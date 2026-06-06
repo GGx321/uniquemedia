@@ -17,5 +17,6 @@ export function verifyCopy(
 
 /** Distance between two copies, by their first-frame signature. */
 export function interCopyDistance(a: Uint8Array[], b: Uint8Array[]): number {
+  if (!a.length || !b.length) throw new Error("interCopyDistance: empty hash array");
   return hammingDistance(a[0], b[0]);
 }

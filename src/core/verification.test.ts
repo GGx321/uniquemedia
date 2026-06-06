@@ -26,3 +26,8 @@ test("fails when any frame is too close", () => {
 test("interCopyDistance compares first-frame signatures", () => {
   expect(interCopyDistance([hash(0)], [hash(30)])).toBe(30);
 });
+
+test("interCopyDistance throws on empty input", () => {
+  expect(() => interCopyDistance([], [new Uint8Array(32)])).toThrow();
+  expect(() => interCopyDistance([new Uint8Array(32)], [])).toThrow();
+});
