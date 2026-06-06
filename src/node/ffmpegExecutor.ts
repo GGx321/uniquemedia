@@ -4,6 +4,7 @@ import ffprobeStatic from "ffprobe-static";
 import { buildArgs } from "../core/filterGraph";
 import type { RenderExecutor } from "../core/executor";
 import type { MediaInfo, Recipe } from "../core/types";
+import { parseProgressFraction } from "./ffmpegProgress";
 
 const FFMPEG = ffmpegPath as string;
 const FFPROBE = ffprobeStatic.path;
@@ -40,8 +41,34 @@ export class FfmpegExecutor implements RenderExecutor {
     };
   }
 
-  async render(input: string, info: MediaInfo, recipe: Recipe, output: string): Promise<void> {
-    await run(FFMPEG, ["-y", "-i", input, ...buildArgs(recipe, info), output]);
+  render(
+    input: string,
+    info: MediaInfo,
+    recipe: Recipe,
+    output: string,
+    onProgress?: (fraction: number) => void
+  ): Promise<void> {
+    const args = ["-y", "-i", input, ...buildArgs(recipe, info)];
+    if (onProgress) args.push("-progress", "pipe:1", "-nostats");
+    args.push(output);
+
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn(FFMPEG, args);
+      const err: Buffer[] = [];
+      child.stderr.on("data", (d) => err.push(d));
+      if (onProgress) {
+        child.stdout.on("data", (d) => {
+          const f = parseProgressFraction(d.toString(), info.durationSec);
+          if (f !== null) onProgress(f);
+        });
+      }
+      child.on("error", reject);
+      child.on("close", (code) =>
+        code === 0
+          ? resolve()
+          : reject(new Error(`ffmpeg exited ${code}: ${Buffer.concat(err).toString().slice(-500)}`))
+      );
+    });
   }
 
   async extractGrayFrames(input: string, count: number): Promise<Uint8Array[]> {
