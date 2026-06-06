@@ -26,6 +26,15 @@ Flags:
 ## Test
     bun test
 
+## Desktop app (Electron UI)
+
+    bun install
+    bun run dev      # launches the Electron app
+
+Drop a video, set the number of copies, pick a preset and format, press Uniquify,
+and watch the queue fill with verified-unique copies (live progress + uniqueness
+badges). Build a distributable with `bun run build`.
+
 ## Notes
 This transforms your own content; mass-posting may violate Instagram ToS — risk
 is on the user. "Uniqueness" is measured, not guaranteed against a black box.
