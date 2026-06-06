@@ -53,6 +53,11 @@ export class FfmpegExecutor implements RenderExecutor {
         "-ss", t.toFixed(3), "-i", input, "-frames:v", "1",
         "-vf", "scale=64:64,format=gray", "-f", "rawvideo", "-",
       ]);
+      if (buf.length < 64 * 64) {
+        throw new Error(
+          `extractGrayFrames: expected 4096 bytes at t=${t.toFixed(3)}s, got ${buf.length}`
+        );
+      }
       frames.push(new Uint8Array(buf.subarray(0, 64 * 64)));
     }
     return frames;
