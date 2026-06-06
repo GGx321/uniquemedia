@@ -1,21 +1,19 @@
-import type { CopyOptions, PresetName, ExportFormat } from "../../core/types";
+import type { CopyOptions, ExportFormat } from "../../core/types";
 import { DropZone, type Source } from "./DropZone";
 import { NField } from "./NField";
 import { FormatSelect } from "./FormatSelect";
-import { PresetButtons } from "./PresetButtons";
 import { AdvancedPanel, type AdvancedValue } from "./AdvancedPanel";
 import { RunButton } from "./RunButton";
 
 export interface SettingsState {
   count: number;
-  preset: PresetName;
   format: ExportFormat;
   advanced: AdvancedValue;
 }
 
 export function settingsToOptions(s: SettingsState): CopyOptions {
   return {
-    preset: s.preset,
+    strength: s.advanced.strength,
     exportFormat: s.format,
     keepTrendAudio: s.advanced.keepTrendAudio,
     allowMirror: s.advanced.allowMirror,
@@ -48,7 +46,6 @@ export function SettingsPanel({
         <div style={{ flex: 1 }}><NField value={state.count} onChange={(count) => set({ count })} /></div>
         <div style={{ flex: 1, alignSelf: "flex-end" }}><FormatSelect value={state.format} onChange={(format) => set({ format })} /></div>
       </div>
-      <PresetButtons value={state.preset} onChange={(preset) => set({ preset })} />
       <AdvancedPanel value={state.advanced} onChange={(advanced) => set({ advanced })} />
       <RunButton disabled={!source} running={running} onClick={onRun} />
     </div>

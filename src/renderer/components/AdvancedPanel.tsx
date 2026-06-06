@@ -1,4 +1,5 @@
 export interface AdvancedValue {
+  strength: number;
   keepTrendAudio: boolean;
   allowMirror: boolean;
   targetDistance: number;
@@ -17,6 +18,21 @@ export function AdvancedPanel({
     <details style={{ background: "var(--panel)", borderRadius: 8, padding: "8px 12px" }}>
       <summary style={{ cursor: "pointer", color: "var(--muted)" }}>Дополнительно</summary>
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ display: "flex", justifyContent: "space-between" }}>
+            <span>Сила изменений</span>
+            <span style={{ color: "var(--muted)" }}>{Math.round(value.strength * 100)}%</span>
+          </span>
+          <input
+            aria-label="Сила изменений"
+            type="range"
+            min={0.5}
+            max={1.5}
+            step={0.1}
+            value={value.strength}
+            onChange={(e) => set({ strength: Number(e.target.value) })}
+          />
+        </label>
         <label style={row}>
           Сохранить оригинальный звук
           <input
