@@ -52,6 +52,15 @@ export function AdvancedPanel({
             onChange={(e) => set({ allowMirror: e.target.checked })}
           />
         </label>
+        <label style={row}>
+          Метаданные iPhone
+          <input
+            aria-label="Метаданные iPhone"
+            type="checkbox"
+            checked={value.spoofMetadata}
+            onChange={(e) => set({ spoofMetadata: e.target.checked })}
+          />
+        </label>
       </div>
     </details>
   );

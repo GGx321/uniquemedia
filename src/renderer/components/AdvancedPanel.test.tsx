@@ -24,3 +24,10 @@ test("adjusts strength", () => {
   fireEvent.change(screen.getByLabelText("Сила изменений"), { target: { value: "1.3" } });
   expect(v.strength).toBeCloseTo(1.3, 5);
 });
+
+test("toggles spoof-metadata", () => {
+  let v = { keepTrendAudio: false, allowMirror: false, targetDistance: 60, strength: 1.0, spoofMetadata: true };
+  render(<AdvancedPanel value={v} onChange={(x) => (v = x)} />);
+  fireEvent.click(screen.getByLabelText("Метаданные iPhone"));
+  expect(v.spoofMetadata).toBe(false);
+});

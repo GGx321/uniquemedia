@@ -74,3 +74,7 @@ ipcMain.handle(CH.start, async (_e, req: { input: string; opts: Parameters<typeo
 
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+app.on("will-quit", async () => {
+  const { exiftool } = await import("exiftool-vendored");
+  await exiftool.end();
+});
