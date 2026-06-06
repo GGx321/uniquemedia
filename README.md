@@ -17,6 +17,7 @@ Flags:
 - `--count N` number of copies
 - `--preset light|medium|aggressive`
 - `--format reels|feed|square`
+- `--out DIR` output directory (default: out)
 - `--target` minimum PDQ Hamming distance each copy must exceed (0..256)
 - `--keep-audio` keep trend audio (no audio modification)
 - `--mirror` allow horizontal flip
