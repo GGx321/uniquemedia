@@ -1,5 +1,7 @@
-import { test, expect } from "bun:test";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { test, expect, afterEach } from "bun:test";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+
+afterEach(cleanup);
 import { NField } from "./NField";
 
 test("reports numeric changes, clamps to >= 1", () => {
