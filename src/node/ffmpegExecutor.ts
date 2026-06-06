@@ -89,4 +89,12 @@ export class FfmpegExecutor implements RenderExecutor {
     }
     return frames;
   }
+
+  async extractThumbnail(input: string): Promise<string> {
+    const buf = await run(FFMPEG, [
+      "-ss", "0.5", "-i", input, "-frames:v", "1",
+      "-vf", "scale=-2:180", "-f", "image2pipe", "-vcodec", "mjpeg", "-",
+    ]);
+    return "data:image/jpeg;base64," + buf.toString("base64");
+  }
 }
