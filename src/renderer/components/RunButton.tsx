@@ -17,7 +17,7 @@ export function RunButton({
         color: "#fff", fontWeight: 600,
       }}
     >
-      {running ? "Processing…" : "Uniquify"}
+      {running ? "Обработка…" : "Уникализировать"}
     </button>
   );
 }

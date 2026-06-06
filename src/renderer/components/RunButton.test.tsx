@@ -11,5 +11,5 @@ test("disabled blocks clicks", () => {
 
 test("shows running label", () => {
   render(<RunButton disabled={false} running onClick={() => {}} />);
-  expect(screen.getByText(/Processing/)).toBeDefined();
+  expect(screen.getByText(/Обработка/)).toBeDefined();
 });

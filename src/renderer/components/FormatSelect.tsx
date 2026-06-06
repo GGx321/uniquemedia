@@ -2,8 +2,8 @@ import type { ExportFormat } from "../../core/types";
 
 const OPTS: { id: ExportFormat; label: string }[] = [
   { id: "reels", label: "Reels 9:16" },
-  { id: "feed", label: "Feed 4:5" },
-  { id: "square", label: "Square 1:1" },
+  { id: "feed", label: "Лента 4:5" },
+  { id: "square", label: "Квадрат 1:1" },
 ];
 
 export function FormatSelect({

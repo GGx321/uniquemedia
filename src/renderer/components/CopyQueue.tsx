@@ -11,7 +11,7 @@ export function CopyQueue({
   onReveal: (path: string) => void;
 }) {
   if (copies.length === 0) {
-    return <div style={{ color: "var(--muted)", padding: 24 }}>Queue is empty — drop a video and press Uniquify.</div>;
+    return <div style={{ color: "var(--muted)", padding: 24 }}>Очередь пуста — перетащите видео и нажмите «Уникализировать».</div>;
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>

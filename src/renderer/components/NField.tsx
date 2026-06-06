@@ -7,9 +7,9 @@ export function NField({
 }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 12, color: "var(--muted)" }}>Copies</span>
+      <span style={{ fontSize: 12, color: "var(--muted)" }}>Копии</span>
       <input
-        aria-label="copies"
+        aria-label="копии"
         type="number"
         min={1}
         value={value}

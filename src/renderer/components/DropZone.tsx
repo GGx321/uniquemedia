@@ -34,7 +34,7 @@ export function DropZone({
           <div style={{ fontSize: 12 }}>{source.info.width}×{source.info.height}</div>
         </div>
       ) : (
-        "⬇︎ Drop a video or click to pick"
+        "⬇︎ Перетащите видео или нажмите, чтобы выбрать"
       )}
     </div>
   );

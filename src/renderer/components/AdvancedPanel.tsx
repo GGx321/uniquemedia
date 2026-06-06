@@ -15,36 +15,24 @@ export function AdvancedPanel({
   const row = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } as const;
   return (
     <details style={{ background: "var(--panel)", borderRadius: 8, padding: "8px 12px" }}>
-      <summary style={{ cursor: "pointer", color: "var(--muted)" }}>Advanced</summary>
+      <summary style={{ cursor: "pointer", color: "var(--muted)" }}>Дополнительно</summary>
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
         <label style={row}>
-          Keep trend audio
+          Сохранить оригинальный звук
           <input
-            aria-label="Keep trend audio"
+            aria-label="Сохранить оригинальный звук"
             type="checkbox"
             checked={value.keepTrendAudio}
             onChange={(e) => set({ keepTrendAudio: e.target.checked })}
           />
         </label>
         <label style={row}>
-          Allow mirror (flips text)
+          Зеркальное отражение (отражает текст)
           <input
-            aria-label="Allow mirror"
+            aria-label="Зеркальное отражение"
             type="checkbox"
             checked={value.allowMirror}
             onChange={(e) => set({ allowMirror: e.target.checked })}
-          />
-        </label>
-        <label style={row}>
-          Target distance
-          <input
-            aria-label="Target distance"
-            type="number"
-            min={1}
-            max={256}
-            value={value.targetDistance}
-            onChange={(e) => set({ targetDistance: Math.max(1, Math.min(256, Number(e.target.value) || 1)) })}
-            style={{ width: 80, background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 6, padding: 4 }}
           />
         </label>
       </div>

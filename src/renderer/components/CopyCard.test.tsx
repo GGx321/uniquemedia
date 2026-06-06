@@ -8,16 +8,15 @@ const done: UiCopy = {
   verify: { minDistance: 118, passed: true }, thumb: "data:image/jpeg;base64,AAAA",
 };
 
-test("renders pass badge and distance", () => {
+test("renders unique badge", () => {
   render(<CopyCard copy={done} onOpen={() => {}} onReveal={() => {}} />);
-  expect(screen.getByText(/118/)).toBeDefined();
-  expect(screen.getByText(/✓/)).toBeDefined();
+  expect(screen.getByText(/Уникально/)).toBeDefined();
 });
 
 test("open button fires with the copy name", () => {
   let opened = "";
   render(<CopyCard copy={done} onOpen={() => (opened = done.name)} onReveal={() => {}} />);
-  fireEvent.click(screen.getByText(/Open/));
+  fireEvent.click(screen.getByText(/Открыть/));
   expect(opened).toBe("copy_07.mp4");
 });
 
@@ -29,5 +28,5 @@ test("shows a warning badge when not passed", () => {
       onReveal={() => {}}
     />
   );
-  expect(screen.getByText(/warn/i)).toBeDefined();
+  expect(screen.getByText(/Слабо/)).toBeDefined();
 });

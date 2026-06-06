@@ -11,7 +11,7 @@ const initial: SettingsState = {
   count: 10,
   preset: "medium",
   format: "reels",
-  advanced: { keepTrendAudio: false, allowMirror: false, targetDistance: 90 },
+  advanced: { keepTrendAudio: false, allowMirror: false, targetDistance: 60 },
 };
 
 export function App() {

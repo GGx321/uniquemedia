@@ -5,7 +5,7 @@ import type { UiCopy } from "../types";
 
 test("shows empty message with no copies", () => {
   render(<CopyQueue copies={[]} onOpen={() => {}} onReveal={() => {}} />);
-  expect(screen.getByText(/Queue is empty/i)).toBeDefined();
+  expect(screen.getByText(/Очередь пуста/i)).toBeDefined();
 });
 
 test("renders one card per copy", () => {

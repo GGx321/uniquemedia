@@ -4,7 +4,7 @@ import { DropZone } from "./DropZone";
 
 test("shows prompt when no source", () => {
   render(<DropZone source={null} onPick={() => {}} onDropFile={() => {}} />);
-  expect(screen.getByText(/Drop a video/i)).toBeDefined();
+  expect(screen.getByText(/Перетащите видео/i)).toBeDefined();
 });
 
 test("shows source name and dims when set", () => {

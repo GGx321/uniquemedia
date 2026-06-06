@@ -12,11 +12,11 @@ export function CopyCard({
   const passed = copy.verify?.passed;
   const badge =
     copy.status === "error"
-      ? { text: "error", bg: "#3d1f1f", fg: "#e08a8a" }
+      ? { text: "Ошибка", bg: "#3d1f1f", fg: "#e08a8a" }
       : passed
-      ? { text: `${copy.verify!.minDistance} ✓ pass`, bg: "var(--ok-bg)", fg: "var(--ok)" }
+      ? { text: "✓ Уникально", bg: "var(--ok-bg)", fg: "var(--ok)" }
       : copy.verify
-      ? { text: `${copy.verify.minDistance} warn`, bg: "#3a3320", fg: "var(--warn)" }
+      ? { text: "⚠ Слабо", bg: "#3a3320", fg: "var(--warn)" }
       : { text: "…", bg: "var(--panel)", fg: "var(--muted)" };
 
   return (
@@ -39,8 +39,8 @@ export function CopyCard({
         )}
         {copy.status === "done" && (
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => onOpen(copy.name)} style={btn}>▶ Open</button>
-            <button onClick={() => onReveal(copy.name)} style={btn}>📁 Folder</button>
+            <button onClick={() => onOpen(copy.name)} style={btn}>▶ Открыть</button>
+            <button onClick={() => onReveal(copy.name)} style={btn}>📁 Папка</button>
           </div>
         )}
       </div>
