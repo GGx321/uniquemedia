@@ -1,8 +1,16 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { FfmpegExecutor } from "../src/node/ffmpegExecutor";
+import { uniquify } from "../src/core/pipeline";
+import { CH } from "./ipc";
+
+const executor = new FfmpegExecutor();
+let cancelled = false;
+let win: BrowserWindow | null = null;
 
 function createWindow() {
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     width: 1100,
     height: 720,
     backgroundColor: "#0f0f14",
@@ -12,14 +20,54 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    win.loadFile(join(import.meta.dirname, "../renderer/index.html"));
-  }
+  if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
+  else win.loadFile(join(import.meta.dirname, "../renderer/index.html"));
 }
 
-app.whenReady().then(createWindow);
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+ipcMain.handle(CH.pickFile, async () => {
+  const r = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [{ name: "Video", extensions: ["mp4", "mov", "mkv", "webm", "avi"] }],
+  });
+  return r.canceled ? null : r.filePaths[0];
 });
+
+ipcMain.handle(CH.probe, (_e, path: string) => executor.probe(path));
+
+ipcMain.handle(CH.chooseOutDir, async () => {
+  const r = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
+  return r.canceled ? null : r.filePaths[0];
+});
+
+ipcMain.handle(CH.openFile, (_e, path: string) => shell.openPath(path));
+ipcMain.handle(CH.reveal, (_e, path: string) => shell.showItemInFolder(path));
+ipcMain.handle(CH.cancel, () => { cancelled = true; });
+
+ipcMain.handle(CH.start, async (_e, req: { input: string; opts: Parameters<typeof uniquify>[1]; count: number; outDir: string }) => {
+  cancelled = false;
+  const { input, opts, count, outDir } = req;
+  mkdirSync(outDir, { recursive: true });
+  const send = (ch: string, payload: unknown) => win?.webContents.send(ch, payload);
+  try {
+    const results = await uniquify(input, opts, executor, count, {
+      seedBase: Date.now() % 1e6,
+      outputPath: (i) => join(outDir, `copy_${i + 1}.mp4`),
+      onProgress: (index, _attempt, fraction) =>
+        send(CH.evtProgress, { index, count, fraction }),
+      onCopyDone: async (r) => {
+        if (cancelled) return;
+        const thumb = await executor.extractThumbnail(r.outputPath).catch(() => "");
+        send(CH.evtCopyDone, {
+          index: r.index, path: r.outputPath, thumb, verify: r.verify,
+        });
+      },
+    });
+    const passed = results.filter((r) => r.verify.passed).length;
+    send(CH.evtBatchDone, { passed, total: count });
+  } catch (err) {
+    send(CH.evtError, { message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.whenReady().then(createWindow);
+app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
