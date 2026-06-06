@@ -8,3 +8,8 @@ test("changes format on selection", () => {
   fireEvent.change(screen.getByRole("combobox"), { target: { value: "square" } });
   expect(v).toBe("square");
 });
+
+test("renders Оригинал option", () => {
+  render(<FormatSelect value="original" onChange={() => {}} />);
+  expect(screen.getByRole("option", { name: "Оригинал" })).toBeTruthy();
+});

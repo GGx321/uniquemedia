@@ -15,9 +15,11 @@ function videoChain(recipe: Recipe, info: MediaInfo): string {
     if (frag) parts.push(frag);
   }
 
-  const { w, h } = EXPORT_DIMS[recipe.exportFormat];
-  parts.push(`scale=${w}:${h}:force_original_aspect_ratio=increase`);
-  parts.push(`crop=${w}:${h}`);
+  if (recipe.exportFormat !== "original") {
+    const { w, h } = EXPORT_DIMS[recipe.exportFormat];
+    parts.push(`scale=${w}:${h}:force_original_aspect_ratio=increase`);
+    parts.push(`crop=${w}:${h}`);
+  }
   parts.push("setsar=1");
   if (speed !== 1) parts.push(`setpts=PTS/${speed}`);
 

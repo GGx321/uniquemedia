@@ -5,9 +5,9 @@ export interface MediaInfo {
   hasAudio: boolean;
 }
 
-export type ExportFormat = "reels" | "feed" | "square";
+export type ExportFormat = "original" | "reels" | "feed" | "square";
 
-export const EXPORT_DIMS: Record<ExportFormat, { w: number; h: number }> = {
+export const EXPORT_DIMS: Record<Exclude<ExportFormat, "original">, { w: number; h: number }> = {
   reels: { w: 1080, h: 1920 },
   feed: { w: 1080, h: 1350 },
   square: { w: 1080, h: 1080 },

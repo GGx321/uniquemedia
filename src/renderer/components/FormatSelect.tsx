@@ -1,6 +1,7 @@
 import type { ExportFormat } from "../../core/types";
 
 const OPTS: { id: ExportFormat; label: string }[] = [
+  { id: "original", label: "Оригинал" },
   { id: "reels", label: "Reels 9:16" },
   { id: "feed", label: "Лента 4:5" },
   { id: "square", label: "Квадрат 1:1" },

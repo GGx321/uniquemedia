@@ -49,6 +49,17 @@ test("no audio source omits -af and adds -an", () => {
   expect(args).toContain("-an");
 });
 
+const originalRecipe: Recipe = { ...recipe, exportFormat: "original" };
+
+test("original format: skips fixed-format scale/crop but keeps setsar=1 and effect filters", () => {
+  const args = buildArgs(originalRecipe, info);
+  const vf = args[args.indexOf("-vf") + 1];
+  expect(vf).not.toContain("scale=1080");
+  expect(vf).not.toContain("crop=1080");
+  expect(vf).toContain("setsar=1");
+  expect(vf).toContain("eq=brightness=0.01");
+});
+
 const spoofRecipe: Recipe = { ...recipe, spoof: true };
 
 test("spoof: args include -f mov, -profile:v high, bt709 tags, and handler_name", () => {
