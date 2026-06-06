@@ -45,3 +45,16 @@ test("mirror disabled never emits hflip", () => {
     expect(r.video.some((o) => o.id === "hflip" && o.params.on === true)).toBe(false);
   }
 });
+
+test("crf varies around neutral and is not pinned to the clamp ceiling", () => {
+  const values = new Set<number>();
+  for (let seed = 0; seed < 60; seed++) {
+    const recipe = sampleRecipe(opts, seed, 1);
+    const crf = Number(recipe.video.find((o) => o.id === "encode")!.params.crf);
+    expect(crf).toBeGreaterThanOrEqual(18);
+    expect(crf).toBeLessThanOrEqual(26);
+    values.add(crf);
+  }
+  // must not be a single pinned value, and the average should sit near 21, not 26
+  expect(values.size).toBeGreaterThan(1);
+});

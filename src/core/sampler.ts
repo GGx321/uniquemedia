@@ -32,12 +32,15 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     { id: "vignette", params: { on: rng() < 0.6 * Math.min(1, s) } },
   ];
 
+  // Determinism invariant: same seed + same opts => same recipe. The mirror draw
+  // below is conditional, so changing `allowMirror` shifts the rng stream for the
+  // speed/crf/eqGain draws — that's intentional and acceptable.
   if (opts.allowMirror && rng() < 0.5) {
     video.push({ id: "hflip", params: { on: true } });
   }
 
   const speed = round(clamp(dev(rng, "speed", s), 0.9, 1.1));
-  const crf = Math.round(clamp(dev(rng, "crf", s, true) + 19, 18, 26));
+  const crf = Math.round(clamp(dev(rng, "crf", s), 18, 26));
 
   const audio: Operation[] = opts.keepTrendAudio
     ? []
