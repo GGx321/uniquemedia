@@ -16,9 +16,8 @@ jobs:
         with:
           bun-version: latest
       - run: bun install
-      - run: bun run dist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: bun run build
+      - run: bunx electron-builder --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: uniquemedia-${{ matrix.os }}
