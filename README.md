@@ -11,14 +11,14 @@ hash so it provably crosses a Hamming-distance threshold.
     bun install
 
 ## Usage
-    bun run src/cli.ts <input.mp4> --count 30 --preset aggressive --format reels --out out --target 90
+    bun run src/cli.ts <input.mp4> --count 30 --format reels --out out
 
 Flags:
 - `--count N` number of copies
-- `--preset light|medium|aggressive`
+- `--strength` visual-change multiplier (~0.5..1.5, default 1.0)
 - `--format reels|feed|square`
 - `--out DIR` output directory (default: out)
-- `--target` minimum PDQ Hamming distance each copy must exceed (0..256)
+- `--target` minimum PDQ Hamming distance each copy must exceed (0..256, default 60)
 - `--keep-audio` keep trend audio (no audio modification)
 - `--mirror` allow horizontal flip
 - `--seed` base seed for reproducible batches
@@ -31,9 +31,10 @@ Flags:
     bun install
     bun run dev      # launches the Electron app
 
-Drop a video, set the number of copies, pick a preset and format, press Uniquify,
-and watch the queue fill with verified-unique copies (live progress + uniqueness
-badges). Build a distributable with `bun run build`.
+Drop a video, set the number of copies, choose a format, press Uniquify, and watch
+the queue fill with verified-unique copies (live progress + uniqueness badges).
+Strength is auto-managed (the verification loop guarantees the threshold); a manual
+strength slider lives under "Дополнительно". Build a distributable with `bun run build`.
 
 ## Notes
 This transforms your own content; mass-posting may violate Instagram ToS — risk

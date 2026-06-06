@@ -24,7 +24,7 @@ async function main() {
     exportFormat: (arg("format", "reels") as ExportFormat),
     keepTrendAudio: arg("keep-audio") !== undefined,
     allowMirror: arg("mirror") !== undefined,
-    targetDistance: Number(arg("target", "90")),
+    targetDistance: Number(arg("target", "60")),
   };
   const seedBase = Number(arg("seed", String(Math.floor(Date.now() % 1e6))));
 
