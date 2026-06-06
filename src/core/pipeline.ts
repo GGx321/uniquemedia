@@ -17,7 +17,8 @@ export interface UniquifyConfig {
   maxAttempts?: number;
   interThreshold?: number;
   outputPath?: (index: number) => string;
-  onProgress?: (index: number, attempt: number) => void;
+  onProgress?: (index: number, attempt: number, fraction: number) => void;
+  onCopyDone?: (result: CopyResult) => void;
 }
 
 const hashFrames = (frames: Uint8Array[]) => frames.map(computePdqHash);
@@ -48,9 +49,10 @@ export async function uniquify(
     const out = outputPath(i);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      config.onProgress?.(i, attempt);
       const recipe = sampleRecipe(opts, seed, intensity);
-      await executor.render(input, info, recipe, out);
+      await executor.render(input, info, recipe, out, (f) =>
+        config.onProgress?.(i, attempt, f)
+      );
       lastRecipe = recipe;
 
       const copyHashes = hashFrames(await executor.extractGrayFrames(out, framesPerCopy));
@@ -77,6 +79,7 @@ export async function uniquify(
       await executor.render(input, info, best!.recipe, out);
     }
     results.push(best!);
+    config.onCopyDone?.(best!);
   }
 
   return results;
