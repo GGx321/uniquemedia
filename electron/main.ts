@@ -18,6 +18,9 @@ function createWindow() {
       preload: join(import.meta.dirname, "../preload/preload.mjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      // ESM preload (.mjs) only runs in a non-sandboxed renderer; contextIsolation
+      // still isolates the bridge, so window.api stays the only exposed surface.
+      sandbox: false,
     },
   });
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
