@@ -1,3 +1,4 @@
 [test]
 # Integration tests invoke real FFmpeg binaries; allow up to 60 s per test.
 timeout = 60000
+preload = ["./testSetup.ts"]
