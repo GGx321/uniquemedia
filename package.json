@@ -2,7 +2,9 @@
   "name": "uniquemedia",
   "version": "0.1.0",
   "type": "module",
-  "bin": { "uniquify": "./src/cli.ts" },
+  "bin": {
+    "uniquify": "./src/cli.ts"
+  },
   "scripts": {
     "test": "bun test",
     "uniquify": "bun run src/cli.ts"
@@ -13,6 +15,7 @@
   },
   "devDependencies": {
     "@types/ffprobe-static": "^2.0.3",
+    "@types/node": "^25.9.2",
     "typescript": "^5.6.0"
   }
 }
