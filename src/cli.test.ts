@@ -19,7 +19,7 @@ test("CLI produces N output files", () => {
   const outDir = join(dir, "out");
   const r = spawnSync(
     "bun",
-    ["run", "src/cli.ts", input, "--count", "2", "--preset", "aggressive",
+    ["run", "src/cli.ts", input, "--count", "2", "--strength", "1.4",
      "--out", outDir, "--format", "square", "--seed", "1"],
     { encoding: "utf8" }
   );

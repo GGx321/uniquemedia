@@ -30,7 +30,7 @@ class MockExecutor implements RenderExecutor {
 }
 
 const opts: CopyOptions = {
-  preset: "medium",
+  strength: 1.0,
   exportFormat: "reels",
   keepTrendAudio: false,
   allowMirror: false,

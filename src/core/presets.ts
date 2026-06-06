@@ -1,5 +1,3 @@
-import type { PresetName } from "./types";
-
 export interface ParamSpec {
   neutral: number;
   dev: number; // base max absolute deviation at scalar 1.0
@@ -21,8 +19,3 @@ export const PARAMS = {
   crf: { neutral: 21, dev: 2 },
 } satisfies Record<string, ParamSpec>;
 
-export const PRESET_SCALAR: Record<PresetName, number> = {
-  light: 0.5,
-  medium: 1.0,
-  aggressive: 1.7,
-};

@@ -1,5 +1,5 @@
 import { makeRng, type Rng } from "./rng";
-import { PARAMS, PRESET_SCALAR } from "./presets";
+import { PARAMS } from "./presets";
 import { round, clamp } from "./util";
 import type { CopyOptions, Operation, Recipe } from "./types";
 
@@ -11,7 +11,7 @@ function dev(rng: Rng, key: keyof typeof PARAMS, scalar: number, oneSided = fals
 
 export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Recipe {
   const rng = makeRng(seed);
-  const s = PRESET_SCALAR[opts.preset] * intensity;
+  const s = opts.strength * intensity;
 
   const video: Operation[] = [
     {

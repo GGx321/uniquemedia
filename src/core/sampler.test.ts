@@ -3,7 +3,7 @@ import { sampleRecipe } from "./sampler";
 import type { CopyOptions } from "./types";
 
 const opts: CopyOptions = {
-  preset: "medium",
+  strength: 1.0,
   exportFormat: "reels",
   keepTrendAudio: false,
   allowMirror: false,

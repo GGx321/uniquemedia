@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { FfmpegExecutor } from "./node/ffmpegExecutor";
 import { uniquify } from "./core/pipeline";
-import type { CopyOptions, ExportFormat, PresetName } from "./core/types";
+import type { CopyOptions, ExportFormat } from "./core/types";
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -12,7 +12,7 @@ function arg(name: string, fallback?: string): string | undefined {
 async function main() {
   const input = process.argv[2];
   if (!input || input.startsWith("--")) {
-    console.error("usage: uniquify <input.mp4> --count N [--preset light|medium|aggressive] " +
+    console.error("usage: uniquify <input.mp4> --count N [--strength 1.0] " +
       "[--format reels|feed|square] [--out DIR] [--target 90] [--seed 1]");
     process.exit(1);
   }
@@ -20,7 +20,7 @@ async function main() {
   const count = Number(arg("count", "5"));
   const outDir = arg("out", "out")!;
   const opts: CopyOptions = {
-    preset: (arg("preset", "medium") as PresetName),
+    strength: Number(arg("strength", "1.0")),
     exportFormat: (arg("format", "reels") as ExportFormat),
     keepTrendAudio: arg("keep-audio") !== undefined,
     allowMirror: arg("mirror") !== undefined,

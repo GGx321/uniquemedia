@@ -5,7 +5,6 @@ export interface MediaInfo {
   hasAudio: boolean;
 }
 
-export type PresetName = "light" | "medium" | "aggressive";
 export type ExportFormat = "reels" | "feed" | "square";
 
 export const EXPORT_DIMS: Record<ExportFormat, { w: number; h: number }> = {
@@ -15,7 +14,7 @@ export const EXPORT_DIMS: Record<ExportFormat, { w: number; h: number }> = {
 };
 
 export interface CopyOptions {
-  preset: PresetName;
+  strength: number; // visual-change multiplier, ~0.5..1.5, default 1.0
   exportFormat: ExportFormat;
   keepTrendAudio: boolean;
   allowMirror: boolean;
