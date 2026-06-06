@@ -1,4 +1,5 @@
 import { sampleRecipe } from "./sampler";
+import { sampleDeviceProfile } from "./deviceProfile";
 import { computePdqHash } from "./pdq/pdq";
 import { verifyCopy, interCopyDistance } from "./verification";
 import type { RenderExecutor } from "./executor";
@@ -16,6 +17,7 @@ export interface UniquifyConfig {
   framesPerCopy?: number;
   maxAttempts?: number;
   interThreshold?: number;
+  nowMs?: number;
   outputPath?: (index: number) => string;
   onProgress?: (index: number, attempt: number, fraction: number) => void;
   onCopyDone?: (result: CopyResult) => void;
@@ -78,6 +80,12 @@ export async function uniquify(
     if (best!.recipe !== lastRecipe) {
       await executor.render(input, info, best!.recipe, out);
     }
+
+    if (opts.spoofMetadata && executor.applyDeviceMetadata) {
+      const profile = sampleDeviceProfile(config.seedBase + i * 1000, config.nowMs ?? 0);
+      await executor.applyDeviceMetadata(out, profile);
+    }
+
     results.push(best!);
     config.onCopyDone?.(best!);
   }

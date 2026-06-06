@@ -56,10 +56,31 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
   args.push(
     "-c:v", "libx264",
     "-preset", "ultrafast",
+  );
+
+  if (recipe.spoof) {
+    args.push(
+      "-profile:v", "high",
+      "-colorspace", "bt709",
+      "-color_primaries", "bt709",
+      "-color_trc", "bt709",
+    );
+  }
+
+  args.push(
     "-crf", crf,
     "-pix_fmt", "yuv420p",
     "-movflags", "+faststart",
     "-map_metadata", "-1"
   );
+
+  if (recipe.spoof) {
+    args.push("-metadata:s:v", "handler_name=Core Media Video");
+    if (info.hasAudio) {
+      args.push("-metadata:s:a", "handler_name=Core Media Audio");
+    }
+    args.push("-f", "mov");
+  }
+
   return args;
 }

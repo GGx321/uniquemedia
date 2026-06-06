@@ -20,7 +20,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 test("render reports increasing progress ending near 1", async () => {
   const info = await exec.probe(input);
   const recipe = sampleRecipe(
-    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90 },
+    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90, spoofMetadata: false },
     7, 1
   );
   const seen: number[] = [];

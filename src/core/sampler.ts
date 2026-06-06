@@ -51,6 +51,7 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     intensity,
     exportFormat: opts.exportFormat,
     keepTrendAudio: opts.keepTrendAudio,
+    spoof: opts.spoofMetadata,
     video: [...video, { id: "speed", params: { speed } }, { id: "encode", params: { crf } }],
     audio,
   };

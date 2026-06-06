@@ -1,4 +1,5 @@
 import type { MediaInfo, Recipe } from "./types";
+import type { DeviceProfile } from "./deviceProfile";
 
 /**
  * Host-provided FFmpeg backend. core depends only on this interface so the same
@@ -15,4 +16,6 @@ export interface RenderExecutor {
   ): Promise<void>;
   /** Returns `count` evenly-spaced frames as 64x64 grayscale buffers (4096 bytes each). */
   extractGrayFrames(input: string, count: number): Promise<Uint8Array[]>;
+  /** Writes iPhone-style QuickTime metadata tags to an already-rendered file. */
+  applyDeviceMetadata?(output: string, profile: DeviceProfile): Promise<void>;
 }

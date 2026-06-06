@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
 import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
+import { exiftool } from "exiftool-vendored";
 import { buildArgs } from "../core/filterGraph";
 import type { RenderExecutor } from "../core/executor";
 import type { MediaInfo, Recipe } from "../core/types";
+import type { DeviceProfile } from "../core/deviceProfile";
 import { parseProgressFraction } from "./ffmpegProgress";
 
 const FFMPEG = (ffmpegPath as string).replace("app.asar", "app.asar.unpacked");
@@ -96,5 +98,19 @@ export class FfmpegExecutor implements RenderExecutor {
       "-vf", "scale=-2:180", "-f", "image2pipe", "-vcodec", "mjpeg", "-",
     ]);
     return "data:image/jpeg;base64," + buf.toString("base64");
+  }
+
+  async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
+    await exiftool.write(
+      output,
+      {
+        "Keys:Make": profile.make,
+        "Keys:Model": profile.model,
+        "Keys:Software": profile.software,
+        "Keys:CreationDate": profile.creationLocal,
+        "Keys:GPSCoordinates": profile.gpsISO6709,
+      } as Record<string, string>,
+      { writeArgs: ["-overwrite_original"] }
+    );
   }
 }

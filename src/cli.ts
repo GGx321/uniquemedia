@@ -13,7 +13,7 @@ async function main() {
   const input = process.argv[2];
   if (!input || input.startsWith("--")) {
     console.error("usage: uniquify <input.mp4> --count N [--strength 1.0] " +
-      "[--format reels|feed|square] [--out DIR] [--target 90] [--seed 1]");
+      "[--format reels|feed|square] [--out DIR] [--target 90] [--seed 1] [--no-spoof]");
     process.exit(1);
   }
 
@@ -25,6 +25,7 @@ async function main() {
     keepTrendAudio: arg("keep-audio") !== undefined,
     allowMirror: arg("mirror") !== undefined,
     targetDistance: Number(arg("target", "60")),
+    spoofMetadata: arg("no-spoof") === undefined,
   };
   const seedBase = Number(arg("seed", String(Math.floor(Date.now() % 1e6))));
 
@@ -33,6 +34,7 @@ async function main() {
 
   const results = await uniquify(input, opts, executor, count, {
     seedBase,
+    nowMs: Date.now(),
     outputPath: (i) => join(outDir, `copy_${i + 1}.mp4`),
     onProgress: (i, attempt) =>
       process.stdout.write(`\rcopy ${i + 1}/${count} (attempt ${attempt + 1})   `),

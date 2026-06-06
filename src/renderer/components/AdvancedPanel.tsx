@@ -3,6 +3,7 @@ export interface AdvancedValue {
   keepTrendAudio: boolean;
   allowMirror: boolean;
   targetDistance: number;
+  spoofMetadata: boolean;
 }
 
 export function AdvancedPanel({

@@ -34,7 +34,7 @@ test("extractGrayFrames returns 64x64 buffers", async () => {
 test("render produces a valid playable mp4", async () => {
   const info = await exec.probe(input);
   const recipe = sampleRecipe(
-    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90 },
+    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90, spoofMetadata: false },
     7,
     1
   );

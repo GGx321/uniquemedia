@@ -19,6 +19,7 @@ export interface CopyOptions {
   keepTrendAudio: boolean;
   allowMirror: boolean;
   targetDistance: number; // Hamming distance (0..256) the copy must exceed
+  spoofMetadata: boolean;
 }
 
 export interface Operation {
@@ -31,6 +32,7 @@ export interface Recipe {
   intensity: number; // 1.0 baseline; raised on auto-strengthen
   exportFormat: ExportFormat;
   keepTrendAudio: boolean;
+  spoof: boolean;
   video: Operation[];
   audio: Operation[];
 }

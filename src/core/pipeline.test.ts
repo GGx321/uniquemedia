@@ -35,6 +35,7 @@ const opts: CopyOptions = {
   keepTrendAudio: false,
   allowMirror: false,
   targetDistance: 40,
+  spoofMetadata: false,
 };
 
 test("produces the requested number of copies", async () => {

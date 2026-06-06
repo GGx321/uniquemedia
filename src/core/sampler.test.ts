@@ -8,6 +8,7 @@ const opts: CopyOptions = {
   keepTrendAudio: false,
   allowMirror: false,
   targetDistance: 90,
+  spoofMetadata: false,
 };
 
 test("same seed and intensity is deterministic", () => {

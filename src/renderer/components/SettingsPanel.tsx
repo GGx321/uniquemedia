@@ -18,6 +18,7 @@ export function settingsToOptions(s: SettingsState): CopyOptions {
     keepTrendAudio: s.advanced.keepTrendAudio,
     allowMirror: s.advanced.allowMirror,
     targetDistance: s.advanced.targetDistance,
+    spoofMetadata: s.advanced.spoofMetadata,
   };
 }
 

@@ -9,6 +9,7 @@ const recipe: Recipe = {
   intensity: 1,
   exportFormat: "reels",
   keepTrendAudio: false,
+  spoof: false,
   video: [
     { id: "eq", params: { brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1 } },
     { id: "noise", params: { strength: 0 } }, // no-op, must be skipped
@@ -46,4 +47,45 @@ test("no audio source omits -af and adds -an", () => {
   const args = buildArgs(recipe, { ...info, hasAudio: false });
   expect(args).not.toContain("-af");
   expect(args).toContain("-an");
+});
+
+const spoofRecipe: Recipe = { ...recipe, spoof: true };
+
+test("spoof: args include -f mov, -profile:v high, bt709 tags, and handler_name", () => {
+  const args = buildArgs(spoofRecipe, info);
+  expect(args).toContain("-f");
+  expect(args[args.lastIndexOf("-f") + 1]).toBe("mov");
+  expect(args).toContain("-profile:v");
+  expect(args[args.indexOf("-profile:v") + 1]).toBe("high");
+  expect(args).toContain("bt709");
+  expect(args).toContain("-metadata:s:v");
+  const handlerV = args[args.indexOf("-metadata:s:v") + 1];
+  expect(handlerV).toContain("Core Media Video");
+  expect(args).toContain("-metadata:s:a");
+  const handlerA = args[args.indexOf("-metadata:s:a") + 1];
+  expect(handlerA).toContain("Core Media Audio");
+});
+
+test("spoof: -f mov is the last flag before output position", () => {
+  const args = buildArgs(spoofRecipe, info);
+  const lastFIdx = args.lastIndexOf("-f");
+  expect(args[lastFIdx + 1]).toBe("mov");
+  // nothing after "mov" (caller appends the output path)
+  expect(args.length).toBe(lastFIdx + 2);
+});
+
+test("no-spoof: args do NOT contain -f mov, -profile:v, or handler_name", () => {
+  const args = buildArgs(recipe, info);
+  // -f should not appear at all in non-spoof mode
+  expect(args.includes("-f")).toBe(false);
+  expect(args.includes("-profile:v")).toBe(false);
+  expect(args.includes("-metadata:s:v")).toBe(false);
+  expect(args.includes("-metadata:s:a")).toBe(false);
+});
+
+test("spoof without audio: handler for audio not added, -f mov still present", () => {
+  const args = buildArgs(spoofRecipe, { ...info, hasAudio: false });
+  expect(args).toContain("-f");
+  expect(args[args.lastIndexOf("-f") + 1]).toBe("mov");
+  expect(args).not.toContain("-metadata:s:a");
 });
