@@ -44,12 +44,14 @@ export async function uniquify(
     let seed = config.seedBase + i * 1000;
     let intensity = 1;
     let best: CopyResult | null = null;
+    let lastRecipe: Recipe | null = null;
+    const out = outputPath(i);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       config.onProgress?.(i, attempt);
       const recipe = sampleRecipe(opts, seed, intensity);
-      const out = outputPath(i);
       await executor.render(input, info, recipe, out);
+      lastRecipe = recipe;
 
       const copyHashes = hashFrames(await executor.extractGrayFrames(out, framesPerCopy));
       const verify = verifyCopy(originalHashes, copyHashes, opts.targetDistance);
@@ -69,6 +71,11 @@ export async function uniquify(
       seed = (seed * 1103515245 + 12345) >>> 0; // re-seed so retries differ
     }
 
+    // Disk may hold a later (worse) attempt than `best`; re-render best so the
+    // file on disk matches the reported metric.
+    if (best!.recipe !== lastRecipe) {
+      await executor.render(input, info, best!.recipe, out);
+    }
     results.push(best!);
   }
 

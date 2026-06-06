@@ -53,7 +53,41 @@ test("auto-strengthens intensity when a copy is too similar", async () => {
     maxAttempts: 3,
   });
   const intensities = exec.rendered.map((r) => r.intensity);
-  expect(intensities.length).toBe(3);
+  // 3 attempts + 1 re-render of best (so disk matches reported metric)
+  expect(intensities.length).toBe(4);
   expect(intensities[1]).toBeGreaterThan(intensities[0]);
   expect(res[0].verify.passed).toBe(false); // gave up, shipped best with warning
+});
+
+test("disk holds the best attempt, not the last, when giving up", async () => {
+  // Path-aware mock: render records recipe per path; extractGrayFrames reads
+  // back the recipe stored at that path. Distance DECREASES with intensity, so
+  // the FIRST attempt is best and a naive impl would leave the LAST on disk.
+  class PathMock implements RenderExecutor {
+    disk = new Map<string, Recipe>();
+    async probe(): Promise<MediaInfo> {
+      return info;
+    }
+    async render(_i: string, _info: MediaInfo, recipe: Recipe, output: string): Promise<void> {
+      this.disk.set(output, recipe);
+    }
+    async extractGrayFrames(input: string, count: number): Promise<Uint8Array[]> {
+      if (input === "ORIGINAL") return Array.from({ length: count }, () => new Uint8Array(64 * 64));
+      const recipe = this.disk.get(input)!;
+      const d = Math.max(1, Math.round(50 / recipe.intensity)); // smaller as intensity grows
+      return Array.from({ length: count }, () => frameOfDistance(d));
+    }
+  }
+
+  const exec = new PathMock();
+  const strict = { ...opts, targetDistance: 250 }; // unreachable -> gives up, best = attempt 0
+  const res = await uniquify("ORIGINAL", strict, exec, 1, {
+    seedBase: 1,
+    framesPerCopy: 4,
+    maxAttempts: 3,
+    outputPath: () => "copy.mp4",
+  });
+
+  // The file on disk must be the SAME recipe object the result reports as best.
+  expect(exec.disk.get("copy.mp4")).toBe(res[0].recipe);
 });
