@@ -106,3 +106,16 @@ test("rendered output has Apple QuickTime creationdate tag", async () => {
     "";
   expect(creationTag.length).toBeGreaterThan(0);
 }, 30_000);
+
+test("rendered output has spoofed GPS location tag", async () => {
+  const tags = await ffprobeFormat(output);
+  // Keys:GPSCoordinates → com.apple.quicktime.location.ISO6709
+  // ItemList:GPSCoordinates → top-level "location"
+  const locationTag =
+    tags["com.apple.quicktime.location.ISO6709"] ??
+    tags["location"] ??
+    "";
+  expect(locationTag.length).toBeGreaterThan(0);
+  // Should encode the lat/lon of the profile city — check it starts with a signed coord
+  expect(locationTag).toMatch(/^[+-]\d{2}\.\d+[+-]\d{3}\.\d+/);
+}, 30_000);

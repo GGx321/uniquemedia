@@ -33,3 +33,16 @@ test("gpsISO6709 is signed fixed-width format", () => {
   const p = sampleDeviceProfile(3, NOW);
   expect(p.gpsISO6709).toMatch(/^[+-]\d{2}\.\d{4}[+-]\d{3}\.\d{4}[+-]\d{3}\.\d{3}\/$/);
 });
+
+test("lat and lon are finite numbers matching a known US city", () => {
+  for (let s = 0; s < 40; s++) {
+    const p = sampleDeviceProfile(s, NOW);
+    expect(Number.isFinite(p.lat)).toBe(true);
+    expect(Number.isFinite(p.lon)).toBe(true);
+    // US mainland bounding box
+    expect(p.lat).toBeGreaterThan(20);
+    expect(p.lat).toBeLessThan(50);
+    expect(p.lon).toBeGreaterThan(-130);
+    expect(p.lon).toBeLessThan(-60);
+  }
+});

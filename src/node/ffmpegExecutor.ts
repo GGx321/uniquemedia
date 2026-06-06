@@ -101,6 +101,11 @@ export class FfmpegExecutor implements RenderExecutor {
   }
 
   async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
+    // GPS decimal string "lat, lon, 0" — exiftool converts this to the ISO6709
+    // format that ffprobe reads back as com.apple.quicktime.location.ISO6709.
+    // Writing to Keys: produces com.apple.quicktime.location.ISO6709;
+    // writing to ItemList: additionally produces the top-level "location" tag.
+    const gpsDecimal = `${profile.lat}, ${profile.lon}, 0`;
     await exiftool.write(
       output,
       {
@@ -108,7 +113,8 @@ export class FfmpegExecutor implements RenderExecutor {
         "Keys:Model": profile.model,
         "Keys:Software": profile.software,
         "Keys:CreationDate": profile.creationLocal,
-        "Keys:GPSCoordinates": profile.gpsISO6709,
+        "Keys:GPSCoordinates": gpsDecimal,
+        "ItemList:GPSCoordinates": gpsDecimal,
       } as Record<string, string>,
       { writeArgs: ["-overwrite_original"] }
     );
