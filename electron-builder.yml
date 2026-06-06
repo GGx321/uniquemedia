@@ -1,0 +1,20 @@
+appId: com.uniquemedia.app
+productName: uniquemedia
+directories:
+  output: release
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+  - node_modules/ffprobe-static/**
+mac:
+  target:
+    - dmg
+  category: public.app-category.video
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

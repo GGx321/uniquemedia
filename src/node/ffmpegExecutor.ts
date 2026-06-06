@@ -6,8 +6,8 @@ import type { RenderExecutor } from "../core/executor";
 import type { MediaInfo, Recipe } from "../core/types";
 import { parseProgressFraction } from "./ffmpegProgress";
 
-const FFMPEG = ffmpegPath as string;
-const FFPROBE = ffprobeStatic.path;
+const FFMPEG = (ffmpegPath as string).replace("app.asar", "app.asar.unpacked");
+const FFPROBE = ffprobeStatic.path.replace("app.asar", "app.asar.unpacked");
 
 function run(bin: string, args: string[]): Promise<Buffer> {
   return new Promise((resolve, reject) => {
