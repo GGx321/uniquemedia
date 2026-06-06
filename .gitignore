@@ -3,3 +3,4 @@ dist/
 out/
 *.tmp.mp4
 .DS_Store
+.superpowers/
