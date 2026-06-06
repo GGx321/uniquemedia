@@ -30,7 +30,7 @@ export async function uniquify(
   count: number,
   config: UniquifyConfig
 ): Promise<CopyResult[]> {
-  const framesPerCopy = config.framesPerCopy ?? 6;
+  const framesPerCopy = config.framesPerCopy ?? 4;
   const maxAttempts = config.maxAttempts ?? 3;
   const interThreshold = config.interThreshold ?? 15;
   const outputPath = config.outputPath ?? ((i) => `out/copy_${i + 1}.mp4`);

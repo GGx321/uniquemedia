@@ -12,8 +12,8 @@ export const PARAMS = {
   gamma: { neutral: 1, dev: 0.06 },
   hueDeg: { neutral: 0, dev: 6 },
   zoomPct: { neutral: 0, dev: 5 }, // one-sided (positive zoom)
-  rotateDeg: { neutral: 0, dev: 1.2 },
-  perspective: { neutral: 0, dev: 0.025 }, // one-sided corner offset fraction
+  rotateDeg: { neutral: 0, dev: 0.6 },
+  perspective: { neutral: 0, dev: 0.012 }, // one-sided corner offset fraction
   lens: { neutral: 0, dev: 0.04 },
   noise: { neutral: 0, dev: 10 }, // one-sided strength
   speed: { neutral: 1, dev: 0.05 },

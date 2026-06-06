@@ -55,7 +55,7 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
 
   args.push(
     "-c:v", "libx264",
-    "-preset", "veryfast",
+    "-preset", "ultrafast",
     "-crf", crf,
     "-pix_fmt", "yuv420p",
     "-movflags", "+faststart",
