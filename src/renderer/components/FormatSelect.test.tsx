@@ -1,7 +1,5 @@
-import { test, expect, afterEach } from "bun:test";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
-
-afterEach(cleanup);
+import { test, expect } from "bun:test";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { FormatSelect } from "./FormatSelect";
 
 test("changes format on selection", () => {

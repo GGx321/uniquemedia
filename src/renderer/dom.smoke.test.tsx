@@ -1,7 +1,5 @@
-import { test, expect, afterEach } from "bun:test";
-import { render, screen, cleanup } from "@testing-library/react";
-
-afterEach(cleanup);
+import { test, expect } from "bun:test";
+import { render, screen } from "@testing-library/react";
 
 test("happy-dom + testing-library render works", () => {
   render(<div>hello</div>);
