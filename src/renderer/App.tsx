@@ -64,6 +64,13 @@ export function App() {
     await api.start({ input: sourcePath, opts: settingsToOptions(state), count: state.count, outDir });
   }
 
+  function stop() {
+    api.cancel();
+    setRunning(false);
+    setProgress({ index: 0, count: 0, fraction: 0 });
+    setCopies((cs) => cs.filter((c) => c.status === "done"));
+  }
+
   const open = (name: string) => {
     const entry = [...pathByIndex.current.values()].find((p) => p.endsWith(name));
     if (entry) api.openFile(entry);
@@ -85,6 +92,7 @@ export function App() {
           onDropFile={loadSource}
           onChange={setState}
           onRun={run}
+          onStop={stop}
         />
         <BatchProgress index={progress.index} count={progress.count} fraction={progress.fraction} />
       </div>

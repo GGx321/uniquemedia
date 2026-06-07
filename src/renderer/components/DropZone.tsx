@@ -31,7 +31,7 @@ export function DropZone({
       }}
     >
       {analyzing ? (
-        <div style={{ color: "var(--accent)" }}>⏳ Анализ видео…</div>
+        <div style={{ color: "var(--accent)" }}>Анализ видео…</div>
       ) : source ? (
         <div>
           <div style={{ color: "var(--text)", fontWeight: 600 }}>{source.name}</div>

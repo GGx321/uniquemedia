@@ -76,3 +76,36 @@ test("applyDeviceMetadata is NOT called when spoofMetadata is false", async () =
   });
   expect(exec.metadataCalls.length).toBe(0);
 });
+
+class AbortMock implements RenderExecutor {
+  renderCalls = 0;
+  async probe(): Promise<MediaInfo> { return info; }
+  async render(_i: string, _n: MediaInfo, _r: Recipe, _o: string, onProgress?: (f: number) => void): Promise<void> {
+    this.renderCalls++;
+    onProgress?.(1);
+  }
+  async extractGrayFrames(input: string, count: number): Promise<Uint8Array[]> {
+    const blank = new Uint8Array(64 * 64);
+    if (input === "ORIGINAL") return Array.from({ length: count }, () => blank);
+    return Array.from({ length: count }, () => frame(5));
+  }
+}
+
+test("AbortSignal halts the batch loop after the first copy", async () => {
+  const controller = new AbortController();
+  const exec = new AbortMock();
+  const done: number[] = [];
+  const res = await uniquify("ORIGINAL", opts, exec, 5, {
+    seedBase: 1,
+    framesPerCopy: 4,
+    signal: controller.signal,
+    onCopyDone: (r) => {
+      done.push(r.index);
+      // abort after the first copy completes
+      controller.abort();
+    },
+  });
+  // Only the first copy should have completed; the rest should be halted
+  expect(res.length).toBeLessThan(5);
+  expect(done.length).toBeLessThan(5);
+});

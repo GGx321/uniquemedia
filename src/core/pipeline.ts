@@ -21,6 +21,7 @@ export interface UniquifyConfig {
   outputPath?: (index: number) => string;
   onProgress?: (index: number, attempt: number, fraction: number) => void;
   onCopyDone?: (result: CopyResult) => void;
+  signal?: AbortSignal;
 }
 
 const hashFrames = (frames: Uint8Array[]) => frames.map(computePdqHash);
@@ -44,6 +45,7 @@ export async function uniquify(
   const acceptedSignatures: Uint8Array[][] = [];
 
   for (let i = 0; i < count; i++) {
+    if (config.signal?.aborted) break;
     let seed = config.seedBase + i * 1000;
     let intensity = 1;
     let best: CopyResult | null = null;
@@ -51,10 +53,16 @@ export async function uniquify(
     const out = outputPath(i);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (config.signal?.aborted) break;
       const recipe = sampleRecipe(opts, seed, intensity);
-      await executor.render(input, info, recipe, out, (f) =>
-        config.onProgress?.(i, attempt, f)
-      );
+      try {
+        await executor.render(input, info, recipe, out, (f) =>
+          config.onProgress?.(i, attempt, f)
+        );
+      } catch (err) {
+        if (config.signal?.aborted) break;
+        throw err;
+      }
       lastRecipe = recipe;
 
       const copyHashes = hashFrames(await executor.extractGrayFrames(out, framesPerCopy));
@@ -75,10 +83,14 @@ export async function uniquify(
       seed = (seed * 1103515245 + 12345) >>> 0; // re-seed so retries differ
     }
 
+    // Don't push a half-done copy on cancel; also guards best being null if
+    // the very first render was killed.
+    if (config.signal?.aborted || !best) break;
+
     // Disk may hold a later (worse) attempt than `best`; re-render best so the
     // file on disk matches the reported metric.
-    if (best!.recipe !== lastRecipe) {
-      await executor.render(input, info, best!.recipe, out);
+    if (best.recipe !== lastRecipe) {
+      await executor.render(input, info, best.recipe, out);
     }
 
     if (opts.spoofMetadata && executor.applyDeviceMetadata) {
@@ -86,8 +98,8 @@ export async function uniquify(
       await executor.applyDeviceMetadata(out, profile);
     }
 
-    results.push(best!);
-    config.onCopyDone?.(best!);
+    results.push(best);
+    config.onCopyDone?.(best);
   }
 
   return results;

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { rmSync } from "node:fs";
 import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 import { exiftool } from "exiftool-vendored";
@@ -28,6 +29,17 @@ function run(bin: string, args: string[]): Promise<Buffer> {
 }
 
 export class FfmpegExecutor implements RenderExecutor {
+  private currentChild: ReturnType<typeof spawn> | null = null;
+  private currentOutput = "";
+
+  cancel(): void {
+    this.currentChild?.kill("SIGKILL");
+    this.currentChild = null;
+    if (this.currentOutput) {
+      try { rmSync(this.currentOutput, { force: true }); } catch { /* ignore */ }
+    }
+  }
+
   async probe(input: string): Promise<MediaInfo> {
     const raw = await run(FFPROBE, [
       "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", input,
@@ -56,6 +68,8 @@ export class FfmpegExecutor implements RenderExecutor {
 
     return new Promise<void>((resolve, reject) => {
       const child = spawn(FFMPEG, args);
+      this.currentChild = child;
+      this.currentOutput = output;
       const err: Buffer[] = [];
       child.stderr.on("data", (d) => err.push(d));
       if (onProgress) {
@@ -64,12 +78,12 @@ export class FfmpegExecutor implements RenderExecutor {
           if (f !== null) onProgress(f);
         });
       }
-      child.on("error", reject);
-      child.on("close", (code) =>
-        code === 0
-          ? resolve()
-          : reject(new Error(`ffmpeg exited ${code}: ${Buffer.concat(err).toString().slice(-500)}`))
-      );
+      child.on("error", (e) => { this.currentChild = null; reject(e); });
+      child.on("close", (code) => {
+        this.currentChild = null;
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited ${code}: ${Buffer.concat(err).toString().slice(-500)}`));
+      });
     });
   }
 

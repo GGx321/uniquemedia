@@ -6,7 +6,7 @@ import { uniquify } from "../src/core/pipeline";
 import { CH } from "./ipc";
 
 const executor = new FfmpegExecutor();
-let cancelled = false;
+let abortController: AbortController | null = null;
 let win: BrowserWindow | null = null;
 
 function createWindow() {
@@ -44,10 +44,10 @@ ipcMain.handle(CH.chooseOutDir, async () => {
 
 ipcMain.handle(CH.openFile, (_e, path: string) => shell.openPath(path));
 ipcMain.handle(CH.reveal, (_e, path: string) => shell.showItemInFolder(path));
-ipcMain.handle(CH.cancel, () => { cancelled = true; });
+ipcMain.handle(CH.cancel, () => { abortController?.abort(); executor.cancel(); });
 
 ipcMain.handle(CH.start, async (_e, req: { input: string; opts: Parameters<typeof uniquify>[1]; count: number; outDir: string }) => {
-  cancelled = false;
+  abortController = new AbortController();
   const { input, opts, count, outDir } = req;
   mkdirSync(outDir, { recursive: true });
   const stem = basename(input).replace(/\.[^.]+$/, "");
@@ -56,10 +56,10 @@ ipcMain.handle(CH.start, async (_e, req: { input: string; opts: Parameters<typeo
     const results = await uniquify(input, opts, executor, count, {
       seedBase: Date.now() % 1e6,
       outputPath: (i) => join(outDir, `${stem}_${i + 1}.mp4`),
+      signal: abortController.signal,
       onProgress: (index, _attempt, fraction) =>
         send(CH.evtProgress, { index, count, fraction }),
       onCopyDone: async (r) => {
-        if (cancelled) return;
         const thumb = await executor.extractThumbnail(r.outputPath).catch(() => "");
         send(CH.evtCopyDone, {
           index: r.index, path: r.outputPath, thumb, verify: r.verify,

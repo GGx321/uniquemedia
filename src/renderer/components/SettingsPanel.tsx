@@ -31,6 +31,7 @@ export function SettingsPanel({
   onDropFile,
   onChange,
   onRun,
+  onStop,
 }: {
   source: Source | null;
   state: SettingsState;
@@ -40,6 +41,7 @@ export function SettingsPanel({
   onDropFile: (path: string) => void;
   onChange: (s: SettingsState) => void;
   onRun: () => void;
+  onStop: () => void;
 }) {
   const set = (patch: Partial<SettingsState>) => onChange({ ...state, ...patch });
   return (
@@ -50,7 +52,7 @@ export function SettingsPanel({
         <div style={{ flex: 1, alignSelf: "flex-end" }}><FormatSelect value={state.format} onChange={(format) => set({ format })} /></div>
       </div>
       <AdvancedPanel value={state.advanced} onChange={(advanced) => set({ advanced })} />
-      <RunButton disabled={!source} running={running} onClick={onRun} />
+      <RunButton disabled={!source} running={running} onClick={onRun} onStop={onStop} />
     </div>
   );
 }
