@@ -15,17 +15,19 @@ export function FormatSelect({
   onChange: (f: ExportFormat) => void;
 }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value as ExportFormat)}
-      style={{
-        width: "100%", padding: 8, borderRadius: 8,
-        background: "var(--panel)", color: "var(--text)", border: "1px solid var(--border)",
-      }}
-    >
-      {OPTS.map((o) => (
-        <option key={o.id} value={o.id}>{o.label}</option>
-      ))}
-    </select>
+    <label className="field">
+      <span className="micro-label">Формат</span>
+      <span className="select-wrap">
+        <select
+          className="input"
+          value={value}
+          onChange={(e) => onChange(e.target.value as ExportFormat)}
+        >
+          {OPTS.map((o) => (
+            <option key={o.id} value={o.id}>{o.label}</option>
+          ))}
+        </select>
+      </span>
+    </label>
   );
 }

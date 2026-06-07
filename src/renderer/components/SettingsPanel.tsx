@@ -45,11 +45,11 @@ export function SettingsPanel({
 }) {
   const set = (patch: Partial<SettingsState>) => onChange({ ...state, ...patch });
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, width: 360 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <DropZone source={source} analyzing={analyzing} onPick={onPick} onDropFile={onDropFile} />
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 10 }}>
         <div style={{ flex: 1 }}><NField value={state.count} onChange={(count) => set({ count })} /></div>
-        <div style={{ flex: 1, alignSelf: "flex-end" }}><FormatSelect value={state.format} onChange={(format) => set({ format })} /></div>
+        <div style={{ flex: 1 }}><FormatSelect value={state.format} onChange={(format) => set({ format })} /></div>
       </div>
       <AdvancedPanel value={state.advanced} onChange={(advanced) => set({ advanced })} />
       <RunButton disabled={!source} running={running} onClick={onRun} onStop={onStop} />

@@ -14,15 +14,18 @@ export function AdvancedPanel({
   onChange: (v: AdvancedValue) => void;
 }) {
   const set = (patch: Partial<AdvancedValue>) => onChange({ ...value, ...patch });
-  const row = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } as const;
+  const pct = ((value.strength - 0.5) / 1.0) * 100;
   return (
-    <details style={{ background: "var(--panel)", borderRadius: 8, padding: "8px 12px" }}>
-      <summary style={{ cursor: "pointer", color: "var(--muted)" }}>Дополнительно</summary>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>Сила изменений</span>
-            <span style={{ color: "var(--muted)" }}>{Math.round(value.strength * 100)}%</span>
+    <details className="advanced">
+      <summary>
+        <span className="chev" aria-hidden />
+        Дополнительно
+      </summary>
+      <div className="advanced-body">
+        <label className="field">
+          <span className="adv-slider-head">
+            <span className="micro-label">Сила изменений</span>
+            <span className="val">{Math.round(value.strength * 100)}%</span>
           </span>
           <input
             aria-label="Сила изменений"
@@ -32,29 +35,33 @@ export function AdvancedPanel({
             step={0.1}
             value={value.strength}
             onChange={(e) => set({ strength: Number(e.target.value) })}
+            style={{ ["--pct" as string]: `${pct}%` }}
           />
         </label>
-        <label style={row}>
+        <label className="adv-row">
           Сохранить оригинальный звук
           <input
+            className="switch"
             aria-label="Сохранить оригинальный звук"
             type="checkbox"
             checked={value.keepTrendAudio}
             onChange={(e) => set({ keepTrendAudio: e.target.checked })}
           />
         </label>
-        <label style={row}>
+        <label className="adv-row">
           Зеркальное отражение (отражает текст)
           <input
+            className="switch"
             aria-label="Зеркальное отражение"
             type="checkbox"
             checked={value.allowMirror}
             onChange={(e) => set({ allowMirror: e.target.checked })}
           />
         </label>
-        <label style={row}>
+        <label className="adv-row">
           Метаданные iPhone
           <input
+            className="switch"
             aria-label="Метаданные iPhone"
             type="checkbox"
             checked={value.spoofMetadata}

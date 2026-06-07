@@ -12,9 +12,10 @@ export function NField({
     setText(String(value));
   }, [value]);
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 12, color: "var(--muted)" }}>Копии</span>
+    <label className="field">
+      <span className="micro-label">Копии</span>
       <input
+        className="input"
         aria-label="копии"
         type="text"
         inputMode="numeric"
@@ -29,10 +30,6 @@ export function NField({
             setText("1");
             onChange(1);
           }
-        }}
-        style={{
-          padding: 8, borderRadius: 8, background: "var(--panel)",
-          color: "var(--text)", border: "1px solid var(--border)",
         }}
       />
     </label>

@@ -11,13 +11,24 @@ export function CopyQueue({
   onReveal: (path: string) => void;
 }) {
   if (copies.length === 0) {
-    return <div style={{ color: "var(--muted)", padding: 24 }}>Очередь пуста — перетащите видео и нажмите «Уникализировать».</div>;
+    return (
+      <div className="queue-empty">
+        <svg className="glyph" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" />
+          <path d="m17 10 4-2v8l-4-2" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        </svg>
+        <p>Очередь пуста — перетащите видео и нажмите «Уникализировать».</p>
+      </div>
+    );
   }
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
-      {copies.map((c) => (
-        <CopyCard key={c.index} copy={c} onOpen={onOpen} onReveal={onReveal} />
-      ))}
-    </div>
+    <>
+      <h2 className="queue-title">Очередь · {copies.length}</h2>
+      <div className="queue">
+        {copies.map((c) => (
+          <CopyCard key={c.index} copy={c} onOpen={onOpen} onReveal={onReveal} />
+        ))}
+      </div>
+    </>
   );
 }

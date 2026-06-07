@@ -81,23 +81,36 @@ export function App() {
   };
 
   return (
-    <div style={{ display: "flex", gap: 16, padding: 16, height: "100vh" }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <SettingsPanel
-          source={source}
-          state={state}
-          running={running}
-          analyzing={analyzing}
-          onPick={async () => { const p = await api.pickFile(); if (p) loadSource(p); }}
-          onDropFile={loadSource}
-          onChange={setState}
-          onRun={run}
-          onStop={stop}
-        />
-        <BatchProgress index={progress.index} count={progress.count} fraction={progress.fraction} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <CopyQueue copies={copies} onOpen={open} onReveal={reveal} />
+    <div className="app">
+      <header className="app-header reveal reveal-1">
+        <span className="logo-mark" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </span>
+        <span className="wordmark">unique<b>media</b></span>
+        <span className="tagline">video uniquifier</span>
+        <span className="header-spacer" />
+        <span className="version">v0.2.0</span>
+      </header>
+      <div className="app-body">
+        <aside className="col-settings reveal reveal-2">
+          <SettingsPanel
+            source={source}
+            state={state}
+            running={running}
+            analyzing={analyzing}
+            onPick={async () => { const p = await api.pickFile(); if (p) loadSource(p); }}
+            onDropFile={loadSource}
+            onChange={setState}
+            onRun={run}
+            onStop={stop}
+          />
+          <BatchProgress index={progress.index} count={progress.count} fraction={progress.fraction} />
+        </aside>
+        <main className="col-queue reveal reveal-3">
+          <CopyQueue copies={copies} onOpen={open} onReveal={reveal} />
+        </main>
       </div>
     </div>
   );

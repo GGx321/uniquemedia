@@ -12,43 +12,36 @@ export function CopyCard({
   const passed = copy.verify?.passed;
   const badge =
     copy.status === "error"
-      ? { text: "Ошибка", bg: "#3d1f1f", fg: "#e08a8a" }
+      ? { text: "Ошибка", cls: "err" }
       : passed
-      ? { text: "✓ Уникально", bg: "var(--ok-bg)", fg: "var(--ok)" }
+      ? { text: "✓ Уникально", cls: "ok" }
       : copy.verify
-      ? { text: "⚠ Слабо", bg: "#3a3320", fg: "var(--warn)" }
-      : { text: "…", bg: "var(--panel)", fg: "var(--muted)" };
+      ? { text: "⚠ Слабо", cls: "warn" }
+      : { text: "…", cls: "pending" };
 
   return (
-    <div style={{ display: "flex", gap: 10, alignItems: "center", background: "var(--panel)", borderRadius: 8, padding: 8 }}>
+    <div className="copy-card">
       {copy.thumb ? (
-        <img src={copy.thumb} alt="" style={{ width: 54, height: 96, objectFit: "cover", borderRadius: 8 }} />
+        <img src={copy.thumb} alt="" className="copy-thumb" />
       ) : (
-        <div style={{ width: 54, height: 96, borderRadius: 8, background: "var(--bg)" }} />
+        <div className="copy-thumb placeholder" />
       )}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-        <b style={{ fontSize: 13 }}>{copy.name}</b>
+      <div className="copy-body">
+        <span className="copy-name">{copy.name}</span>
         {copy.status === "rendering" ? (
-          <div style={{ height: 6, borderRadius: 3, background: "var(--border)" }}>
-            <div style={{ width: `${Math.round((copy.fraction ?? 0) * 100)}%`, height: 6, borderRadius: 3, background: "var(--accent)" }} />
+          <div className="bar">
+            <div className="bar-fill" style={{ width: `${Math.round((copy.fraction ?? 0) * 100)}%` }} />
           </div>
         ) : (
-          <span style={{ alignSelf: "flex-start", background: badge.bg, color: badge.fg, borderRadius: 6, padding: "2px 8px", fontSize: 11 }}>
-            {badge.text}
-          </span>
+          <span className={`badge ${badge.cls}`}>{badge.text}</span>
         )}
         {copy.status === "done" && (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => onOpen(copy.name)} style={btn}>▶ Открыть</button>
-            <button onClick={() => onReveal(copy.name)} style={btn}>📁 Папка</button>
+          <div className="copy-actions">
+            <button className="ghost-btn" onClick={() => onOpen(copy.name)}>▶ Открыть</button>
+            <button className="ghost-btn" onClick={() => onReveal(copy.name)}>📁 Папка</button>
           </div>
         )}
       </div>
     </div>
   );
 }
-
-const btn = {
-  fontSize: 11, padding: "3px 8px", borderRadius: 6,
-  background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)",
-} as const;

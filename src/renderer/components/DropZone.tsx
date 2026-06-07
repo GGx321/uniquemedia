@@ -18,6 +18,7 @@ export function DropZone({
 }) {
   return (
     <div
+      className="dropzone"
       onClick={onPick}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
@@ -25,21 +26,45 @@ export function DropZone({
         const f = e.dataTransfer.files[0] as (File & { path?: string }) | undefined;
         if (f?.path) onDropFile(f.path);
       }}
-      style={{
-        border: "1px dashed var(--border)", borderRadius: 8, padding: 18,
-        textAlign: "center", color: "var(--muted)", cursor: "pointer",
-      }}
     >
       {analyzing ? (
-        <div style={{ color: "var(--accent)" }}>Анализ видео…</div>
+        <div className="analyzing">Анализ видео…</div>
       ) : source ? (
-        <div>
-          <div style={{ color: "var(--text)", fontWeight: 600 }}>{source.name}</div>
-          <div style={{ fontSize: 12 }}>{source.info.width}×{source.info.height}</div>
+        <div className="source-info">
+          <span className="source-glyph" aria-hidden>
+            <PlayGlyph />
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <div className="source-name">{source.name}</div>
+            <span className="chip">{source.info.width}×{source.info.height}</span>
+          </div>
         </div>
       ) : (
-        "⬇︎ Перетащите видео или нажмите, чтобы выбрать"
+        <>
+          <UploadGlyph />
+          <div className="dropzone-hint">
+            <b>Перетащите видео</b> сюда
+          </div>
+          <div className="dropzone-sub">или нажмите, чтобы выбрать</div>
+        </>
       )}
     </div>
+  );
+}
+
+function UploadGlyph() {
+  return (
+    <svg className="dropzone-icon" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M12 16V4m0 0L7 9m5-5 5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PlayGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M8 5.5v13a1 1 0 0 0 1.54.84l10-6.5a1 1 0 0 0 0-1.68l-10-6.5A1 1 0 0 0 8 5.5Z" />
+    </svg>
   );
 }

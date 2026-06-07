@@ -9,12 +9,12 @@ export function BatchProgress({
 }) {
   if (count <= 0) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+    <div className="batch-progress">
+      <span className="counter">
         копия {Math.min(index + 1, count)}/{count}
       </span>
-      <div style={{ height: 6, borderRadius: 3, background: "var(--border)" }}>
-        <div style={{ width: `${Math.round(fraction * 100)}%`, height: 6, borderRadius: 3, background: "var(--accent)" }} />
+      <div className="bar">
+        <div className="bar-fill" style={{ width: `${Math.round(fraction * 100)}%` }} />
       </div>
     </div>
   );
