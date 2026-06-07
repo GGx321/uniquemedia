@@ -1,8 +1,9 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { CH, type Api } from "./ipc";
 
 const api: Api = {
   pickFile: () => ipcRenderer.invoke(CH.pickFile),
+  getDroppedPath: (file) => webUtils.getPathForFile(file),
   probe: (path) => ipcRenderer.invoke(CH.probe, path),
   chooseOutDir: () => ipcRenderer.invoke(CH.chooseOutDir),
   start: (req) => ipcRenderer.invoke(CH.start, req),

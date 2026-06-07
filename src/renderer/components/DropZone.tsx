@@ -1,4 +1,5 @@
 import type { MediaInfo } from "../../core/types";
+import { api } from "../api";
 
 export interface Source {
   name: string;
@@ -23,8 +24,11 @@ export function DropZone({
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
-        const f = e.dataTransfer.files[0] as (File & { path?: string }) | undefined;
-        if (f?.path) onDropFile(f.path);
+        const f = e.dataTransfer.files[0];
+        if (f) {
+          const path = api.getDroppedPath(f);
+          if (path) onDropFile(path);
+        }
       }}
     >
       <span className="crop-mark tl" aria-hidden />

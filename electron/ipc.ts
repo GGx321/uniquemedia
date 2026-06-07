@@ -17,6 +17,8 @@ export const CH = {
 
 export interface Api {
   pickFile(): Promise<string | null>;
+  /** Resolve the absolute path of a dropped File (Electron webUtils). */
+  getDroppedPath(file: File): string;
   probe(path: string): Promise<MediaInfo>;
   chooseOutDir(): Promise<string | null>;
   start(req: { input: string; opts: CopyOptions; count: number; outDir: string }): Promise<void>;
