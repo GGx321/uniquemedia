@@ -9,7 +9,7 @@ export const PARAMS = {
   saturation: { neutral: 1, dev: 0.08 },
   gamma: { neutral: 1, dev: 0.06 },
   hueDeg: { neutral: 0, dev: 6 },
-  zoomPct: { neutral: 0, dev: 6 }, // one-sided (positive zoom) — light crop that shifts the hash
+  zoomPct: { neutral: 5, dev: 3 }, // guaranteed 5..8% zoom — enough crop to shift the hash on static content
   rotateDeg: { neutral: 0, dev: 0.05 }, // effectively invisible rotation
   perspective: { neutral: 0, dev: 0.002 }, // effectively invisible tilt
   lens: { neutral: 0, dev: 0.015 }, // barely-there lens distortion

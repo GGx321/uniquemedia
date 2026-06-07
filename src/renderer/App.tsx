@@ -10,7 +10,7 @@ import { basename } from "./util";
 const initial: SettingsState = {
   count: 10,
   format: "original",
-  advanced: { keepTrendAudio: false, allowMirror: false, targetDistance: 45, strength: 1.0, spoofMetadata: true },
+  advanced: { keepTrendAudio: false, allowMirror: false, targetDistance: 38, strength: 1.0, spoofMetadata: true },
 };
 
 export function App() {
