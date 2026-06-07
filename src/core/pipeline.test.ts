@@ -36,7 +36,6 @@ const opts: CopyOptions = {
   allowMirror: false,
   targetDistance: 40,
   spoofMetadata: false,
-  keepResolution: false,
 };
 
 test("produces the requested number of copies", async () => {

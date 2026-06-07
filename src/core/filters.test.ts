@@ -39,29 +39,3 @@ test("perspective emits 8 coordinates", () => {
   expect((out!.match(/:/g) || []).length).toBe(8);
 });
 
-test("resample zero amount is a no-op (null)", () => {
-  expect(FRAGMENTS.resample({ amount: 0 }, info)).toBeNull();
-});
-
-test("lumashift zero offsets (brightness=0, contrast=1) is a no-op (null)", () => {
-  expect(FRAGMENTS.lumashift({ brightness: 0, contrast: 1 }, info)).toBeNull();
-});
-
-test("lumashift emits eq filter with given brightness and contrast", () => {
-  const out = FRAGMENTS.lumashift({ brightness: 0.3, contrast: 1.2 }, info);
-  expect(out).toBe("eq=brightness=0.3:contrast=1.2:saturation=1:gamma=1");
-});
-
-test("resample downscales then upscales back to source dims with even intermediates", () => {
-  // 4% amount on 1280x720: intermediate = round(1280*0.96/2)*2 x round(720*0.96/2)*2
-  const out = FRAGMENTS.resample({ amount: 4 }, info);
-  expect(out).not.toBeNull();
-  // Must end with upscale back to original size
-  expect(out).toContain(`,scale=${info.width}:${info.height}:flags=bicubic`);
-  // First scale must differ from original (downscaled)
-  expect(out!.startsWith(`scale=${info.width}:${info.height}`)).toBe(false);
-  // Intermediate dims must be even
-  const match = out!.match(/^scale=(\d+):(\d+)/);
-  expect(Number(match![1]) % 2).toBe(0);
-  expect(Number(match![2]) % 2).toBe(0);
-});

@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AdvancedPanel } from "./AdvancedPanel";
 
-const base = { keepResolution: true, keepTrendAudio: false, allowMirror: false, targetDistance: 90, strength: 1.0, spoofMetadata: true };
+const base = { keepTrendAudio: false, allowMirror: false, targetDistance: 90, strength: 1.0, spoofMetadata: true };
 
 test("toggles keep-trend-audio", () => {
   let v = { ...base };
@@ -12,21 +12,21 @@ test("toggles keep-trend-audio", () => {
 });
 
 test("toggles allow-mirror", () => {
-  let v = { keepResolution: true, keepTrendAudio: false, allowMirror: false, targetDistance: 90, strength: 1.0, spoofMetadata: true };
+  let v = { keepTrendAudio: false, allowMirror: false, targetDistance: 90, strength: 1.0, spoofMetadata: true };
   render(<AdvancedPanel value={v} onChange={(x) => (v = x)} />);
   fireEvent.click(screen.getByLabelText("Зеркальное отражение"));
   expect(v.allowMirror).toBe(true);
 });
 
 test("adjusts strength", () => {
-  let v = { keepResolution: true, keepTrendAudio: false, allowMirror: false, targetDistance: 60, strength: 1.0, spoofMetadata: true };
+  let v = { keepTrendAudio: false, allowMirror: false, targetDistance: 60, strength: 1.0, spoofMetadata: true };
   render(<AdvancedPanel value={v} onChange={(x) => (v = x)} />);
   fireEvent.change(screen.getByLabelText("Сила изменений"), { target: { value: "1.3" } });
   expect(v.strength).toBeCloseTo(1.3, 5);
 });
 
 test("toggles spoof-metadata", () => {
-  let v = { keepResolution: true, keepTrendAudio: false, allowMirror: false, targetDistance: 60, strength: 1.0, spoofMetadata: true };
+  let v = { keepTrendAudio: false, allowMirror: false, targetDistance: 60, strength: 1.0, spoofMetadata: true };
   render(<AdvancedPanel value={v} onChange={(x) => (v = x)} />);
   fireEvent.click(screen.getByLabelText("Метаданные iPhone"));
   expect(v.spoofMetadata).toBe(false);

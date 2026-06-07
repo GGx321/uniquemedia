@@ -27,7 +27,7 @@ class ProgMock implements RenderExecutor {
 
 const opts: CopyOptions = {
   strength: 1.0, exportFormat: "reels", keepTrendAudio: false, allowMirror: false, targetDistance: 40,
-  spoofMetadata: false, keepResolution: false,
+  spoofMetadata: false,
 };
 
 test("fires onProgress per render tick and onCopyDone per accepted copy", async () => {

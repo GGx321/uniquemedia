@@ -13,7 +13,7 @@ async function main() {
   const input = process.argv[2];
   if (!input || input.startsWith("--")) {
     console.error("usage: uniquify <input.mp4> --count N [--strength 1.0] " +
-      "[--format reels|feed|square] [--out DIR] [--target 90] [--seed 1] [--no-spoof] [--allow-crop]");
+      "[--format reels|feed|square] [--out DIR] [--target 45] [--seed 1] [--no-spoof]");
     process.exit(1);
   }
 
@@ -24,9 +24,8 @@ async function main() {
     exportFormat: (arg("format", "reels") as ExportFormat),
     keepTrendAudio: arg("keep-audio") !== undefined,
     allowMirror: arg("mirror") !== undefined,
-    targetDistance: Number(arg("target", "60")),
+    targetDistance: Number(arg("target", "45")),
     spoofMetadata: arg("no-spoof") === undefined,
-    keepResolution: arg("allow-crop") === undefined,
   };
   const seedBase = Number(arg("seed", String(Math.floor(Date.now() % 1e6))));
 

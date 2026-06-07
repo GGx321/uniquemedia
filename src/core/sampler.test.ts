@@ -9,7 +9,6 @@ const opts: CopyOptions = {
   allowMirror: false,
   targetDistance: 90,
   spoofMetadata: false,
-  keepResolution: false,
 };
 
 test("same seed and intensity is deterministic", () => {
@@ -41,16 +40,11 @@ test("keepTrendAudio yields no audio ops", () => {
   expect(r.audio.length).toBe(0);
 });
 
-test("keepResolution omits zoomcrop and emits resample+lumashift instead; allowing crop includes zoomcrop and no resample/lumashift", () => {
-  const kept = sampleRecipe({ ...opts, keepResolution: true }, 7, 1);
-  expect(kept.video.some((o) => o.id === "zoomcrop")).toBe(false);
-  expect(kept.video.some((o) => o.id === "resample")).toBe(true);
-  expect(kept.video.some((o) => o.id === "lumashift")).toBe(true);
-
-  const cropped = sampleRecipe({ ...opts, keepResolution: false }, 7, 1);
-  expect(cropped.video.some((o) => o.id === "zoomcrop")).toBe(true);
-  expect(cropped.video.some((o) => o.id === "resample")).toBe(false);
-  expect(cropped.video.some((o) => o.id === "lumashift")).toBe(false);
+test("recipe always contains zoomcrop", () => {
+  const r = sampleRecipe(opts, 7, 1);
+  expect(r.video.some((o) => o.id === "zoomcrop")).toBe(true);
+  expect(r.video.some((o) => o.id === "resample")).toBe(false);
+  expect(r.video.some((o) => o.id === "lumashift")).toBe(false);
 });
 
 test("mirror disabled never emits hflip", () => {

@@ -26,30 +26,10 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     { id: "hue", params: { h: round(dev(rng, "hueDeg", s)) } },
   ];
 
-  // Always draw zoomPct to keep the rng stream stable regardless of keepResolution;
-  // only emit the zoomcrop op when the user allows cropping. zoomcrop zooms ~8% then
-  // crops back, which visibly eats the frame edges — keepResolution skips it.
-  // When keepResolution is true we push a resample op instead: a bicubic down-then-up
-  // changes every pixel via interpolation (strong PDQ shift) without touching frame edges.
+  // Always apply a small zoom-crop (~3%) — visually a thin edge crop but shifts
+  // the PDQ hash meaningfully via spatial resampling.
   const zoomPct = round(dev(rng, "zoomPct", s, true));
-  if (!opts.keepResolution) {
-    video.push({ id: "zoomcrop", params: { zoomPct } });
-  } else {
-    // Resample: bicubic down-then-up keeps full frame edges but shifts per-pixel
-    // interpolation — a secondary hash contributor.
-    video.push({ id: "resample", params: { amount: round(dev(rng, "resampleAmt", s, true)) } });
-    // Lumashift: a guaranteed brightness + contrast offset that reliably flips
-    // ~60 PDQ bits even on uniform synthetic content, compensating for the
-    // missing zoomcrop spatial shift. Values are drawn two-sided so some copies
-    // brighten and some darken — keeps the distribution varied.
-    video.push({
-      id: "lumashift",
-      params: {
-        brightness: round(dev(rng, "lumashiftBr", s)),
-        contrast: round(dev(rng, "lumashiftCt", s)),
-      },
-    });
-  }
+  video.push({ id: "zoomcrop", params: { zoomPct } });
 
   video.push(
     { id: "rotate", params: { deg: round(dev(rng, "rotateDeg", s)) } },

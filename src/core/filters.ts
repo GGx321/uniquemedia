@@ -48,25 +48,6 @@ export const FRAGMENTS: Record<string, Fragment> = {
     return `lenscorrection=k1=${k1}:k2=0`;
   },
 
-  resample: (p, info) => {
-    const amt = n(p.amount); // percent, e.g. 4 => down to 96% then back
-    if (amt <= 0) return null;
-    const f = round(1 - amt / 100, 4);
-    const dw = Math.max(2, Math.round((info.width * f) / 2) * 2);
-    const dh = Math.max(2, Math.round((info.height * f) / 2) * 2);
-    return `scale=${dw}:${dh}:flags=bicubic,scale=${info.width}:${info.height}:flags=bicubic`;
-  },
-
-  // Luminance offset used as a keepResolution hash-breaker: a guaranteed
-  // brightness + contrast shift that moves the DCT median threshold enough
-  // to flip ~60+ PDQ bits on real content. Visually subtle at |shift| <= 0.25.
-  lumashift: (p) => {
-    const b = round(n(p.brightness), 4);
-    const c = round(n(p.contrast), 4);
-    if (b === 0 && c === 1) return null;
-    return `eq=brightness=${b}:contrast=${c}:saturation=1:gamma=1`;
-  },
-
   noise: (p) => {
     const s = Math.round(n(p.strength));
     if (s <= 0) return null;
