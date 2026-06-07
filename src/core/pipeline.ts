@@ -97,7 +97,12 @@ export async function uniquify(
     // file on disk matches the reported metric.
     if (best.recipe !== lastRecipe) {
       if (config.signal?.aborted) return null;
-      await executor.render(input, info, best.recipe, out);
+      try {
+        await executor.render(input, info, best.recipe, out);
+      } catch (err) {
+        if (config.signal?.aborted) return null; // killed by Stop — clean exit
+        throw err;
+      }
     }
 
     if (opts.spoofMetadata && executor.applyDeviceMetadata) {
