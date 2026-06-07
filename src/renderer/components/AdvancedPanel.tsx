@@ -1,5 +1,6 @@
 export interface AdvancedValue {
   strength: number;
+  keepResolution: boolean;
   keepTrendAudio: boolean;
   allowMirror: boolean;
   targetDistance: number;
@@ -36,6 +37,16 @@ export function AdvancedPanel({
             value={value.strength}
             onChange={(e) => set({ strength: Number(e.target.value) })}
             style={{ ["--pct" as string]: `${pct}%` }}
+          />
+        </label>
+        <label className="adv-row">
+          Не менять разрешение
+          <input
+            className="switch"
+            aria-label="Не менять разрешение"
+            type="checkbox"
+            checked={value.keepResolution}
+            onChange={(e) => set({ keepResolution: e.target.checked })}
           />
         </label>
         <label className="adv-row">

@@ -19,6 +19,7 @@ export function settingsToOptions(s: SettingsState): CopyOptions {
     allowMirror: s.advanced.allowMirror,
     targetDistance: s.advanced.targetDistance,
     spoofMetadata: s.advanced.spoofMetadata,
+    keepResolution: s.advanced.keepResolution,
   };
 }
 

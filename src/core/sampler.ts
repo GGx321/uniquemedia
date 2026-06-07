@@ -24,13 +24,23 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
       },
     },
     { id: "hue", params: { h: round(dev(rng, "hueDeg", s)) } },
-    { id: "zoomcrop", params: { zoomPct: round(dev(rng, "zoomPct", s, true)) } },
+  ];
+
+  // Always draw zoomPct to keep the rng stream stable regardless of keepResolution;
+  // only emit the zoomcrop op when the user allows cropping. zoomcrop zooms ~8% then
+  // crops back, which visibly eats the frame edges — keepResolution skips it.
+  const zoomPct = round(dev(rng, "zoomPct", s, true));
+  if (!opts.keepResolution) {
+    video.push({ id: "zoomcrop", params: { zoomPct } });
+  }
+
+  video.push(
     { id: "rotate", params: { deg: round(dev(rng, "rotateDeg", s)) } },
     { id: "perspective", params: { off: round(dev(rng, "perspective", s, true)) } },
     { id: "lenscorrection", params: { k1: round(dev(rng, "lens", s)) } },
     { id: "noise", params: { strength: Math.round(dev(rng, "noise", s, true)) } },
     { id: "vignette", params: { on: rng() < 0.6 * Math.min(1, s) } },
-  ];
+  );
 
   // Determinism invariant: same seed + same opts => same recipe. The mirror draw
   // below is conditional, so changing `allowMirror` shifts the rng stream for the

@@ -9,8 +9,8 @@ import { basename } from "./util";
 
 const initial: SettingsState = {
   count: 10,
-  format: "reels",
-  advanced: { keepTrendAudio: false, allowMirror: false, targetDistance: 60, strength: 1.0, spoofMetadata: true },
+  format: "original",
+  advanced: { keepResolution: true, keepTrendAudio: false, allowMirror: false, targetDistance: 60, strength: 1.0, spoofMetadata: true },
 };
 
 export function App() {
@@ -84,12 +84,24 @@ export function App() {
     <div className="app">
       <header className="app-header reveal reveal-1">
         <span className="logo-mark" aria-hidden>
-          <span />
-          <span />
-          <span />
+          <svg viewBox="0 0 32 32" fill="none">
+            <defs>
+              <linearGradient id="lm-grad" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+                <stop stopColor="var(--accent-2)" />
+                <stop offset="1" stopColor="var(--accent-deep)" />
+              </linearGradient>
+            </defs>
+            <rect className="lm-frame lm-frame-back" x="5.5" y="5.5" width="21" height="21" rx="6" />
+            <rect className="lm-frame lm-frame-mid" x="5.5" y="5.5" width="21" height="21" rx="6" />
+            <rect x="5.5" y="5.5" width="21" height="21" rx="6" stroke="url(#lm-grad)" strokeWidth="1.6" />
+            <circle cx="16" cy="16" r="5" stroke="url(#lm-grad)" strokeWidth="1.6" />
+            <circle className="lm-pupil" cx="16" cy="16" r="1.8" fill="var(--accent-2)" />
+          </svg>
         </span>
-        <span className="wordmark">unique<b>media</b></span>
-        <span className="tagline">video uniquifier</span>
+        <span className="wordmark-lockup">
+          <span className="wordmark">unique<b>media</b></span>
+          <span className="tagline">video uniquifier</span>
+        </span>
         <span className="header-spacer" />
         <span className="version">v0.2.0</span>
       </header>
@@ -106,9 +118,15 @@ export function App() {
             onRun={run}
             onStop={stop}
           />
-          <BatchProgress index={progress.index} count={progress.count} fraction={progress.fraction} />
         </aside>
         <main className="col-queue reveal reveal-3">
+          <div className="queue-head">
+            <h2 className="queue-heading">
+              Очередь
+              {copies.length > 0 && <span className="queue-count">{copies.length}</span>}
+            </h2>
+            <BatchProgress index={progress.index} count={progress.count} fraction={progress.fraction} />
+          </div>
           <CopyQueue copies={copies} onOpen={open} onReveal={reveal} />
         </main>
       </div>

@@ -20,6 +20,7 @@ export interface CopyOptions {
   allowMirror: boolean;
   targetDistance: number; // Hamming distance (0..256) the copy must exceed
   spoofMetadata: boolean;
+  keepResolution: boolean; // when true, skip the zoom/crop op so frame edges stay intact
 }
 
 export interface Operation {

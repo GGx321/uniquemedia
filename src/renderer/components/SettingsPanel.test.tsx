@@ -5,7 +5,7 @@ test("settingsToOptions maps every CopyOptions field", () => {
   const state: SettingsState = {
     count: 12,
     format: "feed",
-    advanced: { keepTrendAudio: true, allowMirror: true, targetDistance: 123, strength: 1.3, spoofMetadata: false },
+    advanced: { keepResolution: true, keepTrendAudio: true, allowMirror: true, targetDistance: 123, strength: 1.3, spoofMetadata: false },
   };
   expect(settingsToOptions(state)).toEqual({
     strength: 1.3,
@@ -14,5 +14,6 @@ test("settingsToOptions maps every CopyOptions field", () => {
     allowMirror: true,
     targetDistance: 123,
     spoofMetadata: false,
+    keepResolution: true,
   });
 });

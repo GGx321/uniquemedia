@@ -54,6 +54,7 @@ beforeAll(async () => {
       allowMirror: false,
       targetDistance: 90,
       spoofMetadata: true,
+      keepResolution: false,
     },
     SEED,
     1

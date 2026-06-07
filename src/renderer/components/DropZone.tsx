@@ -18,7 +18,7 @@ export function DropZone({
 }) {
   return (
     <div
-      className="dropzone"
+      className={`dropzone${analyzing ? " is-analyzing" : ""}${source ? " has-source" : ""}`}
       onClick={onPick}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
@@ -27,6 +27,11 @@ export function DropZone({
         if (f?.path) onDropFile(f.path);
       }}
     >
+      <span className="crop-mark tl" aria-hidden />
+      <span className="crop-mark tr" aria-hidden />
+      <span className="crop-mark bl" aria-hidden />
+      <span className="crop-mark br" aria-hidden />
+      {analyzing && <span className="scanline" aria-hidden />}
       {analyzing ? (
         <div className="analyzing">Анализ видео…</div>
       ) : source ? (

@@ -9,6 +9,7 @@ const opts: CopyOptions = {
   allowMirror: false,
   targetDistance: 90,
   spoofMetadata: false,
+  keepResolution: false,
 };
 
 test("same seed and intensity is deterministic", () => {
@@ -38,6 +39,14 @@ test("higher intensity widens eq deviations on average", () => {
 test("keepTrendAudio yields no audio ops", () => {
   const r = sampleRecipe({ ...opts, keepTrendAudio: true }, 5, 1);
   expect(r.audio.length).toBe(0);
+});
+
+test("keepResolution omits the zoomcrop op; allowing crop includes it", () => {
+  const kept = sampleRecipe({ ...opts, keepResolution: true }, 7, 1);
+  expect(kept.video.some((o) => o.id === "zoomcrop")).toBe(false);
+
+  const cropped = sampleRecipe({ ...opts, keepResolution: false }, 7, 1);
+  expect(cropped.video.some((o) => o.id === "zoomcrop")).toBe(true);
 });
 
 test("mirror disabled never emits hflip", () => {

@@ -22,13 +22,10 @@ export function CopyQueue({
     );
   }
   return (
-    <>
-      <h2 className="queue-title">Очередь · {copies.length}</h2>
-      <div className="queue">
-        {copies.map((c) => (
-          <CopyCard key={c.index} copy={c} onOpen={onOpen} onReveal={onReveal} />
-        ))}
-      </div>
-    </>
+    <div className="queue">
+      {copies.map((c) => (
+        <CopyCard key={c.index} copy={c} onOpen={onOpen} onReveal={onReveal} />
+      ))}
+    </div>
   );
 }
