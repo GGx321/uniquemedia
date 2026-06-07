@@ -26,6 +26,7 @@ export function SettingsPanel({
   source,
   state,
   running,
+  analyzing,
   onPick,
   onDropFile,
   onChange,
@@ -34,6 +35,7 @@ export function SettingsPanel({
   source: Source | null;
   state: SettingsState;
   running: boolean;
+  analyzing?: boolean;
   onPick: () => void;
   onDropFile: (path: string) => void;
   onChange: (s: SettingsState) => void;
@@ -42,7 +44,7 @@ export function SettingsPanel({
   const set = (patch: Partial<SettingsState>) => onChange({ ...state, ...patch });
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, width: 360 }}>
-      <DropZone source={source} onPick={onPick} onDropFile={onDropFile} />
+      <DropZone source={source} analyzing={analyzing} onPick={onPick} onDropFile={onDropFile} />
       <div style={{ display: "flex", gap: 6 }}>
         <div style={{ flex: 1 }}><NField value={state.count} onChange={(count) => set({ count })} /></div>
         <div style={{ flex: 1, alignSelf: "flex-end" }}><FormatSelect value={state.format} onChange={(format) => set({ format })} /></div>

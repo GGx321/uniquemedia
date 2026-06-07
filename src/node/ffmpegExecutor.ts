@@ -100,6 +100,13 @@ export class FfmpegExecutor implements RenderExecutor {
     return "data:image/jpeg;base64," + buf.toString("base64");
   }
 
+  async warmup(): Promise<void> {
+    await Promise.allSettled([
+      run(FFMPEG, ["-version"]),
+      run(FFPROBE, ["-version"]),
+    ]);
+  }
+
   async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
     // GPS decimal string "lat, lon, 0" — exiftool converts this to the ISO6709
     // format that ffprobe reads back as com.apple.quicktime.location.ISO6709.

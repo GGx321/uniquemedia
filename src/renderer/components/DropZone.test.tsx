@@ -18,3 +18,16 @@ test("shows source name and dims when set", () => {
   expect(screen.getByText(/clip.mp4/)).toBeDefined();
   expect(screen.getByText(/1080×1920/)).toBeDefined();
 });
+
+test("shows analyzing indicator when analyzing is true", () => {
+  render(
+    <DropZone
+      source={null}
+      analyzing={true}
+      onPick={() => {}}
+      onDropFile={() => {}}
+    />
+  );
+  expect(screen.getByText(/Анализ видео/i)).toBeDefined();
+  expect(screen.queryByText(/Перетащите видео/i)).toBeNull();
+});

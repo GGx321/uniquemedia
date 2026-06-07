@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { mkdirSync } from "node:fs";
 import { FfmpegExecutor } from "../src/node/ffmpegExecutor";
 import { uniquify } from "../src/core/pipeline";
@@ -50,11 +50,12 @@ ipcMain.handle(CH.start, async (_e, req: { input: string; opts: Parameters<typeo
   cancelled = false;
   const { input, opts, count, outDir } = req;
   mkdirSync(outDir, { recursive: true });
+  const stem = basename(input).replace(/\.[^.]+$/, "");
   const send = (ch: string, payload: unknown) => win?.webContents.send(ch, payload);
   try {
     const results = await uniquify(input, opts, executor, count, {
       seedBase: Date.now() % 1e6,
-      outputPath: (i) => join(outDir, `copy_${i + 1}.mp4`),
+      outputPath: (i) => join(outDir, `${stem}_${i + 1}.mp4`),
       onProgress: (index, _attempt, fraction) =>
         send(CH.evtProgress, { index, count, fraction }),
       onCopyDone: async (r) => {
@@ -72,7 +73,11 @@ ipcMain.handle(CH.start, async (_e, req: { input: string; opts: Parameters<typeo
   }
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  executor.warmup().catch(() => {});
+  import("exiftool-vendored").then((m) => m.exiftool.version()).catch(() => {});
+});
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("will-quit", async () => {
   const { exiftool } = await import("exiftool-vendored");

@@ -7,10 +7,12 @@ export interface Source {
 
 export function DropZone({
   source,
+  analyzing,
   onPick,
   onDropFile,
 }: {
   source: Source | null;
+  analyzing?: boolean;
   onPick: () => void;
   onDropFile: (path: string) => void;
 }) {
@@ -28,7 +30,9 @@ export function DropZone({
         textAlign: "center", color: "var(--muted)", cursor: "pointer",
       }}
     >
-      {source ? (
+      {analyzing ? (
+        <div style={{ color: "var(--accent)" }}>⏳ Анализ видео…</div>
+      ) : source ? (
         <div>
           <div style={{ color: "var(--text)", fontWeight: 600 }}>{source.name}</div>
           <div style={{ fontSize: 12 }}>{source.info.width}×{source.info.height}</div>

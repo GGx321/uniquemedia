@@ -19,13 +19,14 @@ export function App() {
   const [state, setState] = useState<SettingsState>(initial);
   const [copies, setCopies] = useState<UiCopy[]>([]);
   const [running, setRunning] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState({ index: 0, count: 0, fraction: 0 });
   const pathByIndex = useRef(new Map<number, string>());
 
   useEffect(() => {
     api.onBatchProgress((p) => {
       setProgress(p);
-      setCopies((cs) => upsert(cs, { index: p.index, name: `copy_${p.index + 1}.mp4`, status: "rendering", fraction: p.fraction }));
+      setCopies((cs) => upsert(cs, { index: p.index, name: `Копия ${p.index + 1}`, status: "rendering", fraction: p.fraction }));
     });
     api.onCopyDone((c) => {
       pathByIndex.current.set(c.index, c.path);
@@ -39,9 +40,18 @@ export function App() {
   }, []);
 
   async function loadSource(path: string) {
-    const info = await api.probe(path);
-    setSourcePath(path);
-    setSource({ name: basename(path), info });
+    setAnalyzing(true);
+    try {
+      const info = await api.probe(path);
+      setSourcePath(path);
+      setSource({ name: basename(path), info });
+      // new source -> reset the queue and progress
+      setCopies([]);
+      setProgress({ index: 0, count: 0, fraction: 0 });
+      pathByIndex.current.clear();
+    } finally {
+      setAnalyzing(false);
+    }
   }
 
   async function run() {
@@ -70,6 +80,7 @@ export function App() {
           source={source}
           state={state}
           running={running}
+          analyzing={analyzing}
           onPick={async () => { const p = await api.pickFile(); if (p) loadSource(p); }}
           onDropFile={loadSource}
           onChange={setState}
