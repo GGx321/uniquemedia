@@ -91,6 +91,42 @@ class AbortMock implements RenderExecutor {
   }
 }
 
+// Records how many render() calls are in flight at once. Each render resolves
+// on a microtask so multiple workers genuinely overlap when concurrency > 1.
+class ConcurrencyMock implements RenderExecutor {
+  inFlight = 0;
+  maxInFlight = 0;
+  async probe(): Promise<MediaInfo> { return info; }
+  async render(_i: string, _n: MediaInfo, _r: Recipe, _o: string, onProgress?: (f: number) => void): Promise<void> {
+    this.inFlight++;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    onProgress?.(1);
+    await Promise.resolve(); // yield so peers can enter before we exit
+    this.inFlight--;
+  }
+  async extractGrayFrames(input: string, count: number): Promise<Uint8Array[]> {
+    const blank = new Uint8Array(64 * 64);
+    if (input === "ORIGINAL") return Array.from({ length: count }, () => blank);
+    return Array.from({ length: count }, () => frame(5));
+  }
+}
+
+test("processes copies in parallel under a bounded worker pool", async () => {
+  const exec = new ConcurrencyMock();
+  const res = await uniquify("ORIGINAL", opts, exec, 8, {
+    seedBase: 1,
+    framesPerCopy: 4,
+    concurrency: 4,
+  });
+  // all 8 copies returned, sorted by index
+  expect(res.length).toBe(8);
+  expect(res.map((r) => r.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  // it actually parallelized (more than one render in flight at some point)
+  expect(exec.maxInFlight).toBeGreaterThan(1);
+  // and never exceeded the configured concurrency
+  expect(exec.maxInFlight).toBeLessThanOrEqual(4);
+});
+
 test("AbortSignal halts the batch loop after the first copy", async () => {
   const controller = new AbortController();
   const exec = new AbortMock();

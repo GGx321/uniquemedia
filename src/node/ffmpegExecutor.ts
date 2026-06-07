@@ -29,15 +29,14 @@ function run(bin: string, args: string[]): Promise<Buffer> {
 }
 
 export class FfmpegExecutor implements RenderExecutor {
-  private currentChild: ReturnType<typeof spawn> | null = null;
-  private currentOutput = "";
+  private active = new Map<ReturnType<typeof spawn>, string>(); // child -> output path
 
   cancel(): void {
-    this.currentChild?.kill("SIGKILL");
-    this.currentChild = null;
-    if (this.currentOutput) {
-      try { rmSync(this.currentOutput, { force: true }); } catch { /* ignore */ }
+    for (const [child, out] of this.active) {
+      child.kill("SIGKILL");
+      try { rmSync(out, { force: true }); } catch { /* ignore */ }
     }
+    this.active.clear();
   }
 
   async probe(input: string): Promise<MediaInfo> {
@@ -68,8 +67,7 @@ export class FfmpegExecutor implements RenderExecutor {
 
     return new Promise<void>((resolve, reject) => {
       const child = spawn(FFMPEG, args);
-      this.currentChild = child;
-      this.currentOutput = output;
+      this.active.set(child, output);
       const err: Buffer[] = [];
       child.stderr.on("data", (d) => err.push(d));
       if (onProgress) {
@@ -78,9 +76,9 @@ export class FfmpegExecutor implements RenderExecutor {
           if (f !== null) onProgress(f);
         });
       }
-      child.on("error", (e) => { this.currentChild = null; reject(e); });
+      child.on("error", (e) => { this.active.delete(child); reject(e); });
       child.on("close", (code) => {
-        this.currentChild = null;
+        this.active.delete(child);
         if (code === 0) resolve();
         else reject(new Error(`ffmpeg exited ${code}: ${Buffer.concat(err).toString().slice(-500)}`));
       });

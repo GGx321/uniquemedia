@@ -22,6 +22,8 @@ export interface UniquifyConfig {
   onProgress?: (index: number, attempt: number, fraction: number) => void;
   onCopyDone?: (result: CopyResult) => void;
   signal?: AbortSignal;
+  /** Copies processed concurrently (one ffmpeg per worker). Default 1 (sequential). */
+  concurrency?: number;
 }
 
 const hashFrames = (frames: Uint8Array[]) => frames.map(computePdqHash);
@@ -41,11 +43,14 @@ export async function uniquify(
   const info = await executor.probe(input);
   const originalHashes = hashFrames(await executor.extractGrayFrames(input, framesPerCopy));
 
-  const results: CopyResult[] = [];
+  // Shared across concurrent workers. Reads/pushes are intentionally lock-free:
+  // each copy uses a distinct seed (seedBase + i*1000), so copies differ by
+  // construction; the inter-copy check is a best-effort safety net.
   const acceptedSignatures: Uint8Array[][] = [];
 
-  for (let i = 0; i < count; i++) {
-    if (config.signal?.aborted) break;
+  // Produces the best CopyResult for copy `i`, or null when aborted / no best.
+  // Does NOT push to results or fire onCopyDone — the worker owns that.
+  async function processCopy(i: number): Promise<CopyResult | null> {
     let seed = config.seedBase + i * 1000;
     let intensity = 1;
     let best: CopyResult | null = null;
@@ -67,6 +72,7 @@ export async function uniquify(
 
       const copyHashes = hashFrames(await executor.extractGrayFrames(out, framesPerCopy));
       const verify = verifyCopy(originalHashes, copyHashes, opts.targetDistance);
+      // Snapshot the current accepted set; concurrent races are acceptable.
       const interOk = acceptedSignatures.every(
         (sig) => interCopyDistance(sig, copyHashes) >= interThreshold
       );
@@ -83,13 +89,14 @@ export async function uniquify(
       seed = (seed * 1103515245 + 12345) >>> 0; // re-seed so retries differ
     }
 
-    // Don't push a half-done copy on cancel; also guards best being null if
+    // Don't ship a half-done copy on cancel; also guards best being null if
     // the very first render was killed.
-    if (config.signal?.aborted || !best) break;
+    if (config.signal?.aborted || !best) return null;
 
     // Disk may hold a later (worse) attempt than `best`; re-render best so the
     // file on disk matches the reported metric.
     if (best.recipe !== lastRecipe) {
+      if (config.signal?.aborted) return null;
       await executor.render(input, info, best.recipe, out);
     }
 
@@ -98,9 +105,27 @@ export async function uniquify(
       await executor.applyDeviceMetadata(out, profile);
     }
 
-    results.push(best);
-    config.onCopyDone?.(best);
+    return best;
   }
 
+  const concurrency = Math.max(1, config.concurrency ?? 1);
+  const results: CopyResult[] = [];
+  let nextIndex = 0;
+  async function worker() {
+    while (true) {
+      if (config.signal?.aborted) return;
+      const i = nextIndex++;
+      if (i >= count) return;
+      const r = await processCopy(i);
+      if (r) {
+        results.push(r);
+        config.onCopyDone?.(r);
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, count) }, () => worker())
+  );
+  results.sort((a, b) => a.index - b.index);
   return results;
 }

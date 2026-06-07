@@ -20,12 +20,16 @@ export function App() {
   const [copies, setCopies] = useState<UiCopy[]>([]);
   const [running, setRunning] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
-  const [progress, setProgress] = useState({ index: 0, count: 0, fraction: 0 });
+  // Overall progress is "completed / total" (parallel-friendly): with copies
+  // running concurrently there is no single "current" copy. `count` is the batch
+  // total (0 hides BatchProgress); the completed tally derives from done cards.
+  const [count, setCount] = useState(0);
   const pathByIndex = useRef(new Map<number, string>());
 
   useEffect(() => {
+    // Per-copy render fraction only updates THAT copy's card; it no longer
+    // feeds the overall progress.
     api.onBatchProgress((p) => {
-      setProgress(p);
       setCopies((cs) => upsert(cs, { index: p.index, name: `Копия ${p.index + 1}`, status: "rendering", fraction: p.fraction }));
     });
     api.onCopyDone((c) => {
@@ -35,7 +39,7 @@ export function App() {
         thumb: c.thumb, verify: c.verify,
       }));
     });
-    api.onBatchDone(() => { setRunning(false); setProgress((p) => ({ ...p, count: 0 })); });
+    api.onBatchDone(() => { setRunning(false); setCount(0); });
     api.onError((e) => { setRunning(false); alert(e.message); });
   }, []);
 
@@ -47,7 +51,7 @@ export function App() {
       setSource({ name: basename(path), info });
       // new source -> reset the queue and progress
       setCopies([]);
-      setProgress({ index: 0, count: 0, fraction: 0 });
+      setCount(0);
       pathByIndex.current.clear();
     } finally {
       setAnalyzing(false);
@@ -60,16 +64,21 @@ export function App() {
     if (!outDir) return;
     setCopies([]);
     setRunning(true);
-    setProgress({ index: 0, count: state.count, fraction: 0 });
+    setCount(state.count);
     await api.start({ input: sourcePath, opts: settingsToOptions(state), count: state.count, outDir });
   }
 
   function stop() {
     api.cancel();
     setRunning(false);
-    setProgress({ index: 0, count: 0, fraction: 0 });
+    setCount(0);
     setCopies((cs) => cs.filter((c) => c.status === "done"));
   }
+
+  // Overall progress = completed / total. BatchProgress reads the counter as
+  // Math.min(index + 1, count), so index = completedCount - 1 makes it show
+  // `completedCount/count`.
+  const completedCount = copies.filter((c) => c.status === "done").length;
 
   const open = (name: string) => {
     const entry = [...pathByIndex.current.values()].find((p) => p.endsWith(name));
@@ -103,7 +112,7 @@ export function App() {
           <span className="tagline">video uniquifier</span>
         </span>
         <span className="header-spacer" />
-        <span className="version">v0.2.0</span>
+        <span className="version">v{__APP_VERSION__}</span>
       </header>
       <div className="app-body">
         <aside className="col-settings reveal reveal-2">
@@ -125,7 +134,7 @@ export function App() {
               Очередь
               {copies.length > 0 && <span className="queue-count">{copies.length}</span>}
             </h2>
-            <BatchProgress index={progress.index} count={progress.count} fraction={progress.fraction} />
+            <BatchProgress index={completedCount - 1} count={count} fraction={count > 0 ? completedCount / count : 0} />
           </div>
           <CopyQueue copies={copies} onOpen={open} onReveal={reveal} />
         </main>

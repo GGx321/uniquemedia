@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { join, basename } from "node:path";
 import { mkdirSync } from "node:fs";
+import { cpus } from "node:os";
 import { FfmpegExecutor } from "../src/node/ffmpegExecutor";
 import { uniquify } from "../src/core/pipeline";
 import { CH } from "./ipc";
@@ -55,6 +56,7 @@ ipcMain.handle(CH.start, async (_e, req: { input: string; opts: Parameters<typeo
   try {
     const results = await uniquify(input, opts, executor, count, {
       seedBase: Date.now() % 1e6,
+      concurrency: Math.max(1, cpus().length - 1), // leave one core free
       outputPath: (i) => join(outDir, `${stem}_${i + 1}.mp4`),
       signal: abortController.signal,
       onProgress: (index, _attempt, fraction) =>
