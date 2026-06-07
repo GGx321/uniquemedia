@@ -126,7 +126,7 @@
           </span>
           <span class="wordmark">unique<span>media</span></span>
         </div>
-        <span class="ver mono">v0.2.2</span>
+        <span class="ver mono" data-version>v0.2.2</span>
       </header>
 
       <div class="hero">
@@ -238,7 +238,7 @@
           <span class="wordmark">unique<span>media</span></span>
         </div>
         <div>
-          <span class="mono">v0.2.2</span> ·
+          <span class="mono" data-version>v0.2.2</span> ·
           <a href="https://github.com/GGx321/uniquemedia/releases">Релизы</a> ·
           <a href="https://github.com/GGx321/uniquemedia">Исходный код</a>
         </div>
@@ -246,15 +246,27 @@
     </div>
 
     <script>
-      // Highlight the button for the visitor's OS.
       (function () {
-        var p = navigator.platform || "";
-        var ua = navigator.userAgent || "";
-        var isMac = /Mac/i.test(p) || /Mac/i.test(ua);
-        var isWin = /Win/i.test(p) || /Win/i.test(ua);
-        if (isMac) document.getElementById("mac").classList.add("primary");
-        else if (isWin) document.getElementById("win").classList.add("primary");
-        else document.getElementById("mac").classList.add("primary");
+        // Highlight the button for the visitor's OS.
+        var s = (navigator.platform || "") + (navigator.userAgent || "");
+        var os = /Mac/i.test(s) ? "mac" : /Win/i.test(s) ? "win" : "mac";
+        document.getElementById(os).classList.add("primary");
+
+        // Always point downloads at the LATEST GitHub release (falls back to the
+        // hardcoded v0.2.2 links if the API is unreachable).
+        fetch("https://api.github.com/repos/GGx321/uniquemedia/releases/latest")
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+          .then(function (rel) {
+            var assets = rel.assets || [];
+            var find = function (re) { return (assets.find(function (a) { return re.test(a.name); }) || {}).browser_download_url; };
+            var mac = find(/\.dmg$/i), win = find(/\.exe$/i);
+            if (mac) document.getElementById("mac").href = mac;
+            if (win) document.getElementById("win").href = win;
+            if (rel.tag_name) {
+              document.querySelectorAll("[data-version]").forEach(function (el) { el.textContent = rel.tag_name; });
+            }
+          })
+          .catch(function () { /* keep hardcoded fallback links */ });
       })();
     </script>
   </body>
