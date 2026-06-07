@@ -1,7 +1,7 @@
 import { sampleRecipe } from "./sampler";
 import { sampleDeviceProfile } from "./deviceProfile";
 import { computePdqHash } from "./pdq/pdq";
-import { verifyCopy, interCopyDistance } from "./verification";
+import { verifyCopy } from "./verification";
 import { hammingDistance } from "./pdq/hamming";
 import type { RenderExecutor } from "./executor";
 import type { CopyOptions, Recipe, VerifyResult } from "./types";
@@ -38,16 +38,11 @@ export async function uniquify(
 ): Promise<CopyResult[]> {
   const framesPerCopy = config.framesPerCopy ?? 4;
   const maxAttempts = config.maxAttempts ?? 3;
-  const interThreshold = config.interThreshold ?? 15;
+  const interThreshold = config.interThreshold ?? 8;
   const outputPath = config.outputPath ?? ((i) => `out/copy_${i + 1}.mp4`);
 
   const info = await executor.probe(input);
   const originalHashes = hashFrames(await executor.extractGrayFrames(input, framesPerCopy));
-
-  // Shared across concurrent workers. Reads/pushes are intentionally lock-free:
-  // each copy uses a distinct seed (seedBase + i*1000), so copies differ by
-  // construction; the inter-copy check is a best-effort safety net.
-  const acceptedSignatures: Uint8Array[][] = [];
 
   // Produces the best CopyResult for copy `i`, or null when aborted / no best.
   // Does NOT push to results or fire onCopyDone — the worker owns that.
@@ -73,19 +68,15 @@ export async function uniquify(
 
       const copyHashes = hashFrames(await executor.extractGrayFrames(out, framesPerCopy));
       const verify = verifyCopy(originalHashes, copyHashes, opts.targetDistance);
-      // Snapshot the current accepted set; concurrent races are acceptable.
-      const interOk = acceptedSignatures.every(
-        (sig) => interCopyDistance(sig, copyHashes) >= interThreshold
-      );
 
       const candidate: CopyResult = { index: i, outputPath: out, recipe, verify };
       if (!best || verify.minDistance > best.verify.minDistance) best = candidate;
 
-      if (verify.passed && interOk) {
-        acceptedSignatures.push(copyHashes);
+      if (verify.passed) {
         best = candidate;
         break;
       }
+      // Copy not yet different enough from the original — strengthen and retry.
       intensity *= 1.4;
       seed = (seed * 1103515245 + 12345) >>> 0; // re-seed so retries differ
     }
