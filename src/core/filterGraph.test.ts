@@ -58,6 +58,8 @@ test("original format: skips fixed-format scale/crop but keeps setsar=1 and effe
   expect(vf).not.toContain("crop=1080");
   expect(vf).toContain("setsar=1");
   expect(vf).toContain("eq=brightness=0.01");
+  // even-dimension guard so libx264 accepts odd-sized sources
+  expect(vf).toContain("crop=trunc(iw/2)*2:trunc(ih/2)*2");
 });
 
 const spoofRecipe: Recipe = { ...recipe, spoof: true };

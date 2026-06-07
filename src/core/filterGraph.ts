@@ -19,6 +19,10 @@ function videoChain(recipe: Recipe, info: MediaInfo): string {
     const { w, h } = EXPORT_DIMS[recipe.exportFormat];
     parts.push(`scale=${w}:${h}:force_original_aspect_ratio=increase`);
     parts.push(`crop=${w}:${h}`);
+  } else {
+    // Keep native size but force even dimensions — libx264 (yuv420p) requires
+    // width/height divisible by 2, and a source can be odd (e.g. 1081x1351).
+    parts.push("crop=trunc(iw/2)*2:trunc(ih/2)*2");
   }
   parts.push("setsar=1");
   if (speed !== 1) parts.push(`setpts=PTS/${speed}`);
