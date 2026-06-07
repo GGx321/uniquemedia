@@ -35,7 +35,7 @@
   /* ── fonts ── */
   --font-display: "Bricolage Grotesque Variable", "Hanken Grotesk Variable", system-ui, sans-serif;
   --font-body: "Hanken Grotesk Variable", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-mono: "Martian Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
   --radius: 12px;
   --radius-sm: 9px;
@@ -239,8 +239,9 @@ button {
 }
 .tagline {
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.22em;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--faint);
 }
@@ -328,8 +329,9 @@ button {
 }
 .micro-label {
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.14em;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--faint);
 }
@@ -531,50 +533,123 @@ select.input option {
 }
 .dropzone-sub {
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--faint);
   margin-top: 8px;
 }
 
-/* source loaded */
+/* ── source loaded card ── */
+.dropzone.has-source {
+  padding: 14px;
+  text-align: left;
+  border-style: solid;
+  border-color: var(--border);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+}
+.dropzone.has-source:hover {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+}
 .source-info {
   display: flex;
   align-items: center;
-  gap: 12px;
-  text-align: left;
+  gap: 14px;
 }
-.source-glyph {
-  width: 34px;
-  height: 34px;
+/* framed mini-thumbnail / placeholder */
+.source-thumb {
+  position: relative;
+  width: 46px;
+  height: 60px;
   flex: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent-soft), transparent);
-  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
   display: grid;
   place-items: center;
   color: var(--accent-2);
+  background: linear-gradient(150deg, var(--accent-soft), var(--bg-elev) 75%);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 6px 16px -10px rgba(0, 0, 0, 0.8);
+  transition: transform 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.source-thumb svg {
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 8px var(--accent-glow));
+}
+.source-thumb-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.6;
+  background-image:
+    linear-gradient(rgba(124, 108, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 108, 255, 0.08) 1px, transparent 1px);
+  background-size: 9px 9px;
+  -webkit-mask-image: radial-gradient(120% 120% at 50% 50%, #000 35%, transparent 80%);
+  mask-image: radial-gradient(120% 120% at 50% 50%, #000 35%, transparent 80%);
+}
+.dropzone.has-source:hover .source-thumb {
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 10px 22px -12px var(--accent-glow);
+}
+.source-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.source-label {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
 }
 .source-name {
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: var(--text);
+  font-size: 12px;
   font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
   word-break: break-all;
-  line-height: 1.3;
+  line-height: 1.35;
+}
+.source-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .chip {
-  display: inline-block;
-  margin-top: 5px;
+  display: inline-flex;
+  align-items: center;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  border: 1px solid rgba(124, 108, 255, 0.28);
   border-radius: 6px;
-  padding: 2px 7px;
+  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.source-change {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity 0.2s var(--ease);
+}
+.dropzone.has-source:hover .source-change {
+  opacity: 1;
 }
 
 /* analyzing shimmer */
@@ -622,8 +697,9 @@ select.input option {
   gap: 8px;
   padding: 10px 0;
   font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
   user-select: none;
@@ -984,12 +1060,12 @@ input[type="range"]:active::-webkit-slider-thumb {
 .copy-card {
   position: relative;
   display: flex;
-  gap: 12px;
+  gap: 14px;
   align-items: center;
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  padding: 10px;
+  padding: 12px;
   box-shadow: 0 2px 6px -4px rgba(0, 0, 0, 0.6), 0 12px 28px -20px rgba(0, 0, 0, 0.9);
   animation: card-in 0.34s var(--ease) both;
   transition: transform 0.18s var(--ease), border-color 0.18s var(--ease),
@@ -1000,27 +1076,37 @@ input[type="range"]:active::-webkit-slider-thumb {
   content: "";
   position: absolute;
   top: 0;
-  left: 14px;
-  right: 14px;
+  left: 16px;
+  right: 16px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
   pointer-events: none;
 }
 .copy-card:hover {
   transform: translateY(-2px);
   border-color: var(--border);
-  box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.6), 0 20px 40px -22px rgba(0, 0, 0, 0.95),
+  box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.6), 0 22px 44px -22px rgba(0, 0, 0, 0.95),
     0 0 0 1px var(--accent-soft);
 }
-.copy-thumb {
-  width: 56px;
-  height: 99px;
+
+/* ── framed thumbnail with play affordance ── */
+.copy-thumb-frame {
+  position: relative;
+  width: 58px;
+  height: 102px;
   flex: none;
-  border-radius: 9px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 6px 14px -8px rgba(0, 0, 0, 0.75);
+}
+.copy-thumb {
+  width: 100%;
+  height: 100%;
+  display: block;
   object-fit: cover;
   background: var(--bg-elev);
-  border: 1px solid var(--border);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 4px 10px -6px rgba(0, 0, 0, 0.7);
 }
 .copy-thumb.placeholder {
   background: linear-gradient(135deg, var(--panel-2), var(--bg-elev));
@@ -1035,40 +1121,93 @@ input[type="range"]:active::-webkit-slider-thumb {
   background: linear-gradient(
     100deg,
     transparent 35%,
-    rgba(124, 108, 255, 0.12) 50%,
+    rgba(124, 108, 255, 0.14) 50%,
     transparent 65%
   );
   background-size: 220% 100%;
   animation: sheen 1.8s linear infinite;
 }
+/* faint play affordance, revealed on hover */
+.copy-thumb-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: radial-gradient(60% 60% at 50% 50%, rgba(7, 7, 11, 0.55), rgba(7, 7, 11, 0.15));
+  opacity: 0;
+  transform: scale(0.86);
+  transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+  pointer-events: none;
+}
+.copy-thumb-play svg {
+  filter: drop-shadow(0 0 8px var(--accent-glow));
+}
+.copy-card:hover .copy-thumb-frame:not(.is-rendering) .copy-thumb-play {
+  opacity: 1;
+  transform: scale(1);
+}
+/* sheen sweep across the frame while rendering */
+.copy-thumb-frame.is-rendering::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 38%,
+    rgba(154, 141, 255, 0.22) 50%,
+    transparent 62%
+  );
+  background-size: 220% 100%;
+  animation: sheen 1.6s linear infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .copy-thumb.placeholder::after {
+  .copy-thumb.placeholder::after,
+  .copy-thumb-frame.is-rendering::after {
     animation: none;
   }
 }
+
 .copy-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
 }
 .copy-name {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
+  letter-spacing: -0.01em;
   color: var(--text);
   word-break: break-all;
-  line-height: 1.3;
+  line-height: 1.35;
 }
+
+/* status row: badge + distance read-out */
+.copy-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.copy-distance {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .badge {
-  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
+  font-size: 10px;
+  letter-spacing: 0.01em;
   font-weight: 500;
   border-radius: 99px;
   padding: 3px 10px;
@@ -1095,24 +1234,59 @@ input[type="range"]:active::-webkit-slider-thumb {
   background: var(--panel-2);
   border-color: var(--border);
 }
+
+/* rendering progress row */
+.copy-progress {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.copy-progress .bar {
+  flex: 1;
+}
+.copy-pct {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--accent-2);
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: right;
+}
+
 .copy-actions {
   display: flex;
   gap: 7px;
 }
 .ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.03em;
-  padding: 5px 10px;
-  border-radius: 7px;
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 8px;
   background: var(--panel-2);
   color: var(--muted);
   border: 1px solid var(--border);
   transition: color 0.16s var(--ease), border-color 0.16s var(--ease),
-    background 0.16s var(--ease);
+    background 0.16s var(--ease), transform 0.12s var(--ease);
+}
+.ghost-btn svg {
+  flex: none;
+  opacity: 0.8;
 }
 .ghost-btn:hover {
   color: var(--text);
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+.ghost-btn:hover svg {
+  opacity: 1;
+}
+.ghost-btn:active {
+  transform: scale(0.96);
 }

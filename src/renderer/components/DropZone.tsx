@@ -36,12 +36,19 @@ export function DropZone({
         <div className="analyzing">Анализ видео…</div>
       ) : source ? (
         <div className="source-info">
-          <span className="source-glyph" aria-hidden>
+          <span className="source-thumb" aria-hidden>
             <PlayGlyph />
+            <span className="source-thumb-grid" />
           </span>
-          <div style={{ minWidth: 0 }}>
+          <div className="source-meta">
+            <span className="source-label">Источник</span>
             <div className="source-name">{source.name}</div>
-            <span className="chip">{source.info.width}×{source.info.height}</span>
+            <div className="source-tags">
+              <span className="chip">
+                {source.info.width}×{source.info.height}
+              </span>
+              <span className="source-change">нажмите, чтобы сменить</span>
+            </div>
           </div>
         </div>
       ) : (
@@ -68,7 +75,7 @@ function UploadGlyph() {
 
 function PlayGlyph() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
       <path d="M8 5.5v13a1 1 0 0 0 1.54.84l10-6.5a1 1 0 0 0 0-1.68l-10-6.5A1 1 0 0 0 8 5.5Z" />
     </svg>
   );
