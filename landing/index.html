@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>uniquemedia — уникализатор видео для Instagram</title>
+    <meta
+      name="description"
+      content="Десктоп-приложение: из одного видео делает N уникальных копий для Instagram. Гарантированная уникальность по PDQ, подделка метаданных iPhone, локально и бесплатно."
+    />
+    <style>
+      :root {
+        --bg: #0d0d12;
+        --panel: #16161e;
+        --panel-2: #1c1c26;
+        --border: #2a2a36;
+        --text: #e9e9f0;
+        --muted: #9595a6;
+        --faint: #6a6a7a;
+        --accent: #7c6cff;
+        --accent-2: #a78bff;
+        --ok: #58d3a0;
+        --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(900px 500px at 20% -10%, rgba(124, 108, 255, 0.16), transparent 60%),
+          radial-gradient(700px 500px at 90% 0%, rgba(88, 211, 160, 0.08), transparent 55%),
+          var(--bg);
+        color: var(--text);
+        font-family: var(--sans);
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 980px; margin: 0 auto; padding: 0 22px; }
+      a { color: inherit; }
+
+      /* header */
+      header { padding: 26px 0; display: flex; align-items: center; justify-content: space-between; }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .logo {
+        width: 34px; height: 34px; border-radius: 9px;
+        background: linear-gradient(140deg, var(--accent), #4f3ad6);
+        display: grid; place-items: center;
+        box-shadow: 0 6px 20px rgba(124, 108, 255, 0.35);
+      }
+      .logo svg { width: 18px; height: 18px; color: #fff; }
+      .wordmark { font-weight: 800; letter-spacing: -0.02em; font-size: 18px; }
+      .wordmark span { color: var(--accent-2); }
+      .ver { font-family: var(--mono); font-size: 12px; color: var(--faint); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; }
+
+      /* hero */
+      .hero { padding: 50px 0 30px; text-align: center; }
+      .badge {
+        display: inline-block; font-family: var(--mono); font-size: 12px;
+        color: var(--accent-2); background: rgba(124, 108, 255, 0.1);
+        border: 1px solid rgba(124, 108, 255, 0.3); border-radius: 999px;
+        padding: 6px 13px; margin-bottom: 22px;
+      }
+      h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: -0.03em; margin: 0 0 16px; }
+      h1 .grad { background: linear-gradient(120deg, var(--accent-2), var(--ok)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      .lead { font-size: clamp(16px, 2.4vw, 19px); color: var(--muted); max-width: 620px; margin: 0 auto 32px; }
+
+      .downloads { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+      .btn {
+        display: inline-flex; align-items: center; gap: 11px;
+        padding: 14px 22px; border-radius: 13px; text-decoration: none;
+        font-weight: 600; font-size: 15px; border: 1px solid var(--border);
+        background: var(--panel-2); color: var(--text); transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+      }
+      .btn:hover { transform: translateY(-2px); border-color: var(--accent); }
+      .btn .os { display: flex; flex-direction: column; line-height: 1.15; text-align: left; }
+      .btn .os small { font-size: 11px; color: var(--muted); font-weight: 500; }
+      .btn svg { width: 22px; height: 22px; }
+      .btn.primary {
+        background: linear-gradient(135deg, var(--accent), #5a45e0);
+        border-color: transparent; box-shadow: 0 10px 30px rgba(124, 108, 255, 0.35);
+      }
+      .btn.primary .os small { color: rgba(255,255,255,0.75); }
+      .sub-links { margin-top: 18px; font-size: 13px; color: var(--faint); }
+      .sub-links a { color: var(--muted); text-decoration: none; border-bottom: 1px dashed var(--border); }
+      .sub-links a:hover { color: var(--accent-2); }
+
+      /* sections */
+      section { padding: 44px 0; }
+      .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); margin-bottom: 12px; }
+      h2 { font-size: clamp(24px, 4vw, 32px); letter-spacing: -0.02em; margin: 0 0 26px; }
+
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 15px; padding: 20px; }
+      .card .ic { width: 34px; height: 34px; border-radius: 9px; background: var(--panel-2); display: grid; place-items: center; margin-bottom: 13px; color: var(--accent-2); font-size: 18px; }
+      .card h3 { margin: 0 0 7px; font-size: 16px; }
+      .card p { margin: 0; color: var(--muted); font-size: 14px; }
+
+      .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; counter-reset: step; }
+      .step { background: var(--panel); border: 1px solid var(--border); border-radius: 15px; padding: 20px; position: relative; }
+      .step::before {
+        counter-increment: step; content: counter(step);
+        font-family: var(--mono); font-weight: 700; font-size: 13px;
+        width: 26px; height: 26px; border-radius: 8px;
+        background: rgba(124,108,255,0.14); color: var(--accent-2);
+        display: grid; place-items: center; margin-bottom: 12px;
+      }
+      .step h3 { margin: 0 0 6px; font-size: 15px; }
+      .step p { margin: 0; color: var(--muted); font-size: 14px; }
+
+      .note { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 12px; padding: 16px 18px; color: var(--muted); font-size: 14px; }
+      .note + .note { margin-top: 12px; }
+      .note b { color: var(--text); }
+
+      footer { padding: 36px 0 50px; border-top: 1px solid var(--border); margin-top: 30px; color: var(--faint); font-size: 13px; text-align: center; }
+      footer a { color: var(--muted); }
+      .mono { font-family: var(--mono); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand">
+          <span class="logo">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="14" height="14" rx="3" stroke="currentColor" stroke-width="1.6"/><rect x="7" y="7" width="14" height="14" rx="3" fill="currentColor" opacity="0.55"/></svg>
+          </span>
+          <span class="wordmark">unique<span>media</span></span>
+        </div>
+        <span class="ver mono">v0.2.2</span>
+      </header>
+
+      <div class="hero">
+        <span class="badge">Десктоп · macOS &amp; Windows · бесплатно</span>
+        <h1>Один ролик →<br /><span class="grad">десятки уникальных копий</span></h1>
+        <p class="lead">
+          uniquemedia делает из одного видео N по-настоящему уникальных копий для Instagram —
+          с гарантированной непохожестью на оригинал и реалистичными метаданными «снято на iPhone».
+        </p>
+
+        <div class="downloads">
+          <a class="btn" id="mac" href="https://github.com/GGx321/uniquemedia/releases/download/v0.2.2/uniquemedia-0.2.2-arm64.dmg">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.8-3.5.8s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.5-.7 2.9-.7s1.7.7 2.9.7c1.2 0 2-1.1 2.7-2.1.8-1.2 1.2-2.4 1.2-2.4s-2.3-.9-2.3-3.6zM14.3 5.7c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.4-.6.7-1.1 1.7-.9 2.8 1 0 2-.6 2.6-1.3z"/></svg>
+            <span class="os"><b>Скачать для Mac</b><small>.dmg · Apple Silicon</small></span>
+          </a>
+          <a class="btn" id="win" href="https://github.com/GGx321/uniquemedia/releases/download/v0.2.2/uniquemedia.Setup.0.2.2.exe">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3V5.5zM11.5 4.3 21 3v8.5h-9.5V4.3zM3 12.5h7.5v7.1L3 18.5v-6zM11.5 12.5H21V21l-9.5-1.3v-7.2z"/></svg>
+            <span class="os"><b>Скачать для Windows</b><small>.exe · установщик</small></span>
+          </a>
+        </div>
+        <div class="sub-links">
+          Все версии и обновления →
+          <a href="https://github.com/GGx321/uniquemedia/releases">github.com/GGx321/uniquemedia/releases</a>
+        </div>
+      </div>
+
+      <section>
+        <div class="eyebrow">Возможности</div>
+        <h2>Что умеет</h2>
+        <div class="grid">
+          <div class="card">
+            <div class="ic">∞</div>
+            <h3>1 видео → N копий</h3>
+            <p>Загрузил один ролик, указал количество — получил пачку разных копий за один проход.</p>
+          </div>
+          <div class="card">
+            <div class="ic">✓</div>
+            <h3>Гарантированная уникальность</h3>
+            <p>Каждая копия проверяется перцептивным хэшем PDQ (тем же классом, что у Instagram) и доводится до порога непохожести.</p>
+          </div>
+          <div class="card">
+            <div class="ic">🍎</div>
+            <h3>Метаданные iPhone</h3>
+            <p>Каждой копии — свой случайный iPhone (11–17 Pro Max), iOS, дата, таймзона и GPS-город США. Выглядит как реальная съёмка.</p>
+          </div>
+          <div class="card">
+            <div class="ic">▦</div>
+            <h3>Форматы под площадки</h3>
+            <p>Оригинал, Reels 9:16, Лента 4:5, Квадрат 1:1 — приведение к нужному соотношению.</p>
+          </div>
+          <div class="card">
+            <div class="ic">⚡</div>
+            <h3>Параллельная обработка</h3>
+            <p>Копии считаются одновременно по числу ядер процессора — батч готов в разы быстрее.</p>
+          </div>
+          <div class="card">
+            <div class="ic">🔒</div>
+            <h3>Локально и приватно</h3>
+            <p>Вся обработка на твоём компьютере. Видео никуда не загружается. Бесплатно.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="eyebrow">Как это работает</div>
+        <h2>Четыре шага</h2>
+        <div class="steps">
+          <div class="step">
+            <h3>Перетащи видео</h3>
+            <p>Брось ролик в окно или выбери файл. Приложение покажет размеры и длительность.</p>
+          </div>
+          <div class="step">
+            <h3>Настрой</h3>
+            <p>Укажи число копий и формат. В «Дополнительно» — сила изменений и другие тонкие настройки.</p>
+          </div>
+          <div class="step">
+            <h3>Уникализируй</h3>
+            <p>Нажми кнопку и выбери папку. Копии считаются параллельно с живым прогрессом.</p>
+          </div>
+          <div class="step">
+            <h3>Забери результат</h3>
+            <p>Готовые файлы с бейджем «✓ Уникально» — открой или покажи в папке прямо из очереди.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="eyebrow">Под капотом</div>
+        <h2>Почему это работает</h2>
+        <p class="lead" style="margin:0 0 22px; text-align:left; max-width:760px;">
+          Instagram ловит повторы не по байтам файла, а по перцептивному отпечатку видео (PDQ-хэш). uniquemedia
+          случайно меняет цвет, лёгкую геометрию (зум-кроп), зерно, скорость и звук, и <b>измеримо</b> уводит отпечаток
+          каждой копии за порог совпадения — а не «на глаз». Плюс полностью переписывает контейнер и метаданные под
+          реальный iPhone.
+        </p>
+        <div class="note">
+          <b>Первый запуск.</b> Установщики без коммерческой подписи: на macOS — правый клик → «Открыть», на Windows —
+          «Подробнее → Выполнить». Для личного использования всё работает.
+        </div>
+        <div class="note">
+          <b>Ответственность.</b> Приложение трансформирует <b>твой</b> контент. Массовый постинг копий может нарушать
+          правила платформы — риск на стороне пользователя. «Уникальность» измеряется, но не гарантируется против
+          закрытого ML-алгоритма.
+        </div>
+      </section>
+
+      <footer>
+        <div class="brand" style="justify-content:center; margin-bottom:10px;">
+          <span class="wordmark">unique<span>media</span></span>
+        </div>
+        <div>
+          <span class="mono">v0.2.2</span> ·
+          <a href="https://github.com/GGx321/uniquemedia/releases">Релизы</a> ·
+          <a href="https://github.com/GGx321/uniquemedia">Исходный код</a>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+      // Highlight the button for the visitor's OS.
+      (function () {
+        var p = navigator.platform || "";
+        var ua = navigator.userAgent || "";
+        var isMac = /Mac/i.test(p) || /Mac/i.test(ua);
+        var isWin = /Win/i.test(p) || /Win/i.test(ua);
+        if (isMac) document.getElementById("mac").classList.add("primary");
+        else if (isWin) document.getElementById("win").classList.add("primary");
+        else document.getElementById("mac").classList.add("primary");
+      })();
+    </script>
+  </body>
+</html>
