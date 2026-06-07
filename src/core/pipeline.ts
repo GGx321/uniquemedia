@@ -2,6 +2,7 @@ import { sampleRecipe } from "./sampler";
 import { sampleDeviceProfile } from "./deviceProfile";
 import { computePdqHash } from "./pdq/pdq";
 import { verifyCopy, interCopyDistance } from "./verification";
+import { hammingDistance } from "./pdq/hamming";
 import type { RenderExecutor } from "./executor";
 import type { CopyOptions, Recipe, VerifyResult } from "./types";
 
@@ -132,5 +133,59 @@ export async function uniquify(
     Array.from({ length: Math.min(concurrency, count) }, () => worker())
   );
   results.sort((a, b) => a.index - b.index);
+
+  // Inter-copy uniqueness post-pass: parallel workers may have produced copies
+  // that are too similar to each other (they skip the live inter-copy check when
+  // processing at the same time). We do a final O(n²) comparison on frame-0 PDQ
+  // hashes and regenerate any copy that is too close to an earlier accepted copy.
+  if (count > 1 && !config.signal?.aborted) {
+    const interThresholdFinal = interThreshold;
+    // Collect frame-0 PDQ hashes for every result (1 raw frame each — cheap).
+    const sigs: Uint8Array[] = await Promise.all(
+      results.map(async (r) => {
+        const frames = await executor.extractGrayFrames(r.outputPath, 1);
+        return computePdqHash(frames[0]);
+      })
+    );
+
+    const maxRegen = count; // cap total regenerations to avoid infinite loops
+    let regenCount = 0;
+    for (let i = 1; i < results.length && regenCount < maxRegen; i++) {
+      if (config.signal?.aborted) break;
+      // Check if result[i] is too close to any earlier accepted result.
+      let tooClose = false;
+      for (let j = 0; j < i; j++) {
+        if (hammingDistance(sigs[i], sigs[j]) < interThresholdFinal) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (!tooClose) continue;
+
+      // Regenerate with a fresh seed that differs from the original slot.
+      const freshSeed = (config.seedBase + results[i].index * 1000 + 7919) >>> 0;
+      const freshRecipe = sampleRecipe(opts, freshSeed, 1);
+      const out = results[i].outputPath;
+      try {
+        await executor.render(input, info, freshRecipe, out);
+      } catch (err) {
+        if (config.signal?.aborted) break;
+        throw err;
+      }
+      regenCount++;
+      const newRawFrames = await executor.extractGrayFrames(out, framesPerCopy);
+      const newHashes = hashFrames(newRawFrames);
+      const newVerify = verifyCopy(originalHashes, newHashes, opts.targetDistance);
+      const newResult: CopyResult = {
+        index: results[i].index,
+        outputPath: out,
+        recipe: freshRecipe,
+        verify: newVerify,
+      };
+      results[i] = newResult;
+      sigs[i] = newHashes[0];
+    }
+  }
+
   return results;
 }

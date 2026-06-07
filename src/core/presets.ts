@@ -17,5 +17,8 @@ export const PARAMS = {
   speed: { neutral: 1, dev: 0.05 },
   eqGain: { neutral: 0, dev: 2.5 },
   crf: { neutral: 21, dev: 2 },
+  resampleAmt: { neutral: 5, dev: 8 }, // one-sided floor, 5..13% × strength; used when keepResolution
+  lumashiftBr: { neutral: 0, dev: 0.4 }, // brightness component of the luma hash-breaker (±0.4)
+  lumashiftCt: { neutral: 1, dev: 0.35 }, // contrast component of the luma hash-breaker (0.65..1.35)
 } satisfies Record<string, ParamSpec>;
 

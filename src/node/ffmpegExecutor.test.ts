@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { FfmpegExecutor } from "./ffmpegExecutor";
 import { makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
+import { uniquify } from "../core/pipeline";
+import type { CopyOptions } from "../core/types";
 
 let dir: string;
 let input: string;
@@ -43,4 +45,40 @@ test("render produces a valid playable mp4", async () => {
   const outInfo = await exec.probe(out);
   expect(outInfo.width).toBe(1080);
   expect(outInfo.height).toBe(1080);
+});
+
+test("keepResolution=true pipeline produces a copy that passes the PDQ threshold of 60", async () => {
+  // Key acceptance test: the full uniquify pipeline (which auto-strengthens intensity
+  // when copies are too similar) must eventually produce a keepResolution copy that
+  // passes targetDistance=60 without any zoomcrop (no frame-edge cropping).
+  // The lumashift + resample ops on the keepResolution path shift PDQ strongly enough
+  // that even on synthetic content the pipeline converges within maxAttempts.
+  const opts: CopyOptions = {
+    strength: 1.0,
+    exportFormat: "original",
+    keepTrendAudio: false,
+    allowMirror: false,
+    targetDistance: 60,
+    spoofMetadata: false,
+    keepResolution: true,
+  };
+
+  const results = await uniquify(input, opts, exec, 1, {
+    seedBase: 1000,
+    framesPerCopy: 4,
+    maxAttempts: 6, // allow several auto-strengthen attempts
+    outputPath: (i) => join(dir, `keepres_${i}.mp4`),
+  });
+
+  expect(results.length).toBe(1);
+  const result = results[0];
+
+  // Verify the recipe does NOT contain zoomcrop (keepResolution path).
+  expect(result.recipe.video.some((o) => o.id === "zoomcrop")).toBe(false);
+  // Verify the recipe contains both resample and lumashift ops.
+  expect(result.recipe.video.some((o) => o.id === "resample")).toBe(true);
+  expect(result.recipe.video.some((o) => o.id === "lumashift")).toBe(true);
+  // The copy must have passed the 60-bit PDQ threshold.
+  expect(result.verify.passed).toBe(true);
+  expect(result.verify.minDistance).toBeGreaterThanOrEqual(60);
 });

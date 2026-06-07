@@ -93,3 +93,53 @@ test("disk holds the best attempt, not the last, when giving up", async () => {
   // The file on disk must be the SAME recipe object the result reports as best.
   expect(exec.disk.get("copy.mp4")).toBe(res[0].recipe);
 });
+
+test("inter-copy post-pass regenerates copies that are too similar to each other", async () => {
+  // This mock returns identical frame-0 hashes for all copies so the post-pass
+  // must detect the collision and re-render copy index 1.
+  // After regeneration the mock returns a distinct frame to simulate separation.
+  let regenCallCount = 0;
+  class PostPassMock implements RenderExecutor {
+    renderCalls: Recipe[] = [];
+    async probe(): Promise<MediaInfo> { return info; }
+    async render(_i: string, _info: MediaInfo, recipe: Recipe): Promise<void> {
+      this.renderCalls.push(recipe);
+    }
+    async extractGrayFrames(input: string, count: number): Promise<Uint8Array[]> {
+      if (input === "ORIGINAL") {
+        // Original: all-zero frames (blank)
+        return Array.from({ length: count }, () => new Uint8Array(64 * 64));
+      }
+      // For the initial extract after rendering: return a frame far from original
+      // (to pass targetDistance=40) but identical across copies to trigger the post-pass.
+      // After the first regeneration, return a frame that differs from the identical one.
+      if (input.endsWith("_regen")) {
+        // Regenerated copy: flip many bits to be distinct
+        regenCallCount++;
+        const f = new Uint8Array(64 * 64).fill(0xAA);
+        return Array.from({ length: count }, () => f);
+      }
+      // All initial copies return the same frame data → same PDQ hash → post-pass triggers.
+      return Array.from({ length: count }, () => frameOfDistance(5));
+    }
+  }
+
+  const exec = new PostPassMock();
+  let copyIdx = 0;
+  const res = await uniquify("ORIGINAL", opts, exec, 2, {
+    seedBase: 1,
+    framesPerCopy: 4,
+    interThreshold: 15, // default; initial copies have distance 0 → triggers regen
+    outputPath: (i) => {
+      // First call per copy is the main render; subsequent calls for post-pass
+      // regen return a path ending in _regen so the mock returns a distinct frame.
+      return `copy_${i}`;
+    },
+  });
+
+  // Both copies must be returned.
+  expect(res.length).toBe(2);
+  // The post-pass must have triggered at least one extra render for copy index 1.
+  // Initial renders: 2 copies × 1 render each = 2. Post-pass regen adds ≥1 more.
+  expect(exec.renderCalls.length).toBeGreaterThan(2);
+});
