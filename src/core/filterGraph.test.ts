@@ -102,3 +102,19 @@ test("spoof without audio: handler for audio not added, -f mov still present", (
   expect(args[args.lastIndexOf("-f") + 1]).toBe("mov");
   expect(args).not.toContain("-metadata:s:a");
 });
+
+test("caps the bitrate so a long video stays under the 50MB ceiling", () => {
+  const args = buildArgs(recipe, { ...info, durationSec: 120 });
+  const i = args.indexOf("-maxrate");
+  expect(i).toBeGreaterThan(-1);
+  expect(args).toContain("-bufsize");
+  const kbps = parseInt(args[i + 1], 10);
+  // kbps * seconds / 8 / 1024 = MB — must not exceed the 50MB cap
+  expect((kbps * 120) / 8 / 1024).toBeLessThanOrEqual(50);
+});
+
+test("short clips get a high cap that doesn't fight CRF", () => {
+  const args = buildArgs(recipe, { ...info, durationSec: 5 });
+  const kbps = parseInt(args[args.indexOf("-maxrate") + 1], 10);
+  expect(kbps).toBeGreaterThan(10000);
+});

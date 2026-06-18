@@ -45,9 +45,20 @@ function audioChain(recipe: Recipe): string | null {
   return parts.length ? parts.join(",") : null;
 }
 
+/** Instagram rejects video files over 50 MB — cap the bitrate so the encode can't exceed it. */
+const MAX_FILE_MB = 50;
+
 export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
   const crf = String(
     recipe.video.find((o) => o.id === "encode")?.params.crf ?? 21
+  );
+  // Bitrate ceiling derived from duration: total bits for ~46 MB (8% safety
+  // margin) minus the audio track, capped per second. CRF still rules for short
+  // clips (the cap only kicks in when content would blow past 50 MB).
+  const audioKbps = info.hasAudio ? 128 : 0;
+  const capKbps = Math.max(
+    600,
+    Math.floor((MAX_FILE_MB * 1024 * 8 * 0.92) / Math.max(1, info.durationSec)) - audioKbps
   );
   const args: string[] = ["-vf", videoChain(recipe, info)];
 
@@ -75,6 +86,8 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
 
   args.push(
     "-crf", crf,
+    "-maxrate", `${capKbps}k`,
+    "-bufsize", `${capKbps * 2}k`,
     "-pix_fmt", "yuv420p",
     "-movflags", "+faststart",
     "-map_metadata", "-1"
