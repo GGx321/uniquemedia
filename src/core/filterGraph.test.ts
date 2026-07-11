@@ -14,7 +14,7 @@ const recipe: Recipe = {
     { id: "eq", params: { brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1 } },
     { id: "noise", params: { strength: 0 } }, // no-op, must be skipped
     { id: "speed", params: { speed: 1.05 } },
-    { id: "encode", params: { crf: 21 } },
+    { id: "encode", params: { crf: 21, fps: 30, gop: 60, keyintMin: 30, preset: "faster", audioKbps: 128 } },
   ],
   audio: [{ id: "aeq", params: { gain: 1.5 } }],
 };
@@ -117,4 +117,29 @@ test("short clips get a high cap that doesn't fight CRF", () => {
   const args = buildArgs(recipe, { ...info, durationSec: 5 });
   const kbps = parseInt(args[args.indexOf("-maxrate") + 1], 10);
   expect(kbps).toBeGreaterThan(10000);
+});
+
+test("emits CFR normalization: -r, -fps_mode cfr, -g, -keyint_min", () => {
+  const args = buildArgs(recipe, info);
+  expect(args[args.indexOf("-r") + 1]).toBe("30");
+  expect(args[args.indexOf("-fps_mode") + 1]).toBe("cfr");
+  expect(args[args.indexOf("-g") + 1]).toBe("60");
+  expect(args[args.indexOf("-keyint_min") + 1]).toBe("30");
+});
+
+test("uses the recipe preset and never ultrafast", () => {
+  const args = buildArgs(recipe, info);
+  expect(args[args.indexOf("-preset") + 1]).toBe("faster");
+  expect(args).not.toContain("ultrafast");
+});
+
+test("uses the per-copy audio bitrate for -b:a", () => {
+  const hi = {
+    ...recipe,
+    video: recipe.video.map((o) =>
+      o.id === "encode" ? { ...o, params: { ...o.params, audioKbps: 160 } } : o
+    ),
+  };
+  const args = buildArgs(hi, info);
+  expect(args[args.indexOf("-b:a") + 1]).toBe("160k");
 });

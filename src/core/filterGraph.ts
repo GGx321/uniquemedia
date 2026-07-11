@@ -49,13 +49,18 @@ function audioChain(recipe: Recipe): string | null {
 const MAX_FILE_MB = 50;
 
 export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
-  const crf = String(
-    recipe.video.find((o) => o.id === "encode")?.params.crf ?? 21
-  );
+  const enc = recipe.video.find((o) => o.id === "encode")?.params ?? {};
+  const crf = String(enc.crf ?? 21);
+  const preset = String(enc.preset ?? "faster");
+  const fps = Number(enc.fps ?? 30);
+  const gop = Number(enc.gop ?? 60);
+  const keyintMin = Number(enc.keyintMin ?? 30);
+  const aBitrate = Number(enc.audioKbps ?? 128);
+
   // Bitrate ceiling derived from duration: total bits for ~46 MB (8% safety
   // margin) minus the audio track, capped per second. CRF still rules for short
   // clips (the cap only kicks in when content would blow past 50 MB).
-  const audioKbps = info.hasAudio ? 128 : 0;
+  const audioKbps = info.hasAudio ? aBitrate : 0;
   const capKbps = Math.max(
     600,
     Math.floor((MAX_FILE_MB * 1024 * 8 * 0.92) / Math.max(1, info.durationSec)) - audioKbps
@@ -65,15 +70,12 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
   if (info.hasAudio) {
     const af = audioChain(recipe);
     if (af) args.push("-af", af);
-    args.push("-c:a", "aac", "-b:a", "128k");
+    args.push("-c:a", "aac", "-b:a", `${aBitrate}k`);
   } else {
     args.push("-an");
   }
 
-  args.push(
-    "-c:v", "libx264",
-    "-preset", "ultrafast",
-  );
+  args.push("-c:v", "libx264", "-preset", preset);
 
   if (recipe.spoof) {
     args.push(
@@ -89,6 +91,10 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
     "-maxrate", `${capKbps}k`,
     "-bufsize", `${capKbps * 2}k`,
     "-pix_fmt", "yuv420p",
+    "-r", String(fps),
+    "-fps_mode", "cfr",
+    "-g", String(gop),
+    "-keyint_min", String(keyintMin),
     "-movflags", "+faststart",
     "-map_metadata", "-1"
   );
