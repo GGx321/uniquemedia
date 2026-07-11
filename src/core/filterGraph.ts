@@ -1,20 +1,15 @@
 import { FRAGMENTS } from "./filters";
 import { EXPORT_DIMS, type MediaInfo, type Recipe } from "./types";
 
-function videoChain(recipe: Recipe, info: MediaInfo): string {
+/** Spatial filter chain (everything except per-segment speed). Applied once to
+ *  the source before it is split into time segments. */
+function spatialChain(recipe: Recipe, info: MediaInfo): string {
   const parts: string[] = [];
-  let speed = 1;
-
   for (const op of recipe.video) {
-    if (op.id === "speed") {
-      speed = Number(op.params.speed);
-      continue;
-    }
     if (op.id === "encode") continue;
     const frag = FRAGMENTS[op.id]?.(op.params, info);
     if (frag) parts.push(frag);
   }
-
   if (recipe.exportFormat !== "original") {
     const { w, h } = EXPORT_DIMS[recipe.exportFormat];
     parts.push(`scale=${w}:${h}:force_original_aspect_ratio=increase`);
@@ -25,24 +20,57 @@ function videoChain(recipe: Recipe, info: MediaInfo): string {
     parts.push("crop=trunc(iw/2)*2:trunc(ih/2)*2");
   }
   parts.push("setsar=1");
-  if (speed !== 1) parts.push(`setpts=PTS/${speed}`);
-
   return parts.join(",");
 }
 
-function audioChain(recipe: Recipe): string | null {
-  const speed = Number(
-    recipe.video.find((o) => o.id === "speed")?.params.speed ?? 1
-  );
-  const parts: string[] = [];
-  if (speed !== 1) parts.push(`atempo=${speed}`);
-  for (const op of recipe.audio) {
-    if (op.id === "aeq") {
-      const g = Number(op.params.gain);
-      if (g !== 0) parts.push(`equalizer=f=3000:t=q:w=1:g=${g}`);
-    }
+/** Cumulative segment boundaries in seconds: [0, t1, ..., duration]. */
+function boundaries(recipe: Recipe, info: MediaInfo): number[] {
+  const bounds = [0];
+  let acc = 0;
+  for (const seg of recipe.segments) {
+    acc += seg.fraction;
+    bounds.push(acc * info.durationSec);
   }
-  return parts.length ? parts.join(",") : null;
+  bounds[bounds.length - 1] = info.durationSec; // guard float drift on the tail
+  return bounds;
+}
+
+const splitLabels = (prefix: string, n: number): string =>
+  Array.from({ length: n }, (_, i) => `[${prefix}${i}]`).join("");
+
+/** Video graph: spatial -> split -> per-segment trim+setpts -> concat -> [outv]. */
+function videoComplex(recipe: Recipe, info: MediaInfo): string {
+  const n = recipe.segments.length;
+  const b = boundaries(recipe, info);
+  const spatial = spatialChain(recipe, info);
+  const lines = [`[0:v]${spatial ? spatial + "," : ""}split=${n}${splitLabels("v", n)}`];
+  recipe.segments.forEach((seg, i) => {
+    lines.push(
+      `[v${i}]trim=start=${b[i].toFixed(3)}:end=${b[i + 1].toFixed(3)},` +
+        `setpts=(PTS-STARTPTS)/${seg.speed}[s${i}]`
+    );
+  });
+  lines.push(`${splitLabels("s", n)}concat=n=${n}:v=1:a=0[outv]`);
+  return lines.join(";");
+}
+
+/** Audio graph: optional EQ -> asplit -> per-segment atrim+atempo -> concat -> [outa].
+ *  Same boundaries as video so A/V stays in sync. */
+function audioComplex(recipe: Recipe, info: MediaInfo): string {
+  const n = recipe.segments.length;
+  const b = boundaries(recipe, info);
+  const eq = recipe.audio.find((o) => o.id === "aeq");
+  const gain = eq ? Number(eq.params.gain) : 0;
+  const pre = gain !== 0 ? `equalizer=f=3000:t=q:w=1:g=${gain},` : "";
+  const lines = [`[0:a]${pre}asplit=${n}${splitLabels("a", n)}`];
+  recipe.segments.forEach((seg, i) => {
+    lines.push(
+      `[a${i}]atrim=start=${b[i].toFixed(3)}:end=${b[i + 1].toFixed(3)},` +
+        `asetpts=PTS-STARTPTS,atempo=${seg.speed}[b${i}]`
+    );
+  });
+  lines.push(`${splitLabels("b", n)}concat=n=${n}:v=0:a=1[outa]`);
+  return lines.join(";");
 }
 
 /** Instagram rejects video files over 50 MB — cap the bitrate so the encode can't exceed it. */
@@ -65,12 +93,14 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
     600,
     Math.floor((MAX_FILE_MB * 1024 * 8 * 0.92) / Math.max(1, info.durationSec)) - audioKbps
   );
-  const args: string[] = ["-vf", videoChain(recipe, info)];
+
+  const complex = info.hasAudio
+    ? `${videoComplex(recipe, info)};${audioComplex(recipe, info)}`
+    : videoComplex(recipe, info);
+  const args: string[] = ["-filter_complex", complex, "-map", "[outv]"];
 
   if (info.hasAudio) {
-    const af = audioChain(recipe);
-    if (af) args.push("-af", af);
-    args.push("-c:a", "aac", "-b:a", `${aBitrate}k`);
+    args.push("-map", "[outa]", "-c:a", "aac", "-b:a", `${aBitrate}k`);
   } else {
     args.push("-an");
   }
