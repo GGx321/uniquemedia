@@ -97,3 +97,27 @@ test("encoder params are not strength-scaled (same for intensity 1 and 2)", () =
   expect(a.audioKbps).toBe(b.audioKbps);
   expect(a.gop).toBe(b.gop);
 });
+
+test("recipe has 3-5 speed segments with fractions summing to ~1", () => {
+  const r = sampleRecipe(opts, 11, 1);
+  expect(r.segments.length).toBeGreaterThanOrEqual(3);
+  expect(r.segments.length).toBeLessThanOrEqual(5);
+  const sum = r.segments.reduce((a, seg) => a + seg.fraction, 0);
+  expect(Math.abs(sum - 1)).toBeLessThan(1e-6);
+  for (const seg of r.segments) {
+    expect(seg.fraction).toBeGreaterThan(0);
+    expect(seg.speed).toBeGreaterThanOrEqual(0.9);
+    expect(seg.speed).toBeLessThanOrEqual(1.1);
+  }
+});
+
+test("no leftover single speed op in the video chain", () => {
+  const r = sampleRecipe(opts, 5, 1);
+  expect(r.video.some((o) => o.id === "speed")).toBe(false);
+});
+
+test("segments vary across seeds", () => {
+  const a = sampleRecipe(opts, 1, 1).segments;
+  const b = sampleRecipe(opts, 2, 1).segments;
+  expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
+});

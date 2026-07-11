@@ -27,12 +27,18 @@ export interface Operation {
   params: Record<string, number | boolean | string>;
 }
 
+export interface SpeedSegment {
+  fraction: number; // portion of source duration; fractions sum to ~1
+  speed: number;    // playback speed for this segment (ffmpeg-safe 0.5..2.0)
+}
+
 export interface Recipe {
   seed: number;
   intensity: number; // 1.0 baseline; raised on auto-strengthen
   exportFormat: ExportFormat;
   keepTrendAudio: boolean;
   spoof: boolean;
+  segments: SpeedSegment[];
   video: Operation[];
   audio: Operation[];
 }

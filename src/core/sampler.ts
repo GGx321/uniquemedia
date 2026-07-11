@@ -13,6 +13,7 @@ const FPS_CHOICES = [24, 25, 30] as const;
 const GOP_SECONDS = [2, 3, 4] as const;
 const PRESET_CHOICES = ["faster", "veryfast"] as const;
 const AUDIO_KBPS_CHOICES = [96, 112, 128, 160] as const;
+const SEGMENT_COUNTS = [3, 4, 5] as const;
 
 function pick<T>(rng: Rng, arr: readonly T[]): T {
   return arr[Math.floor(rng() * arr.length)];
@@ -55,7 +56,16 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     video.push({ id: "hflip", params: { on: true } });
   }
 
-  const speed = round(clamp(dev(rng, "speed", s), 0.9, 1.1));
+  // Per-segment speed changes break the temporal fingerprint. Non-uniform
+  // fractions so segment boundaries aren't a fixed pattern and no segment is
+  // vanishingly small; each keeps the subtle PARAMS.speed spread (~±5%).
+  const segCount = pick(rng, SEGMENT_COUNTS);
+  const weights = Array.from({ length: segCount }, () => 0.5 + rng());
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  const segments = weights.map((w) => ({
+    fraction: w / weightSum,
+    speed: round(clamp(dev(rng, "speed", s), 0.9, 1.1)),
+  }));
   const crf = Math.round(clamp(dev(rng, "crf", s), 18, 26));
 
   // Container/bitstream signature spread. Drawn here (before the conditional
@@ -77,11 +87,8 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     exportFormat: opts.exportFormat,
     keepTrendAudio: opts.keepTrendAudio,
     spoof: opts.spoofMetadata,
-    video: [
-      ...video,
-      { id: "speed", params: { speed } },
-      { id: "encode", params: { crf, fps, gop, keyintMin, preset, audioKbps } },
-    ],
+    segments,
+    video: [...video, { id: "encode", params: { crf, fps, gop, keyintMin, preset, audioKbps } }],
     audio,
   };
 }
