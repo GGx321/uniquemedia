@@ -66,3 +66,34 @@ test("crf varies around neutral and is not pinned to the clamp ceiling", () => {
   // must not be a single pinned value, and the average should sit near 21, not 26
   expect(values.size).toBeGreaterThan(1);
 });
+
+test("encode op carries randomized fps/gop/preset/audio params in range", () => {
+  const enc = sampleRecipe(opts, 7, 1).video.find((o) => o.id === "encode")!.params;
+  expect([24, 25, 30]).toContain(enc.fps);
+  expect(["faster", "veryfast"]).toContain(enc.preset);
+  expect([96, 112, 128, 160]).toContain(enc.audioKbps);
+  expect(enc.keyintMin).toBe(enc.fps);
+  const mult = Number(enc.gop) / Number(enc.fps);
+  expect([2, 3, 4]).toContain(mult);
+});
+
+test("encoder params vary across seeds", () => {
+  const fpsSet = new Set<number>();
+  const presetSet = new Set<string>();
+  for (let s = 0; s < 60; s++) {
+    const enc = sampleRecipe(opts, s, 1).video.find((o) => o.id === "encode")!.params;
+    fpsSet.add(Number(enc.fps));
+    presetSet.add(String(enc.preset));
+  }
+  expect(fpsSet.size).toBeGreaterThan(1);
+  expect(presetSet.size).toBeGreaterThan(1);
+});
+
+test("encoder params are not strength-scaled (same for intensity 1 and 2)", () => {
+  const a = sampleRecipe(opts, 3, 1).video.find((o) => o.id === "encode")!.params;
+  const b = sampleRecipe(opts, 3, 2).video.find((o) => o.id === "encode")!.params;
+  expect(a.fps).toBe(b.fps);
+  expect(a.preset).toBe(b.preset);
+  expect(a.audioKbps).toBe(b.audioKbps);
+  expect(a.gop).toBe(b.gop);
+});

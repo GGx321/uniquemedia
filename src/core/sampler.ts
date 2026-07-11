@@ -9,6 +9,15 @@ function dev(rng: Rng, key: keyof typeof PARAMS, scalar: number, oneSided = fals
   return spec.neutral + mag;
 }
 
+const FPS_CHOICES = [24, 25, 30] as const;
+const GOP_SECONDS = [2, 3, 4] as const;
+const PRESET_CHOICES = ["faster", "veryfast"] as const;
+const AUDIO_KBPS_CHOICES = [96, 112, 128, 160] as const;
+
+function pick<T>(rng: Rng, arr: readonly T[]): T {
+  return arr[Math.floor(rng() * arr.length)];
+}
+
 export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Recipe {
   const rng = makeRng(seed);
   const s = opts.strength * intensity;
@@ -49,6 +58,15 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
   const speed = round(clamp(dev(rng, "speed", s), 0.9, 1.1));
   const crf = Math.round(clamp(dev(rng, "crf", s), 18, 26));
 
+  // Container/bitstream signature spread. Drawn here (before the conditional
+  // audio draw) so they stay independent of `keepTrendAudio`, and they ignore
+  // `s` so the encoder fingerprint is decoupled from the visual-change budget.
+  const fps = pick(rng, FPS_CHOICES);
+  const gop = fps * pick(rng, GOP_SECONDS);
+  const keyintMin = fps;
+  const preset = pick(rng, PRESET_CHOICES);
+  const audioKbps = pick(rng, AUDIO_KBPS_CHOICES);
+
   const audio: Operation[] = opts.keepTrendAudio
     ? []
     : [{ id: "aeq", params: { gain: round(dev(rng, "eqGain", s)) } }];
@@ -59,7 +77,11 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     exportFormat: opts.exportFormat,
     keepTrendAudio: opts.keepTrendAudio,
     spoof: opts.spoofMetadata,
-    video: [...video, { id: "speed", params: { speed } }, { id: "encode", params: { crf } }],
+    video: [
+      ...video,
+      { id: "speed", params: { speed } },
+      { id: "encode", params: { crf, fps, gop, keyintMin, preset, audioKbps } },
+    ],
     audio,
   };
 }
