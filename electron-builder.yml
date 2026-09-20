@@ -2,6 +2,7 @@ appId: com.uniquemedia.app
 productName: uniquemedia
 directories:
   output: release
+afterPack: ./scripts/sign-adhoc.cjs
 files:
   - out/**/*
   - package.json
