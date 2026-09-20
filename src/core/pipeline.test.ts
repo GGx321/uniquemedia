@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test";
 import { uniquify } from "./pipeline";
+import { sampleRecipe } from "./sampler";
 import type { RenderExecutor } from "./executor";
 import type { CopyOptions, MediaInfo, Recipe } from "./types";
 
-const info: MediaInfo = { durationSec: 4, width: 640, height: 480, hasAudio: true };
+const info: MediaInfo = { kind: "video", durationSec: 4, width: 640, height: 480, hasAudio: true };
 
 function frameOfDistance(d: number): Uint8Array {
   const f = new Uint8Array(64 * 64);
@@ -36,11 +37,16 @@ const opts: CopyOptions = {
   allowMirror: false,
   targetDistance: 40,
   spoofMetadata: false,
+  edgeMode: "auto",
 };
 
 test("produces the requested number of copies", async () => {
   const exec = new MockExecutor();
-  const res = await uniquify("ORIGINAL", opts, exec, 3, { seedBase: 1, framesPerCopy: 4 });
+  const res = await uniquify("ORIGINAL", opts, exec, 3, {
+    seedBase: 1,
+    framesPerCopy: 4,
+    sampleRecipe,
+  });
   expect(res.length).toBe(3);
   expect(res.every((r) => r.verify.passed)).toBe(true);
 });
@@ -52,12 +58,55 @@ test("auto-strengthens intensity when a copy is too similar", async () => {
     seedBase: 1,
     framesPerCopy: 4,
     maxAttempts: 3,
+    sampleRecipe,
   });
   const intensities = exec.rendered.map((r) => r.intensity);
   // 3 attempts + 1 re-render of best (so disk matches reported metric)
   expect(intensities.length).toBe(4);
   expect(intensities[1]).toBeGreaterThan(intensities[0]);
   expect(res[0].verify.passed).toBe(false); // gave up, shipped best with warning
+});
+
+test("asks config.sampleRecipe for an escalating seed and intensity on every retry", async () => {
+  const exec = new MockExecutor();
+  const strict = { ...opts, targetDistance: 200 }; // unreachable -> always retries
+  const calls: Array<{ seed: number; intensity: number }> = [];
+
+  await uniquify("ORIGINAL", strict, exec, 1, {
+    seedBase: 1,
+    framesPerCopy: 4,
+    maxAttempts: 3,
+    sampleRecipe: (o, seed, intensity) => {
+      calls.push({ seed, intensity });
+      return sampleRecipe(o, seed, intensity);
+    },
+  });
+
+  // Retry re-seeds with the LCG `(seed * 1103515245 + 12345) >>> 0` and raises
+  // intensity by 1.4x, so each attempt renders a different recipe.
+  expect(calls.map((c) => c.seed)).toEqual([1, 1103527590, 2524885248]);
+  expect(calls.map((c) => c.intensity)).toEqual([1, 1.4, 1.4 * 1.4]);
+});
+
+test("infers the caller's CopyOptions, not the pipeline's base UniquifyOptions", async () => {
+  // The annotation below is the compile-time half of this test: it pins that
+  // UniquifyConfig.sampleRecipe takes O, not a hardcoded UniquifyOptions.
+  // That `opts` itself stays O is enforced elsewhere — by the pipeline's own
+  // call sites (pipeline.ts:63 and :169), which stop compiling if O is collapsed.
+  const exec = new MockExecutor();
+  const seen: CopyOptions[] = [];
+
+  await uniquify("ORIGINAL", opts, exec, 1, {
+    seedBase: 1,
+    framesPerCopy: 4,
+    sampleRecipe: (o: CopyOptions, seed, intensity) => {
+      seen.push(o);
+      return sampleRecipe(o, seed, intensity);
+    },
+  });
+
+  expect(seen.length).toBe(1);
+  expect(seen[0]).toBe(opts); // the same object, not a copy
 });
 
 test("disk holds the best attempt, not the last, when giving up", async () => {
@@ -87,6 +136,7 @@ test("disk holds the best attempt, not the last, when giving up", async () => {
     framesPerCopy: 4,
     maxAttempts: 3,
     outputPath: () => "copy.mp4",
+    sampleRecipe,
   });
 
   // The file on disk must be the SAME recipe object the result reports as best.
@@ -134,6 +184,7 @@ test("inter-copy post-pass regenerates copies that are too similar to each other
       // regen return a path ending in _regen so the mock returns a distinct frame.
       return `copy_${i}`;
     },
+    sampleRecipe,
   });
 
   // Both copies must be returned.

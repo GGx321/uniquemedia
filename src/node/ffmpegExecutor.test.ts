@@ -27,6 +27,11 @@ test("probe returns duration, dims and audio flag", async () => {
   expect(info.hasAudio).toBe(true);
 });
 
+test("probe reports kind video for a video clip", async () => {
+  const info = await exec.probe(input);
+  expect(info.kind).toBe("video");
+});
+
 test("extractGrayFrames returns 64x64 buffers", async () => {
   const frames = await exec.extractGrayFrames(input, 4);
   expect(frames.length).toBe(4);
@@ -36,7 +41,7 @@ test("extractGrayFrames returns 64x64 buffers", async () => {
 test("render produces a valid playable mp4", async () => {
   const info = await exec.probe(input);
   const recipe = sampleRecipe(
-    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90, spoofMetadata: false },
+    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90, spoofMetadata: false, edgeMode: "auto" },
     7,
     1
   );
@@ -58,6 +63,7 @@ test("light zoom-crop pipeline passes PDQ target 45 within a few attempts", asyn
     allowMirror: false,
     targetDistance: 45,
     spoofMetadata: false,
+    edgeMode: "auto",
   };
 
   const results = await uniquify(input, opts, exec, 1, {
@@ -65,6 +71,7 @@ test("light zoom-crop pipeline passes PDQ target 45 within a few attempts", asyn
     framesPerCopy: 4,
     maxAttempts: 4,
     outputPath: (i) => join(dir, `lightcrop_${i}.mp4`),
+    sampleRecipe,
   });
 
   expect(results.length).toBe(1);

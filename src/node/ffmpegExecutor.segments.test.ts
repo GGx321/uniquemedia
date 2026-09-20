@@ -13,7 +13,7 @@ const FFMPEG = ffmpegPath as string;
 const FFPROBE = ffprobeStatic.path;
 
 // makeTestClip is a fixed 2s 320x240 clip with audio.
-const info: MediaInfo = { durationSec: 2, width: 320, height: 240, hasAudio: true };
+const info: MediaInfo = { kind: "video", durationSec: 2, width: 320, height: 240, hasAudio: true };
 
 const recipe: Recipe = {
   seed: 1,

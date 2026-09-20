@@ -1,7 +1,8 @@
 import { test, expect } from "bun:test";
 import { FRAGMENTS } from "./filters";
+import type { MediaInfo } from "./types";
 
-const info = { durationSec: 5, width: 1280, height: 720, hasAudio: true };
+const info: MediaInfo = { kind: "video", durationSec: 5, width: 1280, height: 720, hasAudio: true };
 
 test("eq fragment formats params", () => {
   const out = FRAGMENTS.eq({ brightness: 0.02, contrast: 1.03, saturation: 0.97, gamma: 1.01 }, info);

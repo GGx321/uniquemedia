@@ -1,15 +1,39 @@
+import { EDGE_MODES } from "../../core/types";
+import type { EdgeMode, MediaKind } from "../../core/types";
+
 export interface AdvancedValue {
   strength: number;
   keepTrendAudio: boolean;
   allowMirror: boolean;
   targetDistance: number;
   spoofMetadata: boolean;
+  edgeMode: EdgeMode;
 }
 
+/** Reading the answer back as one of the three modes rather than casting the
+ *  select's string: an unrecognised value is simply not `fit` and would crop in
+ *  silence, which is the damage the control exists to prevent. */
+function toEdgeMode(value: string, fallback: EdgeMode): EdgeMode {
+  return EDGE_MODES.find((m) => m === value) ?? fallback;
+}
+
+/** «Сохранять края кадра»: Авто / Всегда / Никогда. `auto` decides from the
+ *  picture, and is the default because it is right for both kinds of image. */
+const EDGE_LABELS: Record<EdgeMode, string> = {
+  auto: "Авто",
+  fit: "Всегда",
+  crop: "Никогда",
+};
+
 export function AdvancedPanel({
+  kind,
   value,
   onChange,
 }: {
+  /** A still has no soundtrack, so the audio row is not shown for one. The kind
+   *  is required rather than optional so that every call site has to say which
+   *  media it is settings for, instead of defaulting into a dead toggle. */
+  kind: MediaKind;
   value: AdvancedValue;
   onChange: (v: AdvancedValue) => void;
 }) {
@@ -38,16 +62,18 @@ export function AdvancedPanel({
             style={{ ["--pct" as string]: `${pct}%` }}
           />
         </label>
-        <label className="adv-row">
-          Сохранить оригинальный звук
-          <input
-            className="switch"
-            aria-label="Сохранить оригинальный звук"
-            type="checkbox"
-            checked={value.keepTrendAudio}
-            onChange={(e) => set({ keepTrendAudio: e.target.checked })}
-          />
-        </label>
+        {kind !== "photo" && (
+          <label className="adv-row">
+            Сохранить оригинальный звук
+            <input
+              className="switch"
+              aria-label="Сохранить оригинальный звук"
+              type="checkbox"
+              checked={value.keepTrendAudio}
+              onChange={(e) => set({ keepTrendAudio: e.target.checked })}
+            />
+          </label>
+        )}
         <label className="adv-row">
           Зеркальное отражение (отражает текст)
           <input
@@ -58,6 +84,23 @@ export function AdvancedPanel({
             onChange={(e) => set({ allowMirror: e.target.checked })}
           />
         </label>
+        {kind === "photo" && (
+          <label className="adv-row">
+            Сохранять края кадра
+            <span className="select-wrap">
+              <select
+                className="input adv-select"
+                aria-label="Сохранять края кадра"
+                value={value.edgeMode}
+                onChange={(e) => set({ edgeMode: toEdgeMode(e.target.value, value.edgeMode) })}
+              >
+                {EDGE_MODES.map((m) => (
+                  <option key={m} value={m}>{EDGE_LABELS[m]}</option>
+                ))}
+              </select>
+            </span>
+          </label>
+        )}
         <label className="adv-row">
           Метаданные iPhone
           <input

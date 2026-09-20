@@ -734,6 +734,18 @@ select.input option {
   color: var(--text);
   cursor: pointer;
 }
+/* The one adv-row whose control is a select rather than a switch: it sits on
+   the right like the switches do, narrow enough to leave the label room. */
+.adv-row .select-wrap {
+  flex: 0 0 auto;
+}
+.adv-select {
+  width: auto;
+  min-width: 116px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  font-size: 13px;
+}
 .adv-slider-head {
   display: flex;
   justify-content: space-between;

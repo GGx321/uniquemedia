@@ -14,7 +14,7 @@ const FFMPEG = ffmpegPath as string;
 const FFPROBE = ffprobeStatic.path;
 
 // makeTestClip is a fixed 2s 320x240 clip with audio.
-const info: MediaInfo = { durationSec: 2, width: 320, height: 240, hasAudio: true };
+const info: MediaInfo = { kind: "video", durationSec: 2, width: 320, height: 240, hasAudio: true };
 
 function probeField(file: string, entry: string, stream: "v" | "a"): string {
   const r = spawnSync(
@@ -40,7 +40,7 @@ test("rendered copy is CFR at the recipe fps with intact, in-sync audio", () => 
 
     const opts: CopyOptions = {
       strength: 1, exportFormat: "original", keepTrendAudio: false,
-      allowMirror: false, targetDistance: 60, spoofMetadata: false,
+      allowMirror: false, targetDistance: 60, spoofMetadata: false, edgeMode: "auto",
     };
     const recipe = sampleRecipe(opts, 42, 1);
     const enc = recipe.video.find((o) => o.id === "encode")!.params;

@@ -37,11 +37,11 @@ export function DropZone({
       <span className="crop-mark br" aria-hidden />
       {analyzing && <span className="scanline" aria-hidden />}
       {analyzing ? (
-        <div className="analyzing">Анализ видео…</div>
+        <div className="analyzing">Анализ файла…</div>
       ) : source ? (
         <div className="source-info">
           <span className="source-thumb" aria-hidden>
-            <PlayGlyph />
+            {source.info.kind === "photo" ? <StillGlyph /> : <PlayGlyph />}
             <span className="source-thumb-grid" />
           </span>
           <div className="source-meta">
@@ -59,7 +59,7 @@ export function DropZone({
         <>
           <UploadGlyph />
           <div className="dropzone-hint">
-            <b>Перетащите видео</b> сюда
+            <b>Перетащите видео или фото</b> сюда
           </div>
           <div className="dropzone-sub">или нажмите, чтобы выбрать</div>
         </>
@@ -79,8 +79,21 @@ function UploadGlyph() {
 
 function PlayGlyph() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+    <svg data-glyph="play" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
       <path d="M8 5.5v13a1 1 0 0 0 1.54.84l10-6.5a1 1 0 0 0 0-1.68l-10-6.5A1 1 0 0 0 8 5.5Z" />
+    </svg>
+  );
+}
+
+/** A still has nothing to play. Framed mountain-and-sun, the conventional
+ *  still-image mark, drawn at the play triangle's weight so the thumb chip
+ *  reads the same either way. */
+function StillGlyph() {
+  return (
+    <svg data-glyph="still" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="3.5" y="5" width="17" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="9" cy="10" r="1.6" fill="currentColor" />
+      <path d="M4.5 16.5 9.5 12l3.5 3 2.5-2.2 4 3.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

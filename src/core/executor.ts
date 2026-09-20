@@ -5,12 +5,12 @@ import type { DeviceProfile } from "./deviceProfile";
  * Host-provided FFmpeg backend. core depends only on this interface so the same
  * engine runs under Electron (spawn), a Node server, or ffmpeg.wasm.
  */
-export interface RenderExecutor {
+export interface RenderExecutor<R = Recipe> {
   probe(input: string): Promise<MediaInfo>;
   render(
     input: string,
     info: MediaInfo,
-    recipe: Recipe,
+    recipe: R,
     output: string,
     onProgress?: (fraction: number) => void
   ): Promise<void>;

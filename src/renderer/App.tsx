@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { UiCopy } from "./types";
 import type { Source } from "./components/DropZone";
-import { SettingsPanel, settingsToOptions, type SettingsState } from "./components/SettingsPanel";
+import {
+  SettingsPanel,
+  settingsToOptions,
+  settingsToPhotoOptions,
+  type SettingsState,
+} from "./components/SettingsPanel";
 import { CopyQueue } from "./components/CopyQueue";
 import { BatchProgress } from "./components/BatchProgress";
 import { basename } from "./util";
@@ -10,7 +15,17 @@ import { basename } from "./util";
 const initial: SettingsState = {
   count: 10,
   format: "original",
-  advanced: { keepTrendAudio: false, allowMirror: false, targetDistance: 38, strength: 1.0, spoofMetadata: true },
+  advanced: {
+    keepTrendAudio: false,
+    allowMirror: false,
+    targetDistance: 38,
+    strength: 1.0,
+    spoofMetadata: true,
+    // Defaults to deciding from the picture: padding is invisible on a flat
+    // background and a visible border on a photograph, and the user should not
+    // have to know which one they dropped in.
+    edgeMode: "auto",
+  },
 };
 
 export function App() {
@@ -47,12 +62,22 @@ export function App() {
     setAnalyzing(true);
     try {
       const info = await api.probe(path);
+      // Null means main could not identify the file and has already said why
+      // through onError — as its own sentence, rather than wrapped in the IPC
+      // plumbing an error thrown across the bridge would arrive in.
+      if (!info) return;
       setSourcePath(path);
       setSource({ name: basename(path), info });
       // new source -> reset the queue and progress
       setCopies([]);
       setCount(0);
       pathByIndex.current.clear();
+    } catch (err) {
+      // Identifying the file is now where an unreadable format is named — a
+      // HEIC, say, which the bundled ffmpeg cannot open and which reports what
+      // to do about it. Swallowing that would leave the user with a dropzone
+      // that simply does nothing.
+      alert(err instanceof Error ? err.message : String(err));
     } finally {
       setAnalyzing(false);
     }
@@ -65,7 +90,11 @@ export function App() {
     setCopies([]);
     setRunning(true);
     setCount(state.count);
-    await api.start({ input: sourcePath, opts: settingsToOptions(state), count: state.count, outDir });
+    // A still gets the options a still can use; main re-detects the kind from
+    // the file itself, so a wrong guess here costs nothing.
+    const opts =
+      source?.info.kind === "photo" ? settingsToPhotoOptions(state) : settingsToOptions(state);
+    await api.start({ input: sourcePath, opts, count: state.count, outDir });
   }
 
   function stop() {
@@ -109,7 +138,7 @@ export function App() {
         </span>
         <span className="wordmark-lockup">
           <span className="wordmark">unique<b>media</b></span>
-          <span className="tagline">video uniquifier</span>
+          <span className="tagline">media uniquifier</span>
         </span>
         <span className="header-spacer" />
         <span className="version">v{__APP_VERSION__}</span>

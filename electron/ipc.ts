@@ -1,4 +1,4 @@
-import type { CopyOptions, MediaInfo } from "../src/core/types";
+import type { MediaInfo, StartOptions } from "../src/core/types";
 
 export const CH = {
   pickFile: "pick-file",
@@ -19,9 +19,11 @@ export interface Api {
   pickFile(): Promise<string | null>;
   /** Resolve the absolute path of a dropped File (Electron webUtils). */
   getDroppedPath(file: File): string;
-  probe(path: string): Promise<MediaInfo>;
+  /** Null when the file could not be identified: the main process has already
+   *  reported the reason through `onError`, unwrapped. */
+  probe(path: string): Promise<MediaInfo | null>;
   chooseOutDir(): Promise<string | null>;
-  start(req: { input: string; opts: CopyOptions; count: number; outDir: string }): Promise<void>;
+  start(req: { input: string; opts: StartOptions; count: number; outDir: string }): Promise<void>;
   cancel(): Promise<void>;
   openFile(path: string): Promise<void>;
   revealInFolder(path: string): Promise<void>;

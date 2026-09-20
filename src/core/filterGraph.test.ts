@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { buildArgs } from "./filterGraph";
 import type { MediaInfo, Recipe } from "./types";
 
-const info: MediaInfo = { durationSec: 5, width: 1280, height: 720, hasAudio: true };
+const info: MediaInfo = { kind: "video", durationSec: 5, width: 1280, height: 720, hasAudio: true };
 
 const recipe: Recipe = {
   seed: 1,

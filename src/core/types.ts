@@ -1,11 +1,19 @@
+export type MediaKind = "video" | "photo";
+
 export interface MediaInfo {
-  durationSec: number;
+  kind: MediaKind;
+  durationSec: number; // 0 for photos
   width: number;
   height: number;
-  hasAudio: boolean;
+  hasAudio: boolean; // false for photos
 }
 
-export type ExportFormat = "original" | "reels" | "feed" | "square";
+/** The type is derived from the list rather than written beside it, so a format
+ *  can never exist in one and be missing from the other — which is what lets a
+ *  host validate a `--format` argument against the real set. */
+export const EXPORT_FORMATS = ["original", "reels", "feed", "square"] as const;
+
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
 export const EXPORT_DIMS: Record<Exclude<ExportFormat, "original">, { w: number; h: number }> = {
   reels: { w: 1080, h: 1920 },
@@ -13,14 +21,54 @@ export const EXPORT_DIMS: Record<Exclude<ExportFormat, "original">, { w: number;
   square: { w: 1080, h: 1080 },
 };
 
-export interface CopyOptions {
-  strength: number; // visual-change multiplier, ~0.5..1.5, default 1.0
-  exportFormat: ExportFormat;
-  keepTrendAudio: boolean;
-  allowMirror: boolean;
+/**
+ * How a still carries its hash shift at the frame edge.
+ *
+ * `crop` takes an off-centre window and scales it back up: the picture keeps
+ * its texture everywhere, but 3-5% of it is gone. On a photograph that is
+ * invisible; on a graphic whose content runs to the edge it is a defect — a
+ * measured copy of a 1080x1920 story read "NEVER GONNA MAKE I" where the
+ * original said "NEVER GONNA MAKE IT.", at a passing PDQ distance of 54,
+ * because a hash cannot see that a word lost its last letter.
+ *
+ * `fit` shrinks the picture and pads it back to full size instead. The hash
+ * moves just as far (measured 46 at 0.97 and 62 at 0.96 against the crop's 38
+ * at 0.98) and nothing is lost, but on a photograph whose content reaches the
+ * edge the padding reads as a visible border.
+ *
+ * `auto` decides from the picture. Same list-first shape as EXPORT_FORMATS, so
+ * a host can validate a `--edges` argument against the real set.
+ */
+export const EDGE_MODES = ["crop", "fit", "auto"] as const;
+
+export type EdgeMode = (typeof EDGE_MODES)[number];
+
+/** What the pipeline itself needs, regardless of media type. */
+export interface UniquifyOptions {
   targetDistance: number; // Hamming distance (0..256) the copy must exceed
   spoofMetadata: boolean;
 }
+
+/** Options shared by photo and video. */
+export interface PhotoCopyOptions extends UniquifyOptions {
+  strength: number; // visual-change multiplier, ~0.5..1.5, default 1.0
+  exportFormat: ExportFormat;
+  allowMirror: boolean;
+  edgeMode: EdgeMode;
+}
+
+export interface CopyOptions extends PhotoCopyOptions {
+  keepTrendAudio: boolean;
+}
+
+/**
+ * What a host (Electron IPC, the CLI) hands in to start a batch, before the
+ * media kind has been decided from the file itself. `keepTrendAudio` is
+ * optional because a still has no sound: the photo UI never produces it, and
+ * should the file turn out to be footage after all, the video path resolves its
+ * absence to a definite `false` rather than passing `undefined` to a sampler.
+ */
+export type StartOptions = PhotoCopyOptions & { keepTrendAudio?: boolean };
 
 export interface Operation {
   id: string;

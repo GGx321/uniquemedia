@@ -4,6 +4,7 @@ import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 import { exiftool } from "exiftool-vendored";
 import { buildArgs } from "../core/filterGraph";
+import { parseFfprobeJson, type ProbeResult } from "./ffprobeJson";
 import type { RenderExecutor } from "../core/executor";
 import type { MediaInfo, Recipe } from "../core/types";
 import type { DeviceProfile } from "../core/deviceProfile";
@@ -28,6 +29,35 @@ function run(bin: string, args: string[]): Promise<Buffer> {
   });
 }
 
+/**
+ * Turns a parsed ffprobe payload into the `MediaInfo` the video pipeline runs
+ * on, or says which file it could not make sense of.
+ *
+ * Separate from `probe` because it is the half worth testing: the shapes that
+ * hurt (no streams, a truncated payload, a stream with no dimensions, a "N/A"
+ * duration) are exactly the ones a spawned ffprobe will not produce on demand.
+ * It reads a `ProbeResult` rather than raw JSON, so nothing here has to assume
+ * a shape — that job belongs to `parseFfprobeJson`, and it does it defensively.
+ *
+ * `durationSec` comes from the format block alone, NOT from `longestDuration`.
+ * The frame sampler places its PDQ probes at fractions of this number, so
+ * taking the longest stream instead would move every sample point and shift the
+ * verification metric of footage whose bytes have not changed.
+ */
+export function videoInfoFromProbe(probe: ProbeResult, input: string): MediaInfo {
+  const video = probe.streams.find((s) => s.codecType === "video");
+  if (!video || video.width === null || video.height === null) {
+    throw new Error(`Cannot probe ${input}: no video stream with usable dimensions.`);
+  }
+  return {
+    kind: "video",
+    durationSec: probe.formatDurationSec ?? 0,
+    width: video.width,
+    height: video.height,
+    hasAudio: probe.streams.some((s) => s.codecType === "audio"),
+  };
+}
+
 export class FfmpegExecutor implements RenderExecutor {
   private active = new Map<ReturnType<typeof spawn>, string>(); // child -> output path
 
@@ -43,15 +73,7 @@ export class FfmpegExecutor implements RenderExecutor {
     const raw = await run(FFPROBE, [
       "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", input,
     ]);
-    const json = JSON.parse(raw.toString());
-    const v = json.streams.find((s: any) => s.codec_type === "video");
-    const a = json.streams.find((s: any) => s.codec_type === "audio");
-    return {
-      durationSec: Number(json.format.duration) || 0,
-      width: Number(v?.width) || 0,
-      height: Number(v?.height) || 0,
-      hasAudio: Boolean(a),
-    };
+    return videoInfoFromProbe(parseFfprobeJson(raw.toString()), input);
   }
 
   render(

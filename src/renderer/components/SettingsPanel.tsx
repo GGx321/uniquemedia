@@ -1,4 +1,4 @@
-import type { CopyOptions, ExportFormat } from "../../core/types";
+import type { CopyOptions, ExportFormat, PhotoCopyOptions } from "../../core/types";
 import { DropZone, type Source } from "./DropZone";
 import { NField } from "./NField";
 import { FormatSelect } from "./FormatSelect";
@@ -11,15 +11,21 @@ export interface SettingsState {
   advanced: AdvancedValue;
 }
 
-export function settingsToOptions(s: SettingsState): CopyOptions {
+/** The half of the settings that means something for either medium. One state,
+ *  two derivations — so a still never carries a soundtrack flag it cannot use. */
+export function settingsToPhotoOptions(s: SettingsState): PhotoCopyOptions {
   return {
     strength: s.advanced.strength,
     exportFormat: s.format,
-    keepTrendAudio: s.advanced.keepTrendAudio,
     allowMirror: s.advanced.allowMirror,
     targetDistance: s.advanced.targetDistance,
     spoofMetadata: s.advanced.spoofMetadata,
+    edgeMode: s.advanced.edgeMode,
   };
+}
+
+export function settingsToOptions(s: SettingsState): CopyOptions {
+  return { ...settingsToPhotoOptions(s), keepTrendAudio: s.advanced.keepTrendAudio };
 }
 
 export function SettingsPanel({
@@ -51,7 +57,13 @@ export function SettingsPanel({
         <div style={{ flex: 1 }}><NField value={state.count} onChange={(count) => set({ count })} /></div>
         <div style={{ flex: 1 }}><FormatSelect value={state.format} onChange={(format) => set({ format })} /></div>
       </div>
-      <AdvancedPanel value={state.advanced} onChange={(advanced) => set({ advanced })} />
+      <AdvancedPanel
+        // Before a source is chosen there is nothing to hide, so the panel
+        // shows its full set; the kind narrows it once the file is probed.
+        kind={source?.info.kind ?? "video"}
+        value={state.advanced}
+        onChange={(advanced) => set({ advanced })}
+      />
       <RunButton disabled={!source} running={running} onClick={onRun} onStop={onStop} />
     </div>
   );

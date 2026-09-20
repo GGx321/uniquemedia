@@ -54,6 +54,7 @@ beforeAll(async () => {
       allowMirror: false,
       targetDistance: 90,
       spoofMetadata: true,
+      edgeMode: "auto",
     },
     SEED,
     1
@@ -62,8 +63,11 @@ beforeAll(async () => {
   await exec.applyDeviceMetadata!(output, profile);
 }, 60_000);
 
-afterAll(async () => {
-  await exiftool.end();
+// NOTE: do not call `exiftool.end()` here. `exiftool` is a process-wide
+// singleton shared with every other test file and with the executors
+// themselves, and ending it is irreversible — the next write anywhere fails
+// with "BatchCluster has ended, cannot enqueue". Bun exits cleanly without it.
+afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
