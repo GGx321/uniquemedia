@@ -9,6 +9,7 @@ const opts: CopyOptions = {
   allowMirror: false,
   targetDistance: 90,
   spoofMetadata: false,
+  edgeMode: "auto",
 };
 
 test("same seed and intensity is deterministic", () => {
@@ -69,9 +70,14 @@ test("crf varies around neutral and is not pinned to the clamp ceiling", () => {
 
 test("encode op carries randomized fps/gop/preset/audio params in range", () => {
   const enc = sampleRecipe(opts, 7, 1).video.find((o) => o.id === "encode")!.params;
-  expect([24, 25, 30]).toContain(enc.fps);
-  expect(["faster", "veryfast"]).toContain(enc.preset);
-  expect([96, 112, 128, 160]).toContain(enc.audioKbps);
+  // `params` is a union bag, so assert the runtime type as well as the value —
+  // a stringified fps would satisfy the range check alone.
+  expect(typeof enc.fps).toBe("number");
+  expect(typeof enc.preset).toBe("string");
+  expect(typeof enc.audioKbps).toBe("number");
+  expect([24, 25, 30]).toContain(Number(enc.fps));
+  expect(["faster", "veryfast"]).toContain(String(enc.preset));
+  expect([96, 112, 128, 160]).toContain(Number(enc.audioKbps));
   expect(enc.keyintMin).toBe(enc.fps);
   const mult = Number(enc.gop) / Number(enc.fps);
   expect([2, 3, 4]).toContain(mult);
