@@ -248,8 +248,9 @@ export class PhotoExecutor implements RenderExecutor<PhotoRecipe> {
    * `Lavc<ver>` comment:
    *
    *  - `engine`: nothing. Both stay.
-   *  - `iphone`: the EXIF identity of the profile's handset; the comment goes,
-   *    in `applyDeviceMetadata`.
+   *  - `iphone`: the EXIF identity of the profile's handset; the JFIF segment
+   *    and the comment both go, in `applyDeviceMetadata` — an iPhone JPEG has
+   *    no APP0 at all, and states its resolution in EXIF IFD0 instead.
    *  - `clean`: the JFIF segment and the comment go and nothing is added, so
    *    the file is DQT/DHT/SOF/SOS and the scan. The spec's verified recipe;
    *    the output still decodes because none of that is needed to decode.
@@ -325,6 +326,19 @@ export class PhotoExecutor implements RenderExecutor<PhotoRecipe> {
       `-EXIF:MeteringMode#=5`, // Multi-segment
       `-EXIF:Flash#=${0x10}`, // off, did not fire
       `-EXIF:Orientation#=1`, // horizontal (normal)
+
+      // An iPhone JPEG carries no JFIF APP0 segment: the Camera app writes
+      // EXIF and nothing else ahead of the tables, and states 72 x 72 per
+      // inch in IFD0. Left in place, ffmpeg's APP0 is the encoder showing
+      // through beside an Apple EXIF block (the spec's "container-level
+      // tells"). exiftool fills these three in itself when it creates IFD0,
+      // but the value is part of the identity and is pinned here rather than
+      // left to a default. ResolutionUnit has a PrintConv table, hence the
+      // raw-write `#` — see the note above.
+      `-JFIF:all=`,
+      `-EXIF:XResolution=72`,
+      `-EXIF:YResolution=72`,
+      `-EXIF:ResolutionUnit#=2`, // inches
 
       // ffmpeg's mjpeg encoder stamps "Lavc<version>" into the JFIF comment.
       // `-map_metadata -1` does not reach it, and an ffmpeg signature sitting

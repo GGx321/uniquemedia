@@ -164,6 +164,36 @@ test("iphone: the encoder's comment is gone", () => {
   expect(bytes.includes("Lavc")).toBe(false);
 });
 
+test("iphone: carries no JFIF APP0 segment, because an iPhone JPEG has none", () => {
+  // The Camera app writes EXIF and nothing else in front of the tables; a
+  // JFIF header beside an Apple EXIF block is the encoder showing through.
+  const { markers, bytes } = fileOf("iphone");
+  expect(markers.map(hex)).not.toContain(hex(APP0));
+  expect(bytes.includes("JFIF")).toBe(false);
+});
+
+test("iphone: the segment list is EXIF first, then tables, frame header and scan", () => {
+  const { markers } = fileOf("iphone");
+  expect(markers[0]).toBe(APP1);
+  const structural = new Set([APP1, 0xdb, 0xc4, 0xc0, 0xc2, 0xdd, SOS]); // APP1 DQT DHT SOF0 SOF2 DRI SOS
+  for (const m of markers) expect(structural.has(m)).toBe(true);
+});
+
+test("iphone: states 72 x 72 pixels per inch in EXIF IFD0, as the Camera app does", () => {
+  // Where the resolution lives once JFIF is gone. Read numerically (-n), so
+  // ResolutionUnit is the raw 2 (inches) and not its label.
+  const { tags } = fileOf("iphone");
+  expect(str(tags, "EXIF:XResolution")).toBe("72");
+  expect(str(tags, "EXIF:YResolution")).toBe("72");
+  expect(str(tags, "EXIF:ResolutionUnit")).toBe("2");
+});
+
+test("iphone: still decodes without a decoder complaint", () => {
+  const r = spawnSync(FFMPEG, ["-v", "error", "-i", fileOf("iphone").output, "-f", "null", "-"], { encoding: "utf8" });
+  expect(r.status).toBe(0);
+  expect(r.stderr.trim()).toBe("");
+});
+
 // ── clean ─────────────────────────────────────────────────────────────────
 
 test("clean: no APP0, no APP1 and no COM segment remain", () => {
