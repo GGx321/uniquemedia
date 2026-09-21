@@ -9,6 +9,7 @@ import type { RenderExecutor } from "../core/executor";
 import type { MediaInfo, Recipe } from "../core/types";
 import type { DeviceProfile } from "../core/deviceProfile";
 import { parseProgressFraction } from "./ffmpegProgress";
+import { scrubMovSignature } from "./movSignature";
 
 const FFMPEG = (ffmpegPath as string).replace("app.asar", "app.asar.unpacked");
 const FFPROBE = ffprobeStatic.path.replace("app.asar", "app.asar.unpacked");
@@ -159,5 +160,10 @@ export class FfmpegExecutor implements RenderExecutor {
       } as Record<string, string>,
       { writeArgs: ["-overwrite_original"] }
     );
+    // AFTER exiftool, which rewrites the file and moves every offset: the
+    // `ftyp` minor version and the `avc1` vendor are hardcoded by the muxer
+    // (0x200 and `FFMP`), exiftool accepts a write to either and changes
+    // nothing, so they are zeroed in place here.
+    await scrubMovSignature(output);
   }
 }
