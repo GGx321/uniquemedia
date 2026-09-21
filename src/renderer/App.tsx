@@ -20,7 +20,8 @@ const initial: SettingsState = {
     allowMirror: false,
     targetDistance: 38,
     strength: 1.0,
-    spoofMetadata: true,
+    // iPhone by default, as the switch this replaced defaulted to on.
+    identity: "iphone",
     // Defaults to deciding from the picture: padding is invisible on a flat
     // background and a visible border on a photograph, and the user should not
     // have to know which one they dropped in.

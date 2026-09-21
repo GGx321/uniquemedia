@@ -21,7 +21,8 @@ Flags:
 - `--target` minimum PDQ Hamming distance each copy must exceed (0..256, default 60)
 - `--keep-audio` keep trend audio (no audio modification)
 - `--mirror` allow horizontal flip
-- `--no-spoof` disable iPhone metadata spoofing (strip all metadata instead)
+- `--identity engine|iphone|clean` what a copy says about itself: `engine` keeps ffmpeg's own signature, `iphone` (default) makes it look shot on an iPhone, `clean` leaves no metadata at all
+- `--no-spoof` alias for `--identity engine`, kept for existing invocations
 - `--seed` base seed for reproducible batches
 
 ## Test

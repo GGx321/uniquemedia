@@ -43,10 +43,29 @@ export const EDGE_MODES = ["crop", "fit", "auto"] as const;
 
 export type EdgeMode = (typeof EDGE_MODES)[number];
 
+/**
+ * What a shipped file says about itself, once the source's own metadata has
+ * been stripped (every graph passes `-map_metadata -1`).
+ *
+ * `engine` leaves the encoder's honest signature where ffmpeg puts it: `Lavf`
+ * on the container, `Lavc libx264` as the compressor name, the x264 option
+ * string as an SEI in the stream; JFIF plus a `Lavc` comment on a JPEG.
+ * `iphone` replaces all of that with a capture identity — model, iOS, place,
+ * date, lens — and scrubs every trace of the encoder, because the two side by
+ * side are a stronger tell than either alone. `clean` is neither: no source
+ * metadata, no device, no encoder — a file that says nothing at all.
+ *
+ * Same list-first shape as EXPORT_FORMATS, so a host can validate an
+ * `--identity` argument against the real set.
+ */
+export const IDENTITY_MODES = ["engine", "iphone", "clean"] as const;
+
+export type IdentityMode = (typeof IDENTITY_MODES)[number];
+
 /** What the pipeline itself needs, regardless of media type. */
 export interface UniquifyOptions {
   targetDistance: number; // Hamming distance (0..256) the copy must exceed
-  spoofMetadata: boolean;
+  identity: IdentityMode;
 }
 
 /** Options shared by photo and video. */
@@ -91,7 +110,10 @@ export interface Recipe {
   intensity: number; // 1.0 baseline; raised on auto-strengthen
   exportFormat: ExportFormat;
   keepTrendAudio: boolean;
-  spoof: boolean;
+  /** Copied straight from the options, never drawn — as `blackFirstFrame`
+   *  below is: two recipes from the same seed that differ in a setting
+   *  differ in that field alone. */
+  identity: IdentityMode;
   /** Copied straight from the options, never drawn: a recipe with it on and
    *  one with it off differ in this field alone for the same seed. */
   blackFirstFrame: boolean;

@@ -9,11 +9,14 @@ async function main() {
   if (!input || input.startsWith("--")) {
     console.error("usage: uniquify <input.mp4|input.jpg> --count N [--strength 1.0] " +
       "[--format original|reels|feed|square] [--edges crop|fit|auto] [--out DIR] " +
-      "[--target 45] [--seed 1] [--no-spoof] [--black-first-frame]\n" +
+      "[--target 45] [--seed 1] [--identity engine|iphone|clean] [--black-first-frame]\n" +
       "  --format defaults to reels for video and original for photo, so a still keeps its framing.\n" +
       "  --edges says how a still carries its shift at the frame edge: crop cuts an off-centre\n" +
       "  window out, fit shrinks the picture and pads it back so nothing is lost, auto decides\n" +
       "  from the picture (the default) and is ignored for video.\n" +
+      "  --identity says what a copy claims about itself: engine leaves ffmpeg's own signature,\n" +
+      "  iphone (the default) makes it look shot on an iPhone, clean leaves no metadata at all.\n" +
+      "  --no-spoof is the old spelling of --identity engine and still works.\n" +
       "  --black-first-frame opens every video copy on one pure black frame; ignored for a still.");
     process.exit(1);
   }

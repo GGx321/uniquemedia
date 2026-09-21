@@ -6,6 +6,7 @@ import {
   createBackends,
   outputName,
   resolveExportFormat,
+  resolveIdentityMode,
   routeForInput,
   routeForKind,
   uniquifyRoute,
@@ -19,7 +20,7 @@ import { sampleRecipe } from "../core/sampler";
 import { samplePhotoRecipe } from "../core/photo/sampler";
 import { sampleDeviceProfile } from "../core/deviceProfile";
 import { makeTestClip, makeTestHeif, makeTestPhoto } from "./testClip";
-import type { MediaInfo, Recipe, StartOptions } from "../core/types";
+import type { IdentityMode, MediaInfo, Recipe, StartOptions } from "../core/types";
 import type { PhotoRecipe } from "../core/photo/types";
 import type { DeviceProfile } from "../core/deviceProfile";
 
@@ -78,10 +79,10 @@ class FakeBackend<R> implements MediaBackend<R> {
   async sampleEdgeColor(): Promise<string> {
     return "0x000000";
   }
-  async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
-    this.metadataCalls.push({ output, profile });
+  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void> {
+    this.metadataCalls.push({ output, identity, profile });
   }
-  metadataCalls: Array<{ output: string; profile: DeviceProfile }> = [];
+  metadataCalls: Array<{ output: string; identity: IdentityMode; profile: DeviceProfile }> = [];
   cancel(): void {}
   async warmup(): Promise<void> {}
 }
@@ -97,7 +98,7 @@ const opts: StartOptions = {
   exportFormat: "original",
   allowMirror: false,
   targetDistance: 30,
-  spoofMetadata: false,
+  identity: "engine",
   edgeMode: "crop",
 };
 
@@ -227,13 +228,14 @@ test("the host's clock is what dates the spoofed capture of every copy", async (
   // a batch stays reproducible from its seed and clock alone.
   const { backends, photo } = fakeBackends();
   const route = routeForKind("photo", backends);
-  await uniquifyRoute(route, "SOURCE", { ...opts, spoofMetadata: true }, 2, {
+  await uniquifyRoute(route, "SOURCE", { ...opts, identity: "iphone" }, 2, {
     seedBase: 7,
     nowMs: NOW,
     interThreshold: 0,
     outputPath: (i) => outputName("still", i, route),
   });
   expect(photo.metadataCalls.map((c) => c.output)).toEqual(["still_1.jpg", "still_2.jpg"]);
+  expect(photo.metadataCalls.map((c) => c.identity)).toEqual(["iphone", "iphone"]);
   expect(photo.metadataCalls[0].profile).toEqual(sampleDeviceProfile(7, NOW));
   expect(photo.metadataCalls[1].profile).toEqual(sampleDeviceProfile(1007, NOW));
 });
@@ -326,4 +328,33 @@ test("routeForInput picks the video route for a clip on disk", async () => {
   const route = await routeForInput(clip, backends);
   expect(route.kind).toBe("video");
   expect(route.executor).toBe(video);
+});
+
+test("an absent --identity falls back to what the host asked for", () => {
+  expect(resolveIdentityMode(undefined, "iphone")).toBe("iphone");
+  expect(resolveIdentityMode(undefined, "engine")).toBe("engine");
+});
+
+test("--identity takes every mode the type allows", () => {
+  expect(resolveIdentityMode("engine", "iphone")).toBe("engine");
+  expect(resolveIdentityMode("iphone", "engine")).toBe("iphone");
+  expect(resolveIdentityMode("clean", "iphone")).toBe("clean");
+});
+
+test("--identity rejects a mode it does not know, naming what was asked for and what is allowed", () => {
+  // Same reason as --format and --edges: an unrecognised mode that reached
+  // the graph would simply not be "iphone" and would ship as engine, with
+  // the encoder's signature on it, reported as success.
+  const err = (() => {
+    try {
+      resolveIdentityMode("apple", "iphone");
+      return null;
+    } catch (e: unknown) {
+      return e;
+    }
+  })();
+  expect(err).toBeInstanceOf(Error);
+  const message = err instanceof Error ? err.message : "";
+  expect(message).toContain("apple");
+  expect(message).toContain("engine, iphone, clean");
 });

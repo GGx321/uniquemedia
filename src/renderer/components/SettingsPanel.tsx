@@ -19,7 +19,7 @@ export function settingsToPhotoOptions(s: SettingsState): PhotoCopyOptions {
     exportFormat: s.format,
     allowMirror: s.advanced.allowMirror,
     targetDistance: s.advanced.targetDistance,
-    spoofMetadata: s.advanced.spoofMetadata,
+    identity: s.advanced.identity,
     edgeMode: s.advanced.edgeMode,
   };
 }

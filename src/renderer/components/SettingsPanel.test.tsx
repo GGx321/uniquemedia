@@ -16,7 +16,7 @@ const state: SettingsState = {
     allowMirror: true,
     targetDistance: 123,
     strength: 1.3,
-    spoofMetadata: false,
+    identity: "engine",
     edgeMode: "fit",
     blackFirstFrame: true,
   },
@@ -32,7 +32,7 @@ test("settingsToOptions maps every CopyOptions field", () => {
     keepTrendAudio: true,
     allowMirror: true,
     targetDistance: 123,
-    spoofMetadata: false,
+    identity: "engine",
     edgeMode: "fit",
     blackFirstFrame: true,
   });
@@ -44,7 +44,7 @@ test("settingsToPhotoOptions maps every PhotoCopyOptions field", () => {
     exportFormat: "feed",
     allowMirror: true,
     targetDistance: 123,
-    spoofMetadata: false,
+    identity: "engine",
     edgeMode: "fit",
   });
 });

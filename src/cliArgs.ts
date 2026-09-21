@@ -1,4 +1,9 @@
-import { resolveEdgeMode, resolveExportFormat, type MediaRoute } from "./node/mediaRoute";
+import {
+  resolveEdgeMode,
+  resolveExportFormat,
+  resolveIdentityMode,
+  type MediaRoute,
+} from "./node/mediaRoute";
 import type { StartOptions } from "./core/types";
 
 /**
@@ -29,7 +34,11 @@ export function parseStartOptions(argv: readonly string[], route: MediaRoute): S
     keepTrendAudio: flag(argv, "keep-audio"),
     allowMirror: flag(argv, "mirror"),
     targetDistance: Number(arg(argv, "target", "38")),
-    spoofMetadata: !flag(argv, "no-spoof"),
+    // `--no-spoof` predates the modes and meant "leave the encoder's own
+    // signature", which is `engine` now. It is kept as the fallback for an
+    // absent `--identity` so an existing invocation does not break; a line
+    // that names a mode gets that mode.
+    identity: resolveIdentityMode(arg(argv, "identity"), flag(argv, "no-spoof") ? "engine" : "iphone"),
     edgeMode: resolveEdgeMode(arg(argv, "edges"), "auto"),
     blackFirstFrame: flag(argv, "black-first-frame"),
   };

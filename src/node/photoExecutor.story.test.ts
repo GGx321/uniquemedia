@@ -111,7 +111,7 @@ const base: StartOptions = {
   exportFormat: "original",
   allowMirror: false,
   targetDistance: TARGET,
-  spoofMetadata: false,
+  identity: "engine",
   edgeMode: "auto",
 };
 

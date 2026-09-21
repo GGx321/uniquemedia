@@ -1,12 +1,13 @@
-import { EDGE_MODES } from "../../core/types";
-import type { EdgeMode, MediaKind } from "../../core/types";
+import { useId } from "react";
+import { EDGE_MODES, IDENTITY_MODES } from "../../core/types";
+import type { EdgeMode, IdentityMode, MediaKind } from "../../core/types";
 
 export interface AdvancedValue {
   strength: number;
   keepTrendAudio: boolean;
   allowMirror: boolean;
   targetDistance: number;
-  spoofMetadata: boolean;
+  identity: IdentityMode;
   edgeMode: EdgeMode;
   blackFirstFrame: boolean;
 }
@@ -25,6 +26,78 @@ const EDGE_LABELS: Record<EdgeMode, string> = {
   fit: "Всегда",
   crop: "Никогда",
 };
+
+/** «Метаданные»: what a copy says about itself. Three states rather than a
+ *  switch, because «Чисто» is neither on nor off — it is the absence of both
+ *  the encoder's signature and the borrowed identity. */
+const IDENTITY_LABELS: Record<IdentityMode, string> = {
+  engine: "Движок",
+  iphone: "iPhone",
+  clean: "Чисто",
+};
+
+/**
+ * The three-way choice plus the ⓘ that explains it. A CSS tooltip in the
+ * app's own register rather than a native `title`, shown on hover and on
+ * keyboard focus alike: the glyph is a real button, so Tab reaches it, and
+ * `aria-describedby` ties the text to it for a screen reader. Positioned
+ * against the row and spanning its width, so it cannot run past the panel
+ * edge that `.advanced` clips at.
+ */
+function IdentityRow({
+  value,
+  onChange,
+}: {
+  value: IdentityMode;
+  onChange: (identity: IdentityMode) => void;
+}) {
+  const labelId = useId();
+  const tipId = useId();
+  return (
+    <div className="adv-row adv-row-static">
+      <span className="adv-label">
+        <span id={labelId}>Метаданные</span>
+        <span className="info-wrap">
+          <button
+            type="button"
+            className="info"
+            aria-label="Что означают режимы"
+            aria-describedby={tipId}
+          >
+            i
+          </button>
+          <span role="tooltip" id={tipId} className="tip">
+            <p>
+              <b>Движок</b> — метаданные исходника удалены, но в файле остаётся
+              подпись кодировщика (ffmpeg, x264).
+            </p>
+            <p>
+              <b>iPhone</b> — файл выглядит снятым на iPhone: модель, дата, место,
+              объектив. Следов кодировщика нет.
+            </p>
+            <p>
+              <b>Чисто</b> — никаких метаданных и подписей. Голый файл.
+            </p>
+          </span>
+        </span>
+      </span>
+      <div className="seg" role="radiogroup" aria-labelledby={labelId}>
+        {IDENTITY_MODES.map((m) => (
+          <button
+            key={m}
+            type="button"
+            role="radio"
+            aria-checked={value === m}
+            className="seg-btn"
+            onClick={() => onChange(m)}
+          >
+            {IDENTITY_LABELS[m]}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function AdvancedPanel({
   kind,
@@ -114,16 +187,7 @@ export function AdvancedPanel({
             </span>
           </label>
         )}
-        <label className="adv-row">
-          Метаданные iPhone
-          <input
-            className="switch"
-            aria-label="Метаданные iPhone"
-            type="checkbox"
-            checked={value.spoofMetadata}
-            onChange={(e) => set({ spoofMetadata: e.target.checked })}
-          />
-        </label>
+        <IdentityRow value={value.identity} onChange={(identity) => set({ identity })} />
       </div>
     </details>
   );

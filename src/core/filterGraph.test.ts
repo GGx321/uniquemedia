@@ -9,7 +9,7 @@ const recipe: Recipe = {
   intensity: 1,
   exportFormat: "reels",
   keepTrendAudio: false,
-  spoof: false,
+  identity: "engine",
   blackFirstFrame: false,
   segments: [
     { fraction: 0.5, speed: 1.03 },
@@ -119,7 +119,7 @@ test("uses the per-copy audio bitrate for -b:a", () => {
   expect(buildArgs(hi, info)[buildArgs(hi, info).indexOf("-b:a") + 1]).toBe("160k");
 });
 
-const spoofRecipe: Recipe = { ...recipe, spoof: true };
+const spoofRecipe: Recipe = { ...recipe, identity: "iphone" };
 
 test("spoof: -f mov is the last flag, plus profile/bt709/handlers", () => {
   const args = buildArgs(spoofRecipe, info);

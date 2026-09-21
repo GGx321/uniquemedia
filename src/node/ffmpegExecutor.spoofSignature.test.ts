@@ -34,7 +34,7 @@ const opts: CopyOptions = {
   keepTrendAudio: false,
   allowMirror: false,
   targetDistance: 90,
-  spoofMetadata: true,
+  identity: "iphone",
   edgeMode: "auto",
   blackFirstFrame: false,
 };

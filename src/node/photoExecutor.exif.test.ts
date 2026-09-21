@@ -23,7 +23,7 @@ const OPTS: ResolvedPhotoOptions = {
   exportFormat: "original",
   allowMirror: false,
   targetDistance: 30,
-  spoofMetadata: true,
+  identity: "iphone",
   // These predate the edge option and pin the crop behaviour they were
   // written against; the fit direction has its own tests.
   edge: { mode: "crop" },

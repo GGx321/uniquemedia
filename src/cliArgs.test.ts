@@ -16,7 +16,7 @@ const route = routeForKind("video", createBackends());
 const line = (...rest: string[]): string[] => ["bun", "cli.ts", "in.mp4", ...rest];
 
 test("--no-spoof last on the line turns spoofing off", () => {
-  expect(parseStartOptions(line("--count", "1", "--no-spoof"), route).spoofMetadata).toBe(false);
+  expect(parseStartOptions(line("--count", "1", "--no-spoof"), route).identity).toBe("engine");
 });
 
 test("--keep-audio last on the line keeps the audio", () => {
@@ -36,7 +36,7 @@ test("a switch followed by another option is still seen", () => {
     line("--no-spoof", "--keep-audio", "--mirror", "--black-first-frame", "--count", "1"),
     route
   );
-  expect(opts.spoofMetadata).toBe(false);
+  expect(opts.identity).toBe("engine");
   expect(opts.keepTrendAudio).toBe(true);
   expect(opts.allowMirror).toBe(true);
   expect(opts.blackFirstFrame).toBe(true);
@@ -44,7 +44,7 @@ test("a switch followed by another option is still seen", () => {
 
 test("switches that are absent take their defaults", () => {
   const opts = parseStartOptions(line("--count", "1"), route);
-  expect(opts.spoofMetadata).toBe(true);
+  expect(opts.identity).toBe("iphone");
   expect(opts.keepTrendAudio).toBe(false);
   expect(opts.allowMirror).toBe(false);
   expect(opts.blackFirstFrame).toBe(false);
@@ -70,4 +70,44 @@ test("flag reads presence alone", () => {
   expect(flag(line("--mirror"), "mirror")).toBe(true);
   expect(flag(line("--mirror", "x"), "mirror")).toBe(true);
   expect(flag(line(), "mirror")).toBe(false);
+});
+
+/**
+ * `--identity` names one of the three modes outright. `--no-spoof` predates
+ * it and meant "leave the encoder's signature", which is now `engine`; it
+ * stays as an alias so an existing invocation does not break.
+ */
+
+test.each(["engine", "iphone", "clean"] as const)("--identity %s asks for that mode", (mode) => {
+  expect(parseStartOptions(line("--count", "1", "--identity", mode), route).identity).toBe(mode);
+});
+
+test("an absent --identity defaults to iphone, as the switch defaulted to on", () => {
+  expect(parseStartOptions(line("--count", "1"), route).identity).toBe("iphone");
+});
+
+test("--no-spoof is an alias for --identity engine", () => {
+  expect(parseStartOptions(line("--no-spoof"), route).identity).toBe("engine");
+});
+
+test("an explicit --identity wins over the --no-spoof alias", () => {
+  // The alias is a default for the old spelling, not a veto: a line that
+  // names a mode gets that mode.
+  expect(parseStartOptions(line("--no-spoof", "--identity", "clean"), route).identity).toBe("clean");
+  expect(parseStartOptions(line("--identity", "iphone", "--no-spoof"), route).identity).toBe("iphone");
+});
+
+test("--identity rejects a mode it does not know, naming the valid ones", () => {
+  const err = (() => {
+    try {
+      parseStartOptions(line("--identity", "apple"), route);
+      return null;
+    } catch (e: unknown) {
+      return e;
+    }
+  })();
+  expect(err).toBeInstanceOf(Error);
+  const message = err instanceof Error ? err.message : "";
+  expect(message).toContain("apple");
+  for (const mode of ["engine", "iphone", "clean"]) expect(message).toContain(mode);
 });

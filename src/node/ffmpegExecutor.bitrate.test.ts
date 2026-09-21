@@ -56,7 +56,7 @@ test("rendered reel stays within the 3.5 Mbit/s ceiling on a source that would b
   const info = await exec.probe(input);
   const opts: CopyOptions = {
     strength: 1, exportFormat: "reels", keepTrendAudio: false, allowMirror: false,
-    targetDistance: 60, spoofMetadata: false, edgeMode: "auto", blackFirstFrame: false,
+    targetDistance: 60, identity: "engine", edgeMode: "auto", blackFirstFrame: false,
   };
   const out = join(dir, "out.mp4");
   await exec.render(input, info, sampleRecipe(opts, 42, 1), out);

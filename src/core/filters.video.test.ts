@@ -23,7 +23,7 @@ const opts: CopyOptions = {
   keepTrendAudio: false,
   allowMirror: false,
   targetDistance: 38,
-  spoofMetadata: false,
+  identity: "engine",
   edgeMode: "auto",
   blackFirstFrame: false,
 };

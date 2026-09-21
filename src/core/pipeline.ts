@@ -77,24 +77,27 @@ export async function uniquify<R, O extends UniquifyOptions>(
   const originalHashes = hashFrames(await executor.extractGrayFrames(input, framesPerCopy));
 
   /**
-   * Stamps the spoofed device identity onto a file that is finished being
-   * rendered. EVERY path that writes a shipped file has to end here: the graph
+   * Gives a file that is finished being rendered the identity the batch asked
+   * for. EVERY path that writes a shipped file has to end here: the graph
    * strips metadata on its way out (`-map_metadata -1`) and the scrub of the
-   * encoder's own signature lives inside `applyDeviceMetadata`, so a file whose
-   * last touch was a render ships with no EXIF and the encoder's comment still
-   * on it. One such file in a batch of spoofed ones is a stronger tell than no
-   * spoofing at all — which is why this is a helper and not two call sites that
-   * have to be remembered separately.
+   * encoder's own signature lives inside the executor's identity pass, so a
+   * file whose last touch was a render ships with no EXIF and the encoder's
+   * comment still on it. One such file in a batch of spoofed ones is a stronger
+   * tell than no spoofing at all — which is why this is a helper and not two
+   * call sites that have to be remembered separately.
+   *
+   * Every mode goes down, `engine` included: what a mode means for a medium is
+   * the executor's call, and skipping one here would be making it for them.
    *
    * The profile comes from the copy's own index, never from the seed of the
    * render that produced the file: re-rendering a copy re-draws the picture,
    * not the phone, and a second identity on the same file would contradict the
    * first. Media-agnostic by construction — video and photo both land here.
    */
-  async function applySpoofedIdentity(index: number, output: string): Promise<void> {
-    if (!opts.spoofMetadata || !executor.applyDeviceMetadata) return;
+  async function applyIdentity(index: number, output: string): Promise<void> {
+    if (!executor.applyIdentity) return;
     const profile = sampleDeviceProfile(config.seedBase + index * 1000, config.nowMs ?? Date.now());
-    await executor.applyDeviceMetadata(output, profile);
+    await executor.applyIdentity(output, opts.identity, profile);
   }
 
   // Produces the best CopyResult for copy `i`, or null when aborted / no best.
@@ -156,7 +159,7 @@ export async function uniquify<R, O extends UniquifyOptions>(
       }
     }
 
-    await applySpoofedIdentity(i, out);
+    await applyIdentity(i, out);
 
     return best;
   }
@@ -221,7 +224,7 @@ export async function uniquify<R, O extends UniquifyOptions>(
       }
       regenCount++;
       // The render above overwrote whatever `processCopy` stamped on this file.
-      await applySpoofedIdentity(results[i].index, out);
+      await applyIdentity(results[i].index, out);
       const newRawFrames = await executor.extractGrayFrames(out, framesPerCopy);
       const newHashes = hashFrames(newRawFrames);
       const newVerify = verifyCopy(originalHashes, newHashes, opts.targetDistance);

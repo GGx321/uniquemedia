@@ -37,7 +37,7 @@ class TagExecutor implements RenderExecutor<TagRecipe> {
   }
 }
 
-const opts: UniquifyOptions = { targetDistance: 40, spoofMetadata: false };
+const opts: UniquifyOptions = { targetDistance: 40, identity: "engine" };
 
 test("drives an executor whose recipe type is not the video Recipe", async () => {
   const exec = new TagExecutor();
@@ -80,7 +80,7 @@ test("hands sampleRecipe the very options object it verifies against", async () 
   // Unreachable target + colliding frames exercise BOTH call sites: the retry
   // loop and the inter-copy regeneration.
   const exec = new TagExecutor();
-  const strictOpts: UniquifyOptions = { targetDistance: 200, spoofMetadata: false };
+  const strictOpts: UniquifyOptions = { targetDistance: 200, identity: "engine" };
   const seen: UniquifyOptions[] = [];
 
   await uniquify("ORIGINAL", strictOpts, exec, 2, {

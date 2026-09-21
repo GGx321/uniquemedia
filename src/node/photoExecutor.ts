@@ -7,7 +7,7 @@ import { buildPhotoArgs } from "../core/photo/filterGraph";
 import { edgePadColor } from "../core/photo/edges";
 import { parseFfprobeJson } from "./ffprobeJson";
 import type { RenderExecutor } from "../core/executor";
-import type { MediaInfo } from "../core/types";
+import type { IdentityMode, MediaInfo } from "../core/types";
 import type { PhotoRecipe } from "../core/photo/types";
 import type { DeviceProfile } from "../core/deviceProfile";
 
@@ -226,6 +226,27 @@ export class PhotoExecutor implements RenderExecutor<PhotoRecipe> {
       run(FFMPEG, ["-version"]),
       run(FFPROBE, ["-version"]),
     ]);
+  }
+
+  /**
+   * What each identity mode does to a rendered still. The graph has already
+   * stripped the source's metadata (`-map_metadata -1`); what is left is what
+   * ffmpeg's mjpeg encoder adds of its own — a JFIF APP0 segment and a
+   * `Lavc<ver>` comment:
+   *
+   *  - `engine`: nothing. Both stay.
+   *  - `iphone`: the EXIF identity of the profile's handset; the comment goes,
+   *    in `applyDeviceMetadata`.
+   *  - `clean`: the JFIF segment and the comment go and nothing is added, so
+   *    the file is DQT/DHT/SOF/SOS and the scan. The spec's verified recipe;
+   *    the output still decodes because none of that is needed to decode.
+   */
+  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void> {
+    if (identity === "iphone") {
+      await this.applyDeviceMetadata(output, profile);
+    } else if (identity === "clean") {
+      await exiftool.write(output, {}, { writeArgs: ["-JFIF:all=", "-Comment=", "-overwrite_original"] });
+    }
   }
 
   /**

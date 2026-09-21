@@ -17,7 +17,7 @@ const recipe: Recipe = {
   intensity: 1,
   exportFormat: "reels",
   keepTrendAudio: false,
-  spoof: false,
+  identity: "engine",
   blackFirstFrame: false,
   segments: [
     { fraction: 0.5, speed: 1.03 },
@@ -30,7 +30,8 @@ const recipe: Recipe = {
   audio: [{ id: "aeq", params: { gain: 1.5 } }],
 };
 
-const spoofRecipe: Recipe = { ...recipe, spoof: true };
+const spoofRecipe: Recipe = { ...recipe, identity: "iphone" };
+const cleanRecipe: Recipe = { ...recipe, identity: "clean" };
 
 /** Everything from `-c:v` to the end: the encode tail, with the filter graph
  *  and stream mapping in front of it cut off. */
@@ -166,5 +167,66 @@ test("spoof: the encode tail is the non-spoof tail plus exactly the spoof flags"
     "-metadata:s:v", "encoder=H.264",
     "-metadata:s:a", "handler_name=Core Media Audio",
     "-f", "mov",
+  ]);
+});
+
+/**
+ * `clean` is the iphone scrub without the iphone: every place ffmpeg signs its
+ * work is turned off, and nothing is written in its place — no Apple handler
+ * names, no `encoder=H.264`, no bt709 tagging, and the container stays the MP4
+ * the output extension asks for rather than being forced to MOV.
+ */
+
+test("clean: asks the muxer and both encoders for bitexact output", () => {
+  const args = buildArgs(cleanRecipe, info);
+  expect(valueAfter(args, "-fflags")).toBe("+bitexact");
+  expect(valueAfter(args, "-flags:v")).toBe("+bitexact");
+  expect(valueAfter(args, "-flags:a")).toBe("+bitexact");
+});
+
+test("clean without audio: no audio bitexact flag for a stream that does not exist", () => {
+  const args = buildArgs(cleanRecipe, { ...info, hasAudio: false });
+  expect(args).not.toContain("-flags:a");
+  expect(valueAfter(args, "-flags:v")).toBe("+bitexact");
+});
+
+test("clean: strips SEI NAL units (type 6) from the H.264 stream", () => {
+  expect(valueAfter(buildArgs(cleanRecipe, info), "-bsf:v")).toBe("filter_units=remove_types=6");
+});
+
+test("clean: writes no identity of its own — no handler names, no compressor name, no colour tags", () => {
+  const args = buildArgs(cleanRecipe, info);
+  for (const flag of ["-metadata:s:v", "-metadata:s:a", "-profile:v", "-colorspace", "-color_primaries", "-color_trc"]) {
+    expect(args).not.toContain(flag);
+  }
+  expect(args.join(" ")).not.toContain("Core Media");
+  expect(args.join(" ")).not.toContain("encoder=");
+  expect(args.join(" ")).not.toContain("bt709");
+});
+
+test("clean: leaves the container to the output extension instead of forcing MOV", () => {
+  // A `.mp4` path gets the MP4 muxer, whose `avc1` vendor is already zeros.
+  expect(buildArgs(cleanRecipe, info)).not.toContain("-f");
+});
+
+test("clean: the encode tail is the engine tail plus exactly the scrub flags", () => {
+  // Pinned whole, like the other two: the three tails may only diverge here.
+  expect(encodeTail(buildArgs(cleanRecipe, info))).toEqual([
+    "-c:v", "libx264",
+    "-preset", "medium",
+    "-crf", "21",
+    "-maxrate", "3500k",
+    "-bufsize", "7000k",
+    "-pix_fmt", "yuv420p",
+    "-r", "30",
+    "-fps_mode", "cfr",
+    "-g", "60",
+    "-keyint_min", "30",
+    "-movflags", "+faststart",
+    "-map_metadata", "-1",
+    "-fflags", "+bitexact",
+    "-flags:v", "+bitexact",
+    "-flags:a", "+bitexact",
+    "-bsf:v", "filter_units=remove_types=6",
   ]);
 });

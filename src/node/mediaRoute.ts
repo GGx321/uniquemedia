@@ -6,11 +6,12 @@ import { sampleRecipe } from "../core/sampler";
 import { samplePhotoRecipe } from "../core/photo/sampler";
 import type { RenderExecutor } from "../core/executor";
 import { shouldPreserveEdges } from "../core/photo/edges";
-import { EDGE_MODES, EXPORT_FORMATS } from "../core/types";
+import { EDGE_MODES, EXPORT_FORMATS, IDENTITY_MODES } from "../core/types";
 import type {
   CopyOptions,
   EdgeMode,
   ExportFormat,
+  IdentityMode,
   MediaKind,
   Recipe,
   StartOptions,
@@ -158,6 +159,21 @@ export function resolveEdgeMode(requested: string | undefined, fallback: EdgeMod
   const match = EDGE_MODES.find((m) => m === requested);
   if (match === undefined) {
     throw new Error(`Unknown --edges ${requested}. Expected one of: ${EDGE_MODES.join(", ")}.`);
+  }
+  return match;
+}
+
+/**
+ * Turns an `--identity` argument into an identity mode. Same shape and the
+ * same reason as `resolveEdgeMode`: an unrecognised mode that reached the
+ * graph would simply not be `iphone` and would ship as `engine`, with the
+ * encoder's signature on it, reported as success.
+ */
+export function resolveIdentityMode(requested: string | undefined, fallback: IdentityMode): IdentityMode {
+  if (requested === undefined) return fallback;
+  const match = IDENTITY_MODES.find((m) => m === requested);
+  if (match === undefined) {
+    throw new Error(`Unknown --identity ${requested}. Expected one of: ${IDENTITY_MODES.join(", ")}.`);
   }
   return match;
 }

@@ -8,7 +8,7 @@ const opts: CopyOptions = {
   keepTrendAudio: false,
   allowMirror: false,
   targetDistance: 90,
-  spoofMetadata: false,
+  identity: "engine",
   edgeMode: "auto",
   blackFirstFrame: false,
 };
@@ -169,3 +169,14 @@ test("blackFirstFrame never touches the rng: every other recipe field is identic
     expect(restOn).toEqual(restOff);
   }
 });
+
+test.each(["engine", "iphone", "clean"] as const)(
+  "the recipe carries the %s identity mode straight from the options, never drawn",
+  (identity) => {
+    // The mode is a setting, not a draw: two recipes from the same seed that
+    // differ only in the mode must differ in this field alone.
+    const r = sampleRecipe({ ...opts, identity }, 5, 1);
+    expect(r.identity).toBe(identity);
+    expect("spoof" in r).toBe(false);
+  }
+);

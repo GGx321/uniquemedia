@@ -39,7 +39,7 @@ const opts: ResolvedPhotoOptions = {
   allowMirror: false,
   // Low enough that no copy needs a retry: this test is about the post-pass.
   targetDistance: 10,
-  spoofMetadata: true,
+  identity: "iphone",
   // These predate the edge option and pin the crop behaviour they were
   // written against; the fit direction has its own tests.
   edge: { mode: "crop" },

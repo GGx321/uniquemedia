@@ -134,7 +134,7 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
 
   args.push("-c:v", "libx264", "-preset", preset);
 
-  if (recipe.spoof) {
+  if (recipe.identity === "iphone") {
     args.push(
       "-profile:v", "high",
       "-colorspace", "bt709",
@@ -156,15 +156,17 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
     "-map_metadata", "-1"
   );
 
-  if (recipe.spoof) {
+  if (recipe.identity !== "engine") {
     // `-map_metadata -1` above strips what the SOURCE carried; ffmpeg's own
     // signature goes in after that and has to be turned off at each place it
-    // is written:
+    // is written — for `iphone` and `clean` alike:
     //  - muxer `bitexact`: no `encoder=Lavf<ver>` on the container;
     //  - video-encoder `bitexact`: the stream compressor name loses its
-    //    version (`Lavc libx264`); the `encoder=H.264` tag below replaces it,
-    //    since in MOV the compressor name IS the track's `encoder` tag, and
-    //    H.264 is what an iPhone writes there;
+    //    version (`Lavc libx264`); the iphone branch's `encoder=H.264` tag
+    //    replaces it, since in MOV the compressor name IS the track's
+    //    `encoder` tag, and H.264 is what an iPhone writes there. `clean`
+    //    writes nothing there, so the muxer's `Lavc libx264` is blanked after
+    //    the render instead, in the executor's identity pass;
     //  - audio-encoder `bitexact`: the native AAC encoder otherwise embeds
     //    `Lavc<ver>` as a FIL element in the first frame — inside the coded
     //    audio, where no metadata flag reaches;
@@ -173,13 +175,18 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
     //    that is the only SEI x264 emits, so dropping the type loses nothing
     //    a decoder needs.
     // Measured on libx264: bitexact leaves the coded video byte-identical.
-    // The `ftyp` minor version (0x200) and the `avc1` vendor (`FFMP`) are
-    // hardcoded by the MOV muxer and are patched after the render, in
-    // `applyDeviceMetadata`.
+    // The `ftyp` minor version (0x200) and, in MOV mode, the `avc1` vendor
+    // (`FFMP`) are hardcoded by the muxer and are patched after the render.
     args.push("-fflags", "+bitexact", "-flags:v", "+bitexact");
     if (info.hasAudio) args.push("-flags:a", "+bitexact");
+    args.push("-bsf:v", "filter_units=remove_types=6");
+  }
+
+  if (recipe.identity === "iphone") {
+    // What the file says instead: Apple's handler names and compressor name,
+    // in the QuickTime container an iPhone writes. `clean` says nothing and
+    // stays in the MP4 the output extension asks for.
     args.push(
-      "-bsf:v", "filter_units=remove_types=6",
       "-metadata:s:v", "handler_name=Core Media Video",
       "-metadata:s:v", "encoder=H.264",
     );

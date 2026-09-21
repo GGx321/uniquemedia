@@ -9,15 +9,17 @@ import { makeTestClip } from "./testClip";
 import type { MediaInfo, Recipe } from "../core/types";
 
 /**
- * The spoof branch asks libx264 and the AAC encoder for `bitexact` output and
- * strips the x264 SEI. None of that may change the picture: "invisible to the
- * eye" is the invariant the whole tool rests on, and a flag that quietly
- * re-tuned the encode would break it while every metadata test stayed green.
+ * The iphone and clean branches ask libx264 and the AAC encoder for `bitexact`
+ * output and strip the x264 SEI. None of that may change the picture:
+ * "invisible to the eye" is the invariant the whole tool rests on, and a flag
+ * that quietly re-tuned the encode would break it while every metadata test
+ * stayed green.
  *
- * So the same recipe is rendered spoof OFF and spoof ON and the coded video is
- * compared packet by packet. The recipe is hand-built with no `noise` in it:
- * the noise filter seeds itself from the clock, so two renders of a sampled
- * recipe never match byte for byte and could not prove anything here.
+ * So the same recipe is rendered in engine, iphone and clean mode and the
+ * coded video is compared packet by packet. The recipe is hand-built with no
+ * `noise` in it: the noise filter seeds itself from the clock, so two renders
+ * of a sampled recipe never match byte for byte and could not prove anything
+ * here.
  */
 
 const FFPROBE = ffprobeStatic.path.replace("app.asar", "app.asar.unpacked");
@@ -29,7 +31,7 @@ const recipe: Recipe = {
   intensity: 1,
   exportFormat: "square",
   keepTrendAudio: false,
-  spoof: false,
+  identity: "engine",
   blackFirstFrame: false,
   segments: [
     { fraction: 0.5, speed: 1.03 },
@@ -48,6 +50,7 @@ const SEI_MAX_BYTES = 2048;
 let dir: string;
 let plain: string;
 let spoofed: string;
+let clean: string;
 const exec = new FfmpegExecutor();
 
 /** Sizes of every packet of the first stream of `type`, in file order. */
@@ -69,9 +72,11 @@ beforeAll(async () => {
   makeTestClip(input);
   plain = join(dir, "plain.mp4");
   spoofed = join(dir, "spoofed.mov");
+  clean = join(dir, "clean.mp4");
   await exec.render(input, info, recipe, plain);
-  await exec.render(input, info, { ...recipe, spoof: true }, spoofed);
-}, 60_000);
+  await exec.render(input, info, { ...recipe, identity: "iphone" }, spoofed);
+  await exec.render(input, info, { ...recipe, identity: "clean" }, clean);
+}, 90_000);
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -99,6 +104,28 @@ test("spoof leaves the audio packet count and size where they were", () => {
   // the bit reservoir then settles within a few bytes over the whole stream.
   const off = packetSizes(plain, "a");
   const on = packetSizes(spoofed, "a");
+  expect(on.length).toBe(off.length);
+  expect(Math.abs(sum(on) - sum(off))).toBeLessThan(sum(off) * 0.005);
+});
+
+test("clean leaves every coded video packet after the first byte-identical", () => {
+  const off = packetSizes(plain, "v");
+  const on = packetSizes(clean, "v");
+  expect(on.length).toBe(off.length);
+  expect(on.slice(1)).toEqual(off.slice(1));
+});
+
+test("clean shrinks the first video packet by the SEI and nothing more", () => {
+  const off = packetSizes(plain, "v");
+  const on = packetSizes(clean, "v");
+  const removed = off[0] - on[0];
+  expect(removed).toBeGreaterThan(0);
+  expect(removed).toBeLessThan(SEI_MAX_BYTES);
+});
+
+test("clean leaves the audio packet count and size where they were", () => {
+  const off = packetSizes(plain, "a");
+  const on = packetSizes(clean, "a");
   expect(on.length).toBe(off.length);
   expect(Math.abs(sum(on) - sum(off))).toBeLessThan(sum(off) * 0.005);
 });

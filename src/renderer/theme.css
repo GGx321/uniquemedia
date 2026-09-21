@@ -829,6 +829,123 @@ input[type="range"]:active::-webkit-slider-thumb {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* ── three-way identity: a segmented control in the switch's register ── */
+/* The one adv-row that is not a label: its controls are buttons, and the
+   tooltip anchors to it so it can span the row and never leave the panel. */
+.adv-row-static {
+  position: relative;
+  cursor: default;
+}
+.adv-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.seg {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 99px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.seg-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 5px 11px;
+  border-radius: 99px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease);
+}
+.seg-btn:hover {
+  color: var(--text);
+}
+.seg-btn[aria-checked="true"] {
+  background: var(--accent);
+  color: #fff;
+}
+.seg-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* the ⓘ glyph and its tooltip */
+.info-wrap {
+  display: inline-flex;
+}
+.info {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  transition: color 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.info:hover,
+.info:focus-visible {
+  color: var(--accent-2);
+  border-color: var(--accent);
+}
+.info:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease), visibility 0s linear 0.18s;
+}
+.info-wrap:hover .tip,
+.info-wrap:focus-within .tip {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+.tip p {
+  margin: 0;
+}
+.tip p + p {
+  margin-top: 6px;
+}
+.tip b {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* ══════════════════════════════════════════════════════════
    RUN BUTTON
    ══════════════════════════════════════════════════════════ */

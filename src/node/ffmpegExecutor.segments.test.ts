@@ -20,7 +20,7 @@ const recipe: Recipe = {
   intensity: 1,
   exportFormat: "original",
   keepTrendAudio: false,
-  spoof: false,
+  identity: "engine",
   blackFirstFrame: false,
   segments: [
     { fraction: 0.5, speed: 1.03 },

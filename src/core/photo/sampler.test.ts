@@ -10,7 +10,7 @@ const opts: ResolvedPhotoOptions = {
   exportFormat: "original",
   allowMirror: false,
   targetDistance: 90,
-  spoofMetadata: false,
+  identity: "engine",
   edge: { mode: "crop" },
 };
 
@@ -42,7 +42,7 @@ test("different seeds produce different recipes", () => {
 });
 
 test("recipe carries the caller's seed, intensity and export format", () => {
-  const r = samplePhotoRecipe({ ...opts, exportFormat: "square", spoofMetadata: true }, 9, 1.4);
+  const r = samplePhotoRecipe({ ...opts, exportFormat: "square", identity: "iphone" }, 9, 1.4);
   expect(r.seed).toBe(9);
   expect(r.intensity).toBe(1.4);
   expect(r.exportFormat).toBe("square");
@@ -55,7 +55,7 @@ test("the recipe carries no field the photo graph does not read", () => {
   // reads as a setting the renderer honours, and the next person to add one
   // finds precedent for it. Pinning the whole key set is what makes the next
   // dead field visible the moment it appears.
-  const r = samplePhotoRecipe({ ...opts, spoofMetadata: true }, 9, 1.4);
+  const r = samplePhotoRecipe({ ...opts, identity: "iphone" }, 9, 1.4);
   expect(Object.keys(r).sort()).toEqual([
     "encode",
     "exportFormat",

@@ -3,7 +3,8 @@ import { uniquify } from "./pipeline";
 import { sampleRecipe } from "./sampler";
 import { sampleDeviceProfile } from "./deviceProfile";
 import type { RenderExecutor } from "./executor";
-import type { CopyOptions, MediaInfo, Recipe } from "./types";
+import { IDENTITY_MODES } from "./types";
+import type { CopyOptions, IdentityMode, MediaInfo, Recipe } from "./types";
 import type { DeviceProfile } from "./deviceProfile";
 
 const info: MediaInfo = { kind: "video", durationSec: 4, width: 640, height: 480, hasAudio: true };
@@ -29,7 +30,7 @@ class ProgMock implements RenderExecutor {
 
 const opts: CopyOptions = {
   strength: 1.0, exportFormat: "reels", keepTrendAudio: false, allowMirror: false, targetDistance: 40,
-  spoofMetadata: false,
+  identity: "engine",
   edgeMode: "auto",
   blackFirstFrame: false,
 };
@@ -50,16 +51,22 @@ test("fires onProgress per render tick and onCopyDone per accepted copy", async 
   expect(done).toEqual([0, 1]);
 });
 
+interface IdentityCall {
+  output: string;
+  identity: IdentityMode;
+  profile: DeviceProfile;
+}
+
 class SpyMock extends ProgMock {
-  metadataCalls: Array<{ output: string; profile: DeviceProfile }> = [];
-  async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
-    this.metadataCalls.push({ output, profile });
+  metadataCalls: IdentityCall[] = [];
+  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void> {
+    this.metadataCalls.push({ output, identity, profile });
   }
 }
 
-test("applyDeviceMetadata is called once per copy when spoofMetadata is true", async () => {
+test("applyIdentity is called once per copy with the iphone mode from the options", async () => {
   const exec = new SpyMock();
-  const spoofOpts: CopyOptions = { ...opts, spoofMetadata: true };
+  const spoofOpts: CopyOptions = { ...opts, identity: "iphone" };
   const res = await uniquify("ORIGINAL", spoofOpts, exec, 3, {
     seedBase: 1,
     framesPerCopy: 4,
@@ -76,16 +83,38 @@ test("applyDeviceMetadata is called once per copy when spoofMetadata is true", a
   expect(exec.metadataCalls.length).toBe(3);
   // profiles are deterministic and unique per copy
   for (let i = 0; i < 3; i++) {
+    expect(exec.metadataCalls[i].identity).toBe("iphone");
     expect(exec.metadataCalls[i].profile.make).toBe("Apple");
   }
 });
+
+test.each([...IDENTITY_MODES])(
+  "applyIdentity reaches the executor for every shipped copy in %s mode — the pipeline never decides what a mode means",
+  async (identity) => {
+    // `engine` used to short-circuit here as "spoofing off". The executor is
+    // the only place that knows what each mode does to a file (nothing, for a
+    // video in engine mode; a JFIF strip for a still in clean mode), so the
+    // pipeline hands every mode down and decides none of them.
+    const exec = new SpyMock();
+    const res = await uniquify("ORIGINAL", { ...opts, identity }, exec, 3, {
+      seedBase: 1,
+      framesPerCopy: 4,
+      nowMs: 1_700_000_000_000,
+      interThreshold: 0,
+      sampleRecipe,
+    });
+    expect(res.length).toBe(3);
+    expect(exec.metadataCalls.map((c) => c.identity)).toEqual([identity, identity, identity]);
+    expect(exec.metadataCalls.map((c) => c.output)).toEqual(res.map((r) => r.outputPath));
+  }
+);
 
 /** Logs renders and metadata writes in the order they happen, per output file.
  *  The invariant is about ordering, not counting: whatever else happens, the
  *  last thing to touch a file that ships must be the metadata write. */
 class OrderMock extends ProgMock {
   log: Array<{ op: "render" | "metadata"; output: string }> = [];
-  metadataCalls: Array<{ output: string; profile: DeviceProfile }> = [];
+  metadataCalls: IdentityCall[] = [];
   async render(
     input: string,
     info: MediaInfo,
@@ -96,45 +125,50 @@ class OrderMock extends ProgMock {
     this.log.push({ op: "render", output });
     await super.render(input, info, recipe, output, onProgress);
   }
-  async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
+  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void> {
     this.log.push({ op: "metadata", output });
-    this.metadataCalls.push({ output, profile });
+    this.metadataCalls.push({ output, identity, profile });
   }
 }
 
-test("re-applies the device metadata after the inter-copy post-pass re-renders a copy", async () => {
-  // The photo graph always passes `-map_metadata -1` and the encoder-signature
-  // scrub lives in applyDeviceMetadata, so a copy whose last touch was a render
-  // ships with NO EXIF and with the encoder's own comment still on it. A batch
-  // where some files claim to be an iPhone and others carry `Lavc60.3.100` is a
-  // stronger tell than not spoofing at all.
-  const exec = new OrderMock();
-  const spoofOpts: CopyOptions = { ...opts, spoofMetadata: true };
-  const res = await uniquify("ORIGINAL", spoofOpts, exec, 3, {
-    seedBase: 1,
-    framesPerCopy: 4,
-    nowMs: 1_700_000_000_000,
-    outputPath: (i) => `copy_${i + 1}.mp4`,
-    sampleRecipe,
-  });
+test.each([...IDENTITY_MODES])(
+  "re-applies the %s identity after the inter-copy post-pass re-renders a copy",
+  async (identity) => {
+    // The photo graph always passes `-map_metadata -1` and the encoder-signature
+    // scrub lives in the executor's identity pass, so a copy whose last touch
+    // was a render ships with NO EXIF and with the encoder's own comment still
+    // on it. A batch where some files claim to be an iPhone and others carry
+    // `Lavc60.3.100` is a stronger tell than not spoofing at all — and the same
+    // holds for `clean`, where the re-rendered file would be the one member of
+    // the batch still signed by the encoder.
+    const exec = new OrderMock();
+    const res = await uniquify("ORIGINAL", { ...opts, identity }, exec, 3, {
+      seedBase: 1,
+      framesPerCopy: 4,
+      nowMs: 1_700_000_000_000,
+      outputPath: (i) => `copy_${i + 1}.mp4`,
+      sampleRecipe,
+    });
 
-  expect(res.length).toBe(3);
-  // Guard the premise: identical frames must actually have tripped the
-  // post-pass, or the ordering assertion below proves nothing.
-  expect(exec.log.filter((e) => e.op === "render").length).toBeGreaterThan(3);
+    expect(res.length).toBe(3);
+    // Guard the premise: identical frames must actually have tripped the
+    // post-pass, or the ordering assertion below proves nothing.
+    expect(exec.log.filter((e) => e.op === "render").length).toBeGreaterThan(3);
 
-  for (const r of res) {
-    const touches = exec.log.filter((e) => e.output === r.outputPath);
-    expect(touches[touches.length - 1]).toEqual({ op: "metadata", output: r.outputPath });
+    for (const r of res) {
+      const touches = exec.log.filter((e) => e.output === r.outputPath);
+      expect(touches[touches.length - 1]).toEqual({ op: "metadata", output: r.outputPath });
+    }
+    expect(exec.metadataCalls.every((c) => c.identity === identity)).toBe(true);
   }
-});
+);
 
 test("a re-rendered copy keeps the device identity of its own slot", async () => {
   // The post-pass re-draws the picture, not the phone. Deriving the profile
   // from the copy index (not from the fresh render seed) is what keeps one file
   // from claiming two different handsets across its own renders.
   const exec = new OrderMock();
-  const spoofOpts: CopyOptions = { ...opts, spoofMetadata: true };
+  const spoofOpts: CopyOptions = { ...opts, identity: "iphone" };
   const res = await uniquify("ORIGINAL", spoofOpts, exec, 3, {
     seedBase: 1,
     framesPerCopy: 4,
@@ -162,7 +196,7 @@ test("dates the spoofed capture from the wall clock when the host configures no 
   // fallback is the same clock the host would have passed, so the worst case of
   // forgetting is a batch that is merely non-deterministic, never nonsensical.
   const exec = new SpyMock();
-  const spoofOpts: CopyOptions = { ...opts, spoofMetadata: true };
+  const spoofOpts: CopyOptions = { ...opts, identity: "iphone" };
   const before = Date.now();
   await uniquify("ORIGINAL", spoofOpts, exec, 1, {
     seedBase: 1,
@@ -181,7 +215,7 @@ test("uses the host's clock, not the wall clock, when nowMs is configured", asyn
   // The fallback must not cost determinism: a host that states the time still
   // gets a profile derived from exactly that instant.
   const exec = new SpyMock();
-  const spoofOpts: CopyOptions = { ...opts, spoofMetadata: true };
+  const spoofOpts: CopyOptions = { ...opts, identity: "iphone" };
   await uniquify("ORIGINAL", spoofOpts, exec, 1, {
     seedBase: 1,
     framesPerCopy: 4,
@@ -191,15 +225,20 @@ test("uses the host's clock, not the wall clock, when nowMs is configured", asyn
   expect(exec.metadataCalls[0].profile).toEqual(sampleDeviceProfile(1, 1_700_000_000_000));
 });
 
-test("applyDeviceMetadata is NOT called when spoofMetadata is false", async () => {
-  const exec = new SpyMock();
-  await uniquify("ORIGINAL", opts, exec, 2, {
-    seedBase: 1,
-    framesPerCopy: 4,
-    sampleRecipe,
-  });
-  expect(exec.metadataCalls.length).toBe(0);
-});
+test.each([...IDENTITY_MODES])(
+  "an executor with no identity hook still ships every copy in %s mode",
+  async (identity) => {
+    // The hook is optional on the interface: a backend that has nothing to say
+    // about identity (a wasm renderer, a test double) must not be a crash.
+    const exec = new ProgMock();
+    const res = await uniquify("ORIGINAL", { ...opts, identity }, exec, 2, {
+      seedBase: 1,
+      framesPerCopy: 4,
+      sampleRecipe,
+    });
+    expect(res.length).toBe(2);
+  }
+);
 
 class AbortMock implements RenderExecutor {
   renderCalls = 0;

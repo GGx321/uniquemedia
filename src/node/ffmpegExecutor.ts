@@ -6,7 +6,7 @@ import { exiftool } from "exiftool-vendored";
 import { buildArgs } from "../core/filterGraph";
 import { parseFfprobeJson, type ProbeResult } from "./ffprobeJson";
 import type { RenderExecutor } from "../core/executor";
-import type { MediaInfo, Recipe } from "../core/types";
+import type { IdentityMode, MediaInfo, Recipe } from "../core/types";
 import type { DeviceProfile } from "../core/deviceProfile";
 import { parseProgressFraction } from "./ffmpegProgress";
 import { scrubMovSignature } from "./movSignature";
@@ -142,6 +142,23 @@ export class FfmpegExecutor implements RenderExecutor {
     ]);
   }
 
+  /**
+   * What each identity mode does to a rendered clip, after the graph has
+   * already stripped the source's metadata and (for every mode but `engine`)
+   * turned off the encoder's signature at encode time:
+   *
+   *  - `engine`: nothing. The container is ffmpeg's honest MP4.
+   *  - `iphone`: the QuickTime keys of the profile's handset, then the MOV
+   *    fields the muxer hardcodes, in `applyDeviceMetadata`.
+   *  - `clean`: only those hardcoded fields — in MP4 mode the `avc1` vendor is
+   *    already zeros, so that is the `ftyp` minor version and the compressor
+   *    name `Lavc libx264`, which no encode-time flag reaches.
+   */
+  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void> {
+    if (identity === "iphone") await this.applyDeviceMetadata(output, profile);
+    else if (identity === "clean") await scrubMovSignature(output);
+  }
+
   async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
     // GPS decimal string "lat, lon, 0" — exiftool converts this to the ISO6709
     // format that ffprobe reads back as com.apple.quicktime.location.ISO6709.
@@ -163,7 +180,8 @@ export class FfmpegExecutor implements RenderExecutor {
     // AFTER exiftool, which rewrites the file and moves every offset: the
     // `ftyp` minor version and the `avc1` vendor are hardcoded by the muxer
     // (0x200 and `FFMP`), exiftool accepts a write to either and changes
-    // nothing, so they are zeroed in place here.
+    // nothing, so they are zeroed in place here. The compressor name is
+    // `H.264` on this path (set at encode time) and is left alone.
     await scrubMovSignature(output);
   }
 }

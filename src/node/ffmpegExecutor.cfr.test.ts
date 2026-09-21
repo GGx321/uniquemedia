@@ -40,7 +40,7 @@ test("rendered copy is CFR at the recipe fps with intact, in-sync audio", () => 
 
     const opts: CopyOptions = {
       strength: 1, exportFormat: "original", keepTrendAudio: false,
-      allowMirror: false, targetDistance: 60, spoofMetadata: false, edgeMode: "auto",
+      allowMirror: false, targetDistance: 60, identity: "engine", edgeMode: "auto",
       blackFirstFrame: false,
     };
     const recipe = sampleRecipe(opts, 42, 1);
