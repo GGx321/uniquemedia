@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { rmSync } from "node:fs";
+import { rename, rm } from "node:fs/promises";
 import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 import { exiftool } from "exiftool-vendored";
@@ -87,12 +88,24 @@ function altitudeMetres(profile: DeviceProfile): number {
 export class PhotoExecutor implements RenderExecutor<PhotoRecipe> {
   private active = new Map<ReturnType<typeof spawn>, string>(); // child -> output path
 
+  /** Same contract as `FfmpegExecutor.cancel`: the path removed is the one
+   *  the child was writing, and during the post-pass that is a staged sibling,
+   *  never a copy already reported done. */
   cancel(): void {
     for (const [child, out] of this.active) {
       child.kill("SIGKILL");
       try { rmSync(out, { force: true }); } catch { /* ignore */ }
     }
     this.active.clear();
+  }
+
+  /** See `FfmpegExecutor.replace`. */
+  async replace(from: string, to: string): Promise<void> {
+    await rename(from, to);
+  }
+
+  async discard(path: string): Promise<void> {
+    await rm(path, { force: true });
   }
 
   /**

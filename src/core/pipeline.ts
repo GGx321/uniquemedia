@@ -37,7 +37,20 @@ export interface UniquifyConfig<R, O extends UniquifyOptions> {
   nowMs?: number;
   outputPath?: (index: number) => string;
   onProgress?: (index: number, attempt: number, fraction: number) => void;
+  /**
+   * Fires for every copy that is accepted — and AGAIN for a copy the
+   * inter-copy post-pass regenerates, with the fresh result. A host that put
+   * the card back into "rendering" on the regeneration's progress ticks is
+   * told here that it is done a second time.
+   */
   onCopyDone?: (result: CopyResult<R>) => void;
+  /**
+   * The inter-copy check that follows the last copy, as `done` copies settled
+   * out of `total`. A 22.6 s clip at 50 copies re-rendered 27 of them here for
+   * 3 min 40 s with every card showing done and nothing else moving; the host
+   * uses this to say what the batch is still doing.
+   */
+  onPostPass?: (done: number, total: number) => void;
   signal?: AbortSignal;
   /** Copies processed concurrently (one ffmpeg per worker). Default 1 (sequential). */
   concurrency?: number;
@@ -55,6 +68,40 @@ export interface UniquifyConfig<R, O extends UniquifyOptions> {
 const hashFrames = (frames: Uint8Array[]) => frames.map(computePdqHash);
 
 /**
+ * Where the post-pass renders a replacement for `final`: a sibling with the
+ * same extension, since the video executor picks its container from the
+ * extension whenever the graph does not force one. A dot inside a directory
+ * name is not an extension, and neither is the leading dot of a dotfile.
+ */
+export function stagedPath(final: string): string {
+  const slash = Math.max(final.lastIndexOf("/"), final.lastIndexOf("\\"));
+  const dot = final.lastIndexOf(".");
+  if (dot <= slash + 1) return `${final}.regen`;
+  return `${final.slice(0, dot)}.regen${final.slice(dot)}`;
+}
+
+interface Staging {
+  replace: (from: string, to: string) => Promise<void>;
+  discard: (path: string) => Promise<void>;
+}
+
+/**
+ * Both halves or neither. A backend with neither (a test double) keeps the
+ * pre-staging contract and is regenerated in place; one with only half a pair
+ * is a defect and is refused before anything renders, because staging with no
+ * way to swap the file in would leave every regeneration beside the copy it
+ * was meant to replace, and no way to clean up would leave it there on Stop.
+ */
+function stagingOf<R>(executor: RenderExecutor<R>): Staging | null {
+  const { replace, discard } = executor;
+  if (!replace && !discard) return null;
+  if (!replace || !discard) {
+    throw new Error("RenderExecutor must implement both replace and discard, or neither.");
+  }
+  return { replace: replace.bind(executor), discard: discard.bind(executor) };
+}
+
+/**
  * `O` has no default either. With one, `uniquify<PhotoRecipe>(…)` resolved `O`
  * to the bare `UniquifyOptions` instead of inferring the caller's options type,
  * so a sampler needing `strength` failed inside the config object rather than
@@ -69,9 +116,13 @@ export async function uniquify<R, O extends UniquifyOptions>(
   config: UniquifyConfig<R, O>
 ): Promise<CopyResult<R>[]> {
   const framesPerCopy = config.framesPerCopy ?? 4;
-  const maxAttempts = config.maxAttempts ?? 3;
+  // At least one: zero attempts fell through the retry loop with no candidate
+  // and every copy came back null, with no error to say why.
+  const maxAttempts = Math.max(1, config.maxAttempts ?? 3);
   const interThreshold = config.interThreshold ?? 8;
   const outputPath = config.outputPath ?? ((i) => `out/copy_${i + 1}.mp4`);
+
+  const staging = stagingOf(executor);
 
   const info = await executor.probe(input);
   const originalHashes = hashFrames(await executor.extractGrayFrames(input, framesPerCopy));
@@ -102,12 +153,21 @@ export async function uniquify<R, O extends UniquifyOptions>(
 
   // Produces the best CopyResult for copy `i`, or null when aborted / no best.
   // Does NOT push to results or fire onCopyDone — the worker owns that.
-  async function processCopy(i: number): Promise<CopyResult<R> | null> {
-    let seed = config.seedBase + i * 1000;
+  //
+  // `seedStart` and `out` are what the post-pass varies: a regeneration is the
+  // same render — verification against the target, the auto-strengthen retry,
+  // the identity pass — from a different seed into a staged file. It used to be
+  // a one-shot render with none of that, and 2 of 27 regenerations on a real
+  // run shipped below target because of it.
+  async function processCopy(
+    i: number,
+    seedStart: number = config.seedBase + i * 1000,
+    out: string = outputPath(i)
+  ): Promise<CopyResult<R> | null> {
+    let seed = seedStart;
     let intensity = 1;
     let best: CopyResult<R> | null = null;
     let lastRecipe: R | null = null;
-    const out = outputPath(i);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (config.signal?.aborted) break;
@@ -186,56 +246,78 @@ export async function uniquify<R, O extends UniquifyOptions>(
 
   // Inter-copy uniqueness post-pass: parallel workers may have produced copies
   // that are too similar to each other (they skip the live inter-copy check when
-  // processing at the same time). We do a final O(n²) comparison on frame-0 PDQ
-  // hashes and regenerate any copy that is too close to an earlier accepted copy.
+  // processing at the same time). We do a final O(n²) comparison on one PDQ
+  // hash per copy and regenerate any copy that is too close to an earlier
+  // accepted copy — then check the regeneration the same way, because a fresh
+  // draw can land on a collision of its own.
   if (count > 1 && !config.signal?.aborted) {
-    const interThresholdFinal = interThreshold;
-    // Collect frame-0 PDQ hashes for every result (1 raw frame each — cheap).
-    const sigs: Uint8Array[] = await Promise.all(
-      results.map(async (r) => {
-        const frames = await executor.extractGrayFrames(r.outputPath, 1);
-        return computePdqHash(frames[0]);
-      })
-    );
+    const total = results.length;
+    config.onPostPass?.(0, total);
+    // One frame per copy — the SAME one frame for every signature, whether it
+    // was taken before or after a regeneration. Frame 0 of `framesPerCopy`
+    // sits at a different timestamp than frame 0 of 1, and comparing the two
+    // would compare different pictures.
+    const signatureOf = async (path: string): Promise<Uint8Array> =>
+      computePdqHash((await executor.extractGrayFrames(path, 1))[0]);
+    const sigs: Uint8Array[] = await Promise.all(results.map((r) => signatureOf(r.outputPath)));
+    config.onPostPass?.(1, total); // copy 0 is the reference: settled by definition
 
+    const collides = (i: number): boolean => {
+      for (let j = 0; j < i; j++) {
+        if (hammingDistance(sigs[i], sigs[j]) < interThreshold) return true;
+      }
+      return false;
+    };
     const maxRegen = count; // cap total regenerations to avoid infinite loops
     let regenCount = 0;
-    for (let i = 1; i < results.length && regenCount < maxRegen; i++) {
-      if (config.signal?.aborted) break;
-      // Check if result[i] is too close to any earlier accepted result.
-      let tooClose = false;
-      for (let j = 0; j < i; j++) {
-        if (hammingDistance(sigs[i], sigs[j]) < interThresholdFinal) {
-          tooClose = true;
-          break;
-        }
-      }
-      if (!tooClose) continue;
 
-      // Regenerate with a fresh seed that differs from the original slot.
-      const freshSeed = (config.seedBase + results[i].index * 1000 + 7919) >>> 0;
-      const freshRecipe = config.sampleRecipe(opts, freshSeed, 1);
-      const out = results[i].outputPath;
-      try {
-        await executor.render(input, info, freshRecipe, out);
-      } catch (err) {
-        if (config.signal?.aborted) break;
-        throw err;
+    outer: for (let i = 1; i < results.length; i++) {
+      let round = 0;
+      while (collides(i)) {
+        if (config.signal?.aborted || regenCount >= maxRegen) break outer;
+        round++;
+        regenCount++;
+        const { index, outputPath: final } = results[i];
+        // A fresh seed that differs from the original slot and from every
+        // earlier round of the same slot.
+        const seed = (config.seedBase + index * 1000 + 7919 * round) >>> 0;
+        // The finished copy stays where it is until its replacement has been
+        // verified and given its identity. While the regeneration is being
+        // written, `cancel` can only ever delete the temp: Stop used to leave
+        // 49 files behind 50 green cards, because the child it killed was
+        // writing over a copy that was already done.
+        const out = staging ? stagedPath(final) : final;
+        let fresh: CopyResult<R> | null;
+        try {
+          fresh = await processCopy(index, seed, out);
+          if (fresh && staging) await staging.replace(out, final);
+        } catch (err) {
+          if (staging) {
+            // The finished copy is untouched; only the temp goes. Reported
+            // done once more so a host that put its card back into
+            // "rendering" on the regeneration's progress ticks shows what is
+            // actually on disk — its error handler does not touch cards.
+            await staging.discard(out);
+            config.onCopyDone?.(results[i]);
+          }
+          throw err;
+        }
+        if (!fresh) {
+          // Killed by Stop. Staged, the finished copy is untouched and is
+          // reported done again for the same reason as above. In place, the
+          // regeneration was writing over it and a deleting `cancel` may
+          // already have taken it — so nothing is claimed.
+          if (staging) {
+            await staging.discard(out);
+            config.onCopyDone?.(results[i]);
+          }
+          break outer;
+        }
+        results[i] = { ...fresh, outputPath: final };
+        sigs[i] = await signatureOf(final);
+        config.onCopyDone?.(results[i]);
       }
-      regenCount++;
-      // The render above overwrote whatever `processCopy` stamped on this file.
-      await applyIdentity(results[i].index, out);
-      const newRawFrames = await executor.extractGrayFrames(out, framesPerCopy);
-      const newHashes = hashFrames(newRawFrames);
-      const newVerify = verifyCopy(originalHashes, newHashes, opts.targetDistance);
-      const newResult: CopyResult<R> = {
-        index: results[i].index,
-        outputPath: out,
-        recipe: freshRecipe,
-        verify: newVerify,
-      };
-      results[i] = newResult;
-      sigs[i] = newHashes[0];
+      config.onPostPass?.(i + 1, total);
     }
   }
 

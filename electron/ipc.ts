@@ -11,6 +11,7 @@ export const CH = {
   // events (main -> renderer):
   evtProgress: "evt:batch-progress",
   evtCopyDone: "evt:copy-done",
+  evtPostPass: "evt:post-pass",
   evtBatchDone: "evt:batch-done",
   evtError: "evt:error",
 } as const;
@@ -28,7 +29,10 @@ export interface Api {
   openFile(path: string): Promise<void>;
   revealInFolder(path: string): Promise<void>;
   onBatchProgress(cb: (p: { index: number; count: number; fraction: number }) => void): void;
+  /** Fires again for a copy the inter-copy post-pass regenerated. */
   onCopyDone(cb: (c: { index: number; path: string; thumb: string; verify: { minDistance: number; passed: boolean } }) => void): void;
+  /** The inter-copy check after the last copy: `done` of `total` settled. */
+  onPostPass(cb: (p: { done: number; total: number }) => void): void;
   onBatchDone(cb: (s: { passed: number; total: number }) => void): void;
   onError(cb: (e: { message: string }) => void): void;
 }

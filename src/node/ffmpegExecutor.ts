@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { rmSync } from "node:fs";
+import { rename, rm } from "node:fs/promises";
 import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 import { exiftool } from "exiftool-vendored";
@@ -62,12 +63,31 @@ export function videoInfoFromProbe(probe: ProbeResult, input: string): MediaInfo
 export class FfmpegExecutor implements RenderExecutor {
   private active = new Map<ReturnType<typeof spawn>, string>(); // child -> output path
 
+  /**
+   * Kills whatever is rendering and removes the file it was writing. The path
+   * is always the one handed to `render`, and the pipeline guarantees that a
+   * copy already reported done is never that path: during the inter-copy
+   * post-pass the child writes a staged sibling (see `replace`), so Stop can
+   * only ever take a half-written file with it.
+   */
   cancel(): void {
     for (const [child, out] of this.active) {
       child.kill("SIGKILL");
       try { rmSync(out, { force: true }); } catch { /* ignore */ }
     }
     this.active.clear();
+  }
+
+  /** The post-pass swap: a verified regeneration over the copy it replaces.
+   *  `rename` is atomic on one volume, and the staged file is a sibling by
+   *  construction, so the finished copy is either the old one or the new one —
+   *  never a partial. */
+  async replace(from: string, to: string): Promise<void> {
+    await rename(from, to);
+  }
+
+  async discard(path: string): Promise<void> {
+    await rm(path, { force: true });
   }
 
   async probe(input: string): Promise<MediaInfo> {

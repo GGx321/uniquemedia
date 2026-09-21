@@ -89,6 +89,8 @@ class FakePhotoBackend implements PhotoBackend {
   async applyDeviceMetadata(_o: string, _p: DeviceProfile): Promise<void> {}
   cancel(): void {}
   async warmup(): Promise<void> {}
+  async replace(): Promise<void> {}
+  async discard(): Promise<void> {}
 }
 
 class FakeVideoBackend implements MediaBackend<Recipe> {
@@ -109,6 +111,8 @@ class FakeVideoBackend implements MediaBackend<Recipe> {
   }
   cancel(): void {}
   async warmup(): Promise<void> {}
+  async replace(): Promise<void> {}
+  async discard(): Promise<void> {}
 }
 
 function backendsWith(frame: Uint8Array): { backends: Backends; photo: FakePhotoBackend; video: FakeVideoBackend } {

@@ -42,6 +42,11 @@ test("fires onProgress per render tick and onCopyDone per accepted copy", async 
   const res = await uniquify("ORIGINAL", opts, exec, 2, {
     seedBase: 1,
     framesPerCopy: 4,
+    // Every mock copy carries the same frame, and a copy the post-pass
+    // regenerates is reported done a second time. Pinned to 0 so this measures
+    // the per-copy event alone; the second report has its own test in
+    // pipeline.postpass.test.ts.
+    interThreshold: 0,
     onProgress: (_i, _a, f) => progress.push(f),
     onCopyDone: (r) => done.push(r.index),
     sampleRecipe,

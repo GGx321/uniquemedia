@@ -1,16 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { join, basename } from "node:path";
-import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { cpus } from "node:os";
-import {
-  createBackends,
-  outputName,
-  routeForInput,
-  uniquifyRoute,
-  type MediaRoute,
-} from "../src/node/mediaRoute";
-import type { StartOptions } from "../src/core/types";
-import { PICKER_FILTERS, probeForHost } from "./handlers";
+import { createBackends, type MediaRoute } from "../src/node/mediaRoute";
+import { PICKER_FILTERS, probeForHost, runBatchForHost, type StartRequest } from "./handlers";
 import { CH } from "./ipc";
 
 const backends = createBackends();
@@ -63,40 +55,16 @@ ipcMain.handle(CH.openFile, (_e, path: string) => shell.openPath(path));
 ipcMain.handle(CH.reveal, (_e, path: string) => shell.showItemInFolder(path));
 ipcMain.handle(CH.cancel, () => { abortController?.abort(); activeRoute?.executor.cancel(); });
 
-ipcMain.handle(CH.start, async (_e, req: { input: string; opts: StartOptions; count: number; outDir: string }) => {
+ipcMain.handle(CH.start, async (_e, req: StartRequest) => {
   abortController = new AbortController();
-  const { input, opts, count, outDir } = req;
-  mkdirSync(outDir, { recursive: true });
-  const stem = basename(input).replace(/\.[^.]+$/, "");
-  try {
-    // The kind is decided from the file's own bytes, not from whatever the
-    // renderer believed when it probed.
-    const route = await routeForInput(input, backends);
-    activeRoute = route;
-    const results = await uniquifyRoute(route, input, opts, count, {
-      seedBase: Date.now() % 1e6,
-      // The clock the spoofed capture dates are measured back from. Omitting it
-      // is what dated every GUI copy to 1969; the CLI passed it from day one.
-      nowMs: Date.now(),
-      concurrency: Math.max(1, cpus().length - 1), // leave one core free
-      outputPath: (i) => join(outDir, outputName(stem, i, route)),
-      signal: abortController.signal,
-      onProgress: (index, _attempt, fraction) =>
-        send(CH.evtProgress, { index, count, fraction }),
-      onCopyDone: async (r) => {
-        const thumb = await route.executor.extractThumbnail(r.outputPath).catch(() => "");
-        send(CH.evtCopyDone, {
-          index: r.index, path: r.outputPath, thumb, verify: r.verify,
-        });
-      },
-    });
-    const passed = results.filter((r) => r.verify.passed).length;
-    send(CH.evtBatchDone, { passed, total: count });
-  } catch (err) {
-    send(CH.evtError, { message: err instanceof Error ? err.message : String(err) });
-  } finally {
-    activeRoute = null;
-  }
+  await runBatchForHost(req, {
+    backends,
+    send,
+    signal: abortController.signal,
+    nowMs: Date.now,
+    concurrency: Math.max(1, cpus().length - 1), // leave one core free
+    onRoute: (route) => { activeRoute = route; },
+  });
 });
 
 app.whenReady().then(() => {

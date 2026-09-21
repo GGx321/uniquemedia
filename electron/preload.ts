@@ -12,6 +12,7 @@ const api: Api = {
   revealInFolder: (path) => ipcRenderer.invoke(CH.reveal, path),
   onBatchProgress: (cb) => ipcRenderer.on(CH.evtProgress, (_e, p) => cb(p)),
   onCopyDone: (cb) => ipcRenderer.on(CH.evtCopyDone, (_e, c) => cb(c)),
+  onPostPass: (cb) => ipcRenderer.on(CH.evtPostPass, (_e, p) => cb(p)),
   onBatchDone: (cb) => ipcRenderer.on(CH.evtBatchDone, (_e, s) => cb(s)),
   onError: (cb) => ipcRenderer.on(CH.evtError, (_e, x) => cb(x)),
 };

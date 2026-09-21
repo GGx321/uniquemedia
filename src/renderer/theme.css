@@ -1002,6 +1002,12 @@ input[type="range"]:active::-webkit-slider-thumb {
   color: var(--accent-2);
   font-variant-numeric: tabular-nums;
 }
+/* the inter-copy check, once every card is green: what the batch is still doing */
+.batch-progress .phase-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
 .batch-ring {
   position: relative;
   width: 26px;

@@ -28,6 +28,11 @@ export interface MediaBackend<R> extends RenderExecutor<R> {
   extractThumbnail(input: string): Promise<string>;
   cancel(): void;
   warmup(): Promise<void>;
+  /** Required here, optional on `RenderExecutor`: a host backend owns real
+   *  files, and without these the post-pass would regenerate a copy in place —
+   *  the path Stop deletes. */
+  replace(from: string, to: string): Promise<void>;
+  discard(path: string): Promise<void>;
 }
 
 /**
@@ -91,7 +96,10 @@ export interface RouteBatchConfig {
   concurrency?: number;
   signal?: AbortSignal;
   onProgress?: (index: number, attempt: number, fraction: number) => void;
+  /** Fires again for a copy the inter-copy post-pass regenerated. */
   onCopyDone?: (result: RouteCopyResult) => void;
+  /** The inter-copy check after the last copy, as `done` of `total` settled. */
+  onPostPass?: (done: number, total: number) => void;
 }
 
 /** A still is a single frame; asking for more would compare it against itself. */

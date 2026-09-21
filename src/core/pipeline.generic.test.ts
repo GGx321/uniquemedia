@@ -60,6 +60,9 @@ test("drives an executor whose recipe type is not the video Recipe", async () =>
 test("sources the inter-copy regeneration recipe from config.sampleRecipe too", async () => {
   // Every copy yields the same frame, so the post-pass sees a collision and
   // regenerates copy 1 with the fresh seed `seedBase + index * 1000 + 7919`.
+  // The regeneration is then checked against copy 0 again — this executor
+  // never separates them, so a second round follows from `+ 7919 * 2`, and
+  // the cap of `count` regenerations is what ends it.
   const exec = new TagExecutor();
 
   const res = await uniquify("ORIGINAL", opts, exec, 2, {
@@ -70,8 +73,13 @@ test("sources the inter-copy regeneration recipe from config.sampleRecipe too", 
   });
 
   expect(res.length).toBe(2);
-  expect(exec.rendered).toEqual([{ tag: "tag-1" }, { tag: "tag-1001" }, { tag: "tag-8920" }]);
-  expect(res[1].recipe).toEqual({ tag: "tag-8920" });
+  expect(exec.rendered).toEqual([
+    { tag: "tag-1" },
+    { tag: "tag-1001" },
+    { tag: "tag-8920" },
+    { tag: "tag-16839" },
+  ]);
+  expect(res[1].recipe).toEqual({ tag: "tag-16839" });
 });
 
 test("hands sampleRecipe the very options object it verifies against", async () => {
@@ -94,9 +102,12 @@ test("hands sampleRecipe the very options object it verifies against", async () 
     },
   });
 
-  // 2 copies x 2 attempts, plus 1 regeneration in the post-pass. The exact
-  // count is what proves the post-pass call site fired, and it assumes the
-  // default sequential execution — adding `concurrency` here would change it.
-  expect(seen.length).toBe(5);
+  // 2 copies x 2 attempts, plus 2 regeneration rounds x 2 attempts in the
+  // post-pass: a regeneration goes through the same retry loop as a first
+  // render, and with every frame identical the re-check sends copy 1 round
+  // again until the cap of `count` rounds. The exact count is what proves the
+  // post-pass call site fired, and it assumes the default sequential
+  // execution — adding `concurrency` here would change it.
+  expect(seen.length).toBe(8);
   expect(seen.every((o) => o === strictOpts)).toBe(true);
 });

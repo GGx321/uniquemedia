@@ -2,10 +2,18 @@ import { test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { IMAGE_EXTENSIONS, PICKER_FILTERS, VIDEO_EXTENSIONS, probeForHost } from "./handlers";
+import {
+  IMAGE_EXTENSIONS,
+  PICKER_FILTERS,
+  VIDEO_EXTENSIONS,
+  probeForHost,
+  runBatchForHost,
+  type BatchHost,
+} from "./handlers";
+import { CH } from "./ipc";
 import { makeTestHeif, makeTestPhoto } from "../src/node/testClip";
 import type { Backends, MediaBackend } from "../src/node/mediaRoute";
-import type { MediaInfo } from "../src/core/types";
+import type { MediaInfo, StartOptions } from "../src/core/types";
 
 const photoInfo: MediaInfo = {
   kind: "photo",
@@ -30,8 +38,8 @@ class StubBackend<R> implements MediaBackend<R> {
   async probe(): Promise<MediaInfo> {
     return this.info;
   }
-  async render(): Promise<void> {}
-  async extractGrayFrames(): Promise<Uint8Array[]> {
+  async render(_input: string, _info: MediaInfo, _recipe: R, _output: string): Promise<void> {}
+  async extractGrayFrames(_input: string, _count: number): Promise<Uint8Array[]> {
     return [new Uint8Array(64 * 64)];
   }
   async extractThumbnail(): Promise<string> {
@@ -43,6 +51,8 @@ class StubBackend<R> implements MediaBackend<R> {
   }
   cancel(): void {}
   async warmup(): Promise<void> {}
+  async replace(): Promise<void> {}
+  async discard(): Promise<void> {}
 }
 
 function stubBackends(): Backends {
@@ -110,4 +120,149 @@ test("a probe of a readable still returns its info and reports nothing", async (
 
   expect(info).toEqual(photoInfo);
   expect(reported).toEqual([]);
+});
+
+// ── the batch handler, with a fake `send` ───────────────────────────────────
+
+/** More set bytes => larger PDQ distance from an all-zero frame. */
+function frameOfDistance(d: number): Uint8Array {
+  const f = new Uint8Array(64 * 64);
+  for (let i = 0; i < d * 30; i++) f[i] = 255;
+  return f;
+}
+
+/** Every rendered copy is far from the source and — unless told otherwise —
+ *  identical to every other copy, so a 2-copy batch trips the post-pass. The
+ *  thumbnail takes a real turn of the event loop, the way ffmpeg does. */
+class BatchStub extends StubBackend<unknown> {
+  thumbnails = 0;
+  constructor(
+    info: MediaInfo,
+    private readonly frameFor: (path: string) => Uint8Array,
+    private readonly behaviour: {
+      failRenderOf?: (output: string) => boolean;
+      /** How long the n-th thumbnail (1-based) takes. */
+      thumbDelayMs?: (n: number) => number;
+    } = {}
+  ) {
+    super(info);
+  }
+  async render(_input: string, _info: MediaInfo, _recipe: unknown, output: string): Promise<void> {
+    if (this.behaviour.failRenderOf?.(output)) throw new Error(`ffmpeg exited 1: ${output}`);
+  }
+  async extractGrayFrames(input: string, count: number): Promise<Uint8Array[]> {
+    const frame = input.endsWith("in.jpg") ? new Uint8Array(64 * 64) : this.frameFor(input);
+    return Array.from({ length: count }, () => frame);
+  }
+  async extractThumbnail(): Promise<string> {
+    const n = ++this.thumbnails;
+    await new Promise((r) => setTimeout(r, this.behaviour.thumbDelayMs?.(n) ?? 5));
+    return `thumb-${n}`;
+  }
+}
+
+const startOpts: StartOptions = {
+  strength: 1.0,
+  exportFormat: "original",
+  allowMirror: false,
+  targetDistance: 30,
+  identity: "engine",
+  edgeMode: "crop",
+};
+
+interface Sent {
+  channel: string;
+  payload: unknown;
+}
+
+async function runStubbedBatch(
+  count: number,
+  frameFor: (path: string) => Uint8Array,
+  behaviour: ConstructorParameters<typeof BatchStub>[2] = {},
+  outDir = join(dir, "out")
+): Promise<Sent[]> {
+  const input = join(dir, "in.jpg");
+  makeTestPhoto(input);
+  const sent: Sent[] = [];
+  const host: BatchHost = {
+    backends: {
+      video: new BatchStub(videoInfo, frameFor, behaviour),
+      photo: new BatchStub(photoInfo, frameFor, behaviour),
+    },
+    send: (channel, payload) => sent.push({ channel, payload }),
+    signal: new AbortController().signal,
+    nowMs: () => 1_780_000_000_000,
+    concurrency: 1,
+  };
+  await runBatchForHost({ input, opts: startOpts, count, outDir }, host);
+  return sent;
+}
+
+const thumbOf = (payload: unknown): string =>
+  typeof payload === "object" && payload !== null && "thumb" in payload && typeof payload.thumb === "string"
+    ? payload.thumb
+    : "";
+const indexOf = (payload: unknown): number =>
+  typeof payload === "object" && payload !== null && "index" in payload && typeof payload.index === "number"
+    ? payload.index
+    : -1;
+
+test("the batch-done event follows the last copy-done event, thumbnail and all", async () => {
+  // `onCopyDone` awaits a thumbnail and the pipeline does not await the
+  // callback, so with a single copy the batch-done event used to beat the
+  // card it was summing up.
+  const sent = await runStubbedBatch(1, () => frameOfDistance(5));
+  const channels = sent.map((s) => s.channel);
+  expect(channels).toContain(CH.evtCopyDone);
+  expect(channels.lastIndexOf(CH.evtCopyDone)).toBeLessThan(channels.indexOf(CH.evtBatchDone));
+  expect(channels[channels.length - 1]).toBe(CH.evtBatchDone);
+});
+
+test("reports the inter-copy check to the renderer as its own event", async () => {
+  // Two identical copies: the post-pass fires and regenerates copy 2. Without
+  // this event the renderer shows every card done and a Stop button, for as
+  // long as the regenerations take — 3 min 40 s on a real 50-copy run.
+  const sent = await runStubbedBatch(2, () => frameOfDistance(5));
+  const phases = sent.filter((s) => s.channel === CH.evtPostPass).map((s) => s.payload);
+  expect(phases[0]).toEqual({ done: 0, total: 2 });
+  expect(phases.length).toBeGreaterThan(1);
+  // And the regenerated copy is reported done again, after the phase began.
+  const channels = sent.map((s) => s.channel);
+  const phaseStart = channels.indexOf(CH.evtPostPass);
+  expect(channels.slice(phaseStart)).toContain(CH.evtCopyDone);
+  expect(channels[channels.length - 1]).toBe(CH.evtBatchDone);
+});
+
+test("copy-done reports settle before the error event too", async () => {
+  // Copy 1 is done and its thumbnail is in flight when copy 2's render fails.
+  // The error must not overtake the card it would otherwise leave behind.
+  const sent = await runStubbedBatch(2, () => frameOfDistance(5), {
+    failRenderOf: (output) => output.endsWith("_2.jpg"),
+  });
+  const channels = sent.map((s) => s.channel);
+  expect(channels).toContain(CH.evtCopyDone);
+  expect(channels).toContain(CH.evtError);
+  expect(channels.lastIndexOf(CH.evtCopyDone)).toBeLessThan(channels.indexOf(CH.evtError));
+});
+
+test("an output directory that cannot be created is reported, not thrown across IPC", async () => {
+  // Thrown, this reaches the renderer as an unhandled rejection of `start`,
+  // with the Run button stuck on Stop. `/dev/null` is a file, so nothing can
+  // be created beneath it.
+  const sent = await runStubbedBatch(1, () => frameOfDistance(5), {}, join("/dev/null", "out"));
+  const channels = sent.map((s) => s.channel);
+  expect(channels).toEqual([CH.evtError]);
+});
+
+test("two reports for one copy arrive in the order the copy was done, whatever the thumbnails take", async () => {
+  // Copy 2's first thumbnail is slow; the regenerated copy's thumbnails are
+  // fast. Independent promises would let the regeneration's report — and its
+  // thumbnail — reach the card first, and the slow original overwrite it.
+  const sent = await runStubbedBatch(2, () => frameOfDistance(5), {
+    thumbDelayMs: (n) => (n <= 2 ? 20 : 1),
+  });
+  const forCopy2 = sent.filter((s) => s.channel === CH.evtCopyDone && indexOf(s.payload) === 1);
+  expect(forCopy2.length).toBeGreaterThan(1);
+  const thumbs = forCopy2.map((s) => Number(thumbOf(s.payload).replace("thumb-", "")));
+  expect(thumbs).toEqual([...thumbs].sort((a, b) => a - b));
 });

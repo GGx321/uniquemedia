@@ -26,4 +26,17 @@ export interface RenderExecutor<R = Recipe> {
    * the mode asks for one; it is derived from the copy's slot, not the render.
    */
   applyIdentity?(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void>;
+  /**
+   * Moves a staged file over the path it was staged for. The inter-copy
+   * post-pass renders a replacement copy to a sibling temp path and calls this
+   * only once the replacement is verified and carries its identity, so a copy
+   * the host has already shown as done is never half-overwritten — and never
+   * the path `cancel` deletes, because the child that Stop kills is writing
+   * the temp. Optional together with `discard`: a backend that has neither (a
+   * test double) is rendered over in place, which is the pre-staging contract.
+   */
+  replace?(from: string, to: string): Promise<void>;
+  /** Removes a staged file that will not ship — after an abort or a failed
+   *  regeneration. Must tolerate a file that is already gone. */
+  discard?(path: string): Promise<void>;
 }

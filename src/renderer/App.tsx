@@ -9,7 +9,7 @@ import {
   type SettingsState,
 } from "./components/SettingsPanel";
 import { CopyQueue } from "./components/CopyQueue";
-import { BatchProgress } from "./components/BatchProgress";
+import { BatchProgress, type PostPassPhase } from "./components/BatchProgress";
 import { basename } from "./util";
 
 const initial: SettingsState = {
@@ -41,14 +41,28 @@ export function App() {
   // running concurrently there is no single "current" copy. `count` is the batch
   // total (0 hides BatchProgress); the completed tally derives from done cards.
   const [count, setCount] = useState(0);
+  // The inter-copy check that follows the last copy. Every card is green by
+  // then, so this is the only sign the batch is still doing something.
+  const [postPass, setPostPass] = useState<PostPassPhase | null>(null);
   const pathByIndex = useRef(new Map<number, string>());
 
   useEffect(() => {
     // Per-copy render fraction only updates THAT copy's card; it no longer
-    // feeds the overall progress.
+    // feeds the overall progress. A card that already knows its file (one the
+    // post-pass is regenerating) keeps that name rather than the placeholder.
     api.onBatchProgress((p) => {
-      setCopies((cs) => upsert(cs, { index: p.index, name: `Копия ${p.index + 1}`, status: "rendering", fraction: p.fraction }));
+      setCopies((cs) =>
+        upsert(cs, {
+          index: p.index,
+          name: cs.find((c) => c.index === p.index)?.name ?? `Копия ${p.index + 1}`,
+          status: "rendering",
+          fraction: p.fraction,
+        })
+      );
     });
+    // Fires again for a copy the post-pass regenerated: the card went back to
+    // "rendering" on that render's progress ticks and returns to "done" here,
+    // with the new picture and verification.
     api.onCopyDone((c) => {
       pathByIndex.current.set(c.index, c.path);
       setCopies((cs) => upsert(cs, {
@@ -56,8 +70,9 @@ export function App() {
         thumb: c.thumb, verify: c.verify,
       }));
     });
-    api.onBatchDone(() => { setRunning(false); setCount(0); });
-    api.onError((e) => { setRunning(false); alert(e.message); });
+    api.onPostPass((p) => setPostPass(p));
+    api.onBatchDone(() => { setRunning(false); setCount(0); setPostPass(null); });
+    api.onError((e) => { setRunning(false); setPostPass(null); alert(e.message); });
   }, []);
 
   async function loadSource(path: string) {
@@ -92,6 +107,7 @@ export function App() {
     setCopies([]);
     setRunning(true);
     setCount(state.count);
+    setPostPass(null);
     // A still gets the options a still can use; main re-detects the kind from
     // the file itself, so a wrong guess here costs nothing.
     const opts =
@@ -103,6 +119,7 @@ export function App() {
     api.cancel();
     setRunning(false);
     setCount(0);
+    setPostPass(null);
     setCopies((cs) => cs.filter((c) => c.status === "done"));
   }
 
@@ -165,7 +182,12 @@ export function App() {
               Очередь
               {copies.length > 0 && <span className="queue-count">{copies.length}</span>}
             </h2>
-            <BatchProgress index={completedCount - 1} count={count} fraction={count > 0 ? completedCount / count : 0} />
+            <BatchProgress
+              index={completedCount - 1}
+              count={count}
+              fraction={count > 0 ? completedCount / count : 0}
+              postPass={running ? postPass : null}
+            />
           </div>
           <CopyQueue copies={copies} onOpen={open} onReveal={reveal} />
         </main>

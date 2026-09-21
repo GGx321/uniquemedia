@@ -85,6 +85,8 @@ class FakeBackend<R> implements MediaBackend<R> {
   metadataCalls: Array<{ output: string; identity: IdentityMode; profile: DeviceProfile }> = [];
   cancel(): void {}
   async warmup(): Promise<void> {}
+  async replace(): Promise<void> {}
+  async discard(): Promise<void> {}
 }
 
 function fakeBackends(): { backends: Backends; video: FakeBackend<Recipe>; photo: FakeBackend<PhotoRecipe> & PhotoBackend } {
@@ -357,4 +359,23 @@ test("--identity rejects a mode it does not know, naming what was asked for and 
   const message = err instanceof Error ? err.message : "";
   expect(message).toContain("apple");
   expect(message).toContain("engine, iphone, clean");
+});
+
+test("uniquifyRoute hands the post-pass phase report through to the host", async () => {
+  // Every fake copy carries the same frame, so the post-pass fires and the
+  // host is told where it is: the Electron UI reads this to say what the batch
+  // is still doing once every card is green.
+  const { backends } = fakeBackends();
+  const route = routeForKind("photo", backends);
+  const phases: Array<[number, number]> = [];
+  await uniquifyRoute(route, "SOURCE", opts, 2, {
+    seedBase: 1,
+    nowMs: NOW,
+    outputPath: (i) => outputName("still", i, route),
+    onPostPass: (done, total) => phases.push([done, total]),
+  });
+  // The fake never separates the two copies, so copy 1 is regenerated until
+  // the cap of `count` rounds and the phase stops there: nothing settled
+  // beyond the reference copy, and honestly so.
+  expect(phases).toEqual([[0, 2], [1, 2]]);
 });
