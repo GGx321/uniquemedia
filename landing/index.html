@@ -134,7 +134,7 @@
           </span>
           <span class="wordmark">unique<span>media</span></span>
         </div>
-        <span class="ver mono" data-version>v0.4.2</span>
+        <span class="ver mono" data-version>v0.5.0</span>
       </header>
 
       <div class="hero">
@@ -146,11 +146,11 @@
         </p>
 
         <div class="downloads">
-          <a class="btn" id="mac" href="https://github.com/GGx321/uniquemedia/releases/download/v0.4.2/uniquemedia-0.4.2-arm64.dmg">
+          <a class="btn" id="mac" href="https://github.com/GGx321/uniquemedia/releases/download/v0.5.0/uniquemedia-0.5.0-arm64.dmg">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.8-3.5.8s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.5-.7 2.9-.7s1.7.7 2.9.7c1.2 0 2-1.1 2.7-2.1.8-1.2 1.2-2.4 1.2-2.4s-2.3-.9-2.3-3.6zM14.3 5.7c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.4-.6.7-1.1 1.7-.9 2.8 1 0 2-.6 2.6-1.3z"/></svg>
             <span class="os"><b>Скачать для Mac</b><small>.dmg · Apple Silicon</small></span>
           </a>
-          <a class="btn" id="win" href="https://github.com/GGx321/uniquemedia/releases/download/v0.4.2/uniquemedia.Setup.0.4.2.exe">
+          <a class="btn" id="win" href="https://github.com/GGx321/uniquemedia/releases/download/v0.5.0/uniquemedia.Setup.0.5.0.exe">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3V5.5zM11.5 4.3 21 3v8.5h-9.5V4.3zM3 12.5h7.5v7.1L3 18.5v-6zM11.5 12.5H21V21l-9.5-1.3v-7.2z"/></svg>
             <span class="os"><b>Скачать для Windows</b><small>.exe · установщик</small></span>
           </a>
@@ -246,7 +246,7 @@
           <span class="wordmark">unique<span>media</span></span>
         </div>
         <div>
-          <span class="mono" data-version>v0.4.2</span> ·
+          <span class="mono" data-version>v0.5.0</span> ·
           <a href="https://github.com/GGx321/uniquemedia/releases">Релизы</a> ·
           <a href="https://github.com/GGx321/uniquemedia">Исходный код</a>
         </div>
@@ -261,7 +261,7 @@
         document.getElementById(os).classList.add("primary");
 
         // Always point downloads at the LATEST GitHub release (falls back to the
-        // hardcoded v0.4.2 links if the API is unreachable).
+        // hardcoded v0.5.0 links if the API is unreachable).
         fetch("https://api.github.com/repos/GGx321/uniquemedia/releases/latest")
           .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
           .then(function (rel) {
