@@ -18,6 +18,7 @@ const state: SettingsState = {
     strength: 1.3,
     spoofMetadata: false,
     edgeMode: "fit",
+    blackFirstFrame: true,
   },
 };
 
@@ -33,6 +34,7 @@ test("settingsToOptions maps every CopyOptions field", () => {
     targetDistance: 123,
     spoofMetadata: false,
     edgeMode: "fit",
+    blackFirstFrame: true,
   });
 });
 
@@ -49,6 +51,10 @@ test("settingsToPhotoOptions maps every PhotoCopyOptions field", () => {
 
 test("settingsToPhotoOptions drops the audio flag rather than carrying a dead one", () => {
   expect("keepTrendAudio" in settingsToPhotoOptions(state)).toBe(false);
+});
+
+test("settingsToPhotoOptions drops the black-first-frame flag rather than carrying a dead one", () => {
+  expect("blackFirstFrame" in settingsToPhotoOptions(state)).toBe(false);
 });
 
 test("the panel hides the audio row when the source is a photo", () => {
@@ -129,4 +135,52 @@ test("the panel shows the edge control when the source is a photo", () => {
     />
   );
   expect(screen.getByLabelText("Сохранять края кадра")).toBeDefined();
+});
+
+test("the panel hides the black-first-frame row when the source is a photo", () => {
+  render(
+    <SettingsPanel
+      source={{ name: "IMG_0042.jpg", info: photoInfo }}
+      state={state}
+      running={false}
+      onPick={() => {}}
+      onDropFile={() => {}}
+      onChange={() => {}}
+      onRun={() => {}}
+      onStop={() => {}}
+    />
+  );
+  expect(screen.queryByLabelText("Чёрный первый кадр")).toBeNull();
+});
+
+test("the panel keeps the black-first-frame row when the source is a video", () => {
+  render(
+    <SettingsPanel
+      source={{ name: "clip.mp4", info: videoInfo }}
+      state={state}
+      running={false}
+      onPick={() => {}}
+      onDropFile={() => {}}
+      onChange={() => {}}
+      onRun={() => {}}
+      onStop={() => {}}
+    />
+  );
+  expect(screen.getByLabelText("Чёрный первый кадр")).toBeDefined();
+});
+
+test("the panel keeps the black-first-frame row before a source is chosen", () => {
+  render(
+    <SettingsPanel
+      source={null}
+      state={state}
+      running={false}
+      onPick={() => {}}
+      onDropFile={() => {}}
+      onChange={() => {}}
+      onRun={() => {}}
+      onStop={() => {}}
+    />
+  );
+  expect(screen.getByLabelText("Чёрный первый кадр")).toBeDefined();
 });

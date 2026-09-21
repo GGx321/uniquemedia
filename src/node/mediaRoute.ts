@@ -209,11 +209,16 @@ export async function uniquifyRoute(
   const shared = { ...config, framesPerCopy: route.framesPerCopy };
   if (route.kind === "photo") {
     // `edgeMode` is replaced by the decided form rather than carried beside it,
-    // so nothing downstream can read the unanswered one by mistake. The audio
-    // flag goes the same way it does in the renderer's own photo derivation: a
-    // still has no soundtrack, and a dead flag riding along reads as a setting
-    // something honours.
-    const { edgeMode, keepTrendAudio: _keepTrendAudio, ...rest } = opts;
+    // so nothing downstream can read the unanswered one by mistake. The two
+    // video-only flags go the same way they do in the renderer's own photo
+    // derivation: a still has no soundtrack and no second frame, and a dead
+    // flag riding along reads as a setting something honours.
+    const {
+      edgeMode,
+      keepTrendAudio: _keepTrendAudio,
+      blackFirstFrame: _blackFirstFrame,
+      ...rest
+    } = opts;
     const photoOpts: ResolvedPhotoOptions = {
       ...rest,
       edge: await resolveEdge(route.executor, input, edgeMode),
@@ -223,7 +228,11 @@ export async function uniquifyRoute(
       sampleRecipe: route.sampleRecipe,
     });
   }
-  const videoOpts: CopyOptions = { ...opts, keepTrendAudio: opts.keepTrendAudio ?? false };
+  const videoOpts: CopyOptions = {
+    ...opts,
+    keepTrendAudio: opts.keepTrendAudio ?? false,
+    blackFirstFrame: opts.blackFirstFrame ?? false,
+  };
   return uniquify<Recipe, CopyOptions>(input, videoOpts, route.executor, count, {
     ...shared,
     sampleRecipe: route.sampleRecipe,

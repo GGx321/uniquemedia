@@ -25,6 +25,7 @@ const opts: CopyOptions = {
   targetDistance: 38,
   spoofMetadata: false,
   edgeMode: "auto",
+  blackFirstFrame: false,
 };
 
 /** The spatial chain exactly as `buildArgs` assembles it from the fragments. */

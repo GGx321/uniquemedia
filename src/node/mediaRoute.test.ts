@@ -263,6 +263,30 @@ test("a start payload carrying the audio flag passes it through to the video sam
   expect(video.rendered[0].keepTrendAudio).toBe(true);
 });
 
+test("a start payload without the black-first-frame flag renders video with it off", async () => {
+  // Same shape as the audio flag: the photo UI never sends it, and a file that
+  // turns out to be footage must reach the sampler with a definite `false`.
+  const { backends, video } = fakeBackends();
+  const route = routeForKind("video", backends);
+  await uniquifyRoute(route, "SOURCE", opts, 1, {
+    seedBase: 1,
+    nowMs: NOW,
+    outputPath: (i) => outputName("clip", i, route),
+  });
+  expect(video.rendered[0].blackFirstFrame).toBe(false);
+});
+
+test("a start payload carrying the black-first-frame flag passes it through to the video sampler", async () => {
+  const { backends, video } = fakeBackends();
+  const route = routeForKind("video", backends);
+  await uniquifyRoute(route, "SOURCE", { ...opts, blackFirstFrame: true }, 1, {
+    seedBase: 1,
+    nowMs: NOW,
+    outputPath: (i) => outputName("clip", i, route),
+  });
+  expect(video.rendered[0].blackFirstFrame).toBe(true);
+});
+
 let dir: string;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "uniq-route-"));

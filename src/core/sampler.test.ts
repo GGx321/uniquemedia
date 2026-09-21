@@ -10,6 +10,7 @@ const opts: CopyOptions = {
   targetDistance: 90,
   spoofMetadata: false,
   edgeMode: "auto",
+  blackFirstFrame: false,
 };
 
 test("same seed and intensity is deterministic", () => {
@@ -126,4 +127,23 @@ test("segments vary across seeds", () => {
   const a = sampleRecipe(opts, 1, 1).segments;
   const b = sampleRecipe(opts, 2, 1).segments;
   expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
+});
+
+test("carries blackFirstFrame from the options into the recipe", () => {
+  expect(sampleRecipe({ ...opts, blackFirstFrame: true }, 5, 1).blackFirstFrame).toBe(true);
+  expect(sampleRecipe({ ...opts, blackFirstFrame: false }, 5, 1).blackFirstFrame).toBe(false);
+});
+
+test("blackFirstFrame never touches the rng: every other recipe field is identical on and off", () => {
+  // The toggle is copied straight from the options. If it ever cost an rng
+  // draw, flipping it would re-roll every draw after it and the same seed
+  // would stop meaning the same copy — which is the invariant shipped recipes
+  // rely on. So the two recipes must differ in this one field and nowhere else.
+  for (let seed = 1; seed <= 100; seed++) {
+    const { blackFirstFrame: onFlag, ...restOn } = sampleRecipe({ ...opts, blackFirstFrame: true }, seed, 1);
+    const { blackFirstFrame: offFlag, ...restOff } = sampleRecipe({ ...opts, blackFirstFrame: false }, seed, 1);
+    expect(onFlag).toBe(true);
+    expect(offFlag).toBe(false);
+    expect(restOn).toEqual(restOff);
+  }
 });

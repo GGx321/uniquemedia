@@ -38,8 +38,22 @@ function boundaries(recipe: Recipe, info: MediaInfo): number[] {
 const splitLabels = (prefix: string, n: number): string =>
   Array.from({ length: n }, (_, i) => `[${prefix}${i}]`).join("");
 
+/**
+ * Paints the first output frame black. Goes on the concat OUTPUT so it is the
+ * first frame of the file whatever speed the first segment runs at; `n` is the
+ * frame index within this filter and restarts at 0 after the concat.
+ *
+ * The `fps=` in front of it is not optional. The encode applies `-r <fps>
+ * -fps_mode cfr` after the graph, and on a source slower than the target that
+ * duplicates frames to reach CFR — a black frame among them would be duplicated
+ * into two or three. Converting to the target rate inside the graph makes `n`
+ * count output frames, and leaves the `-r` that follows nothing to duplicate.
+ */
+const blackFirstFrame = (fps: number): string =>
+  `,fps=${fps},drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='eq(n,0)'`;
+
 /** Video graph: spatial -> split -> per-segment trim+setpts -> concat -> [outv]. */
-function videoComplex(recipe: Recipe, info: MediaInfo): string {
+function videoComplex(recipe: Recipe, info: MediaInfo, fps: number): string {
   const n = recipe.segments.length;
   const b = boundaries(recipe, info);
   const spatial = spatialChain(recipe, info);
@@ -50,7 +64,8 @@ function videoComplex(recipe: Recipe, info: MediaInfo): string {
         `setpts=(PTS-STARTPTS)/${seg.speed}[s${i}]`
     );
   });
-  lines.push(`${splitLabels("s", n)}concat=n=${n}:v=1:a=0[outv]`);
+  const tail = recipe.blackFirstFrame ? blackFirstFrame(fps) : "";
+  lines.push(`${splitLabels("s", n)}concat=n=${n}:v=1:a=0${tail}[outv]`);
   return lines.join(";");
 }
 
@@ -95,8 +110,8 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
   );
 
   const complex = info.hasAudio
-    ? `${videoComplex(recipe, info)};${audioComplex(recipe, info)}`
-    : videoComplex(recipe, info);
+    ? `${videoComplex(recipe, info, fps)};${audioComplex(recipe, info)}`
+    : videoComplex(recipe, info, fps);
   const args: string[] = ["-filter_complex", complex, "-map", "[outv]"];
 
   if (info.hasAudio) {

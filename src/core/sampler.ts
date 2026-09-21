@@ -87,6 +87,7 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     exportFormat: opts.exportFormat,
     keepTrendAudio: opts.keepTrendAudio,
     spoof: opts.spoofMetadata,
+    blackFirstFrame: opts.blackFirstFrame,
     segments,
     video: [...video, { id: "encode", params: { crf, fps, gop, keyintMin, preset, audioKbps } }],
     audio,

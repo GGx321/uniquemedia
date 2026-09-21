@@ -55,6 +55,7 @@ beforeAll(async () => {
       targetDistance: 90,
       spoofMetadata: true,
       edgeMode: "auto",
+      blackFirstFrame: false,
     },
     SEED,
     1

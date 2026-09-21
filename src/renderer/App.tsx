@@ -25,6 +25,7 @@ const initial: SettingsState = {
     // background and a visible border on a photograph, and the user should not
     // have to know which one they dropped in.
     edgeMode: "auto",
+    blackFirstFrame: false,
   },
 };
 

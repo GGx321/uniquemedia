@@ -59,6 +59,9 @@ export interface PhotoCopyOptions extends UniquifyOptions {
 
 export interface CopyOptions extends PhotoCopyOptions {
   keepTrendAudio: boolean;
+  /** Paint the first output frame pure black. Video only: a still has one
+   *  frame, and blacking it out would be the whole picture. */
+  blackFirstFrame: boolean;
 }
 
 /**
@@ -68,7 +71,10 @@ export interface CopyOptions extends PhotoCopyOptions {
  * should the file turn out to be footage after all, the video path resolves its
  * absence to a definite `false` rather than passing `undefined` to a sampler.
  */
-export type StartOptions = PhotoCopyOptions & { keepTrendAudio?: boolean };
+export type StartOptions = PhotoCopyOptions & {
+  keepTrendAudio?: boolean;
+  blackFirstFrame?: boolean;
+};
 
 export interface Operation {
   id: string;
@@ -86,6 +92,9 @@ export interface Recipe {
   exportFormat: ExportFormat;
   keepTrendAudio: boolean;
   spoof: boolean;
+  /** Copied straight from the options, never drawn: a recipe with it on and
+   *  one with it off differ in this field alone for the same seed. */
+  blackFirstFrame: boolean;
   segments: SpeedSegment[];
   video: Operation[];
   audio: Operation[];

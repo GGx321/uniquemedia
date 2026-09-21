@@ -31,6 +31,7 @@ const opts: CopyOptions = {
   strength: 1.0, exportFormat: "reels", keepTrendAudio: false, allowMirror: false, targetDistance: 40,
   spoofMetadata: false,
   edgeMode: "auto",
+  blackFirstFrame: false,
 };
 
 test("fires onProgress per render tick and onCopyDone per accepted copy", async () => {

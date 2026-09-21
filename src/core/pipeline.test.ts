@@ -38,6 +38,7 @@ const opts: CopyOptions = {
   targetDistance: 40,
   spoofMetadata: false,
   edgeMode: "auto",
+  blackFirstFrame: false,
 };
 
 test("produces the requested number of copies", async () => {

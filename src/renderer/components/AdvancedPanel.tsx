@@ -8,6 +8,7 @@ export interface AdvancedValue {
   targetDistance: number;
   spoofMetadata: boolean;
   edgeMode: EdgeMode;
+  blackFirstFrame: boolean;
 }
 
 /** Reading the answer back as one of the three modes rather than casting the
@@ -84,6 +85,18 @@ export function AdvancedPanel({
             onChange={(e) => set({ allowMirror: e.target.checked })}
           />
         </label>
+        {kind !== "photo" && (
+          <label className="adv-row">
+            Чёрный первый кадр
+            <input
+              className="switch"
+              aria-label="Чёрный первый кадр"
+              type="checkbox"
+              checked={value.blackFirstFrame}
+              onChange={(e) => set({ blackFirstFrame: e.target.checked })}
+            />
+          </label>
+        )}
         {kind === "photo" && (
           <label className="adv-row">
             Сохранять края кадра

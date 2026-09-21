@@ -11,6 +11,7 @@ const base: AdvancedValue = {
   strength: 1.0,
   spoofMetadata: true,
   edgeMode: "auto",
+  blackFirstFrame: false,
 };
 
 test("toggles keep-trend-audio", () => {
@@ -100,4 +101,24 @@ test("the edge control offers exactly the three modes and nothing else", () => {
   const values =
     select instanceof HTMLSelectElement ? [...select.options].map((o) => o.value) : [];
   expect(values.sort()).toEqual(["auto", "crop", "fit"]);
+});
+
+const BLACK_LABEL = "Чёрный первый кадр";
+
+test("toggles black-first-frame for a video", () => {
+  let v: AdvancedValue = { ...base };
+  render(<AdvancedPanel kind="video" value={v} onChange={(x) => (v = x)} />);
+  fireEvent.click(screen.getByLabelText(BLACK_LABEL));
+  expect(v.blackFirstFrame).toBe(true);
+});
+
+test("the black-first-frame switch shows the state it was given", () => {
+  render(<AdvancedPanel kind="video" value={{ ...base, blackFirstFrame: true }} onChange={() => {}} />);
+  const input = screen.getByLabelText(BLACK_LABEL);
+  expect(input instanceof HTMLInputElement ? input.checked : null).toBe(true);
+});
+
+test("hides the black-first-frame switch for a photo, which has one frame to black out", () => {
+  render(<AdvancedPanel kind="photo" value={{ ...base }} onChange={() => {}} />);
+  expect(screen.queryByLabelText(BLACK_LABEL)).toBeNull();
 });

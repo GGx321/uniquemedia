@@ -25,7 +25,11 @@ export function settingsToPhotoOptions(s: SettingsState): PhotoCopyOptions {
 }
 
 export function settingsToOptions(s: SettingsState): CopyOptions {
-  return { ...settingsToPhotoOptions(s), keepTrendAudio: s.advanced.keepTrendAudio };
+  return {
+    ...settingsToPhotoOptions(s),
+    keepTrendAudio: s.advanced.keepTrendAudio,
+    blackFirstFrame: s.advanced.blackFirstFrame,
+  };
 }
 
 export function SettingsPanel({
