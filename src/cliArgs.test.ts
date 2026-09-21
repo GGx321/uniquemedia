@@ -2,11 +2,30 @@ import { test, expect } from "bun:test";
 import { arg, flag, parseStartOptions } from "./cliArgs";
 import { createBackends, routeForKind } from "./node/mediaRoute";
 
+/**
+ * A bare switch takes no value, so the token after it is whatever comes next
+ * on the line — or nothing, when it comes last. A parser that reads "the next
+ * token" as the switch's value sees nothing there and treats the switch as
+ * absent. `--no-spoof` last on the line spoofed anyway, in silence; every
+ * switch is checked in that position here because it is the one that failed.
+ */
 
 const route = routeForKind("video", createBackends());
 
 /** argv as the process sees it: runtime, script, input, then the options. */
 const line = (...rest: string[]): string[] => ["bun", "cli.ts", "in.mp4", ...rest];
+
+test("--no-spoof last on the line turns spoofing off", () => {
+  expect(parseStartOptions(line("--count", "1", "--no-spoof"), route).spoofMetadata).toBe(false);
+});
+
+test("--keep-audio last on the line keeps the audio", () => {
+  expect(parseStartOptions(line("--count", "1", "--keep-audio"), route).keepTrendAudio).toBe(true);
+});
+
+test("--mirror last on the line allows the mirror", () => {
+  expect(parseStartOptions(line("--count", "1", "--mirror"), route).allowMirror).toBe(true);
+});
 
 test("--black-first-frame last on the line turns the black frame on", () => {
   expect(parseStartOptions(line("--count", "1", "--black-first-frame"), route).blackFirstFrame).toBe(true);

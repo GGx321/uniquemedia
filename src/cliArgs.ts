@@ -26,10 +26,10 @@ export function parseStartOptions(argv: readonly string[], route: MediaRoute): S
   return {
     strength: Number(arg(argv, "strength", "1.0")),
     exportFormat: resolveExportFormat(arg(argv, "format"), route),
-    keepTrendAudio: arg(argv, "keep-audio") !== undefined,
-    allowMirror: arg(argv, "mirror") !== undefined,
+    keepTrendAudio: flag(argv, "keep-audio"),
+    allowMirror: flag(argv, "mirror"),
     targetDistance: Number(arg(argv, "target", "38")),
-    spoofMetadata: arg(argv, "no-spoof") === undefined,
+    spoofMetadata: !flag(argv, "no-spoof"),
     edgeMode: resolveEdgeMode(arg(argv, "edges"), "auto"),
     blackFirstFrame: flag(argv, "black-first-frame"),
   };

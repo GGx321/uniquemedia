@@ -39,6 +39,11 @@ test("the CLI rejects an --edges mode it does not know, naming what was asked fo
 });
 
 test("the CLI accepts every mode the option allows", () => {
+  // `--no-spoof` is there to keep exiftool out of a test about edges, and it
+  // sits last on purpose: the parser once read the token after a switch as
+  // its value, so a trailing switch was silently absent and this run spoofed
+  // anyway. The status assertion held either way; what changed is that the
+  // run now does what the line says.
   for (const mode of ["crop", "fit", "auto"]) {
     const { status, output } = runCli([
       input, "--count", "1", "--out", join(dir, mode), "--edges", mode,
