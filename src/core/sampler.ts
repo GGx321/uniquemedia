@@ -11,7 +11,10 @@ function dev(rng: Rng, key: keyof typeof PARAMS, scalar: number, oneSided = fals
 
 const FPS_CHOICES = [24, 25, 30] as const;
 const GOP_SECONDS = [2, 3, 4] as const;
-const PRESET_CHOICES = ["faster", "veryfast"] as const;
+// Slower presets compress better at equal quality, which is what fits a 15-30 s
+// clip inside the 3500k ceiling without lowering crf; the random pick stays
+// because the preset is part of the encoder fingerprint.
+const PRESET_CHOICES = ["medium", "slow"] as const;
 const AUDIO_KBPS_CHOICES = [96, 112, 128, 160] as const;
 const SEGMENT_COUNTS = [3, 4, 5] as const;
 
@@ -66,7 +69,7 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     fraction: w / weightSum,
     speed: round(clamp(dev(rng, "speed", s), 0.9, 1.1)),
   }));
-  const crf = Math.round(clamp(dev(rng, "crf", s), 18, 26));
+  const crf = Math.round(clamp(dev(rng, "crf", s), 18, 22));
 
   // Container/bitstream signature spread. Drawn here (before the conditional
   // audio draw) so they stay independent of `keepTrendAudio`, and they ignore

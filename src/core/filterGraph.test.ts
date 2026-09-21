@@ -18,7 +18,7 @@ const recipe: Recipe = {
   video: [
     { id: "eq", params: { brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1 } },
     { id: "noise", params: { strength: 0 } }, // no-op, must be skipped
-    { id: "encode", params: { crf: 21, fps: 30, gop: 60, keyintMin: 30, preset: "faster", audioKbps: 128 } },
+    { id: "encode", params: { crf: 21, fps: 30, gop: 60, keyintMin: 30, preset: "medium", audioKbps: 128 } },
   ],
   audio: [{ id: "aeq", params: { gain: 1.5 } }],
 };
@@ -96,8 +96,17 @@ test("emits CFR normalization: -r, -fps_mode cfr, -g, -keyint_min", () => {
 
 test("uses the recipe preset and never ultrafast", () => {
   const args = buildArgs(recipe, info);
-  expect(args[args.indexOf("-preset") + 1]).toBe("faster");
+  expect(args[args.indexOf("-preset") + 1]).toBe("medium");
   expect(args).not.toContain("ultrafast");
+});
+
+test("falls back to preset medium when the encode op carries none", () => {
+  const bare = {
+    ...recipe,
+    video: recipe.video.map((o) => (o.id === "encode" ? { ...o, params: { crf: 21 } } : o)),
+  };
+  const args = buildArgs(bare, info);
+  expect(args[args.indexOf("-preset") + 1]).toBe("medium");
 });
 
 test("uses the per-copy audio bitrate for -b:a", () => {
@@ -145,8 +154,16 @@ test("caps the bitrate so a long video stays under the 50MB ceiling", () => {
   expect((kbps * 120) / 8 / 1024).toBeLessThanOrEqual(50);
 });
 
-test("short clips get a high cap that doesn't fight CRF", () => {
-  const short = { ...info, durationSec: 5 };
-  const kbps = parseInt(buildArgs(recipe, short)[buildArgs(recipe, short).indexOf("-maxrate") + 1], 10);
-  expect(kbps).toBeGreaterThan(10000);
+test("a 30 s clip gets the 3500k Instagram ceiling with a 2 s VBV window", () => {
+  const args = buildArgs(recipe, { ...info, durationSec: 30 });
+  expect(args[args.indexOf("-maxrate") + 1]).toBe("3500k");
+  expect(args[args.indexOf("-bufsize") + 1]).toBe("7000k");
+});
+
+test("a 10-minute clip gets the lower 50 MB-derived cap instead of 3500k", () => {
+  const args = buildArgs(recipe, { ...info, durationSec: 600 });
+  const kbps = parseInt(args[args.indexOf("-maxrate") + 1], 10);
+  expect(kbps).toBeLessThan(3500);
+  expect((kbps * 600) / 8 / 1024).toBeLessThanOrEqual(50);
+  expect(args[args.indexOf("-bufsize") + 1]).toBe(`${kbps * 2}k`);
 });

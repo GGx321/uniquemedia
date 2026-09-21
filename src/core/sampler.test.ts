@@ -62,11 +62,33 @@ test("crf varies around neutral and is not pinned to the clamp ceiling", () => {
     const recipe = sampleRecipe(opts, seed, 1);
     const crf = Number(recipe.video.find((o) => o.id === "encode")!.params.crf);
     expect(crf).toBeGreaterThanOrEqual(18);
-    expect(crf).toBeLessThanOrEqual(26);
+    expect(crf).toBeLessThanOrEqual(22);
     values.add(crf);
   }
-  // must not be a single pinned value, and the average should sit near 21, not 26
+  // must not be a single pinned value, and the average should sit near 20, not 22
   expect(values.size).toBeGreaterThan(1);
+});
+
+test("never draws a crf outside 18–22, whatever the seed or intensity", () => {
+  // Auto-strengthen raises intensity on a failed PDQ attempt, which widens every
+  // draw; the crf band has to hold there too, or the escalated copy is the one
+  // that ships at a quality the band was chosen to rule out.
+  for (const intensity of [1, 1.5, 2, 3]) {
+    for (let seed = 0; seed < 300; seed++) {
+      const crf = Number(sampleRecipe(opts, seed, intensity).video.find((o) => o.id === "encode")!.params.crf);
+      expect(crf).toBeGreaterThanOrEqual(18);
+      expect(crf).toBeLessThanOrEqual(22);
+    }
+  }
+});
+
+test("never picks a preset outside medium/slow, whatever the seed or intensity", () => {
+  for (const intensity of [1, 1.5, 2, 3]) {
+    for (let seed = 0; seed < 300; seed++) {
+      const preset = String(sampleRecipe(opts, seed, intensity).video.find((o) => o.id === "encode")!.params.preset);
+      expect(["medium", "slow"]).toContain(preset);
+    }
+  }
 });
 
 test("encode op carries randomized fps/gop/preset/audio params in range", () => {
@@ -77,7 +99,7 @@ test("encode op carries randomized fps/gop/preset/audio params in range", () => 
   expect(typeof enc.preset).toBe("string");
   expect(typeof enc.audioKbps).toBe("number");
   expect([24, 25, 30]).toContain(Number(enc.fps));
-  expect(["faster", "veryfast"]).toContain(String(enc.preset));
+  expect(["medium", "slow"]).toContain(String(enc.preset));
   expect([96, 112, 128, 160]).toContain(Number(enc.audioKbps));
   expect(enc.keyintMin).toBe(enc.fps);
   const mult = Number(enc.gop) / Number(enc.fps);

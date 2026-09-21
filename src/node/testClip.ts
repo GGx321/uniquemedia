@@ -7,12 +7,13 @@ function ffmpeg(label: string, args: string[]): void {
   if (r.status !== 0) throw new Error(`${label} failed: ` + r.stderr.toString());
 }
 
-/** Creates a 2s 320x240 test clip with a 440Hz tone at `path`. */
-export function makeTestClip(path: string): void {
+/** Creates a 320x240 test clip with a 440Hz tone at `path`, 2 s long unless
+ *  `durationSec` says otherwise. */
+export function makeTestClip(path: string, durationSec = 2): void {
   ffmpeg("makeTestClip", [
     "-y",
-    "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=15",
-    "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+    "-f", "lavfi", "-i", `testsrc=duration=${durationSec}:size=320x240:rate=15`,
+    "-f", "lavfi", "-i", `sine=frequency=440:duration=${durationSec}`,
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
     path,
   ]);

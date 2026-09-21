@@ -16,6 +16,6 @@ export const PARAMS = {
   noise: { neutral: 0, dev: 14 }, // one-sided strength — invisible grain, strong hash shift
   speed: { neutral: 1, dev: 0.05 },
   eqGain: { neutral: 0, dev: 2.5 },
-  crf: { neutral: 21, dev: 2 },
+  crf: { neutral: 20, dev: 2 }, // 18..22 at scalar 1 — Instagram re-encodes to 2-3.5 Mbit/s, spend the budget on quality
 } satisfies Record<string, ParamSpec>;
 
