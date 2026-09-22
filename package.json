@@ -1,6 +1,6 @@
 {
   "name": "uniquemedia",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "main": "out/main/main.js",
   "bin": {
