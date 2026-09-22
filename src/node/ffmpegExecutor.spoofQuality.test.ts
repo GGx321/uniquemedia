@@ -32,7 +32,7 @@ const recipe: Recipe = {
   exportFormat: "square",
   keepTrendAudio: false,
   identity: "engine",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
   segments: [
     { fraction: 0.5, speed: 1.03 },
     { fraction: 0.5, speed: 0.97 },

@@ -55,7 +55,7 @@ beforeAll(async () => {
       targetDistance: 90,
       identity: "iphone",
       edgeMode: "auto",
-      blackFirstFrame: false,
+      firstFrame: { mode: "off" },
     },
     SEED,
     1

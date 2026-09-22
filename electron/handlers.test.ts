@@ -3,15 +3,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  COVER_FILTERS,
   IMAGE_EXTENSIONS,
   PICKER_FILTERS,
   VIDEO_EXTENSIONS,
+  pickCoverForHost,
   probeForHost,
   runBatchForHost,
   type BatchHost,
 } from "./handlers";
 import { CH } from "./ipc";
-import { makeTestHeif, makeTestPhoto } from "../src/node/testClip";
+import { makeTestClip, makeTestHeif, makeTestPhoto } from "../src/node/testClip";
 import type { Backends, MediaBackend } from "../src/node/mediaRoute";
 import type { MediaInfo, StartOptions } from "../src/core/types";
 
@@ -265,4 +267,82 @@ test("two reports for one copy arrive in the order the copy was done, whatever t
   expect(forCopy2.length).toBeGreaterThan(1);
   const thumbs = forCopy2.map((s) => Number(thumbOf(s.payload).replace("thumb-", "")));
   expect(thumbs).toEqual([...thumbs].sort((a, b) => a - b));
+});
+
+// ── the cover picker, and photo mode at the batch boundary ─────────────────
+
+test("the cover picker filter offers exactly the image extensions", () => {
+  // The dialog behind «Выбрать фото» takes stills only; a video chosen there
+  // would be refused at Run with a message, but greying it out is kinder.
+  expect(COVER_FILTERS.length).toBe(1);
+  expect(COVER_FILTERS[0].extensions).toEqual(IMAGE_EXTENSIONS);
+});
+
+test("picking a still as the cover returns its path and a thumbnail to show beside it", async () => {
+  const still = join(dir, "cover.jpg");
+  makeTestPhoto(still, 320, 240);
+  const backends: Backends = {
+    video: new BatchStub(videoInfo, () => frameOfDistance(5)),
+    photo: new BatchStub(photoInfo, () => frameOfDistance(5)),
+  };
+  const reported: string[] = [];
+
+  const picked = await pickCoverForHost(still, backends, (m) => reported.push(m));
+
+  expect(picked).toEqual({ path: still, thumb: "thumb-1" });
+  expect(reported).toEqual([]);
+});
+
+test("picking a HEIC as the cover reports the convert-it advice and returns null", async () => {
+  const heif = join(dir, "cover.heic");
+  makeTestHeif(heif);
+  const reported: string[] = [];
+
+  const picked = await pickCoverForHost(heif, stubBackends(), (m) => reported.push(m));
+
+  expect(picked).toBeNull();
+  expect(reported.length).toBe(1);
+  expect(reported[0]).toContain("HEIC");
+  expect(reported[0]).not.toContain("invoking remote method");
+});
+
+test("picking footage as the cover reports that the first frame takes a still, and returns null", async () => {
+  const clip = join(dir, "cover.mp4");
+  makeTestClip(clip);
+  const reported: string[] = [];
+
+  const picked = await pickCoverForHost(clip, stubBackends(), (m) => reported.push(m));
+
+  expect(picked).toBeNull();
+  expect(reported.length).toBe(1);
+  expect(reported[0].toLowerCase()).toContain("still");
+  expect(reported[0]).toContain(clip);
+});
+
+test("a photo first frame with no cover is reported as an error event, and no copy is done", async () => {
+  // The renderer disables Run until a cover is chosen, but the request is
+  // the boundary: a payload that slipped through must be refused with the
+  // same sentence, as an event — thrown, it would arrive wrapped in IPC.
+  const input = join(dir, "clip-in.mp4");
+  makeTestClip(input);
+  const sent: Sent[] = [];
+  const host: BatchHost = {
+    backends: {
+      video: new BatchStub(videoInfo, () => frameOfDistance(5)),
+      photo: new BatchStub(photoInfo, () => frameOfDistance(5)),
+    },
+    send: (channel, payload) => sent.push({ channel, payload }),
+    signal: new AbortController().signal,
+    nowMs: () => 1_780_000_000_000,
+    concurrency: 1,
+  };
+  await runBatchForHost(
+    { input, opts: { ...startOpts, firstFrame: "photo", coverPath: null }, count: 1, outDir: join(dir, "out-nocover") },
+    host
+  );
+  const channels = sent.map((s) => s.channel);
+  expect(channels).toEqual([CH.evtError]);
+  const message = sent[0].payload;
+  expect(typeof message === "object" && message !== null && "message" in message ? String(message.message) : "")
+    .toContain("cover");
 });

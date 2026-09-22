@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { uniquify } from "./pipeline";
 import { sampleRecipe } from "./sampler";
 import type { RenderExecutor } from "./executor";
-import type { CopyOptions, MediaInfo, Recipe } from "./types";
+import type { ResolvedCopyOptions, MediaInfo, Recipe } from "./types";
 
 const info: MediaInfo = { kind: "video", durationSec: 4, width: 640, height: 480, hasAudio: true };
 
@@ -30,7 +30,7 @@ class MockExecutor implements RenderExecutor {
   }
 }
 
-const opts: CopyOptions = {
+const opts: ResolvedCopyOptions = {
   strength: 1.0,
   exportFormat: "reels",
   keepTrendAudio: false,
@@ -38,7 +38,7 @@ const opts: CopyOptions = {
   targetDistance: 40,
   identity: "engine",
   edgeMode: "auto",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
 };
 
 test("produces the requested number of copies", async () => {
@@ -89,18 +89,18 @@ test("asks config.sampleRecipe for an escalating seed and intensity on every ret
   expect(calls.map((c) => c.intensity)).toEqual([1, 1.4, 1.4 * 1.4]);
 });
 
-test("infers the caller's CopyOptions, not the pipeline's base UniquifyOptions", async () => {
+test("infers the caller's ResolvedCopyOptions, not the pipeline's base UniquifyOptions", async () => {
   // The annotation below is the compile-time half of this test: it pins that
   // UniquifyConfig.sampleRecipe takes O, not a hardcoded UniquifyOptions.
   // That `opts` itself stays O is enforced elsewhere — by the pipeline's own
   // call sites (pipeline.ts:63 and :169), which stop compiling if O is collapsed.
   const exec = new MockExecutor();
-  const seen: CopyOptions[] = [];
+  const seen: ResolvedCopyOptions[] = [];
 
   await uniquify("ORIGINAL", opts, exec, 1, {
     seedBase: 1,
     framesPerCopy: 4,
-    sampleRecipe: (o: CopyOptions, seed, intensity) => {
+    sampleRecipe: (o: ResolvedCopyOptions, seed, intensity) => {
       seen.push(o);
       return sampleRecipe(o, seed, intensity);
     },

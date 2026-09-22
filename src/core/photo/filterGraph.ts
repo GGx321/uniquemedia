@@ -66,9 +66,16 @@ function geometryCover(recipe: PhotoRecipe, info: MediaInfo): number {
   return rotated * lensCover(k1) * COVER_MARGIN;
 }
 
-/** Spatial chain for a still: recipe ops in order, the geometry cover, then the
- *  export framing. Mirrors the video spatial chain, minus everything temporal. */
-function chain(recipe: PhotoRecipe, info: MediaInfo): string {
+/**
+ * Spatial chain for a still: recipe ops in order, the geometry cover, then the
+ * export framing. Mirrors the video spatial chain, minus everything temporal.
+ *
+ * Exported bare — no `-vf`, no encode — because the video graph runs a cover
+ * through it as a second input before fitting it to the frame. It is the one
+ * chain, so the cover on frame 0 is exactly the still the photo pipeline would
+ * have shipped from the same recipe.
+ */
+export function photoChain(recipe: PhotoRecipe, info: MediaInfo): string {
   const parts: string[] = [];
   let afterGeometry = 0;
   for (const op of recipe.ops) {
@@ -105,7 +112,7 @@ function chain(recipe: PhotoRecipe, info: MediaInfo): string {
 export function buildPhotoArgs(recipe: PhotoRecipe, info: MediaInfo): string[] {
   return [
     "-vf",
-    chain(recipe, info),
+    photoChain(recipe, info),
     "-q:v",
     String(recipe.encode.quality),
     "-pix_fmt",

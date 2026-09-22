@@ -8,7 +8,7 @@ import ffprobeStatic from "ffprobe-static";
 import { FfmpegExecutor } from "./ffmpegExecutor";
 import { makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
-import type { CopyOptions, MediaInfo, Recipe } from "../core/types";
+import type { ResolvedCopyOptions, MediaInfo, Recipe } from "../core/types";
 
 /**
  * The black first frame, measured on a real encode rather than on the graph
@@ -38,7 +38,7 @@ const BLACK_MAX = 1;
 /** testsrc frames average ~128; a frame this bright is clearly not black. */
 const PICTURE_MEAN = 32;
 
-const opts: CopyOptions = {
+const opts: ResolvedCopyOptions = {
   strength: 1.0,
   exportFormat: "original",
   keepTrendAudio: false,
@@ -46,7 +46,7 @@ const opts: CopyOptions = {
   targetDistance: 60,
   identity: "engine",
   edgeMode: "auto",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
 };
 
 function grayFrames(file: string, count: number): Uint8Array[] {
@@ -94,8 +94,8 @@ beforeAll(async () => {
   info = await exec.probe(input);
   // One seed, two renders: the recipes differ in the toggle alone, so anything
   // that differs between the files is the toggle's doing.
-  recipeOn = sampleRecipe({ ...opts, blackFirstFrame: true }, 42, 1);
-  const recipeOff = sampleRecipe({ ...opts, blackFirstFrame: false }, 42, 1);
+  recipeOn = sampleRecipe({ ...opts, firstFrame: { mode: "black" } }, 42, 1);
+  const recipeOff = sampleRecipe({ ...opts, firstFrame: { mode: "off" } }, 42, 1);
   onPath = join(dir, "on.mp4");
   offPath = join(dir, "off.mp4");
   await exec.render(input, info, recipeOn, onPath);

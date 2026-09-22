@@ -25,7 +25,7 @@ const off: Recipe = {
   exportFormat: "reels",
   keepTrendAudio: false,
   identity: "engine",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
   segments: [
     { fraction: 0.5, speed: 1.03 },
     { fraction: 0.5, speed: 0.97 },
@@ -37,7 +37,7 @@ const off: Recipe = {
   audio: [{ id: "aeq", params: { gain: 1.5 } }],
 };
 
-const on: Recipe = { ...off, blackFirstFrame: true };
+const on: Recipe = { ...off, firstFrame: { mode: "black" } };
 
 const complexOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1];
 

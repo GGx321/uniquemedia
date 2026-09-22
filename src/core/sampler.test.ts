@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
 import { sampleRecipe } from "./sampler";
-import type { CopyOptions } from "./types";
+import type { ResolvedCopyOptions } from "./types";
 
-const opts: CopyOptions = {
+const opts: ResolvedCopyOptions = {
   strength: 1.0,
   exportFormat: "reels",
   keepTrendAudio: false,
@@ -10,7 +10,7 @@ const opts: CopyOptions = {
   targetDistance: 90,
   identity: "engine",
   edgeMode: "auto",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
 };
 
 test("same seed and intensity is deterministic", () => {
@@ -151,21 +151,21 @@ test("segments vary across seeds", () => {
   expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
 });
 
-test("carries blackFirstFrame from the options into the recipe", () => {
-  expect(sampleRecipe({ ...opts, blackFirstFrame: true }, 5, 1).blackFirstFrame).toBe(true);
-  expect(sampleRecipe({ ...opts, blackFirstFrame: false }, 5, 1).blackFirstFrame).toBe(false);
+test("carries the black first-frame mode from the options into the recipe", () => {
+  expect(sampleRecipe({ ...opts, firstFrame: { mode: "black" } }, 5, 1).firstFrame).toEqual({ mode: "black" });
+  expect(sampleRecipe({ ...opts, firstFrame: { mode: "off" } }, 5, 1).firstFrame).toEqual({ mode: "off" });
 });
 
-test("blackFirstFrame never touches the rng: every other recipe field is identical on and off", () => {
-  // The toggle is copied straight from the options. If it ever cost an rng
+test("the black first frame never touches the rng: every other recipe field is identical on and off", () => {
+  // The mode is copied straight from the options. If it ever cost an rng
   // draw, flipping it would re-roll every draw after it and the same seed
   // would stop meaning the same copy — which is the invariant shipped recipes
   // rely on. So the two recipes must differ in this one field and nowhere else.
   for (let seed = 1; seed <= 100; seed++) {
-    const { blackFirstFrame: onFlag, ...restOn } = sampleRecipe({ ...opts, blackFirstFrame: true }, seed, 1);
-    const { blackFirstFrame: offFlag, ...restOff } = sampleRecipe({ ...opts, blackFirstFrame: false }, seed, 1);
-    expect(onFlag).toBe(true);
-    expect(offFlag).toBe(false);
+    const { firstFrame: on, ...restOn } = sampleRecipe({ ...opts, firstFrame: { mode: "black" } }, seed, 1);
+    const { firstFrame: off, ...restOff } = sampleRecipe({ ...opts, firstFrame: { mode: "off" } }, seed, 1);
+    expect(on).toEqual({ mode: "black" });
+    expect(off).toEqual({ mode: "off" });
     expect(restOn).toEqual(restOff);
   }
 });

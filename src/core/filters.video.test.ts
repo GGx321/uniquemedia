@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { FRAGMENTS } from "./filters";
 import { sampleRecipe } from "./sampler";
-import type { CopyOptions, MediaInfo, Operation } from "./types";
+import type { ResolvedCopyOptions, MediaInfo, Operation } from "./types";
 
 /**
  * `filters.ts` is now shared: the photo path added branches inside fragments
@@ -17,7 +17,7 @@ import type { CopyOptions, MediaInfo, Operation } from "./types";
 
 const info: MediaInfo = { kind: "video", durationSec: 5, width: 1280, height: 720, hasAudio: true };
 
-const opts: CopyOptions = {
+const opts: ResolvedCopyOptions = {
   strength: 1.0,
   exportFormat: "reels",
   keepTrendAudio: false,
@@ -25,7 +25,7 @@ const opts: CopyOptions = {
   targetDistance: 38,
   identity: "engine",
   edgeMode: "auto",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
 };
 
 /** The spatial chain exactly as `buildArgs` assembles it from the fragments. */

@@ -23,6 +23,9 @@ Flags:
 - `--mirror` allow horizontal flip
 - `--identity engine|iphone|clean` what a copy says about itself: `engine` keeps ffmpeg's own signature, `iphone` (default) makes it look shot on an iPhone, `clean` leaves no metadata at all
 - `--no-spoof` alias for `--identity engine`, kept for existing invocations
+- `--first-frame off|black|photo` what every video copy opens on: `off` (default) leaves the footage, `black` paints one pure black frame, `photo` puts the `--cover` image there, run through the photo recipe with each copy's own seed and fitted to the video. Ignored for a still
+- `--cover <image>` the still to put on the first frame with `--first-frame photo`
+- `--black-first-frame` alias for `--first-frame black`, kept for existing invocations
 - `--seed` base seed for reproducible batches
 
 ## Test

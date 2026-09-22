@@ -6,7 +6,7 @@ import { FfmpegExecutor } from "./ffmpegExecutor";
 import { makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
 import { uniquify, type CopyResult } from "../core/pipeline";
-import type { CopyOptions, MediaInfo, Recipe } from "../core/types";
+import type { ResolvedCopyOptions, MediaInfo, Recipe } from "../core/types";
 
 /**
  * Stop during the inter-copy post-pass, on the real executor and real files.
@@ -19,7 +19,7 @@ import type { CopyOptions, MediaInfo, Recipe } from "../core/types";
  * did to the disk, not in what the pipeline believed.
  */
 
-const opts: CopyOptions = {
+const opts: ResolvedCopyOptions = {
   strength: 1.0,
   exportFormat: "original",
   keepTrendAudio: false,
@@ -28,7 +28,7 @@ const opts: CopyOptions = {
   targetDistance: 10,
   identity: "engine",
   edgeMode: "crop",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
 };
 
 const COPIES = 2;

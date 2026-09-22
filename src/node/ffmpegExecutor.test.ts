@@ -6,7 +6,7 @@ import { FfmpegExecutor } from "./ffmpegExecutor";
 import { makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
 import { uniquify } from "../core/pipeline";
-import type { CopyOptions } from "../core/types";
+import type { ResolvedCopyOptions } from "../core/types";
 
 let dir: string;
 let input: string;
@@ -41,7 +41,7 @@ test("extractGrayFrames returns 64x64 buffers", async () => {
 test("render produces a valid playable mp4", async () => {
   const info = await exec.probe(input);
   const recipe = sampleRecipe(
-    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90, identity: "engine", edgeMode: "auto", blackFirstFrame: false },
+    { strength: 1.0, exportFormat: "square", keepTrendAudio: false, allowMirror: false, targetDistance: 90, identity: "engine", edgeMode: "auto", firstFrame: { mode: "off" } },
     7,
     1
   );
@@ -56,7 +56,7 @@ test("light zoom-crop pipeline passes PDQ target 45 within a few attempts", asyn
   // Integration test: the full uniquify pipeline with the small zoom-crop (~4-6%)
   // must pass targetDistance=45 on a real test clip. Verifies the light crop is
   // an effective hash-breaker and converges quickly (minimal frame-edge loss).
-  const opts: CopyOptions = {
+  const opts: ResolvedCopyOptions = {
     strength: 1.0,
     exportFormat: "original",
     keepTrendAudio: false,
@@ -64,7 +64,7 @@ test("light zoom-crop pipeline passes PDQ target 45 within a few attempts", asyn
     targetDistance: 45,
     identity: "engine",
     edgeMode: "auto",
-    blackFirstFrame: false,
+    firstFrame: { mode: "off" },
   };
 
   const results = await uniquify(input, opts, exec, 1, {

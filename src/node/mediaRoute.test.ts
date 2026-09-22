@@ -267,9 +267,9 @@ test("a start payload carrying the audio flag passes it through to the video sam
   expect(video.rendered[0].keepTrendAudio).toBe(true);
 });
 
-test("a start payload without the black-first-frame flag renders video with it off", async () => {
+test("a start payload without a first-frame mode renders video with it off", async () => {
   // Same shape as the audio flag: the photo UI never sends it, and a file that
-  // turns out to be footage must reach the sampler with a definite `false`.
+  // turns out to be footage must reach the sampler with a definite mode.
   const { backends, video } = fakeBackends();
   const route = routeForKind("video", backends);
   await uniquifyRoute(route, "SOURCE", opts, 1, {
@@ -277,18 +277,18 @@ test("a start payload without the black-first-frame flag renders video with it o
     nowMs: NOW,
     outputPath: (i) => outputName("clip", i, route),
   });
-  expect(video.rendered[0].blackFirstFrame).toBe(false);
+  expect(video.rendered[0].firstFrame).toEqual({ mode: "off" });
 });
 
-test("a start payload carrying the black-first-frame flag passes it through to the video sampler", async () => {
+test("a start payload asking for a black first frame passes the mode through to the video sampler", async () => {
   const { backends, video } = fakeBackends();
   const route = routeForKind("video", backends);
-  await uniquifyRoute(route, "SOURCE", { ...opts, blackFirstFrame: true }, 1, {
+  await uniquifyRoute(route, "SOURCE", { ...opts, firstFrame: "black" }, 1, {
     seedBase: 1,
     nowMs: NOW,
     outputPath: (i) => outputName("clip", i, route),
   });
-  expect(video.rendered[0].blackFirstFrame).toBe(true);
+  expect(video.rendered[0].firstFrame).toEqual({ mode: "black" });
 });
 
 let dir: string;

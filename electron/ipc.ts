@@ -1,7 +1,15 @@
 import type { MediaInfo, StartOptions } from "../src/core/types";
 
+/** What the cover dialog hands the renderer: the path the batch will send
+ *  back as `coverPath`, and a thumbnail (a data URL) to show beside its name. */
+export interface CoverPick {
+  path: string;
+  thumb: string;
+}
+
 export const CH = {
   pickFile: "pick-file",
+  pickCover: "pick-cover",
   probe: "probe",
   chooseOutDir: "choose-out-dir",
   start: "start",
@@ -18,6 +26,10 @@ export const CH = {
 
 export interface Api {
   pickFile(): Promise<string | null>;
+  /** An image-only open dialog for the photo first frame. Null when cancelled
+   *  — or when the chosen file is not a still the app can open, in which case
+   *  the main process has already said why through `onError`. */
+  pickCover(): Promise<CoverPick | null>;
   /** Resolve the absolute path of a dropped File (Electron webUtils). */
   getDroppedPath(file: File): string;
   /** Null when the file could not be identified: the main process has already

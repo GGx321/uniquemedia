@@ -8,7 +8,7 @@ import ffprobeStatic from "ffprobe-static";
 import { makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
 import { buildArgs } from "../core/filterGraph";
-import type { CopyOptions, MediaInfo } from "../core/types";
+import type { ResolvedCopyOptions, MediaInfo } from "../core/types";
 
 const FFMPEG = ffmpegPath as string;
 const FFPROBE = ffprobeStatic.path;
@@ -38,10 +38,10 @@ test("rendered copy is CFR at the recipe fps with intact, in-sync audio", () => 
     const output = join(dir, "out.mp4");
     makeTestClip(input);
 
-    const opts: CopyOptions = {
+    const opts: ResolvedCopyOptions = {
       strength: 1, exportFormat: "original", keepTrendAudio: false,
       allowMirror: false, targetDistance: 60, identity: "engine", edgeMode: "auto",
-      blackFirstFrame: false,
+      firstFrame: { mode: "off" },
     };
     const recipe = sampleRecipe(opts, 42, 1);
     const enc = recipe.video.find((o) => o.id === "encode")!.params;

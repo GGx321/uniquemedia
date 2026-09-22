@@ -1,6 +1,8 @@
 import { useId } from "react";
-import { EDGE_MODES, IDENTITY_MODES } from "../../core/types";
-import type { EdgeMode, IdentityMode, MediaKind } from "../../core/types";
+import { EDGE_MODES, FIRST_FRAME_MODES, IDENTITY_MODES } from "../../core/types";
+import type { EdgeMode, FirstFrameMode, IdentityMode, MediaKind } from "../../core/types";
+import type { CoverPick } from "../../../electron/ipc";
+import { basename } from "../util";
 
 export interface AdvancedValue {
   strength: number;
@@ -9,7 +11,12 @@ export interface AdvancedValue {
   targetDistance: number;
   identity: IdentityMode;
   edgeMode: EdgeMode;
-  blackFirstFrame: boolean;
+  firstFrame: FirstFrameMode;
+  /** The picture for `firstFrame: "photo"`, once chosen — path and thumbnail
+   *  together, because the thumbnail is only ever shown beside the path it
+   *  was read from. Kept across mode changes: flicking to «Чёрный» to compare
+   *  should not cost the user the file they picked. */
+  cover: CoverPick | null;
 }
 
 /** Reading the answer back as one of the three modes rather than casting the
@@ -35,6 +42,102 @@ const IDENTITY_LABELS: Record<IdentityMode, string> = {
   iphone: "iPhone",
   clean: "Чисто",
 };
+
+/** «Первый кадр»: what a copy opens on. The middle one is what the old
+ *  switch did; the last one needs a picture, and gets a row of its own. */
+const FIRST_FRAME_LABELS: Record<FirstFrameMode, string> = {
+  off: "Выкл",
+  black: "Чёрный",
+  photo: "Фото",
+};
+
+/** A segmented control in the identity row's register: a radiogroup of
+ *  buttons, labelled by the text beside it. */
+function Segmented<M extends string>({
+  labelId,
+  modes,
+  labels,
+  value,
+  onChange,
+}: {
+  labelId: string;
+  modes: readonly M[];
+  labels: Record<M, string>;
+  value: M;
+  onChange: (mode: M) => void;
+}) {
+  return (
+    <div className="seg" role="radiogroup" aria-labelledby={labelId}>
+      {modes.map((m) => (
+        <button
+          key={m}
+          type="button"
+          role="radio"
+          aria-checked={value === m}
+          className="seg-btn"
+          onClick={() => onChange(m)}
+        >
+          {labels[m]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The first-frame choice and, under «Фото», the picture it needs: a button
+ * that opens the host's image dialog, and — once one is chosen — its
+ * thumbnail and file name. The panel never opens a dialog itself: the pick
+ * is the host's (`onPickCover`), the same way the dropzone's is.
+ */
+function FirstFrameRow({
+  value,
+  cover,
+  onChange,
+  onPickCover,
+  pickDisabled,
+}: {
+  value: FirstFrameMode;
+  cover: CoverPick | null;
+  onChange: (mode: FirstFrameMode) => void;
+  onPickCover: () => void;
+  pickDisabled: boolean;
+}) {
+  const labelId = useId();
+  return (
+    <>
+      <div className="adv-row adv-row-static">
+        <span className="adv-label">
+          <span id={labelId}>Первый кадр</span>
+        </span>
+        <Segmented
+          labelId={labelId}
+          modes={FIRST_FRAME_MODES}
+          labels={FIRST_FRAME_LABELS}
+          value={value}
+          onChange={onChange}
+        />
+      </div>
+      {value === "photo" && (
+        <div className="adv-row adv-row-static cover-row">
+          <span className="cover-pick">
+            {cover ? (
+              <>
+                <img className="cover-thumb" src={cover.thumb} alt="Фото для первого кадра" />
+                <span className="cover-name" title={cover.path}>{basename(cover.path)}</span>
+              </>
+            ) : (
+              <span className="cover-name cover-empty">Фото не выбрано</span>
+            )}
+          </span>
+          <button type="button" className="cover-btn" onClick={onPickCover} disabled={pickDisabled}>
+            Выбрать фото
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
 
 /**
  * The three-way choice plus the ⓘ that explains it. A CSS tooltip in the
@@ -81,20 +184,13 @@ function IdentityRow({
           </span>
         </span>
       </span>
-      <div className="seg" role="radiogroup" aria-labelledby={labelId}>
-        {IDENTITY_MODES.map((m) => (
-          <button
-            key={m}
-            type="button"
-            role="radio"
-            aria-checked={value === m}
-            className="seg-btn"
-            onClick={() => onChange(m)}
-          >
-            {IDENTITY_LABELS[m]}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        labelId={labelId}
+        modes={IDENTITY_MODES}
+        labels={IDENTITY_LABELS}
+        value={value}
+        onChange={onChange}
+      />
     </div>
   );
 }
@@ -103,6 +199,8 @@ export function AdvancedPanel({
   kind,
   value,
   onChange,
+  onPickCover,
+  pickCoverDisabled = false,
 }: {
   /** A still has no soundtrack, so the audio row is not shown for one. The kind
    *  is required rather than optional so that every call site has to say which
@@ -110,9 +208,20 @@ export function AdvancedPanel({
   kind: MediaKind;
   value: AdvancedValue;
   onChange: (v: AdvancedValue) => void;
+  /** Opens the host's image dialog for the photo first frame; the host puts
+   *  the result on `value.cover`. */
+  onPickCover: () => void;
+  /** While a batch runs: a pick the host refuses is reported on the same
+   *  error channel as a failed batch, and the renderer's handler for that
+   *  channel ends the batch on screen while ffmpeg keeps going. */
+  pickCoverDisabled?: boolean;
 }) {
   const set = (patch: Partial<AdvancedValue>) => onChange({ ...value, ...patch });
   const pct = ((value.strength - 0.5) / 1.0) * 100;
+  // The edge mode reaches the render for a still, and for the cover of a
+  // video whose first frame is a photo — the route hands the cover the same
+  // setting. A setting that reaches the render has to be on screen.
+  const edgesApply = kind === "photo" || value.firstFrame === "photo";
   return (
     <details className="advanced">
       <summary>
@@ -159,18 +268,15 @@ export function AdvancedPanel({
           />
         </label>
         {kind !== "photo" && (
-          <label className="adv-row">
-            Чёрный первый кадр
-            <input
-              className="switch"
-              aria-label="Чёрный первый кадр"
-              type="checkbox"
-              checked={value.blackFirstFrame}
-              onChange={(e) => set({ blackFirstFrame: e.target.checked })}
-            />
-          </label>
+          <FirstFrameRow
+            value={value.firstFrame}
+            cover={value.cover}
+            onChange={(firstFrame) => set({ firstFrame })}
+            onPickCover={onPickCover}
+            pickDisabled={pickCoverDisabled}
+          />
         )}
-        {kind === "photo" && (
+        {edgesApply && (
           <label className="adv-row">
             Сохранять края кадра
             <span className="select-wrap">

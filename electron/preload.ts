@@ -3,6 +3,7 @@ import { CH, type Api } from "./ipc";
 
 const api: Api = {
   pickFile: () => ipcRenderer.invoke(CH.pickFile),
+  pickCover: () => ipcRenderer.invoke(CH.pickCover),
   getDroppedPath: (file) => webUtils.getPathForFile(file),
   probe: (path) => ipcRenderer.invoke(CH.probe, path),
   chooseOutDir: () => ipcRenderer.invoke(CH.chooseOutDir),

@@ -7,8 +7,9 @@ import {
   type Backends,
   type MediaRoute,
 } from "../src/node/mediaRoute";
+import { assertStillCover } from "../src/node/mediaRoute";
 import type { MediaInfo, StartOptions } from "../src/core/types";
-import { CH } from "./ipc";
+import { CH, type CoverPick } from "./ipc";
 
 /**
  * The half of the desktop host that has nothing to do with Electron: what the
@@ -41,6 +42,33 @@ export const PICKER_FILTERS: PickerFilter[] = [
   { name: "Видео", extensions: VIDEO_EXTENSIONS },
   { name: "Изображения", extensions: IMAGE_EXTENSIONS },
 ];
+
+/** The dialog behind «Выбрать фото»: stills only. */
+export const COVER_FILTERS: PickerFilter[] = [{ name: "Изображения", extensions: IMAGE_EXTENSIONS }];
+
+/**
+ * Takes the file the cover dialog returned and turns it into what the panel
+ * shows: the path, and a thumbnail read by the still backend.
+ *
+ * Checked here, at pick time, rather than only at Run: a cover that is not a
+ * still — a HEIC this build cannot open, a clip chosen through drag-and-drop
+ * — gets its sentence the moment it is chosen, through `report`, and the
+ * panel is left with no cover rather than one it will be refused for later.
+ * Same null-plus-report contract as `probeForHost`, for the same reason.
+ */
+export async function pickCoverForHost(
+  path: string,
+  backends: Backends,
+  report: (message: string) => void
+): Promise<CoverPick | null> {
+  try {
+    await assertStillCover(path);
+    return { path, thumb: await backends.photo.extractThumbnail(path) };
+  } catch (err) {
+    report(err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
 
 /**
  * Identifies `input` and probes it through the route its own bytes select.

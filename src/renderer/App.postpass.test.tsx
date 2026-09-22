@@ -26,6 +26,7 @@ const photoInfo: MediaInfo = { kind: "photo", durationSec: 0, width: 640, height
 
 const fakeApi: Api = {
   pickFile: async () => "/in/still.jpg",
+  pickCover: async () => null,
   getDroppedPath: () => "",
   probe: async () => photoInfo,
   chooseOutDir: async () => "/out",
@@ -46,9 +47,13 @@ let App: () => React.JSX.Element;
 
 beforeAll(async () => {
   // `api.ts` reads `window.api` at import time, so the bridge has to be in
-  // place before App is loaded.
+  // place before App is loaded — and, since test files share one module
+  // cache, another file may have loaded it already with a bridge of its own.
+  // Installing into whatever object it captured serves both orders.
   Object.assign(globalThis, { __APP_VERSION__: "test" });
-  window.api = fakeApi;
+  const captured: Api | undefined = window.api;
+  if (captured) Object.assign(captured, fakeApi);
+  else window.api = fakeApi;
   ({ App } = await import("./App"));
 });
 

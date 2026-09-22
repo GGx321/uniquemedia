@@ -10,7 +10,7 @@ import { makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
 import { sampleDeviceProfile } from "../core/deviceProfile";
 import { IDENTITY_MODES } from "../core/types";
-import type { CopyOptions, IdentityMode } from "../core/types";
+import type { ResolvedCopyOptions, IdentityMode } from "../core/types";
 
 /**
  * The three identity modes, rendered for real and read back as bytes.
@@ -33,14 +33,14 @@ const SEED = 42;
 const NOW_MS = 1_748_000_000_000; // fixed for determinism
 const ENCODER_STRINGS = ["Lavf", "Lavc", "x264", "FFMP"] as const;
 
-const baseOpts: Omit<CopyOptions, "identity"> = {
+const baseOpts: Omit<ResolvedCopyOptions, "identity"> = {
   strength: 1.0,
   exportFormat: "square",
   keepTrendAudio: false,
   allowMirror: false,
   targetDistance: 90,
   edgeMode: "auto",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
 };
 
 interface Rendered {

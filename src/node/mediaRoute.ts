@@ -6,16 +6,21 @@ import { sampleRecipe } from "../core/sampler";
 import { samplePhotoRecipe } from "../core/photo/sampler";
 import type { RenderExecutor } from "../core/executor";
 import { shouldPreserveEdges } from "../core/photo/edges";
-import { EDGE_MODES, EXPORT_FORMATS, IDENTITY_MODES } from "../core/types";
+import { EDGE_MODES, EXPORT_FORMATS, FIRST_FRAME_MODES, IDENTITY_MODES } from "../core/types";
 import type {
-  CopyOptions,
   EdgeMode,
   ExportFormat,
+  FirstFrameMode,
   IdentityMode,
   MediaKind,
   Recipe,
+  ResolvedCopyOptions,
   StartOptions,
   VerifyResult,
+} from "../core/types";
+import type {
+  ResolvedCover,
+  ResolvedFirstFrame,
 } from "../core/types";
 import type { PhotoRecipe, ResolvedEdge, ResolvedPhotoOptions } from "../core/photo/types";
 
@@ -53,7 +58,11 @@ export interface Backends {
 export interface VideoRoute {
   kind: "video";
   executor: MediaBackend<Recipe>;
-  sampleRecipe: (opts: CopyOptions, seed: number, intensity: number) => Recipe;
+  /** The still backend, for the one still a video batch can carry: the cover
+   *  of `firstFrame: "photo"` is probed and its edge mode decided here, the
+   *  same way a photo batch's is, before the sampler ever sees it. */
+  stills: PhotoBackend;
+  sampleRecipe: (opts: ResolvedCopyOptions, seed: number, intensity: number) => Recipe;
   framesPerCopy: number;
   outputExtension: ".mp4";
   defaultExportFormat: ExportFormat;
@@ -128,6 +137,7 @@ export function routeForKind(kind: MediaKind, backends: Backends): MediaRoute {
   return {
     kind,
     executor: backends.video,
+    stills: backends.photo,
     sampleRecipe,
     framesPerCopy: VIDEO_FRAMES_PER_COPY,
     outputExtension: ".mp4",
@@ -187,6 +197,26 @@ export function resolveIdentityMode(requested: string | undefined, fallback: Ide
 }
 
 /**
+ * Turns a `--first-frame` argument into a mode. Same shape and the same reason
+ * as `resolveIdentityMode`: an unrecognised mode that reached the sampler
+ * would simply not be `photo` and the copy would open on the footage,
+ * reported as success.
+ */
+export function resolveFirstFrameMode(
+  requested: string | undefined,
+  fallback: FirstFrameMode
+): FirstFrameMode {
+  if (requested === undefined) return fallback;
+  const match = FIRST_FRAME_MODES.find((m) => m === requested);
+  if (match === undefined) {
+    throw new Error(
+      `Unknown --first-frame ${requested}. Expected one of: ${FIRST_FRAME_MODES.join(", ")}.`
+    );
+  }
+  return match;
+}
+
+/**
  * Answers `auto`, here, where the pixels are.
  *
  * The sampler is a pure function of numbers and never opens a file, so the
@@ -207,6 +237,76 @@ export async function resolveEdge(
     mode === "auto" ? shouldPreserveEdges((await executor.extractGrayFrames(input, 1))[0]) : mode === "fit";
   if (!preserve) return { mode: "crop" };
   return { mode: "fit", padColor: await executor.sampleEdgeColor(input) };
+}
+
+/**
+ * Refuses a cover that is not a still the bundled ffmpeg can open, by name
+ * and with what to do: a HEIC gets the convert-it advice `detectMediaKind`
+ * gives, footage is told the first frame takes a picture. Decided from the
+ * file's bytes, as the source is. Shared by the route and the desktop
+ * host's cover dialog, so the two never drift apart.
+ */
+export async function assertStillCover(coverPath: string): Promise<void> {
+  let kind: MediaKind;
+  try {
+    kind = await detectMediaKind(coverPath);
+  } catch (err) {
+    throw new Error(
+      `Cannot use ${coverPath} as the cover: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  if (kind !== "photo") {
+    throw new Error(
+      `Cannot use ${coverPath} as the cover: the first frame takes a still image, ` +
+        "and this file is footage."
+    );
+  }
+}
+
+/**
+ * Resolves the cover of a `firstFrame: "photo"` batch, or says why it cannot.
+ *
+ * Everything the sampler will need and cannot get for itself: that there IS a
+ * cover (the option is nullable because a host's form can be empty until the
+ * mode asks for it); that it is a still the bundled ffmpeg can open, decided
+ * from its bytes like the source is — a HEIC gets the convert-it advice, a
+ * clip is refused by name; its dimensions, which the cover's chain is built
+ * against; and its edge mode, `auto` answered off its own pixels. Once per
+ * batch, not per copy: all of it is a property of the file.
+ */
+async function resolveCover(
+  stills: PhotoBackend,
+  coverPath: string | null | undefined,
+  edgeMode: EdgeMode
+): Promise<ResolvedCover> {
+  if (!coverPath) {
+    throw new Error(
+      'First frame mode "photo" needs a cover image: pass --cover <path> on the ' +
+        "command line, or pick a photo for the first frame in the app."
+    );
+  }
+  await assertStillCover(coverPath);
+  const info = await stills.probe(coverPath);
+  const edge = await resolveEdge(stills, coverPath, edgeMode);
+  return { path: coverPath, edge, info };
+}
+
+/**
+ * The first-frame half of a video batch's options, with the cover resolved
+ * when the mode calls for one. An absent mode is `off`, for the same reason
+ * an absent audio flag is `false`: the photo UI never sends it.
+ *
+ * The mode is parsed, not trusted: the CLI runs it through the same check,
+ * but the Electron payload arrives as whatever the renderer sent, and an
+ * unknown string would otherwise fall through `!== "photo"` and ship as off.
+ */
+async function resolveFirstFrame(
+  route: VideoRoute,
+  opts: StartOptions
+): Promise<ResolvedFirstFrame> {
+  const mode = resolveFirstFrameMode(opts.firstFrame, "off");
+  if (mode !== "photo") return { mode };
+  return { mode, cover: await resolveCover(route.stills, opts.coverPath, opts.edgeMode) };
 }
 
 /** Decides the route from what is inside the file, never from its extension. */
@@ -240,7 +340,8 @@ export async function uniquifyRoute(
     const {
       edgeMode,
       keepTrendAudio: _keepTrendAudio,
-      blackFirstFrame: _blackFirstFrame,
+      firstFrame: _firstFrame,
+      coverPath: _coverPath,
       ...rest
     } = opts;
     const photoOpts: ResolvedPhotoOptions = {
@@ -252,12 +353,16 @@ export async function uniquifyRoute(
       sampleRecipe: route.sampleRecipe,
     });
   }
-  const videoOpts: CopyOptions = {
-    ...opts,
+  // `firstFrame` and `coverPath` are replaced by the resolved form, as a
+  // still's `edgeMode` is above: the sampler gets numbers, and a request the
+  // cover cannot honour is refused here, before a frame is rendered.
+  const { firstFrame: _firstFrame, coverPath: _coverPath, ...rest } = opts;
+  const videoOpts: ResolvedCopyOptions = {
+    ...rest,
     keepTrendAudio: opts.keepTrendAudio ?? false,
-    blackFirstFrame: opts.blackFirstFrame ?? false,
+    firstFrame: await resolveFirstFrame(route, opts),
   };
-  return uniquify<Recipe, CopyOptions>(input, videoOpts, route.executor, count, {
+  return uniquify<Recipe, ResolvedCopyOptions>(input, videoOpts, route.executor, count, {
     ...shared,
     sampleRecipe: route.sampleRecipe,
   });

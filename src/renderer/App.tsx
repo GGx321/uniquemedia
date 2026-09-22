@@ -26,7 +26,8 @@ const initial: SettingsState = {
     // background and a visible border on a photograph, and the user should not
     // have to know which one they dropped in.
     edgeMode: "auto",
-    blackFirstFrame: false,
+    firstFrame: "off",
+    cover: null,
   },
 };
 
@@ -115,6 +116,15 @@ export function App() {
     await api.start({ input: sourcePath, opts, count: state.count, outDir });
   }
 
+  /** The host's image dialog for the photo first frame. A null answer is a
+   *  cancel, or a file main has already refused through `onError`; either way
+   *  the state keeps whatever cover it had. */
+  async function pickCover() {
+    const cover = await api.pickCover();
+    if (!cover) return;
+    setState((s) => ({ ...s, advanced: { ...s.advanced, cover } }));
+  }
+
   function stop() {
     api.cancel();
     setRunning(false);
@@ -174,6 +184,7 @@ export function App() {
             onChange={setState}
             onRun={run}
             onStop={stop}
+            onPickCover={pickCover}
           />
         </aside>
         <main className="col-queue reveal reveal-3">

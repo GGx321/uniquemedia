@@ -28,8 +28,20 @@ export function settingsToOptions(s: SettingsState): CopyOptions {
   return {
     ...settingsToPhotoOptions(s),
     keepTrendAudio: s.advanced.keepTrendAudio,
-    blackFirstFrame: s.advanced.blackFirstFrame,
+    firstFrame: s.advanced.firstFrame,
+    // The path alone: the thumbnail is the panel's, and main reads the file.
+    coverPath: s.advanced.cover?.path ?? null,
   };
+}
+
+/**
+ * Whether Run has to wait for a picture: the first frame is to be a photo,
+ * none has been chosen, and the source is footage — a still has no first
+ * frame to fill, so the mode (hidden for it) must not hold it back.
+ */
+export function coverMissing(source: Source | null, s: SettingsState): boolean {
+  if (source?.info.kind === "photo") return false;
+  return s.advanced.firstFrame === "photo" && s.advanced.cover === null;
 }
 
 export function SettingsPanel({
@@ -42,6 +54,7 @@ export function SettingsPanel({
   onChange,
   onRun,
   onStop,
+  onPickCover,
 }: {
   source: Source | null;
   state: SettingsState;
@@ -52,6 +65,8 @@ export function SettingsPanel({
   onChange: (s: SettingsState) => void;
   onRun: () => void;
   onStop: () => void;
+  /** Opens the host's image dialog for the photo first frame. */
+  onPickCover: () => void;
 }) {
   const set = (patch: Partial<SettingsState>) => onChange({ ...state, ...patch });
   return (
@@ -67,8 +82,15 @@ export function SettingsPanel({
         kind={source?.info.kind ?? "video"}
         value={state.advanced}
         onChange={(advanced) => set({ advanced })}
+        onPickCover={onPickCover}
+        pickCoverDisabled={running}
       />
-      <RunButton disabled={!source} running={running} onClick={onRun} onStop={onStop} />
+      <RunButton
+        disabled={!source || coverMissing(source, state)}
+        running={running}
+        onClick={onRun}
+        onStop={onStop}
+      />
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { sampleRecipe } from "./sampler";
 import { sampleDeviceProfile } from "./deviceProfile";
 import type { RenderExecutor } from "./executor";
 import { IDENTITY_MODES } from "./types";
-import type { CopyOptions, IdentityMode, MediaInfo, Recipe } from "./types";
+import type { ResolvedCopyOptions, IdentityMode, MediaInfo, Recipe } from "./types";
 import type { DeviceProfile } from "./deviceProfile";
 
 const info: MediaInfo = { kind: "video", durationSec: 4, width: 640, height: 480, hasAudio: true };
@@ -28,11 +28,11 @@ class ProgMock implements RenderExecutor {
   }
 }
 
-const opts: CopyOptions = {
+const opts: ResolvedCopyOptions = {
   strength: 1.0, exportFormat: "reels", keepTrendAudio: false, allowMirror: false, targetDistance: 40,
   identity: "engine",
   edgeMode: "auto",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
 };
 
 test("fires onProgress per render tick and onCopyDone per accepted copy", async () => {
@@ -71,7 +71,7 @@ class SpyMock extends ProgMock {
 
 test("applyIdentity is called once per copy with the iphone mode from the options", async () => {
   const exec = new SpyMock();
-  const spoofOpts: CopyOptions = { ...opts, identity: "iphone" };
+  const spoofOpts: ResolvedCopyOptions = { ...opts, identity: "iphone" };
   const res = await uniquify("ORIGINAL", spoofOpts, exec, 3, {
     seedBase: 1,
     framesPerCopy: 4,
@@ -173,7 +173,7 @@ test("a re-rendered copy keeps the device identity of its own slot", async () =>
   // from the copy index (not from the fresh render seed) is what keeps one file
   // from claiming two different handsets across its own renders.
   const exec = new OrderMock();
-  const spoofOpts: CopyOptions = { ...opts, identity: "iphone" };
+  const spoofOpts: ResolvedCopyOptions = { ...opts, identity: "iphone" };
   const res = await uniquify("ORIGINAL", spoofOpts, exec, 3, {
     seedBase: 1,
     framesPerCopy: 4,
@@ -201,7 +201,7 @@ test("dates the spoofed capture from the wall clock when the host configures no 
   // fallback is the same clock the host would have passed, so the worst case of
   // forgetting is a batch that is merely non-deterministic, never nonsensical.
   const exec = new SpyMock();
-  const spoofOpts: CopyOptions = { ...opts, identity: "iphone" };
+  const spoofOpts: ResolvedCopyOptions = { ...opts, identity: "iphone" };
   const before = Date.now();
   await uniquify("ORIGINAL", spoofOpts, exec, 1, {
     seedBase: 1,
@@ -220,7 +220,7 @@ test("uses the host's clock, not the wall clock, when nowMs is configured", asyn
   // The fallback must not cost determinism: a host that states the time still
   // gets a profile derived from exactly that instant.
   const exec = new SpyMock();
-  const spoofOpts: CopyOptions = { ...opts, identity: "iphone" };
+  const spoofOpts: ResolvedCopyOptions = { ...opts, identity: "iphone" };
   await uniquify("ORIGINAL", spoofOpts, exec, 1, {
     seedBase: 1,
     framesPerCopy: 4,

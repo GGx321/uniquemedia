@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildPhotoArgs } from "./filterGraph";
+import { buildPhotoArgs, photoChain } from "./filterGraph";
 import type { PhotoRecipe } from "./types";
 import type { MediaInfo } from "../types";
 
@@ -273,4 +273,13 @@ test("emits nothing temporal, nothing audio and no video-encoder flags", () => {
   ]) {
     expect(args).not.toContain(flag);
   }
+});
+
+test("photoChain is the -vf value of buildPhotoArgs, bare, for a graph that embeds a still", () => {
+  // The video graph puts a cover through this chain as a second input. It has
+  // to be the same chain a standalone render uses — same ops, same cover
+  // step, same framing — or the cover on frame 0 would not be the still the
+  // photo pipeline would have produced.
+  expect(photoChain(recipe, info)).toBe(vfOf(buildPhotoArgs(recipe, info)));
+  expect(photoChain(recipe, info)).not.toContain("-vf");
 });

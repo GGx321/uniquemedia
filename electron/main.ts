@@ -2,7 +2,14 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { join } from "node:path";
 import { cpus } from "node:os";
 import { createBackends, type MediaRoute } from "../src/node/mediaRoute";
-import { PICKER_FILTERS, probeForHost, runBatchForHost, type StartRequest } from "./handlers";
+import {
+  COVER_FILTERS,
+  PICKER_FILTERS,
+  pickCoverForHost,
+  probeForHost,
+  runBatchForHost,
+  type StartRequest,
+} from "./handlers";
 import { CH } from "./ipc";
 
 const backends = createBackends();
@@ -38,6 +45,17 @@ ipcMain.handle(CH.pickFile, async () => {
     filters: PICKER_FILTERS,
   });
   return r.canceled ? null : r.filePaths[0];
+});
+
+// The cover for the photo first frame: stills only, checked as it is chosen
+// so a file the build cannot open is named now rather than at Run.
+ipcMain.handle(CH.pickCover, async () => {
+  const r = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: COVER_FILTERS,
+  });
+  if (r.canceled) return null;
+  return pickCoverForHost(r.filePaths[0], backends, (message) => send(CH.evtError, { message }));
 });
 
 // Symmetric with CH.start: a failure here is reported to the renderer, not

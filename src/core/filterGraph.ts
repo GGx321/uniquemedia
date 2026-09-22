@@ -1,5 +1,6 @@
 import { FRAGMENTS } from "./filters";
-import { EXPORT_DIMS, type MediaInfo, type Recipe } from "./types";
+import { photoChain } from "./photo/filterGraph";
+import { EXPORT_DIMS, type FirstFrame, type MediaInfo, type Recipe } from "./types";
 
 /** Spatial filter chain (everything except per-segment speed). Applied once to
  *  the source before it is split into time segments. */
@@ -52,7 +53,57 @@ const splitLabels = (prefix: string, n: number): string =>
 const blackFirstFrame = (fps: number): string =>
   `,fps=${fps},drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='eq(n,0)'`;
 
-/** Video graph: spatial -> split -> per-segment trim+setpts -> concat -> [outv]. */
+/**
+ * Fits the cover to the video: the smallest same-aspect frame that covers the
+ * video's, so the overlay's centring crops the excess off two opposite edges
+ * and never leaves a bar. Zero crop when the aspects already match.
+ *
+ * `scale2ref` rather than a `scale=W:H` with a number computed here, because
+ * the video's size is not always a number this module knows. `reels`/`feed`/
+ * `square` are EXPORT_DIMS, but `original` is whatever `rotate`'s `ow=rotw`
+ * left after the even-crop — measured 1082x1920 from a 1080x1920 source at
+ * 0.05°, the top of the baseline draw — and a cover fitted to 1080 would leave
+ * a sliver of footage down one side of frame 0. Reading the size off the
+ * stream is the one way to reuse the spatial chain's answer without
+ * re-deriving ffmpeg's rounding.
+ *
+ * Mind scale2ref's naming: `iw`/`ih` are the REFERENCE (the video) and
+ * `main_w`/`main_h` the input being scaled (the cover). The products are exact
+ * integers, so a same-aspect cover comes out at the video's size exactly.
+ */
+const COVER_FIT =
+  "scale2ref=w='max(iw,ceil(ih*main_w/main_h))':h='max(ih,ceil(iw*main_h/main_w))'";
+
+/**
+ * Lays the fitted cover over frame 0 and nothing else. Centred, so a cover
+ * larger than the frame (the fit's excess) is cropped evenly. `eof_action=
+ * repeat` keeps a one-frame input alive for the whole clip; `enable` decides
+ * where it shows, and `n` is the main input's frame index — the concat output
+ * at the target rate, which is what the `fps=` in front is for.
+ */
+const COVER_OVERLAY = "overlay=x=(W-w)/2:y=(H-h)/2:eof_action=repeat:enable='eq(n,0)'";
+
+/**
+ * The cover branch: the concat output is rated (the same duplication trap as
+ * the black frame), the cover goes through the photo chain at its own size on
+ * `[1:v]`, is fitted against the rated stream and laid over its first frame.
+ */
+function coverFirstFrame(
+  cover: Extract<FirstFrame, { mode: "photo" }>,
+  fps: number
+): { tail: string; lines: string[] } {
+  return {
+    tail: `,fps=${fps}[vc]`,
+    lines: [
+      `[1:v]${photoChain(cover.recipe, cover.info)}[c0]`,
+      `[c0][vc]${COVER_FIT}[cover][vref]`,
+      `[vref][cover]${COVER_OVERLAY}[outv]`,
+    ],
+  };
+}
+
+/** Video graph: spatial -> split -> per-segment trim+setpts -> concat -> [outv],
+ *  with the first-frame branch, if any, on the concat output. */
 function videoComplex(recipe: Recipe, info: MediaInfo, fps: number): string {
   const n = recipe.segments.length;
   const b = boundaries(recipe, info);
@@ -64,8 +115,14 @@ function videoComplex(recipe: Recipe, info: MediaInfo, fps: number): string {
         `setpts=(PTS-STARTPTS)/${seg.speed}[s${i}]`
     );
   });
-  const tail = recipe.blackFirstFrame ? blackFirstFrame(fps) : "";
-  lines.push(`${splitLabels("s", n)}concat=n=${n}:v=1:a=0${tail}[outv]`);
+  const ff = recipe.firstFrame;
+  const concat = `${splitLabels("s", n)}concat=n=${n}:v=1:a=0`;
+  if (ff.mode === "photo") {
+    const { tail, lines: cover } = coverFirstFrame(ff, fps);
+    lines.push(`${concat}${tail}`, ...cover);
+  } else {
+    lines.push(`${concat}${ff.mode === "black" ? blackFirstFrame(fps) : ""}[outv]`);
+  }
   return lines.join(";");
 }
 
@@ -124,7 +181,10 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
   const complex = info.hasAudio
     ? `${videoComplex(recipe, info, fps)};${audioComplex(recipe, info)}`
     : videoComplex(recipe, info, fps);
-  const args: string[] = ["-filter_complex", complex, "-map", "[outv]"];
+  // The cover is the graph's second input, named here so the executor's
+  // `-i <source>` is followed by `-i <cover>` and `[1:v]` means the still.
+  const inputs = recipe.firstFrame.mode === "photo" ? ["-i", recipe.firstFrame.path] : [];
+  const args: string[] = [...inputs, "-filter_complex", complex, "-map", "[outv]"];
 
   if (info.hasAudio) {
     args.push("-map", "[outa]", "-c:a", "aac", "-b:a", `${aBitrate}k`);

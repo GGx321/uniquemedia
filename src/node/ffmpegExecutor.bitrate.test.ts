@@ -7,7 +7,7 @@ import ffprobeStatic from "ffprobe-static";
 import { FfmpegExecutor } from "./ffmpegExecutor";
 import { makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
-import type { CopyOptions } from "../core/types";
+import type { ResolvedCopyOptions } from "../core/types";
 
 /**
  * Instagram re-encodes every upload to roughly 2–3.5 Mbit/s, so whatever a
@@ -54,9 +54,9 @@ function videoBitrateKbps(file: string): number {
 
 test("rendered reel stays within the 3.5 Mbit/s ceiling on a source that would blow past it", async () => {
   const info = await exec.probe(input);
-  const opts: CopyOptions = {
+  const opts: ResolvedCopyOptions = {
     strength: 1, exportFormat: "reels", keepTrendAudio: false, allowMirror: false,
-    targetDistance: 60, identity: "engine", edgeMode: "auto", blackFirstFrame: false,
+    targetDistance: 60, identity: "engine", edgeMode: "auto", firstFrame: { mode: "off" },
   };
   const out = join(dir, "out.mp4");
   await exec.render(input, info, sampleRecipe(opts, 42, 1), out);

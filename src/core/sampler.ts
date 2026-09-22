@@ -1,7 +1,8 @@
 import { makeRng, type Rng } from "./rng";
 import { PARAMS } from "./presets";
 import { round, clamp } from "./util";
-import type { CopyOptions, Operation, Recipe } from "./types";
+import { samplePhotoRecipe } from "./photo/sampler";
+import type { FirstFrame, Operation, Recipe, ResolvedCopyOptions } from "./types";
 
 function dev(rng: Rng, key: keyof typeof PARAMS, scalar: number, oneSided = false): number {
   const spec = PARAMS[key];
@@ -22,7 +23,42 @@ function pick<T>(rng: Rng, arr: readonly T[]): T {
   return arr[Math.floor(rng() * arr.length)];
 }
 
-export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Recipe {
+/**
+ * What frame 0 will be. The mode is copied; the cover, when there is one, is
+ * DRAWN — by the photo sampler, from the same seed and intensity as the copy,
+ * on an rng instance of its own. That is what lets every copy open on a
+ * different rendition of the same picture while the video draws stay exactly
+ * what they are with the mode off: the cover consumes nothing from the video's
+ * generator. (Seeded the same, the two instances replay one sequence, so the
+ * cover's first draws are correlated with the video's first draws. That is a
+ * known property, not independence — the invariant pinned in the tests is
+ * only that the video recipe does not move.)
+ *
+ * The cover's options are not the video's. It is never mirrored (a flipped
+ * cover flips its text) and it keeps its own framing (`original`): the graph
+ * fits it to the video afterwards, and sampling it to EXPORT_DIMS first would
+ * crop it twice. Strength and edge are the video's and the route's.
+ */
+function firstFrameOf(opts: ResolvedCopyOptions, seed: number, intensity: number): FirstFrame {
+  const ff = opts.firstFrame;
+  if (ff.mode !== "photo") return { mode: ff.mode };
+  const { path, edge, info } = ff.cover;
+  const recipe = samplePhotoRecipe(
+    {
+      strength: opts.strength,
+      exportFormat: "original",
+      allowMirror: false,
+      targetDistance: opts.targetDistance,
+      identity: opts.identity,
+      edge,
+    },
+    seed,
+    intensity
+  );
+  return { mode: "photo", path, info, recipe };
+}
+
+export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity = 1): Recipe {
   const rng = makeRng(seed);
   const s = opts.strength * intensity;
 
@@ -90,7 +126,7 @@ export function sampleRecipe(opts: CopyOptions, seed: number, intensity = 1): Re
     exportFormat: opts.exportFormat,
     keepTrendAudio: opts.keepTrendAudio,
     identity: opts.identity,
-    blackFirstFrame: opts.blackFirstFrame,
+    firstFrame: firstFrameOf(opts, seed, intensity),
     segments,
     video: [...video, { id: "encode", params: { crf, fps, gop, keyintMin, preset, audioKbps } }],
     audio,

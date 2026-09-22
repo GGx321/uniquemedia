@@ -9,7 +9,7 @@ import { FfmpegExecutor } from "./ffmpegExecutor";
 import { makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
 import { sampleDeviceProfile } from "../core/deviceProfile";
-import type { CopyOptions } from "../core/types";
+import type { ResolvedCopyOptions } from "../core/types";
 
 /**
  * A spoofed copy claims to be an iPhone capture. Until this test existed it
@@ -28,7 +28,7 @@ const FFPROBE = ffprobeStatic.path.replace("app.asar", "app.asar.unpacked");
 
 const SEED = 42;
 const NOW_MS = 1_748_000_000_000; // fixed for determinism
-const opts: CopyOptions = {
+const opts: ResolvedCopyOptions = {
   strength: 1.0,
   exportFormat: "square",
   keepTrendAudio: false,
@@ -36,7 +36,7 @@ const opts: CopyOptions = {
   targetDistance: 90,
   identity: "iphone",
   edgeMode: "auto",
-  blackFirstFrame: false,
+  firstFrame: { mode: "off" },
 };
 
 let dir: string;
