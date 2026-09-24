@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["engine/**/*"],
+  "exclude": ["engine/**/*.test.ts", "engine/**/*.test.tsx"]
+}
