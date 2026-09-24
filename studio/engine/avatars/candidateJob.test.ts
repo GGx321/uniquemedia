@@ -12,7 +12,7 @@ import type { NewPhotoMeta } from "../library";
 import { imageSize } from "../library/media";
 import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, setupMoney, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
-import { AGE_CHECK_MAX_SIDE, AGE_JSON_SCHEMA, AGE_QUESTION, AGE_SYSTEM } from "./ageCheck";
+import { AGE_CHECK_MAX_SIDE, AGE_QUESTION, AGE_SYSTEM, ageJsonSchema } from "./ageCheck";
 import { candidateJobEnd, PREPARE_TIMEOUT_MS, runCandidateJob, type CandidateJob, type SlotOutcome } from "./candidateJob";
 import { avatarJobEstimate } from "./plan";
 import { candidatePrompt } from "./prompts";
@@ -181,21 +181,25 @@ describe("a batch of candidate portraits", () => {
 
   test("the age check asks the question, after the line that says to ignore text in the image, about a JPEG of at most 768 px, on grok-4.3, as strict JSON", async () => {
     const net = network();
-    await run(net, { concurrency: 1 }).outcomes;
+    await run(net).outcomes;
 
-    const body = net.ageCalls()[0]?.json();
-    expect(body).toMatchObject({
-      model: "x-ai/grok-4.3",
-      max_tokens: 1_000,
-      reasoning: { effort: "low" },
-      response_format: { type: "json_schema", json_schema: { name: AGE_JSON_SCHEMA.name, strict: true, schema: AGE_JSON_SCHEMA.schema } },
-      messages: [
-        { role: "system", content: AGE_SYSTEM },
-        { role: "user", content: [{ type: "text", text: AGE_QUESTION }, { type: "image_url" }] },
-      ],
-    });
-    const jpeg = /"url":"data:image\/jpeg;base64,([A-Za-z0-9+/=]+)"/.exec(JSON.stringify(body))?.[1] ?? "";
-    expect(imageSize(new Uint8Array(Buffer.from(jpeg, "base64")))).toEqual({ width: 576, height: 768 });
+    // Every check, in whatever order the slots sent them.
+    expect(net.ageCalls()).toHaveLength(4);
+    for (const call of net.ageCalls()) {
+      const body = call.json();
+      expect(body).toMatchObject({
+        model: "x-ai/grok-4.3",
+        max_tokens: 1_000,
+        reasoning: { effort: "low" },
+        response_format: { type: "json_schema", json_schema: { name: "age_check", strict: true, schema: ageJsonSchema().schema } },
+        messages: [
+          { role: "system", content: AGE_SYSTEM },
+          { role: "user", content: [{ type: "text", text: AGE_QUESTION }, { type: "image_url" }] },
+        ],
+      });
+      const jpeg = /"url":"data:image\/jpeg;base64,([A-Za-z0-9+/=]+)"/.exec(JSON.stringify(body))?.[1] ?? "";
+      expect(imageSize(new Uint8Array(Buffer.from(jpeg, "base64")))).toEqual({ width: 576, height: 768 });
+    }
   });
 
   test("a candidate that passes is stored as received: its bytes, its size, where it came from and the verdict", async () => {

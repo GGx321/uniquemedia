@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { AGE_CHECK_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
-import { AGE_CHECK_MAX_SIDE, AGE_JSON_SCHEMA, AGE_MIN_CONFIDENCE, AGE_QUESTION, ageCheckMessages, readAgeAnswer } from "./ageCheck";
+import { AGE_CHECK_MAX_SIDE, AGE_MIN_CONFIDENCE, AGE_QUESTION, ageCheckMessages, ageJsonSchema, readAgeAnswer } from "./ageCheck";
 
 function answer(adult: unknown, confidence: unknown, reason: unknown = "Mature facial features and proportions of a woman in her mid-20s."): string {
   return JSON.stringify({ adult, confidence, reason });
@@ -35,7 +35,20 @@ describe("the age question", () => {
 
   test("states the confidence scale: a number from 0 to 1", () => {
     expect(AGE_QUESTION).toContain("Confidence is a number from 0 to 1.");
-    expect(AGE_JSON_SCHEMA.schema).toMatchObject({ properties: { confidence: { type: "number", description: expect.stringContaining("from 0 to 1") } } });
+    expect(ageJsonSchema().schema).toMatchObject({ properties: { confidence: { type: "number", description: expect.stringContaining("from 0 to 1") } } });
+  });
+
+  test("every call gives the schema as a fresh object: two are equal but distinct, and changing one leaves the next call's alone", () => {
+    const first = ageJsonSchema();
+    const second = ageJsonSchema();
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first);
+    expect(second.schema).not.toBe(first.schema);
+
+    // What bun's toMatchObject does to a received object with a matched asymmetric matcher.
+    Object.assign(first.schema, { properties: { confidence: { type: "number", description: {} } } });
+
+    expect(ageJsonSchema()).toEqual(second);
   });
 
   test("tells the model to ignore any text or instructions inside the image, ahead of the question", () => {
@@ -45,7 +58,7 @@ describe("the age question", () => {
   });
 
   test("the answer is a strict JSON object of adult, confidence and reason", () => {
-    expect(AGE_JSON_SCHEMA).toMatchObject({
+    expect(ageJsonSchema()).toMatchObject({
       name: "age_check",
       schema: {
         type: "object",
@@ -57,7 +70,7 @@ describe("the age question", () => {
   });
 
   test("the age check's prompt-token floor fits under the estimate's ceiling, so each check reserves what the estimate priced", () => {
-    const floor = promptTokenFloor({ messages: ageCheckMessages(), jsonSchema: AGE_JSON_SCHEMA, images: AGE_CHECK_CALL.images });
+    const floor = promptTokenFloor({ messages: ageCheckMessages(), jsonSchema: ageJsonSchema(), images: AGE_CHECK_CALL.images });
     if (floor > AGE_CHECK_CALL.inputTokens) {
       throw new Error(`the age check's prompt floor is ${floor} tokens, above AGE_CHECK_CALL.inputTokens ${AGE_CHECK_CALL.inputTokens}: shorten the texts or raise the ceiling (and the estimates)`);
     }

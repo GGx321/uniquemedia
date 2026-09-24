@@ -46,24 +46,29 @@ export function ageCheckMessages(): ChatMessage[] {
 }
 
 /**
- * Structured output, sent as a strict JSON schema. The scale is stated as a
- * description, not as minimum/maximum: whether xAI's strict mode accepts
- * those cannot be checked without a paid call, and a refused schema would
- * fail every age check. A 0-100 answer is read as a percentage instead.
+ * Structured output, sent as a strict JSON schema; a fresh object on every
+ * call, so no caller (nor a test matcher: bun's toMatchObject writes into
+ * the object it checks, frozen or not) can change what the next check sends.
+ * The scale is stated as a description, not as minimum/maximum: whether
+ * xAI's strict mode accepts those cannot be checked without a paid call, and
+ * a refused schema would fail every age check. A 0-100 answer is read as a
+ * percentage instead.
  */
-export const AGE_JSON_SCHEMA: { name: string; schema: Record<string, unknown> } = {
-  name: "age_check",
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    required: ["adult", "confidence", "reason"],
-    properties: {
-      adult: { type: "boolean" },
-      confidence: { type: "number", description: "from 0 to 1" },
-      reason: { type: "string" },
+export function ageJsonSchema(): { name: string; schema: Record<string, unknown> } {
+  return {
+    name: "age_check",
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["adult", "confidence", "reason"],
+      properties: {
+        adult: { type: "boolean" },
+        confidence: { type: "number", description: "from 0 to 1" },
+        reason: { type: "string" },
+      },
     },
-  },
-};
+  };
+}
 
 /** A longer answer is not read at all: the reason scan must never block the engine. */
 const MAX_ANSWER_CHARS = 4_000;

@@ -11,7 +11,7 @@ import { chatAttemptWorstMicros, type ChatPriceShape } from "../openrouter/chat"
 import { toEngineError } from "../openrouter/engineError";
 import { truncate } from "../openrouter/transport";
 import type { ChatResult, ImageOk, ImageResult, OpenRouterClient } from "../openrouter/types";
-import { AGE_JSON_SCHEMA, ageCheckMessages, readAgeAnswer, type AgeRejection } from "./ageCheck";
+import { ageCheckMessages, ageJsonSchema, readAgeAnswer, type AgeRejection } from "./ageCheck";
 import { CANDIDATE_ASPECT_RATIO, CANDIDATES_PER_BATCH, candidateImage } from "./plan";
 import { candidatePrompt, PromptSubjectError } from "./prompts";
 
@@ -76,18 +76,21 @@ export type SlotOutcome =
 export const PREPARE_TIMEOUT_MS = 30_000;
 
 /**
- * Everything of an age check its price depends on. The slot's hold and the
- * request are both built from it, so the hold is exactly what the request
- * will reserve (chatAttemptWorstMicros, the client's own computation).
+ * Everything of an age check its price depends on, fresh for each slot. The
+ * slot's hold and its request are both built from the one shape, so the hold
+ * is exactly what the request will reserve (chatAttemptWorstMicros, the
+ * client's own computation), and nothing is shared between slots.
  */
-const AGE_CHECK_SHAPE: ChatPriceShape = {
-  model: AGE_CHECK_CALL.model,
-  messages: ageCheckMessages(),
-  jsonSchema: AGE_JSON_SCHEMA,
-  maxTokens: AGE_CHECK_CALL.maxTokens,
-  inputTokens: AGE_CHECK_CALL.inputTokens,
-  images: AGE_CHECK_CALL.images,
-};
+function ageCheckShape(): ChatPriceShape {
+  return {
+    model: AGE_CHECK_CALL.model,
+    messages: ageCheckMessages(),
+    jsonSchema: ageJsonSchema(),
+    maxTokens: AGE_CHECK_CALL.maxTokens,
+    inputTokens: AGE_CHECK_CALL.inputTokens,
+    images: AGE_CHECK_CALL.images,
+  };
+}
 
 /** The attempt id of a slot's image; its age check's is `<jobId>:candidate-<n>:age#1`. */
 export function candidateAttemptId(jobId: string, slot: number): string {
@@ -187,16 +190,17 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
   const choice = candidateImage(job.imageModel);
   const attemptId = candidateAttemptId(job.jobId, slot);
   const ageId = ageAttemptId(job.jobId, slot);
+  const ageShape = ageCheckShape();
   const held = await deps.budget.tryHold([
     { attemptId, scope: job.scope, worstMicros: deps.priceBook.imageWorstCase({ model: choice.model, resolution: choice.resolution, quality: choice.quality, refs: choice.refs }) },
-    { attemptId: ageId, scope: job.scope, worstMicros: chatAttemptWorstMicros(deps.priceBook, AGE_CHECK_SHAPE) },
+    { attemptId: ageId, scope: job.scope, worstMicros: chatAttemptWorstMicros(deps.priceBook, ageShape) },
   ]);
   if (!held.ok) {
     const mapped = toEngineError({ status: "blocked", refusal: held });
     return mapped === null ? internal(slot, "the budget refused the slot") : failed(slot, mapped.error, mapped.fatal);
   }
   try {
-    return await sendPair(deps, job, prompt, slot);
+    return await sendPair(deps, job, prompt, slot, ageShape);
   } finally {
     // Whatever was not reserved will not be sent.
     deps.budget.releaseHold(attemptId);
@@ -204,7 +208,7 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
   }
 }
 
-async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number): Promise<SlotOutcome> {
+async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number, ageShape: ChatPriceShape): Promise<SlotOutcome> {
   const choice = candidateImage(job.imageModel);
   const attemptId = candidateAttemptId(job.jobId, slot);
   const image = await deps.generateImage({
@@ -240,7 +244,7 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
     if (prepare.aborted) return internal(slot, `preparing the image for the age check timed out after ${timeoutMs} ms`);
     return internal(slot, `the image could not be prepared for the age check: ${messageOf(error)}`);
   }
-  return ageGate(deps, job, slot, { attemptId, prompt, image, size, jpeg });
+  return ageGate(deps, job, slot, ageShape, { attemptId, prompt, image, size, jpeg });
 }
 
 interface Checked {
@@ -252,7 +256,7 @@ interface Checked {
 }
 
 /** The age check of one paid image; only a clear yes stores it (invariant 8). */
-async function ageGate(deps: CandidateJobDeps, job: CandidateJob, slot: number, checked: Checked): Promise<SlotOutcome> {
+async function ageGate(deps: CandidateJobDeps, job: CandidateJob, slot: number, ageShape: ChatPriceShape, checked: Checked): Promise<SlotOutcome> {
   const age = await deps.chat({
     attemptId: ageAttemptId(job.jobId, slot),
     jobId: job.jobId,
@@ -260,12 +264,12 @@ async function ageGate(deps: CandidateJobDeps, job: CandidateJob, slot: number, 
     budget: deps.budget,
     priceBook: deps.priceBook,
     signal: job.signal,
-    model: AGE_CHECK_SHAPE.model,
-    messages: AGE_CHECK_SHAPE.messages,
-    jsonSchema: AGE_CHECK_SHAPE.jsonSchema,
-    maxTokens: AGE_CHECK_SHAPE.maxTokens,
-    inputTokens: AGE_CHECK_SHAPE.inputTokens,
-    // AGE_CHECK_SHAPE.images: this one.
+    model: ageShape.model,
+    messages: ageShape.messages,
+    jsonSchema: ageShape.jsonSchema,
+    maxTokens: ageShape.maxTokens,
+    inputTokens: ageShape.inputTokens,
+    // ageShape.images: this one.
     images: [checked.jpeg],
     reasoningEffort: "low",
   });
