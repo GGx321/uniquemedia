@@ -47,6 +47,8 @@ async function harness() {
       kind: "control",
       type: "init",
       ledgerPath: join(dir, "ledger.jsonl"),
+      defaultLibraryPath: join(dir, "library"),
+      rawDir: join(dir, "raw"),
       settings: {
         monthlyBudgetMicros: 10_000_000,
         libraryPath: join(dir, "library"),

@@ -5,7 +5,8 @@ import { costToMicros } from "./settleRule";
 export const OPENROUTER_API_BASE = "https://openrouter.ai/api/v1";
 /** The day the fallback table was read from OpenRouter (spike results, 2026-09-24). */
 export const FALLBACK_PRICES_DATE = "2026-09-24";
-const PRICE_FETCH_TIMEOUT_MS = 15_000;
+/** Each price GET gives up after this long; its model then falls back to the dated table. */
+export const PRICE_FETCH_TIMEOUT_MS = 15_000;
 
 export type Resolution = "1K" | "2K";
 export type ImageQuality = "low" | "medium";
@@ -388,8 +389,8 @@ function unavailable(model: string): MoneyError {
   return new MoneyError("PRICE_UNAVAILABLE", `no price loaded for ${model}`);
 }
 
-async function getJson(fetch: FetchLike, url: string): Promise<unknown> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(PRICE_FETCH_TIMEOUT_MS) });
+async function getJson(fetch: FetchLike, url: string, timeoutMs: number): Promise<unknown> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`GET ${url}: HTTP ${res.status}`);
   return res.json();
 }
@@ -412,40 +413,44 @@ async function liveOrFallback<T>(model: string, table: ReadonlyMap<string, T>, l
 /**
  * Fetches live prices (free, public GETs; no key) and falls back per model to
  * the dated table when a fetch fails, answers non-2xx, or its body does not
- * parse. A model missing from both throws PRICE_UNAVAILABLE.
+ * parse. Every GET runs at once, each with its own timeout, so a load takes
+ * at most one timeout. A model missing from both throws PRICE_UNAVAILABLE.
  */
 export async function loadPriceBook(opts: {
   fetch: FetchLike;
   baseUrl: string;
   imageModels: readonly string[];
   chatModels: readonly string[];
+  /** Per GET; PRICE_FETCH_TIMEOUT_MS unless a test shortens it. */
+  timeoutMs?: number;
 }): Promise<PriceBook> {
   const base = opts.baseUrl.replace(/\/+$/, "");
-  const imageEntries = await Promise.all(
+  const timeoutMs = opts.timeoutMs ?? PRICE_FETCH_TIMEOUT_MS;
+  const images = Promise.all(
     opts.imageModels.map(async (model) => {
       const entry = await liveOrFallback(model, FALLBACK_IMAGE, async () =>
-        parseImageEndpoints(await getJson(opts.fetch, `${base}/images/models/${model}/endpoints`), model)
+        parseImageEndpoints(await getJson(opts.fetch, `${base}/images/models/${model}/endpoints`, timeoutMs), model)
       );
       return [model, entry] as const;
     })
   );
+  // One /models fetch serves every chat model; a failure falls back per model.
+  const models: Promise<{ ok: true; body: unknown } | { ok: false; error: unknown }> =
+    opts.chatModels.length === 0
+      ? Promise.resolve({ ok: false, error: new Error("no chat model asked for") })
+      : getJson(opts.fetch, `${base}/models`, timeoutMs).then(
+          (body) => ({ ok: true, body }),
+          (error: unknown) => ({ ok: false, error })
+        );
 
+  const [imageEntries, listed] = await Promise.all([images, models]);
   const chat = new Map<string, PriceEntry<ChatPrice>>();
-  if (opts.chatModels.length > 0) {
-    // One /models fetch serves every chat model; a failure falls back per model.
-    let models: { ok: true; body: unknown } | { ok: false; error: unknown };
-    try {
-      models = { ok: true, body: await getJson(opts.fetch, `${base}/models`) };
-    } catch (error) {
-      models = { ok: false, error };
-    }
-    for (const model of opts.chatModels) {
-      const entry = await liveOrFallback(model, FALLBACK_CHAT, async () => {
-        if (!models.ok) throw models.error;
-        return parseChatModels(models.body, model);
-      });
-      chat.set(model, entry);
-    }
+  for (const model of opts.chatModels) {
+    const entry = await liveOrFallback(model, FALLBACK_CHAT, async () => {
+      if (!listed.ok) throw listed.error;
+      return parseChatModels(listed.body, model);
+    });
+    chat.set(model, entry);
   }
   return new PriceBook(new Map(imageEntries), chat);
 }

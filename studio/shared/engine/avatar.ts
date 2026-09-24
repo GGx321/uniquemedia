@@ -4,8 +4,12 @@ import { adultTextProblems } from "./ageText";
 /** Avatar age: an integer 21-35. The lower bound is invariant 8 (every avatar is 21+). */
 export const AdultAge = z.number().int().min(21).max(35);
 
-/** No control chars and no invisible format chars (bidi overrides, zero-width, BOM). */
-const NO_HIDDEN_CHARS = /^[^\p{Cc}\p{Cf}]*$/u;
+/**
+ * No control chars, no invisible format chars (bidi overrides, zero-width,
+ * BOM), no lone surrogates (they encode as U+FFFD), and no line or paragraph
+ * separators (U+2028/2029 break a prompt line).
+ */
+const NO_HIDDEN_CHARS = /^[^\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]*$/u;
 
 /** Display name; never sent in prompts. */
 export const AvatarName = z

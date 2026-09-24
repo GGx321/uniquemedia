@@ -6,13 +6,21 @@
 // quotes to straight ones, and accents stripped from Latin letters ("tëen").
 // Any digit that is still not ASCII (Arabic-Indic, Devanagari, ...) is rejected.
 //
+// Invisible format characters are dropped before matching, so one inside a
+// word ("te\u2060en") hides nothing.
+//
 // Script policy: the descriptor is engine-written English, so it may hold
 // only ASCII letters, digits and basic punctuation. The vibe is user input in
 // English or Russian: Latin and Cyrillic letters only, and never both inside
 // one word (homoglyph attacks such as "years оld" with a Cyrillic "о").
 //
-// "youthful" is allowed on purpose: it describes a look ("a youthful smile")
-// without stating or implying an age under 21.
+// Two scopes. The vibe only feeds the descriptor LLM, so it is refused only
+// for hard markers of a minor; "a youthful smile" or "girl next door" pass.
+// The descriptor is engine-written and goes into every prompt, so it is held
+// strictly: no number at all but its "<age>-year-old" anchor, letters spelled
+// out one by one ("t e e n", "T.E.E.N") are read as a word, and every word
+// that suggests she is not a grown adult ("girlish", "petite", "youthful",
+// "coed", "school...") is refused.
 
 /** `descriptor`: the strict rule for LLM output that goes into every prompt. `vibe`: hard markers only. */
 export type AgeTextScope = "descriptor" | "vibe";
@@ -56,6 +64,11 @@ function alt(...maps: Record<string, number>[]): string {
 const EN_WORD = `(?:(?:${alt(EN_TENS)})(?:[- ]?(?:${alt(EN_ONES)}))?|${alt(EN_TEENS, EN_ONES)})`;
 /** Without one..nine: after "looks"/"seems" those are too common ("looks like one of the locals"). */
 const EN_BIG_WORD = `(?:(?:${alt(EN_TENS)})(?:[- ]?(?:${alt(EN_ONES)}))?|${alt(EN_TEENS)})`;
+/** Every number word but a lone "one" ("she's one of a kind"); "twenty-one" still counts. */
+const EN_ONES_BUT_ONE = Object.fromEntries(Object.entries(EN_ONES).filter(([word]) => word !== "one"));
+const EN_WORD_BUT_ONE = `(?:(?:${alt(EN_TENS)})(?:[- ]?(?:${alt(EN_ONES)}))?|${alt(EN_TEENS, EN_ONES_BUT_ONE)})`;
+/** thirteen..nineteen: never a clock time, so "at seventeen" is an age wherever it stands. */
+const EN_TEEN_WORD = alt(Object.fromEntries(Object.entries(EN_TEENS).filter(([, n]) => n >= 13)));
 const RU_WORD = `(?:(?:${alt(RU_TENS)})(?:\\s+(?:${alt(RU_ONES)}))?|${alt(RU_TEENS, RU_ONES)})`;
 const RU_STEM = `(?:(?:${alt(RU_STEM_TENS)})(?:${alt(RU_STEM_ONES)})?|${alt(RU_STEM_TEENS, RU_STEM_ONES)})`;
 /** "15-ти", "5-и", "2-х", "7-ми". */
@@ -75,13 +88,37 @@ const EN_JUDGE_FILLER =
 const AGE_CONTEXT_AFTER = "(?=\\s*(?:$|[.,;:!?)]|-?\\s*(?:years?|yrs?|yo|y\\.o|y\\/o)\\b|лет|года|год))";
 const NOT_A_MEASURE = "(?!\\s*(?:feet|foot|ft|inch|inches|cm|m|kg|lbs?|pounds|minutes?|hours?|days?|percent|%))";
 
+/** Words that soften a stated age without changing it: "she's only 16", "ей всего 16". */
+const EN_HEDGE = "(?:only|just|barely|about|around|nearly|almost|maybe)\\s+";
+const RU_HEDGE = "(?:всего|только|уже|почти|около)\\s+";
+/**
+ * After "she's N": what makes N a height, a distance, a share or a count
+ * rather than an age ("she's 5 feet", "she's 5'6\"", "she is 2 hours away",
+ * "she's 100% herself", "she is 3 out of 4").
+ */
+const NOT_AN_AGE_AFTER =
+  "(?!\\s*(?:(?:feet|foot|ft|inch(?:es)?|cm|m|kg|lbs?|pounds|miles?|km|minutes?|mins?|hours?|days?|weeks?|months?|percent|times|of|out)\\b|[%'\"]|[:.,]\\d))";
+
 const AGE_PATTERNS: RegExp[] = [
-  // 25-year-old, 17 years old, 17 yrs old, seventeen-year-old
-  new RegExp(`${START}${NUM}\\s*-?\\s*(?:years?|yrs?)\\s*-?\\s*old${END}`, "giud"),
+  // 25-year-old, 17 years old, 17 yrs old, seventeen-year-old, 17 years young
+  new RegExp(`${START}${NUM}\\s*-?\\s*(?:years?|yrs?)\\s*-?\\s*(?:old|young)${END}`, "giud"),
   // 17 years of age
   new RegExp(`${START}${NUM}\\s*-?\\s*years?\\s+of\\s+age${END}`, "giud"),
-  // aged 17, age 17, age: 17, at the age of 17
-  new RegExp(`\\bage[d]?\\s*(?:of\\s*)?:?\\s*${NUM}${END}`, "giud"),
+  // aged 17, age 17, age: 17, ages 17, at the age of 17
+  new RegExp(`\\bage[ds]?\\s*(?:of\\s*)?:?\\s*${NUM}${END}`, "giud"),
+  // ages 16-18, aged 16 to 18
+  new RegExp(`\\bage[ds]?\\s*:?\\s*${NUM}\\s*(?:-|to|or|and)\\s*${NUM}${END}`, "giud"),
+  // she's 17, she is seven, he's only 16, who is sixteen, she'll be 17 (a lone "one" is too common: "she's one of a kind")
+  new RegExp(
+    `\\b(?:she|he|who)(?:'s|'ll\\s+be|\\s+is|\\s+was|\\s+will\\s+be)\\s+(?:${EN_HEDGE})?(\\d+|${EN_WORD_BUT_ONE})${END}${NOT_AN_AGE_AFTER}`,
+    "giud",
+  ),
+  // her age is 16, his age was fifteen
+  new RegExp(`\\bage\\s+(?:is|was)\\s+(?:${EN_HEDGE})?${NUM}${END}`, "giud"),
+  // at 17, she moved; at 16 she started; at 17 years
+  new RegExp(`\\bat\\s+(?:${EN_HEDGE})?${NUM}(?=\\s*,?\\s*(?:she|he|they)\\b|\\s*-?\\s*years?\\b)`, "giud"),
+  // at seventeen
+  new RegExp(`\\bat\\s+(?:${EN_HEDGE})?(${EN_TEEN_WORD})${END}`, "giud"),
   // 17 yo, 17yo, 17 y.o., 17 y/o, 17 yrs
   new RegExp(`${START}${NUM}\\s*(?:yo|y\\.\\s?o\\.?|y\\/o|yrs?)${END}`, "giud"),
   // looks 16, looks like she is 17, seems fifteen, could pass for 16, appears to be 15
@@ -99,12 +136,12 @@ const AGE_PATTERNS: RegExp[] = [
   new RegExp(`(?<![\\p{L}])(?:лет|года)\\s+${RU_NUM}${END}`, "giud"),
   // 15 на вид
   new RegExp(`${START}${RU_NUM}\\s+на\\s+вид(?![\\p{L}])`, "giud"),
-  // ей 16, ему шестнадцать
-  new RegExp(`(?<![\\p{L}])(?:ей|ему|им)\\s+${RU_NUM}(?=\\s*(?:$|[.,;:!?)]|лет|года|год|на\\s+вид))`, "giud"),
+  // ей 16, ему шестнадцать, ей всего 16
+  new RegExp(`(?<![\\p{L}])(?:ей|ему|им)\\s+(?:${RU_HEDGE})?${RU_NUM}(?=\\s*(?:$|[.,;:!?)]|лет|года|год|на\\s+вид))`, "giud"),
   // 16 годиков, 16 годков
   new RegExp(`${START}${RU_NUM}\\s*-?\\s*год(?:ик|к)\\p{L}*`, "giud"),
-  // just turned 18, not yet 18, going on 15, turning 17
-  new RegExp(`\\b(?:just\\s+turned|turned|turning|not\\s+yet|going\\s+on)\\s+${NUM}${END}`, "giud"),
+  // just turned 18, turning 17
+  new RegExp(`\\b(?:just\\s+turned|turned|turning)\\s+${NUM}${END}`, "giud"),
   // barely 18 (but not "barely 5 feet tall")
   new RegExp(`\\bbarely\\s+${NUM}${END}${NOT_A_MEASURE}`, "giud"),
   // 16 or 17
@@ -118,6 +155,8 @@ const BOUND_PATTERNS: RegExp[] = [
   new RegExp(`\\b(?:under|below|younger\\s+than|less\\s+than)\\s*-?\\s*${NUM}${AGE_CONTEXT_AFTER}`, "giud"),
   // младше 18, моложе 16 лет, до 18 лет
   new RegExp(`(?<![\\p{L}])(?:младше|моложе|меньше|до)\\s+${RU_NUM}${AGE_CONTEXT_AFTER}`, "giud"),
+  // not yet 21, 25 going on 15: she is below that age
+  new RegExp(`\\b(?:not\\s+yet|going\\s+on)\\s+${NUM}${END}`, "giud"),
 ];
 
 const WORD_VALUES: Record<string, number> = {
@@ -144,9 +183,24 @@ function foldForms(text: string): string {
     .replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"');
 }
 
-/** The text every age and youth check runs on: `foldForms` plus Latin accents stripped. */
+/** The text every age and youth check runs on: `foldForms`, invisible format characters dropped, Latin accents stripped. */
 function normalise(text: string): string {
-  return foldForms(text).normalize("NFD").replace(/(?<=[A-Za-z])\p{M}+/gu, "").normalize("NFC");
+  return foldForms(text).replace(/\p{Cf}/gu, "").normalize("NFD").replace(/(?<=[A-Za-z])\p{M}+/gu, "").normalize("NFC");
+}
+
+/** Three or more single letters, each apart by one space, dot, hyphen or underscore: "t e e n", "T.E.E.N.". */
+const SPELLED_OUT = /(?<![\p{L}\p{N}])\p{L}(?:[ .\-_]\p{L}){2,}(?![\p{L}\p{N}])\.?/gu;
+
+/**
+ * Letters spelled out one by one joined into a word, followed by every
+ * suffix of it, so a leading article is no cover: "a t e e n" is read as
+ * "ateen teen een en n".
+ */
+function joinSpelledOut(text: string): string {
+  return text.replace(SPELLED_OUT, (run) => {
+    const word = run.replace(/[^\p{L}]/gu, "");
+    return Array.from(word, (_, i) => word.slice(i)).join(" ");
+  });
 }
 
 function numbersFound(text: string, patterns: readonly RegExp[]): number[] {
@@ -183,27 +237,62 @@ export function nonAsciiDigits(text: string): string[] {
 
 /** Markers of a minor in any scope. */
 const HARD_YOUTH: RegExp[] = [
-  /\b(?:(?:pre-?)?teen\w*|tweens?|middle[- ]?school(?:ers?)?|\d+(?:st|nd|rd|th)[- ]?grade(?:rs?)?|school[- ]?girls?|school[- ]uniforms?|high[- ]?school(?:ers?)?|loli(?:s|ta|tas)?|jailbait|minors?|under[- ]?age|young[- ]looking|barely[- ]legal)\b/giu,
+  /\b(?:(?:pre-?)?teen\w*|tweens?|middle[- ]?school(?:ers?)?|\d+(?:st|nd|rd|th)[- ]?grade(?:rs?)?|school[- ]?girls?|school[- ]uniforms?|high[- ]?school(?:ers?)?|loli\w*|jail[- ]?bait\w*|nymphets?|minors?|under[- ]?aged?|young[- ]looking|barely[- ]?legal|adolescen\w*|(?:pre-?)?pubescen\w*|juveniles?)\b/giu,
   /(?<![\p{L}])(?:подрост|школьниц|несовершеннолет|малолет|малышк|учениц|тинейдж|школот)\p{L}*/giu,
+  // старшеклассница, пятиклассник, одноклассница: any "...классник/...классница" is a school pupil
+  /(?<![\p{L}])\p{L}*классни[кц]\p{L}*/giu,
   /(?<![\p{L}])юн(?:ая|ой|ую|ые|ых|ым|ыми|ое|ого|ый|ому|ом)(?![\p{L}])/giu,
   /(?<![\p{L}])школьн\p{L}*\s+форм\p{L}*/giu,
 ];
 
 /**
  * Words that are ordinary in a vibe ("girl next door", "it-girl", "kids-free",
- * "children's books") but never belong in a descriptor: there the engine
- * writes "woman".
+ * "a youthful smile", "petite") but never belong in the descriptor, an
+ * appearance anchor the engine writes: there she is a "woman", and nothing may
+ * suggest she is not a grown adult.
  */
-const SOFT_YOUTH: RegExp[] = [
-  /\b(?:girls?|kids?|child(?:ren|ish|like)?)\b/giu,
+const DESCRIPTOR_YOUTH: RegExp[] = [
+  new RegExp(
+    [
+      "girl\\w*", "kids?", "kidd(?:ie|o)s?", "child\\w*", "baby[- ]?(?:fac\\w*|doll\\w*)", "doll[- ]?like",
+      "co-?eds?", "freshm[ae]n", "sophomores?", "\\w*school\\w*", "\\w+[- ]grade(?:rs?)?", "grade[- ]?school\\w*", "uniforms?",
+      "(?:just|barely)\\s+(?:legal|of\\s+age)", "drinking\\s+age", "old\\s+enough", "half\\s+(?:her|his|their)\\s+age",
+      "youthful\\w*", "young[- ]?looking", "younger\\w*",
+      "petite", "tiny", "(?:un|under)[- ]?developed", "flat[- ]?chested", "pig-?tails?", "braces",
+    ].map((word) => `\\b${word}\\b`).join("|"),
+    "giu",
+  ),
   /(?<![\p{L}])(?:девочк|реб[её]н)\p{L}*/giu,
 ];
 
 /** Words that describe a minor or a youthful look, in English or Russian. */
 export function youthWords(text: string, scope: AgeTextScope = "descriptor"): string[] {
-  const normalized = normalise(text);
-  const patterns = scope === "descriptor" ? [...HARD_YOUTH, ...SOFT_YOUTH] : HARD_YOUTH;
+  const normalized = scope === "descriptor" ? joinSpelledOut(normalise(text)) : normalise(text);
+  const patterns = scope === "descriptor" ? [...HARD_YOUTH, ...DESCRIPTOR_YOUTH] : HARD_YOUTH;
   return patterns.flatMap((pattern) => Array.from(normalized.matchAll(pattern), (m) => m[0]));
+}
+
+/**
+ * English number words: one..nineteen and every -teen form, the tens and
+ * their forms ("twenties", "twenty-one"), hundreds, dozens, and the ordinals
+ * from fourth on. One..nine are included: a descriptor never needs a count
+ * (the engine words the marks without one), and "she is nine" would be an age.
+ */
+const NUMBER_WORD = new RegExp(
+  "\\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen\\w*" +
+    "|(?:twen|thir|for|four|fif|six|seven|eigh|nine)t(?:y|ie)\\w*|hundred\\w*|thousand\\w*|dozens?" +
+    "|(?:four|fif|six|seven|eigh|nin|ten|eleven|twelf)th)\\b",
+  "iu",
+);
+
+/**
+ * True when the descriptor holds a number besides its one "<age>-year-old"
+ * anchor: any digit, or any number word, also spelled out ("t w e n t y").
+ * Closes "t33n", "18+", "of 16", "who is sixteen", "not yet 21" at once.
+ */
+function hasNumberBesideAnchor(text: string, age: number): boolean {
+  const rest = normalise(text).replace(new RegExp(`(?<![0-9])${age}-year-old`), " ");
+  return /[0-9]/.test(rest) || NUMBER_WORD.test(joinSpelledOut(rest));
 }
 
 const DESCRIPTOR_CHARS = /^[A-Za-z0-9 \-.,;:!?'"()/&%+]*$/;
@@ -224,7 +313,8 @@ function breaksScriptPolicy(text: string, scope: AgeTextScope): boolean {
   });
 }
 
-export type AdultTextProblem = "script" | "non-ascii-digits" | "other-age" | "under-21-bound" | "youth-word";
+/** `number`: descriptor only — a number besides the "<age>-year-old" anchor. */
+export type AdultTextProblem = "script" | "non-ascii-digits" | "other-age" | "under-21-bound" | "youth-word" | "number";
 
 /** Why a text that goes into prompts is not clearly about a 21+ adult of the given age; empty when it is. */
 export function adultTextProblems(text: string, age: number, scope: AgeTextScope): AdultTextProblem[] {
@@ -234,5 +324,6 @@ export function adultTextProblems(text: string, age: number, scope: AgeTextScope
   if (ageMentions(text).some((n) => n !== age)) problems.push("other-age");
   if (ageUpperBounds(text).some((n) => n <= 21)) problems.push("under-21-bound");
   if (youthWords(text, scope).length > 0) problems.push("youth-word");
+  if (scope === "descriptor" && hasNumberBesideAnchor(text, age)) problems.push("number");
   return problems;
 }

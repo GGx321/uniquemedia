@@ -1,21 +1,12 @@
 import { MoneyError } from "./errors";
-import type { Clock, Ledger, LedgerLine, Scope } from "./ledger";
+import { isAttemptId, type Clock, type Ledger, type LedgerLine, type Scope } from "./ledger";
 import { reconcileLedger, type CreditsFetcher, type ReconcileResult } from "./reconcile";
+
+/** The contract's attempt id rule, defined with the ledger that stores the ids. */
+export { isAttemptId };
 
 /** The client's request timeout (T3): an open reserve's request may have run this long after its `at`. */
 export const REQUEST_TIMEOUT_MS = 180_000;
-
-/**
- * An attempt id the contract can carry (T0 `AttemptId`: 1-128 visible ASCII
- * chars). Attempt ids end up in the money status and the reconcile result, so
- * one the contract refuses would break every snapshot; the money core may not
- * import the contract, and budget.test.ts pins that both accept the same ids.
- */
-const ATTEMPT_ID_PATTERN = /^[\x21-\x7e]{1,128}$/;
-
-export function isAttemptId(id: string): boolean {
-  return ATTEMPT_ID_PATTERN.test(id);
-}
 
 export interface BudgetLimits {
   /** One cap for every scope, or a cap per scope (a run's plan worst case, an avatar job's worst case). */
@@ -87,7 +78,8 @@ class Mutex {
   }
 }
 
-function scopeKey(scope: Scope): string {
+/** One key per cap: a photo run or an avatar job. */
+export function scopeKey(scope: Scope): string {
   return "runId" in scope ? `run:${scope.runId}` : `avatar:${scope.avatarJobId}`;
 }
 

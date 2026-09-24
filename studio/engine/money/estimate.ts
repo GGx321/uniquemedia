@@ -68,7 +68,12 @@ export interface RunPlanInput {
 export interface AvatarJobInput {
   candidates: number;
   image: ImageChoice;
-  descriptor: ChatCall;
+  /**
+   * The descriptor call of a new avatar and how many paid attempts it may take
+   * (a rejected answer is asked once more); null for another batch of an
+   * existing draft.
+   */
+  descriptor: { call: ChatCall; maxAttempts: number } | null;
   ageChecks: ChatCall | null;
 }
 
@@ -131,13 +136,24 @@ export function estimateRun(book: PriceBook, plan: RunPlanInput): Estimate {
   };
 }
 
-/** An avatar job: every candidate portrait and its age check, plus the descriptor call. Nothing is retried. */
+/**
+ * An avatar job: every candidate portrait and its age check, plus the
+ * descriptor call when there is one. Expected: one descriptor attempt at its
+ * typical tokens. Worst: every descriptor attempt at its ceilings. Portraits
+ * and age checks are not retried.
+ */
 export function estimateAvatarJob(book: PriceBook, job: AvatarJobInput): Estimate {
   assertCount("candidates", job.candidates);
+  const { descriptor } = job;
+  if (descriptor !== null && (!Number.isSafeInteger(descriptor.maxAttempts) || descriptor.maxAttempts < 1)) {
+    throw new RangeError(`descriptor maxAttempts must be a positive integer, got ${descriptor.maxAttempts}`);
+  }
   const image = imageMicros(book, job.image);
+  const descriptorExpected = descriptor === null ? 0 : typicalMicros(book, descriptor.call);
+  const descriptorWorst = descriptor === null ? 0 : descriptor.maxAttempts * ceilingMicros(book, descriptor.call);
   return {
-    expectedMicros: safe(job.candidates * (image + typicalMicros(book, job.ageChecks)) + typicalMicros(book, job.descriptor)),
-    worstMicros: safe(job.candidates * (image + ceilingMicros(book, job.ageChecks)) + ceilingMicros(book, job.descriptor)),
+    expectedMicros: safe(job.candidates * (image + typicalMicros(book, job.ageChecks)) + descriptorExpected),
+    worstMicros: safe(job.candidates * (image + ceilingMicros(book, job.ageChecks)) + descriptorWorst),
     priceSource: book.source,
   };
 }

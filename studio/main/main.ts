@@ -24,7 +24,7 @@ import { handleMediaRequest, MEDIA_SCHEME } from "./mediaProtocol";
 import { HostNotices } from "./notices";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { handleSettingsCommand } from "./settingsFlow";
-import { SettingsStore } from "./settingsStore";
+import { defaultLibraryPath, SettingsStore } from "./settingsStore";
 
 // A production build keeps no debugging door open, however it is launched:
 // DevTools are off (see createWindow), --inspect is disabled by a fuse, and
@@ -55,6 +55,8 @@ protocol.registerSchemesAsPrivileged([
 const RENDERER_FILE = join(import.meta.dirname, "../renderer/index.html");
 // Inside app.asar when packaged; utilityProcess loads it from there.
 const ENGINE_ENTRY = join(import.meta.dirname, "../engine/main.js");
+/** In userData, next to the ledger: bodies of paid answers that could not be used, kept (redacted) as evidence. */
+const RAW_DIR = "raw";
 const TRUSTED: TrustedRenderer = { devServerUrl, fileUrl: pathToFileURL(RENDERER_FILE).href };
 
 function isDevServer(url: string): boolean {
@@ -164,6 +166,8 @@ async function startStudio(): Promise<void> {
       kind: "control",
       type: "init",
       ledgerPath: join(userData, "ledger.jsonl"),
+      defaultLibraryPath: defaultLibraryPath(userData),
+      rawDir: join(userData, RAW_DIR),
       settings: settings.current,
       encryptionAvailable: keys.status().encryptionAvailable,
       openRouterBaseUrl: openRouterBaseUrlForTests(),

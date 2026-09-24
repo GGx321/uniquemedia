@@ -176,14 +176,11 @@ describe("youthWords in descriptor scope", () => {
   });
 
   test.each([
-    "with her girlfriend",
-    "girlfriends on a trip",
     "kidney-shaped pool",
     "the minority of days",
     "canteen lunch",
     "fifteen minutes of fame",
     "young woman",
-    "a youthful smile",
     "мечтала об этом в юности",
     "девушка в кафе",
     "детали интерьера",
@@ -194,6 +191,14 @@ describe("youthWords in descriptor scope", () => {
 });
 
 describe("youthWords in vibe scope", () => {
+  test.each(["with her girlfriend", "girlfriends on a trip", "a youthful smile", "baby-faced", "college freshman"])(
+    "lets the ordinary %p through (the descriptor refuses it)",
+    (text) => {
+      expect(youthWords(text, "vibe")).toEqual([]);
+      expect(youthWords(text, "descriptor").length).toBeGreaterThan(0);
+    },
+  );
+
   test.each(HARD_WORDS)("still flags the hard marker %p", (word) => {
     expect(youthWords(`a ${word} in a cafe`, "vibe").length).toBeGreaterThan(0);
   });
@@ -204,8 +209,12 @@ describe("youthWords in vibe scope", () => {
 });
 
 describe("adultTextProblems", () => {
-  test("is empty for an adult text that restates the same age", () => {
-    expect(adultTextProblems("25-year-old woman, aged 25, with a youthful smile", 25, "descriptor")).toEqual([]);
+  test("is empty for a vibe that restates the same age", () => {
+    expect(adultTextProblems("aged 25, with a youthful smile", 25, "vibe")).toEqual([]);
+  });
+
+  test("refuses a descriptor that restates the age: only the anchor may carry a number", () => {
+    expect(adultTextProblems("25-year-old woman, aged 25", 25, "descriptor")).toEqual(["number"]);
   });
 
   test("reports another age", () => {
@@ -216,8 +225,8 @@ describe("adultTextProblems", () => {
     expect(adultTextProblems(`21-year-old woman, looks ${bound}`, 21, "descriptor")).toContain("under-21-bound");
   });
 
-  test("allows an upper bound above 21", () => {
-    expect(adultTextProblems("25-year-old woman, looks under 30", 25, "descriptor")).toEqual([]);
+  test("allows an upper bound above 21 in a vibe", () => {
+    expect(adultTextProblems("looks under 30", 25, "vibe")).toEqual([]);
   });
 
   test("reports non-ASCII digits", () => {
@@ -250,8 +259,6 @@ describe("more age contexts", () => {
     ["16 годиков", [16]],
     ["barely 18", [18]],
     ["just turned 18", [18]],
-    ["not yet 18", [18]],
-    ["25 going on 15", [15]],
     ["16 or 17", [16, 17]],
     ["sweet sixteen", [16]],
   ])("finds the age in %p", (text, expected) => {
@@ -276,6 +283,92 @@ describe("more age contexts", () => {
         true,
         true,
       ]);
+    },
+  );
+});
+
+// ---------- the gaps the T0 review left open (T6a) ----------
+
+describe("ages stated in the T6a gap forms", () => {
+  test.each([
+    // "she's N", "she is N"
+    ["she's 17", [17]],
+    ["She's 17!", [17]],
+    ["she is sixteen", [16]],
+    ["she’s only 16.", [16]],
+    ["he is 15 and loves games", [15]],
+    ["she was 17, now she travels", [17]],
+    // "at N"
+    ["at 17, she moved to Paris", [17]],
+    ["at 16 she started modelling", [16]],
+    ["at seventeen he left home", [17]],
+    ["at 17 years", [17]],
+    // "N years young"
+    ["17 years young", [17]],
+    ["seventeen years young", [17]],
+    ["17-years-young", [17]],
+    ["17 yrs young", [17]],
+    // "ages N-M"
+    ["ages 16-18", [16, 18]],
+    ["ages 16 to 18", [16, 18]],
+    ["aged 16-18", [16, 18]],
+    ["ages 16", [16]],
+    // "ей всего N"
+    ["ей всего 16", [16]],
+    ["ей всего шестнадцать лет", [16]],
+    ["ему только 15", [15]],
+  ])("finds the age in %p", (text, expected) => {
+    expect(ageMentions(text)).toEqual(expected);
+  });
+
+  test.each([
+    "she's 5 feet tall",
+    "she is 170 cm tall",
+    "she's 5'6\" with long legs",
+    "she's 100% herself",
+    "she is 3 out of 4 sisters",
+    "she's one of a kind",
+    "she is 2 hours from the sea",
+    "wakes up at 6, drinks coffee",
+    "coffee at 7 am",
+    "meet at 5 pm",
+    "at 7:30 she runs",
+    "forever young at heart",
+    "for ages, she has loved books",
+    "images 3 and pages 12",
+    "ей всего хватает",
+  ])("finds no age in %p", (text) => {
+    expect(ageMentions(text)).toEqual([]);
+  });
+
+  test("a descriptor that says she is another age is refused", () => {
+    expect(adultTextProblems("25-year-old woman; she is sixteen at heart", 25, "descriptor")).toContain("other-age");
+  });
+});
+
+describe("youth words in the T6a gap forms", () => {
+  test.each([
+    "underaged",
+    "adolescent",
+    "adolescents",
+    "adolescence",
+    "pubescent",
+    "prepubescent",
+    "juvenile",
+    "juveniles",
+    "старшеклассница",
+    "Старшеклассницы",
+    "старшеклассник",
+    "пятиклассница",
+    "одноклассница",
+  ])("flags %p in every scope", (word) => {
+    expect([youthWords(`a ${word} in a cafe`, "descriptor").length > 0, youthWords(`a ${word} in a cafe`, "vibe").length > 0]).toEqual([true, true]);
+  });
+
+  test.each(["классный стиль", "классная и уютная", "a classy look", "adult, adulthood", "a juicy peach", "public beaches"])(
+    "does not flag %p",
+    (text) => {
+      expect(youthWords(text, "descriptor")).toEqual([]);
     },
   );
 });
@@ -315,6 +408,243 @@ describe("script policy", () => {
   });
 
   test("accepts a plain English descriptor", () => {
-    expect(adultTextProblems("25-year-old woman in her mid-twenties, hazel eyes (slim build).", 25, "descriptor")).toEqual([]);
+    expect(adultTextProblems("25-year-old woman, hazel eyes (slim build); natural makeup & high cheekbones!", 25, "descriptor")).toEqual([]);
+  });
+});
+
+// ---------- T6a-2a review: the descriptor is engine-written, so it is held strictly ----------
+
+const D = "25-year-old European woman, hazel eyes, ";
+
+describe("the descriptor carries no number but its age anchor", () => {
+  test.each([
+    // digits anywhere else: leetspeak, a second age, a bound, "18+"
+    "t33n look",
+    "te3n look",
+    "l0li look",
+    "18+",
+    "looks as she did at 16.",
+    "the face she had at 16",
+    "of 16 summers",
+    "a woman of 16",
+    "her age is 16",
+    "who is 16",
+    "she's 5 feet tall",
+    "3 ear piercings",
+    // number words: one to ninety, every -teen form, compounds, ordinals
+    "one small mole",
+    "two freckles",
+    "nine",
+    "a face of sixteen",
+    "sixteen summers old",
+    "sixteen-ish",
+    "in tenth grade",
+    "in her mid-twenties",
+    "twenty minus five",
+    "a twenty-one look",
+    "twelfth",
+    "a woman who is sixteen",
+  ])("refuses %p", (rest) => {
+    expect(adultTextProblems(`${D}${rest}`, 25, "descriptor")).toContain("number");
+  });
+
+  test("the anchor is the only number: a second anchor is refused", () => {
+    expect(adultTextProblems(`${D}a 25-year-old look`, 25, "descriptor")).toContain("number");
+  });
+
+  test("an anchor inside a longer number leaves a digit: 125-year-old is refused", () => {
+    expect(adultTextProblems("125-year-old European woman", 25, "descriptor")).toContain("number");
+  });
+
+  test.each(["someone", "stone-grey eyes", "a tenderly soft jawline", "often smiling", "tone", "alone"])(
+    "a number word inside another word is not a number: %p",
+    (rest) => {
+      expect(adultTextProblems(`${D}${rest}`, 25, "descriptor")).toEqual([]);
+    },
+  );
+
+  test("in a vibe, ordinary numbers stay allowed", () => {
+    expect(adultTextProblems("two coffees a day, 3 ear piercings", 25, "vibe")).toEqual([]);
+  });
+});
+
+describe("the descriptor reads letters spelled out one by one as a word", () => {
+  test.each(["t e e n look", "t-e-e-n look", "t.e.e.n. look", "T.E.E.N look", "a k i d look"])("refuses %p", (rest) => {
+    expect(adultTextProblems(`${D}${rest}`, 25, "descriptor")).toContain("youth-word");
+  });
+
+  test.each(["a woman, a b c", "an A-list look", "U.S.-born"])("an ordinary run of letters that spells nothing passes: %p", (rest) => {
+    expect(adultTextProblems(`${D}${rest}`, 25, "descriptor")).toEqual([]);
+  });
+});
+
+describe("the descriptor refuses every word that suggests she is not a grown adult", () => {
+  test.each([
+    "baby-faced", "babyface", "baby face", "babydoll look",
+    "girlish face", "girly look", "a girl", "her girlfriends",
+    "nymphet", "lolicon", "loli", "lolita-esque",
+    "jailbait", "jail-bait", "jail bait",
+    "barely legal", "barelylegal", "barely of age", "just legal", "just barely legal age",
+    "coed look", "co-ed look", "college freshman look", "sophomore look",
+    "school-age look", "school aged look", "plaid school skirt", "sailor uniform",
+    "sixth-grader look", "in third grade", "grade-schooler",
+    "kiddie face", "kiddo", "not old enough to drink", "not yet legal drinking age",
+    "youthful face", "young-looking", "young looking", "younger-looking face", "looks much younger than her age",
+    "childlike face", "child-like face", "childish grin", "doll-like face",
+    "petite frame", "tiny frame", "underdeveloped figure", "undeveloped figure", "flat-chested",
+    "pigtails and braces", "half her age",
+    "prepubescent", "pre-pubescent", "under age", "adolescent", "minor", "tween",
+    "fresh out of high school", "fresh out of highschool", "in her late teens", "teenaged",
+  ])("refuses %p", (rest) => {
+    expect(adultTextProblems(`${D}${rest}`, 25, "descriptor")).toContain("youth-word");
+  });
+
+  test.each([
+    "a beauty mark above the lip",
+    "high cheekbones",
+    "light freckles across the nose",
+    "natural makeup",
+    "a small nose piercing",
+    "a soft jawline and full eyebrows",
+    "a young woman's warm smile",
+    "forever young",
+    "juicy",
+  ])("keeps the ordinary adult %p", (rest) => {
+    expect(adultTextProblems(`${D}${rest}.`, 25, "descriptor")).toEqual([]);
+  });
+});
+
+describe("every scope: hard markers written apart", () => {
+  test.each(["jail bait", "jail-bait", "lolicon", "nymphet", "nymphets", "barelylegal", "barely-legal"])("flags %p in the vibe too", (word) => {
+    expect(youthWords(`a ${word} vibe`, "vibe").length).toBeGreaterThan(0);
+  });
+
+  test("an invisible format character inside a word hides nothing: t\\uFEFFeen, te\\u2060en", () => {
+    expect(youthWords("te\uFEFFen look", "vibe").length).toBeGreaterThan(0);
+    expect(youthWords("te\u2060en look", "vibe").length).toBeGreaterThan(0);
+  });
+});
+
+describe("the vibe: every age after she's, who is, she'll be, age is (T6a-2a review)", () => {
+  test.each([
+    ["she's seven", [7]],
+    ["she is nine", [9]],
+    ["she was eight", [8]],
+    ["she's only six", [6]],
+    ["she's 9", [9]],
+    ["she'll be 17", [17]],
+    ["she will be seventeen", [17]],
+    ["who is 16", [16]],
+    ["a woman who is sixteen", [16]],
+    ["who was 15", [15]],
+    ["her age is 16", [16]],
+    ["his age was 15", [15]],
+    ["at seventeen", [17]],
+    ["she's 17 again", [17]],
+    ["she is 17 at heart", [17]],
+    ["she's twenty", [20]],
+    ["she is 20 now", [20]],
+  ])("finds the age in %p", (text, expected) => {
+    expect(ageMentions(text)).toEqual(expected);
+  });
+
+  test.each(["she's one of a kind", "she's one in a million", "she's 5 feet", "she's 5'4\"", "at 7:30 she runs", "wakes at seven", "at ten o'clock"])(
+    "finds no age in %p",
+    (text) => {
+      expect(ageMentions(text)).toEqual([]);
+    },
+  );
+});
+
+describe("not yet N and going on N are bounds, not ages (T6a-2a review)", () => {
+  test.each([
+    ["not yet 18", [18]],
+    ["not yet 21", [21]],
+    ["not yet twenty-one", [21]],
+    ["25 going on 15", [15]],
+  ])("%p is a bound", (text, expected) => {
+    expect(ageUpperBounds(text)).toEqual(expected);
+    expect(ageMentions(text).filter((n) => expected.includes(n))).toEqual([]);
+  });
+
+  test("not yet 21 is refused at age 21, where it used to count as her own age", () => {
+    expect(adultTextProblems("not yet 21", 21, "vibe")).toContain("under-21-bound");
+  });
+
+  test("not yet 30 is no problem in a vibe at 25", () => {
+    expect(adultTextProblems("not yet 30", 25, "vibe")).toEqual([]);
+  });
+});
+
+describe("reviewer probes on the descriptor, each refused", () => {
+  test.each([
+    "her age is 16",
+    "a woman who is sixteen",
+    "who is 16",
+    "she turned 16",
+    "she'll be 17",
+    "she's barely 18",
+    "she's in 10th grade",
+    "in tenth grade",
+    "a sixteen-year-old's face",
+    "sixteen-ish",
+    "the look of a sixteen year old",
+    "teenaged",
+    "a woman of 16",
+    "she's seven",
+    "she is nine",
+    "she was eight",
+    "she's only six",
+    "at seven, she",
+    "she's 9",
+    "she's one of a kind",
+    "she's one in a million",
+    "te\uFEFFen look",
+    "she's 5 feet",
+    "at 7:30 she runs",
+    "at 16, she moved",
+    "she is sixteen",
+    "she's 16.",
+    "ей всего 16",
+    "старшеклассница",
+    "классный",
+    "she's 5'4\"",
+    "she's 17 again",
+    "she is 17 at heart",
+    "at seventeen",
+    "she's twenty",
+    "she is 20 now",
+  ])("%p", (probe) => {
+    expect(adultTextProblems(`25-year-old woman, ${probe}`, 25, "descriptor").length).toBeGreaterThan(0);
+  });
+
+  test.each([
+    ["she's seven", false],
+    ["she is nine", false],
+    ["she was eight", false],
+    ["she's only six", false],
+    ["at seven, she", false],
+    ["she's 9", false],
+    ["she's one of a kind", true],
+    ["she's one in a million", true],
+    ["te\uFEFFen look", false],
+    ["she's 5 feet", true],
+    ["at 7:30 she runs", true],
+    ["at 16, she moved", false],
+    ["she is sixteen", false],
+    ["she's 16.", false],
+    ["ей всего 16", false],
+    ["старшеклассница", false],
+    ["классный", true],
+    ["forever young", true],
+    ["juicy", true],
+    ["she's 5'4\"", true],
+    ["she's 17 again", false],
+    ["she is 17 at heart", false],
+    ["at seventeen", false],
+    ["she's twenty", false],
+    ["she is 20 now", false],
+  ] as const)("as a vibe at 25, %p passes: %p", (probe, passes) => {
+    expect(adultTextProblems(probe, 25, "vibe").length === 0).toBe(passes);
   });
 });

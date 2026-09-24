@@ -8,6 +8,7 @@ import {
   chatWorstCase,
   imageWorstCase,
   loadPriceBook,
+  PRICE_FETCH_TIMEOUT_MS,
   parseChatModels,
   parseImageEndpoints,
   type ChatPrice,
@@ -347,6 +348,36 @@ test("loadPriceBook uses live prices when every fetch succeeds", async () => {
   expect([...fetch.urls].sort()).toEqual(
     [`${BASE}/images/models/${GROK_2}/endpoints`, `${BASE}/images/models/${SEEDREAM}/endpoints`, `${BASE}/models`].sort()
   );
+});
+
+test("the /models fetch runs while the image endpoints are still loading: one price load waits for one timeout, not two", async () => {
+  let modelsAsked: () => void = () => {};
+  const modelsStarted = new Promise<void>((resolve) => (modelsAsked = resolve));
+  const routes = fakeFetch(LIVE);
+  const fetch: FetchLike = async (url, init) => {
+    if (url === `${BASE}/models`) modelsAsked();
+    else await Promise.race([modelsStarted, Bun.sleep(500).then(() => Promise.reject(new Error("the image fetch ran alone")))]);
+    return routes(url, init);
+  };
+
+  const book = await loadPriceBook({ fetch, baseUrl: BASE, imageModels: [GROK_2], chatModels: [GROK_CHAT] });
+
+  expect([book.sourceOf(GROK_2), book.sourceOf(GROK_CHAT)]).toEqual(["live", "live"]);
+});
+
+test("two fetches that never answer end together at the one timeout, and both fall back", async () => {
+  const hanging: FetchLike = (_url, init) =>
+    new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+  const started = performance.now();
+
+  const book = await loadPriceBook({ fetch: hanging, baseUrl: BASE, imageModels: [GROK_2], chatModels: [GROK_CHAT], timeoutMs: 300 });
+
+  expect(performance.now() - started).toBeLessThan(550);
+  expect(book.source).toBe("fallback");
+});
+
+test("the price fetch timeout is 15 s by default", () => {
+  expect(PRICE_FETCH_TIMEOUT_MS).toBe(15_000);
 });
 
 test("a failed image fetch falls back to the dated table for that model and flags it", async () => {

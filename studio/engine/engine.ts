@@ -1,12 +1,16 @@
+import { mkdir } from "node:fs/promises";
 import {
   errorResponseFor,
   EventLog,
   parseEngineCommand,
   PROTOCOL_VERSION,
   type ApiKeyStatus,
+  type CommandPayload,
+  type Draft,
   type EngineCommandMessage,
   type EngineError,
   type EngineNotice,
+  type Estimate,
   type EventMessage,
   type LedgerUnavailable,
   type MoneyHalt,
@@ -19,17 +23,22 @@ import {
   type Snapshot,
   type UnsequencedEvent,
 } from "../shared/engine";
-import { libraryView, type LibraryView } from "./avatars/records";
+import { runDescriptorJob } from "./avatars/descriptorJob";
+import { avatarJobEstimate, avatarPriceModels, descriptorJobCap, type AvatarModels } from "./avatars/plan";
+import { draftFrom, libraryView, manifestTraits, type LibraryView } from "./avatars/records";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
 import { LibraryError, openLibrary, type Library } from "./library";
 import { STUDIO_E2E } from "./buildFlags";
-import { Budget, type BudgetStatus } from "./money/budget";
+import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
-import { Ledger } from "./money/ledger";
-import { OPENROUTER_API_BASE } from "./money/prices";
+import { Ledger, type Scope } from "./money/ledger";
+import { PriceCache } from "./money/priceCache";
+import { loadPriceBook, OPENROUTER_API_BASE } from "./money/prices";
 import type { ReconcileResult as LedgerReconcileResult, ReconcileWarning as LedgerReconcileWarning } from "./money/reconcile";
 import { createOpenRouterClient, fromOpenRouterError, OpenRouterError, type OpenRouterClient, type OpenRouterFetch } from "./openrouter";
+import { priceFetchFrom } from "./openrouter/priceFetch";
+import { saveRawBody } from "./rawStore";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -165,6 +174,9 @@ function reconcileResultOf(result: Exclude<LedgerReconcileResult, { reason: "IN_
 
 type Money = { ok: true; budget: Budget } | { ok: false; unavailable: LedgerUnavailable };
 
+/** The manifest needs a name; a draft gets the user's name only when a candidate is picked. */
+const DRAFT_NAME = "Draft";
+
 /** A library and the identity of its folder. */
 interface OpenedLibrary {
   library: Library;
@@ -199,8 +211,15 @@ export class Engine {
   readonly #notices: EngineNotice[] = [];
   /** Avatar records already reported as not fitting the contract, so each is logged once. */
   readonly #reportedSkips = new Set<string>();
+  /** Each running paid job's cap by scope (`scopeKey`), shared with the Budget; a scope without one can reserve nothing. */
+  readonly #caps: Map<string, number>;
+  /** Prices for the engine's life, fetched (free, no key) through the injected fetch. */
+  readonly #prices: PriceCache;
+  readonly #rawDir: string;
+  /** Paid commands running now (createDraft): the library they write to must not change under them. */
+  #paidCommands = 0;
 
-  private constructor(init: EngineInit, money: Money, deps: EngineDeps) {
+  private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#events = new EventLog(EVENT_LOG_CAPACITY, deps.bootId);
@@ -208,6 +227,14 @@ export class Engine {
     this.#encryptionAvailable = init.encryptionAvailable;
     this.#openRouterBaseUrl = resolveOpenRouterBaseUrl(init.openRouterBaseUrl, STUDIO_E2E);
     this.#money = money;
+    this.#caps = caps;
+    this.#rawDir = init.rawDir;
+    const priceFetch = priceFetchFrom(deps.fetch);
+    this.#prices = new PriceCache({
+      load: (models) => loadPriceBook({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl, ...models }),
+      clock: deps.clock,
+      monotonic: deps.monotonic,
+    });
   }
 
   /**
@@ -219,15 +246,16 @@ export class Engine {
    */
   static async start(init: EngineInit, deps: EngineDeps): Promise<Engine> {
     let money: Money;
+    const caps = new Map<string, number>();
     try {
       const ledger = await Ledger.open(init.ledgerPath);
       // The engine's one Budget over the ledger, for its whole life: a new
       // monthly budget is set on it, never by building another (that would
       // forget which open reserves are this process's own and put a second
-      // mutex on the ledger). No paid job exists yet (T6a part 2 and T6
-      // register each job's cap), so a scope without a cap can reserve nothing.
+      // mutex on the ledger). Each paid job registers its cap (its own worst
+      // case) before its first reserve; a scope without a cap can reserve nothing.
       const budget = new Budget(ledger, {
-        runCapMicros: 0,
+        runCapMicros: (scope) => caps.get(scopeKey(scope)) ?? 0,
         monthlyBudgetMicros: init.settings.monthlyBudgetMicros,
         clock: deps.clock,
         monotonic: deps.monotonic,
@@ -236,7 +264,14 @@ export class Engine {
     } catch (error) {
       money = { ok: false, unavailable: ledgerUnavailable(error) };
     }
-    const engine = new Engine(init, money, deps);
+    const engine = new Engine(init, money, caps, deps);
+    // First run: the default folder does not exist yet. Only the default is
+    // created; a folder the user chose may be a volume that is not mounted.
+    if (init.settings.libraryPath === init.defaultLibraryPath) {
+      await mkdir(init.defaultLibraryPath, { recursive: true }).catch((error: unknown) => {
+        console.warn(`studio engine: the default library folder could not be created (${messageOf(error, "unknown error")})`);
+      });
+    }
     engine.#live = await engine.#openOrNull(init.settings.libraryPath);
     for (const notice of init.notices) engine.#addNotice(notice);
     return engine;
@@ -297,8 +332,8 @@ export class Engine {
         // The live library's folder, however it is spelled: opening it again
         // would survey (and quarantine) it under the writes of the one in use.
         if (identity !== null && identity === this.#live?.identity) return { kind: "control", type: "reply", callId: call.callId };
-        // Paid requests in flight write where the live library is; part 2 adds running jobs.
-        if (this.#money.ok && this.#money.budget.inFlightCount() > 0) {
+        // Paid requests in flight, and paid commands between their steps, write where the live library is.
+        if (this.#paidCommands > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0)) {
           const detail = "paid requests are in flight; change the library folder when they end";
           return { kind: "control", type: "reply", callId: call.callId, error: { code: "IN_FLIGHT", detail } };
         }
@@ -375,6 +410,28 @@ export class Engine {
         const result = { avatars: view.avatars, unreadableAvatars: view.skipped.length };
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
+      case "avatars.estimate": {
+        // The traits do not change the price: the descriptor prompt is bounded by its ceiling.
+        const models = this.#avatarModels();
+        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models)), models, "new-avatar");
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+      }
+      case "avatars.estimateCandidates": {
+        if (this.#draft(command.payload.avatarId) === null) {
+          throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${command.payload.avatarId} in the open library` });
+        }
+        const models = this.#avatarModels();
+        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models)), models, "next-batch");
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+      }
+      case "avatars.createDraft": {
+        this.#paidCommands++;
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#createDraft(command.payload) };
+        } finally {
+          this.#paidCommands--;
+        }
+      }
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -382,13 +439,14 @@ export class Engine {
 
   #snapshot(): Snapshot {
     const view = this.#libraryView();
+    const nextBatch = this.#nextBatchAtKnownPrices();
     return {
       bootId: this.#events.bootId,
       lastSeq: this.#events.lastSeq,
       settings: this.#currentSettings(),
       money: this.#moneyStatus(),
       avatars: view.avatars,
-      drafts: view.drafts,
+      drafts: view.drafts.map((draft) => ({ ...draft, estimate: nextBatch })),
       unreadableAvatars: view.skipped.length,
       // Filled by the avatar and run jobs (T6a part 2, T6).
       jobs: [],
@@ -405,6 +463,119 @@ export class Engine {
       console.warn(`studio engine: avatar records that do not fit the contract are not listed: ${fresh.join(", ")}`);
     }
     return view;
+  }
+
+  // ---------- avatars ----------
+
+  #avatarModels(): AvatarModels {
+    return { imageModel: this.#settings.imageModel, textModel: this.#settings.textModel };
+  }
+
+  /** A draft of the open library as the contract lists it; null for anything else. */
+  #draft(avatarId: string): Draft | null {
+    const library = this.library;
+    const manifest = library?.getAvatar(avatarId);
+    if (library === null || manifest === undefined) return null;
+    return draftFrom(manifest, library.photosByAvatar(avatarId));
+  }
+
+  /**
+   * A draft's next batch at the prices the engine already has (the contract's
+   * `Draft.estimate`); null before any estimate loaded them. Never fetches:
+   * a snapshot must not wait on the network.
+   */
+  #nextBatchAtKnownPrices(): Estimate | null {
+    const models = this.#avatarModels();
+    const priced = this.#prices.peek(avatarPriceModels(models));
+    return priced === null ? null : avatarJobEstimate(priced, models, "next-batch");
+  }
+
+  /**
+   * A new avatar's draft: the paid descriptor call, then the draft in the
+   * library. Checked before anything is spent, in the order the UI expects
+   * (the renderer's mock engine): a usable key, a ledger that allows paid
+   * calls, an open library, the worst case the user accepted (PRICE_CHANGED)
+   * and room in the month, both for the whole new-avatar job. The command's
+   * own scope is capped at what it sends (every descriptor attempt at its
+   * ceiling); the Budget checks every attempt against it and the global budget.
+   */
+  async #createDraft(payload: CommandPayload<"avatars.createDraft">): Promise<{ draft: Draft }> {
+    const key = this.#usableKey("create an avatar");
+    const budget = this.#paidBudget();
+    const library = this.library;
+    if (library === null) {
+      throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    }
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(avatarPriceModels(models));
+    const job = avatarJobEstimate(priced, models, "new-avatar");
+    if (job.worstMicros > payload.acceptedWorstMicros) {
+      throw new EngineFailure({ code: "PRICE_CHANGED", detail: `the worst case is now ${job.worstMicros} µ$, above the accepted ${payload.acceptedWorstMicros} µ$` });
+    }
+    const month = budget.status();
+    const committed = month.spentThisMonthMicros + month.openReserveMicros;
+    if (committed + job.worstMicros > month.monthlyBudgetMicros) {
+      const detail = `committed ${committed} µ$ + this job's worst case ${job.worstMicros} µ$ > the monthly budget ${month.monthlyBudgetMicros} µ$`;
+      throw new EngineFailure({ code: "BUDGET_EXCEEDED", detail });
+    }
+
+    const jobId = this.#deps.newId();
+    const scope: Scope = { avatarJobId: jobId };
+    // The scope only ever sends descriptor attempts: its cap is theirs, and it goes when the command ends.
+    this.#caps.set(scopeKey(scope), descriptorJobCap(priced, models));
+    const client = this.#openRouter(key);
+    const linesBefore = budget.ledger.lines.length;
+    let result: Awaited<ReturnType<typeof runDescriptorJob>>;
+    try {
+      result = await runDescriptorJob(
+        { chat: (params) => client.chat(params), budget, priceBook: priced.book },
+        { jobId, scope, traits: payload.traits, textModel: models.textModel },
+      );
+    } finally {
+      this.#caps.delete(scopeKey(scope));
+      if (budget.ledger.lines.length !== linesBefore || budget.ledger.failed) this.#emitMoney();
+    }
+    if (!result.ok) {
+      if (result.error.code === "AUTH_INVALID") this.markKeyRejected(key);
+      throw new EngineFailure(result.error);
+    }
+
+    const { descriptor } = result;
+    const manifest = await library
+      .createAvatar({ name: DRAFT_NAME, age: payload.traits.age, traits: manifestTraits(payload.traits), descriptor: descriptor.text })
+      .catch(async (error: unknown) => {
+        // The descriptor is paid for: keep it where the owner can find it, then fail the command.
+        await saveRawBody(this.#rawDir, `${jobId}:descriptor`, JSON.stringify({ traits: payload.traits, descriptor })).catch((saveError: unknown) => {
+          console.warn(`studio engine: a paid descriptor could not be kept (${messageOf(saveError, "unknown error")})`);
+        });
+        throw error;
+      });
+    const stored = draftFrom(manifest, []);
+    if (stored === null) throw new Error(`the new draft ${manifest.id} does not fit the contract`);
+    const draft: Draft = { ...stored, estimate: avatarJobEstimate(priced, models, "next-batch") };
+    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
+    return { draft };
+  }
+
+  /** The key for a paid or keyed call: stored, and not rejected by OpenRouter. */
+  #usableKey(purpose: string): string {
+    const key = this.#apiKey;
+    if (key === null) throw new EngineFailure({ code: "AUTH_INVALID", detail: `no OpenRouter API key is stored; add one in Settings to ${purpose}` });
+    if (this.#keyRejected) throw new EngineFailure({ code: "AUTH_INVALID", detail: `OpenRouter rejected the stored API key (401); store a new key to ${purpose}` });
+    return key;
+  }
+
+  /** The Budget, when the ledger allows paid calls now: readable, not halted, nothing to reconcile. */
+  #paidBudget(): Budget {
+    const money = this.#money;
+    if (!money.ok) throw new EngineFailure({ code: money.unavailable.cause, detail: money.unavailable.detail });
+    const status = money.budget.status();
+    const halt = Engine.#haltOf(money.budget, status);
+    if (halt !== null) throw new EngineFailure({ code: halt.cause, detail: halt.detail });
+    if (status.state === "reconcile-required") {
+      throw new EngineFailure({ code: "RECONCILE_REQUIRED", detail: `${status.openAttempts} open attempt(s)${status.torn ? ", torn ledger line" : ""}; reconcile before any paid call` });
+    }
+    return money.budget;
   }
 
   #apiKeyStatus(): ApiKeyStatus {
@@ -534,9 +705,7 @@ export class Engine {
     const money = this.#money;
     // The cause is its own error code: LEDGER_CORRUPT or LEDGER_UNREADABLE.
     if (!money.ok) throw new EngineFailure({ code: money.unavailable.cause, detail: money.unavailable.detail });
-    const key = this.#apiKey;
-    if (key === null) throw new EngineFailure({ code: "AUTH_INVALID", detail: "no OpenRouter API key is stored; add one in Settings to reconcile" });
-    if (this.#keyRejected) throw new EngineFailure({ code: "AUTH_INVALID", detail: "OpenRouter rejected the stored API key (401); store a new key to reconcile" });
+    const key = this.#usableKey("reconcile");
     let result: LedgerReconcileResult;
     try {
       const client = this.#openRouter(key);
@@ -568,11 +737,9 @@ export class Engine {
       baseUrl: this.#openRouterBaseUrl,
       allowBaseUrlOverride: STUDIO_E2E,
       fetch: this.#deps.fetch,
-      // Only a paid 2xx that cannot be used is saved; the engine sends no paid
-      // request before the avatar jobs (T6a part 2), which decide where it goes.
-      saveRaw: async () => {
-        throw new Error("no paid request is sent before the avatar jobs, so there is no raw body to save");
-      },
+      // Only a paid 2xx that cannot be used is saved, already redacted: in
+      // userData next to the ledger, so the evidence outlives a library move.
+      saveRaw: (attemptId, text) => saveRawBody(this.#rawDir, attemptId, text),
       clock: this.#deps.clock,
       monotonic: this.#deps.monotonic,
     });

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,8 @@ function init(overrides: Partial<EngineInit> = {}): EngineInit {
     kind: "control",
     type: "init",
     ledgerPath: join(dir, "ledger.jsonl"),
+    defaultLibraryPath: join(dir, "userData", "library"),
+    rawDir: join(dir, "userData", "raw"),
     settings: {
       monthlyBudgetMicros: 10_000_000,
       libraryPath: join(dir, "library"),
@@ -148,12 +151,12 @@ describe("Engine command dispatch", () => {
 
   test("commands without a handler yet answer INTERNAL 'not implemented'", async () => {
     const { engine } = await startEngine();
-    const response = await engine.handle(command("avatars.estimateCandidates", { avatarId: "avatar-0001" }));
+    const response = await engine.handle(command("avatars.generateCandidates", { avatarId: "avatar-0001", acceptedWorstMicros: 0 }));
     expect(ResponseMessage.safeParse(response).success).toBe(true);
     expect(response).toMatchObject({
       ok: false,
-      type: "avatars.estimateCandidates",
-      error: { code: "INTERNAL", detail: "avatars.estimateCandidates is not implemented yet" },
+      type: "avatars.generateCandidates",
+      error: { code: "INTERNAL", detail: "avatars.generateCandidates is not implemented yet" },
     });
   });
 
@@ -547,6 +550,23 @@ describe("the library the settings name", () => {
     const { engine } = await startEngine({ settings: { ...init().settings, libraryPath: join(dir, "missing") } });
     expect(engine.library).toBeNull();
     expect(await snapshotIds(engine)).toEqual({ avatars: [], drafts: [] });
+  });
+
+  test("the default folder (userData/library) is created on first run and opened as the library", async () => {
+    const path = join(dir, "userData", "library");
+    const { engine } = await startEngine({ settings: { ...init().settings, libraryPath: path } });
+
+    expect(engine.library?.root).toBe(path);
+    expect(await readdir(path)).toContain("library.json");
+  });
+
+  test("a missing folder the user chose is never created: it may be a volume that is not mounted", async () => {
+    const chosen = join(dir, "volume", "library");
+    const { engine } = await startEngine({ settings: { ...init().settings, libraryPath: chosen } });
+
+    expect(engine.library).toBeNull();
+    expect(existsSync(join(dir, "volume"))).toBe(false);
+    expect(existsSync(join(dir, "userData", "library"))).toBe(false);
   });
 
   test("avatars.list answers the saved avatars of the open library", async () => {

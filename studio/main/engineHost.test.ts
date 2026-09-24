@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { EngineCommandMessage, EngineError, EventMessage, ResponseMessage } from "../shared/engine";
-import type { EngineInit } from "../engine/control";
-import { EngineHost, type EngineChild, type HostPort } from "./engineHost";
+import type { AvatarTraits, EngineCommandMessage, EngineError, EventMessage, ResponseMessage } from "../shared/engine";
+import { DESCRIPTOR_MAX_ATTEMPTS } from "../engine/avatars/descriptor";
+import { COMMAND_DEADLINE_MS, type EngineInit } from "../engine/control";
+import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
+import { MAX_ATTEMPT_MS } from "../engine/openrouter/transport";
+import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort } from "./engineHost";
 
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
 
@@ -9,6 +12,8 @@ const INIT: EngineInit = {
   kind: "control",
   type: "init",
   ledgerPath: "/tmp/userData/ledger.jsonl",
+  defaultLibraryPath: "/tmp/userData/library",
+  rawDir: "/tmp/userData/raw",
   settings: {
     monthlyBudgetMicros: 10_000_000,
     libraryPath: "/tmp/userData/library",
@@ -362,6 +367,41 @@ describe("request deadline", () => {
     await Bun.sleep(0);
     ports[0]?.fromEngine(settingsResponse(cmd.id));
     expect((await again).ok).toBe(true);
+  });
+
+  function createDraft(): EngineCommandMessage {
+    const traits: AvatarTraits = {
+      age: 25, ethnicity: "european", skinTone: "light", hairColor: "black", hairLength: "long",
+      hairTexture: "wavy", eyeColor: "blue", build: "slim", marks: [], vibe: "",
+    };
+    return { v: 1, id: `cmd-${String(++n).padStart(8, "0")}`, kind: "command", type: "avatars.createDraft", payload: { traits, acceptedWorstMicros: 207_500 } };
+  }
+
+  test("avatars.createDraft is not failed at 30 s: main waits out its own deadline, then answers INTERNAL", async () => {
+    const deadline = COMMAND_DEADLINE_MS["avatars.createDraft"] ?? 0;
+    const { host, timers } = setup();
+    await host.start();
+    const cmd = createDraft();
+    let settled: ResponseMessage | null = null;
+    void host.request(cmd).then((r) => (settled = r));
+
+    await timers.advance(REQUEST_TIMEOUT_MS);
+    expect(settled).toBeNull();
+    await timers.advance(deadline - REQUEST_TIMEOUT_MS - 1);
+    expect(settled).toBeNull();
+    await timers.advance(1);
+    expect(settled).toMatchObject({ ok: false, id: cmd.id, error: { code: "INTERNAL", detail: `the engine did not answer within ${deadline / 1000} s` } });
+  });
+
+  test("the createDraft deadline covers a price load and every descriptor attempt at its slowest, plus slack", () => {
+    // One attempt: three HTTP tries to their 180 s timeout and two retry waits at the 60 s Retry-After cap plus 1 s jitter.
+    expect(MAX_ATTEMPT_MS).toBe(3 * 180_000 + 2 * 61_000);
+    expect(COMMAND_DEADLINE_MS["avatars.createDraft"]).toBe(PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000);
+  });
+
+  test("the estimates wait for a price load that times out, so the fallback estimate is not lost to main's deadline", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.estimate"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
+    expect(COMMAND_DEADLINE_MS["avatars.estimateCandidates"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });
 
   test("an init that never finishes cannot hang a request", async () => {

@@ -63,3 +63,10 @@ test("whenever the UI finds no issue, the contract accepts the vibe", () => {
     else expect(contractAccepts(vibe)).toBe(false);
   }
 });
+
+test("a lone surrogate or a line separator is named as hidden text, as the contract refuses it", () => {
+  for (const vibe of ["calm \uD800 mood", "calm mood", "calm mood"]) {
+    expect(vibeIssues(vibe, 25)).toContain("Уберите невидимые и управляющие символы.");
+    expect(contractAccepts(vibe)).toBe(false);
+  }
+});

@@ -6,14 +6,18 @@ import {
   type EngineError,
 } from "../shared/engine";
 import { randomUUID } from "node:crypto";
-import { EngineReply, type EngineInit, type HostCall, type HostControl } from "../engine/control";
+import { COMMAND_DEADLINE_MS, EngineReply, type EngineInit, type HostCall, type HostControl } from "../engine/control";
 
 /** An unexpected exit is followed by one restart, after this delay; a second one is final. */
 export const RESTART_DELAY_MS = 1000;
 const MAX_RESTARTS = 1;
 /** Running this long without a crash gives the restart back. */
 export const HEALTHY_RESET_MS = 5 * 60_000;
-/** A command without an answer by then gets INTERNAL; a later answer is dropped. */
+/**
+ * A command without an answer by then gets INTERNAL; a later answer is
+ * dropped. Commands with their own deadline (control.ts COMMAND_DEADLINE_MS,
+ * e.g. a paid createDraft) wait that long instead.
+ */
 export const REQUEST_TIMEOUT_MS = 30_000;
 
 /** `setTimeout`/`clearTimeout`, injected so tests control time. */
@@ -150,7 +154,7 @@ export class EngineHost<Transfer> {
       );
     }
     return new Promise((resolve) => {
-      const timeoutMs = this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+      const timeoutMs = COMMAND_DEADLINE_MS[command.type] ?? this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
       const entry: Pending = { command, resolve, deadline: null };
       entry.deadline = this.#timers.set(
         () => this.#settle(entry, errorResponseFor(command, { code: "INTERNAL", detail: `the engine did not answer within ${timeoutMs / 1000} s` })),

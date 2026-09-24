@@ -118,7 +118,7 @@ test("a library.open main gave up on after its deadline leaves both main and the
   const timers = new ManualTimers();
   let n = 0;
   port.engine = await Engine.start(
-    { kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), settings: settings.current, encryptionAvailable: true, notices: [] },
+    { kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), defaultLibraryPath: join(userData, "library"), rawDir: join(userData, "raw"), settings: settings.current, encryptionAvailable: true, notices: [] },
     {
       bootId: "boot-flow-0001",
       clock: Date.now,
@@ -133,7 +133,7 @@ test("a library.open main gave up on after its deadline leaves both main and the
   const host = new EngineHost<string>({
     fork: () => new Child(),
     channel: () => ({ local: port, remote: "remote-port" }),
-    init: async () => ({ kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), settings: settings.current, encryptionAvailable: true, notices: [] }),
+    init: async () => ({ kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), defaultLibraryPath: join(userData, "library"), rawDir: join(userData, "raw"), settings: settings.current, encryptionAvailable: true, notices: [] }),
     apiKey: async () => null,
     onEvent: () => {},
     onExit: () => {},

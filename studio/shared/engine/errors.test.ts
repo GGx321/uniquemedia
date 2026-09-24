@@ -23,10 +23,11 @@ const EXPECTED_CODES = [
   "PRICE_UNAVAILABLE",
   "PRICE_CHANGED",
   "IN_FLIGHT",
+  "LIBRARY_UNAVAILABLE",
 ];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of twenty codes", () => {
+  test("is exactly the closed set of twenty-one codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });

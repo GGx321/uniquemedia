@@ -1,7 +1,8 @@
 import { adultTextProblems, ageMentions, ageUpperBounds, youthWords } from "../../shared/engine";
 import { VIBE_MAX } from "./traits";
 
-const HIDDEN_CHARS = /[\p{Cc}\p{Cf}]/u;
+/** The contract's hidden characters (avatar.ts NO_HIDDEN_CHARS): control, format, lone surrogates, line and paragraph separators. */
+const HIDDEN_CHARS = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
 
 function quoted(items: readonly string[]): string {
   return [...new Set(items.map((s) => s.toLowerCase()))].map((s) => `«${s}»`).join(", ");

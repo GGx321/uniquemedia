@@ -16,10 +16,15 @@ export const DEFAULT_NETWORK_CONCURRENCY = 6;
 /** On disk: the non-secret settings plus a version, strict so a stray field (a key) is refused. */
 const SettingsFile = EngineSettings.extend({ schemaVersion: z.literal(1) });
 
+/** The library folder of the default settings; the engine creates it on first run. */
+export function defaultLibraryPath(userData: string): string {
+  return join(userData, "library");
+}
+
 export function defaultSettings(userData: string): EngineSettings {
   return EngineSettings.parse({
     monthlyBudgetMicros: DEFAULT_MONTHLY_BUDGET_MICROS,
-    libraryPath: join(userData, "library"),
+    libraryPath: defaultLibraryPath(userData),
     imageModel: DEFAULT_IMAGE_MODEL,
     textModel: DEFAULT_TEXT_MODEL,
     concurrency: { network: DEFAULT_NETWORK_CONCURRENCY },

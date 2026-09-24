@@ -8,7 +8,21 @@ export type Clock = () => number;
 
 /** Integer micro-dollars: 1 USD = 1_000_000. */
 export const MicrosSchema = z.int().nonnegative();
-const IdSchema = z.string().min(1);
+
+/**
+ * An id the contract can carry (T0 `AttemptId`: 1-128 visible ASCII chars).
+ * Attempt ids end up in the money status and the reconcile result, so one the
+ * contract refuses would break every snapshot; the money core may not import
+ * the contract, and budget.test.ts pins that both accept the same ids. Every
+ * id in a ledger line (attempt, job, scope, model) follows it.
+ */
+const ATTEMPT_ID_PATTERN = /^[\x21-\x7e]{1,128}$/;
+
+export function isAttemptId(id: string): boolean {
+  return ATTEMPT_ID_PATTERN.test(id);
+}
+
+const IdSchema = z.string().regex(ATTEMPT_ID_PATTERN, "must be 1-128 visible ASCII chars, as the contract carries it");
 const AtSchema = z.iso.datetime();
 
 /** Which cap an attempt counts against: a photo run or an avatar job. */

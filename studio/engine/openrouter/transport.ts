@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { z } from "zod";
-import type { Budget, ReserveHandle } from "../money/budget";
+import { REQUEST_TIMEOUT_MS, type Budget, type ReserveHandle } from "../money/budget";
 import { MoneyError } from "../money/errors";
 import type { Scope } from "../money/ledger";
 import { settleRule, type AttemptOutcome } from "../money/settleRule";
@@ -418,6 +418,14 @@ export const MAX_RETRY_AFTER_MS = 60_000;
 export const MAX_RETRY_HINT_MS = 24 * 60 * 60 * 1_000;
 const BACKOFF_BASE_MS = 1_000;
 const JITTER_MS = 1_000;
+
+/**
+ * The longest one paid attempt can legitimately take: every HTTP try (the
+ * first and each transport retry) runs to its timeout, and every retry wait
+ * is at the Retry-After cap plus the jitter. Main waits this long per attempt
+ * before it gives up on a paid command (control.ts COMMAND_DEADLINE_MS).
+ */
+export const MAX_ATTEMPT_MS = (MAX_TRANSPORT_RETRIES + 1) * REQUEST_TIMEOUT_MS + MAX_TRANSPORT_RETRIES * (MAX_RETRY_AFTER_MS + JITTER_MS);
 
 /**
  * Moderation wording in `error.message` only (a prompt echo or a parameter

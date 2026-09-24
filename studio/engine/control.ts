@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { AbsolutePath, ApiKey, EngineError, EngineNotice, Id, Settings } from "../shared/engine";
+import { AbsolutePath, ApiKey, EngineError, EngineNotice, Id, Settings, type EngineCommandMessage } from "../shared/engine";
+import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
+import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
+import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 
 // Messages between main and the engine that are not part of the
 // renderer-facing contract (studio/shared/engine). They never reach the
@@ -19,6 +22,14 @@ export const EngineInit = z.strictObject({
   kind: z.literal("control"),
   type: z.literal("init"),
   ledgerPath: AbsolutePath,
+  /**
+   * `userData/library`, the folder the default settings name. The engine
+   * creates it when the settings name it and it is missing (first run); a
+   * folder the user chose is never created, it may be an unmounted volume.
+   */
+  defaultLibraryPath: AbsolutePath,
+  /** `userData/raw`: where the body of a paid answer that could not be used is kept, redacted. */
+  rawDir: AbsolutePath,
   settings: EngineSettings,
   encryptionAvailable: z.boolean(),
   /** A mock OpenRouter for end-to-end tests; honoured only by an E2E build (invariant 13). */
@@ -73,3 +84,21 @@ export type EngineReply = z.infer<typeof EngineReply>;
 export function isControlMessage(message: unknown): boolean {
   return typeof message === "object" && message !== null && "kind" in message && message.kind === "control";
 }
+
+/** Room for the engine's own work around its network waits: ledger fsyncs, the library write, a reserve queued behind a reconcile. */
+const COMMAND_SLACK_MS = 30_000;
+
+/**
+ * How long main waits for the answer to a command before it answers INTERNAL
+ * itself; a command not listed gets main's default (30 s). A paid command
+ * must not be given up on while the engine may still be working on it: the
+ * user would click again and pay twice. So createDraft waits for a price load
+ * (every GET at once, one timeout) and every descriptor attempt at its
+ * slowest. The estimates wait for a price load that times out, so the
+ * fallback estimate still arrives.
+ */
+export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], number>> = {
+  "avatars.estimate": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "avatars.estimateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+};

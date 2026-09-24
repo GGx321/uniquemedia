@@ -100,8 +100,17 @@ describe("AvatarTraits", () => {
     ["a bidi override", "calm \u202Emood"],
     ["a zero-width space", "calm\u200Bmood"],
     ["a byte order mark", "\uFEFFcalm"],
+    ["a lone high surrogate", "calm \uD800 mood"],
+    ["a lone low surrogate", "calm \uDC00 mood"],
+    ["200 lone surrogates (reviewer probe)", "\uD800".repeat(200)],
+    ["a line separator (U+2028)", "calm\u2028mood"],
+    ["a paragraph separator (U+2029)", "calm\u2029mood"],
   ])("rejects a vibe with %s (hidden prompt text)", (_label, vibe) => {
     expect(AvatarTraits.safeParse({ ...traits, vibe }).success).toBe(false);
+  });
+
+  test("an emoji (a valid surrogate pair) is not a hidden character", () => {
+    expect(AvatarTraits.safeParse({ ...traits, vibe: "coffee \u{1F600}" }).success).toBe(true);
   });
 
   test.each([
@@ -231,15 +240,39 @@ describe("AvatarDescriptor (invariant 8)", () => {
 
   test.each([
     ["the plain anchor", "25-year-old woman, light olive skin, hazel eyes, slim athletic build."],
+    ["young woman", "25-year-old young woman, shoulder-length wavy chestnut hair."],
+    ["a beauty mark", "25-year-old European woman, a beauty mark above the lip, hazel eyes."],
+    ["facial details", "25-year-old Asian woman, high cheekbones, full eyebrows and a soft jawline."],
+    ["freckles and makeup", "25-year-old European woman, light freckles across the nose, natural makeup."],
+    ["a piercing and a tattoo", "25-year-old Latina woman, a small nose piercing and a small tattoo on the inner wrist."],
+  ])("accepts a descriptor with %s", (_label, text) => {
+    expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(true);
+  });
+
+  // T0 accepted these; the T6a-2a review holds the engine-written descriptor strictly:
+  // no number but its anchor, and no word that suggests she is not a grown adult.
+  test.each([
     ["a restated same age", "25-year-old woman, aged 25, light olive skin."],
     ["the age in words too", "25-year-old (twenty-five-year-old) woman, hazel eyes."],
     ["ordinary numbers", "25-year-old woman with two freckles, one small mole and 3 ear piercings."],
     ["a girlfriend", "25-year-old woman, often photographed with her girlfriends."],
-    ["young woman", "25-year-old young woman, shoulder-length wavy chestnut hair."],
-    ["a youthful smile (allowed: describes a smile, not an age)", "a 25-year-old woman with a youthful smile"],
+    ["a youthful smile", "a 25-year-old woman with a youthful smile"],
     ["an upper bound above 21", "25-year-old woman who looks under 30"],
-  ])("accepts a descriptor with %s", (_label, text) => {
-    expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(true);
+    // reviewer probes (contract.probe.ts)
+    ["who is sixteen", "25-year-old European woman, a woman who is sixteen, hazel eyes."],
+    ["her age is 16", "25-year-old European woman, her age is 16, hazel eyes."],
+    ["baby-faced, girlish", "25-year-old European woman, baby-faced, girlish, hazel eyes."],
+    ["as she did at 16", "25-year-old European woman who looks as she did at 16."],
+  ])("refuses a descriptor with %s", (_label, text) => {
+    expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(false);
+  });
+
+  test.each([
+    ["a lone surrogate", "25-year-old woman, hazel eyes\uD800."],
+    ["a line separator", "25-year-old woman,\u2028hazel eyes."],
+    ["a paragraph separator", "25-year-old woman,\u2029hazel eyes."],
+  ])("refuses a descriptor with %s", (_label, text) => {
+    expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(false);
   });
 
   test("rejects an empty text", () => {
@@ -291,9 +324,9 @@ describe("final-round probes", () => {
     expect(AvatarTraits.safeParse({ ...traits, vibe }).success).toBe(true);
   });
 
-  test("a descriptor in her mid-twenties still passes", () => {
+  test("a descriptor in her mid-twenties is refused since the T6a-2a review: the anchor is its only number", () => {
     const text = "25-year-old woman in her mid-twenties, hazel eyes.";
-    expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(true);
+    expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(false);
   });
 });
 

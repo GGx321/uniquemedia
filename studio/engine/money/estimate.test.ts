@@ -104,15 +104,42 @@ test("the estimate reports live prices when the book has only live prices", () =
   });
 });
 
-test("an avatar job: 4 candidates, a descriptor call and an age check per candidate (worst ≈ $0.23)", () => {
-  const descriptor = { model: "x-ai/grok-4.3", maxTokens: 2_000, inputTokens: 2_000, images: 0, typical: { inputTokens: 600, outputTokens: 400 } };
+const DESCRIPTOR_2K = { model: "x-ai/grok-4.3", maxTokens: 2_000, inputTokens: 2_000, images: 0, typical: { inputTokens: 600, outputTokens: 400 } };
+const QUALITY_1K_NO_REF: ImageChoice = { model: "x-ai/grok-imagine-image-quality", resolution: "1K", quality: null, refs: 0 };
 
+test("an avatar job: 4 candidates, a descriptor call and an age check per candidate (worst ≈ $0.23)", () => {
   expect(
     estimateAvatarJob(BOOK, {
       candidates: 4,
-      image: { model: "x-ai/grok-imagine-image-quality", resolution: "1K", quality: null, refs: 0 },
-      descriptor,
+      image: QUALITY_1K_NO_REF,
+      descriptor: { call: DESCRIPTOR_2K, maxAttempts: 1 },
       ageChecks: AGE_CHECK_CALL,
     })
   ).toEqual({ expectedMicros: 4 * (50_000 + AGE_TYPICAL) + 1_750, worstMicros: 227_500, priceSource: "fallback" });
+});
+
+test("a descriptor that may be asked twice counts both attempts in the worst case and one in the expected cost", () => {
+  expect(
+    estimateAvatarJob(BOOK, {
+      candidates: 4,
+      image: QUALITY_1K_NO_REF,
+      descriptor: { call: DESCRIPTOR_2K, maxAttempts: 2 },
+      ageChecks: AGE_CHECK_CALL,
+    })
+  ).toEqual({ expectedMicros: 4 * (50_000 + AGE_TYPICAL) + 1_750, worstMicros: 227_500 + 7_500, priceSource: "fallback" });
+});
+
+test("another batch for an existing draft has no descriptor call", () => {
+  expect(estimateAvatarJob(BOOK, { candidates: 4, image: QUALITY_1K_NO_REF, descriptor: null, ageChecks: AGE_CHECK_CALL })).toEqual({
+    expectedMicros: 4 * (50_000 + AGE_TYPICAL),
+    worstMicros: 4 * (50_000 + 5_000),
+    priceSource: "fallback",
+  });
+});
+
+test("descriptor attempts must be a positive integer", () => {
+  const job = (maxAttempts: number) => ({ candidates: 4, image: QUALITY_1K_NO_REF, descriptor: { call: DESCRIPTOR_2K, maxAttempts }, ageChecks: AGE_CHECK_CALL });
+
+  expect(() => estimateAvatarJob(BOOK, job(0))).toThrow(RangeError);
+  expect(() => estimateAvatarJob(BOOK, job(1.5))).toThrow(RangeError);
 });

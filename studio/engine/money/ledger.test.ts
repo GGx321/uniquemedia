@@ -247,6 +247,46 @@ test("two reserves with one attempt id in the file are corruption", async () => 
   await expectMoneyError(Ledger.open(path), "LEDGER_CORRUPT");
 });
 
+// The contract's AttemptId: 1-128 visible ASCII chars. Attempt ids read from
+// disk reach the money status and the reconcile result, so one the contract
+// refuses must stop at the ledger, not break every snapshot.
+test.each([
+  ["a space", "slot 1#1"],
+  ["a newline", "slot-1#1\n"],
+  ["a non-ASCII letter", "слот-1#1"],
+  ["129 chars", "x".repeat(129)],
+])("an attempt id with %s in the file is corruption", async (_label, attemptId) => {
+  await writeFile(path, jsonl(reserve(attemptId)));
+
+  await expectMoneyError(Ledger.open(path), "LEDGER_CORRUPT");
+});
+
+test("an acknowledged attempt id the contract refuses in a reconcile marker is corruption", async () => {
+  const marker: LedgerLine = { type: "reconcile", creditsUsageMicros: 0, ledgerTotalMicros: 0, aboveWorstAttempts: ["slot 1#1"], at: "2026-09-24T12:00:00.000Z" };
+  await writeFile(path, jsonl(marker));
+
+  await expectMoneyError(Ledger.open(path), "LEDGER_CORRUPT");
+});
+
+test("attempt ids of 128 visible ASCII chars, with # and :, load", async () => {
+  const long = `${"a".repeat(120)}:desc#12`;
+  await writeFile(path, jsonl(reserve(long), reserve("job-1:descriptor#2")));
+
+  const ledger = await Ledger.open(path);
+
+  expect(long.length).toBe(128);
+  expect(ledger.openReserves().map((r) => r.attemptId)).toEqual([long, "job-1:descriptor#2"]);
+});
+
+test("append refuses an attempt id the contract refuses and writes nothing", async () => {
+  const ledger = await Ledger.open(path);
+
+  await expect(ledger.append(reserve("slot 1#1"))).rejects.toThrow(TypeError);
+
+  expect(ledger.lines).toEqual([]);
+  await expect(readFile(path, "utf8")).rejects.toThrow();
+});
+
 test("append refuses a fractional amount and writes nothing", async () => {
   const ledger = await Ledger.open(path);
 
