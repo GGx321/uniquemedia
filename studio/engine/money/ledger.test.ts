@@ -82,16 +82,28 @@ test("append writes, then fsyncs, then closes the file handle before resolving",
   expect(events).toEqual(["open:a", "sync after 1 write(s)", "close", "resolved"]);
 });
 
-/** Records `open <name> <flags>` and `sync <name>` for every handle, names relative to the temp dir ("." = the dir). */
-function recordingOpen(events: string[]): OpenFile {
+/**
+ * What a directory's fsync does under `recordingOpen`: "recorded" only notes
+ * it, for tests of when the ledger asks for one on the platform they name,
+ * which need not be the host's; "real" does it, as the host allows; "eperm"
+ * fails as Windows does (a directory opens there, but its fsync is refused).
+ */
+type DirectorySync = "recorded" | "real" | "eperm";
+
+/**
+ * Records `open <name> <flags>` and `sync <name>` for every handle, names
+ * relative to the temp dir ("." = the dir). Files are really fsynced.
+ */
+function recordingOpen(events: string[], directorySync: DirectorySync = "recorded"): OpenFile {
   return async (p, flags) => {
     const handle = await open(p, flags);
     const name = p === dir ? "." : p.slice(dir.length + 1);
     events.push(`open ${name} ${flags}`);
     const sync = handle.sync.bind(handle);
-    spyOn(handle, "sync").mockImplementation(() => {
+    spyOn(handle, "sync").mockImplementation(async () => {
       events.push(`sync ${name}`);
-      return sync();
+      if (name !== "." || directorySync === "real") return sync();
+      if (directorySync === "eperm") throw Object.assign(new Error("EPERM: operation not permitted, fsync"), { code: "EPERM", syscall: "fsync" });
     });
     return handle;
   };
@@ -106,6 +118,16 @@ test("the append that creates the ledger fsyncs its directory after the file", a
   expect(events).toEqual(["open ledger.jsonl a", "sync ledger.jsonl", "open . r", "sync ."]);
 });
 
+test("by default the ledger follows its host: it really fsyncs a new ledger's directory off win32, and skips that on win32", async () => {
+  const events: string[] = [];
+  const ledger = await Ledger.open(path, { openFile: recordingOpen(events, "real") });
+
+  await ledger.append(reserve("slot-1#1"));
+
+  const file = ["open ledger.jsonl a", "sync ledger.jsonl"];
+  expect(events).toEqual(process.platform === "win32" ? file : [...file, "open . r", "sync ."]);
+});
+
 test("appending to an existing ledger does not fsync the directory", async () => {
   await writeFile(path, jsonl(reserve("slot-1#1")));
   const events: string[] = [];
@@ -117,13 +139,25 @@ test("appending to an existing ledger does not fsync the directory", async () =>
   expect(events.filter((e) => e.includes(" ."))).toEqual([]);
 });
 
-test("the directory fsync is skipped on win32", async () => {
+test("on win32, where a directory's fsync fails with EPERM, the append that creates the ledger never touches the directory", async () => {
   const events: string[] = [];
-  const ledger = await Ledger.open(path, { openFile: recordingOpen(events), platform: "win32" });
+  const ledger = await Ledger.open(path, { openFile: recordingOpen(events, "eperm"), platform: "win32" });
 
   await ledger.append(reserve("slot-1#1"));
 
   expect(events).toEqual(["open ledger.jsonl a", "sync ledger.jsonl"]);
+  expect(ledger.failed).toBe(false);
+});
+
+test("on win32 creating <ledger>.torn never touches the directory either", async () => {
+  await writeFile(path, `${jsonl(reserve("slot-1#1"))}{"ty`);
+  const events: string[] = [];
+  const ledger = await Ledger.open(path, { openFile: recordingOpen(events, "eperm"), platform: "win32" });
+
+  expect(await ledger.moveTornTail()).toBe(true);
+
+  expect(events).toEqual(["open ledger.jsonl.torn a", "sync ledger.jsonl.torn", "open ledger.jsonl r+", "sync ledger.jsonl"]);
+  expect(ledger.failed).toBe(false);
 });
 
 test("creating <ledger>.torn fsyncs the directory; appending to it again does not", async () => {

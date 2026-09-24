@@ -83,7 +83,13 @@ export type OpenFile = (path: string, flags: "a" | "r+" | "r") => Promise<FileHa
 export interface LedgerDeps {
   /** Seam for tests that spy on the FileHandle (write, sync, close). */
   openFile?: OpenFile;
-  /** Directory fsync is skipped on win32, where a directory cannot be opened for it. Defaults to `process.platform`. */
+  /**
+   * On win32 the directory fsync after creating a file is skipped: a
+   * directory opens there, but its fsync fails with EPERM. As with
+   * library/durableFs.fsyncDir, Windows then relies on the file's own fsync
+   * and on NTFS journaling the new entry. Off win32 it is always done.
+   * Defaults to `process.platform`.
+   */
   platform?: NodeJS.Platform;
 }
 
@@ -339,7 +345,7 @@ export class Ledger {
     }
   }
 
-  /** Makes a newly created file's directory entry durable; a no-op on win32. */
+  /** Makes a newly created file's directory entry durable; a no-op on win32, which cannot fsync a directory (see `LedgerDeps.platform`). */
   private async syncDir(): Promise<void> {
     if (this.platform === "win32") return;
     const handle = await this.openFile(dirname(this.path), "r");

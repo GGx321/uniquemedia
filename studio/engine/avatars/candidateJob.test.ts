@@ -1,8 +1,9 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
@@ -10,6 +11,7 @@ import { downscaleToJpeg } from "../../node/downscale";
 import { ffmpegPath } from "../../node/ffmpegBinary";
 import type { NewPhotoMeta } from "../library";
 import { imageSize } from "../library/media";
+import type { LedgerDeps } from "../money/ledger";
 import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, setupMoney, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
 import { AGE_CHECK_MAX_SIDE, AGE_QUESTION, AGE_SYSTEM, ageJsonSchema } from "./ageCheck";
@@ -129,6 +131,21 @@ function expectAllPassed(outcomes: SlotOutcome[]): void {
 
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
+}
+
+/** A disk whose every fsync takes `ms` longer, as on the Windows runners. */
+function slowDisk(ms: number): LedgerDeps {
+  return {
+    openFile: async (path, flags) => {
+      const handle = await open(path, flags);
+      const sync = handle.sync.bind(handle);
+      spyOn(handle, "sync").mockImplementation(async () => {
+        await Bun.sleep(ms);
+        return sync();
+      });
+      return handle;
+    },
+  };
 }
 
 async function until(condition: () => boolean): Promise<void> {
@@ -413,21 +430,56 @@ describe("preparing the image for the age check cannot hold a slot", () => {
 });
 
 describe("the network pool and cancel", () => {
-  test("at most `concurrency` slots are in flight at once", async () => {
-    let inFlight = 0;
-    let most = 0;
-    const net = network({
-      image: async () => {
-        most = Math.max(most, ++inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        inFlight--;
-        return portrait();
-      },
-    });
+  // Every image request waits at the fake server until the test lets it go,
+  // and the test lets the oldest go only once every slot the pool has started
+  // is waiting there: the server then sees exactly as many requests at once as
+  // the pool runs slots, however long a reserve's fsync takes. Racing the wall
+  // clock instead failed on the Windows runners, where a slot's reserve took
+  // longer than another slot's whole 10 ms request.
+  const disks: [string, LedgerDeps | undefined][] = [
+    ["this machine's disk", undefined],
+    ["a disk whose every fsync takes 30 ms more, as on the Windows runners", slowDisk(30)],
+  ];
+  for (const [disk, ledger] of disks) {
+    test(`at most \`concurrency\` slots are in flight at once, and that many are (${disk})`, async () => {
+      if (ledger !== undefined) {
+        await money.cleanup();
+        money = await setupMoney({ runCapMicros: BATCH_WORST, ledger });
+      }
+      /** A slot's first step, taken as the pool starts it: its image and age check are held as a pair. */
+      const started = spyOn(money.budget, "tryHold");
+      const waiting: (() => void)[] = [];
+      let most = 0;
+      let draining = false;
+      const net = network({
+        image: async () => {
+          if (!draining) {
+            await new Promise<void>((release) => {
+              waiting.push(release);
+              most = Math.max(most, waiting.length);
+            });
+          }
+          return portrait();
+        },
+      });
 
-    expectAllPassed(await run(net, { concurrency: 2 }).outcomes);
-    expect(most).toBe(2);
-  });
+      const { outcomes, reported } = run(net, { concurrency: 2 });
+      try {
+        for (let released = 0; released < 4; released++) {
+          await until(() => waiting.length > 0 && waiting.length === started.mock.calls.length - reported.length);
+          waiting.shift()?.();
+        }
+      } finally {
+        draining = true;
+        for (const release of waiting.splice(0)) release();
+        // Even when `until` timed out: the pool must stop writing before afterEach deletes the ledger's dir.
+        await outcomes.catch(() => {});
+      }
+
+      expectAllPassed(await outcomes);
+      expect(most).toBe(2);
+    });
+  }
 
   test("cancel aborts the requests in flight, leaves their reserves open at the worst case, and starts no new slot", async () => {
     const controller = new AbortController();

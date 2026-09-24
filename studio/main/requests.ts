@@ -7,7 +7,7 @@ import {
   type ResponseMessage,
 } from "../shared/engine";
 import { posix, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileUrlToPathOn } from "./fileUrl";
 import type { KeyCommand } from "./keyFlow";
 import { isSettingsCommand, type SettingsCommand } from "./settingsFlow";
 
@@ -37,21 +37,25 @@ function parseUrl(url: string): URL | null {
   }
 }
 
-/** A file URL as a normalised path (Windows: case-folded); null for anything that is not a plain file path. */
+/**
+ * A file URL as a normalised path, read by `platform`'s rules even off that
+ * platform; null for anything that is not a plain file path. On Windows only
+ * ASCII letters are case-folded: `toLowerCase` would also turn signs such as
+ * KELVIN SIGN (U+212A) into letters (`k`), names NTFS keeps apart.
+ */
 function filePathOf(url: string, platform: NodeJS.Platform): string | null {
-  try {
-    const path = fileURLToPath(url);
-    return platform === "win32" ? win32.normalize(path).toLowerCase() : posix.normalize(path);
-  } catch {
-    return null;
-  }
+  const path = fileUrlToPathOn(url, platform);
+  if (path === null) return null;
+  return platform === "win32" ? win32.normalize(path).replace(/[A-Z]/g, (c) => c.toLowerCase()) : posix.normalize(path);
 }
 
 /**
  * True only for the top frame of an app window showing the app's own page:
  * the dev server's origin in dev, else the renderer file itself, compared as
  * a normalised path (percent-encoding, dot segments, query and fragment do
- * not matter; letter case only off Windows).
+ * not matter; on Windows neither does ASCII letter case). `platform` decides how a file
+ * URL is read (on Windows it needs a drive letter, and an encoded `\` is
+ * refused), so a test on macOS can hold the check to Windows' rules.
  */
 export function isTrustedSender(frame: SenderFrame, trusted: TrustedRenderer, platform: NodeJS.Platform = process.platform): boolean {
   if (!frame.isAppWindow || !frame.isTopFrame || frame.url === null) return false;
@@ -61,7 +65,7 @@ export function isTrustedSender(frame: SenderFrame, trusted: TrustedRenderer, pl
     const dev = parseUrl(trusted.devServerUrl);
     return dev !== null && url.origin === dev.origin;
   }
-  if (url.protocol !== "file:" || url.host !== "") return false;
+  // Anything but a `file:` URL without a host is refused by filePathOf.
   url.search = "";
   url.hash = "";
   const actual = filePathOf(url.href, platform);

@@ -53,8 +53,10 @@ export async function fsyncFile(path: string): Promise<void> {
   }
 }
 
-/** Makes a rename or a new directory entry durable. Windows cannot open a
- *  directory for fsync, and NTFS journals the rename itself. */
+/** Makes a rename or a new directory entry durable. Skipped on Windows: a
+ *  directory opens there, but its fsync fails with EPERM (as the Windows CI
+ *  runner showed), so Windows relies on the file's own fsync and on NTFS
+ *  journaling the rename or new entry (as money/ledger.ts does). */
 export async function fsyncDir(dir: string): Promise<void> {
   if (platform() === "win32") return;
   const handle = await open(dir, "r");

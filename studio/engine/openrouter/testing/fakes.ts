@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Budget } from "../../money/budget";
-import { Ledger, type Scope } from "../../money/ledger";
+import { Ledger, type LedgerDeps, type Scope } from "../../money/ledger";
 import { PriceBook } from "../../money/prices";
 import { createOpenRouterClient } from "../client";
 import type {
@@ -144,10 +144,12 @@ export interface Money {
   cleanup(): Promise<void>;
 }
 
-export async function setupMoney(opts: { runCapMicros?: number; monthlyBudgetMicros?: number; monotonic?: () => number } = {}): Promise<Money> {
+export async function setupMoney(
+  opts: { runCapMicros?: number; monthlyBudgetMicros?: number; monotonic?: () => number; ledger?: LedgerDeps } = {},
+): Promise<Money> {
   const dir = await mkdtemp(join(tmpdir(), "studio-openrouter-"));
   const ledgerPath = join(dir, "ledger.jsonl");
-  const ledger = await Ledger.open(ledgerPath);
+  const ledger = await Ledger.open(ledgerPath, opts.ledger);
   const budget = new Budget(ledger, {
     runCapMicros: opts.runCapMicros ?? 10_000_000,
     monthlyBudgetMicros: opts.monthlyBudgetMicros ?? 10_000_000,

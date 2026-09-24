@@ -8,7 +8,7 @@ import { Engine } from "../engine/engine";
 import { createEngineClient, type EngineBridge } from "../renderer/engine/client";
 import { EngineStore } from "../renderer/engine/store";
 import { HostNotices } from "./notices";
-import { handleRendererRequest, type SenderFrame, type TrustedRenderer } from "./requests";
+import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 
 // A real engine and the renderer's real EngineStore, joined through main's
 // request path (handleRendererRequest) with asynchronous event delivery like
@@ -17,7 +17,9 @@ import { handleRendererRequest, type SenderFrame, type TrustedRenderer } from ".
 // must show up in the store without ever making it resync in a loop, and it
 // must never look like an engine error.
 
-const FILE_URL = "file:///app/out-studio/renderer/index.html";
+// With a drive letter, an absolute path on every platform: on Windows a file
+// URL without one is refused by main's sender check.
+const FILE_URL = "file:///C:/Studio/resources/app.asar/out-studio/renderer/index.html";
 const TRUSTED: TrustedRenderer = { fileUrl: FILE_URL };
 const FRAME: SenderFrame = { url: FILE_URL, isTopFrame: true, isAppWindow: true };
 const CORRUPT = "settings.json is not valid JSON; it was moved to settings.json.corrupt-20260924T100000Z and the defaults are in use";
@@ -31,7 +33,14 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const settle = (ms = 60) => Bun.sleep(ms);
+/** Lets the store go on for `ms`: only to show that something does not happen (such as a second snapshot). */
+const settle = (ms: number) => Bun.sleep(ms);
+
+/** Waits for what must happen, however slow the runner. */
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5);
+  if (!condition()) throw new Error("timed out waiting for the condition");
+}
 
 async function harness() {
   const listeners = new Set<(event: unknown) => void>();
@@ -143,13 +152,19 @@ describe("HostNotices", () => {
 });
 
 describe("main's notices reach the renderer store through the engine's snapshot and stream", () => {
+  test("the harness's renderer URL is main's renderer on every platform, so these tests hold on the Windows runner too", () => {
+    for (const platform of ["darwin", "linux", "win32"] satisfies NodeJS.Platform[]) {
+      expect(isTrustedSender(FRAME, TRUSTED, platform)).toBe(true);
+    }
+  });
+
   test("a notice from startup (corrupt settings.json) is in the first snapshot, with one snapshot and no engine error", async () => {
     const h = await harness();
     h.notices.add("settings-reset", CORRUPT);
     await h.startEngine("boot-aaaa-0001");
     const store = h.window();
     const stop = store.start();
-    await settle();
+    await until(() => store.getView().phase !== "connecting");
 
     expect(store.getView()).toMatchObject({ phase: "ready", bootId: "boot-aaaa-0001", engineError: null });
     expect(store.getView().notices).toMatchObject([{ code: "settings-reset", detail: CORRUPT }]);
@@ -163,12 +178,12 @@ describe("main's notices reach the renderer store through the engine's snapshot 
     await h.startEngine("boot-aaaa-0001");
     const store = h.window();
     const stop = store.start();
-    await settle();
+    await until(() => store.getView().phase !== "connecting");
     expect(h.snapshots()).toBe(1);
 
     h.notices.add("engine-restarted", CRASH);
     await h.startEngine("boot-bbbb-0002");
-    await settle();
+    await until(() => store.getView().bootId === "boot-bbbb-0002" || store.getView().phase === "offline");
 
     expect(store.getView()).toMatchObject({ phase: "ready", bootId: "boot-bbbb-0002", engineError: null });
     expect(store.getView().notices).toMatchObject([{ code: "engine-restarted", detail: CRASH }]);
@@ -184,12 +199,13 @@ describe("main's notices reach the renderer store through the engine's snapshot 
     await h.startEngine("boot-aaaa-0001");
     const first = h.window();
     const stopFirst = first.start();
-    await settle();
+    await until(() => first.getView().phase !== "connecting");
     stopFirst();
 
     const later = h.window();
     const stopLater = later.start();
-    await settle();
+    await until(() => later.getView().phase !== "connecting");
+    expect(later.getView()).toMatchObject({ phase: "ready", engineError: null });
     expect(later.getView().notices).toMatchObject([{ code: "settings-reset" }]);
     stopLater();
   });
@@ -203,7 +219,8 @@ describe("main's notices reach the renderer store through the engine's snapshot 
 
     const store = h.window();
     const stop = store.start();
-    await settle();
+    await until(() => store.getView().phase !== "connecting");
+    expect(store.getView()).toMatchObject({ phase: "ready", bootId: "boot-bbbb-0002", engineError: null });
     expect(store.getView().notices.map((n) => n.code)).toEqual(["settings-reset", "engine-restarted"]);
     stop();
   });
