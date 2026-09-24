@@ -1,0 +1,89 @@
+name: studio
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "studio-v*"
+    # Studio builds on src/core and src/node, so a uniquifier-side change that
+    # breaks it must fail here before a release. GitHub does not apply `paths`
+    # to tag pushes, so tags always run.
+    branches:
+      - main
+    paths:
+      - "studio/**"
+      - "src/core/**"
+      - "src/node/**"
+      - "electron.studio.vite.config.ts"
+      - "electron-builder.studio.yml"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/studio.yml"
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # A push to main only checks; tags (and manual runs) build installers.
+      PACKAGE: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - name: Check the tag matches studio/version.json
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(bun -e 'console.log((await Bun.file("studio/version.json").json()).extraMetadata.version)')
+          if [ "$TAG" != "studio-v$version" ]; then
+            echo "::error::tag $TAG does not match studio/version.json ($version)"
+            exit 1
+          fi
+      # A skipped postinstall (or bun failing to materialize a platform binary)
+      # leaves a package without its binary, and the installer would still
+      # build — just without a working ffmpeg inside. ffprobe is not shipped in
+      # Studio yet, but src/node (which Studio builds on) needs it. The paths
+      # come from the packages themselves, exactly as the code resolves them.
+      - name: Check the ffmpeg and ffprobe binaries are present
+        shell: bash
+        run: |
+          bun -e '
+          const { accessSync, constants } = require("node:fs");
+          const mode = process.platform === "win32" ? constants.F_OK : constants.X_OK;
+          let failed = false;
+          for (const [name, path] of [["ffmpeg-static", require("ffmpeg-static")], ["ffprobe-static", require("ffprobe-static").path]]) {
+            try { if (!path) throw new Error("no binary for this platform"); accessSync(path, mode); console.log(`${name}: ${path}`); }
+            catch (e) { console.log(`::error::${name} binary missing or not executable: ${path} (${e.message})`); failed = true; }
+          }
+          process.exit(failed ? 1 : 0)'
+      - run: bunx tsc --noEmit -p studio/tsconfig.json
+      - run: bun test studio
+      - if: env.PACKAGE == 'true'
+        run: bun run build:studio
+      # Studio's version comes from studio/version.json via the config's `extends`.
+      - if: env.PACKAGE == 'true'
+        run: bunx electron-builder --config electron-builder.studio.yml --publish never
+      - if: env.PACKAGE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-${{ matrix.os }}
+          path: |
+            release-studio/*.dmg
+            release-studio/*.exe
+          if-no-files-found: ignore
+      - name: Attach installers to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          # The landing page reads the "latest" release, which must stay the uniquifier's.
+          make_latest: false
+          files: |
+            release-studio/*.dmg
+            release-studio/*.exe
