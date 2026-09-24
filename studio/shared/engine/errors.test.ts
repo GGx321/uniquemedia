@@ -17,6 +17,7 @@ const EXPECTED_CODES = [
   "NOT_FOUND",
   "INTERNAL",
   "LEDGER_CORRUPT",
+  "LEDGER_UNREADABLE",
   "SETTLE_ABOVE_WORST",
   "LEDGER_WRITE_FAILED",
   "PRICE_UNAVAILABLE",
@@ -25,7 +26,7 @@ const EXPECTED_CODES = [
 ];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of nineteen codes", () => {
+  test("is exactly the closed set of twenty codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });

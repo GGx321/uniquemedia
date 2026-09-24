@@ -111,13 +111,27 @@ describe("downgrade protection", () => {
     // Something the open would otherwise quarantine, in the avatar scanned first.
     await writeFile(join(root(), "avatars", mia.id, "photos", "orphan-0001.png"), PNG_1X1);
     const manifestPath = join(root(), "avatars", lena.id, "avatar.json");
-    await writeFile(manifestPath, JSON.stringify({ ...lena, schemaVersion: 2, newField: true }));
+    await writeFile(manifestPath, JSON.stringify({ ...lena, schemaVersion: 3, newField: true }));
     const before = await tree(root());
 
     await expectLibraryError(openLibrary(root()), "library-too-new");
 
     expect(await tree(root())).toEqual(before);
-    expect(await readJson(manifestPath)).toMatchObject({ schemaVersion: 2, newField: true });
+    expect(await readJson(manifestPath)).toMatchObject({ schemaVersion: 3, newField: true });
+  });
+
+  test("a library whose manifests an earlier build wrote (v1, text-only traits) opens as it is, nothing moved", async () => {
+    const { library } = await openLibrary(root(), { newId: sequentialIds() });
+    const mia = await library.createAvatar(SAMPLE_AVATAR);
+    const manifestPath = join(root(), "avatars", mia.id, "avatar.json");
+    await writeFile(manifestPath, JSON.stringify({ ...mia, schemaVersion: 1 }));
+    const before = await tree(root());
+
+    const reopened = await openLibrary(root());
+
+    expect(reopened.library.getAvatar(mia.id)).toMatchObject({ schemaVersion: 1, traits: SAMPLE_AVATAR.traits });
+    expect(reopened.report.quarantined).toEqual([]);
+    expect(await tree(root())).toEqual(before);
   });
 
   test("a photo sidecar from a newer schema version refuses the library and touches nothing", async () => {

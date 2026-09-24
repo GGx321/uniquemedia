@@ -15,6 +15,7 @@ import type {
   AvatarSummary,
   Candidate,
   Draft,
+  EngineNotice,
   Estimate,
   JobState,
   MoneyStatus,
@@ -40,6 +41,7 @@ const settings: Settings = {
 };
 
 const money: MoneyStatus = {
+  ledger: "open",
   month: "2026-09",
   spentMicros: 1_250_000,
   monthlyBudgetMicros: 10_000_000,
@@ -47,6 +49,15 @@ const money: MoneyStatus = {
   unsettledCount: 0,
   reconcileNeeded: false,
   reconcileReasons: [],
+  halt: null,
+};
+
+const notice: EngineNotice = {
+  noticeId: "notice-0001",
+  code: "engine-restarted",
+  detail: "the engine exited unexpectedly (code 9); restarting it",
+  at: "2026-09-24T10:00:00.000Z",
+  count: 1,
 };
 
 const estimate: Estimate = { expectedMicros: 200_000, worstMicros: 230_000, prices: "live", pricesAsOf: "2026-09-24" };
@@ -136,10 +147,21 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "money.status": { payload: {}, result: money },
   "money.reconcile": {
     payload: {},
-    result: { status: "done", creditsDeltaMicros: 210_000, ledgerDeltaMicros: 230_000, closedReserves: 2, tornLineMoved: false },
+    result: {
+      status: "done",
+      creditsDeltaMicros: 210_000,
+      deltaUnavailable: null,
+      ledgerDeltaMicros: 230_000,
+      mismatch: true,
+      closedReserves: 2,
+      aboveWorstAttempts: [],
+      tornLineMoved: false,
+      warnings: [],
+    },
   },
-  "avatars.list": { payload: {}, result: { avatars: [avatar] } },
+  "avatars.list": { payload: {}, result: { avatars: [avatar], unreadableAvatars: 0 } },
   "avatars.estimate": { payload: { traits }, result: estimate },
+  "avatars.estimateCandidates": { payload: { avatarId: DRAFT_ID }, result: { ...estimate, expectedMicros: 198_000, worstMicros: 227_000 } },
   "avatars.createDraft": { payload: { traits, acceptedWorstMicros: 230_000 }, result: { draft: { ...draft, candidates: [] } } },
   "avatars.generateCandidates": { payload: { avatarId: DRAFT_ID, acceptedWorstMicros: 230_000 }, result: { jobId: "job-00000001" } },
   "avatars.cancel": { payload: { jobId: "job-00000001" }, result: { jobId: "job-00000001" } },
@@ -158,7 +180,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo] } },
   "engine.snapshot": {
     payload: {},
-    result: { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], drafts: [draft], jobs: [job] },
+    result: { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], drafts: [draft], unreadableAvatars: 1, jobs: [job], notices: [notice] },
   },
   "engine.events": { payload: { afterSeq: 6, bootId: BOOT }, result: { gap: false, events: [progressEvent] } },
 };
@@ -170,9 +192,14 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
     result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates, rejectedByAgeCheck: 1 },
   },
   "job.failed": { jobId: "job-00000001", error: { code: "AUTH_INVALID", detail: "401 from OpenRouter" } },
+  "job.cancelled": { jobId: "job-00000001" },
   "money.changed": { status: money },
   "money.reconcileNeeded": { reasons: ["open-reserves"], unsettledMicros: 55_000 },
+  "settings.changed": { settings: { ...settings, apiKey: { ...keyStatus, rejected: true } } },
+  "avatar.changed": { avatar },
+  "draft.changed": { draft },
   "engine.error": { error: { code: "INTERNAL" } },
+  "engine.notice": { notice },
 };
 
 // ---------- helpers ----------
@@ -227,6 +254,7 @@ describe("contract surface", () => {
         "money.reconcile",
         "avatars.list",
         "avatars.estimate",
+        "avatars.estimateCandidates",
         "avatars.createDraft",
         "avatars.generateCandidates",
         "avatars.cancel",
@@ -246,7 +274,19 @@ describe("contract surface", () => {
   test("the event set is exactly the one the stage 2 plan names", () => {
     const actual: string[] = [...EVENT_TYPES].sort();
     expect(actual).toEqual(
-      ["job.progress", "job.done", "job.failed", "money.changed", "money.reconcileNeeded", "engine.error"].sort(),
+      [
+        "job.progress",
+        "job.done",
+        "job.failed",
+        "job.cancelled",
+        "money.changed",
+        "money.reconcileNeeded",
+        "settings.changed",
+        "avatar.changed",
+        "draft.changed",
+        "engine.error",
+        "engine.notice",
+      ].sort(),
     );
   });
 
@@ -467,6 +507,14 @@ describe("payloads", () => {
   test("rejects an engine.events request for a negative seq", () => {
     expect(reasonOf(command("engine.events", { afterSeq: -1 }))).toContain("payload.afterSeq");
   });
+
+  test("avatars.estimateCandidates prices an existing draft by its id, never by traits", () => {
+    expect(reasonOf(command("avatars.estimateCandidates", { traits }))).toContain("payload");
+  });
+
+  test("rejects avatars.estimateCandidates for an avatar id with path characters", () => {
+    expect(reasonOf(command("avatars.estimateCandidates", { avatarId: "../avatar-0002" }))).toContain("payload.avatarId");
+  });
 });
 
 describe("results", () => {
@@ -514,13 +562,45 @@ describe("results", () => {
   });
 
   test("an engine.snapshot response without drafts is rejected", () => {
-    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], jobs: [job] };
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], unreadableAvatars: 0, jobs: [job], notices: [] };
     expect(reasonOf(okResponse("engine.snapshot", result))).toContain("result.drafts");
+  });
+
+  test("an engine.snapshot response without the count of avatars it could not read is rejected", () => {
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], drafts: [draft], jobs: [job], notices: [] };
+    expect(reasonOf(okResponse("engine.snapshot", result))).toContain("result.unreadableAvatars");
+  });
+
+  test.each([-1, 1.5])("rejects an avatars.list answer that counts %p unreadable avatars", (unreadableAvatars) => {
+    expect(reasonOf(okResponse("avatars.list", { avatars: [avatar], unreadableAvatars }))).toContain("result.unreadableAvatars");
+  });
+
+  test("an engine.snapshot response without the pending notices is rejected", () => {
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], drafts: [draft], unreadableAvatars: 0, jobs: [job] };
+    expect(reasonOf(okResponse("engine.snapshot", result))).toContain("result.notices");
+  });
+
+  test("an engine.snapshot response that repeats a notice is rejected", () => {
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [], unreadableAvatars: 0, jobs: [], notices: [notice, notice] };
+    expect(reasonOf(okResponse("engine.snapshot", result))).toContain("result.notices");
   });
 
   test("a snapshot restores a finished candidates job with its result", () => {
     const done = { ...job, status: "done", done: 4, result: eventCases["job.done"].result };
-    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [draft], jobs: [done] };
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [draft], unreadableAvatars: 0, jobs: [done], notices: [] };
+    expect(parseMessage(okResponse("engine.snapshot", result)).ok).toBe(true);
+  });
+
+  test("a snapshot taken while the ledger cannot be read still parses, with the cause and no amounts", () => {
+    const unavailable = {
+      ledger: "unavailable",
+      month: "2026-09",
+      monthlyBudgetMicros: 10_000_000,
+      reconcileNeeded: false,
+      reconcileReasons: [],
+      halt: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" },
+    };
+    const result = { bootId: BOOT, lastSeq: 0, settings, money: unavailable, avatars: [], drafts: [], unreadableAvatars: 0, jobs: [], notices: [] };
     expect(parseMessage(okResponse("engine.snapshot", result)).ok).toBe(true);
   });
 
@@ -574,6 +654,32 @@ describe("events", () => {
   test("accepts money.reconcileNeeded with both reasons", () => {
     const payload = { reasons: ["open-reserves", "torn-ledger-line"], unsettledMicros: 55_000 };
     expect(parseMessage(event("money.reconcileNeeded", payload)).ok).toBe(true);
+  });
+
+  test("settings.changed cannot carry the key itself", () => {
+    const payload = { settings: { ...settings, apiKey: { ...keyStatus, key: API_KEY } } };
+    expect(reasonOf(event("settings.changed", payload))).toContain("payload.settings.apiKey");
+  });
+
+  test("settings.changed carries the whole settings, not a patch", () => {
+    expect(reasonOf(event("settings.changed", { settings: { apiKey: keyStatus } }))).toContain("payload.settings");
+  });
+
+  test("avatar.changed rejects a draft: drafts change through draft.changed", () => {
+    expect(reasonOf(event("avatar.changed", { avatar: { ...avatar, status: "draft" } }))).toContain("payload.avatar.status");
+  });
+
+  test("draft.changed rejects a candidate of another avatar", () => {
+    const stray = { ...draft, candidates: [{ avatarId: "avatar-0009", photoId: "photo-0101" }] };
+    expect(reasonOf(event("draft.changed", { draft: stray }))).toContain("payload.draft.candidates");
+  });
+
+  test("engine.notice rejects an error code as the notice code: a notice is not a generic error", () => {
+    expect(reasonOf(event("engine.notice", { notice: { ...notice, code: "INTERNAL" } }))).toContain("payload.notice.code");
+  });
+
+  test("rejects job.cancelled without the job id", () => {
+    expect(reasonOf(event("job.cancelled", {}))).toContain("payload.jobId");
   });
 });
 

@@ -40,7 +40,7 @@ describe("createAvatar", () => {
     const avatar = await library.createAvatar(MIA);
 
     const expected: AvatarManifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: "avatar-0001",
       ...MIA,
       masterPhotoId: null,
@@ -50,6 +50,15 @@ describe("createAvatar", () => {
     expect(avatar).toEqual(expected);
     expect(await readJson(join(root(), "avatars", "avatar-0001", "avatar.json"))).toEqual(expected);
     expect(library.getAvatar("avatar-0001")).toEqual(expected);
+  });
+
+  test("keeps a list-valued trait a list on disk", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar({ ...MIA, traits: { marks: ["freckles", "mole"], vibe: "coffee" } });
+    expect(await readJson(join(root(), "avatars", "avatar-0001", "avatar.json"))).toMatchObject({
+      schemaVersion: 2,
+      traits: { marks: ["freckles", "mole"], vibe: "coffee" },
+    });
   });
 
   test("creates an empty photos folder for the avatar", async () => {

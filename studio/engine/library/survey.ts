@@ -13,6 +13,8 @@ import {
   THUMBS_DIR,
   USED_FILE,
   isFromNewerVersion,
+  MANIFEST_SCHEMA_VERSION,
+  SIDECAR_SCHEMA_VERSION,
   isLibraryFileTemp,
 } from "./layout";
 import { isImageExtension } from "./media";
@@ -68,7 +70,7 @@ async function readManifest(avatarDir: string, folderName: string): Promise<Pars
   const path = join(avatarDir, MANIFEST_FILE);
   const raw = await readJsonFile(path);
   if (!raw.ok) return raw;
-  if (isFromNewerVersion(raw.value)) throw tooNew(path);
+  if (isFromNewerVersion(raw.value, MANIFEST_SCHEMA_VERSION)) throw tooNew(path);
   const result = AvatarManifestSchema.safeParse(raw.value);
   if (!result.success) return { ok: false, detail: result.error.message };
   if (result.data.id !== folderName) {
@@ -80,7 +82,7 @@ async function readManifest(avatarDir: string, folderName: string): Promise<Pars
 async function readSidecar(path: string, stem: string, avatarId: string): Promise<Parsed<PhotoSidecar>> {
   const raw = await readJsonFile(path);
   if (!raw.ok) return raw;
-  if (isFromNewerVersion(raw.value)) throw tooNew(path);
+  if (isFromNewerVersion(raw.value, SIDECAR_SCHEMA_VERSION)) throw tooNew(path);
   const result = PhotoSidecarSchema.safeParse(raw.value);
   if (!result.success) return { ok: false, detail: result.error.message };
   const { id, avatarId: recorded } = result.data;

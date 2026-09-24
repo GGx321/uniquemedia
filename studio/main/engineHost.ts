@@ -199,7 +199,7 @@ export class EngineHost<Transfer> {
     entry.resolve(error);
   }
 
-  /** Sends a control message (the key, settings, a notice) now, or right after the engine's next start. */
+  /** Sends a control message (the key, settings) now, or right after the engine's next start. */
   send(control: HostControl): void {
     if (this.#phase === "running" && this.#port !== null) this.#port.postMessage(control);
     else if (this.#phase !== "failed" && this.#phase !== "stopped") this.#queuedControls.push(control);

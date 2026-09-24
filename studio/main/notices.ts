@@ -1,43 +1,57 @@
-import type { EngineError, ResponseMessage } from "../shared/engine";
-import type { HostControl } from "../engine/control";
+import { EngineNotice, type NoticeCode } from "../shared/engine";
+
+/** A notice's `detail` travels as T0 `SafeText`, which allows at most 500 chars. */
+const MAX_DETAIL = 500;
+
+export interface HostNoticesDeps {
+  newId: () => string;
+  /** Wall clock, epoch ms: when the notice was raised. */
+  clock: () => number;
+}
 
 /**
  * What main has to tell the windows: the engine restarted after a crash,
- * settings.json was corrupt. Main never emits events itself — an event with
- * a bootId other than the engine's means "the engine restarted" to the
- * renderer, which then refetches the snapshot. Each notice goes to the engine
- * as a `notice` control message instead and comes back as an ordinary
- * `engine.error` in the engine's own seq/bootId stream.
+ * settings.json was reset. Main never emits events itself — an event with a
+ * bootId other than the engine's means "the engine restarted" to the
+ * renderer. Main keeps the notices of this app session instead, and every
+ * engine (re)start gets all of them in `init`: the engine keeps them pending
+ * in its snapshot (so a window opened later still shows them) and emits each
+ * as an `engine.notice` in its own seq/bootId stream (so open windows of a
+ * restarted engine resync and see it). Nothing waits for a snapshot.
  *
- * Timing: the renderer ignores events before its first snapshot, and a
- * snapshot clears its last error, so a notice is held and sent right after
- * the next successful snapshot, once. After an engine restart a copy also goes
- * out at once: that event carries the new bootId, so open windows resync, and
- * the held copy lands after their snapshot. A window opened after a notice
- * was delivered does not see it until T0's Snapshot can carry notices (T6a).
+ * The list is bounded: a notice that happens again replaces the earlier one
+ * of its kind (a crash more than five minutes after the last one is restarted
+ * again, without end), so there is at most one entry per notice code.
  */
 export class HostNotices {
-  readonly #send: (control: HostControl) => void;
-  #held: EngineError[] = [];
+  readonly #deps: HostNoticesDeps;
+  readonly #notices: EngineNotice[] = [];
 
-  constructor(send: (control: HostControl) => void) {
-    this.#send = send;
+  constructor(deps: HostNoticesDeps) {
+    this.#deps = deps;
   }
 
-  /** Holds `error` until a window has taken a snapshot. */
-  hold(error: EngineError): void {
-    this.#held.push(error);
+  /**
+   * Records a notice for the next engine start, replacing an earlier one of
+   * the same code (counted); parsed with the contract, so a bad one fails
+   * here, not in the engine.
+   */
+  add(code: NoticeCode, detail?: string): EngineNotice {
+    const earlier = this.#notices.findIndex((n) => n.code === code);
+    const notice = EngineNotice.parse({
+      noticeId: this.#deps.newId(),
+      code,
+      ...(detail === undefined ? {} : { detail: detail.length <= MAX_DETAIL ? detail : `${detail.slice(0, MAX_DETAIL - 1)}…` }),
+      at: new Date(this.#deps.clock()).toISOString(),
+      count: earlier === -1 ? 1 : (this.#notices[earlier]?.count ?? 0) + 1,
+    });
+    if (earlier === -1) this.#notices.push(notice);
+    else this.#notices[earlier] = notice;
+    return notice;
   }
 
-  /** The engine was restarted: tell it now (windows resync) and again after the next snapshot (so it sticks). */
-  restarted(error: EngineError): void {
-    this.#held.push(error);
-    this.#send({ kind: "control", type: "notice", error });
-  }
-
-  /** Main's hook after every response to a window: a successful snapshot releases the held notices. */
-  seen(response: ResponseMessage): void {
-    if (!response.ok || response.type !== "engine.snapshot") return;
-    for (const error of this.#held.splice(0)) this.#send({ kind: "control", type: "notice", error });
+  /** Every notice of this app session, oldest first: what `init` carries. */
+  get all(): readonly EngineNotice[] {
+    return this.#notices;
   }
 }

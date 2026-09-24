@@ -5,10 +5,22 @@ import { reconcileLedger, type CreditsFetcher, type ReconcileResult } from "./re
 /** The client's request timeout (T3): an open reserve's request may have run this long after its `at`. */
 export const REQUEST_TIMEOUT_MS = 180_000;
 
+/**
+ * An attempt id the contract can carry (T0 `AttemptId`: 1-128 visible ASCII
+ * chars). Attempt ids end up in the money status and the reconcile result, so
+ * one the contract refuses would break every snapshot; the money core may not
+ * import the contract, and budget.test.ts pins that both accept the same ids.
+ */
+const ATTEMPT_ID_PATTERN = /^[\x21-\x7e]{1,128}$/;
+
+export function isAttemptId(id: string): boolean {
+  return ATTEMPT_ID_PATTERN.test(id);
+}
+
 export interface BudgetLimits {
   /** One cap for every scope, or a cap per scope (a run's plan worst case, an avatar job's worst case). */
   runCapMicros: number | ((scope: Scope) => number);
-  /** Global budget per UTC calendar month. */
+  /** Global budget per UTC calendar month, at construction; `setMonthlyBudget` changes it. */
   monthlyBudgetMicros: number;
   /** Wall clock, epoch ms: ledger `at` values and the monthly window. */
   clock: Clock;
@@ -117,6 +129,8 @@ export class Budget {
   readonly clock: Clock;
   private readonly monotonic: Clock;
   private readonly limits: BudgetLimits;
+  /** The global budget now; `setMonthlyBudget` changes it under the mutex. */
+  private monthlyBudgetMicros: number;
   private readonly mutex = new Mutex();
   private readonly own = new Map<string, { handle: ReserveHandle; state: AttemptState }>();
   /** Monotonic time this Budget was built, right after its ledger was opened. */
@@ -131,12 +145,14 @@ export class Budget {
     this.clock = limits.clock;
     this.monotonic = limits.monotonic;
     this.limits = limits;
+    this.monthlyBudgetMicros = limits.monthlyBudgetMicros;
     this.openedAtMono = limits.monotonic();
   }
 
   tryReserve(req: ReserveRequest): Promise<ReserveResult> {
     return this.mutex.run(async () => {
       assertMicros("worstMicros", req.worstMicros);
+      if (!isAttemptId(req.attemptId)) throw new TypeError("attemptId must be 1-128 visible ASCII chars, as the contract carries it");
       const blocked = this.blocked();
       if (blocked) return blocked;
       if (this.ledger.reserveOf(req.attemptId)) {
@@ -145,8 +161,8 @@ export class Budget {
 
       const totals = this.totals(req.scope);
       const monthCommitted = totals.spentThisMonth + totals.openWorst;
-      if (monthCommitted + req.worstMicros > this.limits.monthlyBudgetMicros) {
-        return { ok: false, reason: "BUDGET_EXCEEDED", limitMicros: this.limits.monthlyBudgetMicros, committedMicros: monthCommitted, worstMicros: req.worstMicros };
+      if (monthCommitted + req.worstMicros > this.monthlyBudgetMicros) {
+        return { ok: false, reason: "BUDGET_EXCEEDED", limitMicros: this.monthlyBudgetMicros, committedMicros: monthCommitted, worstMicros: req.worstMicros };
       }
       const cap = this.capOf(req.scope);
       const scopeCommitted = totals.scopeSpent + totals.scopeOpenWorst;
@@ -224,6 +240,20 @@ export class Budget {
     });
   }
 
+  /**
+   * A new global budget (Settings), under this Budget's mutex: a reserve whose
+   * check and write are under way finishes against the old value, every later
+   * reserve is checked against the new one. The Budget itself stays, so its
+   * own open reserves stay its own and there is still one mutex on the ledger.
+   * Writes nothing.
+   */
+  setMonthlyBudget(micros: number): Promise<void> {
+    return this.mutex.run(async () => {
+      assertMicros("monthlyBudgetMicros", micros);
+      this.monthlyBudgetMicros = micros;
+    });
+  }
+
   /** How many of this process's attempts are still waiting for a response. */
   inFlightCount(): number {
     let n = 0;
@@ -280,7 +310,7 @@ export class Budget {
     const blocked = this.blocked();
     return {
       state: blocked === null ? "ok" : blocked.reason === "HALTED" ? "halted" : "reconcile-required",
-      monthlyBudgetMicros: this.limits.monthlyBudgetMicros,
+      monthlyBudgetMicros: this.monthlyBudgetMicros,
       spentThisMonthMicros: totals.spentThisMonth,
       openReserveMicros: totals.openWorst,
       openAttempts: totals.openAttempts,

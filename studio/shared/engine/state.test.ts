@@ -3,6 +3,7 @@ import {
   ApiKeyStatus,
   AvatarSummary,
   Draft,
+  EngineNotice,
   Estimate,
   JobState,
   MoneyStatus,
@@ -23,6 +24,7 @@ const settings = {
 };
 
 const money = {
+  ledger: "open",
   month: "2026-09",
   spentMicros: 1_250_000,
   monthlyBudgetMicros: 10_000_000,
@@ -30,6 +32,29 @@ const money = {
   unsettledCount: 0,
   reconcileNeeded: false,
   reconcileReasons: [],
+  halt: null,
+};
+
+/** The ledger could not be read at start: no amounts, only why. */
+const unavailableMoney = {
+  ledger: "unavailable",
+  month: "2026-09",
+  monthlyBudgetMicros: 10_000_000,
+  reconcileNeeded: false,
+  reconcileReasons: [],
+  halt: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" },
+};
+
+const reconciled = {
+  status: "done",
+  creditsDeltaMicros: 210_000,
+  deltaUnavailable: null,
+  ledgerDeltaMicros: 230_000,
+  mismatch: true,
+  closedReserves: 2,
+  aboveWorstAttempts: [],
+  tornLineMoved: false,
+  warnings: [],
 };
 
 const estimate = { expectedMicros: 200_000, worstMicros: 230_000, prices: "live", pricesAsOf: "2026-09-24" };
@@ -213,6 +238,77 @@ describe("MoneyStatus", () => {
     const s = { ...money, reconcileNeeded: true, reconcileReasons: ["because"] };
     expect(MoneyStatus.safeParse(s).success).toBe(false);
   });
+
+  test("rejects a status without a halt field: no halt is null, never missing", () => {
+    const { halt: _h, ...withoutHalt } = money;
+    expect(MoneyStatus.safeParse(withoutHalt).success).toBe(false);
+  });
+
+  test("accepts a halt for attempts billed above their worst case, with the attempts listed", () => {
+    const halt = { cause: "SETTLE_ABOVE_WORST", detail: "the price table is wrong; reconcile to acknowledge", attemptIds: ["slot-3#2"] };
+    expect(MoneyStatus.safeParse({ ...money, halt }).success).toBe(true);
+  });
+
+  test("rejects a settle-above-worst halt that lists no attempt", () => {
+    const halt = { cause: "SETTLE_ABOVE_WORST", detail: "the price table is wrong", attemptIds: [] };
+    expect(MoneyStatus.safeParse({ ...money, halt }).success).toBe(false);
+  });
+
+  test.each(["", "a b", "x".repeat(129)])("rejects the attempt id %p in a settle-above-worst halt", (attemptId) => {
+    const halt = { cause: "SETTLE_ABOVE_WORST", detail: "the price table is wrong", attemptIds: [attemptId] };
+    expect(MoneyStatus.safeParse({ ...money, halt }).success).toBe(false);
+  });
+
+  test("accepts a halt after a failed ledger write, next to open reserves that also need a reconcile", () => {
+    const s = {
+      ...money,
+      unsettledMicros: 55_000,
+      unsettledCount: 1,
+      reconcileNeeded: true,
+      reconcileReasons: ["open-reserves"],
+      halt: { cause: "LEDGER_WRITE_FAILED", detail: "a ledger write failed; restart the app" },
+    };
+    expect(MoneyStatus.safeParse(s).success).toBe(true);
+  });
+
+  test.each(["LEDGER_CORRUPT", "LEDGER_UNREADABLE", "INTERNAL"])("rejects the halt cause %p on a ledger that was read", (cause) => {
+    expect(MoneyStatus.safeParse({ ...money, halt: { cause, detail: "x" } }).success).toBe(false);
+  });
+
+  test("strips a key from a halt detail", () => {
+    const parsed = MoneyStatus.parse({ ...money, halt: { cause: "LEDGER_WRITE_FAILED", detail: "failed with sk-or-v1-abcdef0123456789" } });
+    expect(JSON.stringify(parsed)).not.toContain("sk-or-v1-abcdef0123456789");
+  });
+
+  test("rejects a halt detail over 500 chars", () => {
+    expect(MoneyStatus.safeParse({ ...money, halt: { cause: "LEDGER_WRITE_FAILED", detail: "x".repeat(501) } }).success).toBe(false);
+  });
+
+  test.each(["LEDGER_CORRUPT", "LEDGER_UNREADABLE"])("accepts a ledger that could not be read (%s): the cause, no amounts", (cause) => {
+    expect(MoneyStatus.safeParse({ ...unavailableMoney, halt: { cause, detail: "x" } }).success).toBe(true);
+  });
+
+  test.each(["spentMicros", "unsettledMicros", "unsettledCount"])("rejects %s on a ledger that could not be read: the amount is unknown", (field) => {
+    expect(MoneyStatus.safeParse({ ...unavailableMoney, [field]: 0 }).success).toBe(false);
+  });
+
+  test("rejects a ledger that could not be read without the cause", () => {
+    expect(MoneyStatus.safeParse({ ...unavailableMoney, halt: null }).success).toBe(false);
+  });
+
+  test("rejects a ledger that could not be read with a halt that belongs to a readable one", () => {
+    const halt = { cause: "LEDGER_WRITE_FAILED", detail: "x" };
+    expect(MoneyStatus.safeParse({ ...unavailableMoney, halt }).success).toBe(false);
+  });
+
+  test("rejects a reconcile on a ledger that could not be read: reconcile needs the ledger", () => {
+    const s = { ...unavailableMoney, reconcileNeeded: true, reconcileReasons: ["open-reserves"] };
+    expect(MoneyStatus.safeParse(s).success).toBe(false);
+  });
+
+  test("rejects an unknown ledger state", () => {
+    expect(MoneyStatus.safeParse({ ...money, ledger: "closed" }).success).toBe(false);
+  });
 });
 
 describe("Estimate", () => {
@@ -272,6 +368,10 @@ describe("Draft", () => {
   test("rejects a draft without an estimate", () => {
     const { estimate: _e, ...withoutEstimate } = draft;
     expect(Draft.safeParse(withoutEstimate).success).toBe(false);
+  });
+
+  test("accepts a draft whose next batch the engine cannot price now (estimate null)", () => {
+    expect(Draft.safeParse({ ...draft, estimate: null }).success).toBe(true);
   });
 });
 
@@ -369,22 +469,112 @@ describe("JobState", () => {
 });
 
 describe("ReconcileResult", () => {
-  test("accepts a finished reconcile that shows both totals", () => {
-    const r = { status: "done", creditsDeltaMicros: 210_000, ledgerDeltaMicros: 230_000, closedReserves: 2, tornLineMoved: false };
+  test("accepts a finished reconcile that shows both totals and the verdict", () => {
+    expect(ReconcileResult.safeParse(reconciled).success).toBe(true);
+  });
+
+  test.each(["no-baseline", "negative-delta"])("accepts a reconcile whose /credits delta is unavailable (%s): no delta, no verdict", (why) => {
+    const r = { ...reconciled, creditsDeltaMicros: null, deltaUnavailable: why, mismatch: null };
     expect(ReconcileResult.safeParse(r).success).toBe(true);
   });
 
+  test("rejects a delta together with a reason it is unavailable", () => {
+    expect(ReconcileResult.safeParse({ ...reconciled, deltaUnavailable: "no-baseline" }).success).toBe(false);
+  });
+
+  test("rejects a missing delta without the reason", () => {
+    expect(ReconcileResult.safeParse({ ...reconciled, creditsDeltaMicros: null, mismatch: null }).success).toBe(false);
+  });
+
+  test("rejects a verdict without a delta to compare", () => {
+    const r = { ...reconciled, creditsDeltaMicros: null, deltaUnavailable: "no-baseline", mismatch: false };
+    expect(ReconcileResult.safeParse(r).success).toBe(false);
+  });
+
+  test("rejects a delta without a verdict", () => {
+    expect(ReconcileResult.safeParse({ ...reconciled, mismatch: null }).success).toBe(false);
+  });
+
+  test("accepts the above-worst attempts this reconcile acknowledged", () => {
+    expect(ReconcileResult.safeParse({ ...reconciled, aboveWorstAttempts: ["slot-3#2", "age-1#1"] }).success).toBe(true);
+  });
+
+  test("rejects a done answer without the acknowledged above-worst attempts", () => {
+    const { aboveWorstAttempts: _a, ...without } = reconciled;
+    expect(ReconcileResult.safeParse(without).success).toBe(false);
+  });
+
+  test("rejects the old done shape without delta reason, verdict, attempts or warnings", () => {
+    const r = { status: "done", creditsDeltaMicros: 210_000, ledgerDeltaMicros: 230_000, closedReserves: 2, tornLineMoved: false };
+    expect(ReconcileResult.safeParse(r).success).toBe(false);
+  });
+
+  test("accepts a clock-skew warning on a finished reconcile", () => {
+    expect(ReconcileResult.safeParse({ ...reconciled, warnings: ["clock-skew"] }).success).toBe(true);
+  });
+
+  test.each([[["clock-skew", "clock-skew"]], [["late"]]])("rejects the warnings %p", (warnings) => {
+    expect(ReconcileResult.safeParse({ ...reconciled, warnings }).success).toBe(false);
+  });
+
   test("accepts a too-early answer with a wait", () => {
-    expect(ReconcileResult.safeParse({ status: "too-early", retryAfterMs: 45_000 }).success).toBe(true);
+    expect(ReconcileResult.safeParse({ status: "too-early", retryAfterMs: 45_000, warnings: [] }).success).toBe(true);
+  });
+
+  test("accepts a too-early answer measured on the monotonic clock (clock skew)", () => {
+    expect(ReconcileResult.safeParse({ status: "too-early", retryAfterMs: 45_000, warnings: ["clock-skew"] }).success).toBe(true);
   });
 
   test("rejects a too-early answer with a zero wait", () => {
-    expect(ReconcileResult.safeParse({ status: "too-early", retryAfterMs: 0 }).success).toBe(false);
+    expect(ReconcileResult.safeParse({ status: "too-early", retryAfterMs: 0, warnings: [] }).success).toBe(false);
+  });
+
+  test("rejects an in-flight result: requests in flight are the IN_FLIGHT error, not a result", () => {
+    expect(ReconcileResult.safeParse({ status: "in-flight", inFlight: 2 }).success).toBe(false);
   });
 
   test("rejects a float credits delta", () => {
-    const r = { status: "done", creditsDeltaMicros: 0.21, ledgerDeltaMicros: 0, closedReserves: 0, tornLineMoved: false };
-    expect(ReconcileResult.safeParse(r).success).toBe(false);
+    expect(ReconcileResult.safeParse({ ...reconciled, creditsDeltaMicros: 0.21 }).success).toBe(false);
+  });
+});
+
+describe("EngineNotice", () => {
+  const notice = { noticeId: "notice-0001", code: "engine-restarted", detail: "the engine exited unexpectedly (code 9)", at: "2026-09-24T10:00:00.000Z", count: 1 };
+
+  test("accepts an engine restart with its diagnostic detail", () => {
+    expect(EngineNotice.safeParse(notice).success).toBe(true);
+  });
+
+  test("accepts a settings reset without a detail", () => {
+    const { detail: _d, ...withoutDetail } = notice;
+    expect(EngineNotice.safeParse({ ...withoutDetail, code: "settings-reset" }).success).toBe(true);
+  });
+
+  test.each(["INTERNAL", "engine.error", "crash"])("rejects the code %p: a notice is not an error code", (code) => {
+    expect(EngineNotice.safeParse({ ...notice, code }).success).toBe(false);
+  });
+
+  test("accepts a notice that happened several times this session: the count, the latest detail and time", () => {
+    expect(EngineNotice.safeParse({ ...notice, count: 7 }).success).toBe(true);
+  });
+
+  test.each([0, 1.5, -1])("rejects a count of %p", (count) => {
+    expect(EngineNotice.safeParse({ ...notice, count }).success).toBe(false);
+  });
+
+  test("rejects a notice without a count", () => {
+    const { count: _c, ...withoutCount } = notice;
+    expect(EngineNotice.safeParse(withoutCount).success).toBe(false);
+  });
+
+  test("rejects a notice without an id", () => {
+    const { noticeId: _n, ...withoutId } = notice;
+    expect(EngineNotice.safeParse(withoutId).success).toBe(false);
+  });
+
+  test("strips a key from the detail", () => {
+    const parsed = EngineNotice.parse({ ...notice, detail: "Bearer sk-or-v1-abcdef0123456789" });
+    expect(parsed.detail).not.toContain("sk-or-v1");
   });
 });
 

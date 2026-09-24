@@ -24,15 +24,23 @@ function readStudioVersion(): string {
 }
 
 // An end-to-end test build (`bun run build:studio:e2e`, STUDIO_E2E=1) keeps
-// DevTools and remote debugging in a packaged app and lets the engine take a
-// mock OpenRouter base URL (invariant 13). Every other build compiles the
-// flag to `false`. Never ship an E2E build.
+// DevTools and remote debugging, reads the smoke test's switches and lets the
+// engine take a mock OpenRouter base URL (invariant 13). Every other build
+// compiles the flag to `false`. Never ship an E2E build.
 const STUDIO_E2E = process.env.STUDIO_E2E === "1";
 
-export default defineConfig({
+// Every debug door is decided here, at build time: `__STUDIO_DEV__` is true
+// only under `electron-vite dev` (command "serve"), false in every
+// `electron-vite build`. Never `app.isPackaged`, which depends only on the
+// executable's name.
+export default defineConfig(({ command }) => ({
   main: {
-    // The engine is a main-process entry too, so it gets both constants.
-    define: { __APP_VERSION__: JSON.stringify(readStudioVersion()), __STUDIO_E2E__: JSON.stringify(STUDIO_E2E) },
+    // The engine is a main-process entry too, so it gets every constant.
+    define: {
+      __APP_VERSION__: JSON.stringify(readStudioVersion()),
+      __STUDIO_E2E__: JSON.stringify(STUDIO_E2E),
+      __STUDIO_DEV__: JSON.stringify(command === "serve"),
+    },
     build: {
       // Two main-process entries: the main process (out-studio/main/main.js)
       // and the engine utilityProcess (out-studio/engine/main.js, forked by
@@ -77,4 +85,4 @@ export default defineConfig({
     },
     plugins: [react()],
   },
-});
+}));

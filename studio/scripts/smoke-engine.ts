@@ -2,8 +2,8 @@
 /**
  * Packaged-engine smoke test for Studio (task T1).
  *
- * Full run (dev build or an E2E package): launches the app with a temp
- * userData and the DevTools protocol, and checks from inside the page:
+ * Full run (an E2E build, unpackaged or packaged): launches the app with a
+ * temp userData and the DevTools protocol, and checks from inside the page:
  *
  * - the engine utilityProcess starts and answers engine.snapshot and money.status
  *   (money over a prepared userData/ledger.jsonl);
@@ -12,36 +12,43 @@
  * - main refuses a command that breaks the contract;
  * - settings.setApiKey stores only ciphertext and hands the key to the engine;
  * - settings.setBudget is persisted by main and reaches the engine;
+ * - the live library's folder picked again with another letter case (main's
+ *   dialog answers from --studio-pick-folder) is the folder in use: no second
+ *   survey — the one check of Electron's native realpath;
  * - the engine's environment has no OPENROUTER_* although the app's has one;
- * - a killed engine is restarted once, surfaces engine.error, comes back with a
- *   new bootId and gets the key and the settings again;
- * - the crash is reported as an engine.error of the restarted engine (its own
- *   bootId, no flood of events: the snapshot-loop regression);
+ * - a killed engine is restarted once, comes back with a new bootId and gets
+ *   the key and the settings again;
+ * - the crash is reported as an engine.notice of the restarted engine (its own
+ *   bootId, no flood of events: the snapshot-loop regression), not as an error;
  * - a second instance exits and focuses the first; with the window closed the
- *   engine keeps running, and a reopened window restores from its snapshot
- *   (it is not told about a crash reported before it opened: that needs a T0
- *   Snapshot field for notices, left to T6a);
- * - a corrupt settings.json is moved aside and reported the same way; after an
- *   app restart the key is decrypted and sent again; clearApiKey removes it;
+ *   engine keeps running, and a reopened window restores from its snapshot,
+ *   which still carries the crash notice;
+ * - a corrupt settings.json is moved aside and reported as a pending notice in
+ *   the snapshot; after an app restart the key is decrypted and sent again;
+ *   clearApiKey removes it;
  * - packaged: the engine entry lives inside app.asar, not unpacked; the fuses are set.
  *
- * A packaged production build has no remote debugging, so the full run needs
- * an E2E package (STUDIO_E2E=1: DevTools kept, never shipped). --production
- * checks the real package instead: its fuses, the E2E override compiled out
- * of the engine, and that it launches its engine with remote debugging refused.
+ * Every debug door (remote debugging, DevTools, the test switches) is a
+ * build-time constant: a `build:studio` output has none, however it is
+ * launched — also unpackaged. So the full run needs an E2E build
+ * (STUDIO_E2E=1: DevTools and the test switches kept, never shipped).
+ * --production checks a production build instead: its bundles (every debug
+ * door compiled out, see bundleChecks.ts), and with --app the real package:
+ * its fuses, and that it launches its engine with remote debugging refused.
  *
  * Usage (macOS; on Windows point --app at release-studio/win-unpacked or its
  * Studio.exe, and release-studio/e2e/win-unpacked for an E2E package):
- *   bun run build:studio && bun studio/scripts/smoke-engine.ts
+ *   bun run build:studio:e2e && bun studio/scripts/smoke-engine.ts
  *   bun run dist:studio:mac:e2e && bun studio/scripts/smoke-engine.ts --app release-studio/e2e/mac-arm64/Studio.app
+ *   bun run build:studio && bun studio/scripts/smoke-engine.ts --production
  *   bun run dist:studio:mac && bun studio/scripts/smoke-engine.ts --production --app release-studio/mac-arm64/Studio.app
  *
  * The app window shows for a few seconds. On macOS --use-mock-keychain keeps
  * safeStorage off the real Keychain (checked on Electron 43: no Keychain item
  * is created); Windows' DPAPI needs no such flag. The environment check reads
  * process environments with `ps -E` and runs on macOS only.
- * No request leaves the machine: there is no OpenRouter client yet, and the
- * only key used is a fake one.
+ * No request leaves the machine: the smoke never asks for a reconcile or any
+ * other OpenRouter call, and the only key used is a fake one.
  */
 import { extractFile, listPackage } from "@electron/asar";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -53,6 +60,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
+import { productionEngineProblems, productionMainProblems } from "./bundleChecks";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const SMOKE_KEY = "sk-or-v1-smoke-test-not-real-7q3z";
@@ -91,8 +99,13 @@ async function electronBinary(): Promise<string> {
 async function resolveTarget(): Promise<Target> {
   if (appArg === undefined) {
     const main = join(ROOT, "out-studio/main/main.js");
-    if (!existsSync(main)) throw new Error("out-studio/main/main.js is missing: run `bun run build:studio` first");
-    return { label: "dev build (out-studio)", executable: await electronBinary(), args: [main], app: null, asar: null };
+    const build = production ? "build:studio" : "build:studio:e2e";
+    if (!existsSync(main)) throw new Error(`out-studio/main/main.js is missing: run \`bun run ${build}\` first`);
+    // The E2E build is the one whose main reads the test switches; a production one has no debug door to drive.
+    if (!production && !(await readFile(main, "utf8")).includes("studio-pick-folder")) {
+      throw new Error("out-studio holds a production build, which the smoke cannot drive: run `bun run build:studio:e2e` first");
+    }
+    return { label: production ? "production build (out-studio)" : "E2E build (out-studio)", executable: await electronBinary(), args: [main], app: null, asar: null };
   }
   const app = resolve(appArg);
   if (process.platform === "win32") {
@@ -288,13 +301,13 @@ async function pageCount(port: number): Promise<number> {
   return Array.isArray(targets) ? targets.filter((t) => typeof t === "object" && t !== null && "type" in t && t.type === "page").length : -1;
 }
 
-async function launch(target: Target, userData: string): Promise<Running> {
+async function launch(target: Target, userData: string, extraArgs: string[] = []): Promise<Running> {
   const port = await freePort();
   // A real key must never reach the app under test; the canary must never reach its engine.
   const env = { ...appEnv(), OPENROUTER_API_KEY: ENV_CANARY };
   const child = spawn(
     target.executable,
-    [...target.args, `--user-data-dir=${userData}`, `--remote-debugging-port=${port}`, ...PLATFORM_FLAGS],
+    [...target.args, `--user-data-dir=${userData}`, `--remote-debugging-port=${port}`, ...PLATFORM_FLAGS, ...extraArgs],
     { env, stdio: ["ignore", "pipe", "pipe"] },
   );
   let output = "";
@@ -360,12 +373,30 @@ function asarText(target: Target, file: string): string {
   return target.asar === null ? "" : extractFile(target.asar, file).toString("utf8");
 }
 
+/** Every debug door compiled out of a production build's bundles (bundleChecks.ts), wherever they were read from. */
+function checkProductionBundles(where: string, main: string, engine: string): void {
+  const mainProblems = productionMainProblems(main);
+  check(`${where}: main has every debug door compiled out (no test switch, no env renderer URL, DevTools off, remote debugging refused)`, mainProblems.length === 0, mainProblems);
+  const engineProblems = productionEngineProblems(engine);
+  check(`${where}: the engine was built without the E2E flag (no base-URL override)`, engineProblems.length === 0, engineProblems);
+}
+
 async function productionCheck(target: Target): Promise<void> {
-  if (target.asar === null) throw new Error("--production needs --app <Studio.app>");
+  if (target.asar === null) {
+    // `build:studio` output: the bundles only; a package is what launches.
+    checkProductionBundles(
+      "the production build",
+      await readFile(join(ROOT, "out-studio", "main", "main.js"), "utf8"),
+      await readFile(join(ROOT, "out-studio", "engine", "main.js"), "utf8"),
+    );
+    return;
+  }
   checkPackage(target);
-  check("the packaged engine was built without the E2E flag (no base-URL override)",
-    /resolveOpenRouterBaseUrl\(init\.openRouterBaseUrl, false\)/.test(asarText(target, join("out-studio", "engine", "main.js"))));
-  check("the packaged main never reads the E2E base-URL switch", !asarText(target, join("out-studio", "main", "main.js")).includes("studio-openrouter-base-url"));
+  checkProductionBundles(
+    "the package",
+    asarText(target, join("out-studio", "main", "main.js")),
+    asarText(target, join("out-studio", "engine", "main.js")),
+  );
 
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-prod-"));
   const port = await freePort();
@@ -450,7 +481,12 @@ async function main(): Promise<void> {
 
   checkPackage(target);
 
-  let running = await launch(target, userData);
+  // The live library's folder spelled with another letter case, for main's
+  // folder dialog to answer with (it cannot be clicked). Only a disk that
+  // ignores case (APFS, NTFS by default) has it as the same folder.
+  const otherCase = join(dirname(libraryRoot), basename(libraryRoot).toUpperCase());
+  const caseInsensitive = otherCase !== libraryRoot && existsSync(otherCase);
+  let running = await launch(target, userData, caseInsensitive ? [`--studio-pick-folder=${otherCase}`] : []);
   try {
     const { cdp } = running;
     const statuses = new Map<string, { status: number; mimeType: string; nosniff: boolean }>();
@@ -536,6 +572,23 @@ async function main(): Promise<void> {
         field(savedSettings, "monthlyBudgetMicros") === 25_000_000 && field(moneyAfterBudget, "result", "monthlyBudgetMicros") === 25_000_000,
       { budget, savedSettings, moneyAfterBudget });
 
+    // 4c. The live library's folder picked again with another letter case: the
+    // engine must know it is the folder in use (Electron's native realpath
+    // folds the case) and answer without a second survey, which would move
+    // the live library's unfinished writes to quarantine.
+    if (!caseInsensitive) {
+      console.log("SKIP  picking the live library with another letter case (this disk is case-sensitive)");
+    } else {
+      const unfinished = join(libraryRoot, "avatars", avatar.id, "photos", "writing-0001.png");
+      await Bun.write(unfinished, PNG);
+      const picked = await req(cdp, "settings.setLibraryPath", { path: otherCase });
+      check("the live library picked with another letter case is the folder in use: ok, and no second survey",
+        field(picked, "ok") === true && field(picked, "result", "libraryPath") === otherCase &&
+          existsSync(unfinished) && !existsSync(join(libraryRoot, "quarantine")),
+        { picked, unfinished: existsSync(unfinished), quarantine: existsSync(join(libraryRoot, "quarantine")) });
+      await rm(unfinished, { force: true });
+    }
+
     // 5. Engine environment.
     const mainPid = running.child.pid ?? -1;
     const pid = await waitFor("the engine process", async () => enginePid(mainPid), 5_000);
@@ -549,11 +602,14 @@ async function main(): Promise<void> {
 
     // 6. Restart policy.
     process.kill(pid, "SIGKILL");
-    const crashEvent = await waitFor("an engine.error event", async () => {
-      const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.error")`);
+    const crashEvent = await waitFor("an engine.notice event", async () => {
+      const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice")`);
       return Array.isArray(events) && events.length > 0 ? events[0] : null;
     });
-    check("a killed engine surfaces engine.error", /exited unexpectedly.*restarting it/.test(String(field(crashEvent, "payload", "error", "detail"))), crashEvent);
+    check("a killed engine is reported as an engine-restarted notice",
+      field(crashEvent, "payload", "notice", "code") === "engine-restarted" &&
+        /exited unexpectedly.*restarting it/.test(String(field(crashEvent, "payload", "notice", "detail"))),
+      crashEvent);
     const after = await waitFor("a snapshot from the restarted engine", async () => {
       const s = await req(cdp, "engine.snapshot");
       return field(s, "ok") === true ? s : null;
@@ -563,15 +619,19 @@ async function main(): Promise<void> {
     check("the restarted engine got the key again", field(after, "result", "settings", "apiKey", "last4") === "7q3z", after);
     check("the restarted engine got the current settings again", field(after, "result", "settings", "monthlyBudgetMicros") === 25_000_000, after);
     // The regression: main's own events (a foreign bootId) made the renderer
-    // resnapshot, and every snapshot replayed them. Notices now come from the
-    // engine's own stream: every engine.error carries the new engine's bootId,
-    // and a quiet second later there are still only a handful.
+    // resnapshot, and every snapshot replayed them. Notices come from the
+    // engine's own stream: every engine.notice carries the new engine's
+    // bootId, and a quiet second later there are still only a handful.
     await Bun.sleep(1500);
-    const crashEvents = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.error")`);
-    check("the crash is reported by the restarted engine itself, without an event flood",
+    const crashEvents = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice")`);
+    const errorEvents = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.error")`);
+    check("the crash is reported by the restarted engine itself, without an event flood and not as an error",
       Array.isArray(crashEvents) && crashEvents.length >= 1 && crashEvents.length <= 3 &&
-        crashEvents.every((e: unknown) => field(e, "bootId") === newBootId),
-      { newBootId, crashEvents });
+        crashEvents.every((e: unknown) => field(e, "bootId") === newBootId) &&
+        Array.isArray(errorEvents) && errorEvents.length === 0,
+      { newBootId, crashEvents, errorEvents });
+    check("the restarted engine's snapshot carries the crash notice",
+      JSON.stringify(field(after, "result", "notices")).includes("engine-restarted"), after);
     const newPid = enginePid(mainPid);
     check("a new engine process runs", newPid !== null && newPid !== pid, { pid, newPid });
     check("the key never appeared in the app's output", !running.output().includes(SMOKE_KEY));
@@ -589,6 +649,8 @@ async function main(): Promise<void> {
     const reopened = await req(running.cdp, "engine.snapshot");
     check("the reopened window restores from engine.snapshot of the engine that kept running",
       field(reopened, "ok") === true && field(reopened, "result", "bootId") === newBootId, { reopened, newBootId });
+    check("a window opened after the crash is still told about it (the snapshot's pending notices)",
+      JSON.stringify(field(reopened, "result", "notices")).includes("engine-restarted"), reopened);
 
     // 8. App restart with a corrupt settings.json: it is moved aside and reported;
     // main decrypts the key and hands it over again; then clear it.
@@ -596,20 +658,13 @@ async function main(): Promise<void> {
     await Bun.write(join(userData, "settings.json"), "{ corrupt");
     running = await launch(target, userData);
     const restarted = await req(running.cdp, "engine.snapshot");
-    // The page's own store took the first snapshot, which released the notice
-    // as an engine event; it may have landed before this page's subscription.
-    const notice = await waitFor("the settings notice", async () => {
-      const events = await running.cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.error")`);
-      return Array.isArray(events) && events.length > 0 ? events : null;
-    }, 3_000).catch(() => null);
-    const caught = await req(running.cdp, "engine.events", { afterSeq: 0, bootId: field(restarted, "result", "bootId") });
     const aside = (await readdir(userData)).filter((name) => name.startsWith("settings.json.corrupt-"));
-    const reported = [...(Array.isArray(notice) ? notice : []), ...(Array.isArray(field(caught, "result", "events")) ? [field(caught, "result", "events")] : [])];
-    check("a corrupt settings.json is moved aside, the defaults are used, and the engine reports it in its own stream",
+    const pending = field(restarted, "result", "notices");
+    check("a corrupt settings.json is moved aside, the defaults are used, and the snapshot carries a settings-reset notice",
       aside.length === 1 && field(restarted, "result", "settings", "libraryPath") === join(userData, "library") &&
-        /moved to settings\.json\.corrupt-/.test(JSON.stringify(reported)) &&
-        JSON.stringify(reported).includes(String(field(restarted, "result", "bootId"))),
-      { aside, restarted, notice, caught });
+        Array.isArray(pending) &&
+        pending.some((n: unknown) => field(n, "code") === "settings-reset" && /moved to settings\.json\.corrupt-/.test(String(field(n, "detail")))),
+      { aside, restarted });
     const relaunched = await req(running.cdp, "settings.get");
     check("after an app restart the engine has the key again", field(relaunched, "result", "apiKey", "last4") === "7q3z", relaunched);
     const cleared = await req(running.cdp, "settings.clearApiKey");

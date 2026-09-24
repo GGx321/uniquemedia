@@ -147,7 +147,7 @@ test("reconcile needed: reasons, then too-early with the wait", async () => {
   expect(screen.getByText(/остались незакрытые резервы/)).toBeDefined();
   expect(screen.getByText(/последняя строка журнала расходов обрезана/)).toBeDefined();
 
-  engine.queueReconcile({ status: "too-early", retryAfterMs: 95_000 });
+  engine.queueReconcile({ status: "too-early", retryAfterMs: 95_000, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
   await screen.findByText("Слишком рано");
   expect(screen.getByText(/Сверить можно через 1\s*мин 35\s*с/)).toBeDefined();
@@ -156,7 +156,7 @@ test("reconcile needed: reasons, then too-early with the wait", async () => {
 
 test("reconcile done shows both totals and that they match", async () => {
   const { engine } = await openSettings();
-  engine.queueReconcile({ status: "done", creditsDeltaMicros: 207_600, ledgerDeltaMicros: 211_000, closedReserves: 2, tornLineMoved: true });
+  engine.queueReconcile({ status: "done", creditsDeltaMicros: 207_600, deltaUnavailable: null, ledgerDeltaMicros: 211_000, mismatch: false, closedReserves: 2, aboveWorstAttempts: [], tornLineMoved: true, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
   await screen.findByText("$0.2076");
   expect(screen.getByText("$0.2110")).toBeDefined();
@@ -171,7 +171,7 @@ test("reconcile done shows both totals and that they match", async () => {
 
 test("reconcile mismatch above one cent is flagged", async () => {
   const { engine } = await openSettings();
-  engine.queueReconcile({ status: "done", creditsDeltaMicros: 260_000, ledgerDeltaMicros: 207_600, closedReserves: 0, tornLineMoved: false });
+  engine.queueReconcile({ status: "done", creditsDeltaMicros: 260_000, deltaUnavailable: null, ledgerDeltaMicros: 207_600, mismatch: true, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
   await screen.findByText("Расхождение $0.0524");
   expect(screen.getByText(/OpenRouter насчитал больше/)).toBeDefined();
@@ -179,11 +179,11 @@ test("reconcile mismatch above one cent is flagged", async () => {
 
 test("a difference of exactly one cent is not a mismatch; one micro more is", async () => {
   const { engine } = await openSettings();
-  engine.queueReconcile({ status: "done", creditsDeltaMicros: 110_000, ledgerDeltaMicros: 100_000, closedReserves: 0, tornLineMoved: false });
+  engine.queueReconcile({ status: "done", creditsDeltaMicros: 110_000, deltaUnavailable: null, ledgerDeltaMicros: 100_000, mismatch: false, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
   await screen.findByText(/Суммы сходятся/);
 
-  engine.queueReconcile({ status: "done", creditsDeltaMicros: 110_001, ledgerDeltaMicros: 100_000, closedReserves: 0, tornLineMoved: false });
+  engine.queueReconcile({ status: "done", creditsDeltaMicros: 110_001, deltaUnavailable: null, ledgerDeltaMicros: 100_000, mismatch: true, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
   await screen.findByText("Расхождение $0.0100");
 });
@@ -209,6 +209,27 @@ test("a settle above its reserve halts paid calls until a reconcile, and the rec
   expect(document.body.textContent).not.toContain("списание оказалось выше зарезервированного максимума");
   expect(document.body.textContent).not.toContain("Нужна сверка расходов");
   expect(screen.getByRole("button", { name: "Сверить" }).className).not.toContain("btn-primary");
+});
+
+test("a ledger that could not be read: no reconcile is offered, and the page says why", async () => {
+  await openSettings(STORED, { money: { unavailable: { cause: "LEDGER_UNREADABLE", detail: "EACCES: permission denied" } } });
+  expect(screen.queryByRole("button", { name: "Сверить" }) === null).toBe(true);
+  expect(screen.queryByText("Сверка недоступна") !== null).toBe(true);
+  expect(screen.getAllByText(ERROR_MESSAGES_RU.LEDGER_UNREADABLE).length).toBeGreaterThan(0);
+});
+
+test("a failed ledger write: no reconcile is offered until a restart", async () => {
+  await openSettings(STORED, { money: { halt: { cause: "LEDGER_WRITE_FAILED", detail: "a ledger write failed" } } });
+  expect(screen.queryByRole("button", { name: "Сверить" }) === null).toBe(true);
+  expect(screen.queryByText("Сверка недоступна") !== null).toBe(true);
+  expect(screen.getAllByText(/Перезапустите Studio/).length).toBeGreaterThan(0);
+});
+
+test("a settle above its worst case known only from the status (after a restart) is a reason to reconcile", async () => {
+  await openSettings(STORED, { money: { halt: { cause: "SETTLE_ABOVE_WORST", detail: "billed above", attemptIds: ["slot-1#1"] } } });
+  expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
+  expect(screen.getByText("списание оказалось выше зарезервированного максимума")).toBeDefined();
+  expect(screen.getByRole("button", { name: "Сверить" }).className).toContain("btn-primary");
 });
 
 test("after the reconcile the wizard can spend again", async () => {
@@ -272,6 +293,47 @@ test("the library folder can be changed to an absolute path only", async () => {
   fireEvent.submit(form);
   await screen.findByText("/Volumes/Data/Studio");
   expect(callsOf(engine, "settings.setLibraryPath").map((c) => c.payload.path)).toEqual(["/Volumes/Data/Studio"]);
+});
+
+function changeLibraryTo(path: string): void {
+  fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+  const input = screen.getByLabelText("Библиотека");
+  fireEvent.change(input, { target: { value: path } });
+  const form = input.closest("form");
+  if (!form) throw new Error("library form missing");
+  fireEvent.submit(form);
+}
+
+test("picking the library folder again (it was missing at start) refetches the snapshot, so the lists show what it holds", async () => {
+  const { engine } = await openSettings();
+  const snapshotsBefore = callsOf(engine, "engine.snapshot").length;
+  // The engine can read the folder now and finds an avatar in it; no event says so.
+  engine.addAvatarSilently({
+    avatarId: "avatar-found-0001",
+    name: "Zoe",
+    descriptor: { age: 25, text: "25-year-old woman with chestnut hair." },
+    masterPhotoId: "photo-found-0001",
+    createdAt: "2026-09-24T09:00:00.000Z",
+    status: "active",
+    photoCount: 1,
+  });
+
+  changeLibraryTo("/Users/studio/Studio/library");
+
+  await waitFor(() => expect(callsOf(engine, "engine.snapshot").length).toBe(snapshotsBefore + 1));
+  await openSection("Аватары");
+  expect(await screen.findByText("Zoe")).toBeDefined();
+});
+
+test("a library folder the engine refuses refetches nothing", async () => {
+  const { engine } = await openSettings();
+  const snapshotsBefore = callsOf(engine, "engine.snapshot").length;
+  engine.failNext("settings.setLibraryPath", { code: "VALIDATION" });
+
+  changeLibraryTo("/Volumes/Data/Studio");
+
+  expect(await screen.findByText(ERROR_MESSAGES_RU.VALIDATION)).toBeDefined();
+  expect(callsOf(engine, "engine.snapshot")).toHaveLength(snapshotsBefore);
 });
 
 test("an error link lands on the money card with focus", async () => {

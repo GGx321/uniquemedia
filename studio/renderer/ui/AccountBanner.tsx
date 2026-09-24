@@ -1,14 +1,31 @@
 import type { EngineView } from "../engine/store";
 import { formatUsd } from "../lib/money";
+import { paidStop, restartStopText } from "../lib/paidStop";
 import { useNavigate } from "../navigation";
 import { Notice } from "./Notice";
 
-/** The one thing that blocks paid work right now, if any: reconcile, a rejected key, or no key. */
+/** The one thing that blocks paid work right now, if any: the ledger, reconcile, a rejected key, or no key. */
 export function AccountBanner({ view }: { view: EngineView }) {
   const navigate = useNavigate();
-  const { money, settings, engineError } = view;
+  const { money, settings } = view;
+  const stop = paidStop(view);
 
-  if (money?.reconcileNeeded || engineError?.code === "SETTLE_ABOVE_WORST") {
+  if (stop?.kind === "restart") {
+    return (
+      <Notice
+        tone="danger"
+        title="Платные запросы остановлены"
+        actions={
+          <button type="button" className="btn btn-sm" onClick={() => navigate({ name: "settings", focus: "money" })}>
+            Открыть Настройки
+          </button>
+        }
+      >
+        {restartStopText(stop.code)}
+      </Notice>
+    );
+  }
+  if (stop?.kind === "reconcile") {
     return (
       <Notice
         tone="warn"
@@ -20,7 +37,7 @@ export function AccountBanner({ view }: { view: EngineView }) {
         }
       >
         Платные запросы остановлены до сверки.
-        {money && money.unsettledCount > 0 && ` Незакрытые резервы считаются по худшей цене: до ${formatUsd(money.unsettledMicros, 2, "up")}.`}
+        {money?.ledger === "open" && money.unsettledCount > 0 && ` Незакрытые резервы считаются по худшей цене: до ${formatUsd(money.unsettledMicros, 2, "up")}.`}
       </Notice>
     );
   }

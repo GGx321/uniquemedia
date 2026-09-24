@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { EngineError } from "../../shared/engine/errors";
-import { toEngineError, type MappedError } from "./engineError";
+import { EngineError, type ErrorCode } from "../../shared/engine/errors";
+import { fromOpenRouterError, toEngineError, type MappedError } from "./engineError";
+import { OpenRouterError } from "./errors";
 import { PNG } from "./testing/fakes";
 import type { Failed, FailureKind, ImageResult } from "./types";
 
@@ -74,4 +75,30 @@ test("every mapped error is a valid T0 EngineError", () => {
 
   expect(mapped.length).toBeGreaterThan(0);
   for (const m of mapped) expect(EngineError.safeParse(m.error).success).toBe(true);
+});
+
+// ---------- errors thrown by fetchCredits ----------
+
+const THROWN: { name: string; error: OpenRouterError; code: ErrorCode }[] = [
+  { name: "a 401", error: new OpenRouterError("AUTH_INVALID", "GET /credits: HTTP 401", { httpStatus: 401 }), code: "AUTH_INVALID" },
+  { name: "a 402", error: new OpenRouterError("INSUFFICIENT_CREDITS", "GET /credits: HTTP 402", { httpStatus: 402 }), code: "INSUFFICIENT_CREDITS" },
+  { name: "a 429", error: new OpenRouterError("RATE_LIMITED", "GET /credits: HTTP 429", { httpStatus: 429 }), code: "RATE_LIMITED" },
+  { name: "a 503", error: new OpenRouterError("HTTP_ERROR", "GET /credits: HTTP 503", { httpStatus: 503 }), code: "NETWORK" },
+  { name: "a 404", error: new OpenRouterError("HTTP_ERROR", "GET /credits: HTTP 404", { httpStatus: 404 }), code: "INTERNAL" },
+  { name: "a 2xx without JSON", error: new OpenRouterError("HTTP_ERROR", "GET /credits: HTTP 200, the body is not JSON", { httpStatus: 200 }), code: "INTERNAL" },
+  { name: "a timeout", error: new OpenRouterError("TIMEOUT", "GET /credits: no response within 20000 ms"), code: "TIMEOUT" },
+  { name: "a network failure", error: new OpenRouterError("NETWORK", "GET /credits: fetch failed"), code: "NETWORK" },
+  { name: "no key", error: new OpenRouterError("NO_API_KEY", "no OpenRouter API key is set"), code: "AUTH_INVALID" },
+  { name: "a key that cannot be sent", error: new OpenRouterError("INVALID_API_KEY", "the key contains characters"), code: "AUTH_INVALID" },
+  { name: "a refused base URL", error: new OpenRouterError("BASE_URL_NOT_ALLOWED", "base URL refused"), code: "INTERNAL" },
+];
+
+test.each(THROWN)("fromOpenRouterError maps $name to $code and keeps the message as the detail", ({ error, code }) => {
+  const mapped = fromOpenRouterError(error);
+  expect(mapped).toEqual({ code, detail: error.message });
+  expect(EngineError.safeParse(mapped).success).toBe(true);
+});
+
+test("fromOpenRouterError clips a long message to the contract's 500 chars", () => {
+  expect(fromOpenRouterError(new OpenRouterError("NETWORK", "x".repeat(2000))).detail?.length).toBe(500);
 });

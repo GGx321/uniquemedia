@@ -1,12 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
-import { type CommandMessage, PROTOCOL_VERSION } from "../../shared/engine";
+import { type CommandMessage, type MoneyStatus, PROTOCOL_VERSION } from "../../shared/engine";
 import { readStudioVersion, readWindowBridge, windowStudioClient } from "./windowStudio";
 
 afterEach(() => {
   Reflect.deleteProperty(window, "studio");
 });
 
-const MONEY = {
+const MONEY: MoneyStatus = {
+  ledger: "open",
   month: "2026-09",
   spentMicros: 1_000,
   monthlyBudgetMicros: 10_000_000,
@@ -14,6 +15,7 @@ const MONEY = {
   unsettledCount: 0,
   reconcileNeeded: false,
   reconcileReasons: [],
+  halt: null,
 };
 
 function install(respond: (command: CommandMessage) => unknown): { sent: CommandMessage[]; emit: (e: unknown) => void } {

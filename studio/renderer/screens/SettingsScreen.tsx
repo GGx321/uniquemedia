@@ -6,6 +6,7 @@ import {
   type ApiKeyStatus,
   type EngineError,
   type MoneyStatus,
+  type OpenMoneyStatus,
   type ReconcileReason,
   type ReconcileResult,
   type Settings,
@@ -13,6 +14,7 @@ import {
 import { useEngine, useEngineView } from "../engine/react";
 import { countOf, monthLabel, waitLabel } from "../lib/format";
 import { dollarsInputValue, formatUsd, parseDollars, type DollarsParse } from "../lib/money";
+import { paidStop, restartStopText } from "../lib/paidStop";
 import { bound } from "../lib/traits";
 import type { SettingsFocus } from "../navigation";
 import { Icon } from "../ui/Icon";
@@ -334,7 +336,7 @@ function BudgetRow({ settings }: { settings: Settings }) {
   );
 }
 
-function MoneyStatusRows({ money }: { money: MoneyStatus }) {
+function MoneyStatusRows({ money }: { money: OpenMoneyStatus }) {
   const budget = money.monthlyBudgetMicros;
   const spentShare = budget > 0 ? Math.min(100, (money.spentMicros / budget) * 100) : 100;
   const reservedShare = budget > 0 ? Math.min(100 - spentShare, (money.unsettledMicros / budget) * 100) : 0;
@@ -361,15 +363,19 @@ function MoneyStatusRows({ money }: { money: MoneyStatus }) {
 }
 
 function ReconcileOutcome({ result }: { result: Extract<ReconcileResult, { status: "done" }> }) {
-  const diff = Math.abs(result.creditsDeltaMicros - result.ledgerDeltaMicros);
+  const credits = result.creditsDeltaMicros;
+  // No /credits delta to compare (the first reconcile, or usage that went
+  // down): its own view is for the follow-up that reads `deltaUnavailable`.
+  if (credits === null) return null;
+  const diff = Math.abs(credits - result.ledgerDeltaMicros);
   const mismatch = diff > RECONCILE_TOLERANCE_MICROS;
-  const higher = result.creditsDeltaMicros > result.ledgerDeltaMicros;
+  const higher = credits > result.ledgerDeltaMicros;
   return (
     <div className="reconcile-outcome" role="status">
       <dl className="reconcile-totals">
         <div>
           <dt>OpenRouter · /credits</dt>
-          <dd className="mono">{formatUsd(result.creditsDeltaMicros, 4)}</dd>
+          <dd className="mono">{formatUsd(credits, 4)}</dd>
         </div>
         <div>
           <dt>Журнал Studio</dt>
@@ -400,8 +406,9 @@ function ReconcileBlock({ money, engineError }: { money: MoneyStatus; engineErro
   const [busy, setBusy] = useState(false);
   const [readyAt, setReadyAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const halted = engineError?.code === "SETTLE_ABOVE_WORST";
-  const needed = money.reconcileNeeded || halted;
+  const stop = paidStop({ money, engineError });
+  const aboveWorst = engineError?.code === "SETTLE_ABOVE_WORST" || (money.ledger === "open" && money.halt?.cause === "SETTLE_ABOVE_WORST");
+  const needed = stop?.kind === "reconcile";
   const waiting = readyAt !== null && now < readyAt;
 
   useEffect(() => {
@@ -431,6 +438,18 @@ function ReconcileBlock({ money, engineError }: { money: MoneyStatus; engineErro
     }
   }
 
+  // A ledger that cannot be read, or a failed write: a reconcile needs a sound ledger, so none is offered.
+  if (stop?.kind === "restart") {
+    return (
+      <div className="reconcile">
+        <Notice tone="danger" title="Сверка недоступна">
+          <p>{restartStopText(stop.code)}</p>
+          <p>Сверка тут не поможет: ей нужен исправный журнал расходов.</p>
+        </Notice>
+      </div>
+    );
+  }
+
   return (
     <div className="reconcile">
       {needed && (
@@ -440,7 +459,7 @@ function ReconcileBlock({ money, engineError }: { money: MoneyStatus; engineErro
             {money.reconcileReasons.map((r) => (
               <li key={r}>{REASON_TEXT[r]}</li>
             ))}
-            {halted && <li>списание оказалось выше зарезервированного максимума</li>}
+            {aboveWorst && <li>списание оказалось выше зарезервированного максимума</li>}
           </ul>
         </Notice>
       )}
@@ -543,6 +562,9 @@ function LibraryRow({ settings }: { settings: Settings }) {
     if (reply.ok) {
       store.setSettings(reply.result);
       setEditing(false);
+      // The avatars and drafts belong to the folder: even the same path may
+      // hold a library now that the engine could not open before.
+      store.reload();
     } else setError(reply.error);
   }
 
@@ -662,7 +684,7 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
           <div className="settings-col">
             <Card title="Деньги" id="settings-money" headingRef={moneyHeading}>
               <BudgetRow settings={settings} />
-              {money && <MoneyStatusRows money={money} />}
+              {money?.ledger === "open" && <MoneyStatusRows money={money} />}
               {money && <ReconcileBlock money={money} engineError={view.engineError} />}
             </Card>
             <Card title="Производительность" id="settings-performance">

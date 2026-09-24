@@ -54,8 +54,7 @@ test("a whole avatar flow goes through the validating client without contract er
   expect(avatar).toMatchObject({ name: "Mia", masterPhotoId: photoId, status: "active" });
 
   const money = await unwrap(client.request("money.status", {}));
-  expect(money.spentMicros).toBe(MOCK_ESTIMATE.expectedMicros);
-  expect(money.unsettledMicros).toBe(0);
+  expect(money).toMatchObject({ ledger: "open", spentMicros: MOCK_ESTIMATE.expectedMicros, unsettledMicros: 0, halt: null });
 
   // Seqs are contiguous from 1 and all carry the same bootId.
   expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
@@ -67,7 +66,7 @@ test("a paid command below the current worst case is refused with PRICE_CHANGED 
   engine.setPrice({ expectedMicros: 215_000, worstMicros: 250_000 });
   const reply = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
   expect(reply).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
-  expect((await unwrap(client.request("money.status", {}))).spentMicros).toBe(0);
+  expect(await unwrap(client.request("money.status", {}))).toMatchObject({ spentMicros: 0 });
 });
 
 test("budget, reconcile and key gates refuse paid commands", async () => {
@@ -128,8 +127,65 @@ test("a restart starts a new bootId and flags open reserves for a reconcile", as
 
 test("reconcile answers from its queue, then closes open reserves at their worst case", async () => {
   const { engine, client } = makeMock();
-  engine.queueReconcile({ status: "too-early", retryAfterMs: 95_000 });
-  expect(await unwrap(client.request("money.reconcile", {}))).toEqual({ status: "too-early", retryAfterMs: 95_000 });
+  engine.queueReconcile({ status: "too-early", retryAfterMs: 95_000, warnings: [] });
+  expect(await unwrap(client.request("money.reconcile", {}))).toEqual({ status: "too-early", retryAfterMs: 95_000, warnings: [] });
   const done = await unwrap(client.request("money.reconcile", {}));
   expect(done).toMatchObject({ status: "done", closedReserves: 0 });
+});
+
+// ---------- money stops the UI must show (review of T6a part 1) ----------
+
+test("a mock whose ledger could not be read reports no amounts and refuses paid commands and reconcile with the cause", async () => {
+  const { client } = makeMock({ money: { unavailable: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" } } });
+  expect(await unwrap(client.request("money.status", {}))).toEqual({
+    ledger: "unavailable",
+    month: "2026-09",
+    monthlyBudgetMicros: 10_000_000,
+    reconcileNeeded: false,
+    reconcileReasons: [],
+    halt: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" },
+  });
+  expect(await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 })).toMatchObject({
+    ok: false,
+    error: { code: "LEDGER_CORRUPT" },
+  });
+  expect(await client.request("money.reconcile", {})).toMatchObject({ ok: false, error: { code: "LEDGER_CORRUPT" } });
+});
+
+test("a mock halted by a failed ledger write refuses paid commands and reconcile until a restart", async () => {
+  const { client } = makeMock({ money: { halt: { cause: "LEDGER_WRITE_FAILED", detail: "a ledger write failed" } } });
+  expect(await unwrap(client.request("money.status", {}))).toMatchObject({ ledger: "open", halt: { cause: "LEDGER_WRITE_FAILED" } });
+  expect(await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 })).toMatchObject({
+    ok: false,
+    error: { code: "LEDGER_WRITE_FAILED" },
+  });
+  expect(await client.request("money.reconcile", {})).toMatchObject({ ok: false, error: { code: "LEDGER_WRITE_FAILED" } });
+});
+
+test("a settle above its worst case shows in the money status and a reconcile lifts it", async () => {
+  const { engine, client, events } = makeMock();
+  engine.haltAboveWorst();
+  expect(events.at(-1)).toMatchObject({ type: "money.changed", payload: { status: { halt: { cause: "SETTLE_ABOVE_WORST" } } } });
+  expect(await unwrap(client.request("money.reconcile", {}))).toMatchObject({ status: "done", aboveWorstAttempts: ["mock-attempt#1"] });
+  expect(await unwrap(client.request("money.status", {}))).toMatchObject({ halt: null });
+});
+
+test("another batch for a draft is priced by its own command: accepted at the batch's worst case, it runs", async () => {
+  const { client } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: MOCK_ESTIMATE.worstMicros }));
+  const batch = await unwrap(client.request("avatars.estimateCandidates", { avatarId: draft.avatarId }));
+  expect(batch.worstMicros).toBeLessThan(MOCK_ESTIMATE.worstMicros);
+  expect(draft.estimate).toEqual(batch);
+
+  const reply = await client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: batch.worstMicros });
+  expect(reply.ok).toBe(true);
+});
+
+test("another batch accepted below the batch's worst case is refused with PRICE_CHANGED", async () => {
+  const { client } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: MOCK_ESTIMATE.worstMicros }));
+  const batch = await unwrap(client.request("avatars.estimateCandidates", { avatarId: draft.avatarId }));
+
+  const reply = await client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: batch.worstMicros - 1 });
+  expect(reply).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
 });

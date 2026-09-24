@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { EventMessage } from "../shared/engine";
-import { STUDIO_E2E } from "../engine/buildFlags";
+import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { engineEnv } from "./engineEnv";
 import { EngineHost } from "./engineHost";
@@ -26,18 +26,18 @@ import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedR
 import { handleSettingsCommand } from "./settingsFlow";
 import { SettingsStore } from "./settingsStore";
 
-// A packaged production build keeps no debugging door open: DevTools are off
-// (see createWindow), --inspect is disabled by a fuse, and the remote
-// debugging switches are dropped here, before Chromium reads them. An E2E
-// build (STUDIO_E2E=1, never shipped) keeps them for the smoke test.
-const DEBUGGABLE = !app.isPackaged || STUDIO_E2E;
+// A production build keeps no debugging door open, however it is launched:
+// DevTools are off (see createWindow), --inspect is disabled by a fuse, and
+// the remote debugging switches are dropped here, before Chromium reads them.
+// DEBUGGABLE is a build-time constant (dev and E2E builds only, never
+// shipped), so these doors do not depend on `app.isPackaged`.
 if (!DEBUGGABLE) {
   for (const name of ["remote-debugging-port", "remote-debugging-pipe", "remote-debugging-address"]) app.commandLine.removeSwitch(name);
 }
 
-// The dev server is trusted only in an unpackaged run: a packaged app never
-// loads a URL taken from the environment.
-const devServerUrl = app.isPackaged ? undefined : process.env.ELECTRON_RENDERER_URL;
+// The dev server is trusted only under `electron-vite dev`: every built app
+// loads its own files and never a URL taken from the environment.
+const devServerUrl = STUDIO_DEV ? process.env.ELECTRON_RENDERER_URL : undefined;
 
 // --user-data-dir wins, so the smoke test runs against a temp folder.
 // Otherwise, in dev Electron runs the bare out-studio/main/main.js with no
@@ -120,7 +120,20 @@ function openRouterBaseUrlForTests(): string | undefined {
   return url === "" ? undefined : url;
 }
 
+/**
+ * The folder main's dialog answers with, for the smoke test, which cannot
+ * click a native dialog. Read only by an E2E build: every other build has it
+ * compiled out and always shows the dialog.
+ */
+function pickedFolderForTests(): string | undefined {
+  if (!STUDIO_E2E) return undefined;
+  const path = app.commandLine.getSwitchValue("studio-pick-folder");
+  return path === "" ? undefined : path;
+}
+
 async function pickFolder(owner: BrowserWindow | null, defaultPath: string): Promise<string | null> {
+  const forTests = pickedFolderForTests();
+  if (forTests !== undefined) return forTests;
   const options: OpenDialogOptions = { defaultPath, properties: ["openDirectory", "createDirectory"] };
   const result = owner === null ? await dialog.showOpenDialog(options) : await dialog.showOpenDialog(owner, options);
   return result.canceled ? null : (result.filePaths[0] ?? null);
@@ -131,6 +144,10 @@ async function startStudio(): Promise<void> {
   const { store: settings, notice } = await SettingsStore.open(userData);
   if (notice !== null) console.warn(`studio: ${notice}`);
   const keys = await KeyStore.open(safeStorageAdapter, join(userData, SECRETS_FILE));
+
+  // Main's notices travel in every engine init (see HostNotices), never as events of main's own.
+  const notices = new HostNotices({ newId: randomUUID, clock: Date.now });
+  if (notice !== null) notices.add("settings-reset", notice);
 
   const engine = new EngineHost<MessagePortMain>({
     fork: () =>
@@ -150,23 +167,22 @@ async function startStudio(): Promise<void> {
       settings: settings.current,
       encryptionAvailable: keys.status().encryptionAvailable,
       openRouterBaseUrl: openRouterBaseUrlForTests(),
+      notices: [...notices.all],
     }),
     apiKey: () => keys.read(),
     onEvent: broadcast,
-    // A final exit is not announced: every request then answers "the engine is not running".
+    // The restarted engine gets the notice in its init. A final exit is not
+    // announced: every request then answers "the engine is not running".
     onExit: (error, restarting) => {
-      if (restarting) notices.restarted(error);
+      if (restarting) notices.add("engine-restarted", error.detail);
     },
   });
-  // Main's notices travel as engine events (see HostNotices), never as events of main's own.
-  const notices = new HostNotices((control) => engine.send(control));
-  if (notice !== null) notices.hold({ code: "INTERNAL", detail: notice });
   app.on("will-quit", () => engine.stop());
 
   protocol.handle(MEDIA_SCHEME, (request) => handleMediaRequest(request, { libraryRoot: () => settings.current.libraryPath }));
 
-  ipcMain.handle(CH.request, async (event, raw: unknown) => {
-    const response = await handleRendererRequest(raw, senderFrameOf(event), TRUSTED, {
+  ipcMain.handle(CH.request, (event, raw: unknown) =>
+    handleRendererRequest(raw, senderFrameOf(event), TRUSTED, {
       mainOnly: (command) => handleKeyCommand(command, { keys, engine }),
       settings: (command) =>
         handleSettingsCommand(command, {
@@ -177,10 +193,8 @@ async function startStudio(): Promise<void> {
           newId: randomUUID,
         }),
       engine: (command) => engine.request(command),
-    });
-    notices.seen(response);
-    return response;
-  });
+    }),
+  );
   // Compiled in rather than app.getVersion(): in dev there is no package.json of
   // Studio's own, and the root package.json version belongs to the uniquifier.
   ipcMain.handle(CH.version, (event) => {

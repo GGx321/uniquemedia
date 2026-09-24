@@ -3,6 +3,7 @@ import type {
   AvatarSummary,
   Draft,
   EngineError,
+  EngineNotice,
   EventMessage,
   JobResult,
   JobState,
@@ -38,9 +39,13 @@ export interface EngineView {
   readonly money: MoneyStatus | null;
   readonly avatars: readonly AvatarSummary[];
   readonly drafts: readonly Draft[];
+  /** Avatar records the engine could not read into the lists (from the snapshot and avatars.list). */
+  readonly unreadableAvatars: number;
   readonly jobs: readonly JobView[];
   /** The last `engine.error` event, e.g. a SETTLE_ABOVE_WORST halt. Cleared by a fresh snapshot. */
   readonly engineError: EngineError | null;
+  /** The engine's pending notices (a restart, a settings reset), oldest first: from the snapshot, then `engine.notice`. */
+  readonly notices: readonly EngineNotice[];
 }
 
 const INITIAL: EngineView = {
@@ -52,8 +57,10 @@ const INITIAL: EngineView = {
   money: null,
   avatars: [],
   drafts: [],
+  unreadableAvatars: 0,
   jobs: [],
   engineError: null,
+  notices: [],
 };
 
 export function isActiveJob(job: JobView): boolean {
@@ -140,6 +147,8 @@ export class EngineStore {
   /** The bootIds the last snapshot refuted: stale whatever the cap evicted, so one batch cannot re-trigger itself. */
   private lastRefuted = new Set<string>();
   private readonly now: () => number;
+  /** The library folder the avatar and draft lists came from (the last snapshot's). */
+  private listsLibraryPath: string | null = null;
 
   constructor(
     private readonly client: EngineClient,
@@ -217,18 +226,11 @@ export class EngineStore {
 
   /** A saved avatar replaces its draft. */
   saveAvatar(avatar: AvatarSummary): void {
-    const others = this.view.avatars.filter((a) => a.avatarId !== avatar.avatarId);
-    this.update({
-      avatars: [...others, avatar],
-      drafts: this.view.drafts.filter((d) => d.avatarId !== avatar.avatarId),
-    });
+    this.update(this.savedAvatarPatch(avatar));
   }
 
   upsertDraft(draft: Draft): void {
-    const exists = this.view.drafts.some((d) => d.avatarId === draft.avatarId);
-    this.update({
-      drafts: exists ? this.view.drafts.map((d) => (d.avatarId === draft.avatarId ? draft : d)) : [...this.view.drafts, draft],
-    });
+    this.update(this.draftPatch(draft));
   }
 
   /** Records a job this window just started; merges with any events that beat the reply. */
@@ -242,7 +244,7 @@ export class EngineStore {
 
   async refreshAvatars(): Promise<void> {
     const reply = await this.client.request("avatars.list", {});
-    if (reply.ok) this.setAvatars(reply.result.avatars);
+    if (reply.ok) this.update({ avatars: reply.result.avatars, unreadableAvatars: reply.result.unreadableAvatars });
   }
 
   async refreshMoney(): Promise<void> {
@@ -253,6 +255,22 @@ export class EngineStore {
   async refreshSettings(): Promise<void> {
     const reply = await this.client.request("settings.get", {});
     if (reply.ok) this.setSettings(reply.result);
+  }
+
+  /** The avatar added, or replaced where it is listed; the draft it came from is gone. */
+  private savedAvatarPatch(avatar: AvatarSummary): Pick<EngineView, "avatars" | "drafts"> {
+    const listed = this.view.avatars.some((a) => a.avatarId === avatar.avatarId);
+    return {
+      avatars: listed ? this.view.avatars.map((a) => (a.avatarId === avatar.avatarId ? avatar : a)) : [...this.view.avatars, avatar],
+      drafts: this.view.drafts.filter((d) => d.avatarId !== avatar.avatarId),
+    };
+  }
+
+  private draftPatch(draft: Draft): Pick<EngineView, "drafts"> {
+    const exists = this.view.drafts.some((d) => d.avatarId === draft.avatarId);
+    return {
+      drafts: exists ? this.view.drafts.map((d) => (d.avatarId === draft.avatarId ? draft : d)) : [...this.view.drafts, draft],
+    };
   }
 
   /** A 401 changes the key's status in main, which no event carries: read it again. */
@@ -408,6 +426,7 @@ export class EngineStore {
     // The engine that was replaced may still have events in flight.
     if (this.view.bootId !== null && this.view.bootId !== s.bootId) this.markStale(this.view.bootId);
     this.staleBoots.delete(s.bootId);
+    this.listsLibraryPath = s.settings.libraryPath;
     this.update({
       phase: "ready",
       failure: null,
@@ -417,8 +436,10 @@ export class EngineStore {
       money: s.money,
       avatars: s.avatars,
       drafts: s.drafts,
+      unreadableAvatars: s.unreadableAvatars,
       jobs: s.jobs.map(jobFromState),
       engineError: null,
+      notices: s.notices,
     });
   }
 
@@ -464,7 +485,7 @@ export class EngineStore {
         const money = this.view.money;
         this.update({
           lastSeq,
-          money: money ? { ...money, reconcileNeeded: true, reconcileReasons: reasons, unsettledMicros } : money,
+          money: money?.ledger === "open" ? { ...money, reconcileNeeded: true, reconcileReasons: reasons, unsettledMicros } : money,
         });
         // The event carries the amount but not the count of open reserves: read the whole status.
         void this.refreshMoney();
@@ -474,6 +495,33 @@ export class EngineStore {
         this.update({ engineError: event.payload.error, lastSeq });
         this.afterError(event.payload.error);
         return;
+      case "job.cancelled":
+        this.patchJob(event.payload.jobId, (job) => (isActiveJob(job) ? { ...job, status: "cancelled" } : job), lastSeq);
+        return;
+      case "settings.changed": {
+        const { settings } = event.payload;
+        this.update({ settings, lastSeq });
+        // Another library folder: the avatars and drafts listed belong to the
+        // old one (and studio-media:// already serves the new root). Compared
+        // with the lists' own folder, since this window's command answer may
+        // have updated the settings before the event came.
+        if (this.listsLibraryPath !== null && settings.libraryPath !== this.listsLibraryPath) {
+          void this.resync("snapshot", this.generation, "user");
+        }
+        return;
+      }
+      case "avatar.changed":
+        this.update({ ...this.savedAvatarPatch(event.payload.avatar), lastSeq });
+        return;
+      case "draft.changed":
+        this.update({ ...this.draftPatch(event.payload.draft), lastSeq });
+        return;
+      case "engine.notice": {
+        const { notice } = event.payload;
+        const known = this.view.notices.some((n) => n.noticeId === notice.noticeId);
+        this.update({ notices: known ? this.view.notices : [...this.view.notices, notice], lastSeq });
+        return;
+      }
     }
   }
 

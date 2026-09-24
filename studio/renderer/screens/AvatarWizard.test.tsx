@@ -229,6 +229,32 @@ test("a pending reconcile blocks generation before anything is sent", async () =
   expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
 });
 
+test("a ledger that could not be read blocks generation and says why, with no reconcile to offer", async () => {
+  setup({ money: { unavailable: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" } } });
+  await openWizard();
+  await estimate();
+  expect(generateButton().hasAttribute("disabled")).toBe(true);
+  expect(screen.getAllByText(ERROR_MESSAGES_RU.LEDGER_CORRUPT).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("button", { name: "Перейти к сверке" }) === null).toBe(true);
+});
+
+test("a failed ledger write known from the snapshot blocks generation until a restart", async () => {
+  setup({ money: { halt: { cause: "LEDGER_WRITE_FAILED", detail: "a ledger write failed" } } });
+  await openWizard();
+  await estimate();
+  expect(generateButton().hasAttribute("disabled")).toBe(true);
+  expect(screen.getAllByText(/Перезапустите Studio/).length).toBeGreaterThan(0);
+});
+
+test("a settle above its worst case known only from the snapshot blocks generation until a reconcile", async () => {
+  setup({ money: { halt: { cause: "SETTLE_ABOVE_WORST", detail: "billed above", attemptIds: ["slot-1#1"] } } });
+  await openWizard();
+  await estimate();
+  expect(generateButton().hasAttribute("disabled")).toBe(true);
+  expect(screen.getByText("Платные запросы остановлены до сверки расходов.")).toBeDefined();
+  expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
+});
+
 test("a 401 in the middle of the job stops it and says so", async () => {
   const { engine, scheduler } = setup();
   await openWizard();

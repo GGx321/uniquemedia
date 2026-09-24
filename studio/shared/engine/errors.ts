@@ -20,6 +20,7 @@ import { Count, SafeText } from "./primitives";
  *
  * Fatal money codes (paid calls stop until the cause is dealt with):
  * - LEDGER_CORRUPT: a ledger line other than the last one cannot be read.
+ * - LEDGER_UNREADABLE: the ledger file itself could not be read (permissions, I/O).
  * - SETTLE_ABOVE_WORST: a settle reported more than its reserve's worst case.
  * - LEDGER_WRITE_FAILED: a reserve or settle could not be written and fsynced.
  * - PRICE_UNAVAILABLE: neither live prices nor the fallback table cover the model.
@@ -41,6 +42,7 @@ export const ERROR_CODES = [
   "NOT_FOUND",
   "INTERNAL",
   "LEDGER_CORRUPT",
+  "LEDGER_UNREADABLE",
   "SETTLE_ABOVE_WORST",
   "LEDGER_WRITE_FAILED",
   "PRICE_UNAVAILABLE",

@@ -17,6 +17,7 @@ const INIT: EngineInit = {
     concurrency: { network: 6 },
   },
   encryptionAvailable: true,
+  notices: [],
 };
 
 /** The engine's end of the channel: what main posted, and a way to answer. */

@@ -1,13 +1,18 @@
 // A host (main or the engine) that misbehaves must never make the store spin.
 // Scenarios from the T8a review probes.
 import { expect, test } from "bun:test";
-import { type CommandMessage, PROTOCOL_VERSION, type Snapshot } from "../../shared/engine";
+import { type CommandMessage, type MoneyStatus, type OpenMoneyStatus, PROTOCOL_VERSION, type Snapshot } from "../../shared/engine";
 import { createEngineClient } from "./client";
 import { MockEngine, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 import { EngineStore } from "./store";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function openMoney(money: MoneyStatus): OpenMoneyStatus {
+  if (money.ledger !== "open") throw new Error("expected the mock's ledger to be open");
+  return money;
+}
 
 async function baseSnapshot(): Promise<Snapshot> {
   const reply = await mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() })).request("engine.snapshot", {});
@@ -50,7 +55,7 @@ async function fakeHost(opts: FakeHost = {}) {
       return () => listeners.delete(l);
     },
   };
-  return { bridge, emit, counts, money: base.money };
+  return { bridge, emit, counts, money: openMoney(base.money) };
 }
 
 function notice(seq: number, bootId: string): unknown {
@@ -128,7 +133,7 @@ test("a real engine restart resyncs once, stays ready, and ignores the old engin
   expect(store.getView().lastSeq).toBe(1);
   host.emit({ ...Object(notice(2, "boot-engine-0002")), type: "money.changed", payload: { status: { ...host.money, spentMicros: 4242 } } });
   await sleep(10);
-  expect(store.getView().money?.spentMicros).toBe(4242);
+  expect(store.getView().money).toMatchObject({ spentMicros: 4242 });
   stop();
 });
 
@@ -151,7 +156,7 @@ test("offline is not a dead end: reconnect reloads the snapshot and live events 
 
   host.emit({ ...Object(notice(1, "boot-engine-0001")), type: "money.changed", payload: { status: { ...host.money, spentMicros: 777 } } });
   await sleep(10);
-  expect(store.getView().money?.spentMicros).toBe(777);
+  expect(store.getView().money).toMatchObject({ spentMicros: 777 });
   stop();
 });
 

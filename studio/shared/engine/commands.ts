@@ -8,6 +8,7 @@ import {
   ApiKeyStatus,
   AvatarSummary,
   Draft,
+  EngineNotice,
   Estimate,
   JobState,
   MoneyStatus,
@@ -60,7 +61,13 @@ export const Snapshot = z.strictObject({
   money: MoneyStatus,
   avatars: z.array(AvatarSummary),
   drafts: z.array(Draft),
+  /** Avatar records (saved or draft) in the library that could not be read into the lists: the UI says how many. */
+  unreadableAvatars: Count,
   jobs: z.array(JobState),
+  /** Notices still pending, oldest first: a window opened after one was emitted still shows it. */
+  notices: z
+    .array(EngineNotice)
+    .refine((notices) => new Set(notices.map((n) => n.noticeId)).size === notices.length, "notices must not repeat"),
 });
 
 /**
@@ -104,8 +111,12 @@ const ENGINE_SPECS = [
   defineCommand("money.reconcile", Empty, ReconcileResult),
   // avatars (2a). One avatar job = descriptor + candidate batches + age checks, under one cap.
   // A draft is an avatar with status "draft"; picking a candidate makes it active.
-  defineCommand("avatars.list", Empty, z.strictObject({ avatars: z.array(AvatarSummary) })),
+  defineCommand("avatars.list", Empty, z.strictObject({ avatars: z.array(AvatarSummary), unreadableAvatars: Count })),
+  // A new avatar: the descriptor call, then the first batch of candidates and their age checks.
   defineCommand("avatars.estimate", z.strictObject({ traits: AvatarTraits }), Estimate),
+  // Another batch for an existing draft: candidates and their age checks, no descriptor call.
+  // Keyed like avatars.generateCandidates, whose acceptedWorstMicros it produces.
+  defineCommand("avatars.estimateCandidates", z.strictObject({ avatarId: Id }), Estimate),
   defineCommand(
     "avatars.createDraft",
     z.strictObject({ traits: AvatarTraits, ...AcceptedWorst }),

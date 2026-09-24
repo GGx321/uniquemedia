@@ -24,12 +24,15 @@ import {
   JOURNAL_FILE,
   LIBRARY_FILE,
   MANIFEST_FILE,
+  MANIFEST_SCHEMA_VERSION,
   PHOTOS_DIR,
   PLAN_FILE,
   RUNS_DIR,
   THUMBS_DIR,
   USED_FILE,
   isFromNewerVersion,
+  LIBRARY_FILE_SCHEMA_VERSION,
+  SIDECAR_SCHEMA_VERSION,
   isLibraryFileTemp,
 } from "./layout";
 import { extensionFor, sniffImageMediaType, type ImageMediaType } from "./media";
@@ -179,7 +182,7 @@ export class Library {
     const id = this.#takeId();
     const manifest = this.#validManifest({
       ...input,
-      schemaVersion: 1,
+      schemaVersion: MANIFEST_SCHEMA_VERSION,
       id,
       masterPhotoId: null,
       status: "draft",
@@ -244,7 +247,7 @@ export class Library {
     }
     const id = this.#takeId();
     const candidate = {
-      schemaVersion: 1,
+      schemaVersion: SIDECAR_SCHEMA_VERSION,
       id,
       avatarId,
       file: `${id}.${extensionFor(meta.mediaType)}`,
@@ -537,7 +540,7 @@ async function ensureLibraryFile(root: string, now: () => Date): Promise<void> {
   } catch {
     throw new LibraryError("invalid-library-file", `${path} is not valid JSON`);
   }
-  if (isFromNewerVersion(parsed)) {
+  if (isFromNewerVersion(parsed, LIBRARY_FILE_SCHEMA_VERSION)) {
     throw new LibraryError("library-too-new", `${path} was written by a newer version of Studio; update the app`);
   }
   const result = LibraryFileSchema.safeParse(parsed);

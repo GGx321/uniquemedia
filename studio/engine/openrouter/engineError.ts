@@ -1,5 +1,6 @@
 import type { EngineError, ErrorCode } from "../../shared/engine/errors";
 import type { HaltCause, ReserveRefusal } from "../money/budget";
+import type { OpenRouterError, OpenRouterErrorCode } from "./errors";
 import { truncate } from "./transport";
 import type { ChatResult, Failed, FailureKind, ImageResult } from "./types";
 
@@ -87,4 +88,30 @@ export function toEngineError(result: ImageResult | ChatResult): MappedError | n
     default:
       return unreachable(result);
   }
+}
+
+/**
+ * What an error thrown by the client means in the T0 error model: thrown by
+ * `fetchCredits` (a failure kind) or when the client is created (the key or
+ * the base URL). The message is already redacted. A 401 means the key is
+ * rejected: the caller marks it so and never retries.
+ */
+const BY_THROWN_CODE = {
+  AUTH_INVALID: () => "AUTH_INVALID",
+  NO_API_KEY: () => "AUTH_INVALID",
+  INVALID_API_KEY: () => "AUTH_INVALID",
+  INSUFFICIENT_CREDITS: () => "INSUFFICIENT_CREDITS",
+  RATE_LIMITED: () => "RATE_LIMITED",
+  TIMEOUT: () => "TIMEOUT",
+  NETWORK: () => "NETWORK",
+  // As for a result: a 5xx that outlasted the retries is an outage, any other status our bug.
+  HTTP_ERROR: (e) => (e.httpStatus !== null && e.httpStatus >= 500 ? "NETWORK" : "INTERNAL"),
+  NOT_SENT: () => "INTERNAL",
+  EMPTY_CONTENT: () => "INTERNAL",
+  UNUSABLE_PAID_RESPONSE: () => "INTERNAL",
+  BASE_URL_NOT_ALLOWED: () => "INTERNAL",
+} satisfies Record<OpenRouterErrorCode, (error: OpenRouterError) => ErrorCode>;
+
+export function fromOpenRouterError(error: OpenRouterError): EngineError {
+  return { code: BY_THROWN_CODE[error.code](error), detail: truncate(error.message) };
 }

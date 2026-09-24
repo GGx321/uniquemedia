@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { EngineError } from "./errors";
-import { AbsolutePath, Count, Id, Micros, ModelId } from "./primitives";
+import { AbsolutePath, Count, Id, Micros, ModelId, SafeText } from "./primitives";
 
 const IsoDateTime = z.iso.datetime();
 const IsoDate = z.iso.date();
@@ -63,21 +63,75 @@ export const ReconcileReasons = z
   .max(ReconcileReason.options.length)
   .refine(unique, "reasons must not repeat");
 
-export const MoneyStatus = z
-  .strictObject({
-    month: YearMonth,
-    spentMicros: Micros,
-    monthlyBudgetMicros: Micros,
-    /** Worst case of every reserve without a settle or release. */
-    unsettledMicros: Micros,
-    unsettledCount: Count,
-    reconcileNeeded: z.boolean(),
-    reconcileReasons: ReconcileReasons,
-  })
-  .refine((s) => s.reconcileNeeded === s.reconcileReasons.length > 0, {
-    message: "reconcileReasons must be non-empty exactly when reconcileNeeded is true",
-    path: ["reconcileReasons"],
-  });
+/**
+ * An attempt id as the ledger records it (e.g. `slot-3#2`). The engine makes
+ * them, so they are never user text; visible ASCII keeps them safe to show.
+ */
+export const AttemptId = z.string().regex(/^[\x21-\x7e]{1,128}$/, "must be 1-128 visible ASCII chars");
+
+/**
+ * Why paid calls are stopped on a ledger that was read, beyond the reconcile
+ * reasons (a halt and reconcile reasons can both be present):
+ * - SETTLE_ABOVE_WORST: `attemptIds` were billed above their reserved worst
+ *   case, so the price table is wrong. A reconcile acknowledges them and lifts
+ *   the halt; it also survives a restart until then.
+ * - LEDGER_WRITE_FAILED: a ledger write failed, so the file state is unknown;
+ *   nothing more is written until the app restarts.
+ * `detail` is diagnostics, never user text.
+ */
+export const MoneyHalt = z.discriminatedUnion("cause", [
+  z.strictObject({ cause: z.literal("SETTLE_ABOVE_WORST"), detail: SafeText, attemptIds: z.array(AttemptId).min(1) }),
+  z.strictObject({ cause: z.literal("LEDGER_WRITE_FAILED"), detail: SafeText }),
+]);
+
+/**
+ * Why the ledger could not be opened when the engine started: its content is
+ * broken (LEDGER_CORRUPT: a line before the last one cannot be read) or the
+ * file itself could not be read (LEDGER_UNREADABLE). Paid calls are stopped
+ * and the amounts are unknown until the app restarts with a readable ledger;
+ * a reconcile cannot help, since it needs the ledger.
+ */
+export const LedgerUnavailable = z.strictObject({
+  cause: z.enum(["LEDGER_CORRUPT", "LEDGER_UNREADABLE"]),
+  detail: SafeText,
+});
+
+const moneyCommon = {
+  month: YearMonth,
+  monthlyBudgetMicros: Micros,
+};
+
+/**
+ * The money state for the UI. `ledger: "open"` carries this month's amounts;
+ * `ledger: "unavailable"` says only why there are none. On both, `halt` is
+ * the one place that says why paid calls are stopped beyond a reconcile:
+ * null when nothing but the reconcile reasons (if any) stops them.
+ */
+export const MoneyStatus = z.discriminatedUnion("ledger", [
+  z
+    .strictObject({
+      ledger: z.literal("open"),
+      ...moneyCommon,
+      spentMicros: Micros,
+      /** Worst case of every reserve without a settle or release. */
+      unsettledMicros: Micros,
+      unsettledCount: Count,
+      reconcileNeeded: z.boolean(),
+      reconcileReasons: ReconcileReasons,
+      halt: MoneyHalt.nullable(),
+    })
+    .refine((s) => s.reconcileNeeded === s.reconcileReasons.length > 0, {
+      message: "reconcileReasons must be non-empty exactly when reconcileNeeded is true",
+      path: ["reconcileReasons"],
+    }),
+  z.strictObject({
+    ledger: z.literal("unavailable"),
+    ...moneyCommon,
+    reconcileNeeded: z.literal(false),
+    reconcileReasons: z.tuple([]),
+    halt: LedgerUnavailable,
+  }),
+]);
 
 /** Where prices came from: the live OpenRouter endpoints or the dated fallback table. */
 export const PriceSource = z.enum(["live", "fallback"]);
@@ -95,20 +149,79 @@ export const Estimate = z
     path: ["expectedMicros"],
   });
 
-/** Result of `money.reconcile`: both totals for the window, or how long to wait for `/credits` to catch up. */
+/**
+ * CLOCK_SKEW as T2 reports it: the ledger holds a time later than the wall
+ * clock, so the reconcile wait was measured on the monotonic clock.
+ */
+export const ReconcileWarning = z.enum(["clock-skew"]);
+export const ReconcileWarnings = z
+  .array(ReconcileWarning)
+  .max(ReconcileWarning.options.length)
+  .refine(unique, "warnings must not repeat");
+
+/**
+ * Result of `money.reconcile`: both totals for the window since the previous
+ * reconcile, or how long to wait for `/credits` to catch up. Paid requests
+ * still in flight are refused with the IN_FLIGHT error instead.
+ *
+ * - `creditsDeltaMicros`: `/credits` usage since the previous reconcile; null
+ *   when `deltaUnavailable` says why (`no-baseline`: the first reconcile;
+ *   `negative-delta`: the account-wide usage went down).
+ * - `ledgerDeltaMicros`: the ledger total for the same window, open reserves
+ *   at their worst case.
+ * - `mismatch`: the two differ by more than $0.01; null without a delta.
+ * - `closedReserves`: open reserves settled at their worst case.
+ * - `aboveWorstAttempts`: attempts billed above their worst case in this
+ *   window, now acknowledged; the halt they caused is lifted.
+ */
 export const ReconcileResult = z.discriminatedUnion("status", [
-  z.strictObject({
-    status: z.literal("done"),
-    creditsDeltaMicros: Micros,
-    ledgerDeltaMicros: Micros,
-    closedReserves: Count,
-    tornLineMoved: z.boolean(),
-  }),
+  z
+    .strictObject({
+      status: z.literal("done"),
+      creditsDeltaMicros: Micros.nullable(),
+      deltaUnavailable: z.enum(["no-baseline", "negative-delta"]).nullable(),
+      ledgerDeltaMicros: Micros,
+      mismatch: z.boolean().nullable(),
+      closedReserves: Count,
+      aboveWorstAttempts: z.array(AttemptId),
+      tornLineMoved: z.boolean(),
+      warnings: ReconcileWarnings,
+    })
+    .refine((r) => (r.creditsDeltaMicros === null) === (r.deltaUnavailable !== null), {
+      message: "deltaUnavailable must say why exactly when creditsDeltaMicros is null",
+      path: ["deltaUnavailable"],
+    })
+    .refine((r) => (r.creditsDeltaMicros === null) === (r.mismatch === null), {
+      message: "mismatch must be null exactly when there is no delta to compare",
+      path: ["mismatch"],
+    }),
   z.strictObject({
     status: z.literal("too-early"),
     retryAfterMs: z.number().int().positive(),
+    warnings: ReconcileWarnings,
   }),
 ]);
+
+// ---------- notices ----------
+
+/**
+ * Something the windows must be told that is not an error of any command:
+ * - `engine-restarted`: the engine crashed and was restarted (work in flight was lost);
+ * - `settings-reset`: settings.json could not be read and the defaults are in use.
+ * Pending notices are part of the snapshot, so a window opened later still
+ * shows them. A notice that happens again replaces the earlier one of its
+ * kind: `count` says how often it happened this session, and the id, the
+ * time and `detail` (diagnostics, never user text) are the latest one's.
+ */
+export const NoticeCode = z.enum(["engine-restarted", "settings-reset"]);
+
+export const EngineNotice = z.strictObject({
+  noticeId: Id,
+  code: NoticeCode,
+  detail: SafeText.optional(),
+  at: IsoDateTime,
+  count: z.number().int().positive(),
+});
 
 // ---------- avatars ----------
 
@@ -126,8 +239,13 @@ export const Draft = z
     traits: AvatarTraits,
     descriptor: AvatarDescriptor,
     candidates: z.array(Candidate),
-    /** The avatar job's estimate: descriptor + candidates + age checks (its cap). */
-    estimate: Estimate,
+    /**
+     * What the draft's next batch costs (`avatars.estimateCandidates`: the
+     * candidates and their age checks, no descriptor call), at the prices the
+     * engine had when it built the draft; null when it could not price it.
+     * Prices move, so the UI asks again before a paid command.
+     */
+    estimate: Estimate.nullable(),
   })
   .refine((d) => d.descriptor.age === d.traits.age, {
     message: "descriptor age must match the traits",
@@ -257,7 +375,13 @@ export const PhotoSummary = z.strictObject({
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
 export type Settings = z.infer<typeof Settings>;
 export type ReconcileReason = z.infer<typeof ReconcileReason>;
+export type MoneyHalt = z.infer<typeof MoneyHalt>;
+export type LedgerUnavailable = z.infer<typeof LedgerUnavailable>;
 export type MoneyStatus = z.infer<typeof MoneyStatus>;
+export type OpenMoneyStatus = Extract<MoneyStatus, { ledger: "open" }>;
+export type ReconcileWarning = z.infer<typeof ReconcileWarning>;
+export type NoticeCode = z.infer<typeof NoticeCode>;
+export type EngineNotice = z.infer<typeof EngineNotice>;
 export type Estimate = z.infer<typeof Estimate>;
 export type ReconcileResult = z.infer<typeof ReconcileResult>;
 export type Candidate = z.infer<typeof Candidate>;

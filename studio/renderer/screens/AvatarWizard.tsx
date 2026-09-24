@@ -3,6 +3,7 @@ import { AvatarName, type Candidate, type EngineError, type Estimate } from "../
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type JobView } from "../engine/store";
 import { formatUsd } from "../lib/money";
+import { paidStop, restartStopText } from "../lib/paidStop";
 import { DEFAULT_TRAITS, randomTraits, type Traits, traitsProblem } from "../lib/traits";
 import { vibeIssues } from "../lib/vibe";
 import { useNavigate } from "../navigation";
@@ -108,7 +109,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   const traitsValid = problem === null;
   const key = view.settings?.apiKey;
   const keyUsable = key !== undefined && key.stored && !key.rejected;
-  const paidBlocked = view.money?.reconcileNeeded === true || view.engineError?.code === "SETTLE_ABOVE_WORST";
+  const stop = paidStop(view);
   const offline = view.phase === "offline";
 
   const job = (jobId ? view.jobs.find((j) => j.jobId === jobId) : null) ?? latestCandidatesJob(view.jobs, avatarId);
@@ -221,7 +222,8 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
           : `Сгенерировать 4 варианта · до ${worst}`;
     if (offline) blockedReason = "Нет связи с движком — дождитесь, пока он снова ответит.";
     else if (!keyUsable) blockedReason = "Нужен рабочий ключ OpenRouter — добавьте его в Настройках.";
-    else if (paidBlocked) blockedReason = "Платные запросы остановлены до сверки расходов.";
+    else if (stop?.kind === "reconcile") blockedReason = "Платные запросы остановлены до сверки расходов.";
+    else if (stop?.kind === "restart") blockedReason = restartStopText(stop.code);
     else if (problem !== null) blockedReason = problem;
     action = {
       label,

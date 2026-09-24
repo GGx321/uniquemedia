@@ -46,8 +46,9 @@ describe("shared engine contract", () => {
     "typechecks with no Node or Bun types (studio/shared/tsconfig.json)",
     () => {
       const r = spawnSync(process.execPath, [TSC, "-p", SHARED_TSCONFIG], { encoding: "utf8" });
-      expect(`${r.stdout}${r.stderr}`).toBe("");
-      expect(r.status).toBe(0);
+      // One assertion that names the cause: a type error (output), a crash (signal), or tsc never ran (error).
+      const output = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+      expect({ status: r.status, signal: r.signal, error: r.error?.message, output }).toEqual({ status: 0, signal: null, error: undefined, output: "" });
     },
     60_000,
   );

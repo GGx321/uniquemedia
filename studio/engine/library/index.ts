@@ -24,6 +24,7 @@ export {
   PhotoQaSchema,
   PhotoSidecarSchema,
   PhotoSourceSchema,
+  TraitValueSchema,
   UsedEntrySchema,
   type AvatarManifest,
   type AvatarStatus,
@@ -32,5 +33,6 @@ export {
   type PhotoQa,
   type PhotoSidecar,
   type PhotoSource,
+  type TraitValue,
   type UsedEntry,
 } from "./schemas";

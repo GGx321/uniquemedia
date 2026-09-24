@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Budget, type BudgetLimits, type ReserveHandle, type ReserveRequest, type ReserveResult } from "./budget";
+import { AttemptId } from "../../shared/engine";
+import { Budget, isAttemptId, type BudgetLimits, type ReserveHandle, type ReserveRequest, type ReserveResult } from "./budget";
 import { MoneyError } from "./errors";
 import { Ledger, type LedgerDeps, type LedgerLine, type ReserveLine, type Scope } from "./ledger";
 
@@ -176,6 +177,25 @@ test("worstMicros must be a non-negative integer", async () => {
   expect(await fileLines()).toEqual([]);
 });
 
+const BAD_ATTEMPT_IDS = ["", "slot 1#1", "slot-1#1\n", "x".repeat(129), "слот-1#1"];
+
+test.each(BAD_ATTEMPT_IDS)("an attempt id the contract refuses (%p) is refused before anything is written", async (attemptId) => {
+  const { budget } = await setup();
+
+  expect(await caught(budget.tryReserve(req(attemptId, 1)))).toBeInstanceOf(TypeError);
+  expect(await fileLines()).toEqual([]);
+});
+
+test("the Budget accepts exactly the attempt ids the contract accepts: every char 0x00-0xFF, and lengths 0, 1, 128, 129", () => {
+  const chars = Array.from({ length: 0x100 }, (_, code) => String.fromCharCode(code));
+  const lengths = [0, 1, 128, 129].map((n) => "a".repeat(n));
+  const samples = [...chars, ...lengths];
+  const disagree = samples.filter((id) => isAttemptId(id) !== AttemptId.safeParse(id).success);
+  expect(disagree.map((id) => (id.length === 1 ? `0x${id.charCodeAt(0).toString(16)}` : `length ${id.length}`))).toEqual([]);
+  // Both sides really draw a line: some ids pass, some do not.
+  expect(samples.filter((id) => isAttemptId(id)).length).toBe(0x7e - 0x21 + 1 + 2);
+});
+
 test("an attempt id already in the ledger is never reserved again", async () => {
   const { budget } = await setup({ lines: settledLines("a#1", 10_000, NOW) });
 
@@ -313,6 +333,129 @@ test("a reserve racing a settle above worst is refused as HALTED", async () => {
 
   expect(settled.status).toBe("rejected");
   expect(reserved).toMatchObject({ status: "fulfilled", value: { ok: false, reason: "HALTED", cause: "SETTLE_ABOVE_WORST" } });
+});
+
+// ---------- monthly budget changes ----------
+
+/**
+ * A ledger whose first append blocks in fsync until `release`: the reserve
+ * is then being written, inside the Budget's mutex, while the test acts.
+ */
+function holdFirstAppend(): { deps: LedgerDeps; writing: Promise<void>; release: () => void } {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let signalWriting = () => {};
+  const writing = new Promise<void>((resolve) => (signalWriting = resolve));
+  let held = false;
+  const deps: LedgerDeps = {
+    openFile: async (p, flags) => {
+      const handle = await open(p, flags);
+      if (flags === "a" && !held) {
+        held = true;
+        const sync = handle.sync.bind(handle);
+        spyOn(handle, "sync").mockImplementation(async () => {
+          signalWriting();
+          await gate;
+          return sync();
+        });
+      }
+      return handle;
+    },
+  };
+  return { deps, writing, release };
+}
+
+test("a new monthly budget applies from the next reserve on", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100_000 });
+  await budget.tryReserve(req("a#1", 60_000));
+
+  await budget.setMonthlyBudget(80_000);
+
+  expect(await budget.tryReserve(req("b#1", 20_001))).toEqual({
+    ok: false,
+    reason: "BUDGET_EXCEEDED",
+    limitMicros: 80_000,
+    committedMicros: 60_000,
+    worstMicros: 20_001,
+  });
+  expect((await budget.tryReserve(req("c#1", 20_000))).ok).toBe(true);
+});
+
+test("a raised monthly budget lets through a reserve the old one refused", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100_000 });
+  expect((await budget.tryReserve(req("a#1", 150_000))).ok).toBe(false);
+
+  await budget.setMonthlyBudget(150_000);
+
+  expect((await budget.tryReserve(req("a#1", 150_000))).ok).toBe(true);
+});
+
+test("a budget change waits for a reserve whose write is in progress", async () => {
+  const hold = holdFirstAppend();
+  const { budget } = await setup({ monthlyBudgetMicros: 100_000, deps: hold.deps });
+  const reserving = budget.tryReserve(req("a#1", 60_000));
+  await hold.writing;
+
+  let changed = false;
+  const changing = budget.setMonthlyBudget(50_000).then(() => (changed = true));
+  await Bun.sleep(20);
+  expect(changed).toBe(false);
+
+  hold.release();
+  await Promise.all([reserving, changing]);
+  expect(changed).toBe(true);
+});
+
+test("a reserve checked under the old budget keeps its reservation when the budget drops during its write", async () => {
+  const hold = holdFirstAppend();
+  const { budget } = await setup({ monthlyBudgetMicros: 100_000, deps: hold.deps });
+  const reserving = budget.tryReserve(req("a#1", 60_000));
+  await hold.writing;
+  const changing = budget.setMonthlyBudget(50_000);
+  hold.release();
+
+  expect((await reserving).ok).toBe(true);
+  await changing;
+  expect(await budget.tryReserve(req("b#1", 1))).toMatchObject({ ok: false, reason: "BUDGET_EXCEEDED", limitMicros: 50_000, committedMicros: 60_000 });
+});
+
+test("reserves in flight during a budget change stay this process's own: no reconcile is asked for and they settle", async () => {
+  const hold = holdFirstAppend();
+  const { budget } = await setup({ monthlyBudgetMicros: 100_000, deps: hold.deps });
+  const reserving = budget.tryReserve(req("a#1", 60_000));
+  await hold.writing;
+  const changing = budget.setMonthlyBudget(200_000);
+  hold.release();
+  const handle = handleOf(await reserving);
+  await changing;
+
+  expect(budget.status()).toMatchObject({ state: "ok", monthlyBudgetMicros: 200_000, openAttempts: 1 });
+  expect(budget.inFlightCount()).toBe(1);
+  await budget.settle(handle, { costMicros: 50_000, estimated: false });
+  expect(budget.status()).toMatchObject({ state: "ok", spentThisMonthMicros: 50_000, openAttempts: 0 });
+});
+
+test("status reports the new monthly budget once the change resolved", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100_000 });
+
+  await budget.setMonthlyBudget(0);
+
+  expect(budget.status().monthlyBudgetMicros).toBe(0);
+});
+
+test("a budget change writes nothing to the ledger", async () => {
+  const { budget } = await setup({ lines: settledLines("s#1", 30_000, NOW) });
+
+  await budget.setMonthlyBudget(5_000_000);
+
+  expect(await fileLines()).toEqual(settledLines("s#1", 30_000, NOW));
+});
+
+test.each([-1, 1.5, Number.NaN, 2 ** 53])("a monthly budget of %p is rejected and the old one stays", async (micros) => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100_000 });
+
+  expect(await caught(budget.setMonthlyBudget(micros))).toBeInstanceOf(TypeError);
+  expect(budget.status().monthlyBudgetMicros).toBe(100_000);
 });
 
 // ---------- restart: reconcile required ----------

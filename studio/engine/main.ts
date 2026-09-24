@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { EngineInit } from "./control";
-import { Engine } from "./engine";
+import { deliver, Engine, exitIfStartFails } from "./engine";
 
 const parentPort = process.parentPort;
 if (!parentPort) throw new Error("the studio engine must run as an Electron utilityProcess");
@@ -26,12 +26,17 @@ parentPort.once("message", (event) => {
     monotonic: () => performance.now(),
     newId: randomUUID,
     post: (message) => port.postMessage(message),
+    // The runtime's own fetch (Electron's Node); only the OpenRouter client uses it.
+    fetch: (url, init) => fetch(url, init),
   });
+
+  // A failed start ends the process, so main restarts it and tells the windows.
+  exitIfStartFails(ready, (code) => process.exit(code));
 
   // Registered in arrival order, so control messages and commands are applied
   // in the order main sent them once the engine is ready.
   port.on("message", ({ data }) => {
-    void ready.then((engine) => engine.receive(data));
+    void deliver(ready, data);
   });
   port.start();
 });

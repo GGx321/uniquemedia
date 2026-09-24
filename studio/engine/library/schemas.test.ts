@@ -119,7 +119,24 @@ describe("AvatarManifestSchema", () => {
   });
 
   test("rejects an unknown schema version", () => {
-    expect(AvatarManifestSchema.safeParse(validManifest({ schemaVersion: 2 })).success).toBe(false);
+    expect(AvatarManifestSchema.safeParse(validManifest({ schemaVersion: 3 })).success).toBe(false);
+  });
+
+  test("a v2 manifest keeps trait values in their JSON types: a list, a number, text", () => {
+    const traits = { marks: ["freckles", "mole"], heightCm: 170, vibe: "coffee, travel" };
+    expect(AvatarManifestSchema.parse(validManifest({ schemaVersion: 2, traits })).traits).toEqual(traits);
+  });
+
+  test("a v1 manifest with text-only traits is still read", () => {
+    expect(AvatarManifestSchema.safeParse(validManifest({ schemaVersion: 1 })).success).toBe(true);
+  });
+
+  test("rejects a v1 manifest whose traits hold a list: v1 traits were text only", () => {
+    expect(AvatarManifestSchema.safeParse(validManifest({ schemaVersion: 1, traits: { marks: ["mole"] } })).success).toBe(false);
+  });
+
+  test.each([[{ nested: { a: "b" } }], [{ none: null }], [{ mixed: ["mole", 3] }]])("rejects the trait values %p", (traits) => {
+    expect(AvatarManifestSchema.safeParse(validManifest({ schemaVersion: 2, traits })).success).toBe(false);
   });
 });
 

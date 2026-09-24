@@ -11,6 +11,8 @@ import {
   EventLog,
   type EventMessage,
   type JobState,
+  type LedgerUnavailable,
+  type MoneyHalt,
   type MoneyStatus,
   OkResponse,
   PROTOCOL_VERSION,
@@ -35,6 +37,8 @@ const CANDIDATES_PER_JOB = 4;
 
 /** The mock price list, in micro-dollars: descriptor + 4 portraits + 4 age checks. */
 const DESCRIPTOR = { expected: 2_000, worst: 3_000 };
+/** The attempt a mock settle-above-worst halt names. */
+const MOCK_ABOVE_WORST_ATTEMPT = "mock-attempt#1";
 export const MOCK_ESTIMATE: Readonly<Estimate> = {
   expectedMicros: 207_600, // 2_000 + 4 × 50_000 + 4 × 1_400 → "$0.21"
   worstMicros: 223_000, // 3_000 + 4 × 53_000 + 4 × 2_000 → "$0.23"
@@ -56,7 +60,12 @@ export interface MockEngineOptions {
   eventCapacity?: number;
   avatars?: AvatarSummary[];
   drafts?: Draft[];
-  money?: { spentMicros?: number; monthlyBudgetMicros?: number };
+  /**
+   * `halt`: paid calls halted as the engine reports it (e.g. a failed ledger
+   * write, or a settle above worst known after a restart); `unavailable`: the
+   * ledger could not be read, so there are no amounts at all.
+   */
+  money?: { spentMicros?: number; monthlyBudgetMicros?: number; halt?: MoneyHalt; unavailable?: LedgerUnavailable };
   /** Stored network concurrency (the contract allows 1–16). */
   concurrency?: number;
 }
@@ -175,7 +184,8 @@ export class MockEngine implements EngineBridge {
   private spentSinceReconcile = 0;
   private readonly reserves = new Map<string, number>();
   private reconcileReasons: ReconcileReason[] = [];
-  private haltedAboveWorst = false;
+  private halt: MoneyHalt | null;
+  private readonly unavailable: LedgerUnavailable | null;
   private price: Estimate = { ...MOCK_ESTIMATE };
   private encryptionAvailable: boolean;
   private readonly forced = new Map<CommandType, EngineError[]>();
@@ -201,6 +211,8 @@ export class MockEngine implements EngineBridge {
     this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.drafts = options.drafts ?? [];
     this.spentMicros = options.money?.spentMicros ?? (options.preset === "demo" ? 1_420_000 : 0);
+    this.halt = options.money?.halt ?? null;
+    this.unavailable = options.money?.unavailable ?? null;
   }
 
   // ---------- EngineBridge ----------
@@ -251,8 +263,9 @@ export class MockEngine implements EngineBridge {
 
   /** A settle came in above its reserve: paid calls halt until a reconcile. */
   haltAboveWorst(): void {
-    this.haltedAboveWorst = true;
+    this.halt = { cause: "SETTLE_ABOVE_WORST", detail: "a mock settle above its worst case", attemptIds: [MOCK_ABOVE_WORST_ATTEMPT] };
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "engine.error", payload: { error: { code: "SETTLE_ABOVE_WORST" } } });
+    this.emitMoney();
   }
 
   /** The next `money.reconcile` answers with `result` (a queue; the default is a matching `done`). */
@@ -337,18 +350,22 @@ export class MockEngine implements EngineBridge {
       case "money.reconcile":
         return this.reconcile(c);
       case "avatars.list":
-        return this.ok(c, { avatars: this.avatars });
+        return this.ok(c, { avatars: this.avatars, unreadableAvatars: 0 });
       case "avatars.estimate":
         return this.ok(c, this.price);
+      case "avatars.estimateCandidates":
+        if (!this.drafts.some((d) => d.avatarId === c.payload.avatarId)) return this.fail(c, { code: "NOT_FOUND" });
+        return this.ok(c, this.candidatesPrice());
       case "avatars.createDraft": {
-        const refusal = this.paidGate(c.payload.acceptedWorstMicros);
+        const refusal = this.paidGate(c.payload.acceptedWorstMicros, this.price.worstMicros);
         if (refusal) return this.fail(c, refusal);
         const draft: Draft = {
           avatarId: this.nextId("avatar"),
           traits: c.payload.traits,
           descriptor: mockDescriptor(c.payload.traits),
           candidates: [],
-          estimate: this.price,
+          // A draft's estimate is its next batch: the descriptor is already paid for.
+          estimate: this.candidatesPrice(),
         };
         this.drafts = [...this.drafts, draft];
         this.spend(DESCRIPTOR.expected);
@@ -357,7 +374,8 @@ export class MockEngine implements EngineBridge {
       case "avatars.generateCandidates": {
         const draft = this.drafts.find((d) => d.avatarId === c.payload.avatarId);
         if (!draft) return this.fail(c, { code: "NOT_FOUND" });
-        const refusal = this.paidGate(c.payload.acceptedWorstMicros);
+        // Another batch is priced without the descriptor, like avatars.estimateCandidates.
+        const refusal = this.paidGate(c.payload.acceptedWorstMicros, this.candidatesPrice().worstMicros);
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { jobId: this.startJob(draft.avatarId) });
       }
@@ -419,27 +437,42 @@ export class MockEngine implements EngineBridge {
     return { v: PROTOCOL_VERSION, id: c.id, kind: "response", type: c.type, ok: false, error };
   }
 
-  /** The engine's checks before any paid call, in the order it runs them. */
-  private paidGate(acceptedWorstMicros: number): EngineError | null {
+  /** A stop no reconcile lifts: the ledger could not be read, or a write failed. */
+  private ledgerStop(): EngineError | null {
+    if (this.unavailable !== null) return { code: this.unavailable.cause, detail: this.unavailable.detail };
+    if (this.halt?.cause === "LEDGER_WRITE_FAILED") return { code: "LEDGER_WRITE_FAILED", detail: this.halt.detail };
+    return null;
+  }
+
+  /** The engine's checks before any paid call, in the order it runs them; `worstMicros` is this command's own worst case. */
+  private paidGate(acceptedWorstMicros: number, worstMicros: number): EngineError | null {
     const key = this.settings.apiKey;
     if (!key.stored) return { code: "AUTH_INVALID", detail: "no API key is stored" };
     if (key.rejected) return { code: "AUTH_INVALID" };
-    if (this.reconcileReasons.length > 0 || this.haltedAboveWorst) return { code: "RECONCILE_REQUIRED" };
-    if (acceptedWorstMicros < this.price.worstMicros) return { code: "PRICE_CHANGED" };
-    const committed = this.spentMicros + this.unsettledMicros() + this.price.worstMicros;
+    const stopped = this.ledgerStop();
+    if (stopped) return stopped;
+    if (this.reconcileReasons.length > 0 || this.halt !== null) return { code: "RECONCILE_REQUIRED" };
+    if (acceptedWorstMicros < worstMicros) return { code: "PRICE_CHANGED" };
+    const committed = this.spentMicros + this.unsettledMicros() + worstMicros;
     if (committed > this.settings.monthlyBudgetMicros) return { code: "BUDGET_EXCEEDED" };
     return null;
   }
 
   private reconcile(c: CommandMessage): ResponseMessage {
+    const stopped = this.ledgerStop();
+    if (stopped) return this.fail(c, stopped);
     if (this.running().length > 0) return this.fail(c, { code: "IN_FLIGHT" });
     const ledgerDelta = this.spentSinceReconcile + this.unsettledMicros();
     const result: ReconcileResult = this.reconcileQueue.shift() ?? {
       status: "done",
       creditsDeltaMicros: ledgerDelta,
+      deltaUnavailable: null,
       ledgerDeltaMicros: ledgerDelta,
+      mismatch: false,
       closedReserves: this.reserves.size,
+      aboveWorstAttempts: this.halt?.cause === "SETTLE_ABOVE_WORST" ? this.halt.attemptIds : [],
       tornLineMoved: this.reconcileReasons.includes("torn-ledger-line"),
+      warnings: [],
     };
     if (result.status === "done") {
       // Open reserves close at their worst case.
@@ -447,7 +480,7 @@ export class MockEngine implements EngineBridge {
       this.reserves.clear();
       this.spentSinceReconcile = 0;
       this.reconcileReasons = [];
-      this.haltedAboveWorst = false;
+      this.halt = null;
       this.emitMoney();
     }
     return this.ok(c, result);
@@ -529,7 +562,9 @@ export class MockEngine implements EngineBridge {
       money: this.moneyStatus(),
       avatars: this.avatars,
       drafts: this.drafts,
+      unreadableAvatars: 0,
       jobs: this.jobs.map((j) => this.jobState(j)),
+      notices: [],
     };
   }
 
@@ -545,15 +580,35 @@ export class MockEngine implements EngineBridge {
     return base;
   }
 
+  /** Another batch for an existing draft: the price without the descriptor call. */
+  private candidatesPrice(): Estimate {
+    const worstMicros = Math.max(0, this.price.worstMicros - DESCRIPTOR.worst);
+    const expectedMicros = Math.min(worstMicros, Math.max(0, this.price.expectedMicros - DESCRIPTOR.expected));
+    return { ...this.price, expectedMicros, worstMicros };
+  }
+
   private moneyStatus(): MoneyStatus {
+    const month = new Date(this.clock).toISOString().slice(0, 7);
+    if (this.unavailable !== null) {
+      return {
+        ledger: "unavailable",
+        month,
+        monthlyBudgetMicros: this.settings.monthlyBudgetMicros,
+        reconcileNeeded: false,
+        reconcileReasons: [],
+        halt: this.unavailable,
+      };
+    }
     return {
-      month: new Date(this.clock).toISOString().slice(0, 7),
+      ledger: "open",
+      month,
       spentMicros: this.spentMicros,
       monthlyBudgetMicros: this.settings.monthlyBudgetMicros,
       unsettledMicros: this.unsettledMicros(),
       unsettledCount: this.reserves.size,
       reconcileNeeded: this.reconcileReasons.length > 0,
       reconcileReasons: this.reconcileReasons,
+      halt: this.halt,
     };
   }
 
