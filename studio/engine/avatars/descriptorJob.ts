@@ -11,7 +11,7 @@ import {
   DESCRIPTOR_JSON_SCHEMA,
   DESCRIPTOR_MAX_ATTEMPTS,
   readDescriptorAnswer,
-  type DescriptorProblem,
+  type DescriptorRefusal,
 } from "./descriptor";
 
 export interface DescriptorJobDeps {
@@ -36,8 +36,12 @@ export type DescriptorJobResult = { ok: true; descriptor: AvatarDescriptor } | {
 /** The descriptor call cannot be cancelled: it is one short request inside a user's command. */
 const NEVER_ABORTED = new AbortController().signal;
 
-function afterRefusal(error: EngineError, earlier: readonly DescriptorProblem[]): EngineError {
-  const detail = `${error.detail ?? error.code} (after an answer rejected for: ${earlier.join(", ")})`;
+function refusalText(refusal: DescriptorRefusal): string {
+  return refusal.words.length > 0 ? `${refusal.problems.join(", ")} (${refusal.words.join(", ")})` : refusal.problems.join(", ");
+}
+
+function afterRefusal(error: EngineError, earlier: DescriptorRefusal): EngineError {
+  const detail = `${error.detail ?? error.code} (after an answer rejected for: ${refusalText(earlier)})`;
   return { ...error, detail: truncate(detail) };
 }
 
@@ -52,7 +56,7 @@ function afterRefusal(error: EngineError, earlier: readonly DescriptorProblem[])
  */
 export async function runDescriptorJob(deps: DescriptorJobDeps, job: DescriptorJob): Promise<DescriptorJobResult> {
   const call = descriptorCall(job.textModel);
-  let feedback: DescriptorProblem[] = [];
+  let feedback: DescriptorRefusal = { problems: [], words: [] };
   for (let attempt = 1; attempt <= DESCRIPTOR_MAX_ATTEMPTS; attempt++) {
     const result = await deps.chat({
       attemptId: `${job.jobId}:descriptor#${attempt}`,
@@ -73,18 +77,18 @@ export async function runDescriptorJob(deps: DescriptorJobDeps, job: DescriptorJ
     if (result.status === "ok") {
       const read = readDescriptorAnswer(result.content, job.traits.age);
       if (read.ok) return { ok: true, descriptor: read.descriptor };
-      feedback = read.problems;
+      feedback = { problems: read.problems, words: read.words };
       continue;
     }
     if (result.status === "error" && result.kind === "EMPTY_CONTENT") {
-      feedback = ["empty"];
+      feedback = { problems: ["empty"], words: [] };
       continue;
     }
     const error = toEngineError(result)?.error ?? { code: "INTERNAL", detail: "the descriptor request was cancelled" };
-    return { ok: false, error: feedback.length > 0 ? afterRefusal(error, feedback) : error };
+    return { ok: false, error: feedback.problems.length > 0 ? afterRefusal(error, feedback) : error };
   }
   return {
     ok: false,
-    error: { code: "INTERNAL", detail: truncate(`the text model's descriptor was rejected ${DESCRIPTOR_MAX_ATTEMPTS} times; the last answer for: ${feedback.join(", ")}`) },
+    error: { code: "INTERNAL", detail: truncate(`the text model's descriptor was rejected ${DESCRIPTOR_MAX_ATTEMPTS} times; the last answer for: ${refusalText(feedback)}`) },
   };
 }

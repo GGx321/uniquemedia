@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { adultTextProblems } from "./ageText";
+import { adultTextProblems, DESCRIPTOR_MAX_CHARS } from "./ageText";
 
 /** Avatar age: an integer 21-35. The lower bound is invariant 8 (every avatar is 21+). */
 export const AdultAge = z.number().int().min(21).max(35);
@@ -75,7 +75,7 @@ function hasAgeAnchor(text: string, age: number): boolean {
 export const AvatarDescriptor = z
   .strictObject({
     age: AdultAge,
-    text: z.string().min(1).max(600).regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters"),
+    text: z.string().min(1).max(DESCRIPTOR_MAX_CHARS).regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters"),
   })
   .refine((d) => hasAgeAnchor(d.text, d.age), {
     message: "text must state the avatar's age as '<age>-year-old'",

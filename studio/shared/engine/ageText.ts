@@ -17,10 +17,11 @@
 // Two scopes. The vibe only feeds the descriptor LLM, so it is refused only
 // for hard markers of a minor; "a youthful smile" or "girl next door" pass.
 // The descriptor is engine-written and goes into every prompt, so it is held
-// strictly: no number at all but its "<age>-year-old" anchor, letters spelled
-// out one by one ("t e e n", "T.E.E.N") are read as a word, and every word
-// that suggests she is not a grown adult ("girlish", "petite", "youthful",
-// "coed", "school...") is refused.
+// strictly: at most 600 chars, no number but its "<age>-year-old" anchor (a
+// lone "one" and decade styles aside), letters repeated or spelled out in
+// short fragments ("teeen", "t e e n", "t/e/e/n", "t-een") are read as a word,
+// and every word that suggests she is not a grown adult ("girlish",
+// "petite", "youthful", "innocent", "coed", "school...") is refused.
 
 /** `descriptor`: the strict rule for LLM output that goes into every prompt. `vibe`: hard markers only. */
 export type AgeTextScope = "descriptor" | "vibe";
@@ -188,19 +189,37 @@ function normalise(text: string): string {
   return foldForms(text).replace(/\p{Cf}/gu, "").normalize("NFD").replace(/(?<=[A-Za-z])\p{M}+/gu, "").normalize("NFC");
 }
 
-/** Three or more single letters, each apart by one space, dot, hyphen or underscore: "t e e n", "T.E.E.N.". */
-const SPELLED_OUT = /(?<![\p{L}\p{N}])\p{L}(?:[ .\-_]\p{L}){2,}(?![\p{L}\p{N}])\.?/gu;
+/**
+ * Two or more fragments of one to three letters, each apart by one to three
+ * characters that are neither letters nor digits: "t e e n", "T.E.E.N",
+ * "t/e/e/n", "(t)(e)(e)(n)", "t-een", "tee-n".
+ */
+const FRAGMENTS = /(?<![\p{L}\p{N}])\p{L}{1,3}(?:[^\p{L}\p{N}]{1,3}\p{L}{1,3})+(?![\p{L}\p{N}])/gu;
+/** Longer than any word the rules look for: a suffix is cut here, so the join stays linear. */
+const MAX_WORD = 32;
 
 /**
- * Letters spelled out one by one joined into a word, followed by every
- * suffix of it, so a leading article is no cover: "a t e e n" is read as
+ * Each run of short fragments joined, with every suffix of the joined word
+ * (cut to MAX_WORD), so a leading article is no cover: "a t e e n" reads
  * "ateen teen een en n".
  */
-function joinSpelledOut(text: string): string {
-  return text.replace(SPELLED_OUT, (run) => {
+function fragmentWords(text: string): string[] {
+  return Array.from(text.matchAll(FRAGMENTS), ([run]) => {
     const word = run.replace(/[^\p{L}]/gu, "");
-    return Array.from(word, (_, i) => word.slice(i)).join(" ");
+    return Array.from(word, (_, i) => word.slice(i, i + MAX_WORD)).join(" ");
   });
+}
+
+/**
+ * The descriptor's matching forms: `text` is the text `normalise`d, then the
+ * same with a letter repeated three times or more cut to two ("teeen") and to
+ * one ("giiirl"); `joined` is their short fragments joined. Each part is apart
+ * by "|", so no multi-word rule ("old enough") spans two of them.
+ */
+function descriptorForms(text: string): { text: string; joined: string } {
+  const base = normalise(text);
+  const forms = [...new Set([base, base.replace(/(\p{L})\1{2,}/giu, "$1$1"), base.replace(/(\p{L})\1{2,}/giu, "$1")])];
+  return { text: forms.join("|"), joined: forms.flatMap(fragmentWords).join("|") };
 }
 
 function numbersFound(text: string, patterns: readonly RegExp[]): number[] {
@@ -235,64 +254,174 @@ export function nonAsciiDigits(text: string): string[] {
   return Array.from(normalise(text).matchAll(/(?![0-9])\p{Nd}/gu), (m) => m[0]);
 }
 
+/**
+ * A word the checks refuse, under a fixed name: the name (never text of the
+ * checked answer) is what a retry is told to avoid.
+ */
+interface WordRule {
+  name: string;
+  pattern: RegExp;
+  /** False for a word that short words run together make by chance ("in in a" → "ninina"): it is matched on real words only. */
+  joins: boolean;
+}
+
+/** An English rule: whole words (ASCII word boundaries). */
+function en(name: string, pattern: string, opts: { joins?: boolean } = {}): WordRule {
+  return { name, pattern: new RegExp(`\\b(?:${pattern})\\b`, "giu"), joins: opts.joins ?? true };
+}
+
+/** A Russian rule: `\b` does not see Cyrillic, so the pattern bounds itself. */
+function ru(name: string, pattern: string): WordRule {
+  return { name, pattern: new RegExp(pattern, "giu"), joins: true };
+}
+
 /** Markers of a minor in any scope. */
-const HARD_YOUTH: RegExp[] = [
-  /\b(?:(?:pre-?)?teen\w*|tweens?|middle[- ]?school(?:ers?)?|\d+(?:st|nd|rd|th)[- ]?grade(?:rs?)?|school[- ]?girls?|school[- ]uniforms?|high[- ]?school(?:ers?)?|loli\w*|jail[- ]?bait\w*|nymphets?|minors?|under[- ]?aged?|young[- ]looking|barely[- ]?legal|adolescen\w*|(?:pre-?)?pubescen\w*|juveniles?)\b/giu,
-  /(?<![\p{L}])(?:подрост|школьниц|несовершеннолет|малолет|малышк|учениц|тинейдж|школот)\p{L}*/giu,
+const HARD_YOUTH: WordRule[] = [
+  en("teen", "(?:pre-?)?teen\\w*"),
+  en("tween", "tweens?"),
+  en("middle school", "middle[- ]?school(?:ers?)?"),
+  en("Nth grade", "\\d+(?:st|nd|rd|th)[- ]?grade(?:rs?)?"),
+  en("schoolgirl", "school[- ]?girls?"),
+  en("school uniform", "school[- ]uniforms?"),
+  en("high school", "high[- ]?school(?:ers?)?"),
+  en("loli", "loli\\w*"),
+  en("jailbait", "jail[- ]?bait\\w*"),
+  en("nymphet", "nymphets?"),
+  en("minor", "minors?"),
+  en("underage", "under[- ]?aged?"),
+  en("young-looking", "young[- ]looking"),
+  en("barely legal", "barely[- ]?legal"),
+  en("adolescent", "adolescen\\w*"),
+  en("pubescent", "(?:pre-?)?pubescen\\w*"),
+  en("juvenile", "juveniles?"),
+  ru("подросток", "(?<![\\p{L}])подрост\\p{L}*"),
+  ru("школьница", "(?<![\\p{L}])школьниц\\p{L}*"),
+  ru("несовершеннолетняя", "(?<![\\p{L}])несовершеннолет\\p{L}*"),
+  ru("малолетка", "(?<![\\p{L}])малолет\\p{L}*"),
+  ru("малышка", "(?<![\\p{L}])малышк\\p{L}*"),
+  ru("ученица", "(?<![\\p{L}])учениц\\p{L}*"),
+  ru("тинейджер", "(?<![\\p{L}])тинейдж\\p{L}*"),
+  ru("школота", "(?<![\\p{L}])школот\\p{L}*"),
   // старшеклассница, пятиклассник, одноклассница: any "...классник/...классница" is a school pupil
-  /(?<![\p{L}])\p{L}*классни[кц]\p{L}*/giu,
-  /(?<![\p{L}])юн(?:ая|ой|ую|ые|ых|ым|ыми|ое|ого|ый|ому|ом)(?![\p{L}])/giu,
-  /(?<![\p{L}])школьн\p{L}*\s+форм\p{L}*/giu,
+  ru("классница", "(?<![\\p{L}])\\p{L}*классни[кц]\\p{L}*"),
+  ru("юная", "(?<![\\p{L}])юн(?:ая|ой|ую|ые|ых|ым|ыми|ое|ого|ый|ому|ом)(?![\\p{L}])"),
+  ru("школьная форма", "(?<![\\p{L}])школьн\\p{L}*\\s+форм\\p{L}*"),
 ];
 
 /**
  * Words that are ordinary in a vibe ("girl next door", "it-girl", "kids-free",
- * "a youthful smile", "petite") but never belong in the descriptor, an
- * appearance anchor the engine writes: there she is a "woman", and nothing may
- * suggest she is not a grown adult.
+ * "a youthful smile", "petite", "innocent") but never belong in the
+ * descriptor, an appearance anchor the engine writes: there she is a
+ * "woman", and nothing may suggest she is not a grown adult. Neutral geometry
+ * stays allowed: a round face, a small frame, a slight build, a button nose,
+ * rosy cheeks; so do "old-school" and "salon-grade".
  */
-const DESCRIPTOR_YOUTH: RegExp[] = [
-  new RegExp(
-    [
-      "girl\\w*", "kids?", "kidd(?:ie|o)s?", "child\\w*", "baby[- ]?(?:fac\\w*|doll\\w*)", "doll[- ]?like",
-      "co-?eds?", "freshm[ae]n", "sophomores?", "\\w*school\\w*", "\\w+[- ]grade(?:rs?)?", "grade[- ]?school\\w*", "uniforms?",
-      "(?:just|barely)\\s+(?:legal|of\\s+age)", "drinking\\s+age", "old\\s+enough", "half\\s+(?:her|his|their)\\s+age",
-      "youthful\\w*", "young[- ]?looking", "younger\\w*",
-      "petite", "tiny", "(?:un|under)[- ]?developed", "flat[- ]?chested", "pig-?tails?", "braces",
-    ].map((word) => `\\b${word}\\b`).join("|"),
-    "giu",
-  ),
-  /(?<![\p{L}])(?:девочк|реб[её]н)\p{L}*/giu,
+const DESCRIPTOR_YOUTH: WordRule[] = [
+  en("girl", "girl\\w*"),
+  en("gurl", "gurls?|grls?"),
+  en("kid", "kids?|kidd\\w*"),
+  en("child", "child\\w*"),
+  en("baby", "bab(?:y|ies)\\w*"),
+  en("doll-like", "doll[- ]?like"),
+  en("coed", "co-?eds?"),
+  en("freshman", "freshm[ae]n"),
+  en("sophomore", "sophomores?"),
+  en("school", "(?<!old[- ])\\w*school\\w*"),
+  en("Nth grade", "(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)[- ]grade(?:rs?)?|graders?"),
+  en("grade school", "grade[- ]?school\\w*"),
+  en("kindergarten", "kindergart\\w*"),
+  en("uniform", "uniforms?"),
+  en("just legal", "(?:just|barely)\\s+(?:legal|of\\s+age)"),
+  en("drinking age", "drinking\\s+age"),
+  en("old enough", "old\\s+enough"),
+  en("half her age", "half\\s+(?:her|his|their)\\s+age"),
+  en("youthful", "youthful\\w*"),
+  // The "N-year-old ... woman" anchor carries her age; "young" would pull an age-21 image toward the lower bound.
+  en("young", "young\\w*"),
+  en("boyish", "boyish\\w*"),
+  en("petite", "petite"),
+  en("tiny", "tiny"),
+  en("underdeveloped", "(?:un|under)[- ]?developed"),
+  en("flat-chested", "flat[- ]?chested"),
+  en("pigtails", "pig-?tails?"),
+  en("braces", "braces"),
+  en("innocent", "innocen\\w*"),
+  en("virgin", "virgin\\w*"),
+  en("nubile", "nubile"),
+  en("cherub", "cherub\\w*"),
+  en("ingenue", "ingenues?"),
+  en("waif", "waif\\w*"),
+  en("fresh-faced", "fresh[- ]?faced"),
+  en("college-age", "college[- ]?age\\w*"),
+  en("doe-eyed", "doe[- ]?eyed"),
+  en("prom queen", "prom[- ]?queens?"),
+  en("junior", "junior\\w*|jr"),
+  en("tween", "tween\\w*"),
+  en("lil", "lil"),
+  en("smol", "smol"),
+  en("yung", "yung"),
+  en("lass", "lass(?:ie)?s?"),
+  en("missy", "missy"),
+  en("maiden", "maidens?"),
+  en("damsel", "damsels?"),
+  en("kawaii", "kawaii"),
+  en("chibi", "chibi"),
+  en("shoujo", "shoujo|shojo"),
+  en("nymph", "nymph\\w*"),
+  en("minor", "minor(?:ly|s)?"),
+  en("bambina", "bambin[ao]s?"),
+  // Spanish "niña" (girl) folds to "nina". A real word only: short words run together make it by chance ("tan in a").
+  en("nina", "ninas?", { joins: false }),
+  ru("девочка", "(?<![\\p{L}])девочк\\p{L}*"),
+  ru("ребёнок", "(?<![\\p{L}])реб[её]н\\p{L}*"),
 ];
 
-/** Words that describe a minor or a youthful look, in English or Russian. */
+function youthMatches(text: string, scope: AgeTextScope): { rule: WordRule; words: string[] }[] {
+  const forms = scope === "descriptor" ? descriptorForms(text) : { text: normalise(text), joined: "" };
+  const rules = scope === "descriptor" ? [...HARD_YOUTH, ...DESCRIPTOR_YOUTH] : HARD_YOUTH;
+  return rules
+    .map((rule) => ({
+      rule,
+      words: [...forms.text.matchAll(rule.pattern), ...(rule.joins ? forms.joined.matchAll(rule.pattern) : [])].map((m) => m[0]),
+    }))
+    .filter((match) => match.words.length > 0);
+}
+
+/** Words that describe a minor or a youthful look, in English or Russian, as the text has them (the renderer quotes the user's own words). */
 export function youthWords(text: string, scope: AgeTextScope = "descriptor"): string[] {
-  const normalized = scope === "descriptor" ? joinSpelledOut(normalise(text)) : normalise(text);
-  const patterns = scope === "descriptor" ? [...HARD_YOUTH, ...DESCRIPTOR_YOUTH] : HARD_YOUTH;
-  return patterns.flatMap((pattern) => Array.from(normalized.matchAll(pattern), (m) => m[0]));
+  return youthMatches(text, scope).flatMap((match) => match.words);
+}
+
+/** The fixed names of the rules the text breaks, each once: what a retry is told to avoid, never text of the answer. */
+export function youthRuleNames(text: string, scope: AgeTextScope): string[] {
+  return [...new Set(youthMatches(text, scope).map((match) => match.rule.name))];
 }
 
 /**
- * English number words: one..nineteen and every -teen form, the tens and
- * their forms ("twenties", "twenty-one"), hundreds, dozens, and the ordinals
- * from fourth on. One..nine are included: a descriptor never needs a count
- * (the engine words the marks without one), and "she is nine" would be an age.
+ * English number words: two..nineteen and every -teen form, "twenty" in every
+ * form ("twenties" can mean 20), the other tens and their ordinals, hundreds,
+ * dozens, and the ordinals from fourth on. Allowed: a lone "one" ("a mole on
+ * one cheek", "no one"; "she is one" is no realistic marker next to the
+ * anchor) and the decades as a style ("seventies-style", "nineties brows").
+ * Two..nine are refused: a descriptor needs no count ("a mole", not "two
+ * moles"), and "she is nine" would be an age.
  */
 const NUMBER_WORD = new RegExp(
-  "\\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen\\w*" +
-    "|(?:twen|thir|for|four|fif|six|seven|eigh|nine)t(?:y|ie)\\w*|hundred\\w*|thousand\\w*|dozens?" +
+  "\\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen\\w*" +
+    "|twent(?:y|ie)\\w*|(?:thir|for|four|fif|six|seven|eigh|nine)t(?:y\\w*|ieth\\w*)|hundred\\w*|thousand\\w*|dozens?" +
     "|(?:four|fif|six|seven|eigh|nin|ten|eleven|twelf)th)\\b",
   "iu",
 );
 
 /**
  * True when the descriptor holds a number besides its one "<age>-year-old"
- * anchor: any digit, or any number word, also spelled out ("t w e n t y").
+ * anchor: any digit, or a number word (see NUMBER_WORD), also spelled out.
  * Closes "t33n", "18+", "of 16", "who is sixteen", "not yet 21" at once.
  */
 function hasNumberBesideAnchor(text: string, age: number): boolean {
   const rest = normalise(text).replace(new RegExp(`(?<![0-9])${age}-year-old`), " ");
-  return /[0-9]/.test(rest) || NUMBER_WORD.test(joinSpelledOut(rest));
+  const forms = descriptorForms(rest);
+  return /[0-9]/.test(rest) || NUMBER_WORD.test(`${forms.text}|${forms.joined}`);
 }
 
 const DESCRIPTOR_CHARS = /^[A-Za-z0-9 \-.,;:!?'"()/&%+]*$/;
@@ -313,11 +442,19 @@ function breaksScriptPolicy(text: string, scope: AgeTextScope): boolean {
   });
 }
 
-/** `number`: descriptor only — a number besides the "<age>-year-old" anchor. */
-export type AdultTextProblem = "script" | "non-ascii-digits" | "other-age" | "under-21-bound" | "youth-word" | "number";
+/** The descriptor's longest text (the contract's AvatarDescriptor); longer is refused before any other check. */
+export const DESCRIPTOR_MAX_CHARS = 600;
+
+/**
+ * Descriptor only: `number` — a number besides the "<age>-year-old" anchor;
+ * `too-long` — over DESCRIPTOR_MAX_CHARS, which is all that is reported then.
+ */
+export type AdultTextProblem = "script" | "non-ascii-digits" | "other-age" | "under-21-bound" | "youth-word" | "number" | "too-long";
 
 /** Why a text that goes into prompts is not clearly about a 21+ adult of the given age; empty when it is. */
 export function adultTextProblems(text: string, age: number, scope: AgeTextScope): AdultTextProblem[] {
+  // Bounded before anything else: the checks must never block the engine on a runaway answer.
+  if (scope === "descriptor" && text.length > DESCRIPTOR_MAX_CHARS) return ["too-long"];
   const problems: AdultTextProblem[] = [];
   if (breaksScriptPolicy(text, scope)) problems.push("script");
   if (nonAsciiDigits(text).length > 0) problems.push("non-ascii-digits");

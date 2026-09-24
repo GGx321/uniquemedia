@@ -93,6 +93,14 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   const [showNameIssue, setShowNameIssue] = useState(false);
   // Bumped on every traits change: an estimate answer for older traits is dropped.
   const traitsVersion = useRef(0);
+  // False once the user has left the wizard: a paid step already under way sends nothing more.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const candidatesHeading = useRef<HTMLHeadingElement>(null);
 
   // A draft opened from the grid may arrive with the snapshot, after the first render.
@@ -153,6 +161,8 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
       const created = await client.request("avatars.createDraft", { traits, acceptedWorstMicros: accepted.worstMicros });
       if (!created.ok) return refused(created.error, accepted);
       store.upsertDraft(created.result.draft);
+      // The user left while the descriptor was being written: the draft stays, but no batch is bought for a wizard nobody sees.
+      if (!mounted.current) return;
       id = created.result.draft.avatarId;
       setAvatarId(id);
     }

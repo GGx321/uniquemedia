@@ -38,7 +38,7 @@ import { loadPriceBook, OPENROUTER_API_BASE } from "./money/prices";
 import type { ReconcileResult as LedgerReconcileResult, ReconcileWarning as LedgerReconcileWarning } from "./money/reconcile";
 import { createOpenRouterClient, fromOpenRouterError, OpenRouterError, type OpenRouterClient, type OpenRouterFetch } from "./openrouter";
 import { priceFetchFrom } from "./openrouter/priceFetch";
-import { saveRawBody } from "./rawStore";
+import { rawFileName, saveRawBody } from "./rawStore";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -218,6 +218,8 @@ export class Engine {
   readonly #rawDir: string;
   /** Paid commands running now (createDraft): the library they write to must not change under them. */
   #paidCommands = 0;
+  /** One createDraft at a time: a second click (the wizard left and opened again) must not buy a second descriptor. */
+  #creatingDraft = false;
 
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
@@ -425,11 +427,16 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
       case "avatars.createDraft": {
+        if (this.#creatingDraft) {
+          throw new EngineFailure({ code: "IN_FLIGHT", detail: "a new avatar's descriptor is already being written; wait for it to finish" });
+        }
+        this.#creatingDraft = true;
         this.#paidCommands++;
         try {
           return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#createDraft(command.payload) };
         } finally {
           this.#paidCommands--;
+          this.#creatingDraft = false;
         }
       }
       default:
@@ -544,11 +551,14 @@ export class Engine {
     const manifest = await library
       .createAvatar({ name: DRAFT_NAME, age: payload.traits.age, traits: manifestTraits(payload.traits), descriptor: descriptor.text })
       .catch(async (error: unknown) => {
-        // The descriptor is paid for: keep it where the owner can find it, then fail the command.
-        await saveRawBody(this.#rawDir, `${jobId}:descriptor`, JSON.stringify({ traits: payload.traits, descriptor })).catch((saveError: unknown) => {
-          console.warn(`studio engine: a paid descriptor could not be kept (${messageOf(saveError, "unknown error")})`);
-        });
-        throw error;
+        // The descriptor is paid for: keep it where the owner can find it, and say where.
+        const kept = `${jobId}:descriptor`;
+        const where = await saveRawBody(this.#rawDir, kept, JSON.stringify({ traits: payload.traits, descriptor })).then(
+          () => `the paid descriptor is kept in raw/${rawFileName(kept)} next to the ledger`,
+          (saveError: unknown) => `the paid descriptor could not be kept either (${messageOf(saveError, "unknown error")})`,
+        );
+        // Where it is kept comes first, so the 500-char cut of `detail` cannot drop it.
+        throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`${where}: the draft could not be written (${messageOf(error, "unknown error")})`) });
       });
     const stored = draftFrom(manifest, []);
     if (stored === null) throw new Error(`the new draft ${manifest.id} does not fit the contract`);

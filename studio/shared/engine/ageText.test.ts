@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { adultTextProblems, ageMentions, ageUpperBounds, nonAsciiDigits, youthWords } from "./ageText";
+import { adultTextProblems, ageMentions, ageUpperBounds, DESCRIPTOR_MAX_CHARS, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
 
 describe("ageMentions", () => {
   test.each([
@@ -180,7 +180,6 @@ describe("youthWords in descriptor scope", () => {
     "the minority of days",
     "canteen lunch",
     "fifteen minutes of fame",
-    "young woman",
     "мечтала об этом в юности",
     "девушка в кафе",
     "детали интерьера",
@@ -191,7 +190,7 @@ describe("youthWords in descriptor scope", () => {
 });
 
 describe("youthWords in vibe scope", () => {
-  test.each(["with her girlfriend", "girlfriends on a trip", "a youthful smile", "baby-faced", "college freshman"])(
+  test.each(["with her girlfriend", "girlfriends on a trip", "a youthful smile", "baby-faced", "college freshman", "young woman", "a boyish frame"])(
     "lets the ordinary %p through (the descriptor refuses it)",
     (text) => {
       expect(youthWords(text, "vibe")).toEqual([]);
@@ -431,8 +430,7 @@ describe("the descriptor carries no number but its age anchor", () => {
     "who is 16",
     "she's 5 feet tall",
     "3 ear piercings",
-    // number words: one to ninety, every -teen form, compounds, ordinals
-    "one small mole",
+    // number words: two to ninety, every -teen form, compounds, ordinals (a lone "one" is allowed since the follow-up review)
     "two freckles",
     "nine",
     "a face of sixteen",
@@ -506,8 +504,6 @@ describe("the descriptor refuses every word that suggests she is not a grown adu
     "natural makeup",
     "a small nose piercing",
     "a soft jawline and full eyebrows",
-    "a young woman's warm smile",
-    "forever young",
     "juicy",
   ])("keeps the ordinary adult %p", (rest) => {
     expect(adultTextProblems(`${D}${rest}.`, 25, "descriptor")).toEqual([]);
@@ -597,8 +593,6 @@ describe("reviewer probes on the descriptor, each refused", () => {
     "she's only six",
     "at seven, she",
     "she's 9",
-    "she's one of a kind",
-    "she's one in a million",
     "te\uFEFFen look",
     "she's 5 feet",
     "at 7:30 she runs",
@@ -646,5 +640,134 @@ describe("reviewer probes on the descriptor, each refused", () => {
     ["she is 20 now", false],
   ] as const)("as a vibe at 25, %p passes: %p", (probe, passes) => {
     expect(adultTextProblems(probe, 25, "vibe").length === 0).toBe(passes);
+  });
+});
+
+// ---------- T6a-2a follow-up: before any paid image call ----------
+
+const F = "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build";
+
+describe("the descriptor refuses more words that suggest she is not a grown adult", () => {
+  test.each([
+    "an innocent look", "big innocent eyes", "virginal look", "a virgin", "nubile figure", "cherubic cheeks", "an ingenue look",
+    "a waif-like frame", "baby fat on her cheeks", "a babyish smile", "babies", "fresh-faced", "freshfaced", "college-age look",
+    "a young face", "young-faced", "young features", "a young look", "a young-looking face", "doe-eyed", "doe eyed", "prom-queen smile", "prom queen",
+    "junior look", "jr. look", "tweenish", "lil face", "smol frame", "yung look", "gurl look", "grl look", "a lass", "a lassie", "a missy",
+    "a young miss", "a maiden", "a damsel", "kawaii look", "chibi face", "shoujo look", "a nymph-like look", "minorly", "a kiddish look",
+    "a bambina look", "a nina look", "kindergarten teacher look",
+  ])("refuses %p", (rest) => {
+    expect(adultTextProblems(`${F}, ${rest}.`, 25, "descriptor")).toContain("youth-word");
+  });
+
+  test.each(["teeen look", "sixteeen", "giiirl", "t/e/e/n features", "t'e'e'n look", "t,e,e,n look", "(t)(e)(e)(n) look", "t-een look", "tee-n look", "t een look"])(
+    "refuses %p: repeated letters and odd separators hide nothing",
+    (rest) => {
+      expect(adultTextProblems(`${F}, ${rest}.`, 25, "descriptor").length).toBeGreaterThan(0);
+    },
+  );
+
+  test.each(["an innocent look", "fresh-faced", "teeen look", "t/e/e/n"])("the vibe still lets %p through (the descriptor gate refuses it)", (vibe) => {
+    expect(adultTextProblems(vibe, 25, "vibe")).toEqual([]);
+  });
+});
+
+describe("the descriptor keeps ordinary adult wording that would otherwise cost a paid retry", () => {
+  test.each([
+    // neutral geometry
+    "a round face", "a small frame", "a slight build", "a button nose", "rosy cheeks", "a soft round face", "a delicate, slight build",
+    // a lone "one"
+    "a small mole on one cheek", "one dimple in her left cheek", "her hair parted to one side", "a small tattoo on the inner wrist, one small nose stud",
+    "long lashes and a sun-kissed complexion; no one would forget her face",
+    // decades as a style, old-school, salon-grade
+    "seventies-style curtain bangs", "nineties supermodel brows", "a sixties-inspired winged liner", "thirties finger waves",
+    "old-school glamour makeup", "salon-grade blowout",
+    // the rest of the reviewer's adult probe list
+    "dimples, high cheekbones, full eyebrows, soft jawline, natural makeup", "a light dusting of freckles, heart-shaped face, button nose",
+    "no-makeup makeup look", "a V-shaped jawline", "an A-line silhouette", "a T-zone with a soft sheen", "a U.S.-born look",
+    "deep-set eyes, a strong Roman nose", "strong brows, a mole at the jaw, a small nose piercing", "a slender neck and a first-class smile",
+    "a second piercing in the ear", "naturally flushed cheeks", "a fresh complexion", "well-groomed arched eyebrows, a hint of mascara",
+    "rosy cheeks, a sprinkle of freckles",
+    // not refused by the review's list: neutral descriptions of a grown woman
+    "cute little nose", "elfin features",
+  ])("keeps %p", (rest) => {
+    expect(adultTextProblems(`${F}, ${rest}.`, 25, "descriptor")).toEqual([]);
+  });
+
+  test.each(["one small mole", "she's one of a kind", "she's one in a million"])("keeps the lone \"one\" in %p", (rest) => {
+    expect(adultTextProblems(`${F}, ${rest}.`, 25, "descriptor")).toEqual([]);
+  });
+
+  test.each(["a face of one", "who is one"])("a lone %p is not taken for an age (no realistic minor marker; the anchor states her age)", (rest) => {
+    expect(adultTextProblems(`${F}, ${rest}.`, 25, "descriptor")).toEqual([]);
+  });
+
+  test.each([
+    "in her early twenties", "twenties-style", "sixty", "a sixty-year-old look", "twenty-one", "two moles", "she's two", "who is nine",
+    "schoolgirl", "a school uniform", "a sixth-grader", "in tenth grade", "a school look", "a youthful glow", "a tiny mole above the lip", "a girl-next-door charm",
+  ])("still refuses %p", (rest) => {
+    expect(adultTextProblems(`${F}, ${rest}.`, 25, "descriptor").length).toBeGreaterThan(0);
+  });
+});
+
+describe("the descriptor names the rule a word broke, from our own list", () => {
+  test.each([
+    ["a girlish grin", ["girl"]],
+    ["fresh-faced, a tiny mole", ["fresh-faced", "tiny"]],
+    ["t/e/e/n features", ["teen"]],
+    ["a sixth-grader look", ["Nth grade"]],
+  ])("%p → %p", (rest, names) => {
+    expect(youthRuleNames(`${F}, ${rest}.`, "descriptor").sort()).toEqual([...names].sort());
+  });
+
+  test("a name is ours, never text of the answer", () => {
+    expect(youthRuleNames(`${F}, GiRlIsH, TEEENAGE look.`, "descriptor").sort()).toEqual(["girl", "teen"]);
+  });
+});
+
+describe("an over-long descriptor is refused at once, whatever it holds", () => {
+  test("600 chars is the limit: the checks run up to it, a longer text is only 'too-long'", () => {
+    expect(DESCRIPTOR_MAX_CHARS).toBe(600);
+    expect(adultTextProblems(`25-year-old woman, ${"a".repeat(600)}`, 25, "descriptor")).toEqual(["too-long"]);
+  });
+
+  test("24,000 chars of single letters is refused in well under a frame", () => {
+    const text = `25-year-old woman, ${Array.from({ length: 12_000 }, (_, i) => "abcdefghijklmnopqrstuvwxyz"[i % 26]).join(" ")}`;
+    const started = performance.now();
+
+    expect(adultTextProblems(text, 25, "descriptor")).toEqual(["too-long"]);
+    expect(performance.now() - started).toBeLessThan(20);
+  });
+
+  test("a 600-char descriptor of spelled-out letters is checked quickly: the join is linear", () => {
+    const text = `25-year-old woman, ${Array.from({ length: 290 }, (_, i) => "bcdfghjklmnpqrsvwxz"[i % 19]).join(" ")}`.slice(0, 600);
+    const started = performance.now();
+
+    adultTextProblems(text, 25, "descriptor");
+    expect(performance.now() - started).toBeLessThan(20);
+  });
+});
+
+// ---------- T6a-2a final: "young" and "boyish"; nina only as a real word ----------
+
+describe("the descriptor refuses young and boyish: the anchor carries her age", () => {
+  test.each(["young woman", "a young woman's warm smile", "youngish", "a young face", "forever young", "a slight, boyish frame", "boyish charm", "Young"])("refuses %p", (rest) => {
+    expect(youthRuleNames(`${F}, ${rest}.`, "descriptor").some((name) => name === "young" || name === "boyish" || name === "young-looking")).toBe(true);
+  });
+
+  test.each(["young woman", "a slight, boyish frame"])("the vibe still lets %p through", (vibe) => {
+    expect(adultTextProblems(vibe, 25, "vibe")).toEqual([]);
+  });
+});
+
+describe("nina is refused as a word, never as a join of short words (reviewer join.probe.ts)", () => {
+  test.each(["tan in a", "sun in a", "an in a", "on in a", "in in a", "tan in as", "sun in as", "an in as", "on in as", "in in as"])(
+    "keeps %p before a longer word",
+    (phrase) => {
+      expect(adultTextProblems(`25-year-old European woman, ${phrase} hair.`, 25, "descriptor")).toEqual([]);
+    },
+  );
+
+  test.each(["a nina look", "a ni\u00F1a look", "ninas"])("still refuses the word in %p", (rest) => {
+    expect(youthRuleNames(`${F}, ${rest}.`, "descriptor")).toContain("nina");
   });
 });

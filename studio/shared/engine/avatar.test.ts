@@ -240,7 +240,6 @@ describe("AvatarDescriptor (invariant 8)", () => {
 
   test.each([
     ["the plain anchor", "25-year-old woman, light olive skin, hazel eyes, slim athletic build."],
-    ["young woman", "25-year-old young woman, shoulder-length wavy chestnut hair."],
     ["a beauty mark", "25-year-old European woman, a beauty mark above the lip, hazel eyes."],
     ["facial details", "25-year-old Asian woman, high cheekbones, full eyebrows and a soft jawline."],
     ["freckles and makeup", "25-year-old European woman, light freckles across the nose, natural makeup."],
@@ -258,6 +257,8 @@ describe("AvatarDescriptor (invariant 8)", () => {
     ["a girlfriend", "25-year-old woman, often photographed with her girlfriends."],
     ["a youthful smile", "a 25-year-old woman with a youthful smile"],
     ["an upper bound above 21", "25-year-old woman who looks under 30"],
+    ["young woman (the anchor carries her age)", "25-year-old young woman, shoulder-length wavy chestnut hair."],
+    ["a boyish frame", "25-year-old European woman with a slight, boyish frame."],
     // reviewer probes (contract.probe.ts)
     ["who is sixteen", "25-year-old European woman, a woman who is sixteen, hazel eyes."],
     ["her age is 16", "25-year-old European woman, her age is 16, hazel eyes."],
@@ -277,6 +278,14 @@ describe("AvatarDescriptor (invariant 8)", () => {
 
   test("rejects an empty text", () => {
     expect(AvatarDescriptor.safeParse({ age: 25, text: "" }).success).toBe(false);
+  });
+
+  test("refuses a runaway 24,000-char text at once: its checks never block the engine", () => {
+    const text = `25-year-old woman, ${Array.from({ length: 12_000 }, (_, i) => "abcdefghijklmnopqrstuvwxyz"[i % 26]).join(" ")}`;
+    const started = performance.now();
+
+    expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(false);
+    expect(performance.now() - started).toBeLessThan(20);
   });
 
   test("rejects a text over 600 chars", () => {

@@ -357,3 +357,32 @@ test("the wizard says when the engine stops answering, and blocks spending until
   expect(document.body.textContent).not.toContain("Движок не отвечает");
   expect(generateButton().hasAttribute("disabled")).toBe(false);
 });
+
+test("leaving the wizard while the draft is being created buys no batch afterwards: generateCandidates is never sent", async () => {
+  const { engine, scheduler } = setup({ latencyMs: 500 });
+  /** Answers every pending mock response and lets the UI take them in. */
+  const answerAll = async () => {
+    for (let i = 0; i < 5; i++) {
+      runAll(scheduler);
+      await flush();
+    }
+  };
+  await answerAll();
+  await openWizard();
+  fireEvent.click(screen.getByRole("button", { name: "Оценить стоимость" }));
+  await answerAll();
+  await waitFor(() => expect(estimateText()).not.toBeNull());
+
+  fireEvent.click(generateButton());
+  await flush();
+  expect(callsOf(engine, "avatars.createDraft")).toHaveLength(1);
+  const back = document.querySelector(".back-link");
+  if (!(back instanceof HTMLElement)) throw new Error("no back link");
+  fireEvent.click(back);
+  await flush();
+  expect(screen.queryByRole("heading", { level: 1, name: "Новый аватар" })).toBeNull();
+
+  await answerAll();
+
+  expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(0);
+});

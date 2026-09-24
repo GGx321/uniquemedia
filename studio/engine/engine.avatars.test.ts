@@ -481,6 +481,27 @@ describe("avatars.createDraft", () => {
     expect(ledgerLines().at(-1)).toMatchObject({ type: "settle", costMicros: ATTEMPT_WORST, estimated: true });
   });
 
+  test("a second createDraft while one runs is refused with IN_FLIGHT: one paid descriptor, one draft", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { engine, net } = await startEngine({
+      net: network({ prices: async () => (await held, OFFLINE), chat: [descriptorReply(GOOD), descriptorReply(GOOD)] }),
+    });
+
+    const first = engine.handle(createDraft());
+    await Bun.sleep(5);
+    const second = failed(await engine.handle(createDraft()));
+    release();
+    ok(await first);
+
+    expect(second.error.code).toBe("IN_FLIGHT");
+    expect(net.chatCalls()).toHaveLength(1);
+    expect(engine.library?.listAvatars()).toHaveLength(1);
+    // Once the first has ended, a new avatar may be started.
+    ok(await engine.handle(createDraft()));
+    expect(engine.library?.listAvatars()).toHaveLength(2);
+  });
+
   test("a library switch is refused with IN_FLIGHT while createDraft runs, before its first reserve too", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -507,10 +528,12 @@ describe("avatars.createDraft", () => {
     await rm(join(dir, "library", "avatars"), { recursive: true });
     await writeFile(join(dir, "library", "avatars"), "not a folder");
 
-    expect(failed(await engine.handle(createDraft())).error.code).toBe("INTERNAL");
+    const refused = failed(await engine.handle(createDraft()));
+    expect(refused.error.code).toBe("INTERNAL");
     expect(ledgerLines().at(-1)).toMatchObject({ type: "settle", costMicros: 2_100 });
-    // The paid descriptor is not lost: it waits in userData/raw with the traits it was written for.
+    // The paid descriptor is not lost: it waits in userData/raw with the traits it was written for, and the error says where.
     const jobId = String(ledgerLines()[0]?.jobId);
+    expect(refused.error.detail).toContain(`raw/${rawFileName(`${jobId}:descriptor`)}`);
     const kept = JSON.parse(await readFile(join(dir, "userData", "raw", rawFileName(`${jobId}:descriptor`)), "utf8"));
     expect(kept).toEqual({ traits: TRAITS, descriptor: { age: 25, text: GOOD } });
   });

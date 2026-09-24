@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { adultTextProblems, AvatarDescriptor, AvatarTraits } from "../../shared/engine";
+import { adultTextProblems, ageMentions, ageUpperBounds, AvatarDescriptor, AvatarTraits } from "../../shared/engine";
 import {
   DESCRIPTOR_JSON_SCHEMA,
   descriptorMessages,
@@ -39,6 +39,7 @@ const ALL_PROBLEMS: DescriptorProblem[] = [
   "under-21-bound",
   "youth-word",
   "number",
+  "too-long",
 ];
 
 describe("normaliseDescriptorText (typography must not cost a paid answer)", () => {
@@ -79,20 +80,35 @@ describe("readDescriptorAnswer", () => {
     expect(readDescriptorAnswer(`\`\`\`json\n${answer(GOOD)}\n\`\`\``, 25)).toMatchObject({ ok: true });
   });
 
-  test.each<[string, string, DescriptorProblem[]]>([
-    ["prose instead of JSON", GOOD, ["not-json"]],
-    ["JSON of another shape", JSON.stringify({ text: GOOD }), ["not-json"]],
-    ["a blank descriptor", answer("   "), ["empty"]],
-    ["a descriptor over 600 chars", answer(`${GOOD} ${"x".repeat(600)}`), ["too-long"]],
-    ["no age anchor", answer("European woman, light olive skin, hazel eyes."), ["no-age-anchor"]],
-    ["another age", answer("25-year-old European woman who looks 19, hazel eyes."), ["other-age", "number"]],
-    ["a youth word", answer("25-year-old European girl, hazel eyes."), ["youth-word"]],
-    ["an under-21 bound", answer("25-year-old European woman, looks under 21."), ["under-21-bound", "number"]],
-    ["a number besides the anchor", answer("25-year-old European woman, two small moles."), ["number"]],
-    ["Cyrillic letters", answer("25-year-old European woman, карие глаза."), ["script"]],
-    ["the anchor for another age", answer("24-year-old European woman, hazel eyes."), ["no-age-anchor", "other-age", "number"]],
-  ])("refuses %s and says why", (_label, content, problems) => {
-    expect(readDescriptorAnswer(content, 25)).toEqual({ ok: false, problems });
+  test.each<[string, string, DescriptorProblem[], string[]]>([
+    ["prose instead of JSON", GOOD, ["not-json"], []],
+    ["JSON of another shape", JSON.stringify({ text: GOOD }), ["not-json"], []],
+    ["a blank descriptor", answer("   "), ["empty"], []],
+    ["a descriptor over 600 chars", answer(`${GOOD} ${"x".repeat(600)}`), ["too-long"], []],
+    ["no age anchor", answer("European woman, light olive skin, hazel eyes."), ["no-age-anchor"], []],
+    ["another age", answer("25-year-old European woman who looks 19, hazel eyes."), ["other-age", "number"], []],
+    ["a youth word", answer("25-year-old European girl, hazel eyes."), ["youth-word"], ["girl"]],
+    ["an under-21 bound", answer("25-year-old European woman, looks under 21."), ["under-21-bound", "number"], []],
+    ["a number besides the anchor", answer("25-year-old European woman, two small moles."), ["number"], []],
+    ["Cyrillic letters", answer("25-year-old European woman, карие глаза."), ["script"], []],
+    ["the anchor for another age", answer("24-year-old European woman, hazel eyes."), ["no-age-anchor", "other-age", "number"], []],
+  ])("refuses %s and says why", (_label, content, problems, words) => {
+    expect(readDescriptorAnswer(content, 25)).toEqual({ ok: false, problems, words });
+  });
+
+  test("the refusal names the rules the words broke, by our names, never the answer's own text", () => {
+    const read = readDescriptorAnswer(answer("25-year-old European GiRlIsH woman, a TEEENAGE look, fresh-faced."), 25);
+
+    expect(read.ok).toBe(false);
+    if (!read.ok) expect([...read.words].sort()).toEqual(["fresh-faced", "girl", "teen"]);
+  });
+
+  test("a runaway answer of 24,000 chars is refused as too long at once, without the other checks", () => {
+    const runaway = `25-year-old woman, ${Array.from({ length: 12_000 }, (_, i) => "abcdefghijklmnopqrstuvwxyz"[i % 26]).join(" ")}`;
+    const started = performance.now();
+
+    expect(readDescriptorAnswer(answer(runaway), 25)).toEqual({ ok: false, problems: ["too-long"], words: [] });
+    expect(performance.now() - started).toBeLessThan(20);
   });
 });
 
@@ -129,22 +145,25 @@ describe("descriptorMessages", () => {
     expect(adultTextProblems(`25-year-old woman${listed}`, 25, "descriptor")).toEqual([]);
   });
 
-  test("the prompt asks for no number but the age at the start, and for small rather than tiny or petite", () => {
+  test("the prompt asks for no counts and no number but the age, names youthful, and asks for small rather than tiny or petite", () => {
     const [system] = descriptorMessages(TRAITS);
 
-    expect(system?.content).toContain("No digits and no number words other than the age at the start");
+    expect(system?.content).toContain('No counts: write "a" ("a mole", "a dimple")');
+    expect(system?.content).toContain("no digits or number words other than the age at the start");
+    expect(system?.content).toContain('Never use "youthful", "young", "boyish"');
     expect(system?.content).toContain('"small", never "tiny" or "petite"');
   });
 
   test("the second attempt gets the reasons the first was refused; the rules stay the same", () => {
     const [firstSystem, firstUser] = descriptorMessages(TRAITS);
-    const [system, user] = descriptorMessages(TRAITS, ["youth-word", "no-age-anchor"]);
+    const [system, user] = descriptorMessages(TRAITS, { problems: ["youth-word", "no-age-anchor"], words: ["girl", "fresh-faced"] });
 
     expect(system).toEqual(firstSystem);
     expect(firstUser?.content).not.toContain("rejected");
     expect(user?.content).toContain("rejected");
     expect(user?.content).toContain("call her a woman");
     expect(user?.content).toContain('"25-year-old"');
+    expect(user?.content).toContain('words we do not allow: "girl", "fresh-faced"');
   });
 
   // Invariant 8: every prompt is about a 21+ adult; the descriptor prompt names her age and nothing younger.
@@ -154,11 +173,17 @@ describe("descriptorMessages", () => {
     ["no vibe", ""],
   ])("with %s, every message (and every refusal reason) states only her adult age", (_label, vibe) => {
     for (const age of [21, 35]) {
-      const messages = descriptorMessages({ ...TRAITS, age, vibe }, ALL_PROBLEMS);
-      const text = messages.map((m) => m.content).join("\n");
+      const first = descriptorMessages({ ...TRAITS, age, vibe }).map((m) => m.content).join("\n");
+      // A retry names the words it must not use (ours, e.g. "teen"), so only ages and bounds are checked there.
+      const retry = descriptorMessages({ ...TRAITS, age, vibe }, { problems: ALL_PROBLEMS, words: ["teen", "girl", "tiny"] })
+        .map((m) => m.content)
+        .join("\n");
 
-      expect(adultTextProblems(text, age, "vibe")).toEqual([]);
-      expect(text).toContain(`${age}-year-old`);
+      expect(adultTextProblems(first, age, "vibe")).toEqual([]);
+      expect(ageMentions(retry).filter((n) => n !== age)).toEqual([]);
+      expect(ageUpperBounds(retry).filter((n) => n <= 21)).toEqual([]);
+      expect(first).toContain(`${age}-year-old`);
+      expect(retry).toContain(`${age}-year-old`);
     }
   });
 });
