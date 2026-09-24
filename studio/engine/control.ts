@@ -100,5 +100,7 @@ const COMMAND_SLACK_MS = 30_000;
 export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], number>> = {
   "avatars.estimate": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.estimateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
+  "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
 };

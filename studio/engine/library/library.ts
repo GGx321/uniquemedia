@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { z } from "zod";
 import { runFfmpeg } from "../../node/runFfmpeg";
@@ -271,6 +271,75 @@ export class Library {
 
     this.#photos.set(id, sidecar);
     return sidecar;
+  }
+
+  /**
+   * Removes one of an avatar's photos: the sidecar first — it is the commit
+   * (invariant 11), so a crash after it leaves an uncommitted image that the
+   * next open quarantines — then the image and its thumbnail. The master
+   * cannot be deleted: a manifest never names a missing master. Runs under
+   * the manifest's lock, so a concurrent master change cannot pick it.
+   */
+  async deletePhoto(avatarId: string, photoId: string): Promise<void> {
+    const manifestPath = join(this.#avatarDir(avatarId), MANIFEST_FILE);
+    await runExclusive(`manifest:${manifestPath}`, async () => {
+      const photo = this.#photos.get(photoId);
+      if (!photo || photo.avatarId !== avatarId) throw new LibraryError("photo-not-found", `avatar ${avatarId} has no photo ${photoId}`);
+      if (this.#avatars.get(avatarId)?.masterPhotoId === photoId) {
+        throw new LibraryError("photo-is-master", `photo ${photoId} is the master of avatar ${avatarId}`);
+      }
+      await this.#removePhoto(photo);
+    });
+  }
+
+  /** The sidecar (the commit) first, then the image and its thumbnail; the caller holds the manifest's lock. */
+  async #removePhoto(photo: PhotoSidecar): Promise<void> {
+    const photosDir = this.#photosDir(photo.avatarId);
+    await rm(join(photosDir, `${photo.id}.json`), { force: true });
+    await fsyncDir(photosDir);
+    this.#photos.delete(photo.id);
+    await rm(join(photosDir, photo.file), { force: true });
+    await rm(join(this.#avatarDir(photo.avatarId), THUMBS_DIR, `${photo.id}.webp`), { force: true });
+    await fsyncDir(photosDir);
+  }
+
+  /**
+   * A draft becomes an active avatar: `masterPhotoId` (one of its photos) is
+   * her master, and every other photo of the draft is deleted — other people
+   * from the same descriptor, who must never become photos or references of
+   * her (invariant 9). The new manifest is checked and written durably under
+   * a temp name first, so a manifest that cannot be written is found before
+   * any photo is gone; its rename is the commit. A crash before the rename
+   * leaves a draft with fewer photos (the temp is quarantined on open), which
+   * can be promoted again.
+   */
+  async promoteDraft(avatarId: string, patch: { masterPhotoId: string; name: string }): Promise<AvatarManifest> {
+    const avatarDir = this.#avatarDir(avatarId);
+    const manifestPath = join(avatarDir, MANIFEST_FILE);
+    return runExclusive(`manifest:${manifestPath}`, async () => {
+      const current = this.#avatars.get(avatarId);
+      if (!current) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+      if (current.status !== "draft") throw new LibraryError("not-a-draft", `avatar ${avatarId} is ${current.status}, not a draft`);
+      if (this.#referenceProblem(avatarId, patch.masterPhotoId) !== null) {
+        throw new LibraryError("photo-not-found", `avatar ${avatarId} has no photo ${patch.masterPhotoId}`);
+      }
+      const next = this.#validManifest({ ...current, status: "active", masterPhotoId: patch.masterPhotoId, name: patch.name });
+      const temp = tempSiblingPath(manifestPath);
+      try {
+        await writeFileDurable(temp, toJson(next));
+        for (const photo of this.photosByAvatar(avatarId)) {
+          if (photo.id !== patch.masterPhotoId) await this.#removePhoto(photo);
+        }
+        await this.#beforeRename?.(manifestPath);
+        await renameWithRetry(temp, manifestPath);
+      } catch (error) {
+        await rm(temp, { force: true });
+        throw error;
+      }
+      await fsyncDir(avatarDir);
+      this.#avatars.set(avatarId, next);
+      return next;
+    });
   }
 
   /**

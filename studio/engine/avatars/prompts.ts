@@ -7,6 +7,9 @@ import { AvatarDescriptor } from "../../shared/engine";
 // `promptSubject`; prompts.test.ts checks that no other engine module reads
 // the vibe.
 
+/** A stored descriptor that today's contract refuses: no prompt may be built from it. */
+export class PromptSubjectError extends TypeError {}
+
 /**
  * The avatar as a prompt names her: her descriptor, checked again against
  * today's contract (one stored before a stricter rule is refused here, before
@@ -14,7 +17,7 @@ import { AvatarDescriptor } from "../../shared/engine";
  */
 export function promptSubject(descriptor: AvatarDescriptor): string {
   const checked = AvatarDescriptor.safeParse(descriptor);
-  if (!checked.success) throw new TypeError(`the avatar's descriptor no longer passes the contract: ${checked.error.issues.map((i) => i.message).join("; ")}`);
+  if (!checked.success) throw new PromptSubjectError(`the avatar's descriptor no longer passes the contract: ${checked.error.issues.map((i) => i.message).join("; ")}`);
   return checked.data.text.replace(/[.\s]+$/, "");
 }
 

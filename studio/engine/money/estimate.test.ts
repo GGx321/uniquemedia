@@ -23,9 +23,10 @@ function plan(overrides: Partial<RunPlanInput> = {}): RunPlanInput {
 const AGE_TYPICAL = 1_660; // 658 in × $1.25/M + 335 out × $2.50/M
 const WRITER_TYPICAL_20 = 9_150; // 20 scenes × (106 in, 130 out)
 
-test("the writer and age-check ceilings cost $0.03 and $0.005 at worst on grok-4.3", () => {
+test("the writer and age-check ceilings cost $0.03 and $0.00525 at worst on grok-4.3", () => {
   expect(BOOK.chatWorstCase(WRITER_CALL)).toBe(30_000);
-  expect(BOOK.chatWorstCase(AGE_CHECK_CALL)).toBe(5_000);
+  // 2,200 prompt tokens (one image) × $1.25/M + 1,000 completion tokens × $2.50/M.
+  expect(BOOK.chatWorstCase(AGE_CHECK_CALL)).toBe(5_250);
 });
 
 test("typical chat costs come from the spike's measured tokens", () => {
@@ -35,10 +36,10 @@ test("typical chat costs come from the spike's measured tokens", () => {
   expect(BOOK.chatCost(writer25)).toBe(11_438); // the spike's writer: $0.0112 for 25 scenes
 });
 
-test("20 photos × 3 attempts on the default route: worst $3.33, expected $1.04 for one attempt per slot", () => {
+test("20 photos × 3 attempts on the default route: worst $3.345, expected $1.04 for one attempt per slot", () => {
   expect(estimateRun(BOOK, plan())).toEqual({
     expectedMicros: 20 * (50_000 + AGE_TYPICAL) + WRITER_TYPICAL_20,
-    worstMicros: 3_330_000,
+    worstMicros: 3_345_000,
     priceSource: "fallback",
   });
   expect(estimateRun(BOOK, plan()).expectedMicros).toBe(1_042_350);
@@ -50,13 +51,13 @@ test("the worst case takes the dearest model on the provider route, the expected
 
   expect(estimateRun(BOOK, plan({ photos: 1, route: [grok2K, seedream2K] }))).toEqual({
     expectedMicros: 70_000 + AGE_TYPICAL + 458,
-    worstMicros: 3 * (93_000 + 5_000) + 30_000,
+    worstMicros: 3 * (93_000 + 5_250) + 30_000,
     priceSource: "fallback",
   });
 });
 
 test("the worst case scales with attempts per slot", () => {
-  expect(estimateRun(BOOK, plan({ attemptsPerSlot: 1 })).worstMicros).toBe(20 * 55_000 + 30_000);
+  expect(estimateRun(BOOK, plan({ attemptsPerSlot: 1 })).worstMicros).toBe(20 * 55_250 + 30_000);
 });
 
 test("without age checks only the images and the writer count", () => {
@@ -64,7 +65,7 @@ test("without age checks only the images and the writer count", () => {
 });
 
 test("a single photo: one image, one age check and a one-scene writer", () => {
-  expect(estimateRun(BOOK, plan({ photos: 1 }))).toMatchObject({ expectedMicros: 50_000 + AGE_TYPICAL + 458, worstMicros: 195_000 });
+  expect(estimateRun(BOOK, plan({ photos: 1 }))).toMatchObject({ expectedMicros: 50_000 + AGE_TYPICAL + 458, worstMicros: 3 * 55_250 + 30_000 });
 });
 
 test("zero photos cost nothing, not even a writer call", () => {
@@ -74,7 +75,7 @@ test("zero photos cost nothing, not even a writer call", () => {
 test("attempts per slot must be between 1 and 3", () => {
   expect(() => estimateRun(BOOK, plan({ attemptsPerSlot: 0 }))).toThrow(RangeError);
   expect(() => estimateRun(BOOK, plan({ attemptsPerSlot: 4 }))).toThrow(RangeError);
-  expect(estimateRun(BOOK, plan({ attemptsPerSlot: 3 })).worstMicros).toBe(3_330_000);
+  expect(estimateRun(BOOK, plan({ attemptsPerSlot: 3 })).worstMicros).toBe(3_345_000);
 });
 
 test("photos must be a non-negative integer", () => {
@@ -108,6 +109,7 @@ const DESCRIPTOR_2K = { model: "x-ai/grok-4.3", maxTokens: 2_000, inputTokens: 2
 const QUALITY_1K_NO_REF: ImageChoice = { model: "x-ai/grok-imagine-image-quality", resolution: "1K", quality: null, refs: 0 };
 
 test("an avatar job: 4 candidates, a descriptor call and an age check per candidate (worst ≈ $0.23)", () => {
+  // 4 × ($0.05 + $0.00525) + one 2K/2K descriptor attempt ($0.0075).
   expect(
     estimateAvatarJob(BOOK, {
       candidates: 4,
@@ -115,7 +117,7 @@ test("an avatar job: 4 candidates, a descriptor call and an age check per candid
       descriptor: { call: DESCRIPTOR_2K, maxAttempts: 1 },
       ageChecks: AGE_CHECK_CALL,
     })
-  ).toEqual({ expectedMicros: 4 * (50_000 + AGE_TYPICAL) + 1_750, worstMicros: 227_500, priceSource: "fallback" });
+  ).toEqual({ expectedMicros: 4 * (50_000 + AGE_TYPICAL) + 1_750, worstMicros: 228_500, priceSource: "fallback" });
 });
 
 test("a descriptor that may be asked twice counts both attempts in the worst case and one in the expected cost", () => {
@@ -126,13 +128,13 @@ test("a descriptor that may be asked twice counts both attempts in the worst cas
       descriptor: { call: DESCRIPTOR_2K, maxAttempts: 2 },
       ageChecks: AGE_CHECK_CALL,
     })
-  ).toEqual({ expectedMicros: 4 * (50_000 + AGE_TYPICAL) + 1_750, worstMicros: 227_500 + 7_500, priceSource: "fallback" });
+  ).toEqual({ expectedMicros: 4 * (50_000 + AGE_TYPICAL) + 1_750, worstMicros: 228_500 + 7_500, priceSource: "fallback" });
 });
 
 test("another batch for an existing draft has no descriptor call", () => {
   expect(estimateAvatarJob(BOOK, { candidates: 4, image: QUALITY_1K_NO_REF, descriptor: null, ageChecks: AGE_CHECK_CALL })).toEqual({
     expectedMicros: 4 * (50_000 + AGE_TYPICAL),
-    worstMicros: 4 * (50_000 + 5_000),
+    worstMicros: 4 * (50_000 + 5_250),
     priceSource: "fallback",
   });
 });

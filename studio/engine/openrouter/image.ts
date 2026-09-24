@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { sniffImageMediaType, type ImageMediaType } from "../library/media";
+import { omitImageData } from "./redact";
 import { runPaidAttempt, type ClientContext, type Interpretation } from "./transport";
 import type { ImageParams, ImageResult } from "./types";
 
@@ -67,6 +68,8 @@ export async function generateImage(ctx: ClientContext, params: ImageParams): Pr
         : {}),
     }),
     interpret: interpretImage,
+    // An unusable image body may still hold a whole image that no age check has seen.
+    scrubRaw: omitImageData,
   });
   if (result.status !== "ok") return result;
   const { value, ...paid } = result;

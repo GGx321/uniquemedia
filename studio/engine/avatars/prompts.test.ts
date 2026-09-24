@@ -4,7 +4,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { AvatarDescriptor, Draft, type AvatarTraits } from "../../shared/engine";
-import { candidatePrompt, promptSubject } from "./prompts";
+import { candidatePrompt, promptSubject, PromptSubjectError } from "./prompts";
 
 const GOOD = "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build, light freckles across the nose.";
 const DESCRIPTOR: AvatarDescriptor = { age: 25, text: GOOD };
@@ -35,6 +35,10 @@ describe("the avatar in an image prompt is her descriptor, and nothing else of t
   ])("%s is refused before any prompt is built", (_label, text) => {
     expect(() => promptSubject({ age: 25, text })).toThrow("descriptor");
     expect(() => candidatePrompt({ age: 25, text })).toThrow("descriptor");
+  });
+
+  test("the refusal is its own error type, so a command can name it instead of answering INTERNAL", () => {
+    expect(() => candidatePrompt({ age: 25, text: "25-year-old European woman who looks 17." })).toThrow(PromptSubjectError);
   });
 
   test("the prompt builders take the descriptor alone", () => {

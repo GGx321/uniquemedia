@@ -52,6 +52,8 @@ export interface AttemptSpec<T> {
   buildBody: () => unknown;
   /** `body` is the parsed JSON, or undefined when the text is not JSON. */
   interpret: (body: unknown) => Interpretation<T>;
+  /** Applied to an unusable paid body before it is saved, after the key is redacted (image data must not be kept). */
+  scrubRaw?: (text: string) => string;
 }
 
 export type AttemptResult<T> =
@@ -267,9 +269,11 @@ async function endPaid<T>(
     let saveError = "";
     if (used.kind === "UNUSABLE_PAID_RESPONSE") {
       // Redact before cutting: a key split by the cut must not survive as a fragment.
+      // Scrubbed before the note is added: a value cut at the cap has no closing quote to stop at.
+      const scrub = spec.scrubRaw ?? ((kept: string) => kept);
       const raw = exchange.truncated
-        ? `${ctx.redactHead(text, exchange.keptChars)}\n[truncated: the body exceeded ${ctx.maxBodyBytes} bytes; only its start is kept]`
-        : ctx.redact(text);
+        ? `${scrub(ctx.redactHead(text, exchange.keptChars))}\n[truncated: the body exceeded ${ctx.maxBodyBytes} bytes; only its start is kept]`
+        : scrub(ctx.redact(text));
       try {
         await ctx.saveRaw(spec.attemptId, raw);
         rawSaved = true;

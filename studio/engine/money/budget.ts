@@ -49,6 +49,13 @@ export type ReserveRefusal =
 
 export type ReserveResult = { ok: true; handle: ReserveHandle } | ReserveRefusal;
 
+/** An attempt admitted ahead of its request (see `tryHold`). */
+export interface HoldRequest {
+  attemptId: string;
+  scope: Scope;
+  worstMicros: number;
+}
+
 /**
  * For the UI. With `haltCause: "SETTLE_ABOVE_WORST"` the UI (T8a) must list
  * `budget.aboveWorstAttempts()` — the attempts billed above their worst case —
@@ -61,6 +68,8 @@ export interface BudgetStatus {
   /** Every open reserve at its worst case: this process's in-flight and abandoned ones, and earlier processes' ones. */
   openReserveMicros: number;
   openAttempts: number;
+  /** Held attempts not yet reserved (see `tryHold`): in memory only, never on disk. */
+  heldMicros: number;
   torn: boolean;
   haltCause: HaltCause | null;
 }
@@ -129,6 +138,8 @@ export class Budget {
   private readonly openedAtMono: number;
   /** Monotonic time of this process's last ledger write or abandon. */
   private lastOwnActivityMono: number | null = null;
+  /** Attempts admitted by `tryHold` and not yet reserved or released, by attempt id. */
+  private readonly holds = new Map<string, { scopeKey: string; worstMicros: number }>();
 
   constructor(ledger: Ledger, limits: BudgetLimits) {
     assertMicros("monthlyBudgetMicros", limits.monthlyBudgetMicros);
@@ -151,13 +162,14 @@ export class Budget {
         throw new MoneyError("ATTEMPT_ID_REUSED", `attempt ${req.attemptId} was already reserved; an attempt id is never sent twice`);
       }
 
+      // The attempt's own hold, if any, is what this reserve replaces: it is not counted twice.
       const totals = this.totals(req.scope);
-      const monthCommitted = totals.spentThisMonth + totals.openWorst;
+      const monthCommitted = totals.spentThisMonth + totals.openWorst + this.heldMicros(null, req.attemptId);
       if (monthCommitted + req.worstMicros > this.monthlyBudgetMicros) {
         return { ok: false, reason: "BUDGET_EXCEEDED", limitMicros: this.monthlyBudgetMicros, committedMicros: monthCommitted, worstMicros: req.worstMicros };
       }
       const cap = this.capOf(req.scope);
-      const scopeCommitted = totals.scopeSpent + totals.scopeOpenWorst;
+      const scopeCommitted = totals.scopeSpent + totals.scopeOpenWorst + this.heldMicros(scopeKey(req.scope), req.attemptId);
       if (scopeCommitted + req.worstMicros > cap) {
         return { ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: cap, committedMicros: scopeCommitted, worstMicros: req.worstMicros };
       }
@@ -179,6 +191,7 @@ export class Budget {
         worstMicros: req.worstMicros,
       });
       this.own.set(req.attemptId, { handle, state: "in-flight" });
+      this.holds.delete(req.attemptId);
       return { ok: true, handle };
     });
   }
@@ -246,6 +259,54 @@ export class Budget {
     });
   }
 
+  /**
+   * Admits several attempts together before any of them is sent, e.g. an
+   * image and the age check that must follow it: all of them fit the monthly
+   * budget and their scopes' caps with everything committed and held so far,
+   * or none is held. A hold is in memory only (no request has left, so
+   * nothing goes to the ledger) and counts in every later check until its
+   * attempt is reserved, which takes the hold's place, or it is released.
+   */
+  tryHold(requests: readonly HoldRequest[]): Promise<{ ok: true } | ReserveRefusal> {
+    return this.mutex.run(async () => {
+      const ids = new Set<string>();
+      for (const r of requests) {
+        assertMicros("worstMicros", r.worstMicros);
+        if (!isAttemptId(r.attemptId)) throw new TypeError("attemptId must be 1-128 visible ASCII chars, as the contract carries it");
+        if (this.ledger.reserveOf(r.attemptId) || this.holds.has(r.attemptId) || ids.has(r.attemptId)) {
+          throw new MoneyError("ATTEMPT_ID_REUSED", `attempt ${r.attemptId} was already reserved or held; an attempt id is never sent twice`);
+        }
+        ids.add(r.attemptId);
+      }
+      const blocked = this.blocked();
+      if (blocked) return blocked;
+
+      const worstMicros = requests.reduce((sum, r) => sum + r.worstMicros, 0);
+      const month = this.totals(null);
+      const monthCommitted = month.spentThisMonth + month.openWorst + this.heldMicros(null);
+      if (monthCommitted + worstMicros > this.monthlyBudgetMicros) {
+        return { ok: false, reason: "BUDGET_EXCEEDED", limitMicros: this.monthlyBudgetMicros, committedMicros: monthCommitted, worstMicros };
+      }
+      for (const scope of new Map(requests.map((r) => [scopeKey(r.scope), r.scope])).values()) {
+        const key = scopeKey(scope);
+        const scopeWorst = requests.filter((r) => scopeKey(r.scope) === key).reduce((sum, r) => sum + r.worstMicros, 0);
+        const totals = this.totals(scope);
+        const cap = this.capOf(scope);
+        const scopeCommitted = totals.scopeSpent + totals.scopeOpenWorst + this.heldMicros(key);
+        if (scopeCommitted + scopeWorst > cap) {
+          return { ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: cap, committedMicros: scopeCommitted, worstMicros: scopeWorst };
+        }
+      }
+      for (const r of requests) this.holds.set(r.attemptId, { scopeKey: scopeKey(r.scope), worstMicros: r.worstMicros });
+      return { ok: true };
+    });
+  }
+
+  /** Gives a held attempt's room back (it will not be sent); a reserved or unknown one is left as it is. */
+  releaseHold(attemptId: string): void {
+    this.holds.delete(attemptId);
+  }
+
   /** How many of this process's attempts are still waiting for a response. */
   inFlightCount(): number {
     let n = 0;
@@ -306,6 +367,7 @@ export class Budget {
       spentThisMonthMicros: totals.spentThisMonth,
       openReserveMicros: totals.openWorst,
       openAttempts: totals.openAttempts,
+      heldMicros: this.heldMicros(null),
       torn: this.ledger.torn !== null,
       haltCause: blocked?.reason === "HALTED" ? blocked.cause : null,
     };
@@ -369,6 +431,15 @@ export class Budget {
       throw new MoneyError("ATTEMPT_CLOSED", `attempt ${handle.attemptId} is already ${entry.state}`);
     }
     return entry;
+  }
+
+  /** Held micro-dollars, in one scope or all of them, leaving out the attempt a reserve is replacing. */
+  private heldMicros(key: string | null, except?: string): number {
+    let sum = 0;
+    for (const [attemptId, held] of this.holds) {
+      if (attemptId !== except && (key === null || held.scopeKey === key)) sum += held.worstMicros;
+    }
+    return sum;
   }
 
   private capOf(scope: Scope): number {

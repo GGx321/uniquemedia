@@ -6,6 +6,8 @@ export type LibraryErrorCode =
   | "invalid-record"
   | "avatar-not-found"
   | "photo-not-found"
+  | "photo-is-master"
+  | "not-a-draft"
   | "media-type-mismatch"
   | "run-exists"
   | "run-not-found"

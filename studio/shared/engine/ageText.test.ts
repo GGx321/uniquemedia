@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { adultTextProblems, ageMentions, ageUpperBounds, DESCRIPTOR_MAX_CHARS, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
+import { adultTextProblems, ageMentions, ageUpperBounds, DESCRIPTOR_MAX_CHARS, hardYouthWords, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
 
 describe("ageMentions", () => {
   test.each([
@@ -80,6 +80,24 @@ describe("ageMentions", () => {
     "coffee, travel, books",
   ])("finds no age in %p", (text) => {
     expect(ageMentions(text)).toEqual([]);
+  });
+});
+
+describe("ageMentions: a compound number word is one number", () => {
+  test.each([
+    ["Adult woman aged twenty-five.", [25]],
+    ["aged twenty-five", [25]],
+    ["ages twenty-one to twenty-five", [21, 25]],
+    ["aged thirty-two", [32]],
+    ["ages sixteen-eighteen", [16, 18]],
+    ["aged 16-18", [16, 18]],
+    ["aged twenty-five-ish", [25]],
+  ])("%s → %p", (text, ages) => {
+    expect(ageMentions(text)).toEqual(ages);
+  });
+
+  test("so a descriptor or a vibe that states the age as words is not read as a second, younger age", () => {
+    expect(adultTextProblems("Adult woman aged twenty-five", 25, "vibe")).toEqual([]);
   });
 });
 
@@ -204,6 +222,24 @@ describe("youthWords in vibe scope", () => {
 
   test.each(SOFT_WORDS)("lets %p through (the descriptor check catches it later)", (word) => {
     expect(youthWords(`a ${word} in a cafe`, "vibe")).toEqual([]);
+  });
+});
+
+describe("hardYouthWords", () => {
+  test("finds the hard markers of a minor, as the text has them", () => {
+    expect(hardYouthWords("She could be a teenager, maybe in high school.")).toEqual(["teenager", "high school"]);
+    expect(hardYouthWords("possibly a minor, underage look")).toEqual(["minor", "underage"]);
+  });
+
+  test("leaves the words that only describe a youthful look to the descriptor's stricter set", () => {
+    expect(hardYouthWords("a young, youthful woman, girl next door")).toEqual([]);
+    expect(youthWords("a young, youthful woman, girl next door", "descriptor")).not.toEqual([]);
+  });
+
+  test("is the vibe's whole set of youth words", () => {
+    for (const text of ["teen model", "school uniform", "a young woman", "petite and young-looking", "adolescent features"]) {
+      expect(hardYouthWords(text)).toEqual(youthWords(text, "vibe"));
+    }
   });
 });
 

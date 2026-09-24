@@ -28,6 +28,8 @@ import { Count, SafeText } from "./primitives";
  * - IN_FLIGHT: refused while paid requests are still in flight (e.g. reconcile, library move).
  * - LIBRARY_UNAVAILABLE: no library is open (its folder is missing or unreadable), so nothing that
  *   stores results is started and nothing is spent.
+ * - DESCRIPTOR_INVALID: the avatar's stored descriptor fails today's adult-text rules, so no prompt
+ *   is built from it and nothing is spent; the descriptor has to be rewritten.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -51,6 +53,7 @@ export const ERROR_CODES = [
   "PRICE_CHANGED",
   "IN_FLIGHT",
   "LIBRARY_UNAVAILABLE",
+  "DESCRIPTOR_INVALID",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);

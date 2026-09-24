@@ -151,12 +151,13 @@ describe("Engine command dispatch", () => {
 
   test("commands without a handler yet answer INTERNAL 'not implemented'", async () => {
     const { engine } = await startEngine();
-    const response = await engine.handle(command("avatars.generateCandidates", { avatarId: "avatar-0001", acceptedWorstMicros: 0 }));
+    // photos.list is a 2b placeholder.
+    const response = await engine.handle(command("photos.list", { avatarId: "avatar-0001" }));
     expect(ResponseMessage.safeParse(response).success).toBe(true);
     expect(response).toMatchObject({
       ok: false,
-      type: "avatars.generateCandidates",
-      error: { code: "INTERNAL", detail: "avatars.generateCandidates is not implemented yet" },
+      type: "photos.list",
+      error: { code: "INTERNAL", detail: "photos.list is not implemented yet" },
     });
   });
 

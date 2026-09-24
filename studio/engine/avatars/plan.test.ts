@@ -9,7 +9,7 @@ const FALLBACK = { book: PriceBook.fallback(), asOf: "2026-09-24" };
 // From the dated fallback table: grok-imagine-image-2.0 low 1K = $0.04, no
 // reference; grok-4.3 $1.25/M prompt, $2.50/M completion.
 const PORTRAIT = 40_000;
-const AGE_CHECK = { expected: 1_660, worst: 5_000 }; // 658 in / 335 out; ceilings 2K in / 1K out
+const AGE_CHECK = { expected: 1_660, worst: 5_250 }; // 658 in / 335 out; ceilings 2.2K in / 1K out
 const DESCRIPTOR = { expected: 2_625, worst: 13_750 }; // 900 in / 600 out; ceilings 5K in / 3K out
 
 test("a candidate is a 1K low-quality portrait without a reference, on the settings' image model", () => {
@@ -17,7 +17,7 @@ test("a candidate is a 1K low-quality portrait without a reference, on the setti
   expect(CANDIDATES_PER_BATCH).toBe(4);
 });
 
-test("a new avatar: the descriptor (asked at most twice), 4 portraits and 4 age checks — $0.169 expected, $0.2075 worst", () => {
+test("a new avatar: the descriptor (asked at most twice), 4 portraits and 4 age checks — $0.169 expected, $0.2085 worst", () => {
   const estimate = avatarJobEstimate(FALLBACK, DEFAULTS, "new-avatar");
 
   expect(estimate).toEqual({
@@ -26,14 +26,14 @@ test("a new avatar: the descriptor (asked at most twice), 4 portraits and 4 age 
     prices: "fallback",
     pricesAsOf: "2026-09-24",
   });
-  expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([169_265, 207_500]);
+  expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([169_265, 208_500]);
   expect(Estimate.safeParse(estimate).success).toBe(true);
 });
 
-test("another batch for a draft: 4 portraits and 4 age checks, no descriptor — $0.167 expected, $0.18 worst", () => {
+test("another batch for a draft: 4 portraits and 4 age checks, no descriptor — $0.167 expected, $0.181 worst", () => {
   expect(avatarJobEstimate(FALLBACK, DEFAULTS, "next-batch")).toEqual({
     expectedMicros: 166_640,
-    worstMicros: 180_000,
+    worstMicros: 181_000,
     prices: "fallback",
     pricesAsOf: "2026-09-24",
   });

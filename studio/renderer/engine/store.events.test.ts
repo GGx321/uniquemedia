@@ -209,7 +209,7 @@ test("job.cancelled cancels a running job", async () => {
 });
 
 test("job.cancelled leaves a job that already finished alone", async () => {
-  const result = { kind: "avatar.candidates" as const, avatarId: DRAFT.avatarId, candidates: DRAFT.candidates, rejectedByAgeCheck: 0 };
+  const result = { kind: "avatar.candidates" as const, avatarId: DRAFT.avatarId, candidates: DRAFT.candidates, rejectedByAgeCheck: 0, failedSlots: [] };
   const done = { kind: "avatar.candidates" as const, jobId: "job-00000001", avatarId: DRAFT.avatarId, status: "done" as const, done: 4, total: 4, result };
   const h = await host({ drafts: [DRAFT], jobs: [done] });
 

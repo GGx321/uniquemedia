@@ -35,8 +35,8 @@ const TRAITS: AvatarTraits = {
 const GOOD = "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build, light freckles across the nose.";
 
 /** The dated fallback table's prices (grok-imagine-image-2.0 low 1K, grok-4.3), as plan.test.ts pins them. */
-const NEW_AVATAR: Estimate = { expectedMicros: 169_265, worstMicros: 207_500, prices: "fallback", pricesAsOf: "2026-09-24" };
-const NEXT_BATCH: Estimate = { expectedMicros: 166_640, worstMicros: 180_000, prices: "fallback", pricesAsOf: "2026-09-24" };
+const NEW_AVATAR: Estimate = { expectedMicros: 169_265, worstMicros: 208_500, prices: "fallback", pricesAsOf: "2026-09-24" };
+const NEXT_BATCH: Estimate = { expectedMicros: 166_640, worstMicros: 181_000, prices: "fallback", pricesAsOf: "2026-09-24" };
 const ATTEMPT_WORST = 13_750;
 
 let dir = "";
@@ -172,10 +172,10 @@ describe("avatars.estimate", () => {
 
     const response = ok(await engine.handle(command("avatars.estimate", { traits: TRAITS })));
 
-    // 4 × $0.03 + 4 age checks (658 in, 335 out; ceilings 2K in, 1K out) + the descriptor (900 in, 600 out; 2 × 5K in, 3K out) at $1/M in, $2/M out.
+    // 4 × $0.03 + 4 age checks (658 in, 335 out; ceilings 2.2K in, 1K out) + the descriptor (900 in, 600 out; 2 × 5K in, 3K out) at $1/M in, $2/M out.
     expect(response.result).toEqual({
       expectedMicros: 4 * (30_000 + 1_328) + 2_100,
-      worstMicros: 4 * (30_000 + 4_000) + 2 * 11_000,
+      worstMicros: 4 * (30_000 + 4_200) + 2 * 11_000,
       prices: "live",
       pricesAsOf: "2026-09-24",
     });
@@ -206,7 +206,7 @@ describe("avatars.estimate", () => {
     await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, imageModel: "x-ai/grok-imagine-image-quality" } });
 
     // grok-imagine-image-quality: $0.05 at 1K.
-    expect(ok(await engine.handle(command("avatars.estimate", { traits: TRAITS }))).result).toMatchObject({ worstMicros: 4 * (50_000 + 5_000) + 2 * ATTEMPT_WORST });
+    expect(ok(await engine.handle(command("avatars.estimate", { traits: TRAITS }))).result).toMatchObject({ worstMicros: 4 * (50_000 + 5_250) + 2 * ATTEMPT_WORST });
   });
 
   test("a model neither the live prices nor the table know answers PRICE_UNAVAILABLE", async () => {

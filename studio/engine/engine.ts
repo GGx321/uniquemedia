@@ -5,6 +5,8 @@ import {
   parseEngineCommand,
   PROTOCOL_VERSION,
   type ApiKeyStatus,
+  type AvatarDescriptor,
+  type AvatarSummary,
   type CommandPayload,
   type Draft,
   type EngineCommandMessage,
@@ -23,9 +25,14 @@ import {
   type Snapshot,
   type UnsequencedEvent,
 } from "../shared/engine";
+import { downscaleToJpeg } from "../node/downscale";
+import { AGE_CHECK_MAX_SIDE } from "./avatars/ageCheck";
+import { candidateJobEnd, runCandidateJob, type SlotOutcome } from "./avatars/candidateJob";
 import { runDescriptorJob } from "./avatars/descriptorJob";
-import { avatarJobEstimate, avatarPriceModels, descriptorJobCap, type AvatarModels } from "./avatars/plan";
-import { draftFrom, libraryView, manifestTraits, type LibraryView } from "./avatars/records";
+import { avatarJobEstimate, avatarPriceModels, CANDIDATES_PER_BATCH, descriptorJobCap, type AvatarModels } from "./avatars/plan";
+import { promptSubject, PromptSubjectError } from "./avatars/prompts";
+import { avatarSummaryFrom, draftFrom, libraryView, manifestTraits, type LibraryView } from "./avatars/records";
+import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
 import { LibraryError, openLibrary, type Library } from "./library";
@@ -34,6 +41,7 @@ import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
 import { Ledger, type Scope } from "./money/ledger";
 import { PriceCache } from "./money/priceCache";
+import type { PriceBook } from "./money/prices";
 import { loadPriceBook, OPENROUTER_API_BASE } from "./money/prices";
 import type { ReconcileResult as LedgerReconcileResult, ReconcileWarning as LedgerReconcileWarning } from "./money/reconcile";
 import { createOpenRouterClient, fromOpenRouterError, OpenRouterError, type OpenRouterClient, type OpenRouterFetch } from "./openrouter";
@@ -177,6 +185,24 @@ type Money = { ok: true; budget: Budget } | { ok: false; unavailable: LedgerUnav
 /** The manifest needs a name; a draft gets the user's name only when a candidate is picked. */
 const DRAFT_NAME = "Draft";
 
+/** A candidate job while it runs: what it was started with, and how many slots are done. */
+interface RunningCandidates {
+  jobId: string;
+  scope: Scope;
+  avatarId: string;
+  descriptor: AvatarDescriptor;
+  /** The key the job was started with: a 401 marks this key rejected, not one stored since. */
+  key: string;
+  budget: Budget;
+  /** The library the draft is in; a library switch is refused while the job runs. */
+  library: Library;
+  priceBook: PriceBook;
+  imageModel: string;
+  concurrency: number;
+  signal: AbortSignal;
+  done: number;
+}
+
 /** A library and the identity of its folder. */
 interface OpenedLibrary {
   library: Library;
@@ -220,6 +246,14 @@ export class Engine {
   #paidCommands = 0;
   /** One createDraft at a time: a second click (the wizard left and opened again) must not buy a second descriptor. */
   #creatingDraft = false;
+  /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
+  readonly #jobs = new JobRegistry();
+  /**
+   * Avatars a running job or command is changing: a candidate job holds its
+   * draft until it ends, pick and archive while they write. Anything else
+   * that would change one of them is refused with IN_FLIGHT.
+   */
+  readonly #busyAvatars = new Set<string>();
 
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
@@ -439,6 +473,32 @@ export class Engine {
           this.#creatingDraft = false;
         }
       }
+      case "avatars.generateCandidates": {
+        const { avatarId } = command.payload;
+        this.#claimAvatar(avatarId, "a batch of candidates is already being made for this draft; wait for it to finish");
+        this.#paidCommands++;
+        let started = false;
+        try {
+          const result = await this.#generateCandidates(command.payload);
+          started = true;
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+        } finally {
+          // A started job holds both until it ends.
+          if (!started) {
+            this.#paidCommands--;
+            this.#busyAvatars.delete(avatarId);
+          }
+        }
+      }
+      case "avatars.cancel": {
+        const { jobId } = command.payload;
+        if (!this.#jobs.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no job ${jobId} in this engine` });
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { jobId } };
+      }
+      case "avatars.pick":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#pick(command.payload) };
+      case "avatars.archive":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#archive(command.payload) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -455,8 +515,8 @@ export class Engine {
       avatars: view.avatars,
       drafts: view.drafts.map((draft) => ({ ...draft, estimate: nextBatch })),
       unreadableAvatars: view.skipped.length,
-      // Filled by the avatar and run jobs (T6a part 2, T6).
-      jobs: [],
+      // Avatar jobs of this engine's life; run jobs come with T6.
+      jobs: this.#jobs.states(),
       notices: [...this.#notices],
     };
   }
@@ -509,22 +569,12 @@ export class Engine {
   async #createDraft(payload: CommandPayload<"avatars.createDraft">): Promise<{ draft: Draft }> {
     const key = this.#usableKey("create an avatar");
     const budget = this.#paidBudget();
-    const library = this.library;
-    if (library === null) {
-      throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
-    }
+    const library = this.#liveLibrary();
     const models = this.#avatarModels();
     const priced = await this.#prices.get(avatarPriceModels(models));
     const job = avatarJobEstimate(priced, models, "new-avatar");
-    if (job.worstMicros > payload.acceptedWorstMicros) {
-      throw new EngineFailure({ code: "PRICE_CHANGED", detail: `the worst case is now ${job.worstMicros} µ$, above the accepted ${payload.acceptedWorstMicros} µ$` });
-    }
-    const month = budget.status();
-    const committed = month.spentThisMonthMicros + month.openReserveMicros;
-    if (committed + job.worstMicros > month.monthlyBudgetMicros) {
-      const detail = `committed ${committed} µ$ + this job's worst case ${job.worstMicros} µ$ > the monthly budget ${month.monthlyBudgetMicros} µ$`;
-      throw new EngineFailure({ code: "BUDGET_EXCEEDED", detail });
-    }
+    Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, job.worstMicros);
 
     const jobId = this.#deps.newId();
     const scope: Scope = { avatarJobId: jobId };
@@ -565,6 +615,211 @@ export class Engine {
     const draft: Draft = { ...stored, estimate: avatarJobEstimate(priced, models, "next-batch") };
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
     return { draft };
+  }
+
+  /**
+   * Another batch of candidate portraits for a draft (the first one too:
+   * createDraft buys only the descriptor). Checked before anything is spent,
+   * in createDraft's order: a usable key, a ledger that allows paid calls, an
+   * open library, a draft whose stored descriptor today's rules still accept
+   * (DESCRIPTOR_INVALID otherwise), the worst case the user accepted and room
+   * in the month, both for the batch. Then the job is registered under its own
+   * scope, capped at the batch's worst case, and runs on after the answer.
+   */
+  async #generateCandidates(payload: CommandPayload<"avatars.generateCandidates">): Promise<{ jobId: string }> {
+    const key = this.#usableKey("generate candidate portraits");
+    const budget = this.#paidBudget();
+    const library = this.#liveLibrary();
+    const { avatarId } = payload;
+    const manifest = library.getAvatar(avatarId);
+    if (manifest === undefined || manifest.status !== "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
+    const descriptor: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
+    try {
+      promptSubject(descriptor);
+    } catch (error) {
+      if (!(error instanceof PromptSubjectError)) throw error;
+      throw new EngineFailure({ code: "DESCRIPTOR_INVALID", detail: messageOf(error, "the draft's descriptor fails today's rules") });
+    }
+    if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(avatarPriceModels(models));
+    const batch = avatarJobEstimate(priced, models, "next-batch");
+    Engine.#checkAccepted(batch.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, batch.worstMicros);
+
+    const jobId = this.#deps.newId();
+    const scope: Scope = { avatarJobId: jobId };
+    const signal = this.#jobs.startCandidates(jobId, avatarId, CANDIDATES_PER_BATCH);
+    // The scope sends exactly the batch's calls: its cap is their worst case, and it goes when the job ends.
+    this.#caps.set(scopeKey(scope), batch.worstMicros);
+    void this.#runCandidates({
+      jobId,
+      scope,
+      avatarId,
+      descriptor,
+      key,
+      budget,
+      library,
+      priceBook: priced.book,
+      imageModel: models.imageModel,
+      concurrency: this.#settings.concurrency.network,
+      signal,
+      done: 0,
+    });
+    return { jobId };
+  }
+
+  /**
+   * Runs a registered candidate job to its end and announces it: money.changed,
+   * then job.done, job.failed or job.cancelled. Its cap, its draft and the
+   * library switch are released first, so a pick sent on job.done is taken.
+   * Never rejects.
+   */
+  async #runCandidates(job: RunningCandidates): Promise<void> {
+    let end: CandidatesJobEnd;
+    try {
+      const client = this.#openRouter(job.key);
+      const outcomes = await runCandidateJob(
+        {
+          generateImage: (params) => client.generateImage(params),
+          chat: (params) => client.chat(params),
+          budget: job.budget,
+          priceBook: job.priceBook,
+          downscale: (bytes, signal) => downscaleToJpeg(bytes, { maxSide: AGE_CHECK_MAX_SIDE, signal }),
+          store: (bytes, meta) => job.library.addPhoto(job.avatarId, bytes, meta),
+          errorOf: engineErrorFrom,
+          onSlot: (outcome) => this.#candidateSlotDone(job, outcome),
+        },
+        { jobId: job.jobId, scope: job.scope, imageModel: job.imageModel, descriptor: job.descriptor, concurrency: job.concurrency, signal: job.signal },
+      );
+      end = candidateJobEnd(outcomes, job.signal.aborted);
+    } catch (error) {
+      end = { status: "failed", error: engineErrorFrom(error) };
+    }
+    this.#caps.delete(scopeKey(job.scope));
+    this.#paidCommands--;
+    this.#busyAvatars.delete(job.avatarId);
+    try {
+      this.#emitMoney();
+      const state = this.#jobs.finish(job.jobId, end);
+      const v = PROTOCOL_VERSION;
+      if (state?.status === "done" && state.result !== undefined) {
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: state.result } });
+      } else if (end.status === "failed") {
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.failed", payload: { jobId: job.jobId, error: end.error } });
+      } else if (end.status === "cancelled") {
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.cancelled", payload: { jobId: job.jobId } });
+      }
+    } catch (error) {
+      console.error(`studio engine: the end of job ${job.jobId} could not be announced (${errorKind(error)})`);
+    }
+  }
+
+  /** A slot that finished: a stored candidate changes the draft; every one moves the progress on. */
+  #candidateSlotDone(job: RunningCandidates, outcome: SlotOutcome): void {
+    try {
+      if (outcome.kind === "failed" && outcome.error.code === "AUTH_INVALID") this.markKeyRejected(job.key);
+      if (outcome.kind === "passed") this.#emitDraft(job.library, job.avatarId);
+      const progress = this.#jobs.progress(job.jobId, ++job.done);
+      if (progress !== null) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "job.progress", payload: progress });
+    } catch (error) {
+      // The slot's money and photo are already recorded; only its announcement failed.
+      console.error(`studio engine: a slot of job ${job.jobId} could not be announced (${errorKind(error)})`);
+    }
+  }
+
+  #emitDraft(library: Library, avatarId: string): void {
+    const manifest = library.getAvatar(avatarId);
+    const stored = manifest === undefined ? null : draftFrom(manifest, library.photosByAvatar(avatarId));
+    if (stored === null) return;
+    const draft: Draft = { ...stored, estimate: this.#nextBatchAtKnownPrices() };
+    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
+  }
+
+  /**
+   * The user's pick: the draft becomes an active avatar with the candidate as
+   * her master and the given name. The other candidates are other people from
+   * the same descriptor, so they are deleted before the new manifest commits:
+   * they must never become photos or references of her (invariant 9). A
+   * manifest that cannot be written is found before any of them is gone; a
+   * crash in between leaves a draft with fewer candidates, which can be
+   * picked again. Only a candidate that passed the age check can be picked;
+   * refused while a job runs for the draft.
+   */
+  async #pick(payload: CommandPayload<"avatars.pick">): Promise<{ avatar: AvatarSummary }> {
+    const library = this.#liveLibrary();
+    const { avatarId, photoId } = payload;
+    this.#claimAvatar(avatarId, "a batch of candidates is being made for this draft; pick when it ends");
+    try {
+      if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
+      const photo = library.getPhoto(photoId);
+      if (photo === undefined || photo.avatarId !== avatarId || photo.qa.age?.adult !== true) {
+        throw new EngineFailure({ code: "NOT_FOUND", detail: `draft ${avatarId} has no age-checked candidate ${photoId}` });
+      }
+      // The new manifest is written (not yet committed) before the other candidates go; see Library.promoteDraft.
+      await library.promoteDraft(avatarId, { masterPhotoId: photo.id, name: payload.name.trim() });
+      return { avatar: this.#announceAvatar(library, avatarId) };
+    } finally {
+      this.#busyAvatars.delete(avatarId);
+    }
+  }
+
+  /** A saved avatar archived; one already archived is answered as it is. Refused while a job runs for it. */
+  async #archive(payload: CommandPayload<"avatars.archive">): Promise<{ avatar: AvatarSummary }> {
+    const library = this.#liveLibrary();
+    const { avatarId } = payload;
+    this.#claimAvatar(avatarId, "a job is changing this avatar; archive it when the job ends");
+    try {
+      const manifest = library.getAvatar(avatarId);
+      const current = manifest === undefined ? null : avatarSummaryFrom(manifest, library.photoCount(avatarId));
+      if (current === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
+      if (current.status === "archived") return { avatar: current };
+      await library.updateAvatar(avatarId, { status: "archived" });
+      return { avatar: this.#announceAvatar(library, avatarId) };
+    } finally {
+      this.#busyAvatars.delete(avatarId);
+    }
+  }
+
+  /** The saved avatar as the grid lists it, announced with avatar.changed. */
+  #announceAvatar(library: Library, avatarId: string): AvatarSummary {
+    const manifest = library.getAvatar(avatarId);
+    const avatar = manifest === undefined ? null : avatarSummaryFrom(manifest, library.photoCount(avatarId));
+    if (avatar === null) throw new Error(`the saved avatar ${avatarId} does not fit the contract`);
+    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.changed", payload: { avatar } });
+    return avatar;
+  }
+
+  /** Marks an avatar as being changed; IN_FLIGHT when a job or command already is. */
+  #claimAvatar(avatarId: string, detail: string): void {
+    if (this.#busyAvatars.has(avatarId)) throw new EngineFailure({ code: "IN_FLIGHT", detail });
+    this.#busyAvatars.add(avatarId);
+  }
+
+  /** The live library, for a command that stores into it. */
+  #liveLibrary(): Library {
+    const library = this.library;
+    if (library === null) {
+      throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    }
+    return library;
+  }
+
+  /** PRICE_CHANGED when the worst case now is above the one the user accepted. */
+  static #checkAccepted(worstMicros: number, acceptedWorstMicros: number): void {
+    if (worstMicros > acceptedWorstMicros) {
+      throw new EngineFailure({ code: "PRICE_CHANGED", detail: `the worst case is now ${worstMicros} µ$, above the accepted ${acceptedWorstMicros} µ$` });
+    }
+  }
+
+  /** BUDGET_EXCEEDED when the month has no room for the job's worst case on top of what is spent, reserved and held by running jobs. */
+  static #checkMonthlyRoom(budget: Budget, worstMicros: number): void {
+    const month = budget.status();
+    const committed = month.spentThisMonthMicros + month.openReserveMicros + month.heldMicros;
+    if (committed + worstMicros > month.monthlyBudgetMicros) {
+      const detail = `committed ${committed} µ$ + this job's worst case ${worstMicros} µ$ > the monthly budget ${month.monthlyBudgetMicros} µ$`;
+      throw new EngineFailure({ code: "BUDGET_EXCEEDED", detail });
+    }
   }
 
   /** The key for a paid or keyed call: stored, and not rejected by OpenRouter. */
@@ -716,6 +971,10 @@ export class Engine {
     // The cause is its own error code: LEDGER_CORRUPT or LEDGER_UNREADABLE.
     if (!money.ok) throw new EngineFailure({ code: money.unavailable.cause, detail: money.unavailable.detail });
     const key = this.#usableKey("reconcile");
+    // A paid job between its requests has none in flight, but its next reserve would land in the window being reconciled.
+    if (this.#paidCommands > 0) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: `${this.#paidCommands} paid job(s) of this engine are running; reconcile when they end` });
+    }
     let result: LedgerReconcileResult;
     try {
       const client = this.#openRouter(key);

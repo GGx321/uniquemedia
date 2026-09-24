@@ -35,7 +35,9 @@ export interface WriterCall extends Omit<ChatCall, "typical"> {
 /**
  * Measured in the spike (2026-09-24, grok-4.3, $1.25/M in, $2.50/M out).
  * Ceilings: the writer's max_tokens 8K + ~8K prompt = $0.03; an age check's
- * 1K + ~2K prompt (one image) = $0.005. Typical: the writer used 2,645 prompt
+ * 1K + 2.2K prompt (one image) = $0.00525 — its prompt floor (text, schema
+ * and the image allowance, openrouter/chat.ts) is ~2K, and the headroom keeps
+ * a small wording change from raising every reserve above the estimate. Typical: the writer used 2,645 prompt
  * and 3,230 completion tokens for 25 scenes ($0.0112); 83 age checks averaged
  * 658 prompt and 334 completion tokens (max 747 / 573), $0.00166 at list price
  * ($0.00142 billed, with cached prompt tokens).
@@ -50,7 +52,7 @@ export const WRITER_CALL: WriterCall = {
 export const AGE_CHECK_CALL: ChatCall = {
   model: "x-ai/grok-4.3",
   maxTokens: 1_000,
-  inputTokens: 2_000,
+  inputTokens: 2_200,
   images: 1,
   typical: { inputTokens: 658, outputTokens: 335 },
 };

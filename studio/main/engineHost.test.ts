@@ -404,6 +404,10 @@ describe("request deadline", () => {
     expect(COMMAND_DEADLINE_MS["avatars.estimateCandidates"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });
 
+  test("generateCandidates answers once its checks and a price load are done (the job runs on), so it waits as long as an estimate", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.generateCandidates"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
+  });
+
   test("an init that never finishes cannot hang a request", async () => {
     const { host, timers } = setup({ init: () => new Promise<EngineInit>(() => {}) });
     void host.start();

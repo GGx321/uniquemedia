@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ApiKeyStatus,
   AvatarSummary,
+  CandidatesResult,
   Draft,
   EngineNotice,
   Estimate,
@@ -92,6 +93,7 @@ const candidatesResult = {
   avatarId: "avatar-0001",
   candidates: [candidate],
   rejectedByAgeCheck: 0,
+  failedSlots: [],
 };
 
 const runJob = { kind: "run", jobId: "job-00000002", runId: "run-00000001", status: "running", done: 3, total: 20 };
@@ -391,6 +393,52 @@ describe("AvatarSummary", () => {
   test("rejects the old archived flag", () => {
     const { status: _s, ...rest } = avatar;
     expect(AvatarSummary.safeParse({ ...rest, archived: false }).success).toBe(false);
+  });
+});
+
+describe("CandidatesResult", () => {
+  const second = { avatarId: "avatar-0001", photoId: "photo-0002" };
+  const full = {
+    kind: "avatar.candidates",
+    avatarId: "avatar-0001",
+    candidates: [candidate, second],
+    rejectedByAgeCheck: 1,
+    failedSlots: [
+      { slot: 3, reason: "age-rejected" },
+      { slot: 4, reason: "failed", error: { code: "TIMEOUT", detail: "no response within 180000 ms" }, reserveLeftOpen: true },
+    ],
+  };
+
+  test("carries the slots that gave no candidate and why: rejected by the age check, or failed with its error and whether its reserve is still open", () => {
+    expect(CandidatesResult.safeParse(full).success).toBe(true);
+  });
+
+  test("a result must say which slots gave nothing, even when none did", () => {
+    const { failedSlots: _failedSlots, ...without } = full;
+    expect(CandidatesResult.safeParse(without).success).toBe(false);
+    expect(CandidatesResult.safeParse({ ...full, candidates: [candidate, second], rejectedByAgeCheck: 0, failedSlots: [] }).success).toBe(true);
+  });
+
+  test("rejectedByAgeCheck is the number of age-rejected slots", () => {
+    expect(CandidatesResult.safeParse({ ...full, rejectedByAgeCheck: 2 }).success).toBe(false);
+    expect(CandidatesResult.safeParse({ ...full, rejectedByAgeCheck: 0 }).success).toBe(false);
+  });
+
+  test("a slot is 1 to 4 and is listed once", () => {
+    expect(CandidatesResult.safeParse({ ...full, failedSlots: [{ slot: 5, reason: "age-rejected" }, full.failedSlots[1]] }).success).toBe(false);
+    expect(CandidatesResult.safeParse({ ...full, failedSlots: [{ slot: 0, reason: "age-rejected" }, full.failedSlots[1]] }).success).toBe(false);
+    expect(CandidatesResult.safeParse({ ...full, failedSlots: [{ slot: 4, reason: "age-rejected" }, full.failedSlots[1]] }).success).toBe(false);
+  });
+
+  test("candidates and slots that gave nothing are at most the four of a batch", () => {
+    const four = ["photo-0001", "photo-0002", "photo-0003", "photo-0004"].map((photoId) => ({ avatarId: "avatar-0001", photoId }));
+    expect(CandidatesResult.safeParse({ ...full, candidates: four, rejectedByAgeCheck: 0, failedSlots: [full.failedSlots[1]] }).success).toBe(false);
+  });
+
+  test("a failed slot needs its error and the reserve flag; an age-rejected one carries neither", () => {
+    expect(CandidatesResult.safeParse({ ...full, failedSlots: [full.failedSlots[0], { slot: 4, reason: "failed", reserveLeftOpen: false }] }).success).toBe(false);
+    expect(CandidatesResult.safeParse({ ...full, failedSlots: [full.failedSlots[0], { slot: 4, reason: "failed", error: { code: "NETWORK" } }] }).success).toBe(false);
+    expect(CandidatesResult.safeParse({ ...full, failedSlots: [{ slot: 3, reason: "age-rejected", error: { code: "NETWORK" } }, full.failedSlots[1]] }).success).toBe(false);
   });
 });
 

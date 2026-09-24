@@ -663,6 +663,7 @@ test("status after a restart shows what needs reconciling", async () => {
     spentThisMonthMicros: 30_000,
     openReserveMicros: 70_000,
     openAttempts: 2,
+    heldMicros: 0,
     torn: false,
     haltCause: null,
   });
@@ -673,4 +674,96 @@ test("status is ok while only this process's reserves are open", async () => {
   await budget.tryReserve(req("a#1", 50_000));
 
   expect(budget.status()).toMatchObject({ state: "ok", spentThisMonthMicros: 0, openReserveMicros: 50_000, openAttempts: 1 });
+});
+
+// ---------- holds: attempts admitted together ahead of their requests ----------
+
+function hold(attemptId: string, worstMicros: number, scope: Scope = RUN) {
+  return { attemptId, scope, worstMicros };
+}
+
+test("a hold admits attempts together, writes nothing, and counts against the month until they are reserved", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100 });
+
+  expect(await budget.tryHold([hold("img#1", 60), hold("age#1", 40)])).toEqual({ ok: true });
+
+  expect(await fileLines()).toEqual([]);
+  expect(budget.status()).toMatchObject({ heldMicros: 100, openReserveMicros: 0, openAttempts: 0 });
+  expect(await budget.tryReserve(req("other#1", 1))).toMatchObject({ ok: false, reason: "BUDGET_EXCEEDED", committedMicros: 100 });
+});
+
+test("a hold that does not fit whole holds nothing: both or neither", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100 });
+
+  expect(await budget.tryHold([hold("img#1", 60), hold("age#1", 41)])).toMatchObject({ ok: false, reason: "BUDGET_EXCEEDED", limitMicros: 100, committedMicros: 0, worstMicros: 101 });
+
+  expect(budget.status().heldMicros).toBe(0);
+  handleOf(await budget.tryReserve(req("other#1", 100)));
+});
+
+test("a held attempt's reserve takes its hold's room: it is not counted twice", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100 });
+  await budget.tryHold([hold("img#1", 60), hold("age#1", 40)]);
+
+  handleOf(await budget.tryReserve(req("img#1", 60)));
+  expect(budget.status()).toMatchObject({ heldMicros: 40, openReserveMicros: 60 });
+  handleOf(await budget.tryReserve(req("age#1", 40)));
+  expect(budget.status()).toMatchObject({ heldMicros: 0, openReserveMicros: 100 });
+});
+
+test("a held attempt reserved above its hold still needs room for the difference", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100 });
+  await budget.tryHold([hold("img#1", 60), hold("age#1", 40)]);
+
+  expect(await budget.tryReserve(req("age#1", 41))).toMatchObject({ ok: false, reason: "BUDGET_EXCEEDED" });
+  expect(budget.status().heldMicros).toBe(100);
+});
+
+test("releasing a hold gives its room back; releasing an unknown or reserved one changes nothing", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 100 });
+  await budget.tryHold([hold("img#1", 60), hold("age#1", 40)]);
+  handleOf(await budget.tryReserve(req("img#1", 60)));
+
+  budget.releaseHold("age#1");
+  budget.releaseHold("img#1");
+  budget.releaseHold("never#1");
+
+  expect(budget.status()).toMatchObject({ heldMicros: 0, openReserveMicros: 60 });
+  handleOf(await budget.tryReserve(req("other#1", 40)));
+});
+
+test("holds count against their scope's cap, and only their own scope's", async () => {
+  const { budget } = await setup({ runCapMicros: 100 });
+  await budget.tryHold([hold("img#1", 60), hold("age#1", 40)]);
+
+  expect(await budget.tryReserve(req("more#1", 1))).toMatchObject({ ok: false, reason: "RUN_CAP_EXCEEDED", committedMicros: 100 });
+  handleOf(await budget.tryReserve(req("other-run#1", 100, OTHER_RUN)));
+  expect(await budget.tryHold([hold("more#2", 1)])).toMatchObject({ ok: false, reason: "RUN_CAP_EXCEEDED" });
+});
+
+test("concurrent holds cannot jointly exceed the monthly budget", async () => {
+  const { budget } = await setup({ monthlyBudgetMicros: 150 });
+
+  const results = await Promise.all([budget.tryHold([hold("a#1", 60), hold("a#2", 40)]), budget.tryHold([hold("b#1", 60), hold("b#2", 40)])]);
+
+  expect(results.map((r) => r.ok).sort()).toEqual([false, true]);
+  expect(budget.status().heldMicros).toBe(100);
+});
+
+test("an attempt id already reserved, already held or repeated in one hold is refused", async () => {
+  const { budget } = await setup();
+  handleOf(await budget.tryReserve(req("used#1", 1)));
+  await budget.tryHold([hold("held#1", 1)]);
+
+  await expect(budget.tryHold([hold("used#1", 1)])).rejects.toMatchObject({ code: "ATTEMPT_ID_REUSED" });
+  await expect(budget.tryHold([hold("held#1", 1)])).rejects.toMatchObject({ code: "ATTEMPT_ID_REUSED" });
+  await expect(budget.tryHold([hold("twice#1", 1), hold("twice#1", 1)])).rejects.toMatchObject({ code: "ATTEMPT_ID_REUSED" });
+  expect(budget.status().heldMicros).toBe(1);
+});
+
+test("nothing is held while a reconcile is required", async () => {
+  const { budget } = await setup({ lines: [reserveLine("old#1", 5, NOW)] });
+
+  expect(await budget.tryHold([hold("img#1", 1)])).toMatchObject({ ok: false, reason: "RECONCILE_REQUIRED" });
+  expect(budget.status().heldMicros).toBe(0);
 });

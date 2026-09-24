@@ -10,6 +10,7 @@ import {
   type Estimate,
   EventLog,
   type EventMessage,
+  type FailedCandidateSlot,
   type JobState,
   type LedgerUnavailable,
   type MoneyHalt,
@@ -47,6 +48,11 @@ export const MOCK_ESTIMATE: Readonly<Estimate> = {
 };
 
 const START_OF_TIME = Date.UTC(2026, 8, 24, 10, 0, 0);
+
+/** The contract's per-slot account of a mock batch: its last `rejected` slots were rejected by the age check. */
+function ageRejectedSlots(total: number, rejected: number): FailedCandidateSlot[] {
+  return Array.from({ length: rejected }, (_, i) => ({ slot: total - rejected + 1 + i, reason: "age-rejected" }));
+}
 
 export interface MockEngineOptions {
   /** `demo` seeds a small library for the dev build; `empty` is a fresh install. */
@@ -540,7 +546,13 @@ export class MockEngine implements EngineBridge {
       type: "job.done",
       payload: {
         jobId: job.jobId,
-        result: { kind: "avatar.candidates", avatarId: job.avatarId, candidates: job.candidates, rejectedByAgeCheck: rejected },
+        result: {
+          kind: "avatar.candidates",
+          avatarId: job.avatarId,
+          candidates: job.candidates,
+          rejectedByAgeCheck: rejected,
+          failedSlots: ageRejectedSlots(job.total, rejected),
+        },
       },
     });
   }
@@ -573,7 +585,13 @@ export class MockEngine implements EngineBridge {
     if (j.status === "done") {
       return {
         ...base,
-        result: { kind: "avatar.candidates", avatarId: j.avatarId, candidates: j.candidates, rejectedByAgeCheck: j.rejectedByAgeCheck },
+        result: {
+          kind: "avatar.candidates",
+          avatarId: j.avatarId,
+          candidates: j.candidates,
+          rejectedByAgeCheck: j.rejectedByAgeCheck,
+          failedSlots: ageRejectedSlots(j.total, j.rejectedByAgeCheck),
+        },
       };
     }
     if (j.status === "failed" && j.error) return { ...base, error: j.error };

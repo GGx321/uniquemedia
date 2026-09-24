@@ -288,16 +288,43 @@ export const JobProgress = z
   })
   .refine(doneWithinTotal.check, doneWithinTotal.params);
 
+/** A batch's slot, 1 to 4. */
+const CandidateSlot = z.number().int().min(1).max(4);
+
+/**
+ * A slot of a finished batch that gave no candidate:
+ * - `age-rejected`: the age check did not say a clear yes; the image was dropped.
+ * - `failed`: the slot could not finish; `error` says why (MODERATION_REFUSED,
+ *   TIMEOUT, NETWORK, BUDGET_EXCEEDED, ...). `reserveLeftOpen`: its request may
+ *   have been billed (a timeout, a network error), so it counts at its worst
+ *   case until the user reconciles.
+ */
+export const FailedCandidateSlot = z.discriminatedUnion("reason", [
+  z.strictObject({ slot: CandidateSlot, reason: z.literal("age-rejected") }),
+  z.strictObject({ slot: CandidateSlot, reason: z.literal("failed"), error: EngineError, reserveLeftOpen: z.boolean() }),
+]);
+
 export const CandidatesResult = z
   .strictObject({
     kind: z.literal("avatar.candidates"),
     avatarId: Id,
     candidates: z.array(Candidate).max(4),
     rejectedByAgeCheck: Count,
+    /** Every slot that gave no candidate, so a batch of fewer than four explains itself. */
+    failedSlots: z.array(FailedCandidateSlot).max(4),
   })
   .refine((r) => r.candidates.every((c) => c.avatarId === r.avatarId), {
     message: "every candidate must belong to the job's avatar",
     path: ["candidates"],
+  })
+  .refine((r) => r.candidates.length + r.failedSlots.length <= 4, {
+    message: "candidates and failed slots are at most the four slots of a batch",
+    path: ["failedSlots"],
+  })
+  .refine((r) => unique(r.failedSlots.map((f) => f.slot)), { message: "a slot must not repeat", path: ["failedSlots"] })
+  .refine((r) => r.rejectedByAgeCheck === r.failedSlots.filter((f) => f.reason === "age-rejected").length, {
+    message: "rejectedByAgeCheck must be the number of age-rejected slots",
+    path: ["rejectedByAgeCheck"],
   });
 
 export const RunResult = z.strictObject({
@@ -389,5 +416,6 @@ export type Draft = z.infer<typeof Draft>;
 export type AvatarSummary = z.infer<typeof AvatarSummary>;
 export type JobState = z.infer<typeof JobState>;
 export type JobResult = z.infer<typeof JobResult>;
+export type FailedCandidateSlot = z.infer<typeof FailedCandidateSlot>;
 export type RunRequest = z.infer<typeof RunRequest>;
 export type PhotoSummary = z.infer<typeof PhotoSummary>;

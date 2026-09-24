@@ -75,6 +75,12 @@ const RU_STEM = `(?:(?:${alt(RU_STEM_TENS)})(?:${alt(RU_STEM_ONES)})?|${alt(RU_S
 /** "15-ти", "5-и", "2-х", "7-ми". */
 const RU_DIGIT_SUFFIX = "(?:\\s*-?\\s*(?:ти|и|х|ми))?";
 
+/**
+ * After a range's first number: not the tens of a compound word, so "aged
+ * twenty-five" is 25, never the range "twenty" to "five".
+ */
+const NOT_SPLIT_COMPOUND = `(?!(?<=(?:${alt(EN_TENS)}))[- ](?:${alt(EN_ONES)})(?![\\p{L}\\p{N}]))`;
+
 const START = "(?<![\\p{L}\\p{N}])";
 const END = "(?![\\p{L}\\p{N}])";
 const NUM = `(\\d+|${EN_WORD})`;
@@ -108,7 +114,7 @@ const AGE_PATTERNS: RegExp[] = [
   // aged 17, age 17, age: 17, ages 17, at the age of 17
   new RegExp(`\\bage[ds]?\\s*(?:of\\s*)?:?\\s*${NUM}${END}`, "giud"),
   // ages 16-18, aged 16 to 18
-  new RegExp(`\\bage[ds]?\\s*:?\\s*${NUM}\\s*(?:-|to|or|and)\\s*${NUM}${END}`, "giud"),
+  new RegExp(`\\bage[ds]?\\s*:?\\s*${NUM}${NOT_SPLIT_COMPOUND}\\s*(?:-|to|or|and)\\s*${NUM}${END}`, "giud"),
   // she's 17, she is seven, he's only 16, who is sixteen, she'll be 17 (a lone "one" is too common: "she's one of a kind")
   new RegExp(
     `\\b(?:she|he|who)(?:'s|'ll\\s+be|\\s+is|\\s+was|\\s+will\\s+be)\\s+(?:${EN_HEDGE})?(\\d+|${EN_WORD_BUT_ONE})${END}${NOT_AN_AGE_AFTER}`,
@@ -390,6 +396,16 @@ function youthMatches(text: string, scope: AgeTextScope): { rule: WordRule; word
 /** Words that describe a minor or a youthful look, in English or Russian, as the text has them (the renderer quotes the user's own words). */
 export function youthWords(text: string, scope: AgeTextScope = "descriptor"): string[] {
   return youthMatches(text, scope).flatMap((match) => match.words);
+}
+
+/**
+ * The hard markers of a minor only ("teen", "minor", "school uniform"), as
+ * the text has them: the vibe's whole set, and what any text about a person
+ * is held to. Words that only describe a youthful look ("young",
+ * "youthful", "girl") are the descriptor's stricter set.
+ */
+export function hardYouthWords(text: string): string[] {
+  return youthWords(text, "vibe");
 }
 
 /** The fixed names of the rules the text breaks, each once: what a retry is told to avoid, never text of the answer. */

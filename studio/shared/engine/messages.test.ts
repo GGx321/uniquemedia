@@ -189,7 +189,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "job.progress": { jobId: "job-00000001", done: 2, total: 4 },
   "job.done": {
     jobId: "job-00000001",
-    result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates, rejectedByAgeCheck: 1 },
+    result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates, rejectedByAgeCheck: 1, failedSlots: [{ slot: 4, reason: "age-rejected" }] },
   },
   "job.failed": { jobId: "job-00000001", error: { code: "AUTH_INVALID", detail: "401 from OpenRouter" } },
   "job.cancelled": { jobId: "job-00000001" },
@@ -628,7 +628,7 @@ describe("events", () => {
     }));
     const payload = {
       jobId: "job-00000001",
-      result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates: five, rejectedByAgeCheck: 0 },
+      result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates: five, rejectedByAgeCheck: 0, failedSlots: [] },
     };
     expect(reasonOf(event("job.done", payload))).toContain("payload.result.candidates");
   });
@@ -636,7 +636,7 @@ describe("events", () => {
   test("rejects a candidate without the photo id the UI needs for studio-media://", () => {
     const payload = {
       jobId: "job-00000001",
-      result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates: [{ avatarId: DRAFT_ID }], rejectedByAgeCheck: 0 },
+      result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates: [{ avatarId: DRAFT_ID }], rejectedByAgeCheck: 0, failedSlots: [] },
     };
     expect(reasonOf(event("job.done", payload))).toContain("photoId");
   });

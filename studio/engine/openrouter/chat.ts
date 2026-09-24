@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { jpegDataUrl } from "./image";
 import { runPaidAttempt, type ClientContext, type Interpretation } from "./transport";
+import type { PriceBook } from "../money/prices";
 import type { ChatMessage, ChatParams, ChatResult } from "./types";
 
 /** Lenient: only `choices[0].message` is required; its content may be null (reported as EMPTY_CONTENT). */
@@ -54,6 +55,17 @@ const TEMPLATE_TOKENS_PER_MESSAGE = 16;
  */
 export const CHAT_IMAGE_TOKEN_ALLOWANCE = 1_500;
 
+/** What a chat attempt's worst case depends on: its model, its text and schema, its limits, how many images it carries. */
+export interface ChatPriceShape {
+  model: string;
+  messages: readonly ChatMessage[];
+  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  maxTokens: number;
+  /** The caller's prompt-token ceiling (money/estimate.ts). */
+  inputTokens: number;
+  images: number;
+}
+
 /**
  * A lower bound under the caller's prompt-token ceiling (money/estimate.ts),
  * so a ceiling set too low cannot make the reserve an underestimate: the
@@ -61,21 +73,30 @@ export const CHAT_IMAGE_TOKEN_ALLOWANCE = 1_500;
  * byte-level tokenizer never emits more), plus template tokens per message and
  * an allowance per image.
  */
-function promptTokenFloor(params: ChatParams, images: number): number {
-  const textBytes = params.messages.reduce((sum, m) => sum + Buffer.byteLength(m.content, "utf8"), 0);
-  const schemaBytes = params.jsonSchema ? Buffer.byteLength(JSON.stringify(params.jsonSchema), "utf8") : 0;
-  return textBytes + schemaBytes + params.messages.length * TEMPLATE_TOKENS_PER_MESSAGE + images * CHAT_IMAGE_TOKEN_ALLOWANCE;
+export function promptTokenFloor(shape: Pick<ChatPriceShape, "messages" | "jsonSchema" | "images">): number {
+  const textBytes = shape.messages.reduce((sum, m) => sum + Buffer.byteLength(m.content, "utf8"), 0);
+  const schemaBytes = shape.jsonSchema ? Buffer.byteLength(JSON.stringify(shape.jsonSchema), "utf8") : 0;
+  return textBytes + schemaBytes + shape.messages.length * TEMPLATE_TOKENS_PER_MESSAGE + shape.images * CHAT_IMAGE_TOKEN_ALLOWANCE;
+}
+
+/**
+ * The worst case a chat attempt reserves: the caller's ceilings, the prompt
+ * never below its floor. The one place it is computed, so an attempt held
+ * ahead of its request (Budget.tryHold) is held at exactly what it will reserve.
+ */
+export function chatAttemptWorstMicros(priceBook: PriceBook, shape: ChatPriceShape): number {
+  return priceBook.chatWorstCase({
+    model: shape.model,
+    maxTokens: shape.maxTokens,
+    inputTokens: Math.max(shape.inputTokens, promptTokenFloor(shape)),
+    images: shape.images,
+  });
 }
 
 /** One chat attempt (`POST /chat/completions`) with usage accounting on. */
 export async function chat(ctx: ClientContext, params: ChatParams): Promise<ChatResult> {
   const images = params.images ?? [];
-  const worstMicros = params.priceBook.chatWorstCase({
-    model: params.model,
-    maxTokens: params.maxTokens,
-    inputTokens: Math.max(params.inputTokens, promptTokenFloor(params, images.length)),
-    images: images.length,
-  });
+  const worstMicros = chatAttemptWorstMicros(params.priceBook, { ...params, images: images.length });
   const result = await runPaidAttempt(ctx, {
     attemptId: params.attemptId,
     jobId: params.jobId,
