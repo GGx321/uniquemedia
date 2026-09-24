@@ -15,22 +15,23 @@ export const LibraryFileSchema = z.object({
 });
 export type LibraryFile = z.infer<typeof LibraryFileSchema>;
 
-/** `avatars/<id>/avatar.json`. An avatar is a `draft` until a candidate
- *  portrait is picked as its master; only a draft may have no master. The
- *  master may only ever be one of this avatar's photos. */
+/** `avatars/<id>/avatar.json`. Strict: an unknown key (e.g. the dropped
+ *  `language` — on-video text is English only) makes the manifest invalid.
+ *  An avatar is a `draft` until a candidate portrait is picked as its master;
+ *  only a draft may have no master. The master may only ever be one of this
+ *  avatar's photos. */
 export const AvatarManifestSchema = z
-  .object({
-  schemaVersion: z.literal(1),
-  id: LibraryIdSchema,
-  name: NonEmpty,
-  language: z.enum(["en", "ru"]),
-  age: z.int().min(21).max(35),
-  traits: z.record(z.string(), z.string()),
-  descriptor: NonEmpty,
-  masterPhotoId: LibraryIdSchema.nullable(),
-  status: z.enum(["draft", "active", "archived"]),
-  createdAt: IsoTimestamp,
-})
+  .strictObject({
+    schemaVersion: z.literal(1),
+    id: LibraryIdSchema,
+    name: NonEmpty,
+    age: z.int().min(21).max(35),
+    traits: z.record(z.string(), z.string()),
+    descriptor: NonEmpty,
+    masterPhotoId: LibraryIdSchema.nullable(),
+    status: z.enum(["draft", "active", "archived"]),
+    createdAt: IsoTimestamp,
+  })
   .refine((m) => m.status === "draft" || m.masterPhotoId !== null, {
     message: "only a draft may have no master photo",
     path: ["masterPhotoId"],

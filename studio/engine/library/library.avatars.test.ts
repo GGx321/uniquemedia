@@ -18,7 +18,6 @@ const root = useTempDir("studio-avatars-");
 
 const MIA: NewAvatar = {
   name: "Mia",
-  language: "en",
   age: 25,
   traits: { hair: "chestnut", eyes: "hazel" },
   descriptor: "a 25-year-old woman with hazel eyes and chestnut hair",
@@ -105,7 +104,7 @@ describe("listAvatars and reopen", () => {
   test("a reopened library lists the avatars created before, in creation order", async () => {
     const first = await openLibrary(root(), deps());
     await first.library.createAvatar(MIA);
-    await first.library.createAvatar({ ...MIA, name: "Lena", language: "ru" });
+    await first.library.createAvatar({ ...MIA, name: "Lena" });
 
     const { library, report } = await openLibrary(root(), deps());
 
@@ -128,6 +127,19 @@ describe("listAvatars and reopen", () => {
     expect(report.quarantined[0]).toMatchObject({ from: join("avatars", "avatar-0002"), reason: "invalid-manifest" });
     expect(report.quarantined[0].detail).toBeString();
     expect(await readJson(join(root(), report.quarantined[0].to, "avatar.json"))).toMatchObject({ age: 19 });
+  });
+
+  test("an avatar folder whose manifest still has a language key is quarantined", async () => {
+    const first = await openLibrary(root(), deps());
+    const mia = await first.library.createAvatar(MIA);
+    const path = join(root(), "avatars", mia.id, "avatar.json");
+    await writeFile(path, JSON.stringify({ ...mia, language: "en" }));
+
+    const { library, report } = await openLibrary(root(), deps());
+
+    expect(library.listAvatars()).toEqual([]);
+    expect(report.quarantined.map((q) => [q.from, q.reason])).toEqual([[join("avatars", mia.id), "invalid-manifest"]]);
+    expect(report.quarantined[0].detail).toContain("language");
   });
 
   test("an avatar folder whose manifest id differs from the folder name is quarantined", async () => {

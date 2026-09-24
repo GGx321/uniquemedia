@@ -7,7 +7,6 @@ function validManifest(overrides: Record<string, unknown> = {}): Record<string, 
     schemaVersion: 1,
     id: "avatar-0001",
     name: "Mia",
-    language: "en",
     age: 25,
     traits: { hair: "chestnut", eyes: "hazel" },
     descriptor: "a 25-year-old woman with hazel eyes and chestnut hair",
@@ -94,8 +93,12 @@ describe("AvatarManifestSchema", () => {
     expect(AvatarManifestSchema.safeParse(validManifest({ age: 25.5 })).success).toBe(false);
   });
 
-  test("rejects a language other than en or ru", () => {
-    expect(AvatarManifestSchema.safeParse(validManifest({ language: "de" })).success).toBe(false);
+  test("rejects a manifest that still carries a language key", () => {
+    expect(AvatarManifestSchema.safeParse(validManifest({ language: "en" })).success).toBe(false);
+  });
+
+  test("rejects any key the schema does not define", () => {
+    expect(AvatarManifestSchema.safeParse(validManifest({ nickname: "M" })).success).toBe(false);
   });
 
   test("rejects an id that breaks the id pattern", () => {

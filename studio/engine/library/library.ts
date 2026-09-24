@@ -83,7 +83,7 @@ export interface ReferencePhoto {
   path: string;
 }
 
-export type NewAvatar = Pick<AvatarManifest, "name" | "language" | "age" | "traits" | "descriptor">;
+export type NewAvatar = Pick<AvatarManifest, "name" | "age" | "traits" | "descriptor">;
 export type AvatarPatch = Partial<Pick<AvatarManifest, "name" | "status" | "masterPhotoId">>;
 
 export interface JournalRead<T> {

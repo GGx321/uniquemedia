@@ -49,7 +49,6 @@ export const JPEG_HEADER_ONLY = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 
 
 export const SAMPLE_AVATAR: NewAvatar = {
   name: "Mia",
-  language: "en",
   age: 25,
   traits: { hair: "chestnut", eyes: "hazel" },
   descriptor: "a 25-year-old woman with hazel eyes and chestnut hair",
