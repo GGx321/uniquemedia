@@ -1,4 +1,4 @@
-import type { StudioApi } from "../shared/ipc";
+import type { StudioApi } from "../preload/api";
 
 declare global {
   interface Window {

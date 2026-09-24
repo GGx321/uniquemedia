@@ -9,6 +9,21 @@
   --accent-soft: rgba(255, 122, 89, 0.14);
   --accent-text: #ffb39f;
   --ok: #4fe0b0;
+  --ok-soft: rgba(79, 224, 176, 0.12);
+  --warn: #f4b957;
+  --warn-soft: rgba(244, 185, 87, 0.1);
+  --danger: #ff6b81;
+  --danger-soft: rgba(255, 107, 129, 0.1);
+
+  --panel-2: #1a1a23;
+  --panel-3: #21212c;
+  --input: #0e0e13;
+  --border-strong: #30303e;
+  --line: #1f1f29;
+  --text-2: #cfcedd;
+  --accent-hover: #ff8d70;
+  --accent-ink: #1a0d08;
+  --accent-ring: rgba(255, 122, 89, 0.55);
 
   --sidebar: #0c0c11;
   --sidebar-border: #1d1d27;
@@ -136,8 +151,14 @@ button {
   flex-shrink: 0;
 }
 
-.version {
+.sidebar-foot {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.version {
   padding: 0 10px;
   font-family: var(--font-mono);
   font-size: 10.5px;
@@ -147,15 +168,17 @@ button {
 /* ── content ── */
 
 .content {
-  padding: 40px 48px;
+  min-width: 0;
+  padding: 28px 36px 40px;
   overflow: auto;
 }
 
 .content h1 {
   margin: 0 0 6px;
   font-family: var(--font-display);
-  font-size: 28px;
-  font-weight: 600;
+  font-size: 30px;
+  font-weight: 650;
+  line-height: 1.1;
   letter-spacing: -0.02em;
 }
 

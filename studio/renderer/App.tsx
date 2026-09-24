@@ -1,7 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
+import type { EngineClient } from "./engine/client";
+import { EngineProvider } from "./engine/react";
+import { readStudioVersion } from "./engine/windowStudio";
+import { NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
+import { AvatarsScreen } from "./screens/AvatarsScreen";
+import { AvatarWizard } from "./screens/AvatarWizard";
+import { SettingsScreen } from "./screens/SettingsScreen";
+import { ScreenTitle } from "./ui/ScreenTitle";
 
 interface Section {
-  id: "avatars" | "photo" | "montage" | "autopilot" | "settings";
+  id: SectionId;
   label: string;
   icon: ReactNode;
 }
@@ -56,13 +64,49 @@ const SECTIONS: readonly Section[] = [
   },
 ];
 
-export function App() {
-  const [active, setActive] = useState<Section>(SECTIONS[0]);
+function routeFor(id: SectionId): Route {
+  switch (id) {
+    case "avatars":
+      return { name: "avatars" };
+    case "settings":
+      return { name: "settings" };
+    default:
+      return { name: "section", id };
+  }
+}
+
+function Screen({ route }: { route: Route }) {
+  switch (route.name) {
+    case "avatars":
+      return <AvatarsScreen saved={route.saved} />;
+    case "avatarNew":
+      return <AvatarWizard draftId={route.draftId} />;
+    case "settings":
+      return <SettingsScreen focus={route.focus} />;
+    case "section": {
+      const label = SECTIONS.find((s) => s.id === route.id)?.label ?? "";
+      return (
+        <div className="page">
+          <ScreenTitle>{label}</ScreenTitle>
+          <p className="muted">Скоро</p>
+        </div>
+      );
+    }
+  }
+}
+
+function screenKey(route: Route): string {
+  return route.name === "avatarNew" ? `avatarNew:${route.draftId ?? "new"}` : route.name === "section" ? route.id : route.name;
+}
+
+export function App({ client }: { client: EngineClient }) {
+  const [route, setRoute] = useState<Route>({ name: "avatars" });
   const [versionLabel, setVersionLabel] = useState("");
+  const active = sectionOf(route);
 
   useEffect(() => {
     let alive = true;
-    window.studio.version().then(
+    readStudioVersion().then(
       (v) => { if (alive) setVersionLabel(`v${v}`); },
       // The version is informational: a failed lookup shows a dash, not a crash.
       () => { if (alive) setVersionLabel("—"); }
@@ -73,52 +117,63 @@ export function App() {
   }, []);
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="logo">
-          <span className="logo-mark" aria-hidden="true" />
-          <span className="logo-text">
-            <span className="logo-name">studio</span>
-            <span className="logo-by">by uniquemedia</span>
-          </span>
+    <EngineProvider client={client}>
+      <NavigationProvider value={setRoute}>
+        <div className="shell">
+          <aside className="sidebar">
+            <div className="logo">
+              <span className="logo-mark" aria-hidden="true" />
+              <span className="logo-text">
+                <span className="logo-name">studio</span>
+                <span className="logo-by">by uniquemedia</span>
+              </span>
+            </div>
+
+            <nav className="nav" aria-label="Разделы">
+              {SECTIONS.map((s) => {
+                const isActive = s.id === active;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={isActive ? "nav-item active" : "nav-item"}
+                    aria-current={isActive ? "page" : undefined}
+                    onClick={() => setRoute(routeFor(s.id))}
+                  >
+                    <svg
+                      className="nav-icon"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      {s.icon}
+                    </svg>
+                    <span>{s.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            <div className="sidebar-foot">
+              {client.kind === "mock" && (
+                <p className="demo-badge" title="Движок не подключён: данные демонстрационные, деньги не тратятся, картинок нет">
+                  <span className="demo-dot" aria-hidden="true" />
+                  Демо-движок
+                </p>
+              )}
+              <div className="version">{versionLabel}</div>
+            </div>
+          </aside>
+
+          <main className="content">
+            <Screen key={screenKey(route)} route={route} />
+          </main>
         </div>
-
-        <nav className="nav" aria-label="Разделы">
-          {SECTIONS.map((s) => {
-            const isActive = s.id === active.id;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                className={isActive ? "nav-item active" : "nav-item"}
-                aria-current={isActive ? "page" : undefined}
-                onClick={() => setActive(s)}
-              >
-                <svg
-                  className="nav-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  {s.icon}
-                </svg>
-                <span>{s.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="version">{versionLabel}</div>
-      </aside>
-
-      <main className="content">
-        <h1>{active.label}</h1>
-        <p className="muted">Скоро</p>
-      </main>
-    </div>
+      </NavigationProvider>
+    </EngineProvider>
   );
 }
