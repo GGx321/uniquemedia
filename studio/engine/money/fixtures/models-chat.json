@@ -1,0 +1,398 @@
+{
+  "data": [
+    {
+      "id": "google/gemini-3.5-flash-lite",
+      "canonical_slug": "google/gemini-3.5-flash-lite-20260721",
+      "hugging_face_id": null,
+      "name": "Google: Gemini 3.5 Flash Lite",
+      "created": 1784646726,
+      "description": "Gemini 3.5 Flash Lite is a high-efficiency model from Google with upgraded agentic capabilities. It is suited for subagents that execute focused tasks within complex, multi-agent workflows.",
+      "context_length": 1048576,
+      "architecture": {
+        "modality": "text+image+file+audio+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video",
+          "file",
+          "audio"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Gemini",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000025",
+        "image": "0.0000003",
+        "audio": "0.0000003",
+        "input_audio_cache": "0.00000003",
+        "web_search": "0.014",
+        "internal_reasoning": "0.0000025",
+        "input_cache_read": "0.00000003",
+        "input_cache_write": "0.0000000833333333333333"
+      },
+      "top_provider": {
+        "context_length": 1048576,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "supported_parameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "default_parameters": {
+        "temperature": null,
+        "top_p": null,
+        "top_k": null,
+        "frequency_penalty": null,
+        "presence_penalty": null,
+        "repetition_penalty": null
+      },
+      "supported_voices": null,
+      "knowledge_cutoff": null,
+      "expiration_date": null,
+      "links": {
+        "details": "/api/v1/models/google/gemini-3.5-flash-lite-20260721/endpoints"
+      },
+      "benchmarks": {
+        "design_arena": [],
+        "artificial_analysis": {
+          "intelligence_index": 22.2,
+          "coding_index": 49.3,
+          "agentic_index": 14.3
+        }
+      },
+      "reasoning": {
+        "mandatory": true,
+        "default_enabled": true,
+        "supported_efforts": [
+          "high",
+          "medium",
+          "low",
+          "minimal"
+        ],
+        "default_effort": "minimal"
+      }
+    },
+    {
+      "id": "x-ai/grok-4.3",
+      "canonical_slug": "x-ai/grok-4.3-20260430",
+      "hugging_face_id": null,
+      "name": "SpaceXAI: Grok 4.3",
+      "created": 1777591821,
+      "description": "Grok 4.3 is a reasoning model from SpaceXAI. It accepts text and image inputs with text output, and is suited for agentic workflows, instruction-following tasks, and applications requiring high factual...",
+      "context_length": 1000000,
+      "architecture": {
+        "modality": "text+image+file->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Grok",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000125",
+        "completion": "0.0000025",
+        "web_search": "0.005",
+        "input_cache_read": "0.0000002",
+        "overrides": [
+          {
+            "min_prompt_tokens": 200000,
+            "prompt": "0.0000025",
+            "completion": "0.000005",
+            "input_cache_read": "0.0000004"
+          }
+        ]
+      },
+      "top_provider": {
+        "context_length": 1000000,
+        "max_completion_tokens": 900000,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "supported_parameters": [
+        "include_reasoning",
+        "logprobs",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_logprobs",
+        "top_p"
+      ],
+      "default_parameters": {
+        "temperature": null,
+        "top_p": null,
+        "top_k": null,
+        "frequency_penalty": null,
+        "presence_penalty": null,
+        "repetition_penalty": null
+      },
+      "supported_voices": null,
+      "knowledge_cutoff": null,
+      "expiration_date": null,
+      "links": {
+        "details": "/api/v1/models/x-ai/grok-4.3-20260430/endpoints"
+      },
+      "benchmarks": {
+        "design_arena": [
+          {
+            "arena": "agents",
+            "category": "agenticgamedev",
+            "elo": 1007,
+            "win_rate": 28.8,
+            "rank": 24
+          },
+          {
+            "arena": "agents",
+            "category": "agentichtmlslides",
+            "elo": 1066,
+            "win_rate": 31.8,
+            "rank": 9
+          },
+          {
+            "arena": "agents",
+            "category": "agenticslides",
+            "elo": 1072,
+            "win_rate": 31.9,
+            "rank": 9
+          },
+          {
+            "arena": "agents",
+            "category": "agenticslides(html)",
+            "elo": 1066,
+            "win_rate": 31.7,
+            "rank": 9
+          },
+          {
+            "arena": "agents",
+            "category": "agenticslides(python-pptx)",
+            "elo": 1068,
+            "win_rate": 32.4,
+            "rank": 9
+          },
+          {
+            "arena": "agents",
+            "category": "androidnative",
+            "elo": 974,
+            "win_rate": 22.6,
+            "rank": 36
+          },
+          {
+            "arena": "agents",
+            "category": "fullstack",
+            "elo": 1010,
+            "win_rate": 28.2,
+            "rank": 40
+          },
+          {
+            "arena": "agents",
+            "category": "godotgamedev",
+            "elo": 1035,
+            "win_rate": 31.2,
+            "rank": 33
+          },
+          {
+            "arena": "agents",
+            "category": "htmlslides",
+            "elo": 1011,
+            "win_rate": 28.4,
+            "rank": 23
+          },
+          {
+            "arena": "agents",
+            "category": "mobileapps",
+            "elo": 1089,
+            "win_rate": 34.5,
+            "rank": 41
+          },
+          {
+            "arena": "agents",
+            "category": "pptxslides",
+            "elo": 1071,
+            "win_rate": 32.5,
+            "rank": 8
+          },
+          {
+            "arena": "agents",
+            "category": "python-pptxslides",
+            "elo": 1072,
+            "win_rate": 30.8,
+            "rank": 26
+          },
+          {
+            "arena": "agents",
+            "category": "webapps",
+            "elo": 1132,
+            "win_rate": 43.4,
+            "rank": 29
+          },
+          {
+            "arena": "models",
+            "category": "3d",
+            "elo": 1153,
+            "win_rate": 41.5,
+            "rank": 67
+          },
+          {
+            "arena": "models",
+            "category": "asciiart",
+            "elo": 1149,
+            "win_rate": 44.8,
+            "rank": 46
+          },
+          {
+            "arena": "models",
+            "category": "codecategories",
+            "elo": 1197,
+            "win_rate": 44.6,
+            "rank": 53
+          },
+          {
+            "arena": "models",
+            "category": "dataviz",
+            "elo": 1196,
+            "win_rate": 45.7,
+            "rank": 55
+          },
+          {
+            "arena": "models",
+            "category": "gamedev",
+            "elo": 1195,
+            "win_rate": 44.4,
+            "rank": 53
+          },
+          {
+            "arena": "models",
+            "category": "svg",
+            "elo": 1103,
+            "win_rate": 39.1,
+            "rank": 59
+          },
+          {
+            "arena": "models",
+            "category": "uicomponent",
+            "elo": 1206,
+            "win_rate": 45.9,
+            "rank": 51
+          },
+          {
+            "arena": "models",
+            "category": "website",
+            "elo": 1204,
+            "win_rate": 44.9,
+            "rank": 53
+          }
+        ],
+        "artificial_analysis": {
+          "intelligence_index": 24.9,
+          "coding_index": 42.2,
+          "agentic_index": 15.5
+        }
+      },
+      "reasoning": {
+        "mandatory": false,
+        "default_enabled": true,
+        "supported_efforts": [
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "default_effort": "low"
+      }
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "canonical_slug": "openai/gpt-4o-mini",
+      "hugging_face_id": null,
+      "name": "OpenAI: GPT-4o-mini",
+      "created": 1721260800,
+      "description": "GPT-4o mini is OpenAI's newest model after [GPT-4 Omni](/models/openai/gpt-4o), supporting both text and image inputs with text outputs. As their most advanced small model, it is many multiples more affordable...",
+      "context_length": 128000,
+      "architecture": {
+        "modality": "text+image+file->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "GPT",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.0000006",
+        "input_cache_read": "0.000000075"
+      },
+      "top_provider": {
+        "context_length": 128000,
+        "max_completion_tokens": 16384,
+        "is_moderated": true
+      },
+      "per_request_limits": null,
+      "supported_parameters": [
+        "frequency_penalty",
+        "logit_bias",
+        "logprobs",
+        "max_completion_tokens",
+        "max_tokens",
+        "prediction",
+        "presence_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_logprobs",
+        "top_p",
+        "web_search_options"
+      ],
+      "default_parameters": {},
+      "supported_voices": null,
+      "knowledge_cutoff": "2023-10-31",
+      "expiration_date": null,
+      "links": {
+        "details": "/api/v1/models/openai/gpt-4o-mini/endpoints"
+      },
+      "benchmarks": {
+        "design_arena": [],
+        "artificial_analysis": {
+          "intelligence_index": null,
+          "coding_index": 11.4,
+          "agentic_index": null
+        }
+      }
+    }
+  ],
+  "total_count": 3
+}
