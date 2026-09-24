@@ -18,10 +18,17 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/studio.yml"
+  # Weekly, so a `latest`-Bun regression (like the one the canary job guards
+  # against) is caught even on a week with no studio push.
+  schedule:
+    - cron: "17 6 * * 1"
 permissions:
   contents: write
 jobs:
   build:
+    # The schedule trigger is only for the canary job below; the full
+    # (optionally packaging) build has nothing to do on a timer.
+    if: github.event_name != 'schedule'
     strategy:
       matrix:
         os: [macos-latest, windows-latest]
@@ -31,9 +38,21 @@ jobs:
       PACKAGE: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v4
+      # Pinned, via .bun-version (the convention setup-bun's bun-version-file
+      # input, and version managers such as mise/asdf, read; `bun` itself has
+      # no built-in version-file lookup, so this only keeps CI and whoever
+      # points their version manager at this file on the same Bun): a newer
+      # Bun rejects the AbortSignal that a happy-dom-registered global
+      # AbortController hands to native `fetch` ("signal is not of type
+      # AbortSignal"), which broke studio/engine/openrouter/loopback.test.ts
+      # here on every push once Bun picked that up. testSetup.ts /
+      # loopback.test.ts now swap in the native AbortController/AbortSignal
+      # for that file's tests, so `latest` passes again too (see the canary
+      # job) — this pin is for reproducibility (CI and local runs on the same
+      # Bun), not a live bug.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
       - run: bun install
       - name: Check the tag matches studio/version.json
         if: startsWith(github.ref, 'refs/tags/')
@@ -102,3 +121,44 @@ jobs:
           files: |
             release-studio/*.dmg
             release-studio/*.exe
+
+  # Early warning for the next Bun release breaking studio: the `build` job
+  # above is pinned to .bun-version for reproducibility, so it would not catch
+  # that on its own. Non-blocking on a push/dispatch run (`continue-on-error`,
+  # so it never fails the workflow or blocks a merge there), but not on the
+  # weekly schedule run below — a green scheduled run either way would be
+  # silent (GitHub only emails on a failed scheduled run), so a schedule
+  # failure must turn the run red to be noticed. One OS is enough for a
+  # version-drift check; ubuntu-latest, not macOS, to keep minutes down (this
+  # repo is private, and macOS runners bill at roughly 10x). ffmpeg-static
+  # ships a linux-x64 binary and ffprobe-static bundles one, so nothing here
+  # needs macOS specifically; the binary-presence check step is duplicated
+  # from the `build` job above (GitHub Actions has no step-level reuse within
+  # one workflow file) as a guard against a bad linux-x64 postinstall. No
+  # installer build, no OS × version matrix.
+  canary:
+    name: canary (bun latest)
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ github.event_name != 'schedule' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - name: Check the ffmpeg and ffprobe binaries are present
+        shell: bash
+        run: |
+          bun -e '
+          const { accessSync, constants } = require("node:fs");
+          const mode = process.platform === "win32" ? constants.F_OK : constants.X_OK;
+          let failed = false;
+          for (const [name, path] of [["ffmpeg-static", require("ffmpeg-static")], ["ffprobe-static", require("ffprobe-static").path]]) {
+            try { if (!path) throw new Error("no binary for this platform"); accessSync(path, mode); console.log(`${name}: ${path}`); }
+            catch (e) { console.log(`::error::${name} binary missing or not executable: ${path} (${e.message})`); failed = true; }
+          }
+          process.exit(failed ? 1 : 0)'
+      - run: bunx tsc --noEmit -p studio/tsconfig.json
+      - run: bun test ./studio --randomize

@@ -1,6 +1,8 @@
 // Run with `bun run` (not `bun test`): the test preload swaps the global
-// fetch and AbortController for happy-dom's, whose signal the native fetch
-// ignores. Here both are native, as in Electron's Node. Prints one JSON line.
+// fetch and AbortController for happy-dom's. Bun 1.3.12 silently ignores a
+// happy-dom AbortSignal handed to native fetch; Bun 1.4.2 throws "signal is
+// not of type AbortSignal" instead — either way, the real behavior to test is
+// with both native, as in Electron's Node. Prints one JSON line.
 import { createServer, type AddressInfo } from "node:net";
 import { createOpenRouterClient } from "../client";
 import { imageParams, setupMoney, TEST_KEY } from "./fakes";

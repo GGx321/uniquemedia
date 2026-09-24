@@ -1,6 +1,10 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { afterAll, afterEach } from "bun:test";
 import { exiftool } from "exiftool-vendored";
+// Must be imported before `GlobalRegistrator.register()` below: it captures
+// the native AbortController/AbortSignal while they are still the globals, for
+// loopback.test.ts to swap back in for its own duration.
+import "./nativeGlobals";
 
 GlobalRegistrator.register();
 
