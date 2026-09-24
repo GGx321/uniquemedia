@@ -64,7 +64,7 @@ jobs:
           }
           process.exit(failed ? 1 : 0)'
       - run: bunx tsc --noEmit -p studio/tsconfig.json
-      - run: bun test studio
+      - run: bun test ./studio
       - if: env.PACKAGE == 'true'
         run: bun run build:studio
       # Studio's version comes from studio/version.json via the config's `extends`.
