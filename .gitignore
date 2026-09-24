@@ -5,3 +5,7 @@ out/
 .DS_Store
 .superpowers/
 release/
+.env*
+!.env.example
+out-studio/
+release-studio/
