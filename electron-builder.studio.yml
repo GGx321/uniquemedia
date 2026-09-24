@@ -28,6 +28,21 @@ extraMetadata:
   name: uniquemedia-studio
 asarUnpack:
   - node_modules/ffmpeg-static/**
+# Electron fuses, flipped in the packaged binary: no ELECTRON_RUN_AS_NODE, no
+# NODE_OPTIONS, no --inspect, the app only from app.asar and that asar checked
+# against the hash embedded at build time, cookies encrypted at rest. Check
+# with `bunx @electron/fuses read --app release-studio/mac-arm64/Studio.app`.
+# Fuses are flipped after the afterPack hook has ad-hoc signed the bundle, which
+# breaks that signature: resetAdHocDarwinSignature re-signs it (ad hoc, --deep)
+# right after the flip, or macOS would kill the app at launch.
+electronFuses:
+  resetAdHocDarwinSignature: true
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
+  enableCookieEncryption: true
 # No auto-update feed: app-update.yml would point at this repo's Releases,
 # where "latest" is the uniquifier.
 publish: null

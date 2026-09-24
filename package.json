@@ -17,8 +17,10 @@
     "dist:win": "electron-vite build && electron-builder --win",
     "dev:studio": "electron-vite dev -c electron.studio.vite.config.ts --entry out-studio/main/main.js",
     "build:studio": "electron-vite build -c electron.studio.vite.config.ts",
+    "build:studio:e2e": "STUDIO_E2E=1 electron-vite build -c electron.studio.vite.config.ts",
     "dist:studio": "bun run build:studio && electron-builder --config electron-builder.studio.yml",
     "dist:studio:mac": "bun run build:studio && electron-builder --config electron-builder.studio.yml --mac",
+    "dist:studio:mac:e2e": "bun run build:studio:e2e && electron-builder --config electron-builder.studio.yml --mac dir -c.directories.output=release-studio/e2e",
     "dist:studio:win": "bun run build:studio && electron-builder --config electron-builder.studio.yml --win"
   },
   "dependencies": {

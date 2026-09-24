@@ -70,6 +70,21 @@ jobs:
       # Studio's version comes from studio/version.json via the config's `extends`.
       - if: env.PACKAGE == 'true'
         run: bunx electron-builder --config electron-builder.studio.yml --publish never
+      # Launches the package as shipped, before anything is uploaded: fuses set,
+      # the E2E override compiled out, the engine utilityProcess started from
+      # inside app.asar, --remote-debugging-port refused. GitHub's macOS and
+      # Windows runners have a desktop session, so the app starts as is.
+      - name: Smoke-test the packaged app
+        if: env.PACKAGE == 'true'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            app=$(ls -d release-studio/mac*/Studio.app | head -n 1)
+          else
+            app=release-studio/win-unpacked
+          fi
+          bun studio/scripts/smoke-engine.ts --production --app "$app"
       - if: env.PACKAGE == 'true'
         uses: actions/upload-artifact@v4
         with:

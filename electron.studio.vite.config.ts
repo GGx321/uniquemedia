@@ -23,12 +23,34 @@ function readStudioVersion(): string {
   throw new Error('studio/version.json must be { "extraMetadata": { "version": "<semver>" } }');
 }
 
+// An end-to-end test build (`bun run build:studio:e2e`, STUDIO_E2E=1) keeps
+// DevTools and remote debugging in a packaged app and lets the engine take a
+// mock OpenRouter base URL (invariant 13). Every other build compiles the
+// flag to `false`. Never ship an E2E build.
+const STUDIO_E2E = process.env.STUDIO_E2E === "1";
+
 export default defineConfig({
   main: {
-    define: { __APP_VERSION__: JSON.stringify(readStudioVersion()) },
+    // The engine is a main-process entry too, so it gets both constants.
+    define: { __APP_VERSION__: JSON.stringify(readStudioVersion()), __STUDIO_E2E__: JSON.stringify(STUDIO_E2E) },
     build: {
-      outDir: at("out-studio/main"),
-      lib: { entry: at("studio/main/main.ts") },
+      // Two main-process entries: the main process (out-studio/main/main.js)
+      // and the engine utilityProcess (out-studio/engine/main.js, forked by
+      // main from inside app.asar). Code both import (zod, the T0 contract)
+      // lands in a shared chunk at the out-studio root. The outDir is
+      // out-studio itself so the entry names can carry their folders; it is
+      // emptied before main is built, and preload and renderer are built after
+      // it. Chunk names are left to the preset: a rollupOptions.output
+      // override here replaced the preset's `external` list and bundled the
+      // `electron` npm stub into main.js (the same trap as the preload note
+      // below), and a rolldownOptions one failed the build.
+      outDir: at("out-studio"),
+      lib: {
+        entry: {
+          "main/main": at("studio/main/main.ts"),
+          "engine/main": at("studio/engine/main.ts"),
+        },
+      },
       // Never bundled: each locates its binary relative to its own package
       // directory. Externalizing only keeps them out of main.js — a package
       // reaches the installer only as a `dependency` that electron-builder.studio.yml
