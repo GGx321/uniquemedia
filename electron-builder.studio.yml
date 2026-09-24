@@ -1,0 +1,46 @@
+# Studio: the second app in this repo, packaged apart from the uniquifier
+# (electron-builder.yml). Build with `bun run build:studio` first.
+#
+# Version: studio/version.json holds { extraMetadata: { version } } and is
+# pulled in through `extends`, so every invocation of this config (scripts, CI,
+# a bare `electron-builder --config electron-builder.studio.yml`) stamps Studio's
+# own version into the packaged package.json instead of the uniquifier's.
+extends: ./studio/version.json
+appId: com.uniquemedia.studio
+productName: Studio
+directories:
+  output: release-studio
+afterPack: ./scripts/sign-adhoc.cjs
+files:
+  - out-studio/**/*
+  - package.json
+  # ffprobe-static (every platform's binary, ~335 MB unpacked) and exiftool are
+  # `dependencies` for the uniquifier's sake; nothing in studio/ uses them yet.
+  # Drop the exclusions (and restore their asarUnpack entries, as in
+  # electron-builder.yml) when Studio starts to.
+  - "!node_modules/ffprobe-static{,/**/*}"
+  - "!node_modules/exiftool-vendored*{,/**/*}"
+extraMetadata:
+  # The root package.json `main` points at the uniquifier.
+  main: out-studio/main/main.js
+  # Electron derives the userData directory from the package name; without
+  # this Studio would share ~/Library/Application Support/uniquemedia with it.
+  name: uniquemedia-studio
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+# No auto-update feed: app-update.yml would point at this repo's Releases,
+# where "latest" is the uniquifier.
+publish: null
+mac:
+  target:
+    - dmg
+  category: public.app-category.video
+  # Stay ad-hoc (scripts/sign-adhoc.cjs) rather than picking up whatever Apple
+  # Development certificate happens to be in the local keychain.
+  identity: null
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
