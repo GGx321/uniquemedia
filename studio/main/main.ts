@@ -30,9 +30,14 @@ import { defaultLibraryPath, SettingsStore } from "./settingsStore";
 // DevTools are off (see createWindow), --inspect is disabled by a fuse, and
 // the remote debugging switches are dropped here, before Chromium reads them.
 // DEBUGGABLE is a build-time constant (dev and E2E builds only, never
-// shipped), so these doors do not depend on `app.isPackaged`.
+// shipped), so these doors do not depend on `app.isPackaged`. A launch that
+// asked for one of these switches gets one clean line back, not silence and
+// not a stack trace (see smoke-engine.ts's production check).
 if (!DEBUGGABLE) {
   for (const name of ["remote-debugging-port", "remote-debugging-pipe", "remote-debugging-address"]) app.commandLine.removeSwitch(name);
+  if (process.argv.some((arg) => arg.startsWith("--remote-debugging-"))) {
+    console.warn("studio: ignoring --remote-debugging-port/--remote-debugging-pipe/--remote-debugging-address (production build)");
+  }
 }
 
 // The dev server is trusted only under `electron-vite dev`: every built app

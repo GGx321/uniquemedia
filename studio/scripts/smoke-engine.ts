@@ -32,9 +32,11 @@
  * build-time constant: a `build:studio` output has none, however it is
  * launched — also unpackaged. So the full run needs an E2E build
  * (STUDIO_E2E=1: DevTools and the test switches kept, never shipped).
- * --production checks a production build instead: its bundles (every debug
- * door compiled out, see bundleChecks.ts), and with --app the real package:
- * its fuses, and that it launches its engine with remote debugging refused.
+ * --production checks a production build instead: its bundles (main, preload
+ * and renderer, every debug door compiled out, see bundleChecks.ts), and with
+ * --app the real package: its fuses, that it launches its engine with remote
+ * debugging refused, and that the refusal is a clean one-line message, not a
+ * stack trace.
  *
  * Usage (macOS; on Windows point --app at release-studio/win-unpacked or its
  * Studio.exe, and release-studio/e2e/win-unpacked for an E2E package):
@@ -60,7 +62,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
-import { productionEngineProblems, productionMainProblems } from "./bundleChecks";
+import { productionBundleProblems, productionEngineProblems, productionMainProblems } from "./bundleChecks";
+import { looksLikeAStackTrace } from "./stackTrace";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const SMOKE_KEY = "sk-or-v1-smoke-test-not-real-7q3z";
@@ -373,12 +376,30 @@ function asarText(target: Target, file: string): string {
   return target.asar === null ? "" : extractFile(target.asar, file).toString("utf8");
 }
 
+/** The renderer's built JS (there may be more than one chunk), read from disk or, packaged, from the asar without extracting it. */
+async function rendererBundleText(target: Target): Promise<string> {
+  if (target.asar === null) {
+    const dir = join(ROOT, "out-studio", "renderer", "assets");
+    const files = (await readdir(dir)).filter((f) => f.endsWith(".js"));
+    return (await Promise.all(files.map((f) => readFile(join(dir, f), "utf8")))).join("\n");
+  }
+  const entries = listPackage(target.asar, { isPack: false }).map((p) => p.replaceAll("\\", "/"));
+  const files = entries.filter((p) => p.startsWith("/out-studio/renderer/assets/") && p.endsWith(".js"));
+  return files.map((p) => asarText(target, p.replace(/^\//, ""))).join("\n");
+}
+
 /** Every debug door compiled out of a production build's bundles (bundleChecks.ts), wherever they were read from. */
-function checkProductionBundles(where: string, main: string, engine: string): void {
+function checkProductionBundles(where: string, main: string, engine: string, preload: string, renderer: string): void {
   const mainProblems = productionMainProblems(main);
   check(`${where}: main has every debug door compiled out (no test switch, no env renderer URL, DevTools off, remote debugging refused)`, mainProblems.length === 0, mainProblems);
   const engineProblems = productionEngineProblems(engine);
   check(`${where}: the engine was built without the E2E flag (no base-URL override)`, engineProblems.length === 0, engineProblems);
+  check(`${where}: a preload bundle was read`, preload.length > 0);
+  const preloadProblems = productionBundleProblems(preload);
+  check(`${where}: preload has every debug door compiled out`, preloadProblems.length === 0, preloadProblems);
+  check(`${where}: a renderer bundle was read`, renderer.length > 0);
+  const rendererProblems = productionBundleProblems(renderer);
+  check(`${where}: renderer has every debug door compiled out`, rendererProblems.length === 0, rendererProblems);
 }
 
 async function productionCheck(target: Target): Promise<void> {
@@ -388,6 +409,8 @@ async function productionCheck(target: Target): Promise<void> {
       "the production build",
       await readFile(join(ROOT, "out-studio", "main", "main.js"), "utf8"),
       await readFile(join(ROOT, "out-studio", "engine", "main.js"), "utf8"),
+      await readFile(join(ROOT, "out-studio", "preload", "preload.cjs"), "utf8"),
+      await rendererBundleText(target),
     );
     return;
   }
@@ -396,14 +419,19 @@ async function productionCheck(target: Target): Promise<void> {
     "the package",
     asarText(target, join("out-studio", "main", "main.js")),
     asarText(target, join("out-studio", "engine", "main.js")),
+    asarText(target, join("out-studio", "preload", "preload.cjs")),
+    await rendererBundleText(target),
   );
 
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-prod-"));
   const port = await freePort();
   const child = spawn(target.executable, [`--user-data-dir=${join(tmp, "userData")}`, `--remote-debugging-port=${port}`, ...PLATFORM_FLAGS], {
     env: appEnv(),
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  let output = "";
+  child.stdout?.on("data", (d) => (output += String(d)));
+  child.stderr?.on("data", (d) => (output += String(d)));
   try {
     const mainPid = child.pid ?? -1;
     const engine = await waitFor("the engine process", async () => enginePid(mainPid), 20_000).catch(() => null);
@@ -414,6 +442,15 @@ async function productionCheck(target: Target): Promise<void> {
       await Bun.sleep(300);
     }
     check("the production app ignores --remote-debugging-port", !listening);
+    // The refusal (studio/main/main.ts) is one clean line, not a stack trace:
+    // exactly one line mentions it, in the project's `studio: ...` log style,
+    // and nothing in the output looks like an unhandled exception.
+    const refusalLines = output.split("\n").map((line) => line.trim()).filter((line) => line.includes("remote-debugging-port"));
+    check(
+      "the production app prints its remote-debugging refusal as a clean one-line message, not a stack trace",
+      refusalLines.length === 1 && refusalLines[0]?.startsWith("studio: ") === true && !looksLikeAStackTrace(output),
+      { output: output.slice(0, 2000) },
+    );
   } finally {
     if (process.platform !== "win32") child.kill("SIGTERM");
     await Bun.sleep(1000);
