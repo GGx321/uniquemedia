@@ -4,7 +4,13 @@
 // never degrades into a crash: a launch it refuses must print one line back,
 // not leak an internal stack.
 
+/**
+ * An indented V8-style frame line: `at name (location)` or a bare
+ * `at location`, where the location ends in `:line` or `:line:column`.
+ */
+const FRAME_LINE = /^[ \t]+at (?:.+ \()?\S+:\d+(?::\d+)?\)?[ \t\r]*$/m;
+
 /** True when `output` contains a JS stack trace frame or an unhandled-error marker. */
 export function looksLikeAStackTrace(output: string): boolean {
-  return /\bat \S+ \(|\bUncaught\b|\bunhandledRejection\b/.test(output);
+  return FRAME_LINE.test(output) || /\bUncaught\b|\bunhandledRejection\b/.test(output);
 }
