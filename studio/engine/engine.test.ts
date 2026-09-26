@@ -598,24 +598,74 @@ describe("the library the settings name", () => {
     const seeded = await seedLibrary(join(dir, "library"), "saved");
     const { engine } = await startEngine();
     const response = ok(await engine.handle(command("avatars.list")));
-    expect(response).toMatchObject({ type: "avatars.list", result: { avatars: [{ avatarId: seeded.avatarId }], unreadableAvatars: 0 } });
+    expect(response).toMatchObject({ type: "avatars.list", result: { avatars: [{ avatarId: seeded.avatarId }], unreadableAvatars: [] } });
   });
 
-  test("avatar records the contract refuses are counted in the snapshot and avatars.list, not silently dropped", async () => {
+  test("an avatar record whose traits do not fit the contract is counted in the snapshot and avatars.list, not silently dropped", async () => {
     const seeded = await seedLibrary(join(dir, "library"), "saved");
     const { library } = await openLibrary(join(dir, "library"), { newId: sequentialIds("early") });
-    await library.createAvatar({ name: "Early", age: 25, traits: { hair: "chestnut" }, descriptor: DESCRIPTOR });
+    const early = await library.createAvatar({ name: "Early", age: 25, traits: { hair: "chestnut" }, descriptor: DESCRIPTOR });
     const { engine } = await startEngine();
 
     expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({
-      result: { avatars: [{ avatarId: seeded.avatarId }], drafts: [{ avatarId: seeded.draftId }], unreadableAvatars: 1 },
+      result: {
+        avatars: [{ avatarId: seeded.avatarId }],
+        drafts: [{ avatarId: seeded.draftId }],
+        unreadableAvatars: [{ avatarId: early.id, reason: "contract-mismatch" }],
+        unreadableTotal: 1,
+      },
     });
-    expect(ok(await engine.handle(command("avatars.list")))).toMatchObject({ result: { unreadableAvatars: 1 } });
+    expect(ok(await engine.handle(command("avatars.list")))).toMatchObject({
+      result: { unreadableAvatars: [{ avatarId: early.id, reason: "contract-mismatch" }], unreadableTotal: 1 },
+    });
+  });
+
+  test("unreadableTotal (L1) counts every unreadable avatar, manifest-unreadable and skipped alike", async () => {
+    const seeded = await seedLibrary(join(dir, "library"), "saved");
+    const { library } = await openLibrary(join(dir, "library"), { newId: sequentialIds("early") });
+    await library.createAvatar({ name: "Early", age: 25, traits: { hair: "chestnut" }, descriptor: DESCRIPTOR });
+    await mkdir(join(dir, "library", "avatars", "broken0000000a"), { recursive: true });
+    await writeFile(join(dir, "library", "avatars", "broken0000000a", "avatar.json"), "not json");
+    const { engine } = await startEngine();
+
+    const list = ok(await engine.handle(command("avatars.list")));
+    expect(list).toMatchObject({ result: { unreadableTotal: 2 } });
+    if (list.type !== "avatars.list") throw new Error("wrong type");
+    expect(list.result.unreadableTotal).toBe(list.result.unreadableAvatars.length);
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { unreadableTotal: 2, avatars: [{ avatarId: seeded.avatarId }] } });
+  });
+
+  test("a saved avatar whose stored descriptor no longer fits today's rules is listed as unreadable with reason descriptor-invalid, never echoing the descriptor", async () => {
+    const { library } = await openLibrary(join(dir, "library"), { newId: sequentialIds("bad") });
+    const bad = await library.createAvatar({ name: "Bad", age: 25, traits: manifestTraits(TRAITS), descriptor: "a young woman with hazel eyes" });
+    const photo = await library.addPhoto(bad.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(bad.id, { status: "active", masterPhotoId: photo.id });
+    const { engine } = await startEngine();
+
+    const response = ok(await engine.handle(command("avatars.list")));
+    expect(response).toMatchObject({ result: { avatars: [], unreadableAvatars: [{ avatarId: bad.id, reason: "descriptor-invalid" }] } });
+    expect(JSON.stringify(response)).not.toContain("young woman");
+  });
+
+  test("an avatar manifest that cannot be parsed is listed as unreadable with reason manifest-unreadable and its folder's id", async () => {
+    const seeded = await seedLibrary(join(dir, "library"), "saved");
+    await mkdir(join(dir, "library", "avatars", "broken0000000a"), { recursive: true });
+    await writeFile(join(dir, "library", "avatars", "broken0000000a", "avatar.json"), "not json");
+    const { engine } = await startEngine();
+
+    const response = ok(await engine.handle(command("avatars.list")));
+    expect(response).toMatchObject({
+      result: {
+        avatars: [{ avatarId: seeded.avatarId }],
+        unreadableAvatars: [{ avatarId: "broken0000000a", reason: "manifest-unreadable" }],
+      },
+    });
+    expect(JSON.stringify(response)).not.toContain("not json");
   });
 
   test("avatars.list without a library answers an empty list", async () => {
     const { engine } = await startEngine({ settings: { ...init().settings, libraryPath: join(dir, "missing") } });
-    expect(ok(await engine.handle(command("avatars.list")))).toMatchObject({ result: { avatars: [] } });
+    expect(ok(await engine.handle(command("avatars.list")))).toMatchObject({ result: { avatars: [], unreadableAvatars: [] } });
   });
 });
 
@@ -871,6 +921,20 @@ describe("library.confirm from main", () => {
     expect(engine.library?.root).toBe(join(dir, "other"));
     expect(await snapshotIds(engine)).toEqual({ avatars: [other.avatarId], drafts: [other.draftId] });
     expect(events().at(-1)).toMatchObject({ type: "settings.changed", payload: { settings: { libraryPath: join(dir, "other") } } });
+  });
+
+  test("propagates a quarantined manifest's unreadable entry from the staged survey into the confirmed, live library (L11)", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    await mkdir(join(dir, "other", "avatars", "broken0000000a"), { recursive: true });
+    await writeFile(join(dir, "other", "avatars", "broken0000000a", "avatar.json"), "not json");
+    const { engine } = await startEngine();
+    await engine.receive(libraryOpen(join(dir, "other")));
+
+    await engine.receive(libraryConfirm(join(dir, "other"), "call-00000002"));
+
+    const list = ok(await engine.handle(command("avatars.list")));
+    expect(list).toMatchObject({ result: { unreadableAvatars: [{ avatarId: "broken0000000a", reason: "manifest-unreadable" }] } });
   });
 
   // A folder nothing staged used to be opened fresh here, which is exactly

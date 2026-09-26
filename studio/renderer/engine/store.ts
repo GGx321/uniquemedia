@@ -10,6 +10,7 @@ import type {
   MoneyStatus,
   Settings,
   Snapshot,
+  UnreadableAvatar,
 } from "../../shared/engine";
 import type { EngineClient } from "./client";
 
@@ -39,8 +40,10 @@ export interface EngineView {
   readonly money: MoneyStatus | null;
   readonly avatars: readonly AvatarSummary[];
   readonly drafts: readonly Draft[];
-  /** Avatar records the engine could not read into the lists (from the snapshot and avatars.list). */
-  readonly unreadableAvatars: number;
+  /** Avatar records the engine could not read into the lists (from the snapshot and avatars.list); UI shows their count via `.length`. */
+  readonly unreadableAvatars: readonly UnreadableAvatar[];
+  /** How many there really are; can exceed `unreadableAvatars.length` when the list was cut at its bound (L1). */
+  readonly unreadableTotal: number;
   readonly jobs: readonly JobView[];
   /** The last `engine.error` event, e.g. a SETTLE_ABOVE_WORST halt. Cleared by a fresh snapshot. */
   readonly engineError: EngineError | null;
@@ -57,7 +60,8 @@ const INITIAL: EngineView = {
   money: null,
   avatars: [],
   drafts: [],
-  unreadableAvatars: 0,
+  unreadableAvatars: [],
+  unreadableTotal: 0,
   jobs: [],
   engineError: null,
   notices: [],
@@ -271,7 +275,7 @@ export class EngineStore {
 
   async refreshAvatars(): Promise<void> {
     const reply = await this.client.request("avatars.list", {});
-    if (reply.ok) this.update({ avatars: reply.result.avatars, unreadableAvatars: reply.result.unreadableAvatars });
+    if (reply.ok) this.update({ avatars: reply.result.avatars, unreadableAvatars: reply.result.unreadableAvatars, unreadableTotal: reply.result.unreadableTotal });
   }
 
   async refreshMoney(): Promise<void> {
@@ -284,19 +288,37 @@ export class EngineStore {
     if (reply.ok) this.setSettings(reply.result);
   }
 
-  /** The avatar added, or replaced where it is listed; the draft it came from is gone. */
-  private savedAvatarPatch(avatar: AvatarSummary): Pick<EngineView, "avatars" | "drafts"> {
+  /**
+   * `unreadableAvatars` and `unreadableTotal` with `avatarId` dropped: an
+   * avatar the store can list normally is readable by definition, whether it
+   * just arrived that way or a rewrite just recovered it — otherwise it
+   * would sit in both lists until the next snapshot, its stale count
+   * included, and a second rewrite would answer VALIDATION (nothing to fix).
+   */
+  private droppedFromUnreadable(avatarId: string): Pick<EngineView, "unreadableAvatars" | "unreadableTotal"> {
+    const wasListed = this.view.unreadableAvatars.some((u) => u.avatarId === avatarId);
+    return {
+      unreadableAvatars: this.view.unreadableAvatars.filter((u) => u.avatarId !== avatarId),
+      unreadableTotal: wasListed ? Math.max(0, this.view.unreadableTotal - 1) : this.view.unreadableTotal,
+    };
+  }
+
+  /** The avatar added, or replaced where it is listed; the draft it came from is gone. Also drops it from `unreadableAvatars` (see `droppedFromUnreadable`). */
+  private savedAvatarPatch(avatar: AvatarSummary): Pick<EngineView, "avatars" | "drafts" | "unreadableAvatars" | "unreadableTotal"> {
     const listed = this.view.avatars.some((a) => a.avatarId === avatar.avatarId);
     return {
       avatars: listed ? this.view.avatars.map((a) => (a.avatarId === avatar.avatarId ? avatar : a)) : [...this.view.avatars, avatar],
       drafts: this.view.drafts.filter((d) => d.avatarId !== avatar.avatarId),
+      ...this.droppedFromUnreadable(avatar.avatarId),
     };
   }
 
-  private draftPatch(draft: Draft): Pick<EngineView, "drafts"> {
+  /** Same drop from `unreadableAvatars`/`unreadableTotal` as `savedAvatarPatch`, for a draft. */
+  private draftPatch(draft: Draft): Pick<EngineView, "drafts" | "unreadableAvatars" | "unreadableTotal"> {
     const exists = this.view.drafts.some((d) => d.avatarId === draft.avatarId);
     return {
       drafts: exists ? this.view.drafts.map((d) => (d.avatarId === draft.avatarId ? draft : d)) : [...this.view.drafts, draft],
+      ...this.droppedFromUnreadable(draft.avatarId),
     };
   }
 
@@ -464,6 +486,7 @@ export class EngineStore {
       avatars: s.avatars,
       drafts: s.drafts,
       unreadableAvatars: s.unreadableAvatars,
+      unreadableTotal: s.unreadableTotal,
       jobs: s.jobs.map(jobFromState),
       engineError: null,
       notices: s.notices.reduce(mergeNotice, [] as readonly EngineNotice[]),

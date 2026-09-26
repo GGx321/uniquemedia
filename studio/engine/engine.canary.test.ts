@@ -13,6 +13,7 @@ import {
   NEW_AVATAR,
   ok,
   schemaName,
+  seedDraft,
   startEngine,
   TRAITS,
   useEngineDir,
@@ -80,5 +81,20 @@ describe("the vibe never leaves the engine except in the descriptor attempts", (
     expect(carrying).toHaveLength(descriptorAttempts().length);
     expect(carrying.every((call) => schemaName(call) === "avatar_descriptor")).toBe(true);
     expect([...net.imageCalls(), ...net.ageCalls()].filter(carriesMarker)).toEqual([]);
+  });
+
+  test("avatars.rewriteDescriptor: only its descriptor attempt carries it, a rejected answer's retry included", async () => {
+    const { draftId } = await seedDraft(dir(), { traits: MARKED, descriptor: "a young woman with hazel eyes" });
+    const net = network({ descriptors: [descriptorReply("25-year-old European girl, hazel eyes."), descriptorReply(GOOD)] });
+    const { engine } = await startEngine(dir(), { net });
+
+    const estimate = ok(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId: draftId })));
+    if (estimate.type !== "avatars.estimateRewriteDescriptor") throw new Error("wrong type");
+    ok(await engine.handle(command("avatars.rewriteDescriptor", { avatarId: draftId, acceptedWorstMicros: estimate.result.worstMicros })));
+
+    const carrying = net.calls.filter(carriesMarker);
+    expect(descriptorAttempts()).toHaveLength(2);
+    expect(carrying).toHaveLength(descriptorAttempts().length);
+    expect(carrying.every((call) => schemaName(call) === "avatar_descriptor")).toBe(true);
   });
 });

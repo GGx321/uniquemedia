@@ -1,5 +1,7 @@
 import {
+  AvatarDescriptor,
   type ApiKeyStatus,
+  type AvatarStatus,
   type AvatarSummary,
   type AvatarTraits,
   type Candidate,
@@ -23,6 +25,7 @@ import {
   type ResponseMessage,
   type Settings,
   type Snapshot,
+  type UnreadableAvatar,
   type UnsequencedEvent,
 } from "../../shared/engine";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
@@ -67,6 +70,7 @@ export interface MockEngineOptions {
   eventCapacity?: number;
   avatars?: AvatarSummary[];
   drafts?: Draft[];
+  unreadableAvatars?: UnreadableAvatar[];
   /**
    * `halt`: paid calls halted as the engine reports it (e.g. a failed ledger
    * write, or a settle above worst known after a restart); `unavailable`: the
@@ -75,6 +79,24 @@ export interface MockEngineOptions {
   money?: { spentMicros?: number; monthlyBudgetMicros?: number; halt?: MoneyHalt; unavailable?: LedgerUnavailable };
   /** Stored network concurrency (the contract allows 1–16). */
   concurrency?: number;
+}
+
+/**
+ * What `avatars.rewriteDescriptor` restores a seeded `descriptor-invalid`
+ * entry to: everything the resulting draft or saved avatar needs besides its
+ * (freshly rewritten) descriptor, which `avatars.rewriteDescriptor` never
+ * touches on the master photo, candidates or name.
+ */
+export interface RewriteTarget {
+  status: "draft" | Exclude<AvatarStatus, "draft">;
+  name: string;
+  traits: AvatarTraits;
+  /** Ignored for a draft: it has no master yet. */
+  masterPhotoId?: string;
+  createdAt?: string;
+  photoCount?: number;
+  /** A draft's existing candidates, kept through the rewrite exactly as the engine keeps them; ignored for a saved avatar. */
+  candidates?: Candidate[];
 }
 
 interface MockJob {
@@ -186,6 +208,9 @@ export class MockEngine implements EngineBridge {
   private settings: Settings;
   private avatars: AvatarSummary[];
   private drafts: Draft[];
+  private unreadable: UnreadableAvatar[];
+  /** What a seeded `descriptor-invalid` entry recovers to, by avatarId; entries seeded without one (or for any other reason) cannot be rewritten. */
+  private readonly rewritable = new Map<string, RewriteTarget>();
   private jobs: MockJob[] = [];
   private spentMicros: number;
   private spentSinceReconcile = 0;
@@ -219,6 +244,7 @@ export class MockEngine implements EngineBridge {
     };
     this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.drafts = options.drafts ?? [];
+    this.unreadable = options.unreadableAvatars ?? [];
     this.spentMicros = options.money?.spentMicros ?? (options.preset === "demo" ? 1_420_000 : 0);
     this.halt = options.money?.halt ?? null;
     this.unavailable = options.money?.unavailable ?? null;
@@ -297,6 +323,19 @@ export class MockEngine implements EngineBridge {
     this.avatars = [...this.avatars, avatar];
   }
 
+  /**
+   * Lists `entry` in `unreadableAvatars`, as the real engine would for a
+   * quarantined manifest or a record the contract refuses. With `recoverTo`,
+   * `avatars.rewriteDescriptor` can turn it into a normal draft or saved
+   * avatar with that shape (its descriptor freshly written); without one, a
+   * rewrite attempt on this id answers VALIDATION, like any other entry whose
+   * reason is not `descriptor-invalid`.
+   */
+  seedUnreadable(entry: UnreadableAvatar, recoverTo?: RewriteTarget): void {
+    this.unreadable = [...this.unreadable, entry];
+    if (recoverTo !== undefined && entry.avatarId !== null) this.rewritable.set(entry.avatarId, recoverTo);
+  }
+
   /** The engine process restarts: a new bootId, seq from 1, running jobs are gone, open reserves need a reconcile. */
   restart(): void {
     for (const job of this.jobs) {
@@ -371,12 +410,20 @@ export class MockEngine implements EngineBridge {
       case "money.reconcile":
         return this.reconcile(c);
       case "avatars.list":
-        return this.ok(c, { avatars: this.avatars, unreadableAvatars: 0 });
+        return this.ok(c, { avatars: this.avatars, unreadableAvatars: this.unreadable, unreadableTotal: this.unreadable.length });
       case "avatars.estimate":
         return this.ok(c, this.price);
-      case "avatars.estimateCandidates":
-        if (!this.drafts.some((d) => d.avatarId === c.payload.avatarId)) return this.fail(c, { code: "NOT_FOUND" });
+      case "avatars.estimateCandidates": {
+        const draft = this.drafts.find((d) => d.avatarId === c.payload.avatarId);
+        if (!draft) return this.fail(c, { code: "NOT_FOUND" });
+        if (!AvatarDescriptor.safeParse(draft.descriptor).success) return this.fail(c, { code: "DESCRIPTOR_INVALID" });
         return this.ok(c, this.candidatesPrice());
+      }
+      case "avatars.estimateRewriteDescriptor": {
+        const refusal = this.rewriteRefusal(c.payload.avatarId);
+        if (refusal) return this.fail(c, refusal);
+        return this.ok(c, this.rewritePrice());
+      }
       case "avatars.createDraft": {
         const refusal = this.paidGate(c.payload.acceptedWorstMicros, this.price.worstMicros);
         if (refusal) return this.fail(c, refusal);
@@ -395,6 +442,7 @@ export class MockEngine implements EngineBridge {
       case "avatars.generateCandidates": {
         const draft = this.drafts.find((d) => d.avatarId === c.payload.avatarId);
         if (!draft) return this.fail(c, { code: "NOT_FOUND" });
+        if (!AvatarDescriptor.safeParse(draft.descriptor).success) return this.fail(c, { code: "DESCRIPTOR_INVALID" });
         // Another batch is priced without the descriptor, like avatars.estimateCandidates.
         const refusal = this.paidGate(c.payload.acceptedWorstMicros, this.candidatesPrice().worstMicros);
         if (refusal) return this.fail(c, refusal);
@@ -435,6 +483,18 @@ export class MockEngine implements EngineBridge {
         this.avatars = this.avatars.map((a) => (a === avatar ? archived : a));
         return this.ok(c, { avatar: archived });
       }
+      case "avatars.rewriteDescriptor": {
+        const { avatarId } = c.payload;
+        // The engine's order: the key and the ledger before it even looks up
+        // the id, then the id (NOT_FOUND/VALIDATION), then the price.
+        const refusal = this.keyAndLedgerGate() ?? this.rewriteRefusal(avatarId) ?? this.priceGate(c.payload.acceptedWorstMicros, this.rewritePrice().worstMicros);
+        if (refusal) return this.fail(c, refusal);
+        const target = this.rewritable.get(avatarId);
+        if (target === undefined) throw new Error("unreachable: rewriteRefusal already checked the target exists");
+        this.applyRewrite(avatarId, target);
+        this.spend(DESCRIPTOR.expected);
+        return this.ok(c, { avatarId });
+      }
       case "photos.list":
         return this.ok(c, { photos: [] });
       case "runs.estimate":
@@ -465,18 +525,28 @@ export class MockEngine implements EngineBridge {
     return null;
   }
 
-  /** The engine's checks before any paid call, in the order it runs them; `worstMicros` is this command's own worst case. */
-  private paidGate(acceptedWorstMicros: number, worstMicros: number): EngineError | null {
+  /** The key and the ledger: the engine's first checks before any paid call, before it even looks up what the command names. */
+  private keyAndLedgerGate(): EngineError | null {
     const key = this.settings.apiKey;
     if (!key.stored) return { code: "AUTH_INVALID", detail: "no API key is stored" };
     if (key.rejected) return { code: "AUTH_INVALID" };
     const stopped = this.ledgerStop();
     if (stopped) return stopped;
     if (this.reconcileReasons.length > 0 || this.halt !== null) return { code: "RECONCILE_REQUIRED" };
+    return null;
+  }
+
+  /** The price checks: after the command's target is found valid, `worstMicros` is this command's own worst case. */
+  private priceGate(acceptedWorstMicros: number, worstMicros: number): EngineError | null {
     if (acceptedWorstMicros < worstMicros) return { code: "PRICE_CHANGED" };
     const committed = this.spentMicros + this.unsettledMicros() + worstMicros;
     if (committed > this.settings.monthlyBudgetMicros) return { code: "BUDGET_EXCEEDED" };
     return null;
+  }
+
+  /** The engine's checks before any paid call, in the order it runs them; `worstMicros` is this command's own worst case. */
+  private paidGate(acceptedWorstMicros: number, worstMicros: number): EngineError | null {
+    return this.keyAndLedgerGate() ?? this.priceGate(acceptedWorstMicros, worstMicros);
   }
 
   private reconcile(c: CommandMessage): ResponseMessage {
@@ -589,7 +659,8 @@ export class MockEngine implements EngineBridge {
       money: this.moneyStatus(),
       avatars: this.avatars,
       drafts: this.drafts,
-      unreadableAvatars: 0,
+      unreadableAvatars: this.unreadable,
+      unreadableTotal: this.unreadable.length,
       jobs: this.jobs.map((j) => this.jobState(j)),
       librarySwitchGeneration: this.librarySwitchGeneration,
       notices: [],
@@ -619,6 +690,52 @@ export class MockEngine implements EngineBridge {
     const worstMicros = Math.max(0, this.price.worstMicros - DESCRIPTOR.worst);
     const expectedMicros = Math.min(worstMicros, Math.max(0, this.price.expectedMicros - DESCRIPTOR.expected));
     return { ...this.price, expectedMicros, worstMicros };
+  }
+
+  /** The descriptor-only recovery's price: the same descriptor sub-cost `candidatesPrice` subtracts, alone. */
+  private rewritePrice(): Estimate {
+    return { ...this.price, expectedMicros: DESCRIPTOR.expected, worstMicros: DESCRIPTOR.worst };
+  }
+
+  /**
+   * NOT_FOUND for an id that names nothing at all, or that names a
+   * `manifest-unreadable` entry — the real engine's library never holds such
+   * a manifest either, so it is exactly as unknown as an id that never
+   * existed. VALIDATION for one this mock cannot rewrite — already fine
+   * (listed normally), or unreadable for a `contract-mismatch` reason, or
+   * seeded without a recovery target. Null when it is a rewritable
+   * descriptor-invalid entry.
+   */
+  private rewriteRefusal(avatarId: string): EngineError | null {
+    if (this.rewritable.has(avatarId)) return null;
+    const entry = this.unreadable.find((u) => u.avatarId === avatarId);
+    if (entry !== undefined) return entry.reason === "manifest-unreadable" ? { code: "NOT_FOUND" } : { code: "VALIDATION", detail: "nothing to rewrite" };
+    const known = this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId);
+    return known ? { code: "VALIDATION", detail: "nothing to rewrite" } : { code: "NOT_FOUND" };
+  }
+
+  /** Turns a seeded unreadable entry into a normal draft or saved avatar with a freshly written descriptor; the master, candidates and name are untouched. */
+  private applyRewrite(avatarId: string, target: RewriteTarget): void {
+    this.unreadable = this.unreadable.filter((u) => u.avatarId !== avatarId);
+    this.rewritable.delete(avatarId);
+    const descriptor = mockDescriptor(target.traits);
+    if (target.status === "draft") {
+      const draft: Draft = { avatarId, traits: target.traits, descriptor, candidates: target.candidates ?? [], estimate: this.candidatesPrice() };
+      this.drafts = [...this.drafts, draft];
+      this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "draft.changed", payload: { draft } });
+      return;
+    }
+    const avatar: AvatarSummary = {
+      avatarId,
+      name: target.name,
+      descriptor,
+      masterPhotoId: target.masterPhotoId ?? this.nextId("photo"),
+      createdAt: target.createdAt ?? this.nowIso(),
+      status: target.status,
+      photoCount: target.photoCount ?? 0,
+    };
+    this.avatars = [...this.avatars, avatar];
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });
   }
 
   private moneyStatus(): MoneyStatus {

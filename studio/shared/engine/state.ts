@@ -270,6 +270,41 @@ export const AvatarSummary = z.strictObject({
   photoCount: Count,
 });
 
+/**
+ * Why a stored avatar record could not be listed as a draft or a saved
+ * avatar:
+ * - `manifest-unreadable`: its manifest file could not be read or parsed.
+ * - `descriptor-invalid`: its stored descriptor no longer fits today's rules
+ *   (ageText.ts, AvatarDescriptor); `avatars.rewriteDescriptor` can fix it.
+ * - `contract-mismatch`: anything else the contract refuses (e.g. traits
+ *   stored before typed traits existed).
+ */
+export const UnreadableReason = z.enum(["manifest-unreadable", "descriptor-invalid", "contract-mismatch"]);
+
+/**
+ * The fixed, short English sentence each reason gets — enumerated, not
+ * `SafeText`, so a `detail` outside this closed set (a bug, or an attempt to
+ * sneak the descriptor or the vibe through it) fails validation, not only review.
+ */
+export const UnreadableDetail = z.enum([
+  "its manifest file could not be read or parsed",
+  "its stored descriptor no longer fits today's rules",
+  "its stored record no longer fits the contract",
+]);
+
+/**
+ * At most `MAX_UNREADABLE_AVATARS` bounded elsewhere: an avatar the engine
+ * could not list normally. `avatarId` is null only when it cannot be
+ * recovered from the folder or the manifest; `detail` is one of
+ * `UnreadableDetail`'s fixed sentences, the one its `reason` names — never
+ * the descriptor or the vibe.
+ */
+export const UnreadableAvatar = z.strictObject({
+  avatarId: Id.nullable(),
+  reason: UnreadableReason,
+  detail: UnreadableDetail,
+});
+
 // ---------- jobs ----------
 
 export const JobKind = z.enum(["avatar.candidates", "run"]);
@@ -414,6 +449,16 @@ export type ReconcileResult = z.infer<typeof ReconcileResult>;
 export type Candidate = z.infer<typeof Candidate>;
 export type Draft = z.infer<typeof Draft>;
 export type AvatarSummary = z.infer<typeof AvatarSummary>;
+export type UnreadableReason = z.infer<typeof UnreadableReason>;
+export type UnreadableDetail = z.infer<typeof UnreadableDetail>;
+export type UnreadableAvatar = z.infer<typeof UnreadableAvatar>;
+
+/** The fixed, short English detail of each reason: never the descriptor or the vibe, whatever the manifest held. */
+export const UNREADABLE_REASON_DETAIL: Record<UnreadableReason, UnreadableDetail> = {
+  "manifest-unreadable": "its manifest file could not be read or parsed",
+  "descriptor-invalid": "its stored descriptor no longer fits today's rules",
+  "contract-mismatch": "its stored record no longer fits the contract",
+};
 export type JobState = z.infer<typeof JobState>;
 export type JobResult = z.infer<typeof JobResult>;
 export type FailedCandidateSlot = z.infer<typeof FailedCandidateSlot>;

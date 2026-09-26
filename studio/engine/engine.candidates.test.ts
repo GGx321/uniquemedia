@@ -689,6 +689,15 @@ describe("avatars.pick", () => {
     expect(failed(await engine.handle(pick("nobody-00000000", masterId))).error.code).toBe("NOT_FOUND");
   });
 
+  test("a draft whose stored descriptor fails today's rules: DESCRIPTOR_INVALID, not NOT_FOUND (L7)", async () => {
+    const { draftId, candidates } = await draftWithCandidates();
+    const { library } = await openLibrary(join(dir(), "library"));
+    await library.updateAvatar(draftId, { descriptor: "a young woman with hazel eyes" });
+    const { engine } = await startEngine(dir());
+
+    expect(failed(await engine.handle(pick(draftId, candidates[0]?.id ?? ""))).error.code).toBe("DESCRIPTOR_INVALID");
+  });
+
   test("without a library: LIBRARY_UNAVAILABLE", async () => {
     const { engine } = await startEngine(dir(), { init: { settings: engineSettings(dir(), { libraryPath: join(dir(), "missing") }) } });
 
@@ -728,6 +737,15 @@ describe("avatars.archive", () => {
 
     expect(failed(await engine.handle(command("avatars.archive", { avatarId: draftId }))).error.code).toBe("NOT_FOUND");
     expect(failed(await engine.handle(command("avatars.archive", { avatarId: "nobody-00000000" }))).error.code).toBe("NOT_FOUND");
+  });
+
+  test("a saved avatar whose stored descriptor fails today's rules: DESCRIPTOR_INVALID, not NOT_FOUND (L7)", async () => {
+    const { avatarId } = await seedDraft(dir());
+    const { library } = await openLibrary(join(dir(), "library"));
+    await library.updateAvatar(avatarId, { descriptor: "a young woman with hazel eyes" });
+    const { engine } = await startEngine(dir());
+
+    expect(failed(await engine.handle(command("avatars.archive", { avatarId }))).error.code).toBe("DESCRIPTOR_INVALID");
   });
 
   test("refused while a job runs for it: IN_FLIGHT", async () => {

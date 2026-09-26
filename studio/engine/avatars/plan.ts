@@ -14,8 +14,13 @@ export interface AvatarModels {
   textModel: string;
 }
 
-/** `new-avatar`: the descriptor call and the first batch. `next-batch`: another batch for an existing draft. */
-export type AvatarJobKind = "new-avatar" | "next-batch";
+/**
+ * `new-avatar`: the descriptor call and the first batch. `next-batch`:
+ * another batch for an existing draft. `rewrite-descriptor`: the descriptor
+ * call alone, for an avatar whose stored descriptor fails today's rules —
+ * no candidates, no age checks, master photo and name untouched.
+ */
+export type AvatarJobKind = "new-avatar" | "next-batch" | "rewrite-descriptor";
 
 /** Candidate portraits per batch. */
 export const CANDIDATES_PER_BATCH = 4;
@@ -27,17 +32,25 @@ export function candidateImage(imageModel: string): ImageChoice {
   return { model: imageModel, resolution: "1K", quality: "low", refs: 0 };
 }
 
-/** The models to price: the image model, the text model and the age checks' model (fixed decision: grok-4.3). */
-export function avatarPriceModels(models: AvatarModels): PriceModels {
+/**
+ * The models to price: the image model, the text model and the age checks'
+ * model (fixed decision: grok-4.3) for `new-avatar`/`next-batch`.
+ * `rewrite-descriptor` sends neither an image nor an age check (plan.ts's
+ * `jobInput`), so it needs only the text model priced — an image model with
+ * no price loaded (unknown, renamed, or the live fetch failed with nothing in
+ * the fallback table) must never block a rewrite that never touches it.
+ */
+export function avatarPriceModels(models: AvatarModels, kind: AvatarJobKind = "new-avatar"): PriceModels {
+  if (kind === "rewrite-descriptor") return { imageModels: [], chatModels: [models.textModel] };
   return { imageModels: [models.imageModel], chatModels: [...new Set([models.textModel, AGE_CHECK_CALL.model])] };
 }
 
 function jobInput(models: AvatarModels, kind: AvatarJobKind): AvatarJobInput {
   return {
-    candidates: CANDIDATES_PER_BATCH,
+    candidates: kind === "rewrite-descriptor" ? 0 : CANDIDATES_PER_BATCH,
     image: candidateImage(models.imageModel),
-    descriptor: kind === "new-avatar" ? { call: descriptorCall(models.textModel), maxAttempts: DESCRIPTOR_MAX_ATTEMPTS } : null,
-    ageChecks: AGE_CHECK_CALL,
+    descriptor: kind === "next-batch" ? null : { call: descriptorCall(models.textModel), maxAttempts: DESCRIPTOR_MAX_ATTEMPTS },
+    ageChecks: kind === "rewrite-descriptor" ? null : AGE_CHECK_CALL,
   };
 }
 

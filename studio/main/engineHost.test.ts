@@ -408,6 +408,15 @@ describe("request deadline", () => {
     expect(COMMAND_DEADLINE_MS["avatars.generateCandidates"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });
 
+  test("estimateRewriteDescriptor waits as long as an estimate", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.estimateRewriteDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
+  });
+
+  test("rewriteDescriptor is sized like createDraft's descriptor part: the same job, the same attempt ceiling", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.rewriteDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000);
+    expect(COMMAND_DEADLINE_MS["avatars.rewriteDescriptor"]).toBe(COMMAND_DEADLINE_MS["avatars.createDraft"]);
+  });
+
   test("an init that never finishes cannot hang a request", async () => {
     const { host, timers } = setup({ init: () => new Promise<EngineInit>(() => {}) });
     void host.start();

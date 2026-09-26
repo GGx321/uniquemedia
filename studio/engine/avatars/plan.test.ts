@@ -76,6 +76,33 @@ test("the models to price: the image model, the text model and the age checks' m
   });
 });
 
+test("rewriting a descriptor needs only the text model priced: no image, no age-check model (L8)", () => {
+  expect(avatarPriceModels(DEFAULTS, "rewrite-descriptor")).toEqual({ imageModels: [], chatModels: ["x-ai/grok-4.3"] });
+  expect(avatarPriceModels({ ...DEFAULTS, textModel: "acme/writer" }, "rewrite-descriptor")).toEqual({ imageModels: [], chatModels: ["acme/writer"] });
+});
+
+test("estimateAvatarJob for rewrite-descriptor never prices the image model, even one with no fallback price", () => {
+  const book = new PriceBook(
+    new Map(), // no image price loaded at all
+    new Map([["x-ai/grok-4.3", { price: { promptPico: 1_250_000, completionPico: 2_500_000, imagePico: 0, requestPico: 0, overrides: [] }, source: "live" }]]),
+  );
+  expect(() => avatarJobEstimate({ book, asOf: "2026-10-01" }, DEFAULTS, "rewrite-descriptor")).not.toThrow();
+});
+
 test("the descriptor job's cap is what it can send: every attempt at its ceiling, on the settings' text model", () => {
   expect(descriptorJobCap(FALLBACK, DEFAULTS)).toBe(2 * DESCRIPTOR.worst);
+});
+
+test("rewriting a descriptor: the descriptor call alone (asked at most twice), no candidates and no age checks", () => {
+  const estimate = avatarJobEstimate(FALLBACK, DEFAULTS, "rewrite-descriptor");
+
+  expect(estimate).toEqual({
+    expectedMicros: DESCRIPTOR.expected,
+    worstMicros: 2 * DESCRIPTOR.worst,
+    prices: "fallback",
+    pricesAsOf: "2026-09-24",
+  });
+  // Exactly the descriptor job's cap: the command's own scope never sends anything else.
+  expect(estimate.worstMicros).toBe(descriptorJobCap(FALLBACK, DEFAULTS));
+  expect(Estimate.safeParse(estimate).success).toBe(true);
 });

@@ -150,7 +150,9 @@ export function estimateAvatarJob(book: PriceBook, job: AvatarJobInput): Estimat
   if (descriptor !== null && (!Number.isSafeInteger(descriptor.maxAttempts) || descriptor.maxAttempts < 1)) {
     throw new RangeError(`descriptor maxAttempts must be a positive integer, got ${descriptor.maxAttempts}`);
   }
-  const image = imageMicros(book, job.image);
+  // Never priced when nothing is sent (rewrite-descriptor): an image model
+  // with no price loaded must not block a job that never touches it.
+  const image = job.candidates > 0 ? imageMicros(book, job.image) : 0;
   const descriptorExpected = descriptor === null ? 0 : typicalMicros(book, descriptor.call);
   const descriptorWorst = descriptor === null ? 0 : descriptor.maxAttempts * ceilingMicros(book, descriptor.call);
   return {

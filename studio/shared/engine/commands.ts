@@ -17,9 +17,14 @@ import {
   ReconcileResult,
   RunRequest,
   Settings,
+  UnreadableAvatar,
 } from "./state";
 
 const Empty = z.strictObject({});
+
+/** Avatar records the engine could not list normally, kept bounded (the Snapshot and avatars.list). */
+export const MAX_UNREADABLE_AVATARS = 200;
+const UnreadableAvatars = z.array(UnreadableAvatar).max(MAX_UNREADABLE_AVATARS);
 
 function defineCommand<const T extends string, P extends z.ZodType, R extends z.ZodType>(
   type: T,
@@ -61,8 +66,10 @@ export const Snapshot = z.strictObject({
   money: MoneyStatus,
   avatars: z.array(AvatarSummary),
   drafts: z.array(Draft),
-  /** Avatar records (saved or draft) in the library that could not be read into the lists: the UI says how many. */
-  unreadableAvatars: Count,
+  /** Avatar records (saved or draft) in the library that could not be read into the lists, with their ids and why. */
+  unreadableAvatars: UnreadableAvatars,
+  /** How many there really are, even past the `MAX_UNREADABLE_AVATARS` bound: the list can be cut, this count never is (L1). */
+  unreadableTotal: Count,
   jobs: z.array(JobState),
   /**
    * Bumped by one every time the live library folder actually changes (a
@@ -121,12 +128,16 @@ const ENGINE_SPECS = [
   defineCommand("money.reconcile", Empty, ReconcileResult),
   // avatars (2a). One avatar job = descriptor + candidate batches + age checks, under one cap.
   // A draft is an avatar with status "draft"; picking a candidate makes it active.
-  defineCommand("avatars.list", Empty, z.strictObject({ avatars: z.array(AvatarSummary), unreadableAvatars: Count })),
+  defineCommand("avatars.list", Empty, z.strictObject({ avatars: z.array(AvatarSummary), unreadableAvatars: UnreadableAvatars, unreadableTotal: Count })),
   // A new avatar: the descriptor call, then the first batch of candidates and their age checks.
   defineCommand("avatars.estimate", z.strictObject({ traits: AvatarTraits }), Estimate),
   // Another batch for an existing draft: candidates and their age checks, no descriptor call.
   // Keyed like avatars.generateCandidates, whose acceptedWorstMicros it produces.
   defineCommand("avatars.estimateCandidates", z.strictObject({ avatarId: Id }), Estimate),
+  // The descriptor-only recovery for an avatar listed in unreadableAvatars with
+  // reason "descriptor-invalid": no candidates, no age checks. Keyed like
+  // avatars.rewriteDescriptor, whose acceptedWorstMicros it produces.
+  defineCommand("avatars.estimateRewriteDescriptor", z.strictObject({ avatarId: Id }), Estimate),
   defineCommand(
     "avatars.createDraft",
     z.strictObject({ traits: AvatarTraits, ...AcceptedWorst }),
@@ -144,6 +155,16 @@ const ENGINE_SPECS = [
     z.strictObject({ avatar: AvatarSummary }),
   ),
   defineCommand("avatars.archive", z.strictObject({ avatarId: Id }), z.strictObject({ avatar: AvatarSummary })),
+  // The paid recovery for an avatar whose stored descriptor fails today's
+  // rules: rewrites it from the avatar's stored typed traits alone (the same
+  // descriptor job as createDraft), keeping its master photo, candidates and
+  // name untouched. Refused with VALIDATION when the descriptor already fits
+  // today's rules (nothing to fix, so no spend), or NOT_FOUND for an unknown id.
+  defineCommand(
+    "avatars.rewriteDescriptor",
+    z.strictObject({ avatarId: Id, ...AcceptedWorst }),
+    z.strictObject({ avatarId: Id }),
+  ),
   // photo runs (2b placeholders)
   defineCommand("runs.estimate", RunRequest, z.strictObject({ estimate: Estimate })),
   defineCommand("runs.start", RunRequest.extend(AcceptedWorst), z.strictObject({ runId: Id, jobId: Id })),

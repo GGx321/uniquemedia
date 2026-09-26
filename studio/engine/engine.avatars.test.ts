@@ -139,12 +139,12 @@ function ledgerLines(): Record<string, unknown>[] {
   return readLedgerLines(join(dir, "userData", "ledger.jsonl"));
 }
 
-async function seedDraft(): Promise<{ draftId: string; avatarId: string }> {
+async function seedDraft(opts: { descriptor?: string } = {}): Promise<{ draftId: string; avatarId: string }> {
   const { library } = await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds("seed") });
   const saved = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta());
   await library.updateAvatar(saved.id, { status: "active", masterPhotoId: master.id });
-  const draft = await library.createAvatar({ name: "Draft", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+  const draft = await library.createAvatar({ name: "Draft", age: 25, traits: manifestTraits(TRAITS), descriptor: opts.descriptor ?? GOOD });
   return { draftId: draft.id, avatarId: saved.id };
 }
 
@@ -242,6 +242,445 @@ describe("avatars.estimateCandidates", () => {
     const { engine } = await startEngine({ init: { settings: { ...init().settings, libraryPath: join(dir, "missing") } } });
 
     expect(failed(await engine.handle(command("avatars.estimateCandidates", { avatarId: "draft-00000001" }))).error.code).toBe("NOT_FOUND");
+  });
+
+  test("answers DESCRIPTOR_INVALID, never INTERNAL, for a draft whose stored descriptor fails today's rules", async () => {
+    const { draftId } = await seedDraft({ descriptor: "a young woman with hazel eyes" });
+    const { engine } = await startEngine();
+
+    expect(failed(await engine.handle(command("avatars.estimateCandidates", { avatarId: draftId }))).error.code).toBe("DESCRIPTOR_INVALID");
+  });
+});
+
+// ---------- avatars.estimateRewriteDescriptor / avatars.rewriteDescriptor ----------
+
+const BAD_DESCRIPTOR = "a young woman with hazel eyes";
+/** The descriptor call alone, at fallback prices: no candidates, no age checks. */
+const REWRITE: Estimate = { expectedMicros: 2_625, worstMicros: 2 * ATTEMPT_WORST, prices: "fallback", pricesAsOf: "2026-09-24" };
+
+async function seedUnreadable(status: "draft" | "active" | "archived" = "draft"): Promise<{ avatarId: string }> {
+  const { library } = await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds("bad") });
+  const avatar = await library.createAvatar({ name: "Bad", age: 25, traits: manifestTraits(TRAITS), descriptor: BAD_DESCRIPTOR });
+  if (status !== "draft") {
+    const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  }
+  if (status === "archived") await library.updateAvatar(avatar.id, { status: "archived" });
+  return { avatarId: avatar.id };
+}
+
+function rewriteDescriptor(avatarId: string, acceptedWorstMicros = REWRITE.worstMicros): unknown {
+  return command("avatars.rewriteDescriptor", { avatarId, acceptedWorstMicros });
+}
+
+/** A draft whose vibe (not just the descriptor) now fails today's rules: rewriting the descriptor alone cannot recover it (H2). */
+async function seedUnrewritableVibe(): Promise<{ avatarId: string }> {
+  const { library } = await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds("badvibe") });
+  const avatar = await library.createAvatar({ name: "Bad", age: 25, traits: manifestTraits({ ...TRAITS, vibe: "teen look" }), descriptor: BAD_DESCRIPTOR });
+  return { avatarId: avatar.id };
+}
+
+/** An active avatar with a name over 60 chars (the library allows it; the contract's AvatarName does not): no descriptor could make it fit (H2/M1). */
+async function seedUnrewritableName(): Promise<{ avatarId: string }> {
+  const { library } = await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds("badname") });
+  const avatar = await library.createAvatar({ name: "N".repeat(61), age: 25, traits: manifestTraits(TRAITS), descriptor: BAD_DESCRIPTOR });
+  const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta());
+  await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  return { avatarId: avatar.id };
+}
+
+describe("avatars.estimateRewriteDescriptor", () => {
+  test("prices the descriptor call alone for a draft whose descriptor fails today's rules", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine } = await startEngine();
+
+    expect(ok(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId }))).result).toEqual(REWRITE);
+  });
+
+  test("prices it the same for an active avatar", async () => {
+    const { avatarId } = await seedUnreadable("active");
+    const { engine } = await startEngine();
+
+    expect(ok(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId }))).result).toEqual(REWRITE);
+  });
+
+  test("answers NOT_FOUND for an unknown id", async () => {
+    const { engine } = await startEngine();
+
+    expect(failed(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId: "nobody-00000000" }))).error.code).toBe("NOT_FOUND");
+  });
+
+  test("refuses with VALIDATION for an avatar whose descriptor already fits today's rules: nothing to fix", async () => {
+    const { avatarId } = await seedDraft();
+    const { engine } = await startEngine();
+
+    expect(failed(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId }))).error.code).toBe("VALIDATION");
+  });
+
+  test("refuses with VALIDATION, not a price, for a draft whose vibe also fails today's rules: rewriting the descriptor alone would not fix it", async () => {
+    const { avatarId } = await seedUnrewritableVibe();
+    const { engine, net } = await startEngine();
+
+    expect(failed(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId }))).error.code).toBe("VALIDATION");
+    expect(net.chatCalls()).toHaveLength(0);
+  });
+
+  test("refuses with VALIDATION, not a price, for an avatar whose name is over 60 chars: no descriptor could make it fit", async () => {
+    const { avatarId } = await seedUnrewritableName();
+    const { engine } = await startEngine();
+
+    expect(failed(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId }))).error.code).toBe("VALIDATION");
+  });
+
+  test("prices it even when the settings' image model has no price at all (L8): a rewrite never sends an image", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine } = await startEngine({ init: { settings: { ...init().settings, imageModel: "acme/unknown-image" } } });
+
+    expect(ok(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId }))).result).toEqual(REWRITE);
+  });
+});
+
+describe("avatars.rewriteDescriptor", () => {
+  test("one paid descriptor call rewrites a draft's descriptor; the next snapshot lists it normally", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine, events } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
+
+    const response = ok(await engine.handle(rewriteDescriptor(avatarId)));
+    expect(response).toMatchObject({ result: { avatarId } });
+
+    expect(engine.library?.getAvatar(avatarId)).toMatchObject({ descriptor: GOOD, name: "Bad", status: "draft" });
+    const snapshot = ok(await engine.handle(command("engine.snapshot")));
+    expect(snapshot).toMatchObject({ result: { drafts: [{ avatarId, descriptor: { text: GOOD } }], unreadableAvatars: [] } });
+    expect(events().map((e) => e.type)).toContain("draft.changed");
+
+    const [reserve, settle, ...rest] = withoutAt(ledgerLines());
+    expect(rest).toEqual([]);
+    expect(reserve).toMatchObject({ type: "reserve", model: "x-ai/grok-4.3", worstMicros: ATTEMPT_WORST });
+    expect(settle).toMatchObject({ type: "settle", costMicros: 2_100 });
+  });
+
+  test("rewrites an active avatar's descriptor, keeping its master photo and name, and emits avatar.changed", async () => {
+    const { avatarId } = await seedUnreadable("active");
+    const { engine, events } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
+    const before = engine.library?.getAvatar(avatarId);
+
+    ok(await engine.handle(rewriteDescriptor(avatarId)));
+
+    expect(engine.library?.getAvatar(avatarId)).toMatchObject({ descriptor: GOOD, name: before?.name, masterPhotoId: before?.masterPhotoId, status: "active" });
+    const list = ok(await engine.handle(command("avatars.list")));
+    expect(list).toMatchObject({ result: { avatars: [{ avatarId }], unreadableAvatars: [] } });
+    expect(events().map((e) => e.type)).toContain("avatar.changed");
+  });
+
+  test("rewrites an archived avatar's descriptor too, leaving it archived", async () => {
+    const { avatarId } = await seedUnreadable("archived");
+    const { engine } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
+
+    ok(await engine.handle(rewriteDescriptor(avatarId)));
+
+    expect(engine.library?.getAvatar(avatarId)).toMatchObject({ descriptor: GOOD, status: "archived" });
+    const list = ok(await engine.handle(command("avatars.list")));
+    expect(list).toMatchObject({ result: { avatars: [{ avatarId, status: "archived" }], unreadableAvatars: [] } });
+  });
+
+  test("a rejected answer is asked once more; the job's cap is exactly the descriptor job's cap", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine } = await startEngine({ net: network({ chat: [descriptorReply("25-year-old European girl, hazel eyes."), descriptorReply(GOOD)] }) });
+
+    ok(await engine.handle(rewriteDescriptor(avatarId)));
+
+    expect(ledgerLines().filter((l) => l.type === "settle")).toHaveLength(2);
+    expect(engine.library?.getAvatar(avatarId)).toMatchObject({ descriptor: GOOD });
+  });
+
+  test("refuses with VALIDATION and spends nothing for an avatar whose descriptor already fits today's rules", async () => {
+    const { avatarId } = await seedDraft();
+    const { engine, net } = await startEngine();
+
+    const refused = failed(await engine.handle(rewriteDescriptor(avatarId, REWRITE.worstMicros)));
+
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(net.chatCalls()).toHaveLength(0);
+    expect(ledgerLines()).toEqual([]);
+  });
+
+  test("refuses with VALIDATION and spends nothing for a draft whose vibe also fails today's rules (H2): rewriting the descriptor alone would not fix it", async () => {
+    const { avatarId } = await seedUnrewritableVibe();
+    const { engine, net } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
+
+    const refused = failed(await engine.handle(rewriteDescriptor(avatarId)));
+
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(net.chatCalls()).toHaveLength(0);
+    expect(ledgerLines()).toEqual([]);
+  });
+
+  test("refuses with VALIDATION and spends nothing for an avatar with a name over 60 chars: it pays, writes, then INTERNAL was the bug (M1)", async () => {
+    const { avatarId } = await seedUnrewritableName();
+    const { engine, net, events } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
+    const before = events().length;
+
+    const refused = failed(await engine.handle(rewriteDescriptor(avatarId)));
+
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(net.chatCalls()).toHaveLength(0);
+    expect(ledgerLines()).toEqual([]);
+    expect(events().slice(before)).toEqual([]);
+    // A retry behaves identically: the record was never mutated.
+    expect(failed(await engine.handle(rewriteDescriptor(avatarId))).error.code).toBe("VALIDATION");
+  });
+
+  test("answers NOT_FOUND for an unknown id, nothing sent", async () => {
+    const { engine, net } = await startEngine();
+
+    expect(failed(await engine.handle(rewriteDescriptor("nobody-00000000"))).error.code).toBe("NOT_FOUND");
+    expect(net.chatCalls()).toHaveLength(0);
+  });
+
+  test("accepted one micro-dollar below the current worst case: PRICE_CHANGED, nothing sent", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine, net } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
+
+    const refused = failed(await engine.handle(rewriteDescriptor(avatarId, REWRITE.worstMicros - 1)));
+
+    expect(refused.error.code).toBe("PRICE_CHANGED");
+    expect(net.chatCalls()).toHaveLength(0);
+    expect(ledgerLines()).toEqual([]);
+  });
+
+  test("without a key: AUTH_INVALID, nothing sent", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine, net } = await startEngine({ key: null });
+
+    expect(failed(await engine.handle(rewriteDescriptor(avatarId))).error.code).toBe("AUTH_INVALID");
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("without a library: LIBRARY_UNAVAILABLE, nothing sent", async () => {
+    const { engine, net } = await startEngine({ init: { settings: { ...init().settings, libraryPath: join(dir, "missing") } } });
+
+    expect(failed(await engine.handle(rewriteDescriptor("avatar-00000001"))).error.code).toBe("LIBRARY_UNAVAILABLE");
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("after a restart with open reserves: RECONCILE_REQUIRED before anything is sent (M2)", async () => {
+    await writeLedger([
+      { type: "reserve", attemptId: "old#1", jobId: "job-old", scope: { avatarJobId: "job-old" }, model: "x-ai/grok-4.3", worstMicros: 5_000, at: "2026-09-24T11:00:00.000Z" },
+    ]);
+    const { engine, net } = await startEngine();
+
+    expect(failed(await engine.handle(rewriteDescriptor("avatar-00000001"))).error.code).toBe("RECONCILE_REQUIRED");
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("after a bill above its worst case: SETTLE_ABOVE_WORST until a reconcile, nothing sent (M2)", async () => {
+    await writeLedger([
+      { type: "reserve", attemptId: "old#1", jobId: "job-old", scope: { avatarJobId: "job-old" }, model: "x-ai/grok-4.3", worstMicros: 5_000, at: "2026-09-24T11:00:00.000Z" },
+      { type: "settle", attemptId: "old#1", costMicros: 6_000, estimated: false, at: "2026-09-24T11:00:01.000Z" },
+    ]);
+    const { engine, net } = await startEngine();
+
+    expect(failed(await engine.handle(rewriteDescriptor("avatar-00000001"))).error.code).toBe("SETTLE_ABOVE_WORST");
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("a ledger halted by a failed write: LEDGER_WRITE_FAILED, nothing sent (M2)", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine, net } = await startEngine({ init: { ledgerPath: join(dir, "money", "ledger.jsonl") } });
+    await writeFile(join(dir, "money"), "a file where the ledger's folder should be");
+    const budget = engine.budget;
+    if (budget === null) throw new Error("expected a budget");
+    await budget.tryReserve({ attemptId: "att-0001", jobId: "job-0001", scope: { avatarJobId: "job-0001" }, model: "x-ai/grok-4.3", worstMicros: 0 }).catch(() => undefined);
+
+    expect(failed(await engine.handle(rewriteDescriptor(avatarId))).error.code).toBe("LEDGER_WRITE_FAILED");
+    expect(net.chatCalls()).toHaveLength(0);
+  });
+
+  test("a 401 answers AUTH_INVALID and marks the key rejected (M2)", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine, events } = await startEngine({ net: network({ chat: [{ status: 401, body: { error: { message: "No auth credentials found" } } }] }) });
+
+    expect(failed(await engine.handle(rewriteDescriptor(avatarId))).error.code).toBe("AUTH_INVALID");
+    expect(events().at(-1)).toMatchObject({ type: "settings.changed", payload: { settings: { apiKey: { rejected: true } } } });
+  });
+
+  test("emits money.changed on a successful rewrite (M2)", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine, events } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
+    const before = events().length;
+
+    ok(await engine.handle(rewriteDescriptor(avatarId)));
+
+    const emitted = events().slice(before);
+    expect(emitted.map((e) => e.type)).toEqual(["money.changed", "draft.changed"]);
+    expect(emitted[0]).toMatchObject({ payload: { status: { spentMicros: 2_100 } } });
+  });
+
+  test("the job's scope is capped at the descriptor job's cap while it runs, and cleared once it ends (M2)", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    let probe: unknown = null;
+    let engineRef: Engine | null = null;
+    const probeAttempt = async (): Promise<Reply> => {
+      const budget = engineRef?.budget;
+      if (budget === null || budget === undefined) throw new Error("expected a budget");
+      const jobId = String(ledgerLines()[0]?.jobId);
+      const scope = { avatarJobId: jobId };
+      probe = await budget.tryReserve({ attemptId: "probe#1", jobId, scope, model: "x-ai/grok-4.3", worstMicros: 2 * ATTEMPT_WORST + 1 });
+      return descriptorReply(GOOD);
+    };
+    const { engine } = await startEngine({ net: network({ chat: [probeAttempt] }) });
+    engineRef = engine;
+
+    ok(await engine.handle(rewriteDescriptor(avatarId)));
+
+    // Probed while the descriptor attempt is in flight: its own reserve (13,750 µ$) is already open in the scope.
+    expect(probe).toMatchObject({ ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: 2 * ATTEMPT_WORST });
+    const budget = engine.budget;
+    if (budget === null) throw new Error("expected a budget");
+    const jobId = String(ledgerLines()[0]?.jobId);
+    expect(await budget.tryReserve({ attemptId: "late#1", jobId, scope: { avatarJobId: jobId }, model: "x-ai/grok-4.3", worstMicros: 1 })).toMatchObject({
+      ok: false,
+      reason: "RUN_CAP_EXCEEDED",
+      limitMicros: 0,
+    });
+  });
+
+  test("money.reconcile is refused with IN_FLIGHT while a rewrite runs (M2, P5)", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { engine } = await startEngine({ net: network({ prices: async () => (await held, OFFLINE), chat: [descriptorReply(GOOD)] }) });
+
+    // No sleep needed: #paidCommands++ (the avatars.rewriteDescriptor dispatch case)
+    // runs synchronously, before rewriteDescriptor's first await, so it is
+    // already set by the time this call returns control (L10).
+    const rewriting = engine.handle(rewriteDescriptor(avatarId));
+    expect(failed(await engine.handle(command("money.reconcile"))).error.code).toBe("IN_FLIGHT");
+
+    release();
+    ok(await rewriting);
+  });
+
+  test("a final non-2xx settles the attempt at 0 and releases the claim: a second rewrite is taken, not IN_FLIGHT (M2, P4)", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const moderationRefused: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
+    const { engine } = await startEngine({ net: network({ chat: [moderationRefused, descriptorReply(GOOD)] }) });
+
+    const first = failed(await engine.handle(rewriteDescriptor(avatarId)));
+    expect(first.error.code).not.toBe("IN_FLIGHT");
+    expect(ledgerLines().filter((l) => l.type === "settle").map((l) => l.costMicros)).toEqual([0]);
+
+    const second = ok(await engine.handle(rewriteDescriptor(avatarId)));
+    expect(second.result).toMatchObject({ avatarId });
+  });
+
+  test("a failed rewrite also releases the claim for a library switch (M2)", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const moderationRefused: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
+    const { engine, posted } = await startEngine({ net: network({ chat: [moderationRefused] }) });
+    await mkdir(join(dir, "other"));
+
+    failed(await engine.handle(rewriteDescriptor(avatarId)));
+
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-00000001", path: join(dir, "other") });
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000001" });
+  });
+
+  test("a monthly budget without room for the descriptor job: BUDGET_EXCEEDED before anything is sent", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine, net } = await startEngine({ init: { settings: { ...init().settings, monthlyBudgetMicros: REWRITE.worstMicros - 1 } } });
+
+    expect(failed(await engine.handle(rewriteDescriptor(avatarId))).error.code).toBe("BUDGET_EXCEEDED");
+    expect(net.chatCalls()).toHaveLength(0);
+  });
+
+  test("refuses with VALIDATION an avatar whose traits do not fit AvatarTraits (schema version 2, free-form values): it cannot be rewritten", async () => {
+    const { library } = await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds("legacy") });
+    const legacy = await library.createAvatar({ name: "Legacy", age: 25, traits: { hair: "chestnut" }, descriptor: BAD_DESCRIPTOR });
+    const { engine, net } = await startEngine();
+
+    const refused = failed(await engine.handle(rewriteDescriptor(legacy.id, REWRITE.worstMicros)));
+
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(net.chatCalls()).toHaveLength(0);
+  });
+
+  test("refuses with VALIDATION a genuine schema version 1 manifest (text-only traits, from before version 2 existed): it cannot be rewritten", async () => {
+    await openLibrary(join(dir, "library"));
+    const avatarDir = join(dir, "library", "avatars", "legacy-0000001");
+    await mkdir(join(avatarDir, "photos"), { recursive: true });
+    const v1Manifest = {
+      schemaVersion: 1,
+      id: "legacy-0000001",
+      name: "Legacy",
+      age: 25,
+      traits: { ethnicity: "european", hair: "chestnut" },
+      descriptor: BAD_DESCRIPTOR,
+      masterPhotoId: null,
+      status: "draft",
+      createdAt: "2026-09-24T10:00:00.000Z",
+    };
+    await writeFile(join(avatarDir, "avatar.json"), JSON.stringify(v1Manifest));
+    const { engine, net } = await startEngine();
+    expect(engine.library?.getAvatar("legacy-0000001")).toMatchObject({ schemaVersion: 1 });
+
+    const refused = failed(await engine.handle(rewriteDescriptor("legacy-0000001", REWRITE.worstMicros)));
+
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(net.chatCalls()).toHaveLength(0);
+  });
+
+  test("a second rewriteDescriptor for the same avatar while one runs is refused with IN_FLIGHT", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { engine } = await startEngine({
+      net: network({ prices: async () => (await held, OFFLINE), chat: [descriptorReply(GOOD)] }),
+    });
+
+    // No sleep needed (L10): #claimAvatar runs synchronously, before the
+    // first await, so it is already set by the time this call returns control.
+    const first = engine.handle(rewriteDescriptor(avatarId));
+    const second = failed(await engine.handle(rewriteDescriptor(avatarId)));
+    release();
+    ok(await first);
+
+    expect(second.error.code).toBe("IN_FLIGHT");
+  });
+
+  test("a library switch is refused with IN_FLIGHT while rewriteDescriptor runs", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { engine, posted } = await startEngine({
+      net: network({ prices: async () => (await held, OFFLINE), chat: [descriptorReply(GOOD)] }),
+    });
+    await mkdir(join(dir, "other"));
+
+    // No sleep needed (L10): #paidCommands++ and #claimAvatar run
+    // synchronously, before rewriteDescriptor's first await.
+    const rewriting = engine.handle(rewriteDescriptor(avatarId));
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-00000001", path: join(dir, "other") });
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000001", error: { code: "IN_FLIGHT" } });
+
+    release();
+    ok(await rewriting);
+  });
+
+  test("a library write that fails after the paid call fails the command; the money stays settled and the paid descriptor is kept", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const { engine } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
+    // The avatars folder becomes a file: the rewrite cannot be written.
+    await rm(join(dir, "library", "avatars"), { recursive: true });
+    await writeFile(join(dir, "library", "avatars"), "not a folder");
+
+    const refused = failed(await engine.handle(rewriteDescriptor(avatarId)));
+    expect(refused.error.code).toBe("INTERNAL");
+    expect(ledgerLines().at(-1)).toMatchObject({ type: "settle", costMicros: 2_100 });
+    const jobId = String(ledgerLines()[0]?.jobId);
+    expect(refused.error.detail).toContain(`raw/${rawFileName(`${jobId}:rewrite`)}`);
+    const kept = JSON.parse(await readFile(join(dir, "userData", "raw", rawFileName(`${jobId}:rewrite`)), "utf8"));
+    expect(kept).toEqual({ avatarId, descriptor: { age: 25, text: GOOD } });
   });
 });
 

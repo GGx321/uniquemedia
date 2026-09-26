@@ -1,11 +1,12 @@
 import { mkdir } from "node:fs/promises";
 import {
+  AvatarDescriptor,
+  AvatarTraits,
   errorResponseFor,
   EventLog,
   parseEngineCommand,
   PROTOCOL_VERSION,
   type ApiKeyStatus,
-  type AvatarDescriptor,
   type AvatarSummary,
   type CommandPayload,
   type Draft,
@@ -23,7 +24,9 @@ import {
   type ResponseMessage,
   type Settings,
   type Snapshot,
+  type UnreadableAvatar,
   type UnsequencedEvent,
+  UNREADABLE_REASON_DETAIL,
 } from "../shared/engine";
 import { downscaleToJpeg } from "../node/downscale";
 import { AGE_CHECK_MAX_SIDE } from "./avatars/ageCheck";
@@ -31,11 +34,11 @@ import { candidateJobEnd, runCandidateJob, type SlotOutcome } from "./avatars/ca
 import { runDescriptorJob } from "./avatars/descriptorJob";
 import { avatarJobEstimate, avatarPriceModels, CANDIDATES_PER_BATCH, descriptorJobCap, type AvatarModels } from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
-import { avatarSummaryFrom, draftFrom, libraryView, manifestTraits, type LibraryView } from "./avatars/records";
+import { avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
-import { LibraryError, openLibrary, type Library } from "./library";
+import { LibraryError, openLibrary, type AvatarManifest, type Library } from "./library";
 import { STUDIO_E2E } from "./buildFlags";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
@@ -203,10 +206,11 @@ interface RunningCandidates {
   done: number;
 }
 
-/** A library and the identity of its folder. */
+/** A library, the identity of its folder, and the whole avatar folders quarantined (bounded) when it was opened. */
 interface OpenedLibrary {
   library: Library;
   identity: string;
+  unreadable: UnreadableAvatar[];
 }
 
 /**
@@ -256,7 +260,7 @@ export class Engine {
    */
   #switching = 0;
   /** Opens in progress, by folder identity: two surveys of one folder would race their quarantine moves. */
-  readonly #opening = new Map<string, Promise<Library>>();
+  readonly #opening = new Map<string, Promise<{ library: Library; unreadable: UnreadableAvatar[] }>>();
   /** Set by a 401 with the current key; a new key clears it. */
   #keyRejected = false;
   /** Main's notices, oldest first; pending for this engine's life. */
@@ -532,7 +536,7 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#reconcile() };
       case "avatars.list": {
         const view = this.#libraryView();
-        const result = { avatars: view.avatars, unreadableAvatars: view.skipped.length };
+        const result = { avatars: view.avatars, unreadableAvatars: view.unreadable, unreadableTotal: view.unreadableTotal };
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
       case "avatars.estimate": {
@@ -542,11 +546,31 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
       case "avatars.estimateCandidates": {
-        if (this.#draft(command.payload.avatarId) === null) {
-          throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${command.payload.avatarId} in the open library` });
+        // Same order as generateCandidates: NOT_FOUND for an unknown or non-draft
+        // id, DESCRIPTOR_INVALID (never INTERNAL) for a stored descriptor that
+        // fails today's rules, before the price fetch below spends anything on it.
+        const { avatarId } = command.payload;
+        const manifest = this.library?.getAvatar(avatarId);
+        if (manifest === undefined || manifest.status !== "draft") {
+          throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
         }
+        this.#assertDescriptorReadable(manifest);
+        if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
         const models = this.#avatarModels();
         const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models)), models, "next-batch");
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+      }
+      case "avatars.estimateRewriteDescriptor": {
+        // Free, so no #switching gating: LIBRARY_UNAVAILABLE without a
+        // library (matching avatars.rewriteDescriptor's own #liveLibrary()),
+        // NOT_FOUND for an unknown id, VALIDATION when there is nothing to
+        // fix or the record is not rewritable at all.
+        const library = this.library;
+        if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+        const manifest = this.#manifestOrNotFound(library, command.payload.avatarId);
+        this.#assertRewritable(command.payload.avatarId, manifest);
+        const models = this.#avatarModels();
+        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models, "rewrite-descriptor")), models, "rewrite-descriptor");
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
       case "avatars.createDraft": {
@@ -588,6 +612,17 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#pick(command.payload) };
       case "avatars.archive":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#archive(command.payload) };
+      case "avatars.rewriteDescriptor": {
+        const { avatarId } = command.payload;
+        this.#claimAvatar(avatarId, "a job or command is already changing this avatar; wait for it to finish");
+        this.#paidCommands++;
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#rewriteDescriptor(command.payload) };
+        } finally {
+          this.#paidCommands--;
+          this.#busyAvatars.delete(avatarId);
+        }
+      }
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -603,7 +638,8 @@ export class Engine {
       money: this.#moneyStatus(),
       avatars: view.avatars,
       drafts: view.drafts.map((draft) => ({ ...draft, estimate: nextBatch })),
-      unreadableAvatars: view.skipped.length,
+      unreadableAvatars: view.unreadable,
+      unreadableTotal: view.unreadableTotal,
       // Avatar jobs of this engine's life; run jobs come with T6.
       jobs: this.#jobs.states(),
       librarySwitchGeneration: this.#librarySwitchGeneration,
@@ -611,15 +647,30 @@ export class Engine {
     };
   }
 
-  #libraryView(): LibraryView {
-    if (this.#live === null) return { avatars: [], drafts: [], skipped: [] };
+  /**
+   * Saved avatars and drafts of the live library, plus every avatar record it
+   * could not list normally: a whole manifest quarantined at open (this
+   * library's own, fixed for its life) and every record `libraryView` had to
+   * skip (drafts and saved avatars alike, re-checked on every call — a
+   * descriptor that fails today's rules only after a rule tightened is caught
+   * here, not only at open). Bounded at MAX_UNREADABLE_AVATARS, a rewritable
+   * (descriptor-invalid) entry first (records.ts's `combineUnreadable`, L2):
+   * a library with many quarantined or otherwise unreadable folders must
+   * never push a fixable one off the list.
+   */
+  #libraryView(): { avatars: AvatarSummary[]; drafts: Draft[]; unreadable: UnreadableAvatar[]; unreadableTotal: number } {
+    if (this.#live === null) return { avatars: [], drafts: [], unreadable: [], unreadableTotal: 0 };
     const view = libraryView(this.#live.library);
-    const fresh = view.skipped.filter((id) => !this.#reportedSkips.has(id));
+    const fresh = view.skipped.filter((s) => !this.#reportedSkips.has(s.avatarId));
     if (fresh.length > 0) {
-      for (const id of fresh) this.#reportedSkips.add(id);
-      console.warn(`studio engine: avatar records that do not fit the contract are not listed: ${fresh.join(", ")}`);
+      for (const s of fresh) this.#reportedSkips.add(s.avatarId);
+      console.warn(`studio engine: avatar records that do not fit the contract are not listed: ${fresh.map((s) => s.avatarId).join(", ")}`);
     }
-    return view;
+    const fromSkipped: UnreadableAvatar[] = view.skipped.map((s) => ({ avatarId: s.avatarId, reason: s.reason, detail: UNREADABLE_REASON_DETAIL[s.reason] }));
+    // The true count, before the bound: the list a window shows can be cut, this count never is (L1).
+    const unreadableTotal = fromSkipped.length + this.#live.unreadable.length;
+    const unreadable = combineUnreadable(fromSkipped, this.#live.unreadable);
+    return { avatars: view.avatars, drafts: view.drafts, unreadable, unreadableTotal };
   }
 
   // ---------- avatars ----------
@@ -645,6 +696,113 @@ export class Engine {
     const models = this.#avatarModels();
     const priced = this.#prices.peek(avatarPriceModels(models));
     return priced === null ? null : avatarJobEstimate(priced, models, "next-batch");
+  }
+
+  /** The stored manifest for `avatarId` in `library` (any status), whether or not it fits the contract; NOT_FOUND when there is none. */
+  #manifestOrNotFound(library: Library | null, avatarId: string): AvatarManifest {
+    const manifest = library?.getAvatar(avatarId);
+    if (manifest === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    return manifest;
+  }
+
+  /**
+   * DESCRIPTOR_INVALID (never INTERNAL) when `manifest`'s stored descriptor
+   * fails today's rules: shared by every command that touches an existing
+   * record's descriptor (the estimate and candidate commands, pick, archive)
+   * so a tightened rule always answers the same way, never a generic
+   * NOT_FOUND that hides the real, recoverable cause.
+   */
+  #assertDescriptorReadable(manifest: AvatarManifest): void {
+    try {
+      promptSubject({ age: manifest.age, text: manifest.descriptor });
+    } catch (error) {
+      if (!(error instanceof PromptSubjectError)) throw error;
+      throw new EngineFailure({ code: "DESCRIPTOR_INVALID", detail: messageOf(error, "the stored descriptor fails today's rules") });
+    }
+  }
+
+  /**
+   * VALIDATION, before any spend, when there is nothing `avatars.rewriteDescriptor`
+   * could do for `manifest`: its descriptor already fits today's rules
+   * (nothing to fix), or it is not rewritable at all (records.ts's
+   * `isRewritable`: untyped traits, a vibe that no longer parses, a name
+   * over 60 chars, ...) — rewriting the descriptor alone would not recover
+   * such a record, so estimating or paying for it would be a dead end.
+   */
+  #assertRewritable(avatarId: string, manifest: AvatarManifest): void {
+    if (AvatarDescriptor.safeParse({ age: manifest.age, text: manifest.descriptor }).success) {
+      throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId}'s descriptor already fits today's rules; nothing to rewrite` });
+    }
+    if (!isRewritable(manifest)) {
+      throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} cannot be rewritten: its record does not fit the contract beyond the descriptor` });
+    }
+  }
+
+  /**
+   * The paid recovery for `avatarId`'s stored descriptor: the same descriptor
+   * job as createDraft, from its stored typed traits alone (manifest schema
+   * version 2 only), under exactly createDraft's guard order — a usable key,
+   * a ledger that allows paid calls, an open library, the id, whether there is
+   * anything to fix, the accepted worst case and room in the month — then the
+   * library's atomic manifest write. Its master photo, candidates and name
+   * are never touched: only `descriptor` is patched.
+   */
+  async #rewriteDescriptor(payload: CommandPayload<"avatars.rewriteDescriptor">): Promise<{ avatarId: string }> {
+    const key = this.#usableKey("rewrite an avatar's descriptor");
+    const budget = this.#paidBudget();
+    const library = this.#liveLibrary();
+    const { avatarId } = payload;
+    const manifest = this.#manifestOrNotFound(library, avatarId);
+    this.#assertRewritable(avatarId, manifest);
+    // isRewritable (inside #assertRewritable) already proved this parses; re-parsed here only to get its typed data.
+    const traits = AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age });
+    if (!traits.success) throw new Error(`unreachable: isRewritable said avatar ${avatarId}'s traits parse`);
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(avatarPriceModels(models, "rewrite-descriptor"));
+    const job = avatarJobEstimate(priced, models, "rewrite-descriptor");
+    Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, job.worstMicros);
+
+    const jobId = this.#deps.newId();
+    const scope: Scope = { avatarJobId: jobId };
+    // The scope only ever sends descriptor attempts: its cap is theirs, just like createDraft's.
+    this.#caps.set(scopeKey(scope), descriptorJobCap(priced, models));
+    const client = this.#openRouter(key);
+    const linesBefore = budget.ledger.lines.length;
+    let result: Awaited<ReturnType<typeof runDescriptorJob>>;
+    try {
+      result = await runDescriptorJob(
+        { chat: (params) => client.chat(params), budget, priceBook: priced.book },
+        { jobId, scope, traits: traits.data, textModel: models.textModel },
+      );
+    } finally {
+      this.#caps.delete(scopeKey(scope));
+      if (budget.ledger.lines.length !== linesBefore || budget.ledger.failed) this.#emitMoney();
+    }
+    if (!result.ok) {
+      if (result.error.code === "AUTH_INVALID") this.markKeyRejected(key);
+      throw new EngineFailure(result.error);
+    }
+
+    const { descriptor } = result;
+    const updated = await library.updateAvatar(avatarId, { descriptor: descriptor.text }).catch(async (error: unknown) => {
+      // The descriptor is paid for: keep it where the owner can find it, and say where.
+      const kept = `${jobId}:rewrite`;
+      const where = await saveRawBody(this.#rawDir, kept, JSON.stringify({ avatarId, descriptor })).then(
+        () => `the paid descriptor is kept in raw/${rawFileName(kept)} next to the ledger`,
+        (saveError: unknown) => `the paid descriptor could not be kept either (${messageOf(saveError, "unknown error")})`,
+      );
+      // Where it is kept comes first, so the 500-char cut of `detail` cannot drop it.
+      throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`${where}: the descriptor could not be written (${messageOf(error, "unknown error")})`) });
+    });
+    // The write already committed: isRewritable proved the record would fit
+    // with a valid descriptor, and the one just written is valid (the
+    // descriptor job never returns anything else), so this cannot fail in
+    // normal operation. Defensively, though, a paid write that already
+    // committed must never turn into INTERNAL over its own announcement.
+    if (updated.status === "draft") this.#emitDraft(library, avatarId);
+    else this.#announceAvatarOrLog(library, avatarId);
+    return { avatarId };
   }
 
   /**
@@ -723,13 +881,8 @@ export class Engine {
     const { avatarId } = payload;
     const manifest = library.getAvatar(avatarId);
     if (manifest === undefined || manifest.status !== "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
+    this.#assertDescriptorReadable(manifest);
     const descriptor: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
-    try {
-      promptSubject(descriptor);
-    } catch (error) {
-      if (!(error instanceof PromptSubjectError)) throw error;
-      throw new EngineFailure({ code: "DESCRIPTOR_INVALID", detail: messageOf(error, "the draft's descriptor fails today's rules") });
-    }
     if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
     const models = this.#avatarModels();
     const priced = await this.#prices.get(avatarPriceModels(models));
@@ -841,7 +994,10 @@ export class Engine {
     const { avatarId, photoId } = payload;
     this.#claimAvatar(avatarId, "a batch of candidates is being made for this draft; pick when it ends");
     try {
-      if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
+      const manifest = library.getAvatar(avatarId);
+      if (manifest === undefined || manifest.status !== "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
+      this.#assertDescriptorReadable(manifest);
+      if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
       const photo = library.getPhoto(photoId);
       if (photo === undefined || photo.avatarId !== avatarId || photo.qa.age?.adult !== true) {
         throw new EngineFailure({ code: "NOT_FOUND", detail: `draft ${avatarId} has no age-checked candidate ${photoId}` });
@@ -861,7 +1017,9 @@ export class Engine {
     this.#claimAvatar(avatarId, "a job is changing this avatar; archive it when the job ends");
     try {
       const manifest = library.getAvatar(avatarId);
-      const current = manifest === undefined ? null : avatarSummaryFrom(manifest, library.photoCount(avatarId));
+      if (manifest === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
+      if (manifest.status !== "draft") this.#assertDescriptorReadable(manifest);
+      const current = avatarSummaryFrom(manifest, library.photoCount(avatarId));
       if (current === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
       if (current.status === "archived") return { avatar: current };
       await library.updateAvatar(avatarId, { status: "archived" });
@@ -878,6 +1036,21 @@ export class Engine {
     if (avatar === null) throw new Error(`the saved avatar ${avatarId} does not fit the contract`);
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.changed", payload: { avatar } });
     return avatar;
+  }
+
+  /**
+   * `#announceAvatar`, but never throws: a write that already committed must
+   * not turn into INTERNAL over its own announcement. A failure here is
+   * logged (never by the record's content) and the caller answers ok
+   * regardless — the write stands; only the live announce was missed, and
+   * the next snapshot or avatars.list still shows the true state.
+   */
+  #announceAvatarOrLog(library: Library, avatarId: string): void {
+    try {
+      this.#announceAvatar(library, avatarId);
+    } catch (error) {
+      console.error(`studio engine: avatar ${avatarId} was written but could not be announced (${errorKind(error)})`);
+    }
   }
 
   /** Marks an avatar as being changed; IN_FLIGHT when a job or command already is. */
@@ -1020,7 +1193,10 @@ export class Engine {
         this.#switching++;
         try {
           const kept = identity === null ? undefined : staged.get(next.libraryPath);
-          const opened = kept !== undefined && identity !== null ? { library: kept.library, identity } : await this.#openOrNull(next.libraryPath);
+          const opened =
+            kept !== undefined && identity !== null
+              ? { library: kept.library, identity, unreadable: kept.unreadable }
+              : await this.#openOrNull(next.libraryPath);
           // Re-checked: a reserve made straight against the Budget (e.g. a
           // job attempt already past its own #liveLibrary() call when the
           // survey started) is not stopped by #switching; #busy() still
@@ -1065,11 +1241,15 @@ export class Engine {
     const identity = knownIdentity ?? (await folderIdentity(path, this.#folderFs));
     if (identity === null) throw new Error(`${path} is not a folder the engine can read`);
     const pending = this.#opening.get(identity);
-    if (pending !== undefined) return { library: await pending, identity };
-    const opening = openLibrary(path).then((opened) => opened.library);
+    if (pending !== undefined) {
+      const opened = await pending;
+      return { library: opened.library, identity, unreadable: opened.unreadable };
+    }
+    const opening = openLibrary(path).then((opened) => ({ library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) }));
     this.#opening.set(identity, opening);
     try {
-      return { library: await opening, identity };
+      const opened = await opening;
+      return { library: opened.library, identity, unreadable: opened.unreadable };
     } finally {
       if (this.#opening.get(identity) === opening) this.#opening.delete(identity);
     }

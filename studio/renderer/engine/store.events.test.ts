@@ -91,9 +91,16 @@ async function host(patch: Partial<Snapshot> = {}) {
   };
 }
 
-test("the snapshot's count of avatar records it could not read is kept", async () => {
-  const h = await host({ unreadableAvatars: 2 });
-  expect(h.store.getView().unreadableAvatars).toBe(2);
+test("the snapshot's avatar records it could not read are kept, with the count derived from the list's length", async () => {
+  const unreadableAvatars: Snapshot["unreadableAvatars"] = [
+    { avatarId: "avatar-broken-0001", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
+  ];
+  const h = await host({ unreadableAvatars, unreadableTotal: 200 });
+  expect(h.store.getView().unreadableAvatars).toEqual(unreadableAvatars);
+  expect(h.store.getView().unreadableAvatars).toHaveLength(2);
+  // L1: the total can exceed the (possibly cut) list's own length.
+  expect(h.store.getView().unreadableTotal).toBe(200);
   h.stop();
 });
 
@@ -218,6 +225,47 @@ test("avatar.changed replaces an avatar the store already lists", async () => {
   await h.emit({ type: "avatar.changed", payload: { avatar: { ...SAVED, status: "archived" } } });
 
   expect(h.store.getView().avatars).toEqual([{ ...SAVED, status: "archived" }]);
+  h.stop();
+});
+
+// H1: after avatars.rewriteDescriptor recovers a record, it is listed
+// normally and dropped from unreadableAvatars in the same patch — otherwise
+// every open window still shows it as unreadable until the next snapshot,
+// and a second rewrite attempt on it answers VALIDATION (nothing to fix).
+test("avatar.changed drops the avatar from unreadableAvatars: a rewrite recovers it into the list, not into both", async () => {
+  const h = await host({ unreadableAvatars: [{ avatarId: SAVED.avatarId, reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }], unreadableTotal: 1 });
+  await h.emit({ type: "avatar.changed", payload: { avatar: SAVED } });
+
+  expect(h.store.getView().avatars).toEqual([SAVED]);
+  expect(h.store.getView().unreadableAvatars).toEqual([]);
+  // L1: the local patch keeps the total in step with the list it just shrank.
+  expect(h.store.getView().unreadableTotal).toBe(0);
+  h.stop();
+});
+
+test("avatar.changed leaves unreadableTotal alone when the avatar was not the one counted (a stale, cut-off entry)", async () => {
+  const h = await host({ unreadableAvatars: [], unreadableTotal: 5 });
+  await h.emit({ type: "avatar.changed", payload: { avatar: SAVED } });
+
+  expect(h.store.getView().unreadableTotal).toBe(5);
+  h.stop();
+});
+
+test("draft.changed drops the draft from unreadableAvatars too", async () => {
+  const h = await host({ unreadableAvatars: [{ avatarId: DRAFT.avatarId, reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }] });
+  await h.emit({ type: "draft.changed", payload: { draft: DRAFT } });
+
+  expect(h.store.getView().drafts).toEqual([DRAFT]);
+  expect(h.store.getView().unreadableAvatars).toEqual([]);
+  h.stop();
+});
+
+test("saveAvatar and upsertDraft (local updates after a command answers) drop the entry from unreadableAvatars too", async () => {
+  const h = await host({ unreadableAvatars: [{ avatarId: SAVED.avatarId, reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }] });
+  h.store.saveAvatar(SAVED);
+
+  expect(h.store.getView().avatars).toEqual([SAVED]);
+  expect(h.store.getView().unreadableAvatars).toEqual([]);
   h.stop();
 });
 

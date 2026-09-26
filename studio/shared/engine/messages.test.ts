@@ -4,6 +4,7 @@ import {
   COMMAND_TYPES,
   ENGINE_COMMAND_TYPES,
   MAIN_ONLY_COMMANDS,
+  MAX_UNREADABLE_AVATARS,
   type CommandPayload,
   type CommandResult,
   type CommandType,
@@ -22,6 +23,7 @@ import type {
   PhotoSummary,
   RunRequest,
   Settings,
+  UnreadableAvatar,
 } from "./state";
 
 // ---------- fixtures ----------
@@ -107,6 +109,8 @@ const job: JobState = {
   total: 4,
 };
 
+const unreadable: UnreadableAvatar = { avatarId: "avatar-0009", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" };
+
 const runRequest: RunRequest = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], resolution: "1k" };
 
 const photo: PhotoSummary = {
@@ -159,9 +163,10 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
       warnings: [],
     },
   },
-  "avatars.list": { payload: {}, result: { avatars: [avatar], unreadableAvatars: 0 } },
+  "avatars.list": { payload: {}, result: { avatars: [avatar], unreadableAvatars: [unreadable], unreadableTotal: 1 } },
   "avatars.estimate": { payload: { traits }, result: estimate },
   "avatars.estimateCandidates": { payload: { avatarId: DRAFT_ID }, result: { ...estimate, expectedMicros: 198_000, worstMicros: 227_000 } },
+  "avatars.estimateRewriteDescriptor": { payload: { avatarId: "avatar-0009" }, result: { ...estimate, expectedMicros: 2_625, worstMicros: 27_500 } },
   "avatars.createDraft": { payload: { traits, acceptedWorstMicros: 230_000 }, result: { draft: { ...draft, candidates: [] } } },
   "avatars.generateCandidates": { payload: { avatarId: DRAFT_ID, acceptedWorstMicros: 230_000 }, result: { jobId: "job-00000001" } },
   "avatars.cancel": { payload: { jobId: "job-00000001" }, result: { jobId: "job-00000001" } },
@@ -170,6 +175,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     result: { avatar: { ...avatar, avatarId: DRAFT_ID, masterPhotoId: "photo-0101" } },
   },
   "avatars.archive": { payload: { avatarId: "avatar-0001" }, result: { avatar: { ...avatar, status: "archived" } } },
+  "avatars.rewriteDescriptor": { payload: { avatarId: "avatar-0009", acceptedWorstMicros: 27_500 }, result: { avatarId: "avatar-0009" } },
   "runs.estimate": { payload: runRequest, result: { estimate } },
   "runs.start": {
     payload: { ...runRequest, acceptedWorstMicros: 3_330_000 },
@@ -187,7 +193,8 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
       money,
       avatars: [avatar],
       drafts: [draft],
-      unreadableAvatars: 1,
+      unreadableAvatars: [unreadable],
+      unreadableTotal: 1,
       jobs: [job],
       librarySwitchGeneration: 2,
       notices: [notice],
@@ -266,11 +273,13 @@ describe("contract surface", () => {
         "avatars.list",
         "avatars.estimate",
         "avatars.estimateCandidates",
+        "avatars.estimateRewriteDescriptor",
         "avatars.createDraft",
         "avatars.generateCandidates",
         "avatars.cancel",
         "avatars.pick",
         "avatars.archive",
+        "avatars.rewriteDescriptor",
         "runs.estimate",
         "runs.start",
         "runs.cancel",
@@ -573,32 +582,79 @@ describe("results", () => {
   });
 
   test("an engine.snapshot response without drafts is rejected", () => {
-    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], unreadableAvatars: 0, jobs: [job], notices: [] };
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], unreadableAvatars: [], jobs: [job], notices: [] };
     expect(reasonOf(okResponse("engine.snapshot", result))).toContain("result.drafts");
   });
 
-  test("an engine.snapshot response without the count of avatars it could not read is rejected", () => {
+  test("an engine.snapshot response without the avatars it could not read is rejected", () => {
     const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], drafts: [draft], jobs: [job], notices: [] };
     expect(reasonOf(okResponse("engine.snapshot", result))).toContain("result.unreadableAvatars");
   });
 
-  test.each([-1, 1.5])("rejects an avatars.list answer that counts %p unreadable avatars", (unreadableAvatars) => {
-    expect(reasonOf(okResponse("avatars.list", { avatars: [avatar], unreadableAvatars }))).toContain("result.unreadableAvatars");
+  test.each([0, -1, {}, [{ avatarId: "avatar-0009", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }, "not-an-entry"]])(
+    "rejects an avatars.list answer whose unreadableAvatars is %p, not a list of entries",
+    (unreadableAvatars) => {
+      expect(reasonOf(okResponse("avatars.list", { avatars: [avatar], unreadableAvatars }))).toContain("result.unreadableAvatars");
+    },
+  );
+
+  test("rejects an unreadable-avatar entry whose reason is unknown, and one missing its detail", () => {
+    expect(reasonOf(okResponse("avatars.list", { avatars: [], unreadableAvatars: [{ avatarId: null, reason: "no-such-reason", detail: "x" }] }))).toContain(
+      "unreadableAvatars",
+    );
+    expect(reasonOf(okResponse("avatars.list", { avatars: [], unreadableAvatars: [{ avatarId: "avatar-0009", reason: "descriptor-invalid" }] }))).toContain(
+      "unreadableAvatars",
+    );
+  });
+
+  test("rejects an unreadable-avatar entry whose detail is not one of the fixed sentences (L4): it can never echo the descriptor or the vibe", () => {
+    expect(
+      reasonOf(
+        okResponse("avatars.list", {
+          avatars: [],
+          unreadableAvatars: [{ avatarId: "avatar-0009", reason: "descriptor-invalid", detail: "a young woman with hazel eyes" }],
+        }),
+      ),
+    ).toContain("unreadableAvatars");
+  });
+
+  test("an unreadable-avatar entry's avatarId may be null: it is not always recoverable", () => {
+    const result = { avatars: [], unreadableAvatars: [{ avatarId: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" }], unreadableTotal: 1 };
+    expect(parseMessage(okResponse("avatars.list", result)).ok).toBe(true);
+  });
+
+  test("the unreadable-avatars list is bounded at MAX_UNREADABLE_AVATARS", () => {
+    const entry = { avatarId: null, reason: "manifest-unreadable" as const, detail: "its manifest file could not be read or parsed" };
+    const atLimit = { avatars: [], unreadableAvatars: Array.from({ length: MAX_UNREADABLE_AVATARS }, () => entry), unreadableTotal: MAX_UNREADABLE_AVATARS };
+    const overLimit = { avatars: [], unreadableAvatars: Array.from({ length: MAX_UNREADABLE_AVATARS + 1 }, () => entry), unreadableTotal: MAX_UNREADABLE_AVATARS + 1 };
+    expect(parseMessage(okResponse("avatars.list", atLimit)).ok).toBe(true);
+    expect(reasonOf(okResponse("avatars.list", overLimit))).toContain("result.unreadableAvatars");
+  });
+
+  test("unreadableTotal (L1) may exceed the list's own length: the list is cut, the total is not", () => {
+    const entry = { avatarId: null, reason: "manifest-unreadable" as const, detail: "its manifest file could not be read or parsed" };
+    const result = { avatars: [], unreadableAvatars: [entry], unreadableTotal: MAX_UNREADABLE_AVATARS + 40 };
+    expect(parseMessage(okResponse("avatars.list", result)).ok).toBe(true);
+  });
+
+  test("rejects a negative or fractional unreadableTotal", () => {
+    expect(reasonOf(okResponse("avatars.list", { avatars: [], unreadableAvatars: [], unreadableTotal: -1 }))).toContain("result.unreadableTotal");
+    expect(reasonOf(okResponse("avatars.list", { avatars: [], unreadableAvatars: [], unreadableTotal: 1.5 }))).toContain("result.unreadableTotal");
   });
 
   test("an engine.snapshot response without the pending notices is rejected", () => {
-    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], drafts: [draft], unreadableAvatars: 0, jobs: [job] };
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], drafts: [draft], unreadableAvatars: [], jobs: [job] };
     expect(reasonOf(okResponse("engine.snapshot", result))).toContain("result.notices");
   });
 
   test("an engine.snapshot response that repeats a notice is rejected", () => {
-    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [], unreadableAvatars: 0, jobs: [], notices: [notice, notice] };
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [], unreadableAvatars: [], jobs: [], notices: [notice, notice] };
     expect(reasonOf(okResponse("engine.snapshot", result))).toContain("result.notices");
   });
 
   test("a snapshot restores a finished candidates job with its result", () => {
     const done = { ...job, status: "done", done: 4, result: eventCases["job.done"].result };
-    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [draft], unreadableAvatars: 0, jobs: [done], librarySwitchGeneration: 0, notices: [] };
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [draft], unreadableAvatars: [], unreadableTotal: 0, jobs: [done], librarySwitchGeneration: 0, notices: [] };
     expect(parseMessage(okResponse("engine.snapshot", result)).ok).toBe(true);
   });
 
@@ -611,7 +667,7 @@ describe("results", () => {
       reconcileReasons: [],
       halt: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" },
     };
-    const result = { bootId: BOOT, lastSeq: 0, settings, money: unavailable, avatars: [], drafts: [], unreadableAvatars: 0, jobs: [], librarySwitchGeneration: 0, notices: [] };
+    const result = { bootId: BOOT, lastSeq: 0, settings, money: unavailable, avatars: [], drafts: [], unreadableAvatars: [], unreadableTotal: 0, jobs: [], librarySwitchGeneration: 0, notices: [] };
     expect(parseMessage(okResponse("engine.snapshot", result)).ok).toBe(true);
   });
 

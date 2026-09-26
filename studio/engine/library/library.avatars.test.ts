@@ -223,6 +223,19 @@ describe("updateAvatar", () => {
     expect(library.getAvatar(mia.id)?.status).toBe("draft");
   });
 
+  test("persists a rewritten descriptor, leaving the name, master and status untouched", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const mia = await library.createAvatar(MIA);
+    const photo = await library.addPhoto(mia.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(mia.id, { masterPhotoId: photo.id, status: "active" });
+
+    const updated = await library.updateAvatar(mia.id, { descriptor: "a rewritten 25-year-old woman." });
+
+    expect(updated).toMatchObject({ name: "Mia", status: "active", masterPhotoId: photo.id, descriptor: "a rewritten 25-year-old woman." });
+    const reopened = await openLibrary(root(), deps());
+    expect(reopened.library.getAvatar(mia.id)).toMatchObject({ descriptor: "a rewritten 25-year-old woman." });
+  });
+
   test("refuses an unknown avatar with avatar-not-found", async () => {
     const { library } = await openLibrary(root(), deps());
     await expectLibraryError(library.updateAvatar("unknown-avatar", { name: "X" }), "avatar-not-found");

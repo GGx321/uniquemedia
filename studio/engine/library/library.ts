@@ -87,7 +87,7 @@ export interface ReferencePhoto {
 }
 
 export type NewAvatar = Pick<AvatarManifest, "name" | "age" | "traits" | "descriptor">;
-export type AvatarPatch = Partial<Pick<AvatarManifest, "name" | "status" | "masterPhotoId">>;
+export type AvatarPatch = Partial<Pick<AvatarManifest, "name" | "status" | "masterPhotoId" | "descriptor">>;
 
 export interface JournalRead<T> {
   events: T[];

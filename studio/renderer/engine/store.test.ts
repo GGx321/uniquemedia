@@ -181,6 +181,27 @@ test("progress that arrives after a local cancel does not revive the job", async
   expect(store.getView().lastSeq).toBeGreaterThan(0);
 });
 
+test("avatars.rewriteDescriptor recovers an unreadable avatar into the store's normal list, dropped from unreadableAvatars (H1, full stack)", async () => {
+  const { engine, store } = await started();
+  engine.seedUnreadable(
+    { avatarId: "avatar-broken-0001", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { status: "active", name: "Mia", traits: DEFAULT_TRAITS, masterPhotoId: "photo-broken-0001", photoCount: 1 },
+  );
+  await store.refreshAvatars();
+  expect(store.getView().unreadableAvatars).toHaveLength(1);
+  const client = mockEngineClient(engine);
+
+  const est = await client.request("avatars.estimateRewriteDescriptor", { avatarId: "avatar-broken-0001" });
+  if (!est.ok) throw new Error(est.error.code);
+  const rw = await client.request("avatars.rewriteDescriptor", { avatarId: "avatar-broken-0001", acceptedWorstMicros: est.result.worstMicros });
+  if (!rw.ok) throw new Error(rw.error.code);
+  await settle();
+
+  const view = store.getView();
+  expect(view.avatars.map((a) => a.avatarId)).toContain("avatar-broken-0001");
+  expect(view.unreadableAvatars).toEqual([]);
+});
+
 test("money.reconcileNeeded refreshes the money status, so the reserve count is current", async () => {
   const { engine } = await started();
   const before = count(engine.calls, "money.status");
