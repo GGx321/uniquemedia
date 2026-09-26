@@ -13,6 +13,7 @@ import {
   type Settings,
 } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
+import type { SyncPhase } from "../engine/store";
 import { countOf, monthLabel, waitLabel } from "../lib/format";
 import { dollarsInputValue, formatUsd, parseDollars, type DollarsParse } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
@@ -428,14 +429,14 @@ function ReconcileOutcome({ result }: { result: Extract<ReconcileResult, { statu
   );
 }
 
-function ReconcileBlock({ money, engineError }: { money: MoneyStatus; engineError: EngineError | null }) {
+function ReconcileBlock({ phase, money, engineError }: { phase: SyncPhase; money: MoneyStatus; engineError: EngineError | null }) {
   const { client, store } = useEngine();
   const [result, setResult] = useState<ReconcileResult | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
   const [busy, setBusy] = useState(false);
   const [readyAt, setReadyAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const stop = paidStop({ money, engineError });
+  const stop = paidStop({ phase, money, engineError });
   const aboveWorst = engineError?.code === "SETTLE_ABOVE_WORST" || (money.ledger === "open" && money.halt?.cause === "SETTLE_ABOVE_WORST");
   const needed = stop?.kind === "reconcile";
   const waiting = readyAt !== null && now < readyAt;
@@ -715,7 +716,7 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
             <Card title="Деньги" id="settings-money" headingRef={moneyHeading}>
               <BudgetRow settings={settings} />
               {money?.ledger === "open" && <MoneyStatusRows money={money} />}
-              {money && <ReconcileBlock money={money} engineError={view.engineError} />}
+              {money && <ReconcileBlock phase={view.phase} money={money} engineError={view.engineError} />}
             </Card>
             <Card title="Производительность" id="settings-performance">
               <ConcurrencyRow settings={settings} />

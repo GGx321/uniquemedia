@@ -509,7 +509,14 @@ test("picking a candidate while its batch is still running answers IN_FLIGHT", a
   expect(reply).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
 });
 
-test("cancel ends with a job.cancelled event, not only the command's own reply", async () => {
+/**
+ * M-optimistic-cancel: the real engine answers avatars.cancel before the job
+ * actually ends (engine.ts's #runCandidates settles it later, once the
+ * abort really lands) — the mock must not fold the two into one synchronous
+ * step, or a renderer test against it could never catch the UI treating the
+ * command's own reply as the job's real end.
+ */
+test("cancel answers before the job actually ends; job.cancelled lands on its own, later tick", async () => {
   const { scheduler, client, events } = makeMock();
   const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
   const { jobId } = await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
@@ -518,6 +525,9 @@ test("cancel ends with a job.cancelled event, not only the command's own reply",
   const before = events.length;
   const reply = await unwrap(client.request("avatars.cancel", { jobId }));
   expect(reply).toEqual({ jobId });
+  expect(events.slice(before).some((e) => e.type === "job.cancelled")).toBe(false);
+
+  scheduler.runAll(); // the job's own, separate cancel-confirm delay elapses
   const emitted = events.slice(before);
   expect(emitted.some((e) => e.type === "job.cancelled" && e.payload.jobId === jobId)).toBe(true);
 });

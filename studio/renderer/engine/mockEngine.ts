@@ -40,6 +40,15 @@ import { realScheduler, type Scheduler } from "./scheduler";
 
 const CANDIDATES_PER_JOB = 4;
 
+/**
+ * How long after avatars.cancel is accepted the job actually ends
+ * (M-optimistic-cancel): the real engine's command answers before its abort
+ * actually lands (engine.ts's #runCandidates settles the job later, once the
+ * in-flight requests really stop), so the mock must not fold the two into
+ * one synchronous step — that hid the bug this delay exists to catch.
+ */
+const CANCEL_CONFIRM_DELAY_MS = 50;
+
 /** The mock price list, in micro-dollars: descriptor + 4 portraits + 4 age checks. */
 export const DESCRIPTOR = { expected: 2_000, worst: 3_000 };
 /** The attempt a mock settle-above-worst halt names. */
@@ -510,11 +519,19 @@ export class MockEngine implements EngineBridge {
         const job = this.jobs.find((j) => j.jobId === c.payload.jobId);
         if (!job) return this.fail(c, { code: "NOT_FOUND" });
         if (job.status === "queued" || job.status === "running") {
+          // No more slots are drawn from here on, but the job itself is not
+          // cancelled yet: like the real engine (engine.ts's avatars.cancel
+          // answers immediately, #runCandidates settles later), the status
+          // flip and job.cancelled land on a later, separate tick.
           for (const cancel of job.cancelTimers) cancel();
-          job.cancelTimers = [];
-          // An aborted attempt counts at its worst case until reconciled: the reserve stays open.
-          job.status = "cancelled";
-          this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { jobId: job.jobId } });
+          job.cancelTimers = [
+            this.scheduler.schedule(CANCEL_CONFIRM_DELAY_MS, () => {
+              // An aborted attempt counts at its worst case until reconciled: the reserve stays open.
+              job.status = "cancelled";
+              job.cancelTimers = [];
+              this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { jobId: job.jobId } });
+            }),
+          ];
         }
         return this.ok(c, { jobId: job.jobId });
       }

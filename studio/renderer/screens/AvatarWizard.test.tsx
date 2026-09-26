@@ -323,6 +323,8 @@ test("cancel sends avatars.cancel for the running job", async () => {
   tick(scheduler, 1);
 
   fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+  await flush();
+  runAll(scheduler); // the mock's own cancel-confirm delay elapses (M-optimistic-cancel), separate from the command's own reply
   await screen.findByText("Генерация остановлена");
   const jobId = callsOf(engine, "avatars.cancel")[0]?.payload.jobId;
   expect(jobId).toMatch(/^job-/);
@@ -336,7 +338,15 @@ test("cancel sends avatars.cancel for the running job", async () => {
   expect(screen.getByRole("button", { name: "Ещё 4 варианта · до $0.22" })).toBeDefined();
 });
 
-test("cancel shows a cancelling state for as long as its own command is in flight, ending only once the job is actually cancelled", async () => {
+/**
+ * Optimistic cancel (M-optimistic-cancel): the real engine answers
+ * avatars.cancel before the job actually ends (engine.ts's #runCandidates
+ * settles it later, once the in-flight requests really stop) — so the UI
+ * must not call the job cancelled just because its own command was accepted.
+ * The two tests below pin this at both ends: the command's own round trip,
+ * and the separate, later real end.
+ */
+test("cancel keeps «Отменяем…» after its own command replies, until the job actually ends", async () => {
   const { engine, scheduler } = setup();
   await openWizard();
   await estimate();
@@ -344,7 +354,35 @@ test("cancel shows a cancelling state for as long as its own command is in fligh
   await screen.findByText(/Рисуем портреты/);
   tick(scheduler, 1);
 
-  // Only the cancel command itself is delayed: the batch's own timers are untouched.
+  const cancelButton = screen.getByRole("button", { name: "Отменить" });
+  fireEvent.click(cancelButton);
+  expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
+  expect(cancelButton.hasAttribute("disabled")).toBe(true);
+
+  // The command's own (fast) reply lands — the mock, like the real engine,
+  // answers before the job actually ends.
+  await flush();
+  expect(callsOf(engine, "avatars.cancel")).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
+  expect(screen.queryByText("Генерация остановлена")).toBeNull();
+  // Still not done: the progress line stays, it is just being cancelled.
+  expect(screen.getByText(/Рисуем портреты/)).toBeDefined();
+
+  // Only now does the mock's own job.cancelled land, mirroring #runCandidates.
+  runAll(scheduler);
+  await flush();
+  await screen.findByText("Генерация остановлена");
+});
+
+test("a delayed avatars.cancel reply also shows «Отменяем…» while in flight, and it still outlives that reply", async () => {
+  const { engine, scheduler } = setup();
+  await openWizard();
+  await estimate();
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  tick(scheduler, 1);
+
+  // Only the cancel command's own reply is delayed: the batch's timers are untouched.
   engine.delayNext("avatars.cancel", 30);
   const cancelButton = screen.getByRole("button", { name: "Отменить" });
   fireEvent.click(cancelButton);
@@ -352,10 +390,16 @@ test("cancel shows a cancelling state for as long as its own command is in fligh
   expect(cancelButton.hasAttribute("disabled")).toBe(true);
   expect(screen.queryByText("Генерация остановлена")).toBeNull();
 
-  tick(scheduler, 1); // the delayed avatars.cancel reply arrives, carrying job.cancelled with it
+  tick(scheduler, 1); // the delayed avatars.cancel reply arrives
+  await flush();
+  expect(callsOf(engine, "avatars.cancel")).toHaveLength(1);
+  // Accepted, but not yet actually ended.
+  expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
+  expect(screen.queryByText("Генерация остановлена")).toBeNull();
+
+  runAll(scheduler); // the mock's own, separate cancel-confirm delay elapses
   await flush();
   await screen.findByText("Генерация остановлена");
-  expect(callsOf(engine, "avatars.cancel")).toHaveLength(1);
 });
 
 test("failed slots are explained in Russian and their cost is called out, alongside whatever did succeed", async () => {

@@ -1,16 +1,17 @@
-import type {
-  ApiKeyStatus,
-  AvatarSummary,
-  Draft,
-  EngineError,
-  EngineNotice,
-  EventMessage,
-  JobResult,
-  JobState,
-  MoneyStatus,
-  Settings,
-  Snapshot,
-  UnreadableAvatar,
+import {
+  ENGINE_GONE_DETAIL,
+  type ApiKeyStatus,
+  type AvatarSummary,
+  type Draft,
+  type EngineError,
+  type EngineNotice,
+  type EventMessage,
+  type JobResult,
+  type JobState,
+  type MoneyStatus,
+  type Settings,
+  type Snapshot,
+  type UnreadableAvatar,
 } from "../../shared/engine";
 import type { EngineClient } from "./client";
 
@@ -49,6 +50,17 @@ export interface EngineView {
   readonly engineError: EngineError | null;
   /** The engine's pending notices (a restart, a settings reset), oldest first: from the snapshot, then `engine.notice`. */
   readonly notices: readonly EngineNotice[];
+  /**
+   * jobIds this window asked to cancel but has no real end for yet
+   * (optimistic cancel, M-optimistic-cancel): the engine's own `avatars.cancel`
+   * answers before the job actually ends (engine.ts's #runCandidates settles
+   * later), so accepting the command must not by itself call the job
+   * cancelled. Always a subset of the active jobs — `update()` prunes it to
+   * that on every change, so a real end (an event, a fresh snapshot that no
+   * longer lists the job as active, a restart, or M5's dead-engine failure)
+   * clears it for free, without each of those needing to know this set exists.
+   */
+  readonly cancellingJobs: ReadonlySet<string>;
 }
 
 const INITIAL: EngineView = {
@@ -65,6 +77,7 @@ const INITIAL: EngineView = {
   jobs: [],
   engineError: null,
   notices: [],
+  cancellingJobs: new Set(),
 };
 
 export function isActiveJob(job: JobView): boolean {
@@ -273,6 +286,20 @@ export class EngineStore {
     this.patchJob(jobId, (job) => (isActiveJob(job) ? { ...job, status: "cancelled" } : job));
   }
 
+  /**
+   * Optimistic cancel, done right: records that this window is waiting for
+   * jobId's real end, without claiming it has already happened. A no-op for
+   * a job that is not active — there is nothing to wait for (it may already
+   * be done, failed, or itself gone offline-failed by M5). `update()` keeps
+   * this set pruned to active jobs on every change, so the real end, by
+   * whatever path it comes, clears it without this method's help.
+   */
+  markCancelling(jobId: string): void {
+    const job = this.view.jobs.find((j) => j.jobId === jobId);
+    if (job === undefined || !isActiveJob(job)) return;
+    this.update({ cancellingJobs: new Set([...this.view.cancellingJobs, jobId]) });
+  }
+
   async refreshAvatars(): Promise<void> {
     const reply = await this.client.request("avatars.list", {});
     if (reply.ok) this.update({ avatars: reply.result.avatars, unreadableAvatars: reply.result.unreadableAvatars, unreadableTotal: reply.result.unreadableTotal });
@@ -375,8 +402,30 @@ export class EngineStore {
     return true;
   }
 
+  /**
+   * M5: nothing polls on its own, so once the engine is dead for good a job
+   * left `queued`/`running` would look alive forever — no event will ever
+   * arrive to say otherwise, and this may be the last check for a long
+   * while. Every active job is failed with the same reason right here, not
+   * only the top-level `phase`; a finished job (done/cancelled/failed
+   * already) is untouched, matching `isFinished`'s own rule elsewhere.
+   *
+   * This only applies when `failure.detail` is `ENGINE_GONE_DETAIL` — main's
+   * `EngineHost` stamps every answer with it once it has given up restarting
+   * the engine. Every other offline cause (a broken event stream, a plain
+   * failed snapshot fetch, a network hiccup) leaves job statuses alone: the
+   * engine and the job may well still be alive, and the next successful
+   * snapshot or event is what actually knows — failing them here would be a
+   * guess the store cannot back up, and a real progress event landing right
+   * after would have nothing to correct.
+   */
   private goOffline(failure: EngineError): void {
-    this.update({ phase: "offline", failure });
+    const goneForGood = failure.detail === ENGINE_GONE_DETAIL;
+    this.update({
+      phase: "offline",
+      failure,
+      jobs: goneForGood ? this.view.jobs.map((job) => (isActiveJob(job) ? { ...job, status: "failed", error: failure } : job)) : this.view.jobs,
+    });
     this.held = [];
     this.unconfirmedBoots.clear();
   }
@@ -579,8 +628,19 @@ export class EngineStore {
     this.update(lastSeq === undefined ? { jobs } : { jobs, lastSeq });
   }
 
+  /**
+   * `cancellingJobs` is kept pruned to jobIds still active in `jobs` (patched
+   * or not) on every update: whatever ended the job — an event, a fresh
+   * snapshot, a restart, or M5's dead-engine failure — ends the cancelling
+   * wait for free, with no need for each of those call sites to know this
+   * set exists.
+   */
   private update(patch: Partial<EngineView>): void {
-    this.view = { ...this.view, ...patch };
+    const jobs = patch.jobs ?? this.view.jobs;
+    const requested = patch.cancellingJobs ?? this.view.cancellingJobs;
+    const active = new Set(jobs.filter(isActiveJob).map((j) => j.jobId));
+    const cancellingJobs = [...requested].every((id) => active.has(id)) ? requested : new Set([...requested].filter((id) => active.has(id)));
+    this.view = { ...this.view, ...patch, jobs, cancellingJobs };
     for (const listener of [...this.listeners]) listener();
   }
 }

@@ -67,3 +67,15 @@ export const EngineError = z.strictObject({
 
 export type ErrorCode = z.infer<typeof ErrorCode>;
 export type EngineError = z.infer<typeof EngineError>;
+
+/**
+ * `EngineError.detail` for the one case the renderer must tell apart from
+ * every other INTERNAL: the engine is dead for good (it crashed too many
+ * times and main gave up restarting it), not merely unreachable for a
+ * moment. main's `EngineHost` uses this on every answer once it gives up,
+ * and the renderer matches on it to show a message that does not offer a
+ * retry that can never succeed (studio/renderer/ui/EngineOffline.tsx). A
+ * plain string, not a new `ErrorCode`: the code stays INTERNAL either way,
+ * this only distinguishes the detail.
+ */
+export const ENGINE_GONE_DETAIL = "the engine crashed too many times and will not be restarted";

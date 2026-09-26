@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import type { AvatarSummary, Draft } from "../../shared/engine";
+import { ENGINE_GONE_DETAIL, type AvatarSummary, type Draft } from "../../shared/engine";
 import { DESCRIPTOR, MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { callsOf, flush, runAll, setup, inAct, tick } from "../testing";
@@ -144,6 +144,18 @@ test("an engine that does not answer shows a retry", async () => {
   expect(screen.getByText("Внутренняя ошибка движка.")).toBeDefined();
   fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
   expect(await screen.findByRole("heading", { level: 2, name: "Mia" })).toBeDefined();
+});
+
+// M5 follow-up: an ordinary offline (above) still offers a retry that can
+// actually work; a dead-for-good engine must not — "Повторить" would just
+// fail the same way forever, so it says so instead and offers no button.
+test("an engine dead for good shows a distinct message and no retry", async () => {
+  const { engine } = setup({ preset: "demo" });
+  engine.failNext("engine.snapshot", { code: "INTERNAL", detail: ENGINE_GONE_DETAIL });
+  expect(await screen.findByText("Движок не отвечает")).toBeDefined();
+  expect(screen.getByText(/остановился и не будет перезапущен/)).toBeDefined();
+  expect(screen.queryByText("Внутренняя ошибка движка.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Повторить" })).toBeNull();
 });
 
 // ---------- unreadable avatars: tiles, reasons and the rewrite recovery (T8a) ----------

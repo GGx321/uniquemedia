@@ -1,6 +1,8 @@
 import {
+  ENGINE_GONE_DETAIL,
   errorResponseFor,
   EventMessage,
+  PROTOCOL_VERSION,
   ResponseMessage,
   type EngineCommandMessage,
   type EngineError,
@@ -109,6 +111,30 @@ function idOf(data: unknown): string | null {
 }
 
 /**
+ * Told to already-open windows via `onEvent` (main.ts forwards it exactly
+ * like a real engine event) the moment the engine fails for good. Main never
+ * has the dead engine's own bootId or seq to continue, and there is no next
+ * engine to carry a notice in its `init` — but EventStore's contract already
+ * treats an event under a bootId no window has as "something changed,
+ * requery" (an engine restart, normally): a fresh `bootId` here drives the
+ * exact same resync, and the resulting `engine.snapshot` call meets the same
+ * ENGINE_GONE_DETAIL answer `request()` gives below, so the store goes
+ * offline with a true reason. The payload is honest either way: `engine.error`
+ * is defined as "a failure that belongs to no command", which this is.
+ */
+function goneEvent(newId: () => string): EventMessage {
+  return EventMessage.parse({
+    v: PROTOCOL_VERSION,
+    id: newId(),
+    kind: "event",
+    seq: 1,
+    bootId: newId(),
+    type: "engine.error",
+    payload: { error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } },
+  });
+}
+
+/**
  * Runs the engine utilityProcess and carries T0 commands, responses and
  * events over a MessagePort. Commands sent while the engine starts or
  * restarts wait for it; responses are matched to commands by id and checked
@@ -163,7 +189,7 @@ export class EngineHost<Transfer> {
       this.#pending.set(command.id, entry);
       void this.#runningPort().then((port) => {
         if (this.#pending.get(command.id) !== entry) return; // timed out or failed meanwhile
-        if (port === null) this.#settle(entry, errorResponseFor(command, { code: "INTERNAL", detail: "the engine is not running" }));
+        if (port === null) this.#settle(entry, errorResponseFor(command, { code: "INTERNAL", detail: this.#notRunningDetail() }));
         else port.postMessage(command);
       });
     });
@@ -202,7 +228,7 @@ export class EngineHost<Transfer> {
       this.#calls.set(callId, entry);
       void this.#runningPort().then((port) => {
         if (this.#calls.get(callId) !== entry) return;
-        if (port === null) this.#settleCall(entry, { code: "INTERNAL", detail: "the engine is not running" });
+        if (port === null) this.#settleCall(entry, { code: "INTERNAL", detail: this.#notRunningDetail() });
         else port.postMessage(call);
       });
     });
@@ -262,6 +288,11 @@ export class EngineHost<Transfer> {
     for (const wake of this.#waiters.splice(0)) wake(port);
   }
 
+  /** "the engine is not running" is ambiguous (still starting? stopped on purpose? dead for good?); `failed` is the one case a request can never recover from on its own. */
+  #notRunningDetail(): string {
+    return this.#phase === "failed" ? ENGINE_GONE_DETAIL : "the engine is not running";
+  }
+
   #runningPort(): Promise<HostPort | null> {
     if (this.#phase === "running" && this.#port !== null) return Promise.resolve(this.#port);
     if (this.#phase === "failed" || this.#phase === "stopped") return Promise.resolve(null);
@@ -289,7 +320,11 @@ export class EngineHost<Transfer> {
       return;
     }
     this.#phase = "failed";
-    this.#detach("the engine is not running");
+    this.#detach(ENGINE_GONE_DETAIL);
+    // Any window still open and synced has no other way to learn this: it
+    // gets no more events from the (nonexistent) next engine, and nothing
+    // it does on its own ever asks again while it believes it is `ready`.
+    this.#deps.onEvent(goneEvent(this.#deps.newId ?? randomUUID));
     this.#deps.onExit({ code: "INTERNAL", detail: `${detail}; not restarted again` }, false);
   }
 

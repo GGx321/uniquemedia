@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AvatarTraits, EngineCommandMessage, EngineError, EventMessage, ResponseMessage } from "../shared/engine";
+import { ENGINE_GONE_DETAIL, type AvatarTraits, type EngineCommandMessage, type EngineError, type EventMessage, type ResponseMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "../engine/avatars/descriptor";
 import { COMMAND_DEADLINE_MS, type EngineInit } from "../engine/control";
 import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
@@ -288,8 +288,8 @@ describe("restart policy", () => {
     expect((await pending).ok).toBe(true);
   });
 
-  test("a second unexpected exit is final: surfaced, no restart, commands answer INTERNAL", async () => {
-    const { host, children, exits, endBackoff } = setup();
+  test("a second unexpected exit is final: surfaced, no restart, commands answer a clear dead-engine error, and open windows are told to resync (M5)", async () => {
+    const { host, children, exits, events, endBackoff } = setup();
     await host.start();
     children[0]?.crash(1);
     await endBackoff();
@@ -298,7 +298,18 @@ describe("restart policy", () => {
     expect(host.phase).toBe("failed");
     expect(children).toHaveLength(2);
     expect(exits[1]).toEqual({ error: { code: "INTERNAL", detail: "the engine exited unexpectedly (code 2); not restarted again" }, restarting: false });
-    expect(await host.request(command())).toMatchObject({ ok: false, error: { code: "INTERNAL", detail: "the engine is not running" } });
+    // A fresh request answers promptly with a detail distinct from "not
+    // started yet" (REQUEST_TIMEOUT_MS's own wording), so the renderer can
+    // tell "dead for good" apart from a transient gap.
+    expect(await host.request(command())).toMatchObject({ ok: false, error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
+    // A window that was already open and synced (no pending command to
+    // answer) still has to learn the engine is gone: onEvent carries a
+    // contract-valid notice under a bootId no window has, so its next
+    // engine.snapshot (the reboot path already in EngineStore) lands on the
+    // same clear error above and the store goes offline on its own.
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "event", type: "engine.error", payload: { error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } } });
+    expect(typeof events[0]?.bootId).toBe("string");
   });
 
   test("stop kills the engine without a restart or an exit report", async () => {
@@ -508,7 +519,7 @@ describe("calls to the engine (library.open)", () => {
     expect(await pending).toMatchObject({ code: "INTERNAL" });
     await endBackoff();
     children[1]?.crash(1);
-    expect(await host.openLibrary("/Users/me/Studio")).toEqual({ code: "INTERNAL", detail: "the engine is not running" });
+    expect(await host.openLibrary("/Users/me/Studio")).toEqual({ code: "INTERNAL", detail: ENGINE_GONE_DETAIL });
   });
 });
 

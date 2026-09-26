@@ -159,9 +159,8 @@ function UnreadableTile({ entry, view, index }: { entry: UnreadableAvatar; view:
   const key = view.settings?.apiKey;
   const keyUsable = key !== undefined && key.stored && !key.rejected;
   const stop = paidStop(view);
-  const offline = view.phase === "offline";
   let blockedReason: string | null = null;
-  if (offline) blockedReason = "Нет связи с движком — дождитесь, пока он снова ответит.";
+  if (stop?.kind === "offline") blockedReason = "Нет связи с движком — дождитесь, пока он снова ответит.";
   else if (!keyUsable) blockedReason = "Нужен рабочий ключ OpenRouter — добавьте его в Настройках.";
   else if (stop?.kind === "reconcile") blockedReason = "Платные запросы остановлены до сверки расходов.";
   else if (stop?.kind === "restart") blockedReason = restartStopText(stop.code);

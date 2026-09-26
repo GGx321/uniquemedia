@@ -186,8 +186,11 @@ async function startStudio(): Promise<void> {
       // that, and settings.json must not keep naming the old folder then.
       if (event.type === "settings.changed") void reconcileLibraryPath(event.payload.settings, { settings, engine, newId: randomUUID });
     },
-    // The restarted engine gets the notice in its init. A final exit is not
-    // announced: every request then answers "the engine is not running".
+    // The restarted engine gets the notice in its init. A final exit has no
+    // next engine to carry one, so EngineHost announces it itself instead
+    // (M5): every open window is pushed an `onEvent(goneEvent(...))`, and
+    // every request from then on answers ENGINE_GONE_DETAIL, not a bare
+    // "the engine is not running".
     onExit: (error, restarting) => {
       if (restarting) notices.add("engine-restarted", error.detail);
     },

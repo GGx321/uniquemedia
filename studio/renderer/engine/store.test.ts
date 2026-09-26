@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { AvatarSummary, CommandMessage, EventMessage } from "../../shared/engine";
+import { ENGINE_GONE_DETAIL, type AvatarSummary, type CommandMessage, type EventMessage } from "../../shared/engine";
 import type { EngineClient } from "./client";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
@@ -150,6 +150,69 @@ test("a failed snapshot leaves the store offline, and reload recovers", async ()
   expect(store.getView().phase).toBe("ready");
 });
 
+// M5: a dead engine must not leave a job looking alive just because no
+// event will ever arrive to say otherwise (nothing polls on its own).
+test("going offline fails every active job, so it cannot go on looking alive forever (M5)", async () => {
+  const { scheduler, engine, store } = await started();
+  const client = mockEngineClient(engine);
+  const created = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
+  if (!created.ok) throw new Error(created.error.code);
+  const job = await client.request("avatars.generateCandidates", { avatarId: created.result.draft.avatarId, acceptedWorstMicros: 223_000 });
+  if (!job.ok) throw new Error(job.error.code);
+  scheduler.next(); // one slot lands; the job is genuinely "running", not just queued
+  expect(store.getView().jobs.find((j) => j.jobId === job.result.jobId)?.status).toBe("running");
+
+  engine.failNext("engine.snapshot", { code: "INTERNAL", detail: ENGINE_GONE_DETAIL });
+  store.reload();
+  await settle();
+
+  expect(store.getView().phase).toBe("offline");
+  const view = store.getView().jobs.find((j) => j.jobId === job.result.jobId);
+  expect(view?.status).toBe("failed");
+  expect(view?.error).toEqual({ code: "INTERNAL", detail: ENGINE_GONE_DETAIL });
+  // A finished job (done/cancelled/failed already) must not be disturbed by going offline.
+  expect(store.getView().jobs.filter((j) => j.status === "queued" || j.status === "running")).toEqual([]);
+});
+
+// A resync failure that is NOT the engine dying for good (a broken event
+// stream, a merely-unlucky snapshot fetch) must not lie about a job that is
+// still genuinely alive on the engine's side: only ENGINE_GONE_DETAIL means
+// there is no engine left to ever correct the guess.
+test("an ordinary offline (not dead for good) leaves an active job's own status alone", async () => {
+  const { scheduler, engine, store } = await started();
+  const client = mockEngineClient(engine);
+  const created = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
+  if (!created.ok) throw new Error(created.error.code);
+  const job = await client.request("avatars.generateCandidates", { avatarId: created.result.draft.avatarId, acceptedWorstMicros: 223_000 });
+  if (!job.ok) throw new Error(job.error.code);
+  scheduler.next();
+  expect(store.getView().jobs.find((j) => j.jobId === job.result.jobId)?.status).toBe("running");
+
+  engine.failNext("engine.snapshot", { code: "INTERNAL" }); // no detail: an ordinary, possibly transient failure
+  store.reload();
+  await settle();
+
+  expect(store.getView().phase).toBe("offline");
+  expect(store.getView().jobs.find((j) => j.jobId === job.result.jobId)?.status).toBe("running");
+});
+
+test("a job already done or cancelled before the engine goes offline keeps its own outcome", async () => {
+  const { scheduler, engine, store } = await started();
+  const client = mockEngineClient(engine);
+  const created = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
+  if (!created.ok) throw new Error(created.error.code);
+  const job = await client.request("avatars.generateCandidates", { avatarId: created.result.draft.avatarId, acceptedWorstMicros: 223_000 });
+  if (!job.ok) throw new Error(job.error.code);
+  scheduler.runAll();
+  expect(store.getView().jobs.find((j) => j.jobId === job.result.jobId)?.status).toBe("done");
+
+  engine.failNext("engine.snapshot", { code: "INTERNAL" });
+  store.reload();
+  await settle();
+
+  expect(store.getView().jobs.find((j) => j.jobId === job.result.jobId)?.status).toBe("done");
+});
+
 test("after stop, late answers and events change nothing (StrictMode remount)", async () => {
   const scheduler = new ManualScheduler();
   const engine = new MockEngine({ scheduler });
@@ -179,6 +242,109 @@ test("progress that arrives after a local cancel does not revive the job", async
   scheduler.next(); // the engine had already queued this progress
   expect(store.getView().jobs.find((j) => j.jobId === job.result.jobId)?.status).toBe("cancelled");
   expect(store.getView().lastSeq).toBeGreaterThan(0);
+});
+
+// Optimistic cancel: the real engine's avatars.cancel answers before the job
+// actually ends (engine.ts's #runCandidates settles the job later). The
+// store must not call a job cancelled just because its own command was
+// accepted — only a real end (job.cancelled, or the job no longer active in
+// a fresh snapshot) may do that.
+test("markCancelling keeps the job active until job.cancelled actually arrives", async () => {
+  const { scheduler, engine, store } = await started();
+  const client = mockEngineClient(engine);
+  const created = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
+  if (!created.ok) throw new Error(created.error.code);
+  const job = await client.request("avatars.generateCandidates", { avatarId: created.result.draft.avatarId, acceptedWorstMicros: 223_000 });
+  if (!job.ok) throw new Error(job.error.code);
+  const jobId = job.result.jobId;
+  scheduler.next();
+
+  store.markCancelling(jobId);
+  expect(store.getView().cancellingJobs.has(jobId)).toBe(true);
+  // Accepting the cancel does not end the job on its own: it is still what it was.
+  expect(store.getView().jobs.find((j) => j.jobId === jobId)?.status).toBe("running");
+
+  await client.request("avatars.cancel", { jobId });
+  scheduler.runAll(); // the mock's own job.cancelled lands later than its command reply
+  await settle();
+  expect(store.getView().jobs.find((j) => j.jobId === jobId)?.status).toBe("cancelled");
+  expect(store.getView().cancellingJobs.has(jobId)).toBe(false);
+});
+
+test("markCancelling is a no-op for a job that is not active (nothing to wait for)", async () => {
+  const { scheduler, engine, store } = await started();
+  const client = mockEngineClient(engine);
+  const created = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
+  if (!created.ok) throw new Error(created.error.code);
+  const job = await client.request("avatars.generateCandidates", { avatarId: created.result.draft.avatarId, acceptedWorstMicros: 223_000 });
+  if (!job.ok) throw new Error(job.error.code);
+  scheduler.runAll();
+  expect(store.getView().jobs.find((j) => j.jobId === job.result.jobId)?.status).toBe("done");
+
+  store.markCancelling(job.result.jobId);
+  expect(store.getView().cancellingJobs.size).toBe(0);
+});
+
+test("an engine restart (bootId change) ends the cancelling state along with the job", async () => {
+  const { engine, store } = await started();
+  const client = mockEngineClient(engine);
+  const created = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
+  if (!created.ok) throw new Error(created.error.code);
+  const job = await client.request("avatars.generateCandidates", { avatarId: created.result.draft.avatarId, acceptedWorstMicros: 223_000 });
+  if (!job.ok) throw new Error(job.error.code);
+  store.trackCandidatesJob(job.result.jobId, created.result.draft.avatarId);
+  store.markCancelling(job.result.jobId);
+  expect(store.getView().cancellingJobs.has(job.result.jobId)).toBe(true);
+
+  engine.restart();
+  await settle();
+
+  expect(store.getView().cancellingJobs.size).toBe(0);
+});
+
+test("going offline dead-for-good (M5) also ends the cancelling state: it fails every active job", async () => {
+  const { scheduler, engine, store } = await started();
+  const client = mockEngineClient(engine);
+  const created = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
+  if (!created.ok) throw new Error(created.error.code);
+  const job = await client.request("avatars.generateCandidates", { avatarId: created.result.draft.avatarId, acceptedWorstMicros: 223_000 });
+  if (!job.ok) throw new Error(job.error.code);
+  scheduler.next();
+  store.markCancelling(job.result.jobId);
+  expect(store.getView().cancellingJobs.has(job.result.jobId)).toBe(true);
+
+  engine.failNext("engine.snapshot", { code: "INTERNAL", detail: ENGINE_GONE_DETAIL });
+  store.reload();
+  await settle();
+
+  expect(store.getView().cancellingJobs.size).toBe(0);
+  expect(store.getView().jobs.find((j) => j.jobId === job.result.jobId)?.status).toBe("failed");
+});
+
+// The race the reviewer asked to pin explicitly: cancel is sent, but the
+// batch finishes (job.done) before the abort actually takes effect — a real
+// possibility since avatars.cancel only asks the engine to stop, it does not
+// freeze the job in place. "Отменяем…" must clear all the same: the job is
+// no longer active, whatever it ended as.
+test("a job that finishes (job.done) while a cancel is pending clears «Отменяем…» too", async () => {
+  const { scheduler, engine, store } = await started();
+  const client = mockEngineClient(engine);
+  const created = await client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 });
+  if (!created.ok) throw new Error(created.error.code);
+  const job = await client.request("avatars.generateCandidates", { avatarId: created.result.draft.avatarId, acceptedWorstMicros: 223_000 });
+  if (!job.ok) throw new Error(job.error.code);
+  const jobId = job.result.jobId;
+  scheduler.next();
+
+  store.markCancelling(jobId);
+  expect(store.getView().cancellingJobs.has(jobId)).toBe(true);
+
+  // The cancel is never actually sent to the engine here — this pins the
+  // store's own bookkeeping: whatever the real end turns out to be, pending
+  // or not, "cancelling" must not survive it.
+  scheduler.runAll();
+  expect(store.getView().jobs.find((j) => j.jobId === jobId)?.status).toBe("done");
+  expect(store.getView().cancellingJobs.has(jobId)).toBe(false);
 });
 
 test("avatars.rewriteDescriptor recovers an unreadable avatar into the store's normal list, dropped from unreadableAvatars (H1, full stack)", async () => {

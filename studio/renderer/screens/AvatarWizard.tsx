@@ -148,6 +148,11 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
 
   const job = (jobId ? view.jobs.find((j) => j.jobId === jobId) : null) ?? latestCandidatesJob(view.jobs, avatarId);
   const running = job !== null && isActiveJob(job);
+  // "Отменяем…" while this window's own avatars.cancel is in flight (busy),
+  // and for as long as afterward as the store has no real end for the job
+  // yet (M-optimistic-cancel) — cleared by whatever ends the job, cancelled
+  // or not, never by this command's own reply alone.
+  const cancelling = busy === "cancel" || (job !== null && view.cancellingJobs.has(job.jobId));
   const jobCandidates = job?.result?.kind === "avatar.candidates" ? job.result.candidates : [];
   const candidates = uniqueCandidates([draft?.candidates ?? [], jobCandidates]);
   const pickedIndex = candidates.findIndex((c) => c.photoId === picked);
@@ -307,13 +312,24 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
     setBusy(null);
   }
 
+  /**
+   * Optimistic cancel, done right (M-optimistic-cancel): the engine answers
+   * avatars.cancel before the job actually ends (engine.ts's #runCandidates
+   * settles it later, once the abort really lands) — accepting the command
+   * must not by itself claim the job is cancelled. `store.markCancelling`
+   * only records that this window is waiting; the real end — `job.cancelled`,
+   * or the job no longer active in a fresh snapshot — is what flips its
+   * status, wherever that end comes from (including M5's dead-engine
+   * failure and a plain restart, which `markCancelling`'s own bookkeeping
+   * already resolves on its own).
+   */
   async function cancel(): Promise<void> {
     if (!job) return;
     setBusy("cancel");
     const reply = await client.request("avatars.cancel", { jobId: job.jobId });
     setBusy(null);
     if (reply.ok) {
-      store.markJobCancelled(reply.result.jobId);
+      store.markCancelling(reply.result.jobId);
       candidatesHeading.current?.focus();
     } else setError(reply.error);
   }
@@ -345,7 +361,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
         : locked
           ? `Ещё 4 варианта · до ${worst}`
           : `Сгенерировать 4 варианта · до ${worst}`;
-    if (offline) blockedReason = "Нет связи с движком — дождитесь, пока он снова ответит.";
+    if (stop?.kind === "offline") blockedReason = "Нет связи с движком — дождитесь, пока он снова ответит.";
     else if (!keyUsable) blockedReason = "Нужен рабочий ключ OpenRouter — добавьте его в Настройках.";
     else if (stop?.kind === "reconcile") blockedReason = "Платные запросы остановлены до сверки расходов.";
     else if (stop?.kind === "restart") blockedReason = restartStopText(stop.code);
@@ -453,7 +469,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             picked={picked}
             onPick={setPicked}
             onCancel={() => void cancel()}
-            cancelling={busy === "cancel"}
+            cancelling={cancelling}
             headingRef={candidatesHeading}
           />
 
