@@ -18,6 +18,8 @@ import {
   TRAITS,
   useEngineDir,
 } from "./testing/engineHarness";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // Mandatory before the first paid image call (plan T6a-2b, item 2): a
 // network-level canary. The vibe feeds the descriptor LLM only; the AST rule

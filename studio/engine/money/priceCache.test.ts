@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { MoneyError } from "./errors";
 import { FALLBACK_PRICES_TTL_MS, LIVE_PRICES_TTL_MS, PriceCache, type PriceModels } from "./priceCache";
 import { FALLBACK_PRICES_DATE, PriceBook, type ChatPrice, type ImagePrice, type PriceEntry } from "./prices";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const NOW = Date.parse("2026-10-02T23:59:00.000Z");
 const MODELS: PriceModels = { imageModels: ["x-ai/grok-imagine-image-2.0"], chatModels: ["x-ai/grok-4.3"] };

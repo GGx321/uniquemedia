@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import studioViteConfig from "../../electron.studio.vite.config";
 import { productionEngineProblems, productionMainProblems } from "../scripts/bundleChecks";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // Invariant 13: the OpenRouter base-URL override exists only in an E2E build.
 // Builds Studio for real (electron-vite, the same config as `build:studio`)

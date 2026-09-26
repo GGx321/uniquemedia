@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { Budget, type ReserveHandle, type ReserveResult } from "./budget";
 import { Ledger, type LedgerLine, type ReserveLine, type Scope } from "./ledger";
 import { RECONCILE_TOLERANCE_MICROS, reconcile, type CreditsFetcher } from "./reconcile";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let dir: string;
 let path: string;

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { fakeFetch, imageBody, imageParams, makeClient, PNG, setupMoney, withoutAt, WORST_ONE_REF, type Money, type Step } from "./testing/fakes";
 import type { OpenRouterClientOptions } from "./types";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let money: Money;
 

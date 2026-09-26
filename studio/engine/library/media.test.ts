@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { ffmpegPath } from "../../node/ffmpegBinary";
 import { imageSize, isAnimatedImage } from "./media";
 import { JPEG_HEADER_ONLY, PNG_1X1, WEBP_HEADER_ONLY } from "./testing/helpers";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Real images at a known size, made by the bundled ffmpeg (as studio/node's tests do).
 let dir = "";

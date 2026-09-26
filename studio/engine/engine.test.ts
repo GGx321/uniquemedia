@@ -15,6 +15,8 @@ import { MoneyError } from "./money/errors";
 import { fakeFetch, type Step } from "./openrouter/testing/fakes";
 import type { OpenRouterFetch } from "./openrouter/types";
 import { descriptorReply, GOOD as HARNESS_GOOD, network, NEW_AVATAR as HARNESS_NEW_AVATAR, OFFLINE, TRAITS as HARNESS_TRAITS } from "./testing/engineHarness";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 const NOW = Date.parse("2026-09-24T12:00:00.000Z");
 const TEN_MIN_AGO = new Date(NOW - 10 * 60_000).toISOString();

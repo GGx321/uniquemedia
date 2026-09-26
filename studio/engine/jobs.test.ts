@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { JobState, type FailedCandidateSlot } from "../shared/engine";
 import { JobRegistry } from "./jobs";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 const DRAFT = "draft-00000001";
 

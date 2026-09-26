@@ -16,6 +16,8 @@ import {
   WORST_ONE_REF,
   type Money,
 } from "./testing/fakes";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let money: Money;
 

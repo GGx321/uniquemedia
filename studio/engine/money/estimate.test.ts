@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { AGE_CHECK_CALL, WRITER_CALL, estimateAvatarJob, estimateRun, type ImageChoice, type RunPlanInput } from "./estimate";
 import { PriceBook } from "./prices";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const BOOK = PriceBook.fallback();
 

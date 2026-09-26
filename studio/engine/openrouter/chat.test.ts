@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { b64, chatBody, chatParams, fakeFetch, JPEG, JPEG_2, LOCAL_BASE, makeClient, PNG, readLedgerLines, setupMoney, type Money, type Step } from "./testing/fakes";
 import { RAW_KEEP_BYTES_CHAT, RAW_KEEP_BYTES_IMAGE, RAW_PREFIX_BYTES } from "./transport";
 import type { ChatParams } from "./types";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let money: Money;
 

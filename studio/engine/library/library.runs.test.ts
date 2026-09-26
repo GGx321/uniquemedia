@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import { openLibrary, type LibraryDeps } from "./library";
 import { expectLibraryError, rejectionOf, steppingClock, useTempDir } from "./testing/helpers";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const root = useTempDir("studio-runs-");
 

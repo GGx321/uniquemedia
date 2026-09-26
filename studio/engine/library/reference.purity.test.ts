@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Review (LOW 6): LibraryReference's brand (media.ts) only deters an
 // ACCIDENTAL plain-Uint8Array assignment — an explicit `as LibraryReference`

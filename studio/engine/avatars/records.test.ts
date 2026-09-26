@@ -5,6 +5,8 @@ import { openLibrary, type QuarantineEntry } from "../library";
 import { AvatarManifestSchema, type AvatarManifest, type PhotoSidecar } from "../library/schemas";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../library/testing/helpers";
 import { avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./records";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const TRAITS: AvatarTraits = {
   age: 25,

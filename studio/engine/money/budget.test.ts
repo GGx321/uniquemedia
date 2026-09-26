@@ -6,6 +6,8 @@ import { AttemptId } from "../../shared/engine";
 import { Budget, isAttemptId, type BudgetLimits, type ReserveHandle, type ReserveRequest, type ReserveResult } from "./budget";
 import { MoneyError } from "./errors";
 import { Ledger, type LedgerDeps, type LedgerLine, type ReserveLine, type Scope } from "./ledger";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let dir: string;
 let path: string;

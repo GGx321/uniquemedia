@@ -3,6 +3,8 @@ import { ResponseMessage, type EngineCommandMessage } from "../shared/engine";
 import type { KeyCommand } from "./keyFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // A renderer URL with a drive letter is an absolute path on every platform
 // ("/C:/…" off Windows, "C:\…" on it), so the request path's tests hold on the

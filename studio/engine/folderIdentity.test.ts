@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { folderIdentity, type FolderFs } from "./folderIdentity";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 let dir = "";
 beforeEach(async () => {

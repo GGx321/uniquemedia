@@ -7,6 +7,8 @@ import {
   readDescriptorAnswer,
   type DescriptorProblem,
 } from "./descriptor";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const TRAITS: AvatarTraits = {
   age: 25,

@@ -17,6 +17,8 @@ import {
   type Money,
 } from "./testing/fakes";
 import { RAW_KEEP_BYTES_IMAGE } from "./transport";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let money: Money;
 

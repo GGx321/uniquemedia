@@ -5,6 +5,8 @@ import { nativeAbortController, nativeAbortSignal } from "../../../nativeGlobals
 import { createOpenRouterClient } from "./client";
 import { chatBody, chatParams, imageBody, imageParams, PNG, setupMoney, TEST_KEY, WORST_ONE_REF, type Money } from "./testing/fakes";
 import type { OpenRouterClientOptions } from "./types";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Real HTTP against a loopback mock: exercises the real fetch, headers and
 // socket failures. The test preload swaps the global fetch/AbortController/
@@ -31,7 +33,13 @@ import type { OpenRouterClientOptions } from "./types";
 // re-registering happy-dom builds a new window/document, so `screen` is left
 // pointing at the torn-down one for the rest of the run. Swapping only
 // AbortController/AbortSignal here never touches document/window, so this
-// does not matter either way.
+// does not matter either way — which is exactly why `useNativeGlobals()`
+// above (M6, studio/testing/nativeGlobals.ts) is safe doing the same swap at
+// file scope (beforeAll/afterAll) for every other file in studio/engine,
+// studio/main, studio/node and studio/scripts. This file keeps its own
+// per-test beforeEach/afterEach on top of that file-scoped default for the
+// unrelated reason below (a hanging closer), not because the file scope
+// itself is unsafe.
 const nativeFetch = Bun.fetch;
 const happyDomAbortController = globalThis.AbortController;
 const happyDomAbortSignal = globalThis.AbortSignal;

@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // The bundle-level scan in bundleChecks.ts reads compiled JS by text markers,
 // which is cheap but blind to the difference between "a top-level statement"

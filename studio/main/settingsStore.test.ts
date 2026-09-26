@@ -3,6 +3,8 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultSettings, loadSettings, saveSettings, SETTINGS_FILE, SettingsStore } from "./settingsStore";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 let userData = "";
 beforeEach(async () => {

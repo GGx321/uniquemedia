@@ -19,6 +19,8 @@ import { AGE_CHECK_MAX_SIDE, AGE_QUESTION, AGE_SYSTEM, ageJsonSchema } from "./a
 import { candidateJobEnd, PREPARE_TIMEOUT_MS, runCandidateJob, type CandidateJob, type SlotOutcome } from "./candidateJob";
 import { avatarJobEstimate } from "./plan";
 import { candidatePrompt } from "./prompts";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // The candidate job's slots against the real OpenRouter client (T3) over a
 // fake fetch, a real ledger and Budget (T2) in a temp dir, and the bundled

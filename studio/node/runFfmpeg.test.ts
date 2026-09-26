@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ffmpegPath, unpackAsarSegment, __setFfmpegPathOverrideForTests } from "./ffmpegBinary";
 import { runFfmpeg, FfmpegError } from "./runFfmpeg";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 let dir: string;
 let redPng: string;

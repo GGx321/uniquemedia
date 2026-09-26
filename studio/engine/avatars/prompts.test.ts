@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { AvatarDescriptor, Draft, type AvatarTraits } from "../../shared/engine";
 import { candidatePrompt, promptSubject, PromptSubjectError } from "./prompts";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const GOOD = "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build, light freckles across the nose.";
 const DESCRIPTOR: AvatarDescriptor = { age: 25, text: GOOD };

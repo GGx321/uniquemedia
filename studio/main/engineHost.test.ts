@@ -5,6 +5,8 @@ import { COMMAND_DEADLINE_MS, type EngineInit } from "../engine/control";
 import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
 import { MAX_ATTEMPT_MS } from "../engine/openrouter/transport";
 import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort } from "./engineHost";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
 

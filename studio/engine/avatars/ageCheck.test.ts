@@ -6,6 +6,8 @@ import { z } from "zod";
 import { AGE_CHECK_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
 import { AGE_CHECK_MAX_SIDE, AGE_MIN_CONFIDENCE, AGE_QUESTION, ageCheckMessages, ageJsonSchema, passesAgeThreshold, readAgeAnswer } from "./ageCheck";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 function answer(adult: unknown, confidence: unknown, reason: unknown = "Mature facial features and proportions of a woman in her mid-20s."): string {
   return JSON.stringify({ adult, confidence, reason });

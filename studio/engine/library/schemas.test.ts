@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { isLibraryId } from "./ids";
 import { AvatarManifestSchema, PhotoSidecarSchema } from "./schemas";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 function validManifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

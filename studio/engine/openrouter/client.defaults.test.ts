@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { MoneyError } from "../money/errors";
 import { createOpenRouterClient } from "./client";
 import { fakeFetch, imageBody, imageParams, LOCAL_BASE, PNG, setupMoney, TEST_KEY, type Money, type Step } from "./testing/fakes";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let money: Money;
 

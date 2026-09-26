@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { renameWithRetry, type RenameRetryOptions } from "./renameRetry";
 import { rejectionOf } from "./testing/helpers";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 function fsError(code: string): Error {
   return Object.assign(new Error(`${code}: simulated`), { code });

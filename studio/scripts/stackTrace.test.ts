@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { looksLikeAStackTrace } from "./stackTrace";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 describe("looksLikeAStackTrace", () => {
   test("flags real stderr from an uncaught exception thrown at the top level of a child process", () => {

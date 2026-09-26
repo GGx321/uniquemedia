@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleMediaRequest, parseMediaUrl } from "./mediaProtocol";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 const AVATAR = "avatar-0001";
 const PHOTO = "photo-00001";

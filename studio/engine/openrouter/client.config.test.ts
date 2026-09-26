@@ -4,6 +4,8 @@ import { createOpenRouterClient } from "./client";
 import { OpenRouterError } from "./errors";
 import { fakeFetch, LOCAL_BASE, TEST_KEY } from "./testing/fakes";
 import type { OpenRouterClientOptions } from "./types";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 function options(overrides: Partial<OpenRouterClientOptions>): OpenRouterClientOptions {
   return {

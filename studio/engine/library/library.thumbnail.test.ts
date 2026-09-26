@@ -14,6 +14,8 @@ import {
   steppingClock,
   useTempDir,
 } from "./testing/helpers";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const root = useTempDir("studio-thumb-");
 

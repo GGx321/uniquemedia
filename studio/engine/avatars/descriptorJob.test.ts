@@ -4,6 +4,8 @@ import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type Money, type Step } from "../openrouter/testing/fakes";
 import { descriptorCall } from "./descriptor";
 import { runDescriptorJob, type DescriptorJob } from "./descriptorJob";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const TRAITS: AvatarTraits = {
   age: 25,

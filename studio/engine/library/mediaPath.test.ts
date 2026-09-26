@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveMediaPath, type MediaPathErrorCode, type MediaPathResult } from "./mediaPath";
 import { JPEG_HEADER_ONLY, PNG_1X1, WEBP_HEADER_ONLY, useTempDir } from "./testing/helpers";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // One temp dir per test holding the library root and, beside it, an
 // "outside" folder that symlinks try to reach.

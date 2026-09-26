@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chatParams, fakeFetch, imageParams, makeClient, setupMoney, TEST_KEY, type Harness, type Money, type Step } from "./testing/fakes";
 import type { OpenRouterClientOptions } from "./types";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Invariant 10: the key never reaches logs, error messages or saved files.
 

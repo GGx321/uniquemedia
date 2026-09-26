@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { ResponseMessage } from "../shared/engine";
 import type { HostControl } from "../engine/control";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type KeyCommand, type SafeStorageLike } from "./keyFlow";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
 

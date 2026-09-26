@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import { appendJsonLine, readJsonl, writeJsonAtomic } from "./durableFs";
 import { expectLibraryError, rejectionOf, tempFilesIn, useTempDir } from "./testing/helpers";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const dir = useTempDir("studio-durable-");
 const Entry = z.object({ n: z.int() });

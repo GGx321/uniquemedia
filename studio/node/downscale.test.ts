@@ -8,6 +8,8 @@ import { imageSize, sniffImageMediaType } from "../engine/library/media";
 import { __setFfmpegPathOverrideForTests, ffmpegPath } from "./ffmpegBinary";
 import { downscaleCommand, downscaleToJpeg, PREFLIGHT_IMAGE, preflightDownscale, type SpawnLike } from "./downscale";
 import { FfmpegError } from "./runFfmpeg";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 let dir = "";
 beforeAll(() => {

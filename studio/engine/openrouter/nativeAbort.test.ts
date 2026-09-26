@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // The race in sendOnce returns promptly on abort whatever fetch does, so a
 // signal that never reached fetch would go unnoticed in-process. This runs the

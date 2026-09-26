@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { engineEnv } from "./engineEnv";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 test("OPENROUTER_* never reaches the engine, in any letter case", () => {
   const env = engineEnv({

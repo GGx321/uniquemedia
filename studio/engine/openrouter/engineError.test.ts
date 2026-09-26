@@ -4,6 +4,8 @@ import { fromOpenRouterError, toEngineError, type MappedError } from "./engineEr
 import { OpenRouterError } from "./errors";
 import { PNG } from "./testing/fakes";
 import type { Failed, FailureKind, ImageResult } from "./types";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const SETTLED_ZERO = { action: "settled", costMicros: 0, estimated: false } as const;
 const LEFT_OPEN = { action: "left-open", worstMicros: 50_000 } as const;

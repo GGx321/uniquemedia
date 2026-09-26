@@ -42,6 +42,8 @@ import {
   useEngineDir,
   writeLedger,
 } from "./testing/engineHarness";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // T6a part 2b: the candidate job, its registry and events, cancel, pick and
 // archive, against a real ledger and library in a temp dir, the bundled

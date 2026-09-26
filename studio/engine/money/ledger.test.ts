@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MoneyError } from "./errors";
 import { Ledger, type LedgerLine, type OpenFile, type ReserveLine } from "./ledger";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let dir: string;
 let path: string;

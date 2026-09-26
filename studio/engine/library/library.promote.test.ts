@@ -3,6 +3,8 @@ import { chmod, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { openLibrary, type LibraryDeps } from "./library";
 import { expectLibraryError, PNG_1X1, SAMPLE_AVATAR, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "./testing/helpers";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const root = useTempDir("studio-promote-");
 

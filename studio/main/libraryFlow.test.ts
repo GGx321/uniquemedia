@@ -10,6 +10,8 @@ import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../engin
 import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort, type HostTimers } from "./engineHost";
 import { handleSettingsCommand, isSettingsCommand, reconcileLibraryPath, type SettingsCommand, type SettingsFlowDeps } from "./settingsFlow";
 import { loadSettings, SettingsStore } from "./settingsStore";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // The divergence the T1 review found, end to end: main asks the engine to
 // open a library folder, its 30 s deadline passes first, so main saves

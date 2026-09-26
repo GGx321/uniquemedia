@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // The engine runs under Electron's Node while tests run under bun, so every
 // module reachable from the engine entry may use only node:* APIs and must

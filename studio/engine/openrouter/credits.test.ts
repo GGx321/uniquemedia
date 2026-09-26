@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { OpenRouterError } from "./errors";
 import { fakeFetch, LOCAL_BASE, makeClient, setupMoney, TEST_KEY, type Money, type Step } from "./testing/fakes";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 let money: Money;
 

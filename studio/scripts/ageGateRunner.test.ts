@@ -18,6 +18,8 @@ import {
   type AgeGateRow,
   type Plan,
 } from "./ageGateRunner";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // No test here ever calls the network: every fetch is an injected fake
 // (bun --no-env-file test never lets a real OPENROUTER_API_KEY through, and

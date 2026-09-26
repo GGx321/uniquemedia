@@ -11,6 +11,8 @@ import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./librar
 import { Ledger, type LedgerLine } from "./money/ledger";
 import { RAW_KEEP_BYTES_CHAT, RAW_KEEP_BYTES_IMAGE, rawFileName } from "./rawStore";
 import { chatBody, fakeFetch, readLedgerLines, withoutAt, type FetchCall, type Reply, type Step } from "./openrouter/testing/fakes";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // The avatar commands of T6a part 2a against a real ledger and library in a
 // temp dir. Every request goes to a fake fetch routed by URL: prices (free

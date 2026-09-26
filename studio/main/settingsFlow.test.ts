@@ -6,6 +6,8 @@ import { CommandMessage, ResponseMessage, type ApiKeyStatus, type EngineCommandM
 import type { HostControl } from "../engine/control";
 import { handleSettingsCommand, isSettingsCommand, reconcileLibraryPath, type LibraryReconcileDeps, type SettingsCommand, type SettingsFlowDeps } from "./settingsFlow";
 import { loadSettings, SettingsStore } from "./settingsStore";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 const KEY_STATUS: ApiKeyStatus = { stored: true, last4: "wxyz", encryptionAvailable: true, rejected: false };
 

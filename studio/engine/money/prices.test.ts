@@ -15,6 +15,8 @@ import {
   type FetchLike,
   type ImagePrice,
 } from "./prices";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Real response bodies of the public, free GET endpoints, saved on 2026-09-24
 // (/models trimmed to two entries; each entry is unchanged).

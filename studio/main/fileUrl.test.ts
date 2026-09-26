@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileUrlToPathOn } from "./fileUrl";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // fileUrlToPathOn reads a file URL by the rules of the platform it is given,
 // whatever the host: Bun ignores fileURLToPath's `windows` option, so without

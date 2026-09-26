@@ -3,6 +3,8 @@ import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openLibrary } from "./library";
 import { SAMPLE_AVATAR, expectLibraryError, sequentialIds, steppingClock, useTempDir } from "./testing/helpers";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const root = useTempDir("studio-history-");
 

@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { costToMicros, settleRule } from "./settleRule";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const WORST = 50_000;
 

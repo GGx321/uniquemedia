@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { loadPriceBook } from "../money/prices";
 import { priceFetchFrom } from "./priceFetch";
 import { fakeFetch, LOCAL_BASE } from "./testing/fakes";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const MODELS_BODY = { data: [{ id: "x-ai/grok-4.3", pricing: { prompt: "0.000002", completion: "0.000004" } }] };
 

@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RAW_PREFIX_BYTES } from "./openrouter/transport";
 import { RAW_KEEP_BYTES, RAW_KEEP_BYTES_IMAGE, RAW_MAX_FILES, rawFileName, saveRawBody } from "./rawStore";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");

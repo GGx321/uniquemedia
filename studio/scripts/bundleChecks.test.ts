@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { productionBundleProblems, productionEngineProblems, productionMainProblems } from "./bundleChecks";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // A stand-in for a real production main.js: the exact, unconditional shape
 // esbuild emits for studio/main/main.ts's `if (!DEBUGGABLE) { for (...) ... }`

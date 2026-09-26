@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { Estimate } from "../../shared/engine";
 import { PriceBook, type ChatPrice, type ImagePrice, type PriceEntry } from "../money/prices";
 import { avatarJobEstimate, avatarPriceModels, candidateImage, CANDIDATES_PER_BATCH, descriptorJobCap, type AvatarModels } from "./plan";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const DEFAULTS: AvatarModels = { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" };
 const FALLBACK = { book: PriceBook.fallback(), asOf: "2026-09-24" };

@@ -9,6 +9,8 @@ import { createEngineClient, type EngineBridge } from "../renderer/engine/client
 import { EngineStore } from "../renderer/engine/store";
 import { HostNotices } from "./notices";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // A real engine and the renderer's real EngineStore, joined through main's
 // request path (handleRendererRequest) with asynchronous event delivery like
