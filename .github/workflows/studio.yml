@@ -30,6 +30,8 @@ jobs:
     # (optionally packaging) build has nothing to do on a timer.
     if: github.event_name != 'schedule'
     strategy:
+      # One OS failing must not cancel the other: each has its own smoke to report.
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}

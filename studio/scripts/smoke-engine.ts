@@ -58,7 +58,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, normalize, resolve } from "node:path";
 import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
@@ -372,9 +372,13 @@ function checkPackage(target: Target): void {
   check("the Electron fuses are set (runAsNode, NODE_OPTIONS, --inspect off; asar-only with integrity; cookie encryption)", wrong.length === 0, { wrong, fuses });
 }
 
-/** In-memory reads from the asar (never extracted to disk). */
+/**
+ * In-memory reads from the asar (never extracted to disk). @electron/asar
+ * splits a path on the platform's separator, so a `/` path is normalised:
+ * on Windows it would otherwise never be found.
+ */
 function asarText(target: Target, file: string): string {
-  return target.asar === null ? "" : extractFile(target.asar, file).toString("utf8");
+  return target.asar === null ? "" : extractFile(target.asar, normalize(file)).toString("utf8");
 }
 
 /** The renderer's built JS (there may be more than one chunk), read from disk or, packaged, from the asar without extracting it. */
