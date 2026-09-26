@@ -104,6 +104,33 @@ jobs:
             app=release-studio/win-unpacked
           fi
           bun studio/scripts/smoke-engine.ts --production --app "$app"
+      # An E2E package (STUDIO_E2E=1: the base-URL override honoured, invariant
+      # 13; the folder-picker and remote-debugging test switches kept) so the
+      # full smoke can drive it end to end, avatar creation against a mock
+      # OpenRouter included (studio/scripts/mockOpenRouter.ts) — never a real
+      # request, never a real key. This package is never uploaded or
+      # published: it is a throwaway build for this job only.
+      - name: Build the E2E package (never uploaded)
+        if: env.PACKAGE == 'true'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            bun run dist:studio:mac:e2e
+          else
+            bun run dist:studio:win:e2e
+          fi
+      - name: Smoke-test the E2E package (avatar end-to-end against the mock)
+        if: env.PACKAGE == 'true'
+        # The reconcile check alone waits out the ledger's 120 s quiet period.
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            app=$(ls -d release-studio/e2e/mac*/Studio.app | head -n 1)
+          else
+            app=release-studio/e2e/win-unpacked
+          fi
+          bun studio/scripts/smoke-engine.ts --app "$app"
       - if: env.PACKAGE == 'true'
         uses: actions/upload-artifact@v4
         with:

@@ -63,6 +63,7 @@ import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { productionBundleProblems, productionEngineProblems, productionMainProblems } from "./bundleChecks";
+import { startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { looksLikeAStackTrace } from "./stackTrace";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -460,6 +461,240 @@ async function productionCheck(target: Target): Promise<void> {
   }
 }
 
+// ---------- avatar end-to-end scenario (against the mock OpenRouter) ----------
+
+/** Distinctive words that must reach the mock only inside the descriptor request (T6a-2b's marker-vibe canary, engine.canary.test.ts's own convention). */
+const AVATAR_MARKER_WORDS = ["zebra", "lantern", "marmalade"];
+
+/** studio/engine/testing/engineHarness.ts's TRAITS, with the vibe replaced by the marker words. */
+const AVATAR_TRAITS = {
+  age: 25,
+  ethnicity: "european",
+  skinTone: "light-olive",
+  hairColor: "chestnut",
+  hairLength: "shoulder",
+  hairTexture: "wavy",
+  eyeColor: "hazel",
+  build: "athletic",
+  marks: ["freckles"],
+  vibe: AVATAR_MARKER_WORDS.join(" "),
+};
+
+/** A descriptor that fits the traits above (engineHarness.ts's GOOD): passes the age anchor and every adult-text rule on the first attempt. */
+const AVATAR_DESCRIPTOR =
+  "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build, light freckles across the nose.";
+
+/** Every file under `dir`, relative to it, with `/` separators regardless of platform. */
+async function filesUnder(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((e) => e.isFile())
+    .map((e) => join(e.parentPath, e.name).slice(dir.length + 1).replaceAll("\\", "/"));
+}
+
+/** Whether any marker word is anywhere in a mock request's body, in any letter case (engine.canary.test.ts's own `carriesMarker`). */
+function carriesMarker(request: MockRequest): boolean {
+  const text = JSON.stringify(request.body).toLowerCase();
+  return AVATAR_MARKER_WORDS.some((word) => text.includes(word));
+}
+
+/**
+ * Slice 2a's "Done when": a packaged (or unpackaged E2E) build creates an
+ * avatar end-to-end against a mock OpenRouter. Its own app instance, its own
+ * temp userData and library, its own mock server — kept apart from the
+ * checks above so neither's ledger or events are read by the other.
+ *
+ * No request leaves the machine: the base-URL override (invariant 13) points
+ * only at this mock's loopback port, and the only key ever sent is a fake
+ * one. Every check below is against what the mock actually saw, not an
+ * assumption about the engine's internals.
+ */
+async function runAvatarScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, rejectAgeCheckNumber: 1 });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-avatar-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "avatar-library");
+  await mkdir(userData, { recursive: true });
+  await mkdir(libraryRoot, { recursive: true });
+
+  const running = await launch(target, userData, [
+    `--studio-openrouter-base-url=${mock.url}`,
+    `--studio-pick-folder=${libraryRoot}`,
+  ]);
+  try {
+    const { cdp } = running;
+    const statuses = new Map<string, { status: number; mimeType: string }>();
+    cdp.on((method, params) => {
+      if (method !== "Network.responseReceived") return;
+      const url = field(params, "response", "url");
+      if (typeof url !== "string" || !url.startsWith("studio-media:")) return;
+      statuses.set(url, { status: Number(field(params, "response", "status")), mimeType: String(field(params, "response", "mimeType")) });
+    });
+    await cdp.send("Network.enable");
+
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("avatar scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+
+    // The renderer never sends a path for real: main's folder dialog answers
+    // from --studio-pick-folder (an E2E-only switch), which is why the
+    // library actually adopted is `libraryRoot`, not the (irrelevant) path below.
+    const libSet = await req(cdp, "settings.setLibraryPath", { path: libraryRoot });
+    check(
+      "avatar scenario: settings.setLibraryPath adopts the temp library (via --studio-pick-folder)",
+      field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot,
+      libSet,
+    );
+
+    // 1. Estimate, then create the draft: one descriptor call.
+    const estimate = await req(cdp, "avatars.estimate", { traits: AVATAR_TRAITS });
+    check("avatar scenario: avatars.estimate prices a new avatar", field(estimate, "ok") === true, estimate);
+    const draft = await req(cdp, "avatars.createDraft", { traits: AVATAR_TRAITS, acceptedWorstMicros: field(estimate, "result", "worstMicros") });
+    check("avatar scenario: avatars.createDraft writes the descriptor and a draft", field(draft, "ok") === true, draft);
+    const avatarId = field(draft, "result", "draft", "avatarId");
+    check(
+      "avatar scenario: the draft's descriptor is exactly the mock's answer",
+      field(draft, "result", "draft", "descriptor", "text") === AVATAR_DESCRIPTOR,
+      draft,
+    );
+
+    // 2. Estimate, then generate the first batch of candidates.
+    const batchEstimate = await req(cdp, "avatars.estimateCandidates", { avatarId });
+    check("avatar scenario: avatars.estimateCandidates prices the batch", field(batchEstimate, "ok") === true, batchEstimate);
+    const generated = await req(cdp, "avatars.generateCandidates", { avatarId, acceptedWorstMicros: field(batchEstimate, "result", "worstMicros") });
+    check("avatar scenario: avatars.generateCandidates starts a job", field(generated, "ok") === true, generated);
+    const jobId = field(generated, "result", "jobId");
+
+    // 3. Wait for the job's end: a bounded poll of the events the page already collects, no fixed sleep.
+    const end = await waitFor(
+      "the candidate job to end",
+      async () => {
+        const found = await cdp.evaluate(
+          `window.__smoke.events.find((e) => (e.type === "job.done" || e.type === "job.failed" || e.type === "job.cancelled") && e.payload.jobId === ${JSON.stringify(jobId)})`,
+        );
+        return found === undefined ? null : found;
+      },
+      30_000,
+    );
+    check("avatar scenario: the candidate batch finished as job.done", field(end, "type") === "job.done", end);
+    const candidates = field(end, "payload", "result", "candidates");
+    const failedSlots = field(end, "payload", "result", "failedSlots");
+    check(
+      "avatar scenario: 3 candidates passed the age check and the age-gated one was rejected",
+      Array.isArray(candidates) &&
+        candidates.length === 3 &&
+        field(end, "payload", "result", "rejectedByAgeCheck") === 1 &&
+        Array.isArray(failedSlots) &&
+        failedSlots.length === 1 &&
+        field(failedSlots[0], "reason") === "age-rejected",
+      end,
+    );
+
+    // 4. The 3 passed candidates' files exist in the library; the rejected one was never written anywhere (checked before the pick below deletes the unpicked ones — invariant 9).
+    const beforePick = await filesUnder(libraryRoot);
+    const photoDir = `avatars/${String(avatarId)}/photos/`;
+    check(
+      "avatar scenario: exactly the 3 passed candidates' image and sidecar files exist in the library",
+      Array.isArray(candidates) &&
+        candidates.every((c: unknown) => {
+          const photoId = String(field(c, "photoId"));
+          return beforePick.some((f) => f.startsWith(photoDir) && f.includes(photoId) && f.endsWith(".json")) &&
+            beforePick.some((f) => f.startsWith(photoDir) && f.includes(photoId) && !f.endsWith(".json"));
+        }) &&
+        beforePick.filter((f) => f.startsWith(photoDir) && f.endsWith(".json")).length === 3,
+      { candidates, beforePick },
+    );
+
+    // 5. Pick one candidate: the draft becomes an active avatar with the chosen master.
+    const picked = Array.isArray(candidates) ? candidates[0] : undefined;
+    const photoId = field(picked, "photoId");
+    const pick = await req(cdp, "avatars.pick", { avatarId, photoId, name: "Zoe" });
+    check(
+      "avatar scenario: avatars.pick makes the draft an active avatar with the chosen master photo",
+      field(pick, "ok") === true && field(pick, "result", "avatar", "status") === "active" && field(pick, "result", "avatar", "masterPhotoId") === photoId,
+      pick,
+    );
+
+    // 6. studio-media:// serves the new master photo.
+    await cdp.evaluate(
+      `new Promise((r) => { const i = new Image(); i.onload = () => r(true); i.onerror = () => r(false); i.src = "studio-media://photo/${String(avatarId)}/${String(photoId)}"; })`,
+    );
+    await Bun.sleep(300);
+    const media = statuses.get(`studio-media://photo/${String(avatarId)}/${String(photoId)}`);
+    check(
+      "avatar scenario: studio-media:// serves the new master photo (200, an image MIME type)",
+      media?.status === 200 && Boolean(media.mimeType.startsWith("image/")),
+      [...statuses],
+    );
+
+    // 7. The Avatars grid (Studio's default screen) shows the new avatar's tile, by its name.
+    const tileShown = await waitFor(
+      "the new avatar's tile in the Avatars grid",
+      async () => {
+        const found = await cdp.evaluate(
+          `[...document.querySelectorAll("article.avatar-card h2.avatar-name")].some((h) => h.textContent.trim() === "Zoe")`,
+        );
+        return found === true ? true : null;
+      },
+      10_000,
+    );
+    check("avatar scenario: the Avatars grid shows the new avatar's tile", tileShown === true);
+
+    // 8. Money: the ledger total is exactly the sum of the mock's charged costs, and nothing is left open.
+    const expectedMicros = Math.round(mock.totalUsageUsd() * 1_000_000);
+    const money = await req(cdp, "money.status");
+    check(
+      "avatar scenario: money.status' ledger total equals the mock's charged costs, no open reserves",
+      field(money, "ok") === true &&
+        field(money, "result", "ledger") === "open" &&
+        field(money, "result", "spentMicros") === expectedMicros &&
+        field(money, "result", "unsettledMicros") === 0 &&
+        field(money, "result", "unsettledCount") === 0 &&
+        field(money, "result", "reconcileNeeded") === false,
+      { money, expectedMicros },
+    );
+
+    // 9. money.reconcile against the mock's /credits: a bounded poll for the
+    // reconcile wait (studio/engine/money/reconcile.ts's RECONCILE_QUIET_MS,
+    // 2 minutes) to pass, never a fixed sleep past what the engine itself reports.
+    const reconciled = await waitFor(
+      "money.reconcile past its quiet window",
+      async () => {
+        const r = await req(cdp, "money.reconcile");
+        if (field(r, "ok") !== true || field(r, "result", "status") === "too-early") return null;
+        return r;
+      },
+      170_000,
+    );
+    check(
+      "avatar scenario: money.reconcile against the mock's /credits reports no mismatch",
+      field(reconciled, "result", "status") === "done" &&
+        field(reconciled, "result", "mismatch") !== true &&
+        field(reconciled, "result", "ledgerDeltaMicros") === expectedMicros,
+      reconciled,
+    );
+
+    // 10. Every request the engine made went to the mock, exactly the expected sequence, and no unknown route was hit.
+    check("avatar scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+    check(
+      "avatar scenario: the mock saw exactly 1 descriptor call, 4 image calls and 4 age checks",
+      mock.descriptorRequests().length === 1 && mock.imageRequests().length === 4 && mock.ageCheckRequests().length === 4,
+      mock.requests,
+    );
+
+    // 11. The marker vibe reaches the mock only in the descriptor request (T6a-2b's network canary).
+    const carrying = mock.requests.filter(carriesMarker);
+    check(
+      "avatar scenario: the marker vibe appears in the mock's requests only in the descriptor call",
+      carrying.length === 1 && carrying[0]?.schemaName === "avatar_descriptor",
+      carrying,
+    );
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
 // ---------- main ----------
 
 function finish(): void {
@@ -714,6 +949,8 @@ async function main(): Promise<void> {
     if (keep) console.log(`\nkept ${tmp}`);
     else await rm(tmp, { recursive: true, force: true });
   }
+
+  await runAvatarScenario(target);
   finish();
 }
 
