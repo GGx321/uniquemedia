@@ -2,14 +2,14 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CommandMessage, type ApiKeyStatus, type EngineCommandMessage, type ResponseMessage } from "../shared/engine";
+import { CommandMessage, type ApiKeyStatus, type EngineCommandMessage, type EventMessage, type ResponseMessage } from "../shared/engine";
 import { isControlMessage } from "../engine/control";
 import { Engine } from "../engine/engine";
 import { openLibrary } from "../engine/library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../engine/library/testing/helpers";
 import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort, type HostTimers } from "./engineHost";
-import { handleSettingsCommand, isSettingsCommand, type SettingsCommand, type SettingsFlowDeps } from "./settingsFlow";
-import { SettingsStore } from "./settingsStore";
+import { handleSettingsCommand, isSettingsCommand, reconcileLibraryPath, type SettingsCommand, type SettingsFlowDeps } from "./settingsFlow";
+import { loadSettings, SettingsStore } from "./settingsStore";
 
 // The divergence the T1 review found, end to end: main asks the engine to
 // open a library folder, its 30 s deadline passes first, so main saves
@@ -170,4 +170,111 @@ test("a library.open main gave up on after its deadline leaves both main and the
   expect(port.engine.library?.root).toBe(join(dir, "library"));
   expect(await snapshotAvatars(host)).toEqual([savedAvatar]);
   host.stop();
+});
+
+// Unlike library.open above, a library.confirm main gave up on can still
+// switch the engine after its deadline (confirm is synchronous once staged,
+// so once main's call reaches it, it always lands).
+// Without reconciliation, main (settings.json, settings.current, and so the
+// studio-media:// root, which reads from settings.current) keeps naming the
+// old folder while the engine and its windows already list the new one, and
+// the next unrelated settings command silently flips the engine back. Main's
+// onEvent must reconcile settings.json to the engine's actual library as
+// soon as a settings.changed event says they disagree.
+test("a library.confirm main gave up on still switches the engine; main reconciles settings.json (and so the media root) to it, and a later unrelated command does not flip it back", async () => {
+  const userData = join(dir, "userData");
+  await mkdir(userData);
+  await seedLibrary(join(dir, "library"), "saved");
+  const pickedAvatar = await seedLibrary(join(dir, "picked"), "picked");
+  const { store: settings } = await SettingsStore.open(userData);
+  await settings.save({ ...settings.current, libraryPath: join(dir, "library") });
+
+  const port = new WirePort();
+  // Hold only the confirm call; library.open goes through.
+  port.postMessage = function (message: unknown): void {
+    if (typeof message === "object" && message !== null && "type" in message && message.type === "library.confirm" && this.holdCalls) {
+      this.held.push(message);
+      return;
+    }
+    void this.engine?.receive(message);
+  };
+  const timers = new ManualTimers();
+  const events: EventMessage[] = [];
+  let n = 0;
+  const newId = () => `internal-${String(++n).padStart(6, "0")}`;
+  // The last reconciliation onEvent kicked off, so the test can wait for the
+  // exact same fire-and-forget work main's own onEvent triggers, deterministically.
+  let lastReconcile: Promise<void> = Promise.resolve();
+  port.engine = await Engine.start(
+    { kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), defaultLibraryPath: join(userData, "library"), rawDir: join(userData, "raw"), settings: settings.current, encryptionAvailable: true, notices: [] },
+    {
+      bootId: "boot-flow-0001",
+      clock: Date.now,
+      monotonic: () => performance.now(),
+      newId: () => `id-flow-${String(++n).padStart(6, "0")}`,
+      post: (message) => port.fromEngine(message),
+      fetch: async (url) => {
+        throw new Error(`unexpected network call to ${url}`);
+      },
+    },
+  );
+  const host = new EngineHost<string>({
+    fork: () => new Child(),
+    channel: () => ({ local: port, remote: "remote-port" }),
+    init: async () => ({ kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), defaultLibraryPath: join(userData, "library"), rawDir: join(userData, "raw"), settings: settings.current, encryptionAvailable: true, notices: [] }),
+    apiKey: async () => null,
+    onEvent: (e) => {
+      events.push(e);
+      // Exactly what main.ts's own onEvent does.
+      if (e.type === "settings.changed") lastReconcile = reconcileLibraryPath(e.payload.settings, { settings, engine: host, newId });
+    },
+    onExit: () => {},
+    timers,
+  });
+  await host.start();
+  const deps: SettingsFlowDeps = { settings, engine: host, pickFolder: async () => join(dir, "picked"), keyStatus: () => KEY_STATUS, newId };
+
+  port.holdCalls = true;
+  const answering = handleSettingsCommand(settingsCommand("settings.setLibraryPath", { path: join(dir, "picked") }, "cmd-pick-0001"), deps);
+  for (let i = 0; i < 400 && port.held.length === 0; i++) await Bun.sleep(5);
+  expect(port.held.length).toBe(1);
+  timers.fire(REQUEST_TIMEOUT_MS);
+  expect(await answering).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+
+  port.holdCalls = false;
+  for (const call of port.held.splice(0)) await port.engine.receive(call);
+  // The confirm's own settings.changed event fires synchronously within
+  // receive() above (confirm has no await left in it once staged), so
+  // onEvent (and the reconciliation it kicks off) has already started;
+  // wait for it to finish.
+  await lastReconcile;
+
+  // main, the engine and the windows all converge on the engine's actual folder:
+  expect(port.engine.library?.root).toBe(join(dir, "picked"));
+  expect(settings.current.libraryPath).toBe(join(dir, "picked"));
+  expect((await loadSettings(userData)).settings.libraryPath).toBe(join(dir, "picked"));
+  // studio-media:// reads its root from settings.current (main.ts), which just converged too.
+  expect(await snapshotAvatars(host)).toEqual([pickedAvatar]);
+  const lastSettingsChanged = events.filter((e) => e.type === "settings.changed").at(-1);
+  expect(lastSettingsChanged?.payload).toMatchObject({ settings: { libraryPath: join(dir, "picked") }, librarySwitchGeneration: 1 });
+
+  // A later, unrelated settings command no longer disagrees with the engine, so it changes nothing about the library:
+  const budgetAnswer = await handleSettingsCommand(settingsCommand("settings.setBudget", { monthlyBudgetMicros: 20_000_000 }, "cmd-budget-0001"), deps);
+  expect(budgetAnswer).toMatchObject({ ok: true, result: { libraryPath: join(dir, "picked"), monthlyBudgetMicros: 20_000_000 } });
+  expect(port.engine.library?.root).toBe(join(dir, "picked"));
+  expect(settings.current.libraryPath).toBe(join(dir, "picked"));
+  host.stop();
+
+  // The restart path: because reconciliation already persisted settings.json
+  // before this point (not deferred to the next restart), a fresh engine
+  // built the way main.ts's `init()` builds one after a crash — from
+  // settings.current, read fresh off disk — starts on "picked" directly,
+  // with no divergence left to carry across the restart.
+  const { store: reloaded } = await SettingsStore.open(userData);
+  expect(reloaded.current.libraryPath).toBe(join(dir, "picked"));
+  const restarted = await Engine.start(
+    { kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), defaultLibraryPath: join(userData, "library"), rawDir: join(userData, "raw"), settings: reloaded.current, encryptionAvailable: true, notices: [] },
+    { bootId: "boot-flow-0002", clock: Date.now, monotonic: () => performance.now(), newId, post: () => {}, fetch: async (url) => { throw new Error(`unexpected network call to ${url}`); } },
+  );
+  expect(restarted.library?.root).toBe(join(dir, "picked"));
 });

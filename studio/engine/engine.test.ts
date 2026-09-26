@@ -14,6 +14,7 @@ import { Ledger, type LedgerLine } from "./money/ledger";
 import { MoneyError } from "./money/errors";
 import { fakeFetch, type Step } from "./openrouter/testing/fakes";
 import type { OpenRouterFetch } from "./openrouter/types";
+import { descriptorReply, GOOD as HARNESS_GOOD, network, NEW_AVATAR as HARNESS_NEW_AVATAR, OFFLINE, TRAITS as HARNESS_TRAITS } from "./testing/engineHarness";
 
 const NOW = Date.parse("2026-09-24T12:00:00.000Z");
 const TEN_MIN_AGO = new Date(NOW - 10 * 60_000).toISOString();
@@ -437,6 +438,29 @@ describe("settings.update from main", () => {
     expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { monthlyBudgetMicros: 10_000_000 } });
     expect(posted.filter((m) => typeof m === "object" && m !== null && "kind" in m && m.kind === "event")).toEqual([]);
   });
+
+  test("a momentarily unreadable volume does not drop the live library when the same path is re-sent", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    let volumeDown = false;
+    const folderFs = {
+      stat: async (path: string) => {
+        if (volumeDown && path === join(dir, "library")) throw Object.assign(new Error("EIO: i/o error, stat"), { code: "EIO" });
+        return stat(path, { bigint: true });
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    const { engine } = await startEngine({}, { folderFs });
+    const live = engine.library;
+    expect(live?.root).toBe(join(dir, "library"));
+
+    volumeDown = true;
+    // The same libraryPath re-sent (e.g. an unrelated settings.setBudget), while the volume cannot be stat'ed right now.
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
+
+    expect(engine.library).toBe(live);
+    expect(await snapshotIds(engine)).toEqual({ avatars: [saved.avatarId], drafts: [saved.draftId] });
+    expect(ok(await engine.handle(command("money.status")))).toMatchObject({ result: { monthlyBudgetMicros: 20_000_000 } });
+  });
 });
 
 describe("OpenRouter base URL (invariant 13)", () => {
@@ -827,6 +851,589 @@ describe("library.open from main", () => {
 
     expect(engine.library).toBeNull();
     expect(await snapshotIds(engine)).toEqual({ avatars: [], drafts: [] });
+  });
+});
+
+describe("library.confirm from main", () => {
+  function libraryConfirm(path: string, callId = "call-00000001") {
+    return { kind: "control", type: "library.confirm", callId, path };
+  }
+
+  test("confirms a previously staged folder: the engine switches, and settings.changed carries the new path", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    const other = await seedLibrary(join(dir, "other"), "other");
+    const { engine, posted, events } = await startEngine();
+    await engine.receive(libraryOpen(join(dir, "other")));
+
+    await engine.receive(libraryConfirm(join(dir, "other"), "call-00000002"));
+
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000002" });
+    expect(engine.library?.root).toBe(join(dir, "other"));
+    expect(await snapshotIds(engine)).toEqual({ avatars: [other.avatarId], drafts: [other.draftId] });
+    expect(events().at(-1)).toMatchObject({ type: "settings.changed", payload: { settings: { libraryPath: join(dir, "other") } } });
+  });
+
+  // A folder nothing staged used to be opened fresh here, which is exactly
+  // the TOCTOU the fix closes (a survey after the busy check, with no
+  // re-check once it resolves). Refused with VALIDATION instead, never
+  // surveyed at all; main must send library.open again (control.ts's comment).
+  test("a folder never staged is refused with VALIDATION; the live library is untouched", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const { engine, posted } = await startEngine();
+
+    await engine.receive(libraryConfirm(join(dir, "other")));
+
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000001", error: { code: "VALIDATION", detail: "the folder is not staged; open it again" } });
+    expect(engine.library?.root).toBe(join(dir, "library"));
+    expect(await snapshotIds(engine)).toEqual({ avatars: [saved.avatarId], drafts: [saved.draftId] });
+  });
+
+  test("a path that was never even a real folder is refused the same way, VALIDATION, never surveyed", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    const { engine, posted } = await startEngine();
+
+    await engine.receive(libraryConfirm(join(dir, "missing")));
+
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000001", error: { code: "VALIDATION" } });
+    expect(engine.library?.root).toBe(join(dir, "library"));
+  });
+
+  test("confirming the already-live folder is a harmless no-op", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const { engine, posted } = await startEngine();
+    const live = engine.library;
+
+    await engine.receive(libraryConfirm(join(dir, "library")));
+
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000001" });
+    expect(engine.library).toBe(live);
+    expect(await snapshotIds(engine)).toEqual({ avatars: [saved.avatarId], drafts: [saved.draftId] });
+  });
+
+  test("the live folder opened under another spelling (a symlink alias) stages that spelling too: it can be confirmed, and confirmed again on a later retry", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await symlink(join(dir, "library"), join(dir, "alias"));
+    const { engine, posted } = await startEngine();
+    const live = engine.library;
+
+    await engine.receive(libraryOpen(join(dir, "alias"), "call-00000001"));
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000001" });
+    await engine.receive(libraryConfirm(join(dir, "alias"), "call-00000002"));
+
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000002" });
+    expect(engine.library).toBe(live); // the same instance, adopted as-is, never re-surveyed
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { libraryPath: join(dir, "alias") } });
+    // No generation bump: the folder's identity did not change, only its spelling.
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 0 } });
+
+    // Retrying the exact same open+confirm sequence (the user reopens Settings and re-picks it) still works, not VALIDATION forever.
+    await engine.receive(libraryOpen(join(dir, "alias"), "call-00000003"));
+    await engine.receive(libraryConfirm(join(dir, "alias"), "call-00000004"));
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000004" });
+  });
+
+  test("a stale staged entry left by an earlier IN_FLIGHT refusal is dropped, not adopted later, when the live folder is re-opened under its own spelling", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    await symlink(join(dir, "other"), join(dir, "other-alias"));
+    const { engine, posted } = await startEngine();
+    const budget = engine.budget;
+    if (budget === null) throw new Error("expected a budget");
+
+    // Staged, then the confirm is refused IN_FLIGHT: the stale entry it leaves must not resurface later.
+    await engine.receive(libraryOpen(join(dir, "other"), "call-00000001"));
+    const h = await budget.tryReserve({ attemptId: "att-0001", jobId: "job-0001", scope: { avatarJobId: "job-0001" }, model: "x-ai/grok-4.3", worstMicros: 0 });
+    await engine.receive(libraryConfirm(join(dir, "other"), "call-00000002"));
+    expect(posted.at(-1)).toMatchObject({ error: { code: "IN_FLIGHT" } });
+    if (!h.ok) throw new Error("expected a reservation");
+    await budget.settle(h.handle, { costMicros: 0, estimated: false });
+
+    // The switch actually happens via another spelling of the same folder.
+    await engine.receive(libraryOpen(join(dir, "other-alias"), "call-00000003"));
+    await engine.receive(libraryConfirm(join(dir, "other-alias"), "call-00000004"));
+    const live = engine.library;
+    expect(live?.root).toBe(join(dir, "other-alias"));
+
+    // Later, re-opening the live folder under its original spelling ("other") is a no-op that stages the CURRENT instance under that string (round-2 fix), so the stale one from call-00000001 can never be adopted.
+    await engine.receive(libraryOpen(join(dir, "other"), "call-00000005"));
+    await engine.receive(libraryConfirm(join(dir, "other"), "call-00000006"));
+
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000006" });
+    expect(engine.library).toBe(live); // the same instance throughout, never swapped for a stale one
+    expect(engine.library?.root).toBe(join(dir, "other-alias")); // unchanged: adopted as-is, no re-open
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { libraryPath: join(dir, "other") } }); // only the reported spelling moved
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 1 } }); // bumped once, not again for a same-identity spelling change
+  });
+
+  test("a malformed confirm call is ignored", async () => {
+    const { engine, posted } = await startEngine();
+    await engine.receive({ kind: "control", type: "library.confirm", callId: "x", path: "relative" });
+    expect(posted).toEqual([]);
+  });
+
+  test("refused with IN_FLIGHT while a paid request is in flight; the live library stays", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const { engine, posted } = await startEngine();
+    // Staged first, while nothing is busy yet: confirm's own check has no
+    // await left to race, so what matters is that "other" was staged.
+    await engine.receive(libraryOpen(join(dir, "other")));
+    const budget = engine.budget;
+    if (budget === null) throw new Error("expected a budget");
+    await budget.tryReserve({ attemptId: "att-0001", jobId: "job-0001", scope: { avatarJobId: "job-0001" }, model: "x-ai/grok-4.3", worstMicros: 0 });
+
+    await engine.receive(libraryConfirm(join(dir, "other"), "call-00000002"));
+
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000002", error: { code: "IN_FLIGHT" } });
+    expect(engine.library?.root).toBe(join(dir, "library"));
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { settings: { libraryPath: join(dir, "library") } } });
+  });
+
+  test("refused with IN_FLIGHT while a pick is in flight; the live library and its avatars stay", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const { engine, posted } = await startEngine();
+    // Staged first, while nothing is busy yet.
+    await engine.receive(libraryOpen(join(dir, "other")));
+    const pickable = await engine.library?.addPhoto(saved.draftId, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
+    if (pickable === undefined) throw new Error("expected the engine's library to be open");
+
+    // #claimAvatar marks the pick busy synchronously, before its own first
+    // await: by the time this call returns control, confirm (which has no
+    // await of its own left once staged) deterministically sees it in flight.
+    const picking = engine.handle(command("avatars.pick", { avatarId: saved.draftId, photoId: pickable.id, name: "Zoe" }));
+    await engine.receive(libraryConfirm(join(dir, "other"), "call-00000002"));
+
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000002", error: { code: "IN_FLIGHT" } });
+    expect(engine.library?.root).toBe(join(dir, "library"));
+    ok(await picking);
+  });
+
+  test("refused with IN_FLIGHT while an archive is in flight", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const { engine, posted } = await startEngine();
+    await engine.receive(libraryOpen(join(dir, "other")));
+
+    const archiving = engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+    await engine.receive(libraryConfirm(join(dir, "other"), "call-00000002"));
+
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000002", error: { code: "IN_FLIGHT" } });
+    expect(engine.library?.root).toBe(join(dir, "library"));
+    ok(await archiving);
+  });
+
+  test("library.open itself is also refused with IN_FLIGHT while a pick is in flight", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const otherInfo = await stat(join(dir, "other"), { bigint: true });
+    const otherReal = await realpath(join(dir, "other"));
+    const folderFs = {
+      stat: async (path: string) => (path === join(dir, "other") ? otherInfo : stat(path, { bigint: true })),
+      realpath: async (path: string) => (path === join(dir, "other") ? otherReal : realpath(path)),
+    };
+    const { engine, posted } = await startEngine({}, { folderFs });
+    const pickable = await engine.library?.addPhoto(saved.draftId, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
+    if (pickable === undefined) throw new Error("expected the engine's library to be open");
+
+    const picking = engine.handle(command("avatars.pick", { avatarId: saved.draftId, photoId: pickable.id, name: "Zoe" }));
+    await engine.receive(libraryOpen(join(dir, "other")));
+
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000001", error: { code: "IN_FLIGHT" } });
+    ok(await picking);
+  });
+});
+
+describe("the library-switch generation", () => {
+  test("starts at 0 and is carried in the snapshot", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 0 } });
+  });
+
+  test("a confirmed switch to another folder bumps it and settings.changed carries the new value", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const { engine, events } = await startEngine();
+    await engine.receive(libraryOpen(join(dir, "other")));
+
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, libraryPath: join(dir, "other") } });
+
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 1 } });
+    expect(events().at(-1)).toMatchObject({ type: "settings.changed", payload: { librarySwitchGeneration: 1 } });
+  });
+
+  test("a switch to a folder that cannot be opened (LIBRARY_UNAVAILABLE) bumps it too: the windows must still resync to see the library is gone", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, libraryPath: join(dir, "missing") } });
+
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 1 } });
+  });
+
+  test("a settings update that keeps the same folder (e.g. only the budget changed) does not bump it", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
+
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 0 } });
+  });
+
+  test("with no library at all, a budget-only update leaves the generation unchanged", async () => {
+    await rm(join(dir, "library"), { recursive: true });
+    const { engine } = await startEngine();
+    expect(engine.library).toBeNull();
+
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
+
+    expect(engine.library).toBeNull();
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 0, money: { monthlyBudgetMicros: 20_000_000 } } });
+  });
+
+  test("a folder that is only staged (not yet confirmed) does not bump it", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const { engine } = await startEngine();
+
+    await engine.receive(libraryOpen(join(dir, "other")));
+
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 0 } });
+  });
+
+  test("a momentarily unreadable volume that keeps the live library does not bump it either", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    let volumeDown = false;
+    const folderFs = {
+      stat: async (path: string) => {
+        if (volumeDown && path === join(dir, "library")) throw Object.assign(new Error("EIO: i/o error, stat"), { code: "EIO" });
+        return stat(path, { bigint: true });
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    const { engine } = await startEngine({}, { folderFs });
+    volumeDown = true;
+
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
+
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 0 } });
+  });
+});
+
+describe("a confirm for an unstaged folder never surveys it or races paid work", () => {
+  test("a confirm for a folder nothing staged never surveys it and never races a paid command: it refuses synchronously, and the draft stays in the live library", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const other = join(dir, "other");
+    let otherStats = 0;
+    const folderFs = {
+      stat: async (path: string) => {
+        if (path === other) otherStats++;
+        return stat(path, { bigint: true });
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    let releasePrices: () => void = () => {};
+    const pricesHeld = new Promise<void>((r) => (releasePrices = r));
+    const net = network({ prices: async () => (await pricesHeld, OFFLINE), descriptors: [descriptorReply(HARNESS_GOOD)] });
+    const { engine, posted } = await startEngine({}, { folderFs, fetch: net.fetch });
+    await engine.applyControl({ kind: "control", type: "apiKey.set", key: KEY });
+    const oldLibrary = engine.library;
+    if (oldLibrary === null) throw new Error("expected a library");
+
+    // Nothing staged (e.g. an intervening settings.update or an engine restart dropped it).
+    // No sleep needed: #paidCommands++ (engine.ts's avatars.createDraft case)
+    // runs synchronously, before createDraft's first await, so it is already
+    // set by the time this call returns control.
+    const creating = engine.handle(command("avatars.createDraft", { traits: HARNESS_TRAITS, acceptedWorstMicros: HARNESS_NEW_AVATAR.worstMicros }));
+    await engine.receive({ kind: "control", type: "library.confirm", callId: "call-00000009", path: other });
+
+    // Refused for the exact path string, without ever surveying "other": no TOCTOU window opened at all.
+    expect(posted.find((m) => typeof m === "object" && m !== null && "callId" in m && m.callId === "call-00000009")).toMatchObject({
+      kind: "control",
+      type: "reply",
+      callId: "call-00000009",
+      error: { code: "VALIDATION" },
+    });
+    expect(otherStats).toBe(0);
+    expect(engine.library).toBe(oldLibrary);
+
+    releasePrices();
+    const created = ok(await creating);
+    if (created.type !== "avatars.createDraft") throw new Error("wrong type");
+    const draftId = created.result.draft.avatarId;
+    // The paid draft landed in the one library that was ever live.
+    expect(oldLibrary.getAvatar(draftId)).toBeDefined();
+    expect(engine.library?.getAvatar(draftId)).toBeDefined();
+    expect((await snapshotIds(engine)).drafts).toContain(draftId);
+  });
+});
+
+describe("#applySettings' own busy recheck, field ordering and races between two updates", () => {
+  test("settings.get and the snapshot never report the new libraryPath before the switch actually lands", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    let reached: () => void = () => {};
+    const atGate = new Promise<void>((r) => (reached = r));
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const folderFs = {
+      stat: async (path: string) => {
+        if (path === join(dir, "other")) {
+          reached();
+          await gate;
+        }
+        return stat(path, { bigint: true });
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    const { engine } = await startEngine({}, { folderFs });
+
+    const updating = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, libraryPath: join(dir, "other") } });
+    await atGate; // inside folderIdentity's stat for "other", well before #live could switch
+
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { libraryPath: join(dir, "library") } });
+    expect(engine.library?.root).toBe(join(dir, "library"));
+
+    release();
+    await updating;
+
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { libraryPath: join(dir, "other") } });
+    expect(engine.library?.root).toBe(join(dir, "other"));
+  });
+
+  test("paid work that starts while settings.update surveys the new folder makes the switch refused with IN_FLIGHT, rolled back", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    let reached: () => void = () => {};
+    const atGate = new Promise<void>((r) => (reached = r));
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const folderFs = {
+      stat: async (path: string) => {
+        if (path === join(dir, "other")) {
+          reached();
+          await gate;
+        }
+        return stat(path, { bigint: true });
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    const { engine, posted } = await startEngine({}, { folderFs });
+    const budget = engine.budget;
+    if (budget === null) throw new Error("expected a budget");
+
+    const updating = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, libraryPath: join(dir, "other") } });
+    await atGate;
+    // Paid work starts in the window after #applySettings' folderIdentity await, before its busy recheck runs.
+    await budget.tryReserve({ attemptId: "att-0001", jobId: "job-0001", scope: { avatarJobId: "job-0001" }, model: "x-ai/grok-4.3", worstMicros: 0 });
+    release();
+    await updating;
+
+    expect(engine.library?.root).toBe(join(dir, "library"));
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { libraryPath: join(dir, "library") } });
+    // The engine is still visibly busy: a further switch attempt also sees it.
+    await engine.receive(libraryOpen(join(dir, "other"), "call-00000099"));
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000099", error: { code: "IN_FLIGHT" } });
+  });
+
+  test("settings.update with a different libraryPath while already busy still applies the non-library fields, refuses the switch, and settings.changed carries the engine's actual path", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const { engine, events } = await startEngine();
+    const budget = engine.budget;
+    if (budget === null) throw new Error("expected a budget");
+    await budget.tryReserve({ attemptId: "att-0001", jobId: "job-0001", scope: { avatarJobId: "job-0001" }, model: "x-ai/grok-4.3", worstMicros: 0 });
+
+    await engine.receive({
+      kind: "control",
+      type: "settings.update",
+      settings: { ...init().settings, libraryPath: join(dir, "other"), monthlyBudgetMicros: 20_000_000 },
+    });
+
+    expect(engine.library?.root).toBe(join(dir, "library"));
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({
+      result: { libraryPath: join(dir, "library"), monthlyBudgetMicros: 20_000_000 },
+    });
+    expect(events().at(-1)).toMatchObject({
+      type: "settings.changed",
+      payload: { settings: { libraryPath: join(dir, "library"), monthlyBudgetMicros: 20_000_000 } },
+    });
+  });
+
+  // library.confirm never calls #applySettings at all (it is fully
+  // synchronous, staged-only), so the "switch not applied because a later
+  // call raced in" case is impossible to reach through it. It remains
+  // reachable only through two overlapping settings.update control messages
+  // (main's own channel, which has no reply to carry an error on): the later
+  // one must win outright, never leaving a half-applied mix behind.
+  test("a later settings.update racing in during an earlier one's survey wins outright; the earlier one is superseded, not half-applied", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    let reached: () => void = () => {};
+    const atGate = new Promise<void>((r) => (reached = r));
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const folderFs = {
+      stat: async (path: string) => {
+        if (path === join(dir, "other")) {
+          reached();
+          await gate;
+        }
+        return stat(path, { bigint: true });
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    const { engine } = await startEngine({}, { folderFs });
+
+    const first = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, libraryPath: join(dir, "other") } });
+    await atGate; // the first update is paused inside folderIdentity(other)
+    // A second, later update arrives and completes fully before the first resumes.
+    await engine.receive({
+      kind: "control",
+      type: "settings.update",
+      settings: { ...init().settings, libraryPath: join(dir, "library"), monthlyBudgetMicros: 30_000_000 },
+    });
+    release();
+    await first;
+
+    // The second (later) update's intent wins outright; the first's stale
+    // switch to "other" never lands on top of it, half-applied or otherwise.
+    expect(engine.library?.root).toBe(join(dir, "library"));
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({
+      result: { libraryPath: join(dir, "library"), monthlyBudgetMicros: 30_000_000 },
+    });
+  });
+
+  test("a library.confirm landing while an unrelated settings.update is still surveying is not rolled back once that update resumes", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await seedLibrary(join(dir, "other"), "other");
+    const third = await seedLibrary(join(dir, "third"), "third");
+    let reached: () => void = () => {};
+    const atGate = new Promise<void>((r) => (reached = r));
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const folderFs = {
+      stat: async (path: string) => {
+        if (path === join(dir, "other")) {
+          reached();
+          await gate;
+        }
+        return stat(path, { bigint: true });
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    const { engine } = await startEngine({}, { folderFs });
+
+    const updating = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, libraryPath: join(dir, "other") } });
+    await atGate; // the settings.update is paused inside folderIdentity(other), before it can commit
+
+    // An unrelated library.confirm, for a folder staged earlier, lands and
+    // commits synchronously while the update above is still paused.
+    await engine.receive(libraryOpen(join(dir, "third"), "call-00000001"));
+    await engine.receive({ kind: "control", type: "library.confirm", callId: "call-00000002", path: join(dir, "third") });
+    expect(engine.library?.root).toBe(join(dir, "third"));
+
+    release();
+    await updating;
+
+    // The confirm's switch stands: the settings.update, superseded by it
+    // (#pendingLibraryPath, set by confirm too), must not roll it back to
+    // "other" or to the original "library".
+    expect(engine.library?.root).toBe(join(dir, "third"));
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { libraryPath: join(dir, "third") } });
+    expect(await snapshotIds(engine)).toEqual({ avatars: [third.avatarId], drafts: [third.draftId] });
+  });
+});
+
+describe("a genuine settings.update switch blocks new paid work, pick and archive for its whole survey", () => {
+  /**
+   * A folderFs whose stat() of `target`, once armed, reports a different
+   * device id (as a volume remounted at the same path would) and, on its
+   * SECOND call for `target`, pauses at a gate: the first call is
+   * #applySettings' own folderIdentity (which decides a switch is needed);
+   * the second is #open's, inside #openOrNull, after the busy check.
+   */
+  function remountGate(target: string) {
+    let armed = false;
+    let hits = 0;
+    let reached: () => void = () => {};
+    const atGate = new Promise<void>((r) => (reached = r));
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const folderFs = {
+      stat: async (path: string) => {
+        const real = await stat(path, { bigint: true });
+        if (path !== target || !armed) return real;
+        if (++hits === 2) {
+          reached();
+          await gate;
+        }
+        return { isDirectory: () => true, dev: real.dev + 1000n, ino: real.ino };
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    return { folderFs, arm: () => (armed = true), atGate, release };
+  }
+
+  test("createDraft is refused with IN_FLIGHT while the survey runs; the new library never gets an orphaned draft", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const g = remountGate(join(dir, "library"));
+    const { engine } = await startEngine({}, { folderFs: g.folderFs });
+    await engine.applyControl({ kind: "control", type: "apiKey.set", key: KEY });
+    const before = engine.library;
+    if (before === null) throw new Error("expected a library");
+
+    g.arm();
+    const updating = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
+    await g.atGate; // past #applySettings' busy check, inside its survey (#openOrNull)
+
+    const refused = await engine.handle(command("avatars.createDraft", { traits: HARNESS_TRAITS, acceptedWorstMicros: HARNESS_NEW_AVATAR.worstMicros }));
+    expect(refused).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+
+    g.release();
+    await updating;
+    expect(engine.library).not.toBe(before); // the remount is a genuine switch (a new device id)
+    expect(await snapshotIds(engine)).toEqual({ avatars: [saved.avatarId], drafts: [saved.draftId] }); // nothing orphaned
+  });
+
+  test("generateCandidates is refused with IN_FLIGHT while the survey runs", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const g = remountGate(join(dir, "library"));
+    const { engine } = await startEngine({}, { folderFs: g.folderFs });
+    await engine.applyControl({ kind: "control", type: "apiKey.set", key: KEY });
+
+    g.arm();
+    const updating = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
+    await g.atGate;
+
+    const refused = await engine.handle(command("avatars.generateCandidates", { avatarId: saved.draftId, acceptedWorstMicros: 1 }));
+    expect(refused).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+
+    g.release();
+    await updating;
+  });
+
+  test("pick is refused with IN_FLIGHT while the survey runs; retried after the switch it succeeds", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const g = remountGate(join(dir, "library"));
+    const { engine } = await startEngine({}, { folderFs: g.folderFs });
+    const pickable = await engine.library?.addPhoto(saved.draftId, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
+    if (pickable === undefined) throw new Error("expected the engine's library to be open");
+
+    g.arm();
+    const updating = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
+    await g.atGate;
+
+    const refused = await engine.handle(command("avatars.pick", { avatarId: saved.draftId, photoId: pickable.id, name: "Zoe" }));
+    expect(refused).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+
+    g.release();
+    await updating;
+    const retried = ok(await engine.handle(command("avatars.pick", { avatarId: saved.draftId, photoId: pickable.id, name: "Zoe" })));
+    expect(retried).toMatchObject({ result: { avatar: { name: "Zoe" } } });
   });
 });
 

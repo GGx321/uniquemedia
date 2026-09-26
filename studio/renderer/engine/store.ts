@@ -89,6 +89,27 @@ function emptyJob(jobId: string): JobView {
   return { jobId, kind: null, avatarId: null, status: "queued", done: 0, total: 0, result: null, error: null };
 }
 
+/**
+ * Adds `notice` to `notices`, deduped by `noticeId` (an exact repeat delivery
+ * changes nothing) and by `code` (only one of each kind is shown, so e.g. two
+ * `engine-restarted` notices show once). Which one of a same-code pair is
+ * kept is decided by `count` (the larger, i.e. the one that happened more
+ * times this session) and, tied, by the newer `at` — never by which simply
+ * arrived last: a snapshot's own notices and a live `engine.notice` can
+ * interleave out of order (a resync's held events replayed after a fresher
+ * snapshot, say), and a stale duplicate must not make the shown notice regress.
+ */
+function mergeNotice(notices: readonly EngineNotice[], notice: EngineNotice): readonly EngineNotice[] {
+  if (notices.some((n) => n.noticeId === notice.noticeId)) return notices;
+  const bySameCode = notices.findIndex((n) => n.code === notice.code);
+  if (bySameCode === -1) return [...notices, notice];
+  const existing = notices[bySameCode];
+  if (existing === undefined) return [...notices, notice];
+  const isNewer = notice.count > existing.count || (notice.count === existing.count && notice.at >= existing.at);
+  if (!isNewer) return notices;
+  return notices.map((n, i) => (i === bySameCode ? notice : n));
+}
+
 function mergeCandidates(draft: Draft, result: JobResult): Draft {
   if (result.kind !== "avatar.candidates" || result.avatarId !== draft.avatarId) return draft;
   const known = new Set(draft.candidates.map((c) => c.photoId));
@@ -147,8 +168,14 @@ export class EngineStore {
   /** The bootIds the last snapshot refuted: stale whatever the cap evicted, so one batch cannot re-trigger itself. */
   private lastRefuted = new Set<string>();
   private readonly now: () => number;
-  /** The library folder the avatar and draft lists came from (the last snapshot's). */
-  private listsLibraryPath: string | null = null;
+  /**
+   * The library-switch generation the avatar and draft lists came from (the
+   * last snapshot's). Compared instead of the path string: two spellings of
+   * one folder (a Windows network share reached by two names) must not
+   * trigger a resync, and a folder that stops resolving while the path is
+   * unchanged still needs a compare the string alone could miss.
+   */
+  private listsLibraryGeneration: number | null = null;
 
   constructor(
     private readonly client: EngineClient,
@@ -426,7 +453,7 @@ export class EngineStore {
     // The engine that was replaced may still have events in flight.
     if (this.view.bootId !== null && this.view.bootId !== s.bootId) this.markStale(this.view.bootId);
     this.staleBoots.delete(s.bootId);
-    this.listsLibraryPath = s.settings.libraryPath;
+    this.listsLibraryGeneration = s.librarySwitchGeneration;
     this.update({
       phase: "ready",
       failure: null,
@@ -439,7 +466,7 @@ export class EngineStore {
       unreadableAvatars: s.unreadableAvatars,
       jobs: s.jobs.map(jobFromState),
       engineError: null,
-      notices: s.notices,
+      notices: s.notices.reduce(mergeNotice, [] as readonly EngineNotice[]),
     });
   }
 
@@ -499,13 +526,13 @@ export class EngineStore {
         this.patchJob(event.payload.jobId, (job) => (isActiveJob(job) ? { ...job, status: "cancelled" } : job), lastSeq);
         return;
       case "settings.changed": {
-        const { settings } = event.payload;
+        const { settings, librarySwitchGeneration } = event.payload;
         this.update({ settings, lastSeq });
-        // Another library folder: the avatars and drafts listed belong to the
-        // old one (and studio-media:// already serves the new root). Compared
-        // with the lists' own folder, since this window's command answer may
-        // have updated the settings before the event came.
-        if (this.listsLibraryPath !== null && settings.libraryPath !== this.listsLibraryPath) {
+        // A genuine library switch: the avatars and drafts listed belong to
+        // the old folder (and studio-media:// already serves the new root).
+        // Compared by generation, not the path string, since this window's
+        // command answer may have updated the settings before the event came.
+        if (this.listsLibraryGeneration !== null && librarySwitchGeneration !== this.listsLibraryGeneration) {
           void this.resync("snapshot", this.generation, "user");
         }
         return;
@@ -516,12 +543,9 @@ export class EngineStore {
       case "draft.changed":
         this.update({ ...this.draftPatch(event.payload.draft), lastSeq });
         return;
-      case "engine.notice": {
-        const { notice } = event.payload;
-        const known = this.view.notices.some((n) => n.noticeId === notice.noticeId);
-        this.update({ notices: known ? this.view.notices : [...this.view.notices, notice], lastSeq });
+      case "engine.notice":
+        this.update({ notices: mergeNotice(this.view.notices, event.payload.notice), lastSeq });
         return;
-      }
     }
   }
 

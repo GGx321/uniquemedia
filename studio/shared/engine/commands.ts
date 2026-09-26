@@ -64,6 +64,16 @@ export const Snapshot = z.strictObject({
   /** Avatar records (saved or draft) in the library that could not be read into the lists: the UI says how many. */
   unreadableAvatars: Count,
   jobs: z.array(JobState),
+  /**
+   * Bumped by one every time the live library folder actually changes (a
+   * switch confirmed, or the library becoming unavailable). Also on
+   * `settings.changed`, so a window resyncs on a genuine switch even when the
+   * path string alone would not say so (e.g. the same folder reached through
+   * two different spellings is not a switch; a folder that stops resolving
+   * while the path is unchanged still needs a compare that is not fooled by
+   * either case).
+   */
+  librarySwitchGeneration: Count,
   /** Notices still pending, oldest first: a window opened after one was emitted still shows it. */
   notices: z
     .array(EngineNotice)

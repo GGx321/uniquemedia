@@ -133,6 +133,46 @@ test("reconcile answers from its queue, then closes open reserves at their worst
   expect(done).toMatchObject({ status: "done", closedReserves: 0 });
 });
 
+// The real engine emits settings.changed on every settings command
+// (engine.ts's #emitSettings); without it here, generation-based resync
+// (store.ts) is dead in mock/dev mode, since the renderer never learns a
+// library switch happened unless it happens to poll a snapshot.
+test("every settings command emits settings.changed, carrying the current library-switch generation", async () => {
+  const { client, events } = makeMock();
+
+  await unwrap(client.request("settings.setBudget", { monthlyBudgetMicros: 5_000_000 }));
+
+  const changed = events.filter((e) => e.type === "settings.changed");
+  expect(changed).toHaveLength(1);
+  expect(changed[0]).toMatchObject({ type: "settings.changed", payload: { settings: { monthlyBudgetMicros: 5_000_000 }, librarySwitchGeneration: 0 } });
+});
+
+test("settings.setApiKey, clearApiKey, setModels and setConcurrency each emit settings.changed too", async () => {
+  const { client, events } = makeMock();
+
+  await unwrap(client.request("settings.setApiKey", { key: "sk-or-v1-abcdefgh-0000" }));
+  await unwrap(client.request("settings.clearApiKey", {}));
+  await unwrap(client.request("settings.setModels", { imageModel: "bytedance/seedream-5-pro", textModel: "x-ai/grok-5" }));
+  await unwrap(client.request("settings.setConcurrency", { network: 3 }));
+
+  expect(events.filter((e) => e.type === "settings.changed")).toHaveLength(4);
+});
+
+test("a library switch bumps the generation the settings.changed event carries; the same path does not", async () => {
+  const { engine, client, events } = makeMock();
+  const other = "/Users/studio/Other/library";
+
+  await unwrap(client.request("settings.setLibraryPath", { path: other }));
+  await unwrap(client.request("settings.setLibraryPath", { path: other }));
+
+  const changed = events.filter((e) => e.type === "settings.changed");
+  expect(changed).toHaveLength(2);
+  expect(changed[0]).toMatchObject({ payload: { settings: { libraryPath: other }, librarySwitchGeneration: 1 } });
+  expect(changed[1]).toMatchObject({ payload: { settings: { libraryPath: other }, librarySwitchGeneration: 1 } });
+  expect((await unwrap(client.request("engine.snapshot", {}))).librarySwitchGeneration).toBe(1);
+  expect(engine.currentBootId).toBeTruthy(); // sanity: this mock did not restart
+});
+
 // ---------- money stops the UI must show (review of T6a part 1) ----------
 
 test("a mock whose ledger could not be read reports no amounts and refuses paid commands and reconcile with the cause", async () => {

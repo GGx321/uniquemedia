@@ -7,6 +7,7 @@ import {
   type CommandType,
   type Draft,
   type EngineError,
+  type EngineNotice,
   type Estimate,
   EventLog,
   type EventMessage,
@@ -197,6 +198,8 @@ export class MockEngine implements EngineBridge {
   private readonly forced = new Map<CommandType, EngineError[]>();
   private readonly reconcileQueue: ReconcileResult[] = [];
   private ageRejectionsNextJob = 0;
+  /** Bumped whenever settings.setLibraryPath actually changes the folder, mirroring the real engine's Snapshot field. */
+  private librarySwitchGeneration = 0;
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -313,6 +316,11 @@ export class MockEngine implements EngineBridge {
     this.emitMoney();
   }
 
+  /** Emits an `engine.notice` (a restart, a settings reset) for tests of the renderer's notice handling. */
+  emitNotice(notice: EngineNotice): void {
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "engine.notice", payload: { notice } });
+  }
+
   get currentBootId(): string {
     return this.log.bootId;
   }
@@ -330,26 +338,33 @@ export class MockEngine implements EngineBridge {
         if (!this.encryptionAvailable) return this.fail(c, { code: "ENCRYPTION_UNAVAILABLE" });
         const apiKey: ApiKeyStatus = { stored: true, last4: c.payload.key.slice(-4), encryptionAvailable: true, rejected: false };
         this.settings = { ...this.settings, apiKey };
+        this.emitSettingsChanged();
         return this.ok(c, apiKey);
       }
       case "settings.clearApiKey": {
         const apiKey: ApiKeyStatus = { stored: false, last4: null, encryptionAvailable: this.encryptionAvailable, rejected: false };
         this.settings = { ...this.settings, apiKey };
+        this.emitSettingsChanged();
         return this.ok(c, apiKey);
       }
       case "settings.setBudget":
         this.settings = { ...this.settings, monthlyBudgetMicros: c.payload.monthlyBudgetMicros };
         this.emitMoney();
+        this.emitSettingsChanged();
         return this.ok(c, this.settings);
       case "settings.setLibraryPath":
         if (this.running().length > 0) return this.fail(c, { code: "IN_FLIGHT" });
+        if (c.payload.path !== this.settings.libraryPath) this.librarySwitchGeneration += 1;
         this.settings = { ...this.settings, libraryPath: c.payload.path };
+        this.emitSettingsChanged();
         return this.ok(c, this.settings);
       case "settings.setModels":
         this.settings = { ...this.settings, imageModel: c.payload.imageModel, textModel: c.payload.textModel };
+        this.emitSettingsChanged();
         return this.ok(c, this.settings);
       case "settings.setConcurrency":
         this.settings = { ...this.settings, concurrency: { network: c.payload.network } };
+        this.emitSettingsChanged();
         return this.ok(c, this.settings);
       case "money.status":
         return this.ok(c, this.moneyStatus());
@@ -576,6 +591,7 @@ export class MockEngine implements EngineBridge {
       drafts: this.drafts,
       unreadableAvatars: 0,
       jobs: this.jobs.map((j) => this.jobState(j)),
+      librarySwitchGeneration: this.librarySwitchGeneration,
       notices: [],
     };
   }
@@ -650,6 +666,17 @@ export class MockEngine implements EngineBridge {
 
   private emitMoney(): void {
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "money.changed", payload: { status: this.moneyStatus() } });
+  }
+
+  /** Mirrors the real engine's #emitSettings: every settings command emits this, so generation-based resync (store.ts) is exercised in mock/dev mode too. */
+  private emitSettingsChanged(): void {
+    this.emit({
+      v: PROTOCOL_VERSION,
+      id: this.nextId("evt"),
+      kind: "event",
+      type: "settings.changed",
+      payload: { settings: this.settings, librarySwitchGeneration: this.librarySwitchGeneration },
+    });
   }
 
   private emitReconcileNeeded(): void {

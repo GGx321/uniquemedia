@@ -62,12 +62,30 @@ export type HostControl = z.infer<typeof HostControl>;
 export const HostCall = z.discriminatedUnion("type", [
   /**
    * Opens (creating on first use) the library at a folder the user picked in
-   * main's dialog, and stages it. Only the engine touches the library; main
-   * persists the new path after an ok reply, and the engine switches to the
-   * staged folder only when a `settings.update` names it. A folder main gave
-   * up on (its deadline passed) is therefore never taken.
+   * main's dialog, and stages it. Only the engine touches the library; the
+   * engine switches to the staged folder only on a `library.confirm` that
+   * names it. A folder main gave up on (its deadline passed, so it never
+   * sent a confirm) is therefore never taken.
    */
   z.strictObject({ kind: z.literal("control"), type: z.literal("library.open"), callId: Id, path: AbsolutePath }),
+  /**
+   * Commits the switch to a folder staged by `library.open` for this exact
+   * path string: a folder never staged (or staged under another spelling of
+   * the same string) is refused with VALIDATION rather than surveyed fresh —
+   * opening it here, after the busy check below, would reopen the very
+   * TOCTOU window this call exists to close (a paid command could start
+   * during that survey and write into the old library while this call
+   * answers ok). Main must send `library.open` again first.
+   *
+   * Already the live (and saved) folder is a harmless no-op, checked by the
+   * same path string, without staging or a survey. Otherwise, refused with
+   * IN_FLIGHT, the live library unchanged, while any avatar job or paid
+   * command writes into it, or a pick or archive is in flight; main then
+   * must not persist the new path. Once staged and not busy, the switch
+   * itself has no await in it: main persists the path and pushes the rest of
+   * the settings (`settings.update`) only after an ok reply.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("library.confirm"), callId: Id, path: AbsolutePath }),
 ]);
 export type HostCall = z.infer<typeof HostCall>;
 

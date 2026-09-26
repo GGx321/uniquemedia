@@ -502,3 +502,28 @@ describe("calls to the engine (library.open)", () => {
     expect(await host.openLibrary("/Users/me/Studio")).toEqual({ code: "INTERNAL", detail: "the engine is not running" });
   });
 });
+
+describe("calls to the engine (library.confirm)", () => {
+  test("posts the call with an id and resolves with the engine's reply", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.confirmLibrary("/Users/me/Studio");
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    expect(call).toMatchObject({ kind: "control", type: "library.confirm", path: "/Users/me/Studio" });
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId });
+    expect(await pending).toBeNull();
+  });
+
+  test("an IN_FLIGHT reply (a job or a pick/archive is in flight) is passed on", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.confirmLibrary("/Users/me/Studio");
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, error: { code: "IN_FLIGHT", detail: "paid work is in flight" } });
+    expect(await pending).toEqual({ code: "IN_FLIGHT", detail: "paid work is in flight" });
+  });
+});

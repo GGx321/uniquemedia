@@ -10,6 +10,7 @@ import type { EngineInit } from "./control";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta } from "./library/testing/helpers";
 import { imageBody } from "./openrouter/testing/fakes";
+import { RAW_KEEP_BYTES_IMAGE } from "./rawStore";
 import {
   ageReply,
   AGE_WORST,
@@ -273,6 +274,30 @@ describe("avatars.generateCandidates", () => {
     expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000002" });
   });
 
+  test("library.confirm is refused with IN_FLIGHT while a job runs, and allowed once it ended", async () => {
+    const { draftId } = await seedDraft(dir());
+    const { engine, net, posted, events } = await startEngine(dir(), { net: network({ image: () => ({ hang: true }) }) });
+    await mkdir(join(dir(), "other"));
+    const confirm = (callId: string) => ({ kind: "control", type: "library.confirm", callId, path: join(dir(), "other") });
+    // Staged first, while nothing is busy yet: confirm itself has no await
+    // left to race, so what matters here is that "other" is staged.
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-open-0001", path: join(dir(), "other") });
+
+    const jobId = jobIdOf(await engine.handle(generate(draftId)));
+    await until(() => net.imageCalls().length === 4, "four image requests");
+    await engine.receive(confirm("call-00000001"));
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000001", error: { code: "IN_FLIGHT" } });
+    expect(engine.library?.root).toBe(join(dir(), "library"));
+
+    ok(await engine.handle(command("avatars.cancel", { jobId })));
+    await jobEnd(events, jobId);
+    // An IN_FLIGHT refusal drops the staged entry (main always opens again before it retries confirm).
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-open-0002", path: join(dir(), "other") });
+    await engine.receive(confirm("call-00000002"));
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000002" });
+    expect(engine.library?.root).toBe(join(dir(), "other"));
+  });
+
   test("a 401 fails the job with AUTH_INVALID and marks the key rejected; no slot starts after it", async () => {
     const { draftId } = await seedDraft(dir());
     const net = network({ image: () => ({ status: 401, body: { error: { message: "No auth credentials found" } } }) });
@@ -302,6 +327,23 @@ describe("avatars.generateCandidates", () => {
     const text = new TextDecoder().decode(await fileBytes(join(dir(), "userData", "raw", saved[0] ?? "")));
     expect(text).toContain(`"sha256":"${sha256(gif)}"`);
     expect(text).not.toContain(Buffer.from(gif).toString("base64").slice(0, 24));
+  });
+
+  test("an unusable image body with array-of-number image data (redaction only catches strings) is capped tight on disk: the image attempt's own small keepBytes, not the chat default", async () => {
+    const { draftId } = await seedDraft(dir());
+    const bytes = Array.from({ length: 50_000 }, (_, i) => i % 256);
+    const net = network({ image: () => ({ status: 200, body: JSON.stringify({ data: [{ bytes }] }) }) });
+    const { engine, events } = await startEngine(dir(), { net, init: sequentialInit() });
+
+    const end = await jobEnd(events, jobIdOf(await engine.handle(generate(draftId))));
+
+    expect(end).toMatchObject({ type: "job.failed", payload: { error: { code: "INTERNAL" } } });
+    const saved = await filesUnder(join(dir(), "userData", "raw"));
+    expect(saved).toHaveLength(1);
+    const text = new TextDecoder().decode(await fileBytes(join(dir(), "userData", "raw", saved[0] ?? "")));
+    // Far below the chat/descriptor default (RAW_PREFIX_BYTES + 4096): the
+    // image attempt's own small cap applied, not the larger default.
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThan(RAW_KEEP_BYTES_IMAGE + 500);
   });
 
   test("every image refused by moderation: the job fails with MODERATION_REFUSED and nothing is spent", async () => {

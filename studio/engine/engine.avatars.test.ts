@@ -9,7 +9,7 @@ import { Engine, type EngineDeps } from "./engine";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { Ledger, type LedgerLine } from "./money/ledger";
-import { rawFileName } from "./rawStore";
+import { RAW_KEEP_BYTES, RAW_KEEP_BYTES_IMAGE, rawFileName } from "./rawStore";
 import { chatBody, fakeFetch, readLedgerLines, withoutAt, type FetchCall, type Reply, type Step } from "./openrouter/testing/fakes";
 
 // The avatar commands of T6a part 2a against a real ledger and library in a
@@ -481,6 +481,27 @@ describe("avatars.createDraft", () => {
     expect(ledgerLines().at(-1)).toMatchObject({ type: "settle", costMicros: ATTEMPT_WORST, estimated: true });
   });
 
+  test("an oversized paid descriptor answer keeps far more on disk than an image attempt would: the chat default cap, not the image one", async () => {
+    // Ordinary words with spaces, not a run of one letter: a long run of
+    // base64-alphabet characters would itself be scrubbed as image-shaped
+    // data (chat.ts's scrubRaw), which is not what this test is about.
+    const phrase = "the descriptor answer keeps going on and on without ever closing its quote. ";
+    const leaky = `oops ${phrase.repeat(Math.ceil((RAW_KEEP_BYTES + 500) / phrase.length))} not json`;
+    const { engine } = await startEngine({ net: network({ chat: [{ status: 200, body: leaky }] }) });
+
+    const refused = failed(await engine.handle(createDraft()));
+
+    expect(refused.error.code).toBe("INTERNAL");
+    const raw = join(dir, "userData", "raw");
+    const files = await readdir(raw);
+    expect(files).toHaveLength(1);
+    const text = await readFile(join(raw, files[0] ?? ""), "utf8");
+    // The chat/descriptor default (RAW_PREFIX_BYTES + 4096) fits the client's
+    // own 64 KiB prefix and note whole; a flat image-sized cap would not.
+    expect(Buffer.byteLength(text, "utf8")).toBeGreaterThan(RAW_KEEP_BYTES_IMAGE * 4);
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThan(RAW_KEEP_BYTES + 500);
+  });
+
   test("a second createDraft while one runs is refused with IN_FLIGHT: one paid descriptor, one draft", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -520,6 +541,35 @@ describe("avatars.createDraft", () => {
     ok(await creating);
     await engine.receive(open("call-00000002"));
     expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000002" });
+  });
+
+  test("library.confirm is refused with IN_FLIGHT while createDraft runs, and allowed once it ended", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { engine, posted } = await startEngine({
+      net: network({ prices: async () => (await held, OFFLINE), chat: [descriptorReply(GOOD)] }),
+    });
+    await mkdir(join(dir, "other"));
+    const confirm = (callId: string) => ({ kind: "control", type: "library.confirm", callId, path: join(dir, "other") });
+    // Staged first, while nothing is busy yet: confirm itself has no await
+    // left to race, so what matters here is that "other" is staged.
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-open-0001", path: join(dir, "other") });
+
+    // No sleep needed: #paidCommands++ (engine.ts's avatars.createDraft case)
+    // runs synchronously, before createDraft's first await, so it is already
+    // set by the time this call returns control.
+    const creating = engine.handle(createDraft());
+    await engine.receive(confirm("call-00000001"));
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-00000001", error: { code: "IN_FLIGHT" } });
+    expect(engine.library?.root).toBe(join(dir, "library"));
+
+    release();
+    ok(await creating);
+    // An IN_FLIGHT refusal drops the staged entry (main always opens again before it retries confirm).
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-open-0002", path: join(dir, "other") });
+    await engine.receive(confirm("call-00000002"));
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000002" });
+    expect(engine.library?.root).toBe(join(dir, "other"));
   });
 
   test("a library write that fails after the paid call fails the command; the money stays settled", async () => {

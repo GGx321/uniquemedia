@@ -11,6 +11,14 @@ export const MAX_MESSAGE_CHARS = 500;
 export const MAX_BODY_BYTES = 32 * 1024 * 1024;
 /** How much of an over-cap body is kept for `saveRaw`. */
 export const RAW_PREFIX_BYTES = 64 * 1024;
+/**
+ * An image attempt's own cap on a saved raw body (rawStore.ts's default is
+ * far larger, sized for chat/descriptor/age-check text worth keeping long).
+ * Defined here, a sibling of image.ts, rather than in rawStore.ts: the
+ * client (this folder) may only import siblings, the money core,
+ * library/media and node:* (runtime.test.ts), never a module outside it.
+ */
+export const RAW_KEEP_BYTES_IMAGE = 4_096;
 /** Read past the kept prefix, so a secret straddling the cut is redacted whole (keys are ~75 bytes). */
 const SECRET_OVERLAP_BYTES = 256;
 
@@ -19,7 +27,8 @@ export interface ClientContext {
   key: string;
   base: string;
   fetch: OpenRouterFetch;
-  saveRaw: (attemptId: string, text: string) => Promise<void>;
+  /** `keepBytes` is the attempt's own on-disk cap (`AttemptSpec.rawKeepBytes`); omitted, the store's default applies. */
+  saveRaw: (attemptId: string, text: string, keepBytes?: number) => Promise<void>;
   log: (line: string) => void;
   timeoutMs: number;
   maxBodyBytes: number;
@@ -54,6 +63,8 @@ export interface AttemptSpec<T> {
   interpret: (body: unknown) => Interpretation<T>;
   /** Applied to an unusable paid body before it is saved, after the key is redacted (image data must not be kept). */
   scrubRaw?: (text: string) => string;
+  /** This attempt's own cap on a saved raw body (rawStore's `keepBytes`); image attempts pass a small one. Omitted, the store's default (sized for chat/descriptor/age-check bodies) applies. */
+  rawKeepBytes?: number;
 }
 
 export type AttemptResult<T> =
@@ -275,7 +286,7 @@ async function endPaid<T>(
         ? `${scrub(ctx.redactHead(text, exchange.keptChars))}\n[truncated: the body exceeded ${ctx.maxBodyBytes} bytes; only its start is kept]`
         : scrub(ctx.redact(text));
       try {
-        await ctx.saveRaw(spec.attemptId, raw);
+        await ctx.saveRaw(spec.attemptId, raw, spec.rawKeepBytes);
         rawSaved = true;
       } catch (err) {
         saveError = `; the raw body could not be saved: ${describe(err)}`;

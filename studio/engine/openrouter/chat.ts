@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { jpegDataUrl } from "./image";
+import { omitByPattern } from "./redact";
 import { runPaidAttempt, type ClientContext, type Interpretation } from "./transport";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage, ChatParams, ChatResult } from "./types";
@@ -117,6 +118,11 @@ export async function chat(ctx: ClientContext, params: ChatParams): Promise<Chat
         : {}),
     }),
     interpret: interpretChat,
+    // textModel is user-configurable; a model that answers with an image
+    // (invariant 8) must not leave it whole on disk. Pattern rules only,
+    // never the JSON path's ">256-char string" rule: the answer text itself
+    // stays whole, which is what this raw body exists to diagnose.
+    scrubRaw: omitByPattern,
   });
   if (result.status !== "ok") return result;
   const { value, ...paid } = result;

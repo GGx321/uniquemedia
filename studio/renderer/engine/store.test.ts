@@ -189,6 +189,85 @@ test("money.reconcileNeeded refreshes the money status, so the reserve count is 
   expect(count(engine.calls, "money.status")).toBe(before + 1);
 });
 
+test("two engine notices with the same code show once, the latest replacing the earlier", async () => {
+  const { engine, store } = await started();
+  engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 });
+  engine.emitNotice({ noticeId: "notice-0002", code: "engine-restarted", at: "2026-09-24T10:05:00.000Z", count: 2 });
+
+  expect(store.getView().notices).toHaveLength(1);
+  expect(store.getView().notices[0]).toMatchObject({ noticeId: "notice-0002", count: 2 });
+});
+
+test("notices of different codes are kept apart", async () => {
+  const { engine, store } = await started();
+  engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 });
+  engine.emitNotice({ noticeId: "notice-0002", code: "settings-reset", at: "2026-09-24T10:05:00.000Z", count: 1 });
+
+  expect(store.getView().notices.map((n) => n.code)).toEqual(["engine-restarted", "settings-reset"]);
+});
+
+test("a repeated engine.notice delivery (same noticeId) is not duplicated", async () => {
+  const { engine, store } = await started();
+  const notice = { noticeId: "notice-0001", code: "engine-restarted" as const, at: "2026-09-24T10:00:00.000Z", count: 1 };
+  engine.emitNotice(notice);
+  engine.emitNotice(notice);
+
+  expect(store.getView().notices).toHaveLength(1);
+});
+
+// Dedupe by code used to keep whichever arrived last, trusting delivery
+// order; it must instead keep the larger `count` (or, tied, the newer
+// `at`), so an out-of-order delivery cannot make a notice regress.
+test("a notice with a smaller count arriving after one with a larger count does not replace it", async () => {
+  const { engine, store } = await started();
+  engine.emitNotice({ noticeId: "notice-0002", code: "engine-restarted", at: "2026-09-24T10:05:00.000Z", count: 2 });
+  engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 });
+
+  expect(store.getView().notices).toHaveLength(1);
+  expect(store.getView().notices[0]).toMatchObject({ noticeId: "notice-0002", count: 2 });
+});
+
+test("when two notices of the same code tie on count, the one with the newer `at` wins", async () => {
+  const { engine, store } = await started();
+  engine.emitNotice({ noticeId: "notice-0001", code: "settings-reset", at: "2026-09-24T10:00:00.000Z", count: 1 });
+  engine.emitNotice({ noticeId: "notice-0002", code: "settings-reset", at: "2026-09-24T09:00:00.000Z", count: 1 });
+
+  expect(store.getView().notices).toHaveLength(1);
+  expect(store.getView().notices[0]).toMatchObject({ noticeId: "notice-0001", count: 1 });
+});
+
+// The pair above alone cannot tell "the newer `at` wins" apart from "the
+// first one to arrive wins": there, the newer-`at` notice also happens to
+// arrive first. Reversing the arrival order (the newer-`at` one arrives
+// second) is what actually pins the rule down to `at`, not arrival order.
+test("...and the newer `at` still wins when it is the one that arrives second", async () => {
+  const { engine, store } = await started();
+  engine.emitNotice({ noticeId: "notice-0001", code: "settings-reset", at: "2026-09-24T09:00:00.000Z", count: 1 });
+  engine.emitNotice({ noticeId: "notice-0002", code: "settings-reset", at: "2026-09-24T10:00:00.000Z", count: 1 });
+
+  expect(store.getView().notices).toHaveLength(1);
+  expect(store.getView().notices[0]).toMatchObject({ noticeId: "notice-0002", count: 1 });
+});
+
+// In the tests above `count` and `at` always point the same way, so they
+// cannot tell "count decides, `at` only breaks a tie" from the reverse.
+test("a larger count wins over a newer `at`, whichever arrives first", async () => {
+  const larger = { code: "engine-restarted" as const, at: "2026-09-24T09:00:00.000Z", count: 3 };
+  const newer = { code: "engine-restarted" as const, at: "2026-09-24T10:00:00.000Z", count: 2 };
+
+  const first = await started();
+  first.engine.emitNotice({ noticeId: "notice-0001", ...larger });
+  first.engine.emitNotice({ noticeId: "notice-0002", ...newer });
+  expect(first.store.getView().notices).toHaveLength(1);
+  expect(first.store.getView().notices[0]).toMatchObject({ noticeId: "notice-0001", count: 3 });
+
+  const second = await started();
+  second.engine.emitNotice({ noticeId: "notice-0002", ...newer });
+  second.engine.emitNotice({ noticeId: "notice-0001", ...larger });
+  expect(second.store.getView().notices).toHaveLength(1);
+  expect(second.store.getView().notices[0]).toMatchObject({ noticeId: "notice-0001", count: 3 });
+});
+
 test("a gap that never heals stops after a few resyncs and goes offline", async () => {
   const source = new MockEngine({ scheduler: new ManualScheduler() });
   const snap = await mockEngineClient(source).request("engine.snapshot", {});

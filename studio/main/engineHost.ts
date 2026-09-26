@@ -179,6 +179,18 @@ export class EngineHost<Transfer> {
     return this.#call(callId, { kind: "control", type: "library.open", callId, path });
   }
 
+  /**
+   * Asks the engine to commit the switch to the library at `path`, staged
+   * earlier by `openLibrary`. Null when it did; otherwise its error (e.g.
+   * IN_FLIGHT while paid work or a pick/archive holds the live library) or
+   * INTERNAL when it did not answer in time or is not running. Only after a
+   * null reply may main persist the new path.
+   */
+  confirmLibrary(path: string): Promise<EngineError | null> {
+    const callId = (this.#deps.newId ?? randomUUID)();
+    return this.#call(callId, { kind: "control", type: "library.confirm", callId, path });
+  }
+
   #call(callId: string, call: HostCall): Promise<EngineError | null> {
     return new Promise((resolve) => {
       const timeoutMs = this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;

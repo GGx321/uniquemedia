@@ -23,7 +23,7 @@ import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "
 import { handleMediaRequest, MEDIA_SCHEME } from "./mediaProtocol";
 import { HostNotices } from "./notices";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
-import { handleSettingsCommand } from "./settingsFlow";
+import { handleSettingsCommand, reconcileLibraryPath } from "./settingsFlow";
 import { defaultLibraryPath, SettingsStore } from "./settingsStore";
 
 // A production build keeps no debugging door open, however it is launched:
@@ -179,7 +179,13 @@ async function startStudio(): Promise<void> {
       notices: [...notices.all],
     }),
     apiKey: () => keys.read(),
-    onEvent: broadcast,
+    onEvent: (event) => {
+      broadcast(event);
+      // The engine is the source of truth about the live library: a confirm
+      // main gave up on (engineHost.ts's 30 s deadline) can still land after
+      // that, and settings.json must not keep naming the old folder then.
+      if (event.type === "settings.changed") void reconcileLibraryPath(event.payload.settings, { settings, engine, newId: randomUUID });
+    },
     // The restarted engine gets the notice in its init. A final exit is not
     // announced: every request then answers "the engine is not running".
     onExit: (error, restarting) => {

@@ -103,18 +103,31 @@ test("a settings.changed that names another library folder refetches the snapsho
   if (current === null) throw new Error("expected settings");
   h.setSnapshot({ avatars: [SAVED], drafts: [], settings: { ...current, libraryPath: "/Users/studio/Other/library" } });
 
-  await h.emit({ type: "settings.changed", payload: { settings: { ...current, libraryPath: "/Users/studio/Other/library" } } });
+  await h.emit({ type: "settings.changed", payload: { settings: { ...current, libraryPath: "/Users/studio/Other/library" }, librarySwitchGeneration: 1 } });
   await flush();
 
   expect(h.snapshots()).toBe(2);
   expect(h.store.getView()).toMatchObject({ avatars: [SAVED], drafts: [] });
 });
 
-test("a settings.changed on the same library folder refetches nothing", async () => {
+test("a settings.changed with the same library-switch generation refetches nothing, even if the path string happens to differ", async () => {
   const h = await host();
   const current = h.store.getView().settings;
   if (current === null) throw new Error("expected settings");
-  await h.emit({ type: "settings.changed", payload: { settings: { ...current, monthlyBudgetMicros: 20_000_000 } } });
+  await h.emit({ type: "settings.changed", payload: { settings: { ...current, monthlyBudgetMicros: 20_000_000 }, librarySwitchGeneration: 0 } });
+  await flush();
+  expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("a settings.changed whose path string differs but the generation is unchanged (the same folder, another spelling) refetches nothing", async () => {
+  const h = await host();
+  const current = h.store.getView().settings;
+  if (current === null) throw new Error("expected settings");
+  // The engine did not consider this a switch (same folder identity, a
+  // different spelling reached e.g. through a Windows network share): the
+  // generation says so even though the path string differs.
+  await h.emit({ type: "settings.changed", payload: { settings: { ...current, libraryPath: `${current.libraryPath}/` }, librarySwitchGeneration: 0 } });
   await flush();
   expect(h.snapshots()).toBe(1);
   h.stop();
@@ -128,7 +141,7 @@ test("a library folder changed by this window's own command still refetches when
   h.setSnapshot({ drafts: [], settings: moved });
   // The command's answer lands first and updates the settings, then the event arrives.
   h.store.setSettings(moved);
-  await h.emit({ type: "settings.changed", payload: { settings: moved } });
+  await h.emit({ type: "settings.changed", payload: { settings: moved, librarySwitchGeneration: 1 } });
   await flush();
 
   expect(h.snapshots()).toBe(2);
@@ -139,6 +152,17 @@ test("a library folder changed by this window's own command still refetches when
 test("the snapshot brings the pending notices, and they are not an engine error", async () => {
   const h = await host({ notices: [RESET] });
   expect(h.store.getView()).toMatchObject({ phase: "ready", notices: [RESET], engineError: null });
+  h.stop();
+});
+
+// The snapshot's own notices (not just ones added later by engine.notice)
+// must go through the same code-dedupe merge.
+test("the snapshot's own notices are deduped by code too: the larger count wins", async () => {
+  const smaller: EngineNotice = { noticeId: "notice-0003", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 };
+  const larger: EngineNotice = { noticeId: "notice-0004", code: "engine-restarted", at: "2026-09-24T10:05:00.000Z", count: 2 };
+  const h = await host({ notices: [smaller, larger] });
+
+  expect(h.store.getView().notices).toEqual([larger]);
   h.stop();
 });
 
@@ -159,7 +183,7 @@ test("settings.changed replaces the settings, the key status included", async ()
   if (current === null) throw new Error("expected settings");
   const next = { ...current, apiKey: { ...current.apiKey, rejected: true }, monthlyBudgetMicros: 25_000_000 };
 
-  await h.emit({ type: "settings.changed", payload: { settings: next } });
+  await h.emit({ type: "settings.changed", payload: { settings: next, librarySwitchGeneration: 0 } });
 
   expect(h.store.getView().settings).toEqual(next);
   expect(h.store.getView().lastSeq).toBe(1);

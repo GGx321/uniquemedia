@@ -190,6 +190,35 @@ test.each([
   expect(money.lines()[1]).toMatchObject({ type: "settle" });
 });
 
+// textModel is user-configurable; a model that answers with an image (a data
+// URL, or an image squeezed through as a long base64 run) would otherwise
+// leave that data on disk with no age check ever having seen it (invariant
+// 8). Chat gets only the pattern rules (redact.ts's omitByPattern), never
+// the image path's ">256-char string" rule, so an ordinary long answer is
+// still kept whole for diagnosing a bad LLM answer.
+test("an unusable chat body's image-shaped data (a data URL) is scrubbed; ordinary long text next to it is kept whole", async () => {
+  const longText = "the provider said: something went wrong, please try again in a few minutes. ".repeat(10);
+  const dataUrl = `data:image/png;base64,${b64(PNG)}`;
+  const body = { usage: { cost: 0.002 }, error_note: longText, leaked_image: dataUrl }; // no choices -> UNUSABLE_PAID_RESPONSE
+  const { result, raws } = await run([{ status: 200, body }]);
+
+  expect(result).toMatchObject({ status: "error", kind: "UNUSABLE_PAID_RESPONSE", fatal: true, rawSaved: true });
+  expect(raws[0]?.text).not.toContain(b64(PNG));
+  expect(raws[0]?.text).toContain("image data omitted");
+  // Unlike image.ts's scrub, chat text over 256 chars is not summarised away.
+  expect(raws[0]?.text).toContain(longText);
+});
+
+test("a long base64 run (128+ chars) with no data-URL prefix is scrubbed too", async () => {
+  const run128 = "A".repeat(200);
+  const body = { usage: { cost: 0.002 }, blob: run128 };
+  const { result, raws } = await run([{ status: 200, body }]);
+
+  expect(result).toMatchObject({ status: "error", kind: "UNUSABLE_PAID_RESPONSE", fatal: true, rawSaved: true });
+  expect(raws[0]?.text).not.toContain(run128);
+  expect(raws[0]?.text).toContain("image data omitted");
+});
+
 test("uses the same transport retries as images", async () => {
   const { result, calls } = await run([{ status: 429, headers: { "Retry-After": "1" } }, { status: 200, body: chatBody(ANSWER, { cost: 0.001 }) }]);
 

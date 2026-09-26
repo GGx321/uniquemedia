@@ -227,8 +227,34 @@ export class Engine {
   #apiKey: string | null = null;
   /** The library of the saved settings; null when it could not be opened. */
   #live: OpenedLibrary | null = null;
-  /** Folders main had the engine open that no settings update has confirmed yet, by folder identity. */
-  #staged = new Map<string, Library>();
+  /** Bumped by one every time `#live`'s folder identity actually changes (invariant: every open window resyncs after a switch). */
+  #librarySwitchGeneration = 0;
+  /**
+   * Folders main had the engine open that no confirm has switched to yet, by
+   * the exact path string `library.open` staged them under (never a
+   * resolved identity: `library.confirm` looks one up by that same string,
+   * with no survey of its own — see `#answer`'s `library.confirm` case).
+   */
+  #staged = new Map<string, OpenedLibrary>();
+  /**
+   * The `libraryPath` of the most recent `#applySettings` call, whether or
+   * not it has committed yet. Not `#settings.libraryPath`, which only moves
+   * once a switch actually lands: this field alone detects a later
+   * `settings.update` racing in during an earlier one's awaits, so the
+   * earlier one's stale result is discarded instead of half-applied.
+   */
+  #pendingLibraryPath: string;
+  /**
+   * Non-zero while `#applySettings` surveys a folder it is not yet sure is
+   * a genuine switch (between its own busy check and the switch actually
+   * landing): `#liveLibrary()` refuses IN_FLIGHT then, so a paid command,
+   * pick or archive starting during the survey cannot write through the
+   * library instance that is about to be replaced. Not part of `#busy()`
+   * itself: `#applySettings` also reads `#busy()` to detect new work that
+   * started during that same survey, and folding this counter into it would
+   * make that recheck see its own switch as "busy" and refuse itself.
+   */
+  #switching = 0;
   /** Opens in progress, by folder identity: two surveys of one folder would race their quarantine moves. */
   readonly #opening = new Map<string, Promise<Library>>();
   /** Set by a 401 with the current key; a new key clears it. */
@@ -260,6 +286,7 @@ export class Engine {
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#events = new EventLog(EVENT_LOG_CAPACITY, deps.bootId);
     this.#settings = init.settings;
+    this.#pendingLibraryPath = init.settings.libraryPath;
     this.#encryptionAvailable = init.encryptionAvailable;
     this.#openRouterBaseUrl = resolveOpenRouterBaseUrl(init.openRouterBaseUrl, STUDIO_E2E);
     this.#money = money;
@@ -366,23 +393,78 @@ export class Engine {
       case "library.open": {
         const identity = await folderIdentity(call.path, this.#folderFs);
         // The live library's folder, however it is spelled: opening it again
-        // would survey (and quarantine) it under the writes of the one in use.
-        if (identity !== null && identity === this.#live?.identity) return { kind: "control", type: "reply", callId: call.callId };
-        // Paid requests in flight, and paid commands between their steps, write where the live library is.
-        if (this.#paidCommands > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0)) {
-          const detail = "paid requests are in flight; change the library folder when they end";
-          return { kind: "control", type: "reply", callId: call.callId, error: { code: "IN_FLIGHT", detail } };
+        // would survey (and quarantine) it under the writes of the one in
+        // use. Staged under this spelling too, not just answered ok: a
+        // later confirm of this exact string (main's normal open-then-
+        // confirm sequence) must find something to adopt, not VALIDATION
+        // forever — adopting #live as-is, no re-survey, is always correct
+        // here, since it is already the live instance.
+        if (identity !== null && identity === this.#live?.identity) {
+          if (this.#live !== null) this.#staged.set(call.path, this.#live);
+          return { kind: "control", type: "reply", callId: call.callId };
         }
+        if (this.#busy()) return { kind: "control", type: "reply", callId: call.callId, error: this.#inFlightRefusal() };
         try {
           const opened = await this.#open(call.path, identity);
-          this.#staged.set(opened.identity, opened.library);
+          // Staged under the exact string main sent, not the resolved
+          // identity: `library.confirm` looks it up the same way, with no
+          // survey of its own (the TOCTOU this closes; see its case below).
+          this.#staged.set(call.path, opened);
           return { kind: "control", type: "reply", callId: call.callId };
         } catch (error) {
           const code = error instanceof LibraryError ? "VALIDATION" : "INTERNAL";
           return { kind: "control", type: "reply", callId: call.callId, error: { code, detail: messageOf(error, "the library could not be opened") } };
         }
       }
+      case "library.confirm": {
+        // Already the live (and saved) folder: a harmless no-op, by the
+        // exact path string, with no staging lookup and no survey.
+        if (call.path === this.#settings.libraryPath && this.#live !== null) {
+          return { kind: "control", type: "reply", callId: call.callId };
+        }
+        // Requires a folder `library.open` staged under this exact path
+        // string. Never surveyed fresh here: doing that after the busy check
+        // below would reopen the TOCTOU window this call exists to close (a
+        // paid command starting during the survey would write into the old
+        // library while this call answers ok). Main must send library.open
+        // again for a folder nothing is staged for (a dropped confirm, a
+        // restart): see control.ts's doc comment on this call.
+        const staged = this.#staged.get(call.path);
+        if (staged === undefined) {
+          const detail = "the folder is not staged; open it again";
+          return { kind: "control", type: "reply", callId: call.callId, error: { code: "VALIDATION", detail } };
+        }
+        if (this.#busy()) {
+          // Dropped rather than left lingering: main always opens a folder
+          // again before confirming it, so a retry re-stages it fresh
+          // instead of ever adopting this now-stale entry later.
+          this.#staged.delete(call.path);
+          return { kind: "control", type: "reply", callId: call.callId, error: this.#inFlightRefusal() };
+        }
+        // No await between the check above and here: the switch is atomic
+        // with the busy check just made, so nothing can start writing into
+        // the old library between "not busy" and "switched".
+        const beforeIdentity = this.#live?.identity ?? null;
+        if (staged.identity !== beforeIdentity) this.#librarySwitchGeneration++;
+        this.#live = staged;
+        this.#settings = { ...this.#settings, libraryPath: call.path };
+        this.#pendingLibraryPath = call.path;
+        // Every other folder still staged (candidates main gave up on) is
+        // stale the moment the live folder changes underneath it.
+        this.#staged = new Map();
+        this.#emitSettings();
+        return { kind: "control", type: "reply", callId: call.callId };
+      }
     }
+  }
+
+  /** True while a job or paid command writes into the live library, or a pick/archive is running: a library switch must be refused. */
+  #busy(): boolean {
+    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
+  }
+
+  #inFlightRefusal(): EngineError {
+    return { code: "IN_FLIGHT", detail: "paid requests, or a pick or archive, are in flight; change the library folder when they end" };
   }
 
   /**
@@ -409,9 +491,16 @@ export class Engine {
         this.#keyRejected = false;
         this.#emitSettings();
         return;
-      case "settings.update":
-        await this.#applySettings(control.settings);
+      case "settings.update": {
+        const refusal = await this.#applySettings(control.settings);
+        // settings.update has no reply main waits on: the engine's actual
+        // libraryPath is already visible through the settings.changed
+        // #applySettings emits unconditionally, so main can reconcile
+        // settings.json to it (see main's onEvent); this is only so the
+        // refusal itself is not silent.
+        if (refusal !== null) console.warn(`studio engine: a settings.update's library switch was refused (${refusal.code}): ${refusal.detail ?? ""}`);
         return;
+      }
     }
   }
 
@@ -517,6 +606,7 @@ export class Engine {
       unreadableAvatars: view.skipped.length,
       // Avatar jobs of this engine's life; run jobs come with T6.
       jobs: this.#jobs.states(),
+      librarySwitchGeneration: this.#librarySwitchGeneration,
       notices: [...this.#notices],
     };
   }
@@ -796,8 +886,17 @@ export class Engine {
     this.#busyAvatars.add(avatarId);
   }
 
-  /** The live library, for a command that stores into it. */
+  /**
+   * The live library, for a command that stores into it. Every write path
+   * (createDraft, generateCandidates, pick, archive) reaches the library
+   * only through here, so gating this one place is enough to refuse all of
+   * them with IN_FLIGHT while a folder survey (`#switching`) could still
+   * replace the instance they would write into.
+   */
   #liveLibrary(): Library {
+    if (this.#switching > 0) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: "a library switch is being surveyed; write commands wait for it to finish" });
+    }
     const library = this.library;
     if (library === null) {
       throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
@@ -855,28 +954,105 @@ export class Engine {
 
   /**
    * Main persisted new settings: they are made current and a new monthly
-   * budget goes to the Budget. The library follows the saved folder: when it
-   * is not the live library's folder (or there is none), the engine takes the
-   * one staged by `library.open` or, failing that, opens it now — so a folder
-   * picked again after it was missing at start is taken too. Staged folders
-   * that no update confirmed are dropped: main gave up on them.
+   * budget goes to the Budget — every field but `libraryPath`, applied
+   * immediately (before any await), so they still land even when the switch
+   * below is refused or superseded. The library follows the saved folder:
+   * when it is not the live library's folder (or there is none), the engine
+   * takes the one staged by `library.open` (by the exact path string) or,
+   * failing that, opens it now — so a folder picked again after it was
+   * missing at start is taken too, and a volume remounted under the same
+   * path (a new folder identity) is surveyed fresh. Staged folders that no
+   * update confirmed are dropped: main gave up on them.
+   *
+   * `libraryPath` itself is committed together with `#live`, only at the very
+   * end, once every await below is done: until then `#settings.libraryPath`
+   * (so `settings.get` and the snapshot) keeps naming the folder `#live`
+   * actually is, never a folder its avatar and draft lists do not match yet.
+   *
+   * A genuine switch surveys the folder before committing (`#openOrNull`, or
+   * a staged instance reused as-is): while that survey runs, `#switching` is
+   * set, so `#liveLibrary()` refuses new paid work, pick and archive with
+   * IN_FLIGHT — the very thing that used to be able to write through the
+   * library instance this call is about to replace. The switch is still
+   * refused with IN_FLIGHT when the engine was already busy before the
+   * survey, or became busy during it in a way `#switching` cannot see (a
+   * reserve made straight against the Budget, bypassing `#liveLibrary()`):
+   * `libraryPath` then simply never advances, which is its own rollback, and
+   * a freshly opened library is dropped rather than adopted. A later call to
+   * this method that started after this one (two `settings.update`s racing;
+   * `#pendingLibraryPath` set at the top of each tracks whichever started
+   * last) also wins outright: this call's result — a switch or a
+   * same-folder no-op — is discarded rather than half-applied on top of the
+   * later call's. `library.confirm` never calls this method at all (it is
+   * fully synchronous, staged-only), so it cannot be superseded this way.
+   *
+   * Returns an error when the switch (or the no-op commit) was not applied,
+   * for any reason above, or null when everything applied, including any
+   * switch.
    */
-  async #applySettings(next: EngineSettings): Promise<void> {
+  async #applySettings(next: EngineSettings): Promise<EngineError | null> {
     const previous = this.#settings;
-    this.#settings = next;
+    this.#pendingLibraryPath = next.libraryPath;
+    this.#settings = { ...next, libraryPath: previous.libraryPath };
     const staged = this.#staged;
     this.#staged = new Map();
     if (this.#money.ok && next.monthlyBudgetMicros !== previous.monthlyBudgetMicros) {
       await this.#money.budget.setMonthlyBudget(next.monthlyBudgetMicros);
     }
     const identity = await folderIdentity(next.libraryPath, this.#folderFs);
-    if (identity === null || identity !== this.#live?.identity) {
-      const kept = identity === null ? undefined : staged.get(identity);
-      const live = kept !== undefined && identity !== null ? { library: kept, identity } : await this.#openOrNull(next.libraryPath);
-      // A later update may have named another folder while this one opened.
-      if (this.#settings.libraryPath === next.libraryPath) this.#live = live;
+    // Nothing asked to move away from the folder already live (this update
+    // names the same path as before): a folder that cannot be identified
+    // right now is then a transient hiccup (a volume briefly unreadable), not
+    // a request to drop the library. Keep it, rather than flipping to
+    // LIBRARY_UNAVAILABLE and losing it over a momentary stat() failure.
+    const keepLive = identity === null && this.#live !== null && next.libraryPath === previous.libraryPath;
+    const sameLibrary = keepLive || (identity !== null && identity === this.#live?.identity);
+    let refusal: EngineError | null = null;
+    let live = this.#live;
+    let switched = false;
+    if (!sameLibrary) {
+      if (this.#busy()) {
+        refusal = this.#inFlightRefusal();
+      } else {
+        // #switching blocks new paid work, pick and archive (#liveLibrary())
+        // for the whole survey below, not only the busy check just made:
+        // #busy() alone cannot see work that starts during the await.
+        this.#switching++;
+        try {
+          const kept = identity === null ? undefined : staged.get(next.libraryPath);
+          const opened = kept !== undefined && identity !== null ? { library: kept.library, identity } : await this.#openOrNull(next.libraryPath);
+          // Re-checked: a reserve made straight against the Budget (e.g. a
+          // job attempt already past its own #liveLibrary() call when the
+          // survey started) is not stopped by #switching; #busy() still
+          // catches it. The freshly opened library is dropped, not adopted.
+          if (this.#busy()) {
+            refusal = this.#inFlightRefusal();
+          } else {
+            live = opened;
+            switched = true;
+          }
+        } finally {
+          this.#switching--;
+        }
+      }
+    }
+    // A later call named another folder while this one awaited: that call's
+    // result stands, whole; this one's is dropped, not layered on top of it.
+    if (refusal === null && this.#pendingLibraryPath !== next.libraryPath) {
+      refusal = { code: "INTERNAL", detail: "a later settings update named another library folder before this one could switch" };
+    } else if (refusal === null) {
+      if (switched) {
+        // Every open window must resync on a genuine switch, folder-to-folder
+        // or into/out of LIBRARY_UNAVAILABLE; a race that changes nothing
+        // (kept the same folder after all) must not bump it.
+        const beforeIdentity = this.#live?.identity ?? null;
+        if ((live?.identity ?? null) !== beforeIdentity) this.#librarySwitchGeneration++;
+        this.#live = live;
+      }
+      this.#settings = { ...this.#settings, libraryPath: next.libraryPath };
     }
     this.#emitSettings();
+    return refusal;
   }
 
   /**
@@ -1008,7 +1184,7 @@ export class Engine {
       fetch: this.#deps.fetch,
       // Only a paid 2xx that cannot be used is saved, already redacted: in
       // userData next to the ledger, so the evidence outlives a library move.
-      saveRaw: (attemptId, text) => saveRawBody(this.#rawDir, attemptId, text),
+      saveRaw: (attemptId, text, keepBytes) => saveRawBody(this.#rawDir, attemptId, text, { keepBytes }),
       clock: this.#deps.clock,
       monotonic: this.#deps.monotonic,
     });
@@ -1021,7 +1197,13 @@ export class Engine {
   }
 
   #emitSettings(): void {
-    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "settings.changed", payload: { settings: this.#currentSettings() } });
+    this.#emit({
+      v: PROTOCOL_VERSION,
+      id: this.#deps.newId(),
+      kind: "event",
+      type: "settings.changed",
+      payload: { settings: this.#currentSettings(), librarySwitchGeneration: this.#librarySwitchGeneration },
+    });
   }
 
   #emitMoney(): void {

@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { sniffImageMediaType, type ImageMediaType } from "../library/media";
 import { omitImageData } from "./redact";
-import { runPaidAttempt, type ClientContext, type Interpretation } from "./transport";
+import { RAW_KEEP_BYTES_IMAGE, runPaidAttempt, type ClientContext, type Interpretation } from "./transport";
 import type { ImageParams, ImageResult } from "./types";
 
 /** Lenient: only `data[0].b64_json` is required; everything else may be missing, null or unknown. */
@@ -70,6 +70,9 @@ export async function generateImage(ctx: ClientContext, params: ImageParams): Pr
     interpret: interpretImage,
     // An unusable image body may still hold a whole image that no age check has seen.
     scrubRaw: omitImageData,
+    // A usable image is never text worth keeping long; a small cap is the
+    // last line of defence against whatever escapes the scrub above.
+    rawKeepBytes: RAW_KEEP_BYTES_IMAGE,
   });
   if (result.status !== "ok") return result;
   const { value, ...paid } = result;

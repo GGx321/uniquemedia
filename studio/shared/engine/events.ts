@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { nonEmpty, ProtocolVersion, Seq } from "./envelope";
 import { EngineError } from "./errors";
-import { Id, Micros } from "./primitives";
+import { Count, Id, Micros } from "./primitives";
 import { AvatarSummary, Draft, EngineNotice, JobProgress, JobResult, MoneyStatus, ReconcileReasons, Settings } from "./state";
 
 function defineEvent<const T extends string, P extends z.ZodType>(type: T, payload: P) {
@@ -37,7 +37,8 @@ const EVENT_SPECS = [
   defineEvent("job.cancelled", z.strictObject({ jobId: Id })),
   defineEvent("money.changed", z.strictObject({ status: MoneyStatus })),
   defineEvent("money.reconcileNeeded", z.strictObject({ reasons: ReconcileReasons.min(1), unsettledMicros: Micros })),
-  defineEvent("settings.changed", z.strictObject({ settings: Settings })),
+  /** `librarySwitchGeneration` is `Snapshot`'s own counter: it says whether this settings.changed is a genuine library switch. */
+  defineEvent("settings.changed", z.strictObject({ settings: Settings, librarySwitchGeneration: Count })),
   defineEvent("avatar.changed", z.strictObject({ avatar: AvatarSummary })),
   defineEvent("draft.changed", z.strictObject({ draft: Draft })),
   defineEvent("engine.error", z.strictObject({ error: EngineError })),

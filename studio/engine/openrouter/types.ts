@@ -39,8 +39,12 @@ export interface OpenRouterClientOptions {
    */
   allowBaseUrlOverride: boolean;
   fetch: OpenRouterFetch;
-  /** Saves the body of a paid 2xx that could not be used; called before the attempt is settled. */
-  saveRaw: (attemptId: string, text: string) => Promise<void>;
+  /**
+   * Saves the body of a paid 2xx that could not be used; called before the
+   * attempt is settled. `keepBytes` is the attempt's own cap (image.ts's
+   * attempts pass a small one); omitted, the store's own default applies.
+   */
+  saveRaw: (attemptId: string, text: string, keepBytes?: number) => Promise<void>;
   /** Diagnostic lines (retries); already redacted. */
   log?: (line: string) => void;
   /**

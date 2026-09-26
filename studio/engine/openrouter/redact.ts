@@ -85,8 +85,15 @@ function textSha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-/** The pattern rules, on any text: `b64_json` values, image data URLs, runs of base64. */
-function omitByPattern(text: string): string {
+/**
+ * The pattern rules alone, on any text: `b64_json` values, image data URLs,
+ * runs of base64 of 128+ characters — never the JSON per-string ">256 chars"
+ * rule `omitImageData` also applies. For a chat attempt's `scrubRaw`
+ * (chat.ts): the answer is text the owner needs whole to diagnose a bad LLM
+ * answer, but a user-configurable textModel could still answer with an
+ * image-shaped value the pattern rules alone are enough to catch.
+ */
+export function omitByPattern(text: string): string {
   return text
     .replace(B64_JSON_VALUE, (_match, value: string, closingQuote: string) => `"b64_json":${JSON.stringify(b64JsonSummary(value, closingQuote === ""))}`)
     .replace(IMAGE_DATA_URL, (_match, payload: string) => `[image data omitted: ${payload.length} chars, sha256 ${sha256Hex(decodedLoosely(payload))}]`)

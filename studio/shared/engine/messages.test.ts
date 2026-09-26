@@ -180,7 +180,18 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo] } },
   "engine.snapshot": {
     payload: {},
-    result: { bootId: BOOT, lastSeq: 7, settings, money, avatars: [avatar], drafts: [draft], unreadableAvatars: 1, jobs: [job], notices: [notice] },
+    result: {
+      bootId: BOOT,
+      lastSeq: 7,
+      settings,
+      money,
+      avatars: [avatar],
+      drafts: [draft],
+      unreadableAvatars: 1,
+      jobs: [job],
+      librarySwitchGeneration: 2,
+      notices: [notice],
+    },
   },
   "engine.events": { payload: { afterSeq: 6, bootId: BOOT }, result: { gap: false, events: [progressEvent] } },
 };
@@ -195,7 +206,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "job.cancelled": { jobId: "job-00000001" },
   "money.changed": { status: money },
   "money.reconcileNeeded": { reasons: ["open-reserves"], unsettledMicros: 55_000 },
-  "settings.changed": { settings: { ...settings, apiKey: { ...keyStatus, rejected: true } } },
+  "settings.changed": { settings: { ...settings, apiKey: { ...keyStatus, rejected: true } }, librarySwitchGeneration: 2 },
   "avatar.changed": { avatar },
   "draft.changed": { draft },
   "engine.error": { error: { code: "INTERNAL" } },
@@ -587,7 +598,7 @@ describe("results", () => {
 
   test("a snapshot restores a finished candidates job with its result", () => {
     const done = { ...job, status: "done", done: 4, result: eventCases["job.done"].result };
-    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [draft], unreadableAvatars: 0, jobs: [done], notices: [] };
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [draft], unreadableAvatars: 0, jobs: [done], librarySwitchGeneration: 0, notices: [] };
     expect(parseMessage(okResponse("engine.snapshot", result)).ok).toBe(true);
   });
 
@@ -600,7 +611,7 @@ describe("results", () => {
       reconcileReasons: [],
       halt: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" },
     };
-    const result = { bootId: BOOT, lastSeq: 0, settings, money: unavailable, avatars: [], drafts: [], unreadableAvatars: 0, jobs: [], notices: [] };
+    const result = { bootId: BOOT, lastSeq: 0, settings, money: unavailable, avatars: [], drafts: [], unreadableAvatars: 0, jobs: [], librarySwitchGeneration: 0, notices: [] };
     expect(parseMessage(okResponse("engine.snapshot", result)).ok).toBe(true);
   });
 
