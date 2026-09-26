@@ -70,6 +70,8 @@ export interface MockRequest {
   /** Parsed JSON for a POST; null for a GET or a body that did not parse. */
   body: unknown;
   schemaName: string | null;
+  /** The request's Authorization header, verbatim; null when it sent none (the price-fetch GETs send none — see openrouter/priceFetch.ts). */
+  authorization: string | null;
 }
 
 export interface MockOpenRouterOptions {
@@ -120,8 +122,8 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   }
 
-  function record(method: string, path: string, body: unknown): MockRequest {
-    const entry: MockRequest = { method, path, body, schemaName: schemaNameOf(body) };
+  function record(req: Request, path: string, body: unknown): MockRequest {
+    const entry: MockRequest = { method: req.method, path, body, schemaName: schemaNameOf(body), authorization: req.headers.get("authorization") };
     requests.push(entry);
     return entry;
   }
@@ -154,19 +156,19 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       const { method } = req;
 
       if (method === "GET" && path === `/api/v1/images/models/${imageModel}/endpoints`) {
-        record(method, path, null);
+        record(req, path, null);
         return new Response(endpointsFixture, { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "GET" && path === "/api/v1/models") {
-        record(method, path, null);
+        record(req, path, null);
         return new Response(modelsFixture, { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "GET" && path === "/api/v1/credits") {
-        record(method, path, null);
+        record(req, path, null);
         return json({ data: { total_usage: totalUsageUsd } });
       }
       if (method === "POST" && path === "/api/v1/chat/completions") {
-        const entry = record(method, path, await jsonBody(req));
+        const entry = record(req, path, await jsonBody(req));
         if (entry.schemaName === "avatar_descriptor") {
           return json(chatCompletion(JSON.stringify({ descriptor: opts.descriptorText }), costs.descriptor));
         }
@@ -183,11 +185,11 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         return loudly404(entry);
       }
       if (method === "POST" && path === "/api/v1/images") {
-        record(method, path, await jsonBody(req));
+        record(req, path, await jsonBody(req));
         totalUsageUsd += costs.image;
         return json({ created: 1_790_000_000, data: [{ b64_json: b64(portraitPng()), media_type: "image/png" }], usage: { cost: costs.image } });
       }
-      return loudly404(record(method, path, method === "POST" ? await jsonBody(req) : null));
+      return loudly404(record(req, path, method === "POST" ? await jsonBody(req) : null));
     },
   });
 

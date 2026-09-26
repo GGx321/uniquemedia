@@ -250,6 +250,16 @@ function killTree(child: ChildProcess): void {
   else child.kill("SIGKILL");
 }
 
+/** Whether a process with this pid still exists, cross-platform (signal 0 sends nothing). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The app's environment: the caller's, without anything OPENROUTER_* (bun loads .env) or ELECTRON_*. */
 function appEnv(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -317,7 +327,36 @@ async function launch(target: Target, userData: string, extraArgs: string[] = []
   let output = "";
   child.stdout?.on("data", (d) => (output += String(d)));
   child.stderr?.on("data", (d) => (output += String(d)));
-  return { child, cdp: await connectPage(port), port, env, output: () => output };
+  try {
+    return { child, cdp: await connectPage(port), port, env, output: () => output };
+  } catch (error) {
+    killTree(child); // this attempt is not going to become a Running: leave nothing behind for the next one
+    throw error;
+  }
+}
+
+/**
+ * `launch`, retried with backoff: a cold relaunch right after the previous
+ * instance's own `app.quit()` (the Windows/Linux "closing the last window"
+ * branch below) can race Electron's SingletonLock file, which is not always
+ * released the instant the process reports exited. Each failed attempt is
+ * cleaned up by `launch` itself before the next one; a failure after every
+ * attempt says so clearly instead of surfacing only the last try's bare
+ * timeout.
+ */
+async function launchWithRetry(target: Target, userData: string, attempts = 3): Promise<Running> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await launch(target, userData);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await Bun.sleep(1_000 * attempt);
+    }
+  }
+  throw new Error(
+    `could not relaunch on ${userData} after ${attempts} attempts (a stale Electron SingletonLock right after the previous instance's app.quit()?): ${String(lastError)}`,
+  );
 }
 
 /** Starts a second instance on the same userData; it must hand over to the first and exit. */
@@ -549,6 +588,24 @@ async function runAvatarScenario(target: Target): Promise<void> {
       libSet,
     );
 
+    // 0. A baseline reconcile before any paid call (M2 of the whole-slice
+    // review): the ledger is empty, so Budget.quiet() is already infinite
+    // (no activity to wait out) and this returns at once — no need for the
+    // 120 s wait. Without this marker, the reconcile after the scenario
+    // below would always land in reconcileLedger's "no baseline" branch
+    // (studio/engine/money/reconcile.ts), where `mismatch` is always null:
+    // /credits would never actually be compared against the ledger.
+    const baseline = await req(cdp, "money.reconcile");
+    check(
+      "avatar scenario: the baseline reconcile (before any paid call) succeeds at once, with no delta yet to compare",
+      field(baseline, "ok") === true &&
+        field(baseline, "result", "status") === "done" &&
+        field(baseline, "result", "deltaUnavailable") === "no-baseline" &&
+        field(baseline, "result", "creditsDeltaMicros") === null &&
+        field(baseline, "result", "mismatch") === null,
+      baseline,
+    );
+
     // 1. Estimate, then create the draft: one descriptor call.
     const estimate = await req(cdp, "avatars.estimate", { traits: AVATAR_TRAITS });
     check("avatar scenario: avatars.estimate prices a new avatar", field(estimate, "ok") === true, estimate);
@@ -659,7 +716,12 @@ async function runAvatarScenario(target: Target): Promise<void> {
 
     // 9. money.reconcile against the mock's /credits: a bounded poll for the
     // reconcile wait (studio/engine/money/reconcile.ts's RECONCILE_QUIET_MS,
-    // 2 minutes) to pass, never a fixed sleep past what the engine itself reports.
+    // 2 minutes) to pass, never a fixed sleep past what the engine itself
+    // reports. Thanks to the baseline reconcile above, this is a real
+    // comparison (M2 of the whole-slice review), not the "no baseline"
+    // branch: creditsDeltaMicros is /credits' usage since that baseline —
+    // exactly the mock's charged total — checked against the ledger total
+    // for the same window, and they must match with no mismatch.
     const reconciled = await waitFor(
       "money.reconcile past its quiet window",
       async () => {
@@ -670,11 +732,13 @@ async function runAvatarScenario(target: Target): Promise<void> {
       170_000,
     );
     check(
-      "avatar scenario: money.reconcile against the mock's /credits reports no mismatch",
+      "avatar scenario: money.reconcile against the mock's /credits is a real comparison — the delta equals the mock's charged total and the ledger total, and mismatch is false",
       field(reconciled, "result", "status") === "done" &&
-        field(reconciled, "result", "mismatch") !== true &&
-        field(reconciled, "result", "ledgerDeltaMicros") === expectedMicros,
-      reconciled,
+        field(reconciled, "result", "deltaUnavailable") === null &&
+        field(reconciled, "result", "creditsDeltaMicros") === expectedMicros &&
+        field(reconciled, "result", "ledgerDeltaMicros") === expectedMicros &&
+        field(reconciled, "result", "mismatch") === false,
+      { reconciled, expectedMicros },
     );
 
     // 10. Every request the engine made went to the mock, exactly the expected sequence, and no unknown route was hit.
@@ -692,10 +756,61 @@ async function runAvatarScenario(target: Target): Promise<void> {
       carrying.length === 1 && carrying[0]?.schemaName === "avatar_descriptor",
       carrying,
     );
+
+    // 12. Every authenticated request the mock saw carried exactly Bearer
+    // <the fake key> (M4): the price-fetch GETs are OpenRouter's public
+    // pricing endpoints and send no Authorization at all
+    // (studio/engine/openrouter/priceFetch.ts), so this checks every other
+    // route — the descriptor, the 4 image calls, the 4 age checks and both
+    // reconciles' /credits.
+    const authenticated = mock.requests.filter((r) => !r.path.endsWith("/endpoints") && r.path !== "/api/v1/models");
+    check(
+      "avatar scenario: every authenticated request to the mock carried exactly Bearer <the fake key>",
+      authenticated.length === 1 + 4 + 4 + 2 && authenticated.every((r) => r.authorization === `Bearer ${SMOKE_KEY}`),
+      authenticated.map((r) => ({ path: r.path, authorization: r.authorization })),
+    );
+
+    // 13. The fake key appears nowhere in the temp userData or the library —
+    // and nowhere in the app's captured output either — except as
+    // ciphertext inside secrets.bin (M4).
+    const secretsBlob = await readFile(join(userData, "secrets.bin")).catch(() => null);
+    check(
+      "avatar scenario: secrets.bin holds ciphertext, not the fake key",
+      secretsBlob !== null && secretsBlob.length > 0 && !secretsBlob.toString("latin1").includes(SMOKE_KEY),
+    );
+    // A scan of nothing would pass vacuously: both trees must actually hold
+    // files (the scenario's own writes above) before "0 leaks" means anything.
+    const userDataFiles = await filesUnder(userData);
+    const libraryFiles = await filesUnder(libraryRoot);
+    check(
+      "avatar scenario: the key-leak scan has files to scan (userData and the library are non-empty)",
+      userDataFiles.length > 0 && libraryFiles.length > 0,
+      { userDataFileCount: userDataFiles.length, libraryFileCount: libraryFiles.length },
+    );
+    const userDataLeaks: string[] = [];
+    for (const name of userDataFiles) {
+      if (name === "secrets.bin") continue;
+      try {
+        if ((await readFile(join(userData, name))).toString("latin1").includes(SMOKE_KEY)) userDataLeaks.push(name);
+      } catch {
+        // a file that vanished between the listing and the read
+      }
+    }
+    check("avatar scenario: the fake key appears nowhere else in userData", userDataLeaks.length === 0, userDataLeaks);
+    const libraryLeaks: string[] = [];
+    for (const name of libraryFiles) {
+      try {
+        if ((await readFile(join(libraryRoot, name))).toString("latin1").includes(SMOKE_KEY)) libraryLeaks.push(name);
+      } catch {
+        // a file that vanished between the listing and the read
+      }
+    }
+    check("avatar scenario: the fake key appears nowhere in the library", libraryLeaks.length === 0, libraryLeaks);
+    check("avatar scenario: the fake key never appeared in the app's captured stdout/stderr", !running.output().includes(SMOKE_KEY));
   } finally {
     await quit(running);
     await mock.stop();
-    await rm(tmp, { recursive: true, force: true });
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
 }
 
@@ -912,21 +1027,56 @@ async function main(): Promise<void> {
     check("a new engine process runs", newPid !== null && newPid !== pid, { pid, newPid });
     check("the key never appeared in the app's output", !running.output().includes(SMOKE_KEY));
 
-    // 7. Single instance, and a closed window leaves the engine running.
-    const enginePidBefore = enginePid(mainPid);
+    // 7. Single instance, and what a closed last window does to the app.
+    // macOS keeps the app and the engine running (main.ts's
+    // window-all-closed no-ops there; the dock icon would reopen a window).
+    // Windows and Linux instead quit the whole app on the last window close
+    // (main.ts: `window-all-closed` calls `app.quit()` off darwin, which
+    // triggers `will-quit` -> `engine.stop()`), so there is no "same engine
+    // kept running" to check there — the app and its engine must both exit,
+    // and the rest of the smoke continues on a fresh cold relaunch instead.
+    const enginePidBeforeClose = enginePid(mainPid);
     await cdp.evaluate("window.close(), true").catch(() => undefined);
     cdp.close();
     await waitFor("the window to close", async () => ((await pageCount(running.port)) === 0 ? true : null), 10_000);
-    check("closing the last window keeps the app and the same engine running (macOS)",
-      running.child.exitCode === null && enginePidBefore !== null && enginePid(mainPid) === enginePidBefore, { enginePidBefore });
-    check("a second instance on the same userData exits", await secondInstanceExits(target, userData, running.env));
-    running.cdp = await connectPage(running.port);
-    check("the first instance opened a window for it, and only one", (await pageCount(running.port)) === 1);
-    const reopened = await req(running.cdp, "engine.snapshot");
-    check("the reopened window restores from engine.snapshot of the engine that kept running",
-      field(reopened, "ok") === true && field(reopened, "result", "bootId") === newBootId, { reopened, newBootId });
-    check("a window opened after the crash is still told about it (the snapshot's pending notices)",
-      JSON.stringify(field(reopened, "result", "notices")).includes("engine-restarted"), reopened);
+
+    if (process.platform === "darwin") {
+      check("closing the last window keeps the app and the same engine running (macOS)",
+        running.child.exitCode === null && enginePidBeforeClose !== null && enginePid(mainPid) === enginePidBeforeClose, { enginePidBeforeClose });
+      check("a second instance on the same userData exits", await secondInstanceExits(target, userData, running.env));
+      running.cdp = await connectPage(running.port);
+      check("the first instance opened a window for it, and only one", (await pageCount(running.port)) === 1);
+      const reopened = await req(running.cdp, "engine.snapshot");
+      check("the reopened window restores from engine.snapshot of the engine that kept running",
+        field(reopened, "ok") === true && field(reopened, "result", "bootId") === newBootId, { reopened, newBootId });
+      check("a window opened after the crash is still told about it (the snapshot's pending notices)",
+        JSON.stringify(field(reopened, "result", "notices")).includes("engine-restarted"), reopened);
+    } else {
+      console.log(`SKIP  "keeps the same engine running" and "reopened window restores from it" (${process.platform}: window-all-closed quits the app instead — see main.ts)`);
+      const closedChild = running.child;
+      const quitCleanly = await waitFor(
+        "the app to quit after its last window closed",
+        async () => (closedChild.exitCode !== null || closedChild.signalCode !== null ? true : null),
+        15_000,
+      ).catch(() => false);
+      check(`closing the last window quits the app on ${process.platform}`, quitCleanly === true, { exitCode: closedChild.exitCode, signalCode: closedChild.signalCode });
+      const engineExited = await waitFor(
+        "the engine process to exit along with the app",
+        async () => (enginePidBeforeClose === null || !pidAlive(enginePidBeforeClose) ? true : null),
+        10_000,
+      ).catch(() => false);
+      check("the engine process exits along with the app", engineExited === true, { enginePidBeforeClose });
+      killTree(closedChild); // defensive: a no-op once it has already exited on its own
+
+      // A cold relaunch on the same userData: the rest of the smoke (second
+      // instance, then the corrupt-settings.json restart below) needs a
+      // live instance, and this OS left none running to reuse. Retried with
+      // backoff (see launchWithRetry) in case the SingletonLock this app
+      // just released is not yet gone.
+      running = await launchWithRetry(target, userData);
+      check("a second instance on the same userData exits", await secondInstanceExits(target, userData, running.env));
+      check("the relaunched instance kept its one window after the second instance exited", (await pageCount(running.port)) === 1);
+    }
 
     // 8. App restart with a corrupt settings.json: it is moved aside and reported;
     // main decrypts the key and hands it over again; then clear it.
@@ -950,8 +1100,11 @@ async function main(): Promise<void> {
       { cleared, afterClear });
   } finally {
     await quit(running);
+    // Windows can hold a brief file lock on a just-exited process's files
+    // (userData, the library); bounded retries ride that out instead of
+    // failing the cleanup outright.
     if (keep) console.log(`\nkept ${tmp}`);
-    else await rm(tmp, { recursive: true, force: true });
+    else await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
 
   await runAvatarScenario(target);
