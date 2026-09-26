@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AvatarName, type Candidate, type EngineError, type Estimate } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type JobView } from "../engine/store";
@@ -111,6 +111,25 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
     setEstimate((current) => current ?? draft.estimate);
   }, [draftKey]); // only when a different draft appears
 
+  // A continued draft's cached price can be missing (the engine could not
+  // price it when the draft was made) or, once shown, is not refreshed on its
+  // own: avatars.estimateCandidates prices "another batch" and re-validates
+  // the descriptor, so a DESCRIPTOR_INVALID here is caught before any spend.
+  useEffect(() => {
+    if (draft === null || draft.estimate !== null) return;
+    let alive = true;
+    setBusy("estimate");
+    void client.request("avatars.estimateCandidates", { avatarId: draft.avatarId }).then((reply) => {
+      if (!alive) return;
+      setBusy(null);
+      if (reply.ok) setEstimate(reply.result);
+      else setError(reply.error);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [draftKey]); // keyed on the draft's identity, not its (possibly still-null) estimate
+
   const locked = avatarId !== null;
   const issues = vibeIssues(traits.vibe, traits.age);
   const problem = issues.length > 0 ? "Исправьте поле «Вайб»." : traitsProblem(traits);
@@ -178,7 +197,13 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
 
   async function refused(err: EngineError, accepted: Estimate): Promise<void> {
     if (err.code === "PRICE_CHANGED") {
-      const fresh = await client.request("avatars.estimate", { traits: draft?.traits ?? traits });
+      // A locked draft already has a descriptor: its refreshed price (and
+      // DESCRIPTOR_INVALID check) comes from avatars.estimateCandidates, not
+      // the full avatars.estimate, which would price the descriptor again.
+      const fresh =
+        avatarId !== null
+          ? await client.request("avatars.estimateCandidates", { avatarId })
+          : await client.request("avatars.estimate", { traits });
       if (fresh.ok) {
         setEstimate(fresh.result);
         setPreviousWorst(accepted.worstMicros);
@@ -246,6 +271,16 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   const nameProblem = nameIssue(name);
   const pickedLetter = pickedIndex >= 0 ? candidateLetter(pickedIndex) : null;
 
+  /** DESCRIPTOR_INVALID points at its recovery: the Avatars grid's unreadable tiles, where «Переписать описание» lives. */
+  function descriptorFix(source: EngineError | null): ReactNode {
+    if (source?.code !== "DESCRIPTOR_INVALID") return undefined;
+    return (
+      <button type="button" className="btn btn-sm" onClick={() => navigate({ name: "avatars" })}>
+        Переписать описание
+      </button>
+    );
+  }
+
   return (
     <div className="page page-wizard">
       <header className="page-head">
@@ -300,6 +335,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             action={action}
             blockedReason={blockedReason}
             error={error}
+            errorActions={descriptorFix(error)}
             repeat={locked}
           />
 
@@ -358,15 +394,21 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={picked === null || busy !== null}
+                disabled={picked === null || busy !== null || running}
                 onClick={() => void save()}
                 aria-busy={busy === "save"}
               >
                 {busy === "save" ? "Сохраняем…" : "Сохранить"}
               </button>
-              <p className="field-hint">{pickedLetter ? `Мастер-портрет — вариант ${pickedLetter}.` : "Сначала выберите вариант."}</p>
+              <p className="field-hint">
+                {running
+                  ? "Дождитесь конца генерации, чтобы сохранить."
+                  : pickedLetter
+                    ? `Мастер-портрет — вариант ${pickedLetter}.`
+                    : "Сначала выберите вариант."}
+              </p>
             </div>
-            {saveError && <ErrorNotice error={saveError} />}
+            {saveError && <ErrorNotice error={saveError} actions={descriptorFix(saveError)} />}
           </section>
         </div>
       </div>

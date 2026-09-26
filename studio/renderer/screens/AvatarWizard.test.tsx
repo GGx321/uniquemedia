@@ -1,7 +1,27 @@
 import { expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { ERROR_MESSAGES_RU } from "../../shared/engine";
+import { ERROR_MESSAGES_RU, type Draft } from "../../shared/engine";
+import { MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
+import { DEFAULT_TRAITS } from "../lib/traits";
 import { callsOf, estimateText, flush, openWizard, runAll, setup, tick, inAct, describeElement, focusedLabel } from "../testing";
+
+function continuedDraft(overrides: Partial<Draft> = {}): Draft {
+  return {
+    avatarId: "avatar-continue-0001",
+    traits: DEFAULT_TRAITS,
+    descriptor: mockDescriptor(DEFAULT_TRAITS),
+    candidates: [],
+    estimate: null,
+    ...overrides,
+  };
+}
+
+/** Opens the wizard on an existing draft from the Avatars grid, as "Продолжить" does. */
+async function continueDraft(): Promise<void> {
+  const card = await screen.findByRole("article", { name: "Черновик" });
+  fireEvent.click(within(card).getByRole("button", { name: "Продолжить" }));
+  await screen.findByRole("heading", { level: 1, name: "Новый аватар" });
+}
 
 async function estimate(): Promise<void> {
   fireEvent.click(screen.getByRole("button", { name: "Оценить стоимость" }));
@@ -193,8 +213,63 @@ test("cancel sends avatars.cancel for the running job", async () => {
   const jobId = callsOf(engine, "avatars.cancel")[0]?.payload.jobId;
   expect(jobId).toMatch(/^job-/);
   runAll(scheduler);
-  expect(screen.queryAllByRole("radio", { name: /^Вариант/ })).toHaveLength(0);
+  // The one candidate already drawn before the cancel stays: only its three
+  // still-queued siblings are gone, not the whole batch.
+  expect(screen.queryAllByRole("radio", { name: /^Вариант/ })).toHaveLength(1);
   // Another batch can be started, again under an accepted worst case.
+  expect(screen.getByRole("button", { name: "Ещё 4 варианта · до $0.23" })).toBeDefined();
+});
+
+test("cancel shows a cancelling state for as long as its own command is in flight, ending only once the job is actually cancelled", async () => {
+  const { engine, scheduler } = setup();
+  await openWizard();
+  await estimate();
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  tick(scheduler, 1);
+
+  // Only the cancel command itself is delayed: the batch's own timers are untouched.
+  engine.delayNext("avatars.cancel", 30);
+  const cancelButton = screen.getByRole("button", { name: "Отменить" });
+  fireEvent.click(cancelButton);
+  expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
+  expect(cancelButton.hasAttribute("disabled")).toBe(true);
+  expect(screen.queryByText("Генерация остановлена")).toBeNull();
+
+  tick(scheduler, 1); // the delayed avatars.cancel reply arrives, carrying job.cancelled with it
+  await flush();
+  await screen.findByText("Генерация остановлена");
+  expect(callsOf(engine, "avatars.cancel")).toHaveLength(1);
+});
+
+test("failed slots are explained in Russian and their cost is called out, alongside whatever did succeed", async () => {
+  const { engine, scheduler } = setup();
+  engine.failNextSlots(2, { code: "MODERATION_REFUSED" });
+  await openWizard();
+  await estimate();
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  runAll(scheduler);
+
+  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(2);
+  expect(screen.getByText(new RegExp(`варианта не удалось получить: ${ERROR_MESSAGES_RU.MODERATION_REFUSED}`))).toBeDefined();
+  expect(screen.getByText(/Стоимость попытки учтена/)).toBeDefined();
+});
+
+test("when every slot fails the empty state explains it instead of showing blank letters", async () => {
+  const { engine, scheduler } = setup();
+  engine.failNextSlots(4, { code: "NETWORK" });
+  await openWizard();
+  await estimate();
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  runAll(scheduler);
+
+  expect(screen.queryAllByRole("radio", { name: /^Вариант/ })).toHaveLength(0);
+  expect(screen.getByText(/Ни один вариант не получился/)).toBeDefined();
+  // Russian plurals: 4 falls in the "few" form ("варианта"), not "вариантов".
+  expect(screen.getByText(new RegExp(`4 варианта не удалось получить: ${ERROR_MESSAGES_RU.NETWORK}`))).toBeDefined();
+  // A retry is a fresh, separately accepted attempt.
   expect(screen.getByRole("button", { name: "Ещё 4 варианта · до $0.23" })).toBeDefined();
 });
 
@@ -385,4 +460,100 @@ test("leaving the wizard while the draft is being created buys no batch afterwar
   await answerAll();
 
   expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(0);
+});
+
+// ---------- continuing an existing draft: its own estimate, IN_FLIGHT, DESCRIPTOR_INVALID (T8a) ----------
+
+test("a continued draft with no cached price fetches one via avatars.estimateCandidates, not the full avatars.estimate", async () => {
+  const draft = continuedDraft();
+  const { engine } = setup({ drafts: [draft] });
+  await continueDraft();
+
+  await waitFor(() => expect(estimateText()).not.toBeNull());
+  expect(estimateText()).toBe("≈ $0.21, не больше $0.22");
+  expect(callsOf(engine, "avatars.estimateCandidates").map((c) => c.payload)).toEqual([{ avatarId: draft.avatarId }]);
+  expect(callsOf(engine, "avatars.estimate")).toHaveLength(0);
+  expect(screen.getByRole("button", { name: /Ещё 4 варианта/ })).toBeDefined();
+});
+
+// A schema-invalid descriptor cannot sit in a fixture draft: the mock validates
+// its own snapshot against the same AvatarDescriptor contract, so it would
+// throw before the app even loaded. failNext models the engine's own defensive
+// re-check (the descriptor could have stopped fitting today's rules between
+// listing and this command) without needing an actually-broken fixture.
+test("DESCRIPTOR_INVALID on a continued draft's own price points at the rewrite recovery in Аватары", async () => {
+  const draft = continuedDraft();
+  const { engine } = setup({ drafts: [draft] });
+  engine.failNext("avatars.estimateCandidates", { code: "DESCRIPTOR_INVALID" });
+  await continueDraft();
+
+  await screen.findByText(ERROR_MESSAGES_RU.DESCRIPTOR_INVALID);
+  expect(screen.queryByRole("button", { name: /Ещё 4 варианта/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
+  await screen.findByRole("heading", { level: 1, name: "Аватары" });
+});
+
+test("DESCRIPTOR_INVALID on avatars.generateCandidates points at the rewrite recovery too", async () => {
+  const draft = continuedDraft({ estimate: { ...MOCK_ESTIMATE } });
+  const { engine } = setup({ drafts: [draft] });
+  await continueDraft();
+  engine.failNext("avatars.generateCandidates", { code: "DESCRIPTOR_INVALID" });
+
+  fireEvent.click(screen.getByRole("button", { name: /Ещё 4 варианта/ }));
+  await screen.findByText(ERROR_MESSAGES_RU.DESCRIPTOR_INVALID);
+  expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Переписать описание" })).toBeDefined();
+});
+
+test("DESCRIPTOR_INVALID on avatars.pick (save) points at the rewrite recovery in the save card", async () => {
+  const draft = continuedDraft({
+    estimate: { ...MOCK_ESTIMATE },
+    candidates: [{ avatarId: "avatar-continue-0001", photoId: "photo-continue-0001" }],
+  });
+  const { engine } = setup({ drafts: [draft] });
+  await continueDraft();
+  engine.failNext("avatars.pick", { code: "DESCRIPTOR_INVALID" });
+
+  fireEvent.click(screen.getByRole("radio", { name: "Вариант A" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Имя/ }), { target: { value: "Mia" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+
+  await screen.findByText(ERROR_MESSAGES_RU.DESCRIPTOR_INVALID);
+  expect(callsOf(engine, "avatars.pick")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
+  await screen.findByRole("heading", { level: 1, name: "Аватары" });
+});
+
+test("a second batch (PRICE_CHANGED) on a continued draft re-asks via avatars.estimateCandidates, never the full estimate", async () => {
+  const draft = continuedDraft({ estimate: { ...MOCK_ESTIMATE } });
+  const { engine } = setup({ drafts: [draft] });
+  await continueDraft();
+
+  engine.setPrice({ expectedMicros: 215_000, worstMicros: 250_000 });
+  fireEvent.click(screen.getByRole("button", { name: /Ещё 4 варианта/ }));
+
+  await screen.findByText("Цена выросла");
+  expect(callsOf(engine, "avatars.estimateCandidates")).toHaveLength(1);
+  expect(callsOf(engine, "avatars.estimate")).toHaveLength(0);
+  expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(1); // the refused first attempt
+});
+
+test("running a batch disables Сохранить for candidates already on hand, with a hint why", async () => {
+  const draft = continuedDraft({
+    estimate: { ...MOCK_ESTIMATE },
+    candidates: [{ avatarId: "avatar-continue-0001", photoId: "photo-continue-0001" }],
+  });
+  const { scheduler } = setup({ drafts: [draft] });
+  await continueDraft();
+  fireEvent.click(screen.getByRole("radio", { name: "Вариант A" }));
+  const save = screen.getByRole("button", { name: "Сохранить" });
+  expect(save.hasAttribute("disabled")).toBe(false);
+
+  fireEvent.click(screen.getByRole("button", { name: /Ещё 4 варианта/ }));
+  await screen.findByText(/Рисуем портреты/);
+  expect(save.hasAttribute("disabled")).toBe(true);
+  expect(screen.getByText("Дождитесь конца генерации, чтобы сохранить.")).toBeDefined();
+
+  runAll(scheduler);
+  await waitFor(() => expect(save.hasAttribute("disabled")).toBe(false));
 });

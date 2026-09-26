@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { EngineClient } from "./engine/client";
-import { EngineProvider } from "./engine/react";
+import { EngineProvider, useEngineView } from "./engine/react";
 import { readStudioVersion } from "./engine/windowStudio";
 import { NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { EngineNotices } from "./ui/EngineNotices";
 import { ScreenTitle } from "./ui/ScreenTitle";
 
 interface Section {
@@ -99,6 +100,12 @@ function screenKey(route: Route): string {
   return route.name === "avatarNew" ? `avatarNew:${route.draftId ?? "new"}` : route.name === "section" ? route.id : route.name;
 }
 
+/** Engine-wide notices belong above every screen, not one of them: useEngineView needs the provider, which App sits outside of. */
+function EngineNoticesBar() {
+  const view = useEngineView();
+  return <EngineNotices notices={view.notices} />;
+}
+
 export function App({ client }: { client: EngineClient }) {
   const [route, setRoute] = useState<Route>({ name: "avatars" });
   const [versionLabel, setVersionLabel] = useState("");
@@ -170,6 +177,7 @@ export function App({ client }: { client: EngineClient }) {
           </aside>
 
           <main className="content">
+            <EngineNoticesBar />
             <Screen key={screenKey(route)} route={route} />
           </main>
         </div>

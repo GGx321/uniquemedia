@@ -41,7 +41,7 @@ import { realScheduler, type Scheduler } from "./scheduler";
 const CANDIDATES_PER_JOB = 4;
 
 /** The mock price list, in micro-dollars: descriptor + 4 portraits + 4 age checks. */
-const DESCRIPTOR = { expected: 2_000, worst: 3_000 };
+export const DESCRIPTOR = { expected: 2_000, worst: 3_000 };
 /** The attempt a mock settle-above-worst halt names. */
 const MOCK_ABOVE_WORST_ATTEMPT = "mock-attempt#1";
 export const MOCK_ESTIMATE: Readonly<Estimate> = {
@@ -53,9 +53,19 @@ export const MOCK_ESTIMATE: Readonly<Estimate> = {
 
 const START_OF_TIME = Date.UTC(2026, 8, 24, 10, 0, 0);
 
-/** The contract's per-slot account of a mock batch: its last `rejected` slots were rejected by the age check. */
-function ageRejectedSlots(total: number, rejected: number): FailedCandidateSlot[] {
-  return Array.from({ length: rejected }, (_, i) => ({ slot: total - rejected + 1 + i, reason: "age-rejected" }));
+type SlotOutcome = "success" | "age-rejected" | "failed";
+
+/**
+ * Slot `step` (1-based) of a batch of `total`: the trailing `ageRejected`
+ * slots are rejected by the age check, the `failedCount` right before them
+ * fail with an error, and the rest succeed. Mirrors the contract's own
+ * "unlucky tail" accounting (`FailedCandidateSlot`).
+ */
+function slotOutcome(step: number, total: number, ageRejected: number, failedCount: number): SlotOutcome {
+  const fromEnd = total - step;
+  if (fromEnd < ageRejected) return "age-rejected";
+  if (fromEnd < ageRejected + failedCount) return "failed";
+  return "success";
 }
 
 export interface MockEngineOptions {
@@ -71,6 +81,8 @@ export interface MockEngineOptions {
   avatars?: AvatarSummary[];
   drafts?: Draft[];
   unreadableAvatars?: UnreadableAvatar[];
+  /** Overrides `unreadableTotal` above `unreadableAvatars.length` (L1): the real engine's list is bounded and cut, its total never is. */
+  unreadableTotal?: number;
   /**
    * `halt`: paid calls halted as the engine reports it (e.g. a failed ledger
    * write, or a settle above worst known after a restart); `unavailable`: the
@@ -105,8 +117,11 @@ interface MockJob {
   status: JobState["status"];
   done: number;
   total: number;
+  /** This job's own successes so far, added one at a time as each step lands. */
   candidates: Candidate[];
   rejectedByAgeCheck: number;
+  /** Slots that gave no candidate, in step order: age-rejected and failed alike. */
+  failedSlots: FailedCandidateSlot[];
   error: EngineError | null;
   cancelTimers: (() => void)[];
 }
@@ -209,6 +224,7 @@ export class MockEngine implements EngineBridge {
   private avatars: AvatarSummary[];
   private drafts: Draft[];
   private unreadable: UnreadableAvatar[];
+  private readonly unreadableTotalOverride: number | null;
   /** What a seeded `descriptor-invalid` entry recovers to, by avatarId; entries seeded without one (or for any other reason) cannot be rewritten. */
   private readonly rewritable = new Map<string, RewriteTarget>();
   private jobs: MockJob[] = [];
@@ -221,8 +237,10 @@ export class MockEngine implements EngineBridge {
   private price: Estimate = { ...MOCK_ESTIMATE };
   private encryptionAvailable: boolean;
   private readonly forced = new Map<CommandType, EngineError[]>();
+  private readonly delayed = new Map<CommandType, number[]>();
   private readonly reconcileQueue: ReconcileResult[] = [];
   private ageRejectionsNextJob = 0;
+  private failedSlotsNextJob: { count: number; error: EngineError; reserveLeftOpen: boolean } | null = null;
   /** Bumped whenever settings.setLibraryPath actually changes the folder, mirroring the real engine's Snapshot field. */
   private librarySwitchGeneration = 0;
 
@@ -245,6 +263,7 @@ export class MockEngine implements EngineBridge {
     this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.drafts = options.drafts ?? [];
     this.unreadable = options.unreadableAvatars ?? [];
+    this.unreadableTotalOverride = options.unreadableTotal ?? null;
     this.spentMicros = options.money?.spentMicros ?? (options.preset === "demo" ? 1_420_000 : 0);
     this.halt = options.money?.halt ?? null;
     this.unavailable = options.money?.unavailable ?? null;
@@ -254,7 +273,8 @@ export class MockEngine implements EngineBridge {
 
   async request(command: CommandMessage): Promise<ResponseMessage> {
     this.calls.push(command);
-    if (this.latencyMs > 0) await new Promise<void>((resolve) => this.scheduler.schedule(this.latencyMs, resolve));
+    const delay = this.delayed.get(command.type)?.shift() ?? (this.latencyMs > 0 ? this.latencyMs : null);
+    if (delay !== null) await new Promise<void>((resolve) => this.scheduler.schedule(delay, resolve));
     else await Promise.resolve();
     return this.handle(command);
   }
@@ -269,6 +289,16 @@ export class MockEngine implements EngineBridge {
   /** The next `type` command fails with `error` before anything else is checked. */
   failNext(type: CommandType, error: EngineError): void {
     this.forced.set(type, [...(this.forced.get(type) ?? []), error]);
+  }
+
+  /**
+   * The next `type` command answers after `ms` instead of the usual
+   * `latencyMs`, so a test can observe a busy/cancelling UI state for exactly
+   * that one command without slowing (or racing) anything else, including the
+   * scheduler-driven job timers that share the same clock.
+   */
+  delayNext(type: CommandType, ms: number): void {
+    this.delayed.set(type, [...(this.delayed.get(type) ?? []), ms]);
   }
 
   /** Changes the current price; a paid command accepted at a lower worst case gets PRICE_CHANGED. */
@@ -311,6 +341,17 @@ export class MockEngine implements EngineBridge {
   /** The next candidate job loses `count` portraits to the age check. */
   rejectNextByAgeCheck(count: number): void {
     this.ageRejectionsNextJob = Math.max(0, Math.min(CANDIDATES_PER_JOB, count));
+  }
+
+  /**
+   * The next candidate job's trailing `count` slots (right before any
+   * age-rejected tail from `rejectNextByAgeCheck`) fail with `error` instead
+   * of producing a candidate — a moderation refusal, a timeout, and so on.
+   * With `count` at 4 (and no age rejections), every slot fails: the batch
+   * still ends `status: "done"`, just with zero candidates.
+   */
+  failNextSlots(count: number, error: EngineError, reserveLeftOpen = false): void {
+    this.failedSlotsNextJob = { count: Math.max(0, Math.min(CANDIDATES_PER_JOB, count)), error, reserveLeftOpen };
   }
 
   /** While off, events go into the log but are not delivered: the window misses them. */
@@ -410,7 +451,7 @@ export class MockEngine implements EngineBridge {
       case "money.reconcile":
         return this.reconcile(c);
       case "avatars.list":
-        return this.ok(c, { avatars: this.avatars, unreadableAvatars: this.unreadable, unreadableTotal: this.unreadable.length });
+        return this.ok(c, { avatars: this.avatars, unreadableAvatars: this.unreadable, unreadableTotal: this.unreadableCount() });
       case "avatars.estimate":
         return this.ok(c, this.price);
       case "avatars.estimateCandidates": {
@@ -442,6 +483,7 @@ export class MockEngine implements EngineBridge {
       case "avatars.generateCandidates": {
         const draft = this.drafts.find((d) => d.avatarId === c.payload.avatarId);
         if (!draft) return this.fail(c, { code: "NOT_FOUND" });
+        if (this.jobRunningFor(draft.avatarId)) return this.fail(c, { code: "IN_FLIGHT" });
         if (!AvatarDescriptor.safeParse(draft.descriptor).success) return this.fail(c, { code: "DESCRIPTOR_INVALID" });
         // Another batch is priced without the descriptor, like avatars.estimateCandidates.
         const refusal = this.paidGate(c.payload.acceptedWorstMicros, this.candidatesPrice().worstMicros);
@@ -453,8 +495,10 @@ export class MockEngine implements EngineBridge {
         if (!job) return this.fail(c, { code: "NOT_FOUND" });
         if (job.status === "queued" || job.status === "running") {
           for (const cancel of job.cancelTimers) cancel();
+          job.cancelTimers = [];
           // An aborted attempt counts at its worst case until reconciled: the reserve stays open.
           job.status = "cancelled";
+          this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { jobId: job.jobId } });
         }
         return this.ok(c, { jobId: job.jobId });
       }
@@ -463,6 +507,8 @@ export class MockEngine implements EngineBridge {
         if (!draft || !draft.candidates.some((cand) => cand.photoId === c.payload.photoId)) {
           return this.fail(c, { code: "NOT_FOUND" });
         }
+        if (this.jobRunningFor(draft.avatarId)) return this.fail(c, { code: "IN_FLIGHT" });
+        if (!AvatarDescriptor.safeParse(draft.descriptor).success) return this.fail(c, { code: "DESCRIPTOR_INVALID" });
         const avatar: AvatarSummary = {
           avatarId: draft.avatarId,
           name: c.payload.name.trim(),
@@ -474,13 +520,16 @@ export class MockEngine implements EngineBridge {
         };
         this.drafts = this.drafts.filter((d) => d !== draft);
         this.avatars = [...this.avatars, avatar];
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });
         return this.ok(c, { avatar });
       }
       case "avatars.archive": {
         const avatar = this.avatars.find((a) => a.avatarId === c.payload.avatarId);
         if (!avatar) return this.fail(c, { code: "NOT_FOUND" });
+        if (!AvatarDescriptor.safeParse(avatar.descriptor).success) return this.fail(c, { code: "DESCRIPTOR_INVALID" });
         const archived: AvatarSummary = { ...avatar, status: "archived" };
         this.avatars = this.avatars.map((a) => (a === avatar ? archived : a));
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: archived } });
         return this.ok(c, { avatar: archived });
       }
       case "avatars.rewriteDescriptor": {
@@ -577,27 +626,88 @@ export class MockEngine implements EngineBridge {
     return this.ok(c, result);
   }
 
+  /** Whether an avatar has a candidate batch still queued or running: a second batch or a pick must wait. */
+  private jobRunningFor(avatarId: string): boolean {
+    return this.jobs.some((j) => j.avatarId === avatarId && (j.status === "queued" || j.status === "running"));
+  }
+
+  /** One slot's own reserve, keyed apart from its siblings: cancel, a crash, or `reserveLeftOpen` can leave just this one open. */
+  private slotReserveKey(jobId: string, slot: number): string {
+    return `${jobId}#${slot}`;
+  }
+
   private startJob(avatarId: string): string {
+    const total = CANDIDATES_PER_JOB;
+    const ageRejected = this.ageRejectionsNextJob;
+    this.ageRejectionsNextJob = 0;
+    const failedSpec = this.failedSlotsNextJob;
+    this.failedSlotsNextJob = null;
+    const failedCount = failedSpec?.count ?? 0;
+    const failedError: EngineError = failedSpec?.error ?? { code: "INTERNAL" };
+    const failedReserveLeftOpen = failedSpec?.reserveLeftOpen ?? false;
+    // Fixed at job start, like the reserve itself: a later setPrice() must not change what an already-running slot owes.
+    const perSlotWorst = Math.round((this.price.worstMicros - DESCRIPTOR.worst) / total);
+    const perSlotExpected = Math.round((this.price.expectedMicros - DESCRIPTOR.expected) / total);
+
     const job: MockJob = {
       jobId: this.nextId("job"),
       avatarId,
       status: "queued",
       done: 0,
-      total: CANDIDATES_PER_JOB,
+      total,
       candidates: [],
       rejectedByAgeCheck: 0,
+      failedSlots: [],
       error: null,
       cancelTimers: [],
     };
     this.jobs = [...this.jobs, job];
-    this.reserves.set(job.jobId, this.price.worstMicros - DESCRIPTOR.worst);
+    // Reserved per slot, not as one lump for the whole batch: a cancel, a
+    // crash, or a `reserveLeftOpen` failure then leaves only its own slots'
+    // reserves open, exactly as the real engine's per-attempt reserves would.
+    for (let slot = 1; slot <= total; slot++) this.reserves.set(this.slotReserveKey(job.jobId, slot), perSlotWorst);
     this.emitMoney();
 
-    for (let step = 1; step <= job.total; step++) {
+    // Each slot lands on its own step: a success is appended to the draft
+    // right away (draft.changed), one at a time, exactly as a real run would
+    // report each portrait as it clears its age check. Its reserve is settled
+    // the same moment, not batched to the job's end.
+    for (let step = 1; step <= total; step++) {
       job.cancelTimers.push(
         this.scheduler.schedule(this.stepMs * step, () => {
           job.status = "running";
           job.done = step;
+          const outcome = slotOutcome(step, total, ageRejected, failedCount);
+          const reserveKey = this.slotReserveKey(job.jobId, step);
+          if (outcome === "success") {
+            const candidate: Candidate = { avatarId: job.avatarId, photoId: this.nextId("photo") };
+            job.candidates = [...job.candidates, candidate];
+            const draft = this.drafts.find((d) => d.avatarId === avatarId);
+            if (draft) {
+              const updated: Draft = { ...draft, candidates: [...draft.candidates, candidate] };
+              this.drafts = this.drafts.map((d) => (d === draft ? updated : d));
+              this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "draft.changed", payload: { draft: updated } });
+            }
+            // A 2xx generation, billed regardless of the (later) pick decision.
+            this.reserves.delete(reserveKey);
+            this.spend(perSlotExpected);
+          } else if (outcome === "age-rejected") {
+            job.rejectedByAgeCheck += 1;
+            job.failedSlots = [...job.failedSlots, { slot: step, reason: "age-rejected" }];
+            // The image itself still generated (a 2xx) before the age check dropped it: billed all the same.
+            this.reserves.delete(reserveKey);
+            this.spend(perSlotExpected);
+          } else {
+            job.failedSlots = [...job.failedSlots, { slot: step, reason: "failed", error: failedError, reserveLeftOpen: failedReserveLeftOpen }];
+            if (failedReserveLeftOpen) {
+              // A timeout or network error: unknown whether OpenRouter billed it, so the reserve stays open until reconciled.
+              this.emitMoney();
+            } else {
+              // A definite non-2xx (a moderation refusal, say): settled at its known cost of zero.
+              this.reserves.delete(reserveKey);
+              this.emitMoney();
+            }
+          }
           this.emit({
             v: PROTOCOL_VERSION,
             id: this.nextId("evt"),
@@ -608,22 +718,14 @@ export class MockEngine implements EngineBridge {
         }),
       );
     }
-    job.cancelTimers.push(this.scheduler.schedule(this.stepMs * (job.total + 1), () => this.finishJob(job)));
+    job.cancelTimers.push(this.scheduler.schedule(this.stepMs * (total + 1), () => this.finishJob(job)));
     return job.jobId;
   }
 
   private finishJob(job: MockJob): void {
-    const rejected = this.ageRejectionsNextJob;
-    this.ageRejectionsNextJob = 0;
-    job.candidates = Array.from({ length: job.total - rejected }, () => ({ avatarId: job.avatarId, photoId: this.nextId("photo") }));
-    job.rejectedByAgeCheck = rejected;
     job.status = "done";
     job.done = job.total;
-    this.drafts = this.drafts.map((d) =>
-      d.avatarId === job.avatarId ? { ...d, candidates: [...d.candidates, ...job.candidates] } : d,
-    );
-    this.reserves.delete(job.jobId);
-    this.spend(this.price.expectedMicros - DESCRIPTOR.expected);
+    // Every slot settled (or, for `reserveLeftOpen`, stayed open) as it landed above: nothing left to spend here.
     this.emit({
       v: PROTOCOL_VERSION,
       id: this.nextId("evt"),
@@ -635,8 +737,8 @@ export class MockEngine implements EngineBridge {
           kind: "avatar.candidates",
           avatarId: job.avatarId,
           candidates: job.candidates,
-          rejectedByAgeCheck: rejected,
-          failedSlots: ageRejectedSlots(job.total, rejected),
+          rejectedByAgeCheck: job.rejectedByAgeCheck,
+          failedSlots: job.failedSlots,
         },
       },
     });
@@ -644,6 +746,7 @@ export class MockEngine implements EngineBridge {
 
   private failJob(job: MockJob, error: EngineError): void {
     for (const cancel of job.cancelTimers) cancel();
+    job.cancelTimers = [];
     job.status = "failed";
     job.error = error;
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { jobId: job.jobId, error } });
@@ -660,7 +763,7 @@ export class MockEngine implements EngineBridge {
       avatars: this.avatars,
       drafts: this.drafts,
       unreadableAvatars: this.unreadable,
-      unreadableTotal: this.unreadable.length,
+      unreadableTotal: this.unreadableCount(),
       jobs: this.jobs.map((j) => this.jobState(j)),
       librarySwitchGeneration: this.librarySwitchGeneration,
       notices: [],
@@ -677,7 +780,7 @@ export class MockEngine implements EngineBridge {
           avatarId: j.avatarId,
           candidates: j.candidates,
           rejectedByAgeCheck: j.rejectedByAgeCheck,
-          failedSlots: ageRejectedSlots(j.total, j.rejectedByAgeCheck),
+          failedSlots: j.failedSlots,
         },
       };
     }
@@ -761,6 +864,11 @@ export class MockEngine implements EngineBridge {
       reconcileReasons: this.reconcileReasons,
       halt: this.halt,
     };
+  }
+
+  /** `unreadableAvatars.length`, or a seeded override for testing the "N more" UI beyond the bounded list (L1). */
+  private unreadableCount(): number {
+    return Math.max(this.unreadable.length, this.unreadableTotalOverride ?? 0);
   }
 
   private unsettledMicros(): number {

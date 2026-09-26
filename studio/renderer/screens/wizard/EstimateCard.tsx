@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { EngineError, Estimate } from "../../../shared/engine";
 import { dateLabel } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
@@ -19,17 +20,14 @@ interface EstimateCardProps {
   /** Why the action is unavailable, shown under it. */
   blockedReason: string | null;
   error: EngineError | null;
+  /** Extra action next to a non-PRICE_CHANGED error, e.g. a pointer to fix it elsewhere (DESCRIPTOR_INVALID → the rewrite recovery). */
+  errorActions?: ReactNode;
   /** Another batch for an existing draft: its descriptor is not written again. */
   repeat: boolean;
 }
 
-/** "≈ $0.21, не больше $0.23": the expected cost rounded to the cent, the worst case rounded up. */
-export function estimateLine(estimate: Estimate): string {
-  return `≈ ${formatUsd(estimate.expectedMicros)}, не больше ${formatUsd(estimate.worstMicros, 2, "up")}`;
-}
-
 /** Step 2: the price before anything is spent, and the button that accepts it. */
-export function EstimateCard({ estimate, previousWorst, estimating, action, blockedReason, error, repeat }: EstimateCardProps) {
+export function EstimateCard({ estimate, previousWorst, estimating, action, blockedReason, error, errorActions, repeat }: EstimateCardProps) {
   return (
     <section className="card estimate-card" aria-labelledby="estimate-title" aria-busy={estimating}>
       <div className="card-head">
@@ -76,7 +74,7 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
         </Notice>
       )}
 
-      {error && error.code !== "PRICE_CHANGED" && <ErrorNotice error={error} />}
+      {error && error.code !== "PRICE_CHANGED" && <ErrorNotice error={error} actions={errorActions} />}
 
       {action && (
         <div className="estimate-actions">

@@ -647,6 +647,42 @@ fieldset:disabled .range {
   margin-top: 2px;
 }
 
+.avatar-card-unreadable {
+  border-color: rgba(255, 107, 129, 0.32);
+}
+
+.avatar-card-unreadable .avatar-card-body {
+  gap: 10px;
+}
+
+.avatar-card-unreadable .btn {
+  align-self: flex-start;
+}
+
+.avatar-card-unreadable-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--danger);
+  background:
+    radial-gradient(ellipse 70% 70% at 50% 40%, var(--danger-soft), transparent 75%),
+    #1b1b23;
+}
+
+.unreadable-more-tile {
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  border-style: dashed;
+  border-color: #3a3a48;
+  animation: rise 0.34s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.unreadable-more-tile .avatar-card-body {
+  align-items: center;
+  text-align: center;
+}
+
 .portrait {
   position: relative;
   width: 100%;

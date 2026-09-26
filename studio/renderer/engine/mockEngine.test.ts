@@ -119,7 +119,8 @@ test("a restart starts a new bootId and flags open reserves for a reconcile", as
   const last = events.at(-1);
   expect(last).toMatchObject({ bootId: engine.currentBootId, seq: 1, type: "money.changed" });
   const money = await unwrap(client.request("money.status", {}));
-  expect(money).toMatchObject({ reconcileNeeded: true, reconcileReasons: ["open-reserves"], unsettledCount: 1 });
+  // Reserved per slot, not as one lump for the batch: none of the four ran, so all four are still open.
+  expect(money).toMatchObject({ reconcileNeeded: true, reconcileReasons: ["open-reserves"], unsettledCount: 4 });
 
   const events1 = await unwrap(client.request("engine.events", { afterSeq: 3, bootId: before }));
   expect(events1).toEqual({ gap: true });
@@ -391,6 +392,41 @@ test("avatars.estimateCandidates and generateCandidates answer DESCRIPTOR_INVALI
   });
 });
 
+test("avatars.pick answers DESCRIPTOR_INVALID for a draft whose descriptor fails today's rules, never saving it", async () => {
+  const { client } = makeMock({
+    drafts: [
+      {
+        avatarId: "avatar-baddesc-0002",
+        traits: DEFAULT_TRAITS,
+        descriptor: { age: 25, text: "a young woman with hazel eyes" },
+        candidates: [{ avatarId: "avatar-baddesc-0002", photoId: "photo-0001" }],
+        estimate: null,
+      },
+    ],
+  });
+  expect(await client.request("avatars.pick", { avatarId: "avatar-baddesc-0002", photoId: "photo-0001", name: "Mia" })).toMatchObject({
+    ok: false,
+    error: { code: "DESCRIPTOR_INVALID" },
+  });
+});
+
+test("avatars.archive answers DESCRIPTOR_INVALID for a saved avatar whose descriptor fails today's rules", async () => {
+  const { client } = makeMock({
+    avatars: [
+      {
+        avatarId: "avatar-baddesc-0003",
+        name: "Zoe",
+        descriptor: { age: 25, text: "a young woman with hazel eyes" },
+        masterPhotoId: "photo-0001",
+        createdAt: "2026-09-24T09:00:00.000Z",
+        status: "active",
+        photoCount: 1,
+      },
+    ],
+  });
+  expect(await client.request("avatars.archive", { avatarId: "avatar-baddesc-0003" })).toMatchObject({ ok: false, error: { code: "DESCRIPTOR_INVALID" } });
+});
+
 test("applyRewrite keeps the draft's existing candidates, as the engine does", async () => {
   const { client, engine } = makeMock();
   engine.seedUnreadable(
@@ -403,4 +439,182 @@ test("applyRewrite keeps the draft's existing candidates, as the engine does", a
 
   const snapshot = await unwrap(client.request("engine.snapshot", {}));
   expect(snapshot.drafts).toMatchObject([{ avatarId: "avatar-broken-0006", candidates: [{ avatarId: "avatar-broken-0006", photoId: "photo-broken-0001" }] }]);
+});
+
+// ---------- mock parity: one-by-one candidates, IN_FLIGHT, cancellation, failed slots (T8a) ----------
+
+test("candidates arrive one by one as draft.changed, each carrying the growing list", async () => {
+  const { scheduler, client, events } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  scheduler.runAll();
+
+  const changed = events.filter((e) => e.type === "draft.changed");
+  expect(changed).toHaveLength(4);
+  expect(changed.map((e) => (e.type === "draft.changed" ? e.payload.draft.candidates.length : -1))).toEqual([1, 2, 3, 4]);
+  // The final job.done carries the same four, so a store applying only job.done still gets them all.
+  const done = events.find((e) => e.type === "job.done");
+  expect(done?.type === "job.done" && done.payload.result.kind === "avatar.candidates" ? done.payload.result.candidates.length : -1).toBe(4);
+});
+
+test("candidates already drawn stay in the draft after the batch is cancelled mid-run", async () => {
+  const { scheduler, client, events } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  const { jobId } = await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+
+  scheduler.next(); // one candidate lands
+  await unwrap(client.request("avatars.cancel", { jobId }));
+  scheduler.runAll(); // the remaining steps were cancelled: nothing more should happen
+
+  expect(events.filter((e) => e.type === "draft.changed")).toHaveLength(1);
+  expect(events.some((e) => e.type === "job.done")).toBe(false);
+  expect(events.find((e) => e.type === "job.cancelled")).toMatchObject({ payload: { jobId } });
+  const snapshot = await unwrap(client.request("engine.snapshot", {}));
+  expect(snapshot.drafts[0]?.candidates).toHaveLength(1);
+});
+
+test("candidates already drawn stay in the draft after a fatal AUTH_INVALID mid-run", async () => {
+  const { scheduler, engine, client, events } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+
+  scheduler.next();
+  scheduler.next(); // two candidates land
+  engine.rejectKey();
+  scheduler.runAll();
+
+  expect(events.filter((e) => e.type === "draft.changed")).toHaveLength(2);
+  const snapshot = await unwrap(client.request("engine.snapshot", {}));
+  expect(snapshot.drafts[0]?.candidates).toHaveLength(2);
+});
+
+test("a second batch for the same avatar answers IN_FLIGHT while one is already running", async () => {
+  const { client } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+
+  const second = await client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 });
+  expect(second).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+});
+
+test("picking a candidate while its batch is still running answers IN_FLIGHT", async () => {
+  const { scheduler, client } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  scheduler.next(); // one candidate to try picking
+
+  const snapshot = await unwrap(client.request("engine.snapshot", {}));
+  const photoId = snapshot.drafts[0]?.candidates[0]?.photoId ?? "";
+  const reply = await client.request("avatars.pick", { avatarId: draft.avatarId, photoId, name: "Mia" });
+  expect(reply).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+});
+
+test("cancel ends with a job.cancelled event, not only the command's own reply", async () => {
+  const { scheduler, client, events } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  const { jobId } = await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  scheduler.next();
+
+  const before = events.length;
+  const reply = await unwrap(client.request("avatars.cancel", { jobId }));
+  expect(reply).toEqual({ jobId });
+  const emitted = events.slice(before);
+  expect(emitted.some((e) => e.type === "job.cancelled" && e.payload.jobId === jobId)).toBe(true);
+});
+
+test("pick and archive each emit avatar.changed, not only their own command reply", async () => {
+  const { scheduler, client, events } = makeMock();
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  scheduler.runAll();
+  const snapshot = await unwrap(client.request("engine.snapshot", {}));
+  const photoId = snapshot.drafts[0]?.candidates[0]?.photoId ?? "";
+
+  const { avatar } = await unwrap(client.request("avatars.pick", { avatarId: draft.avatarId, photoId, name: "Mia" }));
+  expect(events.find((e) => e.type === "avatar.changed")).toMatchObject({ payload: { avatar: { avatarId: avatar.avatarId, status: "active" } } });
+
+  const { avatar: archived } = await unwrap(client.request("avatars.archive", { avatarId: avatar.avatarId }));
+  const archiveEvents = events.filter((e) => e.type === "avatar.changed");
+  expect(archiveEvents.at(-1)).toMatchObject({ payload: { avatar: { avatarId: archived.avatarId, status: "archived" } } });
+});
+
+test("failNextSlots makes some slots fail with an engine error instead of a candidate, without touching the age-rejected tail", async () => {
+  const { scheduler, engine, client } = makeMock();
+  engine.failNextSlots(1, { code: "MODERATION_REFUSED" });
+  engine.rejectNextByAgeCheck(1);
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  const { jobId } = await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  scheduler.runAll();
+
+  const snapshot = await unwrap(client.request("engine.snapshot", {}));
+  const job = snapshot.jobs.find((j) => j.jobId === jobId);
+  if (job === undefined || job.result === undefined || job.result.kind !== "avatar.candidates") {
+    throw new Error("expected a done candidates job");
+  }
+  expect(job.result.candidates).toHaveLength(2);
+  expect(job.result.rejectedByAgeCheck).toBe(1);
+  expect(job.result.failedSlots).toEqual([
+    { slot: 3, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false },
+    { slot: 4, reason: "age-rejected" },
+  ]);
+});
+
+test("failNextSlots at the full batch size ends the job done with zero candidates, all four failed", async () => {
+  const { scheduler, engine, client } = makeMock();
+  engine.failNextSlots(4, { code: "NETWORK" }, true);
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  const { jobId } = await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  scheduler.runAll();
+
+  const snapshot = await unwrap(client.request("engine.snapshot", {}));
+  const job = snapshot.jobs.find((j) => j.jobId === jobId);
+  if (job === undefined || job.result === undefined || job.result.kind !== "avatar.candidates") {
+    throw new Error("expected a done candidates job");
+  }
+  expect(job.result.candidates).toHaveLength(0);
+  expect(job.result.failedSlots).toHaveLength(4);
+  expect(job.result.failedSlots.every((f) => f.reason === "failed" && f.error.code === "NETWORK" && f.reserveLeftOpen)).toBe(true);
+  // Every slot's own reserve stayed open (reserveLeftOpen): nothing was actually spent on them,
+  // only the descriptor call the draft already paid for — until a reconcile settles the rest.
+  const money = await unwrap(client.request("money.status", {}));
+  if (money.ledger !== "open") throw new Error("expected an open ledger");
+  expect(money.spentMicros).toBe(2_000);
+  expect(money.unsettledCount).toBe(4);
+  expect(money.unsettledMicros).toBeGreaterThan(0);
+});
+
+test("a failed slot with reserveLeftOpen keeps its own reserve open after the batch finishes, until a reconcile closes it", async () => {
+  const { scheduler, engine, client } = makeMock();
+  engine.failNextSlots(1, { code: "NETWORK" }, true);
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  scheduler.runAll();
+
+  const before = await unwrap(client.request("money.status", {}));
+  if (before.ledger !== "open") throw new Error("expected an open ledger");
+  // Three slots settled and were spent; the fourth (a network error, maybe billed) stays open on its own.
+  expect(before.unsettledCount).toBe(1);
+  expect(before.unsettledMicros).toBe(55_000); // (223_000 − 3_000) / 4, this slot's own worst case
+  expect(before.spentMicros).toBe(2_000 + 3 * 51_400);
+  expect(before.reconcileNeeded).toBe(false); // open-reserves is only flagged after a restart, not merely by existing
+
+  const reconciled = await unwrap(client.request("money.reconcile", {}));
+  expect(reconciled).toMatchObject({ status: "done", closedReserves: 1 });
+  const after = await unwrap(client.request("money.status", {}));
+  if (after.ledger !== "open") throw new Error("expected an open ledger");
+  expect(after.unsettledCount).toBe(0);
+  expect(after.spentMicros).toBe(before.spentMicros + 55_000);
+});
+
+test("a failed slot without reserveLeftOpen settles at zero: no open reserve, and it costs nothing", async () => {
+  const { scheduler, engine, client } = makeMock();
+  engine.failNextSlots(1, { code: "MODERATION_REFUSED" }); // reserveLeftOpen defaults to false: known not billed
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
+  await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  scheduler.runAll();
+
+  const money = await unwrap(client.request("money.status", {}));
+  if (money.ledger !== "open") throw new Error("expected an open ledger");
+  expect(money.unsettledCount).toBe(0);
+  expect(money.spentMicros).toBe(2_000 + 3 * 51_400);
 });

@@ -1,15 +1,17 @@
-import { useEffect, useState } from "react";
-import type { AvatarSummary, Draft } from "../../shared/engine";
+import { useEffect, useRef, useState } from "react";
+import type { AvatarSummary, Draft, EngineError, Estimate, UnreadableAvatar } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { countOf, dateLabel, yearsOld } from "../lib/format";
+import { estimateLine, formatUsd } from "../lib/money";
+import { paidStop, restartStopText } from "../lib/paidStop";
 import { ETHNICITIES } from "../lib/traits";
 import { useNavigate } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
 import { EngineOffline } from "../ui/EngineOffline";
 import { RadioChoices } from "../ui/Choice";
 import { Icon } from "../ui/Icon";
-import { Notice } from "../ui/Notice";
+import { ErrorNotice, Notice } from "../ui/Notice";
 import { Portrait, PortraitPlaceholder } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
 
@@ -17,6 +19,35 @@ type Filter = "active" | "archived";
 
 const AVATAR_FORMS = ["аватар", "аватара", "аватаров"] as const;
 const DRAFT_FORMS = ["черновик", "черновика", "черновиков"] as const;
+
+/** Never the raw `detail` (contract text, not user copy) — a fixed Russian line per reason instead. */
+const UNREADABLE_REASON_LABEL: Record<UnreadableAvatar["reason"], string> = {
+  "manifest-unreadable": "Файл повреждён",
+  "descriptor-invalid": "Описание устарело",
+  "contract-mismatch": "Старый формат",
+};
+
+const UNREADABLE_REASON_TEXT: Record<UnreadableAvatar["reason"], string> = {
+  "manifest-unreadable": "Файл записи не удалось прочитать или разобрать. Он перемещён в карантин при запуске движка.",
+  "descriptor-invalid": "Описание аватара не проходит текущую проверку возраста. Его можно переписать заново — портрет, кандидаты и имя останутся как есть.",
+  "contract-mismatch": "Запись сохранена в формате, который сегодняшняя версия Studio больше не читает.",
+};
+
+/**
+ * A React key per unreadable entry: its `avatarId` when the engine could
+ * recover one, otherwise its reason plus that entry's own position within
+ * just that reason — stable across a reordering of the list itself (a fresh
+ * snapshot, say), unlike the overall array index.
+ */
+function unreadableKeys(list: readonly UnreadableAvatar[]): string[] {
+  const seenPerReason = new Map<UnreadableAvatar["reason"], number>();
+  return list.map((u) => {
+    if (u.avatarId !== null) return u.avatarId;
+    const n = seenPerReason.get(u.reason) ?? 0;
+    seenPerReason.set(u.reason, n + 1);
+    return `${u.reason}-${n}`;
+  });
+}
 
 function latestJobFor(jobs: readonly JobView[], avatarId: string): JobView | null {
   const own = jobs.filter((j) => j.avatarId === avatarId);
@@ -89,6 +120,164 @@ function DraftCard({ draft, job, index }: { draft: Draft; job: JobView | null; i
         >
           Продолжить
         </button>
+      </div>
+    </article>
+  );
+}
+
+type RewriteBusy = "estimate" | "rewrite" | null;
+
+/**
+ * A grid tile for a record the engine could not read into the normal lists
+ * (`unreadableAvatars`). `descriptor-invalid` is the one recoverable reason:
+ * its «Переписать описание» goes through the same estimate-then-accept
+ * pattern as the wizard's EstimateCard (avatars.estimateRewriteDescriptor,
+ * then avatars.rewriteDescriptor with that estimate's own worst case). On
+ * success the tile disappears on its own — avatar.changed/draft.changed lists
+ * the id normally and the store drops it from unreadableAvatars there.
+ */
+function UnreadableTile({ entry, view, index }: { entry: UnreadableAvatar; view: EngineView; index: number }) {
+  const { client } = useEngine();
+  const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [previousWorst, setPreviousWorst] = useState<number | null>(null);
+  const [busy, setBusy] = useState<RewriteBusy>(null);
+  const [error, setError] = useState<EngineError | null>(null);
+  // False once this tile is gone (a rewrite elsewhere lists the avatar, or the grid re-renders past it):
+  // a paid step already under way must not set state on an unmounted component.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const avatarId = entry.avatarId;
+  const rewritable = entry.reason === "descriptor-invalid" && avatarId !== null;
+  const titleId = `unreadable-${index}`;
+
+  const key = view.settings?.apiKey;
+  const keyUsable = key !== undefined && key.stored && !key.rejected;
+  const stop = paidStop(view);
+  const offline = view.phase === "offline";
+  let blockedReason: string | null = null;
+  if (offline) blockedReason = "Нет связи с движком — дождитесь, пока он снова ответит.";
+  else if (!keyUsable) blockedReason = "Нужен рабочий ключ OpenRouter — добавьте его в Настройках.";
+  else if (stop?.kind === "reconcile") blockedReason = "Платные запросы остановлены до сверки расходов.";
+  else if (stop?.kind === "restart") blockedReason = restartStopText(stop.code);
+
+  async function startEstimate(): Promise<void> {
+    if (avatarId === null) return;
+    setBusy("estimate");
+    setError(null);
+    const reply = await client.request("avatars.estimateRewriteDescriptor", { avatarId });
+    if (!mounted.current) return;
+    setBusy(null);
+    if (reply.ok) {
+      setEstimate(reply.result);
+      setPreviousWorst(null);
+    } else setError(reply.error);
+  }
+
+  /**
+   * Stays busy through the whole PRICE_CHANGED chain, not just the first
+   * request: clearing `busy` before the re-estimate lands would re-enable the
+   * button while it still shows the old, rejected price, letting a second
+   * click resend `rewriteDescriptor` with a stale `acceptedWorstMicros`
+   * (refused by the engine, but still a double submit). Mirrors
+   * AvatarWizard.tsx's `refused()`.
+   */
+  async function confirmRewrite(accepted: Estimate): Promise<void> {
+    if (avatarId === null) return;
+    setBusy("rewrite");
+    setError(null);
+    const reply = await client.request("avatars.rewriteDescriptor", { avatarId, acceptedWorstMicros: accepted.worstMicros });
+    if (!mounted.current) return;
+    if (reply.ok) {
+      setBusy(null);
+      return; // avatar.changed/draft.changed drops this tile by itself.
+    }
+    if (reply.error.code === "PRICE_CHANGED") {
+      const fresh = await client.request("avatars.estimateRewriteDescriptor", { avatarId });
+      if (!mounted.current) return;
+      setBusy(null);
+      if (fresh.ok) {
+        setEstimate(fresh.result);
+        setPreviousWorst(accepted.worstMicros);
+        return;
+      }
+      setError(fresh.error);
+      return;
+    }
+    setBusy(null);
+    setError(reply.error);
+  }
+
+  return (
+    <article className="avatar-card avatar-card-unreadable" aria-labelledby={titleId}>
+      <div className="avatar-card-media avatar-card-unreadable-media">
+        <Icon name="alert" size={26} strokeWidth={1.6} />
+      </div>
+      <div className="avatar-card-body">
+        <div className="avatar-card-row">
+          <h2 id={titleId} className="avatar-name">
+            Не читается
+          </h2>
+          <span className="pill pill-danger">{UNREADABLE_REASON_LABEL[entry.reason]}</span>
+        </div>
+        <p className="avatar-descriptor">{UNREADABLE_REASON_TEXT[entry.reason]}</p>
+
+        {rewritable &&
+          (estimate ? (
+            <>
+              <p className="mono faint">{estimateLine(estimate)}</p>
+              {previousWorst !== null && (
+                <Notice tone="warn" title="Цена выросла">
+                  Было не больше {formatUsd(previousWorst, 2, "up")}, теперь не больше {formatUsd(estimate.worstMicros, 2, "up")}.
+                </Notice>
+              )}
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                disabled={busy !== null || blockedReason !== null}
+                aria-busy={busy === "rewrite"}
+                onClick={() => void confirmRewrite(estimate)}
+              >
+                {busy === "rewrite"
+                  ? "Переписываем…"
+                  : previousWorst !== null
+                    ? `Подтвердить новую цену · до ${formatUsd(estimate.worstMicros, 2, "up")}`
+                    : `Переписать · до ${formatUsd(estimate.worstMicros, 2, "up")}`}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy !== null || blockedReason !== null}
+              aria-busy={busy === "estimate"}
+              onClick={() => void startEstimate()}
+            >
+              {busy === "estimate" ? "Считаем…" : "Переписать описание"}
+            </button>
+          ))}
+        {rewritable && blockedReason && <p className="field-hint">{blockedReason}</p>}
+        {rewritable && error && <ErrorNotice error={error} />}
+      </div>
+    </article>
+  );
+}
+
+/** How many unreadable records the bounded list left out (`unreadableTotal` never itself is cut). */
+function UnreadableMoreTile({ count }: { count: number }) {
+  return (
+    <article className="avatar-card unreadable-more-tile" aria-label="Показаны не все нечитаемые записи">
+      <div className="avatar-card-media avatar-card-unreadable-media">
+        <Icon name="alert" size={22} strokeWidth={1.6} />
+      </div>
+      <div className="avatar-card-body">
+        <p className="muted">Показаны не все нечитаемые записи</p>
+        <p className="field-hint">Ещё {countOf(count, ["запись не читается", "записи не читаются", "записей не читаются"])}.</p>
       </div>
     </article>
   );
@@ -171,7 +360,11 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
   const photoTotal = active.reduce((sum, a) => sum + a.photoCount, 0);
   const shown = filter === "active" ? active : archived;
   const drafts = filter === "active" ? view.drafts : [];
-  const isEmpty = ready && view.avatars.length === 0 && view.drafts.length === 0;
+  // Unreadable records sit with the other to-dos on the active tab; the archive filter is only for browsing archived avatars.
+  const unreadable = filter === "active" ? view.unreadableAvatars : [];
+  const unreadableKeyList = unreadableKeys(unreadable);
+  const unreadableMore = filter === "active" ? Math.max(0, view.unreadableTotal - view.unreadableAvatars.length) : 0;
+  const isEmpty = ready && view.avatars.length === 0 && view.drafts.length === 0 && view.unreadableTotal === 0;
 
   return (
     <div className="page">
@@ -220,6 +413,10 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
               {drafts.map((d, i) => (
                 <DraftCard key={d.avatarId} draft={d} job={latestJobFor(view.jobs, d.avatarId)} index={i} />
               ))}
+              {unreadable.map((u, i) => (
+                <UnreadableTile key={unreadableKeyList[i]} entry={u} view={view} index={i} />
+              ))}
+              {unreadableMore > 0 && <UnreadableMoreTile count={unreadableMore} />}
               {shown.map((a, i) => (
                 <AvatarCard key={a.avatarId} avatar={a} index={i + drafts.length} />
               ))}

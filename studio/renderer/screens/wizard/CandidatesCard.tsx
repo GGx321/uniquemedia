@@ -1,5 +1,5 @@
 import { type Ref, useId } from "react";
-import type { Candidate } from "../../../shared/engine";
+import { ERROR_MESSAGES_RU, type Candidate, type FailedCandidateSlot } from "../../../shared/engine";
 import { isActiveJob, type JobView } from "../../engine/store";
 import { countOf } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
@@ -7,6 +7,16 @@ import { ErrorNotice, Notice } from "../../ui/Notice";
 import { Portrait } from "../../ui/Portrait";
 
 const SLOTS = 4;
+
+const FAILED_FORMS = ["вариант не удалось получить", "варианта не удалось получить", "вариантов не удалось получить"] as const;
+
+/** The failed (non-age-rejected) slots of a finished batch, summarised: their shared reason if they agree, otherwise a generic line. */
+function failedSummary(failed: readonly Extract<FailedCandidateSlot, { reason: "failed" }>[]): string {
+  const codes = new Set(failed.map((f) => f.error.code));
+  const [onlyCode] = codes;
+  const reason = codes.size === 1 && onlyCode !== undefined ? ERROR_MESSAGES_RU[onlyCode] : "Причины разные — подробности в журнале.";
+  return `${countOf(failed.length, FAILED_FORMS)}: ${reason}`;
+}
 
 export function candidateLetter(index: number): string {
   return String.fromCharCode(65 + (index % 26));
@@ -46,6 +56,13 @@ export function CandidatesCard({ candidates, job, picked, onPick, onCancel, canc
   const running = job !== null && isActiveJob(job);
   const total = job?.total || SLOTS;
   const rejected = job?.result?.kind === "avatar.candidates" ? job.result.rejectedByAgeCheck : 0;
+  const failedOther =
+    job?.result?.kind === "avatar.candidates"
+      ? job.result.failedSlots.filter((f): f is Extract<FailedCandidateSlot, { reason: "failed" }> => f.reason === "failed")
+      : [];
+  // The batch ran to its end but produced nothing to choose from — distinct
+  // from "not started yet", which looks the same (four empty letters) otherwise.
+  const allFailed = job?.status === "done" && candidates.length === 0 && (rejected > 0 || failedOther.length > 0);
 
   return (
     <section className="card candidates-card" aria-labelledby="candidates-title">
@@ -97,15 +114,26 @@ export function CandidatesCard({ candidates, job, picked, onPick, onCancel, canc
           стоимость учтена.
         </Notice>
       )}
+      {failedOther.length > 0 && (
+        <Notice tone={allFailed ? "danger" : "warn"}>
+          {failedSummary(failedOther)} Стоимость попытки учтена.
+        </Notice>
+      )}
 
       {candidates.length === 0 && !running ? (
-        <div className="cand-grid" aria-hidden="true">
-          {Array.from({ length: SLOTS }, (_, i) => (
-            <div key={i} className="cand-slot cand-slot-empty">
-              <span className="mono faint">{candidateLetter(i)}</span>
-            </div>
-          ))}
-        </div>
+        allFailed ? (
+          <p className="muted empty-inline">
+            Ни один вариант не получился. Можно попробовать снова — это отдельная оплаченная попытка.
+          </p>
+        ) : (
+          <div className="cand-grid" aria-hidden="true">
+            {Array.from({ length: SLOTS }, (_, i) => (
+              <div key={i} className="cand-slot cand-slot-empty">
+                <span className="mono faint">{candidateLetter(i)}</span>
+              </div>
+            ))}
+          </div>
+        )
       ) : (
         <fieldset className="cand-fieldset">
           <legend className="sr-only">Выберите вариант</legend>

@@ -1,6 +1,7 @@
 // Money in the UI stays in integer micro-dollars ($1 = 1_000_000) end to end.
 // Formatting and parsing work on integers and digit strings only: no float
 // arithmetic and no parseFloat anywhere on a money value.
+import type { Estimate } from "../../shared/engine";
 
 export const MICROS_PER_DOLLAR = 1_000_000;
 
@@ -66,4 +67,14 @@ export function parseDollars(input: string, opts: { maxDecimals?: number; maxMic
   if (micros === 0) return { ok: false, reason: "zero" };
   if (micros > maxMicros) return { ok: false, reason: "too-large" };
   return { ok: true, micros };
+}
+
+/**
+ * "≈ $0.21, не больше $0.23": the expected cost rounded to the cent, the
+ * worst case rounded up. Shared by every paid-confirmation UI (the wizard's
+ * EstimateCard, the Avatars grid's rewrite-recovery tile) so the same price
+ * reads the same way everywhere.
+ */
+export function estimateLine(estimate: Estimate): string {
+  return `≈ ${formatUsd(estimate.expectedMicros)}, не больше ${formatUsd(estimate.worstMicros, 2, "up")}`;
 }

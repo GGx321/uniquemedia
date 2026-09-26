@@ -188,6 +188,39 @@ test("a difference of exactly one cent is not a mismatch; one micro more is", as
   await screen.findByText("Расхождение $0.0100");
 });
 
+test("a first reconcile with no baseline still shows the ledger's own total and says why there is nothing to compare it to", async () => {
+  const { engine } = await openSettings();
+  engine.queueReconcile({ status: "done", creditsDeltaMicros: null, deltaUnavailable: "no-baseline", ledgerDeltaMicros: 211_000, mismatch: null, closedReserves: 1, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
+  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
+  await screen.findByText("$0.2110");
+  expect(screen.getByText(/Это первая сверка/)).toBeDefined();
+  expect(screen.getByText(/Закрыто по худшей цене: 1\s*резерв/)).toBeDefined();
+  expect(screen.queryByText(/OpenRouter · \/credits/)).toBeNull();
+});
+
+test("a negative account-wide /credits delta is explained instead of compared", async () => {
+  const { engine } = await openSettings();
+  engine.queueReconcile({ status: "done", creditsDeltaMicros: null, deltaUnavailable: "negative-delta", ledgerDeltaMicros: 50_000, mismatch: null, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
+  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
+  await screen.findByText(/ушёл в минус/);
+});
+
+test("a clock-skew warning shows on a too-early answer", async () => {
+  const { engine } = await openSettings();
+  engine.queueReconcile({ status: "too-early", retryAfterMs: 30_000, warnings: ["clock-skew"] });
+  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
+  await screen.findByText(/Системные часы отстают/);
+  expect(screen.getByText("Слишком рано")).toBeDefined();
+});
+
+test("a clock-skew warning shows alongside a done reconcile too", async () => {
+  const { engine } = await openSettings();
+  engine.queueReconcile({ status: "done", creditsDeltaMicros: 100_000, deltaUnavailable: null, ledgerDeltaMicros: 100_000, mismatch: false, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: ["clock-skew"] });
+  fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
+  await screen.findByText(/Суммы сходятся/);
+  expect(screen.getByText(/Системные часы отстают/)).toBeDefined();
+});
+
 test("reconcile refused while requests are in flight", async () => {
   const { engine } = await openSettings();
   engine.failNext("money.reconcile", { code: "IN_FLIGHT" });

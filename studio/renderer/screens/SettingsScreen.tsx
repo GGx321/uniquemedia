@@ -9,6 +9,7 @@ import {
   type OpenMoneyStatus,
   type ReconcileReason,
   type ReconcileResult,
+  type ReconcileWarning,
   type Settings,
 } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
@@ -251,6 +252,16 @@ const REASON_TEXT: Record<ReconcileReason, string> = {
   "torn-ledger-line": "последняя строка журнала расходов обрезана (например, при сбое питания)",
 };
 
+/** Why `creditsDeltaMicros` is null: nothing to compare the ledger's own delta against. */
+const DELTA_UNAVAILABLE_TEXT: Record<NonNullable<Extract<ReconcileResult, { status: "done" }>["deltaUnavailable"]>, string> = {
+  "no-baseline": "Это первая сверка: нет предыдущей точки, с которой сравнить расход по /credits.",
+  "negative-delta": "Расход по /credits за это окно ушёл в минус. /credits общий для всего аккаунта — сравнение недостоверно.",
+};
+
+const RECONCILE_WARNING_TEXT: Record<ReconcileWarning, string> = {
+  "clock-skew": "Системные часы отстают от журнала расходов, поэтому время ожидания посчитано по внутреннему таймеру, а не по часам.",
+};
+
 function BudgetRow({ settings }: { settings: Settings }) {
   const { client, store } = useEngine();
   const inputId = useId();
@@ -364,9 +375,30 @@ function MoneyStatusRows({ money }: { money: OpenMoneyStatus }) {
 
 function ReconcileOutcome({ result }: { result: Extract<ReconcileResult, { status: "done" }> }) {
   const credits = result.creditsDeltaMicros;
+  const trailer = (
+    <>
+      {result.closedReserves > 0 && (
+        <p className="field-hint">Закрыто по худшей цене: {countOf(result.closedReserves, ["резерв", "резерва", "резервов"])}.</p>
+      )}
+      {result.tornLineMoved && <p className="field-hint">Обрезанная строка журнала перенесена в ledger.torn.</p>}
+    </>
+  );
   // No /credits delta to compare (the first reconcile, or usage that went
-  // down): its own view is for the follow-up that reads `deltaUnavailable`.
-  if (credits === null) return null;
+  // down): say why, but still show the ledger's own delta for the window.
+  if (credits === null) {
+    return (
+      <div className="reconcile-outcome" role="status">
+        <dl className="reconcile-totals">
+          <div>
+            <dt>Журнал Studio</dt>
+            <dd className="mono">{formatUsd(result.ledgerDeltaMicros, 4)}</dd>
+          </div>
+        </dl>
+        <Notice tone="info">{result.deltaUnavailable && DELTA_UNAVAILABLE_TEXT[result.deltaUnavailable]}</Notice>
+        {trailer}
+      </div>
+    );
+  }
   const diff = Math.abs(credits - result.ledgerDeltaMicros);
   const mismatch = diff > RECONCILE_TOLERANCE_MICROS;
   const higher = credits > result.ledgerDeltaMicros;
@@ -391,10 +423,7 @@ function ReconcileOutcome({ result }: { result: Extract<ReconcileResult, { statu
       ) : (
         <Notice tone="ok">Суммы сходятся: расхождение не больше {formatUsd(RECONCILE_TOLERANCE_MICROS)}.</Notice>
       )}
-      {result.closedReserves > 0 && (
-        <p className="field-hint">Закрыто по худшей цене: {countOf(result.closedReserves, ["резерв", "резерва", "резервов"])}.</p>
-      )}
-      {result.tornLineMoved && <p className="field-hint">Обрезанная строка журнала перенесена в ledger.torn.</p>}
+      {trailer}
     </div>
   );
 }
@@ -483,6 +512,7 @@ function ReconcileBlock({ money, engineError }: { money: MoneyStatus; engineErro
           OpenRouter ещё не обновил расход. Сверить можно через {waitLabel(readyAt - now)}.
         </Notice>
       )}
+      {result?.warnings.includes("clock-skew") && <Notice tone="info">{RECONCILE_WARNING_TEXT["clock-skew"]}</Notice>}
       {result?.status === "done" && <ReconcileOutcome result={result} />}
       {error && <ErrorNotice error={error} />}
     </div>
