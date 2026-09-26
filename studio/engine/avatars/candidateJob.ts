@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { FfmpegError } from "../../node/runFfmpeg";
 import type { AvatarDescriptor, EngineError, FailedCandidateSlot } from "../../shared/engine";
 import type { CandidatesJobEnd } from "../jobs";
 import type { NewPhotoMeta } from "../library";
@@ -117,8 +118,13 @@ function internal(slot: number, detail: string): SlotOutcome {
   return failed(slot, { code: "INTERNAL", detail }, false);
 }
 
-/** `work`, or the signal's reason as soon as it fires; a late rejection of the abandoned work is dropped. */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+/**
+ * `work`, or the signal's reason as soon as it fires; a late rejection of the
+ * abandoned work is dropped. Bounds `work` even when it ignores `signal`
+ * itself (a hung native call, or a test double that does not bother) — the
+ * race here is what settles, not `work`'s own cooperation.
+ */
+export function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   work.catch(() => {});
   return new Promise<T>((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason);
@@ -137,8 +143,28 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/**
+ * `error.message`, with an `FfmpegError`'s own stderr tail appended (review
+ * A): the bare exit code ("ffmpeg exited with code 1") explains nothing on
+ * its own — what ffmpeg printed with `-loglevel error` is the actual
+ * diagnostic. `truncate()` (see `failed()`) still bounds the final detail.
+ */
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  if (!(error instanceof FfmpegError)) return message;
+  const stderrTail = error.stderrTail.trim();
+  return stderrTail === "" ? message : `${message}: ${stderrTail}`;
+}
+
+/**
+ * A spawn failure (the ffmpeg binary itself missing, ENOENT, or not
+ * executable, EACCES): systemic, since every downscale spawns its own
+ * ffmpeg process from the same fixed path — the next slot's spawn would fail
+ * the exact same way. A decode failure (ffmpeg ran, exited non-zero: this
+ * one image was garbled or unusual) has no `code` at all and is not this.
+ */
+function isSpawnFailure(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES");
 }
 
 /**
@@ -166,7 +192,7 @@ export async function runCandidateJob(deps: CandidateJobDeps, job: CandidateJob)
       if (slot === undefined) return;
       let outcome: SlotOutcome;
       try {
-        outcome = await runSlot(deps, job, prompt, slot);
+        outcome = await runSlot(deps, job, prompt, slot, () => fatal);
       } catch (error) {
         outcome = failed(slot, deps.errorOf(error), true);
       }
@@ -186,7 +212,7 @@ export async function runCandidateJob(deps: CandidateJobDeps, job: CandidateJob)
  * paid for when its check could not be (m3 of the part 1 review). Each
  * request is still reserved on disk, and checked again, when it is sent.
  */
-async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number): Promise<SlotOutcome> {
+async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number, isFatal: () => boolean): Promise<SlotOutcome> {
   const choice = candidateImage(job.imageModel);
   const attemptId = candidateAttemptId(job.jobId, slot);
   const ageId = ageAttemptId(job.jobId, slot);
@@ -200,6 +226,12 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
     return mapped === null ? internal(slot, "the budget refused the slot") : failed(slot, mapped.error, mapped.fatal);
   }
   try {
+    // Review (LOW 14): the worker loop only checks `fatal` before picking a
+    // slot; this slot was already past that check when another slot's own
+    // failure turned the job fatal while this one awaited its hold above.
+    // Re-checked here, right before the request would actually be sent, so
+    // no image is bought after the job is already known to be fatal.
+    if (isFatal()) return { slot, kind: "skipped" };
     return await sendPair(deps, job, prompt, slot, ageShape);
   } finally {
     // Whatever was not reserved will not be sent.
@@ -241,8 +273,20 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
     jpeg = await untilAborted(deps.downscale(image.bytes, prepare), prepare);
   } catch (error) {
     if (job.signal.aborted) return { slot, kind: "aborted" };
-    if (prepare.aborted) return internal(slot, `preparing the image for the age check timed out after ${timeoutMs} ms`);
-    return internal(slot, `the image could not be prepared for the age check: ${messageOf(error)}`);
+    // M8 (review fix): fatal only for a SYSTEMIC failure of the image
+    // pipeline — the prepare timeout (30 s is generous; a hang this long
+    // points at something stuck, not a merely slow decode) or a spawn
+    // failure (the ffmpeg binary itself missing or not executable). Every
+    // downscale spawns its own ffmpeg process from the same fixed path, so
+    // either of those would fail the exact same way for every slot after
+    // this one — continuing would only buy more images that can never be
+    // checked or stored. A decode failure (ffmpeg ran, exited non-zero: this
+    // one paid image was garbled or unusual) is this slot's own problem:
+    // the other slots' own images are independent, so they still have their
+    // own chance, and the batch must not report itself failed while candidates
+    // it already stored sit unreported.
+    if (prepare.aborted) return failed(slot, { code: "INTERNAL", detail: `preparing the image for the age check timed out after ${timeoutMs} ms` }, true);
+    return failed(slot, { code: "INTERNAL", detail: `the image could not be prepared for the age check: ${messageOf(error)}` }, isSpawnFailure(error));
   }
   return ageGate(deps, job, slot, ageShape, { attemptId, prompt, image, size, jpeg });
 }

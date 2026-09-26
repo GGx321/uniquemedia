@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, watch } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { imageSize, sniffImageMediaType } from "../engine/library/media";
 import { __setFfmpegPathOverrideForTests, ffmpegPath } from "./ffmpegBinary";
-import { downscaleCommand, downscaleToJpeg } from "./downscale";
+import { downscaleCommand, downscaleToJpeg, preflightDownscale, type SpawnLike } from "./downscale";
+import { FfmpegError } from "./runFfmpeg";
 
 let dir = "";
 beforeAll(() => {
@@ -152,5 +154,135 @@ describe("downscaleCommand", () => {
     expect(args.slice(input - 6, input + 2)).toEqual(["-protocol_whitelist", "pipe", "-max_pixels", "16777216", "-f", "png_pipe", "-i", "pipe:0"]);
     expect(args.slice(-3)).toEqual(["-f", "mjpeg", "pipe:1"]);
     expect(args).toContain("scale=w='min(768,iw)':h='min(768,ih)':force_original_aspect_ratio=decrease");
+  });
+});
+
+describe("preflightDownscale (M8: a cheap check the image pipeline works, before a batch buys anything)", () => {
+  test("resolves once a healthy ffmpeg decodes and scales the tiny built-in image", async () => {
+    await expect(preflightDownscale()).resolves.toBeUndefined();
+  });
+
+  test("rejects with the same failure a real slot's downscale would see when ffmpeg is missing", async () => {
+    __setFfmpegPathOverrideForTests(join(dir, "no-such-ffmpeg"));
+    try {
+      expect(await rejectionOf(preflightDownscale())).toBeInstanceOf(Error);
+    } finally {
+      __setFfmpegPathOverrideForTests(undefined);
+    }
+  });
+
+  test("an aborted signal rejects with its reason, same as downscaleToJpeg", async () => {
+    const controller = new AbortController();
+    const reason = new Error("preflight cancelled");
+    controller.abort(reason);
+
+    expect(await rejectionOf(preflightDownscale(controller.signal))).toBe(reason);
+  });
+});
+
+// Review: a Windows CI flake (run 36263630451, attempt 1) saw ffmpeg.exe
+// exit with code 5 (ERROR_ACCESS_DENIED) right after another test SIGKILLed
+// several ffmpeg.exe processes — probably AV or a delayed handle release on
+// a freshly unpacked binary — then pass on rerun. A single spawn retry, only
+// when ffmpeg exited non-zero with NO stderr at all (with -loglevel error, a
+// real decode failure always prints something), covers exactly that without
+// masking a genuine decode failure. Tested with an injected `spawn` (a
+// scripted fake, never a real child process): a shell stub would not run
+// the same way on Windows, which is exactly the platform this covers.
+describe("downscaleToJpeg retries once on an empty-stderr non-zero exit (Windows CI flake)", () => {
+  const JPEG_OUT = Uint8Array.of(0xff, 0xd8, 0xff, 0xd9);
+  /** A real 1x1 PNG's bytes; the fake spawn below never actually decodes it, but downscaleToJpeg's own format sniff must recognise it before it ever spawns anything. */
+  const PNG_1X1_INPUT = Uint8Array.from(
+    Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"),
+  );
+
+  /** A minimal fake child_process.ChildProcess: an EventEmitter with the stdout/stderr/stdin/kill/exitCode shape downscaleToJpeg reads. */
+  function fakeChild() {
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const stdin = Object.assign(new EventEmitter(), { ended: undefined as Uint8Array | undefined, end(bytes: Uint8Array) { this.ended = bytes; } });
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr,
+      stdin,
+      exitCode: null as number | null,
+      kill: (): boolean => true, // replaced below, once `close` (which needs `child`) exists
+    });
+    const close = (code: number | null, signal: string | null = null): void => {
+      if (child.exitCode !== null) return;
+      child.exitCode = code;
+      child.emit("close", code, signal);
+    };
+    // A real killed process's close eventually follows, asynchronously; this mimics that instead of requiring every script to call close() itself.
+    child.kill = () => {
+      queueMicrotask(() => close(null, "SIGKILL"));
+      return true;
+    };
+    return { child, stdout, stderr, stdin, close };
+  }
+
+  /** Each call to `spawn` gets the next script in order; a call past the end fails the test loudly. */
+  function scriptedSpawn(scripts: ((f: ReturnType<typeof fakeChild>) => void)[]): { spawn: SpawnLike; calls: number } {
+    let calls = 0;
+    const spawn: SpawnLike = (_command, _args) => {
+      const script = scripts[calls++];
+      if (script === undefined) throw new Error(`unexpected spawn call #${calls}`);
+      const f = fakeChild();
+      queueMicrotask(() => script(f));
+      return f.child;
+    };
+    return { spawn, calls: 0 };
+  }
+
+  test("retries once, after a short delay, when the first spawn exits non-zero with no stderr at all", async () => {
+    const scripted = scriptedSpawn([
+      (f) => f.close(5),
+      (f) => {
+        f.stdout.emit("data", Buffer.from(JPEG_OUT));
+        f.close(0);
+      },
+    ]);
+    const started = performance.now();
+
+    const out = await downscaleToJpeg(PNG_1X1_INPUT, { maxSide: 64, spawn: scripted.spawn });
+
+    expect(out).toEqual(JPEG_OUT);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(150); // the ~200 ms delay actually happened
+  });
+
+  test("never retries when the failing spawn's stderr is non-empty: a real decode failure always prints something", async () => {
+    const scripted = scriptedSpawn([
+      (f) => {
+        f.stderr.emit("data", Buffer.from("Error while decoding stream\n"));
+        f.close(5);
+      },
+    ]);
+
+    const error = await rejectionOf(downscaleToJpeg(PNG_1X1_INPUT, { maxSide: 64, spawn: scripted.spawn }));
+
+    expect(error).toBeInstanceOf(FfmpegError);
+    expect((error as FfmpegError).stderrTail).toContain("Error while decoding stream");
+  });
+
+  test("never retries after the signal aborts the first attempt", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled mid-attempt");
+    // The first spawn just hangs; downscaleToJpeg's own abort handler kills
+    // it (the fake's kill() then emits close on its own, like a real one).
+    const scripted = scriptedSpawn([() => {}]);
+
+    const promise = downscaleToJpeg(PNG_1X1_INPUT, { maxSide: 64, spawn: scripted.spawn, signal: controller.signal });
+    controller.abort(reason);
+
+    expect(await rejectionOf(promise)).toBe(reason);
+  });
+
+  test("a second empty-stderr failure is not retried again: at most one retry", async () => {
+    const scripted = scriptedSpawn([(f) => f.close(5), (f) => f.close(5)]);
+
+    const error = await rejectionOf(downscaleToJpeg(PNG_1X1_INPUT, { maxSide: 64, spawn: scripted.spawn }));
+
+    expect(error).toBeInstanceOf(FfmpegError);
+    expect((error as FfmpegError).exitCode).toBe(5);
   });
 });

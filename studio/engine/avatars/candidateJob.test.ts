@@ -14,6 +14,7 @@ import { imageSize } from "../library/media";
 import type { LedgerDeps } from "../money/ledger";
 import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, setupMoney, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
+import type { OpenRouterClientOptions } from "../openrouter/types";
 import { AGE_CHECK_MAX_SIDE, AGE_QUESTION, AGE_SYSTEM, ageJsonSchema } from "./ageCheck";
 import { candidateJobEnd, PREPARE_TIMEOUT_MS, runCandidateJob, type CandidateJob, type SlotOutcome } from "./candidateJob";
 import { avatarJobEstimate } from "./plan";
@@ -96,8 +97,12 @@ interface Stored {
   meta: NewPhotoMeta;
 }
 
-function run(net: ReturnType<typeof network>, job: Partial<CandidateJob> = {}, seams: { downscale?: (bytes: Uint8Array, signal: AbortSignal) => Promise<Uint8Array> } = {}) {
-  const { client } = makeClient(net.fetch);
+function run(
+  net: ReturnType<typeof network>,
+  job: Partial<CandidateJob> = {},
+  seams: { downscale?: (bytes: Uint8Array, signal: AbortSignal) => Promise<Uint8Array>; clientOverrides?: Partial<OpenRouterClientOptions> } = {},
+) {
+  const { client } = makeClient(net.fetch, seams.clientOverrides);
   const stored: Stored[] = [];
   const reported: SlotOutcome[] = [];
   const outcomes = runCandidateJob(
@@ -311,6 +316,87 @@ describe("the age gate: nothing is stored without a clear yes, and nothing is as
   });
 });
 
+// M7: the age check's own request can fail exactly as the image attempt's
+// can; each case is checked for the same four things: nothing is ever stored
+// (a candidate is only stored after a clear "yes" — see the age gate above),
+// the ledger's line for the age attempt matches the case's own money rule,
+// the hold taken for the pair is fully released, and the job ends failed
+// with that case's error code (whether the case is fatal for the slots not
+// started yet, or every slot hits the very same failure independently).
+describe("the age check's own failure paths (M7): nothing is stored, the ledger and the hold are right, and the job ends right", () => {
+  interface AgeFailureCase {
+    name: string;
+    age: Handler;
+    clientOverrides?: Partial<OpenRouterClientOptions>;
+    code: EngineError["code"];
+    fatal: boolean;
+    /** Whether the age attempt's own reserve line was settled (a final response, even a bad one) or left open (no final response; may have been billed). */
+    settled: boolean;
+  }
+
+  const cases: AgeFailureCase[] = [
+    { name: "a network error before any response", age: () => ({ reject: new TypeError("fetch failed") }), code: "NETWORK", fatal: false, settled: false },
+    { name: "a timeout with no response", age: () => ({ hang: true }), clientOverrides: { timeoutMs: 20 }, code: "TIMEOUT", fatal: false, settled: false },
+    { name: "a persistent 5xx (transport retries exhausted)", age: () => ({ status: 503 }), code: "NETWORK", fatal: false, settled: true },
+    { name: "a 401", age: () => ({ status: 401, body: { error: { message: "No auth credentials found" } } }), code: "AUTH_INVALID", fatal: true, settled: true },
+    {
+      name: "a charge above the worst case",
+      age: () => ({ status: 200, body: chatBody(JSON.stringify({ adult: true, confidence: 0.95, reason: "An adult." }), { cost: 6 }) }),
+      code: "SETTLE_ABOVE_WORST",
+      fatal: true,
+      settled: true,
+    },
+  ];
+
+  test.each(cases.map((c): [string, AgeFailureCase] => [c.name, c]))("%s on the age check", async (_label, c) => {
+    const net = network({ age: c.age });
+    const { outcomes, stored } = run(net, { concurrency: 1 }, { clientOverrides: c.clientOverrides });
+
+    const results = await outcomes;
+    expect(results[0]).toMatchObject({ slot: 1, kind: "failed", error: expect.objectContaining({ code: c.code }), fatal: c.fatal, reserveLeftOpen: !c.settled });
+    if (c.fatal) {
+      // Fatal: the slots not started yet never start.
+      expect(results.slice(1)).toEqual([2, 3, 4].map((slot) => ({ slot, kind: "skipped" })));
+    } else {
+      // Non-fatal: every slot hits the very same failure on its own age check, independently.
+      expect(results.slice(1)).toEqual([2, 3, 4].map((slot) => expect.objectContaining({ slot, kind: "failed", error: expect.objectContaining({ code: c.code }) })));
+    }
+    // Nothing is ever stored: the age check never said a clear yes.
+    expect(stored).toEqual([]);
+
+    const attemptLines = money.lines().filter((l) => l.attemptId === `${JOB_ID}:candidate-1:age#1`);
+    if (c.settled) expect(attemptLines).toMatchObject([{ type: "reserve", worstMicros: AGE_WORST }, { type: "settle" }]);
+    else expect(attemptLines).toEqual([expect.objectContaining({ type: "reserve", worstMicros: AGE_WORST })]);
+    // The hold taken for the image+age pair is released either way: nothing is left in flight.
+    expect(money.budget.inFlightCount()).toBe(0);
+    expect(money.budget.status().heldMicros).toBe(0);
+
+    expect(candidateJobEnd(results, false)).toMatchObject({ status: "failed", error: { code: c.code } });
+  });
+
+  test("a cancel while the age check is in flight ends the slot as aborted; the reserve stays open until reconcile, and the job ends cancelled", async () => {
+    const controller = new AbortController();
+    const net = network({ age: () => ({ hang: true }) });
+    const { outcomes, stored } = run(net, { concurrency: 1, signal: controller.signal });
+    await until(() => net.ageCalls().length === 1);
+    controller.abort();
+
+    const results = await outcomes;
+    expect(results).toEqual([
+      { slot: 1, kind: "aborted" },
+      { slot: 2, kind: "skipped" },
+      { slot: 3, kind: "skipped" },
+      { slot: 4, kind: "skipped" },
+    ]);
+    expect(stored).toEqual([]);
+    const attemptLines = money.lines().filter((l) => l.attemptId === `${JOB_ID}:candidate-1:age#1`);
+    expect(attemptLines).toEqual([expect.objectContaining({ type: "reserve", worstMicros: AGE_WORST })]);
+    expect(money.budget.inFlightCount()).toBe(0);
+    expect(money.budget.status().heldMicros).toBe(0);
+    expect(candidateJobEnd(results, true)).toEqual({ status: "cancelled" });
+  });
+});
+
 describe("a slot that cannot finish", () => {
   test("a moderation refusal of the image fails its slot for free, with no age check and no retry", async () => {
     const net = network({ image: (_call, n) => (n === 2 ? MODERATION : portrait()) });
@@ -366,16 +452,80 @@ describe("a slot that cannot finish", () => {
     expect([net.ageCalls().length, stored.length]).toEqual([0, 0]);
   });
 
-  test("an image ffmpeg cannot decode fails its slot before any age check is paid", async () => {
-    // A valid PNG signature and IHDR (864×1152), then garbage.
+  test("an image ffmpeg cannot decode fails only its own slot before any age check is paid: not fatal, since ffmpeg ran and this one paid image was the problem (M8 review fix)", async () => {
+    // A valid PNG signature and IHDR (864×1152), then garbage: ffmpeg spawns
+    // fine, reads it, and exits non-zero — a decode failure, not a spawn one.
     const broken = Uint8Array.from([...PORTRAIT.subarray(0, 33), ...new Uint8Array(64).fill(7)]);
-    const net = network({ image: () => portrait(broken) });
-    const { outcomes, stored } = run(net);
+    const net = network({ image: (_call, n) => (n === 1 ? portrait(broken) : portrait()) });
+    const { outcomes, stored } = run(net, { concurrency: 1 });
 
     const results = await outcomes;
-    expect(results).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: false, reserveLeftOpen: false })));
-    expect(results[0]).toMatchObject({ error: { detail: expect.stringContaining("age check") } });
+    const first = results[0];
+    if (first.kind !== "failed") throw new Error(`expected slot 1 to have failed, got ${first.kind}`);
+    expect(first).toMatchObject({ slot: 1, kind: "failed", fatal: false, reserveLeftOpen: false });
+    expect(first.error.code).toBe("INTERNAL");
+    expect(first.error.detail).toContain("age check");
+    // Review (A): the engine's own error detail carries ffmpeg's own stderr
+    // tail too, not just its bare exit code, which explains nothing alone.
+    expect(first.error.detail).toContain("ffmpeg exited with code");
+    expect(first.error.detail).not.toMatch(/ffmpeg exited with code \d+$/);
+    // The other slots are independent: their own images still have their own chance.
+    // (Slot 1 never stores anything, so the store's own sequential ids start at slot 2.)
+    expect(results.slice(1)).toEqual([2, 3, 4].map((n) => ({ ...passed(n), photoId: `photo-${String(n - 1).padStart(8, "0")}` })));
+    expect([net.imageCalls().length, stored.length]).toEqual([4, 3]);
+  });
+
+  test("a spawn failure (ffmpeg missing or not executable) is fatal for the slots not started yet, unlike a decode failure (M8 review fix)", async () => {
+    const net = network();
+    const { outcomes, stored } = run(net, { concurrency: 1 }, {
+      downscale: () => Promise.reject(Object.assign(new Error("spawn no-such-ffmpeg ENOENT"), { code: "ENOENT" })),
+    });
+
+    const results = await outcomes;
+    expect(results[0]).toMatchObject({ slot: 1, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: true, reserveLeftOpen: false });
+    expect(results.slice(1)).toEqual([2, 3, 4].map((slot) => ({ slot, kind: "skipped" })));
     expect([net.ageCalls().length, stored.length]).toEqual([0, 0]);
+  });
+
+  // Review (LOW 14): the worker loop only checks `fatal` before PICKING a
+  // slot; a slot already past that check, mid-flight through its own hold,
+  // did not re-check it before actually sending. Slot 2's own tryHold is
+  // held back (a spy on the real Budget, not a fake) until slot 1's spawn
+  // failure has already turned the job fatal, so this proves the window
+  // between tryHold resolving and the image request being sent, not just
+  // the ordinary top-of-loop check.
+  test("does not send an image once the job has already turned fatal, even for a slot already past its own hold (LOW 14)", async () => {
+    let releaseSlot2: () => void = () => {};
+    const gate = new Promise<void>((r) => (releaseSlot2 = r));
+    const realTryHold = money.budget.tryHold.bind(money.budget);
+    spyOn(money.budget, "tryHold").mockImplementation(async (requests: Parameters<typeof realTryHold>[0]) => {
+      if (requests.some((r) => r.attemptId.includes("candidate-2"))) await gate;
+      return realTryHold(requests);
+    });
+    const net = network();
+    const { outcomes, reported } = run(net, { concurrency: 2 }, {
+      downscale: () => Promise.reject(Object.assign(new Error("spawn no-such-ffmpeg ENOENT"), { code: "ENOENT" })),
+    });
+
+    await until(() => reported.some((o) => o.kind === "failed" && o.fatal));
+    releaseSlot2();
+    const results = await outcomes;
+
+    expect(results[0]).toMatchObject({ slot: 1, kind: "failed", fatal: true });
+    expect(results[1]).toEqual({ slot: 2, kind: "skipped" });
+    expect(net.imageCalls()).toHaveLength(1);
+  });
+
+  test("with concurrency high enough that every image is already bought, one slot's decode failure does not turn the others' passing candidates into a failed job (review MEDIUM)", async () => {
+    const broken = Uint8Array.from([...PORTRAIT.subarray(0, 33), ...new Uint8Array(64).fill(7)]);
+    const net = network({ image: (_call, n) => (n === 1 ? portrait(broken) : portrait()) });
+    const { outcomes, stored } = run(net, { concurrency: 6 });
+
+    const results = await outcomes;
+    expect(results.find((o) => o.slot === 1)).toMatchObject({ kind: "failed", fatal: false });
+    expect(results.filter((o) => o.kind === "passed")).toHaveLength(3);
+    expect(stored).toHaveLength(3);
+    expect(candidateJobEnd(results, false)).toMatchObject({ status: "done", photoIds: stored.map(() => expect.any(String)) });
   });
 
   test("a descriptor that fails today's rules sends nothing: every slot fails with DESCRIPTOR_INVALID", async () => {
@@ -389,11 +539,11 @@ describe("a slot that cannot finish", () => {
 });
 
 describe("preparing the image for the age check cannot hold a slot", () => {
-  test("a downscale that never ends fails its slot once the prepare timeout passes; its signal fired, so ffmpeg is killed", async () => {
+  test("a downscale that never ends fails its slot once the prepare timeout passes; its signal fired, so ffmpeg is killed, and it is fatal for the slots not started yet (M8)", async () => {
     const signals: AbortSignal[] = [];
     const net = network();
     const started = performance.now();
-    const { outcomes, stored } = run(net, { prepareTimeoutMs: 50 }, {
+    const { outcomes, stored } = run(net, { prepareTimeoutMs: 50, concurrency: 1 }, {
       downscale: (_bytes, signal) => {
         signals.push(signal);
         return new Promise<Uint8Array>(() => {});
@@ -402,7 +552,9 @@ describe("preparing the image for the age check cannot hold a slot", () => {
 
     const results = await outcomes;
     expect(performance.now() - started).toBeLessThan(2_000);
-    expect(results).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL", detail: expect.stringContaining("timed out") }), fatal: false, reserveLeftOpen: false })));
+    expect(results[0]).toMatchObject({ slot: 1, kind: "failed", error: expect.objectContaining({ code: "INTERNAL", detail: expect.stringContaining("timed out") }), fatal: true, reserveLeftOpen: false });
+    expect(results.slice(1)).toEqual([2, 3, 4].map((slot) => ({ slot, kind: "skipped" })));
+    expect(signals).toHaveLength(1);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
     expect([net.ageCalls().length, stored.length]).toEqual([0, 0]);
   }, 3_000);

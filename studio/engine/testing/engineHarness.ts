@@ -164,7 +164,10 @@ export type Network = ReturnType<typeof network>;
 
 // ---------- the engine ----------
 
-export async function startEngine(dir: string, opts: { init?: Partial<EngineInit>; net?: Network; key?: string | null; bootId?: string } = {}) {
+export async function startEngine(
+  dir: string,
+  opts: { init?: Partial<EngineInit>; net?: Network; key?: string | null; bootId?: string; deps?: Partial<EngineDeps> } = {},
+) {
   const net = opts.net ?? network();
   const posted: unknown[] = [];
   let n = 0;
@@ -175,6 +178,7 @@ export async function startEngine(dir: string, opts: { init?: Partial<EngineInit
     newId: () => `id-${String(++n).padStart(8, "0")}`,
     post: (message) => posted.push(message),
     fetch: net.fetch,
+    ...opts.deps,
   };
   const engine = await Engine.start(engineInit(dir, opts.init), deps);
   const key = opts.key === undefined ? KEY : opts.key;

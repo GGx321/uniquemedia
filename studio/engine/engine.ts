@@ -28,9 +28,9 @@ import {
   type UnsequencedEvent,
   UNREADABLE_REASON_DETAIL,
 } from "../shared/engine";
-import { downscaleToJpeg } from "../node/downscale";
-import { AGE_CHECK_MAX_SIDE } from "./avatars/ageCheck";
-import { candidateJobEnd, runCandidateJob, type SlotOutcome } from "./avatars/candidateJob";
+import { downscaleToJpeg, preflightDownscale } from "../node/downscale";
+import { AGE_CHECK_MAX_SIDE, passesAgeThreshold } from "./avatars/ageCheck";
+import { candidateJobEnd, runCandidateJob, untilAborted, type SlotOutcome } from "./avatars/candidateJob";
 import { runDescriptorJob } from "./avatars/descriptorJob";
 import { avatarJobEstimate, avatarPriceModels, CANDIDATES_PER_BATCH, descriptorJobCap, type AvatarModels } from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
@@ -71,6 +71,18 @@ export interface EngineDeps {
   fetch: OpenRouterFetch;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
+  /**
+   * Downscales a tiny built-in image through the same ffmpeg path a real
+   * slot's image would take (M8's `generateCandidates` preflight). Defaults
+   * to `studio/node/downscale.ts`'s real one; tests inject a hanging or
+   * failing fake here instead of a broken ffmpeg path or a shell stub (which
+   * would not run the same way on Windows).
+   */
+  preflightDownscale?: (signal: AbortSignal) => Promise<void>;
+  /** Bounds the preflight above; PREFLIGHT_TIMEOUT_MS unless a test says otherwise. */
+  preflightTimeoutMs?: number;
+  /** Bounds #liveLibrary's identity re-check; LIVE_LIBRARY_IDENTITY_TIMEOUT_MS unless a test says otherwise. */
+  liveLibraryIdentityTimeoutMs?: number;
 }
 
 function detailOf(message: string): string {
@@ -188,6 +200,12 @@ type Money = { ok: true; budget: Budget } | { ok: false; unavailable: LedgerUnav
 /** The manifest needs a name; a draft gets the user's name only when a candidate is picked. */
 const DRAFT_NAME = "Draft";
 
+/** How long generateCandidates' ffmpeg preflight (M8) may take before it answers a clear error and spends nothing. */
+export const PREFLIGHT_TIMEOUT_MS = 10_000;
+
+/** How long #liveLibrary's identity re-check (one stat, one realpath) may take before it is read as "cannot be identified right now" (review LOW 15). */
+export const LIVE_LIBRARY_IDENTITY_TIMEOUT_MS = 5_000;
+
 /** A candidate job while it runs: what it was started with, and how many slots are done. */
 interface RunningCandidates {
   jobId: string;
@@ -223,6 +241,9 @@ interface OpenedLibrary {
 export class Engine {
   readonly #deps: EngineDeps;
   readonly #folderFs: FolderFs;
+  readonly #preflight: (signal: AbortSignal) => Promise<void>;
+  readonly #preflightTimeoutMs: number;
+  readonly #liveLibraryIdentityTimeoutMs: number;
   readonly #events: EventLog;
   readonly #encryptionAvailable: boolean;
   readonly #openRouterBaseUrl: string;
@@ -288,6 +309,9 @@ export class Engine {
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
+    this.#preflight = deps.preflightDownscale ?? preflightDownscale;
+    this.#preflightTimeoutMs = deps.preflightTimeoutMs ?? PREFLIGHT_TIMEOUT_MS;
+    this.#liveLibraryIdentityTimeoutMs = deps.liveLibraryIdentityTimeoutMs ?? LIVE_LIBRARY_IDENTITY_TIMEOUT_MS;
     this.#events = new EventLog(EVENT_LOG_CAPACITY, deps.bootId);
     this.#settings = init.settings;
     this.#pendingLibraryPath = init.settings.libraryPath;
@@ -421,11 +445,6 @@ export class Engine {
         }
       }
       case "library.confirm": {
-        // Already the live (and saved) folder: a harmless no-op, by the
-        // exact path string, with no staging lookup and no survey.
-        if (call.path === this.#settings.libraryPath && this.#live !== null) {
-          return { kind: "control", type: "reply", callId: call.callId };
-        }
         // Requires a folder `library.open` staged under this exact path
         // string. Never surveyed fresh here: doing that after the busy check
         // below would reopen the TOCTOU window this call exists to close (a
@@ -434,6 +453,15 @@ export class Engine {
         // again for a folder nothing is staged for (a dropped confirm, a
         // restart): see control.ts's doc comment on this call.
         const staged = this.#staged.get(call.path);
+        // Already the live (and saved) folder, by the exact path string,
+        // with no staging lookup and no survey — UNLESS something is staged
+        // under this same path with a DIFFERENT identity (review LOW 8: a
+        // remount at the exact same path). That is not a no-op: #live would
+        // otherwise keep naming a folder no longer really there. Falls
+        // through to the ordinary staged-adopt path below, busy check first.
+        if (call.path === this.#settings.libraryPath && this.#live !== null && (staged === undefined || staged.identity === this.#live.identity)) {
+          return { kind: "control", type: "reply", callId: call.callId };
+        }
         if (staged === undefined) {
           const detail = "the folder is not staged; open it again";
           return { kind: "control", type: "reply", callId: call.callId, error: { code: "VALIDATION", detail } };
@@ -750,7 +778,7 @@ export class Engine {
   async #rewriteDescriptor(payload: CommandPayload<"avatars.rewriteDescriptor">): Promise<{ avatarId: string }> {
     const key = this.#usableKey("rewrite an avatar's descriptor");
     const budget = this.#paidBudget();
-    const library = this.#liveLibrary();
+    const library = await this.#liveLibrary();
     const { avatarId } = payload;
     const manifest = this.#manifestOrNotFound(library, avatarId);
     this.#assertRewritable(avatarId, manifest);
@@ -817,7 +845,7 @@ export class Engine {
   async #createDraft(payload: CommandPayload<"avatars.createDraft">): Promise<{ draft: Draft }> {
     const key = this.#usableKey("create an avatar");
     const budget = this.#paidBudget();
-    const library = this.#liveLibrary();
+    const library = await this.#liveLibrary();
     const models = this.#avatarModels();
     const priced = await this.#prices.get(avatarPriceModels(models));
     const job = avatarJobEstimate(priced, models, "new-avatar");
@@ -877,13 +905,19 @@ export class Engine {
   async #generateCandidates(payload: CommandPayload<"avatars.generateCandidates">): Promise<{ jobId: string }> {
     const key = this.#usableKey("generate candidate portraits");
     const budget = this.#paidBudget();
-    const library = this.#liveLibrary();
+    const library = await this.#liveLibrary();
     const { avatarId } = payload;
     const manifest = library.getAvatar(avatarId);
     if (manifest === undefined || manifest.status !== "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
     this.#assertDescriptorReadable(manifest);
     const descriptor: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
     if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
+    // M8: every candidate needs a downscale for its age check, so a broken
+    // or missing ffmpeg would otherwise be discovered only mid-batch — one
+    // paid image at a time, all of them thrown away. A tiny built-in image
+    // through the exact same path catches that here, for free, before the
+    // price fetch, #checkAccepted, the reserve, or any request.
+    await this.#preflightDownscale();
     const models = this.#avatarModels();
     const priced = await this.#prices.get(avatarPriceModels(models));
     const batch = avatarJobEstimate(priced, models, "next-batch");
@@ -990,17 +1024,33 @@ export class Engine {
    * refused while a job runs for the draft.
    */
   async #pick(payload: CommandPayload<"avatars.pick">): Promise<{ avatar: AvatarSummary }> {
-    const library = this.#liveLibrary();
     const { avatarId, photoId } = payload;
+    // Claimed before the (now async) #liveLibrary() re-verification below, so
+    // this still marks the avatar busy synchronously, before this method's
+    // first await — library.confirm's own race check relies on that.
     this.#claimAvatar(avatarId, "a batch of candidates is being made for this draft; pick when it ends");
     try {
+      const library = await this.#liveLibrary();
       const manifest = library.getAvatar(avatarId);
       if (manifest === undefined || manifest.status !== "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
       this.#assertDescriptorReadable(manifest);
       if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
       const photo = library.getPhoto(photoId);
-      if (photo === undefined || photo.avatarId !== avatarId || photo.qa.age?.adult !== true) {
-        throw new EngineFailure({ code: "NOT_FOUND", detail: `draft ${avatarId} has no age-checked candidate ${photoId}` });
+      if (photo === undefined || photo.avatarId !== avatarId) {
+        throw new EngineFailure({ code: "NOT_FOUND", detail: `draft ${avatarId} has no candidate ${photoId}` });
+      }
+      // The stored verdict is only the answer its own age check gave;
+      // today's threshold (passesAgeThreshold, ageCheck.ts) is re-applied
+      // here, against the threshold in force right now — not the one that
+      // may have been in force when the candidate was checked. A later
+      // calibration can only raise it, never lower an already-picked
+      // master's standing, so an older candidate cannot become a master on
+      // the strength of a threshold that no longer holds. draftFrom
+      // (records.ts) already keeps such a candidate off the list the UI
+      // shows, so this is never a "the UI showed something pick refuses":
+      // it just has to say the same thing again, honestly.
+      if (!passesAgeThreshold(photo.qa.age)) {
+        throw new EngineFailure({ code: "NOT_FOUND", detail: `candidate ${photoId} no longer passes today's age-check threshold` });
       }
       // The new manifest is written (not yet committed) before the other candidates go; see Library.promoteDraft.
       await library.promoteDraft(avatarId, { masterPhotoId: photo.id, name: payload.name.trim() });
@@ -1012,10 +1062,13 @@ export class Engine {
 
   /** A saved avatar archived; one already archived is answered as it is. Refused while a job runs for it. */
   async #archive(payload: CommandPayload<"avatars.archive">): Promise<{ avatar: AvatarSummary }> {
-    const library = this.#liveLibrary();
     const { avatarId } = payload;
+    // Claimed before the (now async) #liveLibrary() re-verification below, so
+    // this still marks the avatar busy synchronously, before this method's
+    // first await — library.confirm's own race check relies on that.
     this.#claimAvatar(avatarId, "a job is changing this avatar; archive it when the job ends");
     try {
+      const library = await this.#liveLibrary();
       const manifest = library.getAvatar(avatarId);
       if (manifest === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
       if (manifest.status !== "draft") this.#assertDescriptorReadable(manifest);
@@ -1065,16 +1118,68 @@ export class Engine {
    * only through here, so gating this one place is enough to refuse all of
    * them with IN_FLIGHT while a folder survey (`#switching`) could still
    * replace the instance they would write into.
+   *
+   * keepLive (`#applySettings`) deliberately keeps `#live` set even when its
+   * folder cannot be identified right now, or is gone outright (ENOENT,
+   * ENOTDIR) — a momentary hiccup during an unrelated settings.update must
+   * not drop the library out from under a read. That leniency does not
+   * belong here: before a write actually reaches the library, the live
+   * folder's identity is re-verified — cheaply, one stat and one realpath
+   * (`folderIdentity`) — against the identity it had when it was opened. A
+   * folder that no longer matches (moved, replaced, or really gone) refuses
+   * LIBRARY_UNAVAILABLE and writes nothing, rather than let a write (in
+   * slice 2b, a paid one, ~20x more expensive) go through a stale instance
+   * or fail midway with a raw ENOENT.
    */
-  #liveLibrary(): Library {
+  async #liveLibrary(): Promise<Library> {
     if (this.#switching > 0) {
       throw new EngineFailure({ code: "IN_FLIGHT", detail: "a library switch is being surveyed; write commands wait for it to finish" });
     }
-    const library = this.library;
-    if (library === null) {
+    const live = this.#live;
+    if (live === null) {
       throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
     }
-    return library;
+    // live.library.root, not #settings.libraryPath (review LOW 9): the two
+    // can differ after an alias is confirmed (library.open's adopt-as-is
+    // path keeps #live on the real instance while #settings.libraryPath
+    // keeps the alias spelling main saved) — the Library instance itself
+    // only ever reads and writes through its own .root, so that is what
+    // must still be there. Bounded (review LOW 15): a hung stat/realpath
+    // (a stalled network volume) must not hold this claim, and #paidCommands
+    // with it, forever — a timeout here is read the same as "cannot be
+    // identified right now", exactly like folderIdentity's own null.
+    const signal = AbortSignal.timeout(this.#liveLibraryIdentityTimeoutMs);
+    const identity = await untilAborted(folderIdentity(live.library.root, this.#folderFs), signal).catch(() => null);
+    if (identity !== live.identity) {
+      // Review LOW 10: realpath's own transient failure falls back to a
+      // plain resolve() (folderIdentity's own comment) and so can mismatch
+      // here on nothing more than a momentary hiccup — worded so that is not
+      // read as "this folder is gone, go pick another one".
+      throw new EngineFailure({
+        code: "LIBRARY_UNAVAILABLE",
+        detail: "the live library's folder could not be confirmed just now (it may have moved, or this may be transient); try again, or choose one in Settings",
+      });
+    }
+    return live.library;
+  }
+
+  /**
+   * M8: a cheap, free check that the image pipeline (ffmpeg) can actually
+   * prepare an image for the age check, before anything is bought. Bounded
+   * by `#preflightTimeoutMs` even when `#preflight` itself ignores its
+   * signal (a hung native process, or a test double that does not bother):
+   * `untilAborted` is what settles this call, not `#preflight`'s own
+   * cooperation — a review fix (HIGH): an unbounded preflight used to hang
+   * `generateCandidates` forever, leaving the paid-commands counter and the
+   * draft's busy claim up until an engine restart.
+   */
+  async #preflightDownscale(): Promise<void> {
+    const signal = AbortSignal.timeout(this.#preflightTimeoutMs);
+    try {
+      await untilAborted(this.#preflight(signal), signal);
+    } catch (error) {
+      throw new EngineFailure({ code: "INTERNAL", detail: `the image pipeline (ffmpeg) cannot prepare images for the age check: ${messageOf(error, "unknown error")}` });
+    }
   }
 
   /** PRICE_CHANGED when the worst case now is above the one the user accepted. */

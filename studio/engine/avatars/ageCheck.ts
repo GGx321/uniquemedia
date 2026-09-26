@@ -267,3 +267,16 @@ export function readAgeAnswer(content: string): AgeVerdict {
   if (reasonVoicesDoubt(reason)) return { pass: false, why: "doubt-in-reason" };
   return { pass: true, confidence };
 }
+
+/**
+ * Whether a photo's already-stored age-check verdict still counts today
+ * (invariant 8, re-checked at pick and whenever a draft's candidates are
+ * listed — `draftFrom`/the snapshot): adult, and at least today's
+ * `AGE_MIN_CONFIDENCE`. Only `adult` and `confidence` are stored on a photo
+ * (`PhotoQa.age`) — `reason` is not, so a later calibration can only ever
+ * re-check the threshold, never `readAgeAnswer`'s doubt-in-reason rule.
+ * `undefined` (no verdict at all) never passes.
+ */
+export function passesAgeThreshold(age: { adult: boolean; confidence: number } | undefined): boolean {
+  return age?.adult === true && age.confidence >= AGE_MIN_CONFIDENCE;
+}

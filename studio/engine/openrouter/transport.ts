@@ -19,6 +19,19 @@ export const RAW_PREFIX_BYTES = 64 * 1024;
  * library/media and node:* (runtime.test.ts), never a module outside it.
  */
 export const RAW_KEEP_BYTES_IMAGE = 4_096;
+/**
+ * A chat attempt's own cap on a saved raw body (M7 leftover): descriptor and
+ * age-check answers are a sentence or two of JSON, nowhere near this in
+ * normal operation, so nothing legitimate is ever cut short. It only bounds
+ * how much of a redacted body that escaped the pattern-based scrub
+ * (redact.ts) whole is kept — the store's own default (`RAW_KEEP_BYTES`,
+ * rawStore.ts) exists for other callers of `saveRawBody` that pass no
+ * `keepBytes` at all (a paid descriptor kept because the draft could not be
+ * written: our own short JSON, never attacker-controlled), and stays far
+ * larger than any chat attempt now needs. Defined here for the same reason
+ * as RAW_KEEP_BYTES_IMAGE: the client may only import siblings.
+ */
+export const RAW_KEEP_BYTES_CHAT = 16 * 1024;
 /** Read past the kept prefix, so a secret straddling the cut is redacted whole (keys are ~75 bytes). */
 const SECRET_OVERLAP_BYTES = 256;
 
@@ -63,7 +76,7 @@ export interface AttemptSpec<T> {
   interpret: (body: unknown) => Interpretation<T>;
   /** Applied to an unusable paid body before it is saved, after the key is redacted (image data must not be kept). */
   scrubRaw?: (text: string) => string;
-  /** This attempt's own cap on a saved raw body (rawStore's `keepBytes`); image attempts pass a small one. Omitted, the store's default (sized for chat/descriptor/age-check bodies) applies. */
+  /** This attempt's own cap on a saved raw body (rawStore's `keepBytes`): image.ts passes RAW_KEEP_BYTES_IMAGE, chat.ts passes RAW_KEEP_BYTES_CHAT. Omitted (no caller here does), the store's own larger default applies. */
   rawKeepBytes?: number;
 }
 

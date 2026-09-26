@@ -13,7 +13,8 @@ export type LibraryErrorCode =
   | "run-not-found"
   | "invalid-run-plan"
   | "corrupt-log"
-  | "log-needs-repair";
+  | "log-needs-repair"
+  | "reference-corrupt";
 
 export class LibraryError extends Error {
   readonly code: LibraryErrorCode;

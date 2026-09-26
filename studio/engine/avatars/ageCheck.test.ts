@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { AGE_CHECK_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
-import { AGE_CHECK_MAX_SIDE, AGE_MIN_CONFIDENCE, AGE_QUESTION, ageCheckMessages, ageJsonSchema, readAgeAnswer } from "./ageCheck";
+import { AGE_CHECK_MAX_SIDE, AGE_MIN_CONFIDENCE, AGE_QUESTION, ageCheckMessages, ageJsonSchema, passesAgeThreshold, readAgeAnswer } from "./ageCheck";
 
 function answer(adult: unknown, confidence: unknown, reason: unknown = "Mature facial features and proportions of a woman in her mid-20s."): string {
   return JSON.stringify({ adult, confidence, reason });
@@ -389,5 +389,28 @@ describe("readAgeAnswer: an answer that cannot be read is rejected", () => {
 
   test("a runaway answer is rejected without being scanned", () => {
     expect(readAgeAnswer(answer(true, 0.95, "adult ".repeat(10_000)))).toEqual({ pass: false, why: "unreadable" });
+  });
+});
+
+// Review (MEDIUM): the stored `qa.age` verdict is only the answer its own
+// age check gave; whether it still counts today (pick, draftFrom/the
+// snapshot) is this one rule, re-applied against the threshold in force
+// right now — never the reason, which is not stored.
+describe("passesAgeThreshold: re-applies today's threshold to a stored verdict", () => {
+  test("passes: adult and at least today's minimum confidence", () => {
+    expect(passesAgeThreshold({ adult: true, confidence: AGE_MIN_CONFIDENCE })).toBe(true);
+    expect(passesAgeThreshold({ adult: true, confidence: 0.99 })).toBe(true);
+  });
+
+  test("fails: adult but below today's minimum confidence (a later, stricter calibration)", () => {
+    expect(passesAgeThreshold({ adult: true, confidence: AGE_MIN_CONFIDENCE - 0.01 })).toBe(false);
+  });
+
+  test("fails: not adult, whatever the confidence", () => {
+    expect(passesAgeThreshold({ adult: false, confidence: 0.99 })).toBe(false);
+  });
+
+  test("fails: no stored verdict at all", () => {
+    expect(passesAgeThreshold(undefined)).toBe(false);
   });
 });

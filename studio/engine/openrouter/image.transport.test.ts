@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import type { LibraryReference } from "../library/media";
 import type { LedgerLine } from "../money/ledger";
-import { fakeFetch, imageBody, imageParams, makeClient, PNG, setupMoney, withoutAt, WORST_ONE_REF, type Money, type Step } from "./testing/fakes";
+import { asLibraryReference, fakeFetch, imageBody, imageParams, makeClient, PNG, setupMoney, withoutAt, WORST_ONE_REF, type Money, type Step } from "./testing/fakes";
 import type { OpenRouterClientOptions } from "./types";
 
 let money: Money;
@@ -17,7 +18,7 @@ afterEach(async () => {
 const FAST = 2_000;
 const RESERVE_ONLY = [expect.objectContaining({ type: "reserve", attemptId: "slot-1#1", worstMicros: WORST_ONE_REF })];
 
-async function run(steps: Step[], opts: { overrides?: Partial<OpenRouterClientOptions>; controller?: AbortController; references?: Uint8Array[] } = {}) {
+async function run(steps: Step[], opts: { overrides?: Partial<OpenRouterClientOptions>; controller?: AbortController; references?: LibraryReference[] } = {}) {
   const { fetch, calls } = fakeFetch(steps);
   const harness = makeClient(fetch, opts.overrides);
   const signal = (opts.controller ?? new AbortController()).signal;
@@ -205,7 +206,7 @@ test("an unexpected throw before fetch was called releases the attempt and rethr
 // ---------- dispatch and network failures ----------
 
 test("releases the reserve when the request cannot be built (a reference that is not a JPEG)", async () => {
-  const { result, calls } = await run([], { references: [PNG] });
+  const { result, calls } = await run([], { references: [asLibraryReference(PNG)] });
 
   expect(calls).toHaveLength(0);
   expect(result).toMatchObject({ status: "error", kind: "NOT_SENT", fatal: false, httpStatus: null, ledger: { action: "released" } });

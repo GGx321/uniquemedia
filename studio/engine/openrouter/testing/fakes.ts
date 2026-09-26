@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Budget } from "../../money/budget";
 import { Ledger, type LedgerDeps, type Scope } from "../../money/ledger";
 import { PriceBook } from "../../money/prices";
+import type { LibraryReference } from "../../library/media";
 import { createOpenRouterClient } from "../client";
 import type {
   ChatParams,
@@ -35,6 +36,18 @@ export const WEBP = Uint8Array.from([..."RIFF"].map((c) => c.charCodeAt(0)).conc
 
 export function b64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
+}
+
+/**
+ * Test-only: brands arbitrary bytes as a `LibraryReference` without going
+ * through `Library.loadReference()`. Production code must never do this — the
+ * whole point of the brand (invariant 9) is that only the loader may mint
+ * one; this exists so the OpenRouter client's own tests (which exercise
+ * `ImageParams.references` in isolation from the library) can hand it some
+ * bytes at all.
+ */
+export function asLibraryReference(bytes: Uint8Array): LibraryReference {
+  return bytes as LibraryReference;
 }
 
 export function abortError(): Error {
@@ -189,14 +202,15 @@ export function withoutAt(lines: Record<string, unknown>[]): Record<string, unkn
 export interface Harness {
   client: OpenRouterClient;
   logs: string[];
-  raws: { attemptId: string; text: string }[];
+  /** `keepBytes` is the attempt's own on-disk cap it asked `saveRaw` for (undefined: the store's own default applies). */
+  raws: { attemptId: string; text: string; keepBytes: number | undefined }[];
   /** Every wait the client asked for between transport retries. */
   sleeps: number[];
 }
 
 export function makeClient(fetch: OpenRouterFetch, overrides: Partial<OpenRouterClientOptions> = {}): Harness {
   const logs: string[] = [];
-  const raws: { attemptId: string; text: string }[] = [];
+  const raws: Harness["raws"] = [];
   const sleeps: number[] = [];
   let mono = 0;
   const client = createOpenRouterClient({
@@ -204,8 +218,8 @@ export function makeClient(fetch: OpenRouterFetch, overrides: Partial<OpenRouter
     baseUrl: LOCAL_BASE,
     allowBaseUrlOverride: true,
     fetch,
-    saveRaw: async (attemptId, text) => {
-      raws.push({ attemptId, text });
+    saveRaw: async (attemptId, text, keepBytes) => {
+      raws.push({ attemptId, text, keepBytes });
     },
     log: (line) => logs.push(line),
     sleep: async (ms) => {
@@ -229,7 +243,7 @@ export function imageParams(money: Money, overrides: Partial<ImageParams> = {}):
     resolution: "1K",
     aspectRatio: "3:4",
     quality: "low",
-    references: [JPEG],
+    references: [asLibraryReference(JPEG)],
     budget: money.budget,
     priceBook: money.priceBook,
     signal: new AbortController().signal,

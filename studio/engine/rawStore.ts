@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fsyncDir } from "./library/durableFs";
-import { RAW_KEEP_BYTES_IMAGE, RAW_PREFIX_BYTES } from "./openrouter/transport";
+import { RAW_KEEP_BYTES_CHAT, RAW_KEEP_BYTES_IMAGE, RAW_PREFIX_BYTES } from "./openrouter/transport";
 
 // userData/raw: bodies of paid answers the engine could not use (already
 // redacted by the client), and a paid descriptor whose draft could not be
@@ -15,15 +15,23 @@ import { RAW_KEEP_BYTES_IMAGE, RAW_PREFIX_BYTES } from "./openrouter/transport";
 // or as many short base64 chunks each under its 256-char string threshold,
 // survives it untouched. This is the last line of defence (invariant 8): no
 // body kept on disk holds more than a small, fixed prefix, whatever shape
-// escaped redaction. Chat, descriptor and age-check bodies are text the
-// owner needs whole enough to diagnose a bad LLM answer, so they get a much
-// larger default prefix; an image attempt passes its own tight `keepBytes`
-// (image.ts) since a usable image is never unusable text worth keeping long.
+// escaped redaction. Chat, descriptor and age-check attempts (through the
+// OpenRouter client) pass their own cap, RAW_KEEP_BYTES_CHAT — text worth
+// keeping longer than an image, but still bounded, not this store's own
+// (larger) default; an image attempt passes its own tighter one,
+// RAW_KEEP_BYTES_IMAGE (image.ts), since a usable image is never unusable
+// text worth keeping long. RAW_KEEP_BYTES, this store's own default, applies
+// only to a caller that bypasses the client and calls saveRawBody directly
+// with no keepBytes at all — e.g. a paid descriptor kept here because the
+// draft's own write failed (engine.ts): our own short JSON, never an
+// attacker-controlled body, so the larger default costs nothing in practice.
 
 /** Default cap for a saved body: the client's own 64 KiB prefix of an oversized chat/descriptor/age-check body, with its note, fits whole. */
 export const RAW_KEEP_BYTES = RAW_PREFIX_BYTES + 4_096;
 /** Cap for an image attempt's saved body: image.ts's own scrub already strips recognisable image data; this is the last-line-of-defence cap for whatever slips through it. Re-exported for callers that only know rawStore.ts (the constant itself lives in openrouter/transport.ts, see its comment). */
 export { RAW_KEEP_BYTES_IMAGE };
+/** Cap for a chat/descriptor/age-check attempt's saved body (M7 leftover). Re-exported for callers that only know rawStore.ts (the constant itself lives in openrouter/transport.ts, see its comment). */
+export { RAW_KEEP_BYTES_CHAT };
 /** The folder keeps at most this many bodies; past it the oldest go. */
 export const RAW_MAX_FILES = 200;
 

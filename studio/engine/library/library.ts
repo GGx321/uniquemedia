@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { z } from "zod";
+import { downscaleToJpeg } from "../../node/downscale";
 import { runFfmpeg } from "../../node/runFfmpeg";
 import {
   appendJsonLine,
@@ -35,7 +36,7 @@ import {
   SIDECAR_SCHEMA_VERSION,
   isLibraryFileTemp,
 } from "./layout";
-import { extensionFor, sniffImageMediaType, type ImageMediaType } from "./media";
+import { extensionFor, sniffImageMediaType, type ImageMediaType, type LibraryReference } from "./media";
 import { Quarantine, type QuarantineEntry } from "./quarantine";
 import { renameWithRetry } from "./renameRetry";
 import {
@@ -64,6 +65,14 @@ export interface LibraryDeps {
   /** Test seam: called after each temp file or temp folder is durable and
    *  before it is renamed into place. Throwing simulates a crash there. */
   testHooks?: { beforeRename?: (finalPath: string) => void | Promise<void> };
+  /**
+   * Downscales a face reference's raw bytes to the JPEG `ImageParams.references`
+   * expects; defaults to `studio/node/downscale.ts`'s real one at
+   * `REFERENCE_MAX_SIDE`. Only `loadReference()` calls this and brands its
+   * result (invariant 9) — the size/quality 2b settles on is this
+   * dependency's business, not `loadReference()`'s.
+   */
+  downscaleReference?: (bytes: Uint8Array, signal?: AbortSignal) => Promise<Uint8Array>;
 }
 
 /** An avatar whose manifest names a face reference the library cannot use. */
@@ -105,6 +114,14 @@ export interface NewPhotoMeta {
 
 const THUMB_WIDTH = 360;
 
+/**
+ * The default `downscaleReference`'s longest side: the fixed decisions'
+ * candidate portraits are already 1K (3:4), so this never upscales a real
+ * master; 2b owns the final call on the size/quality an image model actually
+ * wants for a reference and may inject its own `downscaleReference` instead.
+ */
+const REFERENCE_MAX_SIDE = 1024;
+
 // Files an OS drops into any folder it has shown; they do not make a folder "used".
 const OS_METADATA = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 
@@ -122,6 +139,7 @@ export class Library {
   readonly #newId: () => string;
   readonly #beforeRename: ((finalPath: string) => void | Promise<void>) | undefined;
   readonly #renderThumbnail: (input: string, output: string) => Promise<void>;
+  readonly #downscaleReference: (bytes: Uint8Array, signal?: AbortSignal) => Promise<Uint8Array>;
   readonly #thumbRenders = new Map<string, Promise<string>>();
   readonly #avatars = new Map<string, AvatarManifest>();
   readonly #photos = new Map<string, PhotoSidecar>();
@@ -135,6 +153,7 @@ export class Library {
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;
     this.#renderThumbnail = deps.renderThumbnail ?? renderWebpThumbnail;
+    this.#downscaleReference = deps.downscaleReference ?? ((bytes, signal) => downscaleToJpeg(bytes, { maxSide: REFERENCE_MAX_SIDE, signal }));
   }
 
   /**
@@ -355,6 +374,36 @@ export class Library {
     const photo = this.#photos.get(masterPhotoId);
     if (!photo || photo.avatarId !== avatarId) return null;
     return { photo, path: join(this.#photosDir(avatarId), photo.file) };
+  }
+
+  /**
+   * The avatar's face reference, ready to send: `referencePhoto()`'s image,
+   * read from disk, checked against its own sidecar (size and sha256 —
+   * survey.ts's own check, re-run here since the file can rot on disk any
+   * time after that survey), downscaled to the JPEG `ImageParams.references`
+   * expects (`#downscaleReference`, 2b's own choice of size/quality), and
+   * only THAT result branded `LibraryReference` (invariant 9). This is the
+   * only place that mints one — no other code can pass arbitrary bytes as a
+   * reference (see `LibraryReference`'s own comment, media.ts), and no
+   * caller can re-downscale loadReference's own output and re-brand it,
+   * since the one mint point is the downscale's own result, not the raw
+   * bytes. Null in exactly the cases `referencePhoto()` is; throws
+   * `LibraryError("reference-corrupt", ...)` for a master that fails its own
+   * sidecar's check, before ever reaching the downscale step.
+   */
+  async loadReference(avatarId: string, signal?: AbortSignal): Promise<LibraryReference | null> {
+    const ref = this.referencePhoto(avatarId);
+    if (ref === null) return null;
+    const raw = await readFile(ref.path);
+    if (raw.length !== ref.photo.bytes) {
+      throw new LibraryError("reference-corrupt", `${ref.photo.file} has ${raw.length} bytes, the sidecar recorded ${ref.photo.bytes}`);
+    }
+    const sha256 = createHash("sha256").update(raw).digest("hex");
+    if (sha256 !== ref.photo.sha256) {
+      throw new LibraryError("reference-corrupt", `${ref.photo.file} does not match the sha256 in its sidecar`);
+    }
+    const jpeg = await this.#downscaleReference(new Uint8Array(raw), signal);
+    return jpeg as LibraryReference;
   }
 
   getPhoto(photoId: string): PhotoSidecar | undefined {

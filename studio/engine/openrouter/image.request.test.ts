@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
+  asLibraryReference,
   b64,
   fakeFetch,
   imageBody,
@@ -45,7 +46,7 @@ test("reserves the price book's worst case for the model, quality, resolution an
   const { fetch } = fakeFetch([{ status: 200, body: imageBody(PNG, { cost: 0.07 }) }]);
   const { client } = makeClient(fetch);
 
-  await client.generateImage(imageParams(money, { quality: "medium", resolution: "2K", references: [JPEG, JPEG_2] }));
+  await client.generateImage(imageParams(money, { quality: "medium", resolution: "2K", references: [JPEG, JPEG_2].map(asLibraryReference) }));
 
   const expected = money.priceBook.imageWorstCase({ model: "x-ai/grok-imagine-image-2.0", resolution: "2K", quality: "medium", refs: 2 });
   expect(money.lines()[0]).toMatchObject({ type: "reserve", worstMicros: expected, jobId: "job-1", scope: { avatarJobId: "avjob-1" } });
@@ -71,7 +72,7 @@ test("posts the Image API body with each reference as a JPEG data URL, in order"
   const { fetch, calls } = fakeFetch([{ status: 200, body: imageBody(PNG, { cost: 0.06 }) }]);
   const { client } = makeClient(fetch);
 
-  await client.generateImage(imageParams(money, { references: [JPEG, JPEG_2] }));
+  await client.generateImage(imageParams(money, { references: [JPEG, JPEG_2].map(asLibraryReference) }));
 
   expect(calls[0]?.url).toBe(`${LOCAL_BASE}/images`);
   expect(calls[0]?.method).toBe("POST");

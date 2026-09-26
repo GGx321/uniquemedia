@@ -36,7 +36,8 @@ function manifest(overrides: Partial<AvatarManifest> = {}): AvatarManifest {
   });
 }
 
-function photo(id: string, avatarId = "avatar-0001"): PhotoSidecar {
+/** A candidate that passes today's age threshold by default: a stored photo is always one that passed some age check (invariant 8). */
+function photo(id: string, avatarId = "avatar-0001", qa: PhotoSidecar["qa"] = { age: { adult: true, confidence: 0.95 } }): PhotoSidecar {
   return {
     schemaVersion: 1,
     id,
@@ -48,7 +49,7 @@ function photo(id: string, avatarId = "avatar-0001"): PhotoSidecar {
     bytes: 1,
     sha256: "a".repeat(64),
     source: samplePhotoMeta().source,
-    qa: {},
+    qa,
     createdAt: "2026-09-24T10:00:01.000Z",
   };
 }
@@ -120,6 +121,18 @@ describe("draftFrom", () => {
 
   test("is null for a candidate photo of another avatar", () => {
     expect(draftFrom(manifest(), [photo("photo-0001", "avatar-0002")])).toBeNull();
+  });
+
+  // Review (MEDIUM): pick used to refuse a candidate the UI still showed —
+  // draftFrom listed every photo, whatever its stored age verdict. A
+  // below-threshold candidate (e.g. a later, stricter calibration) is no
+  // longer offered at all, so a NOT_FOUND at pick is honest.
+  test("excludes a candidate whose stored verdict no longer passes today's age threshold", () => {
+    const passing = photo("photo-0001");
+    const stale = photo("photo-0002", "avatar-0001", { age: { adult: true, confidence: 0.5 } });
+    const neverChecked = photo("photo-0003", "avatar-0001", {});
+
+    expect(draftFrom(manifest(), [passing, stale, neverChecked])?.candidates).toEqual([{ avatarId: "avatar-0001", photoId: "photo-0001" }]);
   });
 });
 
@@ -195,7 +208,7 @@ describe("libraryView over a real library", () => {
     const master = await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta());
     await library.updateAvatar(saved.id, { status: "active", masterPhotoId: master.id });
     const draft = await library.createAvatar({ name: "Draft", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
-    const candidate = await library.addPhoto(draft.id, PNG_1X1, samplePhotoMeta());
+    const candidate = await library.addPhoto(draft.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
     const early = await library.createAvatar({ name: "Early", age: 25, traits: { hair: "chestnut" }, descriptor: DESCRIPTOR });
 
     const view = libraryView(library);

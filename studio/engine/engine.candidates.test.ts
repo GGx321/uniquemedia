@@ -5,6 +5,7 @@ import { chmod, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Snapshot, type ErrorCode, type EventMessage } from "../shared/engine";
 import { __setFfmpegPathOverrideForTests, ffmpegPath } from "../node/ffmpegBinary";
+import { AGE_MIN_CONFIDENCE } from "./avatars/ageCheck";
 import { manifestTraits } from "./avatars/records";
 import type { EngineInit } from "./control";
 import { openLibrary } from "./library";
@@ -356,19 +357,40 @@ describe("avatars.generateCandidates", () => {
     expect(ledgerLines(dir()).filter((l) => l.type === "settle").map((l) => l.costMicros)).toEqual([0, 0, 0, 0]);
   });
 
-  test("a missing ffmpeg is a slot error, not a crash: no age check is paid, nothing is stored, and the engine goes on", async () => {
+  // M8: a broken ffmpeg used to be discovered only mid-batch, one paid image
+  // at a time (this test used to assert exactly that: a job.failed after all
+  // 4 images were bought and thrown away). The preflight below now catches
+  // it before the command even starts a job, so nothing is ever spent.
+
+  // Review (LOW 7): restores coverage for the case the preflight cannot
+  // catch — ffmpeg is healthy when the batch starts (the preflight passes),
+  // then breaks before a later slot's own downscale. The override happens
+  // inside the fake image handler (not before the command even runs), so it
+  // lands after the preflight, mid-batch, like a real failure would.
+  test("preflight passed, then ffmpeg breaks before a later slot's own downscale: that slot fails fatally, the earlier candidate stays stored", async () => {
     const { draftId } = await seedDraft(dir());
-    const { engine, net, events } = await startEngine(dir());
-    __setFfmpegPathOverrideForTests(join(dir(), "no-such-ffmpeg"));
+    const net = network({
+      image: (_call, n) => {
+        // Rendered (and cached) with a healthy ffmpeg before breaking it: the
+        // override below must affect only this slot's downscale, not the
+        // fake server's own portrait rendering.
+        const reply = portraitReply(n);
+        if (n === 2) __setFfmpegPathOverrideForTests(join(dir(), "no-such-ffmpeg"));
+        return reply;
+      },
+    });
+    const { engine, events } = await startEngine(dir(), { net, init: sequentialInit() });
     try {
       const end = await jobEnd(events, jobIdOf(await engine.handle(generate(draftId))));
 
-      expect(end).toMatchObject({ type: "job.failed", payload: { error: { code: "INTERNAL", detail: expect.stringContaining("age check") } } });
-      expect(net.ageCalls()).toHaveLength(0);
-      expect(engine.library?.photosByAvatar(draftId)).toEqual([]);
+      expect(end).toMatchObject({ type: "job.failed", payload: { error: { code: "INTERNAL" } } });
+      expect(net.imageCalls()).toHaveLength(2);
+      expect(net.ageCalls()).toHaveLength(1);
+      expect(engine.library?.photosByAvatar(draftId)).toHaveLength(1);
     } finally {
       __setFfmpegPathOverrideForTests(undefined);
     }
+    // The engine goes on: a fresh batch (ffmpeg fixed again) still works.
     expect((await snapshot(engine)).drafts).toHaveLength(1);
   });
 });
@@ -430,6 +452,60 @@ describe("avatars.generateCandidates: checked before anything is spent", () => {
     expect(net.paidCalls()).toHaveLength(0);
     expect(ledgerLines(dir())).toEqual([]);
   });
+
+  test("a broken ffmpeg pipeline refuses the batch up front (M8): INTERNAL, no request, nothing reserved", async () => {
+    const { draftId } = await seedDraft(dir());
+    const { engine, net } = await startEngine(dir());
+    __setFfmpegPathOverrideForTests(join(dir(), "no-such-ffmpeg"));
+    try {
+      const refused = failed(await engine.handle(generate(draftId)));
+
+      expect(refused.error).toMatchObject({ code: "INTERNAL", detail: expect.stringContaining("ffmpeg") });
+      expect(net.calls).toHaveLength(0);
+      expect(ledgerLines(dir())).toEqual([]);
+      expect((await snapshot(engine)).jobs).toEqual([]);
+    } finally {
+      __setFfmpegPathOverrideForTests(undefined);
+    }
+  });
+
+  test("ffmpeg is checked after the descriptor and before price and month (M8)", async () => {
+    const stale = await seedDraft(dir(), { descriptor: "25-year-old European woman with a youthful smile." });
+    const good = await seedDraft(dir());
+    const cheap = engineSettings(dir(), { monthlyBudgetMicros: 1 });
+    const { engine, net } = await startEngine(dir(), { init: { settings: cheap } });
+    __setFfmpegPathOverrideForTests(join(dir(), "no-such-ffmpeg"));
+    try {
+      expect(failed(await engine.handle(generate(stale.draftId, 1))).error.code).toBe("DESCRIPTOR_INVALID");
+      expect(failed(await engine.handle(generate(good.draftId, 1))).error.code).toBe("INTERNAL");
+      expect(net.calls).toHaveLength(0);
+    } finally {
+      __setFfmpegPathOverrideForTests(undefined);
+    }
+  });
+
+  // Review (HIGH): a hung preflight used to hang generateCandidates forever
+  // (no timeout at all), leaving #paidCommands and the draft's busy claim up
+  // until an engine restart. A shell stub (`sleep 30`) does not run the same
+  // way on Windows, so the hang is injected at the EngineDeps level instead —
+  // works identically on every OS the tests run on.
+  test("a hung preflight is bounded: INTERNAL within the timeout, nothing spent, and nothing stays claimed", async () => {
+    const { draftId } = await seedDraft(dir());
+    const never = (): Promise<void> => new Promise<void>(() => {});
+    const { engine, net } = await startEngine(dir(), { deps: { preflightDownscale: never, preflightTimeoutMs: 50 } });
+
+    const started = performance.now();
+    const refused = failed(await engine.handle(generate(draftId)));
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(refused.error).toMatchObject({ code: "INTERNAL" });
+    expect(net.calls).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+
+    // Nothing left claimed: a retry is refused for its own reasons, never IN_FLIGHT.
+    const retried = failed(await engine.handle(generate(draftId)));
+    expect(retried.error.code).not.toBe("IN_FLIGHT");
+    expect(failed(await engine.handle(command("money.reconcile"))).error.code).not.toBe("IN_FLIGHT");
+  }, 5_000);
 
   test("accepted exactly at the batch's worst case it starts; one micro-dollar below: PRICE_CHANGED", async () => {
     const { engine, seeded } = await refusedWith("PRICE_CHANGED", { accepted: NEXT_BATCH.worstMicros - 1 });
@@ -664,6 +740,51 @@ describe("avatars.pick", () => {
     expect(events()).toHaveLength(count);
     expect(engine.library?.getAvatar(draftId)?.status).toBe("draft");
     expect(engine.library?.photosByAvatar(draftId)).toHaveLength(candidates.length + 1);
+  });
+
+  // If the age check's confidence threshold rises after a later calibration,
+  // an older candidate stored under a lower threshold must not slip through
+  // pick on the strength of its own, now-stale, age-check verdict.
+  test("refuses a candidate whose stored confidence no longer meets today's threshold, and changes nothing", async () => {
+    const { draftId } = await seedDraft(dir());
+    const { library } = await openLibrary(join(dir(), "library"));
+    const stale = await library.addPhoto(draftId, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: AGE_MIN_CONFIDENCE - 0.01 } } }));
+    const { engine, events } = await startEngine(dir());
+    const count = events().length;
+
+    expect(failed(await engine.handle(pick(draftId, stale.id))).error).toMatchObject({ code: "NOT_FOUND", detail: expect.stringContaining("threshold") });
+
+    expect(events()).toHaveLength(count);
+    expect(engine.library?.getAvatar(draftId)?.status).toBe("draft");
+  });
+
+  // Review (LOW 13): "no such photo" and "below today's threshold" are
+  // different problems (an id typo vs. a stale verdict); their NOT_FOUND
+  // details must say which, not share one sentence.
+  test("gives distinct details for 'no such photo' and 'below today's threshold' (LOW 13)", async () => {
+    const { draftId } = await seedDraft(dir());
+    const { library } = await openLibrary(join(dir(), "library"));
+    const stale = await library.addPhoto(draftId, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: AGE_MIN_CONFIDENCE - 0.01 } } }));
+    const { engine } = await startEngine(dir());
+
+    const noSuchPhoto = failed(await engine.handle(pick(draftId, "photo-unknown-0"))).error;
+    const belowThreshold = failed(await engine.handle(pick(draftId, stale.id))).error;
+
+    expect(noSuchPhoto.code).toBe("NOT_FOUND");
+    expect(belowThreshold.code).toBe("NOT_FOUND");
+    expect(noSuchPhoto.detail).not.toBe(belowThreshold.detail);
+    expect(belowThreshold.detail).toContain(stale.id);
+  });
+
+  test("still picks a candidate whose stored confidence exactly meets today's threshold", async () => {
+    const { draftId } = await seedDraft(dir());
+    const { library } = await openLibrary(join(dir(), "library"));
+    const borderline = await library.addPhoto(draftId, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: AGE_MIN_CONFIDENCE } } }));
+    const { engine } = await startEngine(dir());
+
+    const answer = ok(await engine.handle(pick(draftId, borderline.id)));
+
+    expect(answer.result).toMatchObject({ avatar: { avatarId: draftId, masterPhotoId: borderline.id } });
   });
 
   test("refuses while a candidate job runs for the draft: IN_FLIGHT", async () => {

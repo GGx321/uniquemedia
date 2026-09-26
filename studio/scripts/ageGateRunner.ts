@@ -42,6 +42,7 @@ import { chatAttemptWorstMicros, type ChatPriceShape } from "../engine/openroute
 import { jpegDataUrl } from "../engine/openrouter/image";
 import { makeRedactor } from "../engine/openrouter/redact";
 import { downscaleToJpeg } from "../node/downscale";
+import { FfmpegError } from "../node/runFfmpeg";
 
 /**
  * studio/engine/avatars/candidateJob.ts's `PREPARE_TIMEOUT_MS` and
@@ -218,11 +219,18 @@ export interface AgeGateFetch {
   (url: string, init: { method: "POST"; headers: Record<string, string>; body: string; signal: AbortSignal }): Promise<{ status: number; json(): Promise<unknown> }>;
 }
 
-/** `error instanceof Error` misses DOMException (an `AbortSignal.timeout()` rejection), which has no `.message` guarantee otherwise. */
+/**
+ * `error instanceof Error` misses DOMException (an `AbortSignal.timeout()`
+ * rejection), which has no `.message` guarantee otherwise. An `FfmpegError`
+ * (a downscale failure) gets its own stderr tail appended: the bare exit
+ * code ("ffmpeg exited with code 1") explains nothing on its own — what
+ * ffmpeg printed with `-loglevel error` is the actual diagnostic (review A).
+ */
 function messageOf(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error !== null && "message" in error) return String((error as { message: unknown }).message);
-  return String(error);
+  const message = error instanceof Error ? error.message : typeof error === "object" && error !== null && "message" in error ? String((error as { message: unknown }).message) : String(error);
+  if (!(error instanceof FfmpegError)) return message;
+  const stderrTail = error.stderrTail.trim();
+  return stderrTail === "" ? message : `${message}: ${stderrTail}`;
 }
 
 type ContentResult = { kind: "ok"; content: string } | { kind: "empty" } | { kind: "missing" };

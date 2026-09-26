@@ -1,3 +1,21 @@
+// LibraryReference lives here, not in library.ts (its natural home): the
+// OpenRouter client (openrouter/types.ts, ImageParams.references) may import
+// only from a fixed allowlist that includes this pure media-type module but
+// not the rest of library/ (openrouter/runtime.test.ts's static check).
+
+declare const LIBRARY_REFERENCE_BRAND: unique symbol;
+/**
+ * A face-reference image's bytes (invariant 9: a reference comes only from
+ * a library record of a generated frame, never an arbitrary file), minted
+ * only by `Library.loadReference()`. This is TypeScript's usual branding
+ * limit, not a runtime guarantee — an explicit `x as LibraryReference`
+ * elsewhere still compiles — but a plain `Uint8Array` (a user file, a
+ * network body, anything not sourced through the loader) can no longer be
+ * assigned where a reference is expected without that cast being written
+ * out loud, for a reviewer to see and question.
+ */
+export type LibraryReference = Uint8Array & { readonly [LIBRARY_REFERENCE_BRAND]: true };
+
 /** The only image formats the library stores or serves, keyed by file extension. */
 export const IMAGE_EXTENSIONS = {
   jpg: "image/jpeg",

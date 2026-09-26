@@ -15,7 +15,7 @@ export {
   type QuarantineReason,
   type ReferencePhoto,
 } from "./library";
-export { IMAGE_EXTENSIONS, type ImageExtension, type ImageMediaType } from "./media";
+export { IMAGE_EXTENSIONS, type ImageExtension, type ImageMediaType, type LibraryReference } from "./media";
 export { resolveMediaPath, type MediaPathErrorCode, type MediaPathResult } from "./mediaPath";
 export {
   AvatarManifestSchema,

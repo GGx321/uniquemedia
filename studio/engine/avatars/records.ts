@@ -10,6 +10,7 @@ import {
 } from "../../shared/engine";
 import { isLibraryId, type Library, type QuarantineEntry } from "../library";
 import type { AvatarManifest, PhotoSidecar, TraitValue } from "../library/schemas";
+import { passesAgeThreshold } from "./ageCheck";
 
 /** The two skip reasons `libraryView` can tell apart; the third, `manifest-unreadable`, never reaches here — see engine.ts. */
 export type SkippedReason = Exclude<UnreadableReason, "manifest-unreadable">;
@@ -42,8 +43,11 @@ function descriptorOf(manifest: AvatarManifest): { age: number; text: string } {
 
 /**
  * A draft as the contract lists it: its candidates are its photos in the
- * given order. The next batch's estimate is left null: pricing is the avatar
- * jobs' business. Null for a saved avatar or a record the contract refuses.
+ * given order, minus any whose stored age-check verdict no longer passes
+ * today's threshold (a later, stricter calibration; `passesAgeThreshold`,
+ * ageCheck.ts) — so pick is never asked for something the UI never offered.
+ * The next batch's estimate is left null: pricing is the avatar jobs'
+ * business. Null for a saved avatar or a record the contract refuses.
  */
 export function draftFrom(manifest: AvatarManifest, photos: readonly PhotoSidecar[]): Draft | null {
   if (manifest.status !== "draft") return null;
@@ -53,7 +57,7 @@ export function draftFrom(manifest: AvatarManifest, photos: readonly PhotoSideca
     avatarId: manifest.id,
     traits,
     descriptor: descriptorOf(manifest),
-    candidates: photos.map((p) => ({ avatarId: p.avatarId, photoId: p.id })),
+    candidates: photos.filter((p) => passesAgeThreshold(p.qa.age)).map((p) => ({ avatarId: p.avatarId, photoId: p.id })),
     estimate: null,
   });
   return parsed.success ? parsed.data : null;

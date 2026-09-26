@@ -278,6 +278,30 @@ describe("checkOneImage", () => {
     expect(called).toBe(false);
   });
 
+  // Review (A): FfmpegError carries ffmpeg's own stderr tail, which used to
+  // be dropped here — "ffmpeg exited with code 1" alone explains nothing;
+  // the actual diagnostic (what ffmpeg printed with -loglevel error) is
+  // what the owner needs to see when a real image fails to decode.
+  test("a corrupted image's read-failed detail includes ffmpeg's own stderr, not just its exit code", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "age-gate-runner-corrupt-"));
+    try {
+      const path = join(dir, "corrupt.png");
+      // A valid PNG signature and IHDR, then garbage: ffmpeg spawns fine, reads it, and exits non-zero.
+      await writeFile(path, Buffer.concat([PNG.subarray(0, 33), Buffer.alloc(64, 7)]));
+      const fetchFn: AgeGateFetch = async () => {
+        throw new Error("must never be called");
+      };
+
+      const row = await checkOneImage(fetchFn, "sk-fake", path);
+
+      expect(row.verdict).toBe("read-failed");
+      expect(row.detail).toContain("ffmpeg exited with code");
+      expect(row.detail).not.toBe("ffmpeg exited with code 1");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("sends exactly Bearer <the key> in the Authorization header, and JSON content type", async () => {
     await withPngFile(async (path) => {
       let seenAuth: string | undefined;

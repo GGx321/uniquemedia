@@ -9,7 +9,7 @@ import { Engine, type EngineDeps } from "./engine";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { Ledger, type LedgerLine } from "./money/ledger";
-import { RAW_KEEP_BYTES, RAW_KEEP_BYTES_IMAGE, rawFileName } from "./rawStore";
+import { RAW_KEEP_BYTES_CHAT, RAW_KEEP_BYTES_IMAGE, rawFileName } from "./rawStore";
 import { chatBody, fakeFetch, readLedgerLines, withoutAt, type FetchCall, type Reply, type Step } from "./openrouter/testing/fakes";
 
 // The avatar commands of T6a part 2a against a real ledger and library in a
@@ -920,12 +920,12 @@ describe("avatars.createDraft", () => {
     expect(ledgerLines().at(-1)).toMatchObject({ type: "settle", costMicros: ATTEMPT_WORST, estimated: true });
   });
 
-  test("an oversized paid descriptor answer keeps far more on disk than an image attempt would: the chat default cap, not the image one", async () => {
+  test("an oversized paid descriptor answer keeps far more on disk than an image attempt would, but is capped well below the store's own larger default (M7 leftover: the chat cap)", async () => {
     // Ordinary words with spaces, not a run of one letter: a long run of
     // base64-alphabet characters would itself be scrubbed as image-shaped
     // data (chat.ts's scrubRaw), which is not what this test is about.
     const phrase = "the descriptor answer keeps going on and on without ever closing its quote. ";
-    const leaky = `oops ${phrase.repeat(Math.ceil((RAW_KEEP_BYTES + 500) / phrase.length))} not json`;
+    const leaky = `oops ${phrase.repeat(Math.ceil((RAW_KEEP_BYTES_CHAT + 500) / phrase.length))} not json`;
     const { engine } = await startEngine({ net: network({ chat: [{ status: 200, body: leaky }] }) });
 
     const refused = failed(await engine.handle(createDraft()));
@@ -935,10 +935,12 @@ describe("avatars.createDraft", () => {
     const files = await readdir(raw);
     expect(files).toHaveLength(1);
     const text = await readFile(join(raw, files[0] ?? ""), "utf8");
-    // The chat/descriptor default (RAW_PREFIX_BYTES + 4096) fits the client's
-    // own 64 KiB prefix and note whole; a flat image-sized cap would not.
-    expect(Buffer.byteLength(text, "utf8")).toBeGreaterThan(RAW_KEEP_BYTES_IMAGE * 4);
-    expect(Buffer.byteLength(text, "utf8")).toBeLessThan(RAW_KEEP_BYTES + 500);
+    // Bigger than an image attempt's cap (descriptor/age text is worth
+    // reading whole), but capped at the chat cap, not the store's own
+    // larger default (RAW_KEEP_BYTES, sized for callers that pass no
+    // keepBytes at all — not this path any more).
+    expect(Buffer.byteLength(text, "utf8")).toBeGreaterThan(RAW_KEEP_BYTES_IMAGE * 2);
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThan(RAW_KEEP_BYTES_CHAT + 500);
   });
 
   test("a second createDraft while one runs is refused with IN_FLIGHT: one paid descriptor, one draft", async () => {

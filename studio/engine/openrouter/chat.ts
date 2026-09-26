@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { jpegDataUrl } from "./image";
 import { omitByPattern } from "./redact";
-import { runPaidAttempt, type ClientContext, type Interpretation } from "./transport";
+import { RAW_KEEP_BYTES_CHAT, runPaidAttempt, type ClientContext, type Interpretation } from "./transport";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage, ChatParams, ChatResult } from "./types";
 
@@ -123,6 +123,10 @@ export async function chat(ctx: ClientContext, params: ChatParams): Promise<Chat
     // never the JSON path's ">256-char string" rule: the answer text itself
     // stays whole, which is what this raw body exists to diagnose.
     scrubRaw: omitByPattern,
+    // M7 leftover: descriptor and age-check answers are small; this only
+    // bounds a redacted body that escaped the scrub above whole (see
+    // RAW_KEEP_BYTES_CHAT's own comment, transport.ts).
+    rawKeepBytes: RAW_KEEP_BYTES_CHAT,
   });
   if (result.status !== "ok") return result;
   const { value, ...paid } = result;

@@ -1,4 +1,4 @@
-import type { ImageMediaType } from "../library/media";
+import type { ImageMediaType, LibraryReference } from "../library/media";
 import type { Budget, ReserveRefusal } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { ImageQuality, PriceBook, Resolution } from "../money/prices";
@@ -179,8 +179,8 @@ export interface ImageParams extends AttemptParams {
   resolution: Resolution;
   aspectRatio: AspectRatio;
   quality?: ImageQuality | null;
-  /** Already-downscaled JPEGs. */
-  references: readonly Uint8Array[];
+  /** Already-downscaled JPEGs, sourced only through `Library.loadReference()` (invariant 9). */
+  references: readonly LibraryReference[];
 }
 
 export interface ChatMessage {

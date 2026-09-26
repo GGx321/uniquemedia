@@ -536,7 +536,8 @@ async function seedLibrary(path: string, prefix: string): Promise<{ library: Lib
   const master = await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta());
   await library.updateAvatar(saved.id, { status: "active", masterPhotoId: master.id });
   const draft = await library.createAvatar({ name: "Draft", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
-  const candidate = await library.addPhoto(draft.id, PNG_1X1, samplePhotoMeta());
+  // Age-checked (invariant 8: a stored photo always passed some age check), so draftFrom offers it.
+  const candidate = await library.addPhoto(draft.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
   return { library, avatarId: saved.id, draftId: draft.id, candidateId: candidate.id };
 }
 
@@ -973,6 +974,37 @@ describe("library.confirm from main", () => {
     expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000001" });
     expect(engine.library).toBe(live);
     expect(await snapshotIds(engine)).toEqual({ avatars: [saved.avatarId], drafts: [saved.draftId] });
+  });
+
+  // Review (LOW 8): the no-op above only applies while nothing staged under
+  // this exact path disagrees with #live's own identity. A remount at the
+  // exact same path (a new device underneath, still the "live" spelling)
+  // must not be silently ignored: library.open stages the freshly surveyed
+  // instance, and confirm has to adopt it, not answer ok while #live stays
+  // on a folder no longer really there.
+  test("confirming the already-live path adopts a remount staged under it, instead of a silent no-op", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    const target = join(dir, "library");
+    let remounted = false;
+    const folderFs = {
+      stat: async (path: string) => {
+        const real = await stat(path, { bigint: true });
+        return path === target && remounted ? { isDirectory: () => real.isDirectory(), dev: real.dev + 1000n, ino: real.ino } : real;
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    const { engine, posted } = await startEngine({}, { folderFs });
+    const before = engine.library;
+    remounted = true;
+
+    await engine.receive(libraryOpen(target, "call-00000001"));
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000001" }); // staged fresh: a different identity now
+
+    await engine.receive(libraryConfirm(target, "call-00000002"));
+
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000002" });
+    expect(engine.library).not.toBe(before);
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { librarySwitchGeneration: 1 } });
   });
 
   test("the live folder opened under another spelling (a symlink alias) stages that spelling too: it can be confirmed, and confirmed again on a later retry", async () => {
@@ -1499,6 +1531,157 @@ describe("a genuine settings.update switch blocks new paid work, pick and archiv
     const retried = ok(await engine.handle(command("avatars.pick", { avatarId: saved.draftId, photoId: pickable.id, name: "Zoe" })));
     expect(retried).toMatchObject({ result: { avatar: { name: "Zoe" } } });
   });
+});
+
+describe("the live folder's identity is re-verified before any paid command, pick or archive (keepLive)", () => {
+  // #live (and the in-memory Library it wraps) is not cleared just because
+  // the folder under it is later removed from disk: keepLive (#applySettings)
+  // deliberately looks past a folder that cannot be identified right now, so
+  // a momentary hiccup during an unrelated settings.update never drops the
+  // library. That leniency is right for a read; it is wrong right before a
+  // paid command, pick or archive actually writes through the instance — in
+  // slice 2b those commands are about 20x more expensive. Each of these
+  // re-verifies the live folder's identity first, cheaply (folderIdentity:
+  // one stat, one realpath), and refuses LIBRARY_UNAVAILABLE rather than
+  // spend or write through a folder that is no longer really there.
+  test("avatars.createDraft refuses LIBRARY_UNAVAILABLE and never reaches the network once the live folder is gone", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+    await engine.applyControl({ kind: "control", type: "apiKey.set", key: KEY });
+    await rm(join(dir, "library"), { recursive: true, force: true });
+
+    const refused = await engine.handle(command("avatars.createDraft", { traits: HARNESS_TRAITS, acceptedWorstMicros: HARNESS_NEW_AVATAR.worstMicros }));
+
+    // NO_NETWORK (the default fetch) throws on any call; this only resolves cleanly because none was made.
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
+  test("avatars.pick refuses LIBRARY_UNAVAILABLE once the live folder is gone; nothing is written and the avatar is not left claimed", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+    const pickable = await engine.library?.addPhoto(saved.draftId, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
+    if (pickable === undefined) throw new Error("expected the engine's library to be open");
+    await rm(join(dir, "library"), { recursive: true, force: true });
+
+    const refused = await engine.handle(command("avatars.pick", { avatarId: saved.draftId, photoId: pickable.id, name: "Zoe" }));
+
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+    // Not left claimed: a retry (once a library is open again) would not be refused with IN_FLIGHT by #claimAvatar.
+    await mkdir(join(dir, "library"), { recursive: true });
+    const retried = await engine.handle(command("avatars.pick", { avatarId: saved.draftId, photoId: pickable.id, name: "Zoe" }));
+    expect(retried).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
+  test("avatars.archive refuses LIBRARY_UNAVAILABLE once the live folder is gone", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+    await rm(join(dir, "library"), { recursive: true, force: true });
+
+    const refused = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
+  // Review (MEDIUM): generateCandidates and rewriteDescriptor are the two
+  // paid commands whose own identity re-check was untested — a mutation that
+  // skipped it (e.g. reordering #liveLibrary() past their other checks)
+  // would have survived unnoticed.
+  test("avatars.generateCandidates refuses LIBRARY_UNAVAILABLE, reaches no network, and releases the draft once the live folder is gone", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+    await engine.applyControl({ kind: "control", type: "apiKey.set", key: KEY });
+    await rm(join(dir, "library"), { recursive: true, force: true });
+
+    // NO_NETWORK (the default fetch) throws on any call; this only resolves cleanly because none was made.
+    const refused = await engine.handle(command("avatars.generateCandidates", { avatarId: saved.draftId, acceptedWorstMicros: 1 }));
+
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+    // Not left claimed: a retry (an empty folder recreated at the same path, still a different identity) is refused for the same honest reason, never IN_FLIGHT.
+    await mkdir(join(dir, "library"), { recursive: true });
+    const retried = await engine.handle(command("avatars.generateCandidates", { avatarId: saved.draftId, acceptedWorstMicros: 1 }));
+    expect(retried).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
+  test("avatars.rewriteDescriptor refuses LIBRARY_UNAVAILABLE and reaches no network once the live folder is gone", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+    await engine.applyControl({ kind: "control", type: "apiKey.set", key: KEY });
+    await rm(join(dir, "library"), { recursive: true, force: true });
+
+    const refused = await engine.handle(command("avatars.rewriteDescriptor", { avatarId: saved.avatarId, acceptedWorstMicros: 1 }));
+
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+    await mkdir(join(dir, "library"), { recursive: true });
+    const retried = await engine.handle(command("avatars.rewriteDescriptor", { avatarId: saved.avatarId, acceptedWorstMicros: 1 }));
+    expect(retried).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
+  test("a folder replaced at the same path (a different identity now there) is refused the same way, not silently written into", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+    // Swapped for a different, unrelated folder at the exact same path: same
+    // spelling, a different device/inode underneath (or, lacking real file
+    // ids, at least a fresh folder the survey never confirmed).
+    await rm(join(dir, "library"), { recursive: true, force: true });
+    await mkdir(join(dir, "library"), { recursive: true });
+
+    const refused = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
+  test("reads (engine.snapshot, settings.get) are unaffected: only the write commands re-verify", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const { engine } = await startEngine();
+    await rm(join(dir, "library"), { recursive: true, force: true });
+
+    expect(await snapshotIds(engine)).toEqual({ avatars: [saved.avatarId], drafts: [saved.draftId] });
+  });
+
+  // Review (LOW 9): #settings.libraryPath can be an alias (a symlink)
+  // confirmed onto the real folder — library.open's own adopt-as-is path
+  // keeps #live pointed at the real Library instance, whose own `.root` is
+  // the real path, not the alias string. Breaking the alias afterwards must
+  // not refuse a paid command: the folder the engine actually reads and
+  // writes through is untouched.
+  test("re-verifies live.library.root, not the (possibly aliased) settings.libraryPath: a broken alias does not refuse a paid command", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    await symlink(join(dir, "library"), join(dir, "alias"));
+    const { engine } = await startEngine();
+    const live = engine.library;
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-00000001", path: join(dir, "alias") });
+    await engine.receive({ kind: "control", type: "library.confirm", callId: "call-00000002", path: join(dir, "alias") });
+    expect(engine.library).toBe(live); // adopted as-is: still the same instance, rooted at "library", not "alias"
+    expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { libraryPath: join(dir, "alias") } });
+
+    await rm(join(dir, "alias"), { force: true }); // the alias is gone; the real folder is untouched
+
+    // archive needs no key and no network, so this exercises exactly the identity re-check.
+    const answer = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+    expect(answer).toMatchObject({ ok: true, result: { avatar: { status: "archived" } } });
+  });
+
+  // Review (LOW 15): a hung stat (a stalled network volume) must not hold
+  // #liveLibrary's claim, and #paidCommands with it, forever.
+  test("a hung folderFs.stat is bounded: LIBRARY_UNAVAILABLE within the timeout, and nothing stays claimed", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    let hung = false;
+    const folderFs = {
+      stat: (path: string) => (hung ? new Promise<never>(() => {}) : stat(path, { bigint: true })),
+      realpath: (path: string) => realpath(path),
+    };
+    const { engine } = await startEngine({}, { folderFs, liveLibraryIdentityTimeoutMs: 50 });
+    hung = true;
+
+    const started = performance.now();
+    const refused = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+
+    // Not left claimed: a retry is refused for the same honest reason, never IN_FLIGHT.
+    const retried = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+    expect(retried).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  }, 5_000);
 });
 
 // ---------- money.reconcile ----------

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { b64, chatBody, chatParams, fakeFetch, JPEG, JPEG_2, LOCAL_BASE, makeClient, PNG, readLedgerLines, setupMoney, type Money, type Step } from "./testing/fakes";
+import { RAW_KEEP_BYTES_CHAT, RAW_KEEP_BYTES_IMAGE, RAW_PREFIX_BYTES } from "./transport";
 import type { ChatParams } from "./types";
 
 let money: Money;
@@ -188,6 +189,19 @@ test.each([
   expect(result).toMatchObject({ status: "error", kind: "UNUSABLE_PAID_RESPONSE", fatal: true, rawSaved: true });
   expect(raws.map((r) => r.attemptId)).toEqual(["age-1#1"]);
   expect(money.lines()[1]).toMatchObject({ type: "settle" });
+});
+
+// Descriptor and age-check answers are a short sentence or two of JSON: never
+// anywhere near this cap in normal operation. It only bounds a redacted body
+// that escaped the pattern-based scrub (redact.ts) whole — the same
+// last-line-of-defence role image.ts's own RAW_KEEP_BYTES_IMAGE plays for
+// images, sized for text worth reading rather than a single image payload.
+test("an unusable chat body asks the store for the chat cap, not the store's own larger default and not the image cap", async () => {
+  const { raws } = await run([{ status: 200, body: "upstream error" }]);
+
+  expect(raws[0]?.keepBytes).toBe(RAW_KEEP_BYTES_CHAT);
+  expect(RAW_KEEP_BYTES_CHAT).toBeGreaterThan(RAW_KEEP_BYTES_IMAGE);
+  expect(RAW_KEEP_BYTES_CHAT).toBeLessThan(RAW_PREFIX_BYTES);
 });
 
 // textModel is user-configurable; a model that answers with an image (a data

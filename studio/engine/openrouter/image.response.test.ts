@@ -16,6 +16,7 @@ import {
   WORST_ONE_REF,
   type Money,
 } from "./testing/fakes";
+import { RAW_KEEP_BYTES_IMAGE } from "./transport";
 
 let money: Money;
 
@@ -120,7 +121,7 @@ test.each(UNUSABLE)("saves the raw body, settles at the worst case and returns a
 
   expect(result).toMatchObject({ status: "error", kind: "UNUSABLE_PAID_RESPONSE", fatal: true, httpStatus: 200, rawSaved: true });
   expect(result.status === "error" && result.ledger).toEqual({ action: "settled", costMicros: WORST_ONE_REF, estimated: true });
-  expect(raws).toEqual([{ attemptId: "slot-1#1", text }]);
+  expect(raws).toEqual([{ attemptId: "slot-1#1", text, keepBytes: RAW_KEEP_BYTES_IMAGE }]);
   expect(money.lines()[1]).toMatchObject({ type: "settle", costMicros: WORST_ONE_REF, estimated: true });
 });
 
