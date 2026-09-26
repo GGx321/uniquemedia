@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventMessage, ResponseMessage, type AvatarTraits, type EngineNotice } from "../shared/engine";
@@ -24,7 +24,13 @@ const CREDITS_URL = "https://openrouter.ai/api/v1/credits";
 
 let dir = "";
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "studio-engine-"));
+  // realpath(tmpdir()), not tmpdir() itself: on macOS /tmp (and the real
+  // os.tmpdir()) sit behind a symlink into /private, so resolve() and
+  // realpath() of a path under it differ even once the path is gone —
+  // "accidentally" catching a bug that resolve()==realpath() (as on Linux,
+  // where /tmp has no such symlink) would not. Canonicalizing here makes
+  // every OS exercise the same code path the review found broken on Linux.
+  dir = await realpath(await mkdtemp(join(tmpdir(), "studio-engine-")));
   await mkdir(join(dir, "library"));
 });
 afterEach(async () => {
@@ -1544,6 +1550,37 @@ describe("the live folder's identity is re-verified before any paid command, pic
   // re-verifies the live folder's identity first, cheaply (folderIdentity:
   // one stat, one realpath), and refuses LIBRARY_UNAVAILABLE rather than
   // spend or write through a folder that is no longer really there.
+
+  // Review (a separate hardening, NOT the canary's actual bug — see the
+  // library.json fingerprint tests below for that one): the re-check used
+  // to use folderIdentity's own lenient fallback — when realpath fails (a
+  // driver that cannot give a canonical path; folderIdentity's own
+  // comment), it falls back to a plain resolve(path). That fallback is fine
+  // for library.open's survey (a wrong "same" there is harmless: a switch
+  // is refused while paid work runs anyway) but is a needless risk here: if
+  // the ORIGINAL identity was computed with a working realpath, and
+  // resolve(path) happens to equal that same string (no symlink in the path
+  // — true on Linux's /tmp; only "accidentally" false on macOS, whose
+  // tmpdir sits behind /private), a folder that merely could not be
+  // confirmed just now (a transient realpath failure) would still "match".
+  // #liveLibrary() no longer uses that fallback for its own re-check. `dir`
+  // is realpath'd in beforeEach so this reproduces on every OS the tests
+  // run on, not just Linux.
+  test("a folder whose canonical path cannot be confirmed right now is refused, never matched through folderIdentity's own lenient resolve() fallback", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    let realpathBroken = false;
+    const folderFs = {
+      stat: (path: string) => stat(path, { bigint: true }),
+      realpath: (path: string) => (realpathBroken ? Promise.reject(new Error("EIO: i/o error, realpath")) : realpath(path)),
+    };
+    const { engine } = await startEngine({}, { folderFs });
+    realpathBroken = true;
+
+    const refused = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
   test("avatars.createDraft refuses LIBRARY_UNAVAILABLE and never reaches the network once the live folder is gone", async () => {
     await seedLibrary(join(dir, "library"), "saved");
     const { engine } = await startEngine();
@@ -1616,6 +1653,59 @@ describe("the live folder's identity is re-verified before any paid command, pic
     expect(retried).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
   });
 
+  // Review (real bug, corrected diagnosis, canary run 36272376999): a
+  // canonical path plus dev:ino (folderIdentity) cannot tell a
+  // deleted-and-recreated folder from the original on Linux, where a
+  // just-freed inode number is routinely reused for the very next directory
+  // created — the recreated folder can share BOTH the original's canonical
+  // path AND its dev:ino, so folderIdentity alone says "same folder". This
+  // folderFs simulates exactly that (a real repro needs no symlink or
+  // deletion race, just an injected volume that reports the ORIGINAL
+  // folder's identity for the recreated one too — reproduces on every OS,
+  // not only Linux), so library.json's own createdAt fingerprint is what
+  // must catch it: the recreated folder has none at all.
+  test("a recreated folder that coincidentally reports the ORIGINAL folder's dev:ino and canonical path (a freed inode reused) is still refused: library.json's createdAt does not match", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const target = join(dir, "library");
+    const originalStat = await stat(target, { bigint: true });
+    const originalReal = await realpath(target);
+    const folderFs = {
+      stat: async (path: string) => (path === target ? originalStat : stat(path, { bigint: true })),
+      realpath: async (path: string) => (path === target ? originalReal : realpath(path)),
+    };
+    const { engine } = await startEngine({}, { folderFs });
+
+    await rm(target, { recursive: true, force: true });
+    await mkdir(target, { recursive: true }); // empty: no library.json of its own
+
+    const refused = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
+  test("the same coincidental reuse, but a DIFFERENT library recreated at the path: refused too, its own createdAt does not match either", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const target = join(dir, "library");
+    const originalStat = await stat(target, { bigint: true });
+    const originalReal = await realpath(target);
+    const folderFs = {
+      stat: async (path: string) => (path === target ? originalStat : stat(path, { bigint: true })),
+      realpath: async (path: string) => (path === target ? originalReal : realpath(path)),
+    };
+    const { engine } = await startEngine({}, { folderFs });
+
+    await rm(target, { recursive: true, force: true });
+    await mkdir(target, { recursive: true });
+    // A whole different library, its own (later) createdAt — steppingClock()'s
+    // default start is the same fixed instant every time, so seedLibrary's
+    // own default would coincidentally match the original's too.
+    await openLibrary(target, { now: steppingClock("2027-01-01T00:00:00.000Z") });
+
+    const refused = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));
+
+    expect(refused).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+  });
+
   test("a folder replaced at the same path (a different identity now there) is refused the same way, not silently written into", async () => {
     const saved = await seedLibrary(join(dir, "library"), "saved");
     const { engine } = await startEngine();
@@ -1654,7 +1744,11 @@ describe("the live folder's identity is re-verified before any paid command, pic
     expect(engine.library).toBe(live); // adopted as-is: still the same instance, rooted at "library", not "alias"
     expect(ok(await engine.handle(command("settings.get")))).toMatchObject({ result: { libraryPath: join(dir, "alias") } });
 
-    await rm(join(dir, "alias"), { force: true }); // the alias is gone; the real folder is untouched
+    // unlink, not rm: on Windows a directory symlink is a junction, and
+    // fs.rm's recursive removal there fails with EFAULT trying to treat it
+    // as a directory to descend into. unlink removes the link itself,
+    // never its target, on every OS — exactly "the alias is gone" here.
+    await unlink(join(dir, "alias")); // the alias is gone; the real folder is untouched
 
     // archive needs no key and no network, so this exercises exactly the identity re-check.
     const answer = await engine.handle(command("avatars.archive", { avatarId: saved.avatarId }));

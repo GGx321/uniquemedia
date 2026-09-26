@@ -20,13 +20,29 @@ async function readJson(path: string): Promise<unknown> {
 
 describe("openLibrary", () => {
   test("turns an empty folder into a library and reports it empty", async () => {
-    const { report } = await openLibrary(root(), { now: steppingClock("2026-09-24T10:00:00.000Z") });
+    const { library, report } = await openLibrary(root(), { now: steppingClock("2026-09-24T10:00:00.000Z") });
 
     expect(await readJson(join(root(), "library.json"))).toEqual({
       schemaVersion: 1,
       createdAt: "2026-09-24T10:00:00.000Z",
     });
     expect(report).toEqual({ avatars: 0, photos: 0, quarantined: [], masterIssues: [], logIssues: [] });
+    // Review (real bug, canary run 36272376999): a deleted-then-recreated
+    // folder can share the original's canonical path AND dev:ino on Linux
+    // (a freed inode is routinely reused) — folderIdentity alone cannot
+    // tell them apart. Library.createdAt is the fingerprint the engine
+    // checks in addition: a fresh folder has none at all, an unrelated
+    // library has a different one.
+    expect(library.createdAt).toBe("2026-09-24T10:00:00.000Z");
+  });
+
+  test("createdAt is the folder's own library.json, whoever opens it and however many times", async () => {
+    const first = await openLibrary(root(), { now: steppingClock("2026-09-24T10:00:00.000Z") });
+    const second = await openLibrary(root(), { now: steppingClock("2027-01-01T00:00:00.000Z") });
+
+    expect(first.library.createdAt).toBe("2026-09-24T10:00:00.000Z");
+    // Re-opening an existing library reads its own recorded createdAt, never the re-opener's clock.
+    expect(second.library.createdAt).toBe("2026-09-24T10:00:00.000Z");
   });
 
   test("treats a folder holding only OS metadata files as empty", async () => {

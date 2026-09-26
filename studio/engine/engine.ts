@@ -1,4 +1,5 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   AvatarDescriptor,
   AvatarTraits,
@@ -38,7 +39,7 @@ import { avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryV
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
-import { LibraryError, openLibrary, type AvatarManifest, type Library } from "./library";
+import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library } from "./library";
 import { STUDIO_E2E } from "./buildFlags";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
@@ -1124,12 +1125,16 @@ export class Engine {
    * ENOTDIR) — a momentary hiccup during an unrelated settings.update must
    * not drop the library out from under a read. That leniency does not
    * belong here: before a write actually reaches the library, the live
-   * folder's identity is re-verified — cheaply, one stat and one realpath
-   * (`folderIdentity`) — against the identity it had when it was opened. A
-   * folder that no longer matches (moved, replaced, or really gone) refuses
-   * LIBRARY_UNAVAILABLE and writes nothing, rather than let a write (in
-   * slice 2b, a paid one, ~20x more expensive) go through a stale instance
-   * or fail midway with a raw ENOENT.
+   * folder is re-verified two ways — its identity (`folderIdentity`, one
+   * stat and one realpath) against the identity it had when it was opened,
+   * AND its own library.json `createdAt` against `live.library.createdAt`
+   * (`Library.createdAt`'s own comment explains why identity alone is not
+   * enough: canonical path plus dev:ino cannot tell a deleted-and-recreated
+   * folder from the original on Linux, where a just-freed inode is
+   * routinely reused for the very next directory created). A folder that
+   * fails either check refuses LIBRARY_UNAVAILABLE and writes nothing,
+   * rather than let a write (in slice 2b, a paid one, ~20x more expensive)
+   * go through a stale instance or fail midway with a raw ENOENT.
    */
   async #liveLibrary(): Promise<Library> {
     if (this.#switching > 0) {
@@ -1144,23 +1149,64 @@ export class Engine {
     // path keeps #live on the real instance while #settings.libraryPath
     // keeps the alias spelling main saved) — the Library instance itself
     // only ever reads and writes through its own .root, so that is what
-    // must still be there. Bounded (review LOW 15): a hung stat/realpath
-    // (a stalled network volume) must not hold this claim, and #paidCommands
-    // with it, forever — a timeout here is read the same as "cannot be
-    // identified right now", exactly like folderIdentity's own null.
+    // must still be there. Bounded (review LOW 15): a hung stat/realpath/
+    // read (a stalled network volume) must not hold this claim, and
+    // #paidCommands with it, forever — a timeout here is read the same as
+    // "cannot be confirmed right now", exactly like folderIdentity's own null.
+    //
+    // strict: true — a conservative choice for this specific, money-critical
+    // re-check: folderIdentity's own resolve() fallback for a realpath that
+    // cannot be trusted right now is right for library.open's survey and
+    // keepLive (#applySettings) — both are read paths where guessing "same"
+    // is cheap to undo — but there is no reason to accept that same guess
+    // right before a write actually spends or writes, so this call insists
+    // on a realpath that actually resolved. It is not, on its own, what
+    // catches a deleted-and-recreated folder on Linux (a coincidentally
+    // reused inode makes both stat AND realpath agree, strict or not) —
+    // the library.json fingerprint below is what catches that.
     const signal = AbortSignal.timeout(this.#liveLibraryIdentityTimeoutMs);
-    const identity = await untilAborted(folderIdentity(live.library.root, this.#folderFs), signal).catch(() => null);
-    if (identity !== live.identity) {
-      // Review LOW 10: realpath's own transient failure falls back to a
-      // plain resolve() (folderIdentity's own comment) and so can mismatch
-      // here on nothing more than a momentary hiccup — worded so that is not
-      // read as "this folder is gone, go pick another one".
+    const verified = await untilAborted(
+      folderIdentity(live.library.root, this.#folderFs, { strict: true }).then(
+        async (identity) => identity === live.identity && (await this.#sameLibraryFile(live.library)),
+      ),
+      signal,
+    ).catch(() => false);
+    if (!verified) {
+      // Review LOW 10: a transient stat, realpath or read failure (a
+      // momentary network-volume hiccup) now reads the same as "gone",
+      // deterministically (strict mode above no longer sometimes forgives a
+      // realpath failure via resolve()) — worded so that is not read as
+      // "this folder is gone, go pick another one".
       throw new EngineFailure({
         code: "LIBRARY_UNAVAILABLE",
         detail: "the live library's folder could not be confirmed just now (it may have moved, or this may be transient); try again, or choose one in Settings",
       });
     }
     return live.library;
+  }
+
+  /**
+   * Whether `library`'s root still holds ITS library.json (review, real
+   * bug: canary run 36272376999) — read fresh, never cached: a folder
+   * deleted and recreated at the exact same path can share the original's
+   * canonical path AND dev:ino on Linux (folderIdentity, however strict,
+   * cannot tell them apart — a freed inode is routinely reused for the very
+   * next directory created), but the recreated folder has no library.json
+   * of its own at all, and an unrelated library's has a different
+   * `createdAt`. One small read, the library's own schema (never changed
+   * for this): false for anything else — unreadable, invalid JSON, a
+   * mismatched schema, or a `createdAt` that does not match.
+   */
+  async #sameLibraryFile(library: Library): Promise<boolean> {
+    let raw: unknown;
+    try {
+      const text = await readFile(join(library.root, LIBRARY_FILE), "utf8");
+      raw = JSON.parse(text);
+    } catch {
+      return false;
+    }
+    const parsed = LibraryFileSchema.safeParse(raw);
+    return parsed.success && parsed.data.createdAt === library.createdAt;
   }
 
   /**

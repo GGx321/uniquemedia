@@ -1,5 +1,6 @@
 export { LibraryError, type LibraryErrorCode } from "./errors";
 export { LIBRARY_ID_PATTERN, isLibraryId } from "./ids";
+export { LIBRARY_FILE } from "./layout";
 export {
   openLibrary,
   type AvatarPatch,

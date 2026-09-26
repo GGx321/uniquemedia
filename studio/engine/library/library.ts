@@ -135,6 +135,17 @@ function byCreation(a: { createdAt: string; id: string }, b: { createdAt: string
 
 export class Library {
   readonly root: string;
+  /**
+   * The folder's own `library.json` `createdAt` (review, real bug: canary
+   * run 36272376999). A folder's canonical path plus its dev:ino
+   * (folderIdentity) cannot tell a deleted-and-recreated folder from the
+   * original on Linux, where a just-freed inode number is routinely reused
+   * for the very next directory created — so `Engine#liveLibrary` checks
+   * this too, read fresh from the live root before a paid write. Captured
+   * once, at open, from whatever the folder's own library.json says (never
+   * this run's own clock re-stamping it).
+   */
+  readonly createdAt: string;
   readonly #now: () => Date;
   readonly #newId: () => string;
   readonly #beforeRename: ((finalPath: string) => void | Promise<void>) | undefined;
@@ -147,8 +158,9 @@ export class Library {
   /** Avatars whose used.jsonl has a bad line, with the reason. */
   readonly #brokenUsedLogs = new Map<string, string>();
 
-  private constructor(root: string, deps: LibraryDeps) {
+  private constructor(root: string, deps: LibraryDeps, createdAt: string) {
     this.root = root;
+    this.createdAt = createdAt;
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;
@@ -163,8 +175,9 @@ export class Library {
    * refusing it leaves the folder exactly as it was.
    */
   static async open(root: string, deps: LibraryDeps): Promise<{ library: Library; report: OpenReport }> {
-    const library = new Library(root, deps);
-    await ensureLibraryFile(root, library.#now);
+    const now = deps.now ?? (() => new Date());
+    const createdAt = await ensureLibraryFile(root, now);
+    const library = new Library(root, deps, createdAt);
     const survey = await surveyLibrary(root);
 
     await mkdir(library.#avatarsDir(), { recursive: true });
@@ -628,10 +641,13 @@ async function isNonEmptyFile(path: string): Promise<boolean> {
   }
 }
 
-/** Validates library.json, or creates it in an empty folder. A folder is
- *  empty when it holds only OS metadata and the temp of a crashed attempt
- *  to write library.json itself. */
-async function ensureLibraryFile(root: string, now: () => Date): Promise<void> {
+/**
+ * Validates library.json, or creates it in an empty folder, and answers its
+ * `createdAt` either way (`Library.createdAt`'s own source). A folder is
+ * empty when it holds only OS metadata and the temp of a crashed attempt
+ * to write library.json itself.
+ */
+async function ensureLibraryFile(root: string, now: () => Date): Promise<string> {
   const path = join(root, LIBRARY_FILE);
   let text: string | null = null;
   try {
@@ -648,8 +664,9 @@ async function ensureLibraryFile(root: string, now: () => Date): Promise<void> {
         `${root} is not empty and has no ${LIBRARY_FILE}; choose an empty folder or an existing library`
       );
     }
-    await writeJsonAtomic(path, LibraryFileSchema.parse({ schemaVersion: 1, createdAt: now().toISOString() }));
-    return;
+    const createdAt = now().toISOString();
+    await writeJsonAtomic(path, LibraryFileSchema.parse({ schemaVersion: 1, createdAt }));
+    return createdAt;
   }
 
   let parsed: unknown;
@@ -665,6 +682,7 @@ async function ensureLibraryFile(root: string, now: () => Date): Promise<void> {
   if (!result.success) {
     throw new LibraryError("invalid-library-file", `${path} is not a supported library file: ${result.error.message}`);
   }
+  return result.data.createdAt;
 }
 
 export function openLibrary(root: string, deps: LibraryDeps = {}): Promise<{ library: Library; report: OpenReport }> {

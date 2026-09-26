@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { AGE_QUESTION, AGE_SYSTEM, ageJsonSchema } from "../engine/avatars/ageCheck";
 import { AGE_CHECK_CALL } from "../engine/money/estimate";
 import { FALLBACK_PRICES_DATE } from "../engine/money/prices";
+import { PREFLIGHT_IMAGE } from "../node/downscale";
 import {
   ageCheckRequestBody,
   checkOneImage,
@@ -22,8 +23,15 @@ import {
 // (bun --no-env-file test never lets a real OPENROUTER_API_KEY through, and
 // none of these tests reads process.env at all).
 
-/** A real, valid 1x1 PNG (the same fixture studio/scripts/smoke-engine.ts uses), so the real downscale/ffmpeg pipeline runs unmocked — only the HTTP call is faked. */
-const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+/**
+ * A real, valid, small PNG, so the real downscale/ffmpeg pipeline runs
+ * unmocked — only the HTTP call is faked. `PREFLIGHT_IMAGE` (downscale.ts's
+ * own cheap preflight fixture), not a 1×1 pixel: a 1×1 input failed
+ * deterministically on Windows CI (run 36272376999) — see its own comment.
+ * studio/scripts/smoke-engine.ts still uses the plain 1×1 (out of this
+ * review's scope), so this is no longer literally "the same fixture".
+ */
+const PNG = Buffer.from(PREFLIGHT_IMAGE);
 
 async function withPngFile(run: (path: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "age-gate-runner-"));

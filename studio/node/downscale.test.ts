@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { imageSize, sniffImageMediaType } from "../engine/library/media";
 import { __setFfmpegPathOverrideForTests, ffmpegPath } from "./ffmpegBinary";
-import { downscaleCommand, downscaleToJpeg, preflightDownscale, type SpawnLike } from "./downscale";
+import { downscaleCommand, downscaleToJpeg, PREFLIGHT_IMAGE, preflightDownscale, type SpawnLike } from "./downscale";
 import { FfmpegError } from "./runFfmpeg";
 
 let dir = "";
@@ -158,6 +158,24 @@ describe("downscaleCommand", () => {
 });
 
 describe("preflightDownscale (M8: a cheap check the image pipeline works, before a batch buys anything)", () => {
+  // Review (Windows, run 36272376999): a 1×1 PNG (68 bytes) failed
+  // deterministically on Windows CI — ffmpeg exit 5/116, empty stderr even
+  // after the retry, while every real-size PNG/JPEG/WebP downscale test
+  // passed there. Real-size PNG/JPEG/WebP downscale tests pass on Windows,
+  // so the earlier "AV lock after SIGKILLs" theory was wrong; the trigger
+  // was the 1×1 input itself — most likely a pipe/EOF race in the Windows
+  // ffmpeg build once the whole input (and then some) fits in one read.
+  // PREFLIGHT_IMAGE is a real, if tiny, 48×64 solid-colour PNG (160 bytes) —
+  // still cheap, but no longer the degenerate 1-pixel case. A 1×1 input is
+  // not a production case either way: every real portrait is 1K.
+  test("the built-in preflight image is a realistic small image, not a degenerate 1×1 pixel", () => {
+    expect(PREFLIGHT_IMAGE.length).toBeGreaterThan(100);
+    const size = imageSize(PREFLIGHT_IMAGE);
+    expect(size).not.toBeNull();
+    expect(size?.width).toBeGreaterThan(1);
+    expect(size?.height).toBeGreaterThan(1);
+  });
+
   test("resolves once a healthy ffmpeg decodes and scales the tiny built-in image", async () => {
     await expect(preflightDownscale()).resolves.toBeUndefined();
   });
@@ -180,15 +198,23 @@ describe("preflightDownscale (M8: a cheap check the image pipeline works, before
   });
 });
 
-// Review: a Windows CI flake (run 36263630451, attempt 1) saw ffmpeg.exe
-// exit with code 5 (ERROR_ACCESS_DENIED) right after another test SIGKILLed
-// several ffmpeg.exe processes — probably AV or a delayed handle release on
-// a freshly unpacked binary — then pass on rerun. A single spawn retry, only
-// when ffmpeg exited non-zero with NO stderr at all (with -loglevel error, a
-// real decode failure always prints something), covers exactly that without
-// masking a genuine decode failure. Tested with an injected `spawn` (a
-// scripted fake, never a real child process): a shell stub would not run
-// the same way on Windows, which is exactly the platform this covers.
+// Review: a Windows CI flake (first seen in run 36263630451, attempt 1, as
+// every ageGateRunner `checkOneImage` test failing at once with ffmpeg exit
+// code 5 right after runFfmpeg.test.ts SIGKILLed several ffmpeg.exe
+// processes). The first theory — an AV lock or a delayed handle release
+// after those SIGKILLs — turned out wrong: run 36272376999 caught the SAME
+// exit 5/116-with-empty-stderr signature failing deterministically on
+// downscale.test.ts's own 1×1 preflight image, before runFfmpeg.test.ts had
+// even run, while every real-size PNG/JPEG/WebP downscale test passed on
+// the same runner. The trigger is the tiny input itself — most likely a
+// pipe/EOF race in the Windows ffmpeg build (see PREFLIGHT_IMAGE's own
+// comment, downscale.ts, which is no longer a degenerate 1×1). A single
+// spawn retry, only when ffmpeg exited non-zero with NO stderr at all (with
+// -loglevel error, a real decode failure always prints something), covers
+// exactly that without masking a genuine decode failure. Tested with an
+// injected `spawn` (a scripted fake, never a real child process): a shell
+// stub would not run the same way on Windows, which is exactly the platform
+// this covers.
 describe("downscaleToJpeg retries once on an empty-stderr non-zero exit (Windows CI flake)", () => {
   const JPEG_OUT = Uint8Array.of(0xff, 0xd8, 0xff, 0xd9);
   /** A real 1x1 PNG's bytes; the fake spawn below never actually decodes it, but downscaleToJpeg's own format sniff must recognise it before it ever spawns anything. */

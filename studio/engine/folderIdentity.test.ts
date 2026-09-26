@@ -80,3 +80,27 @@ describe("folderIdentity: two folders are one only when nothing says otherwise",
     expect(await folderIdentity(join(dir, "beach.jpg"))).toBeNull();
   });
 });
+
+describe("strict mode (Engine#liveLibrary's own re-check, review: real bug)", () => {
+  test("without strict, a realpath failure still gets an identity via resolve() — the documented, deliberate tolerance for library.open's survey and keepLive", async () => {
+    const fs: FolderFs = { stat: (path) => stat(path, { bigint: true }), realpath: async () => Promise.reject(new Error("EIO: i/o error, realpath")) };
+    expect(await folderIdentity(join(dir, "library"), fs)).not.toBeNull();
+  });
+
+  test("with strict, a realpath failure is null, exactly like a stat failure — never resolve()'s guess", async () => {
+    const fs: FolderFs = { stat: (path) => stat(path, { bigint: true }), realpath: async () => Promise.reject(new Error("EIO: i/o error, realpath")) };
+    expect(await folderIdentity(join(dir, "library"), fs, { strict: true })).toBeNull();
+  });
+
+  test("strict still gives a real identity, and still tells two different folders apart, when realpath actually works", async () => {
+    expect(await folderIdentity(join(dir, "library"), undefined, { strict: true })).not.toBeNull();
+    expect(await same(join(dir, "library"), join(dir, "holiday-photos"))).toBe(false);
+    expect(
+      (await folderIdentity(join(dir, "library"), undefined, { strict: true })) === (await folderIdentity(join(dir, "holiday-photos"), undefined, { strict: true })),
+    ).toBe(false);
+  });
+
+  test("strict still says a missing folder has no identity", async () => {
+    expect(await folderIdentity(join(dir, "missing"), undefined, { strict: true })).toBeNull();
+  });
+});

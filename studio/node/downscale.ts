@@ -88,21 +88,33 @@ export function downscaleCommand(input: InputFormat, maxSide: number, maxPixels:
   };
 }
 
-/** A 1×1 white PNG: the smallest input `downscaleToJpeg` accepts, for a cheap preflight (M8). */
-const TINY_PNG = Uint8Array.from(
-  Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"),
+/**
+ * A tiny (48×64, 160-byte) solid-grey PNG for a cheap preflight (M8) — real,
+ * if small; never a degenerate 1×1. A 1×1 pixel used to sit here and failed
+ * deterministically on Windows CI (run 36272376999: ffmpeg exit 5/116, empty
+ * stderr even after the retry, while every real-size PNG/JPEG/WebP
+ * downscale test passed there) — most likely a pipe/EOF race in the Windows
+ * ffmpeg build once the whole 68-byte input (and then some) fits in a
+ * single read. A 1×1 input is not a production case either way: every real
+ * portrait this pipeline actually downscales is 1K.
+ */
+export const PREFLIGHT_IMAGE = Uint8Array.from(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAADAAAABACAIAAADTQmMRAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAUklEQVR4nO3OoQEAIAzAsF3O7fiZSBDNBZnzmXkd2ApJISkkhaSQFJJCUkgKSSEpJIWkkBSSQlJICkkhKSSFpJAUkkJSSApJISkkhaSQFJJCcgH2l7kA8mp9OAAAAABJRU5ErkJggg==",
+    "base64",
+  ),
 );
 
 /**
- * Downscales `TINY_PNG` through the exact same ffmpeg spawn a paid image
- * would take (M8): a broken or missing ffmpeg binary, or one that cannot
- * write pipe:1 for any other reason, is caught here — cheaply, before a
- * single request is sent — instead of discovered one paid image at a time
- * mid-batch. Resolves on a healthy decoder; otherwise rejects with the same
- * error a real slot's downscale would raise.
+ * Downscales `PREFLIGHT_IMAGE` through the exact same ffmpeg spawn a paid
+ * image would take (M8): a broken or missing ffmpeg binary, or one that
+ * cannot write pipe:1 for any other reason, is caught here — cheaply,
+ * before a single request is sent — instead of discovered one paid image at
+ * a time mid-batch. Resolves on a healthy decoder; otherwise rejects with
+ * the same error a real slot's downscale would raise.
  */
 export function preflightDownscale(signal?: AbortSignal): Promise<void> {
-  return downscaleToJpeg(TINY_PNG, { maxSide: 64, signal }).then(() => undefined);
+  return downscaleToJpeg(PREFLIGHT_IMAGE, { maxSide: 64, signal }).then(() => undefined);
 }
 
 /** One spawn's outcome: success, or a failure with whether it is worth retrying (see `downscaleToJpeg`'s retry comment). */
@@ -166,9 +178,11 @@ function attemptDownscale(doSpawn: SpawnLike, args: string[], env: Record<string
         const how = code !== null ? `code ${code}` : `signal ${closeSignal ?? "unknown"}`;
         const error = new FfmpegError(`ffmpeg exited with ${how}`, code, stderrTail);
         // A real decode failure always prints something with -loglevel
-        // error; a non-zero exit with NOTHING on stderr at all is the
-        // Windows CI flake's own signature (AV or a delayed handle release
-        // right after another process's ffmpeg.exe was just SIGKILLed) —
+        // error; a non-zero exit with NOTHING on stderr at all is a
+        // Windows-only flake's own signature (most likely a pipe/EOF race in
+        // the Windows ffmpeg build, not — as first suspected — an AV lock
+        // after another process's ffmpeg.exe was SIGKILLed: real-size
+        // PNG/JPEG/WebP downscales never showed it, only a 1×1 input did) —
         // worth one retry, never a second (see downscaleToJpeg).
         return resolve({ ok: false, retryable: stderrTail.trim() === "", error });
       }
@@ -188,10 +202,12 @@ function attemptDownscale(doSpawn: SpawnLike, args: string[], env: Record<string
  * cannot leave one behind.
  *
  * Retries once, after `RETRY_DELAY_MS`, when ffmpeg exited non-zero with no
- * stderr output at all — a Windows-only flake (a real decode failure always
- * prints something with `-loglevel error`), never a genuine decode failure,
- * and never after an abort or the caller's own timeout: the delay and the
- * retried attempt both still run under the same `signal`.
+ * stderr output at all — a Windows-only flake, most likely a pipe/EOF race
+ * in the Windows ffmpeg build rather than the AV-lock theory first suspected
+ * (see PREFLIGHT_IMAGE's own comment); never a genuine decode failure (a
+ * real one always prints something with `-loglevel error`), and never after
+ * an abort or the caller's own timeout: the delay and the retried attempt
+ * both still run under the same `signal`.
  */
 export async function downscaleToJpeg(bytes: Uint8Array, opts: DownscaleOptions): Promise<Uint8Array> {
   const { maxSide, signal } = opts;
