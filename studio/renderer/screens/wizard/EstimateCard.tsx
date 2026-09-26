@@ -60,7 +60,11 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
           </p>
           <p className="estimate-caption">
             {repeat
-              ? "Ещё 4 портрета и проверка возраста каждого. Дескриптор уже готов и не пересоздаётся, а оценка — по полной цене аватара, так что это верхняя граница."
+              // The descriptor is already paid for and this price is the
+              // batch alone (avatars.estimateCandidates / the draft's own
+              // estimate) — not the whole avatar's price used as a loose
+              // upper bound, so the caption must not claim that anymore.
+              ? "Ещё 4 портрета и проверка возраста каждого. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
               : "Дескриптор, 4 портрета и проверка возраста каждого. Худшая цена — это предел: дороже этот шаг не выйдет."}
             {estimate.prices === "fallback" && " OpenRouter не ответил, поэтому цены взяты из резервной таблицы."}
           </p>

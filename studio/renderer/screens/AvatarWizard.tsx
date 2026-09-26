@@ -69,8 +69,9 @@ function latestCandidatesJob(jobs: readonly JobView[], avatarId: string | null):
 /**
  * The "Новый аватар" wizard: traits → estimate → 4 candidates → pick. Nothing
  * paid is sent until the user has seen the estimate; every paid command
- * carries the worst case they accepted (`acceptedWorstMicros`), and a
- * PRICE_CHANGED refusal shows the new estimate and asks again.
+ * carries the worst case shown for *that* command — createDraft the whole
+ * new-avatar estimate, generateCandidates the draft's own batch estimate —
+ * and a PRICE_CHANGED refusal shows the new estimate and asks again.
  */
 export function AvatarWizard({ draftId }: { draftId: string | null }) {
   const { client, store } = useEngine();
@@ -115,8 +116,14 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   // price it when the draft was made) or, once shown, is not refreshed on its
   // own: avatars.estimateCandidates prices "another batch" and re-validates
   // the descriptor, so a DESCRIPTOR_INVALID here is caught before any spend.
+  // `busy !== null` is deliberately not in the deps array below: it is read
+  // as of the render where draftKey changes, to skip a draft generate() just
+  // created (busy is "generate" for its whole flow) — that flow prices its
+  // own fallback and gates the batch on a fresh click; this effect racing it
+  // for the same avatars.estimateCandidates call would double-fetch and could
+  // overwrite that gate's estimate with a differently-timed answer.
   useEffect(() => {
-    if (draft === null || draft.estimate !== null) return;
+    if (draft === null || draft.estimate !== null || busy !== null) return;
     let alive = true;
     setBusy("estimate");
     void client.request("avatars.estimateCandidates", { avatarId: draft.avatarId }).then((reply) => {
@@ -171,22 +178,64 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
     } else setError(reply.error);
   }
 
-  /** Paid: descriptor (once) and a batch of candidates, both under the worst case the user accepted. */
+  /**
+   * Paid: descriptor (once) and a batch of candidates. createDraft is capped
+   * at the whole new-avatar worst the user just accepted, as before — the
+   * engine checks it against that whole job (engine.ts ~:824). But
+   * generateCandidates must never reuse that same number: the engine checks
+   * it against the batch job alone, no descriptor in it (engine.ts ~:890),
+   * so sending the whole avatar's worst to both let their spend add up past
+   * what the user actually accepted — up to the descriptor's own worst case
+   * (whole-slice review, M1). Once the draft exists, its own batch estimate
+   * is what gets shown and sent for every paid call from here on.
+   */
   async function generate(accepted: Estimate): Promise<void> {
     setBusy("generate");
     setError(null);
     let id = avatarId;
+    // What generateCandidates is about to be sent: the whole new-avatar
+    // estimate until a draft exists, then replaced below by the draft's own
+    // batch estimate — never the whole one again.
+    let batchAccepted = accepted;
     if (id === null) {
       const created = await client.request("avatars.createDraft", { traits, acceptedWorstMicros: accepted.worstMicros });
-      if (!created.ok) return refused(created.error, accepted);
+      if (!created.ok) return refused(created.error, accepted, id);
       store.upsertDraft(created.result.draft);
       // The user left while the descriptor was being written: the draft stays, but no batch is bought for a wizard nobody sees.
       if (!mounted.current) return;
       id = created.result.draft.avatarId;
       setAvatarId(id);
+
+      if (created.result.draft.estimate !== null) {
+        // createDraft prices its whole job and this draft's next batch from
+        // the same price book in the same call (engine.ts ~:822 and ~:863),
+        // so this number was already covered by the whole-avatar worst the
+        // user just accepted above: safe to send on unchanged.
+        const batch = created.result.draft.estimate;
+        setEstimate(batch); // "Ещё 4 варианта" must show the batch's own price, not the whole avatar's
+        setPreviousWorst(null);
+        batchAccepted = batch;
+      } else {
+        // Draft.estimate is nullable in the contract (studio/shared/engine/
+        // state.ts): the engine could not price the batch when it built the
+        // draft. Unreachable today — createDraft always fills it — but must
+        // stay safe: avatars.estimateCandidates is a separate, later call
+        // that can come back from a fresher (and higher) price book than
+        // createDraft's own accepted-check used, and the user never saw
+        // this number. Same rule as M1 — never send an accepted worst the
+        // user did not see — so it must not go straight to
+        // generateCandidates; show it and require a fresh click, exactly
+        // like a PRICE_CHANGED refusal.
+        const batch = await estimateBatch(id);
+        if (batch === null || !mounted.current) return; // estimateBatch already reported the error, or the user left meanwhile
+        setEstimate(batch);
+        setPreviousWorst(accepted.worstMicros);
+        setBusy(null);
+        return;
+      }
     }
-    const started = await client.request("avatars.generateCandidates", { avatarId: id, acceptedWorstMicros: accepted.worstMicros });
-    if (!started.ok) return refused(started.error, accepted);
+    const started = await client.request("avatars.generateCandidates", { avatarId: id, acceptedWorstMicros: batchAccepted.worstMicros });
+    if (!started.ok) return refused(started.error, batchAccepted, id);
     store.trackCandidatesJob(started.result.jobId, id);
     setJobId(started.result.jobId);
     setPreviousWorst(null);
@@ -195,14 +244,55 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
     candidatesHeading.current?.focus();
   }
 
-  async function refused(err: EngineError, accepted: Estimate): Promise<void> {
+  /**
+   * The batch price for a fresh draft whose createDraft answer carried none;
+   * null (error already shown, busy already cleared) on failure. On
+   * failure, `estimate` is cleared too: it still held the whole new-avatar
+   * price from before generate() was clicked, and leaving it in place would
+   * make "Ещё 4 варианта" clickable again at that whole price — sending it
+   * to generateCandidates would bring the M1 bug straight back. With no
+   * estimate, retryBatchEstimate() below is the only way back to a button.
+   */
+  async function estimateBatch(id: string): Promise<Estimate | null> {
+    const reply = await client.request("avatars.estimateCandidates", { avatarId: id });
+    if (reply.ok) return reply.result;
+    setEstimate(null);
+    setError(reply.error);
+    setBusy(null);
+    return null;
+  }
+
+  /** Retries the batch price after estimateBatch (or the mount-time fetch below) failed and left `estimate` null. */
+  async function retryBatchEstimate(): Promise<void> {
+    if (avatarId === null) return;
+    setBusy("estimate");
+    setError(null);
+    const reply = await client.request("avatars.estimateCandidates", { avatarId });
+    setBusy(null);
+    if (reply.ok) {
+      setEstimate(reply.result);
+      setPreviousWorst(null);
+    } else {
+      setError(reply.error);
+    }
+  }
+
+  /**
+   * `refusedAvatarId` is generate()'s own local `id`, not the `avatarId`
+   * state read from this closure: right after a fresh createDraft, `id` is
+   * already the new draft's id, but the component has not re-rendered yet,
+   * so `avatarId` here would still read null and wrongly re-price the whole
+   * new avatar (and re-check the descriptor) instead of just the next batch.
+   */
+  async function refused(err: EngineError, accepted: Estimate, refusedAvatarId: string | null): Promise<void> {
     if (err.code === "PRICE_CHANGED") {
-      // A locked draft already has a descriptor: its refreshed price (and
-      // DESCRIPTOR_INVALID check) comes from avatars.estimateCandidates, not
-      // the full avatars.estimate, which would price the descriptor again.
+      // A draft already has a descriptor, fresh or continued alike: its
+      // refreshed price (and DESCRIPTOR_INVALID check) comes from
+      // avatars.estimateCandidates, not the full avatars.estimate, which
+      // would price the descriptor again.
       const fresh =
-        avatarId !== null
-          ? await client.request("avatars.estimateCandidates", { avatarId })
+        refusedAvatarId !== null
+          ? await client.request("avatars.estimateCandidates", { avatarId: refusedAvatarId })
           : await client.request("avatars.estimate", { traits });
       if (fresh.ok) {
         setEstimate(fresh.result);
@@ -281,6 +371,24 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
     );
   }
 
+  /**
+   * The estimate card's own error action. DESCRIPTOR_INVALID keeps pointing
+   * at its recovery. Otherwise, once a draft exists with no estimate — the
+   * batch price could not be fetched, so estimateBatch cleared it — the
+   * only way back to a "Ещё 4 варианта" button is this retry: with no
+   * estimate at all, there is nothing else on this card to click.
+   */
+  function estimateErrorActions(source: EngineError | null): ReactNode {
+    const fix = descriptorFix(source);
+    if (fix !== undefined) return fix;
+    if (source === null || estimate !== null || !locked) return undefined;
+    return (
+      <button type="button" className="btn btn-sm" onClick={() => void retryBatchEstimate()} disabled={busy !== null} aria-busy={busy === "estimate"}>
+        {busy === "estimate" ? "Считаем…" : "Повторить оценку"}
+      </button>
+    );
+  }
+
   return (
     <div className="page page-wizard">
       <header className="page-head">
@@ -335,7 +443,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             action={action}
             blockedReason={blockedReason}
             error={error}
-            errorActions={descriptorFix(error)}
+            errorActions={estimateErrorActions(error)}
             repeat={locked}
           />
 

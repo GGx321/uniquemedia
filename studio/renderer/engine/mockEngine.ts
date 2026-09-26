@@ -241,6 +241,7 @@ export class MockEngine implements EngineBridge {
   private readonly reconcileQueue: ReconcileResult[] = [];
   private ageRejectionsNextJob = 0;
   private failedSlotsNextJob: { count: number; error: EngineError; reserveLeftOpen: boolean } | null = null;
+  private nextDraftEstimateMissing = false;
   /** Bumped whenever settings.setLibraryPath actually changes the folder, mirroring the real engine's Snapshot field. */
   private librarySwitchGeneration = 0;
 
@@ -341,6 +342,16 @@ export class MockEngine implements EngineBridge {
   /** The next candidate job loses `count` portraits to the age check. */
   rejectNextByAgeCheck(count: number): void {
     this.ageRejectionsNextJob = Math.max(0, Math.min(CANDIDATES_PER_JOB, count));
+  }
+
+  /**
+   * The next avatars.createDraft answers with a Draft whose `estimate` is
+   * null, as if the engine could not price the next batch when it built the
+   * draft — `Draft.estimate` is nullable in the contract (state.ts). Exercises
+   * the renderer's avatars.estimateCandidates fallback for that case.
+   */
+  dropNextDraftEstimate(): void {
+    this.nextDraftEstimateMissing = true;
   }
 
   /**
@@ -468,13 +479,18 @@ export class MockEngine implements EngineBridge {
       case "avatars.createDraft": {
         const refusal = this.paidGate(c.payload.acceptedWorstMicros, this.price.worstMicros);
         if (refusal) return this.fail(c, refusal);
+        const noEstimate = this.nextDraftEstimateMissing;
+        this.nextDraftEstimateMissing = false;
         const draft: Draft = {
           avatarId: this.nextId("avatar"),
           traits: c.payload.traits,
           descriptor: mockDescriptor(c.payload.traits),
           candidates: [],
-          // A draft's estimate is its next batch: the descriptor is already paid for.
-          estimate: this.candidatesPrice(),
+          // A draft's estimate is its next batch: the descriptor is already
+          // paid for. null (dropNextDraftEstimate) mirrors the contract's
+          // nullable case: the engine could not price the batch when it
+          // built the draft.
+          estimate: noEstimate ? null : this.candidatesPrice(),
         };
         this.drafts = [...this.drafts, draft];
         this.spend(DESCRIPTOR.expected);
