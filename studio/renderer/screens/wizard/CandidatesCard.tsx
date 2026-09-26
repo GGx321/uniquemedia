@@ -31,6 +31,8 @@ interface CandidatesCardProps {
   cancelling: boolean;
   /** Where focus goes when the button the user pressed (generate, cancel) disappears. */
   headingRef: Ref<HTMLHeadingElement>;
+  /** How many of this draft's stored candidates today's age threshold hides (the Draft contract's own count); 0 when none are. */
+  hiddenBelowThreshold: number;
 }
 
 function PendingSlots({ job }: { job: JobView }) {
@@ -51,7 +53,7 @@ function PendingSlots({ job }: { job: JobView }) {
 }
 
 /** Step 3: progress while the job runs, then the portraits to choose from. */
-export function CandidatesCard({ candidates, job, picked, onPick, onCancel, cancelling, headingRef }: CandidatesCardProps) {
+export function CandidatesCard({ candidates, job, picked, onPick, onCancel, cancelling, headingRef, hiddenBelowThreshold }: CandidatesCardProps) {
   const groupName = useId();
   const running = job !== null && isActiveJob(job);
   const total = job?.total || SLOTS;
@@ -117,6 +119,17 @@ export function CandidatesCard({ candidates, job, picked, onPick, onCancel, canc
       {failedOther.length > 0 && (
         <Notice tone={allFailed ? "danger" : "warn"}>
           {failedSummary(failedOther)} Стоимость попытки учтена.
+        </Notice>
+      )}
+
+      {hiddenBelowThreshold > 0 && (
+        <Notice tone="info">
+          {countOf(hiddenBelowThreshold, [
+            "вариант из прошлой партии больше не проходит",
+            "варианта из прошлой партии больше не проходят",
+            "вариантов из прошлой партии больше не проходят",
+          ])}{" "}
+          проверку возраста при более строгом пороге. Сгенерируйте новую партию.
         </Notice>
       )}
 

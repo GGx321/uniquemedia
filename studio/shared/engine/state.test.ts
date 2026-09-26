@@ -6,6 +6,7 @@ import {
   Draft,
   EngineNotice,
   Estimate,
+  JobProgress,
   JobState,
   MoneyStatus,
   ReconcileResult,
@@ -77,7 +78,7 @@ const descriptor = { age: 25, text: "25-year-old woman, light olive skin, hazel 
 
 const candidate = { avatarId: "avatar-0001", photoId: "photo-0001" };
 
-const draft = { avatarId: "avatar-0001", traits, descriptor, candidates: [candidate], estimate };
+const draft = { avatarId: "avatar-0001", traits, descriptor, candidates: [candidate], hiddenBelowThreshold: 0, estimate };
 
 const candidatesJob = {
   kind: "avatar.candidates",
@@ -375,6 +376,19 @@ describe("Draft", () => {
   test("accepts a draft whose next batch the engine cannot price now (estimate null)", () => {
     expect(Draft.safeParse({ ...draft, estimate: null }).success).toBe(true);
   });
+
+  test("rejects a draft without hiddenBelowThreshold: how many stored candidates today's threshold hides", () => {
+    const { hiddenBelowThreshold: _h, ...withoutField } = draft;
+    expect(Draft.safeParse(withoutField).success).toBe(false);
+  });
+
+  test("accepts hiddenBelowThreshold as a nonnegative count, even above the current candidates", () => {
+    expect(Draft.safeParse({ ...draft, hiddenBelowThreshold: 3 }).success).toBe(true);
+  });
+
+  test("rejects a negative hiddenBelowThreshold", () => {
+    expect(Draft.safeParse({ ...draft, hiddenBelowThreshold: -1 }).success).toBe(false);
+  });
 });
 
 describe("AvatarSummary", () => {
@@ -439,6 +453,23 @@ describe("CandidatesResult", () => {
     expect(CandidatesResult.safeParse({ ...full, failedSlots: [full.failedSlots[0], { slot: 4, reason: "failed", reserveLeftOpen: false }] }).success).toBe(false);
     expect(CandidatesResult.safeParse({ ...full, failedSlots: [full.failedSlots[0], { slot: 4, reason: "failed", error: { code: "NETWORK" } }] }).success).toBe(false);
     expect(CandidatesResult.safeParse({ ...full, failedSlots: [{ slot: 3, reason: "age-rejected", error: { code: "NETWORK" } }, full.failedSlots[1]] }).success).toBe(false);
+  });
+});
+
+describe("JobProgress", () => {
+  const progress = { jobId: "job-00000001", avatarId: "avatar-0001", done: 1, total: 4 };
+
+  test("accepts progress with the avatarId of the job it reports on", () => {
+    expect(JobProgress.safeParse(progress).success).toBe(true);
+  });
+
+  test("rejects progress without an avatarId: the renderer must not have to guess it", () => {
+    const { avatarId: _a, ...withoutAvatar } = progress;
+    expect(JobProgress.safeParse(withoutAvatar).success).toBe(false);
+  });
+
+  test("rejects done past total", () => {
+    expect(JobProgress.safeParse({ ...progress, done: 5, total: 4 }).success).toBe(false);
   });
 });
 

@@ -116,6 +116,7 @@ test("a draft from the snapshot is listed and reopens the wizard with its candid
     traits: DEFAULT_TRAITS,
     descriptor: mockDescriptor(DEFAULT_TRAITS),
     candidates: ["a", "b", "c", "d"].map((x) => ({ avatarId: "avatar-draft-0001", photoId: `photo-draft-000${x}` })),
+    hiddenBelowThreshold: 0,
     estimate: { ...MOCK_ESTIMATE },
   };
   const { engine } = setup({ drafts: [draft] });

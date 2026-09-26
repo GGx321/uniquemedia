@@ -21,7 +21,7 @@ describe("JobRegistry", () => {
     const jobs = new JobRegistry();
     jobs.startCandidates("job-00000001", DRAFT, 4);
 
-    expect(jobs.progress("job-00000001", 2)).toEqual({ jobId: "job-00000001", done: 2, total: 4 });
+    expect(jobs.progress("job-00000001", 2)).toEqual({ jobId: "job-00000001", avatarId: DRAFT, done: 2, total: 4 });
     expect(jobs.states()).toMatchObject([{ status: "running", done: 2 }]);
     expect(jobs.progress("job-00000404", 1)).toBeNull();
   });

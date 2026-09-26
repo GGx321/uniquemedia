@@ -37,11 +37,11 @@ export class JobRegistry {
   }
 
   /** Records how many slots are done; the `job.progress` payload, or null for a job that is not running. */
-  progress(jobId: string, done: number): { jobId: string; done: number; total: number } | null {
+  progress(jobId: string, done: number): { jobId: string; avatarId: string; done: number; total: number } | null {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined || entry.state.status !== "running") return null;
     entry.state = { ...entry.state, done };
-    return { jobId, done, total: entry.state.total };
+    return { jobId, avatarId: entry.state.avatarId, done, total: entry.state.total };
   }
 
   /** Ends a running job; its final state, or null for a job that is not running. */

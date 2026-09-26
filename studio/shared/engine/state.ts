@@ -240,6 +240,14 @@ export const Draft = z
     descriptor: AvatarDescriptor,
     candidates: z.array(Candidate),
     /**
+     * How many of this draft's stored candidates today's age threshold hides
+     * (passesAgeThreshold, ageCheck.ts): a later, stricter calibration can
+     * make every one of them fail, which would otherwise look exactly like a
+     * draft that never generated anything (`candidates: []` either way). The
+     * photos themselves stay on disk; only the offer is hidden.
+     */
+    hiddenBelowThreshold: Count,
+    /**
      * What the draft's next batch costs (`avatars.estimateCandidates`: the
      * candidates and their age checks, no descriptor call), at the prices the
      * engine had when it built the draft; null when it could not price it.
@@ -318,6 +326,8 @@ const doneWithinTotal = {
 export const JobProgress = z
   .strictObject({
     jobId: Id,
+    /** The job's own avatar, straight off the event: the renderer must not have to guess it from other jobs or a local avatarId. */
+    avatarId: Id,
     done: Count,
     total: Count,
   })

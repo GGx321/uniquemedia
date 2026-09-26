@@ -571,6 +571,7 @@ describe("the library the settings name", () => {
         traits: TRAITS,
         descriptor: { age: 25, text: DESCRIPTOR },
         candidates: [{ avatarId: seeded.draftId, photoId: seeded.candidateId }],
+        hiddenBelowThreshold: 0,
         estimate: null,
       },
     ]);

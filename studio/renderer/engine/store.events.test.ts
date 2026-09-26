@@ -28,6 +28,7 @@ const DRAFT: Draft = {
   traits: DEFAULT_TRAITS,
   descriptor: mockDescriptor(DEFAULT_TRAITS),
   candidates: [{ avatarId: "avatar-draft-0001", photoId: "photo-draft-0001" }],
+  hiddenBelowThreshold: 0,
   estimate: { ...MOCK_ESTIMATE },
 };
 
@@ -195,6 +196,18 @@ test("settings.changed replaces the settings, the key status included", async ()
   expect(h.store.getView().settings).toEqual(next);
   expect(h.store.getView().lastSeq).toBe(1);
   expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+// A job.progress event is often the FIRST this window ever hears of a job it
+// did not start itself (another window's batch, say): before this, the
+// event carried no avatarId, so the store could only create it with
+// avatarId: null, and the wizard had to guess whose draft it belonged to.
+test("job.progress alone gives the job its avatarId: the store never has to leave it null for the renderer to guess", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { jobId: "job-00000009", avatarId: DRAFT.avatarId, done: 1, total: 4 } });
+
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: null, avatarId: DRAFT.avatarId, status: "running", done: 1, total: 4, result: null, error: null }]);
   h.stop();
 });
 

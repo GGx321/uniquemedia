@@ -12,7 +12,7 @@ function progress(n: number): UnsequencedEvent {
     id: `evt-${String(n).padStart(8, "0")}`,
     kind: "event",
     type: "job.progress",
-    payload: { jobId: "job-00000001", done: n, total: 100 },
+    payload: { jobId: "job-00000001", avatarId: "avatar-0001", done: n, total: 100 },
   };
 }
 
@@ -23,7 +23,7 @@ function progressPastTotal(): UnsequencedEvent {
     id: "evt-00000001",
     kind: "event",
     type: "job.progress",
-    payload: { jobId: "job-00000001", done: 5, total: 4 },
+    payload: { jobId: "job-00000001", avatarId: "avatar-0001", done: 5, total: 4 },
   };
 }
 

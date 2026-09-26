@@ -718,7 +718,14 @@ describe("avatars.createDraft", () => {
     if (response.type !== "avatars.createDraft") throw new Error("wrong type");
     const { draft } = response.result;
 
-    expect(draft).toEqual({ avatarId: draft.avatarId, traits: TRAITS, descriptor: { age: 25, text: GOOD }, candidates: [], estimate: NEXT_BATCH });
+    expect(draft).toEqual({
+      avatarId: draft.avatarId,
+      traits: TRAITS,
+      descriptor: { age: 25, text: GOOD },
+      candidates: [],
+      hiddenBelowThreshold: 0,
+      estimate: NEXT_BATCH,
+    });
     expect(net.chatCalls().map((c) => [c.url, c.headers.Authorization])).toEqual([[`${BASE}/chat/completions`, `Bearer ${KEY}`]]);
     const stored = engine.library?.getAvatar(draft.avatarId);
     expect(stored).toMatchObject({ status: "draft", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD, masterPhotoId: null });

@@ -128,7 +128,9 @@ describe("avatars.generateCandidates", () => {
     expect(emitted.map((e) => e.type)).toEqual([
       "draft.changed", "job.progress", "draft.changed", "job.progress", "draft.changed", "job.progress", "draft.changed", "job.progress", "money.changed", "job.done",
     ]);
-    expect(emitted.filter((e) => e.type === "job.progress").map((e) => e.payload)).toEqual([1, 2, 3, 4].map((done) => ({ jobId, done, total: 4 })));
+    expect(emitted.filter((e) => e.type === "job.progress").map((e) => e.payload)).toEqual(
+      [1, 2, 3, 4].map((done) => ({ jobId, avatarId: draftId, done, total: 4 })),
+    );
     expect(emitted.flatMap((e) => (e.type === "draft.changed" ? [e.payload.draft.candidates.length] : []))).toEqual([1, 2, 3, 4]);
     expect(emitted.find((e) => e.type === "draft.changed")).toMatchObject({ payload: { draft: { avatarId: draftId, traits: TRAITS, estimate: NEXT_BATCH } } });
     expect(emitted.find((e) => e.type === "money.changed")).toMatchObject({ payload: { status: { spentMicros: 4 * (40_000 + 1_400), unsettledCount: 0 } } });

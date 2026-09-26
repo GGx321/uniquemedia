@@ -94,6 +94,7 @@ describe("draftFrom", () => {
         { avatarId: "avatar-0001", photoId: "photo-0001" },
         { avatarId: "avatar-0001", photoId: "photo-0002" },
       ],
+      hiddenBelowThreshold: 0,
       estimate: null,
     });
     expect(Draft.safeParse(draft).success).toBe(true);
@@ -133,6 +134,31 @@ describe("draftFrom", () => {
     const neverChecked = photo("photo-0003", "avatar-0001", {});
 
     expect(draftFrom(manifest(), [passing, stale, neverChecked])?.candidates).toEqual([{ avatarId: "avatar-0001", photoId: "photo-0001" }]);
+  });
+
+  // The photos stay on disk (invariant 8 never deletes a stored, once-passing
+  // photo), but a stricter calibration can hide all of them — this is what
+  // tells that apart from a draft that never generated anything at all.
+  test("hiddenBelowThreshold counts the candidates a stricter threshold hides, whatever is still shown", () => {
+    const passing = photo("photo-0001");
+    const stale = photo("photo-0002", "avatar-0001", { age: { adult: true, confidence: 0.5 } });
+    const neverChecked = photo("photo-0003", "avatar-0001", {});
+
+    expect(draftFrom(manifest(), [passing, stale, neverChecked])?.hiddenBelowThreshold).toBe(2);
+  });
+
+  test("hiddenBelowThreshold is 0 when nothing is hidden, photos or not", () => {
+    expect(draftFrom(manifest(), [])?.hiddenBelowThreshold).toBe(0);
+    expect(draftFrom(manifest(), [photo("photo-0001"), photo("photo-0002")])?.hiddenBelowThreshold).toBe(0);
+  });
+
+  test("a draft whose every candidate now falls below threshold still reports their count, not zero", () => {
+    const stale1 = photo("photo-0001", "avatar-0001", { age: { adult: true, confidence: 0.5 } });
+    const stale2 = photo("photo-0002", "avatar-0001", { age: { adult: true, confidence: 0.5 } });
+
+    const draft = draftFrom(manifest(), [stale1, stale2]);
+    expect(draft?.candidates).toEqual([]);
+    expect(draft?.hiddenBelowThreshold).toBe(2);
   });
 });
 

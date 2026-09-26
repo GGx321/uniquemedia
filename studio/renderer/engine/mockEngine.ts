@@ -495,6 +495,7 @@ export class MockEngine implements EngineBridge {
           traits: c.payload.traits,
           descriptor: mockDescriptor(c.payload.traits),
           candidates: [],
+          hiddenBelowThreshold: 0,
           // A draft's estimate is its next batch: the descriptor is already
           // paid for. null (dropNextDraftEstimate) mirrors the contract's
           // nullable case: the engine could not price the batch when it
@@ -746,7 +747,7 @@ export class MockEngine implements EngineBridge {
             id: this.nextId("evt"),
             kind: "event",
             type: "job.progress",
-            payload: { jobId: job.jobId, done: job.done, total: job.total },
+            payload: { jobId: job.jobId, avatarId: job.avatarId, done: job.done, total: job.total },
           });
         }),
       );
@@ -856,7 +857,14 @@ export class MockEngine implements EngineBridge {
     this.rewritable.delete(avatarId);
     const descriptor = mockDescriptor(target.traits);
     if (target.status === "draft") {
-      const draft: Draft = { avatarId, traits: target.traits, descriptor, candidates: target.candidates ?? [], estimate: this.candidatesPrice() };
+      const draft: Draft = {
+        avatarId,
+        traits: target.traits,
+        descriptor,
+        candidates: target.candidates ?? [],
+        hiddenBelowThreshold: 0,
+        estimate: this.candidatesPrice(),
+      };
       this.drafts = [...this.drafts, draft];
       this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "draft.changed", payload: { draft } });
       return;

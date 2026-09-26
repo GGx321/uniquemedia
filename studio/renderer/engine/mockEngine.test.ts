@@ -383,7 +383,18 @@ test("a contract-mismatch entry (not descriptor-invalid, no recovery target) ans
 });
 
 test("avatars.estimateCandidates and generateCandidates answer DESCRIPTOR_INVALID for a draft whose descriptor fails today's rules", async () => {
-  const { client } = makeMock({ drafts: [{ avatarId: "avatar-baddesc-0001", traits: DEFAULT_TRAITS, descriptor: { age: 25, text: "a young woman with hazel eyes" }, candidates: [], estimate: null }] });
+  const { client } = makeMock({
+    drafts: [
+      {
+        avatarId: "avatar-baddesc-0001",
+        traits: DEFAULT_TRAITS,
+        descriptor: { age: 25, text: "a young woman with hazel eyes" },
+        candidates: [],
+        hiddenBelowThreshold: 0,
+        estimate: null,
+      },
+    ],
+  });
 
   expect(await client.request("avatars.estimateCandidates", { avatarId: "avatar-baddesc-0001" })).toMatchObject({ ok: false, error: { code: "DESCRIPTOR_INVALID" } });
   expect(await client.request("avatars.generateCandidates", { avatarId: "avatar-baddesc-0001", acceptedWorstMicros: 1_000_000 })).toMatchObject({
@@ -400,6 +411,7 @@ test("avatars.pick answers DESCRIPTOR_INVALID for a draft whose descriptor fails
         traits: DEFAULT_TRAITS,
         descriptor: { age: 25, text: "a young woman with hazel eyes" },
         candidates: [{ avatarId: "avatar-baddesc-0002", photoId: "photo-0001" }],
+        hiddenBelowThreshold: 0,
         estimate: null,
       },
     ],

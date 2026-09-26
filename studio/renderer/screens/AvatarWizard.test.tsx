@@ -11,6 +11,7 @@ function continuedDraft(overrides: Partial<Draft> = {}): Draft {
     traits: DEFAULT_TRAITS,
     descriptor: mockDescriptor(DEFAULT_TRAITS),
     candidates: [],
+    hiddenBelowThreshold: 0,
     estimate: null,
     ...overrides,
   };
@@ -635,6 +636,39 @@ test("a continued draft with no cached price fetches one via avatars.estimateCan
   expect(callsOf(engine, "avatars.estimateCandidates").map((c) => c.payload)).toEqual([{ avatarId: draft.avatarId }]);
   expect(callsOf(engine, "avatars.estimate")).toHaveLength(0);
   expect(screen.getByRole("button", { name: /Ещё 4 варианта/ })).toBeDefined();
+});
+
+// A stricter age calibration can hide every stored candidate of a draft (or
+// only some), which otherwise looks exactly like "never generated" — both
+// show candidates: [] or a partial grid with no explanation.
+test("a draft whose stored candidates all fail today's stricter age threshold says so, not just an empty grid", async () => {
+  const draft = continuedDraft({ estimate: { ...MOCK_ESTIMATE }, hiddenBelowThreshold: 2 });
+  setup({ drafts: [draft] });
+  await continueDraft();
+
+  expect(screen.getByText(/2 варианта из прошлой партии.*проходят.*возраста/)).toBeDefined();
+  expect(screen.getByText(/новую партию/)).toBeDefined();
+});
+
+test("the same notice shows when only some of the draft's candidates are hidden by a stricter threshold", async () => {
+  const draft = continuedDraft({
+    estimate: { ...MOCK_ESTIMATE },
+    candidates: [{ avatarId: "avatar-continue-0001", photoId: "photo-continue-0001" }],
+    hiddenBelowThreshold: 1,
+  });
+  setup({ drafts: [draft] });
+  await continueDraft();
+
+  expect(screen.getByRole("radio", { name: "Вариант A" })).toBeDefined();
+  expect(screen.getByText(/1 вариант из прошлой партии.*проходит.*возраста/)).toBeDefined();
+});
+
+test("says nothing about a stricter threshold when nothing is hidden", async () => {
+  const draft = continuedDraft({ estimate: { ...MOCK_ESTIMATE } });
+  setup({ drafts: [draft] });
+  await continueDraft();
+
+  expect(screen.queryByText(/из прошлой партии/)).toBeNull();
 });
 
 // A schema-invalid descriptor cannot sit in a fixture draft: the mock validates

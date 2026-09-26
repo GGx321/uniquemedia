@@ -53,11 +53,15 @@ export function draftFrom(manifest: AvatarManifest, photos: readonly PhotoSideca
   if (manifest.status !== "draft") return null;
   const traits = traitsFrom(manifest);
   if (traits === null) return null;
+  const shown = photos.filter((p) => passesAgeThreshold(p.qa.age));
   const parsed = Draft.safeParse({
     avatarId: manifest.id,
     traits,
     descriptor: descriptorOf(manifest),
-    candidates: photos.filter((p) => passesAgeThreshold(p.qa.age)).map((p) => ({ avatarId: p.avatarId, photoId: p.id })),
+    candidates: shown.map((p) => ({ avatarId: p.avatarId, photoId: p.id })),
+    // The photos below-threshold are still on disk; only their count is
+    // told apart from "never generated" (candidates: [] either way).
+    hiddenBelowThreshold: photos.length - shown.length,
     estimate: null,
   });
   return parsed.success ? parsed.data : null;

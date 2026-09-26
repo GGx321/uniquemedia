@@ -546,8 +546,12 @@ export class EngineStore {
     const lastSeq = event.seq;
     switch (event.type) {
       case "job.progress": {
-        const { jobId, done, total } = event.payload;
-        this.patchJob(jobId, (job) => (isFinished(job) ? job : { ...job, status: "running", done, total }), lastSeq);
+        const { jobId, avatarId, done, total } = event.payload;
+        // avatarId comes straight off the event now, so this is never a
+        // guess: a window that never started this job itself (another
+        // window's batch, or a progress event landing before this one's own
+        // trackCandidatesJob) still learns whose draft it is immediately.
+        this.patchJob(jobId, (job) => (isFinished(job) ? job : { ...job, avatarId, status: "running", done, total }), lastSeq);
         return;
       }
       case "job.done": {

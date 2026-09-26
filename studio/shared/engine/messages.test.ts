@@ -88,7 +88,7 @@ const candidates: Candidate[] = ["photo-0101", "photo-0102", "photo-0103"].map((
   avatarId: DRAFT_ID,
   photoId,
 }));
-const draft: Draft = { avatarId: DRAFT_ID, traits, descriptor, candidates, estimate };
+const draft: Draft = { avatarId: DRAFT_ID, traits, descriptor, candidates, hiddenBelowThreshold: 0, estimate };
 
 const avatar: AvatarSummary = {
   avatarId: "avatar-0001",
@@ -129,7 +129,7 @@ const progressEvent: EventMessage = {
   seq: 7,
   bootId: BOOT,
   type: "job.progress",
-  payload: { jobId: "job-00000001", done: 1, total: 4 },
+  payload: { jobId: "job-00000001", avatarId: DRAFT_ID, done: 1, total: 4 },
 };
 
 type CommandCase<T extends CommandType> = { payload: CommandPayload<T>; result: CommandResult<T> };
@@ -204,7 +204,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
 };
 
 const eventCases: { [T in EventType]: EventPayload<T> } = {
-  "job.progress": { jobId: "job-00000001", done: 2, total: 4 },
+  "job.progress": { jobId: "job-00000001", avatarId: DRAFT_ID, done: 2, total: 4 },
   "job.done": {
     jobId: "job-00000001",
     result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates, rejectedByAgeCheck: 1, failedSlots: [{ slot: 4, reason: "age-rejected" }] },
@@ -685,7 +685,13 @@ describe("results", () => {
 
 describe("events", () => {
   test("rejects progress past the total", () => {
-    expect(reasonOf(event("job.progress", { jobId: "job-00000001", done: 5, total: 4 }))).toContain("payload.done");
+    expect(reasonOf(event("job.progress", { jobId: "job-00000001", avatarId: DRAFT_ID, done: 5, total: 4 }))).toContain("payload.done");
+  });
+
+  // The renderer must not have to guess a job's avatar (store.ts's job.progress
+  // handler reads it straight off the event) — so it is required, not optional.
+  test("rejects job.progress without an avatarId", () => {
+    expect(reasonOf(event("job.progress", { jobId: "job-00000001", done: 1, total: 4 }))).toContain("avatarId");
   });
 
   test("rejects more than four candidates in one job", () => {

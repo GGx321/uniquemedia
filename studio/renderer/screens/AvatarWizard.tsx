@@ -471,6 +471,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             onCancel={() => void cancel()}
             cancelling={cancelling}
             headingRef={candidatesHeading}
+            hiddenBelowThreshold={draft?.hiddenBelowThreshold ?? 0}
           />
 
           {draft && (

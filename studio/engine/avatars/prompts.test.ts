@@ -23,7 +23,7 @@ describe("the avatar in an image prompt is her descriptor, and nothing else of t
       age: 25, ethnicity: "european", skinTone: "light-olive", hairColor: "chestnut", hairLength: "shoulder", hairTexture: "wavy",
       eyeColor: "hazel", build: "athletic", marks: ["freckles"], vibe: "zebra lantern marmalade",
     };
-    const draft = Draft.parse({ avatarId: "draft-00000001", traits, descriptor: DESCRIPTOR, candidates: [], estimate: null });
+    const draft = Draft.parse({ avatarId: "draft-00000001", traits, descriptor: DESCRIPTOR, candidates: [], hiddenBelowThreshold: 0, estimate: null });
 
     expect(candidatePrompt(draft.descriptor)).not.toContain("zebra");
     expect(promptSubject(draft.descriptor)).toBe(GOOD.replace(/\.$/, ""));
