@@ -121,12 +121,15 @@ function realSimilarityFn(recognizer: import("onnxruntime-web").InferenceSession
  * filesystem path resolution tied to `process`/`import.meta`).
  *
  * `wasmPaths` (packaging, plan T7b) must be set explicitly to the .wasm/.mjs
- * files' real, asar-*unpacked* location once packaged — resolving that path
- * needs `process.resourcesPath` or similar, which is exactly what this
- * module's runtime rule forbids, so the caller (T6's wiring) computes it and
- * hands it in; omitted, onnxruntime-web falls back to resolving it relative
- * to its own bundled module location, which does not survive being bundled
- * into `engine/main.js` by electron-vite.
+ * files' real location once packaged — resolving that path needs
+ * `process.resourcesPath` or similar, which is exactly what this module's
+ * runtime rule forbids, so the caller (T6's wiring) computes it and hands it
+ * in; omitted, onnxruntime-web falls back to resolving it relative to its
+ * own bundled module location, which does not survive being bundled into
+ * `engine/main.js` by electron-vite. The files ship inside app.asar, not
+ * unpacked (electron-builder.studio.yml) — Electron's `fs` reads them from
+ * there transparently, so the path T7b computes stays an ordinary
+ * `.../app.asar/node_modules/onnxruntime-web/dist/...` path.
  */
 export async function createFaceGate(
   models: { yunet: Uint8Array; sface: Uint8Array },

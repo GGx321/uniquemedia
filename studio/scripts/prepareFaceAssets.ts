@@ -3,7 +3,7 @@
  * `electron-vite build` writes `out-studio/` (emptied on every build — see
  * electron.studio.vite.config.ts's comment on `outDir`), the two `.onnx`
  * files are copied in from the gitignored model cache so
- * electron-builder.studio.yml's `files`/`asarUnpack` can find them under
+ * electron-builder.studio.yml's `files` glob can find them under
  * `out-studio/**`, right where every other build output lives — never
  * committed to git, and never read by studio/engine itself (its runtime
  * rule forbids resolving a path on its own; the packaged app's real entry

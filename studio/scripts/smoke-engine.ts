@@ -59,6 +59,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve } from "node:path";
+import { FACE_MODELS } from "../engine/face/modelSource";
 import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
@@ -406,6 +407,18 @@ function checkPackage(target: Target): void {
   const entries = listPackage(target.asar, { isPack: false }).map((p) => p.replaceAll("\\", "/"));
   check("app.asar contains out-studio/engine/main.js", entries.includes("/out-studio/engine/main.js"));
   check("the engine is not unpacked from the asar", !existsSync(join(`${target.asar}.unpacked`, "out-studio")));
+  // T7b, the face gate: neither the models nor onnxruntime-web's WASM
+  // runtime are asarUnpack'd (electron-builder.studio.yml) — both must stay
+  // inside the integrity-checked asar. This only checks packaging, not that
+  // anything loads them yet (nothing does).
+  const modelFiles = Object.values(FACE_MODELS).map((m) => `/out-studio/engine/models/${m.file}`);
+  const ortFiles = [
+    "/node_modules/onnxruntime-web/dist/ort.node.min.mjs",
+    "/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",
+    "/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs",
+  ];
+  const missingFaceAssets = [...modelFiles, ...ortFiles].filter((f) => !entries.includes(f));
+  check("app.asar contains the face gate's models and onnxruntime-web's WASM runtime", missingFaceAssets.length === 0, { missingFaceAssets });
   const fuses = spawnSync("bunx", ["@electron/fuses", "read", "--app", target.app], { encoding: "utf8" }).stdout;
   const wrong = Object.entries(EXPECTED_FUSES).filter(([fuse, state]) => !new RegExp(`${fuse} is ${state}`).test(fuses));
   check("the Electron fuses are set (runAsNode, NODE_OPTIONS, --inspect off; asar-only with integrity; cookie encryption)", wrong.length === 0, { wrong, fuses });
