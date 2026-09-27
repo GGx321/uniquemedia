@@ -124,7 +124,7 @@ jobs:
       # runtime are the two biggest additions this repo ships. Budget: 220
       # MiB, from a real measurement (mac arm64 .dmg, 2026-09-27,
       # electron-builder.studio.yml's inverted onnxruntime-web exclusion in
-      # place): 182 MiB, +~40 MiB margin for Windows NSIS's different
+      # place): 182 MiB, +38 MiB margin for Windows NSIS's different
       # compression and normal future growth — tight enough that
       # accidentally shipping even one of the excluded WASM variants again
       # (each 17-28 MB) would still trip it.
@@ -132,11 +132,17 @@ jobs:
         if: env.PACKAGE == 'true'
         shell: bash
         run: |
+          shopt -s nullglob
           if [ "$RUNNER_OS" = "macOS" ]; then
-            file=$(ls release-studio/*.dmg | head -n 1)
+            files=(release-studio/*.dmg)
           else
-            file=$(ls release-studio/*.exe | head -n 1)
+            files=(release-studio/*.exe)
           fi
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no installer found in release-studio/"
+            exit 1
+          fi
+          file=${files[0]}
           bytes=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
           mib=$((bytes / 1024 / 1024))
           budget=220
