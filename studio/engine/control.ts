@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { AbsolutePath, ApiKey, EngineError, EngineNotice, Id, Settings, type EngineCommandMessage } from "../shared/engine";
+import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, Settings, type EngineCommandMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
+import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 
@@ -58,6 +59,15 @@ export const HostControl = z.discriminatedUnion("type", [
 ]);
 export type HostControl = z.infer<typeof HostControl>;
 
+/**
+ * T6c (L3): the same 20 MB cap `importFlow.ts` already refuses a picked file
+ * over, enforced again at the contract boundary — `bytes` below is never
+ * trusted to already be under it just because main is the only sender.
+ * Exported so main's own flow bounds its read by this exact number, rather
+ * than keeping a second constant that could drift from this one.
+ */
+export const MAX_IMPORT_PHOTO_BYTES = 20 * 1024 * 1024;
+
 /** A question main asks the engine; the engine answers with an `EngineReply` carrying the same `callId`. */
 export const HostCall = z.discriminatedUnion("type", [
   /**
@@ -86,15 +96,37 @@ export const HostCall = z.discriminatedUnion("type", [
    * the settings (`settings.update`) only after an ok reply.
    */
   z.strictObject({ kind: z.literal("control"), type: z.literal("library.confirm"), callId: Id, path: AbsolutePath }),
+  /**
+   * T6c (import an existing avatar): main's own dialog read the picked
+   * photo's raw bytes itself (design constraint 1 — the renderer never sends
+   * a path or raw bytes); this hands them to the engine, which validates them
+   * (media checks, not animated, a readable size), downscales the two JPEGs
+   * the paid calls need and holds them staged, replacing any earlier staged
+   * photo. `bytes` never reaches the renderer-facing contract (commands.ts) —
+   * only this main-only control message ever carries raw image bytes.
+   */
+  z.strictObject({
+    kind: z.literal("control"),
+    type: z.literal("import.stagePhoto"),
+    callId: Id,
+    bytes: z.instanceof(Uint8Array).refine((b) => b.byteLength <= MAX_IMPORT_PHOTO_BYTES, `must be at most ${MAX_IMPORT_PHOTO_BYTES} bytes`),
+  }),
 ]);
 export type HostCall = z.infer<typeof HostCall>;
 
-/** The engine's answer to a `HostCall`: no `error` means it succeeded. */
+/**
+ * The engine's answer to a `HostCall`: no `error` means it succeeded.
+ * `stage` is set only for `import.stagePhoto`'s own successful reply — the
+ * one HostCall whose caller (main) needs more than a bare ok, so the
+ * renderer's `avatars.pickImportPhoto` result (commands.ts's
+ * `ImportPhotoPicked`) can carry the staged photo's id and pixel size.
+ */
 export const EngineReply = z.strictObject({
   kind: z.literal("control"),
   type: z.literal("reply"),
   callId: Id,
   error: EngineError.optional(),
+  stage: z.strictObject({ stagingId: Id, width: Count, height: Count }).optional(),
 });
 export type EngineReply = z.infer<typeof EngineReply>;
 
@@ -119,6 +151,9 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "avatars.estimate": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.estimateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.estimateRewriteDescriptor": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "avatars.estimateImport": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  // T6c: one mandatory age-check attempt, then up to IMPORT_DESCRIBE_MAX_ATTEMPTS describe attempts, each at its slowest.
+  "avatars.importAvatar": PRICE_FETCH_TIMEOUT_MS + (1 + IMPORT_DESCRIBE_MAX_ATTEMPTS) * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,

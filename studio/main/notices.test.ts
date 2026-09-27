@@ -96,6 +96,9 @@ async function harness() {
         settings: async () => {
           throw new Error("not used");
         },
+        importPhoto: async () => {
+          throw new Error("not used");
+        },
         engine: (c) => {
           if (engine === null) throw new Error("the engine is not started");
           return engine.handle(c);

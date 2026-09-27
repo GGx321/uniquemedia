@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  AGE_CHECK_ALREADY_REFUSED_DETAIL,
   AvatarDescriptor,
   AvatarTraits,
   errorResponseFor,
@@ -30,18 +32,29 @@ import {
   type UnsequencedEvent,
   UNREADABLE_REASON_DETAIL,
 } from "../shared/engine";
-import { downscaleToJpeg, preflightDownscale } from "../node/downscale";
+import { downscaleToJpeg, MAX_SOURCE_PIXELS, preflightDownscale } from "../node/downscale";
 import { timeoutSignal } from "./money/timeoutSignal";
 import { AGE_CHECK_MAX_SIDE, passesAgeThreshold } from "./avatars/ageCheck";
 import { candidateJobEnd, runCandidateJob, untilAborted, type SlotOutcome } from "./avatars/candidateJob";
 import { runDescriptorJob } from "./avatars/descriptorJob";
-import { avatarJobEstimate, avatarPriceModels, CANDIDATES_PER_BATCH, descriptorJobCap, type AvatarModels } from "./avatars/plan";
+import { runImportJob, type ImportJobResult } from "./avatars/importJob";
+import { checkImportPhoto, IMPORT_DESCRIBE_MAX_SIDE } from "./avatars/importStaging";
+import {
+  avatarJobEstimate,
+  avatarPriceModels,
+  CANDIDATES_PER_BATCH,
+  descriptorJobCap,
+  importJobEstimate,
+  importPriceModels,
+  type AvatarModels,
+} from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
 import { avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
 import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library } from "./library";
+import type { ImageMediaType } from "./library/media";
 import { STUDIO_E2E } from "./buildFlags";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
@@ -86,6 +99,18 @@ export interface EngineDeps {
   preflightTimeoutMs?: number;
   /** Bounds #liveLibrary's identity re-check; LIVE_LIBRARY_IDENTITY_TIMEOUT_MS unless a test says otherwise. */
   liveLibraryIdentityTimeoutMs?: number;
+  /**
+   * T6c: downscales a staged import photo's raw bytes to a JPEG for one of
+   * its paid calls (the age check or the describe call), at `maxSide`.
+   * Defaults to `studio/node/downscale.ts`'s real one (the same ffmpeg path
+   * every candidate portrait's own downscale takes, and the one that really
+   * kills ffmpeg on `signal`'s own abort); tests inject a failing fake here
+   * instead of constructing a genuinely oversized image, or one that ignores
+   * `signal` entirely to exercise the M4 timeout below on its own.
+   */
+  downscaleImportPhoto?: (bytes: Uint8Array, maxSide: number, signal: AbortSignal) => Promise<Uint8Array>;
+  /** M4: bounds each of the two import downscales (age check size, then describe size); IMPORT_DOWNSCALE_TIMEOUT_MS unless a test says otherwise. */
+  importDownscaleTimeoutMs?: number;
 }
 
 function detailOf(message: string): string {
@@ -209,6 +234,16 @@ export const PREFLIGHT_TIMEOUT_MS = 10_000;
 /** How long #liveLibrary's identity re-check (one stat, one realpath) may take before it is read as "cannot be identified right now" (review LOW 15). */
 export const LIVE_LIBRARY_IDENTITY_TIMEOUT_MS = 5_000;
 
+/**
+ * T6c review round 2, M4: how long each of import.stagePhoto's two
+ * downscales (the age check's own size, then the describe call's own larger
+ * one) may take before it answers a clear error and stages nothing. Two of
+ * these run sequentially per stage, so the worst case (20 s) stays
+ * comfortably under main's own REQUEST_TIMEOUT_MS (30 s, engineHost.ts) for
+ * this same control call.
+ */
+export const IMPORT_DOWNSCALE_TIMEOUT_MS = 10_000;
+
 /** A candidate job while it runs: what it was started with, and how many slots are done. */
 interface RunningCandidates {
   jobId: string;
@@ -249,6 +284,8 @@ export class Engine {
   readonly #preflight: (signal: AbortSignal) => Promise<void>;
   readonly #preflightTimeoutMs: number;
   readonly #liveLibraryIdentityTimeoutMs: number;
+  readonly #downscaleImportPhoto: (bytes: Uint8Array, maxSide: number, signal: AbortSignal) => Promise<Uint8Array>;
+  readonly #importDownscaleTimeoutMs: number;
   readonly #events: EventLog;
   readonly #encryptionAvailable: boolean;
   readonly #openRouterBaseUrl: string;
@@ -302,6 +339,28 @@ export class Engine {
   #paidCommands = 0;
   /** One createDraft at a time: a second click (the wizard left and opened again) must not buy a second descriptor. */
   #creatingDraft = false;
+  /**
+   * T6c: the one photo staged for import (`avatars.pickImportPhoto` →
+   * `import.stagePhoto`), replaced whenever a later stage lands. Single-use:
+   * `avatars.importAvatar` clears it as soon as it is accepted, whatever
+   * happens next — a failed import needs a fresh pick, never a silent retry
+   * of the same bytes.
+   */
+  #importStaging: {
+    stagingId: string;
+    mediaType: ImageMediaType;
+    width: number;
+    height: number;
+    rawBytes: Uint8Array;
+    /** sha256 of `rawBytes`, hex: the library's own key for H2's refused-imports list. */
+    sha256: string;
+    /** Downscaled once at stage time, to the age check's own size (ageCheck.ts's AGE_CHECK_MAX_SIDE). */
+    ageJpeg: Uint8Array;
+    /** Downscaled once at stage time, larger than the age check's own JPEG: more detail for the vision describe call. */
+    describeJpeg: Uint8Array;
+  } | null = null;
+  /** One avatars.importAvatar at a time, like #creatingDraft. */
+  #importing = false;
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs = new JobRegistry();
   /**
@@ -315,6 +374,8 @@ export class Engine {
     this.#deps = deps;
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#preflight = deps.preflightDownscale ?? preflightDownscale;
+    this.#downscaleImportPhoto = deps.downscaleImportPhoto ?? ((bytes, maxSide, signal) => downscaleToJpeg(bytes, { maxSide, signal }));
+    this.#importDownscaleTimeoutMs = deps.importDownscaleTimeoutMs ?? IMPORT_DOWNSCALE_TIMEOUT_MS;
     this.#preflightTimeoutMs = deps.preflightTimeoutMs ?? PREFLIGHT_TIMEOUT_MS;
     this.#liveLibraryIdentityTimeoutMs = deps.liveLibraryIdentityTimeoutMs ?? LIVE_LIBRARY_IDENTITY_TIMEOUT_MS;
     this.#events = new EventLog(EVENT_LOG_CAPACITY, deps.bootId);
@@ -489,8 +550,55 @@ export class Engine {
         // Every other folder still staged (candidates main gave up on) is
         // stale the moment the live folder changes underneath it.
         this.#staged = new Map();
+        // L5: a photo staged for import belongs to the library that was live
+        // when it was picked; once a different one is live, importing it
+        // there without a fresh pick would be surprising, not a convenience.
+        this.#importStaging = null;
         this.#emitSettings();
         return { kind: "control", type: "reply", callId: call.callId };
+      }
+      case "import.stagePhoto": {
+        // Free (design constraint 2): media checks, not animated, a readable
+        // size — before anything is downscaled or paid for. A rejection here
+        // never touches #importStaging: an earlier stage (if any) stays live
+        // until a photo that actually validates replaces it.
+        const checked = checkImportPhoto(call.bytes);
+        if (!checked.ok) {
+          const detail =
+            checked.reason === "not-an-image"
+              ? "the file is not a supported image (PNG, JPEG or WebP)"
+              : checked.reason === "animated"
+                ? "an animated image cannot be imported"
+                : checked.reason === "too-many-pixels"
+                  ? `the image is larger than ${MAX_SOURCE_PIXELS} pixels; choose a smaller photo`
+                  : "the image's size could not be read";
+          return { kind: "control", type: "reply", callId: call.callId, error: { code: "VALIDATION", detail } };
+        }
+        // T6c review H2: the mandatory age check must not be re-rollable by
+        // simply re-picking the same file — a fresh pick gets a fresh
+        // stagingId, but the sha256 of its exact bytes is the same one the
+        // library keyed the earlier refusal by. Checked for free, before
+        // anything below is downscaled or paid for.
+        const sha256 = createHash("sha256").update(call.bytes).digest("hex");
+        if (this.library?.isRefusedImport(sha256) === true) {
+          return { kind: "control", type: "reply", callId: call.callId, error: { code: "AGE_CHECK_FAILED", detail: AGE_CHECK_ALREADY_REFUSED_DETAIL } };
+        }
+        let ageJpeg: Uint8Array;
+        let describeJpeg: Uint8Array;
+        try {
+          ageJpeg = await this.#boundedImportDownscale(call.bytes, AGE_CHECK_MAX_SIDE);
+          describeJpeg = await this.#boundedImportDownscale(call.bytes, IMPORT_DESCRIBE_MAX_SIDE);
+        } catch (error) {
+          // L4: messageOf() already truncates the error's own message, but
+          // this prefix is added AFTER that — the concatenation itself must
+          // stay under SafeText's 500-char cap too, or this reply would fail
+          // to leave the engine at all.
+          const detail = detailOf(`the photo could not be prepared (it may be too large or an unsupported variant): ${messageOf(error, "unknown error")}`);
+          return { kind: "control", type: "reply", callId: call.callId, error: { code: "VALIDATION", detail } };
+        }
+        const stagingId = this.#deps.newId();
+        this.#importStaging = { stagingId, mediaType: checked.info.mediaType, width: checked.info.width, height: checked.info.height, rawBytes: call.bytes, sha256, ageJpeg, describeJpeg };
+        return { kind: "control", type: "reply", callId: call.callId, stage: { stagingId, width: checked.info.width, height: checked.info.height } };
       }
     }
   }
@@ -660,6 +768,29 @@ export class Engine {
         } finally {
           this.#paidCommands--;
           this.#busyAvatars.delete(avatarId);
+        }
+      }
+      case "avatars.estimateImport": {
+        // Free: only checks that the named staged photo still exists (a
+        // fresh pick, or main gave up on the dialog and never staged one).
+        if (this.#importStaging?.stagingId !== command.payload.stagingId) {
+          throw new EngineFailure({ code: "NOT_FOUND", detail: "no staged photo with this id; pick one again" });
+        }
+        const models = this.#avatarModels();
+        const result = importJobEstimate(await this.#prices.get(importPriceModels(models)), models);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+      }
+      case "avatars.importAvatar": {
+        if (this.#importing) {
+          throw new EngineFailure({ code: "IN_FLIGHT", detail: "an import is already being written; wait for it to finish" });
+        }
+        this.#importing = true;
+        this.#paidCommands++;
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#importAvatar(command.payload) };
+        } finally {
+          this.#paidCommands--;
+          this.#importing = false;
         }
       }
       default:
@@ -933,6 +1064,125 @@ export class Engine {
     const draft: Draft = { ...stored, estimate: avatarJobEstimate(priced, models, "next-batch", imageAgeCheck) };
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
     return { draft };
+  }
+
+  /**
+   * T6c: imports an existing avatar from one photo the owner already has,
+   * instead of generating one. Checked before anything is spent, in
+   * createDraft's order: a usable key, a ledger that allows paid calls, an
+   * open library, the staged photo (NOT_FOUND when it is missing — never
+   * staged, already consumed, or replaced by a later stage), the worst case
+   * the user accepted (PRICE_CHANGED) and room in the month, all for the
+   * whole import job. The staged photo is single-use: consumed the moment
+   * those checks pass, so a second click can never reuse it.
+   *
+   * Then, in one scope: the mandatory one-time image age check (whatever
+   * `imageAgeCheck` says — an imported image bypasses the prompt's own 21+
+   * anchoring, invariant 8's own text-level safeguards notwithstanding), and
+   * only on a clear pass, the vision describe job for her typed traits and
+   * descriptor. Either step's refusal stores nothing; every attempt made so
+   * far is still settled by the client's own settle rule. Confirmation that
+   * the photo is an AI persona is a contract-level requirement (`z.literal(true)`
+   * on `confirmedAiPersona`), not a check made here: a payload without it
+   * never reaches this method at all.
+   */
+  async #importAvatar(payload: CommandPayload<"avatars.importAvatar">): Promise<{ avatar: AvatarSummary }> {
+    const key = this.#usableKey("import an avatar");
+    const budget = this.#paidBudget();
+    const library = await this.#liveLibrary();
+    const staged = this.#importStaging;
+    if (staged === null || staged.stagingId !== payload.stagingId) {
+      throw new EngineFailure({ code: "NOT_FOUND", detail: "no staged photo with this id; pick one again" });
+    }
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(importPriceModels(models));
+    const job = importJobEstimate(priced, models);
+    Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, job.worstMicros);
+    // Round 3, L2: re-checked for free, right before anything is spent — not
+    // only at stage time. The race this closes: X's own age check is still
+    // pending when the very same bytes are re-picked as stage B; X resolves
+    // and records the refusal first, and B must not still pay for its own
+    // age check on bytes already known to fail it.
+    if (library.isRefusedImport(staged.sha256)) {
+      // Single-use even on this free refusal: the same L1 guard as below, so a stage that raced ahead of us survives.
+      if (this.#importStaging?.stagingId === staged.stagingId) this.#importStaging = null;
+      throw new EngineFailure({ code: "AGE_CHECK_FAILED", detail: AGE_CHECK_ALREADY_REFUSED_DETAIL });
+    }
+
+    // Single-use, consumed now: a failed import below needs a fresh pick, never a silent retry of the same bytes.
+    // L1: only clear the slot if it still holds this same staged photo — a
+    // concurrent stage that replaced it during the awaits above must survive.
+    if (this.#importStaging?.stagingId === staged.stagingId) this.#importStaging = null;
+
+    const importId = this.#deps.newId();
+    const scope: Scope = { avatarJobId: importId };
+    // The scope only ever sends one age check and up to two describe attempts — exactly this job's own worst case.
+    this.#caps.set(scopeKey(scope), job.worstMicros);
+    const client = this.#openRouter(key);
+    const linesBefore = budget.ledger.lines.length;
+    let outcome: ImportJobResult;
+    try {
+      outcome = await runImportJob(
+        { chat: (params) => client.chat(params), budget, priceBook: priced.book },
+        { jobId: importId, scope, textModel: models.textModel, ageJpeg: staged.ageJpeg, describeJpeg: staged.describeJpeg },
+      );
+    } finally {
+      this.#caps.delete(scopeKey(scope));
+      if (budget.ledger.lines.length !== linesBefore || budget.ledger.failed) this.#emitMoney();
+    }
+    if (!outcome.ok) {
+      if (outcome.authInvalid) this.markKeyRejected(key);
+      // H2: only the age check itself refusing this exact photo says
+      // anything about what the photo shows — a transient failure (NETWORK,
+      // AUTH_INVALID, SETTLE_ABOVE_WORST) never blocks a later re-pick.
+      if (outcome.error.code === "AGE_CHECK_FAILED") {
+        // L3: recording the refusal can itself fail (disk full, a read-only
+        // library folder) — that must never turn a genuine AGE_CHECK_FAILED
+        // verdict into an unrelated INTERNAL, and it must never be silently
+        // swallowed either: the detail says the refusal could not be kept.
+        try {
+          await library.recordRefusedImport(staged.sha256);
+        } catch (error) {
+          throw new EngineFailure({
+            code: "AGE_CHECK_FAILED",
+            detail: detailOf(`${outcome.error.detail ?? outcome.error.code}; the refusal could not be remembered for a later re-pick: ${messageOf(error, "unknown error")}`),
+          });
+        }
+      }
+      throw new EngineFailure(outcome.error);
+    }
+    const { traits, descriptor, ageConfidence } = outcome;
+
+    // M3: the manifest (status "active", her master already set), the photo
+    // file and its sidecar all publish in ONE rename — no dangling avatar,
+    // no half-written manifest, if the write fails or the process is killed
+    // partway (Library.createImportedAvatar's own doc comment).
+    const written = await library
+      .createImportedAvatar({
+        name: payload.name,
+        age: traits.age,
+        traits: manifestTraits(traits),
+        descriptor: descriptor.text,
+        photoBytes: staged.rawBytes,
+        photoMeta: {
+          mediaType: staged.mediaType,
+          width: staged.width,
+          height: staged.height,
+          source: { kind: "imported", importedAt: new Date(this.#deps.clock()).toISOString(), confirmedAiPersona: payload.confirmedAiPersona },
+          qa: { age: { adult: true, confidence: ageConfidence } },
+        },
+      })
+      .catch(async (error: unknown) => {
+        // Paid for: keep it where the owner can find it, and say where.
+        const kept = `${importId}:import`;
+        const where = await saveRawBody(this.#rawDir, kept, JSON.stringify({ traits, descriptor })).then(
+          () => `the paid description is kept in raw/${rawFileName(kept)} next to the ledger`,
+          (saveError: unknown) => `the paid description could not be kept either (${messageOf(saveError, "unknown error")})`,
+        );
+        throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`${where}: the imported avatar could not be written (${messageOf(error, "unknown error")})`) });
+      });
+    return { avatar: this.#announceAvatar(library, written.avatar.id) };
   }
 
   /**
@@ -1301,6 +1551,23 @@ export class Engine {
   }
 
   /**
+   * T6c review round 2, M4: bounds one import downscale (the age check's own
+   * size, or the describe call's own larger one) at #importDownscaleTimeoutMs.
+   * timeoutSignal(), not AbortSignal.timeout() — the same reason as
+   * #preflightDownscale's own doc comment just above. untilAborted is what
+   * settles this call even if the injected downscaler ignores its own
+   * signal, exactly like #preflightDownscale's own #preflight.
+   */
+  async #boundedImportDownscale(bytes: Uint8Array, maxSide: number): Promise<Uint8Array> {
+    const timeout = timeoutSignal(this.#importDownscaleTimeoutMs);
+    try {
+      return await untilAborted(this.#downscaleImportPhoto(bytes, maxSide, timeout.signal), timeout.signal);
+    } finally {
+      timeout.clear();
+    }
+  }
+
+  /**
    * PRICE_CHANGED when the worst case now is above the one the user accepted
    * (T0's own contract, errors.ts, commands.ts's `AcceptedWorst`) — never on a
    * drop. A drop is routine (a fresh price load, the fallback table's 60 s
@@ -1455,6 +1722,10 @@ export class Engine {
         // (kept the same folder after all) must not bump it.
         const beforeIdentity = this.#live?.identity ?? null;
         if ((live?.identity ?? null) !== beforeIdentity) this.#librarySwitchGeneration++;
+        // L5: only once a DIFFERENT library is actually live — not on a
+        // switch into LIBRARY_UNAVAILABLE, which never adopts anything and
+        // must not spend a staged photo's one chance on a transient outage.
+        if (live !== null) this.#importStaging = null;
         this.#live = live;
       }
       this.#settings = { ...this.#settings, libraryPath: next.libraryPath };

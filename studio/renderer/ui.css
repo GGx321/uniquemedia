@@ -971,11 +971,39 @@ fieldset:disabled .range {
 .estimate-card,
 .candidates-card,
 .descriptor-card,
-.save-card {
+.save-card,
+.import-confirm-card {
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 18px 20px 20px;
+}
+
+/* T6c: the import confirmation card stacks the AI-persona checkbox above the
+   name + confirm row (unlike .save-card's own row layout, tuned for exactly
+   name + button). */
+.import-confirm-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.confirm-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.confirm-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .estimate-card {

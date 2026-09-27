@@ -679,3 +679,24 @@ test("a failed slot without reserveLeftOpen settles at zero: no open reserve, an
   expect(money.unsettledCount).toBe(0);
   expect(money.spentMicros).toBe(2_000 + 3 * 51_400);
 });
+
+// T6c review round 2, L7: the real engine holds only ONE staged import photo
+// at a time — a fresh stage replaces any earlier one, and only the newest
+// stagingId can be estimated or imported. The mock must match that, not hold
+// every stage forever in a Set.
+test("avatars.pickImportPhoto: a fresh stage replaces an earlier one; only the newest stagingId is usable (L7)", async () => {
+  const { client } = makeMock();
+  const first = await unwrap(client.request("avatars.pickImportPhoto", {}));
+  if (!first.picked) throw new Error("expected a picked photo");
+  const second = await unwrap(client.request("avatars.pickImportPhoto", {}));
+  if (!second.picked) throw new Error("expected a picked photo");
+  expect(first.stagingId).not.toBe(second.stagingId);
+
+  expect(await client.request("avatars.estimateImport", { stagingId: first.stagingId })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+  expect((await client.request("avatars.estimateImport", { stagingId: second.stagingId })).ok).toBe(true);
+
+  const worst = (await unwrap(client.request("avatars.estimateImport", { stagingId: second.stagingId }))).worstMicros;
+  expect(
+    await client.request("avatars.importAvatar", { stagingId: first.stagingId, name: "Zoe", confirmedAiPersona: true, acceptedWorstMicros: worst }),
+  ).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+});

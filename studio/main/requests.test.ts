@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ResponseMessage, type EngineCommandMessage } from "../shared/engine";
+import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
@@ -20,6 +21,7 @@ const KEY = "sk-or-v1-0123456789abcdef-wxyz";
 function routesSpy() {
   const mainOnly: KeyCommand[] = [];
   const settings: SettingsCommand[] = [];
+  const importPhoto: ImportPhotoCommand[] = [];
   const engine: EngineCommandMessage[] = [];
   const routes: RequestRoutes = {
     mainOnly: async (command) => {
@@ -30,12 +32,16 @@ function routesSpy() {
       settings.push(command);
       return { v: 1, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
+    importPhoto: async (command) => {
+      importPhoto.push(command);
+      return { v: 1, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
+    },
     engine: async (command) => {
       engine.push(command);
       return { v: 1, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, settings, engine };
+  return { routes, mainOnly, settings, importPhoto, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -179,6 +185,13 @@ describe("handleRendererRequest", () => {
     expect(engine).toEqual([]);
   });
 
+  test("avatars.pickImportPhoto is handled by main and never forwarded to the engine", async () => {
+    const { routes, importPhoto, engine } = routesSpy();
+    await handleRendererRequest(command("avatars.pickImportPhoto", {}), APP_FRAME, PACKAGED, routes);
+    expect(importPhoto.map((c) => c.type)).toEqual(["avatars.pickImportPhoto"]);
+    expect(engine).toEqual([]);
+  });
+
   test("a validation failure on a key command never echoes the key", async () => {
     const { routes, mainOnly } = routesSpy();
     const response = await handleRendererRequest(command("settings.setApiKey", { key: `${KEY} with spaces` }), APP_FRAME, PACKAGED, routes);
@@ -223,6 +236,9 @@ describe("handleRendererRequest", () => {
         throw new Error(`disk full while writing ${KEY}`);
       },
       settings: async () => {
+        throw new Error("unreachable");
+      },
+      importPhoto: async () => {
         throw new Error("unreachable");
       },
       engine: async () => {

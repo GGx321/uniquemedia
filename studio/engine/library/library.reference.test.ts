@@ -8,6 +8,7 @@ import {
   PNG_1X1,
   rejectionOf,
   SAMPLE_AVATAR,
+  SAMPLE_IMPORTED_SOURCE,
   samplePhotoMeta,
   sequentialIds,
   steppingClock,
@@ -128,6 +129,20 @@ describe("loadReference (invariant 9: a face reference comes only from the libra
   test("is null for an unknown avatar", async () => {
     const { library } = await avatarsWithMaster();
     expect(await library.loadReference("unknown-avatar")).toBeNull();
+  });
+
+  // T6c: invariant 9 widens to "generated, or the owner's import" — loadReference
+  // is entirely generic over source.kind, so an imported master works unchanged.
+  test("works for an imported master photo, exactly like a generated one (invariant 9 widened)", async () => {
+    const marker = Uint8Array.from([7, 7, 7]);
+    const { library } = await openLibrary(root(), deps({ downscaleReference: async () => marker }));
+    const mia = await library.createAvatar(SAMPLE_AVATAR);
+    const master = await library.addPhoto(mia.id, PNG_1X1, samplePhotoMeta({ source: SAMPLE_IMPORTED_SOURCE, qa: { age: { adult: true, confidence: 0.9 } } }));
+    await library.updateAvatar(mia.id, { masterPhotoId: master.id, status: "active" });
+
+    expect(library.referencePhoto(mia.id)).toEqual({ photo: master, path: join(root(), "avatars", mia.id, "photos", master.file) });
+    const loaded = await library.loadReference(mia.id);
+    expect(loaded).toEqual(marker as LibraryReference);
   });
 
   test("is null wherever referencePhoto is null: a quarantined master gives no reference either", async () => {

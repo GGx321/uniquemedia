@@ -196,4 +196,52 @@ describe("PhotoSidecarSchema", () => {
     const sidecar = validSidecar({ source: sourceWith({ promptSha: "abc" }) });
     expect(PhotoSidecarSchema.safeParse(sidecar).success).toBe(false);
   });
+
+  // T6c: the owner's own imported photo, not a generated frame (invariant 9
+  // widens to "generated, or the owner's import"). Backward compatible: every
+  // existing "generated" sidecar above still parses unchanged, since this
+  // widens the source to a union instead of replacing it.
+  describe("an imported source (T6c)", () => {
+    function importedSidecar(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return validSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z", confirmedAiPersona: true }, ...overrides });
+    }
+
+    test("accepts a minimal imported source unchanged", () => {
+      expect<unknown>(PhotoSidecarSchema.parse(importedSidecar())).toEqual(importedSidecar());
+    });
+
+    test("accepts an imported source with a qa.age verdict (the one-time image age check)", () => {
+      const sidecar = importedSidecar({ qa: { age: { adult: true, confidence: 0.92 } } });
+      expect<unknown>(PhotoSidecarSchema.parse(sidecar)).toEqual(sidecar);
+    });
+
+    test("rejects an imported source missing importedAt", () => {
+      const sidecar = validSidecar({ source: { kind: "imported", confirmedAiPersona: true } });
+      expect(PhotoSidecarSchema.safeParse(sidecar).success).toBe(false);
+    });
+
+    // L11: the owner's AI-persona confirmation (the payload's own
+    // confirmedAiPersona: z.literal(true)) is recorded on the sidecar, not
+    // only checked and discarded — required, and only ever true.
+    test("rejects an imported source missing confirmedAiPersona", () => {
+      const sidecar = validSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z" } });
+      expect(PhotoSidecarSchema.safeParse(sidecar).success).toBe(false);
+    });
+
+    test("rejects confirmedAiPersona: false — the field only ever records a true confirmation", () => {
+      const sidecar = importedSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z", confirmedAiPersona: false } });
+      expect(PhotoSidecarSchema.safeParse(sidecar).success).toBe(false);
+    });
+
+    test("rejects an imported source that also carries generated-only fields it should not need", () => {
+      // Not required, but must not silently smuggle a fabricated cost/model in: the union is strict per branch.
+      const sidecar = validSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z", confirmedAiPersona: true, costMicros: 1 } });
+      expect(PhotoSidecarSchema.safeParse(sidecar).success).toBe(false);
+    });
+
+    test("rejects importedAt that is not an ISO datetime", () => {
+      const sidecar = validSidecar({ source: { kind: "imported", importedAt: "not-a-date", confirmedAiPersona: true } });
+      expect(PhotoSidecarSchema.safeParse(sidecar).success).toBe(false);
+    });
+  });
 });

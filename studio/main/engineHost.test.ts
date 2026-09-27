@@ -550,3 +550,54 @@ describe("calls to the engine (library.confirm)", () => {
     expect(await pending).toEqual({ code: "IN_FLIGHT", detail: "paid work is in flight" });
   });
 });
+
+// T6c: import an existing avatar. main's own dialog reads the picked photo's
+// raw bytes itself (design constraint 1) and hands them to the engine over
+// this same call/reply channel — the one HostCall whose reply carries more
+// than a bare ok (its staged photo's id and pixel size).
+describe("calls to the engine (import.stagePhoto)", () => {
+  test("posts the bytes with an id and resolves with the engine's staged photo", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const bytes = Uint8Array.from([1, 2, 3]);
+    const pending = host.stageImportPhoto(bytes);
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    expect(call).toMatchObject({ kind: "control", type: "import.stagePhoto", bytes });
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, stage: { stagingId: "stage-00000001", width: 1024, height: 1365 } });
+
+    expect(await pending).toEqual({ error: null, stage: { stagingId: "stage-00000001", width: 1024, height: 1365 } });
+  });
+
+  test("a VALIDATION reply (not an image, animated, or a downscale failure) is passed on, with no stage", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.stageImportPhoto(Uint8Array.from([1, 2, 3]));
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, error: { code: "VALIDATION", detail: "an animated image cannot be imported" } });
+
+    expect(await pending).toEqual({ error: { code: "VALIDATION", detail: "an animated image cannot be imported" }, stage: undefined });
+  });
+
+  test("no reply within 30 s is INTERNAL, with no stage", async () => {
+    const { host, timers } = setup();
+    await host.start();
+    const pending = host.stageImportPhoto(Uint8Array.from([1, 2, 3]));
+    await timers.advance(30_000);
+    expect(await pending).toEqual({ error: { code: "INTERNAL", detail: "the engine did not answer within 30 s" }, stage: undefined });
+  });
+
+  test("openLibrary and confirmLibrary are unaffected: they still resolve with a bare error or null", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.openLibrary("/Users/me/Studio");
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId });
+    expect(await pending).toBeNull();
+  });
+});

@@ -8,6 +8,7 @@ import {
 } from "../shared/engine";
 import { posix, win32 } from "node:path";
 import { fileUrlToPathOn } from "./fileUrl";
+import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
 import { isSettingsCommand, type SettingsCommand } from "./settingsFlow";
 
@@ -77,6 +78,14 @@ export interface RequestRoutes {
   mainOnly(command: KeyCommand): Promise<ResponseMessage>;
   /** Settings changes: main owns settings.json and tells the engine afterwards. */
   settings(command: SettingsCommand): Promise<ResponseMessage>;
+  /**
+   * T6c: the import photo dialog. Answered by main itself and never
+   * forwarded — the renderer never sends a path or raw bytes (design
+   * constraint 1); main opens its own dialog, reads the picked file, and
+   * hands its bytes to the engine over the control channel, never through
+   * this command's own payload.
+   */
+  importPhoto(command: ImportPhotoCommand): Promise<ResponseMessage>;
   /** Everything else, forwarded to the engine. */
   engine(command: EngineCommandMessage): Promise<ResponseMessage>;
 }
@@ -89,6 +98,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
 
   if (MAIN_ONLY_COMMANDS.includes(message.type)) {
     if (message.type === "settings.setApiKey" || message.type === "settings.clearApiKey") return routes.mainOnly(message);
+    if (message.type === "avatars.pickImportPhoto") return routes.importPhoto(message);
     return errorResponseFor(message, { code: "INTERNAL", detail: `${message.type} has no handler in main` });
   }
   if (isSettingsCommand(message)) return routes.settings(message);

@@ -112,6 +112,12 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('const SWITCH = "studio-pick-folder";')).toEqual(["contains studio-pick-folder"]);
   });
 
+  // T6c: the import photo dialog's own E2E-only switch, compiled out of
+  // production exactly like studio-pick-folder.
+  test("flags the import dialog's E2E switch leaking anywhere", () => {
+    expect(productionBundleProblems('const SWITCH = "studio-pick-import-file";')).toEqual(["contains studio-pick-import-file"]);
+  });
+
   test("flags a debug switch name leaking into the renderer bundle", () => {
     expect(productionBundleProblems('fetch("studio-openrouter-base-url")')).toEqual(["contains studio-openrouter-base-url"]);
   });

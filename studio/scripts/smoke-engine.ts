@@ -63,8 +63,9 @@ import { FACE_MODELS } from "../engine/face/modelSource";
 import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
+import { ffmpegPath } from "../node/ffmpegBinary";
 import { productionBundleProblems, productionEngineProblems, productionMainProblems } from "./bundleChecks";
-import { startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
+import { DEFAULT_IMPORT_DESCRIBE_ANSWER, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { looksLikeAStackTrace } from "./stackTrace";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -855,6 +856,158 @@ async function runAvatarScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- import an existing avatar end-to-end scenario (T6c) ----------
+
+/** T6c has no owner-authored vibe at all (traits come from the vision call); the entered name is the only user text that could leak. */
+const IMPORT_MARKER_NAME = "zebra-lantern-nina";
+
+/** A real, valid, non-animated PNG (roughly 3:4), rendered once by the bundled ffmpeg — never a committed binary blob, and never touched by the app's own dialog (main reads it from disk, at the path --studio-pick-import-file names). */
+function renderImportPhoto(): Uint8Array {
+  const r = spawnSync(ffmpegPath(), [
+    "-f", "lavfi", "-i", "mandelbrot=size=300x400",
+    "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1",
+  ]);
+  if (r.status !== 0) throw new Error(`smoke test could not render an import photo: ${r.stderr.toString()}`);
+  return new Uint8Array(r.stdout);
+}
+
+/**
+ * T6c: importing an existing avatar from one photo the owner already has,
+ * end to end against the mock OpenRouter — its own app instance, its own
+ * temp userData and library, its own mock server, kept apart from the avatar
+ * scenario above. The renderer never sends a path or raw bytes (design
+ * constraint 1): main's own dialog answers with --studio-pick-import-file
+ * (an E2E-only switch, compiled out of production exactly like
+ * --studio-pick-folder), reads that file itself, and only then does the
+ * command chain (pick → estimate → accept) begin.
+ */
+async function runImportScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({
+    descriptorText: AVATAR_DESCRIPTOR,
+    // The one-time image age check is mandatory for an import, whatever
+    // settings.imageAgeCheck says; nothing here should reject it.
+    rejectAgeCheckNumber: 0,
+  });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-import-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "import-library");
+  const photoPath = join(tmp, "master.png");
+  await mkdir(userData, { recursive: true });
+  await mkdir(libraryRoot, { recursive: true });
+  await Bun.write(photoPath, renderImportPhoto());
+
+  const running = await launch(target, userData, [
+    `--studio-openrouter-base-url=${mock.url}`,
+    `--studio-pick-folder=${libraryRoot}`,
+    `--studio-pick-import-file=${photoPath}`,
+  ]);
+  try {
+    const { cdp } = running;
+
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("import scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+
+    const libSet = await req(cdp, "settings.setLibraryPath", { path: libraryRoot });
+    check(
+      "import scenario: settings.setLibraryPath adopts the temp library (via --studio-pick-folder)",
+      field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot,
+      libSet,
+    );
+
+    // 0. A baseline reconcile before any paid call, for the same reason as the avatar scenario's own.
+    const baseline = await req(cdp, "money.reconcile");
+    check(
+      "import scenario: the baseline reconcile (before any paid call) succeeds at once, with no delta yet to compare",
+      field(baseline, "ok") === true && field(baseline, "result", "status") === "done" && field(baseline, "result", "deltaUnavailable") === "no-baseline",
+      baseline,
+    );
+
+    // 1. Design constraint 1: pick (main's own dialog, answered here by
+    // --studio-pick-import-file — the renderer never sends a path or raw
+    // bytes), then estimate for that exact staged photo.
+    const picked = await req(cdp, "avatars.pickImportPhoto", {});
+    check(
+      "import scenario: avatars.pickImportPhoto stages the photo main's dialog answered with (via --studio-pick-import-file)",
+      field(picked, "ok") === true && field(picked, "result", "picked") === true && typeof field(picked, "result", "stagingId") === "string",
+      picked,
+    );
+    const stagingId = field(picked, "result", "stagingId");
+
+    const estimate = await req(cdp, "avatars.estimateImport", { stagingId });
+    check(
+      "import scenario: avatars.estimateImport prices the mandatory age check plus up to two describe attempts",
+      field(estimate, "ok") === true && typeof field(estimate, "result", "worstMicros") === "number",
+      estimate,
+    );
+
+    // 2. Confirm the import: the one-time age check, then the vision describe call.
+    const imported = await req(cdp, "avatars.importAvatar", {
+      stagingId,
+      name: IMPORT_MARKER_NAME,
+      confirmedAiPersona: true,
+      acceptedWorstMicros: field(estimate, "result", "worstMicros"),
+    });
+    check("import scenario: avatars.importAvatar writes a new active avatar", field(imported, "ok") === true, imported);
+    const avatarId = field(imported, "result", "avatar", "avatarId");
+    const masterPhotoId = field(imported, "result", "avatar", "masterPhotoId");
+    check(
+      "import scenario: the new avatar is active, with the vision job's own descriptor",
+      field(imported, "result", "avatar", "status") === "active" &&
+        field(imported, "result", "avatar", "descriptor", "text") === DEFAULT_IMPORT_DESCRIBE_ANSWER.descriptor,
+      imported,
+    );
+
+    // 3. The library: the master photo's sidecar marks it imported (invariant
+    // 9 widened: "generated, or the owner's import"), with the one-time
+    // age verdict recorded in qa.age.
+    const { library } = await openLibrary(libraryRoot);
+    const manifest = library.getAvatar(String(avatarId));
+    const photo = manifest?.masterPhotoId ? library.getPhoto(manifest.masterPhotoId) : undefined;
+    check(
+      "import scenario: the master photo's sidecar records the import, not a generated frame, with a passing one-time age verdict",
+      photo?.source.kind === "imported" && photo.qa.age?.adult === true,
+      photo,
+    );
+
+    // 4. studio-media:// serves the imported master, exactly like a generated one.
+    const loaded = await cdp.evaluate(
+      `new Promise((r) => { const i = new Image(); i.onload = () => r(true); i.onerror = () => r(false); i.src = "studio-media://photo/${String(avatarId)}/${String(masterPhotoId)}"; })`,
+    );
+    check("import scenario: studio-media:// serves the imported master photo (invariant 9 widened)", loaded === true);
+
+    // 5. Exactly one mandatory age check and one describe attempt reached the mock; the import never generates an image.
+    check(
+      "import scenario: the mock saw exactly one age check and one describe attempt, no image generation",
+      mock.ageCheckRequests().length === 1 && mock.importDescribeRequests().length === 1 && mock.imageRequests().length === 0,
+      mock.requests,
+    );
+    check("import scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+
+    // 6. The owner's entered name never reaches the mock: T6c has no vibe at
+    // all (traits come from the vision call), so the name is the only user
+    // text at risk of leaking into a request (mirrors engine.canary.test.ts's own check).
+    const nameLeaks = mock.requests.filter((r) => JSON.stringify(r.body).toLowerCase().includes(IMPORT_MARKER_NAME.toLowerCase()));
+    check("import scenario: the owner's entered name never reaches the mock", nameLeaks.length === 0, nameLeaks);
+
+    // 7. Money: one age check + one describe attempt, exactly the mock's charged costs, nothing left open.
+    const expectedMicros = Math.round(mock.totalUsageUsd() * 1_000_000);
+    const money = await req(cdp, "money.status");
+    check(
+      "import scenario: money.status' ledger total equals the mock's charged costs, no open reserves",
+      field(money, "ok") === true &&
+        field(money, "result", "ledger") === "open" &&
+        field(money, "result", "spentMicros") === expectedMicros &&
+        field(money, "result", "unsettledMicros") === 0 &&
+        field(money, "result", "unsettledCount") === 0,
+      { money, expectedMicros },
+    );
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  }
+}
+
 // ---------- main ----------
 
 function finish(): void {
@@ -1149,6 +1302,7 @@ async function main(): Promise<void> {
   }
 
   await runAvatarScenario(target);
+  await runImportScenario(target);
   finish();
 }
 

@@ -15,6 +15,8 @@ import {
   type EventMessage,
   type FailedCandidateSlot,
   type ImageAgeCheck,
+  IMPORT_FALLBACK_PRICE,
+  type ImportPhotoPicked,
   type JobState,
   type LedgerUnavailable,
   type MoneyHalt,
@@ -65,6 +67,32 @@ export const MOCK_ESTIMATE: Readonly<Estimate> = {
   worstMicros: 223_000, // 3_000 + 4 × 53_000 + 4 × 2_000 → "$0.23"
   prices: "live",
   pricesAsOf: "2026-09-24",
+};
+/**
+ * T6c (import an existing avatar), L8: one mandatory one-time age check plus
+ * up to two vision describe attempts — the shared IMPORT_FALLBACK_PRICE's own
+ * whole-job number (plan.ts's importJobEstimate at the fallback prices),
+ * never a separate copy of it, so the mock cannot drift from the real
+ * engine's own computation. Unaffected by settings.imageAgeCheck, unlike the
+ * candidate batches' own toggle-able check.
+ */
+export const MOCK_IMPORT_ESTIMATE: Readonly<Estimate> = {
+  ...IMPORT_FALLBACK_PRICE.whole,
+  prices: "live",
+  pricesAsOf: IMPORT_FALLBACK_PRICE.asOf,
+};
+/** What the mock's one-off vision call would have written, stood in for the real photo it never actually looks at. */
+const MOCK_IMPORT_TRAITS: AvatarTraits = {
+  age: 26,
+  ethnicity: "european",
+  skinTone: "light",
+  hairColor: "dark-brown",
+  hairLength: "long",
+  hairTexture: "straight",
+  eyeColor: "brown",
+  build: "slim",
+  marks: [],
+  vibe: "",
 };
 
 const START_OF_TIME = Date.UTC(2026, 8, 24, 10, 0, 0);
@@ -253,6 +281,8 @@ export class MockEngine implements EngineBridge {
   private halt: MoneyHalt | null;
   private readonly unavailable: LedgerUnavailable | null;
   private price: Estimate = { ...MOCK_ESTIMATE };
+  /** T6c's own import price, settable apart from `price` above (the avatar-creation baseline): the two commands are priced independently by the real engine too. */
+  private importPriceValue: Estimate = { ...MOCK_IMPORT_ESTIMATE };
   private encryptionAvailable: boolean;
   private readonly forced = new Map<CommandType, EngineError[]>();
   private readonly delayed = new Map<CommandType, number[]>();
@@ -262,6 +292,18 @@ export class MockEngine implements EngineBridge {
   private nextDraftEstimateMissing = false;
   /** Bumped whenever settings.setLibraryPath actually changes the folder, mirroring the real engine's Snapshot field. */
   private librarySwitchGeneration = 0;
+  /**
+   * T6c (L7): the ONE photo staged for import, like the real engine's own
+   * single slot — a fresh stage replaces any earlier one, and importing
+   * consumes it. Holds no real bytes (the mock never touches a file).
+   */
+  private stagedImportId: string | null = null;
+  /** The next avatars.pickImportPhoto answers with this instead of a fresh staged photo. */
+  private nextImportPick: ImportPhotoPicked | null = null;
+  /** The next avatars.importAvatar's one-time age check fails: nothing is stored, AGE_CHECK_FAILED. */
+  private nextImportAgeCheckFails = false;
+  /** T6c review round 3, L4: see failNextImportAfterConsuming's own doc comment. */
+  private nextImportFailure: EngineError | null = null;
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -326,6 +368,11 @@ export class MockEngine implements EngineBridge {
     this.price = { ...this.price, ...price };
   }
 
+  /** T6c: changes avatars.importAvatar's own price, apart from setPrice's avatar-creation baseline. */
+  setImportPrice(price: Pick<Estimate, "expectedMicros" | "worstMicros">): void {
+    this.importPriceValue = { ...this.importPriceValue, ...price };
+  }
+
   /**
    * `this.price` (the on-mode baseline, settable via `setPrice`) with the age
    * check's own cost taken back out when the setting is off — mirrors
@@ -369,6 +416,29 @@ export class MockEngine implements EngineBridge {
   /** The next `money.reconcile` answers with `result` (a queue; the default is a matching `done`). */
   queueReconcile(result: ReconcileResult): void {
     this.reconcileQueue.push(result);
+  }
+
+  /** The next avatars.pickImportPhoto answers with `result` (e.g. `{ picked: false }`, a cancel) instead of a fresh staged photo. */
+  queueImportPick(result: ImportPhotoPicked): void {
+    this.nextImportPick = result;
+  }
+
+  /** The next avatars.importAvatar's one-time image age check fails: nothing is stored, the reserve is settled, AGE_CHECK_FAILED. */
+  failNextImportAgeCheck(): void {
+    this.nextImportAgeCheckFails = true;
+  }
+
+  /**
+   * T6c review round 3, L4: the next avatars.importAvatar fails with `error`
+   * only after its stage is already consumed (money already spent for the
+   * age check) — unlike `failNext`, which answers before the gates even run
+   * and so never touches the stage at all. Stands in for anything the real
+   * engine's own paid job can fail with once the stage is gone (NETWORK,
+   * INTERNAL, IMPORT_SUBJECT_INVALID, …), so a renderer test can tell that
+   * case apart from a gate refusal that leaves the stage live.
+   */
+  failNextImportAfterConsuming(error: EngineError): void {
+    this.nextImportFailure = error;
   }
 
   /** The next candidate job loses `count` portraits to the age check. */
@@ -604,6 +674,60 @@ export class MockEngine implements EngineBridge {
         this.applyRewrite(avatarId, target);
         this.spend(DESCRIPTOR.expected);
         return this.ok(c, { avatarId });
+      }
+      case "avatars.pickImportPhoto": {
+        if (this.nextImportPick !== null) {
+          const queued = this.nextImportPick;
+          this.nextImportPick = null;
+          return this.ok(c, queued);
+        }
+        const stagingId = this.nextId("staging");
+        this.stagedImportId = stagingId;
+        return this.ok(c, { picked: true, stagingId, width: 1024, height: 1365 });
+      }
+      case "avatars.estimateImport": {
+        if (c.payload.stagingId !== this.stagedImportId) return this.fail(c, { code: "NOT_FOUND", detail: "no staged photo; pick one again" });
+        return this.ok(c, this.importPrice());
+      }
+      case "avatars.importAvatar": {
+        // The engine's order: the key and the ledger before the id, then the
+        // id, then the price — mirroring avatars.rewriteDescriptor's own gate order above.
+        const gate = this.keyAndLedgerGate() ?? (c.payload.stagingId === this.stagedImportId ? null : { code: "NOT_FOUND" as const, detail: "no staged photo; pick one again" });
+        if (gate) return this.fail(c, gate);
+        const priced = this.priceGate(c.payload.acceptedWorstMicros, this.importPrice().worstMicros);
+        if (priced) return this.fail(c, priced);
+        // Single-use, consumed now: only if this is still the same staged
+        // photo — a later stage that replaced it during the checks above
+        // must survive (L1's own real-engine guard, mirrored here).
+        if (this.stagedImportId === c.payload.stagingId) this.stagedImportId = null;
+        if (this.nextImportFailure) {
+          const error = this.nextImportFailure;
+          this.nextImportFailure = null;
+          this.spend(IMPORT_FALLBACK_PRICE.ageCheck.expectedMicros);
+          return this.fail(c, error);
+        }
+        if (this.nextImportAgeCheckFails) {
+          this.nextImportAgeCheckFails = false;
+          // The one-time age check ran (and is billed) before the describe
+          // call would have; nothing else is spent, nothing is stored. L8:
+          // the age check's own expected micros, shared with plan.test.ts
+          // and the import tile's own text — never a separate number.
+          this.spend(IMPORT_FALLBACK_PRICE.ageCheck.expectedMicros);
+          return this.fail(c, { code: "AGE_CHECK_FAILED" });
+        }
+        const avatar: AvatarSummary = {
+          avatarId: this.nextId("avatar"),
+          name: c.payload.name.trim(),
+          descriptor: mockDescriptor(MOCK_IMPORT_TRAITS),
+          masterPhotoId: this.nextId("photo"),
+          createdAt: this.nowIso(),
+          status: "active",
+          photoCount: 1,
+        };
+        this.avatars = [...this.avatars, avatar];
+        this.spend(this.importPrice().expectedMicros);
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });
+        return this.ok(c, { avatar });
       }
       case "photos.list":
         return this.ok(c, { photos: [] });
@@ -866,6 +990,11 @@ export class MockEngine implements EngineBridge {
   /** The descriptor-only recovery's price: the same descriptor sub-cost `candidatesPrice` subtracts, alone; never touches the image age check either way. */
   private rewritePrice(): Estimate {
     return { ...this.price, expectedMicros: DESCRIPTOR.expected, worstMicros: DESCRIPTOR.worst };
+  }
+
+  /** T6c's import job price: fixed, unaffected by settings.imageAgeCheck (its own one-time age check is mandatory either way). */
+  private importPrice(): Estimate {
+    return { ...this.importPriceValue };
   }
 
   /**

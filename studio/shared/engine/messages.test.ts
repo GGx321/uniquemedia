@@ -178,6 +178,12 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   },
   "avatars.archive": { payload: { avatarId: "avatar-0001" }, result: { avatar: { ...avatar, status: "archived" } } },
   "avatars.rewriteDescriptor": { payload: { avatarId: "avatar-0009", acceptedWorstMicros: 27_500 }, result: { avatarId: "avatar-0009" } },
+  "avatars.pickImportPhoto": { payload: {}, result: { picked: true, stagingId: "staging-0001", width: 1024, height: 1365 } },
+  "avatars.estimateImport": { payload: { stagingId: "staging-0001" }, result: { ...estimate, expectedMicros: 6_500, worstMicros: 42_000 } },
+  "avatars.importAvatar": {
+    payload: { stagingId: "staging-0001", name: "Лиза", confirmedAiPersona: true, acceptedWorstMicros: 42_000 },
+    result: { avatar },
+  },
   "runs.estimate": { payload: runRequest, result: { estimate } },
   "runs.start": {
     payload: { ...runRequest, acceptedWorstMicros: 3_330_000 },
@@ -283,6 +289,9 @@ describe("contract surface", () => {
         "avatars.pick",
         "avatars.archive",
         "avatars.rewriteDescriptor",
+        "avatars.pickImportPhoto",
+        "avatars.estimateImport",
+        "avatars.importAvatar",
         "runs.estimate",
         "runs.start",
         "runs.cancel",
@@ -325,9 +334,9 @@ describe("contract surface", () => {
     expect(covered).toEqual(all);
   });
 
-  test("only the API key commands are handled by main alone", () => {
+  test("only the API key commands and the import photo dialog are handled by main alone", () => {
     const actual: string[] = [...MAIN_ONLY_COMMANDS].sort();
-    expect(actual).toEqual(["settings.clearApiKey", "settings.setApiKey"]);
+    expect(actual).toEqual(["avatars.pickImportPhoto", "settings.clearApiKey", "settings.setApiKey"]);
   });
 
   test("the engine accepts every command except the main-only ones", () => {

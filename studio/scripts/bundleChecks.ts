@@ -17,6 +17,8 @@ const SWITCH_NAMES = ["remote-debugging-port", "remote-debugging-pipe", "remote-
 /** Test-only switches and debug names that no production bundle (main, preload or renderer) may carry at all. */
 const FORBIDDEN_DEBUG_MARKERS = [
   "studio-pick-folder",
+  // T6c: the import photo dialog's own E2E-only switch (main.ts's pickImportFile).
+  "studio-pick-import-file",
   "studio-openrouter-base-url",
   "ELECTRON_RENDERER_URL",
   "DEBUGGABLE",

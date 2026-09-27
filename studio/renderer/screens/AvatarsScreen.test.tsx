@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { ENGINE_GONE_DETAIL, type AvatarSummary, type Draft } from "../../shared/engine";
+import { ENGINE_GONE_DETAIL, IMPORT_FALLBACK_PRICE, type AvatarSummary, type Draft } from "../../shared/engine";
+import { formatUsd } from "../lib/money";
 import { DESCRIPTOR, MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { callsOf, flush, runAll, setup, inAct, tick } from "../testing";
@@ -299,4 +300,14 @@ test("the rewrite button stays disabled while paid calls are halted, with the re
   await screen.findByText("Не читается");
   expect(screen.getByRole("button", { name: "Переписать описание" }).hasAttribute("disabled")).toBe(true);
   expect(screen.getByText("Платные запросы остановлены до сверки расходов.")).toBeDefined();
+});
+
+// L8: the import tile's price text is built from IMPORT_FALLBACK_PRICE
+// (shared with plan.test.ts and the mock's own spend), never a hand-typed
+// string that could silently drift from the real numbers.
+test("the import tile's price text is derived from IMPORT_FALLBACK_PRICE, not a hard-coded string", async () => {
+  setup({ preset: "demo" });
+  const tile = await screen.findByRole("button", { name: /Импортировать аватара/ });
+  const expected = `≈ ${formatUsd(IMPORT_FALLBACK_PRICE.whole.expectedMicros)}–${formatUsd(IMPORT_FALLBACK_PRICE.whole.worstMicros, 2, "up").slice(1)}`;
+  expect(within(tile).getByText(`своё фото · ${expected}`)).toBeDefined();
 });

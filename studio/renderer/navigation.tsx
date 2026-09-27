@@ -6,6 +6,7 @@ export type SectionId = "avatars" | "photo" | "montage" | "autopilot" | "setting
 export type Route =
   | { name: "avatars"; saved?: string }
   | { name: "avatarNew"; draftId: string | null }
+  | { name: "avatarImport" }
   | { name: "settings"; focus?: SettingsFocus }
   | { name: "section"; id: "photo" | "montage" | "autopilot" };
 
@@ -27,6 +28,7 @@ export function sectionOf(route: Route): SectionId {
   switch (route.name) {
     case "avatars":
     case "avatarNew":
+    case "avatarImport":
       return "avatars";
     case "settings":
       return "settings";

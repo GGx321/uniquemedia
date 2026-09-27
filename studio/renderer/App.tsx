@@ -3,6 +3,7 @@ import type { EngineClient } from "./engine/client";
 import { EngineProvider, useEngineView } from "./engine/react";
 import { readStudioVersion } from "./engine/windowStudio";
 import { NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
+import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -82,6 +83,8 @@ function Screen({ route }: { route: Route }) {
       return <AvatarsScreen saved={route.saved} />;
     case "avatarNew":
       return <AvatarWizard draftId={route.draftId} />;
+    case "avatarImport":
+      return <AvatarImport />;
     case "settings":
       return <SettingsScreen focus={route.focus} />;
     case "section": {

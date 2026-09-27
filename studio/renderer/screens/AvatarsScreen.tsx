@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AvatarSummary, Draft, EngineError, Estimate, UnreadableAvatar } from "../../shared/engine";
+import { IMPORT_FALLBACK_PRICE, type AvatarSummary, type Draft, type EngineError, type Estimate, type UnreadableAvatar } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { countOf, dateLabel, yearsOld } from "../lib/format";
@@ -295,6 +295,25 @@ function NewAvatarTile() {
   );
 }
 
+// L8: no hard-coded money — the same fallback-priced numbers plan.ts's
+// importJobEstimate and the renderer's mock both use (IMPORT_FALLBACK_PRICE),
+// formatted the same way every other price in the app is (lib/money.ts).
+const IMPORT_TILE_PRICE = `≈ ${formatUsd(IMPORT_FALLBACK_PRICE.whole.expectedMicros)}–${formatUsd(IMPORT_FALLBACK_PRICE.whole.worstMicros, 2, "up").slice(1)}`;
+
+/** T6c: one photo the owner already has, instead of generating one from a prompt. */
+function ImportAvatarTile() {
+  const navigate = useNavigate();
+  return (
+    <button type="button" className="new-tile" onClick={() => navigate({ name: "avatarImport" })}>
+      <span className="new-tile-icon">
+        <Icon name="upload" size={22} strokeWidth={2.2} />
+      </span>
+      <span className="new-tile-title">Импортировать аватара</span>
+      <span className="mono muted">своё фото · {IMPORT_TILE_PRICE}</span>
+    </button>
+  );
+}
+
 function EmptyLibrary({ view }: { view: EngineView }) {
   const navigate = useNavigate();
   const keyStored = view.settings?.apiKey.stored ?? false;
@@ -316,6 +335,10 @@ function EmptyLibrary({ view }: { view: EngineView }) {
         <button type="button" className="btn btn-primary" onClick={() => navigate({ name: "avatarNew", draftId: null })}>
           <Icon name="plus" size={16} strokeWidth={2.2} />
           Создать первый аватар
+        </button>
+        <button type="button" className="btn" onClick={() => navigate({ name: "avatarImport" })}>
+          <Icon name="upload" size={16} strokeWidth={2.2} />
+          Импортировать аватара
         </button>
         {!keyStored && (
           <button type="button" className="btn" onClick={() => navigate({ name: "settings", focus: "key" })}>
@@ -419,7 +442,12 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
               {shown.map((a, i) => (
                 <AvatarCard key={a.avatarId} avatar={a} index={i + drafts.length} />
               ))}
-              {filter === "active" && <NewAvatarTile />}
+              {filter === "active" && (
+                <>
+                  <NewAvatarTile />
+                  <ImportAvatarTile />
+                </>
+              )}
             </div>
           )}
         </>

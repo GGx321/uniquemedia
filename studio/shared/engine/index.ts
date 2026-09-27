@@ -7,6 +7,7 @@ export * from "./errorMessagesRu";
 export * from "./errors";
 export * from "./eventLog";
 export * from "./events";
+export * from "./importFallbackPrice";
 export * from "./messages";
 export * from "./primitives";
 export * from "./state";

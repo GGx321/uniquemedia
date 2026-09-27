@@ -24,12 +24,21 @@ interface EstimateCardProps {
   errorActions?: ReactNode;
   /** Another batch for an existing draft: its descriptor is not written again. */
   repeat: boolean;
-  /** Whether the image age check is on, so the caption mentions it only when it actually runs (owner's decision, 2026-09-27: off by default). */
-  imageAgeCheck: ImageAgeCheck;
+  /** Whether the image age check is on, so the caption mentions it only when it actually runs (owner's decision, 2026-09-27: off by default). Irrelevant, and so optional, for `variant: "import"` — its own age check is always mandatory, never toggle-dependent. */
+  imageAgeCheck?: ImageAgeCheck;
+  /**
+   * T6c (review round 2, M1): the import screen's own caption and empty
+   * state — its mandatory one-time age check runs whatever `imageAgeCheck`
+   * says (never optional, unlike a generated avatar's own toggle-able one),
+   * and there is no separate "Оценить стоимость" button to point to: the
+   * estimate appears on its own, right after a photo is picked. Defaults to
+   * the avatar-creation/next-batch wording every other screen already used.
+   */
+  variant?: "avatar" | "import";
 }
 
 /** Step 2: the price before anything is spent, and the button that accepts it. */
-export function EstimateCard({ estimate, previousWorst, estimating, action, blockedReason, error, errorActions, repeat, imageAgeCheck }: EstimateCardProps) {
+export function EstimateCard({ estimate, previousWorst, estimating, action, blockedReason, error, errorActions, repeat, imageAgeCheck, variant = "avatar" }: EstimateCardProps) {
   return (
     <section className="card estimate-card" aria-labelledby="estimate-title" aria-busy={estimating}>
       <div className="card-head">
@@ -49,7 +58,9 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
         <p className="muted estimate-empty">
           {estimating
             ? "Считаем стоимость…"
-            : "Сначала цена, потом расходы: заполните внешность и нажмите «Оценить стоимость». Деньги не тратятся, пока вы не подтвердите сумму."}
+            : variant === "import"
+              ? "Сначала выберите фото — оценка появится сама. Деньги не тратятся, пока вы не подтвердите сумму."
+              : "Сначала цена, потом расходы: заполните внешность и нажмите «Оценить стоимость». Деньги не тратятся, пока вы не подтвердите сумму."}
         </p>
       ) : (
         <div className="estimate-body" aria-live="polite">
@@ -61,17 +72,19 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
             </span>
           </p>
           <p className="estimate-caption">
-            {repeat
-              // The descriptor is already paid for and this price is the
-              // batch alone (avatars.estimateCandidates / the draft's own
-              // estimate) — not the whole avatar's price used as a loose
-              // upper bound, so the caption must not claim that anymore.
-              ? imageAgeCheck === "on"
-                ? "Ещё 4 портрета и проверка возраста каждого. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
-                : "Ещё 4 портрета. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
-              : imageAgeCheck === "on"
-                ? "Дескриптор, 4 портрета и проверка возраста каждого. Худшая цена — это предел: дороже этот шаг не выйдет."
-                : "Дескриптор и 4 портрета. Худшая цена — это предел: дороже этот шаг не выйдет."}
+            {variant === "import"
+              ? "Обязательная проверка возраста и описание по фото (до 2 попыток). Худшая цена — это предел: дороже этот шаг не выйдет."
+              : repeat
+                // The descriptor is already paid for and this price is the
+                // batch alone (avatars.estimateCandidates / the draft's own
+                // estimate) — not the whole avatar's price used as a loose
+                // upper bound, so the caption must not claim that anymore.
+                ? imageAgeCheck === "on"
+                  ? "Ещё 4 портрета и проверка возраста каждого. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
+                  : "Ещё 4 портрета. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
+                : imageAgeCheck === "on"
+                  ? "Дескриптор, 4 портрета и проверка возраста каждого. Худшая цена — это предел: дороже этот шаг не выйдет."
+                  : "Дескриптор и 4 портрета. Худшая цена — это предел: дороже этот шаг не выйдет."}
             {estimate.prices === "fallback" && " OpenRouter не ответил, поэтому цены взяты из резервной таблицы."}
           </p>
         </div>

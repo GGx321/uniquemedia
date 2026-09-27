@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarTraits } from "../shared/engine";
-import type { FetchCall } from "./openrouter/testing/fakes";
+import { chatBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import {
+  ageReply,
   command,
   descriptorReply,
   generate,
@@ -12,6 +13,7 @@ import {
   network,
   NEW_AVATAR,
   ok,
+  portraitPng,
   schemaName,
   seedDraft,
   startEngine,
@@ -98,5 +100,61 @@ describe("the vibe never leaves the engine except in the descriptor attempts", (
     expect(descriptorAttempts()).toHaveLength(2);
     expect(carrying).toHaveLength(descriptorAttempts().length);
     expect(carrying.every((call) => schemaName(call) === "avatar_descriptor")).toBe(true);
+  });
+});
+
+// T6c: an imported avatar has no owner-authored vibe at all (her traits come
+// from the vision call, not from the wizard) — the only owner-entered text in
+// the whole import flow is the display name, collected before the paid
+// command and never sent to any model. This canary proves that directly:
+// nothing about the request bodies of a marker-named import carries the name.
+describe("avatars.importAvatar: the owner's name never leaves the engine", () => {
+  const dir2 = useEngineDir("studio-engine-canary-import-");
+  const MARKER_NAME = "zebra-lantern-marmalade";
+
+  function importDescribeReply(overrides: Record<string, unknown> = {}, cost = 0.0021): Reply {
+    const answer = {
+      people: 1,
+      woman: true,
+      age: 25,
+      ethnicity: "european",
+      skinTone: "light-olive",
+      hairColor: "chestnut",
+      hairLength: "shoulder",
+      hairTexture: "wavy",
+      eyeColor: "hazel",
+      build: "athletic",
+      marks: ["freckles"],
+      descriptor: GOOD,
+      ...overrides,
+    };
+    return { status: 200, body: chatBody(JSON.stringify(answer), { cost }) };
+  }
+
+  test("the age check and the describe call never carry the owner-entered name, marker-named import included", async () => {
+    const net = network({ age: () => ageReply(true, 0.93), descriptors: [importDescribeReply()] });
+    const { engine, posted } = await startEngine(dir2(), { net });
+    const callId = "call-canary-0001";
+    // H3: a realistic-sized fixture, not a degenerate 1×1 PNG — ffmpeg's real
+    // downscale exits non-zero on a 1×1 input on Windows CI (exit 5/116).
+    await engine.receive({ kind: "control", type: "import.stagePhoto", callId, bytes: portraitPng() });
+    const reply = posted.find(
+      (m) => typeof m === "object" && m !== null && "kind" in m && m.kind === "control" && "type" in m && m.type === "reply" && "callId" in m && m.callId === callId,
+    ) as { stage?: { stagingId: string } } | undefined;
+    const stagingId = reply?.stage?.stagingId;
+    if (stagingId === undefined) throw new Error("staging failed");
+
+    const estimate = ok(await engine.handle(command("avatars.estimateImport", { stagingId })));
+    if (estimate.type !== "avatars.estimateImport") throw new Error("wrong type");
+    const response = await engine.handle(command("avatars.importAvatar", { stagingId, name: MARKER_NAME, confirmedAiPersona: true, acceptedWorstMicros: estimate.result.worstMicros }));
+
+    // L2: the canary proves nothing if the import itself silently failed —
+    // it must actually reach the describe call for the "never carries it" check below to mean anything.
+    expect(ok(response).ok).toBe(true);
+    expect(net.calls.filter((c) => c.url.endsWith("/chat/completions") && schemaName(c) === "import_describe")).toHaveLength(1);
+
+    const marker = MARKER_NAME.toLowerCase();
+    const carrying = net.calls.filter((call) => `${call.url}\n${JSON.stringify(call.headers)}\n${call.body ?? ""}`.toLowerCase().includes(marker));
+    expect(carrying).toEqual([]);
   });
 });

@@ -30,6 +30,11 @@ import { Count, SafeText } from "./primitives";
  *   stores results is started and nothing is spent.
  * - DESCRIPTOR_INVALID: the avatar's stored descriptor fails today's adult-text rules, so no prompt
  *   is built from it and nothing is spent; the descriptor has to be rewritten.
+ * - AGE_CHECK_FAILED: importing an avatar's one-time image age check did not clearly confirm an
+ *   adult (T6c); the import is refused and nothing is stored.
+ * - IMPORT_SUBJECT_INVALID: the imported photo's vision describe call did not recognise exactly
+ *   one woman (T6c, review round 2, M5) — a group photo, an empty one, or a person who is not a
+ *   woman; never retried (the photo does not change between attempts), nothing is stored.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -54,6 +59,8 @@ export const ERROR_CODES = [
   "IN_FLIGHT",
   "LIBRARY_UNAVAILABLE",
   "DESCRIPTOR_INVALID",
+  "AGE_CHECK_FAILED",
+  "IMPORT_SUBJECT_INVALID",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -79,3 +86,14 @@ export type EngineError = z.infer<typeof EngineError>;
  * this only distinguishes the detail.
  */
 export const ENGINE_GONE_DETAIL = "the engine crashed too many times and will not be restarted";
+
+/**
+ * `EngineError.detail` for the one AGE_CHECK_FAILED case the renderer must
+ * tell apart from every other one (T6c review H2, M2): re-picking a photo
+ * the mandatory one-time age check already refused is refused again for
+ * free, before anything is downscaled or paid for — unlike the ordinary
+ * AGE_CHECK_FAILED, nothing is charged this time. A plain string, not a new
+ * `ErrorCode`: the code stays AGE_CHECK_FAILED either way, this only
+ * distinguishes the detail (studio/renderer/lib/errors.ts).
+ */
+export const AGE_CHECK_ALREADY_REFUSED_DETAIL = "this exact photo was already refused by the one-time image age check; nothing was charged this time";

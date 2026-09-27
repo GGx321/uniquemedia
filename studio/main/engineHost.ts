@@ -92,9 +92,15 @@ interface Pending {
   deadline: unknown;
 }
 
+/** A `HostCall`'s outcome: `error` is null on success; `stage` is set only by `import.stagePhoto`'s own successful reply. */
+export interface CallResult {
+  error: EngineError | null;
+  stage?: EngineReply["stage"];
+}
+
 interface PendingCall {
   callId: string;
-  resolve: (error: EngineError | null) => void;
+  resolve: (result: CallResult) => void;
   deadline: unknown;
 }
 
@@ -202,7 +208,7 @@ export class EngineHost<Transfer> {
    */
   openLibrary(path: string): Promise<EngineError | null> {
     const callId = (this.#deps.newId ?? randomUUID)();
-    return this.#call(callId, { kind: "control", type: "library.open", callId, path });
+    return this.#call(callId, { kind: "control", type: "library.open", callId, path }).then((r) => r.error);
   }
 
   /**
@@ -214,31 +220,44 @@ export class EngineHost<Transfer> {
    */
   confirmLibrary(path: string): Promise<EngineError | null> {
     const callId = (this.#deps.newId ?? randomUUID)();
-    return this.#call(callId, { kind: "control", type: "library.confirm", callId, path });
+    return this.#call(callId, { kind: "control", type: "library.confirm", callId, path }).then((r) => r.error);
   }
 
-  #call(callId: string, call: HostCall): Promise<EngineError | null> {
+  /**
+   * T6c: asks the engine to validate (media checks, not animated, a readable
+   * size) and stage a picked photo's raw bytes for import — the one HostCall
+   * whose reply carries more than a bare ok. `error` is null on success,
+   * with `stage` set to the staged photo's id and pixel size; otherwise
+   * `error` names why (VALIDATION for a bad image, or INTERNAL when the
+   * engine did not answer in time or is not running) and `stage` is absent.
+   */
+  stageImportPhoto(bytes: Extract<HostCall, { type: "import.stagePhoto" }>["bytes"]): Promise<CallResult> {
+    const callId = (this.#deps.newId ?? randomUUID)();
+    return this.#call(callId, { kind: "control", type: "import.stagePhoto", callId, bytes });
+  }
+
+  #call(callId: string, call: HostCall): Promise<CallResult> {
     return new Promise((resolve) => {
       const timeoutMs = this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
       const entry: PendingCall = { callId, resolve, deadline: null };
       entry.deadline = this.#timers.set(
-        () => this.#settleCall(entry, { code: "INTERNAL", detail: `the engine did not answer within ${timeoutMs / 1000} s` }),
+        () => this.#settleCall(entry, { error: { code: "INTERNAL", detail: `the engine did not answer within ${timeoutMs / 1000} s` } }),
         timeoutMs,
       );
       this.#calls.set(callId, entry);
       void this.#runningPort().then((port) => {
         if (this.#calls.get(callId) !== entry) return;
-        if (port === null) this.#settleCall(entry, { code: "INTERNAL", detail: this.#notRunningDetail() });
+        if (port === null) this.#settleCall(entry, { error: { code: "INTERNAL", detail: this.#notRunningDetail() } });
         else port.postMessage(call);
       });
     });
   }
 
-  #settleCall(entry: PendingCall, error: EngineError | null): void {
+  #settleCall(entry: PendingCall, result: CallResult): void {
     if (this.#calls.get(entry.callId) !== entry) return;
     this.#calls.delete(entry.callId);
     this.#timers.clear(entry.deadline);
-    entry.resolve(error);
+    entry.resolve(result);
   }
 
   /** Sends a control message (the key, settings) now, or right after the engine's next start. */
@@ -354,7 +373,7 @@ export class EngineHost<Transfer> {
   /** Answers every command and call that is waiting for the engine. */
   #failPending(detail: string): void {
     for (const entry of [...this.#pending.values()]) this.#settle(entry, errorResponseFor(entry.command, { code: "INTERNAL", detail }));
-    for (const entry of [...this.#calls.values()]) this.#settleCall(entry, { code: "INTERNAL", detail });
+    for (const entry of [...this.#calls.values()]) this.#settleCall(entry, { error: { code: "INTERNAL", detail } });
   }
 
   #fromEngine(data: unknown): void {
@@ -362,7 +381,7 @@ export class EngineHost<Transfer> {
     if (kind === "control") {
       const reply = EngineReply.safeParse(data);
       const entry = reply.success ? this.#calls.get(reply.data.callId) : undefined;
-      if (reply.success && entry !== undefined) this.#settleCall(entry, reply.data.error ?? null);
+      if (reply.success && entry !== undefined) this.#settleCall(entry, { error: reply.data.error ?? null, stage: reply.data.stage });
       else console.warn("studio: dropped an engine reply no call is waiting for");
       return;
     }

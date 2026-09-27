@@ -21,6 +21,20 @@ import {
   UnreadableAvatar,
 } from "./state";
 
+/**
+ * `avatars.pickImportPhoto`'s result (T6c): the renderer never sends a path
+ * or raw bytes (design constraint 1) — main opens its own native dialog,
+ * reads the file itself (with a size cap) and forwards the bytes straight to
+ * the engine over the control channel (control.ts's `import.stagePhoto`),
+ * never through this command's own payload. `picked: false` is a plain
+ * cancel (no dialog result), never an error.
+ */
+export const ImportPhotoPicked = z.discriminatedUnion("picked", [
+  z.strictObject({ picked: z.literal(true), stagingId: Id, width: Count, height: Count }),
+  z.strictObject({ picked: z.literal(false) }),
+]);
+export type ImportPhotoPicked = z.infer<typeof ImportPhotoPicked>;
+
 const Empty = z.strictObject({});
 
 /** Avatar records the engine could not list normally, kept bounded (the Snapshot and avatars.list). */
@@ -114,6 +128,13 @@ const AcceptedWorst = { acceptedWorstMicros: Micros };
 const MAIN_ONLY_SPECS = [
   defineCommand("settings.setApiKey", z.strictObject({ key: ApiKey }), ApiKeyStatus),
   defineCommand("settings.clearApiKey", Empty, ApiKeyStatus),
+  // T6c (import an existing avatar): the renderer asks main to open its own
+  // native file dialog and read the picked photo (design constraint 1) — an
+  // empty payload, exactly like settings.setLibraryPath's dialog is never
+  // handed a real path by the renderer. main forwards the bytes to the
+  // engine over the control channel (control.ts's `import.stagePhoto`),
+  // never through this command.
+  defineCommand("avatars.pickImportPhoto", Empty, ImportPhotoPicked),
 ] as const;
 
 /** Commands main forwards to the engine. */
@@ -166,6 +187,24 @@ const ENGINE_SPECS = [
     "avatars.rewriteDescriptor",
     z.strictObject({ avatarId: Id, ...AcceptedWorst }),
     z.strictObject({ avatarId: Id }),
+  ),
+  // T6c: import an existing avatar from one photo the owner already has,
+  // instead of generating one. `stagingId` names a photo staged by main's
+  // dialog (avatars.pickImportPhoto, above) and validated/downscaled by the
+  // engine; the estimate must be for that exact staged image (design
+  // constraint 1: pick, then estimate, then accept). Worst case: one
+  // one-time image age check + up to two vision-description attempts.
+  defineCommand("avatars.estimateImport", z.strictObject({ stagingId: Id }), Estimate),
+  // Refused with AGE_CHECK_FAILED when the one-time age check on the staged
+  // photo does not clearly confirm an adult (nothing is stored, reserves are
+  // settled); `confirmedAiPersona` must be exactly `true` — the engine refuses
+  // without the owner's confirmation that the photo is an AI persona, not a
+  // real person (a schema-level requirement, not a business check, so a
+  // missing or false confirmation never even reaches the engine's logic).
+  defineCommand(
+    "avatars.importAvatar",
+    z.strictObject({ stagingId: Id, name: AvatarName, confirmedAiPersona: z.literal(true), ...AcceptedWorst }),
+    z.strictObject({ avatar: AvatarSummary }),
   ),
   // photo runs (2b placeholders)
   defineCommand("runs.estimate", RunRequest, z.strictObject({ estimate: Estimate })),

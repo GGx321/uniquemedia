@@ -1,7 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { Estimate } from "../../shared/engine";
+import { Estimate, IMPORT_FALLBACK_PRICE } from "../../shared/engine";
 import { PriceBook, type ChatPrice, type ImagePrice, type PriceEntry } from "../money/prices";
-import { avatarJobEstimate, avatarPriceModels, candidateImage, CANDIDATES_PER_BATCH, descriptorJobCap, type AvatarModels } from "./plan";
+import {
+  avatarJobEstimate,
+  avatarPriceModels,
+  candidateImage,
+  CANDIDATES_PER_BATCH,
+  descriptorJobCap,
+  importDescribeCall,
+  IMPORT_DESCRIBE_MAX_ATTEMPTS,
+  importJobEstimate,
+  importPriceModels,
+  type AvatarModels,
+} from "./plan";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -128,6 +139,94 @@ describe("the image age check off (owner's decision, 2026-09-27: off by default)
     expect(avatarPriceModels({ ...DEFAULTS, textModel: "acme/writer" }, "new-avatar", "off")).toEqual({
       imageModels: ["x-ai/grok-imagine-image-2.0"],
       chatModels: ["acme/writer"],
+    });
+  });
+});
+
+// ---------- T6c: import an existing avatar ----------
+
+// Same fallback prices (grok-4.3): $1.25/M prompt, $2.50/M completion. The
+// vision describe call is longer than the plain descriptor call (every trait
+// field, not just one string) and carries one attached image.
+const IMPORT_DESCRIBE = { expected: 3_875, worst: 16_250 }; // 1_800 in / 650 out; ceilings 7K in / 3K out
+
+describe("import an existing avatar (T6c)", () => {
+  test("at most 2 describe attempts, mirroring the descriptor job's own retry limit", () => {
+    expect(IMPORT_DESCRIBE_MAX_ATTEMPTS).toBe(2);
+  });
+
+  test("one describe attempt on the settings' text model, with one attached image", () => {
+    expect(importDescribeCall("acme/vision")).toEqual({
+      model: "acme/vision",
+      maxTokens: 3_000,
+      inputTokens: 7_000,
+      images: 1,
+      typical: { inputTokens: 1_800, outputTokens: 650 },
+    });
+  });
+
+  test("prices the settings' text model and the age check's own fixed model, whatever imageAgeCheck says — the import's own age check is mandatory", () => {
+    expect(importPriceModels(DEFAULTS)).toEqual({ imageModels: [], chatModels: ["x-ai/grok-4.3"] });
+    expect(importPriceModels({ ...DEFAULTS, textModel: "acme/vision" })).toEqual({
+      imageModels: [],
+      chatModels: ["acme/vision", "x-ai/grok-4.3"],
+    });
+  });
+
+  test("worst case: one mandatory age check + up to 2 describe attempts — $0.037750 worst, $0.005535 expected", () => {
+    const estimate = importJobEstimate(FALLBACK, DEFAULTS);
+
+    expect(estimate).toEqual({
+      expectedMicros: AGE_CHECK.expected + IMPORT_DESCRIBE.expected,
+      worstMicros: AGE_CHECK.worst + IMPORT_DESCRIBE_MAX_ATTEMPTS * IMPORT_DESCRIBE.worst,
+      prices: "fallback",
+      pricesAsOf: "2026-09-24",
+    });
+    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([5_535, 37_750]);
+    expect(Estimate.safeParse(estimate).success).toBe(true);
+  });
+
+  // L8: the mock (mockEngine.ts) and the static UI text before any photo is
+  // picked (AvatarsScreen.tsx) both read IMPORT_FALLBACK_PRICE instead of
+  // keeping their own copy of these numbers — this proves the shared
+  // constant actually matches the real engine's own computation, at the
+  // fallback prices, so none of the three can drift from each other unnoticed.
+  test("L8: IMPORT_FALLBACK_PRICE (shared with the renderer's mock and its UI text) matches the real computation exactly", () => {
+    const estimate = importJobEstimate(FALLBACK, DEFAULTS);
+    expect({ expectedMicros: AGE_CHECK.expected, worstMicros: AGE_CHECK.worst }).toEqual(IMPORT_FALLBACK_PRICE.ageCheck);
+    expect({ expectedMicros: IMPORT_DESCRIBE.expected, worstMicros: IMPORT_DESCRIBE.worst }).toEqual(IMPORT_FALLBACK_PRICE.describe);
+    expect({ expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros }).toEqual(IMPORT_FALLBACK_PRICE.whole);
+    expect(estimate.pricesAsOf).toBe(IMPORT_FALLBACK_PRICE.asOf);
+  });
+
+  test("no image model is ever priced: the import never generates an image, only reads the staged one", () => {
+    const book = new PriceBook(
+      new Map(), // no image price loaded at all
+      new Map([["x-ai/grok-4.3", { price: { promptPico: 1_250_000, completionPico: 2_500_000, imagePico: 0, requestPico: 0, overrides: [] }, source: "live" }]]),
+    );
+    expect(() => importJobEstimate({ book, asOf: "2026-10-01" }, DEFAULTS)).not.toThrow();
+  });
+
+  test("the text model from the settings prices the describe call; the age check stays on grok-4.3", () => {
+    const rates = (promptPico: number, completionPico: number): PriceEntry<ChatPrice> => ({
+      price: { promptPico, completionPico, imagePico: 0, requestPico: 0, overrides: [] },
+      source: "live",
+    });
+    const book = new PriceBook(
+      new Map(),
+      new Map([
+        ["x-ai/grok-4.3", rates(1_250_000, 2_500_000)],
+        ["acme/vision", rates(1_000_000, 1_000_000)],
+      ]),
+    );
+
+    const estimate = importJobEstimate({ book, asOf: "2026-10-01" }, { ...DEFAULTS, textModel: "acme/vision" });
+
+    expect(estimate).toEqual({
+      expectedMicros: AGE_CHECK.expected + (1_800 + 650),
+      worstMicros: AGE_CHECK.worst + 2 * (7_000 + 3_000),
+      prices: "live",
+      pricesAsOf: "2026-10-01",
     });
   });
 });

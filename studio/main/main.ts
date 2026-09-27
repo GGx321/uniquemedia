@@ -19,6 +19,7 @@ import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { engineEnv } from "./engineEnv";
 import { EngineHost } from "./engineHost";
+import { handleImportPhotoCommand } from "./importFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
 import { handleMediaRequest, MEDIA_SCHEME } from "./mediaProtocol";
 import { HostNotices } from "./notices";
@@ -146,6 +147,26 @@ async function pickFolder(owner: BrowserWindow | null, defaultPath: string): Pro
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
+/**
+ * The file main's import dialog answers with, for the smoke test, which
+ * cannot click a native dialog. Read only by an E2E build: every other build
+ * has it compiled out and always shows the dialog (T6c).
+ */
+function pickedImportFileForTests(): string | undefined {
+  if (!STUDIO_E2E) return undefined;
+  const path = app.commandLine.getSwitchValue("studio-pick-import-file");
+  return path === "" ? undefined : path;
+}
+
+/** T6c: the owner's own open-file dialog for importing an existing avatar's photo; never handed a path by the renderer. */
+async function pickImportFile(owner: BrowserWindow | null): Promise<string | null> {
+  const forTests = pickedImportFileForTests();
+  if (forTests !== undefined) return forTests;
+  const options: OpenDialogOptions = { properties: ["openFile"], filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }] };
+  const result = owner === null ? await dialog.showOpenDialog(options) : await dialog.showOpenDialog(owner, options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
 async function startStudio(): Promise<void> {
   const userData = app.getPath("userData");
   const { store: settings, notice } = await SettingsStore.open(userData);
@@ -209,6 +230,11 @@ async function startStudio(): Promise<void> {
           pickFolder: (defaultPath) => pickFolder(BrowserWindow.fromWebContents(event.sender), defaultPath),
           keyStatus: () => keys.status(),
           newId: randomUUID,
+        }),
+      importPhoto: (command) =>
+        handleImportPhotoCommand(command, {
+          pickImportFile: () => pickImportFile(BrowserWindow.fromWebContents(event.sender)),
+          engine: { stageImportPhoto: (bytes) => engine.stageImportPhoto(bytes) },
         }),
       engine: (command) => engine.request(command),
     }),

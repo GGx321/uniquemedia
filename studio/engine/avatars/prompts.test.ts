@@ -63,10 +63,22 @@ function sources(dir: string): string[] {
   });
 }
 
+/** A `vibe: ""` (or `"vibe": ""`) property assignment: setting the fixed empty string is not "reading" or "forwarding" anyone's vibe — the one shape T6c's import needs, since an imported avatar has no owner-entered vibe at all. Only this exact shape is exempt; any other mention of vibe anywhere, including a non-empty string or a read, still trips the rule below. */
+function isSetToFixedEmptyString(node: ts.Node): boolean {
+  return (
+    ts.isPropertyAssignment(node) &&
+    (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
+    /^vibe$/i.test(node.name.text) &&
+    ts.isStringLiteralLike(node.initializer) &&
+    node.initializer.text === ""
+  );
+}
+
 function mentionsTheVibe(path: string): boolean {
   const file = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
   let found = false;
   const visit = (node: ts.Node): void => {
+    if (isSetToFixedEmptyString(node)) return; // exempt: neither this assignment's own name nor its value is a "read"
     if ((ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isPrivateIdentifier(node)) && /^#?vibe$/i.test(node.text)) found = true;
     ts.forEachChild(node, visit);
   };
@@ -80,10 +92,22 @@ test("only the descriptor prompt reads the vibe: no other engine module (image, 
     .filter(mentionsTheVibe)
     .map((path) => relative(studio, path));
 
-  expect(readers).toEqual([...MAY_READ_THE_VIBE]);
+  // Sorted on both sides: readdirSync's order is filesystem-dependent, not a fact this rule cares about.
+  expect([...readers].sort()).toEqual([...MAY_READ_THE_VIBE].sort());
 });
 
 test("the scan sees a module that reads the vibe (it is not vacuous)", () => {
   expect(mentionsTheVibe(join(ENGINE_DIR, "avatars", "descriptor.ts"))).toBe(true);
   expect(mentionsTheVibe(join(ENGINE_DIR, "avatars", "prompts.ts"))).toBe(false);
+});
+
+// L9: importDescribe.ts sets `vibe: ""` (an imported avatar has no
+// owner-entered vibe) but does not read or forward anyone's vibe — the scan
+// must see straight through that one exemption, on the real file, not just
+// on a hand-built fixture.
+test("L9: importDescribe.ts's fixed vibe: \"\" is exempt, but any other mention of vibe still trips the scan", () => {
+  expect(mentionsTheVibe(join(ENGINE_DIR, "avatars", "importDescribe.ts"))).toBe(false);
+  expect(isSetToFixedEmptyString(ts.factory.createPropertyAssignment("vibe", ts.factory.createStringLiteral("")))).toBe(true);
+  expect(isSetToFixedEmptyString(ts.factory.createPropertyAssignment("vibe", ts.factory.createStringLiteral("zebra")))).toBe(false);
+  expect(isSetToFixedEmptyString(ts.factory.createPropertyAssignment("vibeOther", ts.factory.createStringLiteral("")))).toBe(false);
 });

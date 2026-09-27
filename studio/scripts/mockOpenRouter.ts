@@ -1,20 +1,21 @@
 /**
- * A mock OpenRouter server for Studio's avatar end-to-end scenario
- * (studio/scripts/smoke-engine.ts). Runs in the harness process itself —
- * `Bun.serve` on 127.0.0.1 with an ephemeral port — the only kind of host an
- * E2E build's `--studio-openrouter-base-url` override may point at
+ * A mock OpenRouter server for Studio's avatar and import end-to-end
+ * scenarios (studio/scripts/smoke-engine.ts). Runs in the harness process
+ * itself — `Bun.serve` on 127.0.0.1 with an ephemeral port — the only kind of
+ * host an E2E build's `--studio-openrouter-base-url` override may point at
  * (invariant 13, studio/engine/openrouter/client.ts's `checkedBaseUrl`
  * refuses anything but a loopback http(s) base). No request this server
  * answers ever reaches the real network, and the only API key ever sent to
  * it is a fake one (studio/scripts/smoke-engine.ts's SMOKE_KEY).
  *
- * It serves exactly what the avatar flow (studio/engine/avatars/*,
- * studio/engine/money/prices.ts) calls:
+ * It serves exactly what the avatar and import flows (studio/engine/avatars/*,
+ * studio/engine/money/prices.ts) call:
  * - GET  /images/models/<imageModel>/endpoints  (image price; the exact
  *   fixture studio/engine/money/prices.test.ts already parses)
  * - GET  /models                                 (chat price; ditto)
  * - POST /chat/completions                       (the descriptor, schema
- *   "avatar_descriptor"; the age check, schema "age_check")
+ *   "avatar_descriptor"; the age check, schema "age_check"; T6c's vision
+ *   describe call, schema "import_describe")
  * - POST /images                                 (candidate portraits — a
  *   real, valid, non-animated PNG rendered once by the bundled ffmpeg, never
  *   a committed binary blob)
@@ -74,15 +75,49 @@ export interface MockRequest {
   authorization: string | null;
 }
 
+/** T6c: the vision describe call's own strict JSON answer (the M5 subject check, traits, and descriptor in one). */
+export interface MockImportDescribeAnswer {
+  people: number;
+  woman: boolean;
+  age: number;
+  ethnicity: string;
+  skinTone: string;
+  hairColor: string;
+  hairLength: string;
+  hairTexture: string;
+  eyeColor: string;
+  build: string;
+  marks: string[];
+  descriptor: string;
+}
+
+/** A plausible default answer: exactly one woman (M5), always adult, always passing today's descriptor rules. */
+export const DEFAULT_IMPORT_DESCRIBE_ANSWER: MockImportDescribeAnswer = {
+  people: 1,
+  woman: true,
+  age: 27,
+  ethnicity: "latina",
+  skinTone: "tan",
+  hairColor: "black",
+  hairLength: "long",
+  hairTexture: "wavy",
+  eyeColor: "brown",
+  build: "athletic",
+  marks: [],
+  descriptor: "27-year-old Latina woman, tan skin, brown eyes, long wavy black hair, athletic build.",
+};
+
 export interface MockOpenRouterOptions {
   /** Must match the app's settings.imageModel (default: the same default the app itself uses). */
   imageModel?: string;
   /** What the mock answers for the "avatar_descriptor" schema. */
   descriptorText: string;
+  /** T6c: what the mock answers for the "import_describe" schema (the vision job's traits + descriptor); unused unless an import scenario runs. */
+  importDescribeAnswer?: MockImportDescribeAnswer;
   /** Which age-check call, counted across the whole run (1-based), answers "not an adult"; 0 rejects none. */
   rejectAgeCheckNumber?: number;
   /** USD per call; /credits' total_usage is the running sum of exactly these. */
-  costsUsd?: { descriptor?: number; image?: number; age?: number };
+  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number };
 }
 
 export interface MockOpenRouter {
@@ -95,6 +130,8 @@ export interface MockOpenRouter {
   imageRequests(): MockRequest[];
   ageCheckRequests(): MockRequest[];
   descriptorRequests(): MockRequest[];
+  /** T6c: the vision describe call's own requests ("import_describe" schema), distinct from a plain new-avatar descriptor. */
+  importDescribeRequests(): MockRequest[];
   priceRequests(): MockRequest[];
   creditsRequests(): MockRequest[];
   /** The running total this mock has billed, in USD — what /credits reports. */
@@ -104,7 +141,7 @@ export interface MockOpenRouter {
 
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
-  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, ...opts.costsUsd };
+  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, ...opts.costsUsd };
   const rejectAt = opts.rejectAgeCheckNumber ?? 1;
   const requests: MockRequest[] = [];
   const unexpected: MockRequest[] = [];
@@ -182,6 +219,10 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
           };
           return json(chatCompletion(JSON.stringify(answer), costs.age));
         }
+        if (entry.schemaName === "import_describe") {
+          const answer = opts.importDescribeAnswer ?? DEFAULT_IMPORT_DESCRIBE_ANSWER;
+          return json(chatCompletion(JSON.stringify(answer), costs.importDescribe));
+        }
         return loudly404(entry);
       }
       if (method === "POST" && path === "/api/v1/images") {
@@ -200,6 +241,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     imageRequests: () => requests.filter((r) => r.path === "/api/v1/images"),
     ageCheckRequests: () => requests.filter((r) => r.schemaName === "age_check"),
     descriptorRequests: () => requests.filter((r) => r.schemaName === "avatar_descriptor"),
+    importDescribeRequests: () => requests.filter((r) => r.schemaName === "import_describe"),
     priceRequests: () => requests.filter((r) => r.path.endsWith("/endpoints") || r.path === "/api/v1/models"),
     creditsRequests: () => requests.filter((r) => r.path === "/api/v1/credits"),
     totalUsageUsd: () => totalUsageUsd,

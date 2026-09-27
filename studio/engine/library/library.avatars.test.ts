@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { cp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { openLibrary, type LibraryDeps, type NewAvatar } from "./library";
+import { openLibrary, type LibraryDeps, type NewAvatar, type NewImportedAvatar } from "./library";
 import type { AvatarManifest, AvatarStatus } from "./schemas";
 import {
   PNG_1X1,
+  SAMPLE_IMPORTED_SOURCE,
   expectLibraryError,
   samplePhotoMeta,
   rejectionOf,
@@ -108,6 +109,115 @@ describe("createAvatar", () => {
     expect(entry.from).toMatch(/^avatars[\\/]\.avatar-0001\..+\.tmp$/);
     expect(await readJson(join(root(), entry.to, "avatar.json"))).toMatchObject({ id: "avatar-0001", name: "Mia" });
     expect(await readdir(join(root(), "avatars"))).toEqual([]);
+  });
+});
+
+describe("createImportedAvatar (T6c, M3: atomic — manifest, photo and sidecar publish in one rename)", () => {
+  const IMPORTED: NewImportedAvatar = {
+    name: "Zoe",
+    age: 27,
+    traits: { hairColor: "black" },
+    descriptor: "a 27-year-old woman with black hair",
+    photoBytes: PNG_1X1,
+    photoMeta: { mediaType: "image/png", width: 1, height: 1, source: SAMPLE_IMPORTED_SOURCE },
+  };
+
+  test("writes an active avatar with her master already set, and the photo file plus its sidecar, in one publish", async () => {
+    const { library } = await openLibrary(root(), deps());
+
+    const { avatar, photo } = await library.createImportedAvatar(IMPORTED);
+
+    expect(avatar).toMatchObject({ id: "avatar-0001", name: "Zoe", age: 27, status: "active", masterPhotoId: photo.id });
+    expect(photo).toMatchObject({ avatarId: "avatar-0001", source: SAMPLE_IMPORTED_SOURCE });
+    expect(library.getAvatar("avatar-0001")).toEqual(avatar);
+    expect(library.getPhoto(photo.id)).toEqual(photo);
+    expect(await readJson(join(root(), "avatars", "avatar-0001", "avatar.json"))).toEqual(avatar);
+    expect(await readJson(join(root(), "avatars", "avatar-0001", "photos", `${photo.id}.json`))).toEqual(photo);
+    expect((await stat(join(root(), "avatars", "avatar-0001", "photos", photo.file))).size).toBe(PNG_1X1.length);
+  });
+
+  test("the master's own reference works, exactly like a generated avatar's (invariant 9 widened)", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const { avatar } = await library.createImportedAvatar(IMPORTED);
+    expect(library.referencePhoto(avatar.id)?.photo.source.kind).toBe("imported");
+  });
+
+  test("rejects a media-type mismatch and writes nothing", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await expectLibraryError(
+      library.createImportedAvatar({ ...IMPORTED, photoMeta: { ...IMPORTED.photoMeta, mediaType: "image/webp" } }),
+      "media-type-mismatch",
+    );
+    expect(await readdir(join(root(), "avatars"))).toEqual([]);
+    expect(library.listAvatars()).toEqual([]);
+  });
+
+  test("rejects an under-21 avatar with invalid-record and writes nothing", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await expectLibraryError(library.createImportedAvatar({ ...IMPORTED, age: 20 }), "invalid-record");
+    expect(await readdir(join(root(), "avatars"))).toEqual([]);
+  });
+
+  // M3: a crash (kill, or any failure) between the writes and the publishing
+  // rename must leave nothing published — no dangling avatar with no photo,
+  // no half-written manifest visible to listAvatars — mirroring createAvatar's
+  // own crash test above: the temp folder is left for the next open's
+  // quarantine (evidence kept, never silently deleted), not published.
+  test("a crash before the publish rename leaves no avatar, no photo, and no partial state behind", async () => {
+    const crash = new Error("simulated crash");
+    const { library } = await openLibrary(root(), deps({ testHooks: { beforeRename: () => { throw crash; } } }));
+
+    expect(await rejectionOf(library.createImportedAvatar(IMPORTED))).toBe(crash);
+
+    expect(library.listAvatars()).toEqual([]);
+    const reopened = await openLibrary(root(), deps());
+    expect(reopened.library.listAvatars()).toEqual([]);
+    expect(reopened.report.avatars).toBe(0);
+    // Not silently gone: the crashed temp folder is quarantined on the next open, evidence kept.
+    expect(reopened.report.quarantined).toHaveLength(1);
+    expect(reopened.report.quarantined[0]?.reason).toBe("temp-file");
+    await rm(join(root(), reopened.report.quarantined[0]?.to ?? ""), { recursive: true, force: true });
+  });
+});
+
+describe("isRefusedImport / recordRefusedImport (T6c, H2)", () => {
+  test("a hash is not refused until recorded", async () => {
+    const { library } = await openLibrary(root(), deps());
+    expect(library.isRefusedImport("a".repeat(64))).toBe(false);
+  });
+
+  test("recordRefusedImport makes isRefusedImport true, in this instance and after a reopen", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const sha256 = "b".repeat(64);
+    await library.recordRefusedImport(sha256);
+
+    expect(library.isRefusedImport(sha256)).toBe(true);
+    expect(await readJson(join(root(), "refused-imports.json"))).toEqual({ schemaVersion: 1, sha256: [sha256] });
+
+    const reopened = await openLibrary(root(), deps());
+    expect(reopened.library.isRefusedImport(sha256)).toBe(true);
+  });
+
+  test("recording the same hash twice is a no-op, not a second write", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const sha256 = "c".repeat(64);
+    await library.recordRefusedImport(sha256);
+    const before = await readFile(join(root(), "refused-imports.json"), "utf8");
+    await library.recordRefusedImport(sha256);
+    const after = await readFile(join(root(), "refused-imports.json"), "utf8");
+    expect(after).toBe(before);
+  });
+
+  test("a missing refused-imports.json is read as empty, never blocking open", async () => {
+    const { library } = await openLibrary(root(), deps());
+    expect(library.isRefusedImport("d".repeat(64))).toBe(false);
+  });
+
+  test("a corrupt refused-imports.json is read as empty, never blocking open", async () => {
+    await openLibrary(root(), deps());
+    await writeFile(join(root(), "refused-imports.json"), "not json");
+    const { library } = await openLibrary(root(), deps());
+    expect(library.isRefusedImport("e".repeat(64))).toBe(false);
   });
 });
 

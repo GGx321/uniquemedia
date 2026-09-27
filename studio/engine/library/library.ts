@@ -28,11 +28,13 @@ import {
   MANIFEST_SCHEMA_VERSION,
   PHOTOS_DIR,
   PLAN_FILE,
+  REFUSED_IMPORTS_FILE,
   RUNS_DIR,
   THUMBS_DIR,
   USED_FILE,
   isFromNewerVersion,
   LIBRARY_FILE_SCHEMA_VERSION,
+  REFUSED_IMPORTS_SCHEMA_VERSION,
   SIDECAR_SCHEMA_VERSION,
   isLibraryFileTemp,
 } from "./layout";
@@ -44,6 +46,7 @@ import {
   HistoryEntrySchema,
   LibraryFileSchema,
   PhotoSidecarSchema,
+  RefusedImportsFileSchema,
   UsedEntrySchema,
   type AvatarManifest,
   type AvatarStatus,
@@ -97,6 +100,12 @@ export interface ReferencePhoto {
 
 export type NewAvatar = Pick<AvatarManifest, "name" | "age" | "traits" | "descriptor">;
 export type AvatarPatch = Partial<Pick<AvatarManifest, "name" | "status" | "masterPhotoId" | "descriptor">>;
+
+/** T6c (M3): a whole imported avatar — the manifest fields and her one photo, published together in one atomic write. */
+export type NewImportedAvatar = NewAvatar & {
+  photoBytes: Uint8Array;
+  photoMeta: NewPhotoMeta;
+};
 
 export interface JournalRead<T> {
   events: T[];
@@ -157,6 +166,8 @@ export class Library {
   readonly #used = new Set<string>();
   /** Avatars whose used.jsonl has a bad line, with the reason. */
   readonly #brokenUsedLogs = new Map<string, string>();
+  /** T6c (H2): sha256 of every imported photo's raw bytes the mandatory one-time age check has already refused. */
+  #refusedImportHashes = new Set<string>();
 
   private constructor(root: string, deps: LibraryDeps, createdAt: string) {
     this.root = root;
@@ -189,6 +200,7 @@ export class Library {
     for (const photo of survey.photos) library.#photos.set(photo.id, photo);
     for (const photoId of survey.usedPhotoIds) library.#used.add(photoId);
     for (const issue of survey.logIssues) library.#brokenUsedLogs.set(issue.avatarId, issue.detail);
+    library.#refusedImportHashes = await loadRefusedImports(root);
 
     // Reported, never "fixed" by rewriting the manifest: restoring the photo
     // from quarantine heals the avatar. Until then referencePhoto() is null.
@@ -234,6 +246,89 @@ export class Library {
 
     this.#avatars.set(id, manifest);
     return manifest;
+  }
+
+  /**
+   * T6c (M3): imports an existing avatar atomically. The manifest (status
+   * "active", her master already set), the photo file and its sidecar are
+   * all written into one temp avatar folder, then published with ONE
+   * rename — mirrors `createAvatar`'s own temp-dir-then-rename shape, so a
+   * crash or a kill between the writes and the rename leaves nothing
+   * published: no dangling avatar, no half-written manifest, no orphaned
+   * draft with no photo. The crashed temp folder is left for the next
+   * open's quarantine, exactly like `createAvatar`'s own.
+   */
+  async createImportedAvatar(input: NewImportedAvatar): Promise<{ avatar: AvatarManifest; photo: PhotoSidecar }> {
+    const actual = sniffImageMediaType(input.photoBytes);
+    if (actual !== input.photoMeta.mediaType) {
+      throw new LibraryError("media-type-mismatch", `bytes are ${actual ?? "not a known image"}, not ${input.photoMeta.mediaType}`);
+    }
+    const avatarId = this.#takeId();
+    const photoId = this.#takeId();
+    const now = this.#now().toISOString();
+    const manifest = this.#validManifest({
+      name: input.name,
+      age: input.age,
+      traits: input.traits,
+      descriptor: input.descriptor,
+      schemaVersion: MANIFEST_SCHEMA_VERSION,
+      id: avatarId,
+      masterPhotoId: photoId,
+      status: "active",
+      createdAt: now,
+    });
+    const sidecarCandidate = {
+      schemaVersion: SIDECAR_SCHEMA_VERSION,
+      id: photoId,
+      avatarId,
+      file: `${photoId}.${extensionFor(input.photoMeta.mediaType)}`,
+      mediaType: input.photoMeta.mediaType,
+      width: input.photoMeta.width,
+      height: input.photoMeta.height,
+      bytes: input.photoBytes.length,
+      sha256: createHash("sha256").update(input.photoBytes).digest("hex"),
+      source: input.photoMeta.source,
+      qa: input.photoMeta.qa ?? {},
+      createdAt: now,
+    };
+    const sidecarResult = PhotoSidecarSchema.safeParse(sidecarCandidate);
+    if (!sidecarResult.success) throw new LibraryError("invalid-record", `invalid photo record: ${sidecarResult.error.message}`);
+    const sidecar = sidecarResult.data;
+
+    // Everything lands in one temp folder — manifest, image, sidecar — so a
+    // crash before the rename below leaves no avatar folder at all, not a
+    // partial one.
+    const finalDir = this.#avatarDir(avatarId);
+    const tempDir = tempSiblingPath(finalDir);
+    const tempPhotosDir = join(tempDir, PHOTOS_DIR);
+    await mkdir(tempPhotosDir, { recursive: true });
+    await writeFileDurable(join(tempDir, MANIFEST_FILE), toJson(manifest));
+    await writeFileDurable(join(tempPhotosDir, sidecar.file), input.photoBytes);
+    await writeFileDurable(join(tempPhotosDir, `${photoId}.json`), toJson(sidecar));
+    await fsyncDir(tempPhotosDir);
+    await fsyncDir(tempDir);
+    await this.#beforeRename?.(finalDir);
+    await renameWithRetry(tempDir, finalDir);
+    await fsyncDir(this.#avatarsDir());
+
+    this.#avatars.set(avatarId, manifest);
+    this.#photos.set(photoId, sidecar);
+    return { avatar: manifest, photo: sidecar };
+  }
+
+  /** T6c (H2): whether `sha256` (an imported photo's raw bytes) was already refused by the mandatory one-time age check — checked for free, before anything is downscaled or paid for, so re-picking the exact same bytes cannot re-roll it. */
+  isRefusedImport(sha256: string): boolean {
+    return this.#refusedImportHashes.has(sha256);
+  }
+
+  /** Records that the mandatory one-time age check refused this photo's exact raw bytes; written atomically (temp + fsync + rename), like every other library JSON file. A no-op if already recorded. */
+  async recordRefusedImport(sha256: string): Promise<void> {
+    if (this.#refusedImportHashes.has(sha256)) return;
+    const next = new Set(this.#refusedImportHashes);
+    next.add(sha256);
+    const file = RefusedImportsFileSchema.parse({ schemaVersion: REFUSED_IMPORTS_SCHEMA_VERSION, sha256: [...next].sort() });
+    await writeJsonAtomic(join(this.root, REFUSED_IMPORTS_FILE), file, { beforeRename: this.#beforeRename });
+    this.#refusedImportHashes = next;
   }
 
   getAvatar(avatarId: string): AvatarManifest | undefined {
@@ -429,7 +524,8 @@ export class Library {
   }
 
   photosByCategory(avatarId: string, category: string): PhotoSidecar[] {
-    return this.photosByAvatar(avatarId).filter((p) => p.source.category === category);
+    // An imported photo (T6c) has no category: it never matches a category filter.
+    return this.photosByAvatar(avatarId).filter((p) => p.source.kind === "generated" && p.source.category === category);
   }
 
   /** Photos with no entry in the avatar's used.jsonl. */
@@ -683,6 +779,21 @@ async function ensureLibraryFile(root: string, now: () => Date): Promise<string>
     throw new LibraryError("invalid-library-file", `${path} is not a supported library file: ${result.error.message}`);
   }
   return result.data.createdAt;
+}
+
+/**
+ * T6c (H2): the sha256 of every imported photo the mandatory one-time image
+ * age check has already refused, from `<root>/refused-imports.json`. Never
+ * blocks or quarantines the library over it: it is a courtesy cache, not the
+ * safety boundary itself (the mandatory age check always still runs on
+ * import) — a missing or unreadable file is simply read as empty.
+ */
+async function loadRefusedImports(root: string): Promise<Set<string>> {
+  const raw = await readJsonFile(join(root, REFUSED_IMPORTS_FILE));
+  if (!raw.ok) return new Set();
+  if (isFromNewerVersion(raw.value, REFUSED_IMPORTS_SCHEMA_VERSION)) return new Set();
+  const parsed = RefusedImportsFileSchema.safeParse(raw.value);
+  return parsed.success ? new Set(parsed.data.sha256) : new Set();
 }
 
 export function openLibrary(root: string, deps: LibraryDeps = {}): Promise<{ library: Library; report: OpenReport }> {

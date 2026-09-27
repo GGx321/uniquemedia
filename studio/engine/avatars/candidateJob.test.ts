@@ -252,7 +252,9 @@ describe("a batch of candidate portraits", () => {
       },
       qa: { age: { adult: true, confidence: 0.9 } },
     });
-    expect(stored.map((s) => s.meta.source.attemptId)).toEqual([1, 2, 3, 4].map((n) => `${JOB_ID}:candidate-${n}#1`));
+    expect(stored.map((s) => (s.meta.source.kind === "generated" ? s.meta.source.attemptId : null))).toEqual(
+      [1, 2, 3, 4].map((n) => `${JOB_ID}:candidate-${n}#1`),
+    );
   });
 
   test("reports each finished slot as it finishes", async () => {

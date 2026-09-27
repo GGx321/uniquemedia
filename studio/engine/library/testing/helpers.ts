@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LibraryError, type LibraryErrorCode } from "../errors";
 import type { NewAvatar, NewPhotoMeta } from "../library";
-import type { PhotoSource } from "../schemas";
+import type { GeneratedPhotoSource, ImportedPhotoSource } from "../schemas";
 
 /** A fresh temp dir per test, removed after it. Returns a getter because the
  *  path only exists once `beforeEach` has run. */
@@ -54,7 +54,7 @@ export const SAMPLE_AVATAR: NewAvatar = {
   descriptor: "a 25-year-old woman with hazel eyes and chestnut hair",
 };
 
-export const SAMPLE_SOURCE: PhotoSource = {
+export const SAMPLE_SOURCE: GeneratedPhotoSource = {
   kind: "generated",
   model: "x-ai/grok-imagine-image-2.0",
   provider: "xai",
@@ -68,6 +68,13 @@ export const SAMPLE_SOURCE: PhotoSource = {
 export function samplePhotoMeta(extra: Partial<NewPhotoMeta> = {}): NewPhotoMeta {
   return { mediaType: "image/png", width: 1, height: 1, source: SAMPLE_SOURCE, qa: {}, ...extra };
 }
+
+/** T6c: the owner's own imported photo, not a generated frame. */
+export const SAMPLE_IMPORTED_SOURCE: ImportedPhotoSource = {
+  kind: "imported",
+  importedAt: "2026-09-27T10:00:00.000Z",
+  confirmedAiPersona: true,
+};
 
 /** RIFF/WEBP container header — enough to sniff as WebP. */
 export const WEBP_HEADER_ONLY = Uint8Array.from([

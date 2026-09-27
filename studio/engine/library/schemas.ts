@@ -49,9 +49,17 @@ export const AvatarManifestSchema = z
 export type AvatarManifest = z.infer<typeof AvatarManifestSchema>;
 export type AvatarStatus = AvatarManifest["status"];
 
-/** Where a photo came from. Only generated frames exist — there is no kind
- *  for a user-supplied file, so none can ever become a reference (invariant 9). */
-export const PhotoSourceSchema = z.object({
+/**
+ * Where a photo came from: a generated frame, or (T6c, invariant 9 widened:
+ * "generated, or the owner's import") a photo the owner already had and
+ * imported through the one-time image age check and vision descriptor job.
+ * Still no kind for an arbitrary file: an imported photo only ever exists
+ * because `avatars.importAvatar` stored it through the library, exactly like
+ * a generated one — no other code path can add a `PhotoSource`. A union, not
+ * an added optional field, so every existing "generated" sidecar keeps
+ * parsing exactly as it did (backward-compatible parsing).
+ */
+const GeneratedSourceSchema = z.object({
   kind: z.literal("generated"),
   model: NonEmpty,
   provider: NonEmpty,
@@ -64,7 +72,25 @@ export const PhotoSourceSchema = z.object({
   /** Integer micro-dollars. */
   costMicros: z.int().nonnegative(),
 });
+
+/**
+ * No model, provider, job, prompt or cost: none of that applies to a photo
+ * the owner already had. `confirmedAiPersona` records the owner's own
+ * confirmation (the payload's `confirmedAiPersona: z.literal(true)`) — the
+ * engine refuses the import without it, so this field is never anything but
+ * `true` once it exists (L11: recorded, not only checked and discarded).
+ */
+const ImportedSourceSchema = z.strictObject({
+  kind: z.literal("imported"),
+  importedAt: IsoTimestamp,
+  confirmedAiPersona: z.literal(true),
+});
+
+export const PhotoSourceSchema = z.discriminatedUnion("kind", [GeneratedSourceSchema, ImportedSourceSchema]);
 export type PhotoSource = z.infer<typeof PhotoSourceSchema>;
+/** The two branches, exported so a caller that only ever builds one of them (a generated frame's own job, T6c's import job, their tests) can type a value precisely instead of the wider union. */
+export type GeneratedPhotoSource = z.infer<typeof GeneratedSourceSchema>;
+export type ImportedPhotoSource = z.infer<typeof ImportedSourceSchema>;
 
 export const PhotoQaSchema = z.object({
   age: z.object({ adult: z.boolean(), confidence: z.number().min(0).max(1) }).optional(),
@@ -90,6 +116,19 @@ export const UsedEntrySchema = z.object({
   at: IsoTimestamp,
 });
 export type UsedEntry = z.infer<typeof UsedEntrySchema>;
+
+/**
+ * `<root>/refused-imports.json` (T6c, H2): the sha256 of every imported
+ * photo's raw bytes the mandatory one-time image age check has already
+ * refused. Read at library open, written atomically (temp + fsync +
+ * rename), so `import.stagePhoto` can refuse a known-refused photo for free
+ * on a re-pick, before anything is downscaled or paid for.
+ */
+export const RefusedImportsFileSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  sha256: z.array(Sha256Hex),
+});
+export type RefusedImportsFile = z.infer<typeof RefusedImportsFileSchema>;
 
 /** `avatars/<avatarId>/photos/<id>.json` — the commit record of one photo. */
 export const PhotoSidecarSchema = z
