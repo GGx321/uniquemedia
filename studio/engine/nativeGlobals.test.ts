@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { nativeAbortController, nativeAbortSignal } from "../../nativeGlobals";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -57,19 +58,26 @@ test("a native AbortSignal.any result is accepted by the real native fetch (no '
   // so global `fetch` is still happy-dom's here (same as loopback.test.ts,
   // which captures `Bun.fetch` for the same reason) and would apply
   // happy-dom's own same-origin policy to a plain loopback request.
-  const server = createServer((socket) => {
-    socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+  // An HTTP server that reads the request before answering, closed with
+  // closeAllConnections() first: the same pattern as loopback.test.ts. A
+  // server that answered on connect and then waited in close() hung the
+  // Windows job and timed out on Linux.
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => res.writeHead(200, { "Content-Length": "0" }).end());
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
     const controller = new AbortController();
-    const combined = AbortSignal.any([controller.signal]);
+    // The timeout bounds the request itself, so a stuck connection fails the test instead of holding the run.
+    const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(3_000)]);
 
     const response = await Bun.fetch(base, { signal: combined });
 
     expect(response.status).toBe(200);
   } finally {
+    server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
