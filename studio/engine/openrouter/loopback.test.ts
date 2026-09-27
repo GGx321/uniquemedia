@@ -13,8 +13,8 @@ useNativeGlobals();
 // AbortSignal for happy-dom's; newer Bun's native fetch rejects a happy-dom
 // AbortSignal outright ("signal is not of type AbortSignal"), so both must be
 // native for the transport code under test: `new AbortController()` in
-// transport.ts and credits.ts, `AbortSignal.timeout()` in priceFetch.ts (and,
-// elsewhere in the engine, money/prices.ts and avatars/candidateJob.ts).
+// transport.ts and credits.ts, and `timeoutSignal()`'s own AbortController in
+// money/prices.ts and avatars/candidateJob.ts.
 // Each test swaps both globals for the pre-registration native ones
 // (nativeGlobals.ts) it runs and restores happy-dom's right after, matching
 // what Electron's Node gives the engine in production.

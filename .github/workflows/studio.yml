@@ -85,7 +85,12 @@ jobs:
           }
           process.exit(failed ? 1 : 0)'
       - run: bunx tsc --noEmit -p studio/tsconfig.json
+      # Bounded so a future hang (like the Windows one an unref'd
+      # AbortSignal.timeout() timer caused here — fixed by timeoutSignal.ts's
+      # ref'd replacement) fails in minutes, not by holding a runner for
+      # hours until GitHub's own job-level limit kicks in.
       - run: bun test ./studio
+        timeout-minutes: 10
       - if: env.PACKAGE == 'true'
         run: bun run build:studio
       # Studio's version comes from studio/version.json via the config's `extends`.
@@ -190,4 +195,6 @@ jobs:
           }
           process.exit(failed ? 1 : 0)'
       - run: bunx tsc --noEmit -p studio/tsconfig.json
+      # Same bound as the build job's own step above, for the same reason.
       - run: bun test ./studio --randomize
+        timeout-minutes: 10

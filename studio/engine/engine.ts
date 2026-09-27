@@ -30,6 +30,7 @@ import {
   UNREADABLE_REASON_DETAIL,
 } from "../shared/engine";
 import { downscaleToJpeg, preflightDownscale } from "../node/downscale";
+import { timeoutSignal } from "./money/timeoutSignal";
 import { AGE_CHECK_MAX_SIDE, passesAgeThreshold } from "./avatars/ageCheck";
 import { candidateJobEnd, runCandidateJob, untilAborted, type SlotOutcome } from "./avatars/candidateJob";
 import { runDescriptorJob } from "./avatars/descriptorJob";
@@ -1164,13 +1165,23 @@ export class Engine {
     // catches a deleted-and-recreated folder on Linux (a coincidentally
     // reused inode makes both stat AND realpath agree, strict or not) —
     // the library.json fingerprint below is what catches that.
-    const signal = AbortSignal.timeout(this.#liveLibraryIdentityTimeoutMs);
-    const verified = await untilAborted(
-      folderIdentity(live.library.root, this.#folderFs, { strict: true }).then(
-        async (identity) => identity === live.identity && (await this.#sameLibraryFile(live.library)),
-      ),
-      signal,
-    ).catch(() => false);
+    // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
+    // unref'd, which hung the Windows CI runs once M6 moved these tests onto
+    // Bun's native AbortController/AbortSignal (timeoutSignal.ts's own doc
+    // comment has the full story). Cleared in the finally below, whichever
+    // way the check ends.
+    const timeout = timeoutSignal(this.#liveLibraryIdentityTimeoutMs);
+    let verified: boolean;
+    try {
+      verified = await untilAborted(
+        folderIdentity(live.library.root, this.#folderFs, { strict: true }).then(
+          async (identity) => identity === live.identity && (await this.#sameLibraryFile(live.library)),
+        ),
+        timeout.signal,
+      ).catch(() => false);
+    } finally {
+      timeout.clear();
+    }
     if (!verified) {
       // Review LOW 10: a transient stat, realpath or read failure (a
       // momentary network-volume hiccup) now reads the same as "gone",
@@ -1220,11 +1231,17 @@ export class Engine {
    * draft's busy claim up until an engine restart.
    */
   async #preflightDownscale(): Promise<void> {
-    const signal = AbortSignal.timeout(this.#preflightTimeoutMs);
+    // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
+    // unref'd, which hung this exact preflight on Windows CI once M6 moved
+    // these tests onto Bun's native AbortController/AbortSignal
+    // (timeoutSignal.ts's own doc comment has the full story).
+    const timeout = timeoutSignal(this.#preflightTimeoutMs);
     try {
-      await untilAborted(this.#preflight(signal), signal);
+      await untilAborted(this.#preflight(timeout.signal), timeout.signal);
     } catch (error) {
       throw new EngineFailure({ code: "INTERNAL", detail: `the image pipeline (ffmpeg) cannot prepare images for the age check: ${messageOf(error, "unknown error")}` });
+    } finally {
+      timeout.clear();
     }
   }
 

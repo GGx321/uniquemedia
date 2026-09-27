@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MoneyError } from "./errors";
 import { costToMicros } from "./settleRule";
+import { timeoutSignal } from "./timeoutSignal";
 
 export const OPENROUTER_API_BASE = "https://openrouter.ai/api/v1";
 /** The day the fallback table was read from OpenRouter (spike results, 2026-09-24). */
@@ -390,9 +391,18 @@ function unavailable(model: string): MoneyError {
 }
 
 async function getJson(fetch: FetchLike, url: string, timeoutMs: number): Promise<unknown> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!res.ok) throw new Error(`GET ${url}: HTTP ${res.status}`);
-  return res.json();
+  // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
+  // unref'd, which hung the Windows CI runs once M6 moved these tests onto
+  // Bun's native AbortController/AbortSignal (timeoutSignal.ts's own doc
+  // comment has the full story). Cleared in the finally below either way.
+  const timeout = timeoutSignal(timeoutMs);
+  try {
+    const res = await fetch(url, { signal: timeout.signal });
+    if (!res.ok) throw new Error(`GET ${url}: HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    timeout.clear();
+  }
 }
 
 async function liveOrFallback<T>(model: string, table: ReadonlyMap<string, T>, load: () => Promise<T>): Promise<PriceEntry<T>> {

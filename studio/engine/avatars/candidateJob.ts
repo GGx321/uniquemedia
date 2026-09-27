@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { FfmpegError } from "../../node/runFfmpeg";
+import { timeoutSignal } from "../money/timeoutSignal";
 import type { AvatarDescriptor, EngineError, FailedCandidateSlot } from "../../shared/engine";
 import type { CandidatesJobEnd } from "../jobs";
 import type { NewPhotoMeta } from "../library";
@@ -267,7 +268,13 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
   if (job.signal.aborted) return { slot, kind: "aborted" };
   // The downscale is told to stop on a cancel or the timeout, and is not waited for past either.
   const timeoutMs = job.prepareTimeoutMs ?? PREPARE_TIMEOUT_MS;
-  const prepare = AbortSignal.any([job.signal, AbortSignal.timeout(timeoutMs)]);
+  // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
+  // unref'd, which hung the Windows CI runs once M6 moved these tests onto
+  // Bun's native AbortController/AbortSignal (timeoutSignal.ts's own doc
+  // comment has the full story). Cleared below whichever way `prepare` ends,
+  // so its ref'd timer never outlives this slot's own work.
+  const timeout = timeoutSignal(timeoutMs);
+  const prepare = AbortSignal.any([job.signal, timeout.signal]);
   let jpeg: Uint8Array;
   try {
     jpeg = await untilAborted(deps.downscale(image.bytes, prepare), prepare);
@@ -287,6 +294,8 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
     // it already stored sit unreported.
     if (prepare.aborted) return failed(slot, { code: "INTERNAL", detail: `preparing the image for the age check timed out after ${timeoutMs} ms` }, true);
     return failed(slot, { code: "INTERNAL", detail: `the image could not be prepared for the age check: ${messageOf(error)}` }, isSpawnFailure(error));
+  } finally {
+    timeout.clear();
   }
   return ageGate(deps, job, slot, ageShape, { attemptId, prompt, image, size, jpeg });
 }

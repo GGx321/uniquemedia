@@ -43,6 +43,7 @@ import { jpegDataUrl } from "../engine/openrouter/image";
 import { makeRedactor } from "../engine/openrouter/redact";
 import { downscaleToJpeg } from "../node/downscale";
 import { FfmpegError } from "../node/runFfmpeg";
+import { timeoutSignal } from "../engine/money/timeoutSignal";
 
 /**
  * studio/engine/avatars/candidateJob.ts's `PREPARE_TIMEOUT_MS` and
@@ -329,24 +330,35 @@ export async function checkOneImage(
     ...(partial.detail === undefined ? {} : { detail: redact(partial.detail) }),
   });
 
+  // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
+  // unref'd, which hung the Windows CI runs once M6 moved these tests onto
+  // Bun's native AbortController/AbortSignal (timeoutSignal.ts's own doc
+  // comment has the full story). Each timer is cleared in its own finally,
+  // whichever way its step ends.
   let jpeg: Uint8Array;
+  const prepareTimeout = timeoutSignal(timeouts.prepareMs);
   try {
     const bytes = new Uint8Array(await readFile(filePath));
-    jpeg = await downscaleToJpeg(bytes, { maxSide: AGE_CHECK_MAX_SIDE, signal: AbortSignal.timeout(timeouts.prepareMs) });
+    jpeg = await downscaleToJpeg(bytes, { maxSide: AGE_CHECK_MAX_SIDE, signal: prepareTimeout.signal });
   } catch (error) {
     return row({ adult: null, confidence: null, reason: null, verdict: "read-failed", detail: messageOf(error) });
+  } finally {
+    prepareTimeout.clear();
   }
 
   let res: { status: number; json(): Promise<unknown> };
+  const requestTimeout = timeoutSignal(timeouts.requestMs);
   try {
     res = await fetchFn(`${OPENROUTER_API_BASE}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(ageCheckRequestBody(jpeg)),
-      signal: AbortSignal.timeout(timeouts.requestMs),
+      signal: requestTimeout.signal,
     });
   } catch (error) {
     return row({ adult: null, confidence: null, reason: null, verdict: "request-failed", detail: messageOf(error) });
+  } finally {
+    requestTimeout.clear();
   }
   const body = await res.json().catch(() => null);
   if (res.status !== 200) {
