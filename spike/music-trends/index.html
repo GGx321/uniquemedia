@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Тренды музыки TikTok — спайк</title>
+<style>
+  :root {
+    --bg: #09090c;
+    --panel: #14141b;
+    --border: #272733;
+    --accent: #ff7a59;
+    --text: #e8e8ee;
+    --muted: #8b8b98;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .app {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 24px 16px 64px;
+  }
+  header h1 {
+    font-size: 20px;
+    margin: 0 0 8px;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 20px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .panel h2 {
+    font-size: 15px;
+    margin: 0 0 12px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+  .field label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  select, input[type="number"], input[type="text"] {
+    background: #1c1c25;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  input[type="file"] {
+    color: var(--text);
+    font-size: 13px;
+  }
+  button {
+    background: var(--accent);
+    color: #1a0f0a;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .checkbox, .radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .status {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .muted { color: var(--muted); font-size: 13px; }
+  .track-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .track-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .track-row:hover {
+    border-color: var(--accent);
+  }
+  .track-row.selected {
+    border-color: var(--accent);
+    background: #1c140f;
+  }
+  .track-row .cover {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: #1c1c25;
+    flex-shrink: 0;
+  }
+  .track-row .meta {
+    flex: 1;
+    min-width: 0;
+  }
+  .track-row .title {
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .track-row .sub {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tag {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .tag-song {
+    background: rgba(255, 122, 89, 0.18);
+    color: var(--accent);
+  }
+  .tag-original {
+    background: rgba(139, 139, 152, 0.18);
+    color: var(--muted);
+  }
+  .tag-monet {
+    background: rgba(139, 139, 152, 0.18);
+    color: var(--muted);
+  }
+  .tag-trending {
+    background: rgba(90, 200, 130, 0.18);
+    color: #5ac882;
+  }
+  .source-switch {
+    display: flex;
+    gap: 16px;
+  }
+  .ig-quota {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .highlight-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 12px;
+  }
+  .highlight-btn {
+    background: #1c1c25;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 400;
+    cursor: pointer;
+  }
+  .highlight-btn:hover {
+    border-color: var(--accent);
+  }
+  .render-panel h2 { margin-bottom: 6px; }
+  #selected-track { margin-top: 0; margin-bottom: 12px; }
+  .result {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .result video {
+    width: 100%;
+    max-width: 260px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #000;
+  }
+  .result a {
+    color: var(--accent);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Тренды музыки → тестовый Reels</h1>
+    <p class="hint">
+      Собери ролик, загрузи его в Instagram (можно в черновик) и проверь, подпишет ли Instagram трек.
+    </p>
+  </header>
+
+  <section class="panel">
+    <div class="source-switch">
+      <label class="radio">
+        <input type="radio" name="source" value="tiktok" checked /> TikTok (tikwm)
+      </label>
+      <label class="radio">
+        <input type="radio" name="source" value="instagram" /> Instagram (flashapi)
+      </label>
+    </div>
+  </section>
+
+  <section class="panel" id="tiktok-controls">
+    <div class="controls">
+      <div class="field">
+        <label for="region">Регион</label>
+        <select id="region">
+          <option value="US">US</option>
+          <option value="GB">GB</option>
+          <option value="DE">DE</option>
+          <option value="FR">FR</option>
+          <option value="BR">BR</option>
+          <option value="RU">RU</option>
+          <option value="TR">TR</option>
+          <option value="ID">ID</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="pages">Страниц ленты</label>
+        <input id="pages" type="number" min="1" max="10" value="3" />
+      </div>
+      <button id="load-btn" type="button">Загрузить тренды</button>
+      <label class="checkbox">
+        <input type="checkbox" id="only-songs" checked /> только песни
+      </label>
+    </div>
+    <div id="load-status" class="status"></div>
+  </section>
+
+  <section class="panel" id="instagram-controls" style="display:none">
+    <div class="controls">
+      <button id="ig-refresh-btn" type="button">Обновить (тратит 1 запрос из 30)</button>
+      <label class="checkbox">
+        <input type="checkbox" id="ig-only-trending" /> только в тренде
+      </label>
+    </div>
+    <div id="ig-status" class="status"></div>
+    <div id="ig-quota" class="ig-quota"></div>
+  </section>
+
+  <section class="panel">
+    <div id="track-list" class="track-list">
+      <p class="muted">Список пуст — нажми «Загрузить тренды».</p>
+    </div>
+  </section>
+
+  <section class="panel render-panel">
+    <h2>Собрать тестовый ролик</h2>
+    <p id="selected-track" class="muted">Сначала выбери трек из списка выше.</p>
+
+    <div class="field">
+      <label for="start-slider">Начало (сек): <span id="start-value">0</span></label>
+      <input id="start-slider" type="range" min="0" max="30" step="1" value="0" disabled />
+    </div>
+    <div id="highlight-row" class="highlight-row" style="display:none"></div>
+
+    <div class="field">
+      <label for="length-select">Длина ролика</label>
+      <select id="length-select">
+        <option value="15">15 сек</option>
+        <option value="30">30 сек</option>
+        <option value="60">60 сек</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Источник видео</label>
+      <div style="display:flex; gap:14px; margin-top:4px;">
+        <label class="radio">
+          <input type="radio" name="video-source" value="generated" checked /> сгенерировать
+        </label>
+        <label class="radio">
+          <input type="radio" name="video-source" value="upload" /> загрузить фото или видео
+        </label>
+      </div>
+    </div>
+
+    <div class="field" id="upload-field" style="display:none">
+      <input type="file" id="upload-input" accept="image/*,video/*" />
+    </div>
+
+    <button id="render-btn" type="button" disabled>Собрать</button>
+    <div id="render-status" class="status"></div>
+
+    <div id="result" class="result" style="display:none">
+      <video id="result-video" controls playsinline></video>
+      <a id="result-download" href="#" download>Скачать mp4</a>
+    </div>
+  </section>
+
+  <audio id="player" style="display:none"></audio>
+</div>
+
+<script>
+(() => {
+  const state = {
+    source: "tiktok", // "tiktok" | "instagram"
+    tiktokTracks: [],
+    igTracks: [],
+    igLoadedOnce: false,
+    igHasKey: false,
+    igCache: null,
+    selected: null, // { ...track fields, id, source }
+  };
+
+  const els = {
+    region: document.getElementById("region"),
+    pages: document.getElementById("pages"),
+    loadBtn: document.getElementById("load-btn"),
+    onlySongs: document.getElementById("only-songs"),
+    loadStatus: document.getElementById("load-status"),
+    tiktokControls: document.getElementById("tiktok-controls"),
+    instagramControls: document.getElementById("instagram-controls"),
+    igRefreshBtn: document.getElementById("ig-refresh-btn"),
+    igOnlyTrending: document.getElementById("ig-only-trending"),
+    igStatus: document.getElementById("ig-status"),
+    igQuota: document.getElementById("ig-quota"),
+    trackList: document.getElementById("track-list"),
+    selectedTrack: document.getElementById("selected-track"),
+    startSlider: document.getElementById("start-slider"),
+    startValue: document.getElementById("start-value"),
+    highlightRow: document.getElementById("highlight-row"),
+    lengthSelect: document.getElementById("length-select"),
+    renderBtn: document.getElementById("render-btn"),
+    renderStatus: document.getElementById("render-status"),
+    result: document.getElementById("result"),
+    resultVideo: document.getElementById("result-video"),
+    resultDownload: document.getElementById("result-download"),
+    player: document.getElementById("player"),
+    uploadField: document.getElementById("upload-field"),
+    uploadInput: document.getElementById("upload-input"),
+  };
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function formatDuration(sec) {
+    const s = Math.max(0, Math.round(sec || 0));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2, "0")}`;
+  }
+
+  function renderList() {
+    if (state.source === "instagram") renderIgList();
+    else renderTiktokList();
+  }
+
+  function renderTiktokList() {
+    const onlySongs = els.onlySongs.checked;
+    const list = state.tiktokTracks.filter((t) => !onlySongs || t.isSong);
+    els.trackList.innerHTML = "";
+    if (list.length === 0) {
+      els.trackList.innerHTML = '<p class="muted">Нет треков — попробуй загрузить тренды ещё раз или снять фильтр «только песни».</p>';
+      return;
+    }
+    for (const t of list) {
+      const row = document.createElement("div");
+      const isSelected = state.selected && state.selected.source === "tiktok" && state.selected.id === t.id;
+      row.className = "track-row" + (isSelected ? " selected" : "");
+      row.innerHTML = `
+        <img class="cover" src="${t.cover ? escapeHtml(t.cover) : ""}" alt="" loading="lazy" />
+        <div class="meta">
+          <div class="title">${escapeHtml(t.title || "(без названия)")}</div>
+          <div class="sub">${escapeHtml(t.author || "")} · в ${t.count} трендовых роликах · ${formatDuration(t.duration)}</div>
+        </div>
+        <span class="tag ${t.isSong ? "tag-song" : "tag-original"}">${t.isSong ? "песня" : "original sound"}</span>
+      `;
+      row.addEventListener("click", () => selectTiktokTrack(t));
+      els.trackList.appendChild(row);
+    }
+  }
+
+  function renderIgList() {
+    const onlyTrending = els.igOnlyTrending.checked;
+    const list = state.igTracks.filter((t) => !onlyTrending || t.isTrendingInClips);
+    els.trackList.innerHTML = "";
+    if (list.length === 0) {
+      els.trackList.innerHTML = '<p class="muted">Нет треков — обнови кэш или сними фильтр «только в тренде».</p>';
+      return;
+    }
+    for (const t of list) {
+      const row = document.createElement("div");
+      const isSelected = state.selected && state.selected.source === "instagram" && state.selected.id === t.id;
+      row.className = "track-row" + (isSelected ? " selected" : "");
+      const monetLabel = t.monetization === "ROYALTY_FREE" ? "royalty-free" : (t.monetization || "—");
+      row.innerHTML = `
+        <img class="cover" src="${t.cover ? escapeHtml(t.cover) : ""}" alt="" loading="lazy" />
+        <div class="meta">
+          <div class="title">${escapeHtml(t.title || "(без названия)")}</div>
+          <div class="sub">${escapeHtml(t.artist || "")} · ${formatDuration((t.durationMs || 0) / 1000)}</div>
+        </div>
+        <span class="tag tag-monet">${escapeHtml(monetLabel)}</span>
+        ${t.isTrendingInClips ? '<span class="tag tag-trending">в тренде</span>' : ""}
+      `;
+      row.addEventListener("click", () => selectIgTrack(t));
+      els.trackList.appendChild(row);
+    }
+  }
+
+  function renderHighlights(msList) {
+    els.highlightRow.innerHTML = "";
+    if (!msList || msList.length === 0) {
+      els.highlightRow.style.display = "none";
+      return;
+    }
+    els.highlightRow.style.display = "";
+    msList.forEach((ms, i) => {
+      const sec = Math.round(ms / 1000);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "highlight-btn";
+      btn.textContent = formatDuration(sec) + (i === 0 ? " · по умолч." : "");
+      btn.addEventListener("click", () => {
+        const clamped = Math.min(sec, Number(els.startSlider.max));
+        els.startSlider.value = String(clamped);
+        els.startValue.textContent = String(clamped);
+      });
+      els.highlightRow.appendChild(btn);
+    });
+  }
+
+  function selectTiktokTrack(t) {
+    state.selected = { ...t, source: "tiktok" };
+    els.selectedTrack.textContent = `Выбран трек: ${t.title || "(без названия)"} — ${t.author || ""}`;
+    const maxStart = Math.max(1, Math.round(t.duration || 30));
+    els.startSlider.max = String(maxStart);
+    els.startSlider.value = "0";
+    els.startValue.textContent = "0";
+    els.startSlider.disabled = false;
+    els.renderBtn.disabled = false;
+    els.result.style.display = "none";
+    renderHighlights([]);
+    els.player.src = `/api/audio/${encodeURIComponent(t.id)}`;
+    els.player.play().catch(() => {});
+    renderList();
+  }
+
+  function selectIgTrack(t) {
+    state.selected = { ...t, source: "instagram" };
+    els.selectedTrack.textContent = `Выбран трек (Instagram): ${t.title || "(без названия)"} — ${t.artist || ""}`;
+    const maxStart = Math.max(1, Math.round((t.durationMs || 30000) / 1000));
+    els.startSlider.max = String(maxStart);
+    const highlights = t.highlightStartsMs || [];
+    const defaultStartSec = highlights.length ? Math.min(Math.round(highlights[0] / 1000), maxStart) : 0;
+    els.startSlider.value = String(defaultStartSec);
+    els.startValue.textContent = String(defaultStartSec);
+    els.startSlider.disabled = false;
+    els.renderBtn.disabled = false;
+    els.result.style.display = "none";
+    renderHighlights(highlights);
+    els.player.src = `/api/ig/audio/${encodeURIComponent(t.id)}`;
+    els.player.play().catch(() => {});
+    renderList();
+  }
+
+  function resetSelection() {
+    state.selected = null;
+    els.selectedTrack.textContent = "Сначала выбери трек из списка выше.";
+    els.startSlider.disabled = true;
+    els.startSlider.value = "0";
+    els.startValue.textContent = "0";
+    els.renderBtn.disabled = true;
+    els.result.style.display = "none";
+    els.player.pause();
+    renderHighlights([]);
+  }
+
+  function updateIgStatusText() {
+    if (!state.igHasKey) {
+      els.igStatus.textContent = "Нет ключа: запусти с RAPIDAPI_KEY=…";
+    } else if (state.igCache) {
+      const d = new Date(state.igCache.fetchedAt);
+      els.igStatus.textContent = `из кэша от ${d.toLocaleString("ru-RU")} — запрос не тратился`;
+    } else {
+      els.igStatus.textContent = "Кэша ещё нет — нажми «Обновить».";
+    }
+    const q = state.igCache && state.igCache.quota;
+    if (q && (q.remaining != null || q.limit != null)) {
+      els.igQuota.textContent = `Квота RapidAPI: осталось ${q.remaining ?? "?"} из ${q.limit ?? "?"} запросов.`;
+    } else {
+      els.igQuota.textContent = "";
+    }
+    els.igRefreshBtn.disabled = !state.igHasKey;
+  }
+
+  function applyIgData(data) {
+    state.igHasKey = Boolean(data.hasKey);
+    state.igCache = data.cache;
+    state.igTracks = data.tracks || [];
+    updateIgStatusText();
+    renderList();
+  }
+
+  async function loadIgFromCache() {
+    els.igStatus.textContent = "Загружаю кэш...";
+    try {
+      const res = await fetch("/api/ig/trending");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      applyIgData(data);
+    } catch (err) {
+      els.igStatus.textContent = `Ошибка: ${err.message}`;
+    }
+  }
+
+  els.startSlider.addEventListener("input", () => {
+    els.startValue.textContent = els.startSlider.value;
+  });
+
+  els.onlySongs.addEventListener("change", renderList);
+  els.igOnlyTrending.addEventListener("change", renderList);
+
+  document.querySelectorAll('input[name="source"]').forEach((el) => {
+    el.addEventListener("change", () => {
+      state.source = document.querySelector('input[name="source"]:checked').value;
+      els.tiktokControls.style.display = state.source === "tiktok" ? "" : "none";
+      els.instagramControls.style.display = state.source === "instagram" ? "" : "none";
+      resetSelection();
+      if (state.source === "instagram" && !state.igLoadedOnce) {
+        state.igLoadedOnce = true;
+        loadIgFromCache();
+      }
+      renderList();
+    });
+  });
+
+  document.querySelectorAll('input[name="video-source"]').forEach((el) => {
+    el.addEventListener("change", () => {
+      const upload = document.querySelector('input[name="video-source"]:checked').value === "upload";
+      els.uploadField.style.display = upload ? "" : "none";
+    });
+  });
+
+  els.loadBtn.addEventListener("click", async () => {
+    els.loadBtn.disabled = true;
+    els.loadStatus.textContent = "Загружаю тренды...";
+    try {
+      const region = els.region.value;
+      const pages = els.pages.value;
+      const res = await fetch(`/api/trending?region=${encodeURIComponent(region)}&pages=${encodeURIComponent(pages)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      state.tiktokTracks = data.sounds || [];
+      renderList();
+      let msg = `Готово: ${state.tiktokTracks.length} звуков из ${data.videosSeen} роликов (успешно ${data.pagesFetched} из ${data.pagesRequested} страниц).`;
+      if (data.warnings && data.warnings.length) {
+        msg += ` Предупреждения: ${data.warnings.join("; ")}`;
+      }
+      els.loadStatus.textContent = msg;
+    } catch (err) {
+      els.loadStatus.textContent = `Ошибка: ${err.message}`;
+    } finally {
+      els.loadBtn.disabled = false;
+    }
+  });
+
+  els.igRefreshBtn.addEventListener("click", async () => {
+    els.igRefreshBtn.disabled = true;
+    els.igStatus.textContent = "Запрашиваю flashapi (тратится 1 запрос из 30)...";
+    try {
+      const res = await fetch("/api/ig/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      applyIgData(data);
+    } catch (err) {
+      els.igStatus.textContent = `Ошибка: ${err.message}`;
+      els.igRefreshBtn.disabled = !state.igHasKey;
+    }
+  });
+
+  els.renderBtn.addEventListener("click", async () => {
+    if (!state.selected) return;
+    els.renderBtn.disabled = true;
+    els.renderStatus.textContent = "Рендерим ролик... это может занять несколько секунд.";
+    els.result.style.display = "none";
+    try {
+      const videoSource = document.querySelector('input[name="video-source"]:checked').value;
+      const startSec = Number(els.startSlider.value);
+      const lengthSec = Number(els.lengthSelect.value);
+      const trackSource = state.selected.source;
+      let res;
+      if (videoSource === "upload") {
+        const file = els.uploadInput.files[0];
+        if (!file) throw new Error("Выбери файл для загрузки");
+        const form = new FormData();
+        form.set("id", state.selected.id);
+        form.set("startSec", String(startSec));
+        form.set("lengthSec", String(lengthSec));
+        form.set("trackSource", trackSource);
+        form.set("file", file);
+        res = await fetch("/api/render", { method: "POST", body: form });
+      } else {
+        res = await fetch("/api/render", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: state.selected.id, startSec, lengthSec, videoKind: "generated", trackSource }),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      els.resultVideo.src = data.url;
+      els.resultDownload.href = data.url;
+      els.result.style.display = "";
+      els.renderStatus.textContent = `Готово: ${data.lengthSec} сек, старт с ${data.startSec} сек.`;
+    } catch (err) {
+      els.renderStatus.textContent = `Ошибка: ${err.message}`;
+    } finally {
+      els.renderBtn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
