@@ -5,6 +5,10 @@
  * ffmpeg decoding does not reach that parity (spike/face-js/README.md's own
  * table: ~0.01-0.03 mean |Δcos|), so a plain node/bun JPEG decoder would not
  * do. Never imported by studio/engine.
+ *
+ * Returns tagged `bgra` pixels, `nativeImage.toBitmap()`'s real byte order —
+ * unconverted, so parity.test.ts exercises `pixels.ts`'s `bgra` branch for
+ * real instead of a decoder-side conversion papering over the tag.
  */
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -12,29 +16,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import type { TaggedPixels } from "../pixels";
 
 const execFileAsync = promisify(execFile);
 const DECODE_SCRIPT = fileURLToPath(new URL("./electronDecode.mjs", import.meta.url));
-
-/** BGRA (Electron's `toBitmap()`) -> RGBA (this module's own input contract). */
-export function bgraToRgba(bgra: Uint8Array): Uint8Array {
-  if (bgra.length % 4 !== 0) throw new Error(`face/testing: expected a multiple of 4 bytes, got ${bgra.length}`);
-  const out = new Uint8Array(bgra.length);
-  for (let i = 0; i < bgra.length; i += 4) {
-    out[i] = bgra[i + 2] ?? 0;
-    out[i + 1] = bgra[i + 1] ?? 0;
-    out[i + 2] = bgra[i] ?? 0;
-    out[i + 3] = bgra[i + 3] ?? 0;
-  }
-  return out;
-}
-
-export interface DecodedImage {
-  width: number;
-  height: number;
-  /** RGBA, already converted from Electron's native BGRA. */
-  data: Uint8Array;
-}
 
 /** Resolves the electron binary's path the same way any app would: `require("electron")` outside of ELECTRON_RUN_AS_NODE is that path, not the API. */
 async function electronBinaryPath(): Promise<string> {
@@ -44,7 +29,7 @@ async function electronBinaryPath(): Promise<string> {
 }
 
 /** Decodes several images in one Electron run (the app itself takes a moment to spin up). */
-export async function decodeImagesWithElectron(paths: readonly string[]): Promise<DecodedImage[]> {
+export async function decodeImagesWithElectron(paths: readonly string[]): Promise<TaggedPixels[]> {
   const dir = await mkdtemp(join(tmpdir(), "studio-face-decode-"));
   try {
     const outs = paths.map((_, i) => join(dir, `${i}.bin`));
@@ -55,13 +40,13 @@ export async function decodeImagesWithElectron(paths: readonly string[]): Promis
     const electron = await electronBinaryPath();
     await execFileAsync(electron, [DECODE_SCRIPT, manifestPath], { timeout: 60_000 });
 
-    const results: DecodedImage[] = [];
+    const results: TaggedPixels[] = [];
     for (const outPath of outs) {
       const buf = await readFile(outPath);
       const width = buf.readInt32LE(0);
       const height = buf.readInt32LE(4);
       const bgra = new Uint8Array(buf.buffer, buf.byteOffset + 8, buf.length - 8);
-      results.push({ width, height, data: bgraToRgba(bgra) });
+      results.push({ format: "bgra", width, height, data: bgra });
     }
     return results;
   } finally {

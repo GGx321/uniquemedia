@@ -2,8 +2,8 @@ import { aggregateSimilarity } from "./calibration";
 import type { FaceGateConfig } from "./config";
 import type { FacePose } from "./config";
 import { defaultFaceGateConfig } from "./config";
-import { rgbaToBgr } from "./pixels";
-import type { BgrImage } from "./pixels";
+import { toBgrImage } from "./pixels";
+import type { BgrImage, TaggedPixels } from "./pixels";
 import { decideFaceVerdict, prominentFaces } from "./policy";
 import type { DetectedFaceBox } from "./policy";
 import { alignCrop, cosine, createRecognizer, feature } from "./sface";
@@ -11,12 +11,14 @@ import type { FaceVerdict } from "./verdict";
 import { createDetector, detect } from "./yunet";
 import type { Detector } from "./yunet";
 
-/** Decoded pixels handed to the gate: RGBA, whatever produced them (Chromium's job, not this module's — see index.ts). */
-export interface FaceGateImage {
-  width: number;
-  height: number;
-  data: Uint8Array;
-}
+/**
+ * Decoded pixels handed to the gate — Chromium's job to decode, not this
+ * module's (see index.ts), but tagged with the real byte order: main's
+ * `nativeImage.toBitmap()` is BGRA, a renderer's `createImageBitmap` is
+ * RGBA. `pixels.ts`'s `toBgrImage` refuses an untagged or wrong-order
+ * buffer rather than guessing.
+ */
+export type FaceGateImage = TaggedPixels;
 
 export interface FaceGateInput {
   pose: FacePose;
@@ -141,11 +143,11 @@ export async function createFaceGate(
 
   return {
     async check(input: FaceGateInput): Promise<FaceVerdict> {
-      const bgr = rgbaToBgr(input.image.width, input.image.height, input.image.data);
+      const bgr = toBgrImage(input.image);
       return runFaceGate(bgr, input, detector, config, similarityFn);
     },
     async embed(image: FaceGateImage): Promise<Float32Array> {
-      const bgr = rgbaToBgr(image.width, image.height, image.data);
+      const bgr = toBgrImage(image);
       const faces = await detect(detector, bgr);
       const face = largestByArea(faces);
       if (face === undefined) throw new Error("face/gate: embed() found no face in the reference image");
