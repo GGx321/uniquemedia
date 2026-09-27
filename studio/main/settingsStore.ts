@@ -12,6 +12,14 @@ export const DEFAULT_MONTHLY_BUDGET_MICROS = 10_000_000;
 export const DEFAULT_IMAGE_MODEL = "x-ai/grok-imagine-image-2.0";
 export const DEFAULT_TEXT_MODEL = "x-ai/grok-4.3";
 export const DEFAULT_NETWORK_CONCURRENCY = 6;
+/**
+ * Owner's decision (2026-09-27): the paid image age check is off by default.
+ * An older settings.json (written before this field existed) is missing the
+ * key entirely, not carrying some other value — `loadSettings` backfills
+ * exactly this default before validating, so an upgrade never turns the
+ * check on by surprise.
+ */
+export const DEFAULT_IMAGE_AGE_CHECK = "off";
 
 /** On disk: the non-secret settings plus a version, strict so a stray field (a key) is refused. */
 const SettingsFile = EngineSettings.extend({ schemaVersion: z.literal(1) });
@@ -28,6 +36,7 @@ export function defaultSettings(userData: string): EngineSettings {
     imageModel: DEFAULT_IMAGE_MODEL,
     textModel: DEFAULT_TEXT_MODEL,
     concurrency: { network: DEFAULT_NETWORK_CONCURRENCY },
+    imageAgeCheck: DEFAULT_IMAGE_AGE_CHECK,
   });
 }
 
@@ -57,7 +66,14 @@ export async function loadSettings(userData: string): Promise<LoadedSettings> {
   } catch {
     return { source: "invalid", settings: defaultSettings(userData), problem: `${SETTINGS_FILE} is not valid JSON` };
   }
-  const parsed = SettingsFile.safeParse(raw);
+  // Backward compatibility for a file written before imageAgeCheck existed:
+  // backfill the default only when the key is truly absent, never overriding
+  // an explicit (even if later invalid) value the file already carries.
+  const withImageAgeCheckDefault =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw) && !("imageAgeCheck" in raw)
+      ? { ...raw, imageAgeCheck: DEFAULT_IMAGE_AGE_CHECK }
+      : raw;
+  const parsed = SettingsFile.safeParse(withImageAgeCheckDefault);
   if (!parsed.success) {
     const where = parsed.error.issues.map((i) => i.path.map(String).join(".") || "(root)").join(", ");
     return { source: "invalid", settings: defaultSettings(userData), problem: `${SETTINGS_FILE} breaks its schema at ${where}` };

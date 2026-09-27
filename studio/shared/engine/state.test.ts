@@ -23,6 +23,7 @@ const settings = {
   imageModel: "x-ai/grok-imagine-image-2.0",
   textModel: "x-ai/grok-4.3",
   concurrency: { network: 6 },
+  imageAgeCheck: "off",
 };
 
 const money = {
@@ -183,6 +184,19 @@ describe("Settings", () => {
 
   test("rejects an extra field", () => {
     expect(Settings.safeParse({ ...settings, apiKeyPlain: "x" }).success).toBe(false);
+  });
+
+  test.each(["off", "on"])("accepts imageAgeCheck %p", (imageAgeCheck) => {
+    expect(Settings.safeParse({ ...settings, imageAgeCheck }).success).toBe(true);
+  });
+
+  test("rejects an imageAgeCheck outside off/on", () => {
+    expect(Settings.safeParse({ ...settings, imageAgeCheck: "true" }).success).toBe(false);
+  });
+
+  test("rejects a missing imageAgeCheck: no default at the contract's own boundary, only in settingsStore's file-loading (backward compatibility lives there, not here)", () => {
+    const { imageAgeCheck: _drop, ...rest } = settings;
+    expect(Settings.safeParse(rest).success).toBe(false);
   });
 });
 

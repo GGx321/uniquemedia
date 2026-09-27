@@ -16,6 +16,7 @@ import {
   type EngineNotice,
   type Estimate,
   type EventMessage,
+  type ImageAgeCheck,
   type LedgerUnavailable,
   type MoneyHalt,
   type MoneyStatus,
@@ -222,6 +223,8 @@ interface RunningCandidates {
   priceBook: PriceBook;
   imageModel: string;
   concurrency: number;
+  /** Captured at #generateCandidates: a mid-flight settings.setImageAgeCheck must not affect this running job. */
+  imageAgeCheck: ImageAgeCheck;
   signal: AbortSignal;
   done: number;
 }
@@ -572,7 +575,8 @@ export class Engine {
       case "avatars.estimate": {
         // The traits do not change the price: the descriptor prompt is bounded by its ceiling.
         const models = this.#avatarModels();
-        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models)), models, "new-avatar");
+        const imageAgeCheck = this.#settings.imageAgeCheck;
+        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models, "new-avatar", imageAgeCheck)), models, "new-avatar", imageAgeCheck);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
       case "avatars.estimateCandidates": {
@@ -587,7 +591,8 @@ export class Engine {
         this.#assertDescriptorReadable(manifest);
         if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
         const models = this.#avatarModels();
-        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models)), models, "next-batch");
+        const imageAgeCheck = this.#settings.imageAgeCheck;
+        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models, "next-batch", imageAgeCheck)), models, "next-batch", imageAgeCheck);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
       case "avatars.estimateRewriteDescriptor": {
@@ -600,7 +605,11 @@ export class Engine {
         const manifest = this.#manifestOrNotFound(library, command.payload.avatarId);
         this.#assertRewritable(command.payload.avatarId, manifest);
         const models = this.#avatarModels();
-        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models, "rewrite-descriptor")), models, "rewrite-descriptor");
+        // rewrite-descriptor never touches candidates or age checks, whatever
+        // the toggle; the mode is still passed through for the (required)
+        // parameter's own sake, and to price the same models either way.
+        const imageAgeCheck = this.#settings.imageAgeCheck;
+        const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models, "rewrite-descriptor", imageAgeCheck)), models, "rewrite-descriptor", imageAgeCheck);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
       case "avatars.createDraft": {
@@ -724,8 +733,33 @@ export class Engine {
    */
   #nextBatchAtKnownPrices(): Estimate | null {
     const models = this.#avatarModels();
-    const priced = this.#prices.peek(avatarPriceModels(models));
-    return priced === null ? null : avatarJobEstimate(priced, models, "next-batch");
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    const priced = this.#prices.peek(avatarPriceModels(models, "next-batch", imageAgeCheck));
+    return priced === null ? null : avatarJobEstimate(priced, models, "next-batch", imageAgeCheck);
+  }
+
+  /**
+   * Re-broadcasts every open draft with its estimate repriced in the current
+   * mode, whenever settings.imageAgeCheck itself changed (whole-slice review,
+   * MEDIUM #5): a draft's own `estimate` is a snapshot taken when it was last
+   * priced (createDraft, or a prior batch) and never updates itself, so it
+   * would otherwise disagree with the wizard's caption, which reads the
+   * setting live — the renderer applies `draft.changed` like any other event,
+   * so this is enough; no renderer change is needed. A snapshot (or the next
+   * `avatars.estimateCandidates`) already re-prices on demand — this only
+   * covers a draft a window may already be showing. Never fetches (like
+   * `#nextBatchAtKnownPrices` itself): a settings.update has no reply main
+   * waits on, so this must not hold it up on the network.
+   */
+  #rebroadcastDraftEstimates(): void {
+    if (this.#live === null) return;
+    const nextBatch = this.#nextBatchAtKnownPrices();
+    for (const manifest of this.#live.library.listAvatars()) {
+      if (manifest.status !== "draft") continue;
+      const draft = draftFrom(manifest, this.#live.library.photosByAvatar(manifest.id));
+      if (draft === null) continue;
+      this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft: { ...draft, estimate: nextBatch } } });
+    }
   }
 
   /** The stored manifest for `avatarId` in `library` (any status), whether or not it fits the contract; NOT_FOUND when there is none. */
@@ -788,8 +822,10 @@ export class Engine {
     const traits = AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age });
     if (!traits.success) throw new Error(`unreachable: isRewritable said avatar ${avatarId}'s traits parse`);
     const models = this.#avatarModels();
-    const priced = await this.#prices.get(avatarPriceModels(models, "rewrite-descriptor"));
-    const job = avatarJobEstimate(priced, models, "rewrite-descriptor");
+    // rewrite-descriptor never touches candidates or age checks either way (see the estimate command's own comment above).
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    const priced = await this.#prices.get(avatarPriceModels(models, "rewrite-descriptor", imageAgeCheck));
+    const job = avatarJobEstimate(priced, models, "rewrite-descriptor", imageAgeCheck);
     Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, job.worstMicros);
 
@@ -849,8 +885,12 @@ export class Engine {
     const budget = this.#paidBudget();
     const library = await this.#liveLibrary();
     const models = this.#avatarModels();
-    const priced = await this.#prices.get(avatarPriceModels(models));
-    const job = avatarJobEstimate(priced, models, "new-avatar");
+    // Captured once, here: a mid-flight settings.setImageAgeCheck must not
+    // affect this command's own job, and a mode changed since the estimate
+    // the user accepted must PRICE_CHANGED, not silently spend at the new mode.
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    const priced = await this.#prices.get(avatarPriceModels(models, "new-avatar", imageAgeCheck));
+    const job = avatarJobEstimate(priced, models, "new-avatar", imageAgeCheck);
     Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, job.worstMicros);
 
@@ -890,7 +930,7 @@ export class Engine {
       });
     const stored = draftFrom(manifest, []);
     if (stored === null) throw new Error(`the new draft ${manifest.id} does not fit the contract`);
-    const draft: Draft = { ...stored, estimate: avatarJobEstimate(priced, models, "next-batch") };
+    const draft: Draft = { ...stored, estimate: avatarJobEstimate(priced, models, "next-batch", imageAgeCheck) };
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
     return { draft };
   }
@@ -914,15 +954,21 @@ export class Engine {
     this.#assertDescriptorReadable(manifest);
     const descriptor: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
     if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
-    // M8: every candidate needs a downscale for its age check, so a broken
+    // Captured once, here: a mid-flight settings.setImageAgeCheck must not
+    // affect this batch, whose reserves and money are fixed at this mode.
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    // M8: every candidate needed a downscale for its age check, so a broken
     // or missing ffmpeg would otherwise be discovered only mid-batch — one
     // paid image at a time, all of them thrown away. A tiny built-in image
     // through the exact same path catches that here, for free, before the
-    // price fetch, #checkAccepted, the reserve, or any request.
-    await this.#preflightDownscale();
+    // price fetch, #checkAccepted, the reserve, or any request. Skipped when
+    // the check is off: candidateJob.ts never downscales in that mode, so a
+    // broken ffmpeg would not affect this batch at all — the preflight would
+    // only be a false blocker.
+    if (imageAgeCheck === "on") await this.#preflightDownscale();
     const models = this.#avatarModels();
-    const priced = await this.#prices.get(avatarPriceModels(models));
-    const batch = avatarJobEstimate(priced, models, "next-batch");
+    const priced = await this.#prices.get(avatarPriceModels(models, "next-batch", imageAgeCheck));
+    const batch = avatarJobEstimate(priced, models, "next-batch", imageAgeCheck);
     Engine.#checkAccepted(batch.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, batch.worstMicros);
 
@@ -942,6 +988,7 @@ export class Engine {
       priceBook: priced.book,
       imageModel: models.imageModel,
       concurrency: this.#settings.concurrency.network,
+      imageAgeCheck,
       signal,
       done: 0,
     });
@@ -969,7 +1016,15 @@ export class Engine {
           errorOf: engineErrorFrom,
           onSlot: (outcome) => this.#candidateSlotDone(job, outcome),
         },
-        { jobId: job.jobId, scope: job.scope, imageModel: job.imageModel, descriptor: job.descriptor, concurrency: job.concurrency, signal: job.signal },
+        {
+          jobId: job.jobId,
+          scope: job.scope,
+          imageModel: job.imageModel,
+          descriptor: job.descriptor,
+          concurrency: job.concurrency,
+          imageAgeCheck: job.imageAgeCheck,
+          signal: job.signal,
+        },
       );
       end = candidateJobEnd(outcomes, job.signal.aborted);
     } catch (error) {
@@ -1245,7 +1300,16 @@ export class Engine {
     }
   }
 
-  /** PRICE_CHANGED when the worst case now is above the one the user accepted. */
+  /**
+   * PRICE_CHANGED when the worst case now is above the one the user accepted
+   * (T0's own contract, errors.ts, commands.ts's `AcceptedWorst`) — never on a
+   * drop. A drop is routine (a fresh price load, the fallback table's 60 s
+   * TTL, or settings.setImageAgeCheck turned OFF since the estimate): the
+   * command then spends less than the user agreed to and simply follows
+   * whatever is cheaper right now, same as the mock (mockEngine.ts's
+   * `priceGate`) already did. A toggle turned ON since the estimate still
+   * raises the worst case, so that direction is still caught below.
+   */
   static #checkAccepted(worstMicros: number, acceptedWorstMicros: number): void {
     if (worstMicros > acceptedWorstMicros) {
       throw new EngineFailure({ code: "PRICE_CHANGED", detail: `the worst case is now ${worstMicros} µ$, above the accepted ${acceptedWorstMicros} µ$` });
@@ -1395,6 +1459,7 @@ export class Engine {
       }
       this.#settings = { ...this.#settings, libraryPath: next.libraryPath };
     }
+    if (previous.imageAgeCheck !== this.#settings.imageAgeCheck) this.#rebroadcastDraftEstimates();
     this.#emitSettings();
     return refusal;
   }

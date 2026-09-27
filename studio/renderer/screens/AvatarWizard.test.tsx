@@ -50,7 +50,7 @@ function vibeInput(): HTMLElement {
 }
 
 test("the estimate is shown before anything is spent", async () => {
-  const { engine } = setup();
+  const { engine } = setup({ imageAgeCheck: "on" });
   await openWizard();
   expect(screen.queryByRole("button", { name: /Сгенерировать/ })).toBeNull();
 
@@ -63,7 +63,7 @@ test("the estimate is shown before anything is spent", async () => {
 });
 
 test("generate sends the whole new-avatar worst to createDraft, then the draft's own batch worst to generateCandidates", async () => {
-  const { engine } = setup();
+  const { engine } = setup({ imageAgeCheck: "on" });
   await openWizard();
   await estimate();
   fireEvent.click(generateButton());
@@ -114,7 +114,7 @@ test("changing the traits drops the estimate, so a stale price can never be acce
 });
 
 test("PRICE_CHANGED shows the new estimate and asks again before spending", async () => {
-  const { engine } = setup();
+  const { engine } = setup({ imageAgeCheck: "on" });
   await openWizard();
   await estimate();
   engine.setPrice({ expectedMicros: 215_000, worstMicros: 250_000 });
@@ -136,7 +136,7 @@ test("PRICE_CHANGED shows the new estimate and asks again before spending", asyn
 });
 
 test("«Ещё 4 варианта» shows the draft's own batch price, not the whole new-avatar price it replaced", async () => {
-  const { scheduler } = setup();
+  const { scheduler } = setup({ imageAgeCheck: "on" });
   await openWizard();
   await estimate();
   expect(generateButton().textContent).toBe("Сгенерировать 4 варианта · до $0.23");
@@ -152,7 +152,7 @@ test("«Ещё 4 варианта» shows the draft's own batch price, not the w
 });
 
 test("a price rise while the batch is being bought re-asks via avatars.estimateCandidates, never the full avatars.estimate, before any candidates are sent", async () => {
-  const { engine, scheduler } = setup();
+  const { engine, scheduler } = setup({ imageAgeCheck: "on" });
   await openWizard();
   await estimate();
   // Only the batch call is delayed: the price can move in the gap between
@@ -190,7 +190,7 @@ test("a price rise while the batch is being bought re-asks via avatars.estimateC
 });
 
 test("a fresh draft with no batch estimate re-prices via avatars.estimateCandidates and asks before any batch is sent", async () => {
-  const { engine, scheduler } = setup();
+  const { engine, scheduler } = setup({ imageAgeCheck: "on" });
   await openWizard();
   await estimate();
   engine.dropNextDraftEstimate();
@@ -217,7 +217,7 @@ test("a fresh draft with no batch estimate re-prices via avatars.estimateCandida
 });
 
 test("a failed fallback re-estimate clears the stale whole-avatar price so it can never be sent, and a retry gets the batch price", async () => {
-  const { engine } = setup();
+  const { engine } = setup({ imageAgeCheck: "on" });
   await openWizard();
   await estimate();
   engine.dropNextDraftEstimate();
@@ -303,7 +303,7 @@ test("focus moves to the candidates when the generate button goes away", async (
 });
 
 test("another batch does not claim to rewrite the descriptor", async () => {
-  const { scheduler } = setup();
+  const { scheduler } = setup({ imageAgeCheck: "on" });
   await openWizard();
   await estimate();
   expect(document.querySelector(".estimate-caption")?.textContent).toContain("Дескриптор, 4 портрета");
@@ -313,6 +313,39 @@ test("another batch does not claim to rewrite the descriptor", async () => {
   const caption = document.querySelector(".estimate-caption")?.textContent ?? "";
   expect(caption).not.toContain("Дескриптор,");
   expect(caption).toContain("не пересоздаётся");
+});
+
+// Owner's decision (2026-09-27): the paid image age check is optional, off by
+// default; the wizard's Russian texts that mention it must be accurate in
+// both modes.
+test("with the image age check off, the estimate caption never mentions it", async () => {
+  const { scheduler } = setup({ imageAgeCheck: "off" });
+  await openWizard();
+  await estimate();
+  const newAvatarCaption = document.querySelector(".estimate-caption")?.textContent ?? "";
+  expect(newAvatarCaption).toContain("Дескриптор и 4 портрета");
+  expect(newAvatarCaption).not.toContain("проверка возраста");
+
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  tick(scheduler, 1);
+
+  const drawnPill = await screen.findByText("готов");
+  expect(drawnPill.textContent).not.toContain("проверка");
+});
+
+test("with the image age check on (default), the estimate caption and the drawn-slot pill both mention it", async () => {
+  const { scheduler } = setup({ imageAgeCheck: "on" });
+  await openWizard();
+  await estimate();
+  const newAvatarCaption = document.querySelector(".estimate-caption")?.textContent ?? "";
+  expect(newAvatarCaption).toContain("проверка возраста");
+
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  tick(scheduler, 1);
+
+  expect(await screen.findByText("готов · проверка")).toBeDefined();
 });
 
 test("cancel sends avatars.cancel for the running job", async () => {
@@ -628,7 +661,7 @@ test("leaving the wizard while the draft is being created buys no batch afterwar
 
 test("a continued draft with no cached price fetches one via avatars.estimateCandidates, not the full avatars.estimate", async () => {
   const draft = continuedDraft();
-  const { engine } = setup({ drafts: [draft] });
+  const { engine } = setup({ drafts: [draft], imageAgeCheck: "on" });
   await continueDraft();
 
   await waitFor(() => expect(estimateText()).not.toBeNull());

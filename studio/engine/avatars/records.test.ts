@@ -130,28 +130,47 @@ describe("draftFrom", () => {
   // draftFrom listed every photo, whatever its stored age verdict. A
   // below-threshold candidate (e.g. a later, stricter calibration) is no
   // longer offered at all, so a NOT_FOUND at pick is honest.
-  test("excludes a candidate whose stored verdict no longer passes today's age threshold", () => {
+  test("excludes a candidate whose stored verdict fails today's age threshold, but not one with no verdict at all", () => {
     const passing = photo("photo-0001");
     const stale = photo("photo-0002", "avatar-0001", { age: { adult: true, confidence: 0.5 } });
+    // Owner's decision (2026-09-27): with the image age check off, a stored
+    // candidate carries no qa.age verdict at all — pickable either way, since
+    // the owner's own pick is the gate. Only a verdict that actually failed
+    // (`stale` above) stays hidden.
     const neverChecked = photo("photo-0003", "avatar-0001", {});
 
-    expect(draftFrom(manifest(), [passing, stale, neverChecked])?.candidates).toEqual([{ avatarId: "avatar-0001", photoId: "photo-0001" }]);
+    expect(draftFrom(manifest(), [passing, stale, neverChecked])?.candidates).toEqual([
+      { avatarId: "avatar-0001", photoId: "photo-0001" },
+      { avatarId: "avatar-0001", photoId: "photo-0003" },
+    ]);
   });
 
   // The photos stay on disk (invariant 8 never deletes a stored, once-passing
   // photo), but a stricter calibration can hide all of them — this is what
   // tells that apart from a draft that never generated anything at all.
-  test("hiddenBelowThreshold counts the candidates a stricter threshold hides, whatever is still shown", () => {
+  test("hiddenBelowThreshold counts only candidates whose stored verdict fails, not ones with no verdict", () => {
     const passing = photo("photo-0001");
     const stale = photo("photo-0002", "avatar-0001", { age: { adult: true, confidence: 0.5 } });
     const neverChecked = photo("photo-0003", "avatar-0001", {});
 
-    expect(draftFrom(manifest(), [passing, stale, neverChecked])?.hiddenBelowThreshold).toBe(2);
+    expect(draftFrom(manifest(), [passing, stale, neverChecked])?.hiddenBelowThreshold).toBe(1);
   });
 
   test("hiddenBelowThreshold is 0 when nothing is hidden, photos or not", () => {
     expect(draftFrom(manifest(), [])?.hiddenBelowThreshold).toBe(0);
     expect(draftFrom(manifest(), [photo("photo-0001"), photo("photo-0002")])?.hiddenBelowThreshold).toBe(0);
+  });
+
+  test("every candidate with no verdict at all (the image age check was off) is shown, and none is hidden", () => {
+    const noVerdictA = photo("photo-0001", "avatar-0001", {});
+    const noVerdictB = photo("photo-0002", "avatar-0001", {});
+
+    const draft = draftFrom(manifest(), [noVerdictA, noVerdictB]);
+    expect(draft?.candidates).toEqual([
+      { avatarId: "avatar-0001", photoId: "photo-0001" },
+      { avatarId: "avatar-0001", photoId: "photo-0002" },
+    ]);
+    expect(draft?.hiddenBelowThreshold).toBe(0);
   });
 
   test("a draft whose every candidate now falls below threshold still reports their count, not zero", () => {

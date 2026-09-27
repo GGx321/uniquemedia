@@ -14,6 +14,7 @@ import {
   EventLog,
   type EventMessage,
   type FailedCandidateSlot,
+  type ImageAgeCheck,
   type JobState,
   type LedgerUnavailable,
   type MoneyHalt,
@@ -51,6 +52,12 @@ const CANCEL_CONFIRM_DELAY_MS = 50;
 
 /** The mock price list, in micro-dollars: descriptor + 4 portraits + 4 age checks. */
 export const DESCRIPTOR = { expected: 2_000, worst: 3_000 };
+/**
+ * The image age check's per-slot mock cost, folded into MOCK_ESTIMATE below
+ * (owner's decision, 2026-09-27: off by default). Subtracted from the
+ * baseline whenever `settings.imageAgeCheck` is "off" — see `#currentPrice`.
+ */
+export const MOCK_AGE_CHECK_PER_SLOT = { expected: 1_400, worst: 2_000 };
 /** The attempt a mock settle-above-worst halt names. */
 const MOCK_ABOVE_WORST_ATTEMPT = "mock-attempt#1";
 export const MOCK_ESTIMATE: Readonly<Estimate> = {
@@ -100,6 +107,8 @@ export interface MockEngineOptions {
   money?: { spentMicros?: number; monthlyBudgetMicros?: number; halt?: MoneyHalt; unavailable?: LedgerUnavailable };
   /** Stored network concurrency (the contract allows 1–16). */
   concurrency?: number;
+  /** Matches the app's own default, "off" (owner's decision, 2026-09-27). Tests that exercise the age-check path (MOCK_ESTIMATE's numbers, rejectNextByAgeCheck, ...) must set "on" explicitly. */
+  imageAgeCheck?: ImageAgeCheck;
 }
 
 /**
@@ -269,6 +278,7 @@ export class MockEngine implements EngineBridge {
       imageModel: "x-ai/grok-imagine-image-2.0",
       textModel: "x-ai/grok-4.3",
       concurrency: { network: options.concurrency ?? 6 },
+      imageAgeCheck: options.imageAgeCheck ?? "off",
     };
     this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.drafts = options.drafts ?? [];
@@ -314,6 +324,19 @@ export class MockEngine implements EngineBridge {
   /** Changes the current price; a paid command accepted at a lower worst case gets PRICE_CHANGED. */
   setPrice(price: Pick<Estimate, "expectedMicros" | "worstMicros">): void {
     this.price = { ...this.price, ...price };
+  }
+
+  /**
+   * `this.price` (the on-mode baseline, settable via `setPrice`) with the age
+   * check's own cost taken back out when the setting is off — mirrors
+   * plan.ts's `jobInput` treating `ageChecks` as null off, in this mock's own
+   * flat-numbers model.
+   */
+  private currentPrice(): Estimate {
+    if (this.settings.imageAgeCheck === "on") return this.price;
+    const expectedMicros = Math.max(0, this.price.expectedMicros - CANDIDATES_PER_JOB * MOCK_AGE_CHECK_PER_SLOT.expected);
+    const worstMicros = Math.max(0, this.price.worstMicros - CANDIDATES_PER_JOB * MOCK_AGE_CHECK_PER_SLOT.worst);
+    return { ...this.price, expectedMicros, worstMicros };
   }
 
   /** OpenRouter answered 401: the key is marked rejected and running jobs fail with AUTH_INVALID. */
@@ -466,6 +489,10 @@ export class MockEngine implements EngineBridge {
         this.settings = { ...this.settings, concurrency: { network: c.payload.network } };
         this.emitSettingsChanged();
         return this.ok(c, this.settings);
+      case "settings.setImageAgeCheck":
+        this.settings = { ...this.settings, imageAgeCheck: c.payload.imageAgeCheck };
+        this.emitSettingsChanged();
+        return this.ok(c, this.settings);
       case "money.status":
         return this.ok(c, this.moneyStatus());
       case "money.reconcile":
@@ -473,7 +500,7 @@ export class MockEngine implements EngineBridge {
       case "avatars.list":
         return this.ok(c, { avatars: this.avatars, unreadableAvatars: this.unreadable, unreadableTotal: this.unreadableCount() });
       case "avatars.estimate":
-        return this.ok(c, this.price);
+        return this.ok(c, this.currentPrice());
       case "avatars.estimateCandidates": {
         const draft = this.drafts.find((d) => d.avatarId === c.payload.avatarId);
         if (!draft) return this.fail(c, { code: "NOT_FOUND" });
@@ -486,7 +513,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, this.rewritePrice());
       }
       case "avatars.createDraft": {
-        const refusal = this.paidGate(c.payload.acceptedWorstMicros, this.price.worstMicros);
+        const refusal = this.paidGate(c.payload.acceptedWorstMicros, this.currentPrice().worstMicros);
         if (refusal) return this.fail(c, refusal);
         const noEstimate = this.nextDraftEstimateMissing;
         this.nextDraftEstimateMissing = false;
@@ -672,16 +699,22 @@ export class MockEngine implements EngineBridge {
 
   private startJob(avatarId: string): string {
     const total = CANDIDATES_PER_JOB;
-    const ageRejected = this.ageRejectionsNextJob;
+    // Off means no age check runs at all, so nothing can reject a slot for
+    // it, whatever a test forced with rejectNextByAgeCheck. Captured at job
+    // start, like the price below: a later settings.setImageAgeCheck must not
+    // affect a job already running (mirrors the real engine's own capture).
+    const ageRejected = this.settings.imageAgeCheck === "on" ? this.ageRejectionsNextJob : 0;
     this.ageRejectionsNextJob = 0;
     const failedSpec = this.failedSlotsNextJob;
     this.failedSlotsNextJob = null;
     const failedCount = failedSpec?.count ?? 0;
     const failedError: EngineError = failedSpec?.error ?? { code: "INTERNAL" };
     const failedReserveLeftOpen = failedSpec?.reserveLeftOpen ?? false;
-    // Fixed at job start, like the reserve itself: a later setPrice() must not change what an already-running slot owes.
-    const perSlotWorst = Math.round((this.price.worstMicros - DESCRIPTOR.worst) / total);
-    const perSlotExpected = Math.round((this.price.expectedMicros - DESCRIPTOR.expected) / total);
+    // Fixed at job start, like the reserve itself: a later setPrice() (or
+    // settings.setImageAgeCheck) must not change what an already-running slot owes.
+    const jobPrice = this.currentPrice();
+    const perSlotWorst = Math.round((jobPrice.worstMicros - DESCRIPTOR.worst) / total);
+    const perSlotExpected = Math.round((jobPrice.expectedMicros - DESCRIPTOR.expected) / total);
 
     const job: MockJob = {
       jobId: this.nextId("job"),
@@ -824,12 +857,13 @@ export class MockEngine implements EngineBridge {
 
   /** Another batch for an existing draft: the price without the descriptor call. */
   private candidatesPrice(): Estimate {
-    const worstMicros = Math.max(0, this.price.worstMicros - DESCRIPTOR.worst);
-    const expectedMicros = Math.min(worstMicros, Math.max(0, this.price.expectedMicros - DESCRIPTOR.expected));
-    return { ...this.price, expectedMicros, worstMicros };
+    const base = this.currentPrice();
+    const worstMicros = Math.max(0, base.worstMicros - DESCRIPTOR.worst);
+    const expectedMicros = Math.min(worstMicros, Math.max(0, base.expectedMicros - DESCRIPTOR.expected));
+    return { ...base, expectedMicros, worstMicros };
   }
 
-  /** The descriptor-only recovery's price: the same descriptor sub-cost `candidatesPrice` subtracts, alone. */
+  /** The descriptor-only recovery's price: the same descriptor sub-cost `candidatesPrice` subtracts, alone; never touches the image age check either way. */
   private rewritePrice(): Estimate {
     return { ...this.price, expectedMicros: DESCRIPTOR.expected, worstMicros: DESCRIPTOR.worst };
   }

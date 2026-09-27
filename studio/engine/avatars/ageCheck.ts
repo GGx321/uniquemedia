@@ -275,8 +275,21 @@ export function readAgeAnswer(content: string): AgeVerdict {
  * `AGE_MIN_CONFIDENCE`. Only `adult` and `confidence` are stored on a photo
  * (`PhotoQa.age`) — `reason` is not, so a later calibration can only ever
  * re-check the threshold, never `readAgeAnswer`'s doubt-in-reason rule.
- * `undefined` (no verdict at all) never passes.
+ *
+ * `undefined` (no verdict at all) passes: with the paid image age check off
+ * (owner's decision, 2026-09-27, the default), candidateJob.ts never runs it,
+ * so every candidate it stores has no verdict whatsoever — that is not the
+ * same thing as a verdict that failed, and must not be hidden from the owner,
+ * whose own pick is the gate either way. A candidate that DOES carry a
+ * failing verdict (e.g. from a batch made while the toggle was on) still
+ * fails below, even if the toggle is off now.
+ *
+ * Reviewed and confirmed (whole-slice review, 2026-09-27): a candidate made
+ * while the toggle was off stays pickable even after the toggle is switched
+ * back on — there is no re-check against a verdict that was never taken. The
+ * owner already judged that candidate by eye when he generated and picked
+ * from it; this is the intended behaviour, not a gap to close.
  */
 export function passesAgeThreshold(age: { adult: boolean; confidence: number } | undefined): boolean {
-  return age?.adult === true && age.confidence >= AGE_MIN_CONFIDENCE;
+  return age === undefined || (age.adult === true && age.confidence >= AGE_MIN_CONFIDENCE);
 }

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { type ApiKeyStatus, ERROR_MESSAGES_RU } from "../../shared/engine";
 import { callsOf, flush, openSection, setup, inAct, describeElement, focusedLabel } from "../testing";
@@ -308,6 +308,44 @@ test("models are shown read-only", async () => {
   await openSettings();
   expect(screen.getByText("x-ai/grok-imagine-image-2.0")).toBeDefined();
   expect(screen.getByText("x-ai/grok-4.3")).toBeDefined();
+});
+
+// Owner's decision (2026-09-27): the paid image age check is optional, off by default.
+describe("image age check toggle", () => {
+  test("off by default: the checkbox is unchecked and says so", async () => {
+    await openSettings(STORED, { imageAgeCheck: "off" });
+    const toggle = screen.getByLabelText("Автопроверка возраста на фото") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(screen.getByText(/\$0,005/)).toBeDefined();
+    expect(screen.getByText(/по умолчанию выключена/i)).toBeDefined();
+  });
+
+  test("shows checked when the setting is on", async () => {
+    await openSettings(STORED, { imageAgeCheck: "on" });
+    expect((screen.getByLabelText("Автопроверка возраста на фото") as HTMLInputElement).checked).toBe(true);
+  });
+
+  test("turning it on sends settings.setImageAgeCheck and reflects the engine's answer", async () => {
+    const { engine } = await openSettings(STORED, { imageAgeCheck: "off" });
+    const toggle = screen.getByLabelText("Автопроверка возраста на фото") as HTMLInputElement;
+
+    fireEvent.click(toggle);
+    await flush();
+
+    expect(callsOf(engine, "settings.setImageAgeCheck").map((c) => c.payload.imageAgeCheck)).toEqual(["on"]);
+    expect(toggle.checked).toBe(true);
+  });
+
+  test("turning it back off sends the setting with imageAgeCheck: off", async () => {
+    const { engine } = await openSettings(STORED, { imageAgeCheck: "on" });
+    const toggle = screen.getByLabelText("Автопроверка возраста на фото") as HTMLInputElement;
+
+    fireEvent.click(toggle);
+    await flush();
+
+    expect(callsOf(engine, "settings.setImageAgeCheck").map((c) => c.payload.imageAgeCheck)).toEqual(["off"]);
+    expect(toggle.checked).toBe(false);
+  });
 });
 
 test("the library folder can be changed to an absolute path only", async () => {

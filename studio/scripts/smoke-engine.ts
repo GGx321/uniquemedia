@@ -552,8 +552,18 @@ function carriesMarker(request: MockRequest): boolean {
  * one. Every check below is against what the mock actually saw, not an
  * assumption about the engine's internals.
  */
+// Owner's decision (2026-09-27): the paid image age check is off by default,
+// so this scenario runs the app's real, unconfigured default — no age-check
+// requests at all, all 4 candidates pass. The age-gate behaviour itself (the
+// rejection, the age-checked candidate count, the age-check request count)
+// stays covered by the engine test suite (candidateJob.test.ts,
+// engine.avatars.test.ts, engine.candidates.test.ts, engine.canary.test.ts,
+// engine.imageAgeCheck.test.ts) — cheaper to run and already thorough; this
+// packaged E2E only adds a cheap plumbing check that the setting can be
+// turned on through the real app (main → engine), without a second full
+// avatar/candidate cycle.
 async function runAvatarScenario(target: Target): Promise<void> {
-  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, rejectAgeCheckNumber: 1 });
+  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR });
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-avatar-"));
   const userData = join(tmp, "userData");
   const libraryRoot = join(tmp, "avatar-library");
@@ -640,28 +650,27 @@ async function runAvatarScenario(target: Target): Promise<void> {
     const candidates = field(end, "payload", "result", "candidates");
     const failedSlots = field(end, "payload", "result", "failedSlots");
     check(
-      "avatar scenario: 3 candidates passed the age check and the age-gated one was rejected",
+      "avatar scenario: with the image age check off (the app's default), all 4 candidates pass — no age check, so nothing to reject",
       Array.isArray(candidates) &&
-        candidates.length === 3 &&
-        field(end, "payload", "result", "rejectedByAgeCheck") === 1 &&
+        candidates.length === 4 &&
+        field(end, "payload", "result", "rejectedByAgeCheck") === 0 &&
         Array.isArray(failedSlots) &&
-        failedSlots.length === 1 &&
-        field(failedSlots[0], "reason") === "age-rejected",
+        failedSlots.length === 0,
       end,
     );
 
-    // 4. The 3 passed candidates' files exist in the library; the rejected one was never written anywhere (checked before the pick below deletes the unpicked ones — invariant 9).
+    // 4. All 4 candidates' files exist in the library (checked before the pick below deletes the unpicked ones — invariant 9).
     const beforePick = await filesUnder(libraryRoot);
     const photoDir = `avatars/${String(avatarId)}/photos/`;
     check(
-      "avatar scenario: exactly the 3 passed candidates' image and sidecar files exist in the library",
+      "avatar scenario: exactly the 4 candidates' image and sidecar files exist in the library",
       Array.isArray(candidates) &&
         candidates.every((c: unknown) => {
           const photoId = String(field(c, "photoId"));
           return beforePick.some((f) => f.startsWith(photoDir) && f.includes(photoId) && f.endsWith(".json")) &&
             beforePick.some((f) => f.startsWith(photoDir) && f.includes(photoId) && !f.endsWith(".json"));
         }) &&
-        beforePick.filter((f) => f.startsWith(photoDir) && f.endsWith(".json")).length === 3,
+        beforePick.filter((f) => f.startsWith(photoDir) && f.endsWith(".json")).length === 4,
       { candidates, beforePick },
     );
 
@@ -744,8 +753,8 @@ async function runAvatarScenario(target: Target): Promise<void> {
     // 10. Every request the engine made went to the mock, exactly the expected sequence, and no unknown route was hit.
     check("avatar scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
     check(
-      "avatar scenario: the mock saw exactly 1 descriptor call, 4 image calls and 4 age checks",
-      mock.descriptorRequests().length === 1 && mock.imageRequests().length === 4 && mock.ageCheckRequests().length === 4,
+      "avatar scenario: the mock saw exactly 1 descriptor call, 4 image calls and no age checks (the toggle is off)",
+      mock.descriptorRequests().length === 1 && mock.imageRequests().length === 4 && mock.ageCheckRequests().length === 0,
       mock.requests,
     );
 
@@ -761,16 +770,35 @@ async function runAvatarScenario(target: Target): Promise<void> {
     // <the fake key> (M4): the price-fetch GETs are OpenRouter's public
     // pricing endpoints and send no Authorization at all
     // (studio/engine/openrouter/priceFetch.ts), so this checks every other
-    // route — the descriptor, the 4 image calls, the 4 age checks and both
-    // reconciles' /credits.
+    // route — the descriptor, the 4 image calls (no age checks: the toggle is
+    // off) and both reconciles' /credits.
     const authenticated = mock.requests.filter((r) => !r.path.endsWith("/endpoints") && r.path !== "/api/v1/models");
     check(
       "avatar scenario: every authenticated request to the mock carried exactly Bearer <the fake key>",
-      authenticated.length === 1 + 4 + 4 + 2 && authenticated.every((r) => r.authorization === `Bearer ${SMOKE_KEY}`),
+      authenticated.length === 1 + 4 + 0 + 2 && authenticated.every((r) => r.authorization === `Bearer ${SMOKE_KEY}`),
       authenticated.map((r) => ({ path: r.path, authorization: r.authorization })),
     );
 
-    // 13. The fake key appears nowhere in the temp userData or the library —
+    // 13. A cheap plumbing check that the toggle itself works end to end
+    // through the real app (renderer → main → engine), without a second full
+    // avatar/candidate cycle: settings.setImageAgeCheck reaches the engine
+    // and its answer reports the new value. The age-check behaviour itself
+    // (on) is already covered by the engine test suite — see the comment on
+    // runAvatarScenario above.
+    const toggledOn = await req(cdp, "settings.setImageAgeCheck", { imageAgeCheck: "on" });
+    check(
+      "avatar scenario: settings.setImageAgeCheck reaches the engine and reports the new value",
+      field(toggledOn, "ok") === true && field(toggledOn, "result", "imageAgeCheck") === "on",
+      toggledOn,
+    );
+    const toggledOff = await req(cdp, "settings.setImageAgeCheck", { imageAgeCheck: "off" });
+    check(
+      "avatar scenario: settings.setImageAgeCheck can turn it back off",
+      field(toggledOff, "ok") === true && field(toggledOff, "result", "imageAgeCheck") === "off",
+      toggledOff,
+    );
+
+    // 14. The fake key appears nowhere in the temp userData or the library —
     // and nowhere in the app's captured output either — except as
     // ciphertext inside secrets.bin (M4).
     const secretsBlob = await readFile(join(userData, "secrets.bin")).catch(() => null);

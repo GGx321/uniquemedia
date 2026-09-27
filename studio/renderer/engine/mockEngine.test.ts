@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { AvatarDescriptor, type EventMessage } from "../../shared/engine";
 import { DEFAULT_TRAITS, randomTraits } from "../lib/traits";
-import { MOCK_ESTIMATE, MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
+import { MOCK_AGE_CHECK_PER_SLOT, MOCK_ESTIMATE, MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 
 function makeMock(options: ConstructorParameters<typeof MockEngine>[0] = {}) {
@@ -31,7 +31,7 @@ test("the descriptor the mock writes passes the contract for any traits", () => 
 });
 
 test("a whole avatar flow goes through the validating client without contract errors", async () => {
-  const { scheduler, client, events } = makeMock();
+  const { scheduler, client, events } = makeMock({ imageAgeCheck: "on" });
   const snapshot = await unwrap(client.request("engine.snapshot", {}));
   expect(snapshot.avatars).toEqual([]);
 
@@ -59,6 +59,45 @@ test("a whole avatar flow goes through the validating client without contract er
   // Seqs are contiguous from 1 and all carry the same bootId.
   expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
   expect(new Set(events.map((e) => e.bootId)).size).toBe(1);
+});
+
+test("the mock defaults to the image age check off, matching the app's own real default", async () => {
+  const { client } = makeMock();
+  expect((await unwrap(client.request("settings.get", {}))).imageAgeCheck).toBe("off");
+});
+
+test("with the image age check off: the estimate excludes it, no rejections are simulated even when forced, and money reflects the smaller charge", async () => {
+  const { scheduler, engine, client, events } = makeMock({ imageAgeCheck: "off" });
+  expect((await unwrap(client.request("settings.get", {}))).imageAgeCheck).toBe("off");
+
+  const estimate = await unwrap(client.request("avatars.estimate", { traits: DEFAULT_TRAITS }));
+  expect(estimate).toEqual({
+    ...MOCK_ESTIMATE,
+    expectedMicros: MOCK_ESTIMATE.expectedMicros - 4 * MOCK_AGE_CHECK_PER_SLOT.expected,
+    worstMicros: MOCK_ESTIMATE.worstMicros - 4 * MOCK_AGE_CHECK_PER_SLOT.worst,
+  });
+
+  // Forcing an age rejection has no effect: off mode never runs the check.
+  engine.rejectNextByAgeCheck(2);
+  const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: estimate.worstMicros }));
+  const { jobId } = await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: estimate.worstMicros }));
+  scheduler.runAll();
+
+  const done = events.find((e) => e.type === "job.done");
+  if (done?.type !== "job.done" || done.payload.result.kind !== "avatar.candidates") throw new Error("expected job.done");
+  expect(done.payload.jobId).toBe(jobId);
+  expect(done.payload.result.candidates).toHaveLength(4);
+  expect(done.payload.result.rejectedByAgeCheck).toBe(0);
+
+  const money = await unwrap(client.request("money.status", {}));
+  expect(money).toMatchObject({ spentMicros: estimate.expectedMicros });
+});
+
+test("settings.setImageAgeCheck changes the setting, going forward, and is reported by settings.get", async () => {
+  const { client } = makeMock();
+  const reply = await unwrap(client.request("settings.setImageAgeCheck", { imageAgeCheck: "off" }));
+  expect(reply.imageAgeCheck).toBe("off");
+  expect((await unwrap(client.request("settings.get", {}))).imageAgeCheck).toBe("off");
 });
 
 test("a paid command below the current worst case is refused with PRICE_CHANGED and spends nothing", async () => {
@@ -561,7 +600,7 @@ test("pick and archive each emit avatar.changed, not only their own command repl
 });
 
 test("failNextSlots makes some slots fail with an engine error instead of a candidate, without touching the age-rejected tail", async () => {
-  const { scheduler, engine, client } = makeMock();
+  const { scheduler, engine, client } = makeMock({ imageAgeCheck: "on" });
   engine.failNextSlots(1, { code: "MODERATION_REFUSED" });
   engine.rejectNextByAgeCheck(1);
   const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
@@ -606,7 +645,7 @@ test("failNextSlots at the full batch size ends the job done with zero candidate
 });
 
 test("a failed slot with reserveLeftOpen keeps its own reserve open after the batch finishes, until a reconcile closes it", async () => {
-  const { scheduler, engine, client } = makeMock();
+  const { scheduler, engine, client } = makeMock({ imageAgeCheck: "on" });
   engine.failNextSlots(1, { code: "NETWORK" }, true);
   const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
   await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
@@ -629,7 +668,7 @@ test("a failed slot with reserveLeftOpen keeps its own reserve open after the ba
 });
 
 test("a failed slot without reserveLeftOpen settles at zero: no open reserve, and it costs nothing", async () => {
-  const { scheduler, engine, client } = makeMock();
+  const { scheduler, engine, client } = makeMock({ imageAgeCheck: "on" });
   engine.failNextSlots(1, { code: "MODERATION_REFUSED" }); // reserveLeftOpen defaults to false: known not billed
   const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
   await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));

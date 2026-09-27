@@ -732,18 +732,31 @@ describe("avatars.pick", () => {
     expect(await filesUnder(join(dir(), "library", "quarantine"))).toEqual(expect.arrayContaining([expect.stringContaining(dropped.file)]));
   });
 
-  test("refuses a photo that is not one of the draft's age-checked candidates, and changes nothing", async () => {
+  test("refuses a photo that belongs to another avatar, or does not exist at all, and changes nothing", async () => {
     const { engine, events, draftId, masterId, candidates } = await draftWithCandidates();
-    const unchecked = await engine.library?.addPhoto(draftId, PNG_1X1, samplePhotoMeta());
     const count = events().length;
 
     expect(failed(await engine.handle(pick(draftId, masterId))).error.code).toBe("NOT_FOUND");
-    expect(failed(await engine.handle(pick(draftId, unchecked?.id ?? ""))).error.code).toBe("NOT_FOUND");
     expect(failed(await engine.handle(pick(draftId, "photo-unknown-0"))).error.code).toBe("NOT_FOUND");
 
     expect(events()).toHaveLength(count);
     expect(engine.library?.getAvatar(draftId)?.status).toBe("draft");
-    expect(engine.library?.photosByAvatar(draftId)).toHaveLength(candidates.length + 1);
+    expect(engine.library?.photosByAvatar(draftId)).toHaveLength(candidates.length);
+  });
+
+  // Owner's decision (2026-09-27): with the image age check off, a stored
+  // candidate carries no qa.age verdict at all — pickable either way, since
+  // the owner's own pick is the gate (ageCheck.ts's passesAgeThreshold).
+  test("a candidate with no age-check verdict at all (as the image age check off would leave it) is pickable", async () => {
+    const { engine, draftId, candidates } = await draftWithCandidates();
+    const unchecked = await engine.library?.addPhoto(draftId, PNG_1X1, samplePhotoMeta());
+    if (unchecked === undefined) throw new Error("expected a stored photo");
+
+    const answer = ok(await engine.handle(pick(draftId, unchecked.id, "Lena")));
+
+    expect(answer.result).toMatchObject({ avatar: { masterPhotoId: unchecked.id, status: "active" } });
+    expect(engine.library?.photosByAvatar(draftId)).toEqual([unchecked]);
+    expect(candidates).toHaveLength(4); // the other, age-checked candidates were still deleted (invariant 9)
   });
 
   // If the age check's confidence threshold rises after a later calibration,

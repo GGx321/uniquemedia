@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Estimate } from "../../shared/engine";
 import { PriceBook, type ChatPrice, type ImagePrice, type PriceEntry } from "../money/prices";
 import { avatarJobEstimate, avatarPriceModels, candidateImage, CANDIDATES_PER_BATCH, descriptorJobCap, type AvatarModels } from "./plan";
@@ -20,7 +20,7 @@ test("a candidate is a 1K low-quality portrait without a reference, on the setti
 });
 
 test("a new avatar: the descriptor (asked at most twice), 4 portraits and 4 age checks — $0.169 expected, $0.2085 worst", () => {
-  const estimate = avatarJobEstimate(FALLBACK, DEFAULTS, "new-avatar");
+  const estimate = avatarJobEstimate(FALLBACK, DEFAULTS, "new-avatar", "on");
 
   expect(estimate).toEqual({
     expectedMicros: 4 * (PORTRAIT + AGE_CHECK.expected) + DESCRIPTOR.expected,
@@ -33,7 +33,7 @@ test("a new avatar: the descriptor (asked at most twice), 4 portraits and 4 age 
 });
 
 test("another batch for a draft: 4 portraits and 4 age checks, no descriptor — $0.167 expected, $0.181 worst", () => {
-  expect(avatarJobEstimate(FALLBACK, DEFAULTS, "next-batch")).toEqual({
+  expect(avatarJobEstimate(FALLBACK, DEFAULTS, "next-batch", "on")).toEqual({
     expectedMicros: 166_640,
     worstMicros: 181_000,
     prices: "fallback",
@@ -43,7 +43,7 @@ test("another batch for a draft: 4 portraits and 4 age checks, no descriptor —
 
 test("the image model comes from the settings", () => {
   // grok-imagine-image-quality has no quality variants: its 1K price is $0.05.
-  expect(avatarJobEstimate(FALLBACK, { ...DEFAULTS, imageModel: "x-ai/grok-imagine-image-quality" }, "next-batch").worstMicros).toBe(4 * (50_000 + AGE_CHECK.worst));
+  expect(avatarJobEstimate(FALLBACK, { ...DEFAULTS, imageModel: "x-ai/grok-imagine-image-quality" }, "next-batch", "on").worstMicros).toBe(4 * (50_000 + AGE_CHECK.worst));
 });
 
 test("the text model from the settings prices the descriptor; the age checks stay on grok-4.3", () => {
@@ -60,7 +60,7 @@ test("the text model from the settings prices the descriptor; the age checks sta
     ]),
   );
 
-  const estimate = avatarJobEstimate({ book, asOf: "2026-10-01" }, { ...DEFAULTS, textModel: "acme/writer" }, "new-avatar");
+  const estimate = avatarJobEstimate({ book, asOf: "2026-10-01" }, { ...DEFAULTS, textModel: "acme/writer" }, "new-avatar", "on");
 
   expect(estimate).toEqual({
     expectedMicros: 4 * (PORTRAIT + AGE_CHECK.expected) + (900 + 600),
@@ -71,16 +71,18 @@ test("the text model from the settings prices the descriptor; the age checks sta
 });
 
 test("the models to price: the image model, the text model and the age checks' model, each once", () => {
-  expect(avatarPriceModels(DEFAULTS)).toEqual({ imageModels: ["x-ai/grok-imagine-image-2.0"], chatModels: ["x-ai/grok-4.3"] });
-  expect(avatarPriceModels({ ...DEFAULTS, textModel: "acme/writer" })).toEqual({
+  expect(avatarPriceModels(DEFAULTS, "new-avatar", "on")).toEqual({ imageModels: ["x-ai/grok-imagine-image-2.0"], chatModels: ["x-ai/grok-4.3"] });
+  expect(avatarPriceModels({ ...DEFAULTS, textModel: "acme/writer" }, "new-avatar", "on")).toEqual({
     imageModels: ["x-ai/grok-imagine-image-2.0"],
     chatModels: ["acme/writer", "x-ai/grok-4.3"],
   });
 });
 
 test("rewriting a descriptor needs only the text model priced: no image, no age-check model (L8)", () => {
-  expect(avatarPriceModels(DEFAULTS, "rewrite-descriptor")).toEqual({ imageModels: [], chatModels: ["x-ai/grok-4.3"] });
-  expect(avatarPriceModels({ ...DEFAULTS, textModel: "acme/writer" }, "rewrite-descriptor")).toEqual({ imageModels: [], chatModels: ["acme/writer"] });
+  expect(avatarPriceModels(DEFAULTS, "rewrite-descriptor", "on")).toEqual({ imageModels: [], chatModels: ["x-ai/grok-4.3"] });
+  expect(avatarPriceModels({ ...DEFAULTS, textModel: "acme/writer" }, "rewrite-descriptor", "on")).toEqual({ imageModels: [], chatModels: ["acme/writer"] });
+  // Ignored either way (rewrite-descriptor never touches the age check), so "off" gives the exact same models.
+  expect(avatarPriceModels(DEFAULTS, "rewrite-descriptor", "off")).toEqual(avatarPriceModels(DEFAULTS, "rewrite-descriptor", "on"));
 });
 
 test("estimateAvatarJob for rewrite-descriptor never prices the image model, even one with no fallback price", () => {
@@ -88,15 +90,50 @@ test("estimateAvatarJob for rewrite-descriptor never prices the image model, eve
     new Map(), // no image price loaded at all
     new Map([["x-ai/grok-4.3", { price: { promptPico: 1_250_000, completionPico: 2_500_000, imagePico: 0, requestPico: 0, overrides: [] }, source: "live" }]]),
   );
-  expect(() => avatarJobEstimate({ book, asOf: "2026-10-01" }, DEFAULTS, "rewrite-descriptor")).not.toThrow();
+  expect(() => avatarJobEstimate({ book, asOf: "2026-10-01" }, DEFAULTS, "rewrite-descriptor", "on")).not.toThrow();
 });
 
 test("the descriptor job's cap is what it can send: every attempt at its ceiling, on the settings' text model", () => {
   expect(descriptorJobCap(FALLBACK, DEFAULTS)).toBe(2 * DESCRIPTOR.worst);
 });
 
+describe("the image age check off (owner's decision, 2026-09-27: off by default)", () => {
+  test("a new avatar: the descriptor and 4 portraits, no age checks — $0.1875 worst, down from $0.2085 on", () => {
+    const estimate = avatarJobEstimate(FALLBACK, DEFAULTS, "new-avatar", "off");
+
+    expect(estimate).toEqual({
+      expectedMicros: 4 * PORTRAIT + DESCRIPTOR.expected,
+      worstMicros: 4 * PORTRAIT + 2 * DESCRIPTOR.worst,
+      prices: "fallback",
+      pricesAsOf: "2026-09-24",
+    });
+    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([162_625, 187_500]);
+  });
+
+  test("another batch for a draft: 4 portraits, no age checks, no descriptor — $0.16 worst, down from $0.181 on", () => {
+    expect(avatarJobEstimate(FALLBACK, DEFAULTS, "next-batch", "off")).toEqual({
+      expectedMicros: 160_000,
+      worstMicros: 160_000,
+      prices: "fallback",
+      pricesAsOf: "2026-09-24",
+    });
+  });
+
+  test("rewriting a descriptor is unaffected by the toggle either way: it never touched candidates or age checks", () => {
+    expect(avatarJobEstimate(FALLBACK, DEFAULTS, "rewrite-descriptor", "off")).toEqual(avatarJobEstimate(FALLBACK, DEFAULTS, "rewrite-descriptor", "on"));
+  });
+
+  test("the age check's model is not even priced: only the image and text models", () => {
+    expect(avatarPriceModels(DEFAULTS, "new-avatar", "off")).toEqual({ imageModels: ["x-ai/grok-imagine-image-2.0"], chatModels: ["x-ai/grok-4.3"] });
+    expect(avatarPriceModels({ ...DEFAULTS, textModel: "acme/writer" }, "new-avatar", "off")).toEqual({
+      imageModels: ["x-ai/grok-imagine-image-2.0"],
+      chatModels: ["acme/writer"],
+    });
+  });
+});
+
 test("rewriting a descriptor: the descriptor call alone (asked at most twice), no candidates and no age checks", () => {
-  const estimate = avatarJobEstimate(FALLBACK, DEFAULTS, "rewrite-descriptor");
+  const estimate = avatarJobEstimate(FALLBACK, DEFAULTS, "rewrite-descriptor", "on");
 
   expect(estimate).toEqual({
     expectedMicros: DESCRIPTOR.expected,

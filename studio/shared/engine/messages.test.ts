@@ -40,6 +40,7 @@ const settings: Settings = {
   imageModel: "x-ai/grok-imagine-image-2.0",
   textModel: "x-ai/grok-4.3",
   concurrency: { network: 6 },
+  imageAgeCheck: "off",
 };
 
 const money: MoneyStatus = {
@@ -148,6 +149,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     result: settings,
   },
   "settings.setConcurrency": { payload: { network: 6 }, result: settings },
+  "settings.setImageAgeCheck": { payload: { imageAgeCheck: "on" }, result: settings },
   "money.status": { payload: {}, result: money },
   "money.reconcile": {
     payload: {},
@@ -268,6 +270,7 @@ describe("contract surface", () => {
         "settings.setLibraryPath",
         "settings.setModels",
         "settings.setConcurrency",
+        "settings.setImageAgeCheck",
         "money.status",
         "money.reconcile",
         "avatars.list",

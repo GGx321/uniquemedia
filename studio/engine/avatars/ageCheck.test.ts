@@ -412,7 +412,13 @@ describe("passesAgeThreshold: re-applies today's threshold to a stored verdict",
     expect(passesAgeThreshold({ adult: false, confidence: 0.99 })).toBe(false);
   });
 
-  test("fails: no stored verdict at all", () => {
-    expect(passesAgeThreshold(undefined)).toBe(false);
+  // Owner's decision (2026-09-27): with the image age check off by default,
+  // candidateJob.ts never runs it at all, so a candidate stored while off
+  // carries no qa.age verdict whatsoever — that must not be confused with a
+  // verdict that failed. No verdict is pickable; the owner's own pick is the
+  // gate. A candidate that DOES carry a failing verdict (from a batch made
+  // while the toggle was on) still fails below.
+  test("passes: no stored verdict at all (the image age check was off when this candidate was made)", () => {
+    expect(passesAgeThreshold(undefined)).toBe(true);
   });
 });

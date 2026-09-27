@@ -569,6 +569,46 @@ function ConcurrencyRow({ settings }: { settings: Settings }) {
   );
 }
 
+// Owner's decision (2026-09-27): the paid image age check is optional, off by
+// default — the app is his personal tool, and he judges age by eye, including
+// at pick. The free text-level 21+ safeguards (the descriptor gate, the
+// prompts) are never affected by this toggle.
+function ImageAgeCheckRow({ settings }: { settings: Settings }) {
+  const { client, store } = useEngine();
+  const inputId = useId();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<EngineError | null>(null);
+
+  async function change(checked: boolean): Promise<void> {
+    setBusy(true);
+    setError(null);
+    const reply = await client.request("settings.setImageAgeCheck", { imageAgeCheck: checked ? "on" : "off" });
+    setBusy(false);
+    if (reply.ok) store.setSettings(reply.result);
+    else setError(reply.error);
+  }
+
+  return (
+    <>
+      <Row
+        label="Автопроверка возраста на фото"
+        labelFor={inputId}
+        hint="Платная проверка моделью, ≈ $0,005 за фото. По умолчанию выключена — вы оцениваете возраст сами, в том числе при выборе."
+      >
+        <input
+          id={inputId}
+          type="checkbox"
+          className="checkbox-input"
+          checked={settings.imageAgeCheck === "on"}
+          disabled={busy}
+          onChange={(e) => void change(e.currentTarget.checked)}
+        />
+      </Row>
+      {error && <ErrorNotice error={error} />}
+    </>
+  );
+}
+
 function LibraryRow({ settings }: { settings: Settings }) {
   const { client, store } = useEngine();
   const inputId = useId();
@@ -705,10 +745,14 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
               <Row label="Фото" hint="Портреты и сцены, 1K">
                 <span className="mono model-id">{settings.imageModel}</span>
               </Row>
-              <Row label="Текст и проверка возраста" hint="Дескриптор, сцены, проверка «явно старше 21»">
+              <Row
+                label={settings.imageAgeCheck === "on" ? "Текст и проверка возраста" : "Текст"}
+                hint={settings.imageAgeCheck === "on" ? "Дескриптор, сцены, проверка «явно старше 21»" : "Дескриптор, сцены"}
+              >
                 <span className="mono model-id">{settings.textModel}</span>
               </Row>
               <p className="field-hint">Модели по умолчанию; выбор других появится позже.</p>
+              <ImageAgeCheckRow settings={settings} />
             </Card>
           </div>
 

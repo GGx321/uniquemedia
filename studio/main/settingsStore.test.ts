@@ -16,7 +16,7 @@ afterEach(async () => {
 
 const path = () => join(userData, SETTINGS_FILE);
 
-test("a missing file gives the defaults: $10 a month, the library in userData, the plan's models", async () => {
+test("a missing file gives the defaults: $10 a month, the library in userData, the plan's models, the image age check off", async () => {
   const loaded = await loadSettings(userData);
   expect(loaded).toEqual({
     source: "missing",
@@ -26,8 +26,23 @@ test("a missing file gives the defaults: $10 a month, the library in userData, t
       imageModel: "x-ai/grok-imagine-image-2.0",
       textModel: "x-ai/grok-4.3",
       concurrency: { network: 6 },
+      imageAgeCheck: "off",
     },
   });
+});
+
+test("an older file that predates the image age check loads it as off, and the file itself is left untouched (no rewrite on read)", async () => {
+  const { imageAgeCheck: _drop, ...older } = defaultSettings(userData);
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...older }));
+  const loaded = await loadSettings(userData);
+  expect(loaded).toEqual({ source: "file", settings: defaultSettings(userData) });
+  expect(JSON.parse(await readFile(path(), "utf8"))).not.toHaveProperty("imageAgeCheck");
+});
+
+test("an older file that also carries an explicit imageAgeCheck keeps it, not the backfilled default", async () => {
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...defaultSettings(userData), imageAgeCheck: "on" }));
+  const loaded = await loadSettings(userData);
+  expect(loaded).toEqual({ source: "file", settings: { ...defaultSettings(userData), imageAgeCheck: "on" } });
 });
 
 test("save then load round-trips, and the file carries its schema version", async () => {
@@ -68,6 +83,7 @@ const invalidFiles: [string, Record<string, unknown>][] = [
   ["concurrency above 16", { concurrency: { network: 17 } }],
   ["an unknown field such as a key", { apiKey: "sk-or-v1-0123456789" }],
   ["another schema version", { schemaVersion: 2 }],
+  ["an imageAgeCheck outside off/on", { imageAgeCheck: "maybe" }],
 ];
 
 for (const [name, patch] of invalidFiles) {

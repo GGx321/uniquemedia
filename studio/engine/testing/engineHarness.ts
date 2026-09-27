@@ -68,6 +68,12 @@ export function engineInit(dir: string, overrides: Partial<EngineInit> = {}): En
       imageModel: "x-ai/grok-imagine-image-2.0",
       textModel: "x-ai/grok-4.3",
       concurrency: { network: 6 },
+      // The app's own default is "off" (owner's decision, 2026-09-27); this
+      // harness defaults to "on" instead, since almost every existing avatar
+      // and candidate test is about the age-check path. The dedicated
+      // engine.imageAgeCheck.test.ts overrides this to "off" to cover the
+      // app's real default.
+      imageAgeCheck: "on",
     },
     encryptionAvailable: true,
     notices: [],

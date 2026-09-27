@@ -193,7 +193,14 @@ describe("handleRendererRequest", () => {
     await handleRendererRequest(command("settings.setModels", { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" }, "cmd-00000002"), APP_FRAME, PACKAGED, routes);
     await handleRendererRequest(command("settings.setConcurrency", { network: 2 }, "cmd-00000003"), APP_FRAME, PACKAGED, routes);
     await handleRendererRequest(command("settings.setLibraryPath", { path: "/Users/me/Studio" }, "cmd-00000004"), APP_FRAME, PACKAGED, routes);
-    expect(settings.map((c) => c.type)).toEqual(["settings.setBudget", "settings.setModels", "settings.setConcurrency", "settings.setLibraryPath"]);
+    await handleRendererRequest(command("settings.setImageAgeCheck", { imageAgeCheck: "on" }, "cmd-00000005"), APP_FRAME, PACKAGED, routes);
+    expect(settings.map((c) => c.type)).toEqual([
+      "settings.setBudget",
+      "settings.setModels",
+      "settings.setConcurrency",
+      "settings.setLibraryPath",
+      "settings.setImageAgeCheck",
+    ]);
     expect(engine).toEqual([]);
   });
 

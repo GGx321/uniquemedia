@@ -83,6 +83,27 @@ function command(type: SettingsCommand["type"], payload: unknown): SettingsComma
   return parsed;
 }
 
+describe("settings.setImageAgeCheck", () => {
+  test("persists first, updates main's settings, tells the engine, and answers with the engine's view", async () => {
+    const h = await harness();
+    const response = await handleSettingsCommand(command("settings.setImageAgeCheck", { imageAgeCheck: "on" }), h.deps);
+
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(response).toMatchObject({ ok: true, id: "cmd-set-00001", type: "settings.setImageAgeCheck", result: { imageAgeCheck: "on", apiKey: { rejected: true } } });
+    expect((await loadSettings(userData)).settings.imageAgeCheck).toBe("on");
+    expect(h.store.current.imageAgeCheck).toBe("on");
+    expect(h.sent).toEqual([{ kind: "control", type: "settings.update", settings: h.store.current }]);
+    expect(h.engineRequests.map((c) => c.type)).toEqual(["settings.get"]);
+  });
+
+  test("changes only its own field", async () => {
+    const h = await harness();
+    const before = h.store.current;
+    await handleSettingsCommand(command("settings.setImageAgeCheck", { imageAgeCheck: "on" }), h.deps);
+    expect(h.store.current).toEqual({ ...before, imageAgeCheck: "on" });
+  });
+});
+
 describe("settings.setBudget / setModels / setConcurrency", () => {
   test("persist first, update main's settings, tell the engine, and answer with the engine's view", async () => {
     const h = await harness();

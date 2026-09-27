@@ -10,6 +10,7 @@ import {
   Draft,
   EngineNotice,
   Estimate,
+  ImageAgeCheck,
   JobState,
   MoneyStatus,
   NetworkConcurrency,
@@ -123,6 +124,7 @@ const ENGINE_SPECS = [
   defineCommand("settings.setLibraryPath", z.strictObject({ path: AbsolutePath }), Settings),
   defineCommand("settings.setModels", z.strictObject({ imageModel: ModelId, textModel: ModelId }), Settings),
   defineCommand("settings.setConcurrency", z.strictObject({ network: NetworkConcurrency }), Settings),
+  defineCommand("settings.setImageAgeCheck", z.strictObject({ imageAgeCheck: ImageAgeCheck }), Settings),
   // money
   defineCommand("money.status", Empty, MoneyStatus),
   defineCommand("money.reconcile", Empty, ReconcileResult),

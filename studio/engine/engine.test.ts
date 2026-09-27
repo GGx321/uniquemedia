@@ -52,6 +52,10 @@ function init(overrides: Partial<EngineInit> = {}): EngineInit {
       imageModel: "x-ai/grok-imagine-image-2.0",
       textModel: "x-ai/grok-4.3",
       concurrency: { network: 6 },
+      // Matches HARNESS_NEW_AVATAR's worst case (engineHarness.ts), used by
+      // this file's own createDraft calls; engine.imageAgeCheck.test.ts
+      // covers the toggle itself.
+      imageAgeCheck: "on",
     },
     encryptionAvailable: true,
     notices: [],

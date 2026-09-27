@@ -39,6 +39,17 @@ export const ApiKeyStatus = z
 /** Parallel network requests; the queue shrinks it on 429. */
 export const NetworkConcurrency = z.number().int().min(1).max(16);
 
+/**
+ * Whether the paid image age check (a vision call per candidate portrait,
+ * ~$0.005 per image) runs at all. Owner's decision (2026-09-27): the app is
+ * his personal tool, he judges age by eye, and off is the default — the free
+ * text-level 21+ safeguards (ageText.ts, promptSubject, youth-word-free
+ * prompts) are always enforced regardless of this setting (invariant 8).
+ * No schema-level default here: an older settings.json missing this field is
+ * handled by settingsStore.ts's own loading, not by this contract boundary.
+ */
+export const ImageAgeCheck = z.enum(["off", "on"]);
+
 export const Settings = z.strictObject({
   apiKey: ApiKeyStatus,
   monthlyBudgetMicros: Micros,
@@ -46,6 +57,7 @@ export const Settings = z.strictObject({
   imageModel: ModelId,
   textModel: ModelId,
   concurrency: z.strictObject({ network: NetworkConcurrency }),
+  imageAgeCheck: ImageAgeCheck,
 });
 
 // ---------- money ----------
@@ -445,6 +457,7 @@ export const PhotoSummary = z.strictObject({
 });
 
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
+export type ImageAgeCheck = z.infer<typeof ImageAgeCheck>;
 export type Settings = z.infer<typeof Settings>;
 export type ReconcileReason = z.infer<typeof ReconcileReason>;
 export type MoneyHalt = z.infer<typeof MoneyHalt>;

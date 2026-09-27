@@ -15,7 +15,7 @@ import type { SettingsStore } from "./settingsStore";
 /** The settings commands main answers itself: it owns settings.json. */
 export type SettingsCommand = Extract<
   CommandMessage,
-  { type: "settings.setBudget" | "settings.setModels" | "settings.setConcurrency" | "settings.setLibraryPath" }
+  { type: "settings.setBudget" | "settings.setModels" | "settings.setConcurrency" | "settings.setLibraryPath" | "settings.setImageAgeCheck" }
 >;
 
 export function isSettingsCommand(command: CommandMessage): command is SettingsCommand {
@@ -23,7 +23,8 @@ export function isSettingsCommand(command: CommandMessage): command is SettingsC
     command.type === "settings.setBudget" ||
     command.type === "settings.setModels" ||
     command.type === "settings.setConcurrency" ||
-    command.type === "settings.setLibraryPath"
+    command.type === "settings.setLibraryPath" ||
+    command.type === "settings.setImageAgeCheck"
   );
 }
 
@@ -67,6 +68,8 @@ async function nextSettings(command: SettingsCommand, deps: SettingsFlowDeps): P
       return { ok: true, settings: { ...current, imageModel: command.payload.imageModel, textModel: command.payload.textModel } };
     case "settings.setConcurrency":
       return { ok: true, settings: { ...current, concurrency: { network: command.payload.network } } };
+    case "settings.setImageAgeCheck":
+      return { ok: true, settings: { ...current, imageAgeCheck: command.payload.imageAgeCheck } };
     case "settings.setLibraryPath": {
       // Never a path string from the renderer: the user picks the folder in
       // main's own dialog, which merely opens at the suggested path.

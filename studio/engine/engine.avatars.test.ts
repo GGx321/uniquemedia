@@ -63,6 +63,10 @@ function init(overrides: Partial<EngineInit> = {}): EngineInit {
       imageModel: "x-ai/grok-imagine-image-2.0",
       textModel: "x-ai/grok-4.3",
       concurrency: { network: 6 },
+      // This whole file is about ON-mode money (the plan's original NEW_AVATAR/NEXT_BATCH
+      // figures, before the age check became optional); the dedicated
+      // engine.imageAgeCheck.test.ts covers OFF.
+      imageAgeCheck: "on",
     },
     encryptionAvailable: true,
     notices: [],

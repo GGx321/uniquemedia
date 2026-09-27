@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { EngineError, Estimate } from "../../../shared/engine";
+import type { EngineError, Estimate, ImageAgeCheck } from "../../../shared/engine";
 import { dateLabel } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
 import { ErrorNotice, Notice } from "../../ui/Notice";
@@ -24,10 +24,12 @@ interface EstimateCardProps {
   errorActions?: ReactNode;
   /** Another batch for an existing draft: its descriptor is not written again. */
   repeat: boolean;
+  /** Whether the image age check is on, so the caption mentions it only when it actually runs (owner's decision, 2026-09-27: off by default). */
+  imageAgeCheck: ImageAgeCheck;
 }
 
 /** Step 2: the price before anything is spent, and the button that accepts it. */
-export function EstimateCard({ estimate, previousWorst, estimating, action, blockedReason, error, errorActions, repeat }: EstimateCardProps) {
+export function EstimateCard({ estimate, previousWorst, estimating, action, blockedReason, error, errorActions, repeat, imageAgeCheck }: EstimateCardProps) {
   return (
     <section className="card estimate-card" aria-labelledby="estimate-title" aria-busy={estimating}>
       <div className="card-head">
@@ -64,8 +66,12 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
               // batch alone (avatars.estimateCandidates / the draft's own
               // estimate) — not the whole avatar's price used as a loose
               // upper bound, so the caption must not claim that anymore.
-              ? "Ещё 4 портрета и проверка возраста каждого. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
-              : "Дескриптор, 4 портрета и проверка возраста каждого. Худшая цена — это предел: дороже этот шаг не выйдет."}
+              ? imageAgeCheck === "on"
+                ? "Ещё 4 портрета и проверка возраста каждого. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
+                : "Ещё 4 портрета. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
+              : imageAgeCheck === "on"
+                ? "Дескриптор, 4 портрета и проверка возраста каждого. Худшая цена — это предел: дороже этот шаг не выйдет."
+                : "Дескриптор и 4 портрета. Худшая цена — это предел: дороже этот шаг не выйдет."}
             {estimate.prices === "fallback" && " OpenRouter не ответил, поэтому цены взяты из резервной таблицы."}
           </p>
         </div>

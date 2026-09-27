@@ -461,6 +461,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             error={error}
             errorActions={estimateErrorActions(error)}
             repeat={locked}
+            imageAgeCheck={view.settings?.imageAgeCheck ?? "off"}
           />
 
           <CandidatesCard
@@ -472,6 +473,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             cancelling={cancelling}
             headingRef={candidatesHeading}
             hiddenBelowThreshold={draft?.hiddenBelowThreshold ?? 0}
+            imageAgeCheck={view.settings?.imageAgeCheck ?? "off"}
           />
 
           {draft && (

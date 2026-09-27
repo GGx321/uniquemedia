@@ -66,6 +66,7 @@ async function harness() {
         imageModel: "x-ai/grok-imagine-image-2.0",
         textModel: "x-ai/grok-4.3",
         concurrency: { network: 6 },
+        imageAgeCheck: "off",
       },
       encryptionAvailable: true,
       notices: [...notices.all],

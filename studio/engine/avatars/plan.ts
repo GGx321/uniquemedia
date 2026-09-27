@@ -1,4 +1,4 @@
-import type { Estimate } from "../../shared/engine";
+import type { Estimate, ImageAgeCheck } from "../../shared/engine";
 import { AGE_CHECK_CALL, estimateAvatarJob, type AvatarJobInput, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { descriptorCall, DESCRIPTOR_MAX_ATTEMPTS } from "./descriptor";
@@ -33,34 +33,43 @@ export function candidateImage(imageModel: string): ImageChoice {
 }
 
 /**
- * The models to price: the image model, the text model and the age checks'
- * model (fixed decision: grok-4.3) for `new-avatar`/`next-batch`.
- * `rewrite-descriptor` sends neither an image nor an age check (plan.ts's
- * `jobInput`), so it needs only the text model priced — an image model with
- * no price loaded (unknown, renamed, or the live fetch failed with nothing in
- * the fallback table) must never block a rewrite that never touches it.
+ * The models to price: the image model, the text model and, when the image
+ * age check is on, its own model too (fixed decision: grok-4.3) for
+ * `new-avatar`/`next-batch`. `rewrite-descriptor` sends neither an image nor
+ * an age check (plan.ts's `jobInput`), so it needs only the text model priced
+ * regardless of the toggle — an image model with no price loaded (unknown,
+ * renamed, or the live fetch failed with nothing in the fallback table) must
+ * never block a rewrite that never touches it. Both `kind` and `imageAgeCheck`
+ * are required, not defaulted: a caller must always say which job and which
+ * mode it means, so a forgotten argument fails loudly instead of silently
+ * pricing (or, worse, spending) the wrong thing.
  */
-export function avatarPriceModels(models: AvatarModels, kind: AvatarJobKind = "new-avatar"): PriceModels {
+export function avatarPriceModels(models: AvatarModels, kind: AvatarJobKind, imageAgeCheck: ImageAgeCheck): PriceModels {
   if (kind === "rewrite-descriptor") return { imageModels: [], chatModels: [models.textModel] };
-  return { imageModels: [models.imageModel], chatModels: [...new Set([models.textModel, AGE_CHECK_CALL.model])] };
+  const chatModels = imageAgeCheck === "on" ? [models.textModel, AGE_CHECK_CALL.model] : [models.textModel];
+  return { imageModels: [models.imageModel], chatModels: [...new Set(chatModels)] };
 }
 
-function jobInput(models: AvatarModels, kind: AvatarJobKind): AvatarJobInput {
+function jobInput(models: AvatarModels, kind: AvatarJobKind, imageAgeCheck: ImageAgeCheck): AvatarJobInput {
   return {
     candidates: kind === "rewrite-descriptor" ? 0 : CANDIDATES_PER_BATCH,
     image: candidateImage(models.imageModel),
     descriptor: kind === "next-batch" ? null : { call: descriptorCall(models.textModel), maxAttempts: DESCRIPTOR_MAX_ATTEMPTS },
-    ageChecks: kind === "rewrite-descriptor" ? null : AGE_CHECK_CALL,
+    // rewrite-descriptor never touches candidates or age checks, whatever the
+    // toggle; otherwise the owner's decision (2026-09-27) applies: off by
+    // default, no age check at all.
+    ageChecks: kind === "rewrite-descriptor" || imageAgeCheck === "off" ? null : AGE_CHECK_CALL,
   };
 }
 
 /**
- * The job's expected and worst cost in the contract's shape. The same models
- * and prices always give the same numbers: the traits do not enter it (the
- * descriptor prompt's size is bounded by its ceiling).
+ * The job's expected and worst cost in the contract's shape. The same models,
+ * prices and toggle always give the same numbers: the traits do not enter it
+ * (the descriptor prompt's size is bounded by its ceiling). `imageAgeCheck` is
+ * required, not defaulted, for the same reason as `avatarPriceModels`'s own.
  */
-export function avatarJobEstimate(priced: PricedBook, models: AvatarModels, kind: AvatarJobKind): Estimate {
-  const estimate = estimateAvatarJob(priced.book, jobInput(models, kind));
+export function avatarJobEstimate(priced: PricedBook, models: AvatarModels, kind: AvatarJobKind, imageAgeCheck: ImageAgeCheck): Estimate {
+  const estimate = estimateAvatarJob(priced.book, jobInput(models, kind, imageAgeCheck));
   return {
     expectedMicros: estimate.expectedMicros,
     worstMicros: estimate.worstMicros,

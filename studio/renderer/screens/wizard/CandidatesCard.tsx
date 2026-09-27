@@ -1,5 +1,5 @@
 import { type Ref, useId } from "react";
-import { ERROR_MESSAGES_RU, type Candidate, type FailedCandidateSlot } from "../../../shared/engine";
+import { ERROR_MESSAGES_RU, type Candidate, type FailedCandidateSlot, type ImageAgeCheck } from "../../../shared/engine";
 import { isActiveJob, type JobView } from "../../engine/store";
 import { countOf } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
@@ -33,9 +33,25 @@ interface CandidatesCardProps {
   headingRef: Ref<HTMLHeadingElement>;
   /** How many of this draft's stored candidates today's age threshold hides (the Draft contract's own count); 0 when none are. */
   hiddenBelowThreshold: number;
+  /** Whether the image age check is on, so the pending-slot pill says so accurately. */
+  imageAgeCheck: ImageAgeCheck;
 }
 
-function PendingSlots({ job }: { job: JobView }) {
+/**
+ * `imageAgeCheck` here is the live setting (AvatarWizard.tsx reads
+ * `view.settings.imageAgeCheck`), not the mode the running job itself
+ * captured at start (engine.ts's own `RunningCandidates.imageAgeCheck`,
+ * which the contract does not expose to the renderer). Reviewed (LOW): a
+ * mid-batch toggle flip would make this badge say "· проверка" for a job
+ * that is not actually running one, or vice versa, for as long as that job
+ * is still in flight — rare (the toggle is a Settings action, not something
+ * touched mid-wizard) and cosmetic (`JobProgress`/`CandidatesResult` are
+ * unaffected; only this pill's own wording could be briefly wrong). Fixing
+ * it properly needs a contract field carrying the job's own captured mode,
+ * which is a bigger change than this review's scope — left as a known,
+ * accepted gap rather than fixed here.
+ */
+function PendingSlots({ job, imageAgeCheck }: { job: JobView; imageAgeCheck: ImageAgeCheck }) {
   const total = job.total || SLOTS;
   return (
     <>
@@ -44,7 +60,7 @@ function PendingSlots({ job }: { job: JobView }) {
         return (
           <div key={i} className={drawn ? "cand-slot cand-slot-drawn" : "cand-slot cand-slot-drawing"} aria-hidden="true">
             {!drawn && <span className="shimmer" />}
-            <span className="pill cand-slot-pill">{drawn ? "готов · проверка" : "рисуется"}</span>
+            <span className="pill cand-slot-pill">{drawn ? (imageAgeCheck === "on" ? "готов · проверка" : "готов") : "рисуется"}</span>
           </div>
         );
       })}
@@ -53,7 +69,7 @@ function PendingSlots({ job }: { job: JobView }) {
 }
 
 /** Step 3: progress while the job runs, then the portraits to choose from. */
-export function CandidatesCard({ candidates, job, picked, onPick, onCancel, cancelling, headingRef, hiddenBelowThreshold }: CandidatesCardProps) {
+export function CandidatesCard({ candidates, job, picked, onPick, onCancel, cancelling, headingRef, hiddenBelowThreshold, imageAgeCheck }: CandidatesCardProps) {
   const groupName = useId();
   const running = job !== null && isActiveJob(job);
   const total = job?.total || SLOTS;
@@ -178,7 +194,7 @@ export function CandidatesCard({ candidates, job, picked, onPick, onCancel, canc
                 </label>
               );
             })}
-            {running && job && <PendingSlots job={job} />}
+            {running && job && <PendingSlots job={job} imageAgeCheck={imageAgeCheck} />}
           </div>
         </fieldset>
       )}

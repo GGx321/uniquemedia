@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { FfmpegError } from "../../node/runFfmpeg";
 import { timeoutSignal } from "../money/timeoutSignal";
-import type { AvatarDescriptor, EngineError, FailedCandidateSlot } from "../../shared/engine";
+import type { AvatarDescriptor, EngineError, FailedCandidateSlot, ImageAgeCheck } from "../../shared/engine";
 import type { CandidatesJobEnd } from "../jobs";
 import type { NewPhotoMeta } from "../library";
 import { imageSize, isAnimatedImage } from "../library/media";
@@ -19,10 +19,16 @@ import { candidatePrompt, PromptSubjectError } from "./prompts";
 
 // One batch of candidate portraits for a draft (T6a part 2b). Each of the
 // CANDIDATES_PER_BATCH slots sends exactly the calls the next-batch estimate
-// priced (plan.ts): one image attempt and, for a usable image, one age
-// check, each under its own attempt id, never retried. A candidate enters the
-// library only after a clear yes from the age check (invariant 8); a rejected
-// image is dropped: it is never written anywhere, since it may show a minor.
+// priced (plan.ts): one image attempt and, when the image age check is on,
+// one age check, each under its own attempt id, never retried. With the
+// check on, a candidate enters the library only after a clear yes from it
+// (invariant 8); a rejected image is dropped: it is never written anywhere,
+// since it may show a minor. With the check off (owner's decision,
+// 2026-09-27, the default: the owner judges age by eye), it is skipped
+// entirely — no hold, no reserve, no request — and a candidate enters the
+// library right after its image checks, with no qa.age verdict at all. The
+// free text-level 21+ safeguards (ageText.ts, promptSubject, youth-word-free
+// prompts) apply either way and are never affected by this toggle.
 
 export interface CandidateJobDeps {
   generateImage: OpenRouterClient["generateImage"];
@@ -54,6 +60,14 @@ export interface CandidateJob {
   signal: AbortSignal;
   /** PREPARE_TIMEOUT_MS unless a test says otherwise. */
   prepareTimeoutMs?: number;
+  /**
+   * The setting's value captured once at job start (a mid-flight
+   * settings.setImageAgeCheck must not affect a job already running).
+   * Required, not defaulted: a caller must always say which mode this batch
+   * runs in, so a forgotten value fails loudly instead of silently running
+   * (or, worse, silently charging for) the wrong mode.
+   */
+  imageAgeCheck: ImageAgeCheck;
 }
 
 /**
@@ -217,11 +231,11 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
   const choice = candidateImage(job.imageModel);
   const attemptId = candidateAttemptId(job.jobId, slot);
   const ageId = ageAttemptId(job.jobId, slot);
-  const ageShape = ageCheckShape();
-  const held = await deps.budget.tryHold([
-    { attemptId, scope: job.scope, worstMicros: deps.priceBook.imageWorstCase({ model: choice.model, resolution: choice.resolution, quality: choice.quality, refs: choice.refs }) },
-    { attemptId: ageId, scope: job.scope, worstMicros: chatAttemptWorstMicros(deps.priceBook, ageShape) },
-  ]);
+  const imageAgeCheck = job.imageAgeCheck;
+  const ageShape = imageAgeCheck === "on" ? ageCheckShape() : null;
+  const holds = [{ attemptId, scope: job.scope, worstMicros: deps.priceBook.imageWorstCase({ model: choice.model, resolution: choice.resolution, quality: choice.quality, refs: choice.refs }) }];
+  if (ageShape !== null) holds.push({ attemptId: ageId, scope: job.scope, worstMicros: chatAttemptWorstMicros(deps.priceBook, ageShape) });
+  const held = await deps.budget.tryHold(holds);
   if (!held.ok) {
     const mapped = toEngineError({ status: "blocked", refusal: held });
     return mapped === null ? internal(slot, "the budget refused the slot") : failed(slot, mapped.error, mapped.fatal);
@@ -235,13 +249,14 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
     if (isFatal()) return { slot, kind: "skipped" };
     return await sendPair(deps, job, prompt, slot, ageShape);
   } finally {
-    // Whatever was not reserved will not be sent.
+    // Whatever was not reserved will not be sent. releaseHold on an id never
+    // held (the age id, with the check off) is a harmless no-op.
     deps.budget.releaseHold(attemptId);
     deps.budget.releaseHold(ageId);
   }
 }
 
-async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number, ageShape: ChatPriceShape): Promise<SlotOutcome> {
+async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number, ageShape: ChatPriceShape | null): Promise<SlotOutcome> {
   const choice = candidateImage(job.imageModel);
   const attemptId = candidateAttemptId(job.jobId, slot);
   const image = await deps.generateImage({
@@ -263,9 +278,18 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
   if (image.status !== "ok" || image.aboveWorst) return failedBy(slot, image, "the image attempt");
   const size = imageSize(image.bytes);
   if (size === null) return internal(slot, `the ${image.mediaType} image's size cannot be read`);
-  // The age check would judge whichever frame the decoder picks, not necessarily the one a viewer sees.
-  if (isAnimatedImage(image.bytes)) return internal(slot, `the ${image.mediaType} image is animated; only a still image can be age-checked`);
+  if (isAnimatedImage(image.bytes)) {
+    // On: the age check would judge whichever frame the decoder picks, not
+    // necessarily the one a viewer sees. Off: there is no age check to
+    // reference at all, so the reason must not name one that never ran.
+    const reason = ageShape === null ? "only a still image can be stored as a photo" : "only a still image can be age-checked";
+    return internal(slot, `the ${image.mediaType} image is animated; ${reason}`);
+  }
   if (job.signal.aborted) return { slot, kind: "aborted" };
+  // The image age check is off: no downscale (its only use is the age
+  // check's own JPEG), no age check, nothing more to prepare — the candidate
+  // is stored right away, with no qa.age verdict.
+  if (ageShape === null) return storeCandidate(deps, job, slot, { attemptId, prompt, image, size });
   // The downscale is told to stop on a cancel or the timeout, and is not waited for past either.
   const timeoutMs = job.prepareTimeoutMs ?? PREPARE_TIMEOUT_MS;
   // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
@@ -305,11 +329,47 @@ interface Checked {
   prompt: string;
   image: ImageOk;
   size: { width: number; height: number };
+}
+
+interface CheckedForAge extends Checked {
   jpeg: Uint8Array;
 }
 
+/** `NewPhotoMeta` for a paid, checked image: `age` only when the image age check ran and gave a verdict (invariant 8's `qa.age`). */
+function buildMeta(job: CandidateJob, slot: number, checked: Checked, age?: { adult: true; confidence: number }): NewPhotoMeta {
+  const { image, size, prompt, attemptId } = checked;
+  return {
+    mediaType: image.mediaType,
+    width: size.width,
+    height: size.height,
+    source: {
+      kind: "generated",
+      model: job.imageModel,
+      provider: "openrouter",
+      jobId: job.jobId,
+      attemptId,
+      promptSha: createHash("sha256").update(prompt).digest("hex"),
+      prompt,
+      slot: `candidate-${slot}`,
+      costMicros: image.costMicros,
+    },
+    ...(age === undefined ? {} : { qa: { age } }),
+  };
+}
+
+/** Stores a candidate that is going into the library, whether or not it carries an age verdict. */
+async function storeCandidate(deps: CandidateJobDeps, job: CandidateJob, slot: number, checked: Checked, age?: { adult: true; confidence: number }): Promise<SlotOutcome> {
+  try {
+    const photo = await deps.store(checked.image.bytes, buildMeta(job, slot, checked, age));
+    return { slot, kind: "passed", photoId: photo.id };
+  } catch (error) {
+    const why = age === undefined ? "" : "passed the age check but ";
+    return internal(slot, `the candidate ${why}could not be stored: ${messageOf(error)}`);
+  }
+}
+
 /** The age check of one paid image; only a clear yes stores it (invariant 8). */
-async function ageGate(deps: CandidateJobDeps, job: CandidateJob, slot: number, ageShape: ChatPriceShape, checked: Checked): Promise<SlotOutcome> {
+async function ageGate(deps: CandidateJobDeps, job: CandidateJob, slot: number, ageShape: ChatPriceShape, checked: CheckedForAge): Promise<SlotOutcome> {
   const age = await deps.chat({
     attemptId: ageAttemptId(job.jobId, slot),
     jobId: job.jobId,
@@ -334,30 +394,7 @@ async function ageGate(deps: CandidateJobDeps, job: CandidateJob, slot: number, 
   const verdict = readAgeAnswer(age.content);
   if (!verdict.pass) return { slot, kind: "rejected", why: verdict.why };
 
-  const { image, size, prompt, attemptId } = checked;
-  const meta: NewPhotoMeta = {
-    mediaType: image.mediaType,
-    width: size.width,
-    height: size.height,
-    source: {
-      kind: "generated",
-      model: job.imageModel,
-      provider: "openrouter",
-      jobId: job.jobId,
-      attemptId,
-      promptSha: createHash("sha256").update(prompt).digest("hex"),
-      prompt,
-      slot: `candidate-${slot}`,
-      costMicros: image.costMicros,
-    },
-    qa: { age: { adult: true, confidence: verdict.confidence } },
-  };
-  try {
-    const photo = await deps.store(image.bytes, meta);
-    return { slot, kind: "passed", photoId: photo.id };
-  } catch (error) {
-    return internal(slot, `the candidate passed the age check but could not be stored: ${messageOf(error)}`);
-  }
+  return storeCandidate(deps, job, slot, checked, { adult: true, confidence: verdict.confidence });
 }
 
 /**

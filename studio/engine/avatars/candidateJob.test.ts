@@ -36,7 +36,9 @@ const PROMPT = candidatePrompt(DESCRIPTOR);
 /** Fallback prices: grok-imagine-image-2.0 low 1K; an age check on grok-4.3 at its ceilings (2.2K in with one image, 1K out). */
 const IMAGE_WORST = 40_000;
 const AGE_WORST = 5_250;
-const BATCH_WORST = avatarJobEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: IMAGE_MODEL, textModel: "x-ai/grok-4.3" }, "next-batch").worstMicros;
+const BATCH_WORST = avatarJobEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: IMAGE_MODEL, textModel: "x-ai/grok-4.3" }, "next-batch", "on").worstMicros;
+/** The batch's worst case with the image age check off (owner's decision, 2026-09-27): the 4 portraits alone, no age checks. */
+const BATCH_WORST_OFF = avatarJobEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: IMAGE_MODEL, textModel: "x-ai/grok-4.3" }, "next-batch", "off").worstMicros;
 const MODERATION: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
 
 let dir = "";
@@ -121,7 +123,7 @@ function run(
       errorOf: (error): EngineError => ({ code: "INTERNAL", detail: String(error) }),
       onSlot: (outcome) => reported.push(outcome),
     },
-    { jobId: JOB_ID, scope: SCOPE, imageModel: IMAGE_MODEL, descriptor: DESCRIPTOR, concurrency: 4, signal: new AbortController().signal, ...job },
+    { jobId: JOB_ID, scope: SCOPE, imageModel: IMAGE_MODEL, descriptor: DESCRIPTOR, concurrency: 4, signal: new AbortController().signal, imageAgeCheck: "on", ...job },
   );
   return { outcomes, stored, reported };
 }
@@ -257,6 +259,120 @@ describe("a batch of candidate portraits", () => {
     const { outcomes, reported } = run(network(), { concurrency: 1 });
 
     expect(reported).toEqual(await outcomes);
+  });
+});
+
+// Owner's decision (2026-09-27): the paid image age check is optional, off by
+// default. With the toggle off, candidateJob skips it entirely — no age-check
+// holds, reserves or requests, and a candidate enters the library right after
+// its image checks, with no qa.age verdict at all (ageCheck.test.ts's
+// passesAgeThreshold and pick then treat it as pickable: the owner's own pick
+// is the gate).
+describe("the image age check off (owner's decision, 2026-09-27: off by default)", () => {
+  beforeEach(async () => {
+    await money.cleanup();
+    money = await setupMoney({ runCapMicros: BATCH_WORST_OFF });
+  });
+
+  test("four image attempts, no age check requests at all", async () => {
+    const net = network();
+
+    expectAllPassed(await run(net, { imageAgeCheck: "off" }).outcomes);
+    expect(net.imageCalls()).toHaveLength(4);
+    expect(net.ageCalls()).toHaveLength(0);
+  });
+
+  test("only the image attempts are reserved: no :age#1 attempt id, and the worst cases add up to the batch's off-mode worst", async () => {
+    await run(network(), { imageAgeCheck: "off" }).outcomes;
+
+    const reserves = money.lines().filter((l) => l.type === "reserve");
+    expect(reserves.map((r) => r.attemptId).sort()).toEqual([1, 2, 3, 4].map((n) => `${JOB_ID}:candidate-${n}#1`).sort());
+    expect(reserves.every((r) => r.worstMicros === IMAGE_WORST)).toBe(true);
+    expect(reserves.reduce((sum, r) => sum + Number(r.worstMicros), 0)).toBe(BATCH_WORST_OFF);
+    expect(BATCH_WORST_OFF).toBe(160_000);
+  });
+
+  test("never downscales and never calls chat: nothing is prepared or asked for an age check that will not run", async () => {
+    let downscaleCalls = 0;
+    const net = network();
+    await run(net, { imageAgeCheck: "off" }, { downscale: () => (downscaleCalls++, Promise.resolve(new Uint8Array())) }).outcomes;
+
+    expect(downscaleCalls).toBe(0);
+    expect(net.ageCalls()).toHaveLength(0);
+  });
+
+  test("a candidate is stored right after its image checks, as received, with no qa.age verdict", async () => {
+    const net = network();
+    const { outcomes, stored } = run(net, { concurrency: 1, imageAgeCheck: "off" });
+
+    expect(await outcomes).toEqual([1, 2, 3, 4].map(passed));
+    expect(stored).toHaveLength(4);
+    expect(stored[0]?.bytes).toEqual(PORTRAIT);
+    expect(stored[0]?.meta).toEqual({
+      mediaType: "image/png",
+      width: 864,
+      height: 1152,
+      source: {
+        kind: "generated",
+        model: IMAGE_MODEL,
+        provider: "openrouter",
+        jobId: JOB_ID,
+        attemptId: `${JOB_ID}:candidate-1#1`,
+        promptSha: sha256(PROMPT),
+        prompt: PROMPT,
+        slot: "candidate-1",
+        costMicros: 40_000,
+      },
+    });
+    expect(stored.every((s) => !("qa" in s.meta))).toBe(true);
+  });
+
+  test("a moderation refusal behaves exactly as with the check on: the age branch is simply never reached", async () => {
+    const net = network({ image: (_call, n) => (n === 2 ? MODERATION : portrait()) });
+    const { outcomes } = run(net, { concurrency: 1, imageAgeCheck: "off" });
+
+    expect((await outcomes)[1]).toMatchObject({ slot: 2, kind: "failed", error: { code: "MODERATION_REFUSED" }, fatal: false, reserveLeftOpen: false });
+    expect(net.ageCalls()).toHaveLength(0);
+  });
+
+  // LOW (review, M28): with the check off there is no age check to blame an
+  // animated image on — the message must say why the image itself is
+  // refused, not reference a check that never ran.
+  test("an animated image is refused with a neutral message, never mentioning the age check", async () => {
+    const net = network({ image: () => portrait(ANIMATED) });
+    const { outcomes } = run(net, { imageAgeCheck: "off" });
+
+    const results = await outcomes;
+    // Read the plain detail strings before any matcher-based expect() below
+    // touches `results`: bun's toMatchObject/toEqual with an asymmetric
+    // matcher (expect.objectContaining, .stringContaining) writes into the
+    // object it checks (see ageCheck.ts's own doc comment on ageJsonSchema),
+    // so a later plain-string read off the same object would see the matcher
+    // itself, not the original string.
+    // "age" alone is not a safe substring check: "image" itself contains it.
+    const details = results.map((r) => (r.kind === "failed" ? r.error.detail : undefined));
+    expect(details.every((d) => d?.includes("animated"))).toBe(true);
+    expect(details.every((d) => !d?.includes("age-check") && !d?.includes("age check"))).toBe(true);
+    expect(results).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: false, reserveLeftOpen: false })));
+    expect(net.ageCalls()).toHaveLength(0);
+  });
+
+  test("a descriptor that fails today's rules still sends nothing, whatever the toggle", async () => {
+    const net = network();
+    const { outcomes } = run(net, { imageAgeCheck: "off", descriptor: { age: 25, text: "25-year-old European woman who looks 17." } });
+
+    expect(await outcomes).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "DESCRIPTOR_INVALID" }), fatal: true, reserveLeftOpen: false })));
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("omitting imageAgeCheck defaults to on (this function's own historical behaviour); the engine always passes the setting explicitly", async () => {
+    await money.cleanup();
+    money = await setupMoney({ runCapMicros: BATCH_WORST });
+    const net = network();
+
+    await run(net).outcomes;
+
+    expect(net.ageCalls()).toHaveLength(4);
   });
 });
 
