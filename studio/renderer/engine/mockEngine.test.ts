@@ -274,20 +274,36 @@ test("another batch accepted below the batch's worst case is refused with PRICE_
 
 test("avatars.list and the snapshot carry a seeded unreadable avatar, with the count derived from its length", async () => {
   const { client, engine } = makeMock();
-  engine.seedUnreadable({ avatarId: "avatar-broken-0001", reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" });
+  engine.seedUnreadable({ avatarId: "avatar-broken-0001", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" });
 
   const list = await unwrap(client.request("avatars.list", {}));
-  expect(list.unreadableAvatars).toEqual([{ avatarId: "avatar-broken-0001", reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" }]);
+  expect(list.unreadableAvatars).toEqual([{ avatarId: "avatar-broken-0001", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" }]);
   expect(list.unreadableTotal).toBe(1);
   const snapshot = await unwrap(client.request("engine.snapshot", {}));
   expect(snapshot.unreadableAvatars).toHaveLength(1);
   expect(snapshot.unreadableTotal).toBe(1);
 });
 
+test("a seeded unreadable entry's name round-trips through avatars.list untouched", async () => {
+  const { client, engine } = makeMock();
+  engine.seedUnreadable({ avatarId: "avatar-broken-0007", name: "Yulia", reason: "contract-mismatch", detail: "its stored record no longer fits the contract" });
+
+  const list = await unwrap(client.request("avatars.list", {}));
+  expect(list.unreadableAvatars).toEqual([{ avatarId: "avatar-broken-0007", name: "Yulia", reason: "contract-mismatch", detail: "its stored record no longer fits the contract" }]);
+});
+
+test("a seeded unreadable entry's name may be null", async () => {
+  const { client, engine } = makeMock();
+  engine.seedUnreadable({ avatarId: "avatar-broken-0008", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" });
+
+  const list = await unwrap(client.request("avatars.list", {}));
+  expect(list.unreadableAvatars).toEqual([{ avatarId: "avatar-broken-0008", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" }]);
+});
+
 test("avatars.estimateRewriteDescriptor prices the descriptor call alone for a descriptor-invalid entry", async () => {
   const { client, engine } = makeMock();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0001", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0001", name: "Draft", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "draft", name: "Draft", traits: DEFAULT_TRAITS },
   );
 
@@ -312,7 +328,7 @@ test("avatars.estimateRewriteDescriptor answers VALIDATION for an avatar whose d
 test("avatars.rewriteDescriptor pays once, turns a draft's unreadable entry into a normal draft, and emits draft.changed", async () => {
   const { client, engine, events } = makeMock();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0001", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0001", name: "Draft", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "draft", name: "Draft", traits: DEFAULT_TRAITS },
   );
   const estimate = await unwrap(client.request("avatars.estimateRewriteDescriptor", { avatarId: "avatar-broken-0001" }));
@@ -331,7 +347,7 @@ test("avatars.rewriteDescriptor pays once, turns a draft's unreadable entry into
 test("avatars.rewriteDescriptor turns an active avatar's unreadable entry into a normal, listed avatar and emits avatar.changed", async () => {
   const { client, engine, events } = makeMock();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0002", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0002", name: "Mia", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Mia", traits: DEFAULT_TRAITS, masterPhotoId: "photo-broken-0001", photoCount: 3 },
   );
   const estimate = await unwrap(client.request("avatars.estimateRewriteDescriptor", { avatarId: "avatar-broken-0002" }));
@@ -357,7 +373,7 @@ test("avatars.rewriteDescriptor answers VALIDATION and spends nothing for an ava
 test("avatars.rewriteDescriptor answers NOT_FOUND for an unknown id, and PRICE_CHANGED below the current worst case", async () => {
   const { client, engine } = makeMock();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0003", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0003", name: "Draft", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "draft", name: "Draft", traits: DEFAULT_TRAITS },
   );
   const estimate = await unwrap(client.request("avatars.estimateRewriteDescriptor", { avatarId: "avatar-broken-0003" }));
@@ -402,7 +418,7 @@ test("avatars.rewriteDescriptor: a ledger halt beats NOT_FOUND too", async () =>
 
 test("a manifest-unreadable entry answers NOT_FOUND, not VALIDATION: the engine never finds such a manifest at all", async () => {
   const { client, engine } = makeMock();
-  engine.seedUnreadable({ avatarId: "avatar-broken-0004", reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" });
+  engine.seedUnreadable({ avatarId: "avatar-broken-0004", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" });
 
   expect(await client.request("avatars.estimateRewriteDescriptor", { avatarId: "avatar-broken-0004" })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
   expect(await client.request("avatars.rewriteDescriptor", { avatarId: "avatar-broken-0004", acceptedWorstMicros: 1_000_000 })).toMatchObject({
@@ -413,7 +429,7 @@ test("a manifest-unreadable entry answers NOT_FOUND, not VALIDATION: the engine 
 
 test("a contract-mismatch entry (not descriptor-invalid, no recovery target) answers VALIDATION, not NOT_FOUND", async () => {
   const { client, engine } = makeMock();
-  engine.seedUnreadable({ avatarId: "avatar-broken-0005", reason: "contract-mismatch", detail: "its stored record no longer fits the contract" });
+  engine.seedUnreadable({ avatarId: "avatar-broken-0005", name: null, reason: "contract-mismatch", detail: "its stored record no longer fits the contract" });
 
   expect(await client.request("avatars.rewriteDescriptor", { avatarId: "avatar-broken-0005", acceptedWorstMicros: 1_000_000 })).toMatchObject({
     ok: false,
@@ -481,7 +497,7 @@ test("avatars.archive answers DESCRIPTOR_INVALID for a saved avatar whose descri
 test("applyRewrite keeps the draft's existing candidates, as the engine does", async () => {
   const { client, engine } = makeMock();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0006", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0006", name: "Draft", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "draft", name: "Draft", traits: DEFAULT_TRAITS, candidates: [{ avatarId: "avatar-broken-0006", photoId: "photo-broken-0001" }] },
   );
   const estimate = await unwrap(client.request("avatars.estimateRewriteDescriptor", { avatarId: "avatar-broken-0006" }));

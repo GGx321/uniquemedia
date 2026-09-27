@@ -350,7 +350,7 @@ test("a job that finishes (job.done) while a cancel is pending clears «Отме
 test("avatars.rewriteDescriptor recovers an unreadable avatar into the store's normal list, dropped from unreadableAvatars (H1, full stack)", async () => {
   const { engine, store } = await started();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0001", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0001", name: "Mia", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Mia", traits: DEFAULT_TRAITS, masterPhotoId: "photo-broken-0001", photoCount: 1 },
   );
   await store.refreshAvatars();

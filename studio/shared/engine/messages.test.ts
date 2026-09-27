@@ -110,7 +110,7 @@ const job: JobState = {
   total: 4,
 };
 
-const unreadable: UnreadableAvatar = { avatarId: "avatar-0009", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" };
+const unreadable: UnreadableAvatar = { avatarId: "avatar-0009", name: "Zoe", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" };
 
 const runRequest: RunRequest = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], resolution: "1k" };
 
@@ -631,12 +631,12 @@ describe("results", () => {
   });
 
   test("an unreadable-avatar entry's avatarId may be null: it is not always recoverable", () => {
-    const result = { avatars: [], unreadableAvatars: [{ avatarId: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" }], unreadableTotal: 1 };
+    const result = { avatars: [], unreadableAvatars: [{ avatarId: null, name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" }], unreadableTotal: 1 };
     expect(parseMessage(okResponse("avatars.list", result)).ok).toBe(true);
   });
 
   test("the unreadable-avatars list is bounded at MAX_UNREADABLE_AVATARS", () => {
-    const entry = { avatarId: null, reason: "manifest-unreadable" as const, detail: "its manifest file could not be read or parsed" };
+    const entry = { avatarId: null, name: null, reason: "manifest-unreadable" as const, detail: "its manifest file could not be read or parsed" };
     const atLimit = { avatars: [], unreadableAvatars: Array.from({ length: MAX_UNREADABLE_AVATARS }, () => entry), unreadableTotal: MAX_UNREADABLE_AVATARS };
     const overLimit = { avatars: [], unreadableAvatars: Array.from({ length: MAX_UNREADABLE_AVATARS + 1 }, () => entry), unreadableTotal: MAX_UNREADABLE_AVATARS + 1 };
     expect(parseMessage(okResponse("avatars.list", atLimit)).ok).toBe(true);
@@ -644,7 +644,7 @@ describe("results", () => {
   });
 
   test("unreadableTotal (L1) may exceed the list's own length: the list is cut, the total is not", () => {
-    const entry = { avatarId: null, reason: "manifest-unreadable" as const, detail: "its manifest file could not be read or parsed" };
+    const entry = { avatarId: null, name: null, reason: "manifest-unreadable" as const, detail: "its manifest file could not be read or parsed" };
     const result = { avatars: [], unreadableAvatars: [entry], unreadableTotal: MAX_UNREADABLE_AVATARS + 40 };
     expect(parseMessage(okResponse("avatars.list", result)).ok).toBe(true);
   });

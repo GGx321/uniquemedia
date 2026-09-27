@@ -94,8 +94,8 @@ async function host(patch: Partial<Snapshot> = {}) {
 
 test("the snapshot's avatar records it could not read are kept, with the count derived from the list's length", async () => {
   const unreadableAvatars: Snapshot["unreadableAvatars"] = [
-    { avatarId: "avatar-broken-0001", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
-    { avatarId: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
+    { avatarId: "avatar-broken-0001", name: "Ana", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: null, name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
   ];
   const h = await host({ unreadableAvatars, unreadableTotal: 200 });
   expect(h.store.getView().unreadableAvatars).toEqual(unreadableAvatars);
@@ -246,7 +246,7 @@ test("avatar.changed replaces an avatar the store already lists", async () => {
 // every open window still shows it as unreadable until the next snapshot,
 // and a second rewrite attempt on it answers VALIDATION (nothing to fix).
 test("avatar.changed drops the avatar from unreadableAvatars: a rewrite recovers it into the list, not into both", async () => {
-  const h = await host({ unreadableAvatars: [{ avatarId: SAVED.avatarId, reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }], unreadableTotal: 1 });
+  const h = await host({ unreadableAvatars: [{ avatarId: SAVED.avatarId, name: "Lena", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }], unreadableTotal: 1 });
   await h.emit({ type: "avatar.changed", payload: { avatar: SAVED } });
 
   expect(h.store.getView().avatars).toEqual([SAVED]);
@@ -265,7 +265,7 @@ test("avatar.changed leaves unreadableTotal alone when the avatar was not the on
 });
 
 test("draft.changed drops the draft from unreadableAvatars too", async () => {
-  const h = await host({ unreadableAvatars: [{ avatarId: DRAFT.avatarId, reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }] });
+  const h = await host({ unreadableAvatars: [{ avatarId: DRAFT.avatarId, name: "Draft", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }] });
   await h.emit({ type: "draft.changed", payload: { draft: DRAFT } });
 
   expect(h.store.getView().drafts).toEqual([DRAFT]);
@@ -274,7 +274,7 @@ test("draft.changed drops the draft from unreadableAvatars too", async () => {
 });
 
 test("saveAvatar and upsertDraft (local updates after a command answers) drop the entry from unreadableAvatars too", async () => {
-  const h = await host({ unreadableAvatars: [{ avatarId: SAVED.avatarId, reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }] });
+  const h = await host({ unreadableAvatars: [{ avatarId: SAVED.avatarId, name: "Lena", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" }] });
   h.store.saveAvatar(SAVED);
 
   expect(h.store.getView().avatars).toEqual([SAVED]);

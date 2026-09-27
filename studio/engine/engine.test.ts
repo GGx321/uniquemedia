@@ -677,6 +677,27 @@ describe("the library the settings name", () => {
     expect(JSON.stringify(response)).not.toContain("not json");
   });
 
+  test("a saved avatar's descriptor-invalid entry carries the manifest's own name", async () => {
+    const { library } = await openLibrary(join(dir, "library"), { newId: sequentialIds("bad-named") });
+    const bad = await library.createAvatar({ name: "Nadia", age: 25, traits: manifestTraits(TRAITS), descriptor: "a young woman with hazel eyes" });
+    const photo = await library.addPhoto(bad.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(bad.id, { status: "active", masterPhotoId: photo.id });
+    const { engine } = await startEngine();
+
+    const response = ok(await engine.handle(command("avatars.list")));
+    expect(response).toMatchObject({ result: { unreadableAvatars: [{ avatarId: bad.id, name: "Nadia", reason: "descriptor-invalid" }] } });
+  });
+
+  test("a quarantined, corrupt manifest's unreadable entry has no name: the manifest was never parsed", async () => {
+    await seedLibrary(join(dir, "library"), "saved");
+    await mkdir(join(dir, "library", "avatars", "broken0000000a"), { recursive: true });
+    await writeFile(join(dir, "library", "avatars", "broken0000000a", "avatar.json"), "not json");
+    const { engine } = await startEngine();
+
+    const response = ok(await engine.handle(command("avatars.list")));
+    expect(response).toMatchObject({ result: { unreadableAvatars: [{ avatarId: "broken0000000a", name: null, reason: "manifest-unreadable" }] } });
+  });
+
   test("avatars.list without a library answers an empty list", async () => {
     const { engine } = await startEngine({ settings: { ...init().settings, libraryPath: join(dir, "missing") } });
     expect(ok(await engine.handle(command("avatars.list")))).toMatchObject({ result: { avatars: [], unreadableAvatars: [] } });

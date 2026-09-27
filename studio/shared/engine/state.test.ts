@@ -12,6 +12,7 @@ import {
   ReconcileResult,
   RunRequest,
   Settings,
+  UnreadableAvatar,
 } from "./state";
 
 const keyStatus = { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
@@ -421,6 +422,31 @@ describe("AvatarSummary", () => {
   test("rejects the old archived flag", () => {
     const { status: _s, ...rest } = avatar;
     expect(AvatarSummary.safeParse({ ...rest, archived: false }).success).toBe(false);
+  });
+});
+
+describe("UnreadableAvatar", () => {
+  const entry = { avatarId: "avatar-0009", name: "Mia", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" };
+
+  test("accepts a string name, the same schema AvatarSummary's name uses", () => {
+    expect(UnreadableAvatar.safeParse(entry).success).toBe(true);
+  });
+
+  test("accepts a null name: some reasons (a quarantined or corrupt manifest) leave no trustworthy name", () => {
+    expect(UnreadableAvatar.safeParse({ ...entry, name: null }).success).toBe(true);
+  });
+
+  test("rejects a missing name field: it must say null explicitly when there is none", () => {
+    const { name: _name, ...withoutName } = entry;
+    expect(UnreadableAvatar.safeParse(withoutName).success).toBe(false);
+  });
+
+  test("rejects a name over 60 chars, the same limit AvatarSummary's name enforces", () => {
+    expect(UnreadableAvatar.safeParse({ ...entry, name: "N".repeat(61) }).success).toBe(false);
+  });
+
+  test("rejects a blank name", () => {
+    expect(UnreadableAvatar.safeParse({ ...entry, name: "   " }).success).toBe(false);
   });
 });
 

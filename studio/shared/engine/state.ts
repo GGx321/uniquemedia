@@ -317,10 +317,15 @@ export const UnreadableDetail = z.enum([
  * could not list normally. `avatarId` is null only when it cannot be
  * recovered from the folder or the manifest; `detail` is one of
  * `UnreadableDetail`'s fixed sentences, the one its `reason` names — never
- * the descriptor or the vibe.
+ * the descriptor or the vibe. `name` is `AvatarSummary`'s own `AvatarName`
+ * schema, reused rather than duplicated; it is null only when no trustworthy
+ * name exists — a quarantined or corrupt manifest (`manifest-unreadable`),
+ * or a manifest whose own stored name no longer fits `AvatarName` — and
+ * carries the manifest's own name otherwise, whatever the skip reason.
  */
 export const UnreadableAvatar = z.strictObject({
   avatarId: Id.nullable(),
+  name: AvatarName.nullable(),
   reason: UnreadableReason,
   detail: UnreadableDetail,
 });

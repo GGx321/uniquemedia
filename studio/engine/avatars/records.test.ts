@@ -262,7 +262,7 @@ describe("libraryView over a real library", () => {
 
     expect(view.avatars.map((a) => [a.avatarId, a.photoCount])).toEqual([[saved.id, 1]]);
     expect(view.drafts.map((d) => [d.avatarId, d.candidates.map((c) => c.photoId)])).toEqual([[draft.id, [candidate.id]]]);
-    expect(view.skipped).toEqual([{ avatarId: early.id, reason: "contract-mismatch" }]);
+    expect(view.skipped).toEqual([{ avatarId: early.id, name: "Early", reason: "contract-mismatch" }]);
   });
 
   test("names a saved avatar whose stored descriptor no longer fits today's rules with reason descriptor-invalid", async () => {
@@ -271,14 +271,14 @@ describe("libraryView over a real library", () => {
     const master = await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta());
     await library.updateAvatar(saved.id, { status: "active", masterPhotoId: master.id });
 
-    expect(libraryView(library).skipped).toEqual([{ avatarId: saved.id, reason: "descriptor-invalid" }]);
+    expect(libraryView(library).skipped).toEqual([{ avatarId: saved.id, name: "Mia", reason: "descriptor-invalid" }]);
   });
 
   test("names a draft whose stored descriptor no longer fits today's rules with reason descriptor-invalid", async () => {
     const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds("bad-draft") });
     const draft = await library.createAvatar({ name: "Draft", age: 25, traits: manifestTraits(TRAITS), descriptor: "a young woman with hazel eyes" });
 
-    expect(libraryView(library).skipped).toEqual([{ avatarId: draft.id, reason: "descriptor-invalid" }]);
+    expect(libraryView(library).skipped).toEqual([{ avatarId: draft.id, name: "Draft", reason: "descriptor-invalid" }]);
   });
 
   test("a draft whose vibe ALSO fails today's rules is contract-mismatch, not descriptor-invalid: rewriting the descriptor alone cannot fix it", async () => {
@@ -290,7 +290,7 @@ describe("libraryView over a real library", () => {
       descriptor: "a young woman with hazel eyes",
     });
 
-    expect(libraryView(library).skipped).toEqual([{ avatarId: draft.id, reason: "contract-mismatch" }]);
+    expect(libraryView(library).skipped).toEqual([{ avatarId: draft.id, name: "Draft", reason: "contract-mismatch" }]);
   });
 
   test("an active avatar with a name over 60 chars and a bad descriptor is contract-mismatch: no descriptor could make it fit", async () => {
@@ -299,12 +299,33 @@ describe("libraryView over a real library", () => {
     const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta());
     await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
 
-    expect(libraryView(library).skipped).toEqual([{ avatarId: avatar.id, reason: "contract-mismatch" }]);
+    expect(libraryView(library).skipped).toEqual([{ avatarId: avatar.id, name: null, reason: "contract-mismatch" }]);
   });
 
   test("an empty library has nothing to list", async () => {
     const { library } = await openLibrary(root());
     expect(libraryView(library)).toEqual({ avatars: [], drafts: [], skipped: [] });
+  });
+
+  test("carries the manifest's own name for a record it must skip, whatever the skip reason: the manifest was still read", async () => {
+    const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds("named-skip") });
+    const draft = await library.createAvatar({
+      name: "Iris",
+      age: 25,
+      traits: manifestTraits({ ...TRAITS, vibe: "teen look" }),
+      descriptor: "a young woman with hazel eyes",
+    });
+
+    expect(libraryView(library).skipped).toEqual([{ avatarId: draft.id, name: "Iris", reason: "contract-mismatch" }]);
+  });
+
+  test("gives no name when the manifest's own name no longer fits the contract (over 60 chars)", async () => {
+    const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds("unnamed-skip") });
+    const avatar = await library.createAvatar({ name: "N".repeat(61), age: 25, traits: manifestTraits(TRAITS), descriptor: "a young woman with hazel eyes" });
+    const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+
+    expect(libraryView(library).skipped).toEqual([{ avatarId: avatar.id, name: null, reason: "contract-mismatch" }]);
   });
 });
 
@@ -315,7 +336,7 @@ describe("unreadableFromQuarantine", () => {
 
   test("names the folder's id and a fixed, generic detail, never the quarantine's own diagnostics", () => {
     expect(unreadableFromQuarantine([entry({ detail: "unexpected token in the manifest, holding a secret nobody should echo" })])).toEqual([
-      { avatarId: "avatar-0001", reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
+      { avatarId: "avatar-0001", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
     ]);
   });
 
@@ -332,7 +353,7 @@ describe("unreadableFromQuarantine", () => {
 
   test("is null for a folder name that does not fit the library id pattern", () => {
     expect(unreadableFromQuarantine([entry({ from: join("avatars", "Not An Id") })])).toEqual([
-      { avatarId: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
+      { avatarId: null, name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
     ]);
   });
 
@@ -340,12 +361,18 @@ describe("unreadableFromQuarantine", () => {
     const many = Array.from({ length: 5 }, (_, i) => entry({ from: join("avatars", `avatar-000${i}`) }));
     expect(unreadableFromQuarantine(many, 3)).toHaveLength(3);
   });
+
+  test("gives no name: a quarantined manifest was never parsed, so no trustworthy name exists", () => {
+    expect(unreadableFromQuarantine([entry()])).toEqual([
+      { avatarId: "avatar-0001", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
+    ]);
+  });
 });
 
 describe("combineUnreadable (L2, L11)", () => {
-  const descriptorInvalid = (n: number): UnreadableAvatar => ({ avatarId: `avatar-fix-${n}`, reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" });
-  const contractMismatch = (n: number): UnreadableAvatar => ({ avatarId: `avatar-mis-${n}`, reason: "contract-mismatch", detail: "its stored record no longer fits the contract" });
-  const manifestUnreadable = (n: number): UnreadableAvatar => ({ avatarId: `avatar-qtn-${n}`, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" });
+  const descriptorInvalid = (n: number): UnreadableAvatar => ({ avatarId: `avatar-fix-${n}`, name: `Fix ${n}`, reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" });
+  const contractMismatch = (n: number): UnreadableAvatar => ({ avatarId: `avatar-mis-${n}`, name: `Mismatch ${n}`, reason: "contract-mismatch", detail: "its stored record no longer fits the contract" });
+  const manifestUnreadable = (n: number): UnreadableAvatar => ({ avatarId: `avatar-qtn-${n}`, name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" });
 
   test("keeps every entry, uncut, when there are fewer than the bound", () => {
     const result = combineUnreadable([descriptorInvalid(1), contractMismatch(1)], [manifestUnreadable(1)], 10);

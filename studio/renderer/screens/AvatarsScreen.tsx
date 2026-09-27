@@ -220,7 +220,7 @@ function UnreadableTile({ entry, view, index }: { entry: UnreadableAvatar; view:
       <div className="avatar-card-body">
         <div className="avatar-card-row">
           <h2 id={titleId} className="avatar-name">
-            Не читается
+            {entry.name ?? "Без имени"}
           </h2>
           <span className="pill pill-danger">{UNREADABLE_REASON_LABEL[entry.reason]}</span>
         </div>

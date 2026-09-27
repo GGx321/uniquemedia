@@ -165,12 +165,12 @@ test("an engine dead for good shows a distinct message and no retry", async () =
 test("unreadable tiles show a clear Russian reason per code, never the raw detail text, and none offer a rewrite", async () => {
   setup({
     unreadableAvatars: [
-      { avatarId: "avatar-broken-0001", reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
-      { avatarId: null, reason: "contract-mismatch", detail: "its stored record no longer fits the contract" },
+      { avatarId: "avatar-broken-0001", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
+      { avatarId: null, name: "Vera", reason: "contract-mismatch", detail: "its stored record no longer fits the contract" },
     ],
   });
-  await screen.findAllByText("Не читается");
-  expect(screen.getAllByText("Не читается")).toHaveLength(2);
+  await screen.findByText("Vera");
+  expect(screen.getByText("Без имени")).toBeDefined();
   expect(screen.getByText(/Файл записи не удалось прочитать или разобрать/)).toBeDefined();
   expect(screen.getByText(/формате, который сегодняшняя версия Studio больше не читает/)).toBeDefined();
   expect(document.body.textContent).not.toContain("its manifest file could not be read or parsed");
@@ -178,38 +178,49 @@ test("unreadable tiles show a clear Russian reason per code, never the raw detai
   expect(screen.queryByRole("button", { name: "Переписать описание" })).toBeNull();
 });
 
+test("an unreadable card shows the avatar's name when the engine still has one, and a neutral fallback when it does not", async () => {
+  setup({
+    unreadableAvatars: [
+      { avatarId: "avatar-broken-0010", name: "Nora", reason: "contract-mismatch", detail: "its stored record no longer fits the contract" },
+      { avatarId: "avatar-broken-0011", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" },
+    ],
+  });
+  expect(await screen.findByRole("heading", { level: 2, name: "Nora" })).toBeDefined();
+  expect(screen.getByRole("heading", { level: 2, name: "Без имени" })).toBeDefined();
+});
+
 test("unreadableTotal beyond the shown list says how many more there are", async () => {
   setup({
-    unreadableAvatars: [{ avatarId: "avatar-broken-0001", reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" }],
+    unreadableAvatars: [{ avatarId: "avatar-broken-0001", name: null, reason: "manifest-unreadable", detail: "its manifest file could not be read or parsed" }],
     unreadableTotal: 5,
   });
-  await screen.findByText("Не читается");
+  await screen.findByText("Без имени");
   // Russian plurals: 4 falls in the "few" form ("записи"), not "записей".
   expect(screen.getByText("Ещё 4 записи не читаются.")).toBeDefined();
 });
 
 test("a library with only unreadable records is not shown as the empty state", async () => {
   setup({
-    unreadableAvatars: [{ avatarId: "avatar-broken-0001", reason: "contract-mismatch", detail: "its stored record no longer fits the contract" }],
+    unreadableAvatars: [{ avatarId: "avatar-broken-0001", name: "Vera", reason: "contract-mismatch", detail: "its stored record no longer fits the contract" }],
   });
-  await screen.findByText("Не читается");
+  await screen.findByText("Vera");
   expect(screen.queryByText("Библиотека пуста")).toBeNull();
 });
 
 test("the rewrite recovery estimates, then sends exactly that estimate's worst case, and the tile disappears on success", async () => {
   const { engine } = setup();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0001", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0001", name: "Zoe", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Zoe", traits: DEFAULT_TRAITS },
   );
-  await screen.findByText("Не читается");
+  await screen.findByText("Описание устарело");
 
   fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
   await screen.findByText("≈ $0.00, не больше $0.01");
   fireEvent.click(screen.getByRole("button", { name: "Переписать · до $0.01" }));
 
   await screen.findByRole("heading", { level: 2, name: "Zoe" });
-  expect(screen.queryByText("Не читается")).toBeNull();
+  expect(screen.queryByText("Описание устарело")).toBeNull();
   expect(callsOf(engine, "avatars.estimateRewriteDescriptor").map((c) => c.payload)).toEqual([{ avatarId: "avatar-broken-0001" }]);
   expect(callsOf(engine, "avatars.rewriteDescriptor")[0]?.payload).toEqual({
     avatarId: "avatar-broken-0001",
@@ -220,10 +231,10 @@ test("the rewrite recovery estimates, then sends exactly that estimate's worst c
 test("PRICE_CHANGED on the rewrite re-estimates and asks again before spending", async () => {
   const { engine } = setup();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0002", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0002", name: "Nora", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Nora", traits: DEFAULT_TRAITS },
   );
-  await screen.findByText("Не читается");
+  await screen.findByText("Описание устарело");
   fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
   await screen.findByText("≈ $0.00, не больше $0.01");
 
@@ -242,10 +253,10 @@ test("PRICE_CHANGED on the rewrite re-estimates and asks again before spending",
 test("confirmRewrite stays busy through a PRICE_CHANGED re-estimate, so a click while it is still in flight sends nothing", async () => {
   const { engine, scheduler } = setup();
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0005", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0005", name: "Vika", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Vika", traits: DEFAULT_TRAITS },
   );
-  await screen.findByText("Не читается");
+  await screen.findByText("Описание устарело");
   fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
   await screen.findByText("≈ $0.00, не больше $0.01");
 
@@ -274,11 +285,11 @@ test("confirmRewrite stays busy through a PRICE_CHANGED re-estimate, so a click 
 test("the rewrite button disables while its own command is in flight, both while estimating and while rewriting", async () => {
   const { engine, scheduler } = setup({ latencyMs: 20 });
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0003", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0003", name: "Mia", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Mia", traits: DEFAULT_TRAITS },
   );
   await answerAll(scheduler);
-  await screen.findByText("Не читается");
+  await screen.findByText("Описание устарело");
 
   const startButton = screen.getByRole("button", { name: "Переписать описание" });
   fireEvent.click(startButton);
@@ -294,10 +305,10 @@ test("the rewrite button disables while its own command is in flight, both while
 test("the rewrite button stays disabled while paid calls are halted, with the reason shown", async () => {
   const { engine } = setup({ money: { halt: { cause: "SETTLE_ABOVE_WORST", detail: "billed above", attemptIds: ["slot-1#1"] } } });
   engine.seedUnreadable(
-    { avatarId: "avatar-broken-0004", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { avatarId: "avatar-broken-0004", name: "Ava", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Ava", traits: DEFAULT_TRAITS },
   );
-  await screen.findByText("Не читается");
+  await screen.findByText("Описание устарело");
   expect(screen.getByRole("button", { name: "Переписать описание" }).hasAttribute("disabled")).toBe(true);
   expect(screen.getByText("Платные запросы остановлены до сверки расходов.")).toBeDefined();
 });

@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import {
+  AvatarName,
   AvatarSummary,
   AvatarTraits,
   Draft,
@@ -85,6 +86,8 @@ export function avatarSummaryFrom(manifest: AvatarManifest, photoCount: number):
 /** An avatar record the contract refuses, with which of the two known causes it is. */
 export interface SkippedAvatar {
   avatarId: string;
+  /** The manifest's own name, when it still fits `AvatarName`; null when even the name no longer fits the contract. The manifest itself was always read here — see `unreadableFromQuarantine` for the case where it was not. */
+  name: string | null;
   reason: SkippedReason;
 }
 
@@ -119,6 +122,18 @@ export function isRewritable(manifest: AvatarManifest): boolean {
 }
 
 /**
+ * The manifest's own name, as `SkippedAvatar.name` and the unreadable
+ * contract entry carry it: `manifest.name` when it still fits `AvatarName`
+ * (the same schema `AvatarSummary`'s own name uses), null otherwise — a
+ * manifest whose name alone no longer fits today's rules (e.g. over 60
+ * chars), independently of whether its descriptor or traits do.
+ */
+function skippedNameOf(manifest: AvatarManifest): string | null {
+  const parsed = AvatarName.safeParse(manifest.name);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Why `manifest` could not be listed as a draft or a saved avatar:
  * `descriptor-invalid` when rewriting the stored descriptor alone would fix
  * it (`isRewritable`); `contract-mismatch` for everything else (untyped
@@ -135,11 +150,11 @@ export function libraryView(library: Library): LibraryView {
   for (const manifest of library.listAvatars()) {
     if (manifest.status === "draft") {
       const draft = draftFrom(manifest, library.photosByAvatar(manifest.id));
-      if (draft === null) view.skipped.push({ avatarId: manifest.id, reason: skipReason(manifest) });
+      if (draft === null) view.skipped.push({ avatarId: manifest.id, name: skippedNameOf(manifest), reason: skipReason(manifest) });
       else view.drafts.push(draft);
     } else {
       const avatar = avatarSummaryFrom(manifest, library.photoCount(manifest.id));
-      if (avatar === null) view.skipped.push({ avatarId: manifest.id, reason: skipReason(manifest) });
+      if (avatar === null) view.skipped.push({ avatarId: manifest.id, name: skippedNameOf(manifest), reason: skipReason(manifest) });
       else view.avatars.push(avatar);
     }
   }
@@ -160,7 +175,7 @@ export function unreadableFromQuarantine(entries: readonly QuarantineEntry[], ma
     .slice(0, max)
     .map((e) => {
       const id = basename(e.from);
-      return { avatarId: isLibraryId(id) ? id : null, reason: "manifest-unreadable", detail: UNREADABLE_REASON_DETAIL["manifest-unreadable"] };
+      return { avatarId: isLibraryId(id) ? id : null, name: null, reason: "manifest-unreadable", detail: UNREADABLE_REASON_DETAIL["manifest-unreadable"] };
     });
 }
 

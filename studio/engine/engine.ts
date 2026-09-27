@@ -836,7 +836,7 @@ export class Engine {
       for (const s of fresh) this.#reportedSkips.add(s.avatarId);
       console.warn(`studio engine: avatar records that do not fit the contract are not listed: ${fresh.map((s) => s.avatarId).join(", ")}`);
     }
-    const fromSkipped: UnreadableAvatar[] = view.skipped.map((s) => ({ avatarId: s.avatarId, reason: s.reason, detail: UNREADABLE_REASON_DETAIL[s.reason] }));
+    const fromSkipped: UnreadableAvatar[] = view.skipped.map((s) => ({ avatarId: s.avatarId, name: s.name, reason: s.reason, detail: UNREADABLE_REASON_DETAIL[s.reason] }));
     // The true count, before the bound: the list a window shows can be cut, this count never is (L1).
     const unreadableTotal = fromSkipped.length + this.#live.unreadable.length;
     const unreadable = combineUnreadable(fromSkipped, this.#live.unreadable);
