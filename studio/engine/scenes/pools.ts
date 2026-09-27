@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { youthWords } from "../../shared/engine";
 import { CATEGORIES, SHOTS, type Category, type Shot } from "./types";
+import { REVEALING_WORDS } from "./words";
 
 // The scene pools: everyday locations, outfits and shot decks per category.
 // Data, not code (T5a, item 1) — ported and cleaned up from the spike
@@ -249,10 +250,9 @@ export const POOLS: Record<Category, Pool> = {
 
 // ---------- validation ----------
 
-/** Spec words plus plural/adjective forms for the outfits the fixed decision
- *  disables in Stage 2: swimwear, sports bras, lingerie, stockings, slip
- *  dresses and robes. Anything matching this can never enter a pool. */
-const REVEALING_WORDS = /\b(bikini|swimsuit|swimwear|lingerie|sports bra|thong|stockings?|slip dress|robe over lingerie)\b/i;
+// REVEALING_WORDS lives in ./words.ts now (review round 1, MEDIUM: it was
+// duplicated here and in writer.ts). Anything matching it can never enter a
+// pool.
 
 /**
  * The same check the descriptor gate uses on its own text
