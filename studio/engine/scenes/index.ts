@@ -4,9 +4,22 @@
 // real ledger attempt ids.
 export { CATEGORIES, SHOTS, type Category, type Shot } from "./types";
 export { POOLS, PoolSchema, validatePools, type Activity, type Place, type Pool } from "./pools";
-export { AttemptIdBaseSchema, CategorySchema, PlanSlotSchema, ScenePlanSchema, ShotSchema, type PlanSlot, type ScenePlan } from "./schema";
-export { plan, placeMirrorShots, type ExcludedPair, type PlanInput } from "./planner";
 export {
+  AttemptIdBaseSchema,
+  CategorySchema,
+  isPhoneInHandShot,
+  PlanSlotSchema,
+  PoseSchema,
+  ScenePlanSchema,
+  ShotSchema,
+  type PlanSlot,
+  type Pose,
+  type ScenePlan,
+} from "./schema";
+export { plan, placeMirrorShots, type ExcludedPair, type PlanInput } from "./planner";
+export { drawPose, NO_EXTRA_POSES, POSE_WEIGHTS, type PoseAllowance } from "./poses";
+export {
+  contradictsPose,
   isTwoHanded,
   readWriterAnswer,
   revealingWordsIn,

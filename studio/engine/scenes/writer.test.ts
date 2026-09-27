@@ -7,6 +7,7 @@ import { plan } from "./planner";
 import type { PlanSlot } from "./schema";
 import {
   chunkSlots,
+  contradictsPose,
   isTwoHanded,
   readWriterAnswer,
   revealingWordsIn,
@@ -34,6 +35,7 @@ function slot(overrides: Partial<PlanSlot> = {}): PlanSlot {
     activity: "holding a ceramic coffee mug",
     outfit: "a plain white t-shirt and cotton shorts",
     shot: "friend",
+    pose: "front",
     attemptIdBase: "slot-1",
     repeatedPair: false,
     ...overrides,
@@ -54,15 +56,34 @@ describe("writerMessages", () => {
     expect(system?.content.toLowerCase()).toContain("no children");
   });
 
-  test("the user message carries only the plan's slot fields, in order", () => {
-    const slots = [slot({ slotIndex: 1, category: "home" }), slot({ slotIndex: 2, category: "fitness", shot: "selfie" })];
+  test("the user message carries only the plan's slot fields, in order, pose included", () => {
+    const slots = [
+      slot({ slotIndex: 1, category: "home", pose: "front" }),
+      slot({ slotIndex: 2, category: "fitness", shot: "selfie", pose: "three-quarter" }),
+    ];
     const [, user] = writerMessages(slots);
     expect(user?.role).toBe("user");
     const body = JSON.parse(user?.content.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
     expect(body).toEqual([
-      { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning", shot: "photo taken by a friend", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
-      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning", shot: "front-camera selfie", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning", shot: "photo taken by a friend", pose: "facing the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning", shot: "front-camera selfie", pose: "a three-quarter view, turned slightly from the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
     ]);
+  });
+
+  test.each([
+    ["profile", "in profile, her face turned fully to the side"],
+    ["back", "from behind, her face not visible"],
+  ] as const)("pose %s is labeled for the model as %j", (pose, label) => {
+    const [, user] = writerMessages([slot({ pose, shot: "candid" })]);
+    const body = JSON.parse(user?.content.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
+    expect(body[0].pose).toBe(label);
+  });
+
+  test("the system prompt tells the model to match each slot's pose, naming back and profile phrasing", () => {
+    const [system] = writerMessages([slot()]);
+    expect(system?.content.toLowerCase()).toContain("pose");
+    expect(system?.content.toLowerCase()).toContain("behind");
+    expect(system?.content.toLowerCase()).toContain("profile");
   });
 
   test("with no refusal, the user message names no earlier rejection", () => {
@@ -71,7 +92,7 @@ describe("writerMessages", () => {
   });
 
   test("a refusal is fed back as fixed reasons, in the next message", () => {
-    const [, user] = writerMessages([slot()], { problems: ["two-handed"], missingSlots: [], twoHandedSlots: [1], wordSlots: [], words: [] });
+    const [, user] = writerMessages([slot()], { problems: ["two-handed"], missingSlots: [], twoHandedSlots: [1], wordSlots: [], words: [], poseSlots: [] });
     expect(user?.content).toContain("rejected");
     expect(user?.content).toContain("1");
   });
@@ -163,6 +184,49 @@ describe("readWriterAnswer", () => {
     expect(answer.twoHandedSlots).toEqual([1]);
     expect(answer.wordSlots).toEqual([2]);
   });
+
+  describe("a sentence that contradicts its slot's pose (T5c)", () => {
+    const BACK_SLOTS = [slot({ slotIndex: 1, shot: "friend", pose: "back" }), slot({ slotIndex: 2, shot: "friend", pose: "front" })];
+    const PROFILE_SLOTS = [slot({ slotIndex: 1, shot: "candid", pose: "profile" })];
+
+    test("a back pose whose sentence says she looks at the camera is refused, naming the slot", () => {
+      const answer = readWriterAnswer(
+        output([
+          { slotIndex: 1, sentence: "She walks away down the hallway, looking at the camera over her shoulder as the light fades." },
+          { slotIndex: 2, sentence: GOOD_FRIEND },
+        ]),
+        BACK_SLOTS,
+      );
+      expect(answer).toMatchObject({ ok: false, problems: ["pose-contradiction"], poseSlots: [1] });
+    });
+
+    test("a profile pose whose sentence has her smiling at the camera is refused", () => {
+      const answer = readWriterAnswer(output([{ slotIndex: 1, sentence: "She stands by the window, smiling at the camera in the evening light." }]), PROFILE_SLOTS);
+      expect(answer).toMatchObject({ ok: false, problems: ["pose-contradiction"], poseSlots: [1] });
+    });
+
+    test("a back pose with no camera-facing language passes", () => {
+      const answer = readWriterAnswer(
+        output([
+          { slotIndex: 1, sentence: "She walks away down the hallway, her hair catching the light as the door closes ahead of her." },
+          { slotIndex: 2, sentence: GOOD_FRIEND },
+        ]),
+        BACK_SLOTS,
+      );
+      expect(answer).toMatchObject({ ok: true });
+    });
+
+    test("the same camera-facing wording on a front-pose slot is not flagged", () => {
+      const answer = readWriterAnswer(
+        output([
+          { slotIndex: 1, sentence: GOOD_FRIEND },
+          { slotIndex: 2, sentence: "She looks at the camera and smiles warmly in the kitchen light." },
+        ]),
+        BACK_SLOTS,
+      );
+      expect(answer).toMatchObject({ ok: true });
+    });
+  });
 });
 
 describe("detectors", () => {
@@ -195,19 +259,36 @@ describe("detectors", () => {
   ])("revealingWordsIn(%j) -> %p", (sentence, expected) => {
     expect(revealingWordsIn(sentence).map((w) => w.toLowerCase())).toEqual(expected);
   });
+
+  test.each([
+    ["back", "she looks at the camera and smiles.", true],
+    ["back", "gazing toward the camera as she turns.", true],
+    ["profile", "she smiles at the camera.", true],
+    ["back", "her hair catches the light as she walks away.", false],
+    ["front", "she looks at the camera and smiles.", false],
+    ["three-quarter", "she glances at the camera.", false],
+  ] as const)("contradictsPose(%j, %j) -> %p", (pose, sentence, expected) => {
+    expect(contradictsPose(sentence, pose)).toBe(expected);
+  });
 });
 
 describe("writerRefusalText", () => {
   test("names the two-handed slots and the rule", () => {
-    const text = writerRefusalText({ problems: ["two-handed"], missingSlots: [], twoHandedSlots: [3], wordSlots: [], words: [] });
+    const text = writerRefusalText({ problems: ["two-handed"], missingSlots: [], twoHandedSlots: [3], wordSlots: [], words: [], poseSlots: [] });
     expect(text).toContain("3");
     expect(text.toLowerCase()).toContain("hand");
   });
 
   test("never repeats the model's own rejected words back verbatim, only our fixed reasons", () => {
-    const text = writerRefusalText({ problems: ["youth-word"], missingSlots: [], twoHandedSlots: [], wordSlots: [2], words: ["girl"] });
+    const text = writerRefusalText({ problems: ["youth-word"], missingSlots: [], twoHandedSlots: [], wordSlots: [2], words: ["girl"], poseSlots: [] });
     expect(text).toContain("girl");
     expect(text).not.toContain("laughs in the kitchen");
+  });
+
+  test("names the pose-contradiction slots and the rule", () => {
+    const text = writerRefusalText({ problems: ["pose-contradiction"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [4] });
+    expect(text).toContain("4");
+    expect(text.toLowerCase()).toContain("pose");
   });
 });
 
@@ -304,16 +385,18 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
   // run's total slot count.
   //
   // The worst plausible single refusal: almost every slot both two-handed
-  // and carrying a youth/revealing word, one slot missing outright.
+  // and carrying a youth/revealing word, one slot missing outright, and
+  // (T5c) almost every slot also flagged for a pose contradiction.
   function worstRefusal(slots: readonly PlanSlot[]): WriterRefusal {
     const indices = slots.map((s) => s.slotIndex);
     const missingSlots = indices.slice(-1);
     const rest = indices.slice(0, -1);
     return {
-      problems: ["missing-slots", "two-handed", "youth-word", "revealing-word"],
+      problems: ["missing-slots", "two-handed", "youth-word", "revealing-word", "pose-contradiction"],
       missingSlots,
       twoHandedSlots: rest,
       wordSlots: rest,
+      poseSlots: rest,
       words: ["girl", "teen", "child", "kid", "school uniform", "bikini", "lingerie", "stockings", "sports bra", "slip dress"],
     };
   }
@@ -323,12 +406,15 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
     const messages = writerMessages(scenePlan.slots, worstRefusal(scenePlan.slots));
     const floor = promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
 
-    // Measured (2026-09-27): a WRITER_CALL.slotsPerCall (25) chunk, plain ~8317,
-    // +worst refusal ~9168; 20 slots plain ~7027, +worst refusal ~7818; 30
-    // slots +worst refusal ~10522 (over one chunk, for reference only — a
-    // 30-slot run is itself split into two chunks of 25 and 5).
-    // WRITER_CALL.inputTokens = 12_000 leaves ~2_800 headroom over one full
-    // chunk's worst refusal.
+    // Measured (2026-09-27, T5c: pose added to every slot and to a worst
+    // refusal's own pose-contradiction problem): a WRITER_CALL.slotsPerCall
+    // (25) chunk, plain ~10045, +worst refusal ~11108; 20 slots plain ~8446,
+    // +worst refusal ~9429; 30 slots +worst refusal ~12711 (over one chunk,
+    // for reference only — a 30-slot run is itself split into two chunks of
+    // 25 and 5). WRITER_CALL.inputTokens = 12_000 still covers a full
+    // chunk's worst refusal, but with only ~892 tokens of headroom left
+    // (down from ~2_800 before pose) — re-measure here before adding any
+    // further refusal reason or per-slot field.
     expect(floor).toBeLessThanOrEqual(WRITER_CALL.inputTokens);
   });
 

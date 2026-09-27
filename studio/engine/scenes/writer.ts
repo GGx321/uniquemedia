@@ -4,7 +4,7 @@ import { WRITER_CALL, writerWorstMicros, type Estimate } from "../money/estimate
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
 import type { Category, Shot } from "./types";
-import type { PlanSlot } from "./schema";
+import type { PlanSlot, Pose } from "./schema";
 import { revealingWordsIn } from "./words";
 
 // T5b: the scene writer, prompt v2. A paid chat call per chunk turns the
@@ -96,16 +96,29 @@ const SHOT_LABEL: Record<Shot, string> = {
   photographer: "photo taken by a photographer with a full-frame camera",
 };
 
+/**
+ * T5c: how each pose is described to the writer model, so its sentence
+ * agrees with the plan's own `pose` (assembler.ts's own fixed phrase per
+ * pose is separate — this is only what the writer is told to write around).
+ */
+const POSE_LABEL: Record<Pose, string> = {
+  front: "facing the camera",
+  "three-quarter": "a three-quarter view, turned slightly from the camera",
+  profile: "in profile, her face turned fully to the side",
+  back: "from behind, her face not visible",
+};
+
 function writerSystemPrompt(): string {
   return [
     "You write one photorealistic scene sentence for each of the given photo slots, of one recurring adult woman.",
     "Reference images supply her identity, so you never describe her face, never give her a name, and never change her hair, eyes or body type.",
     "",
-    "For each slot, write exactly one full English sentence (never a fragment) that uses the slot's category, location, time of day, shot type, outfit and activity, and adds natural, concrete detail: what her hands and body do, her expression, the background and the light.",
+    "For each slot, write exactly one full English sentence (never a fragment) that uses the slot's category, location, time of day, shot type, pose, outfit and activity, and adds natural, concrete detail: what her hands and body do, her expression, the background and the light.",
     "",
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
     '- In a front-camera selfie or a mirror selfie, one hand always holds the phone: describe only what her other, single hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
+    '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the camera, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the camera. For any other pose she may face or glance toward the camera as the shot allows.',
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
     "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the given outfit, describe it as covering and non-revealing.",
     "- No text, logos, brand names or readable signs; nothing covers her face.",
@@ -122,6 +135,7 @@ function slotForWriter(slot: PlanSlot): Record<string, unknown> {
     location: slot.location,
     timeOfDay: slot.timeOfDay,
     shot: SHOT_LABEL[slot.shot],
+    pose: POSE_LABEL[slot.pose],
     outfit: slot.outfit,
     activity: slot.activity,
   };
@@ -129,7 +143,16 @@ function slotForWriter(slot: PlanSlot): Record<string, unknown> {
 
 // ---------- refusal / re-ask feedback ----------
 
-export type WriterProblem = "not-json" | "empty" | "missing-slots" | "unknown-slot" | "duplicate-slot" | "two-handed" | "youth-word" | "revealing-word";
+export type WriterProblem =
+  | "not-json"
+  | "empty"
+  | "missing-slots"
+  | "unknown-slot"
+  | "duplicate-slot"
+  | "two-handed"
+  | "youth-word"
+  | "revealing-word"
+  | "pose-contradiction";
 
 /** Why an answer was refused, as the next attempt is told: fixed reasons and
  *  slot numbers, never the model's own rejected wording (the youth/revealing
@@ -140,9 +163,11 @@ export interface WriterRefusal {
   twoHandedSlots: number[];
   wordSlots: number[];
   words: string[];
+  /** T5c: slots whose sentence contradicts their own pose (e.g. a back pose "looking at the camera"). */
+  poseSlots: number[];
 }
 
-const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [] };
+const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
 
 function quotedList(words: readonly string[]): string {
   return words.map((w) => `"${w}"`).join(", ");
@@ -161,6 +186,7 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "two-handed": (r) => `slot(s) ${slotList(r.twoHandedSlots)} used a two-handed action in a selfie or mirror shot; one hand always holds the phone, so only the other hand may act`,
   "youth-word": (r) => `slot(s) ${slotList(r.wordSlots)} used words we do not allow: ${quotedList(r.words)}; call her a woman and use none of them`,
   "revealing-word": (r) => `slot(s) ${slotList(r.wordSlots)} used a revealing word we do not allow: ${quotedList(r.words)}`,
+  "pose-contradiction": (r) => `slot(s) ${slotList(r.poseSlots)} contradicted their own pose (a back or profile pose looking toward the camera); match each slot's given pose instead`,
 };
 
 /** Every reason a refusal happened, as fixed sentences; never the model's own rejected text. */
@@ -237,6 +263,27 @@ function phoneInHand(slot: PlanSlot): boolean {
   return slot.shot === "selfie" || slot.shot === "mirror";
 }
 
+/**
+ * A sentence describing her looking, gazing, staring, glancing or smiling
+ * at/toward/into the camera — cheaply detectable, and the plan's own example
+ * of what a back or profile pose's sentence must never say (a back-facing
+ * woman cannot be "looking at the camera"; a profile shot's whole point is
+ * that her face is turned to the side, not toward it).
+ */
+const CAMERA_GAZE =
+  /\b(?:look(?:ing|s)?|gaz(?:ing|es)?|star(?:ing|es)?|glanc(?:ing|es)?|smil(?:ing|es)?)\s+(?:at|toward|towards|into)\s+the\s+camera\b/i;
+
+/**
+ * Whether `sentence` contradicts `pose` in a cheaply detectable way (T5c,
+ * plan: "reject a sentence that contradicts the pose ... for example a back
+ * pose whose sentence says 'looking at the camera'"). Only back and profile
+ * carry this rule: front and three-quarter may freely face or glance toward
+ * the camera.
+ */
+export function contradictsPose(sentence: string, pose: Pose): boolean {
+  return (pose === "back" || pose === "profile") && CAMERA_GAZE.test(sentence);
+}
+
 // ---------- reading the answer ----------
 
 /** The JSON of the answer, tolerating a markdown fence around it (mirrors avatars/descriptor.ts). */
@@ -252,7 +299,7 @@ function parseJson(content: string): unknown {
 export type WriterAnswer = { ok: true; sentences: Map<number, string> } | ({ ok: false } & WriterRefusal);
 
 function refused(problems: WriterProblem[], extra: Partial<WriterRefusal> = {}): WriterAnswer {
-  return { ok: false, problems, missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], ...extra };
+  return { ok: false, problems, missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], ...extra };
 }
 
 /** The model's answer against the plan's slots, or every reason it cannot be used. */
@@ -282,6 +329,7 @@ export function readWriterAnswer(content: string, slots: readonly PlanSlot[]): W
   const twoHandedSlots: number[] = [];
   const wordSlots = new Set<number>();
   const words = new Set<string>();
+  const poseSlots: number[] = [];
   for (const s of slots) {
     const sentence = bySlot.get(s.slotIndex);
     if (sentence === undefined) continue;
@@ -301,10 +349,20 @@ export function readWriterAnswer(content: string, slots: readonly PlanSlot[]): W
       problems.add("two-handed");
       twoHandedSlots.push(s.slotIndex);
     }
+    if (contradictsPose(sentence, s.pose)) {
+      problems.add("pose-contradiction");
+      poseSlots.push(s.slotIndex);
+    }
   }
 
   if (problems.size > 0) {
-    return refused([...problems], { missingSlots, twoHandedSlots, wordSlots: [...wordSlots].sort((a, b) => a - b), words: [...words] });
+    return refused([...problems], {
+      missingSlots,
+      twoHandedSlots,
+      wordSlots: [...wordSlots].sort((a, b) => a - b),
+      words: [...words],
+      poseSlots,
+    });
   }
   return { ok: true, sentences: bySlot };
 }

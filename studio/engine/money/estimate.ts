@@ -68,6 +68,15 @@ export interface WriterCall extends Omit<ChatCall, "typical"> {
  * `maxTokens` (the output ceiling) is untouched: typical output was 3_230
  * tokens for 25 scenes, far under it.
  *
+ * T5c (2026-09-27): pose was added to every slot sent to the writer, to the
+ * system prompt's own rules, and to a worst refusal's own new
+ * pose-contradiction problem. Re-measured: a full chunk plain ~10_045,
+ * +worst refusal ~11_108; 20 slots +worst refusal ~9_429. Still comfortably
+ * under 12_000, so `inputTokens` was left unchanged — but the headroom
+ * shrank to ~892 tokens (scenes/writer.test.ts's own comment carries the
+ * up-to-date numbers); re-measure again before adding any further
+ * per-slot field or refusal reason.
+ *
  * `slotsPerCall`/`maxAttempts` review round 2/3: `RunRequest.count` allows
  * up to 100 photos, possibly all in one category — far more slots than one
  * call can safely take (a 100-slot prompt floor alone measured ~30_223

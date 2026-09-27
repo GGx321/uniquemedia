@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FacePoseSchema } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
 
 // The plan's on-disk/on-wire contract (T5a, item 4, invariant 6). Kept
@@ -15,6 +16,26 @@ const NonEmpty = z.string().min(1);
 
 export const CategorySchema = z.enum(CATEGORIES);
 export const ShotSchema = z.enum(SHOTS);
+
+/**
+ * T5c: the same pose vocabulary the face gate's policy already takes
+ * (studio/engine/face/config.ts's `FacePoseSchema` — front/three-quarter get
+ * a full identity check, profile is skipped, back is skipped unless a
+ * confident face turns up). Re-exported here rather than redeclared, so the
+ * planner's own `pose` value and the face gate's `pose` input can never
+ * drift into two different enums.
+ */
+export const PoseSchema = FacePoseSchema;
+export type Pose = z.infer<typeof PoseSchema>;
+
+/** A selfie/mirror shot always holds the phone in one hand, so her face is
+ *  always toward the camera: profile and back are never valid poses there
+ *  (owner decision, 2026-09-27). Shared by PlanSlotSchema's own refine below
+ *  and by the planner/writer/assembler, so the rule lives in exactly one
+ *  place. */
+export function isPhoneInHandShot(shot: (typeof SHOTS)[number]): boolean {
+  return shot === "selfie" || shot === "mirror";
+}
 
 /**
  * `slot-<slotIndex>`. T6 turns this into the ledger's real, globally-unique
@@ -34,17 +55,23 @@ export const AttemptIdBaseSchema = z.string().regex(/^slot-[1-9][0-9]*$/, "must 
  *  planner had to keep a pair it was asked to avoid (T6/T8b can surface this,
  *  e.g. in the review table); false whenever there was nothing to avoid or
  *  avoidance succeeded. */
-export const PlanSlotSchema = z.strictObject({
-  slotIndex: z.int().positive(),
-  category: CategorySchema,
-  location: NonEmpty,
-  timeOfDay: NonEmpty,
-  activity: NonEmpty,
-  outfit: NonEmpty,
-  shot: ShotSchema,
-  attemptIdBase: AttemptIdBaseSchema,
-  repeatedPair: z.boolean(),
-});
+export const PlanSlotSchema = z
+  .strictObject({
+    slotIndex: z.int().positive(),
+    category: CategorySchema,
+    location: NonEmpty,
+    timeOfDay: NonEmpty,
+    activity: NonEmpty,
+    outfit: NonEmpty,
+    shot: ShotSchema,
+    pose: PoseSchema,
+    attemptIdBase: AttemptIdBaseSchema,
+    repeatedPair: z.boolean(),
+  })
+  .refine((slot) => !isPhoneInHandShot(slot.shot) || slot.pose === "front" || slot.pose === "three-quarter", {
+    message: "a selfie or mirror shot always faces the camera: pose must be front or three-quarter",
+    path: ["pose"],
+  });
 export type PlanSlot = z.infer<typeof PlanSlotSchema>;
 
 /** The whole plan: a stable, serialisable value T6 can persist for resume and

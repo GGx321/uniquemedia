@@ -47,7 +47,7 @@ export interface WriterJob {
 
 export type WriterJobResult = { ok: true; sentences: ReadonlyMap<number, string> } | { ok: false; error: EngineError };
 
-const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [] };
+const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
 
 function afterRefusal(error: EngineError, earlier: WriterRefusal): EngineError {
   const detail = `${error.detail ?? error.code} (after an answer rejected for: ${writerRefusalText(earlier)})`;

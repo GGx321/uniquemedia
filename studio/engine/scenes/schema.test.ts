@@ -1,8 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import { plan } from "./planner";
-import { ScenePlanSchema } from "./schema";
+import { PlanSlotSchema, ScenePlanSchema } from "./schema";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+
+function baseSlot(): Record<string, unknown> {
+  return {
+    slotIndex: 1,
+    category: "home",
+    location: "x",
+    timeOfDay: "morning",
+    activity: "y",
+    outfit: "z",
+    shot: "friend",
+    pose: "front",
+    attemptIdBase: "slot-1",
+    repeatedPair: false,
+  };
+}
 
 const ALL = ["home", "travel", "photoshoot", "glamour", "fitness"] as const;
 
@@ -71,5 +86,42 @@ describe("ScenePlanSchema", () => {
   test("rejects a non-integer seed", () => {
     const good = plan({ seed: 1, count: 1, categories: ["home"] });
     expect(ScenePlanSchema.safeParse({ ...good, seed: 1.5 }).success).toBe(false);
+  });
+});
+
+describe("PlanSlotSchema pose (T5c)", () => {
+  test("accepts a well-formed slot with a valid pose", () => {
+    expect(PlanSlotSchema.safeParse(baseSlot()).success).toBe(true);
+  });
+
+  test.each(["front", "three-quarter", "profile", "back"])("accepts pose %s on a non-phone-in-hand shot", (pose) => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), shot: "friend", pose }).success).toBe(true);
+  });
+
+  test("rejects an unknown pose value", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), pose: "overhead" }).success).toBe(false);
+  });
+
+  test("rejects a slot missing pose", () => {
+    const { pose: _pose, ...rest } = baseSlot();
+    expect(PlanSlotSchema.safeParse(rest).success).toBe(false);
+  });
+
+  test.each(["selfie", "mirror"])("rejects pose profile on a %s shot (her face must stay visible)", (shot) => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), shot, pose: "profile" }).success).toBe(false);
+  });
+
+  test.each(["selfie", "mirror"])("rejects pose back on a %s shot (her face must stay visible)", (shot) => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), shot, pose: "back" }).success).toBe(false);
+  });
+
+  test.each(["selfie", "mirror"])("accepts pose front or three-quarter on a %s shot", (shot) => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), shot, pose: "front" }).success).toBe(true);
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), shot, pose: "three-quarter" }).success).toBe(true);
+  });
+
+  test.each(["friend", "candid", "photographer"])("accepts pose profile or back on a %s shot", (shot) => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), shot, pose: "profile" }).success).toBe(true);
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), shot, pose: "back" }).success).toBe(true);
   });
 });

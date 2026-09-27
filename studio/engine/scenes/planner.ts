@@ -1,5 +1,6 @@
 import { CATEGORIES, type Category, type Shot } from "./types";
 import { POOLS, type Place, type Pool } from "./pools";
+import { drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
 import { Bag, makeRng, rngPick, type Rng } from "./rngUtil";
 import { ScenePlanSchema, type PlanSlot, type ScenePlan } from "./schema";
 
@@ -31,6 +32,12 @@ export interface PlanInput {
   categories: readonly Category[];
   /** Pairs to avoid repeating (see ExcludedPair); defaults to none. */
   excludePairs?: readonly ExcludedPair[];
+  /** Which poses beyond front/three-quarter this run allows (T5c, owner
+   *  decision 2026-09-27); defaults to neither (every slot then draws only
+   *  front/three-quarter). Front and three-quarter are always allowed and
+   *  are never gated here; a selfie or mirror shot always draws one of them,
+   *  whatever this says (poses.ts's drawPose). */
+  poses?: PoseAllowance;
 }
 
 function pairKey(location: string, outfit: string): string {
@@ -68,11 +75,24 @@ function fnv1a(text: string): number {
 }
 
 /**
- * A deterministic, independent rng seed per category: `plan()`'s own seed
- * combined with a hash of the category name, then run through a 32-bit
- * avalanche mix (the murmur3/splitmix finalizer) so nearby or related input
- * seeds do not produce nearby output seeds. No Math.random, no Date — pure
- * function of (seed, category), every time.
+ * A deterministic, independent rng seed from `seed` and a discriminator
+ * string, run through a 32-bit avalanche mix (the murmur3/splitmix
+ * finalizer) so nearby or related inputs do not produce nearby outputs. No
+ * Math.random, no Date — pure function of (seed, discriminator), every time.
+ * `categorySeed` and `poseSeed` below each call this with their own
+ * discriminator, so their rng streams never collide or interleave.
+ */
+function subSeed(seed: number, discriminator: string): number {
+  let h = (seed ^ fnv1a(discriminator)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * A deterministic, independent rng seed per category (unchanged since T5a:
+ * `subSeed(seed, category)`, so every existing plan's location/outfit/shot
+ * draws for a given seed stay exactly what they were before pose existed).
  *
  * This is what gives each category its own rng stream (see the module
  * comment): `planCategory` for "travel" never advances "home"'s stream, so a
@@ -80,10 +100,19 @@ function fnv1a(text: string): number {
  * own bags need, never shift what any other category draws for the same seed.
  */
 function categorySeed(seed: number, category: Category): number {
-  let h = (seed ^ fnv1a(category)) >>> 0;
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-  return (h ^ (h >>> 16)) >>> 0;
+  return subSeed(seed, category);
+}
+
+/**
+ * T5c: pose's own rng stream, per category — a different discriminator from
+ * `categorySeed`'s (`"pose:<category>"`, not the bare category name), so
+ * drawing poses never advances, and is never advanced by, the same
+ * category's location/outfit/shot bags (planner.test.ts's isolation test
+ * pins this: the same seed's location/outfit/shot draws are byte-identical
+ * whether poses are drawn at all, and whatever the run's pose allowance is).
+ */
+function poseSeed(seed: number, category: Category): number {
+  return subSeed(seed, `pose:${category}`);
 }
 
 /**
@@ -111,13 +140,25 @@ export function placeMirrorShots(shots: Shot[], places: readonly { mirror?: true
  * `categorySeed`). Draw order: locations and shots are each drawn from their
  * own bag (so a repeat only happens once every option has been used once),
  * mirror shots are then fixed up against the drawn locations, and only then
- * is each slot's outfit (its own bag), activity and time of day picked — the
- * two-handed activity filter needs the slot's *final* shot, after the mirror
- * fixup. `repeatedPair` is set only when `excludePairs` named this exact
- * (location, outfit) and every alternative outfit for that location was also
- * excluded, so the slot had to keep a pair the caller asked it to avoid.
+ * is each slot's outfit (its own bag), activity, time of day and pose picked
+ * — the two-handed activity filter and the pose draw both need the slot's
+ * *final* shot, after the mirror fixup. The pose draw (poses.ts's drawPose)
+ * runs on its own rng stream (`poseRng`, seeded by `poseSeed`, never `rng`),
+ * so it can never perturb this category's own location/outfit/shot draws.
+ * `repeatedPair` is set only when `excludePairs` named this exact (location,
+ * outfit) and every alternative outfit for that location was also excluded,
+ * so the slot had to keep a pair the caller asked it to avoid.
  */
-function planCategory(rng: Rng, pool: Pool, category: Category, n: number, startIndex: number, excluded: ReadonlySet<string>): PlanSlot[] {
+function planCategory(
+  rng: Rng,
+  poseRng: Rng,
+  pool: Pool,
+  category: Category,
+  n: number,
+  startIndex: number,
+  excluded: ReadonlySet<string>,
+  poses: PoseAllowance,
+): PlanSlot[] {
   if (n === 0) return [];
   const locationBag = new Bag(pool.locations, rng);
   const outfitBag = new Bag(pool.outfits, rng);
@@ -148,6 +189,7 @@ function planCategory(rng: Rng, pool: Pool, category: Category, n: number, start
       activity: rngPick(rng, activities).text,
       outfit,
       shot,
+      pose: drawPose(poseRng, shot, poses),
       attemptIdBase: `slot-${slotIndex}`,
       repeatedPair,
     };
@@ -169,13 +211,15 @@ export function planWithPools(input: PlanInput, pools: Record<Category, Pool>): 
 
   const perCategory = distribute(count, categories);
   const excluded = new Set((input.excludePairs ?? []).map((p) => pairKey(p.location, p.outfit)));
+  const poses = input.poses ?? NO_EXTRA_POSES;
 
   const slots: PlanSlot[] = [];
   let nextIndex = 1;
   for (const category of categories) {
     const n = perCategory.get(category) ?? 0;
     const rng = makeRng(categorySeed(seed, category));
-    slots.push(...planCategory(rng, pools[category], category, n, nextIndex, excluded));
+    const poseRng = makeRng(poseSeed(seed, category));
+    slots.push(...planCategory(rng, poseRng, pools[category], category, n, nextIndex, excluded, poses));
     nextIndex += n;
   }
   return ScenePlanSchema.parse({ version: 1, seed, slots });

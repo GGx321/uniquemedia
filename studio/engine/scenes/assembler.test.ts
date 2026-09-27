@@ -29,6 +29,7 @@ function slot(overrides: Partial<PlanSlot> = {}): PlanSlot {
     activity: "holding a ceramic coffee mug",
     outfit: "an oversized cream knit sweater",
     shot: "friend",
+    pose: "front",
     attemptIdBase: "slot-1",
     repeatedPair: false,
     ...overrides,
@@ -77,6 +78,47 @@ describe("assembleSlot", () => {
   test.each(["friend", "candid", "photographer"] as const)("a %s slot's constraints say nothing about a phone hand", (shot) => {
     const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot }), SENTENCE, MASTER);
     expect(prompt.toLowerCase()).not.toContain("holds the phone");
+  });
+
+  describe("pose (T5c)", () => {
+    test.each([
+      ["front", "faces the camera"],
+      ["three-quarter", "three-quarter"],
+      ["profile", "profile"],
+      ["back", "from behind"],
+    ] as const)("the %s pose phrase is in the prompt", (pose, phrase) => {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend", pose }), SENTENCE, MASTER);
+      expect(prompt.toLowerCase()).toContain(phrase);
+    });
+
+    test("a back pose never says her face is clearly or fully visible", () => {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend", pose: "back" }), SENTENCE, MASTER);
+      expect(prompt.toLowerCase()).not.toContain("face clearly visible");
+      expect(prompt.toLowerCase()).not.toContain("face fully visible");
+    });
+
+    test("a back pose's reference binding anchors on hair, build and posture, not her face", () => {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend", pose: "back" }), SENTENCE, MASTER);
+      expect(prompt.toLowerCase()).not.toContain("exact face");
+      expect(prompt.toLowerCase()).toContain("hair");
+      expect(prompt.toLowerCase()).toContain("build");
+      expect(prompt.toLowerCase()).toContain("posture");
+    });
+
+    test("a profile pose's reference binding still names her facial profile", () => {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend", pose: "profile" }), SENTENCE, MASTER);
+      expect(prompt.toLowerCase()).toContain("profile");
+    });
+
+    test.each(["front", "three-quarter"] as const)("the %s pose's reference binding still anchors on her exact face", (pose) => {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend", pose }), SENTENCE, MASTER);
+      expect(prompt.toLowerCase()).toContain("exact face");
+    });
+
+    test("a selfie's shot phrase still says her face is visible, whatever the pose label adds", () => {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "selfie", pose: "front" }), SENTENCE, MASTER);
+      expect(prompt.toLowerCase()).toContain("face fully visible");
+    });
   });
 
   test("uses the photoshoot's editorial realism suffix, not the phone-photo one", () => {

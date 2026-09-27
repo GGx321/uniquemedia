@@ -2,7 +2,7 @@ import { youthWords, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { revealingWordsIn } from "./words";
-import type { ScenePlan } from "./schema";
+import type { Pose, ScenePlan } from "./schema";
 import type { PlanSlot } from "./schema";
 import type { Shot } from "./types";
 
@@ -18,16 +18,30 @@ import type { Shot } from "./types";
 /** A writer sentence that still fails today's rules, caught as a last-resort gate before any image request is built (invariant 8). */
 export class AssemblerRefusalError extends TypeError {}
 
-// TODO(pose): every phrase below assumes her face is always visible
-// (frontal/three-quarter framing). A later task adds the plan slot's own
-// `pose` field (front, three-quarter, profile, back) and should make these
-// pose-aware instead of hardcoding "face clearly/fully visible".
+// T5c: selfie and mirror are always front/three-quarter (schema.ts's own
+// refine pins this), so their own "face fully visible" wording stays exactly
+// right regardless of pose. friend/candid/photographer can land on any pose,
+// so their face-visibility claim now comes from POSE_PHRASE below instead of
+// being hardcoded here — hardcoding "face clearly visible" on these three
+// would contradict a back or profile pose's own phrase.
 const SHOT_PHRASE: Record<Shot, string> = {
-  friend: "Photo taken by a friend with the rear phone camera, three-quarter or full-body framing, face clearly visible",
+  friend: "Photo taken by a friend with the rear phone camera, three-quarter or full-body framing",
   selfie: "Front-camera selfie at arm's length, slight wide-angle distortion, face fully visible",
   mirror: "Mirror selfie, phone held at chest height, face fully visible in the mirror",
-  candid: "Candid shot, she is not looking at the camera, face in three-quarter view and clearly visible",
-  photographer: "Photographed by a photographer with a full-frame camera, three-quarter or full-body framing, face clearly visible",
+  candid: "Candid shot, she is not looking at the camera",
+  photographer: "Photographed by a photographer with a full-frame camera, three-quarter or full-body framing",
+};
+
+/** T5c: a fixed phrase per pose, exactly like SHOT_PHRASE — the shot phrase
+ *  above says how the photo was taken, this says which way she is turned and
+ *  whether her face is visible. Makes sense standing next to any shot
+ *  phrase, including selfie/mirror's own "face fully visible" (front's
+ *  phrase below is consistent with that, not contradictory). */
+const POSE_PHRASE: Record<Pose, string> = {
+  front: "She faces the camera, her face clearly visible",
+  "three-quarter": "Her face and body turned to a three-quarter angle, face clearly visible",
+  profile: "She is seen in profile, her face turned fully to the side",
+  back: "Photographed from behind, her face not visible",
 };
 
 const REALISM_EDITORIAL = "Editorial photo, natural skin texture, no heavy retouching.";
@@ -36,11 +50,22 @@ const REALISM_PHONE = "Smartphone photo, natural skin texture, slight noise, no 
 const BASE_CONSTRAINTS = "She is an adult woman. Only she is in focus; no text, logos, brand names or watermark.";
 const PHONE_HAND_CONSTRAINT = " One hand holds the phone; only her other hand acts.";
 
-// TODO(pose): "her exact face, facial proportions and hairline" (below,
-// where this is used) assumes the face is the visible identity anchor;
-// a back-facing pose (once `pose` exists on the plan slot) will need a
-// different anchor phrase (hair, build, posture) instead of the face.
 const BINDING = "The same woman as in the reference photo,";
+
+/**
+ * T5c: the reference-binding anchor, pose-aware. Front/three-quarter keep
+ * the original face anchor; a profile shot's face is still visible, so it
+ * keeps the face too, with "profile" and "build" named explicitly (the
+ * reference-binding wording must still make sense for a profile shot); a
+ * back shot has no face to bind at all, so it anchors on hair, build and
+ * posture instead.
+ */
+const BINDING_ANCHOR: Record<Pose, string> = {
+  front: "with her exact face, facial proportions and hairline",
+  "three-quarter": "with her exact face, facial proportions and hairline",
+  profile: "with her exact facial profile, hairline and build",
+  back: "with her exact hair, build and posture",
+};
 
 const STOP_WORD_LIST = "8k|masterpiece|professional photo|perfect skin|stunning|flawless|beautiful";
 /**
@@ -103,10 +128,9 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sente
 
   const anchor = promptSubject(descriptor);
   const realism = slot.category === "photoshoot" ? REALISM_EDITORIAL : REALISM_PHONE;
-  // TODO(pose): "with her exact face, facial proportions and hairline" hardcodes a face-visible pose (see BINDING's own note above).
   const raw =
-    `${BINDING} with her exact face, facial proportions and hairline; ${anchor}. ` +
-    `${SHOT_PHRASE[slot.shot]}. ${field(sentence)}. ` +
+    `${BINDING} ${BINDING_ANCHOR[slot.pose]}; ${anchor}. ` +
+    `${SHOT_PHRASE[slot.shot]}. ${POSE_PHRASE[slot.pose]}. ${field(sentence)}. ` +
     `${realism} ${constraintsFor(slot)}`;
   return { slotIndex: slot.slotIndex, prompt: normalize(raw), references: [master] };
 }
