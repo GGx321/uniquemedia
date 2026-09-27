@@ -76,7 +76,34 @@ works for browsing any previously cached response; it just can't refresh.
     with `metadata.is_trending_in_clips`.
   - The base URL is overridable via `FLASHAPI_BASE_URL`, for pointing the
     server at a local test stub instead of the real host — used only by the
-    spike's own verification, never in normal use.
+    spike's own verification, never in normal use. The on-disk cache
+    directory is likewise overridable via `MUSIC_TRENDS_CACHE_ROOT`
+    (replaces the OS temp dir as the root, everything else stays the same),
+    so a verification run never touches the real cache.
+  - **Custom query params.** The "Доп. параметры запроса" field next to the
+    refresh button (e.g. `country=US` or `region=US&locale=en_US`) lets Alex
+    test whether flashapi's response actually changes with a geo param —
+    the CDN host and its inferred city are visible either way. Parsed
+    strictly server-side before any network call: at most 5 `key=value`
+    pairs, key `^[a-z_]{1,24}$`, value `^[A-Za-z0-9_.-]{1,24}$`; anything
+    else is refused with a 400 and never reaches flashapi. Accepted pairs are
+    appended to the request URL after the optional `max_id`, and saved in
+    the cache record (`paramsRequested`) so they show up next to
+    "из кэша от …" and in the cache-response select below.
+  - **CDN geo indicator.** Each cached response shows the distinct CDN
+    host(s) its tracks' `progressive_download_url` point at (e.g.
+    `instagram.fkiv8-1 (Киев)`), decoded from the "fna" location code baked
+    into the hostname via a small table in `server.ts`
+    (`FNA_CITY_BY_CODE` — `fkiv`→Киев, `fwaw`→Варшава, `ffra`→Франкфурт,
+    `flhr`→Лондон, `fams`→Амстердам, `fiad`→Вашингтон, `flga`→Нью-Йорк,
+    `fsjc`→Сан-Хосе, `fmad`→Мадрид, `fcdg`→Париж); an unrecognised code is
+    shown as-is instead of a city name. Also shown: the REVSHARE vs.
+    ROYALTY_FREE split and how many tracks are marked explicit.
+  - **Compare cached responses.** The "Ответ из кэша" select lists every
+    saved response (date + params used + CDN code), newest first. Switching
+    it fetches `GET /api/ig/trending?file=<name>`, which only reads that file
+    from disk — it never calls flashapi, so browsing old responses never
+    spends quota.
 
 ## Known limits
 

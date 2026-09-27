@@ -29,7 +29,11 @@ const FEED_URL = "https://www.tikwm.com/api/feed/list";
 const MIN_FEED_CALL_INTERVAL_MS = 1100;
 const MAX_FEED_RETRIES = 2;
 
-const CACHE_DIR = path.join(tmpdir(), "music-trends-cache");
+// Overridable only for local testing (points cache files at an isolated temp
+// dir instead of the OS temp dir), so a verification run never touches the
+// owner's real cached responses. Mirrors the FLASHAPI_BASE_URL override below.
+const CACHE_ROOT = process.env.MUSIC_TRENDS_CACHE_ROOT || tmpdir();
+const CACHE_DIR = path.join(CACHE_ROOT, "music-trends-cache");
 const RENDER_TIMEOUT_MS = 60_000;
 
 // Instagram trending music via Alex's RapidAPI "flashapi" subscription. Quota
@@ -47,6 +51,10 @@ const FLASHAPI_TRENDING_PATH = "/ig/music_trending/";
 const FLASHAPI_MAX_ID_PARAM = "max_id";
 const FLASHAPI_CACHE_DIR = path.join(CACHE_DIR, "flashapi");
 const FLASHAPI_RESPONSE_PREFIX = "response-";
+/** Exact shape of a cache file name, used to validate the `?file=` query
+ *  param before it ever touches the filesystem (path-traversal guard, same
+ *  idea as RENDER_FILE_NAME_RE below). */
+const FLASHAPI_RESPONSE_FILE_RE = /^response-\d+\.json$/;
 // Read once at startup. Never logged, stored, or echoed back to the client —
 // it only ever goes into the x-rapidapi-key header of the outgoing request.
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
@@ -347,6 +355,9 @@ const FlashapiCacheRecordSchema = z.object({
   fetchedAt: z.string(),
   quota: FlashapiQuotaSchema,
   maxIdRequested: z.string().nullable(),
+  // Optional so older cache files written before this field existed (like
+  // the owner's pre-existing responses) still parse.
+  paramsRequested: z.record(z.string(), z.string()).nullable().optional(),
   response: FlashapiResponseSchema,
 });
 
@@ -404,6 +415,86 @@ function toClientIgTrack(t: IgTrack) {
   return rest;
 }
 
+/** Maps the "fna" location code baked into an fbcdn.net hostname (e.g. the
+ *  "kiv" in "instagram.fkiv8-1.fbcdn.net") to the city it names, so Alex can
+ *  tell at a glance whether flashapi is actually serving US/EU CDN edges or
+ *  still routing through Kyiv regardless of any geo param he sends. Not
+ *  exhaustive — Meta has many more PoPs than this; unknown codes are shown
+ *  as-is by the caller. */
+const FNA_CITY_BY_CODE: Record<string, string> = {
+  fkiv: "Киев",
+  fwaw: "Варшава",
+  ffra: "Франкфурт",
+  flhr: "Лондон",
+  fams: "Амстердам",
+  fiad: "Вашингтон",
+  flga: "Нью-Йорк",
+  fsjc: "Сан-Хосе",
+  fmad: "Мадрид",
+  fcdg: "Париж",
+};
+
+interface CdnHostInfo {
+  /** Hostname minus the ".fbcdn.net" suffix, e.g. "instagram.fkiv8-1". */
+  host: string;
+  /** The 4-char "fna" code, e.g. "fkiv" — null if the hostname didn't match
+   *  the expected "instagram.f???…" shape. */
+  code: string | null;
+  /** Russian city name for `code`, or null when the code isn't in the table
+   *  above. */
+  city: string | null;
+}
+
+function extractCdnHostInfo(url: string): CdnHostInfo | null {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return null;
+  }
+  if (!hostname.toLowerCase().endsWith(".fbcdn.net")) return null;
+  const host = hostname.replace(/\.fbcdn\.net$/i, "");
+  const match = /^instagram\.(f[a-z]{3})/i.exec(hostname);
+  const code = match ? (match[1] as string).toLowerCase() : null;
+  const city = code ? FNA_CITY_BY_CODE[code] ?? null : null;
+  return { host, code, city };
+}
+
+interface FlashapiRecordStats {
+  /** Distinct CDN hosts seen across this response's tracks, in first-seen
+   *  order. */
+  cdnHosts: CdnHostInfo[];
+  totalTracks: number;
+  revshareCount: number;
+  royaltyFreeCount: number;
+  explicitCount: number;
+}
+
+/** Derives the geo/licensing indicators shown next to a cached response,
+ *  from the raw response items — no network, no mutation of `knownIgTracks`. */
+function computeFlashapiStats(record: FlashapiCacheRecord): FlashapiRecordStats {
+  const items = record.response.items ?? [];
+  const cdnHosts: CdnHostInfo[] = [];
+  const seenHosts = new Set<string>();
+  let revshareCount = 0;
+  let royaltyFreeCount = 0;
+  let explicitCount = 0;
+  for (const item of items) {
+    const t = item.track;
+    if (t.progressive_download_url) {
+      const info = extractCdnHostInfo(t.progressive_download_url);
+      if (info && !seenHosts.has(info.host)) {
+        seenHosts.add(info.host);
+        cdnHosts.push(info);
+      }
+    }
+    if (t.song_monetization_info === "REVSHARE") revshareCount++;
+    else if (t.song_monetization_info === "ROYALTY_FREE") royaltyFreeCount++;
+    if (t.is_explicit) explicitCount++;
+  }
+  return { cdnHosts, totalTracks: items.length, revshareCount, royaltyFreeCount, explicitCount };
+}
+
 /** Parses a cache record's items into IgTracks and (re)registers them in
  *  `knownIgTracks`, so a track from a previous run's cache is servable again
  *  after a restart, not just right after a fresh refresh. */
@@ -429,25 +520,114 @@ async function listFlashapiCacheFiles(): Promise<string[]> {
   }
 }
 
-async function loadLatestFlashapiCache(): Promise<FlashapiCacheRecord | null> {
-  const files = await listFlashapiCacheFiles();
-  if (files.length === 0) return null;
-  const latest = files[files.length - 1] as string;
-  const raw = await Bun.file(path.join(FLASHAPI_CACHE_DIR, latest)).json();
+async function loadFlashapiCacheFile(fileName: string): Promise<FlashapiCacheRecord> {
+  const raw = await Bun.file(path.join(FLASHAPI_CACHE_DIR, fileName)).json();
   return FlashapiCacheRecordSchema.parse(raw);
 }
 
-async function saveFlashapiCache(record: FlashapiCacheRecord): Promise<void> {
+async function loadLatestFlashapiCache(): Promise<FlashapiCacheRecord | null> {
+  const files = await listFlashapiCacheFiles();
+  if (files.length === 0) return null;
+  return loadFlashapiCacheFile(files[files.length - 1] as string);
+}
+
+interface FlashapiCacheSummary {
+  file: string;
+  fetchedAt: string;
+  maxIdRequested: string | null;
+  paramsRequested: Record<string, string> | null;
+  /** One entry per distinct CDN host in that response — the fna code where
+   *  known, the raw host label otherwise. */
+  cdnCodes: string[];
+}
+
+/** Lists every cached response on disk (oldest first, same order as
+ *  `listFlashapiCacheFiles`) with just enough detail for the "Ответ из кэша"
+ *  select — never calls flashapi, purely reads what's already on disk. A
+ *  cache file that fails to parse (corrupt, or from an incompatible earlier
+ *  version of this spike) is skipped rather than failing the whole list. */
+async function listFlashapiCacheSummaries(): Promise<FlashapiCacheSummary[]> {
+  const files = await listFlashapiCacheFiles();
+  const summaries: FlashapiCacheSummary[] = [];
+  for (const file of files) {
+    let record: FlashapiCacheRecord;
+    try {
+      record = await loadFlashapiCacheFile(file);
+    } catch {
+      continue;
+    }
+    const stats = computeFlashapiStats(record);
+    summaries.push({
+      file,
+      fetchedAt: record.fetchedAt,
+      maxIdRequested: record.maxIdRequested,
+      paramsRequested: record.paramsRequested ?? null,
+      cdnCodes: stats.cdnHosts.map((h) => h.code ?? h.host),
+    });
+  }
+  return summaries;
+}
+
+async function saveFlashapiCache(record: FlashapiCacheRecord): Promise<string> {
   await mkdir(FLASHAPI_CACHE_DIR, { recursive: true });
   const fileName = `${FLASHAPI_RESPONSE_PREFIX}${Date.now()}.json`;
   await Bun.write(path.join(FLASHAPI_CACHE_DIR, fileName), JSON.stringify(record, null, 2));
+  return fileName;
+}
+
+const IG_REFRESH_PARAM_MAX_COUNT = 5;
+const IG_REFRESH_PARAM_KEY_RE = /^[a-z_]{1,24}$/;
+const IG_REFRESH_PARAM_VALUE_RE = /^[A-Za-z0-9_.-]{1,24}$/;
+
+/** Parses the free-form "Доп. параметры запроса" field (e.g.
+ *  "country=US&locale=en_US") into a strict allowlist of key/value pairs
+ *  before any network call, so a typo or stray character is refused with a
+ *  400 instead of becoming an unexpected request that burns quota. */
+function parseFlashapiExtraParams(raw: string | undefined): Array<[string, string]> {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return [];
+
+  const rawPairs = trimmed
+    .split("&")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (rawPairs.length > IG_REFRESH_PARAM_MAX_COUNT) {
+    throw new HttpError(400, `Слишком много параметров: максимум ${IG_REFRESH_PARAM_MAX_COUNT}.`);
+  }
+
+  const pairs: Array<[string, string]> = [];
+  const seenKeys = new Set<string>();
+  for (const rawPair of rawPairs) {
+    const eq = rawPair.indexOf("=");
+    if (eq <= 0) {
+      throw new HttpError(400, `Неверный параметр "${rawPair}": ожидается вид key=value.`);
+    }
+    const key = rawPair.slice(0, eq);
+    const value = rawPair.slice(eq + 1);
+    if (!IG_REFRESH_PARAM_KEY_RE.test(key)) {
+      throw new HttpError(400, `Неверный ключ параметра "${key}": латиница a-z и "_", длина 1-24.`);
+    }
+    if (!IG_REFRESH_PARAM_VALUE_RE.test(value)) {
+      throw new HttpError(
+        400,
+        `Неверное значение параметра "${key}": латиница, цифры, "_", ".", "-", длина 1-24.`
+      );
+    }
+    if (seenKeys.has(key)) {
+      throw new HttpError(400, `Повторяющийся параметр "${key}".`);
+    }
+    seenKeys.add(key);
+    pairs.push([key, value]);
+  }
+  return pairs;
 }
 
 /** The one network call to flashapi. No retry, no automatic invocation — this
  *  is only ever reached from the explicit "Обновить" action, because the
  *  subscription has a 30-request/month quota. */
 async function fetchFlashapiTrending(
-  maxId: string | undefined
+  maxId: string | undefined,
+  extraParams: Array<[string, string]>
 ): Promise<{ response: FlashapiResponse; quota: { remaining: string | null; limit: string | null } }> {
   if (!RAPIDAPI_KEY) {
     throw new HttpError(400, "Нет ключа: запусти с RAPIDAPI_KEY=…");
@@ -455,6 +635,7 @@ async function fetchFlashapiTrending(
 
   const url = new URL(FLASHAPI_TRENDING_PATH, FLASHAPI_BASE_URL);
   if (maxId) url.searchParams.set(FLASHAPI_MAX_ID_PARAM, maxId);
+  for (const [key, value] of extraParams) url.searchParams.set(key, value);
 
   const res = await fetch(url, {
     headers: {
@@ -682,30 +863,72 @@ async function handleAudio(req: Request, id: string): Promise<Response> {
 // GET /api/ig/audio/:id
 // ---------------------------------------------------------------------------
 
-function flashapiClientPayload(hasKey: boolean, record: FlashapiCacheRecord | null, tracks: IgTrack[]) {
+function flashapiClientPayload(
+  hasKey: boolean,
+  record: FlashapiCacheRecord | null,
+  tracks: IgTrack[],
+  selectedFile: string | null,
+  cacheFiles: FlashapiCacheSummary[]
+) {
   return {
     hasKey,
-    cache: record ? { fetchedAt: record.fetchedAt, quota: record.quota } : null,
+    cache: record
+      ? {
+          fetchedAt: record.fetchedAt,
+          quota: record.quota,
+          maxIdRequested: record.maxIdRequested,
+          paramsRequested: record.paramsRequested ?? null,
+        }
+      : null,
+    stats: record ? computeFlashapiStats(record) : null,
     tracks: tracks.map(toClientIgTrack),
+    selectedFile,
+    // Newest first, for the "Ответ из кэша" select.
+    cacheFiles: [...cacheFiles].reverse(),
   };
 }
 
 /** Always reads from disk, never calls flashapi — this is the "free" path the
- *  page uses by default so browsing never spends quota. */
-async function handleIgTrending(): Promise<Response> {
-  const record = await loadLatestFlashapiCache();
-  if (!record) return jsonResponse(flashapiClientPayload(Boolean(RAPIDAPI_KEY), null, []));
-  const tracks = ingestFlashapiRecord(record);
-  return jsonResponse(flashapiClientPayload(Boolean(RAPIDAPI_KEY), record, tracks));
+ *  page uses by default so browsing never spends quota. An optional `?file=`
+ *  query param picks a specific past response instead of the latest one, so
+ *  the "Ответ из кэша" select can switch between them without spending a
+ *  request either. */
+async function handleIgTrending(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const requestedFile = url.searchParams.get("file");
+
+  let record: FlashapiCacheRecord | null;
+  let selectedFile: string | null;
+  if (requestedFile) {
+    if (!FLASHAPI_RESPONSE_FILE_RE.test(requestedFile)) {
+      throw new HttpError(400, "Invalid cache file name.");
+    }
+    if (!(await fileExists(path.join(FLASHAPI_CACHE_DIR, requestedFile)))) {
+      throw new HttpError(404, `Cache file not found: ${requestedFile}`);
+    }
+    record = await loadFlashapiCacheFile(requestedFile);
+    selectedFile = requestedFile;
+  } else {
+    const files = await listFlashapiCacheFiles();
+    selectedFile = files.length > 0 ? (files[files.length - 1] as string) : null;
+    record = selectedFile ? await loadFlashapiCacheFile(selectedFile) : null;
+  }
+
+  const tracks = record ? ingestFlashapiRecord(record) : [];
+  const cacheFiles = await listFlashapiCacheSummaries();
+  return jsonResponse(flashapiClientPayload(Boolean(RAPIDAPI_KEY), record, tracks, selectedFile, cacheFiles));
 }
 
-const IgRefreshJsonSchema = z.object({ maxId: z.string().optional() });
+const IgRefreshJsonSchema = z.object({ maxId: z.string().optional(), params: z.string().optional() });
 
 /** The only path that spends a request out of the 30/month quota. Called
  *  exclusively from the explicit "Обновить" button — never automatically and
- *  never retried on failure. */
+ *  never retried on failure. Custom query params (from the "Доп. параметры
+ *  запроса" field) are validated before this ever reaches `fetchFlashapiTrending`,
+ *  so an invalid value never costs a request. */
 async function handleIgRefresh(req: Request): Promise<Response> {
   let maxId: string | undefined;
+  let paramsRaw: string | undefined;
   const bodyText = await req.text();
   if (bodyText) {
     let body: unknown;
@@ -717,18 +940,22 @@ async function handleIgRefresh(req: Request): Promise<Response> {
     const parsed = IgRefreshJsonSchema.safeParse(body);
     if (!parsed.success) throw new HttpError(400, "Invalid refresh request.");
     maxId = parsed.data.maxId;
+    paramsRaw = parsed.data.params;
   }
+  const extraParams = parseFlashapiExtraParams(paramsRaw);
 
-  const { response, quota } = await fetchFlashapiTrending(maxId);
+  const { response, quota } = await fetchFlashapiTrending(maxId, extraParams);
   const record: FlashapiCacheRecord = {
     fetchedAt: new Date().toISOString(),
     quota,
     maxIdRequested: maxId ?? null,
+    paramsRequested: extraParams.length > 0 ? Object.fromEntries(extraParams) : null,
     response,
   };
-  await saveFlashapiCache(record);
+  const fileName = await saveFlashapiCache(record);
   const tracks = ingestFlashapiRecord(record);
-  return jsonResponse(flashapiClientPayload(true, record, tracks));
+  const cacheFiles = await listFlashapiCacheSummaries();
+  return jsonResponse(flashapiClientPayload(true, record, tracks, fileName, cacheFiles));
 }
 
 async function handleIgAudio(req: Request, id: string): Promise<Response> {
@@ -999,7 +1226,7 @@ function startServer() {
           "/": Bun.file(INDEX_PATH),
           "/api/trending": { GET: (req) => withErrorHandling(() => handleTrending(req)) },
           "/api/audio/:id": { GET: (req) => withErrorHandling(() => handleAudio(req, req.params.id)) },
-          "/api/ig/trending": { GET: () => withErrorHandling(() => handleIgTrending()) },
+          "/api/ig/trending": { GET: (req) => withErrorHandling(() => handleIgTrending(req)) },
           "/api/ig/refresh": { POST: (req) => withErrorHandling(() => handleIgRefresh(req)) },
           "/api/ig/audio/:id": { GET: (req) => withErrorHandling(() => handleIgAudio(req, req.params.id)) },
           "/api/render": { POST: (req) => withErrorHandling(() => handleRender(req)) },

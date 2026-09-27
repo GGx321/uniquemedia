@@ -279,6 +279,14 @@
 
   <section class="panel" id="instagram-controls" style="display:none">
     <div class="controls">
+      <div class="field">
+        <label for="ig-cache-select">Ответ из кэша</label>
+        <select id="ig-cache-select"></select>
+      </div>
+      <div class="field">
+        <label for="ig-params-input">Доп. параметры запроса</label>
+        <input id="ig-params-input" type="text" placeholder="country=US" />
+      </div>
       <button id="ig-refresh-btn" type="button">Обновить (тратит 1 запрос из 30)</button>
       <label class="checkbox">
         <input type="checkbox" id="ig-only-trending" /> только в тренде
@@ -286,6 +294,8 @@
     </div>
     <div id="ig-status" class="status"></div>
     <div id="ig-quota" class="ig-quota"></div>
+    <div id="ig-geo" class="ig-quota"></div>
+    <div id="ig-stats" class="ig-quota"></div>
   </section>
 
   <section class="panel">
@@ -350,6 +360,9 @@
     igLoadedOnce: false,
     igHasKey: false,
     igCache: null,
+    igStats: null,
+    igCacheFiles: [], // [{ file, fetchedAt, maxIdRequested, paramsRequested, cdnCodes }], newest first
+    igSelectedFile: null,
     selected: null, // { ...track fields, id, source }
   };
 
@@ -365,6 +378,10 @@
     igOnlyTrending: document.getElementById("ig-only-trending"),
     igStatus: document.getElementById("ig-status"),
     igQuota: document.getElementById("ig-quota"),
+    igGeo: document.getElementById("ig-geo"),
+    igStats: document.getElementById("ig-stats"),
+    igCacheSelect: document.getElementById("ig-cache-select"),
+    igParamsInput: document.getElementById("ig-params-input"),
     trackList: document.getElementById("track-list"),
     selectedTrack: document.getElementById("selected-track"),
     startSlider: document.getElementById("start-slider"),
@@ -519,12 +536,21 @@
     renderHighlights([]);
   }
 
+  function formatParams(params) {
+    if (!params) return "";
+    const entries = Object.entries(params);
+    if (entries.length === 0) return "";
+    return entries.map(([k, v]) => `${k}=${v}`).join("&");
+  }
+
   function updateIgStatusText() {
     if (!state.igHasKey) {
       els.igStatus.textContent = "Нет ключа: запусти с RAPIDAPI_KEY=…";
     } else if (state.igCache) {
       const d = new Date(state.igCache.fetchedAt);
-      els.igStatus.textContent = `из кэша от ${d.toLocaleString("ru-RU")} — запрос не тратился`;
+      const paramsText = formatParams(state.igCache.paramsRequested);
+      const paramsSuffix = paramsText ? `параметры: ${paramsText}` : "без доп. параметров";
+      els.igStatus.textContent = `из кэша от ${d.toLocaleString("ru-RU")} (${paramsSuffix}) — запрос не тратился`;
     } else {
       els.igStatus.textContent = "Кэша ещё нет — нажми «Обновить».";
     }
@@ -537,11 +563,68 @@
     els.igRefreshBtn.disabled = !state.igHasKey;
   }
 
+  function renderIgGeoAndStats() {
+    const stats = state.igStats;
+    if (!stats) {
+      els.igGeo.textContent = "";
+      els.igStats.textContent = "";
+      return;
+    }
+    if (stats.cdnHosts.length === 0) {
+      els.igGeo.textContent = "CDN: нет данных (нет треков с progressive_download_url).";
+    } else {
+      const parts = stats.cdnHosts.map((h) => `${h.host} (${h.city || h.code || "код неизвестен"})`);
+      els.igGeo.textContent = `CDN: ${parts.join(", ")}`;
+    }
+    if (stats.totalTracks > 0) {
+      const revsharePct = Math.round((stats.revshareCount / stats.totalTracks) * 100);
+      const royaltyFreePct = Math.round((stats.royaltyFreeCount / stats.totalTracks) * 100);
+      els.igStats.textContent =
+        `REVSHARE: ${revsharePct}% · ROYALTY_FREE: ${royaltyFreePct}% · ` +
+        `explicit: ${stats.explicitCount} из ${stats.totalTracks}`;
+    } else {
+      els.igStats.textContent = "";
+    }
+  }
+
+  function formatCacheOptionLabel(entry) {
+    const d = new Date(entry.fetchedAt);
+    const paramsText = formatParams(entry.paramsRequested) || "без параметров";
+    const cdnText = entry.cdnCodes && entry.cdnCodes.length > 0 ? entry.cdnCodes.join(",") : "—";
+    return `${d.toLocaleString("ru-RU")} · ${paramsText} · CDN: ${cdnText}`;
+  }
+
+  function populateIgCacheSelect() {
+    const files = state.igCacheFiles || [];
+    els.igCacheSelect.innerHTML = "";
+    if (files.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "Кэша нет";
+      els.igCacheSelect.appendChild(opt);
+      els.igCacheSelect.disabled = true;
+      return;
+    }
+    els.igCacheSelect.disabled = false;
+    for (const entry of files) {
+      const opt = document.createElement("option");
+      opt.value = entry.file;
+      opt.textContent = formatCacheOptionLabel(entry);
+      if (entry.file === state.igSelectedFile) opt.selected = true;
+      els.igCacheSelect.appendChild(opt);
+    }
+  }
+
   function applyIgData(data) {
     state.igHasKey = Boolean(data.hasKey);
     state.igCache = data.cache;
+    state.igStats = data.stats;
     state.igTracks = data.tracks || [];
+    state.igCacheFiles = data.cacheFiles || [];
+    state.igSelectedFile = data.selectedFile || null;
     updateIgStatusText();
+    renderIgGeoAndStats();
+    populateIgCacheSelect();
     renderList();
   }
 
@@ -608,6 +691,20 @@
     }
   });
 
+  els.igCacheSelect.addEventListener("change", async () => {
+    const file = els.igCacheSelect.value;
+    if (!file) return;
+    els.igStatus.textContent = "Загружаю выбранный ответ из кэша...";
+    try {
+      const res = await fetch(`/api/ig/trending?file=${encodeURIComponent(file)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      applyIgData(data);
+    } catch (err) {
+      els.igStatus.textContent = `Ошибка: ${err.message}`;
+    }
+  });
+
   els.igRefreshBtn.addEventListener("click", async () => {
     els.igRefreshBtn.disabled = true;
     els.igStatus.textContent = "Запрашиваю flashapi (тратится 1 запрос из 30)...";
@@ -615,7 +712,7 @@
       const res = await fetch("/api/ig/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ params: els.igParamsInput.value || undefined }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
