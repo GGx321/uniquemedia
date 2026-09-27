@@ -63,6 +63,14 @@ jobs:
       # live, so a hash change here busts the cache automatically). parity.test.ts
       # fails the run outright if this step did not leave them in place,
       # rather than silently skipping the parity check (its own CI guard).
+      #
+      # Review fix: this step used to run only `if: cache-hit != 'true'`, so
+      # a cache HIT skipped it entirely and the restored bytes were never
+      # sha256-checked — a corrupted or tampered cache entry would go
+      # straight into the build. `ensureFaceModels` (faceModelCache.ts)
+      # already verifies before doing any network call and skips the fetch
+      # itself when the cached file is valid, so running this step
+      # unconditionally costs nothing on a hit and closes that gap.
       - name: Cache face gate models
         id: face-models-cache
         uses: actions/cache@v4
@@ -70,7 +78,6 @@ jobs:
           path: .cache/studio-face-models
           key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
       - name: Fetch face gate models
-        if: steps.face-models-cache.outputs.cache-hit != 'true'
         run: bun run models:face
       - name: Check the tag matches studio/version.json
         if: startsWith(github.ref, 'refs/tags/')
@@ -112,6 +119,32 @@ jobs:
       # Studio's version comes from studio/version.json via the config's `extends`.
       - if: env.PACKAGE == 'true'
         run: bunx electron-builder --config electron-builder.studio.yml --publish never
+      # Plan T7b: "installer size (+≈53 MB) tracked in CI" — the face gate's
+      # onnx models (out-studio/engine/models/**) and onnxruntime-web's WASM
+      # runtime are the two biggest additions this repo ships. Budget: 220
+      # MiB, from a real measurement (mac arm64 .dmg, 2026-09-27,
+      # electron-builder.studio.yml's inverted onnxruntime-web exclusion in
+      # place): 182 MiB, +~40 MiB margin for Windows NSIS's different
+      # compression and normal future growth — tight enough that
+      # accidentally shipping even one of the excluded WASM variants again
+      # (each 17-28 MB) would still trip it.
+      - name: Check the installer size stays under budget
+        if: env.PACKAGE == 'true'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            file=$(ls release-studio/*.dmg | head -n 1)
+          else
+            file=$(ls release-studio/*.exe | head -n 1)
+          fi
+          bytes=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
+          mib=$((bytes / 1024 / 1024))
+          budget=220
+          echo "installer: $file ($mib MiB, budget $budget MiB)"
+          if [ "$mib" -gt "$budget" ]; then
+            echo "::error::installer size ${mib} MiB exceeds the ${budget} MiB budget"
+            exit 1
+          fi
       # Launches the package as shipped, before anything is uploaded: fuses set,
       # the E2E override compiled out, the engine utilityProcess started from
       # inside app.asar, --remote-debugging-port refused. GitHub's macOS and
