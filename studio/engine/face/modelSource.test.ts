@@ -11,6 +11,16 @@ test("both models declare a pinned https URL and a 64-character lowercase hex sh
   }
 });
 
+test("both URLs are pinned to a specific opencv_zoo commit, not a moving branch like main", () => {
+  // Review fix (2c): the sha256 already guards against a corrupted or
+  // substituted download, but a URL pointing at `main` still means the next
+  // fetch could 404 or serve a different file if history is rewritten —
+  // pin the ref itself too.
+  for (const model of Object.values(FACE_MODELS)) {
+    expect(model.url).toMatch(/^https:\/\/github\.com\/opencv\/opencv_zoo\/raw\/[0-9a-f]{40}\//);
+  }
+});
+
 test("verifyModelBytes accepts bytes matching the pinned hash", () => {
   const bytes = new TextEncoder().encode("hello");
   const sha256 = createHash("sha256").update(bytes).digest("hex");

@@ -9,18 +9,25 @@
  */
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { FACE_MODELS, type FaceModelKey, verifyModelBytes } from "../engine/face/modelSource";
+import { FACE_MODELS, type FaceModelKey, type FaceModelSource, verifyModelBytes } from "../engine/face/modelSource";
 
 export function faceModelCacheDir(root: string): string {
   return join(root, ".cache", "studio-face-models");
 }
 
-export function faceModelPaths(root: string): Record<FaceModelKey, string> {
+function pathsFor(root: string, models: Record<string, FaceModelSource>): Record<string, string> {
   const dir = faceModelCacheDir(root);
-  const paths = {} as Record<FaceModelKey, string>;
-  for (const [key, model] of Object.entries(FACE_MODELS)) paths[key as FaceModelKey] = join(dir, model.file);
+  const paths: Record<string, string> = {};
+  for (const [key, model] of Object.entries(models)) paths[key] = join(dir, model.file);
   return paths;
 }
+
+export function faceModelPaths(root: string): Record<FaceModelKey, string> {
+  return pathsFor(root, FACE_MODELS) as Record<FaceModelKey, string>;
+}
+
+/** Narrower than `typeof fetch` (which also carries bun's `preconnect` static) so a plain test stub is assignable. */
+export type FetchLike = (url: string) => Promise<Response>;
 
 async function readCachedIfValid(path: string, sha256: string): Promise<Uint8Array | undefined> {
   let bytes: Uint8Array;
@@ -38,17 +45,21 @@ async function readCachedIfValid(path: string, sha256: string): Promise<Uint8Arr
 }
 
 /**
- * Ensures both models are present and hash-verified in the cache under
- * `root`, fetching whichever are missing or stale. Returns their paths.
- * Network only happens for a model not already cached with the right hash.
+ * Ensures every model in `models` is present and hash-verified in the cache
+ * under `root`, fetching whichever are missing or stale. Returns their
+ * paths, keyed the same way `models` is. Network only happens for a model
+ * not already cached with the right hash — tested against a tiny fake
+ * registry (faceModelCache.test.ts) so no test ever touches the network or
+ * the real 38.7 MB SFace file.
  */
-export async function ensureFaceModels(root: string, fetchImpl: typeof fetch = fetch): Promise<Record<FaceModelKey, string>> {
+export async function ensureModels(root: string, models: Record<string, FaceModelSource>, fetchImpl: FetchLike = fetch): Promise<Record<string, string>> {
   const dir = faceModelCacheDir(root);
   await mkdir(dir, { recursive: true });
-  const paths = faceModelPaths(root);
+  const paths = pathsFor(root, models);
 
-  for (const [key, model] of Object.entries(FACE_MODELS)) {
-    const path = paths[key as FaceModelKey];
+  for (const [key, model] of Object.entries(models)) {
+    const path = paths[key];
+    if (path === undefined) continue;
     const cached = await readCachedIfValid(path, model.sha256);
     if (cached !== undefined) continue;
 
@@ -66,6 +77,11 @@ export async function ensureFaceModels(root: string, fetchImpl: typeof fetch = f
   }
 
   return paths;
+}
+
+/** The real model registry (studio/engine/face/modelSource.ts), wrapped around `ensureModels`. */
+export async function ensureFaceModels(root: string, fetchImpl: FetchLike = fetch): Promise<Record<FaceModelKey, string>> {
+  return (await ensureModels(root, FACE_MODELS, fetchImpl)) as Record<FaceModelKey, string>;
 }
 
 if (import.meta.main) {
