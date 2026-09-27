@@ -15,8 +15,15 @@ const ENGINE_DIR = dirname(fileURLToPath(import.meta.url));
 const STUDIO_DIR = resolve(ENGINE_DIR, "..");
 const ENTRY = join(ENGINE_DIR, "main.ts");
 
-/** Bare packages the engine may bundle: the contract's validator and the ffmpeg locator. */
-const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static"]);
+/**
+ * Bare packages the engine may bundle: the contract's validator, the ffmpeg
+ * locator, and — T7b, the face gate — onnxruntime-web, which is pure
+ * JS/WASM (no native addon) and, like the others, never itself reads
+ * `process.env` or touches `Bun`/`import.meta.dir` on the paths this module
+ * graph reaches. studio/engine/face/*.ts takes model bytes and wasmPaths as
+ * parameters rather than resolving them itself, for exactly this rule.
+ */
+const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web"]);
 
 /**
  * Where engine code may live: its own tree, studio/node, the pure contract,
