@@ -283,6 +283,22 @@ describe("detectors", () => {
     // must not fire on an unrelated mention of "camera" far from any gaze verb.
     ["back", "the camera sits on a tripod behind her as she walks toward the window.", false],
     ["back", "she looks over her shoulder at the doorway, while the camera sits on a tripod across the room.", false],
+    // Round 3 review: a negated gaze verb is a perfectly compliant sentence
+    // for a back/profile pose ("not looking at the camera" IS the pose), but
+    // it contains the bare substring "looking at the camera" and self-
+    // triggered before this fix — a false positive that burns a paid retry
+    // on an answer that was already correct.
+    ["back", "She is not looking at the camera, focused on the horizon instead.", false],
+    ["profile", "She is not looking at the camera, focused on the horizon instead.", false],
+    ["back", "She isn't looking at the camera as she walks away.", false],
+    ["back", "She never looks at the camera in this shot.", false],
+    ["back", "She walks off without looking at the camera.", false],
+    ["back", "She is no longer looking at the camera by the time she reaches the door.", false],
+    ["profile", "She isn't gazing toward the camera at all.", false],
+    // Negation must not blunt the real catch: an over-the-shoulder gaze at
+    // the camera is still a violation even in a sentence that also contains
+    // an unrelated negation elsewhere.
+    ["back", "She isn't holding anything, but she looks over her shoulder at the camera as the door closes.", true],
   ] as const)("contradictsPose(%j, %j) -> %p", (pose, sentence, expected) => {
     expect(contradictsPose(sentence, pose)).toBe(expected);
   });

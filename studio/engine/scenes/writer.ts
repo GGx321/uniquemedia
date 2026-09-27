@@ -279,9 +279,23 @@ function phoneInHand(slot: PlanSlot): boolean {
  * boundary, lazily so it only matches as far as it needs to; kept tight (25
  * chars, never crossing a period) because a false positive here costs a
  * paid retry, not just a missed catch.
+ *
+ * Round 3 review: "not/isn't/is not/never/without/no longer looking at the
+ * camera" is a perfectly compliant sentence for a back/profile pose (that
+ * IS the pose) — but it contains the bare substring "looking at the
+ * camera", so it self-triggered before this negative lookbehind, burning a
+ * paid retry on an answer that was already correct. The lookbehind only
+ * excludes a negator immediately before the verb (no gap): a negation
+ * elsewhere in the sentence, or before some other word, never suppresses a
+ * real "looks over her shoulder at the camera" catch (writer.test.ts pins
+ * both directions).
  */
 const CAMERA_GAZE_VERB = "(?:look(?:ing|s)?|gaz(?:ing|es)?|star(?:ing|es)?|glanc(?:ing|es)?|smil(?:ing|es)?|peer(?:ing|s)?)";
-const CAMERA_GAZE = new RegExp(`\\b${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b(?:at|toward|towards|into)\\s+the\\s+camera\\b`, "i");
+const CAMERA_GAZE_NEGATOR = "(?:not|isn't|is\\s+not|never|without|no\\s+longer)\\s+";
+const CAMERA_GAZE = new RegExp(
+  `\\b(?<!${CAMERA_GAZE_NEGATOR})${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b(?:at|toward|towards|into)\\s+the\\s+camera\\b`,
+  "i",
+);
 
 /**
  * Whether `sentence` contradicts `pose` in a cheaply detectable way (T5c,
