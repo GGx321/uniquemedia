@@ -24,13 +24,19 @@ test("a threshold at exactly a score counts that score as passing (inclusive)", 
 // Real SFace cosine-to-master values from the face spike (fixtures/spikeCosMaster.ts).
 // These pin the plan's own findings and this module's own recommendation.
 
+test("at 0.55 (the owner's hybrid default, config.ts), 74/76 true renders pass but so does every known impostor — deliberate: 0.55 only catches gross drift, never a strict identity gate", () => {
+  const result = evaluateFixedThreshold(SPIKE_TRUE_RENDER_COSMASTER, SPIKE_IMPOSTOR_COSMASTER, 0.55);
+  expect(result.truePositives).toBe(74);
+  expect(result.falsePositives).toBe(3);
+});
+
 test("at the plain 0.70 cutoff, all 3 impostors are rejected but only 37/76 true renders pass (spike README, Recommendation section)", () => {
   const result = evaluateFixedThreshold(SPIKE_TRUE_RENDER_COSMASTER, SPIKE_IMPOSTOR_COSMASTER, 0.7);
   expect(result.truePositives).toBe(37);
   expect(result.falsePositives).toBe(0);
 });
 
-test("0.66 sits in a real gap between the impostor ceiling and the next cluster of true renders, and keeps 52/76 (config.ts's default)", () => {
+test("0.66 sits in a real gap between the impostor ceiling and the next cluster of true renders, and keeps 52/76 (a stricter, non-default config choice)", () => {
   const result = evaluateFixedThreshold(SPIKE_TRUE_RENDER_COSMASTER, SPIKE_IMPOSTOR_COSMASTER, 0.66);
   expect(result.falsePositives).toBe(0);
   expect(result.truePositives).toBe(52);

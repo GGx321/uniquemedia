@@ -9,6 +9,22 @@
  * for the gallery number, and to re-run the whole comparison if the spike's
  * image set is ever refreshed.
  *
+ * OWNER DECISION (2c review): a hybrid gate, not a strict identity filter.
+ * The shipped default (config.ts) is fixed-threshold 0.55 — "mismatch" means
+ * gross drift only (a different person, or a broken generation), and every
+ * `match`, at whatever similarity, is kept and shown with its score as a
+ * badge in the Photos gallery for the owner to judge by eye. The numbers
+ * below (fixed-threshold section) are exactly what that decision is built
+ * on: at 0.55, 74/76 true renders pass but so does every known impostor —
+ * deliberate, since this is not meant to reject a look-alike; 0.66 and 0.70
+ * reject every impostor but keep far fewer true renders (52/76 and 37/76),
+ * which is why they stay available as stricter config choices rather than
+ * the default. The gallery and best-of-N sections below were evaluated as
+ * alternatives and neither is configured: gallery-max lets an impostor
+ * through in a large gallery, gallery-mean crushes true-positive rate, and
+ * best-of-N needs machinery (several attempts) this per-image gate has no
+ * say over.
+ *
  * Not part of `bun test`: it reads the spike's own (git-ignored, throwaway)
  * output directory, which is never present in CI and not meant to be. Run
  * by hand, from the repo root, after the studio-api and face-js spikes:
@@ -81,7 +97,8 @@ async function main(): Promise<void> {
     console.log("\n--- fixed-threshold (cosine to master only) ---");
     for (const threshold of [0.55, 0.6, 0.66, 0.7]) {
       const r = evaluateFixedThreshold(trueCosMaster, impostorCosMaster, threshold);
-      console.log(`threshold ${threshold}: true ${r.truePositives}/${trueCosMaster.length}, impostors passing ${r.falsePositives}/${impostorCosMaster.length}`);
+      const label = threshold === 0.55 ? " (shipped default, config.ts)" : "";
+      console.log(`threshold ${threshold}${label}: true ${r.truePositives}/${trueCosMaster.length}, impostors passing ${r.falsePositives}/${impostorCosMaster.length}`);
     }
 
     console.log("\n--- keep-best-of-N (cosine to master only, consecutive non-overlapping groups) ---");

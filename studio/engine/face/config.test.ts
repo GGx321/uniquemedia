@@ -8,16 +8,17 @@ test("the default config parses as valid", () => {
   expect(parsed.identity.strategy.kind).toBe("fixed-threshold");
 });
 
-test("the default strategy is the gross-drift threshold, not the naive 0.70 cutoff", () => {
-  // The spike found 0.70 rejects 39/76 true renders; a lower, gross-drift-only
-  // threshold is the most conservative choice that still keeps most of them
-  // (calibration.test.ts pins the exact numbers). 0.70 stays available as an
-  // explicit config choice, just not the default.
+test("the default identity threshold is the owner's hybrid decision: 0.55, gross drift only", () => {
+  // Owner decision (2c review): auto-retry only on a clear failure — no
+  // face, multiple faces, an unexpected back-facing face, or similarity
+  // below 0.55 (a different person). Every other frame passes and always
+  // carries its similarity so the Photos gallery can show it as a badge;
+  // the owner judges the rest by eye. calibration.test.ts pins the real
+  // numbers (0.55: 74/76 true pass, but also every impostor; 0.66: 52/76,
+  // 0 impostors; 0.70: 37/76, 0 impostors) — 0.66 and 0.70 stay available
+  // as stricter config choices, just not the default.
   const config = defaultFaceGateConfig();
-  expect(config.identity.strategy.kind).toBe("fixed-threshold");
-  if (config.identity.strategy.kind === "fixed-threshold") {
-    expect(config.identity.strategy.threshold).toBeLessThan(0.7);
-  }
+  expect(config.identity.strategy).toEqual({ kind: "fixed-threshold", threshold: 0.55 });
 });
 
 test("rejects a negative detector score threshold", () => {
