@@ -9,3 +9,6 @@ release/
 !.env.example
 out-studio/
 release-studio/
+# T7b, the face gate: fetched model binaries (38.7 MB + 233 KB), never committed —
+# studio/scripts/faceModelCache.ts fetches and sha256-verifies them here.
+/.cache/

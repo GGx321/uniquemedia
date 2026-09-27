@@ -56,6 +56,22 @@ jobs:
         with:
           bun-version-file: .bun-version
       - run: bun install
+      # T7b, the face gate: the two model binaries (38.7 MB + 233 KB) are
+      # never committed (studio/engine/face/modelSource.ts, .gitignore) — CI
+      # fetches them into the same cache path bun test/build:studio read,
+      # keyed on modelSource.ts itself (the only place the pinned sha256s
+      # live, so a hash change here busts the cache automatically). parity.test.ts
+      # fails the run outright if this step did not leave them in place,
+      # rather than silently skipping the parity check (its own CI guard).
+      - name: Cache face gate models
+        id: face-models-cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/studio-face-models
+          key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
+      - name: Fetch face gate models
+        if: steps.face-models-cache.outputs.cache-hit != 'true'
+        run: bun run models:face
       - name: Check the tag matches studio/version.json
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash

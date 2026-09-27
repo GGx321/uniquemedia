@@ -20,6 +20,21 @@ files:
   # electron-builder.yml) when Studio starts to.
   - "!node_modules/ffprobe-static{,/**/*}"
   - "!node_modules/exiftool-vendored*{,/**/*}"
+  # onnxruntime-web (T7b, the face gate) ships four WASM builds (plain, jsep,
+  # asyncify, jspi) plus browser bundle JS; the engine's utilityProcess is a
+  # Node context and only ever needs the plain build and the Node entry
+  # (spike/face-js/README.md's own "Environments and threading" table).
+  # Keeping only those two cuts ~72 MB of unused WASM binaries plus the
+  # browser-only bundle JS from the installer (plan T7b: "+≈53 MB" total —
+  # 38.7 MB SFace + 14.2 MB WASM + 233 KB YuNet + ~100 KB JS glue).
+  - "!node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.*"
+  - "!node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.*"
+  - "!node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jspi.*"
+  - "!node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs*"
+  - "!node_modules/onnxruntime-web/dist/ort.wasm.js"
+  - "!node_modules/onnxruntime-web/dist/ort.wasm.mjs"
+  - "!node_modules/onnxruntime-web/dist/ort.wasm.min.js*"
+  - "!node_modules/onnxruntime-web/dist/ort.wasm.min.mjs*"
 extraMetadata:
   # The root package.json `main` points at the uniquifier.
   main: out-studio/main/main.js
@@ -28,6 +43,15 @@ extraMetadata:
   name: uniquemedia-studio
 asarUnpack:
   - node_modules/ffmpeg-static/**
+  # T7b, the face gate: onnxruntime-web's WASM runtime and the two model
+  # files prepareFaceAssets.ts copies into out-studio/ before packaging
+  # (never committed to git — studio/scripts/faceModelCache.ts fetches them
+  # into a gitignored cache first). `wasmPaths` (studio/engine/face/gate.ts's
+  # createFaceGate) must be set to these files' real, unpacked path once
+  # packaged — computing that path is T6's wiring, not this module's.
+  - node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm
+  - node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs
+  - out-studio/engine/models/**
 # Electron fuses, flipped in the packaged binary: no ELECTRON_RUN_AS_NODE, no
 # NODE_OPTIONS, no --inspect, the app only from app.asar and that asar checked
 # against the hash embedded at build time, cookies encrypted at rest. Check

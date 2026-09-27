@@ -64,7 +64,11 @@ export default defineConfig(({ command }) => ({
       // reaches the installer only as a `dependency` that electron-builder.studio.yml
       // does not exclude (ffprobe-static and exiftool are excluded until Studio
       // uses them), with its binary left outside the asar by asarUnpack.
-      externalizeDeps: { include: ["ffmpeg-static", "ffprobe-static", "exiftool-vendored"] },
+      // onnxruntime-web (T7b, the face gate) joins them for the same reason:
+      // it locates its own .wasm/.mjs files relative to its own package
+      // directory (or `env.wasm.wasmPaths`, set explicitly at the call site)
+      // — bundling its JS into engine/main.js would break that resolution.
+      externalizeDeps: { include: ["ffmpeg-static", "ffprobe-static", "exiftool-vendored", "onnxruntime-web"] },
     },
   },
   preload: {
