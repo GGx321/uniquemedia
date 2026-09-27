@@ -25,8 +25,11 @@ function plan(overrides: Partial<RunPlanInput> = {}): RunPlanInput {
 const AGE_TYPICAL = 1_660; // 658 in × $1.25/M + 335 out × $2.50/M
 const WRITER_TYPICAL_20 = 9_150; // 20 scenes × (106 in, 130 out)
 
-test("the writer and age-check ceilings cost $0.035 and $0.00525 at worst on grok-4.3", () => {
-  expect(BOOK.chatWorstCase(WRITER_CALL)).toBe(35_000);
+test("the writer and age-check ceilings cost $0.0375 and $0.00525 at worst on grok-4.3", () => {
+  // T5c round 2 (owner decision): 14_000 prompt tokens × $1.25/M + 8_000
+  // completion tokens × $2.50/M (raised from 12_000 for real headroom over
+  // pose's worst-case chunk — see money/estimate.ts's own comment).
+  expect(BOOK.chatWorstCase(WRITER_CALL)).toBe(37_500);
   // 2,200 prompt tokens (one image) × $1.25/M + 1,000 completion tokens × $2.50/M.
   expect(BOOK.chatWorstCase(AGE_CHECK_CALL)).toBe(5_250);
 });
@@ -38,13 +41,15 @@ test("typical chat costs come from the spike's measured tokens", () => {
   expect(BOOK.chatCost(writer25)).toBe(11_438); // the spike's writer: $0.0112 for 25 scenes
 });
 
-test("20 photos × 3 attempts on the default route: worst $3.385, expected $1.04 for one attempt per slot", () => {
+test("20 photos × 3 attempts on the default route: worst $3.39, expected $1.04 for one attempt per slot", () => {
   // Review round 3: the writer's worst case is chunks × WRITER_CALL.maxAttempts
   // (2) × the per-call ceiling — 20 photos is one chunk, retried once, so
-  // 2 * 35_000 = 70_000, not the flat 35_000 a single untried call would cost.
+  // 2 * 37_500 = 75_000, not the flat 37_500 a single untried call would cost.
+  // T5c round 2: the per-call ceiling rose from 35_000 to 37_500
+  // (WRITER_CALL.inputTokens 12_000 -> 14_000), +5_000 here (+$0.005).
   expect(estimateRun(BOOK, plan())).toEqual({
     expectedMicros: 20 * (50_000 + AGE_TYPICAL) + WRITER_TYPICAL_20,
-    worstMicros: 3_385_000,
+    worstMicros: 3_390_000,
     priceSource: "fallback",
   });
   expect(estimateRun(BOOK, plan()).expectedMicros).toBe(1_042_350);
@@ -56,30 +61,32 @@ test("the worst case takes the dearest model on the provider route, the expected
 
   expect(estimateRun(BOOK, plan({ photos: 1, route: [grok2K, seedream2K] }))).toEqual({
     expectedMicros: 70_000 + AGE_TYPICAL + 458,
-    worstMicros: 3 * (93_000 + 5_250) + 2 * 35_000,
+    worstMicros: 3 * (93_000 + 5_250) + 2 * 37_500,
     priceSource: "fallback",
   });
 });
 
 test("the worst case scales with attempts per slot", () => {
-  expect(estimateRun(BOOK, plan({ attemptsPerSlot: 1 })).worstMicros).toBe(20 * 55_250 + 2 * 35_000);
+  expect(estimateRun(BOOK, plan({ attemptsPerSlot: 1 })).worstMicros).toBe(20 * 55_250 + 2 * 37_500);
 });
 
 test("without age checks only the images and the writer count", () => {
-  expect(estimateRun(BOOK, plan({ ageChecks: null }))).toMatchObject({ expectedMicros: 1_000_000 + WRITER_TYPICAL_20, worstMicros: 3_070_000 });
+  // T5c round 2: +5_000 (+$0.005) from the writer's per-call ceiling rise.
+  expect(estimateRun(BOOK, plan({ ageChecks: null }))).toMatchObject({ expectedMicros: 1_000_000 + WRITER_TYPICAL_20, worstMicros: 3_075_000 });
 });
 
 test("a single photo: one image, one age check and a one-scene writer", () => {
-  expect(estimateRun(BOOK, plan({ photos: 1 }))).toMatchObject({ expectedMicros: 50_000 + AGE_TYPICAL + 458, worstMicros: 3 * 55_250 + 2 * 35_000 });
+  expect(estimateRun(BOOK, plan({ photos: 1 }))).toMatchObject({ expectedMicros: 50_000 + AGE_TYPICAL + 458, worstMicros: 3 * 55_250 + 2 * 37_500 });
 });
 
-test("the writer's worst case rises a chunk at a time: 25 slots is one chunk (still 2×35_000), 26 needs a second", () => {
-  expect(estimateRun(BOOK, plan({ photos: 25 })).worstMicros).toBe(25 * 3 * 55_250 + 2 * 35_000);
-  expect(estimateRun(BOOK, plan({ photos: 26 })).worstMicros).toBe(26 * 3 * 55_250 + 2 * 2 * 35_000);
+test("the writer's worst case rises a chunk at a time: 25 slots is one chunk (still 2×37_500), 26 needs a second", () => {
+  expect(estimateRun(BOOK, plan({ photos: 25 })).worstMicros).toBe(25 * 3 * 55_250 + 2 * 37_500);
+  expect(estimateRun(BOOK, plan({ photos: 26 })).worstMicros).toBe(26 * 3 * 55_250 + 2 * 2 * 37_500);
 });
 
 test("a 100-photo run (the contract's RunRequest.count maximum) prices 4 writer chunks", () => {
-  expect(estimateRun(BOOK, plan({ photos: 100 })).worstMicros).toBe(100 * 3 * 55_250 + 4 * 2 * 35_000);
+  // T5c round 2: +20_000 (+$0.02) from the writer's per-call ceiling rise, 4 chunks × 2 attempts.
+  expect(estimateRun(BOOK, plan({ photos: 100 })).worstMicros).toBe(100 * 3 * 55_250 + 4 * 2 * 37_500);
 });
 
 test("zero photos cost nothing, not even a writer call", () => {
@@ -89,7 +96,7 @@ test("zero photos cost nothing, not even a writer call", () => {
 test("attempts per slot must be between 1 and 3", () => {
   expect(() => estimateRun(BOOK, plan({ attemptsPerSlot: 0 }))).toThrow(RangeError);
   expect(() => estimateRun(BOOK, plan({ attemptsPerSlot: 4 }))).toThrow(RangeError);
-  expect(estimateRun(BOOK, plan({ attemptsPerSlot: 3 })).worstMicros).toBe(3_385_000);
+  expect(estimateRun(BOOK, plan({ attemptsPerSlot: 3 })).worstMicros).toBe(3_390_000);
 });
 
 test("photos must be a non-negative integer", () => {

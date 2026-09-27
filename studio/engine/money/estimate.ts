@@ -71,11 +71,17 @@ export interface WriterCall extends Omit<ChatCall, "typical"> {
  * T5c (2026-09-27): pose was added to every slot sent to the writer, to the
  * system prompt's own rules, and to a worst refusal's own new
  * pose-contradiction problem. Re-measured: a full chunk plain ~10_045,
- * +worst refusal ~11_108; 20 slots +worst refusal ~9_429. Still comfortably
- * under 12_000, so `inputTokens` was left unchanged — but the headroom
- * shrank to ~892 tokens (scenes/writer.test.ts's own comment carries the
- * up-to-date numbers); re-measure again before adding any further
- * per-slot field or refusal reason.
+ * +worst refusal ~11_108; 20 slots +worst refusal ~9_429 — still under
+ * 12_000, but the headroom had shrunk to ~892 tokens.
+ *
+ * T5c round 2 (owner decision, 2026-09-27): raised to 14_000 anyway, to
+ * restore real headroom (~2_892 tokens over one full chunk's worst refusal)
+ * rather than run this close to the edge. Per-call ceiling rises from
+ * $0.035 to $0.0375 (14_000 × $1.25/M + 8_000 × $2.50/M); every worst-case
+ * figure that includes the writer's share moves with it — see
+ * estimate.test.ts, scenes/writer.test.ts's `writerRunPrice` tests and
+ * docs/studio/2026-09-24-stage-2-plan.md, all re-derived from this constant,
+ * not computed by hand.
  *
  * `slotsPerCall`/`maxAttempts` review round 2/3: `RunRequest.count` allows
  * up to 100 photos, possibly all in one category — far more slots than one
@@ -91,7 +97,7 @@ export interface WriterCall extends Omit<ChatCall, "typical"> {
 export const WRITER_CALL: WriterCall = {
   model: "x-ai/grok-4.3",
   maxTokens: 8_000,
-  inputTokens: 12_000,
+  inputTokens: 14_000,
   images: 0,
   typicalPerScene: { inputTokens: 106, outputTokens: 130 },
   slotsPerCall: 25,

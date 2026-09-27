@@ -24,7 +24,14 @@ export class AssemblerRefusalError extends TypeError {}
 // so their face-visibility claim now comes from POSE_PHRASE below instead of
 // being hardcoded here — hardcoding "face clearly visible" on these three
 // would contradict a back or profile pose's own phrase.
-const SHOT_PHRASE: Record<Shot, string> = {
+//
+// Round 2 review (HIGH): candid's own "not looking at the camera" combined
+// with front's original "She faces the camera" produced a self-contradicting
+// prompt for a candid+front slot — a real combination (candid draws any
+// pose). Exported so assembler.test.ts's coherence test can scan every
+// value directly, and so the shot×pose coherence check has the exact text
+// to reason about.
+export const SHOT_PHRASE: Record<Shot, string> = {
   friend: "Photo taken by a friend with the rear phone camera, three-quarter or full-body framing",
   selfie: "Front-camera selfie at arm's length, slight wide-angle distortion, face fully visible",
   mirror: "Mirror selfie, phone held at chest height, face fully visible in the mirror",
@@ -32,13 +39,23 @@ const SHOT_PHRASE: Record<Shot, string> = {
   photographer: "Photographed by a photographer with a full-frame camera, three-quarter or full-body framing",
 };
 
-/** T5c: a fixed phrase per pose, exactly like SHOT_PHRASE — the shot phrase
- *  above says how the photo was taken, this says which way she is turned and
- *  whether her face is visible. Makes sense standing next to any shot
- *  phrase, including selfie/mirror's own "face fully visible" (front's
- *  phrase below is consistent with that, not contradictory). */
-const POSE_PHRASE: Record<Pose, string> = {
-  front: "She faces the camera, her face clearly visible",
+/**
+ * T5c: a fixed phrase per pose, exactly like SHOT_PHRASE — the shot phrase
+ * above says how the photo was taken, this says which way she is turned and
+ * whether her face is visible.
+ *
+ * Round 2 review (HIGH): `front` no longer says "She faces the camera"
+ * (an active gaze claim that contradicts candid's "not looking at the
+ * camera"). It now describes orientation only — her face and body turned
+ * toward the lens, face clearly visible — without claiming eye contact, so
+ * it reads fine next to candid ("not looking at the camera" can still be
+ * true of someone turned toward the lens but glancing elsewhere), next to
+ * friend/photographer (no gaze claim either way), and next to selfie/mirror
+ * (their own "face fully visible" wording is consistent, not contradictory).
+ * `three-quarter` never claimed eye contact and is unchanged.
+ */
+export const POSE_PHRASE: Record<Pose, string> = {
+  front: "Her face and body oriented toward the camera, her face clearly visible",
   "three-quarter": "Her face and body turned to a three-quarter angle, face clearly visible",
   profile: "She is seen in profile, her face turned fully to the side",
   back: "Photographed from behind, her face not visible",
@@ -60,7 +77,7 @@ const BINDING = "The same woman as in the reference photo,";
  * back shot has no face to bind at all, so it anchors on hair, build and
  * posture instead.
  */
-const BINDING_ANCHOR: Record<Pose, string> = {
+export const BINDING_ANCHOR: Record<Pose, string> = {
   front: "with her exact face, facial proportions and hairline",
   "three-quarter": "with her exact face, facial proportions and hairline",
   profile: "with her exact facial profile, hairline and build",

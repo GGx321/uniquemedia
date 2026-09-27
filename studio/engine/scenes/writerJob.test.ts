@@ -39,8 +39,8 @@ function job(overrides: Partial<WriterJob> = {}): WriterJob {
   };
 }
 
-/** grok-4.3 fallback prices, WRITER_CALL's own ceiling (maxTokens 8_000, inputTokens 12_000, review round 1): 8_000 * $2.50/M + 12_000 * $1.25/M. */
-const ATTEMPT_WORST = 35_000;
+/** grok-4.3 fallback prices, WRITER_CALL's own ceiling (maxTokens 8_000, inputTokens 14_000, T5c round 2): 8_000 * $2.50/M + 14_000 * $1.25/M. */
+const ATTEMPT_WORST = 37_500;
 
 const GOOD_SELFIE = "She holds her phone in one hand and brushes a loose strand of hair back with the other, smiling softly at her reflection.";
 const GOOD_OTHER = "A friend catches her mid-laugh at the kitchen counter as morning light spills across the table.";

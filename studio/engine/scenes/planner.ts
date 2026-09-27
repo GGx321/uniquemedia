@@ -98,8 +98,17 @@ function subSeed(seed: number, discriminator: string): number {
  * comment): `planCategory` for "travel" never advances "home"'s stream, so a
  * pool edit to one category can only change how many draws that category's
  * own bags need, never shift what any other category draws for the same seed.
+ *
+ * Exported only for planner.test.ts's rng-isolation test (round 2 review,
+ * MEDIUM): the plan-shape tests alone cannot tell `poseSeed` and
+ * `categorySeed` apart if `poseSeed` were collapsed to just call
+ * `categorySeed` — two separate `Rng` *instances* seeded identically still
+ * don't interleave, so the plan would look unperturbed either way. This
+ * export lets the test pin the actual seed derivation directly:
+ * `poseSeed(seed, c) !== categorySeed(seed, c)`, for every category and a
+ * spread of seeds.
  */
-function categorySeed(seed: number, category: Category): number {
+export function categorySeed(seed: number, category: Category): number {
   return subSeed(seed, category);
 }
 
@@ -110,8 +119,9 @@ function categorySeed(seed: number, category: Category): number {
  * category's location/outfit/shot bags (planner.test.ts's isolation test
  * pins this: the same seed's location/outfit/shot draws are byte-identical
  * whether poses are drawn at all, and whatever the run's pose allowance is).
+ * Exported for the same reason as `categorySeed` above.
  */
-function poseSeed(seed: number, category: Category): number {
+export function poseSeed(seed: number, category: Category): number {
   return subSeed(seed, `pose:${category}`);
 }
 

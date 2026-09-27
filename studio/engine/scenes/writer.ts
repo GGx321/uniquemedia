@@ -88,7 +88,7 @@ const CATEGORY_LABEL: Record<Category, string> = {
   glamour: "Glamour",
   fitness: "Fitness",
 };
-const SHOT_LABEL: Record<Shot, string> = {
+export const SHOT_LABEL: Record<Shot, string> = {
   friend: "photo taken by a friend",
   selfie: "front-camera selfie",
   mirror: "mirror selfie",
@@ -101,7 +101,7 @@ const SHOT_LABEL: Record<Shot, string> = {
  * agrees with the plan's own `pose` (assembler.ts's own fixed phrase per
  * pose is separate — this is only what the writer is told to write around).
  */
-const POSE_LABEL: Record<Pose, string> = {
+export const POSE_LABEL: Record<Pose, string> = {
   front: "facing the camera",
   "three-quarter": "a three-quarter view, turned slightly from the camera",
   profile: "in profile, her face turned fully to the side",
@@ -264,14 +264,24 @@ function phoneInHand(slot: PlanSlot): boolean {
 }
 
 /**
- * A sentence describing her looking, gazing, staring, glancing or smiling
- * at/toward/into the camera — cheaply detectable, and the plan's own example
- * of what a back or profile pose's sentence must never say (a back-facing
- * woman cannot be "looking at the camera"; a profile shot's whole point is
- * that her face is turned to the side, not toward it).
+ * A sentence describing her looking, gazing, staring, glancing, smiling or
+ * peering at/toward/into the camera — cheaply detectable, and the plan's own
+ * example of what a back or profile pose's sentence must never say (a
+ * back-facing woman cannot be "looking at the camera"; a profile shot's
+ * whole point is that her face is turned to the side, not toward it).
+ *
+ * Round 2 review (MEDIUM): a bare `verb\s+preposition` required the two to
+ * sit right next to each other, missing natural writing like "looking over
+ * her shoulder at the camera" or "peers at the camera from over her
+ * shoulder" — a real paid answer could phrase it exactly that way and slip
+ * past the gate. `[^.]{0,25}?` allows a short aside (an "over her shoulder"
+ * or "back" between the verb and the preposition) without the sentence
+ * boundary, lazily so it only matches as far as it needs to; kept tight (25
+ * chars, never crossing a period) because a false positive here costs a
+ * paid retry, not just a missed catch.
  */
-const CAMERA_GAZE =
-  /\b(?:look(?:ing|s)?|gaz(?:ing|es)?|star(?:ing|es)?|glanc(?:ing|es)?|smil(?:ing|es)?)\s+(?:at|toward|towards|into)\s+the\s+camera\b/i;
+const CAMERA_GAZE_VERB = "(?:look(?:ing|s)?|gaz(?:ing|es)?|star(?:ing|es)?|glanc(?:ing|es)?|smil(?:ing|es)?|peer(?:ing|s)?)";
+const CAMERA_GAZE = new RegExp(`\\b${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b(?:at|toward|towards|into)\\s+the\\s+camera\\b`, "i");
 
 /**
  * Whether `sentence` contradicts `pose` in a cheaply detectable way (T5c,

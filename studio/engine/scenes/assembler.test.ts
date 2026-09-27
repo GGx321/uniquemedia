@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { youthWords } from "../../shared/engine";
 import type { AvatarDescriptor } from "../../shared/engine";
 import { PromptSubjectError } from "../avatars/prompts";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { plan } from "./planner";
-import type { PlanSlot } from "./schema";
-import { AssemblerRefusalError, assembleRun, assembleSlot } from "./assembler";
+import { PlanSlotSchema, PoseSchema, type PlanSlot } from "./schema";
+import { SHOTS } from "./types";
+import { revealingWordsIn } from "./words";
+import { AssemblerRefusalError, assembleRun, assembleSlot, BINDING_ANCHOR, POSE_PHRASE, SHOT_PHRASE } from "./assembler";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -82,7 +85,7 @@ describe("assembleSlot", () => {
 
   describe("pose (T5c)", () => {
     test.each([
-      ["front", "faces the camera"],
+      ["front", "oriented toward the camera"],
       ["three-quarter", "three-quarter"],
       ["profile", "profile"],
       ["back", "from behind"],
@@ -177,6 +180,78 @@ describe("assembleSlot", () => {
     expect(() => assembleSlot(DESCRIPTOR, slot({ category: "glamour" }), "She poses in a bikini by the mirror.", MASTER)).toThrow(
       AssemblerRefusalError,
     );
+  });
+});
+
+// Round 2 review (HIGH): candid + front produced "she is not looking at the
+// camera. She faces the camera, her face clearly visible." in the same
+// prompt — a direct self-contradiction, and candid is a large share of real
+// slots (2 of 5 shots in the default deck can land any pose). Every valid
+// shot×pose combination the schema allows must read as one coherent scene:
+// never both a "not looking at the camera" phrase and a "faces/looks at the
+// camera" phrase in the same prompt.
+describe("shot × pose coherence (round 2, HIGH)", () => {
+  const NOT_LOOKING_AT_CAMERA = /\bnot\s+looking\s+(?:at|toward|towards|into)\s+the\s+camera\b/i;
+  // A negative lookbehind for a preceding negator, so "not looking at the
+  // camera" (which contains the bare substring "looking at the camera")
+  // never also counts as an affirmative gaze claim — without it, every
+  // candid slot's own NOT_LOOKING_AT_CAMERA match would also trip this
+  // regex on itself, and the test would flag every candid pose as
+  // self-contradicting instead of only the real bug (candid + front).
+  // "faces/faced" the camera is transitive (no preposition needed: "she
+  // faces the camera", not "faces at the camera") — a plain \bfaces?\b
+  // followed by "at/toward/into" would never match it, which is exactly the
+  // bug this test exists to catch (front's original phrase read "She faces
+  // the camera" and slipped past a preposition-only regex).
+  const NEGATOR = "(?:not|n't|never)\\s+";
+  const LOOKS_AT_CAMERA = new RegExp(
+    `\\b(?<!${NEGATOR})(?:look(?:s|ing)?|gaz(?:es|ing)?|star(?:es|ing)?)\\s+(?:directly\\s+)?(?:at|toward|towards|into)\\s+the\\s+camera\\b` +
+      `|\\b(?<!${NEGATOR})faces?\\s+(?:directly\\s+)?(?:at\\s+)?the\\s+camera\\b`,
+    "i",
+  );
+
+  function validCombos(): { shot: PlanSlot["shot"]; pose: PlanSlot["pose"] }[] {
+    const combos: { shot: PlanSlot["shot"]; pose: PlanSlot["pose"] }[] = [];
+    for (const shot of SHOTS) {
+      for (const pose of PoseSchema.options) {
+        const candidate = { ...slot(), shot, pose };
+        if (PlanSlotSchema.safeParse(candidate).success) combos.push({ shot, pose });
+      }
+    }
+    return combos;
+  }
+
+  test("every valid shot×pose pair yields at least one combination to check (sanity)", () => {
+    expect(validCombos().length).toBeGreaterThan(10);
+  });
+
+  test.each(validCombos().map((c): [string, PlanSlot["shot"], PlanSlot["pose"]] => [`${c.shot}/${c.pose}`, c.shot, c.pose]))(
+    "%s: never claims both looking and not-looking at the camera",
+    (_label, shot, pose) => {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot, pose }), SENTENCE, MASTER);
+      const notLooking = NOT_LOOKING_AT_CAMERA.test(prompt);
+      const looksAt = LOOKS_AT_CAMERA.test(prompt);
+      expect(notLooking && looksAt).toBe(false);
+    },
+  );
+});
+
+// Round 2 review (LOW): the fixed phrase constants are engine-authored text
+// that goes straight into every image prompt, exactly like the writer's
+// sentence — so they must pass the same youth/revealing checks the writer's
+// own answer and the descriptor gate are held to.
+describe("phrase constants never suggest a minor or use a revealing word (round 2, LOW)", () => {
+  function allPhrases(): [string, string][] {
+    return [
+      ...Object.entries(SHOT_PHRASE).map(([k, v]): [string, string] => [`SHOT_PHRASE.${k}`, v]),
+      ...Object.entries(POSE_PHRASE).map(([k, v]): [string, string] => [`POSE_PHRASE.${k}`, v]),
+      ...Object.entries(BINDING_ANCHOR).map(([k, v]): [string, string] => [`BINDING_ANCHOR.${k}`, v]),
+    ];
+  }
+
+  test.each(allPhrases())("%s has no youth word and no revealing word", (_name, text) => {
+    expect(youthWords(text, "descriptor")).toEqual([]);
+    expect(revealingWordsIn(text)).toEqual([]);
   });
 });
 

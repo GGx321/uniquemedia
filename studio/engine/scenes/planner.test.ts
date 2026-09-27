@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { CATEGORIES } from "./types";
 import { POOLS } from "./pools";
-import { plan, placeMirrorShots, planWithPools, type ExcludedPair } from "./planner";
+import { categorySeed, plan, placeMirrorShots, planWithPools, poseSeed, type ExcludedPair } from "./planner";
 import { ScenePlanSchema } from "./schema";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -348,6 +348,66 @@ describe("pose (T5c)", () => {
       const p = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
       expect(ScenePlanSchema.safeParse(p).success).toBe(true);
     }
+  });
+
+  describe("boundary cases (round 2, LOW)", () => {
+    test("count 1 with poses allowed still produces a valid, schema-conformant slot", () => {
+      for (let seed = 1; seed <= 20; seed++) {
+        const p = plan({ seed, count: 1, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
+        expect(p.slots).toHaveLength(1);
+        expect(ScenePlanSchema.safeParse(p).success).toBe(true);
+        const [only] = p.slots;
+        if (only!.shot === "selfie" || only!.shot === "mirror") {
+          expect(only!.pose === "front" || only!.pose === "three-quarter").toBe(true);
+        }
+      }
+    });
+
+    test("count 100 (the contract's RunRequest.count maximum) with poses allowed: every slot valid, both extra poses appear", () => {
+      const p = plan({ seed: 20260924, count: 100, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
+      expect(p.slots).toHaveLength(100);
+      expect(ScenePlanSchema.safeParse(p).success).toBe(true);
+      for (const slot of p.slots) {
+        if (slot.shot === "selfie" || slot.shot === "mirror") {
+          expect(slot.pose === "front" || slot.pose === "three-quarter").toBe(true);
+        }
+      }
+      const poses = new Set(p.slots.map((s) => s.pose));
+      expect(poses.has("profile")).toBe(true);
+      expect(poses.has("back")).toBe(true);
+    });
+
+    test("count 100 with poses disallowed: every slot is still front or three-quarter", () => {
+      const p = plan({ seed: 20260924, count: 100, categories: ALL_CATEGORIES, poses: { profile: false, back: false } });
+      expect(p.slots).toHaveLength(100);
+      expect(p.slots.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
+    });
+  });
+
+  // Round 2 review (MEDIUM): the whole-plan isolation tests below still pass
+  // even if `poseSeed` is collapsed to just call `categorySeed` (two
+  // separate Rng *instances* seeded identically still don't interleave, so
+  // the behavioral tests can't tell them apart) — that would defeat the
+  // point of "its own per-concern rng stream" even though nothing else
+  // observably breaks. This test pins the actual seed derivation directly:
+  // poseSeed's own numeric output must differ from categorySeed's, for
+  // every category and a spread of seeds, so a future edit that collapses
+  // them fails here even if the plan-shape tests above stay green.
+  describe("poseSeed and categorySeed are genuinely different streams, not just different Rng instances (round 2, MEDIUM)", () => {
+    test("poseSeed(seed, category) never equals categorySeed(seed, category)", () => {
+      for (let seed = -10; seed <= 50; seed++) {
+        for (const category of ALL_CATEGORIES) {
+          expect(poseSeed(seed, category)).not.toBe(categorySeed(seed, category));
+        }
+      }
+    });
+
+    test("poseSeed differs across categories for the same seed (each category still gets its own pose stream)", () => {
+      for (let seed = 1; seed <= 10; seed++) {
+        const seeds = ALL_CATEGORIES.map((c) => poseSeed(seed, c));
+        expect(new Set(seeds).size).toBe(seeds.length);
+      }
+    });
   });
 
   describe("rng isolation: adding pose draws never perturbs the existing location/outfit/shot draws", () => {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { youthWords } from "../../shared/engine";
 import { estimateRun, WRITER_CALL, type RunPlanInput } from "../money/estimate";
 import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
@@ -9,8 +10,10 @@ import {
   chunkSlots,
   contradictsPose,
   isTwoHanded,
+  POSE_LABEL,
   readWriterAnswer,
   revealingWordsIn,
+  SHOT_LABEL,
   writerMessages,
   writerRefusalText,
   writerRunPrice,
@@ -267,8 +270,38 @@ describe("detectors", () => {
     ["back", "her hair catches the light as she walks away.", false],
     ["front", "she looks at the camera and smiles.", false],
     ["three-quarter", "she glances at the camera.", false],
+    // Round 2 review (MEDIUM): natural phrasings with a gaze verb and the
+    // camera separated by a short aside (e.g. "over her shoulder") were
+    // false negatives — a paid attempt could slip through describing exactly
+    // what the pose forbids.
+    ["back", "she walks away, looking over her shoulder at the camera as the door closes.", true],
+    ["back", "she glances back toward the camera over her shoulder before stepping out.", true],
+    ["back", "she looks directly at the camera over her shoulder as she leaves.", true],
+    ["back", "she peers at the camera from over her shoulder in the doorway.", true],
+    ["profile", "she peers at the camera from over her shoulder as she waits.", true],
+    // A false positive costs a paid retry, so the gap must stay bounded and
+    // must not fire on an unrelated mention of "camera" far from any gaze verb.
+    ["back", "the camera sits on a tripod behind her as she walks toward the window.", false],
+    ["back", "she looks over her shoulder at the doorway, while the camera sits on a tripod across the room.", false],
   ] as const)("contradictsPose(%j, %j) -> %p", (pose, sentence, expected) => {
     expect(contradictsPose(sentence, pose)).toBe(expected);
+  });
+});
+
+// Round 2 review (LOW): SHOT_LABEL and POSE_LABEL are engine-authored text
+// sent straight into the writer's own prompt, exactly like the pool text in
+// pools.ts — so they must pass the same youth/revealing checks.
+describe("phrase constants never suggest a minor or use a revealing word (round 2, LOW)", () => {
+  function allPhrases(): [string, string][] {
+    return [
+      ...Object.entries(SHOT_LABEL).map(([k, v]): [string, string] => [`SHOT_LABEL.${k}`, v]),
+      ...Object.entries(POSE_LABEL).map(([k, v]): [string, string] => [`POSE_LABEL.${k}`, v]),
+    ];
+  }
+
+  test.each(allPhrases())("%s has no youth word and no revealing word", (_name, text) => {
+    expect(youthWords(text, "descriptor")).toEqual([]);
+    expect(revealingWordsIn(text)).toEqual([]);
   });
 });
 
@@ -322,12 +355,15 @@ describe("writerRunPrice", () => {
   // worst case is chunks × maxAttempts × the per-call ceiling (review round
   // 3: a flat one-call, one-attempt ceiling priced this too low).
   test("the worst case is chunks × maxAttempts × the per-call ceiling", () => {
+    // T5c round 2: the per-call ceiling rose from 35_000 to 37_500
+    // (WRITER_CALL.inputTokens 12_000 -> 14_000); every figure below moves
+    // with it (2 * 37_500 = 75_000, etc.).
     const book = PriceBook.fallback();
     expect(writerRunPrice(book, 0).worstMicros).toBe(0);
-    expect(writerRunPrice(book, 1).worstMicros).toBe(70_000);
-    expect(writerRunPrice(book, WRITER_CALL.slotsPerCall).worstMicros).toBe(70_000);
-    expect(writerRunPrice(book, WRITER_CALL.slotsPerCall + 1).worstMicros).toBe(140_000);
-    expect(writerRunPrice(book, 100).worstMicros).toBe(280_000);
+    expect(writerRunPrice(book, 1).worstMicros).toBe(75_000);
+    expect(writerRunPrice(book, WRITER_CALL.slotsPerCall).worstMicros).toBe(75_000);
+    expect(writerRunPrice(book, WRITER_CALL.slotsPerCall + 1).worstMicros).toBe(150_000);
+    expect(writerRunPrice(book, 100).worstMicros).toBe(300_000);
   });
 
   test("the expected cost scales per scene, at the spike's measured per-scene tokens, unaffected by chunking or attempts", () => {
@@ -411,10 +447,11 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
     // (25) chunk, plain ~10045, +worst refusal ~11108; 20 slots plain ~8446,
     // +worst refusal ~9429; 30 slots +worst refusal ~12711 (over one chunk,
     // for reference only — a 30-slot run is itself split into two chunks of
-    // 25 and 5). WRITER_CALL.inputTokens = 12_000 still covers a full
-    // chunk's worst refusal, but with only ~892 tokens of headroom left
-    // (down from ~2_800 before pose) — re-measure here before adding any
-    // further refusal reason or per-slot field.
+    // 25 and 5). That left only ~892 tokens of headroom over 12_000 (down
+    // from ~2_800 before pose), so T5c round 2 (owner decision) raised
+    // WRITER_CALL.inputTokens to 14_000: ~2_892 tokens of headroom over one
+    // full chunk's worst refusal. Re-measure here before adding any further
+    // refusal reason or per-slot field.
     expect(floor).toBeLessThanOrEqual(WRITER_CALL.inputTokens);
   });
 
