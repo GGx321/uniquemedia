@@ -36,13 +36,19 @@ test("arms the money core's 180 s request timeout by default", async () => {
 });
 
 test("the default retry wait ends as soon as the signal aborts", async () => {
-  const { client, calls } = defaultClient([{ status: 429 }]);
   const controller = new AbortController();
+  // Abort only once the 429 has been answered, so the abort lands in the retry
+  // wait. A fixed timer from the start raced a slow runner: the abort could win
+  // before the request was sent, and the reserve was then (rightly) released.
+  const { client, calls } = defaultClient([
+    () => {
+      setTimeout(() => controller.abort(), 20);
+      return { status: 429 };
+    },
+  ]);
   const started = performance.now();
 
-  const pending = client.generateImage(imageParams(money, { signal: controller.signal }));
-  setTimeout(() => controller.abort(), 20);
-  const result = await pending;
+  const result = await client.generateImage(imageParams(money, { signal: controller.signal }));
 
   expect(result).toEqual({ status: "aborted", ledger: { action: "settled", costMicros: 0, estimated: false } });
   expect(calls).toHaveLength(1);
