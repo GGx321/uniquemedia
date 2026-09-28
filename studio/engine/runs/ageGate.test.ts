@@ -8,7 +8,7 @@ import type { PlanSlot } from "../scenes";
 import { MAX_ATTEMPT_MS } from "../openrouter/transport";
 import { AGE_CHECK_CALL } from "../money/estimate";
 import { ffmpegPath } from "../../node/ffmpegBinary";
-import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
+import { asLibraryReference, chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
 import { AGE_GATE_NAME, GateFailure, type QaInput } from "./qa";
 import { ageGateAttemptId, createAgeGate } from "./ageGate";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -86,6 +86,10 @@ function input(m: Money, overrides: Partial<QaInput> = {}): QaInput {
     },
     beforeSend: () => true,
     photosByAvatar: (): readonly PhotoSidecar[] => [],
+    master: asLibraryReference(Uint8Array.of(0xff, 0xd8, 0xff)),
+    decodeImage: () => {
+      throw new Error("must not be called: the age gate never decodes for identity");
+    },
     ...overrides,
   };
 }

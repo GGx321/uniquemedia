@@ -1,5 +1,6 @@
 import type { EngineError } from "../../shared/engine";
-import type { ImageMediaType, PhotoQa, PhotoSidecar } from "../library";
+import type { FaceGateImage } from "../face";
+import type { ImageMediaType, LibraryReference, PhotoQa, PhotoSidecar } from "../library";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
@@ -129,6 +130,30 @@ export interface QaInput {
    * library and would have to fail open to an empty list instead.
    */
   photosByAvatar: (avatarId: string) => readonly PhotoSidecar[];
+  /**
+   * T7b: the avatar's master portrait, the same encoded bytes `runJob.ts`'s
+   * `loadMaster()` already loaded as the image attempt's own OpenRouter
+   * reference — never a second read of the library. The face gate is the
+   * only gate that needs it (its master embedding, computed once per
+   * avatar and cached, is compared against every candidate's own face).
+   */
+  master: LibraryReference;
+  /**
+   * T7b's own decode decision: the engine's utilityProcess has no
+   * `nativeImage` of its own (confirmed empirically — see the T7b wiring
+   * notes in docs/studio/2026-09-24-stage-2-plan.md), and the runtime rule
+   * (invariant 1) forbids importing `electron` from anywhere reachable from
+   * the engine entry regardless. So decoding to the tagged RGBA/BGRA pixels
+   * the face gate needs happens in the REAL main process (Electron's
+   * `nativeImage`, the same decoder the spike's parity numbers were measured
+   * against) and travels back over the engine↔main control channel
+   * (control.ts's `EngineCall`/`MainReply`, `studio/main/imageDecode.ts`).
+   * Only the face gate calls this today; every other gate's own decode
+   * (pdq's 64x64 grayscale, the age gate's downscaled JPEG) stays on the
+   * engine's own ffmpeg, which has no identity-precision requirement to
+   * keep parity with.
+   */
+  decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 }
 
 export type QaVerdict =

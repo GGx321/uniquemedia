@@ -3,7 +3,7 @@ import { computePdqHash } from "../../../src/core/pdq/pdq";
 import type { PhotoSidecar } from "../library";
 import type { PlanSlot } from "../scenes";
 import { PDQ_GRAY_FRAME_BYTES } from "../../node/pdqPixels";
-import { setupMoney, type Money } from "../openrouter/testing/fakes";
+import { asLibraryReference, setupMoney, type Money } from "../openrouter/testing/fakes";
 import type { QaConfig } from "./config";
 import type { QaInput } from "./qa";
 import { createPdqGate, gradientEnergy, PDQ_GATE_NAME } from "./pdqGate";
@@ -69,6 +69,10 @@ function input(overrides: Partial<QaInput> = {}, money_: Money): QaInput {
     },
     beforeSend: () => true,
     photosByAvatar: () => [],
+    master: asLibraryReference(Uint8Array.of(0xff, 0xd8, 0xff)),
+    decodeImage: () => {
+      throw new Error("must not be called: pdq never decodes for identity");
+    },
     ...overrides,
   };
 }

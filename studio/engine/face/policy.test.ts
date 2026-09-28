@@ -47,6 +47,24 @@ test("front, similarity exactly at the threshold counts as a match (inclusive)",
   expect(verdict.kind).toBe("match");
 });
 
+test("front, similarity one step below the threshold: mismatch (the exclusive edge, T7b's own boundary pin)", () => {
+  const threshold = config.identity.strategy.threshold;
+  const verdict = decideFaceVerdict(
+    { pose: "front", faces: [box(0, 0, 100, 200, 0.9)], similarity: threshold - 0.0001, imageHeight: IMAGE_HEIGHT },
+    config,
+  );
+  expect(verdict.kind).toBe("mismatch");
+});
+
+test("front, similarity one step above the threshold: match", () => {
+  const threshold = config.identity.strategy.threshold;
+  const verdict = decideFaceVerdict(
+    { pose: "front", faces: [box(0, 0, 100, 200, 0.9)], similarity: threshold + 0.0001, imageHeight: IMAGE_HEIGHT },
+    config,
+  );
+  expect(verdict.kind).toBe("match");
+});
+
 test("profile: identity is never checked, even with a strong face and no similarity given", () => {
   const verdict = decideFaceVerdict({ pose: "profile", faces: [box(0, 0, 100, 200, 0.95)], imageHeight: IMAGE_HEIGHT }, config);
   expect(verdict).toEqual({ kind: "skipped-by-pose", faces: 1 });
