@@ -69,8 +69,13 @@ export interface FaceQaGateDeps {
   faceGate: Pick<FaceGate, "check" | "embed">;
 }
 
+/** L7: the photo schema caps faceCos at [-1, 1] (schemas.ts); a rounding-step overflow past either edge would otherwise throw in Library.addPhoto and stop the run. */
+function clampCosine(similarity: number): number {
+  return Math.min(1, Math.max(-1, similarity));
+}
+
 function qaOf(verdict: { kind: "match" | "mismatch"; similarity: number; headRatio: number }): PhotoQa {
-  return { faceCos: verdict.similarity, headRatio: verdict.headRatio };
+  return { faceCos: clampCosine(verdict.similarity), headRatio: verdict.headRatio };
 }
 
 /** Waits for `promise` without affecting it: rejects early if `signal` aborts first, but the underlying computation (and any other caller waiting on it) keeps running either way. */

@@ -838,19 +838,19 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
               <ImageAgeCheckRow settings={settings} />
               {/*
                * The engine's face gate (studio/engine/face/config.ts) is a
-               * hybrid, not a strict identity filter — but it is not wired
-               * into the job pipeline yet (no run calls it), so the retries
-               * and gallery badges below describe what photo-runs will do,
-               * not what happens today. The threshold (0.55) is that
-               * module's own literal (defaultFaceGateConfig), restated by
-               * hand here — the renderer bundle itself never imports engine
-               * code for it — but SettingsScreen.test.tsx does import the
-               * real constant and pins this hint's text against it, so the
-               * two numbers cannot silently drift apart.
+               * hybrid, not a strict identity filter — wired into photo runs
+               * (T7b), so the retries and gallery badges below describe
+               * what a run actually does, not a future promise. The
+               * threshold (0.55) is that module's own literal
+               * (defaultFaceGateConfig), restated by hand here — the
+               * renderer bundle itself never imports engine code for it —
+               * but SettingsScreen.test.tsx does import the real constant
+               * and pins this hint's text against it, so the two numbers
+               * cannot silently drift apart.
                */}
               <Row
                 label="Сходство лица"
-                hint="появится вместе с фото-ранами: локально, без токенов · повтор только при явном браке — нет лица, два лица, лицо на кадре со спины, сходство ниже 0.55 · остальное — значком в галерее"
+                hint="локально, без токенов · повтор только при явном браке — нет лица, два лица, лицо на кадре со спины, сходство ниже 0.55 · остальное — значком в галерее"
               >
                 <span className="mono row-value">гибрид</span>
               </Row>

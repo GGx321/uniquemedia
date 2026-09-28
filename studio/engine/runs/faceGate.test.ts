@@ -314,6 +314,30 @@ describe("check() (candidate decode and verdict mapping)", () => {
     expect(verdict).toEqual({ verdict: "pass", qa: { faceCos: 0.812345, headRatio: 0.271 } });
   });
 
+  test("L7: clamps a similarity that overflows past 1 by a rounding step, so addPhoto never throws on the schema's own faceCos <= 1 bound", async () => {
+    const m = await money();
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({ check: async () => ({ kind: "match", similarity: 1.0000000000000002, faces: 1, headRatio: 0.271 }) }),
+    });
+    await gate.prepare?.(prepareInput());
+
+    const verdict = await gate.check(input({}, m));
+
+    expect(verdict).toEqual({ verdict: "pass", qa: { faceCos: 1, headRatio: 0.271 } });
+  });
+
+  test("L7: clamps a similarity that underflows past -1", async () => {
+    const m = await money();
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({ check: async () => ({ kind: "match", similarity: -1.0000000000000002, faces: 1, headRatio: 0.271 }) }),
+    });
+    await gate.prepare?.(prepareInput());
+
+    const verdict = await gate.check(input({}, m));
+
+    expect(verdict).toEqual({ verdict: "pass", qa: { faceCos: -1, headRatio: 0.271 } });
+  });
+
   test("mismatch: retries, gross drift below the threshold", async () => {
     const m = await money();
     const gate = createFaceQaGate({

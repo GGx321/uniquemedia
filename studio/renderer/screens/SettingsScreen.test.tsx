@@ -367,6 +367,12 @@ test("models are shown read-only, with the face check's hybrid mode", async () =
   // default so the two numbers cannot silently drift apart.
   const threshold = defaultFaceGateConfig().identity.strategy.threshold;
   expect(document.body.textContent).toContain(`сходство ниже ${threshold}`);
+  // Money review M5: the gate is wired into photo runs now (T7b) — the hint
+  // must no longer say it "will appear along with photo runs", unlike the
+  // scenes/image-model rows above it, which genuinely still do (T5b is not
+  // wired into the job pipeline yet).
+  const faceRow = screen.getByText("Сходство лица").closest(".row");
+  expect(faceRow?.textContent).not.toContain("появится вместе с фото-ранами");
 });
 
 // Owner's decision (2026-09-27): the paid image age check is optional, off by default.
