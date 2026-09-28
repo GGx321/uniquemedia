@@ -577,6 +577,9 @@ test("cancel shows «Отменяем…» until the job really ends; the cancel
   fireEvent.click(resumeAfter);
   await screen.findByText("Рисуем фото: 1 из 20");
   expect(callsOf(engine, "runs.resume").map((c) => c.payload.runId)).toEqual([started]);
+  // L4: exactly the button's own re-asked price (до $2.85) — the higher,
+  // uncapped one from MEDIUM-1's own re-ask, not the stale до $2.12.
+  expect(callsOf(engine, "runs.resume").at(-1)?.payload.acceptedWorstMicros).toBe(2_850_000);
 });
 
 test("cancel targets the run this window started even after the screen remounts and runs.list then fails (M2)", async () => {
