@@ -920,7 +920,8 @@ export class Engine {
         if (library?.getAvatar(avatarId) === undefined) {
           throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
         }
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { photos: this.#photosFor(library, avatarId) } };
+        const { photos, skippedTotal } = this.#photosFor(library, avatarId);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { photos, skippedTotal } };
       }
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
@@ -934,19 +935,26 @@ export class Engine {
    * left out without comment (photoSummaryFrom, library/photoRecords.ts,
    * only reports a photo as a problem when it looks like a run photo, i.e.
    * carries a scene category); a run photo whose sidecar cannot be read into
-   * the contract's shape is skipped and logged instead of failing the whole
-   * list, the way the library logs other unreadable records (#libraryView).
+   * the contract's shape is skipped, logged (the way the library logs other
+   * unreadable records, #libraryView) and counted in `skippedTotal` — the
+   * same precedent as avatars.list's own unreadableTotal, so a photo lost to
+   * a contract mismatch is never silently invisible in the packaged app,
+   * even though (unlike unreadableAvatars) there is no per-item list to show
+   * for it. `skippedTotal` is never itself bounded: it counts every skip,
+   * not only those among the returned (and possibly capped) photos.
    */
-  #photosFor(library: Library, avatarId: string): PhotoSummary[] {
+  #photosFor(library: Library, avatarId: string): { photos: PhotoSummary[]; skippedTotal: number } {
     const photos: PhotoSummary[] = [];
+    let skippedTotal = 0;
     for (const sidecar of library.photosByAvatar(avatarId)) {
       const summary = photoSummaryFrom(sidecar);
       if (summary !== null) photos.push(summary);
       else if (looksLikeRunPhoto(sidecar)) {
+        skippedTotal++;
         console.warn(`studio engine: photo ${sidecar.id} of avatar ${avatarId} does not fit the contract and is not listed in its gallery`);
       }
     }
-    return finalizePhotoList(photos, MAX_LISTED_PHOTOS);
+    return { photos: finalizePhotoList(photos, MAX_LISTED_PHOTOS), skippedTotal };
   }
 
   // ---------- photo runs (T6) ----------

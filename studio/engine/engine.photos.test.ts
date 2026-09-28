@@ -63,6 +63,12 @@ function listed(response: Parameters<typeof ok>[0]): PhotoSummary[] {
   return answer.result.photos;
 }
 
+function skippedTotalOf(response: Parameters<typeof ok>[0]): number {
+  const answer = ok(response);
+  if (answer.type !== "photos.list") throw new Error(`expected a photos.list answer, got ${answer.type}`);
+  return answer.result.skippedTotal;
+}
+
 describe("photos.list", () => {
   test("is NOT_FOUND for an avatar id the library does not have at all", async () => {
     const { engine } = await startEngine(dir());
@@ -95,6 +101,12 @@ describe("photos.list", () => {
     expect(photos.map((p) => p.photoId)).toEqual([...photoIds].reverse());
   });
 
+  test("skippedTotal is 0 when nothing was skipped", async () => {
+    const { avatarId } = await seedAvatar({ count: 2 });
+    const { engine } = await startEngine(dir());
+    expect(skippedTotalOf(await engine.handle(command("photos.list", { avatarId })))).toBe(0);
+  });
+
   test("each photo carries its run, category and resolution", async () => {
     const { avatarId } = await seedAvatar({ count: 1, runId: "run-00000042" });
     const { engine } = await startEngine(dir());
@@ -115,15 +127,17 @@ describe("photos.list", () => {
     expect(listedPhoto?.resolution).toBe("2k");
   });
 
-  test("a corrupt sidecar (a category the contract no longer recognises) is skipped, not a failure of the whole list", async () => {
-    const { avatarId, photoIds } = await seedAvatar({ count: 1 });
+  test("a corrupt sidecar (a category the contract no longer recognises) is skipped, not a failure of the whole list, and counted in skippedTotal", async () => {
+    const { avatarId, photoIds } = await seedAvatar({ count: 2 });
     const sidecarPath = join(dir(), "library", "avatars", avatarId, "photos", `${photoIds[0]}.json`);
     const sidecar = JSON.parse(await readFile(sidecarPath, "utf8")) as { source: { category: string } };
     sidecar.source.category = "retired-category";
     await writeFile(sidecarPath, JSON.stringify(sidecar));
 
     const { engine } = await startEngine(dir());
-    expect(listed(await engine.handle(command("photos.list", { avatarId })))).toEqual([]);
+    const response = await engine.handle(command("photos.list", { avatarId }));
+    expect(listed(response).map((p) => p.photoId)).toEqual([photoIds[1]]);
+    expect(skippedTotalOf(response)).toBe(1);
   });
 
   test(`the limit boundary: bounded at ${MAX_LISTED_PHOTOS}, keeping the newest`, async () => {

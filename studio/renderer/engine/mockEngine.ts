@@ -736,7 +736,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { avatar });
       }
       case "photos.list":
-        return this.ok(c, { photos: [] });
+        return this.ok(c, { photos: [], skippedTotal: 0 });
       case "runs.list":
         return this.ok(c, { runs: [] });
       case "runs.estimate":

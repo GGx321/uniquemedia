@@ -243,7 +243,15 @@ const ENGINE_SPECS = [
   // have at all — a draft, an active avatar and an archived one all get
   // their (possibly empty) list, like avatars.list already lists archived
   // avatars normally; see engine.ts's own comment on this handler.
-  defineCommand("photos.list", z.strictObject({ avatarId: Id }), z.strictObject({ photos: z.array(PhotoSummary).max(MAX_LISTED_PHOTOS) })),
+  // `skippedTotal` mirrors avatars.list's own unreadableTotal: a run photo
+  // whose sidecar cannot be read into the contract's shape is not silently
+  // lost — its count survives even though (unlike unreadableAvatars) there
+  // is no per-item list to show for it.
+  defineCommand(
+    "photos.list",
+    z.strictObject({ avatarId: Id }),
+    z.strictObject({ photos: z.array(PhotoSummary).max(MAX_LISTED_PHOTOS), skippedTotal: Count }),
+  ),
   // engine
   defineCommand("engine.snapshot", Empty, Snapshot),
   defineCommand("engine.events", z.strictObject({ afterSeq: Count, bootId: Id }), EventsSince),
