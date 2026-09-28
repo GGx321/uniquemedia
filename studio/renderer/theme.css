@@ -325,6 +325,11 @@ a:hover {
   min-height: 0;
   padding: 24px 36px;
   overflow: auto;
+  /* LOW-7: reserves the scrollbar's own width whether or not the page is
+     tall enough to need it, so a layout that counts columns from the
+     available width (the Photos gallery's .photos-grid, B1) never flips
+     count the moment the page starts or stops overflowing. */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 18px;

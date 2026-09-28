@@ -26,15 +26,16 @@ test("clampCount is a plain sum in between", () => {
 
 // ---------- L1: the renderer's per-category split must match the engine planner's own ----------
 
+/** The contract's own short names, in the engine's planner shape (runForm.ts's own `sceneCategory`, but typed here directly so this cross-check needs no `as` cast, LOW-8). */
+const ENGINE_CATEGORY: Record<RunCategory, Category> = { home: "home", travel: "travel", shoot: "photoshoot", glam: "glamour", fit: "fitness" };
+
 /** `plan()`'s slots, counted per contract category in the order they first appear (its own canonical order). */
 function engineSplit(count: number, categories: readonly RunCategory[]): Map<RunCategory, number> {
-  const engineCategories = categories.map((c) => (({ home: "home", travel: "travel", shoot: "photoshoot", glam: "glamour", fit: "fitness" }) as const)[c] as Category);
+  const engineCategories = categories.map((c) => ENGINE_CATEGORY[c]);
   const scenePlan = plan({ seed: 1, count, categories: engineCategories });
-  const order: RunCategory[] = [];
   const counts = new Map<RunCategory, number>();
   for (const slot of scenePlan.slots) {
     const rc = contractCategory(slot.category);
-    if (!counts.has(rc)) order.push(rc);
     counts.set(rc, (counts.get(rc) ?? 0) + 1);
   }
   return counts;

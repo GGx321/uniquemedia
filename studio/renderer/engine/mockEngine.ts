@@ -639,6 +639,18 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
+   * Replaces the whole avatars list without any event, as a library switch's
+   * new folder would — pair with `settings.setLibraryPath` (which bumps
+   * `librarySwitchGeneration` and emits `settings.changed`) so the store's
+   * own resync picks it up through a real snapshot, the way a genuine
+   * library switch would (L11/LOW-9 tests: an avatar this window had pinned
+   * can be entirely absent from the new list).
+   */
+  setAvatarsForNextSnapshot(avatars: AvatarSummary[]): void {
+    this.avatars = avatars;
+  }
+
+  /**
    * Lists `entry` in `unreadableAvatars`, as the real engine would for a
    * quarantined manifest or a record the contract refuses. With `recoverTo`,
    * `avatars.rewriteDescriptor` can turn it into a normal draft or saved

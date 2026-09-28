@@ -293,6 +293,12 @@
   cursor: not-allowed;
 }
 
+/* LOW-6: the review toggle's own aria-disabled state (B6, full opacity, not
+   the native attribute) still reads as non-interactive, not a clickable hand. */
+.sw[aria-disabled="true"] {
+  cursor: default;
+}
+
 /* ── colour swatch · .swatch 26 ── */
 
 .swatch {

@@ -896,6 +896,22 @@ test("what the contract cannot do yet is drawn disabled and marked «скоро�
   expect(screen.getAllByText("скоро").length).toBeGreaterThanOrEqual(3);
 });
 
+test("the «Сцены на проверку» switch cannot be toggled by click or keyboard (LOW-6, P3)", async () => {
+  await openPhotos();
+  await priced();
+  const review = screen.getByRole("switch", { name: "Сцены на проверку" });
+
+  fireEvent.click(review);
+  expect(review.getAttribute("aria-checked")).toBe("false");
+
+  fireEvent.keyDown(review, { key: " " });
+  fireEvent.keyUp(review, { key: " " });
+  expect(review.getAttribute("aria-checked")).toBe("false");
+
+  fireEvent.keyDown(review, { key: "Enter" });
+  expect(review.getAttribute("aria-checked")).toBe("false");
+});
+
 // ---------- navigation ----------
 
 test("avatar A's delayed runs.estimate and photos.list answering after a switch to B must not render on B (M4, LOW-2)", async () => {
@@ -964,6 +980,31 @@ test("the sidebar's «Фото» with no avatar named pins its resolved avatar: 
   expect(await screen.findByRole("heading", { level: 1, name: "Mia" })).toBeDefined();
   expect(screen.getByText("Аватар в архиве — новые фото для него не создаются.")).toBeDefined();
   expect(screen.queryByRole("heading", { level: 1, name: "Sofia" })).toBeNull();
+});
+
+test("if the pinned avatar disappears (a library switch), the fallback is re-pinned too, not left exposed to the same switch bug (LOW-9)", async () => {
+  const { engine, client } = setup({ avatars: [MIA] });
+  await openSection("Фото");
+  expect(await screen.findByRole("heading", { level: 1, name: "Mia" })).toBeDefined();
+  await priced();
+
+  // A library switch: the new folder has Sofia and Elena, not Mia at all.
+  const ELENA = avatar("Elena", 3);
+  engine.setAvatarsForNextSnapshot([SOFIA, ELENA]);
+  await act(async () => {
+    await client.request("settings.setLibraryPath", { path: "/Users/studio/Other/library" });
+  });
+  await flush();
+  expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
+
+  // Another window archives Sofia: without re-pinning the fallback, this
+  // would silently switch to Elena — the exact bug L11 fixes for the first pin.
+  await act(async () => {
+    await client.request("avatars.archive", { avatarId: SOFIA.avatarId });
+  });
+  expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
+  expect(screen.getByText("Аватар в архиве — новые фото для него не создаются.")).toBeDefined();
+  expect(screen.queryByRole("heading", { level: 1, name: "Elena" })).toBeNull();
 });
 
 test("with no saved avatar the Photos screen points back to the Avatars screen", async () => {

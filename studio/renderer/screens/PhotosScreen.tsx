@@ -269,10 +269,17 @@ export function PhotosScreen({ avatarId }: { avatarId: string | null }) {
   // it — so pinning once here for its lifetime is enough.)
   const [pinned, setPinned] = useState<string | null>(null);
   const avatar = resolveAvatar(view.avatars, avatarId ?? pinned);
+  // LOW-9: the pinned id itself can disappear too — a library switch to a
+  // folder that does not have it, say — in which case `avatar` above already
+  // fell back to a fresh resolution this same render (resolveAvatar's own
+  // `asked` lookup simply fails). Left un-re-pinned, that fresh choice would
+  // stay exposed to the exact silent-switch bug this pin exists to prevent
+  // (the next avatars.list change would re-resolve it again, and again).
+  const pinnedGone = pinned !== null && !view.avatars.some((a) => a.avatarId === pinned);
 
   useEffect(() => {
-    if (avatarId === null && pinned === null && avatar !== null) setPinned(avatar.avatarId);
-  }, [avatarId, pinned, avatar]);
+    if (avatarId === null && (pinned === null || pinnedGone) && avatar !== null) setPinned(avatar.avatarId);
+  }, [avatarId, pinned, pinnedGone, avatar]);
 
   if (view.phase === "connecting") {
     return (
