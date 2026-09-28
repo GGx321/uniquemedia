@@ -44,9 +44,10 @@ export const MAX_SOURCE_PIXELS = 16_777_216;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const STDERR_TAIL = 2_000;
 
-type InputFormat = "png_pipe" | "jpeg_pipe" | "webp_pipe";
+/** Exported so other decoders that pipe an in-memory image through ffmpeg (pdqPixels.ts's PDQ decode) sniff it the same way, instead of a second, possibly drifting copy of this check. */
+export type InputFormat = "png_pipe" | "jpeg_pipe" | "webp_pipe";
 
-function inputFormat(bytes: Uint8Array): InputFormat | null {
+export function inputFormat(bytes: Uint8Array): InputFormat | null {
   const ascii = (at: number, length: number) => String.fromCharCode(...bytes.subarray(at, at + length));
   if (bytes.length >= 8 && bytes[0] === 0x89 && ascii(1, 3) === "PNG") return "png_pipe";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg_pipe";
