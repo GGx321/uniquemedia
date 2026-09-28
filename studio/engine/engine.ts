@@ -23,6 +23,7 @@ import {
   type LedgerUnavailable,
   type MoneyHalt,
   type MoneyStatus,
+  type PhotoSummary,
   type ReconcileReason,
   type ReconcileResult,
   type ReconcileWarning,
@@ -33,6 +34,7 @@ import {
   type UnreadableAvatar,
   type UnsequencedEvent,
   UNREADABLE_REASON_DETAIL,
+  MAX_LISTED_PHOTOS,
   MAX_LISTED_RUNS,
 } from "../shared/engine";
 import { downscaleToJpeg, MAX_SOURCE_PIXELS, preflightDownscale } from "../node/downscale";
@@ -58,6 +60,7 @@ import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity"
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
 import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library } from "./library";
 import type { ImageMediaType } from "./library/media";
+import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
@@ -903,9 +906,47 @@ export class Engine {
       }
       case "runs.list":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { runs: await this.#listRuns() } };
+      case "photos.list": {
+        // T8b's gallery. Free, read-only — unlike #runnableAvatar (runs.estimate/
+        // start), which reserves NOT_FOUND for "this avatar cannot run a photo
+        // job right now": here NOT_FOUND means only "the library has no avatar
+        // with this id at all". A draft, an active avatar and an archived one
+        // all get their (possibly empty) photo list, the same as avatars.list
+        // already lists archived avatars normally (AvatarSummary excludes only
+        // "draft"). `library?.` also makes "no library open" answer NOT_FOUND
+        // here, like #runnableAvatar: there is nothing to find either way.
+        const { avatarId } = command.payload;
+        const library = this.library;
+        if (library?.getAvatar(avatarId) === undefined) {
+          throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        }
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { photos: this.#photosFor(library, avatarId) } };
+      }
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
+  }
+
+  /**
+   * An avatar's stored run photos (T8b), newest first, bounded at
+   * MAX_LISTED_PHOTOS (no cursor yet — see that constant's own comment).
+   * Candidates, master portraits and imports are not gallery photos and are
+   * left out without comment (photoSummaryFrom, library/photoRecords.ts,
+   * only reports a photo as a problem when it looks like a run photo, i.e.
+   * carries a scene category); a run photo whose sidecar cannot be read into
+   * the contract's shape is skipped and logged instead of failing the whole
+   * list, the way the library logs other unreadable records (#libraryView).
+   */
+  #photosFor(library: Library, avatarId: string): PhotoSummary[] {
+    const photos: PhotoSummary[] = [];
+    for (const sidecar of library.photosByAvatar(avatarId)) {
+      const summary = photoSummaryFrom(sidecar);
+      if (summary !== null) photos.push(summary);
+      else if (looksLikeRunPhoto(sidecar)) {
+        console.warn(`studio engine: photo ${sidecar.id} of avatar ${avatarId} does not fit the contract and is not listed in its gallery`);
+      }
+    }
+    return finalizePhotoList(photos, MAX_LISTED_PHOTOS);
   }
 
   // ---------- photo runs (T6) ----------

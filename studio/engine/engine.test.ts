@@ -162,18 +162,6 @@ describe("Engine command dispatch", () => {
     expect(settings.result.apiKey.stored).toBe(false);
   });
 
-  test("commands without a handler yet answer INTERNAL 'not implemented'", async () => {
-    const { engine } = await startEngine();
-    // photos.list is a 2b placeholder.
-    const response = await engine.handle(command("photos.list", { avatarId: "avatar-0001" }));
-    expect(ResponseMessage.safeParse(response).success).toBe(true);
-    expect(response).toMatchObject({
-      ok: false,
-      type: "photos.list",
-      error: { code: "INTERNAL", detail: "photos.list is not implemented yet" },
-    });
-  });
-
   test("engine.events answers gap for another bootId and an empty list for this one", async () => {
     const { engine } = await startEngine();
     const other = ok(await engine.handle(command("engine.events", { afterSeq: 0, bootId: "earlier-boot-0001" })));

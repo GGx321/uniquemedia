@@ -1,0 +1,137 @@
+import { describe, expect, test } from "bun:test";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { MAX_LISTED_PHOTOS, type PhotoSummary } from "../shared/engine";
+import { manifestTraits } from "./avatars/records";
+import { openLibrary } from "./library";
+import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { command, engineSettings, failed, GOOD, ok, startEngine, TRAITS, useEngineDir } from "./testing/engineHarness";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
+
+// T8b: photos.list, the Photos screen's gallery — an avatar's stored run
+// photos, newest first. Against a real library in a temp dir; nothing here
+// touches the network or spends money, so photos are seeded directly through
+// the library, the way runJob.ts's photoMeta would leave them (a scene
+// category, a resolution, an attemptId carrying the run's own id).
+
+const dir = useEngineDir("studio-engine-photos-");
+
+let seeded = 0;
+
+/** A run photo's own NewPhotoMeta, as runJob.ts's photoMeta would build it. */
+function runPhotoMeta(runId: string, slot: number, extra: Parameters<typeof samplePhotoMeta>[0] = {}) {
+  return samplePhotoMeta({
+    resolution: "1k",
+    source: {
+      kind: "generated",
+      model: "x-ai/grok-imagine-image-2.0",
+      provider: "openrouter",
+      jobId: "job-0001",
+      attemptId: `${runId}:slot-${slot}#1`,
+      promptSha: "a".repeat(64),
+      prompt: "A friend catches her mid-laugh at the kitchen counter.",
+      slot: `slot-${slot}`,
+      category: "home",
+      costMicros: 50_000,
+    },
+    ...extra,
+  });
+}
+
+/** A saved avatar (active by default), with `count` run photos already stored, oldest first. */
+async function seedAvatar(opts: { count?: number; status?: "active" | "draft" | "archived"; runId?: string } = {}): Promise<{ avatarId: string; photoIds: string[] }> {
+  const count = opts.count ?? 0;
+  const runId = opts.runId ?? "run-00000001";
+  const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seed${++seeded}`) });
+  const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+  if (opts.status !== "draft") {
+    const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
+    await library.updateAvatar(avatar.id, { status: opts.status ?? "active", masterPhotoId: master.id });
+  }
+  const photoIds: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const photo = await library.addPhoto(avatar.id, PNG_1X1, runPhotoMeta(runId, i + 1));
+    photoIds.push(photo.id);
+  }
+  return { avatarId: avatar.id, photoIds };
+}
+
+function listed(response: Parameters<typeof ok>[0]): PhotoSummary[] {
+  const answer = ok(response);
+  if (answer.type !== "photos.list") throw new Error(`expected a photos.list answer, got ${answer.type}`);
+  return answer.result.photos;
+}
+
+describe("photos.list", () => {
+  test("is NOT_FOUND for an avatar id the library does not have at all", async () => {
+    const { engine } = await startEngine(dir());
+    expect(failed(await engine.handle(command("photos.list", { avatarId: "avatar-00000404" }))).error.code).toBe("NOT_FOUND");
+  });
+
+  test("an avatar with no run photos gets an empty list, not NOT_FOUND", async () => {
+    const { avatarId } = await seedAvatar({ count: 0 });
+    const { engine } = await startEngine(dir());
+    expect(listed(await engine.handle(command("photos.list", { avatarId })))).toEqual([]);
+  });
+
+  test("a draft avatar (candidates only, no run photos) gets an empty list, not NOT_FOUND", async () => {
+    const { avatarId } = await seedAvatar({ count: 0, status: "draft" });
+    const { engine } = await startEngine(dir());
+    expect(listed(await engine.handle(command("photos.list", { avatarId })))).toEqual([]);
+  });
+
+  test("an archived avatar still gets its photos: only a missing avatarId is NOT_FOUND, like avatars.list already lists archived avatars normally", async () => {
+    const { avatarId, photoIds } = await seedAvatar({ count: 2, status: "archived" });
+    const { engine } = await startEngine(dir());
+    const photos = listed(await engine.handle(command("photos.list", { avatarId })));
+    expect(photos.map((p) => p.photoId).sort()).toEqual([...photoIds].sort());
+  });
+
+  test("lists newest first", async () => {
+    const { avatarId, photoIds } = await seedAvatar({ count: 3 });
+    const { engine } = await startEngine(dir());
+    const photos = listed(await engine.handle(command("photos.list", { avatarId })));
+    expect(photos.map((p) => p.photoId)).toEqual([...photoIds].reverse());
+  });
+
+  test("each photo carries its run, category and resolution", async () => {
+    const { avatarId } = await seedAvatar({ count: 1, runId: "run-00000042" });
+    const { engine } = await startEngine(dir());
+    const [photo] = listed(await engine.handle(command("photos.list", { avatarId })));
+    expect(photo).toMatchObject({ runId: "run-00000042", category: "home", resolution: "1k" });
+  });
+
+  test("an old sidecar with no stored resolution reads it back from its pixel size", async () => {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seed${++seeded}`) });
+    const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+    // A photo made before the resolution field existed: no `resolution`, but a 2K-sized image.
+    const meta = runPhotoMeta("run-00000001", 1, { width: 2048, height: 2730, resolution: undefined });
+    const photo = await library.addPhoto(avatar.id, PNG_1X1, meta);
+    expect(photo.resolution).toBeUndefined();
+
+    const { engine } = await startEngine(dir());
+    const [listedPhoto] = listed(await engine.handle(command("photos.list", { avatarId: avatar.id })));
+    expect(listedPhoto?.resolution).toBe("2k");
+  });
+
+  test("a corrupt sidecar (a category the contract no longer recognises) is skipped, not a failure of the whole list", async () => {
+    const { avatarId, photoIds } = await seedAvatar({ count: 1 });
+    const sidecarPath = join(dir(), "library", "avatars", avatarId, "photos", `${photoIds[0]}.json`);
+    const sidecar = JSON.parse(await readFile(sidecarPath, "utf8")) as { source: { category: string } };
+    sidecar.source.category = "retired-category";
+    await writeFile(sidecarPath, JSON.stringify(sidecar));
+
+    const { engine } = await startEngine(dir());
+    expect(listed(await engine.handle(command("photos.list", { avatarId })))).toEqual([]);
+  });
+
+  test(`the limit boundary: bounded at ${MAX_LISTED_PHOTOS}, keeping the newest`, async () => {
+    const { avatarId, photoIds } = await seedAvatar({ count: MAX_LISTED_PHOTOS + 1 });
+    const { engine } = await startEngine(dir());
+    const photos = listed(await engine.handle(command("photos.list", { avatarId })));
+    expect(photos).toHaveLength(MAX_LISTED_PHOTOS);
+    expect(photos.map((p) => p.photoId)).not.toContain(photoIds[0]);
+    expect(photos[0]?.photoId).toBe(photoIds.at(-1) ?? "");
+  }, 30_000);
+});
