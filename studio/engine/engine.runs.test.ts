@@ -614,10 +614,18 @@ describe("runs.resume", () => {
     return answer.result.runs.find((r) => r.runId === runId);
   }
 
+  /** A restarted engine whose open reserves are already reconciled: what the run committed is settled, so its cap room is known. */
+  async function restartedAndReconciled(received: string[]) {
+    const second = await restarted(received);
+    second.advance(10 * 60_000);
+    ok(await second.engine.handle(command("money.reconcile")));
+    return second;
+  }
+
   test("runs.list: a stopped run whose cap cannot fund one more attempt has ended: not resumable, capExhausted, its slots still open", async () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     await capLeaving(runId, ONE_ATTEMPT - 1);
-    const second = await restarted(received);
+    const second = await restartedAndReconciled(received);
 
     expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({
       open: 2,
@@ -631,19 +639,36 @@ describe("runs.resume", () => {
   test("runs.list: a cap that leaves exactly one attempt still funds the resume (the boundary)", async () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     await capLeaving(runId, ONE_ATTEMPT);
-    const second = await restarted(received);
+    const second = await restartedAndReconciled(received);
 
     expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ open: 2, resumable: true, capExhausted: false });
+  });
+
+  // Open reserves count at their worst case only until the user reconciles: until then the cap room is not final, so
+  // the run is not declared ended (a reconcile settles them, and the estimate is still free to ask).
+  test("runs.list: while the ledger needs a reconcile, a run is not reported cap-exhausted, and runs.estimateResume still answers", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    await capLeaving(runId, ONE_ATTEMPT - 1);
+    const second = await restarted(received);
+
+    expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: true, capExhausted: false });
+    expect((await remainingWorst(second.engine, runId)).worstMicros).toBe(ONE_ATTEMPT - 1);
+
+    second.advance(10 * 60_000);
+    ok(await second.engine.handle(command("money.reconcile")));
+    expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true });
   });
 
   test("runs.list: a cap with no room at all left is exhausted too, and so is one already committed past (a bill above its worst case)", async () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     await capLeaving(runId, 0);
-    const second = await restarted(received);
+    const second = await restartedAndReconciled(received);
     expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true, remainingWorstMicros: 0 });
 
     await capLeaving(runId, -1);
     const third = await restarted(received);
+    third.advance(10 * 60_000);
+    ok(await third.engine.handle(command("money.reconcile")));
     expect(summaryOf(await third.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true, remainingWorstMicros: 0 });
   });
 

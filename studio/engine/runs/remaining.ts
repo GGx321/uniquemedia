@@ -40,8 +40,9 @@ export interface RemainingPlan {
    * progress: the writer's ceiling when a chunk is still unwritten (the
    * writer runs first) plus the cheapest next attempt of an open slot (a
    * slot next on the Seedream fallback costs that; every attempt carries its
-   * age check when the run has them). Null when nothing is left to send: a
-   * resume then only closes slots and costs nothing. A run whose cap room is
+   * age check when the run has them). Null when nothing is left to send, or
+   * when a writer chunk has no attempts left (it cannot be answered, whatever
+   * the cap): a resume then only closes slots and costs nothing. A run whose cap room is
    * below it can never spend again — only be refused (RUN_CAP_EXCEEDED) — so
    * `runs.list` reports it ended rather than resumable forever.
    */
@@ -91,6 +92,7 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   const writerCeiling = book.chatWorstCase({ model: writer.model, maxTokens: writer.maxTokens, inputTokens: writer.inputTokens, images: writer.images });
   let unwrittenSlots = 0;
   let writerPending = false;
+  let writerBlocked = false;
   for (const chunk of plan.writerChunks) {
     if (state.writerDone.has(chunk.chunk)) continue;
     const answered = chunk.attemptIds.filter((id) => attemptPaid(ledger, id)).length;
@@ -98,6 +100,7 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
     const attempts = Math.min(Math.max(0, writer.maxAttempts - answered), unused);
     worst += attempts * writerCeiling;
     if (attempts > 0) writerPending = true;
+    else writerBlocked = true;
     unwrittenSlots += chunk.slotIndexes.length;
   }
   if (unwrittenSlots > 0) {
@@ -114,6 +117,8 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   const needed = (writerPending ? writerCeiling : 0) + (cheapestSlotAttempt ?? 0);
   return {
     estimate: { expectedMicros: Math.min(expected, worstMicros), worstMicros, prices: book.source, pricesAsOf: priced.asOf },
-    minToProgressMicros: needed === 0 ? null : needed,
+    // A chunk out of writer attempts can never be answered, so its slots are not held back by the cap: nothing the cap
+    // could fund gets them going, and a resume can only close them (after a crash, say). Not «cap exhausted».
+    minToProgressMicros: needed === 0 || writerBlocked ? null : needed,
   };
 }

@@ -112,6 +112,16 @@ describe("remainingPlan's minToProgressMicros", () => {
     expect(plan.minToProgressMicros).toBeNull();
   });
 
+  // After a crash a chunk can be out of writer attempts with its slots still open: the writer can never answer for
+  // them, so the cap is not what stops them, and the run must not be called cap-exhausted. A resume closes them.
+  test("a chunk with no writer attempts left and open slots needs nothing from the cap: null, not «cap exhausted»", () => {
+    const run = runPlan(2);
+    const ids = run.writerChunks[0]?.attemptIds ?? [];
+    const settles = ids.map((id): SettleLine => ({ type: "settle", attemptId: id, costMicros: 1_000, estimated: false, at: AT }));
+    const plan = planFor(run, { reserves: ids.map((id) => reserve(id, "x-ai/grok-4.3", WRITER_WORST)), closes: settles });
+    expect(plan.minToProgressMicros).toBeNull();
+  });
+
   test("the estimate is the one remainingEstimate answers", () => {
     const run = runPlan(4);
     expect(planFor(run, {}, 60_000).estimate).toEqual(estimateFor(run, {}, 60_000));
