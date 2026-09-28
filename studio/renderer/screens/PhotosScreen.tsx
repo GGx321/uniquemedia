@@ -242,7 +242,20 @@ function NoAvatar() {
  */
 export function PhotosScreen({ avatarId }: { avatarId: string | null }) {
   const view = useEngineView();
-  const avatar = resolveAvatar(view.avatars, avatarId);
+  // L11: once a null avatarId (the sidebar's own «Фото», not a specific
+  // avatar's route) resolves to one, pin it locally for the rest of this
+  // mount. Left unpinned, `avatar` would be re-resolved fresh on every
+  // render, so a later change to view.avatars — another window archiving the
+  // resolved avatar, say — would silently switch this screen to a different
+  // one instead of just showing the same avatar now archived. (The prop
+  // itself only ever changes across a remount — App.tsx keys the screen on
+  // it — so pinning once here for its lifetime is enough.)
+  const [pinned, setPinned] = useState<string | null>(null);
+  const avatar = resolveAvatar(view.avatars, avatarId ?? pinned);
+
+  useEffect(() => {
+    if (avatarId === null && pinned === null && avatar !== null) setPinned(avatar.avatarId);
+  }, [avatarId, pinned, avatar]);
 
   if (view.phase === "connecting") {
     return (

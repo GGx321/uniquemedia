@@ -856,6 +856,23 @@ test("the sidebar's «Фото» opens the first active avatar when none was sho
   await priced();
 });
 
+test("the sidebar's «Фото» with no avatar named pins its resolved avatar: another window archiving it does not silently switch the screen (L11)", async () => {
+  const { client } = setup({ avatars: [MIA, SOFIA] });
+  await openSection("Фото");
+  expect(await screen.findByRole("heading", { level: 1, name: "Mia" })).toBeDefined();
+  await priced();
+
+  // Another window archives the avatar this one resolved to and pinned.
+  await act(async () => {
+    await client.request("avatars.archive", { avatarId: MIA.avatarId });
+  });
+
+  // Still Mia — archived now, not silently switched to Sofia (the new "first active").
+  expect(await screen.findByRole("heading", { level: 1, name: "Mia" })).toBeDefined();
+  expect(screen.getByText("Аватар в архиве — новые фото для него не создаются.")).toBeDefined();
+  expect(screen.queryByRole("heading", { level: 1, name: "Sofia" })).toBeNull();
+});
+
 test("with no saved avatar the Photos screen points back to the Avatars screen", async () => {
   setup();
   await openSection("Фото");
