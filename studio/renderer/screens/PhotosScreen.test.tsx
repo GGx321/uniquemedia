@@ -477,6 +477,46 @@ test("a second run started by another window after this one saw the first finish
   expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(false);
 });
 
+/** R1, started through the engine directly, finishes and is watched; R2, started the same way, is running. Both known only through their own events (N1). */
+async function twoRunsSecondRunning() {
+  const harness = await openPhotos();
+  await priced();
+  const r1 = await act(async () => harness.client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_070_000 }));
+  if (!r1.ok) throw new Error(`r1 ${r1.error.code}`);
+  tick(harness.scheduler, 1);
+  await screen.findByText("Рисуем фото: 1 из 20");
+  runAll(harness.scheduler);
+  await flush();
+  await screen.findByText("Запуск завершён");
+
+  const r2 = await act(async () => harness.client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_070_000 }));
+  if (!r2.ok) throw new Error(`r2 ${r2.error.code}`);
+  tick(harness.scheduler, 1);
+  await screen.findByText("Рисуем фото: 1 из 20");
+  return harness;
+}
+
+test("another window's second run, cancelled from this window, shows its own outcome — not the first run's (N1a)", async () => {
+  const { scheduler } = await twoRunsSecondRunning();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+  await flush();
+  runAll(scheduler);
+  await flush();
+
+  expect(await screen.findByText("Генерация остановлена")).toBeDefined();
+  expect(screen.queryByText("Запуск завершён")).toBeNull();
+});
+
+test("another window's second run failing (AUTH_INVALID) after this window watched the first finish shows its own error (N1b)", async () => {
+  const { engine } = await twoRunsSecondRunning();
+  act(() => engine.rejectKey());
+  await flush();
+
+  expect(await screen.findByText(ERROR_MESSAGES_RU.AUTH_INVALID)).toBeDefined();
+  expect(screen.queryByText("Запуск завершён")).toBeNull();
+});
+
 test("cancel shows «Отменяем…» until the job really ends; the cancelled attempts' reserves stay open until reconciled (M3)", async () => {
   const { engine, scheduler, client } = await openPhotos();
   fireEvent.click(await priced());

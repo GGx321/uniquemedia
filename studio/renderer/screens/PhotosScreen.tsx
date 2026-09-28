@@ -33,8 +33,8 @@ function photoCountLabel(list: GalleryList): string {
 
 /**
  * This avatar's latest photo-run job. A job this window did not start is
- * known only by its events until it ends, and `job.progress` carries no
- * kind, so preference order is:
+ * known only by its events until it ends, and neither `job.progress` nor
+ * `job.cancelled`/`job.failed` ever carry a kind, so preference order is:
  * 1. An active (queued/running) job, whatever its kind — an avatar's saved
  *    record can never have a candidates batch still running for it (the
  *    engine's own pick claims the avatar, engine.ts:1791), so an active job
@@ -43,16 +43,20 @@ function photoCountLabel(list: GalleryList): string {
  *    screen watched the first one finish, show as running instead of the
  *    stale, already-done first one (regression from 8d604b2's own L8 fix,
  *    which stopped at "confirmed" and missed this case entirely).
- * 2. Failing that, the latest job already confirmed `kind === "run"` — a
- *    finished run this screen knows about but no longer has an active job
- *    for.
- * 3. Failing that, whatever is latest at all — an unconfirmed job (kind
- *    null) from a run just started elsewhere, seen only through its own
- *    job.progress so far, with nothing confirmed-run to prefer over it.
+ * 2. Failing that, the latest job already confirmed `kind === "run"`, OR
+ *    one this screen itself watched active (N1): a run seen only via events
+ *    that ends by job.cancelled or job.failed instead of job.done never
+ *    gets its kind confirmed at all, so without this it would drop straight
+ *    to step 3 the moment it stops being active — showing an *older*
+ *    confirmed run's own "Запуск завершён" again instead of this one's
+ *    "Генерация остановлена" or its own error.
+ * 3. Failing that, whatever is latest at all — an unconfirmed, never-watched
+ *    job (kind null) from a run just started elsewhere, seen only through
+ *    its own job.progress so far, with nothing else to prefer over it.
  */
-function latestRunJob(jobs: readonly JobView[], avatarId: string): JobView | null {
+function latestRunJob(jobs: readonly JobView[], avatarId: string, seenActive: ReadonlySet<string>): JobView | null {
   const own = jobs.filter((j) => j.avatarId === avatarId && j.kind !== "avatar.candidates");
-  return own.filter(isActiveJob).at(-1) ?? own.filter((j) => j.kind === "run").at(-1) ?? own.at(-1) ?? null;
+  return own.filter(isActiveJob).at(-1) ?? own.filter((j) => j.kind === "run" || seenActive.has(j.jobId)).at(-1) ?? own.at(-1) ?? null;
 }
 
 function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineView }) {
@@ -86,7 +90,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
   const paidInFlight = view.paidInFlightAvatars.has(avatarId);
   const setPaidInFlight = (inFlight: boolean): void => store.setPaidInFlight(avatarId, inFlight);
 
-  const runJob = latestRunJob(view.jobs, avatarId);
+  const runJob = latestRunJob(view.jobs, avatarId, watched);
   const runActive = runJob !== null && isActiveJob(runJob);
   const runJobId = runJob?.jobId ?? null;
 
