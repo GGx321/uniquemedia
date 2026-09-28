@@ -375,6 +375,90 @@ describe("N5: face checks are serialized (memory) — a mutex around decode + ch
     const third = await gate.check(input({ attemptId: "run-1:slot-3#1" }, m));
     expect(third.verdict).toBe("pass");
   });
+
+  test("B1: a waiter cancelled while queued BEHIND an active holder must not let the next waiter overlap the holder", async () => {
+    const m = await money();
+    let releaseHolder: (() => void) | undefined;
+    const holderGate = new Promise<void>((resolve) => {
+      releaseHolder = resolve;
+    });
+    let active = 0;
+    let maxActive = 0;
+    let holderAcquired = false;
+    let calls = 0;
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        check: async () => {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          const isHolder = calls++ === 0;
+          if (isHolder) {
+            holderAcquired = true;
+            await holderGate;
+          }
+          active--;
+          return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
+        },
+      }),
+    });
+    await gate.prepare?.(prepareInput());
+
+    const h = gate.check(input({ attemptId: "run-1:slot-h#1" }, m));
+    for (let i = 0; i < 100 && !holderAcquired; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+    if (!holderAcquired) throw new Error("H never reached the underlying check()");
+
+    const acA = new AbortController();
+    const a = gate.check(input({ attemptId: "run-1:slot-a#1", signal: acA.signal }, m)).catch(() => "A rejected");
+    const b = gate.check(input({ attemptId: "run-1:slot-b#1" }, m));
+    // Let A actually queue behind H (a real microtask hop past its own
+    // master-embedding lookup) before cancelling it.
+    await Promise.resolve();
+    await Promise.resolve();
+    acA.abort(new Error("cancel A"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // While H still holds the lock (never released yet): B must still be
+    // queued, not running — A's own cancellation must not have let B jump
+    // the queue and overlap H.
+    expect(maxActive).toBe(1);
+
+    releaseHolder?.();
+    await Promise.all([h, a, b]);
+    expect(maxActive).toBe(1);
+  });
+
+  test("B1: a hung holder released by ITS OWN signal frees the lane for the next waiter (a zombie computation)", async () => {
+    const m = await money();
+    let secondRan = false;
+    let calls = 0;
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        check: async () => {
+          const isHolder = calls++ === 0;
+          if (isHolder) {
+            await new Promise(() => {}); // the holder's own underlying check never settles
+          }
+          secondRan = true;
+          return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
+        },
+      }),
+    });
+    await gate.prepare?.(prepareInput());
+
+    const holderController = new AbortController();
+    const holder = gate.check(input({ attemptId: "run-1:slot-h#1", signal: holderController.signal }, m)).catch(() => "holder aborted");
+    // Give the holder a chance to actually acquire the lock and start its own (hanging) check().
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    holderController.abort(new Error("the run's own cancel, or the gate's own outer timeout"));
+    await holder;
+
+    // The lane must be free now — a later waiter's own check() actually runs
+    // (a "zombie": the holder's own body() is still hanging in the
+    // background, but it no longer holds the lock).
+    const second = await gate.check(input({ attemptId: "run-1:slot-b#1", signal: new AbortController().signal }, m));
+    expect(second.verdict).toBe("pass");
+    expect(secondRan).toBe(true);
+  });
 });
 
 describe("check() (candidate decode and verdict mapping)", () => {

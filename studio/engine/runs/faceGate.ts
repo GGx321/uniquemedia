@@ -135,10 +135,27 @@ interface CachedEmbedding {
  *
  * A plain FIFO mutex: each acquire is a promise chained onto the previous
  * holder's own release, so it costs nothing when uncontended. A caller
- * whose own signal aborts while WAITING (never once it holds the lock —
- * `body` below is not itself abort-aware, matching every other paid/free
- * gate's own shape) rejects immediately and still releases its own queue
- * slot, so a cancelled waiter never blocks whoever is behind it.
+ * whose own signal aborts while WAITING rejects immediately, but re-review
+ * round 2 (B1) found the FIRST version released its own queue slot right
+ * then — which is the slot a LATER waiter is chained onto, so a cancelled
+ * middle waiter let whoever was queued behind it acquire the lock while the
+ * ORIGINAL holder was still running (repro: H holding, A queued then
+ * cancelled, B queued behind A — `start H, start B, end B, end H`, two
+ * holders at once). Fixed: an aborted waiter's own slot only resolves once
+ * the holder it was ACTUALLY waiting on (`waitFor`) finishes, so whoever is
+ * behind the cancelled waiter still queues on the real holder, never on the
+ * cancellation itself.
+ *
+ * Once queued (still waiting for the lock, never once it holds it), a
+ * caller's own signal aborting still rejects it and frees its own slot as
+ * above. Once a caller HOLDS the lock, `body()` itself might hang forever
+ * (a real decode/ORT deadlock, not merely this caller giving up) — B1's own
+ * second finding: that would then block every later face check forever,
+ * engine-wide. So the holder's own signal aborting also releases the lane
+ * (like `CpuPool`'s own shape), accepting that `body()` keeps running as an
+ * abandoned "zombie" computation in the background — nothing here can force
+ * it to actually stop, the same limitation the master-embedding computation
+ * itself already has (H2's own header).
  */
 function createMutex(): <T>(signal: AbortSignal, body: () => Promise<T>) => Promise<T> {
   let tail: Promise<void> = Promise.resolve();
@@ -151,13 +168,38 @@ function createMutex(): <T>(signal: AbortSignal, body: () => Promise<T>) => Prom
     try {
       await abortableWait(waitFor, signal);
     } catch (error) {
-      release(); // never acquired: free this slot for whoever is queued behind us.
+      // Never acquired: our own slot must not resolve before the holder we
+      // were actually waiting on (`waitFor`) does — otherwise whoever is
+      // queued behind us would acquire the lock while that holder still runs.
+      void waitFor.then(release);
       throw error;
     }
-    try {
-      return await body();
-    } finally {
+    // Holds the lock now. If our own signal aborts while `body()` is still
+    // running, release the lane anyway (B1) — `body()` becomes a zombie,
+    // still running in the background, but the CALLER stops waiting on it
+    // (abortableWait) exactly like the master-embedding computation's own
+    // zombie pattern above (H2's header) — never leaving a caller hung
+    // forever on an abandoned computation just because it still holds no
+    // lock any more.
+    let releasedByAbort = false;
+    const onHolderAbort = (): void => {
+      releasedByAbort = true;
       release();
+    };
+    signal.addEventListener("abort", onHolderAbort, { once: true });
+    try {
+      const result = body();
+      // If `signal` is already aborted (or aborts synchronously inside
+      // body()'s own setup, before abortableWait can even register its own
+      // listener), abortableWait's fast path abandons `result` without ever
+      // observing it — a real rejection there would otherwise surface as an
+      // unhandled promise rejection. Marked handled unconditionally, the
+      // same defensive shape computeEmbedding's own zombie promise uses.
+      result.catch(() => {});
+      return await abortableWait(result, signal);
+    } finally {
+      signal.removeEventListener("abort", onHolderAbort);
+      if (!releasedByAbort) release();
     }
   };
 }
