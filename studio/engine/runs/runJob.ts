@@ -167,8 +167,26 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/**
+ * M1: not every throw is an `Error` — emscripten's own `ExitStatus` (thrown
+ * by the WASM codecs on a fatal decode failure, decode/realBackend.ts) has
+ * `{name, message, status}` own properties but `instanceof Error` is false
+ * and `String()` on it gives the useless `"[object Object]"`. Duck-types a
+ * `.message` string first (covers ExitStatus and anything shaped like it),
+ * falls back to `JSON.stringify` (still useful for a plain object), and
+ * only reaches bare `String()` for a genuinely un-stringifiable throw (a
+ * primitive, `undefined`, a cyclic object `JSON.stringify` itself rejects).
+ */
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error && typeof (error as { message: unknown }).message === "string") {
+    return (error as { message: string }).message;
+  }
+  try {
+    return JSON.stringify(error) ?? String(error);
+  } catch {
+    return String(error);
+  }
 }
 
 function at(ctx: Context): string {
@@ -261,6 +279,22 @@ function masterOriginalFor(original: Uint8Array, reference: LibraryReference): U
 }
 
 /**
+ * Runs every gate's `prepare()` once, against `masterOriginal`. Sets
+ * `ctx.masterSha256` first (N10 — before any gate's own prepare() runs, so a
+ * concurrent/stale check() in this engine process reads the right sha).
+ * Factored out of `prepareGates()` so M1's retry below can call it twice
+ * with two different byte sources under the same signal/timeout budget.
+ */
+async function runPrepare(ctx: Context, masterOriginal: Uint8Array, signal: AbortSignal): Promise<void> {
+  ctx.masterSha256 = createHash("sha256").update(masterOriginal).digest("hex");
+  const input: QaPrepareInput = { avatarId: ctx.plan.avatarId, masterOriginal, decodeImage: ctx.deps.decodeImage, signal };
+  await untilAborted(
+    Promise.all(ctx.deps.gates.map((gate) => gate.prepare?.(input))),
+    signal,
+  );
+}
+
+/**
  * Re-review, N3: `MASTER_FACE_UNUSABLE` means specifically "no usable face
  * in the master" (`NoFaceInReferenceError`, face/gate.ts) — its own Russian
  * text tells the owner to do something about the master, which is wrong
@@ -282,15 +316,23 @@ async function prepareGates(ctx: Context, reference: LibraryReference): Promise<
       return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${plan.avatarId} has no usable master photo` } } };
     }
     const masterOriginal = masterOriginalFor(original, reference);
-    // N10: recorded before any gate's prepare() runs, so a concurrent (or
-    // stale, leftover) check() in this same engine process can tell whether
-    // it is reading the preparation THIS job made.
-    ctx.masterSha256 = createHash("sha256").update(masterOriginal).digest("hex");
-    const input: QaPrepareInput = { avatarId: plan.avatarId, masterOriginal, decodeImage: deps.decodeImage, signal };
-    await untilAborted(
-      Promise.all(deps.gates.map((prepareGate) => prepareGate.prepare?.(input))),
-      signal,
-    );
+    try {
+      await runPrepare(ctx, masterOriginal, signal);
+    } catch (error) {
+      // M1: masterOriginalFor() only sniffs the FORMAT (JPEG/PNG vs. not) —
+      // a JPEG/PNG original can still fail to DECODE (e.g. a CMYK color
+      // space; ffmpeg/import tolerate it, the WASM decoder does not,
+      // decode/realBackend.ts). A genuine "no face" is not retried (the
+      // reference is the same photo, just smaller — it would not have a
+      // different face); nor is anything already run against the reference
+      // (nothing left to fall back to). Any other failure gets exactly one
+      // retry against loadMaster()'s own <=1024px reference, already
+      // downscaled to a format (JPEG) the decoder is known to read — under
+      // the SAME signal/timeout, so the retry never doubles the deadline
+      // budget.
+      if (masterOriginal === reference || error instanceof NoFaceInReferenceError) throw error;
+      await runPrepare(ctx, reference, signal);
+    }
     return { ok: true };
   } catch (error) {
     if (job.signal.aborted) return { ok: false, end: { status: "cancelled" } };

@@ -993,6 +993,35 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
       await real.dispose();
     }
   }, 30_000);
+
+  // ---------- final round, M1: a CMYK JPEG master the WASM decoder cannot read ----------
+
+  test("M1: a CMYK JPEG master (ffmpeg/import tolerate it, the WASM decoder cannot) falls back to the reference and still completes", async () => {
+    // A real, committed CMYK JPEG (master.jpg's own face, converted to CMYK
+    // and downscaled via ImageMagick) — sniffs as image/jpeg, so
+    // masterOriginalFor() picks the ORIGINAL bytes, which is exactly the
+    // case that must fall back once the decoder rejects them.
+    const bytes = readFileSync(join(RR_ROOT, "studio", "engine", "face", "fixtures", "images", "master-cmyk.jpg"));
+    const avatarId = await seedWithMaster(new Uint8Array(bytes), "image/jpeg", 300, 400);
+    const models = { yunet: readFileSync(RR_MODEL_PATHS.yunet), sface: readFileSync(RR_MODEL_PATHS.sface) };
+    const real = await createRealFaceGate(models);
+    const decodeImage = createWasmImageDecoder(await createRealDecodeBackend(join(RR_ROOT, "node_modules")));
+    try {
+      const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
+      const { engine, events } = await engineOver(net, { qaGates: [createFaceQaGate({ faceGate: real })], decodeImage });
+      const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+      const end = await jobEnd(events, jobId);
+      expect(end.type).toBe("job.done");
+      if (end.type !== "job.done") throw new Error("unreachable");
+      // Before the fix: prepareGates() lets the WASM decoder's "Unsupported
+      // color conversion" (an emscripten ExitStatus, not an Error) propagate
+      // straight out of prepare() -> the job ends INTERNAL, never MASTER_FACE_UNUSABLE
+      // (there IS a usable face -- the decoder just can't read this file).
+      expect(end.payload.result.kind === "run" ? end.payload.result.failedSlots : -1).toBe(0);
+    } finally {
+      await real.dispose();
+    }
+  }, 30_000);
 });
 
 /** The mock's own run image, composited with the real fixture face so the real gate (used above) can actually pass a slot — the same technique facePool.ts uses for the packaged E2E. */
