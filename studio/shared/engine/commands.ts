@@ -17,6 +17,7 @@ import {
   PhotoSummary,
   ReconcileResult,
   RunRequest,
+  RunSummary,
   Settings,
   UnreadableAvatar,
 } from "./state";
@@ -36,6 +37,9 @@ export const ImportPhotoPicked = z.discriminatedUnion("picked", [
 export type ImportPhotoPicked = z.infer<typeof ImportPhotoPicked>;
 
 const Empty = z.strictObject({});
+
+/** runs.list answers at most this many runs, newest first. */
+export const MAX_LISTED_RUNS = 100;
 
 /** Avatar records the engine could not list normally, kept bounded (the Snapshot and avatars.list). */
 export const MAX_UNREADABLE_AVATARS = 200;
@@ -206,11 +210,26 @@ const ENGINE_SPECS = [
     z.strictObject({ stagingId: Id, name: AvatarName, confirmedAiPersona: z.literal(true), ...AcceptedWorst }),
     z.strictObject({ avatar: AvatarSummary }),
   ),
-  // photo runs (2b placeholders)
+  // photo runs (T6). A run is persisted in the library (its plan and journal),
+  // so it outlives its jobs: a resume is a new job of the same run. The run's
+  // worst case is its cap for its whole life, resumes included.
+  // Free; NOT_FOUND unless the avatar is saved and active, DESCRIPTOR_INVALID for a descriptor to rewrite first.
   defineCommand("runs.estimate", RunRequest, z.strictObject({ estimate: Estimate })),
+  // Plans and persists the run, then answers; the job runs on (job.progress, then job.done/failed/cancelled).
   defineCommand("runs.start", RunRequest.extend(AcceptedWorst), z.strictObject({ runId: Id, jobId: Id })),
+  // Aborts the run's requests in flight (their reserves stay at their worst case until reconciled); ok for a run
+  // that is not running, NOT_FOUND for an unknown one.
   defineCommand("runs.cancel", z.strictObject({ runId: Id }), z.strictObject({ runId: Id })),
-  defineCommand("runs.resume", z.strictObject({ runId: Id }), z.strictObject({ runId: Id, jobId: Id })),
+  // Free: what a resume could still spend — its open slots' remaining attempts at today's prices, never more
+  // than the run's cap leaves. Keyed like runs.resume, whose acceptedWorstMicros it produces.
+  defineCommand("runs.estimateResume", z.strictObject({ runId: Id }), z.strictObject({ estimate: Estimate })),
+  // Continues a stopped run from its persisted state, never re-planning and never raising its cap; PRICE_CHANGED
+  // when the remaining worst case rose above the accepted one. RECONCILE_REQUIRED after a crash until the user
+  // reconciles; IN_FLIGHT while it runs; VALIDATION when every slot already ended.
+  defineCommand("runs.resume", z.strictObject({ runId: Id, ...AcceptedWorst }), z.strictObject({ runId: Id, jobId: Id })),
+  // Every run the open library holds, newest first (bounded), read from disk: how to find a run to resume after a restart.
+  defineCommand("runs.list", Empty, z.strictObject({ runs: z.array(RunSummary).max(MAX_LISTED_RUNS) })),
+  // Not implemented yet (T8b's gallery).
   defineCommand("photos.list", z.strictObject({ avatarId: Id }), z.strictObject({ photos: z.array(PhotoSummary) })),
   // engine
   defineCommand("engine.snapshot", Empty, Snapshot),

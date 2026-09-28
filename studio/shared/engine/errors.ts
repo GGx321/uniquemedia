@@ -35,6 +35,10 @@ import { Count, SafeText } from "./primitives";
  * - IMPORT_SUBJECT_INVALID: the imported photo's vision describe call did not recognise exactly
  *   one woman (T6c, review round 2, M5) — a group photo, an empty one, or a person who is not a
  *   woman; never retried (the photo does not change between attempts), nothing is stored.
+ * - QA_REJECTED: a photo run's slot ended without a photo because a QA gate (face, near-duplicate,
+ *   age) rejected its image, or asked for another attempt after the slot's last one (T6).
+ * - AGE_GATE_UNAVAILABLE: the image age check is on, but no age gate is wired into photo runs yet,
+ *   so a run would store photos no age check has seen (invariant 8); nothing is started or spent.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -61,6 +65,8 @@ export const ERROR_CODES = [
   "DESCRIPTOR_INVALID",
   "AGE_CHECK_FAILED",
   "IMPORT_SUBJECT_INVALID",
+  "QA_REJECTED",
+  "AGE_GATE_UNAVAILABLE",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);

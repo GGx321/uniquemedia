@@ -389,9 +389,16 @@ export const CandidatesResult = z
     path: ["rejectedByAgeCheck"],
   });
 
+/**
+ * A photo run's outcome (T6). `photoIds`: every photo the run stored, across
+ * all of its jobs (a resume continues the same run). `failedSlots`: the
+ * run's slots that have no photo. `avatarId` is the run's own avatar, like
+ * `JobProgress.avatarId`, so the renderer never has to guess it.
+ */
 export const RunResult = z.strictObject({
   kind: z.literal("run"),
   runId: Id,
+  avatarId: Id,
   photoIds: z.array(Id),
   failedSlots: Count,
 });
@@ -418,6 +425,8 @@ export const JobState = z
     z.strictObject({
       kind: z.literal("run"),
       runId: Id,
+      /** The run's avatar: a snapshot restores it exactly as a live `job.progress` carries it. */
+      avatarId: Id,
       ...jobCommon,
       result: RunResult.optional(),
     }),
@@ -434,7 +443,7 @@ export const JobState = z
   .refine(
     (j) => {
       if (j.kind === "avatar.candidates") return j.result === undefined || j.result.avatarId === j.avatarId;
-      return j.result === undefined || j.result.runId === j.runId;
+      return j.result === undefined || (j.result.runId === j.runId && j.result.avatarId === j.avatarId);
     },
     { message: "result must belong to this job", path: ["result"] },
   );
@@ -445,12 +454,49 @@ export const JobState = z
 export const SceneCategory = z.enum(["home", "travel", "shoot", "glam", "fit"]);
 export const Resolution = z.enum(["1k", "2k"]);
 
+/**
+ * Which poses beyond front and three-quarter a run allows (T5c, owner
+ * decision): a profile or a from-behind shot only when the run asks for it.
+ * Selfie and mirror shots are always front or three-quarter, whatever this
+ * says. Not a price input: every pose costs the same.
+ */
+export const RunPoses = z.strictObject({ profile: z.boolean(), back: z.boolean() });
+
 export const RunRequest = z.strictObject({
   avatarId: Id,
   count: z.number().int().min(1).max(100),
   categories: z.array(SceneCategory).min(1).refine(unique, "categories must not repeat"),
   resolution: Resolution,
+  poses: RunPoses,
 });
+
+/**
+ * A photo run as `runs.list` finds it in the library (T6), so a window can
+ * offer to resume one after a restart. `done`: slots with a photo; `failed`:
+ * slots that ended without one and never will; `open`: slots a resume would
+ * continue. `committedMicros`: the run's settled money plus its open
+ * reserves at their worst case, from the ledger — above `capMicros` only
+ * after a bill above its worst case. `remainingWorstMicros`: what a resume
+ * could still spend at today's prices, never more than the cap leaves; null
+ * when prices cannot be loaded right now (`runs.estimateResume` asks again).
+ */
+export const RunSummary = z
+  .strictObject({
+    runId: Id,
+    avatarId: Id,
+    createdAt: IsoDateTime,
+    total: Count,
+    done: Count,
+    failed: Count,
+    open: Count,
+    capMicros: Micros,
+    committedMicros: Micros,
+    running: z.boolean(),
+    resumable: z.boolean(),
+    remainingWorstMicros: Micros.nullable(),
+  })
+  .refine((r) => r.done + r.failed + r.open === r.total, { message: "done, failed and open slots must add up to the total", path: ["open"] })
+  .refine((r) => r.resumable === (!r.running && r.open > 0), { message: "a run is resumable exactly when it is not running and has open slots", path: ["resumable"] });
 
 export const PhotoSummary = z.strictObject({
   photoId: Id,
@@ -491,4 +537,5 @@ export type JobState = z.infer<typeof JobState>;
 export type JobResult = z.infer<typeof JobResult>;
 export type FailedCandidateSlot = z.infer<typeof FailedCandidateSlot>;
 export type RunRequest = z.infer<typeof RunRequest>;
+export type RunSummary = z.infer<typeof RunSummary>;
 export type PhotoSummary = z.infer<typeof PhotoSummary>;

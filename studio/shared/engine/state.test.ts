@@ -11,6 +11,7 @@ import {
   MoneyStatus,
   ReconcileResult,
   RunRequest,
+  RunSummary,
   Settings,
   UnreadableAvatar,
 } from "./state";
@@ -99,9 +100,26 @@ const candidatesResult = {
   failedSlots: [],
 };
 
-const runJob = { kind: "run", jobId: "job-00000002", runId: "run-00000001", status: "running", done: 3, total: 20 };
+const runJob = { kind: "run", jobId: "job-00000002", runId: "run-00000001", avatarId: "avatar-0001", status: "running", done: 3, total: 20 };
 
-const run = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], resolution: "1k" };
+const runResult = { kind: "run", runId: "run-00000001", avatarId: "avatar-0001", photoIds: ["photo-0002"], failedSlots: 19 };
+
+const run = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], resolution: "1k", poses: { profile: false, back: false } };
+
+const runSummary = {
+  runId: "run-00000001",
+  avatarId: "avatar-0001",
+  createdAt: "2026-09-24T11:00:00.000Z",
+  total: 20,
+  done: 12,
+  failed: 1,
+  open: 7,
+  capMicros: 3_385_000,
+  committedMicros: 1_200_000,
+  running: false,
+  resumable: true,
+  remainingWorstMicros: 1_650_000,
+};
 
 const avatar = {
   avatarId: "avatar-0001",
@@ -554,14 +572,27 @@ describe("JobState", () => {
     expect(JobState.safeParse(j).success).toBe(false);
   });
 
+  test("accepts a done photo run job with its result, both naming the run's avatar", () => {
+    expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result: runResult }).success).toBe(true);
+  });
+
   test("rejects a run result for another run", () => {
-    const result = { kind: "run", runId: "run-00000009", photoIds: [], failedSlots: 0 };
+    const result = { ...runResult, runId: "run-00000009" };
     expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result }).success).toBe(false);
   });
 
+  test("rejects a run result for another avatar", () => {
+    const result = { ...runResult, avatarId: "avatar-0002" };
+    expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result }).success).toBe(false);
+  });
+
+  test("rejects a run result without its avatarId", () => {
+    const { avatarId: _a, ...withoutAvatar } = runResult;
+    expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result: withoutAvatar }).success).toBe(false);
+  });
+
   test("rejects a run result on a candidates job", () => {
-    const result = { kind: "run", runId: "run-00000001", photoIds: [], failedSlots: 0 };
-    expect(JobState.safeParse({ ...candidatesJob, status: "done", done: 4, result }).success).toBe(false);
+    expect(JobState.safeParse({ ...candidatesJob, status: "done", done: 4, result: runResult }).success).toBe(false);
   });
 
   test("rejects a candidates job without its avatarId", () => {
@@ -572,6 +603,11 @@ describe("JobState", () => {
   test("rejects a run job without its runId", () => {
     const { runId: _r, ...withoutRun } = runJob;
     expect(JobState.safeParse(withoutRun).success).toBe(false);
+  });
+
+  test("rejects a run job without its avatarId: a snapshot must name the run's avatar, like a live job.progress does", () => {
+    const { avatarId: _a, ...withoutAvatar } = runJob;
+    expect(JobState.safeParse(withoutAvatar).success).toBe(false);
   });
 
   test("rejects done above total", () => {
@@ -697,7 +733,7 @@ describe("EngineNotice", () => {
   });
 });
 
-describe("RunRequest (2b placeholder)", () => {
+describe("RunRequest", () => {
   test.each([1, 100])("accepts a count of %p", (count) => {
     expect(RunRequest.safeParse({ ...run, count }).success).toBe(true);
   });
@@ -720,5 +756,50 @@ describe("RunRequest (2b placeholder)", () => {
 
   test("rejects an unknown resolution", () => {
     expect(RunRequest.safeParse({ ...run, resolution: "4k" }).success).toBe(false);
+  });
+
+  // T5c/T6 (owner decision): profile and back poses only when the run allows them; front and three-quarter always.
+  test.each([
+    { profile: false, back: false },
+    { profile: true, back: false },
+    { profile: false, back: true },
+    { profile: true, back: true },
+  ])("accepts the poses a run allows: %p", (poses) => {
+    expect(RunRequest.safeParse({ ...run, poses }).success).toBe(true);
+  });
+
+  test("requires the poses, each a yes or a no, and nothing else in them", () => {
+    const { poses: _p, ...withoutPoses } = run;
+    expect(RunRequest.safeParse(withoutPoses).success).toBe(false);
+    expect(RunRequest.safeParse({ ...run, poses: { profile: true } }).success).toBe(false);
+    expect(RunRequest.safeParse({ ...run, poses: { profile: "yes", back: false } }).success).toBe(false);
+    expect(RunRequest.safeParse({ ...run, poses: { profile: false, back: false, front: true } }).success).toBe(false);
+  });
+});
+
+describe("RunSummary (T6: a run as runs.list finds it on disk)", () => {
+  test("accepts a stopped run with slots left, resumable, with its remaining worst case", () => {
+    expect(RunSummary.safeParse(runSummary).success).toBe(true);
+  });
+
+  test("accepts a remaining worst case that could not be priced right now", () => {
+    expect(RunSummary.safeParse({ ...runSummary, remainingWorstMicros: null }).success).toBe(true);
+  });
+
+  test("rejects slot counts that do not add up to the run's total", () => {
+    expect(RunSummary.safeParse({ ...runSummary, open: 6 }).success).toBe(false);
+  });
+
+  test("rejects a run that is resumable while it runs, or with no slot left open", () => {
+    expect(RunSummary.safeParse({ ...runSummary, running: true }).success).toBe(false);
+    expect(RunSummary.safeParse({ ...runSummary, done: 19, open: 0 }).success).toBe(false);
+  });
+
+  test("rejects a stopped run with slots open that does not say it is resumable", () => {
+    expect(RunSummary.safeParse({ ...runSummary, resumable: false }).success).toBe(false);
+  });
+
+  test("accepts a committed amount above the cap: a bill above its worst case can put it there, and the list must still say so", () => {
+    expect(RunSummary.safeParse({ ...runSummary, committedMicros: 3_385_001 }).success).toBe(true);
   });
 });

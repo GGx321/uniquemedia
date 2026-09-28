@@ -108,3 +108,82 @@ describe("JobRegistry", () => {
     expect(() => jobs.startCandidates("job-00000001", DRAFT, 4)).toThrow("job-00000001");
   });
 });
+
+// T6: a photo run's jobs. A resume is a new job of the same run, so a run
+// job starts with the slots its run already finished counted as done.
+describe("JobRegistry: photo run jobs", () => {
+  const RUN = "run-00000001";
+  const AVATAR = "avatar-0001";
+
+  test("a started run job is listed as running with its run and its avatar, counting the slots earlier jobs finished", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 20, done: 3 });
+
+    expect(jobs.states()).toEqual([{ kind: "run", jobId: "job-00000001", runId: RUN, avatarId: AVATAR, status: "running", done: 3, total: 20 }]);
+    valid(jobs.states());
+  });
+
+  test("progress of a run job carries its avatar, like a candidates job's", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 20, done: 0 });
+
+    expect(jobs.progress("job-00000001", 4)).toEqual({ jobId: "job-00000001", avatarId: AVATAR, done: 4, total: 20 });
+  });
+
+  test("a done run job carries its result: the run's photos and how many slots have none", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });
+    jobs.progress("job-00000001", 3);
+
+    const state = jobs.finishRun("job-00000001", { status: "done", photoIds: ["photo-00000001", "photo-00000002"], failedSlots: 1 });
+
+    expect(state).toEqual({
+      kind: "run",
+      jobId: "job-00000001",
+      runId: RUN,
+      avatarId: AVATAR,
+      status: "done",
+      done: 3,
+      total: 3,
+      result: { kind: "run", runId: RUN, avatarId: AVATAR, photoIds: ["photo-00000001", "photo-00000002"], failedSlots: 1 },
+    });
+    valid([state]);
+  });
+
+  test("a failed run job carries its error; a cancelled one neither error nor result", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 1 });
+    jobs.startRun("job-00000002", { runId: "run-00000002", avatarId: AVATAR, total: 3, done: 0 });
+
+    expect(jobs.finishRun("job-00000001", { status: "failed", error: { code: "RUN_CAP_EXCEEDED" } })).toMatchObject({ status: "failed", error: { code: "RUN_CAP_EXCEEDED" } });
+    expect(jobs.finishRun("job-00000002", { status: "cancelled" })).toMatchObject({ status: "cancelled" });
+    valid(jobs.states());
+  });
+
+  test("runningJobOf names the run's running job, and nothing once it ended", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });
+    expect(jobs.runningJobOf(RUN)).toBe("job-00000001");
+    expect(jobs.runningJobOf("run-00000404")).toBeNull();
+
+    jobs.finishRun("job-00000001", { status: "cancelled" });
+    expect(jobs.runningJobOf(RUN)).toBeNull();
+  });
+
+  test("cancel aborts a run job's signal", () => {
+    const jobs = new JobRegistry();
+    const signal = jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });
+    expect(jobs.cancel("job-00000001")).toBe(true);
+    expect(signal.aborted).toBe(true);
+  });
+
+  test("a job is finished only by its own kind's finish", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });
+    jobs.startCandidates("job-00000002", DRAFT, 4);
+
+    expect(jobs.finish("job-00000001", { status: "cancelled" })).toBeNull();
+    expect(jobs.finishRun("job-00000002", { status: "cancelled" })).toBeNull();
+    expect(jobs.states().map((j) => j.status)).toEqual(["running", "running"]);
+  });
+});

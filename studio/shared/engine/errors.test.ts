@@ -27,10 +27,12 @@ const EXPECTED_CODES = [
   "DESCRIPTOR_INVALID",
   "AGE_CHECK_FAILED",
   "IMPORT_SUBJECT_INVALID",
+  "QA_REJECTED",
+  "AGE_GATE_UNAVAILABLE",
 ];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of twenty-four codes", () => {
+  test("is exactly the closed set of twenty-six codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });

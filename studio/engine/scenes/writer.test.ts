@@ -9,6 +9,7 @@ import type { PlanSlot } from "./schema";
 import {
   chunkSlots,
   contradictsPose,
+  emptyAnswerRefusal,
   isTwoHanded,
   POSE_LABEL,
   readWriterAnswer,
@@ -27,7 +28,7 @@ useNativeGlobals();
 
 // T5b: the scene writer's pure logic (prompts, the model's output schema, the
 // re-ask detectors and the writer's own pricing). No I/O, no money, no
-// network: those live in writerJob.test.ts.
+// network: those live in runs/writerPhase.rules.test.ts.
 
 function slot(overrides: Partial<PlanSlot> = {}): PlanSlot {
   return {
@@ -321,6 +322,20 @@ describe("phrase constants never suggest a minor or use a revealing word (round 
   });
 });
 
+describe("emptyAnswerRefusal (the one refusal a paid answer without content gets, T6)", () => {
+  test("names only the empty problem, with every other list empty, and says so to the next attempt", () => {
+    const refusal = emptyAnswerRefusal();
+    expect(refusal).toEqual({ problems: ["empty"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] });
+    expect(writerRefusalText(refusal)).toBe("it was empty");
+  });
+
+  test("is fresh every time: a caller that changes one cannot change the next", () => {
+    const first = emptyAnswerRefusal();
+    first.problems.push("not-json");
+    expect(emptyAnswerRefusal().problems).toEqual(["empty"]);
+  });
+});
+
 describe("writerRefusalText", () => {
   test("names the two-handed slots and the rule", () => {
     const text = writerRefusalText({ problems: ["two-handed"], missingSlots: [], twoHandedSlots: [3], wordSlots: [], words: [], poseSlots: [] });
@@ -431,7 +446,7 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
   // 1..100 photos, possibly all in one category — far more than a single
   // writer call can safely take (a 100-slot prompt floor measured ~30_223
   // tokens, and 100 scenes' typical output alone, ~13_000 tokens, already
-  // exceeds max_tokens). The writer job (writerJob.ts) now chunks the plan
+  // exceeds max_tokens). The writer phase (runs/writerPhase.ts) now chunks the plan
   // into calls of at most WRITER_CALL.slotsPerCall slots each, so the ceiling
   // only ever has to cover ONE chunk — never the whole run — whatever the
   // run's total slot count.

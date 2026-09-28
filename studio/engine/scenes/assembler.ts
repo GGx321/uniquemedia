@@ -134,7 +134,7 @@ export interface AssembledScene {
  * (one hand holds the phone for a selfie/mirror slot, no text/watermark,
  * adult woman), then strips stop-words. `sentence` is re-checked against the
  * same youth- and revealing-word rules the writer's own gate already ran
- * (writerJob.ts / readWriterAnswer): a defense-in-depth last resort, since
+ * (runs/writerPhase.ts / readWriterAnswer): a defense-in-depth last resort, since
  * this is the last engine code to see the text before an image is paid for.
  */
 export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sentence: string, master: LibraryReference): AssembledScene {

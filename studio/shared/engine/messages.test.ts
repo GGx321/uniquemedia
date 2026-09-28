@@ -22,6 +22,7 @@ import type {
   MoneyStatus,
   PhotoSummary,
   RunRequest,
+  RunSummary,
   Settings,
   UnreadableAvatar,
 } from "./state";
@@ -112,7 +113,22 @@ const job: JobState = {
 
 const unreadable: UnreadableAvatar = { avatarId: "avatar-0009", name: "Zoe", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" };
 
-const runRequest: RunRequest = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], resolution: "1k" };
+const runRequest: RunRequest = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], resolution: "1k", poses: { profile: true, back: false } };
+
+const runSummary: RunSummary = {
+  runId: "run-00000001",
+  avatarId: "avatar-0001",
+  createdAt: "2026-09-24T11:00:00.000Z",
+  total: 20,
+  done: 12,
+  failed: 1,
+  open: 7,
+  capMicros: 3_385_000,
+  committedMicros: 1_200_000,
+  running: false,
+  resumable: true,
+  remainingWorstMicros: 1_650_000,
+};
 
 const photo: PhotoSummary = {
   photoId: "photo-0002",
@@ -190,7 +206,9 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     result: { runId: "run-00000001", jobId: "job-00000002" },
   },
   "runs.cancel": { payload: { runId: "run-00000001" }, result: { runId: "run-00000001" } },
-  "runs.resume": { payload: { runId: "run-00000001" }, result: { runId: "run-00000001", jobId: "job-00000003" } },
+  "runs.estimateResume": { payload: { runId: "run-00000001" }, result: { estimate: { ...estimate, expectedMicros: 500_000, worstMicros: 1_650_000 } } },
+  "runs.resume": { payload: { runId: "run-00000001", acceptedWorstMicros: 1_650_000 }, result: { runId: "run-00000001", jobId: "job-00000003" } },
+  "runs.list": { payload: {}, result: { runs: [runSummary] } },
   "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo] } },
   "engine.snapshot": {
     payload: {},
@@ -295,7 +313,9 @@ describe("contract surface", () => {
         "runs.estimate",
         "runs.start",
         "runs.cancel",
+        "runs.estimateResume",
         "runs.resume",
+        "runs.list",
         "photos.list",
         "engine.snapshot",
         "engine.events",
@@ -847,6 +867,10 @@ describe("estimate before spend", () => {
 
   test("runs.start is refused without the worst case the user accepted", () => {
     expect(reasonOf(command("runs.start", runRequest))).toContain("payload.acceptedWorstMicros");
+  });
+
+  test("runs.resume is refused without the remaining worst case the user accepted", () => {
+    expect(reasonOf(command("runs.resume", { runId: "run-00000001" }))).toContain("payload.acceptedWorstMicros");
   });
 
   test("avatars.generateCandidates no longer answers with an estimate after spending started", () => {

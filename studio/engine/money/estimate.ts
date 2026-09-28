@@ -31,7 +31,7 @@ export interface ChatCall {
  * The scene writer: its typical tokens scale with the number of scenes.
  * Review round 2/3: `RunRequest.count` (studio/shared/engine/state.ts)
  * allows up to 100 photos per run, more than one call can safely take, so
- * the writer job (scenes/writerJob.ts) splits the plan into chunks of at
+ * the writer phase (runs/writerPhase.ts) splits the plan into chunks of at
  * most `slotsPerCall` slots, each its own call retried up to `maxAttempts`
  * times. These two fields are the ONE source of truth for that shape: this
  * module (`estimateRun`'s own writer term) and scenes/writer.ts's

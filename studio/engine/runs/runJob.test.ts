@@ -1,0 +1,1150 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { AvatarDescriptor, EngineError } from "../../shared/engine";
+import { openLibrary, type Library } from "../library";
+import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../library/testing/helpers";
+import { Budget, scopeKey } from "../money/budget";
+import { Ledger, type Scope } from "../money/ledger";
+import { reconcile } from "../money/reconcile";
+import { PriceBook } from "../money/prices";
+import { chatBody, fakeFetch, imageBody, JPEG, makeClient, readLedgerLines, type FetchCall, type Reply } from "../openrouter/testing/fakes";
+import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../openrouter/types";
+import { plan as planScenes, type PlanSlot } from "../scenes";
+import { RunEventSchema, type RunEvent } from "./journal";
+import { buildRunPlan, FALLBACK_IMAGE_MODEL, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
+import { CpuPool, NetworkPool } from "./pools";
+import type { QaGate, QaInput, QaVerdict } from "./qa";
+import { reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
+
+// T6: the photo run job — the writer phase, the prompts, then every slot's
+// attempts through the network pool, the provider route, the QA gates and
+// the library — against a real library and ledger in a temp dir, the real
+// OpenRouter client (T3) over a fake fetch, and fake QA gates. Nothing
+// reaches the network or spends money.
+
+const NOW = Date.parse("2026-09-24T12:00:00.000Z");
+const RUN_ID = "run-00000001";
+const JOB_ID = "job-00000001";
+const SCOPE: Scope = { runId: RUN_ID };
+const PRIMARY = "x-ai/grok-imagine-image-2.0";
+const TEXT = "x-ai/grok-4.3";
+const DESCRIPTOR: AvatarDescriptor = {
+  age: 25,
+  text: "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build, light freckles across the nose.",
+};
+/** Fallback prices: the primary's attempt (low 1K + one reference) and the writer's (14K in, 8K out, T5c). */
+const IMAGE_WORST = 50_000;
+const WRITER_WORST = 37_500;
+const SENTENCE = "A friend catches her mid-laugh at the kitchen counter as morning light spills across the table.";
+const MODERATION: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
+
+let dir = "";
+let library: Library;
+let avatarId = "";
+let ledger: Ledger;
+let budget: Budget;
+let mono = 0;
+const caps = new Map<string, number>();
+
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "studio-run-job-"));
+  await mkdir(join(dir, "library"));
+  library = await openTheLibrary();
+  const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: { hair: "chestnut" }, descriptor: DESCRIPTOR.text });
+  const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
+  await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  avatarId = avatar.id;
+  mono = 0;
+  caps.clear();
+  ({ ledger, budget } = await openMoney(() => NOW));
+});
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+/** `idPrefix` differs per process, so a reopened library never hands out an id the first one already used. */
+async function openTheLibrary(idPrefix = "lib"): Promise<Library> {
+  // The reference downscale is ffmpeg's in production; any JPEG will do for the client here.
+  return (await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds(idPrefix), downscaleReference: async () => JPEG })).library;
+}
+
+/** A process's own ledger and Budget over the one ledger file; a scope's cap is whatever `caps` holds. */
+async function openMoney(clock: () => number): Promise<{ ledger: Ledger; budget: Budget }> {
+  const opened = await Ledger.open(join(dir, "ledger.jsonl"));
+  return {
+    ledger: opened,
+    budget: new Budget(opened, { runCapMicros: (scope) => caps.get(scopeKey(scope)) ?? 0, monthlyBudgetMicros: 10_000_000, clock, monotonic: () => mono }),
+  };
+}
+
+// ---------- the run ----------
+
+async function newRun(count: number, opts: { cap?: number; imageModel?: string; avatar?: string } = {}): Promise<RunPlan> {
+  const imageModel = opts.imageModel ?? PRIMARY;
+  const runAvatar = opts.avatar ?? avatarId;
+  const request = { avatarId: runAvatar, count, categories: ["home" as const], resolution: "1k" as const, poses: { profile: false, back: false } };
+  const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel, textModel: TEXT }, request, "off").worstMicros;
+  const cap = opts.cap ?? estimated;
+  const run = buildRunPlan({
+    runId: RUN_ID,
+    avatarId: runAvatar,
+    createdAt: new Date(NOW).toISOString(),
+    request,
+    imageAgeCheck: "off",
+    models: { imageModel, textModel: TEXT },
+    capMicros: cap,
+    plannedWorstMicros: Math.max(cap, estimated),
+    scenes: planScenes({ seed: 5, count, categories: ["home"] }),
+  });
+  await library.createRun(RUN_ID, run, RunPlanSchema);
+  caps.set(scopeKey(SCOPE), cap);
+  return run;
+}
+
+// ---------- the fake OpenRouter ----------
+
+/** The slots a writer request asks about, read back from its own prompt. */
+function slotsAskedFor(call: FetchCall): number[] {
+  const body = call.json();
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const user = messages.find((m: unknown) => typeof m === "object" && m !== null && "role" in m && m.role === "user");
+  const text = typeof user === "object" && user !== null && "content" in user && typeof user.content === "string" ? user.content : "";
+  const slots: { slotIndex: number }[] = JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
+  return slots.map((s) => s.slotIndex);
+}
+
+function writerReply(call: FetchCall, cost = 0.0112): Reply {
+  const scenes = slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `${SENTENCE} (slot ${slotIndex})` }));
+  return { status: 200, body: chatBody(JSON.stringify({ scenes }), { cost }) };
+}
+
+function imageReply(cost = 0.04): Reply {
+  return { status: 200, body: imageBody(PNG_1X1, { cost }) };
+}
+
+type Handler = (call: FetchCall, n: number) => Reply | Promise<Reply>;
+
+function network(opts: { image?: Handler; writer?: Handler } = {}) {
+  let images = 0;
+  let writes = 0;
+  const route = async (call: FetchCall): Promise<Reply> => {
+    if (call.url.endsWith("/images")) return (opts.image ?? (() => imageReply()))(call, ++images);
+    if (call.url.endsWith("/chat/completions")) return (opts.writer ?? ((c) => writerReply(c)))(call, ++writes);
+    throw new Error(`unexpected request to ${call.url}`);
+  };
+  const net = fakeFetch(Array.from({ length: 512 }, () => route));
+  return {
+    fetch: net.fetch,
+    calls: net.calls,
+    imageCalls: () => net.calls.filter((c) => c.url.endsWith("/images")),
+    writerCalls: () => net.calls.filter((c) => c.url.endsWith("/chat/completions")),
+  };
+}
+type Network = ReturnType<typeof network>;
+
+// ---------- gates ----------
+
+function gate(
+  name: string,
+  decide: (input: QaInput, n: number) => QaVerdict | Promise<QaVerdict>,
+  opts: { paid?: boolean; timeoutMs?: number } = {},
+): QaGate & { inputs: QaInput[] } {
+  const inputs: QaInput[] = [];
+  return {
+    name,
+    paid: opts.paid ?? false,
+    ...(opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }),
+    inputs,
+    check: async (input) => {
+      inputs.push(input);
+      return decide(input, inputs.length);
+    },
+  };
+}
+
+// ---------- running it ----------
+
+interface Harness {
+  net: Network;
+  pool: NetworkPool;
+  progress: { done: number; total: number; photoId: string | null }[];
+  /** Attempt ids the client actually sent, in order (a blocked or never-sent attempt is not here). */
+  sent: string[];
+  /** Attempt ids the job started (handed to the client, before its reserve), in order. */
+  started: string[];
+  end: Promise<RunJobEnd>;
+}
+
+function start(
+  run: RunPlan,
+  opts: {
+    net?: Network;
+    pool?: NetworkPool;
+    gates?: QaGate[];
+    signal?: AbortSignal;
+    budget?: Budget;
+    library?: Library;
+    jobId?: string;
+    generateImage?: RunJobDeps["generateImage"];
+    /** Called as the job starts each attempt (it already holds its network slot). */
+    onStart?: () => void;
+    clientOverrides?: Partial<OpenRouterClientOptions>;
+  } = {},
+): Harness {
+  const net = opts.net ?? network();
+  const pool = opts.pool ?? new NetworkPool({ max: 6 });
+  const { client } = makeClient(reportingTo(pool, net.fetch), opts.clientOverrides);
+  const sent: string[] = [];
+  const started: string[] = [];
+  const progress: Harness["progress"] = [];
+  const spy: RunJobDeps["generateImage"] = async (params) => {
+    opts.onStart?.();
+    started.push(params.attemptId);
+    const result: ImageResult = await client.generateImage(params);
+    const dispatched = result.status !== "blocked" && !("ledger" in result && result.ledger.action === "released");
+    if (dispatched) sent.push(params.attemptId);
+    return result;
+  };
+  const end = runPhotoRun(
+    {
+      generateImage: opts.generateImage ?? spy,
+      chat: client.chat,
+      budget: opts.budget ?? budget,
+      priceBook: PriceBook.fallback(),
+      library: opts.library ?? library,
+      pool,
+      cpu: new CpuPool(2),
+      gates: opts.gates ?? [],
+      now: () => new Date(NOW),
+      errorOf: (error: unknown): EngineError => ({ code: "INTERNAL", detail: error instanceof Error ? error.message : String(error) }),
+      onSlot: (p) => progress.push(p),
+    },
+    { plan: run, jobId: opts.jobId ?? JOB_ID, descriptor: DESCRIPTOR, signal: opts.signal ?? new AbortController().signal },
+  );
+  return { net, pool, progress, sent, started, end };
+}
+
+async function journal(lib: Library = library): Promise<RunEvent[]> {
+  return (await lib.readJournal(RUN_ID, RunEventSchema)).events;
+}
+
+function ledgerLines(): Record<string, unknown>[] {
+  return readLedgerLines(join(dir, "ledger.jsonl"));
+}
+
+function reservedIds(): string[] {
+  return ledgerLines().flatMap((l) => (l.type === "reserve" && typeof l.attemptId === "string" ? [l.attemptId] : []));
+}
+
+/** Everything the run's scope has committed now: settled costs plus open reserves at their worst case. */
+function scopeCommitted(of: Ledger = ledger): number {
+  const key = scopeKey(SCOPE);
+  let total = 0;
+  for (const line of of.lines) {
+    if (line.type !== "settle") continue;
+    const reserve = of.reserveOf(line.attemptId);
+    if (reserve !== undefined && scopeKey(reserve.scope) === key) total += line.costMicros;
+  }
+  for (const reserve of of.openReserves()) if (scopeKey(reserve.scope) === key) total += reserve.worstMicros;
+  return total;
+}
+
+async function until(condition: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 1000 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 2));
+  if (!condition()) throw new Error(`timed out waiting for ${what}`);
+}
+
+function slotOf(run: RunPlan, slotIndex: number): PlanSlot {
+  const slot = run.scenes.slots.find((s) => s.slotIndex === slotIndex);
+  if (slot === undefined) throw new Error(`no slot ${slotIndex}`);
+  return slot;
+}
+
+function modelOf(call: FetchCall): unknown {
+  return call.json().model;
+}
+
+// ---------- the happy path ----------
+
+describe("a run from the start", () => {
+  test("stores one photo per slot under the slot's first attempt id, with its scene in the sidecar", async () => {
+    const run = await newRun(3);
+    const { end, sent } = start(run);
+
+    const result = await end;
+
+    expect(result.status).toBe("done");
+    if (result.status !== "done") return;
+    expect(result.failedSlots).toBe(0);
+    expect(result.photoIds).toHaveLength(3);
+    expect(sent.sort()).toEqual([1, 2, 3].map((i) => `${RUN_ID}:slot-${i}#1`));
+    const photos = result.photoIds.map((id) => library.getPhoto(id));
+    expect(photos.map((p) => p?.source)).toEqual(
+      [1, 2, 3].map((i) =>
+        expect.objectContaining({ kind: "generated", model: PRIMARY, provider: "openrouter", jobId: JOB_ID, attemptId: `${RUN_ID}:slot-${i}#1`, slot: `slot-${i}`, category: "home", costMicros: 40_000 }),
+      ),
+    );
+  });
+
+  test("journals the writer's chunk, then the prompts, then each slot's attempt before its end, then the job's end", async () => {
+    const run = await newRun(2);
+    await start(run).end;
+
+    const events = await journal();
+    const label = (e: RunEvent): string =>
+      e.type === "attempt" ? `attempt:${e.slotIndex}:${e.outcome}` : e.type === "slot" ? `slot:${e.slotIndex}:${e.status}` : e.type === "job" ? `job:${e.status}` : e.type;
+    const labels = events.map(label);
+    expect(labels.slice(0, 3)).toEqual(["job:started", "writer", "prompts"]);
+    expect(labels.at(-1)).toBe("job:done");
+    // Slots run concurrently, so their lines may interleave; each slot's own order is fixed.
+    for (const slot of [1, 2]) {
+      const own = labels.filter((l) => l.startsWith(`attempt:${slot}:`) || l.startsWith(`slot:${slot}:`));
+      expect(own).toEqual([`attempt:${slot}:passed`, `slot:${slot}:done`]);
+    }
+    expect(labels).toHaveLength(8);
+  });
+
+  test("invariant 6: every slot's prompt is on disk before the first image request leaves", async () => {
+    const run = await newRun(3);
+    const onDiskAtFirstImage: string[] = [];
+    const net = network({
+      image: async (_call, n) => {
+        if (n === 1) onDiskAtFirstImage.push(await readFile(join(dir, "library", "runs", RUN_ID, "journal.jsonl"), "utf8"));
+        return imageReply();
+      },
+    });
+    await start(run, { net }).end;
+
+    const prompts = onDiskAtFirstImage[0]?.split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.type === "prompts");
+    expect(prompts?.prompts.map((p: { slotIndex: number }) => p.slotIndex)).toEqual([1, 2, 3]);
+  });
+
+  test("each image request carries the assembled prompt (the descriptor's anchor and the writer's sentence) and the master as its one reference", async () => {
+    const run = await newRun(1);
+    const { net, end } = start(run);
+    await end;
+    const body = net.imageCalls()[0]?.json() ?? {};
+
+    expect(body.prompt).toContain("25-year-old European woman");
+    expect(body.prompt).toContain(`${SENTENCE} (slot 1)`);
+    expect(body).toMatchObject({ model: PRIMARY, quality: "low", resolution: "1K", aspect_ratio: "9:16" });
+    expect(Array.isArray(body.input_references) ? body.input_references.length : 0).toBe(1);
+  });
+
+  test("reports progress once per slot that ends", async () => {
+    const run = await newRun(3);
+    const { end, progress } = start(run);
+    await end;
+    expect(progress.map((p) => [p.done, p.total])).toEqual([
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+  });
+
+  test("records each stored photo's location and outfit in the avatar's scene history", async () => {
+    const run = await newRun(2);
+    await start(run).end;
+    const recent = await library.recentPairs(avatarId, 10);
+    expect(recent.map((e) => [e.location, e.outfit]).sort()).toEqual(run.scenes.slots.map((s) => [s.location, s.outfit]).sort());
+  });
+});
+
+// ---------- the provider route ----------
+
+describe("the provider route", () => {
+  test("a moderation refusal on the primary sends the slot's next attempt to Seedream, once", async () => {
+    const run = await newRun(1);
+    const net = network({ image: (call) => (modelOf(call) === PRIMARY ? MODERATION : imageReply(0.045)) });
+    const { end, sent } = start(run, { net });
+
+    const result = await end;
+
+    expect(sent).toEqual([`${RUN_ID}:slot-1#1`, `${RUN_ID}:slot-1#2`]);
+    expect(net.imageCalls().map(modelOf)).toEqual([PRIMARY, FALLBACK_IMAGE_MODEL]);
+    expect(net.imageCalls()[1]?.json().quality).toBeUndefined();
+    if (result.status !== "done") throw new Error(`expected done, got ${result.status}`);
+    expect(library.getPhoto(result.photoIds[0] ?? "")?.source).toMatchObject({ model: FALLBACK_IMAGE_MODEL, attemptId: `${RUN_ID}:slot-1#2` });
+  });
+
+  test("a refusal on Seedream too ends the slot without a photo; its third id is never sent", async () => {
+    const run = await newRun(1);
+    const net = network({ image: () => MODERATION });
+    const { end, sent } = start(run, { net });
+
+    expect(await end).toEqual({ status: "done", photoIds: [], failedSlots: 1 });
+    expect(sent).toEqual([`${RUN_ID}:slot-1#1`, `${RUN_ID}:slot-1#2`]);
+    expect((await journal()).find((e) => e.type === "slot")).toMatchObject({ status: "failed", error: { code: "MODERATION_REFUSED" } });
+  });
+
+  test("the one fallback attempt is not retried after a QA failure; the slot ends", async () => {
+    const run = await newRun(1);
+    const net = network({ image: (call) => (modelOf(call) === PRIMARY ? MODERATION : imageReply(0.045)) });
+    const qa = gate("face", () => ({ verdict: "retry", reason: "no face" }));
+    const { end, sent } = start(run, { net, gates: [qa] });
+
+    expect(await end).toMatchObject({ status: "done", photoIds: [], failedSlots: 1 });
+    expect(sent).toHaveLength(2);
+  });
+
+  test("with Seedream as the image model there is no fallback: a refusal ends the slot at once", async () => {
+    const run = await newRun(1, { imageModel: FALLBACK_IMAGE_MODEL });
+    const net = network({ image: () => MODERATION });
+    const { end, sent } = start(run, { net });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect(sent).toEqual([`${RUN_ID}:slot-1#1`]);
+  });
+
+  test("a timeout moves the slot to its next id (the money model allows it) and leaves that reserve open at its worst case", async () => {
+    const run = await newRun(1);
+    const net = network({ image: (_call, n) => (n === 1 ? { hang: true } : imageReply()) });
+    const { end, sent } = start(run, { net, clientOverrides: { timeoutMs: 30 } });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(sent).toEqual([`${RUN_ID}:slot-1#1`, `${RUN_ID}:slot-1#2`]);
+    expect(ledger.openReserves().map((r) => [r.attemptId, r.worstMicros])).toEqual([[`${RUN_ID}:slot-1#1`, IMAGE_WORST]]);
+  });
+
+  test("a fallback cancelled mid-flight closes its slot on resume, saying it was cancelled, not that it gave no usable photo", async () => {
+    const run = await newRun(1);
+    const controller = new AbortController();
+    const net = network({ image: (call) => (modelOf(call) === PRIMARY ? MODERATION : { hang: true }) });
+    const first = start(run, { net, signal: controller.signal });
+    await until(() => net.imageCalls().length === 2, "the fallback's request");
+    controller.abort(new Error("cancelled by the user"));
+    expect(await first.end).toEqual({ status: "cancelled" });
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect(resumed.sent).toEqual([]);
+    const slotEnd = (await journal()).find((e) => e.type === "slot");
+    expect(slotEnd).toMatchObject({ status: "failed", error: { code: "MODERATION_REFUSED" } });
+    const detail = slotEnd?.type === "slot" ? (slotEnd.error?.detail ?? "") : "";
+    expect(detail).toContain("cancelled before it answered");
+    expect(detail).not.toContain("gave no usable photo");
+  });
+});
+
+// ---------- failures that are no answer (review H1) ----------
+
+describe("an attempt that got no answer stops the run with its slots open", () => {
+  const RATE_LIMITED_120: Reply = { status: 429, headers: { "retry-after": "120" }, body: { error: { message: "rate limited" } } };
+  const UNAVAILABLE: Reply = { status: 503, body: { error: { message: "upstream unavailable" } } };
+
+  /** No slot ended, and no slot used more than one id. */
+  async function expectOpenAndOneIdEach(run: RunPlan): Promise<void> {
+    const events = await journal();
+    expect(events.some((e) => e.type === "slot")).toBe(false);
+    for (const slot of run.scenes.slots) expect(reservedIds().filter((id) => id.startsWith(`${RUN_ID}:${slot.attemptIdBase}#`)).length).toBeLessThanOrEqual(1);
+  }
+
+  test("a final 429 with Retry-After 120 s: the run stops at once with the wait, each slot in flight used one id, the rest none; a resume finishes it", async () => {
+    const run = await newRun(4);
+    const { end, net } = start(run, { net: network({ image: () => RATE_LIMITED_120 }), pool: new NetworkPool({ max: 2 }) });
+
+    expect(await end).toEqual({ status: "failed", error: expect.objectContaining({ code: "RATE_LIMITED", retryAfterMs: 120_000 }) });
+    expect(net.imageCalls()).toHaveLength(2);
+    await expectOpenAndOneIdEach(run);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(resumed.sent.sort()).toEqual([`${RUN_ID}:slot-1#2`, `${RUN_ID}:slot-2#2`, `${RUN_ID}:slot-3#1`, `${RUN_ID}:slot-4#1`]);
+  });
+
+  test("three 503s in a row (one attempt's transport retries): the run stops with NETWORK under one id; a resume finishes it", async () => {
+    const run = await newRun(2);
+    const { end, net } = start(run, { net: network({ image: () => UNAVAILABLE }), pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "NETWORK" } });
+    expect(net.imageCalls()).toHaveLength(3);
+    await expectOpenAndOneIdEach(run);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(resumed.sent.sort()).toEqual([`${RUN_ID}:slot-1#2`, `${RUN_ID}:slot-2#1`]);
+  });
+
+  test("a fetch that always rejects: the run stops with NETWORK, the reserves in flight stay open at their worst case, and a resume finishes within the cap", async () => {
+    const run = await newRun(3);
+    const { end, net } = start(run, { net: network({ image: () => ({ reject: new TypeError("fetch failed") }) }), pool: new NetworkPool({ max: 2 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "NETWORK" } });
+    expect(net.imageCalls()).toHaveLength(2);
+    await expectOpenAndOneIdEach(run);
+    expect(ledger.openReserves().map((r) => r.attemptId).sort()).toEqual([`${RUN_ID}:slot-1#1`, `${RUN_ID}:slot-2#1`]);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(scopeCommitted()).toBeLessThanOrEqual(run.capMicros);
+  });
+
+  test("a writer whose prompt moderation refuses closes every slot: the run is not offered for resumes that would only burn its spare ids", async () => {
+    const run = await newRun(2);
+    const { end, net } = start(run, { net: network({ writer: () => MODERATION }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "MODERATION_REFUSED" } });
+    expect(net.writerCalls()).toHaveLength(1);
+    expect((await journal()).filter((e) => e.type === "slot").map((e) => (e.type === "slot" ? [e.status, e.error?.code] : null))).toEqual([
+      ["failed", "MODERATION_REFUSED"],
+      ["failed", "MODERATION_REFUSED"],
+    ]);
+  });
+
+  test("a writer that gets a 503 three times stops the run before any image, every slot still open", async () => {
+    const run = await newRun(2);
+    const { end, net } = start(run, { net: network({ writer: () => UNAVAILABLE }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "NETWORK" } });
+    expect(net.imageCalls()).toHaveLength(0);
+    expect((await journal()).some((e) => e.type === "slot")).toBe(false);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+  });
+
+  test("a 4xx that is not a moderation refusal is our bug: fatal, and nothing more is sent", async () => {
+    const run = await newRun(3);
+    const { end, sent } = start(run, { net: network({ image: () => ({ status: 404, body: { error: { message: "No endpoints found" } } }) }), pool: new NetworkPool({ max: 1 }) });
+    expect(await end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(sent).toHaveLength(1);
+  });
+
+  test("a request that cannot be built (NOT_SENT) is fatal: its reserve is released and nothing is sent", async () => {
+    const run = await newRun(2);
+    const pngReference = (await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds("png"), downscaleReference: async () => PNG_1X1 })).library;
+    const { end, net } = start(run, { library: pngReference, pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(net.imageCalls()).toHaveLength(0);
+    expect(ledgerLines().filter((l) => typeof l.attemptId === "string" && l.attemptId.includes(":slot-")).map((l) => l.type)).toEqual(["reserve", "release"]);
+  });
+
+  // Review round 3 (a): a slot's spare ids absorb attempts that got no answer, so its three paid attempts survive them.
+  test("two free failures in two jobs, then a slot still gets all three paid attempts: #3 and #4 retried by QA, #5 kept", async () => {
+    const run = await newRun(1);
+    const first = start(run, { net: network({ image: () => RATE_LIMITED_120 }) });
+    expect(await first.end).toMatchObject({ status: "failed", error: { code: "RATE_LIMITED" } });
+    const second = start(run, { net: network({ image: () => UNAVAILABLE }), jobId: "job-00000002" });
+    expect(await second.end).toMatchObject({ status: "failed", error: { code: "NETWORK" } });
+
+    const face = gate("face", (_i, n) => (n < 3 ? { verdict: "retry", reason: "mismatch" } : { verdict: "pass" }));
+    const third = start(run, { gates: [face], jobId: "job-00000003" });
+    const result = await third.end;
+
+    expect(result).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(third.sent).toEqual([3, 4, 5].map((n) => `${RUN_ID}:slot-1#${n}`));
+    if (result.status === "done") expect(library.getPhoto(result.photoIds[0] ?? "")?.source).toMatchObject({ attemptId: `${RUN_ID}:slot-1#5` });
+  });
+
+  test("three paid attempts close the slot even with spare ids left", async () => {
+    const run = await newRun(1);
+    const first = start(run, { net: network({ image: () => RATE_LIMITED_120 }) });
+    await first.end;
+    const face = gate("face", () => ({ verdict: "retry", reason: "mismatch" }));
+    const second = start(run, { gates: [face], jobId: "job-00000002" });
+
+    expect(await second.end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect(second.sent).toEqual([2, 3, 4].map((n) => `${RUN_ID}:slot-1#${n}`));
+    expect(reservedIds()).not.toContain(`${RUN_ID}:slot-1#5`);
+  });
+});
+
+// ---------- QA gates ----------
+
+describe("QA gates", () => {
+  test("a gate's retry consumes an attempt: after three, the slot ends without a photo and no fourth request is sent", async () => {
+    const run = await newRun(1);
+    const qa = gate("face", () => ({ verdict: "retry", reason: "no face" }));
+    const { end, sent } = start(run, { gates: [qa] });
+
+    expect(await end).toEqual({ status: "done", photoIds: [], failedSlots: 1 });
+    expect(sent).toEqual([1, 2, 3].map((n) => `${RUN_ID}:slot-1#${n}`));
+    expect(qa.inputs).toHaveLength(3);
+    expect((await journal()).filter((e) => e.type === "attempt").map((e) => (e.type === "attempt" ? e.outcome : null))).toEqual(["qa-retry", "qa-retry", "qa-retry"]);
+    expect((await journal()).find((e) => e.type === "slot")).toMatchObject({ status: "failed", error: { code: "QA_REJECTED" } });
+  });
+
+  test("a retry then a pass stores the second attempt's image, with every passing gate's qa fields in its sidecar", async () => {
+    const run = await newRun(1);
+    const face = gate("face", (_i, n) => (n === 1 ? { verdict: "retry", reason: "mismatch" } : { verdict: "pass", qa: { faceCos: 0.71, headRatio: 0.3 } }));
+    const pdq = gate("pdq", () => ({ verdict: "pass", qa: { pdq: "c".repeat(64) } }));
+    const { end } = start(run, { gates: [pdq, face] });
+
+    const result = await end;
+    if (result.status !== "done") throw new Error(`expected done, got ${result.status}`);
+    expect(library.getPhoto(result.photoIds[0] ?? "")).toMatchObject({
+      source: { attemptId: `${RUN_ID}:slot-1#2` },
+      qa: { pdq: "c".repeat(64), faceCos: 0.71, headRatio: 0.3 },
+    });
+  });
+
+  test("gates see the slot, the attempt id and the image, and run in order: a failing first gate spares the second", async () => {
+    const run = await newRun(1);
+    const first = gate("pdq", () => ({ verdict: "reject", reason: "duplicate" }));
+    const second = gate("face", () => ({ verdict: "pass" }));
+    await start(run, { gates: [first, second] }).end;
+
+    expect(first.inputs[0]).toMatchObject({ runId: RUN_ID, jobId: JOB_ID, avatarId, attemptId: `${RUN_ID}:slot-1#1`, scope: SCOPE, slot: slotOf(run, 1), image: { mediaType: "image/png", width: 1, height: 1 } });
+    expect(first.inputs[0]?.budget).toBe(budget);
+    expect(first.inputs[0]?.priceBook).toBeInstanceOf(PriceBook);
+    expect(second.inputs).toHaveLength(0);
+  });
+
+  test("a gate's reject drops the photo and ends the slot without retrying", async () => {
+    const run = await newRun(1);
+    const qa = gate("age", () => ({ verdict: "reject", reason: "not clearly adult" }));
+    const { end, sent } = start(run, { gates: [qa] });
+
+    expect(await end).toEqual({ status: "done", photoIds: [], failedSlots: 1 });
+    expect(sent).toHaveLength(1);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(1); // the master alone
+    expect((await journal()).find((e) => e.type === "slot")).toMatchObject({ status: "failed", error: { code: "QA_REJECTED" } });
+  });
+
+  test("a gate that throws stops the run: the job fails and no request is sent after it", async () => {
+    const run = await newRun(6);
+    let callsAtThrow = -1;
+    let harness: Harness | null = null;
+    const qa = gate("face", () => {
+      callsAtThrow = harness?.net.imageCalls().length ?? -1;
+      throw new Error("the face model could not be loaded");
+    });
+    harness = start(run, { gates: [qa], pool: new NetworkPool({ max: 1 }) });
+
+    expect(await harness.end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(callsAtThrow).toBeGreaterThan(0);
+    // An attempt already reserved when the run stopped is asked beforeSend and released unsent (review L1).
+    expect(harness.net.imageCalls()).toHaveLength(callsAtThrow);
+    // An image already on its way when the run stopped is dropped: no gate (a paid one would be a new request) and no photo.
+    expect(qa.inputs).toHaveLength(1);
+    const outcomes = (await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []));
+    expect(outcomes[0]).toBe("failed");
+    expect(outcomes.slice(1).every((o) => o === "dropped" || o === "aborted")).toBe(true);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(1); // the master alone
+  });
+
+  test("a paid gate that ignores the cancel does not keep its network slot: the slot is freed as the cancel lands (review round 3, L-c)", async () => {
+    const run = await newRun(1);
+    const pool = new NetworkPool({ max: 2 });
+    const controller = new AbortController();
+    let checking = false;
+    const stuck = gate(
+      "age",
+      () => {
+        checking = true;
+        return new Promise<QaVerdict>(() => {});
+      },
+      { paid: true },
+    );
+    const { end } = start(run, { gates: [stuck], pool, signal: controller.signal });
+    await until(() => checking, "the paid gate's check");
+    expect(pool.active).toBe(1);
+
+    controller.abort(new Error("cancelled by the user"));
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(pool.active).toBe(0);
+  });
+
+  test("a paid gate runs inside a network slot, a free one inside the CPU pool", async () => {
+    const run = await newRun(1);
+    const pool = new NetworkPool({ max: 2 });
+    let activeInFree = -1;
+    let activeInPaid = -1;
+    const free = gate("pdq", () => {
+      activeInFree = pool.active;
+      return { verdict: "pass" };
+    });
+    const paid = gate(
+      "age",
+      () => {
+        activeInPaid = pool.active;
+        return { verdict: "pass" };
+      },
+      { paid: true },
+    );
+    await start(run, { gates: [free, paid], pool }).end;
+
+    expect(activeInFree).toBe(0);
+    expect(activeInPaid).toBe(1);
+    expect(pool.active).toBe(0);
+  });
+
+  test("a gate that outlives its timeout is read as broken: the run stops, nothing more is sent, and the image in flight then is dropped", async () => {
+    const run = await newRun(3);
+    const hung = gate("face", () => new Promise<QaVerdict>(() => {}), { timeoutMs: 30 });
+    // Slot 2's image is still on its way when slot 1's gate times out; slot 3 waits for the network slot.
+    const net = network({
+      image: async (_call, n) => {
+        if (n > 1) await new Promise((resolve) => setTimeout(resolve, 150));
+        return imageReply();
+      },
+    });
+    const { end } = start(run, { net, gates: [hung], pool: new NetworkPool({ max: 1 }) });
+
+    const result = await end;
+    expect(result).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(result.status === "failed" ? result.error.detail : "").toContain('the QA gate "face" could not run: it took longer than 30 ms');
+    expect(net.imageCalls()).toHaveLength(2);
+    expect(hung.inputs).toHaveLength(1);
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["failed", "dropped"]);
+  });
+
+  test("a cancel while a gate runs drops the paid image (journaled dropped, never aborted) and leaves the slot open", async () => {
+    const run = await newRun(1);
+    const controller = new AbortController();
+    let checking = false;
+    const slow = gate("face", (input) => {
+      checking = true;
+      return new Promise<QaVerdict>((_resolve, reject) => input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true }));
+    });
+    const { end } = start(run, { gates: [slow], signal: controller.signal });
+    await until(() => checking, "the gate's check");
+    controller.abort(new Error("cancelled by the user"));
+
+    expect(await end).toEqual({ status: "cancelled" });
+    const events = await journal();
+    expect(events.filter((e) => e.type === "attempt").map((e) => (e.type === "attempt" ? e.outcome : null))).toEqual(["dropped"]);
+    expect(events.some((e) => e.type === "slot")).toBe(false);
+  });
+});
+
+// ---------- a fatal error does not waste images already paid for (review M1) ----------
+
+describe("images that arrive after a fatal error elsewhere", () => {
+  /** Slot 1's request answers a paid 2xx that cannot be used (fatal) at once; slot 2's image arrives just after. */
+  function lateArrival() {
+    return network({
+      image: async (_call, n) => {
+        if (n === 1) return { status: 200, body: "not an image" };
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return imageReply();
+      },
+    });
+  }
+
+  test("are still stored through free gates, and nothing new is sent", async () => {
+    const run = await newRun(4);
+    const pdq = gate("pdq", () => ({ verdict: "pass" }));
+    const { end, net } = start(run, { net: lateArrival(), gates: [pdq], pool: new NetworkPool({ max: 2 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(net.imageCalls()).toHaveLength(2);
+    expect(pdq.inputs).toHaveLength(1);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(2); // the master and the late arrival
+    expect((await journal()).filter((e) => e.type === "slot")).toEqual([expect.objectContaining({ slotIndex: 2, status: "done" })]);
+  });
+
+  test("are dropped when a gate is paid: a paid gate would be a new request after the stop", async () => {
+    const run = await newRun(4);
+    const age = gate("age", () => ({ verdict: "pass" }), { paid: true });
+    const { end } = start(run, { net: lateArrival(), gates: [age], pool: new NetworkPool({ max: 2 }) });
+
+    expect(await end).toMatchObject({ status: "failed" });
+    expect(age.inputs).toHaveLength(0);
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toContain("dropped");
+    expect(library.photosByAvatar(avatarId)).toHaveLength(1);
+  });
+
+  test("an image billed above its worst case is kept, and the run stops with SETTLE_ABOVE_WORST", async () => {
+    const run = await newRun(2);
+    const { end, net } = start(run, { net: network({ image: () => imageReply(0.06) }), pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "SETTLE_ABOVE_WORST" } });
+    expect(net.imageCalls()).toHaveLength(1);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(2);
+  });
+});
+
+// ---------- the network pool ----------
+
+describe("the network pool", () => {
+  test("a 429 shrinks the pool: with three in flight and the limit down to two, one finishing does not let a fourth start", async () => {
+    const run = await newRun(6);
+    const pool = new NetworkPool({ max: 3 });
+    // Every image request waits for the test to let it answer, except the third, which is rate limited at once
+    // (Retry-After 0: the client retries it inside its own attempt, and that retry waits too).
+    const gates: (() => void)[] = [];
+    const net = network({
+      image: async (_call, n) => {
+        if (n === 3) return { status: 429, headers: { "retry-after": "0" }, body: { error: { message: "rate limited" } } };
+        await new Promise<void>((resolve) => gates.push(resolve));
+        return imageReply();
+      },
+    });
+    const { end, started, progress } = start(run, { net, pool });
+    await until(() => net.imageCalls().length === 4 && gates.length === 3, "three requests in flight, the third one's retry among them");
+    expect(started).toHaveLength(3);
+    expect(pool.limit).toBe(2);
+
+    // Slot 1 answers and ends. At the old limit of three its slot would start a fourth attempt; at two it must not.
+    gates.shift()?.();
+    await until(() => progress.length === 1, "slot 1's end");
+    expect(pool.active).toBe(2);
+    expect(started).toHaveLength(3);
+
+    // The rest may go: the pool grows back as successes come in.
+    const releaseAll = setInterval(() => {
+      for (const release of gates.splice(0)) release();
+    }, 1);
+    try {
+      expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+    } finally {
+      clearInterval(releaseAll);
+    }
+  });
+
+  test("reportingTo tells the pool every status the fetch gets back and passes the response through", async () => {
+    const pool = new NetworkPool({ max: 2 });
+    const inner: OpenRouterFetch = async () => ({ status: 429, headers: { get: () => null }, body: null });
+    const response = await reportingTo(pool, inner)("https://openrouter.ai/api/v1/images", { method: "POST", headers: {}, redirect: "error", signal: new AbortController().signal });
+    expect(response.status).toBe(429);
+    expect(pool.limit).toBe(1);
+  });
+});
+
+// ---------- cancel ----------
+
+describe("cancel", () => {
+  test("mid-flight: no request after the cancel, in-flight reserves stay open at their worst case, queued slots are never reserved", async () => {
+    const run = await newRun(5);
+    const controller = new AbortController();
+    const net = network({ image: () => ({ hang: true }) });
+    const { end } = start(run, { net, signal: controller.signal, pool: new NetworkPool({ max: 2 }) });
+    await until(() => net.imageCalls().length === 2, "two image requests in flight");
+
+    controller.abort(new Error("cancelled by the user"));
+    const result = await end;
+
+    expect(result).toEqual({ status: "cancelled" });
+    expect(net.imageCalls()).toHaveLength(2);
+    expect(reservedIds().filter((id) => id.includes(":slot-"))).toEqual([`${RUN_ID}:slot-1#1`, `${RUN_ID}:slot-2#1`]);
+    expect(ledger.openReserves().map((r) => [r.attemptId, r.worstMicros])).toEqual([
+      [`${RUN_ID}:slot-1#1`, IMAGE_WORST],
+      [`${RUN_ID}:slot-2#1`, IMAGE_WORST],
+    ]);
+    expect(budget.inFlightCount()).toBe(0);
+    const events = await journal();
+    expect(events.filter((e) => e.type === "attempt").map((e) => (e.type === "attempt" ? e.outcome : null))).toEqual(["aborted", "aborted"]);
+    expect(events.at(-1)).toMatchObject({ type: "job", status: "cancelled" });
+  });
+
+  test("before the first image: the writer's reserve stays open and no image is ever reserved", async () => {
+    const run = await newRun(3);
+    const controller = new AbortController();
+    const net = network({ writer: () => ({ hang: true }) });
+    const { end } = start(run, { net, signal: controller.signal });
+    await until(() => net.writerCalls().length === 1, "the writer request");
+
+    controller.abort(new Error("cancelled by the user"));
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.imageCalls()).toHaveLength(0);
+    expect(ledger.openReserves().map((r) => [r.attemptId, r.worstMicros])).toEqual([[`${RUN_ID}:writer-1#1`, WRITER_WORST]]);
+  });
+
+  // Review round 3 (b): an image paid for when the user cancels is kept, through free gates only.
+  /** A client whose first image arrives just as the user cancels: the 2xx is settled, then the cancel lands. */
+  function cancelAsFirstImageArrives(controller: AbortController): RunJobDeps["generateImage"] {
+    const { client } = makeClient(network().fetch);
+    let first = true;
+    return async (params) => {
+      const result = await client.generateImage(params);
+      if (first && result.status === "ok") {
+        first = false;
+        controller.abort(new Error("cancelled by the user"));
+      }
+      return result;
+    };
+  }
+
+  test("an image that arrives as the user cancels is still kept: its free gates run, not aborted by the cancel", async () => {
+    const run = await newRun(2);
+    const controller = new AbortController();
+    const abortedDuringCheck: boolean[] = [];
+    const pdq = gate("pdq", (input) => {
+      abortedDuringCheck.push(input.signal.aborted);
+      return { verdict: "pass", qa: { pdq: "d".repeat(64) } };
+    });
+    const { end, net } = start(run, { gates: [pdq], signal: controller.signal, pool: new NetworkPool({ max: 1 }), generateImage: cancelAsFirstImageArrives(controller) });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(abortedDuringCheck).toEqual([false]);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(2); // the master and the kept image
+    expect((await journal()).filter((e) => e.type === "slot")).toEqual([expect.objectContaining({ slotIndex: 1, status: "done" })]);
+    expect(net.imageCalls()).toHaveLength(0); // slot 2 never started: nothing is sent after the cancel
+  });
+
+  test("...but it is dropped when a paid gate is registered: after a cancel nothing more is sent, and invariant 8 needs every gate", async () => {
+    const run = await newRun(2);
+    const controller = new AbortController();
+    const age = gate("age", () => ({ verdict: "pass" }), { paid: true });
+    const { end } = start(run, { gates: [age], signal: controller.signal, pool: new NetworkPool({ max: 1 }), generateImage: cancelAsFirstImageArrives(controller) });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(age.inputs).toHaveLength(0);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(1);
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
+  });
+
+  test("a free gate that hangs after the cancel is cut off by its own short timeout: the image is dropped and the run ends cancelled", async () => {
+    const run = await newRun(2);
+    const controller = new AbortController();
+    const hung = gate("face", () => new Promise<QaVerdict>(() => {}), { timeoutMs: 30 });
+    const { end } = start(run, { gates: [hung], signal: controller.signal, pool: new NetworkPool({ max: 1 }), generateImage: cancelAsFirstImageArrives(controller) });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(hung.inputs).toHaveLength(1);
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
+  });
+});
+
+// ---------- money ----------
+
+describe("the run's cap", () => {
+  /** One slot whose every image fails QA: the writer (settled at exactly its worst case) and three image attempts (each billed at its worst). */
+  async function capRun(cap: number) {
+    const run = await newRun(1, { cap });
+    const net = network({ image: () => imageReply(IMAGE_WORST / 1_000_000), writer: (call) => writerReply(call, WRITER_WORST / 1_000_000) });
+    const qa = gate("face", () => ({ verdict: "retry", reason: "no face" }));
+    return start(run, { net, gates: [qa] });
+  }
+
+  test("exactly at the cap every allowed attempt is sent", async () => {
+    const { end, sent } = await capRun(WRITER_WORST + 3 * IMAGE_WORST);
+    expect(await end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect(sent).toHaveLength(3);
+    expect(scopeCommitted()).toBe(WRITER_WORST + 3 * IMAGE_WORST);
+  });
+
+  test("one micro under it, the last attempt is refused before it is sent and the run stops with RUN_CAP_EXCEEDED", async () => {
+    const cap = WRITER_WORST + 3 * IMAGE_WORST - 1;
+    const { end, sent } = await capRun(cap);
+    expect(await end).toMatchObject({ status: "failed", error: { code: "RUN_CAP_EXCEEDED" } });
+    expect(sent).toHaveLength(2);
+    expect(reservedIds()).not.toContain(`${RUN_ID}:slot-1#3`);
+    expect(scopeCommitted()).toBeLessThanOrEqual(cap);
+  });
+
+  test("six slots in flight racing for the last of the cap: exactly what fits is reserved, never one more", async () => {
+    const cap = WRITER_WORST + 4 * IMAGE_WORST;
+    const run = await newRun(6, { cap });
+    let inFlight = 0;
+    let peak = 0;
+    // A barrier: no reply until four requests are in flight together (bounded, should fewer ever arrive).
+    const waiting: (() => void)[] = [];
+    const net = network({
+      image: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 2_000);
+          waiting.push(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+          if (waiting.length >= 4) for (const release of waiting.splice(0)) release();
+        });
+        inFlight--;
+        return imageReply(IMAGE_WORST / 1_000_000);
+      },
+      writer: (call) => writerReply(call, WRITER_WORST / 1_000_000),
+    });
+    const { end, sent } = start(run, { net, pool: new NetworkPool({ max: 6 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "RUN_CAP_EXCEEDED" } });
+    expect(sent).toHaveLength(4);
+    expect(peak).toBe(4);
+    expect(scopeCommitted()).toBe(cap);
+  });
+
+  test("a moderation refusal is settled at zero, so a slot's fallback still fits the room its refusal held", async () => {
+    // Writer + one image at the worst case exactly: the refusal's reserve is released by its free settle.
+    const cap = WRITER_WORST + IMAGE_WORST;
+    const run = await newRun(1, { cap });
+    const net = network({ image: (call) => (modelOf(call) === PRIMARY ? MODERATION : imageReply(0.045)), writer: (call) => writerReply(call, WRITER_WORST / 1_000_000) });
+    const { end, sent } = start(run, { net });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(sent).toHaveLength(2);
+    expect(scopeCommitted()).toBeLessThanOrEqual(cap);
+  });
+});
+
+// ---------- failures ----------
+
+describe("failures", () => {
+  test("a writer chunk rejected on every attempt fails the run cleanly: no image request, the writer's money stays settled", async () => {
+    const run = await newRun(3);
+    const net = network({ writer: () => ({ status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) }) });
+    const { end } = start(run, { net });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(net.imageCalls()).toHaveLength(0);
+    expect(ledgerLines().filter((l) => l.type === "settle").map((l) => [l.attemptId, l.costMicros])).toEqual([
+      [`${RUN_ID}:writer-1#1`, 2_000],
+      [`${RUN_ID}:writer-1#2`, 2_000],
+    ]);
+    expect(ledger.openReserves()).toEqual([]);
+    expect((await journal()).some((e) => e.type === "prompts")).toBe(false);
+    // No job will ever write that chunk: its slots end, so the run is not offered for a resume that cannot help.
+    expect((await journal()).filter((e) => e.type === "slot").map((e) => (e.type === "slot" ? e.status : null))).toEqual(["failed", "failed", "failed"]);
+  });
+
+  test("a fatal error (401) stops the run: no new request after it", async () => {
+    const run = await newRun(4);
+    const net = network({ image: () => ({ status: 401, body: { error: { message: "No auth credentials found" } } }) });
+    const { end, sent } = start(run, { net, pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "AUTH_INVALID" } });
+    expect(sent).toHaveLength(1);
+  });
+
+  test("an avatar without a usable master (a draft) fails the run before anything is sent", async () => {
+    const draft = await library.createAvatar({ name: "Draft", age: 25, traits: { hair: "chestnut" }, descriptor: DESCRIPTOR.text });
+    const run = await newRun(2, { avatar: draft.id });
+    const { end, net } = start(run);
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "NOT_FOUND" } });
+    expect(net.calls).toHaveLength(0);
+    expect(ledgerLines()).toEqual([]);
+  });
+
+  test("a master whose file no longer matches its sidecar fails the run before anything is sent", async () => {
+    const run = await newRun(2);
+    const master = library.getAvatar(avatarId)?.masterPhotoId ?? "";
+    const photo = library.getPhoto(master);
+    await writeFile(join(dir, "library", "avatars", avatarId, "photos", photo?.file ?? ""), "rotten");
+    const { end, net } = start(run);
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(net.calls).toHaveLength(0);
+  });
+});
+
+// ---------- crash and resume ----------
+
+describe("crash and resume", () => {
+  test("after an abrupt stop mid-run and a resume, no attempt id is sent twice and the run's cap is never passed", async () => {
+    const run = await newRun(4);
+    const cap = run.capMicros;
+
+    // Process A: the first two images arrive; the next two are in flight when the process dies.
+    const sentA: string[] = [];
+    const netA = network();
+    const clientA = makeClient(netA.fetch).client;
+    let images = 0;
+    const dying: RunJobDeps["generateImage"] = async (params) => {
+      if (++images <= 2) {
+        const result = await clientA.generateImage(params);
+        sentA.push(params.attemptId);
+        return result;
+      }
+      // What the client does before its request leaves: the reserve, on disk. Then the process is gone.
+      const reserved = await params.budget.tryReserve({ attemptId: params.attemptId, jobId: params.jobId, scope: params.scope, model: params.model, worstMicros: IMAGE_WORST });
+      if (!reserved.ok) throw new Error("the reserve was refused");
+      sentA.push(params.attemptId);
+      return new Promise<ImageResult>(() => {});
+    };
+    const a = start(run, { generateImage: dying, pool: new NetworkPool({ max: 2 }) });
+    void a.end;
+    await until(() => sentA.length === 4, "four image requests from process A");
+    await until(() => library.photosByAvatar(avatarId).length === 3, "two photos stored by process A");
+
+    // Process B: a fresh ledger, Budget and library over the same files. Its
+    // wall clock is later; the open reserves wait for a reconcile first (invariant 4).
+    const later = () => NOW + 10 * 60_000;
+    const b = await openMoney(later);
+    expect(await b.budget.tryReserve({ attemptId: "probe", jobId: "probe", scope: SCOPE, model: PRIMARY, worstMicros: 1 })).toMatchObject({ ok: false, reason: "RECONCILE_REQUIRED" });
+    mono = 10 * 60_000;
+    const reconciled = await reconcile(b.budget, { fetchCredits: async () => ({ data: { total_usage: 1 } }) });
+    expect(reconciled.ok && [...reconciled.closedAttempts].sort()).toEqual([`${RUN_ID}:slot-3#1`, `${RUN_ID}:slot-4#1`]);
+    const libraryB = await openTheLibrary("libb");
+
+    const resumed = start(run, { budget: b.budget, library: libraryB, jobId: "job-00000002" });
+    const result = await resumed.end;
+
+    const everySent = [...sentA, ...resumed.sent];
+    expect(new Set(everySent).size).toBe(everySent.length);
+    expect(resumed.sent.sort()).toEqual([`${RUN_ID}:slot-3#2`, `${RUN_ID}:slot-4#2`]);
+    expect(resumed.net.writerCalls()).toHaveLength(0);
+    expect(result).toMatchObject({ status: "done", failedSlots: 0 });
+    if (result.status === "done") expect(result.photoIds).toHaveLength(4);
+    expect(resumed.progress.map((p) => [p.done, p.total])).toEqual([
+      [3, 4],
+      [4, 4],
+    ]);
+    expect(scopeCommitted(b.ledger)).toBeLessThanOrEqual(cap);
+  });
+
+  test("a resume after a crash before the prompts were written asks the writer again under its next id, from the persisted plan", async () => {
+    const run = await newRun(2);
+    // Process A reserved the writer's first attempt and died.
+    const reserved = await budget.tryReserve({ attemptId: `${RUN_ID}:writer-1#1`, jobId: JOB_ID, scope: SCOPE, model: TEXT, worstMicros: WRITER_WORST });
+    if (!reserved.ok) throw new Error("the reserve was refused");
+    const b = await openMoney(() => NOW + 10 * 60_000);
+    mono = 10 * 60_000;
+    await reconcile(b.budget, { fetchCredits: async () => ({ data: { total_usage: 1 } }) });
+
+    const resumed = start(run, { budget: b.budget, library: await openTheLibrary("libb"), jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+
+    expect(reservedIds().filter((id) => id.includes(":writer-"))).toEqual([`${RUN_ID}:writer-1#1`, `${RUN_ID}:writer-1#2`]);
+    const asked = resumed.net.writerCalls()[0];
+    expect(asked === undefined ? [] : slotsAskedFor(asked)).toEqual(run.scenes.slots.map((s) => s.slotIndex));
+  });
+
+  /** A first job that wrote the prompts and was cancelled with its one image in flight. */
+  async function cancelledAfterPrompts(run: RunPlan): Promise<void> {
+    const controller = new AbortController();
+    const net = network({ image: () => ({ hang: true }) });
+    const first = start(run, { net, signal: controller.signal });
+    await until(() => net.imageCalls().length === 1, "the image request");
+    controller.abort(new Error("cancelled by the user"));
+    await first.end;
+  }
+
+  test("review L3: a resume re-assembles every prompt from the journal's writer sentences; a prompt edited in the journal is never sent", async () => {
+    const run = await newRun(1);
+    await cancelledAfterPrompts(run);
+    await library.appendJournal(RUN_ID, { type: "prompts", prompts: [{ slotIndex: 1, prompt: "TAMPERED prompt from the journal" }], at: new Date(NOW).toISOString() }, RunEventSchema);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+    const prompt = resumed.net.imageCalls()[0]?.json().prompt;
+    expect(prompt).not.toContain("TAMPERED");
+    expect(prompt).toContain(`${SENTENCE} (slot 1)`);
+  });
+
+  test("review L3: a writer sentence edited in the journal to break today's rules stops the resume before anything is sent", async () => {
+    const run = await newRun(1);
+    await cancelledAfterPrompts(run);
+    await library.appendJournal(RUN_ID, { type: "writer", chunk: 1, sentences: [{ slotIndex: 1, sentence: "A teenage girl laughs at the kitchen counter." }], at: new Date(NOW).toISOString() }, RunEventSchema);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(resumed.net.calls).toHaveLength(0);
+  });
+
+  test("review L15: a crash between a refusal's settle and its journal line never resends that prompt to the primary", async () => {
+    const run = await newRun(1);
+    const clientA = makeClient(network({ image: () => MODERATION }).fetch).client;
+    const dying: RunJobDeps["generateImage"] = async (params) => {
+      const result = await clientA.generateImage(params);
+      // The refusal is settled in the ledger; the process dies before the journal hears of it.
+      return result.status === "refused" ? new Promise<ImageResult>(() => {}) : result;
+    };
+    const a = start(run, { generateImage: dying });
+    void a.end;
+    await until(() => ledger.closeOf(`${RUN_ID}:slot-1#1`) !== undefined, "the refusal's settle");
+
+    const resumed = start(run, { jobId: "job-00000002", net: network({ image: () => imageReply(0.045) }) });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(resumed.net.imageCalls().map(modelOf)).toEqual([FALLBACK_IMAGE_MODEL]);
+    expect(resumed.sent).toEqual([`${RUN_ID}:slot-1#2`]);
+  });
+});

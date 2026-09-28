@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import {
   AGE_CHECK_ALREADY_REFUSED_DETAIL,
@@ -26,11 +27,13 @@ import {
   type ReconcileResult,
   type ReconcileWarning,
   type ResponseMessage,
+  type RunSummary,
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
   type UnsequencedEvent,
   UNREADABLE_REASON_DETAIL,
+  MAX_LISTED_RUNS,
 } from "../shared/engine";
 import { downscaleToJpeg, MAX_SOURCE_PIXELS, preflightDownscale } from "../node/downscale";
 import { timeoutSignal, untilAborted } from "./money/timeoutSignal";
@@ -59,13 +62,20 @@ import { STUDIO_E2E } from "./buildFlags";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
 import { Ledger, type Scope } from "./money/ledger";
-import { PriceCache } from "./money/priceCache";
+import { PriceCache, type PricedBook } from "./money/priceCache";
 import type { PriceBook } from "./money/prices";
 import { loadPriceBook, OPENROUTER_API_BASE } from "./money/prices";
 import type { ReconcileResult as LedgerReconcileResult, ReconcileWarning as LedgerReconcileWarning } from "./money/reconcile";
 import { createOpenRouterClient, fromOpenRouterError, OpenRouterError, type OpenRouterClient, type OpenRouterFetch } from "./openrouter";
 import { priceFetchFrom } from "./openrouter/priceFetch";
 import { rawFileName, saveRawBody } from "./rawStore";
+import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
+import { buildRunPlan, RunPlanSchema, runEstimate, runPriceModels, sceneCategory, type RunPlan } from "./runs/plan";
+import { CpuPool, NetworkPool } from "./runs/pools";
+import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
+import { remainingEstimate, scopeCommitted } from "./runs/remaining";
+import { reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
+import { plan as planScenes } from "./scenes";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -111,6 +121,27 @@ export interface EngineDeps {
   downscaleImportPhoto?: (bytes: Uint8Array, maxSide: number, signal: AbortSignal) => Promise<Uint8Array>;
   /** M4: bounds each of the two import downscales (age check size, then describe size); IMPORT_DOWNSCALE_TIMEOUT_MS unless a test says otherwise. */
   importDownscaleTimeoutMs?: number;
+  /**
+   * T6: the QA gates every photo run's paid images pass through, in order
+   * (runs/qa.ts). None by default: T7a (PDQ, the optional age check) and T7b
+   * (the face gate) wire theirs in here.
+   */
+  qaGates?: readonly QaGate[];
+  /** T6: local work in flight at once (the QA gates); `defaultCpuPoolSize()` unless a test says otherwise. */
+  cpuPoolSize?: number;
+}
+
+/** Local work in flight at once: the cores but one for the engine's own event loop, at most 4, at least 1. */
+export function defaultCpuPoolSize(): number {
+  return Math.max(1, Math.min(4, availableParallelism() - 1));
+}
+
+/** The avatar's recent scene history the planner steers away from (location + outfit pairs), about two runs' worth. */
+export const RECENT_PAIRS = 40;
+
+/** A run's planner seed: fixed by its id, so the plan is reproducible from the run alone. */
+function seedOf(runId: string): number {
+  return Number.parseInt(createHash("sha256").update(runId).digest("hex").slice(0, 8), 16);
 }
 
 function detailOf(message: string): string {
@@ -264,6 +295,20 @@ interface RunningCandidates {
   done: number;
 }
 
+/** A job of a photo run while it runs: its persisted plan and what it was started or resumed with. */
+interface RunningRun {
+  jobId: string;
+  plan: RunPlan;
+  descriptor: AvatarDescriptor;
+  /** The key the job was started with: a 401 marks this key rejected, not one stored since. */
+  key: string;
+  budget: Budget;
+  /** The library the run lives in; a library switch is refused while the job runs. */
+  library: Library;
+  priceBook: PriceBook;
+  signal: AbortSignal;
+}
+
 /** A library, the identity of its folder, and the whole avatar folders quarantined (bounded) when it was opened. */
 interface OpenedLibrary {
   library: Library;
@@ -369,6 +414,12 @@ export class Engine {
    * that would change one of them is refused with IN_FLIGHT.
    */
   readonly #busyAvatars = new Set<string>();
+  /** T6: paid requests of every photo run in flight at once (the settings' network concurrency); shrinks on a 429. */
+  readonly #networkPool: NetworkPool;
+  /** T6: local work of every photo run (the QA gates). */
+  readonly #cpuPool: CpuPool;
+  /** T6: the QA gates of every photo run; none until T7a/T7b wire theirs. */
+  readonly #qaGates: readonly QaGate[];
 
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
@@ -386,6 +437,9 @@ export class Engine {
     this.#money = money;
     this.#caps = caps;
     this.#rawDir = init.rawDir;
+    this.#networkPool = new NetworkPool({ max: init.settings.concurrency.network });
+    this.#cpuPool = new CpuPool(deps.cpuPoolSize ?? defaultCpuPoolSize());
+    this.#qaGates = deps.qaGates ?? [];
     const priceFetch = priceFetchFrom(deps.fetch);
     this.#prices = new PriceCache({
       load: (models) => loadPriceBook({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl, ...models }),
@@ -793,8 +847,352 @@ export class Engine {
           this.#importing = false;
         }
       }
+      case "runs.estimate": {
+        // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
+        this.#runnableAvatar(this.library, command.payload.avatarId);
+        const models = this.#avatarModels();
+        const imageAgeCheck = this.#settings.imageAgeCheck;
+        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, command.payload, imageAgeCheck);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate } };
+      }
+      case "runs.start": {
+        const { avatarId } = command.payload;
+        // Claimed before the first await, like generateCandidates: the library switch's race check relies on it.
+        this.#claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
+        this.#paidCommands++;
+        let launched = false;
+        try {
+          const result = await this.#startRun(command.payload);
+          launched = true;
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+        } finally {
+          // A launched run holds both until its job ends.
+          if (!launched) {
+            this.#paidCommands--;
+            this.#busyAvatars.delete(avatarId);
+          }
+        }
+      }
+      case "runs.cancel": {
+        const { runId } = command.payload;
+        const jobId = this.#jobs.runningJobOf(runId);
+        if (jobId !== null) this.#jobs.cancel(jobId);
+        else await this.#readRunPlan(this.library, runId);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { runId } };
+      }
+      case "runs.estimateResume": {
+        // Free: what a resume could still spend, at today's prices, within the cap the run has left.
+        const library = this.library;
+        const plan = await this.#readRunPlan(library, command.payload.runId);
+        const { estimate } = await this.#remaining(library, plan);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate } };
+      }
+      case "runs.resume": {
+        const { runId } = command.payload;
+        if (this.#jobs.runningJobOf(runId) !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: `run ${runId} is already running` });
+        // Counted before the first await (the run's avatar is only known once its plan is read): a library switch is refused from here on.
+        this.#paidCommands++;
+        let launched = false;
+        try {
+          const result = await this.#resumeRun(command.payload);
+          launched = true;
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+        } finally {
+          if (!launched) this.#paidCommands--;
+        }
+      }
+      case "runs.list":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { runs: await this.#listRuns() } };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
+    }
+  }
+
+  // ---------- photo runs (T6) ----------
+
+  /**
+   * The manifest of an avatar a run may make photos of: a saved, active
+   * avatar whose stored descriptor today's rules still accept. NOT_FOUND for
+   * an unknown id, a draft (no master yet) or an archived avatar;
+   * DESCRIPTOR_INVALID for a descriptor that has to be rewritten first.
+   */
+  #runnableAvatar(library: Library | null, avatarId: string): AvatarManifest {
+    const manifest = library?.getAvatar(avatarId);
+    if (manifest === undefined || manifest.status !== "active") throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved, active avatar ${avatarId} in the open library` });
+    this.#assertDescriptorReadable(manifest);
+    return manifest;
+  }
+
+  /**
+   * Invariant 8 (review M2): with the image age check on, every photo must
+   * pass it before it enters the library — a run cannot start, or resume,
+   * without the age gate among its QA gates. `imageAgeCheck` is the run's
+   * own mode (the settings' at start, the plan's on a resume).
+   */
+  #assertAgeGate(imageAgeCheck: ImageAgeCheck): void {
+    if (imageAgeCheck === "on" && !this.#qaGates.some((gate) => gate.name === AGE_GATE_NAME)) {
+      throw new EngineFailure({ code: "AGE_GATE_UNAVAILABLE", detail: "the image age check is on, but no age gate is wired into photo runs yet; turn it off in Settings to run" });
+    }
+  }
+
+  /** The ledger's record of attempt ids, for a run's fold (the one Budget's ledger). */
+  #ledgerView(budget: Budget): LedgerView {
+    return { reserveOf: (attemptId) => budget.ledger.reserveOf(attemptId), closeOf: (attemptId) => budget.ledger.closeOf(attemptId) };
+  }
+
+  /**
+   * A run's state as a resume would continue it, and what that resume could
+   * still spend (runs/remaining.ts): today's prices for its own models and
+   * age-check mode, never more than its cap leaves after what it committed.
+   * VALIDATION when every slot already ended.
+   */
+  async #remaining(library: Library | null, plan: RunPlan): Promise<{ state: RunState; estimate: Estimate; priced: PricedBook; budget: Budget }> {
+    const money = this.#money;
+    if (!money.ok) throw new EngineFailure({ code: money.unavailable.cause, detail: money.unavailable.detail });
+    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    const { budget } = money;
+    const { events } = await library.readJournal(plan.runId, RunEventSchema);
+    const ledger = this.#ledgerView(budget);
+    const state = foldRun(plan, { events, ...ledger, photos: library.photosByAvatar(plan.avatarId) });
+    if (state.slots.every((s) => s.end !== null)) throw new EngineFailure({ code: "VALIDATION", detail: `run ${plan.runId} has nothing left to resume: every slot already ended` });
+    const priced = await this.#prices.get(runPriceModels({ imageModel: plan.models.image, textModel: plan.models.text }, plan.imageAgeCheck));
+    const estimate = remainingEstimate(priced, plan, state, scopeCommitted(budget.ledger, { runId: plan.runId }), ledger);
+    return { state, estimate, priced, budget };
+  }
+
+  /**
+   * Every run of the open library, newest first (review M4): found on disk,
+   * so a window opened after a restart can offer a stopped run for a resume.
+   * A run whose plan or journal no longer reads is left out (and logged);
+   * its remaining worst case is null when prices cannot be loaded now.
+   * Everything is read at once, and prices load once per model set, all sets
+   * at once (review round 3, L-d): offline, the whole list takes one price
+   * load's timeout, never one per model set.
+   */
+  async #listRuns(): Promise<RunSummary[]> {
+    const library = this.library;
+    const money = this.#money;
+    if (library === null || !money.ok) return [];
+    const ledger = this.#ledgerView(money.budget);
+    const read = await Promise.all(
+      (await library.listRuns()).map(async (runId) => {
+        try {
+          const plan = await library.readRun(runId, RunPlanSchema);
+          const { events } = await library.readJournal(runId, RunEventSchema);
+          const state = foldRun(plan, { events, ...ledger, photos: library.photosByAvatar(plan.avatarId) });
+          return { runId, plan, state, models: runPriceModels({ imageModel: plan.models.image, textModel: plan.models.text }, plan.imageAgeCheck) };
+        } catch (error) {
+          console.warn(`studio engine: run ${runId} could not be read for the list (${messageOf(error, "unknown error")})`);
+          return null;
+        }
+      }),
+    );
+    const found = read.flatMap((run) => (run === null ? [] : [run]));
+    const modelSets = new Map(found.map((run) => [JSON.stringify(run.models), run.models]));
+    const priced = new Map(
+      await Promise.all(
+        [...modelSets].map(async ([key, models]) => [key, await this.#prices.get(models).catch(() => null)] as const),
+      ),
+    );
+    const runs = found.map(({ runId, plan, state, models }): RunSummary => {
+      const committed = scopeCommitted(money.budget.ledger, { runId });
+      const done = state.slots.filter((s) => s.end?.status === "done").length;
+      const failed = state.slots.filter((s) => s.end?.status === "failed").length;
+      const open = state.slots.length - done - failed;
+      const running = this.#jobs.runningJobOf(runId) !== null;
+      const book = priced.get(JSON.stringify(models)) ?? null;
+      return {
+        runId,
+        avatarId: plan.avatarId,
+        createdAt: plan.createdAt,
+        total: state.slots.length,
+        done,
+        failed,
+        open,
+        capMicros: plan.capMicros,
+        committedMicros: committed,
+        running,
+        resumable: !running && open > 0,
+        remainingWorstMicros: open === 0 ? 0 : book === null ? null : remainingEstimate(book, plan, state, committed, ledger).worstMicros,
+      };
+    });
+    runs.sort((a, b) => (a.createdAt === b.createdAt ? (a.runId < b.runId ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
+    return runs.slice(0, MAX_LISTED_RUNS);
+  }
+
+  /** A run's persisted plan; NOT_FOUND for a run the library does not have. */
+  async #readRunPlan(library: Library | null, runId: string): Promise<RunPlan> {
+    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    try {
+      return await library.readRun(runId, RunPlanSchema);
+    } catch (error) {
+      if (error instanceof LibraryError && (error.code === "run-not-found" || error.code === "invalid-id")) throw new EngineFailure({ code: "NOT_FOUND", detail: `no run ${runId} in the open library` });
+      throw error;
+    }
+  }
+
+  /**
+   * A new photo run. Checked before anything is spent, in createDraft's
+   * order: a usable key, a ledger that allows paid calls, an open library, an
+   * avatar that can get photos (active, a master to use as the face
+   * reference, a descriptor today's rules accept), the worst case the user
+   * accepted (PRICE_CHANGED, `>` like every paid command) and room in the
+   * month. Then the scenes are planned — steered away from the avatar's
+   * recent location + outfit pairs — and persisted with every attempt id
+   * pre-allocated as runs/<runId>/plan.json before the writer's first call
+   * (invariant 6). The run's cap is that accepted worst case, for its whole
+   * life. The job runs on after the answer.
+   */
+  async #startRun(payload: CommandPayload<"runs.start">): Promise<{ runId: string; jobId: string }> {
+    const key = this.#usableKey("start a photo run");
+    const budget = this.#paidBudget();
+    const library = await this.#liveLibrary();
+    const { avatarId, count, categories, resolution, poses } = payload;
+    const manifest = this.#runnableAvatar(library, avatarId);
+    if (library.referencePhoto(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` });
+    // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    this.#assertAgeGate(imageAgeCheck);
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck));
+    const estimate = runEstimate(priced, models, payload, imageAgeCheck);
+    Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
+
+    const runId = this.#deps.newId();
+    const jobId = this.#deps.newId();
+    const recent = await library.recentPairs(avatarId, RECENT_PAIRS).catch((error: unknown) => {
+      // A hint for the planner, never a reason to refuse a run: plan without it, and say so.
+      console.warn(`studio engine: avatar ${avatarId}'s scene history could not be read; planning without it (${messageOf(error, "unknown error")})`);
+      return [];
+    });
+    const scenes = planScenes({
+      seed: seedOf(runId),
+      count,
+      categories: categories.map(sceneCategory),
+      excludePairs: recent.map(({ location, outfit }) => ({ location, outfit })),
+      // Profile and back only when the run allows them (T5c, owner decision); selfie and mirror stay front or three-quarter.
+      poses,
+    });
+    const plan = buildRunPlan({
+      runId,
+      avatarId,
+      createdAt: new Date(this.#deps.clock()).toISOString(),
+      request: { avatarId, count, categories, resolution, poses },
+      imageAgeCheck,
+      models,
+      capMicros: estimate.worstMicros,
+      plannedWorstMicros: estimate.worstMicros,
+      scenes,
+    });
+    await library.createRun(runId, plan, RunPlanSchema);
+    this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, 0);
+    return { runId, jobId };
+  }
+
+  /**
+   * Resumes a stopped run (a cancel, a failure, or a crash of an earlier
+   * engine) from its persisted state: its plan.json, never re-planned, with
+   * its own cap, models and age-check mode; its journal; the ledger's
+   * reserves; and the photos already committed. Checked like a start, with
+   * the owner's consent to what it could still spend (review M3): the
+   * remaining worst case at today's prices, within what the cap leaves
+   * (PRICE_CHANGED when it rose above the accepted one), and room in the
+   * month for it. The cap itself is never raised. After a crash, the
+   * ledger's open reserves refuse this with RECONCILE_REQUIRED until the user
+   * reconciles (invariant 4). VALIDATION when every slot already ended.
+   */
+  async #resumeRun(payload: CommandPayload<"runs.resume">): Promise<{ runId: string; jobId: string }> {
+    const { runId } = payload;
+    const key = this.#usableKey("resume a photo run");
+    this.#paidBudget();
+    const library = await this.#liveLibrary();
+    const plan = await this.#readRunPlan(library, runId);
+    this.#claimAvatar(plan.avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
+    let launched = false;
+    try {
+      const manifest = this.#runnableAvatar(library, plan.avatarId);
+      this.#assertAgeGate(plan.imageAgeCheck);
+      const { state, estimate, priced, budget } = await this.#remaining(library, plan);
+      Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
+      Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
+      const done = state.slots.filter((s) => s.end !== null).length;
+      const jobId = this.#deps.newId();
+      this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, done);
+      launched = true;
+      return { runId, jobId };
+    } finally {
+      if (!launched) this.#busyAvatars.delete(plan.avatarId);
+    }
+  }
+
+  /** Registers the run's job under its own scope, capped by its plan, and runs it on after the answer. */
+  #launchRun(run: Omit<RunningRun, "signal">, done: number): void {
+    const { plan } = run;
+    const signal = this.#jobs.startRun(run.jobId, { runId: plan.runId, avatarId: plan.avatarId, total: plan.scenes.slots.length, done });
+    this.#caps.set(scopeKey({ runId: plan.runId }), plan.capMicros);
+    void this.#runPhotos({ ...run, signal });
+  }
+
+  /**
+   * Runs a registered run job to its end and announces it: money.changed,
+   * then job.done, job.failed or job.cancelled. Its cap, its avatar and the
+   * library switch are released first. Never rejects.
+   */
+  async #runPhotos(run: RunningRun): Promise<void> {
+    const { plan } = run;
+    let end: RunJobEnd;
+    try {
+      const client = this.#openRouter(run.key, reportingTo(this.#networkPool, this.#deps.fetch));
+      end = await runPhotoRun(
+        {
+          generateImage: (params) => client.generateImage(params),
+          chat: (params) => client.chat(params),
+          budget: run.budget,
+          priceBook: run.priceBook,
+          library: run.library,
+          pool: this.#networkPool,
+          cpu: this.#cpuPool,
+          gates: this.#qaGates,
+          now: () => new Date(this.#deps.clock()),
+          errorOf: engineErrorFrom,
+          onSlot: (progress) => this.#runSlotDone(run, progress),
+          warn: (line) => console.warn(line),
+        },
+        { plan, jobId: run.jobId, descriptor: run.descriptor, signal: run.signal },
+      );
+    } catch (error) {
+      end = { status: "failed", error: engineErrorFrom(error) };
+    }
+    this.#caps.delete(scopeKey({ runId: plan.runId }));
+    this.#paidCommands--;
+    this.#busyAvatars.delete(plan.avatarId);
+    try {
+      if (end.status === "failed" && end.error.code === "AUTH_INVALID") this.markKeyRejected(run.key);
+      this.#emitMoney();
+      const state = this.#jobs.finishRun(run.jobId, end);
+      const v = PROTOCOL_VERSION;
+      if (state?.status === "done" && state.result !== undefined) {
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.done", payload: { jobId: run.jobId, result: state.result } });
+      } else if (end.status === "failed") {
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.failed", payload: { jobId: run.jobId, error: end.error } });
+      } else if (end.status === "cancelled") {
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.cancelled", payload: { jobId: run.jobId } });
+      }
+    } catch (error) {
+      console.error(`studio engine: the end of run job ${run.jobId} could not be announced (${errorKind(error)})`);
+    }
+  }
+
+  /** A slot that ended: the progress moves on, and a stored photo changes its avatar's photo count. */
+  #runSlotDone(run: RunningRun, progress: { done: number; photoId: string | null }): void {
+    try {
+      if (progress.photoId !== null) this.#announceAvatarOrLog(run.library, run.plan.avatarId);
+      const payload = this.#jobs.progress(run.jobId, progress.done);
+      if (payload !== null) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "job.progress", payload });
+    } catch (error) {
+      // The slot's money and photo are already recorded; only its announcement failed.
+      console.error(`studio engine: a slot of run job ${run.jobId} could not be announced (${errorKind(error)})`);
     }
   }
 
@@ -810,7 +1208,7 @@ export class Engine {
       drafts: view.drafts.map((draft) => ({ ...draft, estimate: nextBatch })),
       unreadableAvatars: view.unreadable,
       unreadableTotal: view.unreadableTotal,
-      // Avatar jobs of this engine's life; run jobs come with T6.
+      // Avatar and photo run jobs of this engine's life.
       jobs: this.#jobs.states(),
       librarySwitchGeneration: this.#librarySwitchGeneration,
       notices: [...this.#notices],
@@ -1668,6 +2066,8 @@ export class Engine {
     this.#settings = { ...next, libraryPath: previous.libraryPath };
     const staged = this.#staged;
     this.#staged = new Map();
+    // Before any await, like every field but the library: a run's next request already waits on the new ceiling.
+    if (next.concurrency.network !== previous.concurrency.network) this.#networkPool.setMax(next.concurrency.network);
     if (this.#money.ok && next.monthlyBudgetMicros !== previous.monthlyBudgetMicros) {
       await this.#money.budget.setMonthlyBudget(next.monthlyBudgetMicros);
     }
@@ -1859,13 +2259,13 @@ export class Engine {
     return answer;
   }
 
-  /** A client for the current key and base URL; the key goes to OpenRouter only. */
-  #openRouter(key: string): OpenRouterClient {
+  /** A client for the current key and base URL; the key goes to OpenRouter only. `fetch` wraps the engine's own (a run's reports every status to the network pool). */
+  #openRouter(key: string, fetch: OpenRouterFetch = this.#deps.fetch): OpenRouterClient {
     return createOpenRouterClient({
       apiKey: key,
       baseUrl: this.#openRouterBaseUrl,
       allowBaseUrlOverride: STUDIO_E2E,
-      fetch: this.#deps.fetch,
+      fetch,
       // Only a paid 2xx that cannot be used is saved, already redacted: in
       // userData next to the ledger, so the evidence outlives a library move.
       saveRaw: (attemptId, text, keepBytes) => saveRawBody(this.#rawDir, attemptId, text, { keepBytes }),

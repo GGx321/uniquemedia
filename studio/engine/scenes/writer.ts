@@ -26,7 +26,7 @@ import { revealingWordsIn } from "./words";
  * Splits `slots` into chunks of at most `WRITER_CALL.slotsPerCall`, in
  * order, nothing dropped or duplicated. Pure position-based slicing (no
  * shuffling): for a given plan, the chunk boundaries are always the same,
- * which is what lets writerJob.ts's attempt ids
+ * which is what lets runs/writerPhase.ts's attempt ids
  * (`${runId}:writer-${chunkIndex}#N`) stay stable across a resume (T6).
  * Review round 2: `RunRequest.count` (studio/shared/engine/state.ts) allows
  * 1..100 photos per run, possibly all in one category, so a run's plan can
@@ -168,6 +168,11 @@ export interface WriterRefusal {
 }
 
 const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
+
+/** The refusal a paid answer without content gets: the next attempt is told it was empty. Fresh on every call. */
+export function emptyAnswerRefusal(): WriterRefusal {
+  return { problems: ["empty"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
+}
 
 function quotedList(words: readonly string[]): string {
   return words.map((w) => `"${w}"`).join(", ");

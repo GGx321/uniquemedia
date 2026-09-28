@@ -244,10 +244,19 @@ export function jobIdOf(response: ResponseMessage): string {
   return answer.result.jobId;
 }
 
-export async function until(condition: () => boolean, what = "the condition"): Promise<void> {
-  for (let i = 0; i < 600 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+/** Polls `condition` every 5 ms for up to `timeoutMs` (wall time, so a slow runner's timer drift cannot shorten it). */
+export async function until(condition: () => boolean, what = "the condition", timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
   if (!condition()) throw new Error(`timed out waiting for ${what}`);
 }
+
+/**
+ * How long `jobEnd` waits for a job's terminal event: a whole job (a writer
+ * call, every slot's ffmpeg reference and fsyncs) on a slow Windows runner
+ * takes far longer than one condition does (review L16).
+ */
+export const JOB_END_TIMEOUT_MS = 20_000;
 
 type Events = () => EventMessage[];
 const TERMINAL = new Set(["job.done", "job.failed", "job.cancelled"]);
@@ -255,7 +264,7 @@ const TERMINAL = new Set(["job.done", "job.failed", "job.cancelled"]);
 /** The job's terminal event (job.done, job.failed or job.cancelled), once it came. */
 export async function jobEnd(events: Events, jobId: string): Promise<EventMessage> {
   const find = () => events().find((e) => TERMINAL.has(e.type) && "jobId" in e.payload && e.payload.jobId === jobId);
-  await until(() => find() !== undefined, `the end of job ${jobId}`);
+  await until(() => find() !== undefined, `the end of job ${jobId}`, JOB_END_TIMEOUT_MS);
   const end = find();
   if (end === undefined) throw new Error("unreachable");
   return end;

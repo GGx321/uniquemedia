@@ -422,6 +422,13 @@ describe("request deadline", () => {
     expect(COMMAND_DEADLINE_MS["avatars.generateCandidates"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });
 
+  test.each(["runs.estimate", "runs.estimateResume", "runs.start", "runs.resume", "runs.list"] as const)(
+    "%s answers once its checks and a price load are done (a run's job runs on), so it waits as long as an estimate",
+    (type) => {
+      expect(COMMAND_DEADLINE_MS[type]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
+    },
+  );
+
   test("estimateRewriteDescriptor waits as long as an estimate", () => {
     expect(COMMAND_DEADLINE_MS["avatars.estimateRewriteDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });

@@ -716,3 +716,8 @@ test("avatars.pickImportPhoto: a fresh stage replaces an earlier one; only the n
     await client.request("avatars.importAvatar", { stagingId: first.stagingId, name: "Zoe", confirmedAiPersona: true, acceptedWorstMicros: worst }),
   ).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
 });
+
+test("runs.list answers an empty list through the validating client: the mock simulates no photo runs yet", async () => {
+  const { client } = makeMock({ imageAgeCheck: "off" });
+  expect(await unwrap(client.request("runs.list", {}))).toEqual({ runs: [] });
+});

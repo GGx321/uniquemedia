@@ -3,12 +3,18 @@ import type { AvatarTraits } from "../../shared/engine";
 import type { Scope } from "../money/ledger";
 import { WRITER_CALL } from "../money/estimate";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type Money, type Step } from "../openrouter/testing/fakes";
-import { plan } from "./planner";
-import type { PlanSlot } from "./schema";
-import { runWriterJob, type WriterJob } from "./writerJob";
+import { plan, type PlanSlot } from "../scenes";
+import { chunkSlots } from "../scenes/writer";
+import { writerAttemptIds } from "./plan";
+import { runWriterPhase, type WriterPhase } from "./writerPhase";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
+// The scene writer's rules through its one chunk loop, runs/writerPhase.ts's
+// runWriterPhase (moved here from scenes/writerJob.test.ts when the thin
+// runWriterJob wrapper went away, T6 review round 3, L-f), with a run's own
+// chunks and ids and nothing in the journal yet.
+//
 // T5b: the paid writer job. The plan's slots are split into chunks of at
 // most WRITER_CALL.slotsPerCall (review round 2: RunRequest.count allows 1..100
 // photos, possibly all in one category, and a single call for that many
@@ -27,7 +33,17 @@ function slots(count = 2): PlanSlot[] {
   return plan({ seed: 20260924, count, categories: ["home", "fitness"] }).slots;
 }
 
-function job(overrides: Partial<WriterJob> = {}): WriterJob {
+/** What the writer is given for a run: its ids, its scope and its slots — never the avatar. */
+interface WriterRun {
+  runId: string;
+  jobId: string;
+  scope: Scope;
+  slots: readonly PlanSlot[];
+  textModel: string;
+  signal: AbortSignal;
+}
+
+function job(overrides: Partial<WriterRun> = {}): WriterRun {
   return {
     runId: RUN_ID,
     jobId: RUN_ID,
@@ -69,10 +85,28 @@ afterEach(async () => {
   await money.cleanup();
 });
 
-function run(steps: Step[], j: WriterJob = job()) {
+/** The phase a run starts with: every chunk of its plan with the plan's own ids, nothing written yet. */
+function phaseFor(j: WriterRun): WriterPhase {
+  return {
+    jobId: j.jobId,
+    scope: j.scope,
+    textModel: j.textModel,
+    signal: j.signal,
+    slots: j.slots,
+    chunks: chunkSlots(j.slots).map((chunk, i) => ({ chunk: i + 1, slotIndexes: chunk.map((s) => s.slotIndex), attemptIds: writerAttemptIds(j.runId, i + 1) })),
+    sentences: new Map(),
+    writerDone: new Set(),
+    ledger: { reserveOf: (id) => money.ledger.reserveOf(id), closeOf: (id) => money.ledger.closeOf(id) },
+  };
+}
+
+function run(steps: Step[], j: WriterRun = job()) {
   const net = fakeFetch(steps);
   const { client } = makeClient(net.fetch);
-  const result = runWriterJob({ chat: client.chat, budget: money.budget, priceBook: money.priceBook }, j);
+  const result = runWriterPhase(
+    { chat: client.chat, budget: money.budget, priceBook: money.priceBook, acquire: async () => () => {}, onChunk: async () => {} },
+    phaseFor(j),
+  );
   return { net, result };
 }
 
@@ -244,12 +278,12 @@ test("attempt ids are unique and follow `${runId}:writer-${chunkIndex}#N`", asyn
 });
 
 // Extends the network canary idea (studio/engine/engine.canary.test.ts): the
-// writer only ever sees the plan's slots (WriterJob has no field for the
+// writer only ever sees the plan's slots (the phase has no field for the
 // avatar's traits or its free-text mood note at all), so no marker word from
 // it can ever reach the writer's request body.
 const MARKER_WORDS = ["zebra", "lantern", "marmalade"];
 
-test("a WriterJob has no field an avatar's traits could hide behind, and no request carries a marker word", async () => {
+test("the writer's phase has no field an avatar's traits could hide behind, and no request carries a marker word", async () => {
   const theSlots = slots(3);
   const theJob = job({ slots: theSlots });
 
@@ -265,7 +299,7 @@ test("a WriterJob has no field an avatar's traits could hide behind, and no requ
     marks: [],
     vibe: MARKER_WORDS.join(" "),
   };
-  expect(Object.keys(traits).some((key) => key in theJob)).toBe(false);
+  expect(Object.keys(traits).some((key) => key in theJob || key in phaseFor(theJob))).toBe(false);
 
   const { net, result } = run([reply(goodOutput(theSlots))], theJob);
   await result;

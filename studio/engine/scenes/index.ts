@@ -20,6 +20,7 @@ export { plan, placeMirrorShots, type ExcludedPair, type PlanInput } from "./pla
 export { drawPose, NO_EXTRA_POSES, POSE_WEIGHTS, type PoseAllowance } from "./poses";
 export {
   contradictsPose,
+  emptyAnswerRefusal,
   isTwoHanded,
   readWriterAnswer,
   revealingWordsIn,
@@ -35,5 +36,4 @@ export {
   type WriterRefusal,
   type WriterScene,
 } from "./writer";
-export { runWriterJob, type WriterJob, type WriterJobDeps, type WriterJobResult } from "./writerJob";
 export { assembleRun, assembleSlot, AssemblerRefusalError, type AssembledScene } from "./assembler";

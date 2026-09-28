@@ -159,4 +159,11 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // Sized like createDraft's descriptor part: the same job, the same attempt ceiling.
   "avatars.rewriteDescriptor": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  // T6: each answers once its checks, a price load and its plan or journal reads are done; a run's job runs on
+  // and reports by events.
+  "runs.estimate": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "runs.estimateResume": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "runs.start": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "runs.resume": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "runs.list": PRICE_FETCH_TIMEOUT_MS + 15_000,
 };

@@ -737,9 +737,12 @@ export class MockEngine implements EngineBridge {
       }
       case "photos.list":
         return this.ok(c, { photos: [] });
+      case "runs.list":
+        return this.ok(c, { runs: [] });
       case "runs.estimate":
       case "runs.start":
       case "runs.cancel":
+      case "runs.estimateResume":
       case "runs.resume":
         return this.fail(c, { code: "INTERNAL", detail: "photo runs are not simulated by the mock engine" });
       case "engine.snapshot":
