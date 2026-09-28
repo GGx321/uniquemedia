@@ -67,7 +67,24 @@ export const FACE_GATE_NAME = "face";
 export interface FaceQaGateDeps {
   /** The real one: studio/engine/face's `createFaceGate()`. Only `check` and `embed` are used — `dispose()` is the wiring's own concern (main.ts), not this adapter's. */
   faceGate: Pick<FaceGate, "check" | "embed">;
+  /** Re-review N11: how long a master-embedding computation may stay cached without settling before it is evicted. `EMBEDDING_COMPUTE_TIMEOUT_MS` unless a test overrides it. */
+  embeddingComputeTimeoutMs?: number;
 }
+
+/**
+ * Re-review N11: a master-embedding computation that never settles (a real
+ * decode/ORT hang, not merely a caller giving up) used to stay cached
+ * forever — `computeEmbedding`'s own eviction only ran on REJECTION
+ * (`promise.catch(...)`), so a promise that neither resolves nor rejects
+ * poisoned the avatarId+sha cache entry for the rest of this engine
+ * process's life: every later job for this avatar (a resume, a brand new
+ * run) would be handed the exact same hung promise and time out identically
+ * — forever, not just once. This bounds how long an entry may sit
+ * unsettled before it is evicted regardless, so a later job gets a fresh
+ * attempt; the original hung computation is not cancelled (nothing here can
+ * force that), it simply stops being trusted as the cache's own answer.
+ */
+export const EMBEDDING_COMPUTE_TIMEOUT_MS = 30_000;
 
 /** L7: the photo schema caps faceCos at [-1, 1] (schemas.ts); a rounding-step overflow past either edge would otherwise throw in Library.addPhoto and stop the run. */
 function clampCosine(similarity: number): number {
@@ -160,14 +177,23 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
       const decoded = await decodeImage(masterOriginal, internal.signal);
       return deps.faceGate.embed(decoded);
     })();
-    masterEmbeddings.set(avatarId, { sha256, promise });
-    promise.catch(() => {
+    const entry: CachedEmbedding = { sha256, promise };
+    masterEmbeddings.set(avatarId, entry);
+
+    function evictIfStillThis(): void {
       // Evict only if this exact attempt is still the cached one — a newer
       // attempt (a different sha256, or a fresh computation already
-      // replacing this failed one) must not be clobbered by a stale catch.
+      // replacing this one) must not be clobbered by a stale callback.
       const current = masterEmbeddings.get(avatarId);
-      if (current !== undefined && current.promise === promise) masterEmbeddings.delete(avatarId);
-    });
+      if (current === entry) masterEmbeddings.delete(avatarId);
+    }
+    promise.catch(evictIfStillThis);
+
+    // N11: a computation that never settles must not poison the cache
+    // forever — see EMBEDDING_COMPUTE_TIMEOUT_MS's own comment.
+    const evictTimer = setTimeout(evictIfStillThis, deps.embeddingComputeTimeoutMs ?? EMBEDDING_COMPUTE_TIMEOUT_MS);
+    promise.finally(() => clearTimeout(evictTimer)).catch(() => {}); // settled (either way) before the timer fired: no eviction needed from here.
+
     return promise;
   }
 

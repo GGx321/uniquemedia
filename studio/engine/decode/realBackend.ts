@@ -86,6 +86,16 @@ export async function createRealDecodeBackend(nodeModulesDir: string): Promise<D
   // an extension the way CommonJS `require()` does, and this failed loudly
   // in exactly that environment (the E2E smoke's packaged/unpackaged build)
   // with "Cannot find module ... Did you mean to import .../decode.js?".
+  // N13: both packages' own decode.d.ts types init() as taking a
+  // ModuleOptionOverrides object, never a precompiled WebAssembly.Module —
+  // the actual JS (decode.js's own init, this file's header already quotes
+  // it) accepts one at runtime (checked with `instanceof WebAssembly.Module`
+  // before treating the first argument as one), the .d.ts is simply out of
+  // date with the package's own real code. The cast is confined to this one
+  // import boundary, never an exported signature; every value that crosses
+  // it (decoded width/height/byteLength) is re-validated downstream anyway
+  // (wasmDecode.ts's own post-decode checks), so a wrong assumption here
+  // fails loudly there, not silently.
   const jpegDecoder = (await import("@jsquash/jpeg/decode.js")) as {
     default: (buffer: ArrayBuffer, options?: Record<string, unknown>) => Promise<RawDecoded>;
     init: (module?: WebAssembly.Module) => Promise<void>;

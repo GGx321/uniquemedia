@@ -57,8 +57,21 @@ function messageOf(error: unknown): string {
  * a plain, free command. `untilAborted` bounds the work even when it
  * ignores the signal itself (a hung native call), exactly the same shape
  * `runJob.ts`'s own `loadMaster()`/`prepareGates()` use.
+ *
+ * Re-review N14: the engine's own `port.on("message", ...)` listener is not
+ * registered until AFTER this resolves (`Engine.start()` runs right after
+ * it) — while `loadFaceGate()` is still in flight, the engine answers
+ * NOTHING, not even a free command. main's own default command deadline is
+ * `engineHost.ts`'s `REQUEST_TIMEOUT_MS`, 30 s. A bound at or above that
+ * would let a slow-but-eventually-successful load still be running when
+ * main's own first command already gave up as a bare `INTERNAL` timeout,
+ * with no information about why. 25 s stays comfortably below 30 s
+ * (normal load is roughly 1 s either way) so the engine has always either
+ * succeeded or already given up and started without a face gate — a real,
+ * informative `FACE_GATE_UNAVAILABLE` — before main's own deadline could
+ * fire on it.
  */
-const FACE_GATE_LOAD_TIMEOUT_MS = 60_000;
+const FACE_GATE_LOAD_TIMEOUT_MS = 25_000;
 
 type FaceGateLoad = { faceGate: FaceGate; decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> } | { error: string };
 

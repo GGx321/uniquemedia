@@ -236,6 +236,30 @@ describe("prepare() (H1: computes the master embedding eagerly, before any check
     expect(embedCalls).toBe(1);
   });
 
+  test("N11: a computation that never settles is evicted after embeddingComputeTimeoutMs — a LATER job gets a fresh attempt, not stuck forever", async () => {
+    let embedCalls = 0;
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({ embed: async () => (embedCalls++, MASTER_EMBEDDING) }),
+      embeddingComputeTimeoutMs: 20,
+    });
+
+    // The first caller's own decodeImage hangs forever (a real decode/ORT
+    // hang, not merely this caller giving up) — its own wait is bounded by
+    // its own signal, but the underlying computation is not.
+    const firstController = new AbortController();
+    setTimeout(() => firstController.abort(new Error("first caller gave up waiting")), 5);
+    const first = gate.prepare?.(prepareInput({ signal: firstController.signal, decodeImage: () => new Promise(() => {}) }));
+    await expect(first).rejects.toThrow("first caller gave up waiting");
+
+    // Past embeddingComputeTimeoutMs (20 ms): the cache entry must have been
+    // evicted, so a later job (a resume, a brand new run) gets a fresh
+    // computation — never the same permanently-hung promise, forever.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await gate.prepare?.(prepareInput({ decodeImage: async () => DECODED }));
+
+    expect(embedCalls).toBe(1); // the hung computation never actually called embed(); the fresh one did, exactly once.
+  });
+
   test("an already-aborted signal rejects prepare() immediately", async () => {
     const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
     const controller = new AbortController();
