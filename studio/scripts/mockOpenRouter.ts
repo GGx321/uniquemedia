@@ -48,6 +48,7 @@ import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { servedPoolImagePng } from "./distinctPattern";
+import { FACE_FIXTURE_PATH, facePoolImagePng } from "./facePool";
 
 const FIXTURES = join(import.meta.dirname, "../engine/money/fixtures");
 
@@ -71,7 +72,17 @@ function b64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
 }
 
-// ---------- distinct images (T6's kill-and-resume scenario) ----------
+// ---------- a real fixture face (T7b: proving the face gate in the packaged E2E smoke) ----------
+
+let faceFixtureCache: Uint8Array | null = null;
+
+/** The same fixture parity.test.ts pins to the OpenCV/nativeImage numbers, served as the mock avatar's master/candidate portrait when `faceFixture` is on. */
+function faceFixturePng(): Uint8Array {
+  faceFixtureCache ??= readFileSync(FACE_FIXTURE_PATH);
+  return faceFixtureCache;
+}
+
+// ---------- distinct images (T6's kill-and-resume scenario; T7b's face-composited variant) ----------
 
 /**
  * Every distinct image up front (never mid-request, so nothing adds latency
@@ -82,6 +93,18 @@ function b64(bytes: Uint8Array): string {
  */
 function buildDistinctPool(size: number): Uint8Array[] {
   return Array.from({ length: size }, (_, i) => servedPoolImagePng(i));
+}
+
+/**
+ * T7b: the same pool, but every image also carries the fixture face
+ * (`facePool.ts`'s `facePoolImagePng`) composited onto its own PDQ-distinct
+ * background — so a run with the face gate on gets a detectable, matching
+ * face on every image instead of retrying every front/three-quarter slot
+ * forever. distinctPattern.test.ts's own extension proves both properties
+ * hold (PDQ-distinct, face-matching) for exactly this function's output.
+ */
+function buildFacePool(size: number): Uint8Array[] {
+  return Array.from({ length: size }, (_, i) => facePoolImagePng(i));
 }
 
 // ---------- the scene writer (schema "scene_sentences") ----------
@@ -201,6 +224,18 @@ export interface MockOpenRouterOptions {
    * default: the avatar and import scenarios do not need it.
    */
   distinctImages?: boolean;
+  /**
+   * T7b: serves a real fixture face (studio/engine/face/fixtures) instead of
+   * the faceless mandelbrot portrait — the only way a run with the face gate
+   * on can pass a front/three-quarter slot at all. The avatar's master and
+   * candidate portraits become the fixture face directly; with
+   * `distinctImages` also on, the run's own pool composites that SAME face
+   * onto each PDQ-distinct background (`facePool.ts`) instead of serving the
+   * bare pattern. Off by default: every scenario that never turns the face
+   * gate on (avatar creation, import, T6's own kill-and-resume proof) has no
+   * need for it, and the bare mandelbrot/pattern stays cheaper to render.
+   */
+  faceFixture?: boolean;
 }
 
 export interface MockOpenRouter {
@@ -237,7 +272,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   let imageCount = 0;
   // Built once, up front: rendering must never add latency inside a request a
   // caller is timing the arrival of (see the module doc above).
-  const distinctPool = opts.distinctImages ? buildDistinctPool(48) : [];
+  const distinctPool = opts.distinctImages ? (opts.faceFixture ? buildFacePool(48) : buildDistinctPool(48)) : [];
 
   // Reused verbatim: the exact bodies studio/engine/money/prices.test.ts
   // already proved the real client parses, so the mock's prices are exactly
@@ -334,7 +369,8 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         record(req, path, await jsonBody(req));
         if (imageDelayMs > 0) await Bun.sleep(imageDelayMs);
         totalUsageUsd += costs.image;
-        const bytes = distinctPool.length > 0 ? (distinctPool[imageCount++ % distinctPool.length] ?? portraitPng()) : portraitPng();
+        const fallback = opts.faceFixture ? faceFixturePng() : portraitPng();
+        const bytes = distinctPool.length > 0 ? (distinctPool[imageCount++ % distinctPool.length] ?? fallback) : fallback;
         return json({ created: 1_790_000_000, data: [{ b64_json: b64(bytes), media_type: "image/png" }], usage: { cost: costs.image } });
       }
       return loudly404(record(req, path, method === "POST" ? await jsonBody(req) : null));

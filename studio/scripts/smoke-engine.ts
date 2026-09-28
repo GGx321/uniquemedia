@@ -424,8 +424,9 @@ function checkPackage(target: Target): void {
   check("the engine is not unpacked from the asar", !existsSync(join(`${target.asar}.unpacked`, "out-studio")));
   // T7b, the face gate: neither the models nor onnxruntime-web's WASM
   // runtime are asarUnpack'd (electron-builder.studio.yml) — both must stay
-  // inside the integrity-checked asar. This only checks packaging, not that
-  // anything loads them yet (nothing does).
+  // inside the integrity-checked asar. This only checks packaging; that they
+  // are actually LOADED from there and produce a real verdict is proven by
+  // runPhotoRunKillResumeScenario's own qa.faceCos check below.
   const modelFiles = Object.values(FACE_MODELS).map((m) => `/out-studio/engine/models/${m.file}`);
   const ortFiles = [
     "/node_modules/onnxruntime-web/dist/ort.node.min.mjs",
@@ -1152,6 +1153,16 @@ async function createActiveAvatarForRun(cdp: Cdp, name: string): Promise<unknown
  * in-process; a real kill -9 of the packaged engine mid-run belongs to the
  * E2E smoke."
  *
+ * T7b: also this scenario's own asar proof for the face gate (task item 4),
+ * since it already runs real photo runs end-to-end in the packaged app —
+ * the face gate is wired unconditionally (unlike the age gate, never a
+ * Settings toggle), so it runs here whether this scenario asks for it or
+ * not; `faceFixture: true` makes the mock serve a real, matching face
+ * (studio/engine/face/fixtures, composited onto every run image's own
+ * PDQ-distinct background by facePool.ts) instead of a faceless mandelbrot
+ * portrait and pattern, so every front/three-quarter slot (RUN_POSES keeps
+ * profile/back off) can actually pass instead of retrying forever.
+ *
  * Its own app instance, its own temp userData and library, its own mock
  * server — kept apart from every other scenario's money and events. The
  * image-age-check toggle stays off (the app's own default): no age-check
@@ -1163,6 +1174,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     imageDelayMs: RUN_REQUEST_DELAY_MS,
     writerDelayMs: RUN_REQUEST_DELAY_MS,
     distinctImages: true,
+    faceFixture: true,
   });
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-run-"));
   const userData = join(tmp, "userData");
@@ -1318,6 +1330,22 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       "run scenario: no attempt id was ever sent twice (the run's own journal, across both jobs)",
       attemptIds.length > 0 && new Set(attemptIds).size === attemptIds.length,
       attemptIds,
+    );
+
+    // 8b. T7b's own asar proof: the face gate is wired into every photo run
+    // unconditionally (never a Settings toggle, unlike the age gate), so
+    // with a real fixture face served for both the master and every run
+    // image (this scenario's own `faceFixture: true` mock option), the gate
+    // must have actually run — for real, models and onnxruntime-web's WASM
+    // loaded from inside app.asar (electron-builder.studio.yml) — and passed:
+    // every generated photo's sidecar carries a `qa.faceCos`. Read the same
+    // way step 3's import scenario already reads a photo's own qa verdict.
+    const avatarIdStr = String(avatarId);
+    const generatedPhotos = library.photosByAvatar(avatarIdStr).filter((p) => p.id !== library.getAvatar(avatarIdStr)?.masterPhotoId);
+    check(
+      "run scenario: every generated photo carries qa.faceCos — the face gate ran for real, models and ORT loaded from inside app.asar",
+      generatedPhotos.length > 0 && generatedPhotos.every((p) => typeof p.qa.faceCos === "number"),
+      generatedPhotos.map((p) => ({ id: p.id, faceCos: p.qa.faceCos })),
     );
 
     // 9. The wire, not only the journal: a crash can end the engine between

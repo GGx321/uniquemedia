@@ -1,10 +1,18 @@
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { hammingDistance } from "../../src/core/pdq/hamming";
 import { computePdqHash } from "../../src/core/pdq/pdq";
+import { createFaceGate } from "../engine/face/gate";
+import { decodeImagesWithElectron } from "../engine/face/testing/decodeWithElectron";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { servedPoolImagePng } from "./distinctPattern";
+import { faceModelPaths } from "./faceModelCache";
+import { FACE_FIXTURE_PATH, facePoolImagePng } from "./facePool";
 useNativeGlobals();
 
 // T7a (merging soon): an always-on PDQ near-duplicate gate on photo runs,
@@ -73,4 +81,91 @@ describe("the served pool is PDQ-distinct through the real gate pipeline", () =>
     }
     expect(tooClose).toEqual([]);
   });
+});
+
+// T7b: the packaged E2E smoke needs the face gate to actually run and pass in
+// a real photo run, without a real network call (task item 4). Plain pool
+// images carry no face at all, so with the gate on every front/three-quarter
+// slot would retry then fail. studio/scripts/facePool.ts composites a real
+// fixture face onto each of the pool's own PDQ-distinct backgrounds
+// (mockOpenRouter.ts's own "faceFixture" option serves these); this extends
+// the proof above to the composited images: still PDQ-distinct through the
+// real gate pipeline, AND face-detectable/matching through the real face
+// gate (guarded the same way face/parity.test.ts is — real models, real
+// Chromium decoding, never silently skipped in CI).
+describe("the composited (face + PDQ-distinct background) pool the E2E smoke's face-gate scenario serves", () => {
+  // A representative slice, not the full 48: each one needs a real Electron
+  // decode plus ONNX inference, unlike the plain pool's own ffmpeg-only proof.
+  const COMPOSITE_COUNT = 8;
+  const composites = Array.from({ length: COMPOSITE_COUNT }, (_, i) => facePoolImagePng(i));
+
+  test(`every pair of ${COMPOSITE_COUNT} composited images is > ${MIN_HAMMING_DISTANCE} bits apart, decoded through the real gate pipeline`, () => {
+    const hashes = composites.map((png) => computePdqHash(decodeServedGray64(png)));
+    const tooClose: { i: number; j: number; distance: number }[] = [];
+    for (let i = 0; i < hashes.length; i++) {
+      for (let j = i + 1; j < hashes.length; j++) {
+        const a = hashes[i];
+        const b = hashes[j];
+        if (a === undefined || b === undefined) throw new Error("unreachable: i and j are within hashes' own length");
+        const distance = hammingDistance(a, b);
+        if (distance <= MIN_HAMMING_DISTANCE) tooClose.push({ i, j, distance });
+      }
+    }
+    expect(tooClose).toEqual([]);
+  });
+
+  const FACE_ROOT = join(import.meta.dirname, "..", "..");
+  const FACE_MODEL_PATHS = faceModelPaths(FACE_ROOT);
+  const FACE_MODELS_PRESENT = existsSync(FACE_MODEL_PATHS.yunet) && existsSync(FACE_MODEL_PATHS.sface);
+  // Mirrors face/parity.test.ts's own guard: enforced only where the models
+  // are actually expected to be fetched (macOS/Windows CI), not the Linux
+  // Bun-version-drift canary this repo also runs.
+  const FACE_IS_CI = (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") && process.platform !== "linux";
+
+  test("CI guard: the face models must be present in CI, never silently skipped", () => {
+    if (FACE_IS_CI && !FACE_MODELS_PRESENT) {
+      throw new Error(`facePool: models missing in CI at ${FACE_MODEL_PATHS.yunet} / ${FACE_MODEL_PATHS.sface} — the workflow's fetch-and-cache step did not run or failed silently`);
+    }
+    expect(true).toBe(true);
+  });
+
+  describe.skipIf(!FACE_MODELS_PRESENT)("the real face gate, real models, real Chromium decoding", () => {
+    test("every composited image passes as a match against the master, similarity above the gate's 0.55 threshold", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "studio-facepool-"));
+      try {
+        const compositePaths = await Promise.all(
+          composites.map(async (png, i) => {
+            const path = join(dir, `composite-${i}.png`);
+            await writeFile(path, png);
+            return path;
+          }),
+        );
+        const decoded = await decodeImagesWithElectron([FACE_FIXTURE_PATH, ...compositePaths]);
+        const [masterImage, ...compositeImages] = decoded;
+        if (masterImage === undefined) throw new Error("no master image decoded");
+
+        const models = { yunet: readFileSync(FACE_MODEL_PATHS.yunet), sface: readFileSync(FACE_MODEL_PATHS.sface) };
+        const gate = await createFaceGate(models);
+        try {
+          const masterEmbedding = await gate.embed(masterImage);
+          for (let i = 0; i < compositeImages.length; i++) {
+            const image = compositeImages[i];
+            if (image === undefined) throw new Error(`unreachable: composite ${i} was decoded`);
+            const verdict = await gate.check({ pose: "front", image, masterEmbedding });
+            if (verdict.kind !== "match") throw new Error(`composite ${i}: expected a match, got ${verdict.kind}`);
+            expect(verdict.faces).toBe(1);
+            expect(verdict.similarity).toBeGreaterThanOrEqual(0.55);
+          }
+        } finally {
+          await gate.dispose();
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+  });
+
+  if (!FACE_MODELS_PRESENT && !FACE_IS_CI) {
+    console.warn("distinctPattern.test.ts: face models not found in the local cache — run `bun studio/scripts/faceModelCache.ts` to fetch them; the composite face-match test is skipped, not failed.");
+  }
 });
