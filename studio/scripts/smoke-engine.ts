@@ -67,7 +67,8 @@ import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
-import { DEFAULT_IMPORT_DESCRIBE_ANSWER, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
+import { DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
+import { failureDetail } from "./failureDetail";
 import { looksLikeAStackTrace } from "./stackTrace";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -138,8 +139,10 @@ async function resolveTarget(): Promise<Target> {
 const results: { name: string; ok: boolean; detail?: string }[] = [];
 
 function check(name: string, ok: boolean, detail?: unknown): void {
-  results.push({ name, ok, detail: ok || detail === undefined ? undefined : JSON.stringify(detail).slice(0, 600) });
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok || detail === undefined ? "" : `\n      ${JSON.stringify(detail).slice(0, 600)}`}`);
+  // Evidence is printed through failureDetail: a recorded request's headers (Authorization) and bodies never reach the log.
+  const shown = ok || detail === undefined ? undefined : failureDetail(detail);
+  results.push({ name, ok, detail: shown });
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${shown === undefined ? "" : `\n      ${shown}`}`);
 }
 
 // ---------- CDP ----------
@@ -870,7 +873,7 @@ async function runAvatarScenario(target: Target): Promise<void> {
     check(
       "avatar scenario: the marker vibe appears in the mock's requests only in the descriptor call",
       carrying.length === 1 && carrying[0]?.schemaName === "avatar_descriptor",
-      carrying,
+      carrying.map((r) => ({ method: r.method, path: r.path, schemaName: r.schemaName, matched: markerMatch(r, AVATAR_MARKER_WORDS) })),
     );
 
     // 12. Every authenticated request the mock saw carried exactly Bearer
@@ -1576,7 +1579,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     check(
       "run scenario: every request that carries the avatar's marker vibe is an avatar_descriptor request, across all of the mock's requests",
       carryingMarker.length > 0 && carryingMarker.every((r) => r.schemaName === "avatar_descriptor"),
-      { totalRequests: mock.requests.length, carrying: carryingMarker.map((r) => `${r.method} ${r.path} (${String(r.schemaName)})`) },
+      { totalRequests: mock.requests.length, carrying: carryingMarker.map((r) => ({ method: r.method, path: r.path, schemaName: r.schemaName, matched: markerMatch(r, AVATAR_MARKER_WORDS) })) },
     );
 
     check("run scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);

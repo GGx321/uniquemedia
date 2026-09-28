@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
+import { markerMatch, requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
+import { failureDetail } from "./failureDetail";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -79,5 +80,69 @@ describe("requestCarries", () => {
     const m = await started();
     await send(m, "/credits?note=zebra");
     expect(m.requests.map((r) => requestCarries(r, []))).toEqual([false]);
+  });
+});
+
+describe("requestCarries lowercases the marker words too", () => {
+  test("an upper-case or mixed-case word in the list still matches", async () => {
+    const m = await started();
+    await send(m, "/credits?note=zebra");
+    expect(m.requests.map((r) => requestCarries(r, ["ZEBRA"]))).toEqual([true]);
+    expect(m.requests.map((r) => requestCarries(r, ["Lantern", "Zebra"]))).toEqual([true]);
+  });
+});
+
+describe("markerMatch says which word matched and where, and nothing else", () => {
+  test.each([
+    ["url", "/credits?note=zebra", {}],
+    ["headers", "/credits", { headers: { "x-note": "lantern" } }],
+    ["body", "/chat/completions", { method: "POST", headers: { "content-type": "text/plain" }, body: "marmalade" }],
+  ] as const)("a word in the %s", async (where, path, init: RequestInit) => {
+    const m = await started();
+    await send(m, path, init);
+    const found = m.requests[0] === undefined ? null : markerMatch(m.requests[0], WORDS);
+    expect(found?.in).toBe(where);
+    expect(WORDS).toContain(found?.word ?? "");
+  });
+
+  test("null when no word is there", async () => {
+    const m = await started();
+    await send(m, "/credits");
+    expect(m.requests[0] === undefined ? "no request" : markerMatch(m.requests[0], WORDS)).toBeNull();
+  });
+});
+
+// A failed check prints its detail. A recorded request holds the Authorization header and whole bodies: none of that may
+// ever reach the output, only what kind of request it was and where it went.
+describe("failureDetail", () => {
+  const request = {
+    method: "POST",
+    path: "/api/v1/chat/completions",
+    schemaName: "avatar_descriptor",
+    authorization: "Bearer sk-or-v1-secret",
+    url: "http://127.0.0.1:1/api/v1/chat/completions",
+    headers: { authorization: "Bearer sk-or-v1-secret", "x-note": "hello" },
+    body: { messages: [{ content: "a very private prompt" }] },
+    bodyText: '{"messages":[{"content":"a very private prompt"}]}',
+  };
+
+  test("drops every header, the Authorization value and both forms of the body, at any depth", () => {
+    const text = failureDetail([{ carrying: [request] }, request]);
+    expect(text).not.toContain("sk-or-v1-secret");
+    expect(text).not.toContain("Bearer");
+    expect(text).not.toContain("private prompt");
+    expect(text).not.toContain("x-note");
+    expect(text).toContain("/api/v1/chat/completions");
+    expect(text).toContain("avatar_descriptor");
+  });
+
+  test("truncates a long string and the whole text", () => {
+    expect(failureDetail({ why: "x".repeat(5_000) }).length).toBeLessThanOrEqual(600);
+    expect(failureDetail(["y".repeat(300)])).toContain("…");
+  });
+
+  test("leaves plain values alone", () => {
+    expect(failureDetail({ a: 1, b: ["two"] })).toBe('{"a":1,"b":["two"]}');
+    expect(failureDetail(undefined)).toBe("");
   });
 });

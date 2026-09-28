@@ -213,8 +213,20 @@ export interface MockRequest {
  * paraphrase) is not caught here, as in the unit test.
  */
 export function requestCarries(request: MockRequest, words: readonly string[]): boolean {
-  const text = `${request.url}\n${JSON.stringify(request.headers)}\n${request.bodyText}`.toLowerCase();
-  return words.some((word) => text.includes(word));
+  return markerMatch(request, words) !== null;
+}
+
+/** The first of `words` (lower-cased, like the request) found in the request, and where: its URL, its headers or its body. Null when none. */
+export function markerMatch(request: MockRequest, words: readonly string[]): { word: string; in: "url" | "headers" | "body" } | null {
+  const parts = [
+    ["url", request.url.toLowerCase()],
+    ["headers", JSON.stringify(request.headers).toLowerCase()],
+    ["body", request.bodyText.toLowerCase()],
+  ] as const;
+  for (const word of words.map((w) => w.toLowerCase()).filter((w) => w.length > 0)) {
+    for (const [where, text] of parts) if (text.includes(word)) return { word, in: where };
+  }
+  return null;
 }
 
 /** T6c: the vision describe call's own strict JSON answer (the M5 subject check, traits, and descriptor in one). */
