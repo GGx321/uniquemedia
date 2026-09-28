@@ -1,36 +1,53 @@
 import { describe, expect, test } from "bun:test";
-import { releasable, type QaGate } from "./qa";
+import { GateFailure, type QaGate } from "./qa";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
-// T7a: `releasable` is the one place that duck-types the optional
-// ReleasableGate extension, so no other file needs its own `as` cast.
+// T7a review (finding, LOW): the duck-typed `releasable()` helper (and its
+// internal `as` cast) is gone. `releaseClaim` is now a first-class, optional
+// member of `QaGate` itself, so a caller reads `gate.releaseClaim?.(...)`
+// directly — no cast anywhere, and no separate helper to keep in sync with
+// the interface. This deliberately replaces the old `releasable()` tests
+// (which pinned the duck-typed helper's own behaviour) with a test of the
+// plain optional method instead.
 
 function bareGate(): QaGate {
   return { name: "face", paid: false, check: async () => ({ verdict: "pass" }) };
 }
 
-describe("releasable", () => {
-  test("null for a gate with no releaseClaim", () => {
-    expect(releasable(bareGate())).toBeNull();
+describe("QaGate.releaseClaim (optional, first-class)", () => {
+  test("a gate with no releaseClaim leaves it undefined: a caller's optional call is a no-op", () => {
+    const gate = bareGate();
+    expect(gate.releaseClaim).toBeUndefined();
+    expect(() => gate.releaseClaim?.("avatar-1", "run-1:slot-1#1")).not.toThrow();
   });
 
-  test("the gate itself, callable, for a gate that does implement releaseClaim", () => {
+  test("a gate that implements releaseClaim is called directly, with no cast needed at the call site", () => {
     const released: { avatarId: string; attemptId: string }[] = [];
-    const gate: QaGate & { releaseClaim(avatarId: string, attemptId: string): void } = {
+    const gate: QaGate = {
       ...bareGate(),
       name: "pdq",
       releaseClaim: (avatarId, attemptId) => released.push({ avatarId, attemptId }),
     };
 
-    const found = releasable(gate);
-    expect(found).not.toBeNull();
-    found?.releaseClaim("avatar-1", "run-1:slot-1#1");
+    gate.releaseClaim?.("avatar-1", "run-1:slot-1#1");
+
     expect(released).toEqual([{ avatarId: "avatar-1", attemptId: "run-1:slot-1#1" }]);
   });
+});
 
-  test("a gate with releaseClaim as something other than a function is not releasable", () => {
-    const gate = { ...bareGate(), releaseClaim: "not a function" };
-    expect(releasable(gate)).toBeNull();
+describe("GateFailure", () => {
+  test("carries the EngineError it was built with, and its own message mirrors the error's detail", () => {
+    const error = { code: "AUTH_INVALID" as const, detail: "the stored key was rejected" };
+    const failure = new GateFailure(error);
+
+    expect(failure.error).toBe(error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toBe("the stored key was rejected");
+  });
+
+  test("falls back to the error's code as its message when there is no detail", () => {
+    const failure = new GateFailure({ code: "INSUFFICIENT_CREDITS" });
+    expect(failure.message).toBe("INSUFFICIENT_CREDITS");
   });
 });
