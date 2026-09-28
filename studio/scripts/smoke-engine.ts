@@ -1395,6 +1395,22 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       { qaRetries: qaRetries.length },
     );
 
+    // 8d. T6a-2b's network canary (item 2), extended to the photo-run path
+    // (2b whole-slice review blocker): `createActiveAvatarForRun` already
+    // built this avatar from `AVATAR_TRAITS`, whose vibe is the marker
+    // words. The marker may reach the mock only inside the descriptor
+    // request that wrote it — never any image request (the candidate
+    // portraits above, or this run's own photos), any scene-writer request,
+    // or any age-check request (the mock records the age-check calls even
+    // though this scenario's own toggle is off, so this list is empty here
+    // by construction, not by omission).
+    const runNetworkRequests = [...mock.imageRequests(), ...mock.sceneWriterRequests(), ...mock.ageCheckRequests()];
+    check(
+      "run scenario: no image, scene-writer or age-check request carries the avatar's marker vibe",
+      runNetworkRequests.length > 0 && runNetworkRequests.filter(carriesMarker).length === 0,
+      { checked: runNetworkRequests.length, carrying: runNetworkRequests.filter(carriesMarker).length },
+    );
+
     // 9. The wire, not only the journal: a crash can end the engine between
     // an attempt's send and its journal write, so the journal alone (step 8)
     // cannot prove a kill never doubles a *send*, only that it never doubles
