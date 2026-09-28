@@ -1,16 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { computePdqHash } from "../../src/core/pdq/pdq";
 import { JobState, type EventMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
+import { createRealDecodeBackend } from "./decode/realBackend";
+import { createWasmImageDecoder } from "./decode/wasmDecode";
+import { createFaceGate as createRealFaceGate } from "./face/gate";
 import { openLibrary } from "./library";
-import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { samplePhotoMeta, SAMPLE_IMPORTED_SOURCE, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { ffmpegPath } from "../node/ffmpegBinary";
 import { decodeGray64 } from "../node/pdqPixels";
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { RunPlanSchema, type RunPlan } from "./runs/plan";
 import { plan as planScenes } from "./scenes";
+import { faceModelPaths } from "../scripts/faceModelCache";
 import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
 import { createPdqGate } from "./runs/pdqGate";
@@ -912,6 +919,96 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
     expect(order).not.toContain("face");
   });
 });
+
+// ---------- re-review, MUST FIX 1/2 (N1, normalization): the real face gate on unusual masters ----------
+
+const RR_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const RR_MODEL_PATHS = faceModelPaths(RR_ROOT);
+const RR_MODELS_PRESENT = existsSync(RR_MODEL_PATHS.yunet) && existsSync(RR_MODEL_PATHS.sface);
+const RR_MASTER_JPEG = join(RR_ROOT, "studio", "engine", "face", "fixtures", "images", "master.jpg");
+
+/** `master.jpg` (864x1152), re-encoded via the bundled ffmpeg — never a committed large binary — to the exact byte size/format each case needs. */
+function transcodedMaster(args: string[]): Uint8Array {
+  const result = spawnSync(ffmpegPath(), ["-y", "-hide_banner", "-loglevel", "error", "-i", RR_MASTER_JPEG, ...args, "pipe:1"], { maxBuffer: 64 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`ffmpeg could not transcode the master fixture: ${result.stderr.toString()}`);
+  return new Uint8Array(result.stdout);
+}
+
+/** Seeds a fresh avatar whose ONLY photo (and master) is exactly `bytes`, at `mediaType`/`width`/`height` — an imported avatar, matching how a real WebP/oversized import is stored. */
+async function seedWithMaster(bytes: Uint8Array, mediaType: "image/jpeg" | "image/png" | "image/webp", width: number, height: number): Promise<string> {
+  const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`rrseed${++seeded}`) });
+  const avatar = await library.createAvatar({ name: "Imported", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+  const master = await library.addPhoto(avatar.id, bytes, samplePhotoMeta({ mediaType, width, height, source: SAMPLE_IMPORTED_SOURCE, qa: { age: { adult: true, confidence: 0.95 } } }));
+  await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  return avatar.id;
+}
+
+describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face gate completes a run on every master format/size the app can import", () => {
+  const cases = [
+    { name: "864x1152 JPEG (the calibrated control size)", args: ["-c:v", "mjpeg", "-q:v", "2", "-f", "mjpeg"], mediaType: "image/jpeg" as const, w: 864, h: 1152 },
+    { name: "the same portrait as WebP (import accepts WebP, importStaging.ts:26) — N1", args: ["-c:v", "libwebp", "-q:v", "90", "-f", "webp"], mediaType: "image/webp" as const, w: 864, h: 1152 },
+    { name: "the same portrait at 1296x1728 (x1.5) — normalization", args: ["-vf", "scale=1296:1728", "-c:v", "mjpeg", "-q:v", "2", "-f", "mjpeg"], mediaType: "image/jpeg" as const, w: 1296, h: 1728 },
+    { name: "the same portrait at 3024x4032 (12 MP phone size) — normalization", args: ["-vf", "scale=3024:4032", "-c:v", "mjpeg", "-q:v", "2", "-f", "mjpeg"], mediaType: "image/jpeg" as const, w: 3024, h: 4032 },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const bytes = transcodedMaster(c.args);
+      const avatarId = await seedWithMaster(bytes, c.mediaType, c.w, c.h);
+      const models = { yunet: readFileSync(RR_MODEL_PATHS.yunet), sface: readFileSync(RR_MODEL_PATHS.sface) };
+      const real = await createRealFaceGate(models);
+      const decodeImage = createWasmImageDecoder(await createRealDecodeBackend(join(RR_ROOT, "node_modules")));
+      try {
+        const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
+        const { engine, events } = await engineOver(net, { qaGates: [createPdqGate(), createFaceQaGate({ faceGate: real })], decodeImage });
+        const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+        const end = await jobEnd(events, jobId);
+        expect(end.type).toBe("job.done");
+        if (end.type !== "job.done") throw new Error("unreachable");
+        expect(end.payload.result.kind === "run" ? end.payload.result.failedSlots : -1).toBe(0);
+      } finally {
+        await real.dispose();
+      }
+    }, 30_000);
+  }
+
+  test("864x1152 JPEG still embeds from the ORIGINAL bytes, not loadMaster()'s downscaled reference (M1/N1 unchanged)", async () => {
+    const bytes = transcodedMaster(["-c:v", "mjpeg", "-q:v", "2", "-f", "mjpeg"]);
+    const avatarId = await seedWithMaster(bytes, "image/jpeg", 864, 1152);
+    const models = { yunet: readFileSync(RR_MODEL_PATHS.yunet), sface: readFileSync(RR_MODEL_PATHS.sface) };
+    const real = await createRealFaceGate(models);
+    const decodeImage = createWasmImageDecoder(await createRealDecodeBackend(join(RR_ROOT, "node_modules")));
+    const seenMasterBytes: Uint8Array[] = [];
+    const wrappedDecode: EngineDeps["decodeImage"] = async (b, s) => {
+      if (b.byteLength === bytes.byteLength) seenMasterBytes.push(b);
+      return decodeImage(b, s);
+    };
+    try {
+      const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
+      const { engine, events } = await engineOver(net, { qaGates: [createFaceQaGate({ faceGate: real })], decodeImage: wrappedDecode });
+      const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+      await jobEnd(events, jobId);
+      expect(seenMasterBytes.some((b) => Buffer.from(b).equals(Buffer.from(bytes)))).toBe(true);
+    } finally {
+      await real.dispose();
+    }
+  }, 30_000);
+});
+
+/** The mock's own run image, composited with the real fixture face so the real gate (used above) can actually pass a slot — the same technique facePool.ts uses for the packaged E2E. */
+function portraitPngFace(): Uint8Array {
+  const face = join(RR_ROOT, "studio", "engine", "face", "fixtures", "images", "master.jpg");
+  const args = [
+    "-y", "-hide_banner", "-loglevel", "error",
+    "-f", "lavfi", "-i", "color=c=gray:size=200x356:d=1",
+    "-i", face,
+    "-filter_complex", "[1:v]scale=130:170[f];[0:v][f]overlay=35:20",
+    "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "2", "-f", "mjpeg", "pipe:1",
+  ];
+  const result = spawnSync(ffmpegPath(), args, { maxBuffer: 32 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`ffmpeg could not composite a run image: ${result.stderr.toString()}`);
+  return new Uint8Array(result.stdout);
+}
 
 // ---------- runs.list (review M4) ----------
 

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
+import { NoFaceInReferenceError } from "../face";
 import { openLibrary, type Library } from "../library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../library/testing/helpers";
 import { Budget, scopeKey } from "../money/budget";
@@ -208,6 +209,7 @@ function start(
     onStart?: () => void;
     clientOverrides?: Partial<OpenRouterClientOptions>;
     cancelledGateTimeoutMs?: number;
+    referenceTimeoutMs?: number;
   } = {},
 ): Harness {
   const net = opts.net ?? network();
@@ -241,6 +243,7 @@ function start(
       errorOf: (error: unknown): EngineError => ({ code: "INTERNAL", detail: error instanceof Error ? error.message : String(error) }),
       onSlot: (p) => progress.push(p),
       ...(opts.cancelledGateTimeoutMs === undefined ? {} : { cancelledGateTimeoutMs: opts.cancelledGateTimeoutMs }),
+      ...(opts.referenceTimeoutMs === undefined ? {} : { referenceTimeoutMs: opts.referenceTimeoutMs }),
     },
     { plan: run, jobId: opts.jobId ?? JOB_ID, descriptor: DESCRIPTOR, signal: opts.signal ?? new AbortController().signal },
   );
@@ -779,13 +782,34 @@ describe("QA gates", () => {
 // ---------- money review H1: a gate's prepare() runs before any paid work ----------
 
 describe("prepare() (H1: a gate that cannot run for this avatar stops the job before any paid work)", () => {
+  // N3: MASTER_FACE_UNUSABLE means specifically "no usable face in the
+  // master" — pinned with the real NoFaceInReferenceError (face/gate.ts),
+  // never a plain Error with a similar message (string-matching would be
+  // fragile, and the whole point of N3 is that "looks like the same
+  // message" is not how this is told apart from a systemic failure).
   function unusableFaceGate(prepareCalls: { avatarId: string }[]): QaGate {
     return {
       name: "face",
       paid: false,
       prepare: async (input) => {
         prepareCalls.push({ avatarId: input.avatarId });
-        throw new Error("face/gate: embed() found no face in the reference image");
+        throw new NoFaceInReferenceError();
+      },
+      check: async () => {
+        throw new Error("must not be called: prepare() should have stopped the job first");
+      },
+    };
+  }
+
+  // N3: a systemic prepare() failure (a decode/library/ORT problem, not
+  // "this master has no face") must never be reported as MASTER_FACE_UNUSABLE
+  // — that message tells the owner to fix the master, which may be fine.
+  function brokenPrepareGate(): QaGate {
+    return {
+      name: "face",
+      paid: false,
+      prepare: async () => {
+        throw new Error("onnxruntime-web: session run failed");
       },
       check: async () => {
         throw new Error("must not be called: prepare() should have stopped the job first");
@@ -839,6 +863,34 @@ describe("prepare() (H1: a gate that cannot run for this avatar stops the job be
 
     expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
     expect(prepareCalls).toBe(1);
+  });
+
+  test("N3: a systemic prepare() failure ends INTERNAL, never MASTER_FACE_UNUSABLE — the master may be fine", async () => {
+    const run = await newRun(1);
+    const { end, net } = start(run, { gates: [brokenPrepareGate()] });
+
+    const result = await end;
+    expect(result).toMatchObject({ status: "failed" });
+    if (result.status !== "failed") throw new Error("unreachable");
+    expect(result.error.code).toBe("INTERNAL");
+    expect(result.error.code).not.toBe("MASTER_FACE_UNUSABLE");
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("N3: prepareGates' own timeout is also systemic (INTERNAL), never MASTER_FACE_UNUSABLE", async () => {
+    const run = await newRun(1);
+    const hungGate: QaGate = {
+      name: "face",
+      paid: false,
+      prepare: () => new Promise(() => {}), // never settles
+      check: async () => ({ verdict: "pass" }),
+    };
+    const { end } = start(run, { gates: [hungGate], referenceTimeoutMs: 50 });
+
+    const result = await end;
+    expect(result).toMatchObject({ status: "failed" });
+    if (result.status !== "failed") throw new Error("unreachable");
+    expect(result.error.code).toBe("INTERNAL");
   });
 });
 

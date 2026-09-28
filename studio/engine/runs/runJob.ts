@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
-import type { FaceGateImage } from "../face";
+import { NoFaceInReferenceError, type FaceGateImage } from "../face";
 import type { Library, NewPhotoMeta, PhotoQa } from "../library";
-import { imageSize, isAnimatedImage, type LibraryReference } from "../library/media";
+import { imageSize, isAnimatedImage, sniffImageMediaType, type LibraryReference } from "../library/media";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
@@ -227,16 +227,48 @@ async function loadMaster(ctx: Context): Promise<{ ok: true; master: LibraryRefe
  * fed bytes chosen for a completely different purpose (fitting OpenRouter's
  * own reference size).
  */
-async function prepareGates(ctx: Context): Promise<{ ok: true } | { ok: false; end: RunJobEnd }> {
+/**
+ * Re-review, N1 (HIGH): the decoder only handles JPEG/PNG
+ * (decode/wasmDecode.ts's own allow-list — never WebP, by design). An
+ * imported master may be WebP (`importStaging.ts`'s own 16 MP cap accepts
+ * it), so using `loadMasterOriginal()`'s raw bytes unconditionally made
+ * every WebP-imported avatar's runs fail MASTER_FACE_UNUSABLE forever — the
+ * master is perfectly fine, only unreadable by this ONE decoder. Use the
+ * original file when it is JPEG/PNG (M1/N1's own fix stays: never the
+ * OpenRouter-bound downscale for a JPEG/PNG original); otherwise fall back
+ * to `reference` — `loadMaster()`'s own <=1024px reference, already loaded
+ * for this exact avatar's OpenRouter calls, always JPEG
+ * (`downscaleToJpeg`'s own output format, `QaInput.master`'s own doc
+ * comment) — so the identity check still runs, just at a smaller size, on
+ * every format the app can import.
+ */
+function masterOriginalFor(original: Uint8Array, reference: LibraryReference): Uint8Array {
+  const mediaType = sniffImageMediaType(original);
+  return mediaType === "image/jpeg" || mediaType === "image/png" ? original : reference;
+}
+
+/**
+ * Re-review, N3: `MASTER_FACE_UNUSABLE` means specifically "no usable face
+ * in the master" (`NoFaceInReferenceError`, face/gate.ts) — its own Russian
+ * text tells the owner to do something about the master, which is wrong
+ * advice for anything else. A systemic failure (a decode/library/ORT
+ * problem, or this function's own timeout) routes through the same
+ * `INTERNAL` shape `runGates`'s own systemic-failure path already uses for
+ * a broken gate mid-run (runJob.ts's own `GateBroken` handling) — the run
+ * ends failed, resumable, with no implication that the master itself needs
+ * fixing.
+ */
+async function prepareGates(ctx: Context, reference: LibraryReference): Promise<{ ok: true } | { ok: false; end: RunJobEnd }> {
   const { deps, job, plan } = ctx;
   const ms = deps.referenceTimeoutMs ?? REFERENCE_TIMEOUT_MS;
   const timeout = timeoutSignal(ms);
   const signal = AbortSignal.any([job.signal, timeout.signal]);
   try {
-    const masterOriginal = await untilAborted(deps.library.loadMasterOriginal(plan.avatarId), signal);
-    if (masterOriginal === null) {
+    const original = await untilAborted(deps.library.loadMasterOriginal(plan.avatarId), signal);
+    if (original === null) {
       return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${plan.avatarId} has no usable master photo` } } };
     }
+    const masterOriginal = masterOriginalFor(original, reference);
     const input: QaPrepareInput = { avatarId: plan.avatarId, masterOriginal, decodeImage: deps.decodeImage, signal };
     await untilAborted(
       Promise.all(deps.gates.map((prepareGate) => prepareGate.prepare?.(input))),
@@ -245,8 +277,11 @@ async function prepareGates(ctx: Context): Promise<{ ok: true } | { ok: false; e
     return { ok: true };
   } catch (error) {
     if (job.signal.aborted) return { ok: false, end: { status: "cancelled" } };
+    if (error instanceof NoFaceInReferenceError) {
+      return { ok: false, end: { status: "failed", error: { code: "MASTER_FACE_UNUSABLE", detail: truncate(error.message) } } };
+    }
     const why = timeout.signal.aborted ? `it took longer than ${ms} ms` : messageOf(error);
-    return { ok: false, end: { status: "failed", error: { code: "MASTER_FACE_UNUSABLE", detail: truncate(`a QA gate could not be prepared for this avatar: ${why}`) } } };
+    return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`a QA gate could not be prepared: ${why}`) } } };
   } finally {
     timeout.clear();
   }
@@ -755,7 +790,7 @@ async function work(ctx: Context): Promise<RunJobEnd> {
 
   const reference = await loadMaster(ctx);
   if (!reference.ok) return reference.end;
-  const prepared = await prepareGates(ctx);
+  const prepared = await prepareGates(ctx, reference.master);
   if (!prepared.ok) return prepared.end;
   const prompts = await promptsOf(ctx, state, reference.master);
   if (!prompts.ok) return prompts.end;
