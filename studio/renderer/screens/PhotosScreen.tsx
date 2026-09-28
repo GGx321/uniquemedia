@@ -33,13 +33,18 @@ function photoCountLabel(list: GalleryList): string {
 
 /**
  * This avatar's latest photo-run job. A job this window did not start is
- * known only by its events until it ends, and `job.progress` carries no kind:
- * any job of a saved avatar that is not a candidate batch is its run (a
- * batch belongs to a draft).
+ * known only by its events until it ends, and `job.progress` carries no
+ * kind: a job of a saved avatar whose kind is not yet confirmed could in
+ * principle still be a candidates batch this window never tracked, from
+ * when this id was a draft (L8) — so a job already confirmed `kind ===
+ * "run"` is always preferred over an unconfirmed one, and only the latest
+ * unconfirmed job stands in while none is confirmed yet (a run just
+ * started elsewhere, seen only through its own job.progress so far).
  */
 function latestRunJob(jobs: readonly JobView[], avatarId: string): JobView | null {
   const own = jobs.filter((j) => j.avatarId === avatarId && j.kind !== "avatar.candidates");
-  return own[own.length - 1] ?? null;
+  const confirmed = own.filter((j) => j.kind === "run");
+  return confirmed.at(-1) ?? own.at(-1) ?? null;
 }
 
 function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineView }) {
@@ -58,8 +63,6 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
   const [runs, setRuns] = useState<{ forKey: string; runs: readonly RunSummary[] }>({ forKey: "", runs: [] });
   const [runsError, setRunsError] = useState<EngineError | null>(null);
   const [runsRefresh, setRunsRefresh] = useState(0);
-  /** jobId → runId from this window's own start and resume replies. */
-  const [ownRuns, setOwnRuns] = useState<ReadonlyMap<string, string>>(new Map());
   /** Run jobs seen queued or running on this screen: only their ending earns a notice. */
   const [watched, setWatched] = useState<ReadonlySet<string>>(new Set());
   /** Photos picked for a montage (stage 3): drawn as the mockup draws them, not sent anywhere yet. */
@@ -111,8 +114,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
     if (runActive && runJobId !== null) setWatched((seen) => (seen.has(runJobId) ? seen : new Set([...seen, runJobId])));
   }, [runActive, runJobId]);
 
-  function launched({ runId, jobId }: { runId: string; jobId: string }): void {
-    setOwnRuns((known) => new Map([...known, [jobId, runId]]));
+  function launched({ jobId }: { runId: string; jobId: string }): void {
     setWatched((seen) => new Set([...seen, jobId]));
     setRunsRefresh((n) => n + 1);
   }
@@ -128,8 +130,11 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
 
   // One run per avatar at a time (the engine claims the avatar), so the running one in runs.list is this job's run —
   // but only in a list read since this job last changed state: an older one may name a run that has ended since.
+  // Consulted only when the job's own runId is not yet known (M2): a run this
+  // window itself started or resumed always carries it from the store, and
+  // must never wait on (or be redirected by a stale) runs.list for its cancel.
   const listedRunning = runs.forKey === statusKey ? (runs.runs.find((r) => r.running)?.runId ?? null) : null;
-  const activeRunId = runActive && runJobId !== null ? (ownRuns.get(runJobId) ?? listedRunning) : null;
+  const activeRunId = runActive && runJob !== null ? (runJob.runId ?? listedRunning) : null;
   const resumable = runs.runs.filter((r) => r.resumable);
   const pending: PendingSlots | null =
     runJob !== null && runActive && runJob.total > runJob.done
@@ -180,6 +185,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
             watched={runJob !== null && watched.has(runJob.jobId)}
             runs={resumable}
             runsError={runsError}
+            onRetryRuns={() => setRunsRefresh((n) => n + 1)}
             blockedReason={paidBlockedReason(view) ?? (avatar.status !== "active" ? "Аватар в архиве — новые фото для него не создаются." : null)}
             onResumed={launched}
           />

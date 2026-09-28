@@ -22,6 +22,15 @@ export interface JobView {
   readonly jobId: string;
   readonly kind: JobState["kind"] | null;
   readonly avatarId: string | null;
+  /**
+   * A run job's own run, once known: from a snapshot's `JobState.runId`, from
+   * `trackRunJob` (the start/resume reply that started or resumed it in this
+   * window), or from `job.done`'s `RunResult.runId`. Null for a candidates
+   * job, and for a run job this window has only seen through another
+   * window's `job.progress` (that event carries no runId) — cancel must then
+   * fall back to `runs.list` (M2), not sit permanently unusable.
+   */
+  readonly runId: string | null;
   readonly status: JobStatus;
   readonly done: number;
   readonly total: number;
@@ -97,6 +106,7 @@ export function jobFromState(j: JobState): JobView {
     jobId: j.jobId,
     kind: j.kind,
     avatarId: j.avatarId,
+    runId: j.kind === "run" ? j.runId : null,
     status: j.status,
     done: j.done,
     total: j.total,
@@ -106,7 +116,7 @@ export function jobFromState(j: JobState): JobView {
 }
 
 function emptyJob(jobId: string): JobView {
-  return { jobId, kind: null, avatarId: null, status: "queued", done: 0, total: 0, result: null, error: null };
+  return { jobId, kind: null, avatarId: null, runId: null, status: "queued", done: 0, total: 0, result: null, error: null };
 }
 
 /**
@@ -291,13 +301,16 @@ export class EngineStore {
    * ended as done, until the first job.progress says otherwise (so the
    * sidebar queue never shows a batch's "|| 4" for a run, nor a resume
    * starting over from zero); merges with any events that beat the reply.
+   * `runId` comes straight off the same command reply (M2): recorded here,
+   * window-wide, so a cancel this window's own start or resume enabled never
+   * has to fall back to `runs.list` to find it.
    */
-  trackRunJob(jobId: string, avatarId: string, total: number, ended = 0): void {
+  trackRunJob(jobId: string, runId: string, avatarId: string, total: number, ended = 0): void {
     this.patchJob(jobId, (job) => {
       const size = job.total || total;
       // A job that already ended before this reply (its job.done beat it) is complete: never "0 / 20" for it.
       const done = isFinished(job) ? Math.max(job.done, job.status === "done" ? size : 0) : job.done || ended;
-      return { ...job, kind: "run", avatarId, total: size, done };
+      return { ...job, kind: "run", avatarId, runId, total: size, done };
     });
   }
 
@@ -581,6 +594,10 @@ export class EngineStore {
             ...job,
             kind: result.kind,
             avatarId: result.kind === "avatar.candidates" ? result.avatarId : job.avatarId,
+            // A run job's own runId, straight off its result: fills it in even
+            // for a run this window only ever watched through another
+            // window's job.progress (which carries no runId at all).
+            runId: result.kind === "run" ? result.runId : job.runId,
             status: "done",
             done: Math.max(job.done, job.total),
             result,

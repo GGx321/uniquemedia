@@ -396,6 +396,59 @@ test("cancel shows «Отменяем…» until the job really ends, then the s
   expect(screen.getByText(/Готово 1 из 20 · осталось 19/)).toBeDefined();
 });
 
+test("cancel targets the run this window started even after the screen remounts and runs.list then fails (M2)", async () => {
+  const { engine, scheduler } = await openPhotos();
+  fireEvent.click(await priced());
+  await screen.findByText("Рисуем фото: 0 из 20");
+  tick(scheduler, 1);
+  await screen.findByText("Рисуем фото: 1 из 20");
+
+  // Leaving and coming back remounts AvatarPhotos: any runId kept only in
+  // component state (the old `ownRuns`) would be lost here. runs.list, which
+  // cancel must not depend on for a run this window itself started, is made
+  // to fail on top of that.
+  await openSection("Аватары");
+  engine.failNext("runs.list", { code: "INTERNAL" });
+  await openSection("Фото");
+  await screen.findByText("Рисуем фото: 1 из 20");
+  await flush();
+
+  const cancel = screen.getByRole("button", { name: "Отменить" });
+  expect(cancel.hasAttribute("disabled")).toBe(false);
+  fireEvent.click(cancel);
+  await flush();
+  expect(callsOf(engine, "runs.cancel")).toHaveLength(1);
+  expect(callsOf(engine, "runs.cancel")[0]?.payload.runId).toMatch(/^run-/);
+});
+
+test("a run job seen only through another window's progress resolves its cancel target via runs.list, with a retry on failure (M2)", async () => {
+  const { engine, scheduler, client } = setup({ avatars: [MIA] });
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+  // Simulated another window: the run starts straight through the engine,
+  // never through this window's own GenerateCard (so store.trackRunJob,
+  // which would otherwise record its runId right away, is never called).
+  const reply = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_070_000 }));
+  if (!reply.ok) throw new Error(`expected ok, got ${reply.error.code}`);
+  tick(scheduler, 1);
+  await flush();
+
+  engine.failNext("runs.list", { code: "INTERNAL" });
+  await openSection("Фото");
+  await screen.findByRole("heading", { level: 1, name: "Mia" });
+  await screen.findByText("Рисуем фото: 1 из 20");
+  await screen.findByText(ERROR_MESSAGES_RU.INTERNAL);
+
+  // The runId is not known yet (only job.progress has been seen): cancel waits, not stuck forever.
+  expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
+
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(false));
+
+  fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+  await flush();
+  expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([reply.result.runId]);
+});
+
 test("a stopped run is resumed with exactly the worst case runs.estimateResume showed", async () => {
   const harness = setup({ avatars: [MIA] });
   const runId = harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home", "travel"], resolution: "1k" }, 8);

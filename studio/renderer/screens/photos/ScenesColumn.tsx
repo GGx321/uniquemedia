@@ -57,7 +57,7 @@ function ResumeRow({ run, blockedReason, onResumed }: { run: RunSummary; blocked
     try {
       const reply = await client.request("runs.resume", { runId: run.runId, acceptedWorstMicros: accepted.worstMicros });
       // The run is under way whether or not this row is still shown: the (window-wide) store learns of it either way.
-      if (reply.ok) store.trackRunJob(reply.result.jobId, run.avatarId, run.total, run.done + run.failed);
+      if (reply.ok) store.trackRunJob(reply.result.jobId, reply.result.runId, run.avatarId, run.total, run.done + run.failed);
       if (!mounted.current) return;
       if (reply.ok) {
         onResumed(reply.result);
@@ -176,6 +176,8 @@ interface ScenesColumnProps {
   watched: boolean;
   runs: readonly RunSummary[];
   runsError: EngineError | null;
+  /** Retries the `runs.list` this screen asks for its stopped runs and, when a running job's own runId is not yet known, its cancel target (M2). */
+  onRetryRuns: () => void;
   /** Why a paid resume cannot be sent right now, if anything stops it. */
   blockedReason: string | null;
   onResumed: (resumed: { runId: string; jobId: string }) => void;
@@ -188,7 +190,7 @@ interface ScenesColumnProps {
  * how the watched run ended, and the stopped runs a resume can continue —
  * and marks the scene list itself as coming.
  */
-export function ScenesColumn({ view, count, runJob, activeRunId, watched, runs, runsError, blockedReason, onResumed }: ScenesColumnProps) {
+export function ScenesColumn({ view, count, runJob, activeRunId, watched, runs, runsError, onRetryRuns, blockedReason, onResumed }: ScenesColumnProps) {
   const { client, store } = useEngine();
   const mounted = useMounted();
   const cancelSending = useRef(false);
@@ -250,7 +252,16 @@ export function ScenesColumn({ view, count, runJob, activeRunId, watched, runs, 
       )}
       {cancelError && <ErrorNotice error={cancelError} />}
       {!running && watched && runJob && <RunOutcome job={runJob} />}
-      {runsError && <ErrorNotice error={runsError} />}
+      {runsError && (
+        <ErrorNotice
+          error={runsError}
+          actions={
+            <button type="button" className="btn btn-s" onClick={onRetryRuns}>
+              Повторить
+            </button>
+          }
+        />
+      )}
 
       {/* Keyed on what is left too: a run whose open slots changed (another window, a resync) is priced again. */}
       {runs.map((run) => (

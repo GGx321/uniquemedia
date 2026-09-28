@@ -17,12 +17,19 @@ test("jobFromState reads a run job's avatarId, not null", () => {
     jobId: "job-00000002",
     kind: "run",
     avatarId: "avatar-0001",
+    runId: "run-00000001",
     status: "running",
     done: 3,
     total: 20,
     result: null,
     error: null,
   });
+});
+
+test("jobFromState reads null runId for an avatar.candidates job", () => {
+  const candidatesJob: JobState = { kind: "avatar.candidates", jobId: "job-00000001", avatarId: "avatar-0002", status: "running", done: 1, total: 4 };
+
+  expect(jobFromState(candidatesJob).runId).toBeNull();
 });
 
 test("jobFromState still reads an avatar.candidates job's avatarId", () => {
@@ -65,11 +72,13 @@ async function started(options: ConstructorParameters<typeof MockEngine>[0] = {}
 // nothing shows "0 / 0" (or a resume starting over) before its first event.
 test("trackRunJob records a run job with its size, and a resume's ended slots, before any event", async () => {
   const { store } = await started({ avatars: [zoe()] });
-  store.trackRunJob("job-00000042", "avatar-zoe-0001", 20);
-  expect(store.getView().jobs).toEqual([{ jobId: "job-00000042", kind: "run", avatarId: "avatar-zoe-0001", status: "queued", done: 0, total: 20, result: null, error: null }]);
+  store.trackRunJob("job-00000042", "run-00000042", "avatar-zoe-0001", 20);
+  expect(store.getView().jobs).toEqual([
+    { jobId: "job-00000042", kind: "run", avatarId: "avatar-zoe-0001", runId: "run-00000042", status: "queued", done: 0, total: 20, result: null, error: null },
+  ]);
 
-  store.trackRunJob("job-00000043", "avatar-zoe-0001", 12, 8);
-  expect(store.getView().jobs.at(-1)).toMatchObject({ kind: "run", status: "queued", done: 8, total: 12 });
+  store.trackRunJob("job-00000043", "run-00000043", "avatar-zoe-0001", 12, 8);
+  expect(store.getView().jobs.at(-1)).toMatchObject({ kind: "run", runId: "run-00000043", status: "queued", done: 8, total: 12 });
 });
 
 test("trackRunJob never overrides progress that beat the reply", async () => {
@@ -87,8 +96,8 @@ test("trackRunJob never overrides progress that beat the reply", async () => {
   scheduler.next(); // the first slot's job.progress lands before this window tracks the job
   await settle();
 
-  store.trackRunJob(reply.result.jobId, "avatar-zoe-0001", 99, 0);
-  expect(store.getView().jobs.find((j) => j.jobId === reply.result.jobId)).toMatchObject({ kind: "run", status: "running", done: 1, total: 5 });
+  store.trackRunJob(reply.result.jobId, reply.result.runId, "avatar-zoe-0001", 99, 0);
+  expect(store.getView().jobs.find((j) => j.jobId === reply.result.jobId)).toMatchObject({ kind: "run", runId: reply.result.runId, status: "running", done: 1, total: 5 });
 });
 
 test("trackRunJob on a run whose job.done beat the reply keeps it complete, never 0 of its size", async () => {
@@ -106,8 +115,8 @@ test("trackRunJob on a run whose job.done beat the reply keeps it complete, neve
   scheduler.runAll(); // every progress event and job.done land first
   await settle();
 
-  store.trackRunJob(reply.result.jobId, "avatar-zoe-0001", 5, 0);
-  expect(store.getView().jobs.find((j) => j.jobId === reply.result.jobId)).toMatchObject({ kind: "run", status: "done", done: 5, total: 5 });
+  store.trackRunJob(reply.result.jobId, reply.result.runId, "avatar-zoe-0001", 5, 0);
+  expect(store.getView().jobs.find((j) => j.jobId === reply.result.jobId)).toMatchObject({ kind: "run", runId: reply.result.runId, status: "done", done: 5, total: 5 });
 });
 
 test("loads the snapshot, then applies events in seq order", async () => {

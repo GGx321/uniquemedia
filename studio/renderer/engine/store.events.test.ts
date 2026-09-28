@@ -207,7 +207,7 @@ test("job.progress alone gives the job its avatarId: the store never has to leav
   const h = await host();
   await h.emit({ type: "job.progress", payload: { jobId: "job-00000009", avatarId: DRAFT.avatarId, done: 1, total: 4 } });
 
-  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: null, avatarId: DRAFT.avatarId, status: "running", done: 1, total: 4, result: null, error: null }]);
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: null, avatarId: DRAFT.avatarId, runId: null, status: "running", done: 1, total: 4, result: null, error: null }]);
   h.stop();
 });
 
