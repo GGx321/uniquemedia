@@ -232,6 +232,18 @@ jobs:
   # from the `build` job above (GitHub Actions has no step-level reuse within
   # one workflow file) as a guard against a bad linux-x64 postinstall. No
   # installer build, no OS × version matrix.
+  #
+  # Re-review N4: the face gate's decode moved off Electron's `nativeImage`
+  # into a WASM JPEG/PNG decoder inside the engine (security review, T7b
+  # section A) — parity.test.ts and distinctPattern.test.ts's own real-gate
+  # proof no longer need a desktop session, only the two model files this job
+  # was missing. Fetching them here (the same cache + step the `build` job
+  # above uses, keyed the same way) means this job now also runs the real
+  # face-gate parity check on every push AND the weekly schedule, on Linux —
+  # not only macOS/Windows. Before this fix, the weekly scheduled run (not
+  # continue-on-error) turned red every week: parity.test.ts's own CI guard
+  # fails loudly rather than silently skipping when it expects the models
+  # and cannot find them.
   canary:
     name: canary (bun latest)
     runs-on: ubuntu-latest
@@ -256,6 +268,16 @@ jobs:
             catch (e) { console.log(`::error::${name} binary missing or not executable: ${path} (${e.message})`); failed = true; }
           }
           process.exit(failed ? 1 : 0)'
+      # N4: same cache + fetch as the `build` job above — see this job's own
+      # header comment for why a Linux runner can use them now too.
+      - name: Cache face gate models
+        id: face-models-cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/studio-face-models
+          key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
+      - name: Fetch face gate models
+        run: bun run models:face
       - run: bunx tsc --noEmit -p studio/tsconfig.json
       # Same bound as the build job's own step above, for the same reason.
       - run: bun test ./studio --randomize

@@ -5,15 +5,38 @@ import { CODEC_WASM_SOURCES, type CodecWasmKey } from "./codecSource";
 import type { DecodeBackend, RawDecoded } from "./wasmDecode";
 
 /**
+ * N7: real, minimal 2x2 images (the bundled ffmpeg's own encoders, verified
+ * to round-trip through both real decoders before being pasted in here —
+ * never hand-typed base64) — decoded once at load so a broken codec fails
+ * there, not mid-run.
+ */
+const SMOKE_TEST_JPEG = Uint8Array.from(
+  Buffer.from(
+    "/9j/4AAQSkZJRgABAgAAAQABAAD//gAPTGF2YzYwLjMuMTAwAP/bAEMACAQEBAQEBQUFBQUFBgYGBgYGBgYGBgYGBgcHBwgICAcHBwYGBwcICAgICQkJCAgICAkJCgoKDAwLCw4ODhERFP/EAEwAAQEAAAAAAAAAAAAAAAAAAAAGAQEBAAAAAAAAAAAAAAAAAAAGBxABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAAIAAgMBIgACEQADEQD/2gAMAwEAAhEDEQA/AIsAUX9//9k=",
+    "base64",
+  ),
+);
+const SMOKE_TEST_PNG = Uint8Array.from(
+  Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAEElEQVR4nGP4w8AARAwQCgAfjgPxzzTeXgAAAABJRU5ErkJggg==", "base64"),
+);
+
+/**
  * A wasm-module failure that leaves the instance's own linear memory in a
  * bad state (an emscripten `abort()`, an out-of-bounds/OOM trap) — best
  * effort, from the error message emscripten/wasm-bindgen actually throw;
  * an ordinary "this file is corrupt" decode error does not match. Task A.4:
  * "recreate the WASM module after an abort/OOM failure."
  */
-function looksLikeFatalWasmFailure(error: unknown): boolean {
+export function looksLikeFatalWasmFailure(error: unknown): boolean {
+  // N6: a real `WebAssembly.RuntimeError` (an actual wasm trap — unreachable,
+  // an out-of-bounds access) is the precise, structural signal. The message
+  // regex is the fallback for emscripten's own `abort()`, which throws a
+  // plain JS value, not a RuntimeError — its real message is "Aborted(OOM)"
+  // or similar, which `\babort\b` never matched (no word boundary between
+  // "abort" and the "ed" in "Aborted") — `\babort(?:ed)?\b` matches both forms.
+  if (error instanceof WebAssembly.RuntimeError) return true;
   const message = error instanceof Error ? error.message : String(error);
-  return /\babort\b|out of bounds|out of memory|unreachable|RuntimeError/i.test(message);
+  return /\babort(?:ed)?\b|out of bounds|out of memory|unreachable/i.test(message);
 }
 
 async function loadVerifiedModule(nodeModulesDir: string, key: CodecWasmKey): Promise<WebAssembly.Module> {
@@ -74,6 +97,17 @@ export async function createRealDecodeBackend(nodeModulesDir: string): Promise<D
 
   await jpegDecoder.init(jpegModule);
   await pngDecoder.init(pngModule);
+
+  // N7: `init()`'s own `await` only awaits building the emscripten/wasm-
+  // bindgen module wrapper — it does not itself decode anything, so a
+  // codec that is present but broken (compiled without a needed feature, a
+  // mismatched build, a WASM validation error only a real instantiate-and-
+  // run would trip) would not surface until the first real candidate
+  // image, mid-run, after money was already spent generating it. Decoding
+  // one tiny embedded JPEG and PNG here instead makes a broken codec fail
+  // at load — main.ts's own loadFaceGate() already treats that as
+  // FACE_GATE_UNAVAILABLE before any run can start.
+  await Promise.all([jpegDecoder.default(toArrayBuffer(SMOKE_TEST_JPEG)), pngDecoder.default(toArrayBuffer(SMOKE_TEST_PNG))]);
 
   return {
     async decodeJpeg(bytes) {
