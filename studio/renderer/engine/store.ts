@@ -308,8 +308,12 @@ export class EngineStore {
   trackRunJob(jobId: string, runId: string, avatarId: string, total: number, ended = 0): void {
     this.patchJob(jobId, (job) => {
       const size = job.total || total;
-      // A job that already ended before this reply (its job.done beat it) is complete: never "0 / 20" for it.
-      const done = isFinished(job) ? Math.max(job.done, job.status === "done" ? size : 0) : job.done || ended;
+      // A job that already ended before this reply is at least this resume's
+      // own baseline (L9): "done" means every slot, including the newly
+      // resumed ones, finished (size); a job.cancelled or job.failed that
+      // beat the reply (a fast cancel, say) still keeps the slots this
+      // resume started from — never drops back to 0 of them.
+      const done = isFinished(job) ? Math.max(job.done, job.status === "done" ? size : ended) : job.done || ended;
       return { ...job, kind: "run", avatarId, runId, total: size, done };
     });
   }
@@ -588,21 +592,31 @@ export class EngineStore {
       }
       case "job.done": {
         const { jobId, result } = event.payload;
+        // L9: total from the result itself when nothing (no job.progress,
+        // no trackRunJob/trackCandidatesJob) told the store one yet —
+        // otherwise a job whose first-ever event is its own job.done would
+        // read "0 of 0" instead of complete. `job.total` (already known) is
+        // always preferred when it is set.
+        const resultTotal = result.kind === "run" ? result.photoIds.length + result.failedSlots : result.candidates.length + result.failedSlots.length;
         this.patchJob(
           jobId,
-          (job) => ({
-            ...job,
-            kind: result.kind,
-            avatarId: result.kind === "avatar.candidates" ? result.avatarId : job.avatarId,
-            // A run job's own runId, straight off its result: fills it in even
-            // for a run this window only ever watched through another
-            // window's job.progress (which carries no runId at all).
-            runId: result.kind === "run" ? result.runId : job.runId,
-            status: "done",
-            done: Math.max(job.done, job.total),
-            result,
-            error: null,
-          }),
+          (job) => {
+            const total = job.total || resultTotal;
+            return {
+              ...job,
+              kind: result.kind,
+              avatarId: result.kind === "avatar.candidates" ? result.avatarId : job.avatarId,
+              // A run job's own runId, straight off its result: fills it in even
+              // for a run this window only ever watched through another
+              // window's job.progress (which carries no runId at all).
+              runId: result.kind === "run" ? result.runId : job.runId,
+              status: "done",
+              total,
+              done: Math.max(job.done, total),
+              result,
+              error: null,
+            };
+          },
           lastSeq,
         );
         if (result.kind === "avatar.candidates") {

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { ENGINE_GONE_DETAIL, type AvatarSummary, type CommandMessage, type EventMessage, type JobState } from "../../shared/engine";
-import type { EngineClient } from "./client";
+import { ENGINE_GONE_DETAIL, PROTOCOL_VERSION, type AvatarSummary, type CommandMessage, type EventMessage, type JobState, type UnsequencedEvent } from "../../shared/engine";
+import { createEngineClient } from "./client";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -117,6 +117,72 @@ test("trackRunJob on a run whose job.done beat the reply keeps it complete, neve
 
   store.trackRunJob(reply.result.jobId, reply.result.runId, "avatar-zoe-0001", 5, 0);
   expect(store.getView().jobs.find((j) => j.jobId === reply.result.jobId)).toMatchObject({ kind: "run", runId: reply.result.runId, status: "done", done: 5, total: 5 });
+});
+
+const RAW_BOOT = "boot-raw-0001";
+
+/**
+ * A store wired to a scripted bridge (not a real MockEngine job simulation),
+ * so a test can emit exactly the one event it wants with nothing else around
+ * it — a real run or candidates job always carries at least one job.progress
+ * before its job.done, which cannot exercise L9's "no prior progress at all"
+ * case. Mirrors store.events.test.ts's own `host()`.
+ */
+async function rawHost() {
+  const base = await mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() })).request("engine.snapshot", {});
+  if (!base.ok) throw new Error(`expected ok, got ${base.error.code}`);
+  const snapshot = { ...base.result, bootId: RAW_BOOT, lastSeq: 0 };
+  let seq = 0;
+  const listeners = new Set<(e: unknown) => void>();
+  const bridge = {
+    async request(cmd: CommandMessage): Promise<unknown> {
+      const head = { v: PROTOCOL_VERSION, id: cmd.id, kind: "response" as const, type: cmd.type };
+      if (cmd.type === "engine.snapshot") return { ...head, ok: true, result: { ...snapshot, lastSeq: seq } };
+      return { ...head, ok: false, error: { code: "INTERNAL" as const } };
+    },
+    subscribe(l: (e: unknown) => void): () => void {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+  };
+  const store = new EngineStore(createEngineClient(bridge, "window"));
+  const stop = store.start();
+  await settle();
+  return {
+    store,
+    stop,
+    emit: async (event: Omit<UnsequencedEvent, "v" | "id" | "kind">) => {
+      seq += 1;
+      const message = { v: PROTOCOL_VERSION, id: `evt-${String(seq).padStart(8, "0")}`, kind: "event" as const, seq, bootId: RAW_BOOT, ...event };
+      for (const l of [...listeners]) l(message);
+      await settle();
+    },
+  };
+}
+
+test("job.done arriving with no prior progress derives done/total from the result, not 0/0 (L9)", async () => {
+  const { store, emit } = await rawHost();
+  await emit({
+    type: "job.done",
+    payload: {
+      jobId: "job-00000099",
+      result: { kind: "run", runId: "run-00000099", avatarId: "avatar-zoe-0001", photoIds: ["photo-0000001", "photo-0000002", "photo-0000003"], failedSlots: 1 },
+    },
+  });
+
+  const job = store.getView().jobs.find((j) => j.jobId === "job-00000099");
+  expect(job).toMatchObject({ status: "done", done: 4, total: 4 });
+});
+
+test("a resume's job.cancelled arriving before trackRunJob's own reply keeps the run's baseline done count, not 0 (L9)", async () => {
+  const { store, emit } = await rawHost();
+  // As a genuinely fast cancel could race it: the job.cancelled event lands
+  // here before this window's own runs.resume reply calls trackRunJob.
+  await emit({ type: "job.cancelled", payload: { jobId: "job-00000098" } });
+
+  store.trackRunJob("job-00000098", "run-00000098", "avatar-zoe-0001", 12, 8);
+  const job = store.getView().jobs.find((j) => j.jobId === "job-00000098");
+  expect(job).toMatchObject({ status: "cancelled", done: 8, total: 12 });
 });
 
 test("loads the snapshot, then applies events in seq order", async () => {
