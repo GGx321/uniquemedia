@@ -33,6 +33,19 @@ function photo(n: number, patch: Partial<PhotoSummary> = {}): PhotoSummary {
   };
 }
 
+/** N4: `n` real, distinctly-counted photos for `avatarId` (unlike `photo()`, safe past single-digit counts). The first carries a similarity badge when `withFace`. */
+function manyPhotos(n: number, avatarId: string, idPrefix: string, withFace: boolean): PhotoSummary[] {
+  return Array.from({ length: n }, (_, i) => ({
+    photoId: `photo-${idPrefix}-${String(i + 1).padStart(4, "0")}`,
+    avatarId,
+    runId: `run-${idPrefix}-0001`,
+    category: "home" as const,
+    resolution: "1k" as const,
+    createdAt: new Date(Date.UTC(2026, 8, 24, 10, 0, i)).toISOString(),
+    ...(withFace && i === 0 ? { qa: { faceCos: 0.86 } } : {}),
+  }));
+}
+
 /** The default request the screen opens with: 20 photos at 1K, every category, no profile or back. */
 const DEFAULT_REQUEST: RunRequest = {
   avatarId: MIA.avatarId,
@@ -954,11 +967,13 @@ test("the «Сцены на проверку» switch cannot be toggled by click
 
 // ---------- navigation ----------
 
-test("avatar A's delayed runs.estimate and photos.list answering after a switch to B must not render on B (M4, LOW-2)", async () => {
+test("route smoke test: switching avatars via the grid (a full screen-type change) never renders a stale reply on the new one (M4, LOW-2)", async () => {
   // Mia and Sofia must actually differ (LOW-2): with the same default form
   // and an empty gallery for both, a leaked reply would be indistinguishable
   // from the real one and this test could never fail. Mia gets two real
-  // photos of her own; Sofia gets none.
+  // photos of her own; Sofia gets none. (This route — via the Avatars grid —
+  // always changes the Screen's own type/key regardless of AvatarPhotos's
+  // own; N4 below is the one race that actually depends on it.)
   const { engine, scheduler } = setup({ avatars: [MIA, SOFIA], photos: [photo(1, { qa: { faceCos: 0.86 } }), photo(2, { category: "travel" })] });
   engine.delayNext("runs.estimate", 500);
   engine.delayNext("photos.list", 500);
@@ -983,6 +998,41 @@ test("avatar A's delayed runs.estimate and photos.list answering after a switch 
   expect(screen.queryByText("лицо 0.86")).toBeNull();
   expect(document.querySelectorAll(".photo-tile:not(.photo-tile-drawing):not(.photo-tile-queued)")).toHaveLength(0);
   expect(callsOf(engine, "photos.list").map((c) => c.payload.avatarId)).toContain(SOFIA.avatarId);
+});
+
+test("the sidebar's «Фото» staying on the same route through a library switch must not leak the old avatar's stale reply (N4)", async () => {
+  // Unlike the grid route above, the sidebar's own «Фото» (avatarId null)
+  // never changes the Screen's own key on a library switch — it stays on
+  // "photos:last" the whole time. AvatarPhotos's own key on avatar.avatarId
+  // is the only thing that can protect this one.
+  const { engine, client, scheduler } = setup({
+    avatars: [MIA],
+    photos: [...manyPhotos(25, MIA.avatarId, "mia", true), ...manyPhotos(20, SOFIA.avatarId, "sofia", false)],
+  });
+  await openSection("Фото");
+  await screen.findByRole("heading", { level: 1, name: "Mia" });
+  await screen.findByText("лицо 0.86");
+  expect(screen.getByText("25 фото")).toBeDefined();
+
+  engine.delayNext("photos.list", 500);
+  engine.delayNext("photos.list", 500);
+  engine.setAvatarsForNextSnapshot([SOFIA]);
+  await act(async () => {
+    await client.request("settings.setLibraryPath", { path: "/Users/studio/Other/library" });
+  });
+  await flush();
+
+  await screen.findByRole("heading", { level: 1, name: "Sofia" });
+  // Sofia's own gallery is itself still loading (her mount-time ask drew one
+  // of the two delays) — but Mia's tile must not appear regardless.
+  expect(screen.queryByText("лицо 0.86")).toBeNull();
+
+  tick(scheduler, 2); // Sofia's own (delayed) mount-time ask, and Mia's own stale one, both land now
+  await flush();
+
+  expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
+  expect(screen.queryByText("лицо 0.86")).toBeNull();
+  expect(screen.getByText("20 фото")).toBeDefined();
 });
 
 test("an avatar's name on the grid opens its photos; the sidebar's «Фото» comes back to it", async () => {
