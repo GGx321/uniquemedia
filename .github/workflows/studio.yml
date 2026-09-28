@@ -114,6 +114,14 @@ jobs:
       # hours until GitHub's own job-level limit kicks in.
       - run: bun test ./studio
         timeout-minutes: 10
+      # T7c: the real face worker tests (real models, a worker terminated
+      # mid-WASM) run alone: Bun itself segfaults ~2% of the time tearing down
+      # such a worker, so the file skips itself in the run above and this step
+      # retries — at most 3 attempts — ONLY on that Bun crash with no failed
+      # test (studio/scripts/realWorkerTests.ts); a real failure fails at once.
+      - name: Real face worker tests
+        run: bun run test:studio:real-worker
+        timeout-minutes: 10
       - if: env.PACKAGE == 'true'
         run: bun run build:studio
       # Studio's version comes from studio/version.json via the config's `extends`.
@@ -281,4 +289,8 @@ jobs:
       - run: bunx tsc --noEmit -p studio/tsconfig.json
       # Same bound as the build job's own step above, for the same reason.
       - run: bun test ./studio --randomize
+        timeout-minutes: 10
+      # Same alone-and-retry step as the build job's (T7c).
+      - name: Real face worker tests
+        run: bun run test:studio:real-worker
         timeout-minutes: 10

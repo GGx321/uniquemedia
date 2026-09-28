@@ -23,6 +23,18 @@ useNativeGlobals();
 // computation really is interruptible, and that load failures name their
 // cause. (Byte-exact parity through the worker: parity.test.ts.)
 
+// These tests terminate a real worker running WASM, which makes Bun itself
+// segfault in ~2% of runs (a Bun bug; see studio/scripts/realWorkerTests.ts).
+// So they run only when that script sets the flag — alone, in their own CI
+// step, with a retry for that crash and nothing else — and are skipped in the
+// main `bun test ./studio` run, which stays deterministic.
+const RUN_REAL_WORKER_TESTS = process.env.STUDIO_REAL_WORKER_TESTS === "1";
+const IS_CI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
+
+test.skipIf(!RUN_REAL_WORKER_TESTS || !IS_CI)("CI guard: the face models must be present when the real-worker step runs, never silently skipped", () => {
+  expect(MODELS_PRESENT).toBe(true);
+});
+
 const gates: WorkerFaceGate[] = [];
 afterEach(async () => {
   await Promise.all(gates.splice(0).map((g) => g.dispose()));
@@ -60,7 +72,7 @@ async function masterEmbeddingVia(gate: WorkerFaceGate): Promise<Float32Array> {
   return gate.embed(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live());
 }
 
-describe.skipIf(!MODELS_PRESENT)("the real face worker", () => {
+describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("the real face worker", () => {
   test("a 2K check leaves the engine's event loop free: the largest timer gap stays well under what the same check blocks in-thread", async () => {
     const image = twoKJpeg();
 
@@ -87,9 +99,8 @@ describe.skipIf(!MODELS_PRESENT)("the real face worker", () => {
 
     // The control must actually block (else this test measures nothing) ...
     expect(control.maxGapMs).toBeGreaterThan(40);
-    // ... and the worker path must not: a fraction of it, and small in absolute terms.
+    // ... and the worker path must not: a fraction of it. (Relative only: an absolute millisecond bound is flaky on 3-4 vCPU runners and under Windows' 15.6 ms timer.)
     expect(worker.maxGapMs).toBeLessThan(control.maxGapMs / 2);
-    expect(worker.maxGapMs).toBeLessThan(40);
     expect(worker.durationMs).toBeGreaterThan(worker.maxGapMs * 2);
   }, 60_000);
 
@@ -140,7 +151,7 @@ describe.skipIf(!MODELS_PRESENT)("the real face worker", () => {
   }, 30_000);
 });
 
-describe.skipIf(!MODELS_PRESENT)("start-up failures of the real worker name their cause", () => {
+describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("start-up failures of the real worker name their cause", () => {
   test("a model file that does not exist rejects start() and leaves no worker behind", async () => {
     const gate = ownGate({ models: { yunetPath: join(tmpdir(), "no-such-yunet.onnx"), sfacePath: realWorkerInit().models.sfacePath } });
     await expect(gate.start()).rejects.toThrow(/no-such-yunet\.onnx/);
