@@ -23,10 +23,11 @@ import { hammingDistance } from "../../../src/core/pdq/hamming";
 // code between two `await` points, so two concurrent gate checks racing on
 // the same avatar can never both see "no duplicate yet" and both claim: the
 // second one to actually run this method always sees the first one's claim
-// already in the map. `runJob.ts`'s `runGates` calls `release` (via
-// `qa.ts`'s `releasable`) the moment a later gate ends the same attempt
-// without storing its photo, so an unstored claim never lingers to block a
-// genuinely different future image.
+// already in the map. `runJob.ts`'s `runGates` calls every gate's own
+// `QaGate.releaseClaim` (`qa.ts`) the moment a later gate ends the same
+// attempt without storing its photo — the pdq gate's own implementation
+// (pdqGate.ts) forwards straight into `release` below — so an unstored
+// claim never lingers to block a genuinely different future image.
 export class PdqClaims {
   readonly #byAvatar = new Map<string, Map<string, Uint8Array>>();
 
