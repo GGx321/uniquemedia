@@ -60,6 +60,56 @@ async function started(options: ConstructorParameters<typeof MockEngine>[0] = {}
   return { scheduler, engine, store, stop };
 }
 
+// T8b: a photo run this window just started or resumed is tracked from the
+// command's own reply — its size, and a resume's slots already ended — so
+// nothing shows "0 / 0" (or a resume starting over) before its first event.
+test("trackRunJob records a run job with its size, and a resume's ended slots, before any event", async () => {
+  const { store } = await started({ avatars: [zoe()] });
+  store.trackRunJob("job-00000042", "avatar-zoe-0001", 20);
+  expect(store.getView().jobs).toEqual([{ jobId: "job-00000042", kind: "run", avatarId: "avatar-zoe-0001", status: "queued", done: 0, total: 20, result: null, error: null }]);
+
+  store.trackRunJob("job-00000043", "avatar-zoe-0001", 12, 8);
+  expect(store.getView().jobs.at(-1)).toMatchObject({ kind: "run", status: "queued", done: 8, total: 12 });
+});
+
+test("trackRunJob never overrides progress that beat the reply", async () => {
+  const { engine, scheduler, store } = await started({ avatars: [zoe()] });
+  const client = mockEngineClient(engine);
+  const reply = await client.request("runs.start", {
+    avatarId: "avatar-zoe-0001",
+    count: 5,
+    categories: ["home"],
+    resolution: "1k",
+    poses: { profile: false, back: false },
+    acceptedWorstMicros: 5 * 3 * 50_000 + 70_000,
+  });
+  if (!reply.ok) throw new Error(`expected ok, got ${reply.error.code}`);
+  scheduler.next(); // the first slot's job.progress lands before this window tracks the job
+  await settle();
+
+  store.trackRunJob(reply.result.jobId, "avatar-zoe-0001", 99, 0);
+  expect(store.getView().jobs.find((j) => j.jobId === reply.result.jobId)).toMatchObject({ kind: "run", status: "running", done: 1, total: 5 });
+});
+
+test("trackRunJob on a run whose job.done beat the reply keeps it complete, never 0 of its size", async () => {
+  const { engine, scheduler, store } = await started({ avatars: [zoe()] });
+  const client = mockEngineClient(engine);
+  const reply = await client.request("runs.start", {
+    avatarId: "avatar-zoe-0001",
+    count: 5,
+    categories: ["home"],
+    resolution: "1k",
+    poses: { profile: false, back: false },
+    acceptedWorstMicros: 5 * 3 * 50_000 + 70_000,
+  });
+  if (!reply.ok) throw new Error(`expected ok, got ${reply.error.code}`);
+  scheduler.runAll(); // every progress event and job.done land first
+  await settle();
+
+  store.trackRunJob(reply.result.jobId, "avatar-zoe-0001", 5, 0);
+  expect(store.getView().jobs.find((j) => j.jobId === reply.result.jobId)).toMatchObject({ kind: "run", status: "done", done: 5, total: 5 });
+});
+
 test("loads the snapshot, then applies events in seq order", async () => {
   const { engine, store } = await started({ money: { monthlyBudgetMicros: 5_000_000 } });
   expect(store.getView()).toMatchObject({ phase: "ready", bootId: engine.currentBootId, lastSeq: 0 });

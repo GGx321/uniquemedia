@@ -285,6 +285,22 @@ export class EngineStore {
     this.patchJob(jobId, (job) => ({ ...job, kind: "avatar.candidates", avatarId }));
   }
 
+  /**
+   * T8b: records a photo run's job this window just started or resumed, with
+   * its slot count as the total and, for a resume, the slots that already
+   * ended as done, until the first job.progress says otherwise (so the
+   * sidebar queue never shows a batch's "|| 4" for a run, nor a resume
+   * starting over from zero); merges with any events that beat the reply.
+   */
+  trackRunJob(jobId: string, avatarId: string, total: number, ended = 0): void {
+    this.patchJob(jobId, (job) => {
+      const size = job.total || total;
+      // A job that already ended before this reply (its job.done beat it) is complete: never "0 / 20" for it.
+      const done = isFinished(job) ? Math.max(job.done, job.status === "done" ? size : 0) : job.done || ended;
+      return { ...job, kind: "run", avatarId, total: size, done };
+    });
+  }
+
   markJobCancelled(jobId: string): void {
     this.patchJob(jobId, (job) => (isActiveJob(job) ? { ...job, status: "cancelled" } : job));
   }
