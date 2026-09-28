@@ -915,6 +915,37 @@ describe("prepare() (H1: a gate that cannot run for this avatar stops the job be
     expect(net.calls).toHaveLength(0);
   });
 
+  // 2b whole-slice review blocker: the CMYK/M1 fallback (masterOriginalFor's
+  // own retry against loadMaster()'s <=1024px reference, when the original
+  // master fails to DECODE rather than fails the format sniff) must not fire
+  // once the job has already stopped sending — a gate's own prepare() runs
+  // an embedding computation the caller's own signal does not actually stop
+  // (T7b's H2/N11: the shared computation runs on its own internal
+  // AbortController), so retrying it after a cancel starts real, wasted work
+  // that outlives the job.
+  test("a cancel during prepare must not start the CMYK/M1 fallback's own reference embedding a second time", async () => {
+    const run = await newRun(1);
+    const controller = new AbortController();
+    let prepareCalls = 0;
+    const face: QaGate = {
+      name: "face",
+      paid: false,
+      prepare: async () => {
+        prepareCalls++;
+        await new Promise(() => {}); // never settles on its own — only the job's own cancel ends it
+      },
+      check: async () => ({ verdict: "pass" }),
+    };
+    const { end, net } = start(run, { gates: [face], signal: controller.signal });
+
+    await until(() => prepareCalls === 1, "prepare() to start");
+    controller.abort(new Error("cancelled by the user"));
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(0);
+    expect(prepareCalls).toBe(1);
+  });
+
   test("N9: loadMasterOriginal() returning null ends NOT_FOUND, with 0 POSTs", async () => {
     const run = await newRun(1);
     const nullMasterLibrary: RunJobDeps["library"] = {
