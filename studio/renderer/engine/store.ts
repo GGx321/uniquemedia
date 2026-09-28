@@ -89,11 +89,14 @@ function isFinished(job: JobView): boolean {
   return job.status === "cancelled" || job.status === "done" || job.status === "failed";
 }
 
-function jobFromState(j: JobState): JobView {
+export function jobFromState(j: JobState): JobView {
+  // Both JobState branches carry their own avatarId (T6: a run's does too,
+  // not only avatar.candidates') — read straight off the state, never
+  // guessed, matching job.progress's own avatarId (below).
   return {
     jobId: j.jobId,
     kind: j.kind,
-    avatarId: j.kind === "avatar.candidates" ? j.avatarId : null,
+    avatarId: j.avatarId,
     status: j.status,
     done: j.done,
     total: j.total,

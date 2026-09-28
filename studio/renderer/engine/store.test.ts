@@ -1,10 +1,35 @@
 import { expect, test } from "bun:test";
-import { ENGINE_GONE_DETAIL, type AvatarSummary, type CommandMessage, type EventMessage } from "../../shared/engine";
+import { ENGINE_GONE_DETAIL, type AvatarSummary, type CommandMessage, type EventMessage, type JobState } from "../../shared/engine";
 import type { EngineClient } from "./client";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
-import { EngineStore } from "./store";
+import { EngineStore, jobFromState } from "./store";
+
+// T8b (T6 follow-up): a run job's JobState always carries its own avatarId
+// (like an avatar.candidates job's), so jobFromState must never read it back
+// as null for a "run" kind — the store must not make the wizard/gallery
+// guess a running run's avatar from other jobs or a local id.
+test("jobFromState reads a run job's avatarId, not null", () => {
+  const runJob: JobState = { kind: "run", jobId: "job-00000002", runId: "run-00000001", avatarId: "avatar-0001", status: "running", done: 3, total: 20 };
+
+  expect(jobFromState(runJob)).toEqual({
+    jobId: "job-00000002",
+    kind: "run",
+    avatarId: "avatar-0001",
+    status: "running",
+    done: 3,
+    total: 20,
+    result: null,
+    error: null,
+  });
+});
+
+test("jobFromState still reads an avatar.candidates job's avatarId", () => {
+  const candidatesJob: JobState = { kind: "avatar.candidates", jobId: "job-00000001", avatarId: "avatar-0002", status: "running", done: 1, total: 4 };
+
+  expect(jobFromState(candidatesJob).avatarId).toBe("avatar-0002");
+});
 
 function zoe(): AvatarSummary {
   return {
