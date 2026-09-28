@@ -139,19 +139,21 @@ export interface QaInput {
    */
   master: LibraryReference;
   /**
-   * T7b's own decode decision: the engine's utilityProcess has no
-   * `nativeImage` of its own (confirmed empirically — see the T7b wiring
-   * notes in docs/studio/2026-09-24-stage-2-plan.md), and the runtime rule
-   * (invariant 1) forbids importing `electron` from anywhere reachable from
-   * the engine entry regardless. So decoding to the tagged RGBA/BGRA pixels
-   * the face gate needs happens in the REAL main process (Electron's
-   * `nativeImage`, the same decoder the spike's parity numbers were measured
-   * against) and travels back over the engine↔main control channel
-   * (control.ts's `EngineCall`/`MainReply`, `studio/main/imageDecode.ts`).
-   * Only the face gate calls this today; every other gate's own decode
-   * (pdq's 64x64 grayscale, the age gate's downscaled JPEG) stays on the
-   * engine's own ffmpeg, which has no identity-precision requirement to
-   * keep parity with.
+   * Security review, T7b section A: decoding network-sourced image bytes
+   * with native Chromium decoders in the privileged main process (which can
+   * decrypt the API key) was ruled out. The engine decodes to tagged RGBA
+   * pixels itself instead, with a WASM JPEG/PNG decoder
+   * (studio/engine/decode/ — `@jsquash/jpeg`/`@jsquash/png`, mozjpeg/squoosh
+   * WASM), measured byte-identical to Electron's `nativeImage` on the parity
+   * fixture set (face/parity.test.ts). Every decode failure — an unsupported
+   * format, a pixel count over the cap, a decode that throws, a decoded size
+   * that disagrees with the header — is treated as SYSTEMIC (decode/
+   * wasmDecode.ts's own header has the full reasoning) and propagates
+   * uncaught, never turned into a per-photo `retry` here or in
+   * `faceGate.ts`. Only the face gate calls this today; every other gate's
+   * own decode (pdq's 64x64 grayscale, the age gate's downscaled JPEG) stays
+   * on the engine's own ffmpeg, which has no identity-precision requirement
+   * to keep parity with.
    */
   decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 }
@@ -161,6 +163,33 @@ export type QaVerdict =
   | { verdict: "retry"; reason: string }
   | { verdict: "reject"; reason: string };
 
+/**
+ * Money review H1: what `runJob.ts`'s `work()` hands every gate's optional
+ * `prepare()`, once per job (start or resume), right after `loadMaster()`
+ * and BEFORE the writer phase or any image is generated — so a gate that
+ * cannot run for this avatar at all is discovered for free, never after a
+ * paid image (or the writer's own paid call) already happened. The face
+ * gate is `prepare()`'s only real implementor today: it computes and caches
+ * the master's identity embedding here, eagerly, rather than lazily on the
+ * first candidate's own `check()` (the previous, reversed design — see
+ * `runs/faceGate.ts`'s own header).
+ */
+export interface QaPrepareInput {
+  avatarId: string;
+  /**
+   * Money review M1/N1: the avatar's ORIGINAL, undownscaled master file
+   * bytes (`Library.loadMasterOriginal()`, sha256-checked via the library)
+   * — never `QaInput.master` (the ≤1024px reference downscaled for
+   * OpenRouter), which measurably drifts the face embedding past the
+   * gate's own 0.001 parity budget.
+   */
+  masterOriginal: Uint8Array;
+  /** The same decode function `QaInput.decodeImage` is — see its own comment for the full reasoning. */
+  decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
+  /** Aborts on the run's cancel or `runJob.ts`'s own bound on `prepare()` (mirrors `loadMaster()`'s own timeout). */
+  signal: AbortSignal;
+}
+
 export interface QaGate {
   /** Short and fixed (e.g. "pdq", "face", "age"): it names the gate in the run's journal and errors. */
   readonly name: string;
@@ -168,6 +197,14 @@ export interface QaGate {
   readonly paid: boolean;
   /** QA_GATE_TIMEOUT_MS unless the gate needs longer (a paid gate: at least its own request's bound). */
   readonly timeoutMs?: number;
+  /**
+   * Runs once per job, before any paid work (see `QaPrepareInput`'s own
+   * comment). A gate that cannot run for this avatar at all throws here,
+   * uncaught — `runJob.ts`'s `work()` reads that as `MASTER_FACE_UNUSABLE`
+   * (H1) and ends the job failed, spending nothing. Optional: a gate with
+   * nothing to prepare (pdq, the age gate) simply never implements it.
+   */
+  prepare?(input: QaPrepareInput): Promise<void>;
   check(input: QaInput): Promise<QaVerdict>;
   /**
    * Releases a provisional claim this gate made for one attempt (T7a's pdq

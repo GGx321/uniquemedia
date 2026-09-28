@@ -14,7 +14,7 @@ import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
 import { contractCategory, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, runRoute, type RunPlan } from "./plan";
 import type { CpuPool, NetworkPool, Release } from "./pools";
-import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
+import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
 import { runWriterPhase } from "./writerPhase";
 
 // T6: one job of a photo run — a fresh start or a resume, the same code.
@@ -54,8 +54,8 @@ import { runWriterPhase } from "./writerPhase";
 // holds with any number of requests in flight. A cancel aborts the requests
 // in flight — their reserves stay open at their worst case until reconciled.
 
-/** What the job needs of the library: the run's journal, the master as a reference, and the photos. */
-export type RunLibrary = Pick<Library, "appendJournal" | "readJournal" | "addPhoto" | "loadReference" | "photosByAvatar" | "appendHistory">;
+/** What the job needs of the library: the run's journal, the master as a reference (and, for a gate's own prepare(), the master's original bytes — M1/N1), and the photos. */
+export type RunLibrary = Pick<Library, "appendJournal" | "readJournal" | "addPhoto" | "loadReference" | "loadMasterOriginal" | "photosByAvatar" | "appendHistory">;
 
 /** How long preparing the master as a reference (an ffmpeg downscale) may take before the run fails for free. */
 export const REFERENCE_TIMEOUT_MS = 30_000;
@@ -204,6 +204,49 @@ async function loadMaster(ctx: Context): Promise<{ ok: true; master: LibraryRefe
     if (job.signal.aborted) return { ok: false, end: { status: "cancelled" } };
     const why = timeout.signal.aborted ? `it took longer than ${ms} ms` : messageOf(error);
     return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`the master photo could not be prepared as the face reference: ${why}`) } } };
+  } finally {
+    timeout.clear();
+  }
+}
+
+/**
+ * Money review H1: every gate's optional `prepare()`, once per job (start or
+ * resume, the same code — `work()`'s own header), right after `loadMaster()`
+ * and before the writer phase or any image is generated — bounded the same
+ * way `loadMaster()` is. A gate that cannot run for this avatar at all
+ * (today: the face gate, with no usable face on the master) throws there;
+ * the job ends `MASTER_FACE_UNUSABLE` before a single request is sent,
+ * instead of discovering the problem lazily on the first paid image's own
+ * `check()` (the old, reversed design faceGate.ts's own header used to
+ * misattribute to the owner).
+ *
+ * M1/N1: gates are handed the avatar's ORIGINAL master file
+ * (`Library.loadMasterOriginal()`), never `loadMaster()`'s own downscaled
+ * OpenRouter reference — a second, independent read and sha256 check, not a
+ * reuse of `loadMaster()`'s result, so a gate's own identity math is never
+ * fed bytes chosen for a completely different purpose (fitting OpenRouter's
+ * own reference size).
+ */
+async function prepareGates(ctx: Context): Promise<{ ok: true } | { ok: false; end: RunJobEnd }> {
+  const { deps, job, plan } = ctx;
+  const ms = deps.referenceTimeoutMs ?? REFERENCE_TIMEOUT_MS;
+  const timeout = timeoutSignal(ms);
+  const signal = AbortSignal.any([job.signal, timeout.signal]);
+  try {
+    const masterOriginal = await untilAborted(deps.library.loadMasterOriginal(plan.avatarId), signal);
+    if (masterOriginal === null) {
+      return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${plan.avatarId} has no usable master photo` } } };
+    }
+    const input: QaPrepareInput = { avatarId: plan.avatarId, masterOriginal, decodeImage: deps.decodeImage, signal };
+    await untilAborted(
+      Promise.all(deps.gates.map((prepareGate) => prepareGate.prepare?.(input))),
+      signal,
+    );
+    return { ok: true };
+  } catch (error) {
+    if (job.signal.aborted) return { ok: false, end: { status: "cancelled" } };
+    const why = timeout.signal.aborted ? `it took longer than ${ms} ms` : messageOf(error);
+    return { ok: false, end: { status: "failed", error: { code: "MASTER_FACE_UNUSABLE", detail: truncate(`a QA gate could not be prepared for this avatar: ${why}`) } } };
   } finally {
     timeout.clear();
   }
@@ -712,6 +755,8 @@ async function work(ctx: Context): Promise<RunJobEnd> {
 
   const reference = await loadMaster(ctx);
   if (!reference.ok) return reference.end;
+  const prepared = await prepareGates(ctx);
+  if (!prepared.ok) return prepared.end;
   const prompts = await promptsOf(ctx, state, reference.master);
   if (!prompts.ok) return prompts.end;
 

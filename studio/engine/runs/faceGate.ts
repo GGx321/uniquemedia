@@ -1,65 +1,66 @@
+import { createHash } from "node:crypto";
 import type { FaceGate, FaceGateImage } from "../face";
 import type { PhotoQa } from "../library";
-import type { QaGate, QaInput, QaVerdict } from "./qa";
+import type { QaGate, QaInput, QaPrepareInput, QaVerdict } from "./qa";
 
 // T7b: the face gate's QaGate adapter. `studio/engine/face` (createFaceGate,
 // runFaceGate, decideFaceVerdict) never decodes an image file and never
 // learns about QaInput/QaVerdict — see face/index.ts's own header, which
-// sketched this exact shape. This file is the only bridge: it decodes both
-// the candidate image and (once per avatar, cached) the master reference via
-// `input.decodeImage` (T7b's decode decision — real Electron `nativeImage`
-// decoding, reached through main; see qa.ts's own comment on
-// `QaInput.decodeImage`), then maps `FaceGate`'s verdict onto the owner's
-// hybrid policy (face/config.ts, face/policy.ts): a `match` or
+// sketched this exact shape. This file is the only bridge: it decodes the
+// candidate image via `input.decodeImage` (the engine's own WASM decoder —
+// security review, T7b section A) and maps `FaceGate`'s verdict onto the
+// owner's hybrid policy (face/config.ts, face/policy.ts): a `match` or
 // `skipped-by-pose` passes; every clear-failure kind the owner named
 // (`no-face`, `multiple-faces`, `unexpected-face`, `mismatch`) retries —
 // exactly the mapping face/verdict.ts's own header documents.
 //
-// Free (`paid: false`): decoding through main costs no money, and neither
+// Free (`paid: false`): the engine's own decode costs no money, and neither
 // does the ONNX inference itself — both run in the run's CPU pool, like the
 // pdq gate. No `releaseClaim`: this gate makes no provisional claim of its
 // own (nothing here is a resource another attempt could race for), so
 // `runJob.ts`'s unconditional per-gate release is a harmless no-op for it,
 // exactly like the age gate's.
 //
-// The master embedding: computed once per avatar (not per run — an avatar's
-// master photo is immutable once picked, invariant 9, so caching for the
-// whole engine process's life is strictly stronger than "once per run" and
-// costs nothing extra across repeat runs of the same avatar). A master with
-// no detectable face — `deps.faceGate.embed()` throws (its own documented
-// contract) — means this gate cannot run for this avatar at ALL: the
-// failure is never caught here, so it propagates as a plain thrown error.
-// `runJob.ts`'s own wrapper (`checkFree`) reads an uncaught throw from a
-// free gate the same way it reads a broken decoder or a missing model —
-// `GateBroken`, systemic, stopping the whole run (unless the job was
-// already cancelled, read as `GateDropped` instead) — never a `GateFailure`
-// (qa.ts's own contract: GateFailure is for a classified failure like a rate
-// limit or an invalid key, not "this avatar's data makes the gate unusable").
-// The failed embed is cached too (a failing promise, same as a succeeding
-// one): a second photo of the same broken avatar fails the identical way
-// without a second wasted decode+embed attempt, matching the systemic
-// framing above (every later image would hit the exact same problem).
+// MONEY REVIEW H1 (the implementer's own earlier choice, corrected — this
+// header used to attribute the old design to the owner; it was not): a
+// master with no detectable face used to be discovered lazily, on the
+// first candidate's own `check()` — AFTER that first image was already
+// generated and paid for. `prepare()` (qa.ts's own `QaPrepareInput` has the
+// full contract) now computes the master embedding EAGERLY, once per job,
+// before the writer phase or any image is generated (`runJob.ts`'s
+// `work()`) — a master with no usable face is discovered for free, and the
+// job ends `MASTER_FACE_UNUSABLE` before a single request is sent.
 //
-// OWNER DECISION (documented in docs/studio/2026-09-24-stage-2-plan.md's
-// "T7b wiring — decisions"): a run is NOT refused up front for an avatar
-// whose master has no detectable face. The embedding is computed lazily, on
-// the first candidate's own check — after that first paid image was already
-// generated — rather than eagerly before any money is spent. This mirrors
-// every other "gate is broken" scenario already handled by GateBroken (e.g.
-// ffmpeg itself missing): the run discovers the problem on its first
-// attempt, stops cleanly, and that one already-paid image's cost stands.
-// Refusing eagerly would need a new QaGate lifecycle hook (qa.ts has none
-// today beyond `check`/`releaseClaim`) for a single gate's own special case;
-// the existing, already-reviewed failure path handles it correctly without
-// one.
+// MONEY REVIEW M1/N1: `prepare()` is given `input.masterOriginal` — the
+// avatar's ORIGINAL, undownscaled master file (`Library.
+// loadMasterOriginal()`) — never `QaInput.master` (the ≤1024px reference
+// downscaled for OpenRouter), which measurably drifts the embedding past
+// this gate's own 0.001 parity budget.
 //
-// A candidate image that cannot be decoded (decodeImage rejects, and
-// `input.signal` is not the reason) is this ONE photo's own problem, like
-// the pdq gate's own decode failure: `retry`. A decode rejection because
-// `input.signal` fired (the run's cancel, or this gate's own outer timeout)
-// is left to propagate — `runJob.ts`'s own wrapper decides whether that
-// means the image is merely dropped (a cancel) or the gate itself is broken
-// (its own timeout firing on what should be fast, local decoding).
+// MONEY REVIEW H2: the master embedding is cached per avatarId, keyed
+// together with the master bytes' own sha256 (never avatarId alone — a
+// resume whose master somehow differs, or simply a defensive guard against
+// a stale cache entry, gets a fresh embedding). Only a SUCCESSFUL embedding
+// is kept: a rejected computation is evicted immediately, so a later
+// attempt (a resume, after a transient decode failure) gets a fresh try
+// rather than being stuck with a permanently poisoned cache for the rest of
+// this engine process's life. The shared computation itself runs
+// independent of any one caller's own abort signal — a caller that gives
+// up waiting (its own timeout, the job stopping) never kills the
+// computation for another caller (or a later job's `prepare()`) still
+// waiting on the very same one; each caller instead races its own wait
+// against its own signal (`abortableWait` below).
+//
+// A candidate image that cannot be decoded (input.decodeImage rejects) is,
+// as of the security review's decode decision (section A.4), SYSTEMIC, not
+// a per-photo `retry`: it propagates uncaught, exactly like a broken
+// underlying `FaceGate.check`/`embed` — `runJob.ts`'s existing `checkFree`
+// wrapper already reads any uncaught gate failure as GateBroken (or
+// GateDropped, if the job was already cancelled). decode/wasmDecode.ts's
+// own header has the full reasoning: these bytes already passed the pdq
+// gate's own ffmpeg decode, so a WASM decode failure here means the
+// decoder itself cannot handle this format/file, not that this one photo
+// is bad — never something worth burning up to 3 paid attempts retrying.
 
 export const FACE_GATE_NAME = "face";
 
@@ -68,45 +69,88 @@ export interface FaceQaGateDeps {
   faceGate: Pick<FaceGate, "check" | "embed">;
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function qaOf(verdict: { kind: "match" | "mismatch"; similarity: number; headRatio: number }): PhotoQa {
   return { faceCos: verdict.similarity, headRatio: verdict.headRatio };
 }
 
-export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
-  /** One cached (possibly still-pending, possibly rejected) embedding per avatarId, for the gate's whole life. */
-  const masterEmbeddings = new Map<string, Promise<Float32Array>>();
+/** Waits for `promise` without affecting it: rejects early if `signal` aborts first, but the underlying computation (and any other caller waiting on it) keeps running either way. */
+function abortableWait<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
 
-  function embeddingFor(input: QaInput): Promise<Float32Array> {
-    const cached = masterEmbeddings.get(input.avatarId);
-    if (cached !== undefined) return cached;
-    const embedding = (async () => {
-      const decoded = await input.decodeImage(input.master, input.signal);
+interface CachedEmbedding {
+  sha256: string;
+  promise: Promise<Float32Array>;
+}
+
+export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
+  /** H2: one cached (possibly still-pending) embedding per avatarId, keyed together with the master bytes' sha256; only a successful result is kept. */
+  const masterEmbeddings = new Map<string, CachedEmbedding>();
+
+  function computeEmbedding(avatarId: string, masterOriginal: Uint8Array, sha256: string, decodeImage: QaPrepareInput["decodeImage"]): Promise<Float32Array> {
+    // Independent of any one caller's signal (H2): a fresh internal
+    // controller that nothing here ever aborts, so the computation always
+    // runs to completion (or a real failure) regardless of who is still
+    // waiting on it.
+    const internal = new AbortController();
+    const promise = (async () => {
+      const decoded = await decodeImage(masterOriginal, internal.signal);
       return deps.faceGate.embed(decoded);
     })();
-    masterEmbeddings.set(input.avatarId, embedding);
-    return embedding;
+    masterEmbeddings.set(avatarId, { sha256, promise });
+    promise.catch(() => {
+      // Evict only if this exact attempt is still the cached one — a newer
+      // attempt (a different sha256, or a fresh computation already
+      // replacing this failed one) must not be clobbered by a stale catch.
+      const current = masterEmbeddings.get(avatarId);
+      if (current !== undefined && current.promise === promise) masterEmbeddings.delete(avatarId);
+    });
+    return promise;
+  }
+
+  function embeddingFor(input: QaPrepareInput): Promise<Float32Array> {
+    const sha256 = createHash("sha256").update(input.masterOriginal).digest("hex");
+    const cached = masterEmbeddings.get(input.avatarId);
+    const promise = cached !== undefined && cached.sha256 === sha256 ? cached.promise : computeEmbedding(input.avatarId, input.masterOriginal, sha256, input.decodeImage);
+    return abortableWait(promise, input.signal);
   }
 
   return {
     name: FACE_GATE_NAME,
     paid: false,
-    async check(input: QaInput): Promise<QaVerdict> {
-      // Propagates uncaught on failure (see this file's own header): a broken
-      // master, a broken decoder or a missing model are all "this gate cannot
-      // run for this avatar/at all", never a per-photo verdict.
-      const masterEmbedding = await embeddingFor(input);
 
-      let image: FaceGateImage;
-      try {
-        image = await input.decodeImage(input.image.bytes, input.signal);
-      } catch (error) {
-        if (input.signal.aborted) throw error;
-        return { verdict: "retry", reason: `the image could not be decoded for its face check: ${messageOf(error)}` };
+    async prepare(input: QaPrepareInput): Promise<void> {
+      // Propagates uncaught on failure (see this file's own header): a
+      // broken master, a broken decoder or a missing model are all "this
+      // gate cannot run for this avatar/at all" — runJob.ts's work() reads
+      // that as MASTER_FACE_UNUSABLE, before any paid work.
+      await embeddingFor(input);
+    },
+
+    async check(input: QaInput): Promise<QaVerdict> {
+      const cached = masterEmbeddings.get(input.avatarId);
+      if (cached === undefined) {
+        throw new Error(`faceGate: no master embedding prepared for avatar ${input.avatarId} — prepare() must run before check() (runJob.ts's own wiring bug, not a per-photo problem)`);
       }
+      const masterEmbedding = await abortableWait(cached.promise, input.signal);
+
+      // Security review, section A.4: propagates uncaught, never a retry —
+      // see this file's own header.
+      const image: FaceGateImage = await input.decodeImage(input.image.bytes, input.signal);
 
       const verdict = await deps.faceGate.check({ pose: input.slot.pose, image, masterEmbedding });
       switch (verdict.kind) {

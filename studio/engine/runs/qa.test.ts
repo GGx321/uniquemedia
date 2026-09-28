@@ -36,6 +36,33 @@ describe("QaGate.releaseClaim (optional, first-class)", () => {
   });
 });
 
+describe("QaGate.prepare (optional, H1)", () => {
+  test("a gate with no prepare leaves it undefined: a caller's optional call is a no-op", () => {
+    const gate = bareGate();
+    expect(gate.prepare).toBeUndefined();
+  });
+
+  test("a gate that implements prepare is called directly, with no cast needed at the call site", async () => {
+    const prepared: string[] = [];
+    const gate: QaGate = {
+      ...bareGate(),
+      name: "face",
+      prepare: async (input) => {
+        prepared.push(input.avatarId);
+      },
+    };
+
+    await gate.prepare?.({
+      avatarId: "avatar-1",
+      masterOriginal: new Uint8Array([1, 2, 3]),
+      decodeImage: async () => ({ format: "rgba", width: 1, height: 1, data: new Uint8Array(4) }),
+      signal: new AbortController().signal,
+    });
+
+    expect(prepared).toEqual(["avatar-1"]);
+  });
+});
+
 describe("GateFailure", () => {
   test("carries the EngineError it was built with, and its own message mirrors the error's detail", () => {
     const error = { code: "AUTH_INVALID" as const, detail: "the stored key was rejected" };

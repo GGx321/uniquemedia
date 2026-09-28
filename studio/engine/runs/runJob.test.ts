@@ -776,6 +776,72 @@ describe("QA gates", () => {
   });
 });
 
+// ---------- money review H1: a gate's prepare() runs before any paid work ----------
+
+describe("prepare() (H1: a gate that cannot run for this avatar stops the job before any paid work)", () => {
+  function unusableFaceGate(prepareCalls: { avatarId: string }[]): QaGate {
+    return {
+      name: "face",
+      paid: false,
+      prepare: async (input) => {
+        prepareCalls.push({ avatarId: input.avatarId });
+        throw new Error("face/gate: embed() found no face in the reference image");
+      },
+      check: async () => {
+        throw new Error("must not be called: prepare() should have stopped the job first");
+      },
+    };
+  }
+
+  test("on runs.start: MASTER_FACE_UNUSABLE, and 0 POSTs — no writer call, no image call", async () => {
+    const run = await newRun(2);
+    const prepareCalls: { avatarId: string }[] = [];
+    const { end, net } = start(run, { gates: [unusableFaceGate(prepareCalls)] });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "MASTER_FACE_UNUSABLE" } });
+    expect(net.calls).toHaveLength(0);
+    expect(prepareCalls).toEqual([{ avatarId }]);
+  });
+
+  test("on runs.resume: the same avatar's master is still unusable, so the resume also ends MASTER_FACE_UNUSABLE with 0 POSTs", async () => {
+    const run = await newRun(2);
+    const prepareCalls: { avatarId: string }[] = [];
+    const first = start(run, { gates: [unusableFaceGate(prepareCalls)] });
+    expect(await first.end).toMatchObject({ status: "failed", error: { code: "MASTER_FACE_UNUSABLE" } });
+
+    const resumed = start(run, { gates: [unusableFaceGate(prepareCalls)], jobId: "job-00000002" });
+
+    expect(await resumed.end).toMatchObject({ status: "failed", error: { code: "MASTER_FACE_UNUSABLE" } });
+    expect(resumed.net.calls).toHaveLength(0);
+    expect(prepareCalls).toEqual([{ avatarId }, { avatarId }]);
+  });
+
+  test("a gate with no prepare (pdq, age) is unaffected: the run proceeds normally", async () => {
+    const run = await newRun(1);
+    const pdq = gate("pdq", () => ({ verdict: "pass", qa: { pdq: "d".repeat(64) } }));
+    const { end } = start(run, { gates: [pdq] });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+  });
+
+  test("a passing prepare() lets the run proceed, and the gate's own check() still runs per photo", async () => {
+    const run = await newRun(1);
+    let prepareCalls = 0;
+    const face: QaGate = {
+      name: "face",
+      paid: false,
+      prepare: async () => {
+        prepareCalls++;
+      },
+      check: async () => ({ verdict: "pass", qa: { faceCos: 0.9, headRatio: 0.3 } }),
+    };
+    const { end } = start(run, { gates: [face] });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(prepareCalls).toBe(1);
+  });
+});
+
 // ---------- a fatal error does not waste images already paid for (review M1) ----------
 
 describe("images that arrive after a fatal error elsewhere", () => {
@@ -1468,6 +1534,7 @@ describe("a passed gate's claim is always released once its attempt is decided",
       readJournal: library.readJournal.bind(library),
       addPhoto: () => Promise.reject(new Error("disk is full")),
       loadReference: library.loadReference.bind(library),
+      loadMasterOriginal: library.loadMasterOriginal.bind(library),
       photosByAvatar: library.photosByAvatar.bind(library),
       appendHistory: library.appendHistory.bind(library),
     };

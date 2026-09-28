@@ -43,6 +43,10 @@ import { Count, SafeText } from "./primitives";
  *   onnxruntime-web failed to load at engine startup), so a run would store photos no identity
  *   check has seen; nothing is started or spent. Unlike the age gate this is never a Settings
  *   toggle — the face gate is always required, so this only ever means the gate itself is broken.
+ * - MASTER_FACE_UNUSABLE: money review H1 — a gate's `prepare()` (runs/qa.ts) failed before any
+ *   paid work of the job (the writer phase, an image request): the face gate could not compute a
+ *   usable identity embedding from the avatar's master photo (no detectable face, a broken decode).
+ *   The job ends failed right there, before a single request is sent.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -72,6 +76,7 @@ export const ERROR_CODES = [
   "QA_REJECTED",
   "AGE_GATE_UNAVAILABLE",
   "FACE_GATE_UNAVAILABLE",
+  "MASTER_FACE_UNUSABLE",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);

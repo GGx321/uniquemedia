@@ -30,10 +30,11 @@ const EXPECTED_CODES = [
   "QA_REJECTED",
   "AGE_GATE_UNAVAILABLE",
   "FACE_GATE_UNAVAILABLE",
+  "MASTER_FACE_UNUSABLE",
 ];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of twenty-seven codes", () => {
+  test("is exactly the closed set of twenty-eight codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });
