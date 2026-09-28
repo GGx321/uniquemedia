@@ -159,6 +159,24 @@ test("the stepper stays within 5–100 photos", async () => {
   await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 5 фото · до $0.82"));
 });
 
+test("the stepper stays within 5–100 photos at the top too, and stays put past 100 (M4)", async () => {
+  await openPhotos();
+  await priced();
+  const more = screen.getByRole("button", { name: "Больше" });
+  for (let i = 0; i < 15; i++) fireEvent.click(more); // 20 → 95, the stepper's own last step below the cap
+  expect(screen.getByText("95")).toBeDefined();
+  expect(isDisabled(more)).toBe(false);
+
+  fireEvent.click(more); // 95 → 100
+  expect(screen.getByText("100")).toBeDefined();
+  expect(isDisabled(more)).toBe(true);
+
+  fireEvent.click(more); // one more click must not push past the contract's own max
+  expect(screen.getByText("100")).toBeDefined();
+  // 300 attempts × $0.05 + 4 writer chunks (25 photos each) × $0.07.
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 100 фото · до $15.28"));
+});
+
 test("with no category chosen there is nothing to price and nothing to start", async () => {
   const { engine } = await openPhotos();
   await priced();
@@ -229,6 +247,30 @@ test("the button and the form are locked while runs.start is in flight, and a se
   await screen.findByText("Рисуем фото: 0 из 20");
   expect(callsOf(engine, "runs.start")).toHaveLength(1);
   expect(document.querySelector("fieldset.lock-dim")?.hasAttribute("disabled")).toBe(false);
+});
+
+test("unmounting mid-flight still tracks the started run in the window-wide store (M4)", async () => {
+  const { engine, scheduler } = await openPhotos();
+  const button = await priced();
+  engine.delayNext("runs.start", 50);
+  fireEvent.click(button);
+  expect(button.textContent).toContain("Отправляем…");
+
+  // Navigate away before runs.start answers: GenerateCard (and the whole
+  // Photos screen) unmounts mid-flight.
+  await openSection("Аватары");
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+
+  tick(scheduler, 1); // runs.start answers now, with nothing mounted to receive it
+  await flush();
+
+  // The window-wide store still learned of it (store.trackRunJob runs before
+  // the component's mounted check): the sidebar queue shows it under way.
+  expect(within(screen.getByRole("region", { name: "Очередь" })).getByText("0 / 20")).toBeDefined();
+
+  await openSection("Фото");
+  await screen.findByText(/Рисуем фото/);
+  expect(callsOf(engine, "runs.start")).toHaveLength(1);
 });
 
 test("PRICE_CHANGED keeps the button busy until the fresh price replaces it, then asks again", async () => {
@@ -542,6 +584,22 @@ test("a failed re-price after a resume's PRICE_CHANGED drops the refused price: 
   expect(callsOf(harness.engine, "runs.resume")).toHaveLength(1);
 });
 
+test("a resume row whose very first (mount-time) estimateResume fails shows «Узнать цену», with a retry that gets it (M4)", async () => {
+  const harness = setup({ avatars: [MIA] });
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  harness.engine.failNext("runs.estimateResume", { code: "NETWORK" });
+  await openSection("Фото");
+
+  const ask = await screen.findByRole("button", { name: "Узнать цену" });
+  expect(ask.textContent).not.toContain("$");
+  expect(screen.getByText(ERROR_MESSAGES_RU.NETWORK)).toBeDefined();
+  expect(callsOf(harness.engine, "runs.resume")).toHaveLength(0);
+
+  fireEvent.click(ask);
+  expect(await screen.findByRole("button", { name: "Продолжить · до $0.60" })).toBeDefined();
+  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK)).toBeNull();
+});
+
 // ---------- the gallery ----------
 
 test("a failed refresh keeps the gallery already shown and says what went wrong above it", async () => {
@@ -632,6 +690,30 @@ test("what the contract cannot do yet is drawn disabled and marked «скоро�
 });
 
 // ---------- navigation ----------
+
+test("avatar A's delayed runs.estimate and photos.list answering after a switch to B must not render on B (M4)", async () => {
+  const { engine, scheduler } = setup({ avatars: [MIA, SOFIA] });
+  engine.delayNext("runs.estimate", 500);
+  engine.delayNext("photos.list", 500);
+  fireEvent.click(await screen.findByRole("button", { name: "Mia" }));
+  await screen.findByRole("heading", { level: 1, name: "Mia" });
+  // Mia's own price and gallery are still in flight (delayed) when this
+  // window switches to Sofia: the Photos screen (keyed on avatarId) unmounts
+  // Mia's entirely, so her stale replies must land on nothing.
+
+  await openSection("Аватары");
+  fireEvent.click(await screen.findByRole("button", { name: "Sofia" }));
+  await screen.findByRole("heading", { level: 1, name: "Sofia" });
+  const sofiaButton = await priced(); // Sofia's own price, asked for fresh and not delayed
+  expect(sofiaButton.textContent).toBe("Сгенерировать 20 фото · до $3.07");
+
+  tick(scheduler, 2); // Mia's stale runs.estimate and photos.list land now
+  await flush();
+
+  expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
+  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.07");
+  expect(callsOf(engine, "photos.list").map((c) => c.payload.avatarId)).toContain(SOFIA.avatarId);
+});
 
 test("an avatar's name on the grid opens its photos; the sidebar's «Фото» comes back to it", async () => {
   const { engine } = setup({ avatars: [MIA, SOFIA] });

@@ -8,6 +8,7 @@ import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import {
   CATEGORY_LABEL,
+  clampCount,
   COUNT_MAX,
   COUNT_MIN,
   COUNT_STEP,
@@ -236,7 +237,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
                   className="ibtn"
                   aria-label="Меньше"
                   disabled={form.count <= COUNT_MIN}
-                  onClick={() => onFormChange({ ...form, count: Math.max(COUNT_MIN, form.count - COUNT_STEP) })}
+                  onClick={() => onFormChange({ ...form, count: clampCount(form.count, -COUNT_STEP) })}
                 >
                   <Icon name="minus" size={14} strokeWidth={2.4} />
                 </button>
@@ -248,7 +249,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
                   className="ibtn"
                   aria-label="Больше"
                   disabled={form.count >= COUNT_MAX}
-                  onClick={() => onFormChange({ ...form, count: Math.min(COUNT_MAX, form.count + COUNT_STEP) })}
+                  onClick={() => onFormChange({ ...form, count: clampCount(form.count, COUNT_STEP) })}
                 >
                   <Icon name="plus" size={14} strokeWidth={2.4} />
                 </button>

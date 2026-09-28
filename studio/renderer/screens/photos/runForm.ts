@@ -19,6 +19,11 @@ export const COUNT_MIN = 5;
 export const COUNT_MAX = 100;
 export const COUNT_STEP = 5;
 
+/** The stepper's own clamp: `count + delta`, never outside 5–100 whatever `count` already was (an off-grid value included). */
+export function clampCount(count: number, delta: number): number {
+  return Math.min(COUNT_MAX, Math.max(COUNT_MIN, count + delta));
+}
+
 /** The mockup's opening state: 20 photos at 1K in every category, profile and back not allowed. */
 export const DEFAULT_RUN_FORM: RunForm = {
   count: 20,
