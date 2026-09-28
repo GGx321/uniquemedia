@@ -79,9 +79,18 @@ describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real m
     const ortDist = join(ROOT, "node_modules", "onnxruntime-web", "dist");
     const wasmPaths = { wasm: join(ortDist, "ort-wasm-simd-threaded.wasm"), mjs: join(ortDist, "ort-wasm-simd-threaded.mjs") };
     const models = { yunet: readFileSync(MODEL_PATHS.yunet), sface: readFileSync(MODEL_PATHS.sface) };
+    const ort = await import("onnxruntime-web");
+    // ort.env.wasm.wasmPaths is module-level, global, mutable state (bun runs
+    // every test file in one process): createFaceGate only ever SETS it, on a
+    // defined wasmPaths (gate.ts's own `if (wasmPaths !== undefined)`), never
+    // restores it — so leaving this test's own override in place would leak
+    // into every later test in the SAME process that creates a face gate
+    // with the default (undefined) wasmPaths, e.g. distinctPattern.test.ts's
+    // own composite face-match test. Captured and restored here so this
+    // test's own override never outlives it.
+    const previousWasmPaths = ort.env.wasm.wasmPaths;
     const gate = await createFaceGate(models, undefined, wasmPaths);
     try {
-      const ort = await import("onnxruntime-web");
       expect(ort.env.wasm.wasmPaths).toEqual(wasmPaths);
       const [decoded] = await decodeImagesWithElectron([join(IMAGE_DIR, MASTER.file)]);
       if (!decoded) throw new Error("no image decoded");
@@ -89,6 +98,7 @@ describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real m
       expect(embedding.length).toBeGreaterThan(0);
     } finally {
       await gate.dispose();
+      ort.env.wasm.wasmPaths = previousWasmPaths;
     }
   }, 30_000);
 });
