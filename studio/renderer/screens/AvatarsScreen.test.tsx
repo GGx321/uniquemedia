@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { ENGINE_GONE_DETAIL, IMPORT_FALLBACK_PRICE, type AvatarSummary, type Draft } from "../../shared/engine";
+import { ENGINE_GONE_DETAIL, ERROR_MESSAGES_RU, IMPORT_FALLBACK_PRICE, type AvatarSummary, type Draft } from "../../shared/engine";
 import { formatUsd } from "../lib/money";
-import { DESCRIPTOR, MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
+import { DESCRIPTOR, MOCK_AGE_CHECK_PER_SLOT, MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { callsOf, flush, runAll, setup, inAct, tick } from "../testing";
+import { callsOf, estimateText, flush, runAll, setup, inAct, tick } from "../testing";
 
 /** Flushes every latent response, including the ones a resolved one triggers in turn (settings, money, avatars.list). */
 async function answerAll(scheduler: Parameters<typeof runAll>[0]): Promise<void> {
@@ -46,26 +46,42 @@ test("the grid comes from engine.snapshot and is refreshed with avatars.list", a
   const { engine } = setup({ preset: "demo" });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
   await flush();
-  expect(cardNames()).toEqual(["Mia", "Sofia", "Elena", "Ava", "Kira"]);
+  // «Все» by default, as on the mockup: the archived Nora is listed too, marked as such.
+  expect(cardNames()).toEqual(["Mia", "Sofia", "Elena", "Ava", "Kira", "Nora"]);
   expect(callsOf(engine, "engine.snapshot")).toHaveLength(1);
   expect(callsOf(engine, "avatars.list")).toHaveLength(1);
-  expect(screen.getByText(/5\s*аватаров · 466 фото/)).toBeDefined();
+  expect(screen.getByText(/5\s*аватаров · 466\s*фото/)).toBeDefined();
 
   const mia = screen.getByRole("article", { name: "Mia" });
   expect(within(mia).getByText("124 фото")).toBeDefined();
-  expect(within(mia).getByText("Активен")).toBeDefined();
+  expect(within(mia).queryByText("В архиве")).toBeNull();
   expect(within(mia).getByRole("img", { name: "Мастер-портрет: Mia" })).toBeDefined();
+  expect(within(screen.getByRole("article", { name: "Nora" })).getByText("В архиве")).toBeDefined();
 });
 
-test("the archive filter shows archived avatars only", async () => {
+test("the search narrows the grid by name", async () => {
   setup({ preset: "demo" });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
-  fireEvent.click(screen.getByRole("radio", { name: "Архив · 1" }));
+  fireEvent.change(screen.getByRole("searchbox", { name: "Поиск" }), { target: { value: "  so " } });
+  expect(cardNames()).toEqual(["Sofia"]);
+  fireEvent.change(screen.getByRole("searchbox", { name: "Поиск" }), { target: { value: "" } });
+  expect(cardNames()).toContain("Mia");
+});
+
+test("the archive filter shows archived avatars only; «Активные» leaves them out", async () => {
+  setup({ preset: "demo" });
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+  expect(screen.getByRole("radio", { name: "Все" })).toHaveProperty("checked", true);
+
+  fireEvent.click(screen.getByRole("radio", { name: "Архив" }));
   expect(cardNames()).toEqual(["Nora"]);
   expect(screen.getByText("В архиве")).toBeDefined();
-  expect(screen.queryByRole("button", { name: /Новый аватар/ })).toBeNull();
-  fireEvent.click(screen.getByRole("radio", { name: "Активные · 5" }));
-  expect(cardNames()).toContain("Mia");
+  // The dashed «Новый аватар» / «Импортировать аватара» tiles belong with the working avatars, not the archive.
+  expect(document.querySelector(".new-tile")).toBeNull();
+
+  fireEvent.click(screen.getByRole("radio", { name: "Активные" }));
+  expect(cardNames()).toEqual(["Mia", "Sofia", "Elena", "Ava", "Kira"]);
+  expect(document.querySelectorAll(".new-tile")).toHaveLength(2);
 });
 
 test("a seq hole is caught up through engine.events", async () => {
@@ -171,11 +187,12 @@ test("unreadable tiles show a clear Russian reason per code, never the raw detai
   });
   await screen.findByText("Vera");
   expect(screen.getByText("Без имени")).toBeDefined();
-  expect(screen.getByText(/Файл записи не удалось прочитать или разобрать/)).toBeDefined();
-  expect(screen.getByText(/формате, который сегодняшняя версия Studio больше не читает/)).toBeDefined();
+  expect(screen.getByText(/файл записи не читается/)).toBeDefined();
+  expect(screen.getByText(/в старом формате — эта версия Studio её не читает/)).toBeDefined();
+  expect(screen.getByRole("img", { name: "Не читается: файл повреждён" })).toBeDefined();
   expect(document.body.textContent).not.toContain("its manifest file could not be read or parsed");
   expect(document.body.textContent).not.toContain("its stored record no longer fits the contract");
-  expect(screen.queryByRole("button", { name: "Переписать описание" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Переписать описание/ })).toBeNull();
 });
 
 test("an unreadable card shows the avatar's name when the engine still has one, and a neutral fallback when it does not", async () => {
@@ -207,25 +224,152 @@ test("a library with only unreadable records is not shown as the empty state", a
   expect(screen.queryByText("Библиотека пуста")).toBeNull();
 });
 
-test("the rewrite recovery estimates, then sends exactly that estimate's worst case, and the tile disappears on success", async () => {
+// The rewrite recovery is one button that carries its price: the free
+// estimate is asked for as soon as the tile is shown, and a click accepts
+// exactly the worst case written on it («Переписать описание · до $X»).
+const REWRITE_LINE = "описание не проходит текущую проверку";
+
+test("the rewrite recovery prices itself up front, sends nothing paid until the click, then sends exactly the shown worst case", async () => {
   const { engine } = setup();
   engine.seedUnreadable(
     { avatarId: "avatar-broken-0001", name: "Zoe", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Zoe", traits: DEFAULT_TRAITS },
   );
-  await screen.findByText("Описание устарело");
+  await screen.findByText(REWRITE_LINE);
 
-  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
-  await screen.findByText("≈ $0.00, не больше $0.01");
-  fireEvent.click(screen.getByRole("button", { name: "Переписать · до $0.01" }));
+  const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
+  expect(callsOf(engine, "avatars.estimateRewriteDescriptor").map((c) => c.payload)).toEqual([{ avatarId: "avatar-broken-0001" }]);
+  expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(0);
+  fireEvent.click(button);
 
   await screen.findByRole("heading", { level: 2, name: "Zoe" });
-  expect(screen.queryByText("Описание устарело")).toBeNull();
-  expect(callsOf(engine, "avatars.estimateRewriteDescriptor").map((c) => c.payload)).toEqual([{ avatarId: "avatar-broken-0001" }]);
+  expect(screen.queryByText(REWRITE_LINE)).toBeNull();
+  expect(callsOf(engine, "avatars.estimateRewriteDescriptor")).toHaveLength(1);
   expect(callsOf(engine, "avatars.rewriteDescriptor")[0]?.payload).toEqual({
     avatarId: "avatar-broken-0001",
     acceptedWorstMicros: DESCRIPTOR.worst,
   });
+});
+
+test("a failed up-front price leaves a plain «Переписать описание» that only asks for the price, never spends", async () => {
+  const { engine } = setup();
+  engine.failNext("avatars.estimateRewriteDescriptor", { code: "NETWORK" });
+  engine.seedUnreadable(
+    { avatarId: "avatar-broken-0006", name: "Lia", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { status: "active", name: "Lia", traits: DEFAULT_TRAITS },
+  );
+  await screen.findByText(ERROR_MESSAGES_RU.NETWORK);
+
+  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
+  // Asking again is busy and closed to clicks too, until the price is back.
+  const asking = screen.getByRole("button", { name: "Считаем…" });
+  expect(asking.hasAttribute("disabled")).toBe(true);
+  expect(asking.getAttribute("aria-busy")).toBe("true");
+  await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
+  expect(callsOf(engine, "avatars.estimateRewriteDescriptor")).toHaveLength(2);
+  expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(0);
+});
+
+test("a price rise on the rewrite is confirmed at the new price, and exactly that new worst case is sent", async () => {
+  const { engine } = setup();
+  engine.seedUnreadable(
+    { avatarId: "avatar-broken-0007", name: "Rita", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { status: "active", name: "Rita", traits: DEFAULT_TRAITS },
+  );
+  const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
+
+  // The engine's price moves after the tile showed its own: the click carries the old, lower worst case.
+  engine.setRewritePrice({ expectedMicros: 20_000, worstMicros: 25_000 });
+  fireEvent.click(button);
+  await screen.findByText("Цена выросла");
+  expect(callsOf(engine, "avatars.rewriteDescriptor").map((c) => c.payload.acceptedWorstMicros)).toEqual([DESCRIPTOR.worst]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Подтвердить новую цену · до $0.03" }));
+  await screen.findByRole("heading", { level: 2, name: "Rita" });
+  expect(callsOf(engine, "avatars.rewriteDescriptor").map((c) => c.payload.acceptedWorstMicros)).toEqual([DESCRIPTOR.worst, 25_000]);
+});
+
+test("a failed re-estimate after PRICE_CHANGED drops the refused price: the button only asks for a new one", async () => {
+  const { engine } = setup();
+  engine.seedUnreadable(
+    { avatarId: "avatar-broken-0008", name: "Tina", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { status: "active", name: "Tina", traits: DEFAULT_TRAITS },
+  );
+  const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
+
+  engine.failNext("avatars.rewriteDescriptor", { code: "PRICE_CHANGED" });
+  engine.failNext("avatars.estimateRewriteDescriptor", { code: "NETWORK" });
+  fireEvent.click(button);
+  await screen.findByText(ERROR_MESSAGES_RU.NETWORK);
+
+  expect(screen.queryByRole("button", { name: /^(Переписать описание|Подтвердить новую цену) · до/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
+  await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
+  expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(1);
+});
+
+test("a search while a rewrite is on its way keeps its tile busy, so the paid call cannot be sent twice", async () => {
+  const { engine, scheduler } = setup({ preset: "demo" });
+  engine.seedUnreadable(
+    { avatarId: "avatar-broken-0009", name: "Yana", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { status: "active", name: "Yana", traits: DEFAULT_TRAITS },
+  );
+  const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
+  engine.delayNext("avatars.rewriteDescriptor", 50);
+  fireEvent.click(button);
+  await flush();
+
+  const search = screen.getByRole("searchbox", { name: "Поиск" });
+  fireEvent.change(search, { target: { value: "Mia" } });
+  expect(screen.queryByRole("heading", { level: 2, name: "Yana" })).toBeNull();
+  fireEvent.change(search, { target: { value: "" } });
+
+  const again = screen.getByRole("button", { name: /Переписываем…/ });
+  expect(again).toBe(button);
+  expect(again.hasAttribute("disabled")).toBe(true);
+  fireEvent.click(again);
+  await flush();
+  expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(1);
+  expect(callsOf(engine, "avatars.estimateRewriteDescriptor")).toHaveLength(1);
+
+  tick(scheduler, 1);
+  await screen.findByRole("heading", { level: 2, name: "Yana" });
+});
+
+test("a filter change while a rewrite is on its way keeps its tile busy, so the paid call cannot be sent twice", async () => {
+  const { engine, scheduler } = setup({ preset: "demo" });
+  engine.seedUnreadable(
+    { avatarId: "avatar-broken-0012", name: "Yara", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
+    { status: "active", name: "Yara", traits: DEFAULT_TRAITS },
+  );
+  const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
+  engine.delayNext("avatars.rewriteDescriptor", 50);
+  fireEvent.click(button);
+  await flush();
+
+  // Unlike a search query, «Активные»/«Все» carry no status for an unreadable
+  // record (it has none to filter on) — the to-do stays listed on both, so the
+  // busy tile must still be the very same node, not a fresh remount, at every step.
+  fireEvent.click(screen.getByRole("radio", { name: "Активные" }));
+  expect(screen.getByRole("button", { name: /Переписываем…/ }) === button).toBe(true);
+  fireEvent.click(screen.getByRole("radio", { name: "Все" }));
+
+  // «Архив» is the only filter that hides the tile at all (via `hidden`, not
+  // an unmount): switching to it and back must still be the same node.
+  fireEvent.click(screen.getByRole("radio", { name: "Архив" }));
+  expect(screen.queryByRole("button", { name: /Переписываем…/ })).toBeNull();
+  fireEvent.click(screen.getByRole("radio", { name: "Все" }));
+
+  const again = screen.getByRole("button", { name: /Переписываем…/ });
+  expect(again === button).toBe(true);
+  expect(again.hasAttribute("disabled")).toBe(true);
+  fireEvent.click(again);
+  await flush();
+  expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(1);
+  expect(callsOf(engine, "avatars.estimateRewriteDescriptor")).toHaveLength(1);
+
+  tick(scheduler, 1);
+  await screen.findByRole("heading", { level: 2, name: "Yara" });
 });
 
 test("PRICE_CHANGED on the rewrite re-estimates and asks again before spending", async () => {
@@ -234,12 +378,10 @@ test("PRICE_CHANGED on the rewrite re-estimates and asks again before spending",
     { avatarId: "avatar-broken-0002", name: "Nora", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Nora", traits: DEFAULT_TRAITS },
   );
-  await screen.findByText("Описание устарело");
-  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
-  await screen.findByText("≈ $0.00, не больше $0.01");
+  const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
 
   engine.failNext("avatars.rewriteDescriptor", { code: "PRICE_CHANGED" });
-  fireEvent.click(screen.getByRole("button", { name: "Переписать · до $0.01" }));
+  fireEvent.click(button);
 
   await screen.findByText("Цена выросла");
   expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(1);
@@ -256,13 +398,10 @@ test("confirmRewrite stays busy through a PRICE_CHANGED re-estimate, so a click 
     { avatarId: "avatar-broken-0005", name: "Vika", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Vika", traits: DEFAULT_TRAITS },
   );
-  await screen.findByText("Описание устарело");
-  fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
-  await screen.findByText("≈ $0.00, не больше $0.01");
+  const confirmButton = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
 
   engine.failNext("avatars.rewriteDescriptor", { code: "PRICE_CHANGED" });
   engine.delayNext("avatars.estimateRewriteDescriptor", 30);
-  const confirmButton = screen.getByRole("button", { name: "Переписать · до $0.01" });
   fireEvent.click(confirmButton);
   await flush();
 
@@ -270,6 +409,7 @@ test("confirmRewrite stays busy through a PRICE_CHANGED re-estimate, so a click 
   expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(1);
   expect(callsOf(engine, "avatars.estimateRewriteDescriptor")).toHaveLength(2);
   expect(confirmButton.hasAttribute("disabled")).toBe(true);
+  expect(confirmButton.getAttribute("aria-busy")).toBe("true");
 
   // A click while still disabled must not resend the stale, already-rejected worst case.
   fireEvent.click(confirmButton);
@@ -288,18 +428,34 @@ test("the rewrite button disables while its own command is in flight, both while
     { avatarId: "avatar-broken-0003", name: "Mia", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Mia", traits: DEFAULT_TRAITS },
   );
-  await answerAll(scheduler);
-  await screen.findByText("Описание устарело");
+  // Answer only until the tile is on screen: its up-front estimate is then sent and still unanswered.
+  for (let i = 0; i < 10 && screen.queryByText(REWRITE_LINE) === null; i++) {
+    runAll(scheduler);
+    await flush();
+  }
+  const button = screen.getByRole("button", { name: "Считаем…" });
+  expect(button.hasAttribute("disabled")).toBe(true);
+  expect(button.getAttribute("aria-busy")).toBe("true");
 
-  const startButton = screen.getByRole("button", { name: "Переписать описание" });
-  fireEvent.click(startButton);
-  expect(startButton.hasAttribute("disabled")).toBe(true);
   await answerAll(scheduler);
-  await waitFor(() => expect(screen.getByRole("button", { name: /Переписать · до/ }).hasAttribute("disabled")).toBe(false));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Переписать описание · до $0.01" }).hasAttribute("disabled")).toBe(false));
 
-  const confirmButton = screen.getByRole("button", { name: /Переписать · до/ });
+  const confirmButton = screen.getByRole("button", { name: "Переписать описание · до $0.01" });
   fireEvent.click(confirmButton);
   expect(confirmButton.hasAttribute("disabled")).toBe(true);
+  expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(1);
+});
+
+test("an unrewritable descriptor-invalid tile says so plainly and hides the rewrite button", async () => {
+  // Seeded without a recoverTo: the mock's own rewriteRefusal answers
+  // VALIDATION, exactly like a record isRewritable rejects for real (a name
+  // over 60 chars, untyped traits, ...) although its reason is still
+  // descriptor-invalid in the snapshot.
+  const { engine } = setup();
+  engine.seedUnreadable({ avatarId: "avatar-broken-0013", name: "Nadia", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" });
+
+  await screen.findByText("Эту запись переписать нельзя");
+  expect(screen.queryByRole("button", { name: /Переписать описание/ })).toBeNull();
 });
 
 test("the rewrite button stays disabled while paid calls are halted, with the reason shown", async () => {
@@ -308,17 +464,64 @@ test("the rewrite button stays disabled while paid calls are halted, with the re
     { avatarId: "avatar-broken-0004", name: "Ava", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" },
     { status: "active", name: "Ava", traits: DEFAULT_TRAITS },
   );
-  await screen.findByText("Описание устарело");
-  expect(screen.getByRole("button", { name: "Переписать описание" }).hasAttribute("disabled")).toBe(true);
+  const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
+  expect(button.hasAttribute("disabled")).toBe(true);
   expect(screen.getByText("Платные запросы остановлены до сверки расходов.")).toBeDefined();
+  fireEvent.click(button);
+  await flush();
+  expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(0);
 });
 
 // L8: the import tile's price text is built from IMPORT_FALLBACK_PRICE
 // (shared with plan.test.ts and the mock's own spend), never a hand-typed
-// string that could silently drift from the real numbers.
-test("the import tile's price text is derived from IMPORT_FALLBACK_PRICE, not a hard-coded string", async () => {
+// string that could silently drift from the real numbers. «≈», not «до»: this
+// is only the dated fallback table (used when OpenRouter did not answer), and
+// «до» means a hard cap everywhere else in the app — the live price can be
+// higher — so it shows a range from the expected price to the worst case, not
+// the worst case alone (which would overstate the approximate cost).
+test("the import tile's price text is derived from IMPORT_FALLBACK_PRICE, not a hard-coded string, and is approximate", async () => {
+  // Pinned to the fallback table's own numbers, and the rendered text is a
+  // literal, not computed with formatUsdRange itself — a bug in that
+  // function must still be caught here, not just agree with itself.
+  expect(IMPORT_FALLBACK_PRICE.whole).toEqual({ expectedMicros: 5_535, worstMicros: 37_750 });
   setup({ preset: "demo" });
   const tile = await screen.findByRole("button", { name: /Импортировать аватара/ });
-  const expected = `≈ ${formatUsd(IMPORT_FALLBACK_PRICE.whole.expectedMicros)}–${formatUsd(IMPORT_FALLBACK_PRICE.whole.worstMicros, 2, "up").slice(1)}`;
-  expect(within(tile).getByText(`своё фото · ${expected}`)).toBeDefined();
+  expect(within(tile).getByText("1 фото · ≈ $0.01–0.04")).toBeDefined();
+});
+
+test("the new-avatar tile's «до $X» is the engine's own free estimate, never a spend", async () => {
+  const { engine } = setup({ preset: "demo", imageAgeCheck: "on" });
+  const tile = await screen.findByRole("button", { name: /^Новый аватар 4/ });
+  await waitFor(() => expect(within(tile).getByText(`4 портрета · до ${formatUsd(MOCK_ESTIMATE.worstMicros, 2, "up")}`)).toBeDefined());
+  expect(callsOf(engine, "avatars.estimate")).toHaveLength(1);
+  expect(callsOf(engine, "avatars.createDraft")).toHaveLength(0);
+
+  // Switching filters does not ask again; the price stays with the tile.
+  fireEvent.click(screen.getByRole("radio", { name: "Архив" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Все" }));
+  await flush();
+  expect(callsOf(engine, "avatars.estimate")).toHaveLength(1);
+
+  // The tile's price never reaches the wizard: a new avatar starts unpriced, behind its own «Оценить стоимость».
+  fireEvent.click(screen.getByRole("button", { name: /^Новый аватар 4/ }));
+  await screen.findByRole("heading", { level: 1, name: "Новый аватар" });
+  expect(estimateText()).toBeNull();
+  expect(screen.getByRole("button", { name: "Оценить стоимость" })).toBeDefined();
+  expect(screen.queryByRole("button", { name: /Сгенерировать/ })).toBeNull();
+});
+
+test("the new-avatar tile's price re-estimates when the age-check toggle changes, even without leaving the screen", async () => {
+  const { engine, client } = setup({ preset: "demo", imageAgeCheck: "on" });
+  const tile = await screen.findByRole("button", { name: /^Новый аватар 4/ });
+  await waitFor(() => expect(within(tile).getByText(`4 портрета · до ${formatUsd(MOCK_ESTIMATE.worstMicros, 2, "up")}`)).toBeDefined());
+  expect(callsOf(engine, "avatars.estimate")).toHaveLength(1);
+
+  // Toggled directly through the engine, as Настройки's own switch would —
+  // the settings.changed event alone must invalidate the tile's cached price.
+  void client.request("settings.setImageAgeCheck", { imageAgeCheck: "off" });
+  await flush();
+
+  await waitFor(() => expect(callsOf(engine, "avatars.estimate")).toHaveLength(2));
+  const worstOff = MOCK_ESTIMATE.worstMicros - 4 * MOCK_AGE_CHECK_PER_SLOT.worst;
+  await waitFor(() => expect(within(tile).getByText(`4 портрета · до ${formatUsd(worstOff, 2, "up")}`)).toBeDefined());
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { productionBundleProblems, productionEngineProblems, productionMainProblems } from "./bundleChecks";
+import { productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -148,5 +148,36 @@ describe("productionEngineProblems", () => {
 
   test("flags an engine bundle built with the E2E override kept", () => {
     expect(productionEngineProblems("resolveOpenRouterBaseUrl(init.openRouterBaseUrl, true)")).toEqual(["the engine takes an OpenRouter base-URL override"]);
+  });
+});
+
+describe("productionRendererCssProblems: fonts.css must resolve to real asset references, never bare @fontsource text", () => {
+  test("passes CSS with a resolved woff2 reference and no @fontsource text", () => {
+    const css = '@font-face{src:url(./assets/martian-mono-cyrillic-ext-abc123.woff2) format("woff2")}';
+    expect(productionRendererCssProblems(css)).toEqual([]);
+  });
+
+  test("a comment that mentions @fontsource is not a problem", () => {
+    // fonts.css's own top-of-file comment survives minification and mentions
+    // "@fontsource-variable's" in prose — that is not an unresolved import,
+    // just documentation, and must not fail a real `bun run build:studio`.
+    const css =
+      "/* The files are @fontsource-variable's (the same Google files). */\n" +
+      '@font-face{src:url(./assets/martian-mono-cyrillic-ext-abc123.woff2) format("woff2")}';
+    expect(productionRendererCssProblems(css)).toEqual([]);
+  });
+
+  test("an unresolved url(@fontsource/...) is a problem", () => {
+    const css = 'src:url("@fontsource-variable/martian-mono/files/martian-mono-cyrillic-ext-wght-normal.woff2") format("woff2")';
+    expect(productionRendererCssProblems(css)).toContain("an unresolved @fontsource url() remains in the built CSS");
+  });
+
+  test("a woff2 inlined as a data: URI is a problem: the renderer's CSP (default-src 'self') blocks it", () => {
+    const css = '@font-face{src:url(data:font/woff2;base64,AAAA) format("woff2")}';
+    expect(productionRendererCssProblems(css)).toContain("a font is inlined as a data: URI, which the renderer's CSP blocks");
+  });
+
+  test("flags CSS with no woff2 reference at all", () => {
+    expect(productionRendererCssProblems("body { color: red; }")).toContain("no woff2 font reference survived the build");
   });
 });

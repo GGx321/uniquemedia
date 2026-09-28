@@ -3,9 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { pickEngineClient } from "./engine/select";
-import "@fontsource-variable/geologica";
-import "@fontsource-variable/onest";
-import "@fontsource-variable/martian-mono";
+import "./fonts.css";
 import "./theme.css";
 import "./ui.css";
 

@@ -86,6 +86,12 @@ export default defineConfig(({ command }) => ({
     build: {
       outDir: at("out-studio/renderer"),
       rollupOptions: { input: at("studio/renderer/index.html") },
+      // index.html's CSP is `default-src 'self'`, which blocks a data: font.
+      // Vite's default assetsInlineLimit (4096 B) would inline Martian Mono's
+      // cyrillic-ext woff2 (3172 B) as one anyway, so woff2 is excluded from
+      // inlining — kept as its own file (a same-origin url()) — while every
+      // other asset keeps Vite's own default (undefined lets it decide).
+      assetsInlineLimit: (file: string) => (file.endsWith(".woff2") ? false : undefined),
     },
     plugins: [react()],
   },

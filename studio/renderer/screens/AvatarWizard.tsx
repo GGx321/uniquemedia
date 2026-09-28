@@ -9,7 +9,7 @@ import { vibeIssues } from "../lib/vibe";
 import { useNavigate } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
 import { EngineOffline } from "../ui/EngineOffline";
-import { Icon } from "../ui/Icon";
+import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { CandidatesCard, candidateLetter } from "./wizard/CandidatesCard";
@@ -18,7 +18,8 @@ import { TraitsForm } from "./wizard/TraitsForm";
 
 type Busy = "estimate" | "generate" | "cancel" | "save" | null;
 
-const STEPS = ["Внешность", "Оценка", "Кандидаты", "Сохранение"] as const;
+// Three steps, as on the mockup: the price («Оценка») belongs to «Кандидаты».
+const STEPS = ["Внешность", "Кандидаты", "Сохранить"] as const;
 
 function Stepper({ current }: { current: number }) {
   return (
@@ -29,7 +30,7 @@ function Stepper({ current }: { current: number }) {
         return (
           <li key={label} className={`step step-${state}`} aria-current={state === "current" ? "step" : undefined}>
             <span className="step-num mono" aria-hidden="true">
-              {state === "done" ? <Icon name="check" size={12} strokeWidth={3} /> : n}
+              {n}
             </span>
             {label}
             {state === "done" && <span className="sr-only"> — готово</span>}
@@ -67,7 +68,8 @@ function latestCandidatesJob(jobs: readonly JobView[], avatarId: string | null):
 }
 
 /**
- * The "Новый аватар" wizard: traits → estimate → 4 candidates → pick. Nothing
+ * The "Новый аватар" wizard, three steps: Внешность → Кандидаты (the
+ * estimate card, then 4 candidates) → Сохранить (pick and name). Nothing
  * paid is sent until the user has seen the estimate; every paid command
  * carries the worst case shown for *that* command — createDraft the whole
  * new-avatar estimate, generateCandidates the draft's own batch estimate —
@@ -157,7 +159,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   const candidates = uniqueCandidates([draft?.candidates ?? [], jobCandidates]);
   const pickedIndex = candidates.findIndex((c) => c.photoId === picked);
 
-  const step = picked !== null ? 4 : locked || running || candidates.length > 0 ? 3 : estimate ? 2 : 1;
+  const step = picked !== null ? 3 : estimate || locked || running || candidates.length > 0 ? 2 : 1;
 
   function changeTraits(next: Traits): void {
     if (locked || busy === "generate") return;
@@ -371,6 +373,8 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
       onClick: () => void generate(estimate),
       disabled: busy !== null || blockedReason !== null,
       busy: busy === "generate",
+      // Another batch for a draft is secondary: «Сохранить» is this screen's main action by then.
+      primary: !locked || previousWorst !== null,
     };
   }
 
@@ -381,7 +385,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   function descriptorFix(source: EngineError | null): ReactNode {
     if (source?.code !== "DESCRIPTOR_INVALID") return undefined;
     return (
-      <button type="button" className="btn btn-sm" onClick={() => navigate({ name: "avatars" })}>
+      <button type="button" className="btn btn-s" onClick={() => navigate({ name: "avatars" })}>
         Переписать описание
       </button>
     );
@@ -399,14 +403,21 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
     if (fix !== undefined) return fix;
     if (source === null || estimate !== null || !locked) return undefined;
     return (
-      <button type="button" className="btn btn-sm" onClick={() => void retryBatchEstimate()} disabled={busy !== null} aria-busy={busy === "estimate"}>
-        {busy === "estimate" ? "Считаем…" : "Повторить оценку"}
+      <button type="button" className="btn btn-s" onClick={() => void retryBatchEstimate()} disabled={busy !== null} aria-busy={busy === "estimate"}>
+        {busy === "estimate" ? (
+          <>
+            <Spin />
+            Считаем…
+          </>
+        ) : (
+          "Повторить оценку"
+        )}
       </button>
     );
   }
 
   return (
-    <div className="page page-wizard">
+    <div className="page">
       <header className="page-head">
         <div>
           <button type="button" className="back-link" onClick={() => navigate({ name: "avatars" })}>
@@ -422,11 +433,11 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
 
       <div className="wizard">
         <section className="card wizard-form" aria-labelledby="traits-title">
-          <div className="card-head">
-            <h2 id="traits-title" className="card-kicker">
+          <div className="wizard-form-head">
+            <h2 id="traits-title" className="lbl">
               Внешность
             </h2>
-            {locked && <span className="pill pill-muted">зафиксирована в черновике</span>}
+            {locked && <span className="tag">зафиксирована в черновике</span>}
           </div>
 
           <TraitsForm traits={traits} onChange={changeTraits} vibeIssues={issues} locked={locked || busy === "generate"} />
@@ -439,16 +450,25 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
               </button>
               <button
                 type="button"
-                className={estimate ? "btn btn-grow" : "btn btn-primary btn-grow"}
+                className={estimate ? "btn" : "btn btn-p"}
                 onClick={() => void estimateCost()}
                 disabled={!traitsValid || busy !== null}
                 aria-busy={busy === "estimate"}
               >
-                {busy === "estimate" ? "Считаем…" : estimate ? "Оценить заново" : "Оценить стоимость"}
+                {busy === "estimate" ? (
+                  <>
+                    <Spin />
+                    Считаем…
+                  </>
+                ) : estimate ? (
+                  "Оценить заново"
+                ) : (
+                  "Оценить стоимость"
+                )}
               </button>
             </div>
           )}
-          {!locked && problem !== null && <p className="field-hint wizard-form-problem">{problem}</p>}
+          {!locked && problem !== null && <p className="field-hint">{problem}</p>}
         </section>
 
         <div className="wizard-side">
@@ -473,34 +493,34 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             cancelling={cancelling}
             headingRef={candidatesHeading}
             hiddenBelowThreshold={draft?.hiddenBelowThreshold ?? 0}
-            imageAgeCheck={view.settings?.imageAgeCheck ?? "off"}
           />
 
           {draft && (
             <section className="card descriptor-card" aria-labelledby="descriptor-title">
-              <div className="card-head">
-                <h2 id="descriptor-title" className="card-title">
+              <div className="descriptor-head">
+                <h2 id="descriptor-title" className="fl">
                   Дескриптор
                 </h2>
                 <span className="muted">уходит в каждый промпт как якорь внешности</span>
               </div>
+              {/* Read-only: written once with the draft, the anchor of every later prompt. */}
               <p className="descriptor-text mono" lang="en">
                 {draft.descriptor.text}
               </p>
             </section>
           )}
 
-          <section className="card save-card" aria-labelledby="save-title">
+          <section className="save-bar" aria-labelledby="save-title">
             <h2 id="save-title" className="sr-only">
               Сохранение
             </h2>
-            <div className="field save-name">
-              <label className="field-label" htmlFor={nameId}>
+            <div className="field">
+              <label className="fl" htmlFor={nameId}>
                 Имя <span className="faint">· в промпты не уходит</span>
               </label>
               <input
                 id={nameId}
-                className="input"
+                className="in"
                 type="text"
                 value={name}
                 maxLength={80}
@@ -520,12 +540,19 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             <div className="save-action">
               <button
                 type="button"
-                className="btn btn-primary"
+                className="btn btn-p"
                 disabled={picked === null || busy !== null || running}
                 onClick={() => void save()}
                 aria-busy={busy === "save"}
               >
-                {busy === "save" ? "Сохраняем…" : "Сохранить"}
+                {busy === "save" ? (
+                  <>
+                    <Spin />
+                    Сохраняем…
+                  </>
+                ) : (
+                  "Сохранить"
+                )}
               </button>
               <p className="field-hint">
                 {running

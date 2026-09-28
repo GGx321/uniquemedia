@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { AdultAge, AvatarTraits } from "../../shared/engine";
-import { plural, waitLabel, yearsOld } from "./format";
+import { afterColon, groupNumber, monthName, NBSP, plural, waitLabel, yearsOld } from "./format";
 import {
   BUILDS,
   DEFAULT_TRAITS,
@@ -91,6 +91,28 @@ test("waits read as minutes and seconds, rounded up", () => {
   expect(waitLabel(120_000)).toBe("2 мин");
   expect(waitLabel(40_001)).toBe("41 с");
   expect(waitLabel(0)).toBe("0 с");
+});
+
+test("large counts are grouped with a no-break space", () => {
+  expect(groupNumber(466)).toBe("466");
+  expect(groupNumber(1248)).toBe(`1${NBSP}248`);
+  expect(groupNumber(1_000_000)).toBe(`1${NBSP}000${NBSP}000`);
+  expect(groupNumber(0)).toBe("0");
+});
+
+test("a month reads as its capitalised name", () => {
+  expect(monthName("2026-09")).toBe("Сентябрь");
+  expect(monthName("2026-01")).toBe("Январь");
+  // Anything that is not a YYYY-MM month is shown as it came.
+  expect(monthName("2026-13")).toBe("2026-13");
+});
+
+test("a sentence after a colon starts lowercase, but a name at its start keeps its capitals", () => {
+  expect(afterColon("Модель отказалась генерировать это изображение.")).toBe("модель отказалась генерировать это изображение.");
+  expect(afterColon("Нет связи с OpenRouter.")).toBe("нет связи с OpenRouter.");
+  expect(afterColon("OpenRouter не ответил вовремя.")).toBe("OpenRouter не ответил вовремя.");
+  expect(afterColon("API недоступно.")).toBe("API недоступно.");
+  expect(afterColon("")).toBe("");
 });
 
 test("the form's limits come from the contract", () => {

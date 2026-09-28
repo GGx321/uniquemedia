@@ -1,42 +1,85 @@
-:root {
-  --bg: #09090c;
-  --panel: #14141b;
-  --border: #272733;
-  --text: #eeedf3;
-  --muted: #a9a8b9;
-  --faint: #85849a;
-  --accent: #ff7a59;
-  --accent-soft: rgba(255, 122, 89, 0.14);
-  --accent-text: #ffb39f;
-  --ok: #4fe0b0;
-  --ok-soft: rgba(79, 224, 176, 0.12);
-  --warn: #f4b957;
-  --warn-soft: rgba(244, 185, 87, 0.1);
-  --danger: #ff6b81;
-  --danger-soft: rgba(255, 107, 129, 0.1);
+/* Tokens: names and values are the "Компоненты" sheet's (Studio — макет, v11).
+   Components live in ui.css; this file holds the tokens, the page shell and the sidebar. */
 
+:root {
+  /* surfaces */
+  --bg: #09090c;
+  --sidebar: #0c0c11;
+  --input: #0e0e13;
+  --inset: #111118;
+  --panel: #14141b;
   --panel-2: #1a1a23;
   --panel-3: #21212c;
-  --input: #0e0e13;
-  --border-strong: #30303e;
-  --line: #1f1f29;
-  --text-2: #cfcedd;
-  --accent-hover: #ff8d70;
-  --accent-ink: #1a0d08;
-  --accent-ring: rgba(255, 122, 89, 0.55);
+  --seg-on: #262632;
 
-  --sidebar: #0c0c11;
+  /* lines */
   --sidebar-border: #1d1d27;
+  --line: #1f1f29;
+  --track: #23232e;
+  --border: #272733;
+  --switch-off: #2a2a36;
+  --border-strong: #30303e;
+  --dashed: #34343f;
 
-  --font-display: "Geologica Variable", system-ui, sans-serif;
-  --font-body: "Onest Variable", system-ui, -apple-system, sans-serif;
-  --font-mono: "Martian Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+  /* text */
+  --text: #eeedf3;
+  --text-2: #cfcedd;
+  --tag-text: #b9b8c9;
+  --muted: #a9a8b9;
+  --faint: #85849a;
 
-  --radius: 12px;
+  /* alerts and statuses */
+  --danger: #ff8a9b;
+  --warn: #f4b957;
+  --info: #8fb0ff;
+  --ok: #4fe0b0;
+
+  /* accent */
+  --accent: #ff7a59;
+  --accent-hover: #ff8d70;
+  --accent-text: #ffb39f;
+  --link: #ff9a80;
+  --accent-ink: #1a0d08;
+
+  /* tints */
+  --accent-soft: rgba(255, 122, 89, 0.14);
+  --accent-ring: rgba(255, 122, 89, 0.55);
+  --accent-08: rgba(255, 122, 89, 0.08);
+  --accent-18: rgba(255, 122, 89, 0.18);
+  --accent-35: rgba(255, 122, 89, 0.35);
+  --accent-40: rgba(255, 122, 89, 0.4);
+  --scrim: rgba(9, 9, 12, 0.8);
+
+  /* status tints: same alpha-step pattern as --accent-*, from each status's own colour above. */
+  --danger-08: rgba(255, 138, 155, 0.08);
+  --danger-35: rgba(255, 138, 155, 0.35);
+  --danger-70: rgba(255, 138, 155, 0.7);
+  --warn-08: rgba(244, 185, 87, 0.08);
+  --warn-12: rgba(244, 185, 87, 0.12);
+  --warn-35: rgba(244, 185, 87, 0.35);
+  --warn-45: rgba(244, 185, 87, 0.45);
+  --info-08: rgba(143, 176, 255, 0.08);
+  --info-35: rgba(143, 176, 255, 0.35);
+  --ok-08: rgba(79, 224, 176, 0.08);
+  --ok-14: rgba(79, 224, 176, 0.14);
+  --ok-35: rgba(79, 224, 176, 0.35);
+
+  /* other */
+  --uniq: #7c6cff;
+
+  /* The sheet's own stacks; fonts.css declares the three faces as Google serves them. */
+  --font-display: "Geologica", "Onest", sans-serif;
+  --font-body: "Onest", system-ui, sans-serif;
+  --font-mono: "Martian Mono", ui-monospace, monospace;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* `hidden` wins over any component's own display (a card is display: flex). */
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -52,7 +95,8 @@ body {
   font-family: var(--font-body);
   font-size: 13px;
   line-height: 1.45;
-  -webkit-font-smoothing: antialiased;
+  /* No -webkit-font-smoothing: the sheet keeps the browser's default, and
+     `antialiased` renders every text visibly thinner on macOS. */
 }
 
 button {
@@ -60,19 +104,29 @@ button {
   color: inherit;
 }
 
+a {
+  color: var(--link);
+}
+
+a:hover {
+  color: var(--accent-text);
+}
+
 .shell {
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: 232px minmax(0, 1fr);
   height: 100%;
 }
 
-/* ── sidebar ── */
+/* ── sidebar (Sidebar.dc.html) ── */
 
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding: 20px 12px 16px;
+  gap: 24px;
+  min-height: 0;
+  padding: 22px 14px 18px;
+  overflow-y: auto;
   background: var(--sidebar);
   border-right: 1px solid var(--sidebar-border);
 }
@@ -85,28 +139,34 @@ button {
 }
 
 .logo-mark {
-  width: 28px;
-  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .logo-text {
   display: flex;
   flex-direction: column;
-  line-height: 1.15;
 }
 
 .logo-name {
   font-family: var(--font-display);
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 .logo-by {
-  font-size: 11px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
   color: var(--faint);
 }
 
@@ -119,20 +179,21 @@ button {
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   height: 40px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   background: transparent;
   color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
 
 .nav-item:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
 }
 
 .nav-item.active {
@@ -158,10 +219,94 @@ button {
   gap: 10px;
 }
 
-.version {
-  padding: 0 10px;
-  font-family: var(--font-mono);
+/* The two status boxes at the foot: queue and spend. */
+.side-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.side-box-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.side-box-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* The sheet sets these figures in Martian Mono inline, without .mono's tracking. */
+.side-box .mono {
   font-size: 10.5px;
+  letter-spacing: normal;
+  color: var(--muted);
+}
+
+.side-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.side-meter-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.side-spend {
+  gap: 4px;
+}
+
+.side-spend-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.side-box .side-spend-figure {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Same 40px bordered row as the sheet's «Уникализатор» entry, with a status dot. */
+.demo-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  /* The sheet's row is a <button>: its line box is the font's own, not the body's 1.45. */
+  line-height: normal;
+}
+
+.demo-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.version {
+  padding: 0 12px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
   color: var(--faint);
 }
 
@@ -169,20 +314,19 @@ button {
 
 .content {
   min-width: 0;
-  padding: 28px 36px 40px;
+  min-height: 0;
+  padding: 24px 36px;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .content h1 {
-  margin: 0 0 6px;
+  margin: 0;
   font-family: var(--font-display);
   font-size: 30px;
   font-weight: 650;
   line-height: 1.1;
-  letter-spacing: -0.02em;
-}
-
-.muted {
-  margin: 0;
-  color: var(--muted);
+  letter-spacing: -0.015em;
 }

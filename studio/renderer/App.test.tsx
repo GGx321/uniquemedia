@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { fireEvent, screen } from "@testing-library/react";
-import { setup, describeElement, focusedLabel, inAct, flush } from "./testing";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { setup, describeElement, focusedLabel, inAct, flush, openWizard, tick, estimateText } from "./testing";
 
 const SECTION_LABELS = ["Аватары", "Фото", "Монтаж", "Автопилот", "Настройки"];
 
@@ -91,4 +91,56 @@ test("an engine-restarted notice with open reserves does not repeat AccountBanne
   // The notice itself states only what happened, with no reconcile wording of its own.
   const notice = screen.getByText("Движок перезапускался").closest(".notice");
   expect(notice?.textContent ?? "").not.toMatch(/сверк/i);
+});
+
+// The sidebar's foot draws only what the engine reports: the jobs still
+// running and this month's spend. The mockup's render queue and OpenRouter
+// balance have no data in the contract, so they must not appear at all.
+test("the sidebar foot shows the running queue and this month's spend, and no made-up balance", async () => {
+  setup({ preset: "demo" });
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+
+  const queue = screen.getByRole("region", { name: "Очередь" });
+  expect(within(queue).getByText("пусто")).toBeDefined();
+  const spend = screen.getByRole("region", { name: "Расходы за месяц" });
+  expect(within(spend).getByText("$1.42")).toBeDefined();
+  expect(within(spend).getByText("из $10.00")).toBeDefined();
+  expect(screen.queryByText(/Баланс|Рендер|Уникализатор/)).toBeNull();
+});
+
+test("the sidebar spending block is hidden when the ledger is not open", async () => {
+  setup({ money: { unavailable: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" } } });
+  const queue = await screen.findByRole("region", { name: "Очередь" });
+  expect(within(queue).getByText("пусто")).toBeDefined();
+  expect(screen.queryByRole("region", { name: "Расходы за месяц" })).toBeNull();
+});
+
+test("the sidebar queue never shows 0 / 0 before the job's first progress event", async () => {
+  setup();
+  await openWizard();
+  fireEvent.click(screen.getByRole("button", { name: "Оценить стоимость" }));
+  await waitFor(() => expect(estimateText()).not.toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: /Сгенерировать 4 варианта/ }));
+  await screen.findByText(/Рисуем портреты/);
+
+  // Right after avatars.generateCandidates answers, trackCandidatesJob adds
+  // the job as "queued" with no total yet (store.ts's emptyJob) — before its
+  // first job.progress event, which the scheduler has not fired yet.
+  const queue = screen.getByRole("region", { name: "Очередь" });
+  expect(within(queue).getByText("0 / 4")).toBeDefined();
+  expect(within(queue).queryByText("0 / 0")).toBeNull();
+});
+
+test("a running candidates job shows in the sidebar queue with its progress", async () => {
+  const { scheduler } = setup();
+  await openWizard();
+  fireEvent.click(screen.getByRole("button", { name: "Оценить стоимость" }));
+  await waitFor(() => expect(estimateText()).not.toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: /Сгенерировать 4 варианта/ }));
+  await screen.findByText(/Рисуем портреты/);
+  tick(scheduler, 2);
+
+  const queue = screen.getByRole("region", { name: "Очередь" });
+  expect(within(queue).getByText(/^1\s*задача$/)).toBeDefined();
+  expect(within(queue).getByText("2 / 4")).toBeDefined();
 });

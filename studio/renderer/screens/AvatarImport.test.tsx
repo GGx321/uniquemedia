@@ -40,8 +40,9 @@ test("M4: the pixel limit shown next to the size cap matches MAX_SOURCE_PIXELS e
   setup();
   await openImport();
   const text = await screen.findByText(/до 20 МБ/);
-  const match = /не крупнее (\d+)×(\d+)px/.exec(text.textContent ?? "");
-  if (match === null) throw new Error(`expected a "не крупнее W×Hpx" in: ${text.textContent}`);
+  // "px" keeps to its number with a no-break space, as the other units do.
+  const match = /не крупнее (\d+)×(\d+)\s?px/.exec(text.textContent ?? "");
+  if (match === null) throw new Error(`expected a "не крупнее W×H px" in: ${text.textContent}`);
   const [, width, height] = match;
   expect(Number(width) * Number(height)).toBe(MAX_SOURCE_PIXELS);
 });
@@ -49,7 +50,8 @@ test("M4: the pixel limit shown next to the size cap matches MAX_SOURCE_PIXELS e
 test("nothing is spent until a photo is picked: no estimate button and no estimate request", async () => {
   const { engine } = setup();
   await openImport();
-  expect(screen.queryByText(/^≈/)).toBeNull();
+  expect(estimateText()).toBeNull();
+  expect(screen.queryByText(/ожидаемая/)).toBeNull();
   expect(callsOf(engine, "avatars.pickImportPhoto")).toHaveLength(0);
   expect(callsOf(engine, "avatars.estimateImport")).toHaveLength(0);
 });

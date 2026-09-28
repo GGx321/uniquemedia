@@ -30,7 +30,7 @@ export function EngineOffline({ view }: { view: EngineView }) {
       tone="danger"
       title="Движок не отвечает"
       actions={
-        <button type="button" className="btn btn-sm" onClick={() => store.reload()}>
+        <button type="button" className="btn btn-s" onClick={() => store.reload()}>
           Повторить
         </button>
       }

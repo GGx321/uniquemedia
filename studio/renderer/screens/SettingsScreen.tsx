@@ -2,6 +2,7 @@ import { type ReactNode, type Ref, useEffect, useId, useRef, useState } from "re
 import {
   AbsolutePath,
   ApiKey,
+  IMPORT_FALLBACK_PRICE,
   NetworkConcurrency,
   type ApiKeyStatus,
   type EngineError,
@@ -9,17 +10,16 @@ import {
   type OpenMoneyStatus,
   type ReconcileReason,
   type ReconcileResult,
-  type ReconcileWarning,
   type Settings,
 } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import type { SyncPhase } from "../engine/store";
-import { countOf, monthLabel, waitLabel } from "../lib/format";
-import { dollarsInputValue, formatUsd, parseDollars, type DollarsParse } from "../lib/money";
+import { countOf, monthName, NBSP, waitLabel } from "../lib/format";
+import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars, type DollarsParse } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { bound } from "../lib/traits";
 import type { SettingsFocus } from "../navigation";
-import { Icon } from "../ui/Icon";
+import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { EngineOffline } from "../ui/EngineOffline";
 import { ScreenTitle } from "../ui/ScreenTitle";
@@ -35,6 +35,10 @@ export const RECONCILE_TOLERANCE_MICROS = 10_000;
 export const MIN_CONCURRENCY = bound(NetworkConcurrency.minValue, "minimum network concurrency");
 export const MAX_CONCURRENCY = bound(NetworkConcurrency.maxValue, "maximum network concurrency");
 
+/** A status line's colour: the sheet's status tokens. */
+type Tone = "ok" | "warn" | "info" | "danger";
+const TONE: Record<Tone, string> = { ok: "var(--ok)", warn: "var(--warn)", info: "var(--info)", danger: "var(--danger)" };
+
 function Card({ title, id, children, headingRef }: { title: string; id: string; children: ReactNode; headingRef?: Ref<HTMLHeadingElement> }) {
   return (
     <section className="card settings-card" aria-labelledby={id}>
@@ -46,54 +50,80 @@ function Card({ title, id, children, headingRef }: { title: string; id: string; 
   );
 }
 
-function Row({ label, hint, children, labelFor }: { label: string; hint?: ReactNode; children?: ReactNode; labelFor?: string }) {
+interface RowProps {
+  label: string;
+  /** The control the label names; without it the label is plain text (`b`). */
+  labelFor?: string;
+  labelId?: string;
+  hint?: ReactNode;
+  hintId?: string;
+  /** A hint that reports a result (`status`) or a problem (`alert`) rather than explaining the row. */
+  hintRole?: "status" | "alert";
+  hintTone?: Tone;
+  children?: ReactNode;
+}
+
+/** The sheet's settings row: `.row` with the name and hint (`.rl`) on the left and the control on the right. */
+function Row({ label, labelFor, labelId, hint, hintId, hintRole, hintTone, children }: RowProps) {
   return (
-    <div className="setting-row">
-      <div className="setting-label">
+    <div className="row">
+      <div className="rl">
         {labelFor ? (
-          <label className="setting-name" htmlFor={labelFor}>
+          <label id={labelId} htmlFor={labelFor}>
             {label}
           </label>
         ) : (
-          <span className="setting-name">{label}</span>
+          <b id={labelId}>{label}</b>
         )}
-        {hint && <span className="setting-hint">{hint}</span>}
+        {/* Keyed on its role: a result or a problem arrives as a fresh live region, which screen readers announce reliably. */}
+        {hint !== undefined && (
+          <span key={hintRole ?? "hint"} id={hintId} role={hintRole} style={hintTone ? { color: TONE[hintTone] } : undefined}>
+            {hint}
+          </span>
+        )}
       </div>
-      {children && <div className="setting-control">{children}</div>}
+      {children !== undefined && <div className="row-control">{children}</div>}
     </div>
   );
 }
 
 // ---------- OpenRouter key ----------
 
-function keyState(status: ApiKeyStatus): { tone: "ok" | "danger" | "muted"; title: string; text: string } {
+interface KeyState {
+  tone: Tone | null;
+  icon: "lock" | "alert" | null;
+  hint: string;
+  /** The longer explanation, as a notice under the row, when the state needs one. */
+  notice: { title?: string; text: string } | null;
+}
+
+function keyState(status: ApiKeyStatus): KeyState {
   if (!status.encryptionAvailable) {
     return {
       tone: "danger",
-      title: "Системное шифрование недоступно",
-      text:
-        "Studio хранит ключ только зашифрованным (safeStorage), а сейчас система не даёт шифровать — поэтому ключ не сохраняется. " +
-        "На macOS разблокируйте Связку ключей, на Windows войдите в свою учётную запись, затем перезапустите Studio.",
+      icon: "alert",
+      hint: "шифрование недоступно — ключ не сохраняется",
+      notice: {
+        title: "Системное шифрование недоступно",
+        text:
+          "Studio хранит ключ только зашифрованным (safeStorage), а сейчас система не даёт шифровать — поэтому ключ не сохраняется. " +
+          "На macOS разблокируйте Связку ключей, на Windows войдите в свою учётную запись, затем перезапустите Studio.",
+      },
     };
   }
   if (status.rejected) {
     return {
       tone: "danger",
-      title: "OpenRouter отклонил ключ (401)",
-      text: "Генерация остановлена и сама не повторяется. Замените ключ — например, если старый отозван или истёк.",
+      icon: "alert",
+      hint: "OpenRouter отклонил ключ (401)",
+      notice: { text: "Генерация остановлена и сама не повторяется. Замените ключ — например, если старый отозван или истёк." },
     };
   }
-  if (status.stored) {
-    return {
-      tone: "ok",
-      title: "Сохранён и зашифрован",
-      text: "Ключ лежит в системной связке ключей и не передаётся в окно приложения — здесь видны только последние 4 символа.",
-    };
-  }
-  return { tone: "muted", title: "Не задан", text: "Без ключа генерация недоступна. Ключ создаётся на openrouter.ai в разделе Keys." };
+  if (status.stored) return { tone: "ok", icon: "lock", hint: "зашифрован системой", notice: null };
+  return { tone: null, icon: null, hint: "не задан · ключ создаётся на openrouter.ai в разделе Keys", notice: null };
 }
 
-function ApiKeyCard({ status, headingRef }: { status: ApiKeyStatus; headingRef: Ref<HTMLHeadingElement> }) {
+function ApiKeyRow({ status }: { status: ApiKeyStatus }) {
   const { client, store } = useEngine();
   const inputId = useId();
   const issueId = useId();
@@ -147,27 +177,34 @@ function ApiKeyCard({ status, headingRef }: { status: ApiKeyStatus; headingRef: 
   }
 
   return (
-    <Card title="OpenRouter" id="settings-key" headingRef={headingRef}>
-      <div className={`key-state key-state-${state.tone}`} role="status">
-        <span className="key-state-icon">
-          <Icon name={state.tone === "ok" ? "lock" : state.tone === "danger" ? "alert" : "info"} size={14} strokeWidth={2.2} />
-        </span>
-        <div>
-          <p className="key-state-title">{state.title}</p>
-          <p className="key-state-text">{state.text}</p>
-        </div>
-      </div>
-
-      <Row label="API-ключ" labelFor={showInput ? inputId : undefined}>
+    <>
+      <Row
+        label="API-ключ"
+        labelFor={showInput ? inputId : undefined}
+        hintRole="status"
+        // A stored key reads as the sheet has it: a muted line behind a green lock; a problem colours the whole line.
+        hintTone={state.tone === "ok" ? undefined : (state.tone ?? undefined)}
+        hint={
+          <span className={state.tone === "ok" ? "key-hint key-hint-ok" : "key-hint"}>
+            {state.icon && <Icon name={state.icon} size={12} strokeWidth={2.2} />}
+            {state.hint}
+          </span>
+        }
+      >
         {status.stored && !showInput && (
           <>
-            <span className="key-mask mono" aria-label={`Ключ, последние символы ${status.last4 ?? ""}`}>
-              •••• {status.last4}
-            </span>
+            {/* Only the last four characters ever reach the window; the rest is a mask, never the key. */}
+            <input
+              className="in in-s key-field"
+              type="text"
+              readOnly
+              value={`••••••${status.last4 ?? ""}`}
+              aria-label={`Ключ, последние символы ${status.last4 ?? ""}`}
+            />
             <button
               ref={replaceRef}
               type="button"
-              className="btn btn-sm"
+              className="btn btn-s"
               onClick={() => {
                 setEditing(true);
                 setFocusNext("input");
@@ -176,8 +213,15 @@ function ApiKeyCard({ status, headingRef }: { status: ApiKeyStatus; headingRef: 
             >
               Заменить
             </button>
-            <button type="button" className="btn btn-sm btn-quiet" onClick={() => void clear()} disabled={busy}>
-              Удалить
+            <button type="button" className="btn btn-s" onClick={() => void clear()} disabled={busy} aria-busy={busy}>
+              {busy ? (
+                <>
+                  <Spin />
+                  Удаляем…
+                </>
+              ) : (
+                "Удалить"
+              )}
             </button>
           </>
         )}
@@ -192,7 +236,7 @@ function ApiKeyCard({ status, headingRef }: { status: ApiKeyStatus; headingRef: 
             <input
               ref={inputRef}
               id={inputId}
-              className="input input-mono key-input"
+              className="in in-s key-field"
               type="password"
               value={typed}
               placeholder="sk-or-v1-…"
@@ -205,16 +249,24 @@ function ApiKeyCard({ status, headingRef }: { status: ApiKeyStatus; headingRef: 
             />
             <button
               type="submit"
-              className="btn btn-sm btn-primary"
+              className="btn btn-s btn-p"
               aria-label="Сохранить ключ"
+              aria-busy={busy}
               disabled={!status.encryptionAvailable || busy || typed.trim() === ""}
             >
-              {busy ? "Сохраняем…" : "Сохранить"}
+              {busy ? (
+                <>
+                  <Spin />
+                  Сохраняем…
+                </>
+              ) : (
+                "Сохранить"
+              )}
             </button>
             {status.stored && (
               <button
                 type="button"
-                className="btn btn-sm btn-quiet"
+                className="btn btn-s"
                 onClick={() => {
                   setEditing(false);
                   setTyped("");
@@ -228,13 +280,18 @@ function ApiKeyCard({ status, headingRef }: { status: ApiKeyStatus; headingRef: 
           </form>
         )}
       </Row>
+      {state.notice && (
+        <Notice tone="danger" title={state.notice.title}>
+          {state.notice.text}
+        </Notice>
+      )}
       {issue && (
         <p id={issueId} className="field-error" role="alert">
           {issue}
         </p>
       )}
       {error && <ErrorNotice error={error} />}
-    </Card>
+    </>
   );
 }
 
@@ -253,32 +310,32 @@ const REASON_TEXT: Record<ReconcileReason, string> = {
   "torn-ledger-line": "последняя строка журнала расходов обрезана (например, при сбое питания)",
 };
 
-/** Why `creditsDeltaMicros` is null: nothing to compare the ledger's own delta against. */
-const DELTA_UNAVAILABLE_TEXT: Record<NonNullable<Extract<ReconcileResult, { status: "done" }>["deltaUnavailable"]>, string> = {
-  "no-baseline": "Это первая сверка: нет предыдущей точки, с которой сравнить расход по /credits.",
-  "negative-delta": "Расход по /credits за это окно ушёл в минус. /credits общий для всего аккаунта — сравнение недостоверно.",
-};
+const CLOCK_SKEW_TEXT = "системные часы отстают от журнала — ожидание посчитано по внутреннему таймеру, а не по часам";
 
-const RECONCILE_WARNING_TEXT: Record<ReconcileWarning, string> = {
-  "clock-skew": "Системные часы отстают от журнала расходов, поэтому время ожидания посчитано по внутреннему таймеру, а не по часам.",
-};
+/** "$10.00": the budget field shows the dollar sign, as the sheet does; parseDollars accepts it back. */
+function budgetText(micros: number): string {
+  return `$${dollarsInputValue(micros)}`;
+}
 
 function BudgetRow({ settings }: { settings: Settings }) {
   const { client, store } = useEngine();
   const inputId = useId();
-  const issueId = useId();
-  const [text, setText] = useState(() => dollarsInputValue(settings.monthlyBudgetMicros));
+  const hintId = useId();
+  const [text, setText] = useState(() => budgetText(settings.monthlyBudgetMicros));
   const [dirty, setDirty] = useState(false);
   const [issue, setIssue] = useState<string | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!dirty) setText(dollarsInputValue(settings.monthlyBudgetMicros));
+    if (!dirty) setText(budgetText(settings.monthlyBudgetMicros));
   }, [settings.monthlyBudgetMicros, dirty]);
 
   async function save(): Promise<void> {
+    // Enter on an unchanged amount has nothing to save (the button is not even shown then).
+    if (!dirty) return;
     const parsed = parseDollars(text);
     if (!parsed.ok) {
       setIssue(BUDGET_ISSUES[parsed.reason]);
@@ -293,13 +350,24 @@ function BudgetRow({ settings }: { settings: Settings }) {
       store.setSettings(reply.result);
       setDirty(false);
       setSaved(true);
-      setText(dollarsInputValue(reply.result.monthlyBudgetMicros));
+      setText(budgetText(reply.result.monthlyBudgetMicros));
+      // The save button goes away with the change it saved: focus stays with the amount, not on the page.
+      inputRef.current?.focus();
     } else setError(reply.error);
   }
 
+  const hint = issue ?? (saved && !dirty ? `сохранён: ${formatUsd(settings.monthlyBudgetMicros)} в месяц` : "календарный месяц по UTC · запрос сверх бюджета не отправляется");
+
   return (
     <>
-      <Row label="Месячный бюджет" labelFor={inputId} hint="Календарный месяц по UTC. Запрос, который может выйти за бюджет, не отправляется.">
+      <Row
+        label="Бюджет на месяц"
+        labelFor={inputId}
+        hint={hint}
+        hintId={hintId}
+        hintRole={issue ? "alert" : saved && !dirty ? "status" : undefined}
+        hintTone={issue ? "danger" : saved && !dirty ? "ok" : undefined}
+      >
         <form
           className="inline-form"
           onSubmit={(e) => {
@@ -307,42 +375,37 @@ function BudgetRow({ settings }: { settings: Settings }) {
             void save();
           }}
         >
-          <span className="money-input">
-            <span className="money-input-prefix" aria-hidden="true">
-              $
-            </span>
-            <input
-              id={inputId}
-              className="input input-mono money-input-field"
-              type="text"
-              inputMode="decimal"
-              value={text}
-              autoComplete="off"
-              aria-invalid={issue !== null}
-              aria-describedby={issue ? issueId : undefined}
-              onChange={(e) => {
-                setText(e.currentTarget.value);
-                setDirty(true);
-                setSaved(false);
-                setIssue(null);
-              }}
-            />
-          </span>
-          <button type="submit" className="btn btn-sm" aria-label="Сохранить бюджет" disabled={!dirty || busy}>
-            {busy ? "Сохраняем…" : "Сохранить"}
-          </button>
+          <input
+            ref={inputRef}
+            id={inputId}
+            className="in in-s budget-field"
+            type="text"
+            inputMode="decimal"
+            value={text}
+            autoComplete="off"
+            aria-invalid={issue !== null}
+            aria-describedby={hintId}
+            onChange={(e) => {
+              setText(e.currentTarget.value);
+              setDirty(true);
+              setSaved(false);
+              setIssue(null);
+            }}
+          />
+          {dirty && (
+            <button type="submit" className="btn btn-s btn-p" aria-label="Сохранить бюджет" aria-busy={busy} disabled={busy}>
+              {busy ? (
+                <>
+                  <Spin />
+                  Сохраняем…
+                </>
+              ) : (
+                "Сохранить"
+              )}
+            </button>
+          )}
         </form>
       </Row>
-      {issue && (
-        <p id={issueId} className="field-error" role="alert">
-          {issue}
-        </p>
-      )}
-      {saved && !dirty && (
-        <p className="field-ok" role="status">
-          Бюджет сохранён: {formatUsd(settings.monthlyBudgetMicros)} в месяц.
-        </p>
-      )}
       {error && <ErrorNotice error={error} />}
     </>
   );
@@ -354,17 +417,21 @@ function MoneyStatusRows({ money }: { money: OpenMoneyStatus }) {
   const reservedShare = budget > 0 ? Math.min(100 - spentShare, (money.unsettledMicros / budget) * 100) : 0;
   return (
     <>
-      <Row label={`${monthLabel(money.month)} · потрачено`}>
+      <div className="row">
+        <div className="rl rl-meter">
+          <b>{monthName(money.month)} · потрачено</b>
+          {/* Spent in the accent, open reserves at their worst case in the accent at 40 %. */}
+          <div className="bar" aria-hidden="true">
+            <span style={{ width: `${spentShare}%` }} />
+            <span style={{ width: `${reservedShare}%`, background: "var(--accent-40)" }} />
+          </div>
+        </div>
         <span className="mono money-figure">
           {formatUsd(money.spentMicros)} <span className="faint">из {formatUsd(budget)}</span>
         </span>
-      </Row>
-      <div className="budget-meter" aria-hidden="true">
-        <span className="budget-meter-spent" style={{ width: `${spentShare}%` }} />
-        <span className="budget-meter-reserved" style={{ width: `${reservedShare}%` }} />
       </div>
-      <Row label="Незакрытые резервы" hint="Запросы без итога считаются по худшей цене до сверки.">
-        <span className="mono money-figure">
+      <Row label="Незакрытые резервы" hint="запросы без итога считаются по худшей цене до сверки">
+        <span className="mono row-value">
           {money.unsettledCount === 0
             ? "нет"
             : `${countOf(money.unsettledCount, ["резерв", "резерва", "резервов"])} · до ${formatUsd(money.unsettledMicros, 2, "up")}`}
@@ -374,59 +441,43 @@ function MoneyStatusRows({ money }: { money: OpenMoneyStatus }) {
   );
 }
 
-function ReconcileOutcome({ result }: { result: Extract<ReconcileResult, { status: "done" }> }) {
+/**
+ * A finished reconcile as the row's hint: the verdict first — «сверено…
+ * сходится», «расхождение…», or why there is nothing to compare — then
+ * anything else the reconcile did (reserves closed at their worst case, the
+ * torn ledger line moved aside) and any warning about how it was measured.
+ */
+function doneStatus(result: Extract<ReconcileResult, { status: "done" }>): { text: string; tone: Tone } {
+  const ledger = `журнал ${formatUsd(result.ledgerDeltaMicros, 4)}`;
   const credits = result.creditsDeltaMicros;
-  const trailer = (
-    <>
-      {result.closedReserves > 0 && (
-        <p className="field-hint">Закрыто по худшей цене: {countOf(result.closedReserves, ["резерв", "резерва", "резервов"])}.</p>
-      )}
-      {result.tornLineMoved && <p className="field-hint">Обрезанная строка журнала перенесена в ledger.torn.</p>}
-    </>
-  );
-  // No /credits delta to compare (the first reconcile, or usage that went
-  // down): say why, but still show the ledger's own delta for the window.
+  const parts: string[] = [];
+  let tone: Tone;
   if (credits === null) {
-    return (
-      <div className="reconcile-outcome" role="status">
-        <dl className="reconcile-totals">
-          <div>
-            <dt>Журнал Studio</dt>
-            <dd className="mono">{formatUsd(result.ledgerDeltaMicros, 4)}</dd>
-          </div>
-        </dl>
-        <Notice tone="info">{result.deltaUnavailable && DELTA_UNAVAILABLE_TEXT[result.deltaUnavailable]}</Notice>
-        {trailer}
-      </div>
+    tone = "info";
+    parts.push(
+      result.deltaUnavailable === "negative-delta"
+        ? `сравнение недостоверно: расход по /credits за это окно ушёл в минус, а /credits общий для всего аккаунта · ${ledger}`
+        : `первая сверка: сравнить с /credits не с чем · ${ledger}`,
     );
+  } else {
+    const diff = Math.abs(credits - result.ledgerDeltaMicros);
+    const totals = `/credits ${formatUsd(credits, 4)} · ${ledger}`;
+    if (diff > RECONCILE_TOLERANCE_MICROS) {
+      tone = "warn";
+      parts.push(
+        credits > result.ledgerDeltaMicros
+          ? `расхождение ${formatUsd(diff, 4)}: ${totals} — ключом пользовались вне Studio?`
+          : `расхождение ${formatUsd(diff, 4)}: ${totals} — в журнале больше: резервы закрыты по худшей цене, фактически списано меньше`,
+      );
+    } else {
+      tone = "ok";
+      parts.push(`сверено: ${totals} — сходится`);
+    }
   }
-  const diff = Math.abs(credits - result.ledgerDeltaMicros);
-  const mismatch = diff > RECONCILE_TOLERANCE_MICROS;
-  const higher = credits > result.ledgerDeltaMicros;
-  return (
-    <div className="reconcile-outcome" role="status">
-      <dl className="reconcile-totals">
-        <div>
-          <dt>OpenRouter · /credits</dt>
-          <dd className="mono">{formatUsd(credits, 4)}</dd>
-        </div>
-        <div>
-          <dt>Журнал Studio</dt>
-          <dd className="mono">{formatUsd(result.ledgerDeltaMicros, 4)}</dd>
-        </div>
-      </dl>
-      {mismatch ? (
-        <Notice tone="warn" title={`Расхождение ${formatUsd(diff, 4)}`}>
-          {higher
-            ? "OpenRouter насчитал больше, чем записано в журнале. /credits общий для всего аккаунта — возможно, им пользовались вне Studio."
-            : "В журнале больше, чем списал OpenRouter: незакрытые резервы закрыты по худшей цене, фактически списано меньше."}
-        </Notice>
-      ) : (
-        <Notice tone="ok">Суммы сходятся: расхождение не больше {formatUsd(RECONCILE_TOLERANCE_MICROS)}.</Notice>
-      )}
-      {trailer}
-    </div>
-  );
+  if (result.closedReserves > 0) parts.push(`закрыто по худшей цене: ${countOf(result.closedReserves, ["резерв", "резерва", "резервов"])}`);
+  if (result.tornLineMoved) parts.push("обрезанная строка журнала перенесена в ledger.torn");
+  if (result.warnings.includes("clock-skew")) parts.push(CLOCK_SKEW_TEXT);
+  return { text: parts.join(" · "), tone };
 }
 
 function ReconcileBlock({ phase, money, engineError }: { phase: SyncPhase; money: MoneyStatus; engineError: EngineError | null }) {
@@ -471,17 +522,27 @@ function ReconcileBlock({ phase, money, engineError }: { phase: SyncPhase; money
   // A ledger that cannot be read, or a failed write: a reconcile needs a sound ledger, so none is offered.
   if (stop?.kind === "restart") {
     return (
-      <div className="reconcile">
-        <Notice tone="danger" title="Сверка недоступна">
-          <p>{restartStopText(stop.code)}</p>
-          <p>Сверка тут не поможет: ей нужен исправный журнал расходов.</p>
-        </Notice>
-      </div>
+      <Notice tone="danger" title="Сверка недоступна">
+        <p>{restartStopText(stop.code)}</p>
+        <p>Сверка тут не поможет: ей нужен исправный журнал расходов.</p>
+      </Notice>
     );
   }
 
+  let status: { text: string; tone?: Tone } | null = null;
+  if (result?.status === "too-early" && waiting && readyAt !== null) {
+    const early = `OpenRouter ещё не обновил расход · сверить можно через ${waitLabel(readyAt - now)}`;
+    status = { text: result.warnings.includes("clock-skew") ? `${early} · ${CLOCK_SKEW_TEXT}` : early };
+  } else if (result?.status === "too-early" && result.warnings.includes("clock-skew")) {
+    // The countdown ended, but the warning it was shown with is still true:
+    // it must stay visible, not vanish just because `waiting` flipped to false.
+    status = { text: CLOCK_SKEW_TEXT };
+  } else if (result?.status === "done") {
+    status = doneStatus(result);
+  }
+
   return (
-    <div className="reconcile">
+    <>
       {needed && (
         <Notice tone="warn" title="Нужна сверка расходов">
           <p>Платные запросы остановлены до сверки. Причины:</p>
@@ -495,32 +556,27 @@ function ReconcileBlock({ phase, money, engineError }: { phase: SyncPhase; money
       )}
       <Row
         label="Сверка с OpenRouter"
-        hint="Сравнивает расход по /credits с журналом и закрывает резервы по худшей цене. OpenRouter обновляет расход с задержкой: сверка возможна через 2 минуты после последнего запроса."
+        hint={status?.text ?? `сравнивает расход по /credits с журналом и закрывает резервы по худшей цене · через 2${NBSP}мин после последнего запроса`}
+        hintRole={status ? "status" : undefined}
+        hintTone={status?.tone}
       >
         <button
           type="button"
-          className={needed ? "btn btn-sm btn-primary" : "btn btn-sm"}
+          className={needed ? "btn btn-s btn-p" : "btn btn-s"}
           onClick={() => void reconcile()}
           disabled={busy || waiting}
           aria-busy={busy}
         >
-          <Icon name="scale" size={14} />
+          {busy ? <Spin /> : <Icon name="scale" size={14} />}
           {busy ? "Сверяем…" : "Сверить"}
         </button>
       </Row>
-      {result?.status === "too-early" && waiting && readyAt !== null && (
-        <Notice tone="info" title="Слишком рано">
-          OpenRouter ещё не обновил расход. Сверить можно через {waitLabel(readyAt - now)}.
-        </Notice>
-      )}
-      {result?.warnings.includes("clock-skew") && <Notice tone="info">{RECONCILE_WARNING_TEXT["clock-skew"]}</Notice>}
-      {result?.status === "done" && <ReconcileOutcome result={result} />}
       {error && <ErrorNotice error={error} />}
-    </div>
+    </>
   );
 }
 
-// ---------- performance, models, library ----------
+// ---------- models, performance, folders ----------
 
 function ConcurrencyRow({ settings }: { settings: Settings }) {
   const { client, store } = useEngine();
@@ -543,23 +599,21 @@ function ConcurrencyRow({ settings }: { settings: Settings }) {
 
   return (
     <>
-      <div className="setting-row">
-        <div className="setting-label">
-          <span className="setting-name" id={labelId}>
-            Параллельных запросов
-          </span>
-          <span className="setting-hint">
-            От {MIN_CONCURRENCY} до {MAX_CONCURRENCY}. Если OpenRouter отвечает 429, Studio сама уменьшает число.
+      <div className="row">
+        <div className="rl">
+          <b id={labelId}>Параллельных генераций</b>
+          <span>
+            от {MIN_CONCURRENCY} до {MAX_CONCURRENCY} · на 429 уменьшается сама
           </span>
         </div>
-        <div className="setting-control stepper-control" role="group" aria-labelledby={labelId}>
-          <button type="button" className="icon-btn" aria-label="Меньше" onClick={() => void change(value - 1)} disabled={busy || value <= MIN_CONCURRENCY}>
+        <div className="row-control row-control-tight" role="group" aria-labelledby={labelId}>
+          <button type="button" className="ibtn" aria-label="Меньше" onClick={() => void change(value - 1)} disabled={busy || value <= MIN_CONCURRENCY}>
             <Icon name="minus" size={12} strokeWidth={2.6} />
           </button>
           <output className="mono stepper-value" aria-live="polite" aria-labelledby={labelId}>
             {value}
           </output>
-          <button type="button" className="icon-btn" aria-label="Больше" onClick={() => void change(value + 1)} disabled={busy || value >= MAX_CONCURRENCY}>
+          <button type="button" className="ibtn" aria-label="Больше" onClick={() => void change(value + 1)} disabled={busy || value >= MAX_CONCURRENCY}>
             <Icon name="plus" size={12} strokeWidth={2.6} />
           </button>
         </div>
@@ -569,20 +623,31 @@ function ConcurrencyRow({ settings }: { settings: Settings }) {
   );
 }
 
+// One image age check at the dated fallback table (IMPORT_FALLBACK_PRICE: the
+// same AGE_CHECK_CALL prices a candidate's check and an import's). «до» means
+// a hard cap everywhere else in the app, but the fallback table is only used
+// when OpenRouter did not answer — the live price can be higher — so this is
+// «≈» (nearest, not rounded up): a range from the expected price to the worst
+// case, not the worst case alone prefixed with «≈» (which would overstate the
+// approximate cost).
+const AGE_CHECK_PRICE = formatUsdRange(IMPORT_FALLBACK_PRICE.ageCheck.expectedMicros, IMPORT_FALLBACK_PRICE.ageCheck.worstMicros, 3);
+
 // Owner's decision (2026-09-27): the paid image age check is optional, off by
 // default — the app is his personal tool, and he judges age by eye, including
 // at pick. The free text-level 21+ safeguards (the descriptor gate, the
 // prompts) are never affected by this toggle.
 function ImageAgeCheckRow({ settings }: { settings: Settings }) {
   const { client, store } = useEngine();
-  const inputId = useId();
+  const labelId = useId();
+  const hintId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<EngineError | null>(null);
+  const on = settings.imageAgeCheck === "on";
 
-  async function change(checked: boolean): Promise<void> {
+  async function change(next: boolean): Promise<void> {
     setBusy(true);
     setError(null);
-    const reply = await client.request("settings.setImageAgeCheck", { imageAgeCheck: checked ? "on" : "off" });
+    const reply = await client.request("settings.setImageAgeCheck", { imageAgeCheck: next ? "on" : "off" });
     setBusy(false);
     if (reply.ok) store.setSettings(reply.result);
     else setError(reply.error);
@@ -592,16 +657,20 @@ function ImageAgeCheckRow({ settings }: { settings: Settings }) {
     <>
       <Row
         label="Автопроверка возраста на фото"
-        labelFor={inputId}
-        hint="Платная проверка моделью, ≈ $0,005 за фото. По умолчанию выключена — вы оцениваете возраст сами, в том числе при выборе."
+        labelId={labelId}
+        hintId={hintId}
+        hint={`по умолчанию выключена — возраст оцениваете вы сами · ≈ ${AGE_CHECK_PRICE} за фото`}
       >
-        <input
-          id={inputId}
-          type="checkbox"
-          className="checkbox-input"
-          checked={settings.imageAgeCheck === "on"}
+        <button
+          type="button"
+          role="switch"
+          className={on ? "sw sw-on" : "sw"}
+          aria-checked={on}
+          aria-labelledby={labelId}
+          aria-describedby={hintId}
+          aria-busy={busy}
           disabled={busy}
-          onChange={(e) => void change(e.currentTarget.checked)}
+          onClick={() => void change(!on)}
         />
       </Row>
       {error && <ErrorNotice error={error} />}
@@ -645,21 +714,22 @@ function LibraryRow({ settings }: { settings: Settings }) {
         label="Библиотека"
         labelFor={editing ? inputId : undefined}
         hint={
-          editing
-            ? "Папка с аватарами и фото. Журнал расходов хранится отдельно и при переносе не теряется."
-            : <span className="mono setting-path">{settings.libraryPath}</span>
+          editing ? (
+            "папка с аватарами и фото · журнал расходов хранится отдельно и при переносе не теряется"
+          ) : (
+            <span className="mono rl-path">{settings.libraryPath}</span>
+          )
         }
       >
         {!editing && (
           <button
             type="button"
-            className="btn btn-sm"
+            className="btn btn-s"
             onClick={() => {
               setPath(settings.libraryPath);
               setEditing(true);
             }}
           >
-            <Icon name="folder" size={14} />
             Изменить
           </button>
         )}
@@ -674,7 +744,7 @@ function LibraryRow({ settings }: { settings: Settings }) {
         >
           <input
             id={inputId}
-            className="input input-mono"
+            className="in in-s"
             type="text"
             value={path}
             spellCheck={false}
@@ -683,12 +753,19 @@ function LibraryRow({ settings }: { settings: Settings }) {
             aria-describedby={issue ? issueId : undefined}
             onChange={(e) => setPath(e.currentTarget.value)}
           />
-          <button type="submit" className="btn btn-sm btn-primary" aria-label="Сохранить папку" disabled={busy}>
-            {busy ? "Сохраняем…" : "Сохранить"}
+          <button type="submit" className="btn btn-s btn-p" aria-label="Сохранить папку" aria-busy={busy} disabled={busy}>
+            {busy ? (
+              <>
+                <Spin />
+                Сохраняем…
+              </>
+            ) : (
+              "Сохранить"
+            )}
           </button>
           <button
             type="button"
-            className="btn btn-sm btn-quiet"
+            className="btn btn-s"
             onClick={() => {
               setEditing(false);
               setIssue(null);
@@ -711,8 +788,8 @@ function LibraryRow({ settings }: { settings: Settings }) {
 export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
   const { store } = useEngine();
   const view = useEngineView();
-  const keyHeading = useRef<HTMLHeadingElement>(null);
-  const moneyHeading = useRef<HTMLHeadingElement>(null);
+  // The key and the money share one card now («OpenRouter и расходы»): an error link to either lands on its heading.
+  const openRouterHeading = useRef<HTMLHeadingElement>(null);
   const ready = view.phase === "ready";
 
   useEffect(() => {
@@ -721,12 +798,13 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
 
   useEffect(() => {
     if (!ready || !focus) return;
-    const target = focus === "key" ? keyHeading.current : moneyHeading.current;
+    const target = openRouterHeading.current;
     target?.scrollIntoView?.({ block: "start", behavior: "smooth" });
     target?.focus({ preventScroll: true });
   }, [ready, focus]);
 
   const { settings, money } = view;
+  const ageCheckOn = settings?.imageAgeCheck === "on";
 
   return (
     <div className="page">
@@ -740,32 +818,50 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
       {settings && (
         <div className="settings-grid">
           <div className="settings-col">
-            <ApiKeyCard status={settings.apiKey} headingRef={keyHeading} />
-            <Card title="Модели" id="settings-models">
-              <Row label="Фото" hint="Портреты и сцены, 1K">
-                <span className="mono model-id">{settings.imageModel}</span>
-              </Row>
-              <Row
-                label={settings.imageAgeCheck === "on" ? "Текст и проверка возраста" : "Текст"}
-                hint={settings.imageAgeCheck === "on" ? "Дескриптор, сцены, проверка «явно старше 21»" : "Дескриптор, сцены"}
-              >
-                <span className="mono model-id">{settings.textModel}</span>
-              </Row>
-              <p className="field-hint">Модели по умолчанию; выбор других появится позже.</p>
-              <ImageAgeCheckRow settings={settings} />
-            </Card>
-          </div>
-
-          <div className="settings-col">
-            <Card title="Деньги" id="settings-money" headingRef={moneyHeading}>
+            <Card title="OpenRouter и расходы" id="settings-openrouter" headingRef={openRouterHeading}>
+              <ApiKeyRow status={settings.apiKey} />
               <BudgetRow settings={settings} />
               {money?.ledger === "open" && <MoneyStatusRows money={money} />}
               {money && <ReconcileBlock phase={view.phase} money={money} engineError={view.engineError} />}
             </Card>
+            <Card title="Модели" id="settings-models">
+              {/* T5b's scenes/writer.ts and assembler.ts exist but are not wired into the job pipeline yet — no run uses this model for scenes today. */}
+              <Row
+                label="Сцены"
+                hint={ageCheckOn ? "дескриптор и проверка «явно старше 21» · сцены — появятся вместе с фото-ранами" : "дескриптор · сцены появятся вместе с фото-ранами"}
+              >
+                <span className="mono row-value">{settings.textModel}</span>
+              </Row>
+              <Row label="Фото" hint="портреты · 1K · сцены появятся вместе с фото-ранами">
+                <span className="mono row-value">{settings.imageModel}</span>
+              </Row>
+              <ImageAgeCheckRow settings={settings} />
+              {/*
+               * The engine's face gate (studio/engine/face/config.ts) is a
+               * hybrid, not a strict identity filter — but it is not wired
+               * into the job pipeline yet (no run calls it), so the retries
+               * and gallery badges below describe what photo-runs will do,
+               * not what happens today. The threshold (0.55) is that
+               * module's own literal (defaultFaceGateConfig), restated by
+               * hand here — the renderer bundle itself never imports engine
+               * code for it — but SettingsScreen.test.tsx does import the
+               * real constant and pins this hint's text against it, so the
+               * two numbers cannot silently drift apart.
+               */}
+              <Row
+                label="Сходство лица"
+                hint="появится вместе с фото-ранами: локально, без токенов · повтор только при явном браке — нет лица, два лица, лицо на кадре со спины, сходство ниже 0.55 · остальное — значком в галерее"
+              >
+                <span className="mono row-value">гибрид</span>
+              </Row>
+            </Card>
+          </div>
+
+          <div className="settings-col">
             <Card title="Производительность" id="settings-performance">
               <ConcurrencyRow settings={settings} />
             </Card>
-            <Card title="Папки" id="settings-folders">
+            <Card title="Папки и экспорт" id="settings-folders">
               <LibraryRow settings={settings} />
             </Card>
           </div>

@@ -24,7 +24,7 @@ interface TraitsFormProps {
   locked: boolean;
 }
 
-/** Step 1: the avatar's look, from the fixed choices of the contract. */
+/** Step 1: the avatar's look, from the fixed choices of the contract; a `fieldset.lock` once a draft fixes it. */
 export function TraitsForm({ traits, onChange, vibeIssues, locked }: TraitsFormProps) {
   const ageId = useId();
   const vibeId = useId();
@@ -34,12 +34,12 @@ export function TraitsForm({ traits, onChange, vibeIssues, locked }: TraitsFormP
   const invalid = vibeIssues.length > 0;
 
   return (
-    <fieldset className="traits" disabled={locked}>
-      <legend className="sr-only">Внешность</legend>
+    <fieldset className="lock" disabled={locked}>
+      <legend className="sr-only">{locked ? "Внешность зафиксирована в черновике" : "Внешность"}</legend>
 
       <div className="field">
         <div className="field-row">
-          <label className="field-label" htmlFor={ageId}>
+          <label className="fl" htmlFor={ageId}>
             Возраст
           </label>
           <span className="mono muted" aria-hidden="true">
@@ -48,12 +48,13 @@ export function TraitsForm({ traits, onChange, vibeIssues, locked }: TraitsFormP
         </div>
         <input
           id={ageId}
-          className="range"
           type="range"
           min={MIN_AGE}
           max={MAX_AGE}
           step={1}
           value={traits.age}
+          // The thumb's position, 0–1: ui.css fills the track up to it (the slider is drawn by hand).
+          style={{ "--range-fill": (traits.age - MIN_AGE) / (MAX_AGE - MIN_AGE) }}
           aria-valuetext={yearsOld(traits.age)}
           onChange={(e) => {
             const age = Math.round(Number(e.currentTarget.value));
@@ -70,7 +71,7 @@ export function TraitsForm({ traits, onChange, vibeIssues, locked }: TraitsFormP
       </div>
 
       <div className="field">
-        <span className="field-label" aria-hidden="true">
+        <span className="fl" aria-hidden="true">
           Волосы
         </span>
         <div className="segment-pair">
@@ -85,27 +86,32 @@ export function TraitsForm({ traits, onChange, vibeIssues, locked }: TraitsFormP
 
       <div className="field">
         <div className="field-row">
-          <label className="field-label" htmlFor={vibeId}>
+          <label className="fl" htmlFor={vibeId}>
             Вайб
           </label>
-          <span className={traits.vibe.length > VIBE_MAX ? "mono danger-text" : "mono faint"} aria-hidden="true">
-            {traits.vibe.length}/{VIBE_MAX}
-          </span>
+          {!locked && (
+            <span className={traits.vibe.length > VIBE_MAX ? "mono danger-text" : "mono faint"} aria-hidden="true">
+              {traits.vibe.length}/{VIBE_MAX}
+            </span>
+          )}
         </div>
         <input
           id={vibeId}
-          className="input"
+          className="in"
           type="text"
           value={traits.vibe}
           spellCheck={false}
           autoComplete="off"
           aria-invalid={invalid}
-          aria-describedby={invalid ? `${vibeErrorId} ${vibeHintId}` : vibeHintId}
+          aria-describedby={locked ? undefined : invalid ? `${vibeErrorId} ${vibeHintId}` : vibeHintId}
           onChange={(e) => set("vibe", e.currentTarget.value)}
         />
-        <p id={vibeHintId} className="field-hint">
-          Характер и интересы — по-английски или по-русски. Возраст задаётся только ползунком.
-        </p>
+        {/* How to fill it in, while it can be filled in: a locked look has nothing left to type. */}
+        {!locked && (
+          <p id={vibeHintId} className="field-hint">
+            Характер и интересы — по-английски или по-русски. Возраст задаётся только ползунком.
+          </p>
+        )}
         {/* Always mounted and polite: announced once the typing settles, not as an alert per keystroke. */}
         <div id={vibeErrorId} className="vibe-errors" aria-live="polite">
           {invalid && (

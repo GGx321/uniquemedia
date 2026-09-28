@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { dollarsInputValue, formatUsd, parseDollars } from "./money";
+import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars } from "./money";
 
 test("formats micros as dollars with two decimals, rounding to the nearest cent", () => {
   expect(formatUsd(207_600)).toBe("$0.21");
@@ -64,6 +64,15 @@ test("the upper limit is inclusive and one cent over is refused", () => {
   expect(parseDollars("10000")).toEqual({ ok: true, micros: 10_000_000_000 });
   expect(parseDollars("10000.01")).toEqual({ ok: false, reason: "too-large" });
   expect(parseDollars("99999999999")).toEqual({ ok: false, reason: "too-large" });
+});
+
+test("formatUsdRange rounds the expected bound to the nearest, the worst bound up — never an understatement", () => {
+  expect(formatUsdRange(1_660, 5_250, 3)).toBe("$0.002–0.006");
+  expect(formatUsdRange(100_000, 104_000, 2)).toBe("$0.10–0.11");
+});
+
+test("formatUsdRange collapses to one value only when both bounds round the same", () => {
+  expect(formatUsdRange(100_000, 100_000, 2)).toBe("$0.10");
 });
 
 test("the input value round-trips with the parser", () => {

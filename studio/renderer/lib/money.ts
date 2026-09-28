@@ -1,7 +1,6 @@
 // Money in the UI stays in integer micro-dollars ($1 = 1_000_000) end to end.
 // Formatting and parsing work on integers and digit strings only: no float
 // arithmetic and no parseFloat anywhere on a money value.
-import type { Estimate } from "../../shared/engine";
 
 export const MICROS_PER_DOLLAR = 1_000_000;
 
@@ -33,6 +32,20 @@ export function formatUsd(micros: number, decimals: 2 | 3 | 4 = 2, rounding: Rou
   const fraction = units % scale;
   const whole = (units - fraction) / scale;
   return `$${groupThousands(whole)}.${String(fraction).padStart(decimals, "0")}`;
+}
+
+/**
+ * "$0.01–0.04": an expected price to its worst case, sharing one "$" — or
+ * just "$0.01" when the two round to the same string (a swing too small to
+ * show). Never prefix a lone worst case with "≈": that overstates the
+ * approximate cost, sometimes by several times over. The expected bound
+ * rounds to the nearest; the worst bound rounds up, like every other worst
+ * case and limit in the app — «не больше» must never understate it.
+ */
+export function formatUsdRange(expectedMicros: number, worstMicros: number, decimals: 2 | 3 | 4 = 2): string {
+  const expected = formatUsd(expectedMicros, decimals, "nearest");
+  const worst = formatUsd(worstMicros, decimals, "up");
+  return expected === worst ? expected : `${expected}–${worst.slice(1)}`;
 }
 
 /** The plain number for an input field: "10.00" (no "$", no grouping). */
@@ -67,14 +80,4 @@ export function parseDollars(input: string, opts: { maxDecimals?: number; maxMic
   if (micros === 0) return { ok: false, reason: "zero" };
   if (micros > maxMicros) return { ok: false, reason: "too-large" };
   return { ok: true, micros };
-}
-
-/**
- * "≈ $0.21, не больше $0.23": the expected cost rounded to the cent, the
- * worst case rounded up. Shared by every paid-confirmation UI (the wizard's
- * EstimateCard, the Avatars grid's rewrite-recovery tile) so the same price
- * reads the same way everywhere.
- */
-export function estimateLine(estimate: Estimate): string {
-  return `≈ ${formatUsd(estimate.expectedMicros)}, не больше ${formatUsd(estimate.worstMicros, 2, "up")}`;
 }

@@ -64,7 +64,7 @@ import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
-import { productionBundleProblems, productionEngineProblems, productionMainProblems } from "./bundleChecks";
+import { productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
 import { DEFAULT_IMPORT_DESCRIBE_ANSWER, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { looksLikeAStackTrace } from "./stackTrace";
 
@@ -446,8 +446,20 @@ async function rendererBundleText(target: Target): Promise<string> {
   return files.map((p) => asarText(target, p.replace(/^\//, ""))).join("\n");
 }
 
+/** The renderer's built CSS (fonts.css once Vite resolves it), read the same way as rendererBundleText's JS. */
+async function rendererCssText(target: Target): Promise<string> {
+  if (target.asar === null) {
+    const dir = join(ROOT, "out-studio", "renderer", "assets");
+    const files = (await readdir(dir)).filter((f) => f.endsWith(".css"));
+    return (await Promise.all(files.map((f) => readFile(join(dir, f), "utf8")))).join("\n");
+  }
+  const entries = listPackage(target.asar, { isPack: false }).map((p) => p.replaceAll("\\", "/"));
+  const files = entries.filter((p) => p.startsWith("/out-studio/renderer/assets/") && p.endsWith(".css"));
+  return files.map((p) => asarText(target, p.replace(/^\//, ""))).join("\n");
+}
+
 /** Every debug door compiled out of a production build's bundles (bundleChecks.ts), wherever they were read from. */
-function checkProductionBundles(where: string, main: string, engine: string, preload: string, renderer: string): void {
+function checkProductionBundles(where: string, main: string, engine: string, preload: string, renderer: string, rendererCss: string): void {
   const mainProblems = productionMainProblems(main);
   check(`${where}: main has every debug door compiled out (no test switch, no env renderer URL, DevTools off, remote debugging refused)`, mainProblems.length === 0, mainProblems);
   const engineProblems = productionEngineProblems(engine);
@@ -458,6 +470,9 @@ function checkProductionBundles(where: string, main: string, engine: string, pre
   check(`${where}: a renderer bundle was read`, renderer.length > 0);
   const rendererProblems = productionBundleProblems(renderer);
   check(`${where}: renderer has every debug door compiled out`, rendererProblems.length === 0, rendererProblems);
+  check(`${where}: a renderer CSS bundle was read`, rendererCss.length > 0);
+  const rendererCssProblems = productionRendererCssProblems(rendererCss);
+  check(`${where}: renderer CSS has no unresolved @fontsource url() and still carries a woff2 reference`, rendererCssProblems.length === 0, rendererCssProblems);
 }
 
 async function productionCheck(target: Target): Promise<void> {
@@ -469,6 +484,7 @@ async function productionCheck(target: Target): Promise<void> {
       await readFile(join(ROOT, "out-studio", "engine", "main.js"), "utf8"),
       await readFile(join(ROOT, "out-studio", "preload", "preload.cjs"), "utf8"),
       await rendererBundleText(target),
+      await rendererCssText(target),
     );
     return;
   }
@@ -479,6 +495,7 @@ async function productionCheck(target: Target): Promise<void> {
     asarText(target, join("out-studio", "engine", "main.js")),
     asarText(target, join("out-studio", "preload", "preload.cjs")),
     await rendererBundleText(target),
+    await rendererCssText(target),
   );
 
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-prod-"));

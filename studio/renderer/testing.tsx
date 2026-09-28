@@ -54,8 +54,21 @@ export async function openWizard(): Promise<void> {
   await screen.findByRole("heading", { level: 1, name: "Новый аватар" });
 }
 
+/** The estimate as shown: its limit, then the expected cost — "до $0.23 · ожидаемая ≈ $0.21"; null while there is none. */
 export function estimateText(): string | null {
-  return document.querySelector(".estimate-figure")?.textContent ?? null;
+  const worst = document.querySelector(".estimate-worst")?.textContent;
+  const expected = document.querySelector(".estimate-expected")?.textContent;
+  return worst && expected ? `${worst} · ${expected}` : null;
+}
+
+/**
+ * A getByText matcher on an element's whole text, markup inside it included
+ * (a price set in mono inside a sentence), matching the innermost element
+ * that still holds all of it.
+ */
+export function withText(pattern: RegExp): (content: string, element: Element | null) => boolean {
+  return (_, element) =>
+    element !== null && pattern.test(element.textContent ?? "") && Array.from(element.children).every((child) => !pattern.test(child.textContent ?? ""));
 }
 
 /** A short, printable identity for an element, so a focus assertion fails with a readable diff instead of a DOM dump. */

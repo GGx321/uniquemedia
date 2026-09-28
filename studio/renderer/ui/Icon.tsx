@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 
+// Paths are the sheet's own (Studio — макет, «Компоненты»), 24×24 stroke icons.
 const PATHS = {
   plus: <path d="M12 5v14M5 12h14" />,
+  minus: <path d="M5 12h14" />,
   back: <path d="M15 18l-6-6 6-6" />,
   dice: (
     <>
@@ -30,19 +32,35 @@ const PATHS = {
       <path d="M12 11v5M12 7.5v.01" />
     </>
   ),
-  minus: <path d="M5 12h14" />,
-  folder: <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />,
   scale: (
     <>
-      <path d="M12 4v16M5 20h14M6 8h12" />
-      <path d="M6 8l-3 6h6zM18 8l-3 6h6z" />
+      <path d="M12 3v17M7 20h10M5 7h14" />
+      <path d="M5 7l-3 6a3 3 0 006 0zM19 7l-3 6a3 3 0 006 0z" />
     </>
   ),
-  sparkle: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />,
   upload: (
     <>
-      <path d="M12 16V4M7 9l5-5 5 5" />
-      <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" />
+      <path d="M12 15V4M7 9l5-5 5 5" />
+      <path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M20 20l-3.5-3.5" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M3 3l18 18" />
+      <path d="M10.6 5.1A9.8 9.8 0 0112 5c5 0 8.5 4.5 9.5 7a13 13 0 01-2.6 3.9M6.3 6.3C4.3 7.7 3 9.8 2.5 12c1 2.5 4.5 7 9.5 7 1.8 0 3.4-.5 4.8-1.3" />
+      <path d="M9.9 9.9a3 3 0 004.2 4.2" />
+    </>
+  ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.5v2.5M12 19v2.5M2.5 12h2.5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" />
     </>
   ),
 } satisfies Record<string, ReactNode>;
@@ -67,4 +85,9 @@ export function Icon({ name, size = 16, strokeWidth = 2 }: { name: IconName; siz
       {PATHS[name]}
     </svg>
   );
+}
+
+/** The sheet's 14px spinner for a busy button; the button's own text says what is happening. */
+export function Spin() {
+  return <span className="spin" aria-hidden="true" />;
 }

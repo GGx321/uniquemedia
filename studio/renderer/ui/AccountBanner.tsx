@@ -16,7 +16,7 @@ export function AccountBanner({ view }: { view: EngineView }) {
         tone="danger"
         title="Платные запросы остановлены"
         actions={
-          <button type="button" className="btn btn-sm" onClick={() => navigate({ name: "settings", focus: "money" })}>
+          <button type="button" className="btn btn-s" onClick={() => navigate({ name: "settings", focus: "money" })}>
             Открыть Настройки
           </button>
         }
@@ -31,7 +31,7 @@ export function AccountBanner({ view }: { view: EngineView }) {
         tone="warn"
         title="Нужна сверка расходов"
         actions={
-          <button type="button" className="btn btn-sm" onClick={() => navigate({ name: "settings", focus: "money" })}>
+          <button type="button" className="btn btn-s" onClick={() => navigate({ name: "settings", focus: "money" })}>
             Перейти к сверке
           </button>
         }
@@ -47,7 +47,7 @@ export function AccountBanner({ view }: { view: EngineView }) {
         tone="danger"
         title="OpenRouter отклонил ключ (401)"
         actions={
-          <button type="button" className="btn btn-sm" onClick={() => navigate({ name: "settings", focus: "key" })}>
+          <button type="button" className="btn btn-s" onClick={() => navigate({ name: "settings", focus: "key" })}>
             Заменить ключ
           </button>
         }
@@ -62,7 +62,7 @@ export function AccountBanner({ view }: { view: EngineView }) {
         tone="info"
         title="Добавьте ключ OpenRouter"
         actions={
-          <button type="button" className="btn btn-sm" onClick={() => navigate({ name: "settings", focus: "key" })}>
+          <button type="button" className="btn btn-s" onClick={() => navigate({ name: "settings", focus: "key" })}>
             Открыть Настройки
           </button>
         }

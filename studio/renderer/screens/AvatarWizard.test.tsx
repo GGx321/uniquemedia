@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU, type Draft } from "../../shared/engine";
+import { afterColon } from "../lib/format";
 import { MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { callsOf, estimateText, flush, openWizard, runAll, setup, tick, inAct, describeElement, focusedLabel } from "../testing";
+import { callsOf, estimateText, flush, openWizard, runAll, setup, tick, inAct, describeElement, focusedLabel, withText } from "../testing";
 
 function continuedDraft(overrides: Partial<Draft> = {}): Draft {
   return {
@@ -55,7 +56,7 @@ test("the estimate is shown before anything is spent", async () => {
   expect(screen.queryByRole("button", { name: /Сгенерировать/ })).toBeNull();
 
   await estimate();
-  expect(estimateText()).toBe("≈ $0.21, не больше $0.23");
+  expect(estimateText()).toBe("до $0.23 · ожидаемая ≈ $0.21");
   expect(generateButton().textContent).toBe("Сгенерировать 4 варианта · до $0.23");
   expect(callsOf(engine, "avatars.estimate")).toHaveLength(1);
   expect(callsOf(engine, "avatars.createDraft")).toHaveLength(0);
@@ -99,7 +100,7 @@ test("the form is locked while the paid commands are being sent", async () => {
   await estimate();
   fireEvent.click(generateButton());
   // A disabled fieldset disables every control inside it.
-  expect(screen.getByRole("radio", { name: "Азиатский" }).closest("fieldset.traits")?.hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("radio", { name: "Азиатский" }).closest("fieldset.lock")?.hasAttribute("disabled")).toBe(true);
   await screen.findByText(/Рисуем портреты/);
 });
 
@@ -121,8 +122,8 @@ test("PRICE_CHANGED shows the new estimate and asks again before spending", asyn
   fireEvent.click(generateButton());
 
   await screen.findByText("Цена выросла");
-  expect(estimateText()).toBe("≈ $0.22, не больше $0.25");
-  expect(screen.getByText(/Было не больше \$0\.23, теперь не больше \$0\.25/)).toBeDefined();
+  expect(estimateText()).toBe("до $0.25 · ожидаемая ≈ $0.22");
+  expect(screen.getByText(withText(/Было не больше \$0\.23, теперь не больше \$0\.25/))).toBeDefined();
   expect(callsOf(engine, "avatars.createDraft")).toHaveLength(1);
   expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(0);
 
@@ -171,7 +172,7 @@ test("a price rise while the batch is being bought re-asks via avatars.estimateC
   // generateCandidates), not the whole new-avatar worst ($0.23) — that
   // number was never sent for this command, so it must not appear as what
   // was "accepted" for it.
-  expect(screen.getByText(/Было не больше \$0\.22, теперь не больше \$0\.25/)).toBeDefined();
+  expect(screen.getByText(withText(/Было не больше \$0\.22, теперь не больше \$0\.25/))).toBeDefined();
   // The refusal lands right after a fresh createDraft: it must re-price only
   // the next batch, never the whole new avatar again. That needs the
   // avatarId generate() just created — its own local variable, not the
@@ -207,7 +208,7 @@ test("a fresh draft with no batch estimate re-prices via avatars.estimateCandida
   tick(scheduler, 1);
 
   await screen.findByText("Цена выросла");
-  expect(screen.getByText(/Было не больше \$0\.23, теперь не больше \$0\.25/)).toBeDefined();
+  expect(screen.getByText(withText(/Было не больше \$0\.23, теперь не больше \$0\.25/))).toBeDefined();
   expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(0); // still nothing sent without a click
 
   fireEvent.click(screen.getByRole("button", { name: "Подтвердить новую цену · до $0.25" }));
@@ -330,11 +331,13 @@ test("with the image age check off, the estimate caption never mentions it", asy
   await screen.findByText(/Рисуем портреты/);
   tick(scheduler, 1);
 
-  const drawnPill = await screen.findByText("готов");
-  expect(drawnPill.textContent).not.toContain("проверка");
+  // The one finished slot is already a portrait to pick; the three still drawing say only that.
+  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(1);
+  expect(screen.getAllByText("Рисуется")).toHaveLength(3);
+  expect(document.body.textContent).not.toMatch(/Проверка|проверка возраста/);
 });
 
-test("with the image age check on (default), the estimate caption and the drawn-slot pill both mention it", async () => {
+test("with the image age check on, the estimate caption mentions it and no finished slot claims a check still runs", async () => {
   const { scheduler } = setup({ imageAgeCheck: "on" });
   await openWizard();
   await estimate();
@@ -345,7 +348,24 @@ test("with the image age check on (default), the estimate caption and the drawn-
   await screen.findByText(/Рисуем портреты/);
   tick(scheduler, 1);
 
-  expect(await screen.findByText("готов · проверка")).toBeDefined();
+  // A slot is counted done only after its check: never a finished tile claiming a check still runs.
+  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(1);
+  expect(screen.getAllByText("Рисуется")).toHaveLength(3);
+});
+
+test("a running batch shows each slot once: the portraits that came, then only the slots still drawing", async () => {
+  const { scheduler } = setup();
+  await openWizard();
+  await estimate();
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  expect(screen.getAllByText("Рисуется")).toHaveLength(4);
+
+  tick(scheduler, 2);
+  expect(screen.getByText("Рисуем портреты: 2 из 4")).toBeDefined();
+  expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(2);
+  expect(screen.getAllByText("Рисуется")).toHaveLength(2);
+  expect(document.querySelectorAll(".cand, .cand-slot")).toHaveLength(4);
 });
 
 test("cancel sends avatars.cancel for the running job", async () => {
@@ -446,7 +466,10 @@ test("failed slots are explained in Russian and their cost is called out, alongs
   runAll(scheduler);
 
   expect(screen.getAllByRole("radio", { name: /^Вариант/ })).toHaveLength(2);
-  expect(screen.getByText(new RegExp(`варианта не удалось получить: ${ERROR_MESSAGES_RU.MODERATION_REFUSED}`))).toBeDefined();
+  // Lowercase after the colon, as Russian typography wants: "…получить: модель отказалась…".
+  expect(screen.getByText(new RegExp(`варианта не удалось получить: ${afterColon(ERROR_MESSAGES_RU.MODERATION_REFUSED)}`))).toBeDefined();
+  // The two empty slots say so themselves, next to the two portraits that did come.
+  expect(screen.getAllByText("Не получилось")).toHaveLength(2);
   expect(screen.getByText(/Стоимость попытки учтена/)).toBeDefined();
 });
 
@@ -462,10 +485,28 @@ test("when every slot fails the empty state explains it instead of showing blank
   expect(screen.queryAllByRole("radio", { name: /^Вариант/ })).toHaveLength(0);
   expect(screen.getByText(/Ни один вариант не получился/)).toBeDefined();
   // Russian plurals: 4 falls in the "few" form ("варианта"), not "вариантов".
-  expect(screen.getByText(new RegExp(`4 варианта не удалось получить: ${ERROR_MESSAGES_RU.NETWORK}`))).toBeDefined();
+  expect(screen.getByText(new RegExp(`4 варианта не удалось получить: ${afterColon(ERROR_MESSAGES_RU.NETWORK)}`))).toBeDefined();
+  expect(screen.getAllByText("Не получилось")).toHaveLength(4);
   // A retry is a fresh, separately accepted attempt, at the draft's own
   // batch price ($0.22), not the whole new-avatar price ($0.23).
   expect(screen.getByRole("button", { name: "Ещё 4 варианта · до $0.22" })).toBeDefined();
+});
+
+test("when every slot fails, the failed tiles are not wrapped in an empty radio group", async () => {
+  const { engine, scheduler } = setup();
+  engine.failNextSlots(4, { code: "NETWORK" });
+  await openWizard();
+  await estimate();
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  runAll(scheduler);
+
+  await screen.findByText(/Ни один вариант не получился/);
+  expect(screen.getAllByText("Не получилось")).toHaveLength(4);
+  // No real candidate to choose among: a <fieldset>/radiogroup with nothing
+  // to select in it is empty semantics, so the tiles must sit outside one.
+  expect(screen.queryByRole("group", { name: "Выберите вариант" })).toBeNull();
+  expect(document.querySelector(".cand-fieldset")).toBeNull();
 });
 
 test("errors are shown in Russian with a way to fix them", async () => {
@@ -612,6 +653,30 @@ test("the form is labelled and keyboard operable with native controls", async ()
   expect(screen.queryByText(/Язык/)).toBeNull();
 });
 
+// Three steps, as on the mockup: the estimate belongs to «Кандидаты».
+test("the stepper walks Внешность → Кандидаты → Сохранить", async () => {
+  const { scheduler } = setup();
+  await openWizard();
+  const current = (): string | null =>
+    within(screen.getByRole("list", { name: "Шаги" }))
+      .getAllByRole("listitem")
+      .find((li) => li.getAttribute("aria-current") === "step")
+      ?.textContent?.replace(/^\d/, "") ?? null;
+  expect(within(screen.getByRole("list", { name: "Шаги" })).getAllByRole("listitem")).toHaveLength(3);
+  expect(current()).toBe("Внешность");
+
+  await estimate();
+  expect(current()).toBe("Кандидаты");
+
+  fireEvent.click(generateButton());
+  await screen.findByText(/Рисуем портреты/);
+  runAll(scheduler);
+  expect(current()).toBe("Кандидаты");
+
+  fireEvent.click(screen.getByRole("radio", { name: "Вариант A" }));
+  expect(current()).toBe("Сохранить");
+});
+
 test("the wizard says when the engine stops answering, and blocks spending until it is back", async () => {
   const { engine } = setup();
   await openWizard();
@@ -660,14 +725,26 @@ test("leaving the wizard while the draft is being created buys no batch afterwar
 // ---------- continuing an existing draft: its own estimate, IN_FLIGHT, DESCRIPTOR_INVALID (T8a) ----------
 
 test("a continued draft with no cached price fetches one via avatars.estimateCandidates, not the full avatars.estimate", async () => {
-  const draft = continuedDraft();
+  // A distinct age from DEFAULT_TRAITS: the grid's own «Новый аватар» tile
+  // estimates with DEFAULT_TRAITS, so a draft that also used DEFAULT_TRAITS
+  // could not tell the two calls apart by their traits.
+  const draftTraits = { ...DEFAULT_TRAITS, age: 30 };
+  const draft = continuedDraft({ traits: draftTraits, descriptor: mockDescriptor(draftTraits) });
   const { engine } = setup({ drafts: [draft], imageAgeCheck: "on" });
+  // The grid's own «Новый аватар» tile prices a new avatar — one call, counted
+  // before the wizard opens, so any the wizard itself made would show on top.
+  // Filtered by payload.traits rather than a raw count: what matters is that
+  // no avatars.estimate call carries this draft's own traits, not that the
+  // total number of calls (which an unrelated future one could also change)
+  // happens to be exactly 1.
+  await screen.findByRole("article", { name: "Черновик" });
+  await waitFor(() => expect(callsOf(engine, "avatars.estimate").map((c) => c.payload.traits)).toEqual([DEFAULT_TRAITS]));
   await continueDraft();
 
   await waitFor(() => expect(estimateText()).not.toBeNull());
-  expect(estimateText()).toBe("≈ $0.21, не больше $0.22");
+  expect(estimateText()).toBe("до $0.22 · ожидаемая ≈ $0.21");
   expect(callsOf(engine, "avatars.estimateCandidates").map((c) => c.payload)).toEqual([{ avatarId: draft.avatarId }]);
-  expect(callsOf(engine, "avatars.estimate")).toHaveLength(0);
+  expect(callsOf(engine, "avatars.estimate").map((c) => c.payload.traits)).not.toContainEqual(draftTraits);
   expect(screen.getByRole("button", { name: /Ещё 4 варианта/ })).toBeDefined();
 });
 
@@ -753,8 +830,17 @@ test("DESCRIPTOR_INVALID on avatars.pick (save) points at the rewrite recovery i
 });
 
 test("a second batch (PRICE_CHANGED) on a continued draft re-asks via avatars.estimateCandidates, never the full estimate", async () => {
-  const draft = continuedDraft({ estimate: { ...MOCK_ESTIMATE } });
+  // A distinct age from DEFAULT_TRAITS, same reasoning as the continued-draft
+  // test above: the grid's tile also estimates with DEFAULT_TRAITS, so a
+  // draft using it too could not tell the two calls apart by their traits.
+  const draftTraits = { ...DEFAULT_TRAITS, age: 30 };
+  const draft = continuedDraft({ traits: draftTraits, descriptor: mockDescriptor(draftTraits), estimate: { ...MOCK_ESTIMATE } });
   const { engine } = setup({ drafts: [draft] });
+  // The grid's own «Новый аватар» tile prices a new avatar — one call, counted
+  // before the wizard opens. Filtered by payload.traits rather than a raw
+  // count, same reasoning as the continued-draft test above.
+  await screen.findByRole("article", { name: "Черновик" });
+  await waitFor(() => expect(callsOf(engine, "avatars.estimate").map((c) => c.payload.traits)).toEqual([DEFAULT_TRAITS]));
   await continueDraft();
 
   engine.setPrice({ expectedMicros: 215_000, worstMicros: 250_000 });
@@ -762,7 +848,7 @@ test("a second batch (PRICE_CHANGED) on a continued draft re-asks via avatars.es
 
   await screen.findByText("Цена выросла");
   expect(callsOf(engine, "avatars.estimateCandidates")).toHaveLength(1);
-  expect(callsOf(engine, "avatars.estimate")).toHaveLength(0);
+  expect(callsOf(engine, "avatars.estimate").map((c) => c.payload.traits)).not.toContainEqual(draftTraits);
   expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(1); // the refused first attempt
 });
 

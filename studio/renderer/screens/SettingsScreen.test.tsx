@@ -1,7 +1,16 @@
-import { describe, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { type ApiKeyStatus, ERROR_MESSAGES_RU } from "../../shared/engine";
+import { afterEach, describe, expect, jest, test } from "bun:test";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { type ApiKeyStatus, ERROR_MESSAGES_RU, IMPORT_FALLBACK_PRICE } from "../../shared/engine";
+import { defaultFaceGateConfig } from "../../engine/face/config";
 import { callsOf, flush, openSection, setup, inAct, describeElement, focusedLabel } from "../testing";
+
+// Safety net for the clock-skew test's fake timers: if that test ever times
+// out mid-`await`, its own `finally` never runs, and real timers would stay
+// faked for every test after it. This restores them unconditionally between
+// every test, whether or not the previous one actually enabled them.
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 const NOT_SET: ApiKeyStatus = { stored: false, last4: null, encryptionAvailable: true, rejected: false };
 const STORED: ApiKeyStatus = { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
@@ -12,12 +21,17 @@ async function openSettings(apiKey: ApiKeyStatus = STORED, extra: Parameters<typ
   const ctx = setup({ apiKey, ...extra });
   await flush();
   await openSection("Настройки");
-  await screen.findByRole("heading", { level: 2, name: "OpenRouter" });
+  await screen.findByRole("heading", { level: 2, name: "OpenRouter и расходы" });
   return ctx;
 }
 
 function keyInput(): HTMLElement {
   return screen.getByLabelText("API-ключ");
+}
+
+/** The age-check switch, found by its row's name as a screen reader would. */
+function ageSwitch(): HTMLElement {
+  return screen.getByRole("switch", { name: "Автопроверка возраста на фото" });
 }
 
 function inputValues(): string[] {
@@ -28,22 +42,25 @@ function inputValues(): string[] {
 
 test("key state: not set", async () => {
   await openSettings(NOT_SET);
-  expect(screen.getByText("Не задан")).toBeDefined();
+  expect(screen.getByText(/^не задан/)).toBeDefined();
   expect(keyInput().getAttribute("type")).toBe("password");
-  expect(screen.queryByText(/••••/)).toBeNull();
+  expect(screen.queryByDisplayValue(/••••/)).toBeNull();
 });
 
 test("key state: stored shows only the last four characters", async () => {
   await openSettings(STORED);
-  expect(screen.getByText("Сохранён и зашифрован")).toBeDefined();
-  expect(screen.getByText("•••• 3f2a")).toBeDefined();
+  expect(screen.getByText("зашифрован системой")).toBeDefined();
+  const mask = screen.getByDisplayValue("••••••3f2a");
+  expect(mask.hasAttribute("readonly")).toBe(true);
+  expect(mask.getAttribute("aria-label")).toBe("Ключ, последние символы 3f2a");
   expect(screen.getByRole("button", { name: "Заменить" })).toBeDefined();
 });
 
 test("key state: rejected by OpenRouter (401)", async () => {
   await openSettings(REJECTED);
   expect(screen.getByText("OpenRouter отклонил ключ (401)")).toBeDefined();
-  expect(screen.getByText("•••• 3f2a")).toBeDefined();
+  expect(screen.getByText(/Генерация остановлена и сама не повторяется/)).toBeDefined();
+  expect(screen.getByDisplayValue("••••••3f2a")).toBeDefined();
 });
 
 test("key state: encryption unavailable explains why nothing is stored", async () => {
@@ -58,7 +75,7 @@ test("saving a key sends it once and never renders it again", async () => {
   const key = "sk-or-v1-0123456789abcdef7890";
   fireEvent.change(keyInput(), { target: { value: key } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить ключ" }));
-  await screen.findByText("•••• 7890");
+  await screen.findByDisplayValue("••••••7890");
 
   expect(callsOf(engine, "settings.setApiKey").map((c) => c.payload.key)).toEqual([key]);
   expect(document.body.innerHTML).not.toContain(key);
@@ -70,7 +87,7 @@ test("saving a key sends it once and never renders it again", async () => {
   expect(inputValues().some((v) => v.includes("0123456789"))).toBe(false);
   fireEvent.change(keyInput(), { target: { value: "sk-or-v1-rotated-key-4444" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить ключ" }));
-  await screen.findByText("•••• 4444");
+  await screen.findByDisplayValue("••••••4444");
   expect(document.body.innerHTML).not.toContain("rotated");
 });
 
@@ -94,7 +111,7 @@ test("a malformed key is refused before it is sent", async () => {
 test("the key can be removed", async () => {
   const { engine } = await openSettings(STORED);
   fireEvent.click(screen.getByRole("button", { name: "Удалить" }));
-  await screen.findByText("Не задан");
+  await screen.findByText(/^не задан/);
   expect(callsOf(engine, "settings.clearApiKey")).toHaveLength(1);
 });
 
@@ -102,17 +119,20 @@ test("the key can be removed", async () => {
 
 test("the budget is typed in dollars and sent as integer micros", async () => {
   const { engine } = await openSettings();
-  const input = screen.getByLabelText("Месячный бюджет");
-  expect(input instanceof HTMLInputElement ? input.value : null).toBe("10.00");
+  const input = screen.getByLabelText("Бюджет на месяц");
+  expect(input instanceof HTMLInputElement ? input.value : null).toBe("$10.00");
+  // Nothing to save until the amount changes.
+  expect(screen.queryByRole("button", { name: "Сохранить бюджет" })).toBeNull();
   fireEvent.change(input, { target: { value: "12.5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить бюджет" }));
-  await screen.findByText(/Бюджет сохранён: \$12\.50 в месяц/);
+  await screen.findByText(/сохранён: \$12\.50 в месяц/);
   expect(callsOf(engine, "settings.setBudget").map((c) => c.payload.monthlyBudgetMicros)).toEqual([12_500_000]);
+  expect(input instanceof HTMLInputElement ? input.value : null).toBe("$12.50");
 });
 
 test("an invalid budget is explained and not sent", async () => {
   const { engine } = await openSettings();
-  const input = screen.getByLabelText("Месячный бюджет");
+  const input = screen.getByLabelText("Бюджет на месяц");
   const form = input.closest("form");
   if (!form) throw new Error("budget form missing");
   const cases: [string, RegExp][] = [
@@ -135,9 +155,11 @@ test("an invalid budget is explained and not sent", async () => {
 
 test("money status shows spent, the budget and open reserves", async () => {
   await openSettings(STORED, { money: { spentMicros: 1_420_000 } });
-  expect(screen.getByText("Сентябрь 2026 · потрачено")).toBeDefined();
-  expect(screen.getByText("$1.42")).toBeDefined();
-  expect(screen.getByText("нет")).toBeDefined();
+  // The sidebar shows the same month's spend; these are the card's own rows.
+  const card = screen.getByRole("region", { name: "OpenRouter и расходы" });
+  expect(within(card).getByText("Сентябрь · потрачено")).toBeDefined();
+  expect(within(card).getByText("$1.42")).toBeDefined();
+  expect(within(card).getByText("нет")).toBeDefined();
 });
 
 test("reconcile needed: reasons, then too-early with the wait", async () => {
@@ -149,8 +171,8 @@ test("reconcile needed: reasons, then too-early with the wait", async () => {
 
   engine.queueReconcile({ status: "too-early", retryAfterMs: 95_000, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText("Слишком рано");
-  expect(screen.getByText(/Сверить можно через 1\s*мин 35\s*с/)).toBeDefined();
+  await screen.findByText(/OpenRouter ещё не обновил расход/);
+  expect(screen.getByText(/сверить можно через 1\s*мин 35\s*с/)).toBeDefined();
   expect(screen.getByRole("button", { name: "Сверить" }).hasAttribute("disabled")).toBe(true);
 });
 
@@ -158,10 +180,9 @@ test("reconcile done shows both totals and that they match", async () => {
   const { engine } = await openSettings();
   engine.queueReconcile({ status: "done", creditsDeltaMicros: 207_600, deltaUnavailable: null, ledgerDeltaMicros: 211_000, mismatch: false, closedReserves: 2, aboveWorstAttempts: [], tornLineMoved: true, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText("$0.2076");
-  expect(screen.getByText("$0.2110")).toBeDefined();
-  expect(screen.getByText(/Суммы сходятся/)).toBeDefined();
-  expect(screen.getByText(/Закрыто по худшей цене: 2\s*резерва/)).toBeDefined();
+  // The verdict sits in the reconcile row's hint, both totals in it.
+  await screen.findByText(/сверено: \/credits \$0\.2076 · журнал \$0\.2110 — сходится/);
+  expect(screen.getByText(/закрыто по худшей цене: 2\s*резерва/)).toBeDefined();
   expect(screen.getByText(/ledger\.torn/)).toBeDefined();
   // The money card is back to its calm state: nothing left to reconcile.
   await flush();
@@ -173,29 +194,28 @@ test("reconcile mismatch above one cent is flagged", async () => {
   const { engine } = await openSettings();
   engine.queueReconcile({ status: "done", creditsDeltaMicros: 260_000, deltaUnavailable: null, ledgerDeltaMicros: 207_600, mismatch: true, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText("Расхождение $0.0524");
-  expect(screen.getByText(/OpenRouter насчитал больше/)).toBeDefined();
+  await screen.findByText(/расхождение \$0\.0524: \/credits \$0\.2600 · журнал \$0\.2076/);
+  expect(screen.getByText(/ключом пользовались вне Studio\?/)).toBeDefined();
 });
 
 test("a difference of exactly one cent is not a mismatch; one micro more is", async () => {
   const { engine } = await openSettings();
   engine.queueReconcile({ status: "done", creditsDeltaMicros: 110_000, deltaUnavailable: null, ledgerDeltaMicros: 100_000, mismatch: false, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/Суммы сходятся/);
+  await screen.findByText(/— сходится/);
 
   engine.queueReconcile({ status: "done", creditsDeltaMicros: 110_001, deltaUnavailable: null, ledgerDeltaMicros: 100_000, mismatch: true, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText("Расхождение $0.0100");
+  await screen.findByText(/расхождение \$0\.0100/);
 });
 
 test("a first reconcile with no baseline still shows the ledger's own total and says why there is nothing to compare it to", async () => {
   const { engine } = await openSettings();
   engine.queueReconcile({ status: "done", creditsDeltaMicros: null, deltaUnavailable: "no-baseline", ledgerDeltaMicros: 211_000, mismatch: null, closedReserves: 1, aboveWorstAttempts: [], tornLineMoved: false, warnings: [] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText("$0.2110");
-  expect(screen.getByText(/Это первая сверка/)).toBeDefined();
-  expect(screen.getByText(/Закрыто по худшей цене: 1\s*резерв/)).toBeDefined();
-  expect(screen.queryByText(/OpenRouter · \/credits/)).toBeNull();
+  await screen.findByText(/первая сверка: сравнить с \/credits не с чем · журнал \$0\.2110/);
+  expect(screen.getByText(/закрыто по худшей цене: 1\s*резерв/)).toBeDefined();
+  expect(screen.queryByText(/\/credits \$/)).toBeNull();
 });
 
 test("a negative account-wide /credits delta is explained instead of compared", async () => {
@@ -209,16 +229,48 @@ test("a clock-skew warning shows on a too-early answer", async () => {
   const { engine } = await openSettings();
   engine.queueReconcile({ status: "too-early", retryAfterMs: 30_000, warnings: ["clock-skew"] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/Системные часы отстают/);
-  expect(screen.getByText("Слишком рано")).toBeDefined();
+  await screen.findByText(/системные часы отстают/);
+  expect(screen.getByText(/OpenRouter ещё не обновил расход/)).toBeDefined();
 });
 
 test("a clock-skew warning shows alongside a done reconcile too", async () => {
   const { engine } = await openSettings();
   engine.queueReconcile({ status: "done", creditsDeltaMicros: 100_000, deltaUnavailable: null, ledgerDeltaMicros: 100_000, mismatch: false, closedReserves: 0, aboveWorstAttempts: [], tornLineMoved: false, warnings: ["clock-skew"] });
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/Суммы сходятся/);
-  expect(screen.getByText(/Системные часы отстают/)).toBeDefined();
+  await screen.findByText(/— сходится/);
+  expect(screen.getByText(/системные часы отстают/)).toBeDefined();
+});
+
+test("the clock-skew warning stays visible after the countdown ends, not just while it is running", async () => {
+  // Deterministic instead of a real 1.1 s wait: fake timers advance both the
+  // row's own countdown interval (a real 1 s setInterval, not the
+  // ManualScheduler) and Date.now() together, so the countdown can be pushed
+  // past its own end without depending on the wall clock at all.
+  jest.useFakeTimers();
+  try {
+    const { engine } = await openSettings();
+    // A small but positive retryAfterMs (the contract requires positive).
+    engine.queueReconcile({ status: "too-early", retryAfterMs: 10, warnings: ["clock-skew"] });
+    fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
+    await screen.findByText(/системные часы отстают/);
+    expect(screen.getByText(/OpenRouter ещё не обновил расход/)).toBeDefined();
+
+    // Inside act() so React applies the interval's state update as part of
+    // this controlled batch, not as a bare, unwrapped timer callback outside
+    // any render pass.
+    act(() => {
+      jest.advanceTimersByTime(1100);
+    });
+
+    // Once the countdown passes its own end, "ещё не обновил расход · сверить
+    // можно через …" (the still-waiting state) must go — but the clock-skew
+    // warning must stay, not vanish along with it.
+    expect(screen.queryByText(/ещё не обновил расход/)).toBeNull();
+    expect(screen.getByText(/системные часы отстают/)).toBeDefined();
+    expect(screen.getByRole("button", { name: "Сверить" }).hasAttribute("disabled")).toBe(false);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("reconcile refused while requests are in flight", async () => {
@@ -234,14 +286,14 @@ test("a settle above its reserve halts paid calls until a reconcile, and the rec
   await flush();
   expect(screen.getByText("списание оказалось выше зарезервированного максимума")).toBeDefined();
   expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
-  expect(screen.getByRole("button", { name: "Сверить" }).className).toContain("btn-primary");
+  expect(screen.getByRole("button", { name: "Сверить" }).className).toContain("btn-p");
 
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/Суммы сходятся/);
+  await screen.findByText(/— сходится/);
   await flush();
   expect(document.body.textContent).not.toContain("списание оказалось выше зарезервированного максимума");
   expect(document.body.textContent).not.toContain("Нужна сверка расходов");
-  expect(screen.getByRole("button", { name: "Сверить" }).className).not.toContain("btn-primary");
+  expect(screen.getByRole("button", { name: "Сверить" }).className).not.toContain("btn-p");
 });
 
 test("a ledger that could not be read: no reconcile is offered, and the page says why", async () => {
@@ -262,7 +314,7 @@ test("a settle above its worst case known only from the status (after a restart)
   await openSettings(STORED, { money: { halt: { cause: "SETTLE_ABOVE_WORST", detail: "billed above", attemptIds: ["slot-1#1"] } } });
   expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
   expect(screen.getByText("списание оказалось выше зарезервированного максимума")).toBeDefined();
-  expect(screen.getByRole("button", { name: "Сверить" }).className).toContain("btn-primary");
+  expect(screen.getByRole("button", { name: "Сверить" }).className).toContain("btn-p");
 });
 
 test("after the reconcile the wizard can spend again", async () => {
@@ -270,7 +322,7 @@ test("after the reconcile the wizard can spend again", async () => {
   inAct(() => engine.haltAboveWorst());
   await flush();
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
-  await screen.findByText(/Суммы сходятся/);
+  await screen.findByText(/— сходится/);
   await flush();
   await openSection("Аватары");
   expect(document.body.textContent).not.toContain("Нужна сверка расходов");
@@ -285,7 +337,7 @@ test("network concurrency steps through the contract's range, 1 to 16", async ()
     await flush();
   }
   expect(callsOf(engine, "settings.setConcurrency").map((c) => c.payload.network)).toEqual([7, 8, 9]);
-  expect(screen.getByText(/От 1 до 16/)).toBeDefined();
+  expect(screen.getByText(/от 1 до 16/)).toBeDefined();
 });
 
 test("the stepper stops at both ends of the range", async () => {
@@ -300,51 +352,63 @@ test("focus follows the key flow: into the field on «Заменить», back t
   expect(focusedLabel()).toBe(describeElement(keyInput()));
   fireEvent.change(keyInput(), { target: { value: "sk-or-v1-focus-flow-5555" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить ключ" }));
-  await screen.findByText("•••• 5555");
+  await screen.findByDisplayValue("••••••5555");
   expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Заменить" })));
 });
 
-test("models are shown read-only", async () => {
+test("models are shown read-only, with the face check's hybrid mode", async () => {
   await openSettings();
   expect(screen.getByText("x-ai/grok-imagine-image-2.0")).toBeDefined();
   expect(screen.getByText("x-ai/grok-4.3")).toBeDefined();
+  expect(screen.getByText("гибрид")).toBeDefined();
+  expect(screen.queryByRole("combobox")).toBeNull();
+  // The face-gate hint's threshold is hand-typed (the renderer bundle never
+  // imports engine code for it): pin it against the engine's own real
+  // default so the two numbers cannot silently drift apart.
+  const threshold = defaultFaceGateConfig().identity.strategy.threshold;
+  expect(document.body.textContent).toContain(`сходство ниже ${threshold}`);
 });
 
 // Owner's decision (2026-09-27): the paid image age check is optional, off by default.
 describe("image age check toggle", () => {
-  test("off by default: the checkbox is unchecked and says so", async () => {
+  test("off by default: the switch is off and says so, with its per-photo estimate from the shared fallback price table", async () => {
     await openSettings(STORED, { imageAgeCheck: "off" });
-    const toggle = screen.getByLabelText("Автопроверка возраста на фото") as HTMLInputElement;
-    expect(toggle.checked).toBe(false);
-    expect(screen.getByText(/\$0,005/)).toBeDefined();
+    expect(ageSwitch().getAttribute("aria-checked")).toBe("false");
+    // «≈», not «до»: this is only the dated fallback table (used when
+    // OpenRouter did not answer), and «до» means a hard cap everywhere else
+    // in the app — the live price can be higher — so it shows a range from
+    // the expected price to the worst case, not the worst case alone.
+    // Pinned to the fallback table's own numbers, and the rendered text is a
+    // literal, not computed with formatUsdRange itself — a bug in that
+    // function must still be caught here, not just agree with itself.
+    expect(IMPORT_FALLBACK_PRICE.ageCheck).toEqual({ expectedMicros: 1_660, worstMicros: 5_250 });
+    expect(document.body.textContent).toContain("≈ $0.002–0.006 за фото");
     expect(screen.getByText(/по умолчанию выключена/i)).toBeDefined();
   });
 
-  test("shows checked when the setting is on", async () => {
+  test("shows on when the setting is on", async () => {
     await openSettings(STORED, { imageAgeCheck: "on" });
-    expect((screen.getByLabelText("Автопроверка возраста на фото") as HTMLInputElement).checked).toBe(true);
+    expect(ageSwitch().getAttribute("aria-checked")).toBe("true");
   });
 
   test("turning it on sends settings.setImageAgeCheck and reflects the engine's answer", async () => {
     const { engine } = await openSettings(STORED, { imageAgeCheck: "off" });
-    const toggle = screen.getByLabelText("Автопроверка возраста на фото") as HTMLInputElement;
 
-    fireEvent.click(toggle);
+    fireEvent.click(ageSwitch());
     await flush();
 
     expect(callsOf(engine, "settings.setImageAgeCheck").map((c) => c.payload.imageAgeCheck)).toEqual(["on"]);
-    expect(toggle.checked).toBe(true);
+    expect(ageSwitch().getAttribute("aria-checked")).toBe("true");
   });
 
   test("turning it back off sends the setting with imageAgeCheck: off", async () => {
     const { engine } = await openSettings(STORED, { imageAgeCheck: "on" });
-    const toggle = screen.getByLabelText("Автопроверка возраста на фото") as HTMLInputElement;
 
-    fireEvent.click(toggle);
+    fireEvent.click(ageSwitch());
     await flush();
 
     expect(callsOf(engine, "settings.setImageAgeCheck").map((c) => c.payload.imageAgeCheck)).toEqual(["off"]);
-    expect(toggle.checked).toBe(false);
+    expect(ageSwitch().getAttribute("aria-checked")).toBe("false");
   });
 });
 
@@ -414,5 +478,5 @@ test("an error link lands on the money card with focus", async () => {
   await flush();
   fireEvent.click(await screen.findByRole("button", { name: "Перейти к сверке" }));
   await flush();
-  expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Деньги" })));
+  expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "OpenRouter и расходы" })));
 });

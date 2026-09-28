@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useEngine } from "../engine/react";
 import { photoUrl, placeholderGradient } from "../lib/media";
 
-function Silhouette() {
+/** The neutral figure over a placeholder; screens tint it with CSS (unreadable tiles, drawing slots). */
+export function Silhouette() {
   return (
     <svg className="portrait-silhouette" viewBox="0 0 100 130" preserveAspectRatio="xMidYMax meet" aria-hidden="true" focusable="false">
       <g fill="#140c0a" opacity="0.34">

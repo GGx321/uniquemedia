@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { AvatarName, type EngineError, type Estimate } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
+import { NBSP } from "../lib/format";
 import { formatUsd } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { useNavigate } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
 import { EngineOffline } from "../ui/EngineOffline";
-import { Icon } from "../ui/Icon";
+import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { EstimateCard } from "./wizard/EstimateCard";
@@ -161,7 +162,7 @@ export function AvatarImport() {
   const estimateError = error && !showAgeError ? error : null;
 
   return (
-    <div className="page page-wizard">
+    <div className="page page-import">
       <header className="page-head">
         <div>
           <button type="button" className="back-link" onClick={() => navigate({ name: "avatars" })}>
@@ -176,29 +177,40 @@ export function AvatarImport() {
 
       <div className="wizard">
         <section className="card wizard-form" aria-labelledby="import-photo-title">
-          <div className="card-head">
-            <h2 id="import-photo-title" className="card-kicker">
+          <div className="wizard-form-head">
+            <h2 id="import-photo-title" className="lbl">
               Фото
             </h2>
+            {preview && (
+              <span className="tag">
+                выбрано · {preview.width}×{preview.height}{NBSP}px
+              </span>
+            )}
           </div>
           <p className="muted">
-            Один кадр аватара, который у вас уже есть. PNG, JPEG или WebP, до 20 МБ и не крупнее {MAX_IMPORT_PHOTO_SIDE}×{MAX_IMPORT_PHOTO_SIDE}px;
-            анимированные файлы не подходят.
+            Один кадр аватара, который у вас уже есть. PNG, JPEG или WebP, до 20{NBSP}МБ и не крупнее {MAX_IMPORT_PHOTO_SIDE}×
+            {MAX_IMPORT_PHOTO_SIDE}
+            {NBSP}px; анимированные файлы не подходят.
           </p>
-          {preview && (
-            <p className="mono muted">
-              Выбрано фото {preview.width}×{preview.height}px.
-            </p>
-          )}
           <div className="wizard-form-footer">
             <button
               type="button"
-              className={stagingId ? "btn" : "btn btn-primary"}
+              className={stagingId ? "btn" : "btn btn-p"}
               onClick={() => void pickPhoto()}
               disabled={busy !== null}
               aria-busy={busy === "pick"}
             >
-              {busy === "pick" ? "Выбираем…" : stagingId ? "Выбрать другое фото" : "Выбрать фото"}
+              {busy === "pick" ? (
+                <>
+                  <Spin />
+                  Выбираем…
+                </>
+              ) : (
+                <>
+                  <Icon name="upload" size={16} strokeWidth={2.2} />
+                  {stagingId ? "Выбрать другое фото" : "Выбрать фото"}
+                </>
+              )}
             </button>
           </div>
         </section>
@@ -217,7 +229,7 @@ export function AvatarImport() {
           {showAgeError && error && <ErrorNotice error={error} />}
 
           {stagingId && estimate && (
-            <section className="card import-confirm-card" aria-labelledby="import-confirm-title">
+            <section className="import-confirm" aria-labelledby="import-confirm-title">
               <h2 id="import-confirm-title" className="sr-only">
                 Подтверждение
               </h2>
@@ -237,14 +249,14 @@ export function AvatarImport() {
                   </p>
                 )}
               </div>
-              <div className="import-confirm-row">
-                <div className="field save-name">
-                  <label className="field-label" htmlFor={nameId}>
+              <div className="save-bar">
+                <div className="field">
+                  <label className="fl" htmlFor={nameId}>
                     Имя <span className="faint">· в промпты не уходит</span>
                   </label>
                   <input
                     id={nameId}
-                    className="input"
+                    className="in"
                     type="text"
                     value={name}
                     maxLength={80}
@@ -264,14 +276,17 @@ export function AvatarImport() {
                 <div className="save-action">
                   <button
                     type="button"
-                    className="btn btn-primary"
+                    className="btn btn-p"
                     disabled={busy !== null || blockedReason !== null}
                     aria-busy={busy === "import"}
                     onClick={() => void confirmImport()}
                   >
-                    {busy === "import"
-                      ? "Импортируем…"
-                      : previousWorst !== null
+                    {busy === "import" ? (
+                      <>
+                        <Spin />
+                        Импортируем…
+                      </>
+                    ) : previousWorst !== null
                         ? `Подтвердить новую цену · до ${formatUsd(estimate.worstMicros, 2, "up")}`
                         : `Импортировать · до ${formatUsd(estimate.worstMicros, 2, "up")}`}
                   </button>

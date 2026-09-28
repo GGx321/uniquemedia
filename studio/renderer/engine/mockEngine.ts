@@ -283,6 +283,7 @@ export class MockEngine implements EngineBridge {
   private price: Estimate = { ...MOCK_ESTIMATE };
   /** T6c's own import price, settable apart from `price` above (the avatar-creation baseline): the two commands are priced independently by the real engine too. */
   private importPriceValue: Estimate = { ...MOCK_IMPORT_ESTIMATE };
+  private rewritePriceOverride: Pick<Estimate, "expectedMicros" | "worstMicros"> | null = null;
   private encryptionAvailable: boolean;
   private readonly forced = new Map<CommandType, EngineError[]>();
   private readonly delayed = new Map<CommandType, number[]>();
@@ -371,6 +372,11 @@ export class MockEngine implements EngineBridge {
   /** T6c: changes avatars.importAvatar's own price, apart from setPrice's avatar-creation baseline. */
   setImportPrice(price: Pick<Estimate, "expectedMicros" | "worstMicros">): void {
     this.importPriceValue = { ...this.importPriceValue, ...price };
+  }
+
+  /** Changes the descriptor-only rewrite's own price (otherwise DESCRIPTOR's), so a rewrite accepted lower gets PRICE_CHANGED. */
+  setRewritePrice(price: Pick<Estimate, "expectedMicros" | "worstMicros">): void {
+    this.rewritePriceOverride = price;
   }
 
   /**
@@ -989,7 +995,7 @@ export class MockEngine implements EngineBridge {
 
   /** The descriptor-only recovery's price: the same descriptor sub-cost `candidatesPrice` subtracts, alone; never touches the image age check either way. */
   private rewritePrice(): Estimate {
-    return { ...this.price, expectedMicros: DESCRIPTOR.expected, worstMicros: DESCRIPTOR.worst };
+    return { ...this.price, expectedMicros: DESCRIPTOR.expected, worstMicros: DESCRIPTOR.worst, ...this.rewritePriceOverride };
   }
 
   /** T6c's import job price: fixed, unaffected by settings.imageAgeCheck (its own one-time age check is mandatory either way). */

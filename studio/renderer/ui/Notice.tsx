@@ -48,7 +48,7 @@ export function ErrorNotice({ error, actions }: { error: EngineError; actions?: 
           <>
             {actions}
             {focus && (
-              <button type="button" className="btn btn-sm" onClick={() => navigate({ name: "settings", focus })}>
+              <button type="button" className="btn btn-s" onClick={() => navigate({ name: "settings", focus })}>
                 {settingsLinkLabel(focus)}
               </button>
             )}

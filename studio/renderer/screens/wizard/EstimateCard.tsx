@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { EngineError, Estimate, ImageAgeCheck } from "../../../shared/engine";
 import { dateLabel } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
+import { Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 
 export interface EstimateAction {
@@ -9,6 +10,8 @@ export interface EstimateAction {
   onClick: () => void;
   disabled: boolean;
   busy: boolean;
+  /** `.btn-p` when this is the screen's main action; another batch for a draft is secondary (the screen's main one is «Сохранить»). */
+  primary: boolean;
 }
 
 interface EstimateCardProps {
@@ -37,7 +40,23 @@ interface EstimateCardProps {
   variant?: "avatar" | "import";
 }
 
-/** Step 2: the price before anything is spent, and the button that accepts it. */
+function caption(variant: "avatar" | "import", repeat: boolean, imageAgeCheck: ImageAgeCheck | undefined): string {
+  if (variant === "import") return "Обязательная проверка возраста и описание по фото (до 2 попыток). Худшая цена — это предел: дороже этот шаг не выйдет.";
+  // Another batch: the descriptor is already paid for and this price is the
+  // batch alone (avatars.estimateCandidates / the draft's own estimate) — not
+  // the whole avatar's price used as a loose upper bound, so the caption must
+  // not claim that anymore.
+  if (repeat) {
+    return imageAgeCheck === "on"
+      ? "Ещё 4 портрета и проверка возраста каждого. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
+      : "Ещё 4 портрета. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит.";
+  }
+  return imageAgeCheck === "on"
+    ? "Дескриптор, 4 портрета и проверка возраста каждого. Худшая цена — это предел: дороже этот шаг не выйдет."
+    : "Дескриптор и 4 портрета. Худшая цена — это предел: дороже этот шаг не выйдет.";
+}
+
+/** The price before anything is spent — its limit «до $X» first, the expected cost under it — and the button that accepts it. */
 export function EstimateCard({ estimate, previousWorst, estimating, action, blockedReason, error, errorActions, repeat, imageAgeCheck, variant = "avatar" }: EstimateCardProps) {
   return (
     <section className="card estimate-card" aria-labelledby="estimate-title" aria-busy={estimating}>
@@ -55,7 +74,7 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
       </div>
 
       {estimate === null ? (
-        <p className="muted estimate-empty">
+        <p className="estimate-empty">
           {estimating
             ? "Считаем стоимость…"
             : variant === "import"
@@ -63,28 +82,15 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
               : "Сначала цена, потом расходы: заполните внешность и нажмите «Оценить стоимость». Деньги не тратятся, пока вы не подтвердите сумму."}
         </p>
       ) : (
-        <div className="estimate-body" aria-live="polite">
-          <p className="estimate-figure">
-            <span className="estimate-expected">≈ {formatUsd(estimate.expectedMicros)}</span>
-            <span className="estimate-sep">, </span>
-            <span className="estimate-worst">
-              не больше <b>{formatUsd(estimate.worstMicros, 2, "up")}</b>
-            </span>
-          </p>
+        <div className="estimate-figure" aria-live="polite">
+          <div className="estimate-price">
+            <p className="mono estimate-worst">
+              <span>до</span> <span>{formatUsd(estimate.worstMicros, 2, "up")}</span>
+            </p>
+            <p className="mono estimate-expected">ожидаемая ≈ {formatUsd(estimate.expectedMicros)}</p>
+          </div>
           <p className="estimate-caption">
-            {variant === "import"
-              ? "Обязательная проверка возраста и описание по фото (до 2 попыток). Худшая цена — это предел: дороже этот шаг не выйдет."
-              : repeat
-                // The descriptor is already paid for and this price is the
-                // batch alone (avatars.estimateCandidates / the draft's own
-                // estimate) — not the whole avatar's price used as a loose
-                // upper bound, so the caption must not claim that anymore.
-                ? imageAgeCheck === "on"
-                  ? "Ещё 4 портрета и проверка возраста каждого. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
-                  : "Ещё 4 портрета. Дескриптор уже готов и не пересоздаётся — в эту цену он не входит."
-                : imageAgeCheck === "on"
-                  ? "Дескриптор, 4 портрета и проверка возраста каждого. Худшая цена — это предел: дороже этот шаг не выйдет."
-                  : "Дескриптор и 4 портрета. Худшая цена — это предел: дороже этот шаг не выйдет."}
+            {caption(variant, repeat, imageAgeCheck)}
             {estimate.prices === "fallback" && " OpenRouter не ответил, поэтому цены взяты из резервной таблицы."}
           </p>
         </div>
@@ -92,8 +98,9 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
 
       {previousWorst !== null && estimate && (
         <Notice tone="warn" title="Цена выросла">
-          Было не больше {formatUsd(previousWorst, 2, "up")}, теперь не больше {formatUsd(estimate.worstMicros, 2, "up")}. Проверьте
-          новую оценку и подтвердите снова — без подтверждения ничего не отправляется.
+          Было не больше <span className="mono">{formatUsd(previousWorst, 2, "up")}</span>, теперь не больше{" "}
+          <span className="mono">{formatUsd(estimate.worstMicros, 2, "up")}</span>. Проверьте новую оценку и подтвердите снова — без
+          подтверждения ничего не отправляется.
         </Notice>
       )}
 
@@ -101,8 +108,21 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
 
       {action && (
         <div className="estimate-actions">
-          <button type="button" className="btn btn-primary btn-wide" disabled={action.disabled} onClick={action.onClick} aria-busy={action.busy}>
-            {action.busy ? "Отправляем…" : action.label}
+          <button
+            type="button"
+            className={action.primary ? "btn btn-p" : "btn"}
+            disabled={action.disabled}
+            onClick={action.onClick}
+            aria-busy={action.busy}
+          >
+            {action.busy ? (
+              <>
+                <Spin />
+                Отправляем…
+              </>
+            ) : (
+              action.label
+            )}
           </button>
           {blockedReason && <p className="field-hint">{blockedReason}</p>}
         </div>

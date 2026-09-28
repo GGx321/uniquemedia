@@ -108,3 +108,32 @@ export function productionMainProblems(main: string): string[] {
 export function productionEngineProblems(engine: string): string[] {
   return /resolveOpenRouterBaseUrl\(init\.openRouterBaseUrl, false\)/.test(engine) ? [] : ["the engine takes an OpenRouter base-URL override"];
 }
+
+/**
+ * Problems with the renderer's built CSS (fonts.css, once Vite resolves it).
+ * fonts.css's `@font-face` rules import `@fontsource-variable`'s own package
+ * paths, not real URLs: a built stylesheet must never ship that bare text —
+ * Vite resolves each one to a real, same-origin url() for the woff2 file
+ * (electron.studio.vite.config.ts's renderer assetsInlineLimit excludes
+ * fonts from inlining) — otherwise the font silently fails to load. Guards
+ * both directions: an unresolved import, and a build that dropped every
+ * woff2 reference outright. A font inlined as a data: URI is flagged too:
+ * the renderer's CSP (default-src 'self') blocks it, which is exactly why
+ * assetsInlineLimit excludes woff2 in the first place.
+ *
+ * Comments survive minification (fonts.css's own top-of-file comment
+ * mentions "@fontsource-variable's" in prose) and are stripped first, so the
+ * `@fontsource` check only ever sees real CSS, not documentation about it.
+ */
+export function productionRendererCssProblems(css: string): string[] {
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const problems: string[] = [];
+  if (/url\(\s*["']?@fontsource/.test(withoutComments)) problems.push("an unresolved @fontsource url() remains in the built CSS");
+  if (/url\(\s*["']?data:(font\/|application\/(x-)?font)/.test(withoutComments)) {
+    problems.push("a font is inlined as a data: URI, which the renderer's CSP blocks");
+  }
+  // Not `\.woff2\b`: a data: URI names it as a MIME type ("data:font/woff2;base64,…"),
+  // with no leading dot the way a hashed asset filename has one.
+  if (!/woff2/i.test(withoutComments)) problems.push("no woff2 font reference survived the build");
+  return problems;
+}
