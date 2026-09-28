@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { EMBEDDING_LENGTH, FaceWorkerRequestSchema, FaceWorkerResponseSchema } from "./protocol";
+import { useNativeGlobals } from "../../../testing/nativeGlobals";
+useNativeGlobals();
 
 // T7c: the wire format's bounds. Both ends validate with these; a response
 // that does not fit is a protocol violation (workerGate.ts kills the worker).

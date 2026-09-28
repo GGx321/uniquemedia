@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isBunCrashOnly } from "./realWorkerTests";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // T7c: the real-worker test file runs alone (studio/scripts/realWorkerTests.ts)
 // because Bun itself segfaults in roughly 2% of runs while it tears down a
