@@ -88,8 +88,12 @@ export function gradientEnergy(gray64: Uint8Array): number {
   for (let y = 0; y < 64; y++) {
     for (let x = 0; x < 64; x++) {
       const i = y * 64 + x;
-      if (x + 1 < 64) energy += Math.abs(gray64[i]! - gray64[i + 1]!);
-      if (y + 1 < 64) energy += Math.abs(gray64[i]! - gray64[i + 64]!);
+      // T7a re-review (finding L7): a local plus `?? 0`, not a `!` — the guards below already
+      // keep every index in bounds (the frame's length is checked above), but this reads that way
+      // without asserting it.
+      const value = gray64[i] ?? 0;
+      if (x + 1 < 64) energy += Math.abs(value - (gray64[i + 1] ?? 0));
+      if (y + 1 < 64) energy += Math.abs(value - (gray64[i + 64] ?? 0));
     }
   }
   return energy;
