@@ -1395,22 +1395,6 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       { qaRetries: qaRetries.length },
     );
 
-    // 8d. T6a-2b's network canary (item 2), extended to the photo-run path
-    // (2b whole-slice review blocker): `createActiveAvatarForRun` already
-    // built this avatar from `AVATAR_TRAITS`, whose vibe is the marker
-    // words. The marker may reach the mock only inside the descriptor
-    // request that wrote it — never any image request (the candidate
-    // portraits above, or this run's own photos), any scene-writer request,
-    // or any age-check request (the mock records the age-check calls even
-    // though this scenario's own toggle is off, so this list is empty here
-    // by construction, not by omission).
-    const runNetworkRequests = [...mock.imageRequests(), ...mock.sceneWriterRequests(), ...mock.ageCheckRequests()];
-    check(
-      "run scenario: no image, scene-writer or age-check request carries the avatar's marker vibe",
-      runNetworkRequests.length > 0 && runNetworkRequests.filter(carriesMarker).length === 0,
-      { checked: runNetworkRequests.length, carrying: runNetworkRequests.filter(carriesMarker).length },
-    );
-
     // 9. The wire, not only the journal: a crash can end the engine between
     // an attempt's send and its journal write, so the journal alone (step 8)
     // cannot prove a kill never doubles a *send*, only that it never doubles
@@ -1448,9 +1432,10 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     // usage before the run minus its usage now) must never exceed the run's
     // own committed total (settled cost plus any reserve still open at its
     // worst case — RunSummary.committedMicros, "the run's summary" the plan
-    // points at); that committed total must in turn never exceed the sum of
-    // what the owner accepted at the start and at the resume — the run's cap
-    // is never raised (T6 decisions), so this is conservative by design.
+    // points at); that committed total must in turn never exceed the run's
+    // own persisted cap (`capMicros`), and the cap itself must never exceed
+    // the worst case the owner accepted at the start: it is set once, at plan
+    // time, and a resume never raises it (T6 decisions).
     const usageDeltaMicros = Math.round((mock.totalUsageUsd() - usageBeforeRun) * 1_000_000);
     const committedMicros = Number(field(summaryFinal, "committedMicros"));
     check(
@@ -1470,6 +1455,14 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       "run scenario: the run's cap was never exceeded (committed spend <= the run's own persisted cap)",
       committedMicros <= capMicros,
       { committedMicros, capMicros, startAcceptedWorstMicros, resumeAcceptedWorstMicros },
+    );
+    // A cap raised on resume (to the resume's own accepted worst case, or by
+    // any other path) would still satisfy the check above, so pin the cap
+    // itself against the price the owner accepted when the run started.
+    check(
+      "run scenario: the run's cap was not raised by the resume (cap <= the worst case accepted at the start)",
+      capMicros <= startAcceptedWorstMicros,
+      { capMicros, startAcceptedWorstMicros, resumeAcceptedWorstMicros },
     );
 
     // 11. Cancel: a second, small run, stopped mid-flight.
@@ -1509,6 +1502,21 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       "cancel scenario: the in-flight reserves end as the plan says (open, for a future resume — worst case until reconciled, or settled)",
       field(cancelSummary, "running") === false && field(cancelSummary, "resumable") === true && Number(field(cancelSummary, "open")) >= 1,
       cancelSummary,
+    );
+
+    // 12. T6a-2b's network canary (item 2), extended to the photo-run path
+    // (2b whole-slice review blocker) and run over EVERY request this app
+    // instance's mock ever received, after the cancel run above, so its
+    // requests are covered too — not over a filtered subset of image,
+    // scene-writer and age-check requests. `createActiveAvatarForRun` built
+    // this avatar from `AVATAR_TRAITS`, whose vibe is the marker words: the
+    // marker may reach the mock only inside the descriptor request that wrote
+    // it. Any other request that carries it, of whatever kind, is a leak.
+    const carryingMarker = mock.requests.filter(carriesMarker);
+    check(
+      "run scenario: every request that carries the avatar's marker vibe is an avatar_descriptor request, across all of the mock's requests",
+      carryingMarker.length > 0 && carryingMarker.every((r) => r.schemaName === "avatar_descriptor"),
+      { totalRequests: mock.requests.length, carrying: carryingMarker.map((r) => `${r.method} ${r.path} (${String(r.schemaName)})`) },
     );
 
     check("run scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
