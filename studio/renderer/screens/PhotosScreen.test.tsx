@@ -813,6 +813,58 @@ test("a resume row whose very first (mount-time) estimateResume fails shows «У
   expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK)).toBeNull();
 });
 
+test("an older estimateResume answer landing after a newer one must not win the button back (N2)", async () => {
+  const { engine, scheduler } = setup({ avatars: [MIA] });
+  engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  engine.delayNext("runs.estimateResume", 300); // the mount-time ask: issued first, resolves LAST
+  await openSection("Фото");
+  await screen.findByRole("heading", { level: 1, name: "Mia" });
+
+  // Before the mount-time ask lands, a reconcile flip (MEDIUM-1) fires a second, faster one.
+  engine.delayNext("runs.estimateResume", 50); // the reconcile-triggered ask: issued second, resolves FIRST
+  act(() => engine.requireReconcile(["open-reserves"]));
+
+  tick(scheduler, 1); // the faster, newer ask lands first — succeeds normally
+  await flush();
+  await screen.findByRole("button", { name: "Продолжить · до $0.60" });
+
+  // Only now, after the newer ask already succeeded, make the still-pending older one fail once it finally lands.
+  engine.failNext("runs.estimateResume", { code: "NETWORK" });
+  tick(scheduler, 1); // the slower, older (now stale) mount-time ask lands now
+  await flush();
+
+  // Must still show the newer, already-accepted price — a sequence guard drops the stale failure.
+  expect(document.querySelector(".photos-run-go")?.textContent).toContain("до $0.60");
+  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK)).toBeNull();
+});
+
+test("a reconcileNeeded flip while this row's own resume is in flight does not clobber its busy state, and re-asks once it is done (N3)", async () => {
+  const { engine, scheduler } = setup({ avatars: [MIA] });
+  engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  await openSection("Фото");
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
+  const asksBefore = callsOf(engine, "runs.estimateResume").length;
+
+  engine.delayNext("runs.resume", 300);
+  fireEvent.click(resume);
+  await flush();
+  expect(document.querySelector(".photos-run-go")?.textContent).toBe("Продолжаем… · до $0.60");
+
+  act(() => engine.requireReconcile(["open-reserves"]));
+  await flush();
+
+  // Still sending — not clobbered into "Считаем…", nor a disabled, no-longer-busy "Продолжить".
+  expect(document.querySelector(".photos-run-go")?.textContent).toBe("Продолжаем… · до $0.60");
+  expect(document.querySelector(".photos-run-go")?.getAttribute("aria-busy")).toBe("true");
+  // Deferred, not dropped: no re-ask has actually been sent while the resume is still in flight.
+  expect(callsOf(engine, "runs.estimateResume")).toHaveLength(asksBefore);
+
+  tick(scheduler, 1); // the resume itself answers now (RECONCILE_REQUIRED by then, the reconcile flip having landed first)
+  await flush();
+  // The deferred re-ask finally runs once the send is done.
+  expect(callsOf(engine, "runs.estimateResume").length).toBeGreaterThan(asksBefore);
+});
+
 test("a resume whose cap is fully used up shows a non-paid «limit exhausted» state, never «до $0.00» (L6)", async () => {
   const harness = setup({ avatars: [MIA] });
   // 8 done slots at $0.05 each settled $0.40; the cap is seeded at exactly that, leaving nothing for the 4 open slots.

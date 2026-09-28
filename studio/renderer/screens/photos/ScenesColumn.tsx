@@ -36,6 +36,17 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
   const { client, store } = useEngine();
   const mounted = useMounted();
   const sending = useRef(false);
+  // N2: bumped at the start of every runs.estimateResume this row sends
+  // (askPrice's own and resume's PRICE_CHANGED re-ask), so a reply this row
+  // no longer cares about — issued before a newer one, but landing after it,
+  // the mock resolves handle-time state on its own delayed clock — cannot
+  // overwrite what the newer reply already set.
+  const askSeq = useRef(0);
+  // N3: a reconcileNeeded flip while this row's own resume is in flight must
+  // not re-ask mid-send — askPrice's setBusy("estimate") would clobber the
+  // "Продолжаем…" state resume is showing. Deferred here and drained once
+  // resume's own finally is done.
+  const pendingReask = useRef(false);
   const titleId = useId();
   const hintId = useId();
   const [estimate, setEstimate] = useState<Estimate | null>(null);
@@ -45,10 +56,11 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
   const [error, setError] = useState<EngineError | null>(null);
 
   async function askPrice(): Promise<void> {
+    const seq = ++askSeq.current;
     setBusy("estimate");
     setError(null);
     const reply = await client.request("runs.estimateResume", { runId: run.runId });
-    if (!mounted.current) return;
+    if (!mounted.current || seq !== askSeq.current) return;
     setBusy(null);
     if (reply.ok) {
       setEstimate(reply.result.estimate);
@@ -60,7 +72,13 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
   // reconcileNeeded flips (MEDIUM-1): a reconcile changes what the run's cap
   // has left, so a price this row already has — shown even while blocked,
   // runs.estimateResume being free — must not go stale once the block lifts.
+  // N3: while this row's own resume is sending, the re-ask is deferred
+  // instead of firing mid-send (resume's finally drains it).
   useEffect(() => {
+    if (sending.current) {
+      pendingReask.current = true;
+      return;
+    }
     void askPrice();
   }, [run.runId, reconcileNeeded]);
 
@@ -83,8 +101,9 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
         setError(reply.error);
         return;
       }
+      const seq = ++askSeq.current;
       const fresh = await client.request("runs.estimateResume", { runId: run.runId });
-      if (!mounted.current) return;
+      if (!mounted.current || seq !== askSeq.current) return;
       if (fresh.ok) {
         setEstimate(fresh.result.estimate);
         setPreviousWorst(accepted.worstMicros);
@@ -97,6 +116,11 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
       sending.current = false;
       onPaidInFlightChange(false);
       if (mounted.current) setBusy(null);
+      // N3: a reconcileNeeded flip landed while this send was in flight — ask again now, not mid-send.
+      if (pendingReask.current) {
+        pendingReask.current = false;
+        void askPrice();
+      }
     }
   }
 
