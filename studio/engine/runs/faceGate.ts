@@ -1,22 +1,24 @@
 import { createHash } from "node:crypto";
-import type { FaceGate, FaceGateImage } from "../face";
+import type { WorkerFaceGate } from "../face/worker/workerGate";
 import type { PhotoQa } from "../library";
+import { timeoutSignal } from "../money/timeoutSignal";
 import type { QaGate, QaInput, QaPrepareInput, QaVerdict } from "./qa";
 
 // T7b: the face gate's QaGate adapter. `studio/engine/face` (createFaceGate,
 // runFaceGate, decideFaceVerdict) never decodes an image file and never
 // learns about QaInput/QaVerdict — see face/index.ts's own header, which
 // sketched this exact shape. This file is the only bridge: it decodes the
-// candidate image via `input.decodeImage` (the engine's own WASM decoder —
-// security review, T7b section A) and maps `FaceGate`'s verdict onto the
+// candidate image by handing its bytes to the face worker thread (T7c;
+// the worker decodes with the engine's own WASM decoder — security review,
+// T7b section A) and maps the verdict onto the
 // owner's hybrid policy (face/config.ts, face/policy.ts): a `match` or
 // `skipped-by-pose` passes; every clear-failure kind the owner named
 // (`no-face`, `multiple-faces`, `unexpected-face`, `mismatch`) retries —
 // exactly the mapping face/verdict.ts's own header documents.
 //
-// Free (`paid: false`): the engine's own decode costs no money, and neither
-// does the ONNX inference itself — both run in the run's CPU pool, like the
-// pdq gate. No `releaseClaim`: this gate makes no provisional claim of its
+// Free (`paid: false`): the decode costs no money, and neither does the ONNX
+// inference — both run in the face worker thread (T7c), off the engine's
+// event loop, inside a slot of the run's CPU pool like the pdq gate. No `releaseClaim`: this gate makes no provisional claim of its
 // own (nothing here is a resource another attempt could race for), so
 // `runJob.ts`'s unconditional per-gate release is a harmless no-op for it,
 // exactly like the age gate's.
@@ -51,10 +53,10 @@ import type { QaGate, QaInput, QaPrepareInput, QaVerdict } from "./qa";
 // waiting on the very same one; each caller instead races its own wait
 // against its own signal (`abortableWait` below).
 //
-// A candidate image that cannot be decoded (input.decodeImage rejects) is,
+// A candidate image that cannot be decoded (the worker reports the failure) is,
 // as of the security review's decode decision (section A.4), SYSTEMIC, not
 // a per-photo `retry`: it propagates uncaught, exactly like a broken
-// underlying `FaceGate.check`/`embed` — `runJob.ts`'s existing `checkFree`
+// underlying worker `check`/`embed` — `runJob.ts`'s existing `checkFree`
 // wrapper already reads any uncaught gate failure as GateBroken (or
 // GateDropped, if the job was already cancelled). decode/wasmDecode.ts's
 // own header has the full reasoning: these bytes already passed the pdq
@@ -65,9 +67,20 @@ import type { QaGate, QaInput, QaPrepareInput, QaVerdict } from "./qa";
 export const FACE_GATE_NAME = "face";
 
 export interface FaceQaGateDeps {
-  /** The real one: studio/engine/face's `createFaceGate()`. Only `check` and `embed` are used — `dispose()` is the wiring's own concern (main.ts), not this adapter's. */
-  faceGate: Pick<FaceGate, "check" | "embed">;
-  /** Re-review N11: how long a master-embedding computation may stay cached without settling before it is evicted. `EMBEDDING_COMPUTE_TIMEOUT_MS` unless a test overrides it. */
+  /**
+   * The real one: studio/engine/face/worker's `createWorkerFaceGate()` — the
+   * face worker thread behind a FIFO lane (T7c). Only `check` and `embed`
+   * are used — `start()`/`dispose()` are the wiring's own concern (main.ts),
+   * not this adapter's.
+   */
+  faceGate: Pick<WorkerFaceGate, "check" | "embed">;
+  /**
+   * Re-review N11: how long a master-embedding computation may stay cached
+   * without settling before it is evicted — and, T7c, the bound of the
+   * signal the computation itself runs against: at that point a real worker
+   * is TERMINATED rather than left occupying the lane. `EMBEDDING_COMPUTE_TIMEOUT_MS`
+   * unless a test overrides it.
+   */
   embeddingComputeTimeoutMs?: number;
 }
 
@@ -119,106 +132,28 @@ interface CachedEmbedding {
   promise: Promise<Float32Array>;
 }
 
-/**
- * Re-review N5 (memory): ORT's WASM heap grows with the largest input it
- * has ever seen and never shrinks — decoding and running inference for
- * several candidates at once (the run's own CPU pool lets several free
- * gates overlap) multiplies that peak by however many run concurrently.
- * Measured: +270 MB at 4.2 MP, +950 MB at 12 MP for ONE decode+inference;
- * several concurrent ones compound. Serializing every face check's own
- * decode+inference (never the master-embedding cache lookup, which is
- * cheap and already deduplicated by H2) bounds the peak to one at a time —
- * throughput is unaffected, since the ONNX WASM inference itself already
- * runs synchronously on this one event loop regardless of how many
- * `check()` calls are in flight; this only stops them queuing their own
- * decode+inference memory on top of each other.
- *
- * A plain FIFO mutex: each acquire is a promise chained onto the previous
- * holder's own release, so it costs nothing when uncontended. A caller
- * whose own signal aborts while WAITING rejects immediately, but re-review
- * round 2 (B1) found the FIRST version released its own queue slot right
- * then — which is the slot a LATER waiter is chained onto, so a cancelled
- * middle waiter let whoever was queued behind it acquire the lock while the
- * ORIGINAL holder was still running (repro: H holding, A queued then
- * cancelled, B queued behind A — `start H, start B, end B, end H`, two
- * holders at once). Fixed: an aborted waiter's own slot only resolves once
- * the holder it was ACTUALLY waiting on (`waitFor`) finishes, so whoever is
- * behind the cancelled waiter still queues on the real holder, never on the
- * cancellation itself.
- *
- * Once queued (still waiting for the lock, never once it holds it), a
- * caller's own signal aborting still rejects it and frees its own slot as
- * above. Once a caller HOLDS the lock, `body()` itself might hang forever
- * (a real decode/ORT deadlock, not merely this caller giving up) — B1's own
- * second finding: that would then block every later face check forever,
- * engine-wide. So the holder's own signal aborting also releases the lane
- * (like `CpuPool`'s own shape), accepting that `body()` keeps running as an
- * abandoned "zombie" computation in the background — nothing here can force
- * it to actually stop, the same limitation the master-embedding computation
- * itself already has (H2's own header).
- */
-function createMutex(): <T>(signal: AbortSignal, body: () => Promise<T>) => Promise<T> {
-  let tail: Promise<void> = Promise.resolve();
-  return async function withLock<T>(signal: AbortSignal, body: () => Promise<T>): Promise<T> {
-    const waitFor = tail;
-    let release: () => void = () => {};
-    tail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    try {
-      await abortableWait(waitFor, signal);
-    } catch (error) {
-      // Never acquired: our own slot must not resolve before the holder we
-      // were actually waiting on (`waitFor`) does — otherwise whoever is
-      // queued behind us would acquire the lock while that holder still runs.
-      void waitFor.then(release);
-      throw error;
-    }
-    // Holds the lock now. If our own signal aborts while `body()` is still
-    // running, release the lane anyway (B1) — `body()` becomes a zombie,
-    // still running in the background, but the CALLER stops waiting on it
-    // (abortableWait) exactly like the master-embedding computation's own
-    // zombie pattern above (H2's header) — never leaving a caller hung
-    // forever on an abandoned computation just because it still holds no
-    // lock any more.
-    let releasedByAbort = false;
-    const onHolderAbort = (): void => {
-      releasedByAbort = true;
-      release();
-    };
-    signal.addEventListener("abort", onHolderAbort, { once: true });
-    try {
-      const result = body();
-      // If `signal` is already aborted (or aborts synchronously inside
-      // body()'s own setup, before abortableWait can even register its own
-      // listener), abortableWait's fast path abandons `result` without ever
-      // observing it — a real rejection there would otherwise surface as an
-      // unhandled promise rejection. Marked handled unconditionally, the
-      // same defensive shape computeEmbedding's own zombie promise uses.
-      result.catch(() => {});
-      return await abortableWait(result, signal);
-    } finally {
-      signal.removeEventListener("abort", onHolderAbort);
-      if (!releasedByAbort) release();
-    }
-  };
-}
+// Re-review N5 (memory) and round 2's B1 used to live here as a FIFO mutex
+// around decode + inference on the engine's own thread, with a "zombie"
+// computation nothing could stop after a timeout. T7c moved all of it into
+// the face worker's own gate (face/worker/workerGate.ts): one worker is one
+// computation at a time, a waiter cancelled while queued leaves the queue by
+// identity, and a cancel or timeout of the computation in flight TERMINATES
+// the worker — the lane is released only once it is gone, so there is no
+// zombie left to overlap the next check. Its tests carry the N5/B1 pins.
 
 export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
   /** H2: one cached (possibly still-pending) embedding per avatarId, keyed together with the master bytes' sha256; only a successful result is kept. */
   const masterEmbeddings = new Map<string, CachedEmbedding>();
-  const lock = createMutex();
 
-  function computeEmbedding(avatarId: string, masterOriginal: Uint8Array, sha256: string, decodeImage: QaPrepareInput["decodeImage"]): Promise<Float32Array> {
-    // Independent of any one caller's signal (H2): a fresh internal
-    // controller that nothing here ever aborts, so the computation always
-    // runs to completion (or a real failure) regardless of who is still
-    // waiting on it.
-    const internal = new AbortController();
-    const promise = (async () => {
-      const decoded = await decodeImage(masterOriginal, internal.signal);
-      return deps.faceGate.embed(decoded);
-    })();
+  function computeEmbedding(avatarId: string, masterOriginal: Uint8Array, sha256: string): Promise<Float32Array> {
+    // Independent of any one caller's signal (H2): the computation runs
+    // against its OWN bound only, so it completes (or really fails)
+    // regardless of who is still waiting on it. T7c: that bound is a real
+    // one — when it fires, the worker gate terminates the worker, so a hung
+    // computation frees the lane instead of occupying it.
+    const bound = timeoutSignal(deps.embeddingComputeTimeoutMs ?? EMBEDDING_COMPUTE_TIMEOUT_MS);
+    const promise = deps.faceGate.embed(masterOriginal, bound.signal);
+    promise.then(bound.clear, bound.clear);
     const entry: CachedEmbedding = { sha256, promise };
     masterEmbeddings.set(avatarId, entry);
 
@@ -242,7 +177,7 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
   function embeddingFor(input: QaPrepareInput): Promise<Float32Array> {
     const sha256 = createHash("sha256").update(input.masterOriginal).digest("hex");
     const cached = masterEmbeddings.get(input.avatarId);
-    const promise = cached !== undefined && cached.sha256 === sha256 ? cached.promise : computeEmbedding(input.avatarId, input.masterOriginal, sha256, input.decodeImage);
+    const promise = cached !== undefined && cached.sha256 === sha256 ? cached.promise : computeEmbedding(input.avatarId, input.masterOriginal, sha256);
     return abortableWait(promise, input.signal).then((value) => {
       // Round-2 verification, B2: N11's own eviction timer can fire while
       // this exact computation is still pending (a slow, not hung,
@@ -291,27 +226,26 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
       }
       const masterEmbedding = await abortableWait(cached.promise, input.signal);
 
-      return lock(input.signal, async () => {
-        // Security review, section A.4: propagates uncaught, never a retry —
-        // see this file's own header.
-        const image: FaceGateImage = await input.decodeImage(input.image.bytes, input.signal);
-
-        const verdict = await deps.faceGate.check({ pose: input.slot.pose, image, masterEmbedding });
-        switch (verdict.kind) {
-          case "match":
-            return { verdict: "pass", qa: qaOf(verdict) };
-          case "skipped-by-pose":
-            return { verdict: "pass" };
-          case "mismatch":
-            return { verdict: "retry", reason: `similarity ${verdict.similarity} is below the identity threshold (gross drift)` };
-          case "no-face":
-            return { verdict: "retry", reason: "no face was detected in the photo" };
-          case "multiple-faces":
-            return { verdict: "retry", reason: `${verdict.faces} prominent faces were detected` };
-          case "unexpected-face":
-            return { verdict: "retry", reason: `a face was detected on a shot posed from behind (headRatio ${verdict.headRatio})` };
-        }
-      });
+      // Security review, section A.4: a failure — an undecodable image, a
+      // dead worker — propagates uncaught, never a retry: see this file's
+      // own header. The worker gate queues this behind any check already
+      // running (FIFO) and terminates the worker if `input.signal` aborts
+      // while it computes.
+      const verdict = await deps.faceGate.check({ pose: input.slot.pose, bytes: input.image.bytes, masterEmbedding }, input.signal);
+      switch (verdict.kind) {
+        case "match":
+          return { verdict: "pass", qa: qaOf(verdict) };
+        case "skipped-by-pose":
+          return { verdict: "pass" };
+        case "mismatch":
+          return { verdict: "retry", reason: `similarity ${verdict.similarity} is below the identity threshold (gross drift)` };
+        case "no-face":
+          return { verdict: "retry", reason: "no face was detected in the photo" };
+        case "multiple-faces":
+          return { verdict: "retry", reason: `${verdict.faces} prominent faces were detected` };
+        case "unexpected-face":
+          return { verdict: "retry", reason: `a face was detected on a shot posed from behind (headRatio ${verdict.headRatio})` };
+      }
     },
   };
 }

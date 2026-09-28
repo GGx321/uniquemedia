@@ -8,6 +8,7 @@ import { ortWasmPathsFrom } from "../../decode/wasmPaths";
 import { defaultFaceGateConfig } from "../config";
 import { MASTER } from "../fixtures/expected";
 import type { FaceWorkerInit } from "../worker/protocol";
+import { createWorkerFaceGate, type WorkerFaceGate } from "../worker/workerGate";
 import { createFaceWorkerSpawner } from "../worker/spawn";
 
 // Test support for anything that runs the REAL face worker (real models, real
@@ -34,6 +35,24 @@ export function realWorkerInit(overrides: Partial<FaceWorkerInit> = {}): FaceWor
 
 export function realWorkerSpawner(overrides: Partial<FaceWorkerInit> = {}) {
   return createFaceWorkerSpawner(FACE_WORKER_SOURCE, realWorkerInit(overrides));
+}
+
+let shared: WorkerFaceGate | undefined;
+
+/**
+ * One real face worker gate for the whole test process, created on first use
+ * and never disposed (the process exit ends its worker). A real worker holds
+ * an onnxruntime-web heap plus its own pthreads' shared memory, and `bun
+ * test` runs every file in ONE process: a dozen workers spawned and
+ * terminated across the suite exhausted its address space ("RangeError: Out
+ * of memory" while a worker loaded, seen only in the full run) - so tests
+ * that just need a working real gate share this one. A test that kills the
+ * worker (a cancel) is fine: the gate respawns it. Tests that need their own
+ * gate (failure at load, spawn counts) build one with `realWorkerSpawner`.
+ */
+export function sharedRealFaceGate(): WorkerFaceGate {
+  shared ??= createWorkerFaceGate({ spawnWorker: realWorkerSpawner() });
+  return shared;
 }
 
 /** The fixture master (864x1152, a face filling much of the frame) as a JPEG of exactly `width` x `height`, letterboxed on grey so the face keeps its proportions. */

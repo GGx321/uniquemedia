@@ -7,9 +7,7 @@ import { fileURLToPath } from "node:url";
 import { computePdqHash } from "../../src/core/pdq/pdq";
 import { JobState, type EventMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
-import { createRealDecodeBackend } from "./decode/realBackend";
-import { createWasmImageDecoder } from "./decode/wasmDecode";
-import { createFaceGate as createRealFaceGate } from "./face/gate";
+import { sharedRealFaceGate } from "./face/testing/realWorker";
 import { openLibrary } from "./library";
 import { samplePhotoMeta, SAMPLE_IMPORTED_SOURCE, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { ffmpegPath } from "../node/ffmpegBinary";
@@ -955,19 +953,17 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
     test(c.name, async () => {
       const bytes = transcodedMaster(c.args);
       const avatarId = await seedWithMaster(bytes, c.mediaType, c.w, c.h);
-      const models = { yunet: readFileSync(RR_MODEL_PATHS.yunet), sface: readFileSync(RR_MODEL_PATHS.sface) };
-      const real = await createRealFaceGate(models);
-      const decodeImage = createWasmImageDecoder(await createRealDecodeBackend(join(RR_ROOT, "node_modules")));
+      const real = sharedRealFaceGate();
       try {
         const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
-        const { engine, events } = await engineOver(net, { qaGates: [createPdqGate(), createFaceQaGate({ faceGate: real })], decodeImage });
+        const { engine, events } = await engineOver(net, { qaGates: [createPdqGate(), createFaceQaGate({ faceGate: real })] });
         const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
         const end = await jobEnd(events, jobId);
         expect(end.type).toBe("job.done");
         if (end.type !== "job.done") throw new Error("unreachable");
         expect(end.payload.result.kind === "run" ? end.payload.result.failedSlots : -1).toBe(0);
       } finally {
-        await real.dispose();
+        // the real gate is shared by the whole test process (sharedRealFaceGate)
       }
     }, 30_000);
   }
@@ -975,22 +971,23 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
   test("864x1152 JPEG still embeds from the ORIGINAL bytes, not loadMaster()'s downscaled reference (M1/N1 unchanged)", async () => {
     const bytes = transcodedMaster(["-c:v", "mjpeg", "-q:v", "2", "-f", "mjpeg"]);
     const avatarId = await seedWithMaster(bytes, "image/jpeg", 864, 1152);
-    const models = { yunet: readFileSync(RR_MODEL_PATHS.yunet), sface: readFileSync(RR_MODEL_PATHS.sface) };
-    const real = await createRealFaceGate(models);
-    const decodeImage = createWasmImageDecoder(await createRealDecodeBackend(join(RR_ROOT, "node_modules")));
+    const real = sharedRealFaceGate();
     const seenMasterBytes: Uint8Array[] = [];
-    const wrappedDecode: EngineDeps["decodeImage"] = async (b, s) => {
-      if (b.byteLength === bytes.byteLength) seenMasterBytes.push(b);
-      return decodeImage(b, s);
+    const observing = {
+      check: real.check,
+      embed: (b: Uint8Array, signal: AbortSignal) => {
+        if (b.byteLength === bytes.byteLength) seenMasterBytes.push(b);
+        return real.embed(b, signal);
+      },
     };
     try {
       const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
-      const { engine, events } = await engineOver(net, { qaGates: [createFaceQaGate({ faceGate: real })], decodeImage: wrappedDecode });
+      const { engine, events } = await engineOver(net, { qaGates: [createFaceQaGate({ faceGate: observing })] });
       const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
       await jobEnd(events, jobId);
       expect(seenMasterBytes.some((b) => Buffer.from(b).equals(Buffer.from(bytes)))).toBe(true);
     } finally {
-      await real.dispose();
+      // the real gate is shared by the whole test process (sharedRealFaceGate)
     }
   }, 30_000);
 
@@ -1003,12 +1000,10 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
     // case that must fall back once the decoder rejects them.
     const bytes = readFileSync(join(RR_ROOT, "studio", "engine", "face", "fixtures", "images", "master-cmyk.jpg"));
     const avatarId = await seedWithMaster(new Uint8Array(bytes), "image/jpeg", 300, 400);
-    const models = { yunet: readFileSync(RR_MODEL_PATHS.yunet), sface: readFileSync(RR_MODEL_PATHS.sface) };
-    const real = await createRealFaceGate(models);
-    const decodeImage = createWasmImageDecoder(await createRealDecodeBackend(join(RR_ROOT, "node_modules")));
+    const real = sharedRealFaceGate();
     try {
       const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
-      const { engine, events } = await engineOver(net, { qaGates: [createFaceQaGate({ faceGate: real })], decodeImage });
+      const { engine, events } = await engineOver(net, { qaGates: [createFaceQaGate({ faceGate: real })] });
       const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
       const end = await jobEnd(events, jobId);
       expect(end.type).toBe("job.done");
@@ -1019,7 +1014,7 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
       // (there IS a usable face -- the decoder just can't read this file).
       expect(end.payload.result.kind === "run" ? end.payload.result.failedSlots : -1).toBe(0);
     } finally {
-      await real.dispose();
+      // the real gate is shared by the whole test process (sharedRealFaceGate)
     }
   }, 30_000);
 });

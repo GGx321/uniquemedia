@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import type { FaceGateImage, FaceGateInput } from "../face";
+import type { FaceGateImage } from "../face";
 import type { PlanSlot } from "../scenes";
 import { asLibraryReference, setupMoney, type Money } from "../openrouter/testing/fakes";
 import type { QaInput, QaPrepareInput } from "./qa";
@@ -24,6 +24,10 @@ useNativeGlobals();
 // Section A.4 (the decode decision): a candidate that cannot be decoded now
 // propagates uncaught — systemic, never a per-photo `retry` — because these
 // bytes already passed the pdq gate's own decode.
+// T7c: the decode and the inference run in the face worker thread
+// (face/worker/workerGate.ts), so this adapter hands it BYTES and the run's
+// own signal; the FIFO lane, its cancellation semantics (N5, B1) and the
+// real interruption of a computation in flight live — and are pinned — there.
 
 const SLOT: PlanSlot = {
   slotIndex: 1,
@@ -93,7 +97,7 @@ function input(overrides: Partial<QaInput> = {}, money_: Money): QaInput {
   };
 }
 
-/** A fake `FaceGate` (the real module lives in studio/engine/face): `embed` and `check` are both injectable. */
+/** A fake `WorkerFaceGate` (the real one lives in studio/engine/face/worker): `embed` and `check` are both injectable. */
 function fakeFaceGate(overrides: Partial<FaceQaGateDeps["faceGate"]> = {}): FaceQaGateDeps["faceGate"] {
   return {
     embed: async () => MASTER_EMBEDDING,
@@ -121,24 +125,24 @@ describe("createFaceQaGate", () => {
 });
 
 describe("prepare() (H1: computes the master embedding eagerly, before any check())", () => {
-  test("decodes and embeds input.masterOriginal — never QaInput.master (M1/N1)", async () => {
-    const decodeCalls: Uint8Array[] = [];
-    const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
+  test("embeds input.masterOriginal's bytes — never QaInput.master (M1/N1)", async () => {
+    const embedCalls: Uint8Array[] = [];
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ embed: async (bytes) => (embedCalls.push(bytes), MASTER_EMBEDDING) }) });
 
-    await gate.prepare?.(prepareInput({ decodeImage: async (bytes) => (decodeCalls.push(bytes), DECODED) }));
+    await gate.prepare?.(prepareInput());
 
-    expect(decodeCalls).toEqual([MASTER_ORIGINAL_A]);
+    expect(embedCalls).toEqual([MASTER_ORIGINAL_A]);
   });
 
   test("computes the embedding once and reuses it across N later check()s of the same avatar", async () => {
     const m = await money();
     let embedCalls = 0;
-    let embedded: FaceGateImage | undefined;
+    let embedded: Uint8Array | undefined;
     const gate = createFaceQaGate({
       faceGate: fakeFaceGate({
-        embed: async (image) => {
+        embed: async (bytes) => {
           embedCalls++;
-          embedded = image;
+          embedded = bytes;
           return MASTER_EMBEDDING;
         },
       }),
@@ -151,7 +155,7 @@ describe("prepare() (H1: computes the master embedding eagerly, before any check
     }
 
     expect(embedCalls).toBe(1);
-    expect(embedded).toEqual(DECODED);
+    expect(embedded).toEqual(MASTER_ORIGINAL_A);
   });
 
   test("a master with no detectable face: embed() rejects, and prepare() rejects (the gate cannot run for this avatar at all)", async () => {
@@ -204,34 +208,24 @@ describe("prepare() (H1: computes the master embedding eagerly, before any check
     expect(embedCalls).toBe(1);
   });
 
-  test("H2: a caller's own signal aborting during the master decode does not kill the shared computation — a second call with a live signal still succeeds, embed() ran once", async () => {
+  test("H2: a caller's own signal aborting during the master embed does not kill the shared computation — a second call with a live signal still succeeds, embed() ran once", async () => {
     let embedCalls = 0;
-    let resolveDecode: ((image: FaceGateImage) => void) | undefined;
-    const pendingDecode = new Promise<FaceGateImage>((resolve) => {
-      resolveDecode = resolve;
+    let resolveEmbed: ((embedding: Float32Array) => void) | undefined;
+    const pendingEmbed = new Promise<Float32Array>((resolve) => {
+      resolveEmbed = resolve;
     });
-    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ embed: async () => (embedCalls++, MASTER_EMBEDDING) }) });
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ embed: async () => (embedCalls++, pendingEmbed) }) });
 
     const controllerA = new AbortController();
-    const prepareA = gate.prepare?.(
-      prepareInput({
-        signal: controllerA.signal,
-        decodeImage: async () => pendingDecode,
-      }),
-    );
+    const prepareA = gate.prepare?.(prepareInput({ signal: controllerA.signal }));
     controllerA.abort(new Error("caller A gave up waiting"));
     await expect(prepareA).rejects.toThrow("caller A gave up waiting");
 
-    // The shared computation is still in flight; resolve the decode now.
-    resolveDecode?.(DECODED);
+    // The shared computation is still in flight; let it finish now.
+    resolveEmbed?.(MASTER_EMBEDDING);
 
-    const controllerB = new AbortController();
-    await gate.prepare?.(
-      prepareInput({
-        signal: controllerB.signal,
-        decodeImage: async () => pendingDecode, // never actually called again — the shared computation is already running.
-      }),
-    );
+    // A second caller joins the very same computation — embed() is never called again.
+    await gate.prepare?.(prepareInput({ signal: new AbortController().signal }));
 
     expect(embedCalls).toBe(1);
   });
@@ -239,25 +233,26 @@ describe("prepare() (H1: computes the master embedding eagerly, before any check
   test("N11: a computation that never settles is evicted after embeddingComputeTimeoutMs — a LATER job gets a fresh attempt, not stuck forever", async () => {
     let embedCalls = 0;
     const gate = createFaceQaGate({
-      faceGate: fakeFaceGate({ embed: async () => (embedCalls++, MASTER_EMBEDDING) }),
+      // The first embed() never settles and ignores its signal (a backend that
+      // cannot be interrupted); the second answers.
+      faceGate: fakeFaceGate({ embed: async () => (++embedCalls === 1 ? new Promise<Float32Array>(() => {}) : MASTER_EMBEDDING) }),
       embeddingComputeTimeoutMs: 20,
     });
 
-    // The first caller's own decodeImage hangs forever (a real decode/ORT
-    // hang, not merely this caller giving up) — its own wait is bounded by
-    // its own signal, but the underlying computation is not.
+    // The first caller's wait is bounded by its own signal, but the
+    // underlying computation is not.
     const firstController = new AbortController();
     setTimeout(() => firstController.abort(new Error("first caller gave up waiting")), 5);
-    const first = gate.prepare?.(prepareInput({ signal: firstController.signal, decodeImage: () => new Promise(() => {}) }));
+    const first = gate.prepare?.(prepareInput({ signal: firstController.signal }));
     await expect(first).rejects.toThrow("first caller gave up waiting");
 
     // Past embeddingComputeTimeoutMs (20 ms): the cache entry must have been
     // evicted, so a later job (a resume, a brand new run) gets a fresh
     // computation — never the same permanently-hung promise, forever.
     await new Promise((resolve) => setTimeout(resolve, 40));
-    await gate.prepare?.(prepareInput({ decodeImage: async () => DECODED }));
+    await gate.prepare?.(prepareInput());
 
-    expect(embedCalls).toBe(1); // the hung computation never actually called embed(); the fresh one did, exactly once.
+    expect(embedCalls).toBe(2); // the hung computation, then the fresh one — not a third.
   });
 
   test("B2: a SLOW (not hung) computation evicted mid-flight, then resolving, still leaves check() a usable entry", async () => {
@@ -276,21 +271,23 @@ describe("prepare() (H1: computes the master embedding eagerly, before any check
       release = resolve;
     });
     const gate = createFaceQaGate({
-      faceGate: fakeFaceGate({ embed: async () => MASTER_EMBEDDING }),
+      // A backend that keeps working past the bound (ignores its signal) and then succeeds.
+      faceGate: fakeFaceGate({
+        embed: async () => {
+          await gateP;
+          return MASTER_EMBEDDING;
+        },
+      }),
       embeddingComputeTimeoutMs: 30,
     });
-    const decodeImage = async () => {
-      await gateP;
-      return DECODED;
-    };
 
     const j1Controller = new AbortController();
     setTimeout(() => j1Controller.abort(new Error("job 1 gave up")), 10);
-    const j1 = gate.prepare?.(prepareInput({ signal: j1Controller.signal, decodeImage })).catch(() => "j1 gave up");
+    const j1 = gate.prepare?.(prepareInput({ signal: j1Controller.signal })).catch(() => "j1 gave up");
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     // job 2 (a resume) starts with a much longer bound, reusing the same pending computation.
-    const j2 = gate.prepare?.(prepareInput({ signal: new AbortController().signal, decodeImage }));
+    const j2 = gate.prepare?.(prepareInput({ signal: new AbortController().signal }));
 
     // Past embeddingComputeTimeoutMs (30 ms since the computation started at
     // t=0): the eviction timer fires while the computation is STILL pending.
@@ -301,6 +298,40 @@ describe("prepare() (H1: computes the master embedding eagerly, before any check
 
     const verdict = await gate.check(input({}, m));
     expect(verdict.verdict).toBe("pass");
+  });
+
+  test("T7c: the shared embedding computation runs against a signal that aborts at embeddingComputeTimeoutMs, so a real worker is terminated instead of occupying the lane forever", async () => {
+    let seen: AbortSignal | undefined;
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        embed: (_bytes, signal) => {
+          seen = signal;
+          return new Promise<Float32Array>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+        },
+      }),
+      embeddingComputeTimeoutMs: 20,
+    });
+
+    await expect(gate.prepare?.(prepareInput())).rejects.toThrow(/timed out/i);
+    expect(seen?.aborted).toBe(true);
+  });
+
+  test("T7c: a caller giving up does NOT abort that shared signal — only the computation's own bound does (H2)", async () => {
+    let seen: AbortSignal | undefined;
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        embed: (_bytes, signal) => {
+          seen = signal;
+          return new Promise<Float32Array>(() => {});
+        },
+      }),
+      embeddingComputeTimeoutMs: 5_000,
+    });
+    const controller = new AbortController();
+    const waiting = gate.prepare?.(prepareInput({ signal: controller.signal }));
+    controller.abort(new Error("gave up"));
+    await expect(waiting).rejects.toThrow("gave up");
+    expect(seen?.aborted).toBe(false);
   });
 
   test("an already-aborted signal rejects prepare() immediately", async () => {
@@ -340,221 +371,70 @@ describe("check() requires a prior prepare()", () => {
   });
 });
 
-describe("N5: face checks are serialized (memory) — a mutex around decode + check", () => {
-  test("two concurrent checks never overlap inside the underlying faceGate.check()", async () => {
+describe("check() hands the worker gate what it needs", () => {
+  test("T7c: passes the candidate's bytes, the slot's pose, the master embedding and the run's own signal — serialization and interruption are the worker gate's job", async () => {
     const m = await money();
-    let inFlight = 0;
-    let maxInFlight = 0;
+    const seen: { bytes: Uint8Array; pose: string; masterEmbedding: Float32Array; signal: AbortSignal }[] = [];
     const gate = createFaceQaGate({
       faceGate: fakeFaceGate({
-        check: async () => {
-          inFlight++;
-          maxInFlight = Math.max(maxInFlight, inFlight);
-          await new Promise((resolve) => setTimeout(resolve, 15));
-          inFlight--;
+        check: async (checkInput, signal) => {
+          seen.push({ bytes: checkInput.bytes, pose: checkInput.pose, masterEmbedding: checkInput.masterEmbedding, signal });
           return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
         },
       }),
     });
     await gate.prepare?.(prepareInput());
+    const controller = new AbortController();
 
-    await Promise.all([
-      gate.check(input({ attemptId: "run-1:slot-1#1" }, m)),
-      gate.check(input({ attemptId: "run-1:slot-2#1" }, m)),
-      gate.check(input({ attemptId: "run-1:slot-3#1" }, m)),
-    ]);
+    await gate.check(input({ slot: { ...SLOT, pose: "three-quarter" }, signal: controller.signal }, m));
 
-    expect(maxInFlight).toBe(1);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.bytes).toEqual(CANDIDATE_BYTES);
+    expect(seen[0]?.pose).toBe("three-quarter");
+    expect(seen[0]?.masterEmbedding).toEqual(MASTER_EMBEDDING);
+    expect(seen[0]?.signal).toBe(controller.signal);
   });
 
-  test("a cancelled waiter leaves the lane: it rejects instead of blocking the next waiter forever", async () => {
+  test("T7c: the master embedding lookup still waits on the caller's own signal — a cancelled check rejects at once", async () => {
     const m = await money();
-    let releaseFirst: (() => void) | undefined;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    let holderAcquired = false;
-    let secondRan = false;
-    let calls = 0;
-    const gate = createFaceQaGate({
-      faceGate: fakeFaceGate({
-        check: async () => {
-          const isHolder = calls++ === 0;
-          if (isHolder) {
-            holderAcquired = true;
-            await firstGate; // the first caller holds the lock until released
-          } else {
-            secondRan = true;
-          }
-          return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
-        },
-      }),
-    });
-    await gate.prepare?.(prepareInput());
-
-    const holderController = new AbortController();
-    const holder = gate.check(input({ attemptId: "run-1:slot-1#1", signal: holderController.signal }, m));
-    // Wait for the holder to actually be inside the underlying check() (i.e. it holds the
-    // mutex) before starting the waiter — otherwise the waiter could race the holder for the
-    // lock itself, which is not what this test is about. Bounded (macrotask hops, never a tight
-    // microtask spin) so a real bug here fails loudly instead of hanging the whole suite.
-    for (let i = 0; i < 100 && !holderAcquired; i++) await new Promise((resolve) => setTimeout(resolve, 1));
-    if (!holderAcquired) throw new Error("the holder never reached the underlying check()");
-
-    const waiterController = new AbortController();
-    const waiter = gate.check(input({ attemptId: "run-1:slot-2#1", signal: waiterController.signal }, m));
-    // Let the waiter's own master-embedding lookup settle (a resolved promise, but still a real
-    // microtask hop) so it is genuinely queued on the mutex itself before we abort it.
-    await Promise.resolve();
-    await Promise.resolve();
-    waiterController.abort(new Error("cancelled while waiting for the lock"));
-    await expect(waiter).rejects.toThrow("cancelled while waiting for the lock");
-    expect(secondRan).toBe(false); // the waiter never actually ran the underlying check
-
-    // The lane must still be free for a THIRD caller once the holder releases it — the
-    // cancelled waiter must not have left the mutex permanently locked.
-    releaseFirst?.();
-    await holder;
-    const third = await gate.check(input({ attemptId: "run-1:slot-3#1" }, m));
-    expect(third.verdict).toBe("pass");
-  });
-
-  test("B1: a waiter cancelled while queued BEHIND an active holder must not let the next waiter overlap the holder", async () => {
-    const m = await money();
-    let releaseHolder: (() => void) | undefined;
-    const holderGate = new Promise<void>((resolve) => {
-      releaseHolder = resolve;
-    });
-    let active = 0;
-    let maxActive = 0;
-    let holderAcquired = false;
-    let calls = 0;
-    const gate = createFaceQaGate({
-      faceGate: fakeFaceGate({
-        check: async () => {
-          active++;
-          maxActive = Math.max(maxActive, active);
-          const isHolder = calls++ === 0;
-          if (isHolder) {
-            holderAcquired = true;
-            await holderGate;
-          }
-          active--;
-          return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
-        },
-      }),
-    });
-    await gate.prepare?.(prepareInput());
-
-    const h = gate.check(input({ attemptId: "run-1:slot-h#1" }, m));
-    for (let i = 0; i < 100 && !holderAcquired; i++) await new Promise((resolve) => setTimeout(resolve, 1));
-    if (!holderAcquired) throw new Error("H never reached the underlying check()");
-
-    const acA = new AbortController();
-    const a = gate.check(input({ attemptId: "run-1:slot-a#1", signal: acA.signal }, m)).catch(() => "A rejected");
-    const b = gate.check(input({ attemptId: "run-1:slot-b#1" }, m));
-    // Let A actually queue behind H (a real microtask hop past its own
-    // master-embedding lookup) before cancelling it.
-    await Promise.resolve();
-    await Promise.resolve();
-    acA.abort(new Error("cancel A"));
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    // While H still holds the lock (never released yet): B must still be
-    // queued, not running — A's own cancellation must not have let B jump
-    // the queue and overlap H.
-    expect(maxActive).toBe(1);
-
-    releaseHolder?.();
-    await Promise.all([h, a, b]);
-    expect(maxActive).toBe(1);
-  });
-
-  test("B1: a hung holder released by ITS OWN signal frees the lane for the next waiter (a zombie computation)", async () => {
-    const m = await money();
-    let secondRan = false;
-    let calls = 0;
-    const gate = createFaceQaGate({
-      faceGate: fakeFaceGate({
-        check: async () => {
-          const isHolder = calls++ === 0;
-          if (isHolder) {
-            await new Promise(() => {}); // the holder's own underlying check never settles
-          }
-          secondRan = true;
-          return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
-        },
-      }),
-    });
-    await gate.prepare?.(prepareInput());
-
-    const holderController = new AbortController();
-    const holder = gate.check(input({ attemptId: "run-1:slot-h#1", signal: holderController.signal }, m)).catch(() => "holder aborted");
-    // Give the holder a chance to actually acquire the lock and start its own (hanging) check().
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    holderController.abort(new Error("the run's own cancel, or the gate's own outer timeout"));
-    await holder;
-
-    // The lane must be free now — a later waiter's own check() actually runs
-    // (a "zombie": the holder's own body() is still hanging in the
-    // background, but it no longer holds the lock).
-    const second = await gate.check(input({ attemptId: "run-1:slot-b#1", signal: new AbortController().signal }, m));
-    expect(second.verdict).toBe("pass");
-    expect(secondRan).toBe(true);
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ embed: () => new Promise<Float32Array>(() => {}) }) });
+    void gate.prepare?.(prepareInput({ signal: new AbortController().signal })).catch(() => {});
+    const controller = new AbortController();
+    const checking = gate.check(input({ signal: controller.signal }, m));
+    controller.abort(new Error("run cancelled"));
+    await expect(checking).rejects.toThrow("run cancelled");
   });
 });
 
-describe("check() (candidate decode and verdict mapping)", () => {
-  test("decodes the candidate through input.decodeImage", async () => {
+describe("check() (verdict mapping and failures)", () => {
+  test("A.4: an undecodable candidate image — the worker's failure — propagates uncaught (systemic — never a retry verdict)", async () => {
     const m = await money();
-    const decodeCalls: Uint8Array[] = [];
-    const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
-    await gate.prepare?.(prepareInput());
-
-    await gate.check(input({ decodeImage: async (bytes) => (decodeCalls.push(bytes), DECODED) }, m));
-
-    expect(decodeCalls).toEqual([CANDIDATE_BYTES]);
-  });
-
-  test("A.4: an undecodable candidate image propagates uncaught (systemic — never a retry verdict)", async () => {
-    const m = await money();
-    const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
-    await gate.prepare?.(prepareInput());
-
-    const check = gate.check(
-      input(
-        {
-          decodeImage: async () => {
-            throw new Error("wasm decode: corrupt JPEG data");
-          },
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        check: async () => {
+          throw new Error("wasm decode: corrupt JPEG data");
         },
-        m,
-      ),
-    );
+      }),
+    });
+    await gate.prepare?.(prepareInput());
 
-    await expect(check).rejects.toThrow(/corrupt JPEG/);
+    await expect(gate.check(input({}, m))).rejects.toThrow(/corrupt JPEG/);
   });
 
-  test("abort mid-decode: a signal-aborted decodeImage rejection propagates the same way", async () => {
+  test("abort mid-check: the worker gate's rejection with the run's abort reason propagates the same way", async () => {
     const m = await money();
     const controller = new AbortController();
-    const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        check: async (_input, signal) => {
+          controller.abort(new Error("run cancelled"));
+          throw signal.reason;
+        },
+      }),
+    });
     await gate.prepare?.(prepareInput());
 
-    const check = gate.check(
-      input(
-        {
-          signal: controller.signal,
-          decodeImage: async () => {
-            controller.abort(new Error("run cancelled"));
-            throw controller.signal.reason;
-          },
-        },
-        m,
-      ),
-    );
-
-    await expect(check).rejects.toThrow("run cancelled");
+    await expect(gate.check(input({ signal: controller.signal }, m))).rejects.toThrow("run cancelled");
   });
 
   test("match: passes with qa.faceCos and qa.headRatio set from the verdict's similarity/headRatio", async () => {
@@ -649,7 +529,7 @@ describe("check() (candidate decode and verdict mapping)", () => {
 
   test("passes the slot's own pose straight to the underlying FaceGate.check", async () => {
     const m = await money();
-    const seen: FaceGateInput[] = [];
+    const seen: Parameters<FaceQaGateDeps["faceGate"]["check"]>[0][] = [];
     const gate = createFaceQaGate({
       faceGate: fakeFaceGate({
         check: async (input) => {

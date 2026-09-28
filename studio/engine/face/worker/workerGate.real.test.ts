@@ -10,7 +10,7 @@ import { createRealDecodeBackend } from "../../decode/realBackend";
 import { createWasmImageDecoder } from "../../decode/wasmDecode";
 import { createFaceGate } from "../gate";
 import { NoFaceInReferenceError } from "../noFaceError";
-import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, twelveMegapixelJpeg, twoKJpeg } from "../testing/realWorker";
+import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, sharedRealFaceGate, twelveMegapixelJpeg, twoKJpeg } from "../testing/realWorker";
 import { faceModelPaths } from "../../../scripts/faceModelCache";
 import { MASTER } from "../fixtures/expected";
 import { createWorkerFaceGate, type WorkerFaceGate } from "./workerGate";
@@ -28,7 +28,7 @@ afterEach(async () => {
   await Promise.all(gates.splice(0).map((g) => g.dispose()));
 });
 
-function realGate(overrides: Parameters<typeof realWorkerInit>[0] = {}): WorkerFaceGate {
+function ownGate(overrides: Parameters<typeof realWorkerInit>[0]): WorkerFaceGate {
   const gate = createWorkerFaceGate({ spawnWorker: realWorkerSpawner(overrides) });
   gates.push(gate);
   return gate;
@@ -79,7 +79,7 @@ describe.skipIf(!MODELS_PRESENT)("the real face worker", () => {
       await inThread.dispose();
     }
 
-    const gate = realGate();
+    const gate = sharedRealFaceGate();
     await gate.start();
     const masterEmbedding = await masterEmbeddingVia(gate);
     await gate.check({ pose: "front", bytes: image, masterEmbedding }, live()); // warm-up
@@ -95,7 +95,7 @@ describe.skipIf(!MODELS_PRESENT)("the real face worker", () => {
 
   test("cancelling a real 2K check mid-flight terminates the worker promptly, and the next check succeeds on a respawned worker", async () => {
     const image = twoKJpeg();
-    const gate = realGate();
+    const gate = sharedRealFaceGate();
     await gate.start();
     const masterEmbedding = await masterEmbeddingVia(gate);
 
@@ -115,19 +115,19 @@ describe.skipIf(!MODELS_PRESENT)("the real face worker", () => {
   }, 60_000);
 
   test("a 12 MP master embeds through the worker (normalization runs inside it)", async () => {
-    const gate = realGate();
+    const gate = sharedRealFaceGate();
     const embedding = await gate.embed(twelveMegapixelJpeg(), live());
     expect(embedding.length).toBe(128);
   }, 60_000);
 
   test("a reference with no face rejects embed with NoFaceInReferenceError", async () => {
-    const gate = realGate();
+    const gate = sharedRealFaceGate();
     const flat = flatGreyJpeg(); // a valid JPEG with nothing to detect
     await expect(gate.embed(flat, live())).rejects.toBeInstanceOf(NoFaceInReferenceError);
   }, 30_000);
 
   test("an undecodable candidate rejects check with an ordinary Error and leaves the worker alive (systemic, never a retry verdict)", async () => {
-    const gate = realGate();
+    const gate = sharedRealFaceGate();
     const masterEmbedding = await masterEmbeddingVia(gate);
     const notAnImage = Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8);
     const error = await gate.check({ pose: "front", bytes: notAnImage, masterEmbedding }, live()).then(
@@ -142,7 +142,7 @@ describe.skipIf(!MODELS_PRESENT)("the real face worker", () => {
 
 describe.skipIf(!MODELS_PRESENT)("start-up failures of the real worker name their cause", () => {
   test("a model file that does not exist rejects start() and leaves no worker behind", async () => {
-    const gate = realGate({ models: { yunetPath: join(tmpdir(), "no-such-yunet.onnx"), sfacePath: realWorkerInit().models.sfacePath } });
+    const gate = ownGate({ models: { yunetPath: join(tmpdir(), "no-such-yunet.onnx"), sfacePath: realWorkerInit().models.sfacePath } });
     await expect(gate.start()).rejects.toThrow(/no-such-yunet\.onnx/);
   }, 30_000);
 
@@ -151,7 +151,7 @@ describe.skipIf(!MODELS_PRESENT)("start-up failures of the real worker name thei
     try {
       const tampered = join(dir, "face_detection_yunet_2023mar.onnx");
       writeFileSync(tampered, Uint8Array.of(1, 2, 3));
-      const gate = realGate({ models: { yunetPath: tampered, sfacePath: realWorkerInit().models.sfacePath } });
+      const gate = ownGate({ models: { yunetPath: tampered, sfacePath: realWorkerInit().models.sfacePath } });
       await expect(gate.start()).rejects.toThrow(/hash mismatch/);
     } finally {
       rmSync(dir, { recursive: true, force: true });

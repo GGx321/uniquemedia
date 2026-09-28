@@ -12,8 +12,7 @@ import { ortWasmPathsFrom } from "../decode/wasmPaths";
 import { createFaceGate, type FaceGateImage } from "./gate";
 import { ELECTRON_DECODE_HASHES } from "./fixtures/electronDecodeHashes";
 import { IMPOSTOR, MASTER, TRUE_RENDERS } from "./fixtures/expected";
-import { realWorkerSpawner } from "./testing/realWorker";
-import { createWorkerFaceGate } from "./worker/workerGate";
+import { sharedRealFaceGate } from "./testing/realWorker";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -123,7 +122,7 @@ describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real m
   // digit, at the same zero-drift bar as the in-thread test above.
   test("T7c: through the worker thread the results are identical — same cosines, face counts and headRatios", async () => {
     const fixtures = [MASTER, IMPOSTOR, ...TRUE_RENDERS];
-    const gate = createWorkerFaceGate({ spawnWorker: realWorkerSpawner() });
+    const gate = sharedRealFaceGate();
     const live = new AbortController().signal;
     try {
       const inThreadModels = { yunet: readFileSync(MODEL_PATHS.yunet), sface: readFileSync(MODEL_PATHS.sface) };
@@ -152,7 +151,7 @@ describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real m
         await inThread.dispose();
       }
     } finally {
-      await gate.dispose();
+      // `gate` is the process-wide shared real worker gate (testing/realWorker.ts): never disposed here.
     }
   }, 60_000);
 

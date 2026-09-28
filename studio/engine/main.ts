@@ -4,16 +4,15 @@
 // environment is the minimal one main passes to utilityProcess.fork, without
 // any OPENROUTER_* (invariant 10).
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { EngineInit } from "./control";
-import { createRealDecodeBackend } from "./decode/realBackend";
-import { createWasmImageDecoder } from "./decode/wasmDecode";
 import { ortWasmPathsFrom } from "./decode/wasmPaths";
 import { deliver, Engine, exitIfStartFails } from "./engine";
-import { createFaceGate, defaultFaceGateConfig, type FaceGate, type FaceGateImage } from "./face";
+import { defaultFaceGateConfig } from "./face";
+import { createFaceWorkerSpawner } from "./face/worker/spawn";
+import { createWorkerFaceGate, type WorkerFaceGate } from "./face/worker/workerGate";
 import { timeoutSignal, untilAborted } from "./money/timeoutSignal";
 import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
@@ -44,6 +43,13 @@ const ORT_DIST = join(NODE_MODULES_DIR, "onnxruntime-web", "dist");
 // `import()`, which rejects a plain Windows OS path — file:// URLs (decode/
 // wasmPaths.ts) survive on every platform.
 const WASM_PATHS = ortWasmPathsFrom(ORT_DIST);
+// T7c: the face worker thread's built entry (electron.studio.vite.config.ts:
+// engine/faceWorker), a sibling of this file — resolved the same way, so it
+// loads from inside app.asar on macOS and Windows alike (a file URL, never a
+// hand-joined path, and nothing unpacked). Everything the worker loads (the
+// models, the WASM codecs, onnxruntime-web's own files) is handed to it as
+// `workerData`: it resolves no path itself.
+const FACE_WORKER_URL = new URL("./faceWorker.js", import.meta.url);
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -73,36 +79,46 @@ function messageOf(error: unknown): string {
  */
 const FACE_GATE_LOAD_TIMEOUT_MS = 25_000;
 
-type FaceGateLoad = { faceGate: FaceGate; decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> } | { error: string };
+type FaceGateLoad = { faceGate: WorkerFaceGate } | { error: string };
 
 /**
- * Reads the two model files, builds the real face gate, AND builds the
- * engine's own WASM image decoder (decode/realBackend.ts) — the face gate
- * cannot run without a working decoder either way (it is the only caller),
- * so the two are loaded together and fail together. Never throws: a dev
- * build that skipped `faceModelCache.ts`/`prepareFaceAssets.ts`, a
- * genuinely broken package (models OR the WASM codecs), or a load that
- * outlives `FACE_GATE_LOAD_TIMEOUT_MS`, logs clearly and starts the engine
- * WITHOUT a face gate — `Engine`'s own `#assertFaceGate` then refuses any
- * run rather than silently storing photos no identity check has ever seen
- * (T7b wiring decisions, docs/studio/2026-09-24-stage-2-plan.md), and
- * `EngineDeps.faceGateLoadError` (M3) carries why, into the refusal's own
- * detail.
+ * Starts the face worker thread (T7c) and waits for it to load — the two
+ * models (sha256-checked inside the worker), onnxruntime-web's WASM and the
+ * engine's own WASM JPEG/PNG decoder (decode/realBackend.ts), all together:
+ * the face gate cannot run without a working decoder either way, so they
+ * load and fail together. Never throws: a dev build that skipped
+ * `faceModelCache.ts`/`prepareFaceAssets.ts`, a genuinely broken package
+ * (models, the WASM codecs OR the worker entry itself), or a load that
+ * outlives `FACE_GATE_LOAD_TIMEOUT_MS` (the worker is terminated then), logs
+ * clearly and starts the engine WITHOUT a face gate — `Engine`'s own
+ * `#assertFaceGate` then refuses any run rather than silently storing photos
+ * no identity check has ever seen (T7b wiring decisions,
+ * docs/studio/2026-09-24-stage-2-plan.md), and `EngineDeps.faceGateLoadError`
+ * (M3) carries why, into the refusal's own detail.
+ *
+ * The worker is only the STARTUP proof: it stays alive afterwards and is
+ * respawned lazily by the gate itself if a cancel, a timeout or a crash ever
+ * kills it (face/worker/workerGate.ts).
  */
 async function loadFaceGate(): Promise<FaceGateLoad> {
+  const faceGate = createWorkerFaceGate({
+    spawnWorker: createFaceWorkerSpawner(FACE_WORKER_URL, {
+      models: {
+        yunetPath: join(MODEL_DIR, "face_detection_yunet_2023mar.onnx"),
+        sfacePath: join(MODEL_DIR, "face_recognition_sface_2021dec.onnx"),
+      },
+      nodeModulesDir: NODE_MODULES_DIR,
+      wasmPaths: WASM_PATHS,
+      config: defaultFaceGateConfig(),
+    }),
+    loadTimeoutMs: FACE_GATE_LOAD_TIMEOUT_MS,
+  });
   const timeout = timeoutSignal(FACE_GATE_LOAD_TIMEOUT_MS);
   try {
-    const work = (async (): Promise<FaceGateLoad> => {
-      const [yunet, sface, decodeBackend] = await Promise.all([
-        readFile(join(MODEL_DIR, "face_detection_yunet_2023mar.onnx")),
-        readFile(join(MODEL_DIR, "face_recognition_sface_2021dec.onnx")),
-        createRealDecodeBackend(NODE_MODULES_DIR),
-      ]);
-      const faceGate = await createFaceGate({ yunet, sface }, defaultFaceGateConfig(), WASM_PATHS);
-      return { faceGate, decodeImage: createWasmImageDecoder(decodeBackend) };
-    })();
-    return await untilAborted(work, timeout.signal);
+    await untilAborted(faceGate.start(timeout.signal), timeout.signal);
+    return { faceGate };
   } catch (error) {
+    await faceGate.dispose();
     const why = timeout.signal.aborted ? `it took longer than ${FACE_GATE_LOAD_TIMEOUT_MS} ms` : messageOf(error);
     console.error(`studio engine: the face gate could not be loaded (${why}); photo runs will refuse to start until this is fixed`);
     return { error: why };
@@ -143,7 +159,7 @@ parentPort.once("message", (event) => {
       // The runtime's own fetch (Electron's Node); only the OpenRouter client uses it.
       fetch: (url, init) => fetch(url, init),
       qaGates,
-      ...("error" in loaded ? { faceGateLoadError: loaded.error } : { decodeImage: loaded.decodeImage }),
+      ...("error" in loaded ? { faceGateLoadError: loaded.error } : {}),
     });
 
     // A failed start ends the process, so main restarts it and tells the windows.

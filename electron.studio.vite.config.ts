@@ -42,9 +42,10 @@ export default defineConfig(({ command }) => ({
       __STUDIO_DEV__: JSON.stringify(command === "serve"),
     },
     build: {
-      // Two main-process entries: the main process (out-studio/main/main.js)
-      // and the engine utilityProcess (out-studio/engine/main.js, forked by
-      // main from inside app.asar). Code both import (zod, the T0 contract)
+      // Three main-process entries: the main process (out-studio/main/main.js),
+      // the engine utilityProcess (out-studio/engine/main.js, forked by
+      // main from inside app.asar) and the engine's face worker thread
+      // (out-studio/engine/faceWorker.js, T7c). Code both import (zod, the T0 contract)
       // lands in a shared chunk at the out-studio root. The outDir is
       // out-studio itself so the entry names can carry their folders; it is
       // emptied before main is built, and preload and renderer are built after
@@ -57,6 +58,12 @@ export default defineConfig(({ command }) => ({
         entry: {
           "main/main": at("studio/main/main.ts"),
           "engine/main": at("studio/engine/main.ts"),
+          // T7c: the face worker thread the engine spawns by file URL
+          // (studio/engine/main.ts's FACE_WORKER_URL) — a separate entry,
+          // never imported, so it must be listed here or it would not be
+          // built at all; bundleChecks.ts and the production smoke fail the
+          // build checks when it is missing.
+          "engine/faceWorker": at("studio/engine/face/worker/faceWorker.ts"),
         },
       },
       // Never bundled: each locates its binary relative to its own package
