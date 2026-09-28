@@ -55,6 +55,21 @@ function candidateSidecar(overrides: Partial<PhotoSidecar> = {}): PhotoSidecar {
   });
 }
 
+describe("looksLikeRunPhoto", () => {
+  test("is true for a generated photo with a scene category", () => {
+    expect(looksLikeRunPhoto(runPhotoSidecar())).toBe(true);
+  });
+
+  test("is false for a candidate (generated, no category)", () => {
+    expect(looksLikeRunPhoto(candidateSidecar())).toBe(false);
+  });
+
+  test("is false for an imported photo", () => {
+    const imported = runPhotoSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z", confirmedAiPersona: true } });
+    expect(looksLikeRunPhoto(imported)).toBe(false);
+  });
+});
+
 describe("photoSummaryFrom", () => {
   test("maps a run photo to the contract's shape", () => {
     expect(photoSummaryFrom(runPhotoSidecar())).toEqual({
@@ -62,7 +77,7 @@ describe("photoSummaryFrom", () => {
       avatarId: "avatar-0001",
       runId: "run-00000001",
       category: "home",
-        createdAt: "2026-09-24T11:00:00.000Z",
+      createdAt: "2026-09-24T11:00:00.000Z",
     });
   });
 
@@ -112,7 +127,7 @@ describe("finalizePhotoList", () => {
       avatarId: "avatar-0001",
       runId: "run-00000001",
       category: "home",
-        createdAt: `2026-09-24T11:${String(minute).padStart(2, "0")}:00.000Z`,
+      createdAt: `2026-09-24T11:${String(minute).padStart(2, "0")}:00.000Z`,
     };
   }
 
