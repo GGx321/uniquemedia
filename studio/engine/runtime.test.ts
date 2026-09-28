@@ -17,13 +17,21 @@ const ENTRY = join(ENGINE_DIR, "main.ts");
 
 /**
  * Bare packages the engine may bundle: the contract's validator, the ffmpeg
- * locator, and — T7b, the face gate — onnxruntime-web, which is pure
- * JS/WASM (no native addon) and, like the others, never itself reads
- * `process.env` or touches `Bun`/`import.meta.dir` on the paths this module
- * graph reaches. studio/engine/face/*.ts takes model bytes and wasmPaths as
- * parameters rather than resolving them itself, for exactly this rule.
+ * locator, onnxruntime-web (T7b, the face gate) and — security review, T7b
+ * section A: the engine decodes candidate/master images itself now instead
+ * of asking Electron's main process — the two WASM JPEG/PNG decoders
+ * (studio/engine/decode/realBackend.ts). All are pure JS/WASM (no native
+ * addon) and, like the others, never themselves read `process.env` or touch
+ * `Bun`/`import.meta.dir` on the paths this module graph reaches.
+ * studio/engine/face/*.ts and decode/realBackend.ts take model/codec bytes
+ * and wasmPaths as parameters rather than resolving them itself, for exactly
+ * this rule. The two `@jsquash/*` entries are subpath imports (`/decode`,
+ * for the `init()` export the bare package's own index.js does not
+ * re-export) rather than bare package names — the exact specifiers
+ * decode/realBackend.ts actually imports, deliberately listed in full rather
+ * than matched by a prefix.
  */
-const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web"]);
+const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@jsquash/jpeg/decode", "@jsquash/png/decode"]);
 
 /**
  * Where engine code may live: its own tree, studio/node, the pure contract,

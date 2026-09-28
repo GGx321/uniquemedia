@@ -1,35 +1,62 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { faceModelPaths } from "../../scripts/faceModelCache";
-import { createFaceGate } from "./gate";
+import { createRealDecodeBackend } from "../decode/realBackend";
+import { createWasmImageDecoder } from "../decode/wasmDecode";
+import { ortWasmPathsFrom } from "../decode/wasmPaths";
+import { createFaceGate, type FaceGateImage } from "./gate";
+import { ELECTRON_DECODE_HASHES } from "./fixtures/electronDecodeHashes";
 import { IMPOSTOR, MASTER, TRUE_RENDERS } from "./fixtures/expected";
-import { decodeImagesWithElectron } from "./testing/decodeWithElectron";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
 // Plan T7b, "Done when": parity with the OpenCV numbers on the spike image
 // set (<= 0.001 cosine). Needs the real models (fetched into a gitignored
-// cache, never committed — studio/scripts/faceModelCache.ts) and real
-// Chromium decoding (spike/face-js/README.md: only Chromium/nativeImage
-// decoding reaches <= 0.001; ffmpeg drifts up to 0.03) — never skipped
-// silently in CI (the guard test below fails loudly instead).
+// cache, never committed — studio/scripts/faceModelCache.ts).
+//
+// Security review, T7b section A: this test decodes with the engine's own
+// WASM decoder (studio/engine/decode/), never Electron — the whole point of
+// the decode decision is that the engine stays Electron-free, so a test that
+// still needed a real Electron app to prove parity would not actually prove
+// what production does. Byte-exact parity with Electron's `nativeImage` is
+// instead proven once, against committed reference hashes
+// (fixtures/electronDecodeHashes.ts, produced by
+// studio/scripts/generateWasmDecodeParityHashes.ts — the same
+// `decodeWithElectron`/`electronDecode.mjs` harness this file used before,
+// now a one-time hash generator rather than something the test suite runs).
+// The face-gate cosine numbers below must therefore match `expected.ts`'s
+// pinned OpenCV numbers with ZERO drift (the ≤0.001 bar stays as the
+// assertion, but a real regression here means the decoders genuinely
+// disagree, not a rounding difference) — never skipped silently in CI (the
+// guard test below fails loudly instead).
 const FACE_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(FACE_DIR, "..", "..", "..");
 const MODEL_PATHS = faceModelPaths(ROOT);
 const MODELS_PRESENT = existsSync(MODEL_PATHS.yunet) && existsSync(MODEL_PATHS.sface);
-// Decoding needs a real Electron app (nativeImage), which needs a desktop
-// session; GitHub's macOS and Windows runners have one (as the packaged-app
-// smoke test in .github/workflows/studio.yml already relies on), but
-// ubuntu-latest (the `canary` job) does not, and is not the job this parity
-// check is meant to guard — it is a Bun-version-drift smoke, not a T7b
-// concern. So the CI guard below is enforced only where the models are
-// actually expected to be fetched (.github/workflows/studio.yml's `build`
-// job matrix): macOS and Windows.
-const IS_CI = (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") && process.platform !== "linux";
+// No Electron needed any more (the WASM decoder runs under plain bun/Node),
+// so — unlike before this task — the CI guard is no longer platform-limited:
+// it is enforced wherever the models are expected (.github/workflows/
+// studio.yml's `build` job matrix, macOS and Windows) and would also catch a
+// missing cache on Linux if that job ever fetched the models too.
+const IS_CI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 const IMAGE_DIR = join(FACE_DIR, "fixtures", "images");
 const COSINE_TOLERANCE = 0.001;
+
+/** The engine's real decode path (studio/engine/decode/), never Electron. */
+async function decodeFixtures(files: readonly string[]): Promise<FaceGateImage[]> {
+  const backend = await createRealDecodeBackend(join(ROOT, "node_modules"));
+  const decode = createWasmImageDecoder(backend);
+  const controller = new AbortController();
+  const out: FaceGateImage[] = [];
+  for (const file of files) {
+    const bytes = readFileSync(join(IMAGE_DIR, file));
+    out.push(await decode(new Uint8Array(bytes), controller.signal));
+  }
+  return out;
+}
 
 test("CI guard: the face models must be present in CI, never silently skipped", () => {
   if (IS_CI && !MODELS_PRESENT) {
@@ -41,14 +68,28 @@ test("CI guard: the face models must be present in CI, never silently skipped", 
   expect(true).toBe(true);
 });
 
-describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real models + real Chromium decoding)", () => {
-  test("matches within 0.001 cosine, exact face count and headRatio, on the spike's true renders, impostor and master", async () => {
+describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real models + the engine's own WASM decode)", () => {
+  test("the WASM decode is byte-identical to Electron's nativeImage (committed reference hashes)", async () => {
+    const fixtures = [MASTER, IMPOSTOR, ...TRUE_RENDERS];
+    const decoded = await decodeFixtures(fixtures.map((f) => f.file));
+    for (let i = 0; i < fixtures.length; i++) {
+      const file = fixtures[i]!.file;
+      const image = decoded[i]!;
+      const reference = ELECTRON_DECODE_HASHES[file];
+      if (reference === undefined) throw new Error(`no committed reference hash for ${file} — run generateWasmDecodeParityHashes.ts`);
+      expect({ width: image.width, height: image.height }).toEqual({ width: reference.width, height: reference.height });
+      const sha256 = createHash("sha256").update(image.data).digest("hex");
+      expect(sha256).toBe(reference.sha256);
+    }
+  }, 30_000);
+
+  test("matches within 0.001 cosine (measured: 0 drift), exact face count and headRatio, on the spike's true renders, impostor and master", async () => {
     const models = {
       yunet: readFileSync(MODEL_PATHS.yunet),
       sface: readFileSync(MODEL_PATHS.sface),
     };
     const fixtures = [MASTER, IMPOSTOR, ...TRUE_RENDERS];
-    const decoded = await decodeImagesWithElectron(fixtures.map((f) => join(IMAGE_DIR, f.file)));
+    const decoded = await decodeFixtures(fixtures.map((f) => f.file));
 
     const gate = await createFaceGate(models);
     try {
@@ -76,8 +117,8 @@ describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real m
     // applied and onnxruntime-web still loads from it, without needing a
     // packaged build here. A path to nowhere would make session creation
     // itself fail, so this is a real behavioural check, not just a getter.
-    const ortDist = join(ROOT, "node_modules", "onnxruntime-web", "dist");
-    const wasmPaths = { wasm: join(ortDist, "ort-wasm-simd-threaded.wasm"), mjs: join(ortDist, "ort-wasm-simd-threaded.mjs") };
+    // file:// URLs (H4): pins the same form main.ts's real wiring must use.
+    const wasmPaths = ortWasmPathsFrom(join(ROOT, "node_modules", "onnxruntime-web", "dist"));
     const models = { yunet: readFileSync(MODEL_PATHS.yunet), sface: readFileSync(MODEL_PATHS.sface) };
     const ort = await import("onnxruntime-web");
     // ort.env.wasm.wasmPaths is module-level, global, mutable state (bun runs
@@ -92,7 +133,7 @@ describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real m
     const gate = await createFaceGate(models, undefined, wasmPaths);
     try {
       expect(ort.env.wasm.wasmPaths).toEqual(wasmPaths);
-      const [decoded] = await decodeImagesWithElectron([join(IMAGE_DIR, MASTER.file)]);
+      const [decoded] = await decodeFixtures([MASTER.file]);
       if (!decoded) throw new Error("no image decoded");
       const embedding = await gate.embed(decoded);
       expect(embedding.length).toBeGreaterThan(0);

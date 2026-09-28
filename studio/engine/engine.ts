@@ -135,12 +135,13 @@ export interface EngineDeps {
   /** T6: local work in flight at once (the QA gates); `defaultCpuPoolSize()` unless a test says otherwise. */
   cpuPoolSize?: number;
   /**
-   * T7b: decodes an image to tagged RGBA/BGRA pixels via the real main
-   * process (qa.ts's own `QaInput.decodeImage` comment has the full
-   * reasoning — the engine's utilityProcess has no `nativeImage` of its
-   * own). Only the face gate calls it. Defaults to a stub that rejects
-   * clearly: every test that does not wire a face gate never calls it, and
-   * production (studio/engine/main.ts) always provides the real one.
+   * T7b (security review: decode moved into the engine itself): decodes an
+   * image to tagged RGBA pixels with the engine's own WASM JPEG/PNG decoder
+   * (studio/engine/decode/ — qa.ts's own `QaInput.decodeImage` comment has
+   * the full reasoning). Only the face gate calls it. Defaults to a stub
+   * that rejects clearly: every test that does not wire a face gate never
+   * calls it, and production (studio/engine/main.ts) always provides the
+   * real one.
    */
   decodeImage?: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 }
@@ -434,7 +435,7 @@ export class Engine {
   readonly #cpuPool: CpuPool;
   /** T6: the QA gates of every photo run; none until T7a/T7b wire theirs. */
   readonly #qaGates: readonly QaGate[];
-  /** T7b: the run's own way to decode an image to tagged pixels through main (only the face gate calls it). */
+  /** T7b: the run's own way to decode an image to tagged pixels with the engine's own WASM decoder (only the face gate calls it). */
   readonly #decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {

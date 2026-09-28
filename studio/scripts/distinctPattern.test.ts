@@ -1,13 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { hammingDistance } from "../../src/core/pdq/hamming";
 import { computePdqHash } from "../../src/core/pdq/pdq";
+import { createRealDecodeBackend } from "../engine/decode/realBackend";
+import { createWasmImageDecoder } from "../engine/decode/wasmDecode";
 import { createFaceGate } from "../engine/face/gate";
-import { decodeImagesWithElectron } from "../engine/face/testing/decodeWithElectron";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { servedPoolImagePng } from "./distinctPattern";
@@ -117,10 +116,10 @@ describe("the composited (face + PDQ-distinct background) pool the E2E smoke's f
   const FACE_ROOT = join(import.meta.dirname, "..", "..");
   const FACE_MODEL_PATHS = faceModelPaths(FACE_ROOT);
   const FACE_MODELS_PRESENT = existsSync(FACE_MODEL_PATHS.yunet) && existsSync(FACE_MODEL_PATHS.sface);
-  // Mirrors face/parity.test.ts's own guard: enforced only where the models
-  // are actually expected to be fetched (macOS/Windows CI), not the Linux
-  // Bun-version-drift canary this repo also runs.
-  const FACE_IS_CI = (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") && process.platform !== "linux";
+  // No Electron needed any more (T7b security review: the engine decodes
+  // with its own WASM JPEG/PNG decoder — studio/engine/decode/ — never
+  // Electron's nativeImage), so this guard is no longer platform-limited.
+  const FACE_IS_CI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 
   test("CI guard: the face models must be present in CI, never silently skipped", () => {
     if (FACE_IS_CI && !FACE_MODELS_PRESENT) {
@@ -129,38 +128,31 @@ describe("the composited (face + PDQ-distinct background) pool the E2E smoke's f
     expect(true).toBe(true);
   });
 
-  describe.skipIf(!FACE_MODELS_PRESENT)("the real face gate, real models, real Chromium decoding", () => {
+  describe.skipIf(!FACE_MODELS_PRESENT)("the real face gate, real models, the engine's own WASM decode", () => {
     test("every composited image passes as a match against the master, similarity above the gate's 0.55 threshold", async () => {
-      const dir = await mkdtemp(join(tmpdir(), "studio-facepool-"));
-      try {
-        const compositePaths = await Promise.all(
-          composites.map(async (png, i) => {
-            const path = join(dir, `composite-${i}.png`);
-            await writeFile(path, png);
-            return path;
-          }),
-        );
-        const decoded = await decodeImagesWithElectron([FACE_FIXTURE_PATH, ...compositePaths]);
-        const [masterImage, ...compositeImages] = decoded;
-        if (masterImage === undefined) throw new Error("no master image decoded");
+      const nodeModulesDir = join(import.meta.dirname, "..", "..", "node_modules");
+      const backend = await createRealDecodeBackend(nodeModulesDir);
+      const decodeImage = createWasmImageDecoder(backend);
+      const signal = new AbortController().signal;
 
-        const models = { yunet: readFileSync(FACE_MODEL_PATHS.yunet), sface: readFileSync(FACE_MODEL_PATHS.sface) };
-        const gate = await createFaceGate(models);
-        try {
-          const masterEmbedding = await gate.embed(masterImage);
-          for (let i = 0; i < compositeImages.length; i++) {
-            const image = compositeImages[i];
-            if (image === undefined) throw new Error(`unreachable: composite ${i} was decoded`);
-            const verdict = await gate.check({ pose: "front", image, masterEmbedding });
-            if (verdict.kind !== "match") throw new Error(`composite ${i}: expected a match, got ${verdict.kind}`);
-            expect(verdict.faces).toBe(1);
-            expect(verdict.similarity).toBeGreaterThanOrEqual(0.55);
-          }
-        } finally {
-          await gate.dispose();
+      const masterBytes = new Uint8Array(readFileSync(FACE_FIXTURE_PATH));
+      const masterImage = await decodeImage(masterBytes, signal);
+      const compositeImages = await Promise.all(composites.map((png) => decodeImage(png, signal)));
+
+      const models = { yunet: readFileSync(FACE_MODEL_PATHS.yunet), sface: readFileSync(FACE_MODEL_PATHS.sface) };
+      const gate = await createFaceGate(models);
+      try {
+        const masterEmbedding = await gate.embed(masterImage);
+        for (let i = 0; i < compositeImages.length; i++) {
+          const image = compositeImages[i];
+          if (image === undefined) throw new Error(`unreachable: composite ${i} was decoded`);
+          const verdict = await gate.check({ pose: "front", image, masterEmbedding });
+          if (verdict.kind !== "match") throw new Error(`composite ${i}: expected a match, got ${verdict.kind}`);
+          expect(verdict.faces).toBe(1);
+          expect(verdict.similarity).toBeGreaterThanOrEqual(0.55);
         }
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await gate.dispose();
       }
     }, 60_000);
   });
