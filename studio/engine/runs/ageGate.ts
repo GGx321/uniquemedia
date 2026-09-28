@@ -1,55 +1,76 @@
 import { AGE_CHECK_MAX_SIDE, ageCheckMessages, ageJsonSchema, readAgeAnswer } from "../avatars/ageCheck";
 import { AGE_CHECK_CALL } from "../money/estimate";
-import { REQUEST_TIMEOUT_MS } from "../money/budget";
 import { downscaleToJpeg } from "../../node/downscale";
-import type { OpenRouterClient } from "../openrouter/types";
-import type { QaGate, QaInput, QaVerdict } from "./qa";
+import { MAX_ATTEMPT_MS } from "../openrouter/transport";
+import { classifyFailure } from "./failures";
+import { AGE_GATE_NAME, GateFailure, type QaGate, type QaInput, type QaVerdict } from "./qa";
 
 // T7a: the paid image age gate — invariant 8's per-photo check for a run,
-// wired only when the toggle is on (runJob.ts's `runGates` is asked for by
-// `#assertAgeGate`/engine.ts's own filter on AGE_GATE_NAME). It reuses
+// wired only when the toggle is on (engine.ts's own filter on AGE_GATE_NAME,
+// checked by #assertAgeGate before a run may even start). It reuses
 // studio/engine/avatars/ageCheck.ts's question, JSON schema and
 // `readAgeAnswer` verdict rules exactly as candidateJob.ts's own age check
 // does — no second age-check implementation.
 //
-// Money: `deps.chat` is the run's own OpenRouterClient.chat, already bound
-// to the run's key; calling it with `attemptId: ${input.attemptId}:age`,
-// `input.scope`, `input.budget` and `input.priceBook` reserves, sends and
-// settles or releases exactly like any other paid call (chat.ts's own
-// runPaidAttempt) — this gate never touches the ledger directly.
+// T7a whole-slice review, architectural finding: this gate cannot hold an
+// OpenRouter client of its own — it is wired into the engine once, before
+// any run (and before the engine even has an API key) exists, and the key
+// can rotate over the engine's whole life besides. `input.chat` is the RUN's
+// own client instead (bound to the run's key, reporting to the run's
+// network pool exactly like the run's own image attempts), and `beforeSend`
+// is forwarded into its own paid call unchanged (T6 review L1): a request
+// that would leave after the run has already stopped sending for some other
+// reason must never go out.
 //
-// Any doubt rejects, never retries (invariant 8's own rule, echoed by
-// ageCheck.ts): a moderation refusal, an empty answer, a low-confidence or
-// doubtful "yes", a not-adult, a rate limit, a network error, an above-cap
-// reserve refusal — none of these says anything reassuring about the photo,
-// so all of them reject rather than spend a second attempt on a fresh image
-// that would face the very same uncertainty. Only a request that could not
-// even be judged because the CHECK ITSELF cannot run at all — an invalid key,
-// insufficient credits, a bill above the reserved worst case (the price table
-// is wrong), or a reserve refused because the ledger itself is halted — is
-// systemic: every later attempt would fail identically, so those throw
-// instead (qa.ts's own contract: "a gate throws only when it cannot run at
-// all"), stopping the run rather than quietly burning the rest of its image
-// budget on photos that could never pass.
+// Verdicts: only doubt about THIS photo rejects — a refusal to judge it, an
+// empty or unreadable answer, or a clear "no" from `readAgeAnswer`. Nothing
+// here retries (invariant 8's own rule: any doubt rejects, never re-rolled).
+// Everything else the request can fail with — a rate limit, a network
+// error, a 5xx or a non-moderation 4xx, an invalid key, insufficient
+// credits, its own reserve refused (the run's cap, the month, a halted
+// ledger) — is classified exactly like an image attempt's own failure
+// (runs/failures.ts's `classifyFailure`, reused as-is) and thrown as a
+// `GateFailure`: every OTHER slot's paid image would face the exact same
+// unresolved problem, so the run stops the way an image attempt's own
+// failure already does (T6 H1) instead of quietly rejecting one paid photo
+// at a time. `runJob.ts`'s own handling reads the classified code to decide
+// whether this stops only the current slot (`BUDGET_EXCEEDED`,
+// `RUN_CAP_EXCEEDED`) or the whole run — this gate does not need to know
+// the difference, it only needs to preserve the real code (so `AUTH_INVALID`
+// still marks the stored key rejected, and the UI still sees the real
+// cause, never a bare INTERNAL).
 //
-// Aborting is split by WHAT was in flight, matching the two different test
-// scenarios this task asks for: an abort while preparing the image (a local
-// ffmpeg downscale, no different from the pdq gate's own decode) propagates,
-// so runJob.ts's own wrapper decides whether that means dropped (the run's
-// cancel) or broken (this gate's own outer timeout on what should be fast);
-// an abort mid-request (the task's own explicit instruction: "settle
-// promptly on signal abort: abort its own request and reject") rejects
-// outright instead — `deps.chat` already aborts its own HTTP call when
-// `input.signal` fires, this gate just reads that `aborted` result as doubt.
-
-export const AGE_GATE_NAME = "age";
+// A bill above the reserved worst case keeps the verdict (the image is paid
+// for and its answer stands, T6 M1) rather than throwing it away: the
+// ledger itself is already halted (SETTLE_ABOVE_WORST) by the time this
+// gate's own chat call returns, and `runJob.ts`'s `runGates` notices that
+// through the Budget's own status right after this gate runs.
+//
+// Aborting is split by WHAT was in flight: an abort while preparing the
+// image (a local ffmpeg downscale, no different from the pdq gate's own
+// decode) propagates, so `runJob.ts`'s own wrapper decides whether that
+// means dropped (the run's cancel) or broken (this gate's own outer
+// timeout on what should be fast); an abort of the request itself — whether
+// `input.signal` fired (a real cancel, or this gate's own timeout) or
+// `beforeSend` refused because the run had already stopped sending for some
+// other reason (T7a review, finding 3's own residual race, closed at
+// `runJob.ts`'s `checkOne` level by re-checking `sending()` right after a
+// network slot is granted) — also propagates rather than becoming a
+// rejected verdict, so it is read the very same way.
 
 export interface AgeGateDeps {
-  /** The run's own OpenRouterClient.chat, bound to the run's key (engine.ts's own #runPhotos client). */
-  chat: OpenRouterClient["chat"];
   /** Downscales the paid image to the JPEG the age check sends; defaults to studio/node/downscale.ts's real ffmpeg one. */
   downscale?: (bytes: Uint8Array, signal: AbortSignal) => Promise<Uint8Array>;
 }
+
+/**
+ * A generous margin for the local ffmpeg downscale ahead of the request
+ * itself — real downscales take tens of milliseconds; this only needs to
+ * cover a slow but not hung machine.
+ */
+const DOWNSCALE_BUDGET_MS = 15_000;
+/** A little slack past the client's own worst-case bound, so its own abort handling (above) gets the first word. */
+const TIMEOUT_MARGIN_MS = 5_000;
 
 /** The age check's own attempt id, derived from the image attempt's — never sent on its own. */
 export function ageGateAttemptId(attemptId: string): string {
@@ -65,18 +86,19 @@ function isSpawnFailure(error: unknown): boolean {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES");
 }
 
-export function createAgeGate(deps: AgeGateDeps): QaGate {
+export function createAgeGate(deps: AgeGateDeps = {}): QaGate {
   const downscale = deps.downscale ?? ((bytes, signal) => downscaleToJpeg(bytes, { maxSide: AGE_CHECK_MAX_SIDE, signal }));
 
   return {
     name: AGE_GATE_NAME,
     paid: true,
-    // At least the client's own request bound (chat.ts's transport retries
-    // included, MAX_ATTEMPT_MS): the gate's own outer timeout (runJob.ts's
-    // checkOne) must never fire before a legitimately slow but still-running
-    // request would have finished on its own. A little slack past that bound
-    // so the client's own abort handling (above) gets the first word.
-    timeoutMs: REQUEST_TIMEOUT_MS + 5_000,
+    // T7a review (finding 5): at least the client's own worst-case attempt bound (chat.ts's
+    // transport retries included, MAX_ATTEMPT_MS ≈ 662 s) plus room for the downscale ahead of
+    // it — the gate's own outer timeout (runJob.ts's checkOne) must never fire before a
+    // legitimately slow but still-running request would have finished on its own. Only safe
+    // together with finding 1's own fix: this timeout no longer starts until a network slot is
+    // actually granted, so a long FIFO wait never eats into it.
+    timeoutMs: MAX_ATTEMPT_MS + DOWNSCALE_BUDGET_MS + TIMEOUT_MARGIN_MS,
     async check(input: QaInput): Promise<QaVerdict> {
       let jpeg: Uint8Array;
       try {
@@ -89,13 +111,14 @@ export function createAgeGate(deps: AgeGateDeps): QaGate {
         return { verdict: "reject", reason: `the image could not be prepared for the age check: ${messageOf(error)}` };
       }
 
-      const result = await deps.chat({
+      const result = await input.chat({
         attemptId: ageGateAttemptId(input.attemptId),
         jobId: input.jobId,
         scope: input.scope,
         budget: input.budget,
         priceBook: input.priceBook,
         signal: input.signal,
+        beforeSend: input.beforeSend,
         model: AGE_CHECK_CALL.model,
         messages: ageCheckMessages(),
         jsonSchema: ageJsonSchema(),
@@ -107,32 +130,18 @@ export function createAgeGate(deps: AgeGateDeps): QaGate {
 
       switch (result.status) {
         case "aborted":
-          return { verdict: "reject", reason: "the age check was aborted before it answered" };
+          throw input.signal.aborted ? (input.signal.reason ?? new Error("the age check was aborted")) : new Error("the age check was not sent: the run had already stopped sending");
         case "refused":
           return { verdict: "reject", reason: `the age check refused to judge the image: ${result.message}` };
         case "blocked":
-          if (result.refusal.reason === "BUDGET_EXCEEDED" || result.refusal.reason === "RUN_CAP_EXCEEDED") {
-            return { verdict: "reject", reason: `the age check could not be reserved: ${result.refusal.reason}` };
-          }
-          throw new Error(`the age gate could not run: its own reserve was refused (${result.refusal.reason})`);
+          throw new GateFailure(classifyFailure(result).error);
         case "error":
-          switch (result.kind) {
-            case "EMPTY_CONTENT":
-              return { verdict: "reject", reason: "the age check answered with no content" };
-            case "AUTH_INVALID":
-            case "INSUFFICIENT_CREDITS":
-              throw new Error(`the age gate could not run: ${result.kind} (${result.message})`);
-            default:
-              return { verdict: "reject", reason: `the age check failed (${result.kind}): ${result.message}` };
-          }
-        case "ok":
-          if (result.aboveWorst) {
-            throw new Error(`the age gate could not run: billed ${result.costMicros} µ$, above its reserved worst case; the price table is wrong`);
-          }
-          {
-            const verdict = readAgeAnswer(result.content);
-            return verdict.pass ? { verdict: "pass", qa: { age: { adult: true, confidence: verdict.confidence } } } : { verdict: "reject", reason: `the age check did not clearly pass (${verdict.why})` };
-          }
+          if (result.kind === "EMPTY_CONTENT") return { verdict: "reject", reason: "the age check answered with no content" };
+          throw new GateFailure(classifyFailure(result).error);
+        case "ok": {
+          const verdict = readAgeAnswer(result.content);
+          return verdict.pass ? { verdict: "pass", qa: { age: { adult: true, confidence: verdict.confidence } } } : { verdict: "reject", reason: `the age check did not clearly pass (${verdict.why})` };
+        }
       }
     },
   };
