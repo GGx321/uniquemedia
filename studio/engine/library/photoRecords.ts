@@ -14,7 +14,14 @@ import type { PhotoQa, PhotoSidecar } from "./schemas";
 // `looksLikeRunPhoto` is how the caller (engine.ts's #photosFor) tells them
 // apart to decide whether it is worth logging.
 
-/** Halfway between the two sizes the app has ever requested (1K ~1024px, 2K ~2048px on the long side). Only used for a sidecar that predates the `resolution` field, so it never needs to be exact past those two sizes. */
+/**
+ * Between the long sides of the two sizes a photo run has ever requested, in
+ * 9:16 (RUN_ASPECT_RATIO, runs/plan.ts — the only aspect ratio a run photo
+ * uses): the spike measured 1K at 720×1280 and 2K at 1584×2816
+ * (spike/studio-api/README.md), long side 1280 and 2816. Only used for a
+ * sidecar that predates the `resolution` field, so it never needs to be
+ * exact past those two real sizes — it just has to fall between them.
+ */
 const RESOLUTION_MIGRATION_THRESHOLD = 1536;
 
 /**
@@ -55,7 +62,11 @@ export function looksLikeRunPhoto(sidecar: PhotoSidecar): boolean {
  */
 export function photoSummaryFrom(sidecar: PhotoSidecar): PhotoSummary | null {
   if (!looksLikeRunPhoto(sidecar) || sidecar.source.kind !== "generated") return null;
-  const runId = sidecar.source.attemptId.split(":")[0] ?? "";
+  // split(":")[0] is always a string (never undefined) — String.split always
+  // returns at least one element — so an attemptId with no ":" at all (or
+  // one starting with ":") falls straight through to the Id check below and
+  // is rejected there, the same as any other malformed runId.
+  const runId = sidecar.source.attemptId.split(":")[0];
   const parsed = PhotoSummary.safeParse({
     photoId: sidecar.id,
     avatarId: sidecar.avatarId,

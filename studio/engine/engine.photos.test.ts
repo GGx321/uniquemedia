@@ -117,8 +117,9 @@ describe("photos.list", () => {
   test("an old sidecar with no stored resolution reads it back from its pixel size", async () => {
     const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seed${++seeded}`) });
     const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
-    // A photo made before the resolution field existed: no `resolution`, but a 2K-sized image.
-    const meta = runPhotoMeta("run-00000001", 1, { width: 2048, height: 2730, resolution: undefined });
+    // A photo made before the resolution field existed: no `resolution`, but
+    // the spike's own real 2K 9:16 size (1584x2816, spike/studio-api/README.md).
+    const meta = runPhotoMeta("run-00000001", 1, { width: 1584, height: 2816, resolution: undefined });
     const photo = await library.addPhoto(avatar.id, PNG_1X1, meta);
     expect(photo.resolution).toBeUndefined();
 

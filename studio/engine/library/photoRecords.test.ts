@@ -62,12 +62,14 @@ describe("resolutionOf", () => {
     expect(resolutionOf({ resolution: "2k", width: 1, height: 1 })).toBe("2k");
   });
 
-  test("derives 1k from a small pixel size when the sidecar predates the field", () => {
-    expect(resolutionOf({ resolution: undefined, width: 1024, height: 1365 })).toBe("1k");
+  // The spike's own measured run-photo sizes, 9:16 (RUN_ASPECT_RATIO):
+  // 1K is 720×1280, 2K is 1584×2816 (spike/studio-api/README.md).
+  test("derives 1k from the spike's own real 1K 9:16 size (720x1280) when the sidecar predates the field", () => {
+    expect(resolutionOf({ resolution: undefined, width: 720, height: 1280 })).toBe("1k");
   });
 
-  test("derives 2k from a large pixel size when the sidecar predates the field", () => {
-    expect(resolutionOf({ resolution: undefined, width: 2048, height: 2730 })).toBe("2k");
+  test("derives 2k from the spike's own real 2K 9:16 size (1584x2816) when the sidecar predates the field", () => {
+    expect(resolutionOf({ resolution: undefined, width: 1584, height: 2816 })).toBe("2k");
   });
 });
 
@@ -99,7 +101,7 @@ describe("photoSummaryFrom", () => {
   });
 
   test("derives the resolution for a photo made before that field existed", () => {
-    expect(photoSummaryFrom(runPhotoSidecar({ resolution: undefined, width: 2048, height: 2730 }))?.resolution).toBe("2k");
+    expect(photoSummaryFrom(runPhotoSidecar({ resolution: undefined, width: 1584, height: 2816 }))?.resolution).toBe("2k");
   });
 
   test("carries the face-similarity and age qa badges when the sidecar has them", () => {

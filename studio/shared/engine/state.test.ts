@@ -844,7 +844,7 @@ describe("PhotoSummary (T8b: the Photos screen's gallery)", () => {
     expect(PhotoSummary.safeParse({ ...photo, qa: { pdq: "a".repeat(64) } }).success).toBe(false);
   });
 
-  test("rejects a null runId being anything but a valid id or null", () => {
+  test("accepts a null runId, rejects an empty-string one", () => {
     expect(PhotoSummary.safeParse({ ...photo, runId: null }).success).toBe(true);
     expect(PhotoSummary.safeParse({ ...photo, runId: "" }).success).toBe(false);
   });
