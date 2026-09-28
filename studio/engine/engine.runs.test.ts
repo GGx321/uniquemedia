@@ -617,6 +617,23 @@ describe("a run with the image age check on", () => {
   });
 });
 
+// ---------- T7a: a wired age gate is never called (and never reserved for) while the toggle is off ----------
+
+describe("a run with the image age check off, even with a real age gate wired", () => {
+  test("never calls the age gate and never reserves for it", async () => {
+    const avatarId = await seedAvatar();
+    const gate = ageGate();
+    const { engine, events } = await engineOver(runNetwork(), { imageAgeCheck: "off", qaGates: [gate] });
+
+    const { jobId } = started(await engine.handle(startRun(avatarId)));
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 0 } } });
+    expect(gate.inputs).toHaveLength(0);
+
+    const reserves = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve");
+    expect(reserves.some((r) => typeof r.attemptId === "string" && r.attemptId.endsWith(":age"))).toBe(false);
+  });
+});
+
 // ---------- runs.list (review M4) ----------
 
 describe("runs.list", () => {
