@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { codecWasmFileUrl, ortWasmPathsFrom, wasmFileUrl } from "./wasmPaths";
+import { ortWasmPathsFrom, wasmFileUrl } from "./wasmPaths";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -36,21 +36,5 @@ describe("ortWasmPathsFrom", () => {
     expect(paths.wasm.endsWith("ort-wasm-simd-threaded.wasm")).toBe(true);
     expect(paths.mjs).toStartWith("file://");
     expect(paths.mjs.endsWith("ort-wasm-simd-threaded.mjs")).toBe(true);
-  });
-});
-
-describe("codecWasmFileUrl", () => {
-  test("resolves the jpeg codec under node_modules/@jsquash/jpeg, as a file:// URL", () => {
-    const href = codecWasmFileUrl("/root/node_modules", "jpeg");
-    expect(href).toStartWith("file://");
-    expect(href.endsWith("mozjpeg_dec.wasm")).toBe(true);
-    expect(href).toContain("@jsquash/jpeg");
-  });
-
-  test("resolves the png codec under node_modules/@jsquash/png, as a file:// URL", () => {
-    const href = codecWasmFileUrl("/root/node_modules", "png");
-    expect(href).toStartWith("file://");
-    expect(href.endsWith("squoosh_png_bg.wasm")).toBe(true);
-    expect(href).toContain("@jsquash/png");
   });
 });

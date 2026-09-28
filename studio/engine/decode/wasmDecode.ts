@@ -7,7 +7,14 @@ import { imageSize, sniffImageMediaType } from "../library/media";
  * the API key) is not acceptable. This module decodes them in the engine
  * instead, with a WASM JPEG/PNG decoder (`@jsquash/jpeg`/`@jsquash/png`,
  * mozjpeg/squoosh WASM) — measured byte-identical to Electron's `nativeImage`
- * on the parity fixture set (studio/engine/face/parity.test.ts). The engine
+ * on the parity fixture set (studio/engine/face/parity.test.ts), for opaque
+ * images (every fixture measured, and every real photo this gate ever sees —
+ * JPEG has no alpha channel at all, and a generated/imported master is a
+ * photo, never partial-transparency art). Re-review N12: `nativeImage`
+ * premultiplies RGB by alpha for a pixel with REAL transparency (PNG only);
+ * this decoder does not, so the claim is deliberately scoped to opaque
+ * input, not asserted for a translucent PNG this gate would never actually
+ * receive. The engine
  * stays Electron-free: this file uses only node:* APIs and the two codec
  * packages (both pure JS/WASM, no native addon, no `fetch` — the caller hands
  * in an already-compiled `WebAssembly.Module`, loaded from disk and
@@ -59,7 +66,9 @@ function toUint8Array(data: Uint8Array | Uint8ClampedArray): Uint8Array {
  * allow-list, the pixel cap, and the post-decode consistency checks — with
  * no WASM of its own, so it is unit-testable against a fake backend
  * (wasmDecode.test.ts); realBackend.ts's real decode is proven byte-identical
- * to Electron separately (wasmDecode.parity.test.ts).
+ * to Electron's nativeImage separately, against committed reference hashes
+ * (face/parity.test.ts — re-review N8: this comment named a
+ * "wasmDecode.parity.test.ts" that was never actually created).
  */
 export function createWasmImageDecoder(backend: DecodeBackend): (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> {
   return async (bytes, signal) => {

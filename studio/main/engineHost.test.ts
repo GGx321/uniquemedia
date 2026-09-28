@@ -597,9 +597,10 @@ describe("calls to the engine (import.stagePhoto)", () => {
     expect(await pending).toEqual({ error: { code: "INTERNAL", detail: "the engine did not answer within 30 s" }, stage: undefined });
   });
 
-});
-
-describe("calls to the engine (import.stagePhoto), continued", () => {
+  // Re-review N8: this used to be a second describe("…, continued") block —
+  // a leftover split from removing the "calls FROM the engine (image.decode)"
+  // block (T7b security review, section A) that used to sit between the two
+  // halves. Merged back into one, main's own original shape.
   test("openLibrary and confirmLibrary are unaffected: they still resolve with a bare error or null", async () => {
     const { host, ports } = setup();
     await host.start();

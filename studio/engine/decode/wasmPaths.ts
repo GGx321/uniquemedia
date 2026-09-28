@@ -1,18 +1,21 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { CODEC_WASM_SOURCES, type CodecWasmKey } from "./codecSource";
 
 /**
  * Security review H4: onnxruntime-web 1.30's wasm backend passes `wasmPaths.mjs`
  * to a bare `import()` internally, which on Windows rejects a plain OS path
  * (`C:\Users\...\ort-wasm-simd-threaded.mjs` is not a valid module specifier —
- * only a `file://` URL or a relative specifier is). Every WASM-related path this
- * task resolves — onnxruntime-web's own pair AND the two new JPEG/PNG codec
- * `.wasm` files — goes through this one function, so there is exactly one place
- * that ever turns a directory + file name into the string a loader actually
- * receives. `node:fs`'s own read functions accept a `URL` directly
- * (`readFile(new URL(href))`), so `wasmDecode.ts` never needs to convert back to
- * an OS path either — the href is the one representation used end to end.
+ * only a `file://` URL or a relative specifier is). `ortWasmPathsFrom` below
+ * is the one place that turns onnxruntime-web's own directory + file names
+ * into the strings its loader actually receives.
+ *
+ * Re-review N8: this file used to also offer `codecWasmFileUrl` for the two
+ * JPEG/PNG codec `.wasm` files, on the theory that every WASM-related path
+ * should go through one function — but `realBackend.ts` reads those with a
+ * plain `node:fs/promises` `readFile(path)` (never handed to `import()`, so
+ * H4's own Windows failure mode does not apply there), and never actually
+ * called it. Removed rather than left as unused, never-exercised code; the
+ * plan's own claim that the codecs load by URL was corrected to match.
  */
 export function wasmFileUrl(dir: string, ...segments: readonly string[]): string {
   return pathToFileURL(join(dir, ...segments)).href;
@@ -29,9 +32,4 @@ export function ortWasmPathsFrom(ortDistDir: string): OrtWasmPaths {
     wasm: wasmFileUrl(ortDistDir, "ort-wasm-simd-threaded.wasm"),
     mjs: wasmFileUrl(ortDistDir, "ort-wasm-simd-threaded.mjs"),
   };
-}
-
-/** The JPEG/PNG codec `.wasm` file's location, as a `file://` URL — `nodeModulesDir` is node_modules' own directory (a sibling of `out-studio/`, same as onnxruntime-web's `dist/`). */
-export function codecWasmFileUrl(nodeModulesDir: string, key: CodecWasmKey): string {
-  return wasmFileUrl(nodeModulesDir, ...CODEC_WASM_SOURCES[key].path);
 }
