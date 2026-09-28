@@ -189,6 +189,14 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
       // settled entry here, but only if the slot is still empty or still
       // holds this exact sha — never clobber a genuinely newer/different
       // preparation that has since taken over.
+      //
+      // T7c: with the worker gate this path is UNREACHABLE — the computation
+      // runs against the same bound as the eviction timer
+      // (`embeddingComputeTimeoutMs`), so a computation that outlives it is
+      // terminated and rejects, never "succeeds anyway". It is kept as a
+      // defence for a gate that ignores its signal (the unit test drives it
+      // with exactly such a fake), and for the instant-race where the timer
+      // fires as the result arrives.
       const current = masterEmbeddings.get(input.avatarId);
       if (current === undefined || current.sha256 === sha256) {
         masterEmbeddings.set(input.avatarId, { sha256, promise: Promise.resolve(value) });
