@@ -75,6 +75,24 @@ describe("createWasmImageDecoder", () => {
     await expect(decode(Uint8Array.of(1, 2, 3, 4), new AbortController().signal)).rejects.toThrow(/unsupported/i);
   });
 
+  /** Patches JPEG_1X1's own SOF0 (0xff 0xc0) width/height fields to `w`x`h`, for a crafted-header test. */
+  function jpegWithHeaderSize(w: number, h: number): Uint8Array {
+    const out = Uint8Array.from(JPEG_1X1);
+    let sofAt = -1;
+    for (let i = 0; i < out.length - 1; i++) {
+      if (out[i] === 0xff && out[i + 1] === 0xc0) {
+        sofAt = i;
+        break;
+      }
+    }
+    if (sofAt < 0) throw new Error("unreachable: JPEG_1X1 always has an SOF0 marker");
+    out[sofAt + 5] = (h >> 8) & 0xff;
+    out[sofAt + 6] = h & 0xff;
+    out[sofAt + 7] = (w >> 8) & 0xff;
+    out[sofAt + 8] = w & 0xff;
+    return out;
+  }
+
   test("rejects a header whose pixel count exceeds MAX_DECODE_PIXELS, before ever calling the backend", async () => {
     let called = false;
     const decode = createWasmImageDecoder(
@@ -85,23 +103,56 @@ describe("createWasmImageDecoder", () => {
         },
       }),
     );
-    // A crafted JPEG header claiming 5000x5000 (25M px > the 16.7M cap) — SOF0 dimensions patched in.
-    const huge = Uint8Array.from(JPEG_1X1);
-    // Find the SOF0 marker (0xff 0xc0) in this fixture; height/width are the two big-endian u16s right after it.
-    let sofAt = -1;
-    for (let i = 0; i < huge.length - 1; i++) {
-      if (huge[i] === 0xff && huge[i + 1] === 0xc0) {
-        sofAt = i;
-        break;
-      }
-    }
-    expect(sofAt).toBeGreaterThan(-1);
-    huge[sofAt + 5] = (5000 >> 8) & 0xff; // height hi
-    huge[sofAt + 6] = 5000 & 0xff; // height lo
-    huge[sofAt + 7] = (5000 >> 8) & 0xff; // width hi
-    huge[sofAt + 8] = 5000 & 0xff; // width lo
+    // A crafted JPEG header claiming 5000x5000 (25M px > the 16.7M cap).
+    const huge = jpegWithHeaderSize(5000, 5000);
 
     await expect(decode(huge, new AbortController().signal)).rejects.toThrow(new RegExp(`${MAX_DECODE_PIXELS}`));
+    expect(called).toBe(false);
+  });
+
+  // N9: the exact boundary, both sides — MAX_DECODE_PIXELS = 16_777_216 = 4096x4096 exactly.
+  test("N9: accepts a JPEG header at exactly MAX_DECODE_PIXELS (4096x4096)", async () => {
+    const atCap = jpegWithHeaderSize(4096, 4096);
+    const decode = createWasmImageDecoder(fakeBackend({ decodeJpeg: async () => ({ width: 4096, height: 4096, data: new Uint8Array(4096 * 4096 * 4) }) }));
+
+    const image = await decode(atCap, new AbortController().signal);
+
+    expect(image.width).toBe(4096);
+    expect(image.height).toBe(4096);
+  });
+
+  test("N9: refuses a JPEG header one pixel row over MAX_DECODE_PIXELS (4097x4096)", async () => {
+    const overCap = jpegWithHeaderSize(4097, 4096);
+    let called = false;
+    const decode = createWasmImageDecoder(fakeBackend({ decodeJpeg: async () => ((called = true), { width: 4097, height: 4096, data: new Uint8Array(0) }) }));
+
+    await expect(decode(overCap, new AbortController().signal)).rejects.toThrow(new RegExp(`${MAX_DECODE_PIXELS}`));
+    expect(called).toBe(false);
+  });
+
+  test("N9: accepts a PNG header at exactly MAX_DECODE_PIXELS (4096x4096)", async () => {
+    // PNG_1X1 with its IHDR width/height patched to 4096x4096 (both big-endian u32 at fixed offsets).
+    const png = Uint8Array.from(PNG_1X1);
+    const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+    view.setUint32(16, 4096); // IHDR width
+    view.setUint32(20, 4096); // IHDR height
+    const decode = createWasmImageDecoder(fakeBackend({ decodePng: async () => ({ width: 4096, height: 4096, data: new Uint8Array(4096 * 4096 * 4) }) }));
+
+    const image = await decode(png, new AbortController().signal);
+
+    expect(image.width).toBe(4096);
+    expect(image.height).toBe(4096);
+  });
+
+  test("N9: refuses a PNG header one pixel row over MAX_DECODE_PIXELS (4096x4097)", async () => {
+    const png = Uint8Array.from(PNG_1X1);
+    const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+    view.setUint32(16, 4096);
+    view.setUint32(20, 4097);
+    let called = false;
+    const decode = createWasmImageDecoder(fakeBackend({ decodePng: async () => ((called = true), { width: 4096, height: 4097, data: new Uint8Array(0) }) }));
+
+    await expect(decode(png, new AbortController().signal)).rejects.toThrow(new RegExp(`${MAX_DECODE_PIXELS}`));
     expect(called).toBe(false);
   });
 

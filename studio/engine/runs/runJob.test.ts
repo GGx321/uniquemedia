@@ -892,6 +892,68 @@ describe("prepare() (H1: a gate that cannot run for this avatar stops the job be
     if (result.status !== "failed") throw new Error("unreachable");
     expect(result.error.code).toBe("INTERNAL");
   });
+
+  test("N9: a cancel during prepare() ends the job cancelled, with 0 POSTs", async () => {
+    const run = await newRun(1);
+    let prepareStarted = false;
+    const hungGate: QaGate = {
+      name: "face",
+      paid: false,
+      prepare: async () => {
+        prepareStarted = true;
+        await new Promise(() => {}); // never settles on its own — only the job's own cancel ends it
+      },
+      check: async () => ({ verdict: "pass" }),
+    };
+    const controller = new AbortController();
+    const { end, net } = start(run, { gates: [hungGate], signal: controller.signal });
+
+    await until(() => prepareStarted, "prepare() to start");
+    controller.abort(new Error("cancelled by the user"));
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("N9: loadMasterOriginal() returning null ends NOT_FOUND, with 0 POSTs", async () => {
+    const run = await newRun(1);
+    const nullMasterLibrary: RunJobDeps["library"] = {
+      appendJournal: library.appendJournal.bind(library),
+      readJournal: library.readJournal.bind(library),
+      addPhoto: library.addPhoto.bind(library),
+      loadReference: library.loadReference.bind(library),
+      loadMasterOriginal: async () => null,
+      photosByAvatar: library.photosByAvatar.bind(library),
+      appendHistory: library.appendHistory.bind(library),
+    };
+    const { end, net } = start(run, { library: nullMasterLibrary });
+
+    const result = await end;
+    expect(result).toMatchObject({ status: "failed", error: { code: "NOT_FOUND" } });
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("N9: loadMasterOriginal() throwing (a library I/O failure) ends INTERNAL, never MASTER_FACE_UNUSABLE, with 0 POSTs", async () => {
+    const run = await newRun(1);
+    const throwingMasterLibrary: RunJobDeps["library"] = {
+      appendJournal: library.appendJournal.bind(library),
+      readJournal: library.readJournal.bind(library),
+      addPhoto: library.addPhoto.bind(library),
+      loadReference: library.loadReference.bind(library),
+      loadMasterOriginal: async () => {
+        throw new Error("ENOENT: the master file is missing from disk");
+      },
+      photosByAvatar: library.photosByAvatar.bind(library),
+      appendHistory: library.appendHistory.bind(library),
+    };
+    const { end, net } = start(run, { library: throwingMasterLibrary });
+
+    const result = await end;
+    expect(result).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    if (result.status !== "failed") throw new Error("unreachable");
+    expect(result.error.code).not.toBe("MASTER_FACE_UNUSABLE");
+    expect(net.calls).toHaveLength(0);
+  });
 });
 
 // ---------- a fatal error does not waste images already paid for (review M1) ----------
