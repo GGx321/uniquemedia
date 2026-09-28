@@ -290,6 +290,8 @@ describe("a run from the start", () => {
         expect.objectContaining({ kind: "generated", model: PRIMARY, provider: "openrouter", jobId: JOB_ID, attemptId: `${RUN_ID}:slot-${i}#1`, slot: `slot-${i}`, category: "home", costMicros: 40_000 }),
       ),
     );
+    // T8b: the run's own requested resolution (newRun's request always asks for "1k") is stored on every photo, not derived later.
+    expect(photos.map((p) => p?.resolution)).toEqual(["1k", "1k", "1k"]);
   });
 
   test("journals the writer's chunk, then the prompts, then each slot's attempt before its end, then the job's end", async () => {

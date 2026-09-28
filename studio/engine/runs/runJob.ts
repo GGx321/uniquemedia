@@ -335,6 +335,10 @@ function photoMeta(ctx: Context, slot: SlotState, attemptId: string, model: stri
     mediaType: image.mediaType,
     width: size.width,
     height: size.height,
+    // T8b: the run's own requested resolution, stored directly — only this
+    // run knows what it asked for (library/photoRecords.ts's resolutionOf
+    // is only a read-time fallback for photos stored before this field existed).
+    resolution: ctx.plan.request.resolution,
     source: {
       kind: "generated",
       model,
