@@ -50,10 +50,11 @@ test("the grid comes from engine.snapshot and is refreshed with avatars.list", a
   expect(cardNames()).toEqual(["Mia", "Sofia", "Elena", "Ava", "Kira", "Nora"]);
   expect(callsOf(engine, "engine.snapshot")).toHaveLength(1);
   expect(callsOf(engine, "avatars.list")).toHaveLength(1);
-  expect(screen.getByText(/5\s*аватаров · 466\s*фото/)).toBeDefined();
+  // Mia's own count is 8 (T8b, L7 demo data consistency): matches what her seeded photos.list actually lists.
+  expect(screen.getByText(/5\s*аватаров · 350\s*фото/)).toBeDefined();
 
   const mia = screen.getByRole("article", { name: "Mia" });
-  expect(within(mia).getByText("124 фото")).toBeDefined();
+  expect(within(mia).getByText("8 фото")).toBeDefined();
   expect(within(mia).queryByText("В архиве")).toBeNull();
   expect(within(mia).getByRole("img", { name: "Мастер-портрет: Mia" })).toBeDefined();
   expect(within(screen.getByRole("article", { name: "Nora" })).getByText("В архиве")).toBeDefined();

@@ -307,7 +307,8 @@ const DEMO_TRAITS: AvatarTraits = {
 
 function demoAvatars(): AvatarSummary[] {
   const rows: [string, number, Partial<AvatarTraits>, AvatarSummary["status"]][] = [
-    ["Mia", 124, {}, "active"],
+    // Demo data consistency: matches seedDemoRun's own 8 done slots — photos.list's own count for Mia, exactly.
+    ["Mia", 8, {}, "active"],
     ["Sofia", 86, { age: 27, hairColor: "black", hairLength: "long", hairTexture: "straight", eyeColor: "brown" }, "active"],
     ["Elena", 140, { age: 29, skinTone: "light", hairColor: "blonde", eyeColor: "blue", marks: [] }, "active"],
     ["Ava", 64, { age: 23, ethnicity: "latina", skinTone: "tan", hairTexture: "curly", marks: ["dimples"] }, "active"],

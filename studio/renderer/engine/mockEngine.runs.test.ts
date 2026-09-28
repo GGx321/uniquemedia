@@ -230,7 +230,10 @@ test("the demo library seeds Mia's gallery and a stopped run to resume, without 
   const snapshot = await unwrap(client.request("engine.snapshot", {}));
   const mia = snapshot.avatars.find((a) => a.name === "Mia");
   if (!mia) throw new Error("the demo has Mia");
-  expect((await unwrap(client.request("photos.list", { avatarId: mia.avatarId }))).photos).toHaveLength(8);
+  const gallery = await unwrap(client.request("photos.list", { avatarId: mia.avatarId }));
+  expect(gallery.photos).toHaveLength(8);
+  // Demo data consistency: the Avatars grid's own count must match what the Photos screen actually lists.
+  expect(mia.photoCount).toBe(gallery.photos.length + gallery.skippedTotal);
   expect((await unwrap(client.request("runs.list", {}))).runs).toEqual([expect.objectContaining({ avatarId: mia.avatarId, done: 8, open: 4, resumable: true })]);
   // The first id the demo hands out afterwards is still its first.
   const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, avatarId: mia.avatarId, acceptedWorstMicros: 3_070_000 }));
