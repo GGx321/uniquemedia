@@ -17,9 +17,16 @@ describe("wasmFileUrl", () => {
     expect(href).not.toBe(join("/some/dir", "a.wasm"));
   });
 
-  test("joins multiple segments the same way node:path's join does", () => {
-    const href = wasmFileUrl("/root", "pkg", "dist", "file.wasm");
-    expect(href).toBe(`file://${join("/root", "pkg", "dist", "file.wasm")}`);
+  // Exact URLs, one per platform: pasting "file://" in front of `join(...)`
+  // is precisely what this module exists to avoid, and on Windows it yields
+  // backslashes. The Windows case is the one H4 is about (a drive-letter
+  // path handed to `import()`), so it is pinned on the runner that has it.
+  test.skipIf(process.platform === "win32")("joins multiple segments into one file:// URL (POSIX)", () => {
+    expect(wasmFileUrl("/root", "pkg", "dist", "file.wasm")).toBe("file:///root/pkg/dist/file.wasm");
+  });
+
+  test.if(process.platform === "win32")("joins multiple segments into one file:/// URL with the drive letter (Windows)", () => {
+    expect(wasmFileUrl("C:\\root", "pkg", "dist", "file.wasm")).toBe("file:///C:/root/pkg/dist/file.wasm");
   });
 
   test("percent-encodes characters a bare path would not (spaces), proving it is a real URL, not a string with a prefix pasted on", () => {
