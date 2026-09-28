@@ -25,13 +25,17 @@ const ENTRY = join(ENGINE_DIR, "main.ts");
  * `Bun`/`import.meta.dir` on the paths this module graph reaches.
  * studio/engine/face/*.ts and decode/realBackend.ts take model/codec bytes
  * and wasmPaths as parameters rather than resolving them itself, for exactly
- * this rule. The two `@jsquash/*` entries are subpath imports (`/decode`,
+ * this rule. The two `@jsquash/*` entries are subpath imports (`/decode.js`,
  * for the `init()` export the bare package's own index.js does not
  * re-export) rather than bare package names — the exact specifiers
  * decode/realBackend.ts actually imports, deliberately listed in full rather
- * than matched by a prefix.
+ * than matched by a prefix. The explicit `.js` is required, not optional:
+ * neither package declares a package.json "exports" map, so plain Node ESM
+ * (the packaged app's actual runtime) never auto-appends it the way bun's
+ * own resolver — and CommonJS `require()` — do; this was caught by the E2E
+ * smoke against a real build, not by `bun test`.
  */
-const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@jsquash/jpeg/decode", "@jsquash/png/decode"]);
+const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@jsquash/jpeg/decode.js", "@jsquash/png/decode.js"]);
 
 /**
  * Where engine code may live: its own tree, studio/node, the pure contract,

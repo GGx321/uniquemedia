@@ -55,11 +55,19 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 export async function createRealDecodeBackend(nodeModulesDir: string): Promise<DecodeBackend> {
   const [jpegModule, pngModule] = await Promise.all([loadVerifiedModule(nodeModulesDir, "jpeg"), loadVerifiedModule(nodeModulesDir, "png")]);
 
-  const jpegDecoder = (await import("@jsquash/jpeg/decode")) as {
+  // The explicit ".js" is load-bearing, not stylistic: @jsquash/jpeg and
+  // @jsquash/png have no package.json "exports" map, so a bare, extension-
+  // less subpath import (`@jsquash/jpeg/decode`) only resolves under bun's
+  // own lenient resolver — under real Node (the packaged app's Electron
+  // runtime, `out-studio/engine/main.js`), ESM `import()` never auto-appends
+  // an extension the way CommonJS `require()` does, and this failed loudly
+  // in exactly that environment (the E2E smoke's packaged/unpackaged build)
+  // with "Cannot find module ... Did you mean to import .../decode.js?".
+  const jpegDecoder = (await import("@jsquash/jpeg/decode.js")) as {
     default: (buffer: ArrayBuffer, options?: Record<string, unknown>) => Promise<RawDecoded>;
     init: (module?: WebAssembly.Module) => Promise<void>;
   };
-  const pngDecoder = (await import("@jsquash/png/decode")) as {
+  const pngDecoder = (await import("@jsquash/png/decode.js")) as {
     default: (buffer: ArrayBuffer, options?: Record<string, unknown>) => Promise<RawDecoded>;
     init: (module?: WebAssembly.Module) => Promise<unknown>;
   };
