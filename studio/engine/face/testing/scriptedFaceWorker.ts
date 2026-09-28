@@ -65,7 +65,7 @@ port.on("message", (raw: unknown) => {
     if (behaviour === Behaviour.chatty) setTimeout(() => send({ type: "ready" }), 20);
   };
   if (behaviour === Behaviour.hang) {
-    // Never answers. The thread stays idle: Bun's worker.terminate() cannot interrupt a synchronous busy loop (Node's, Electron's, can — the packaged smoke proves that on the real runtime).
+    // Never answers. The thread stays idle: Bun's worker.terminate() cannot interrupt a synchronous busy loop (Node's, Electron's, can — smoke-engine.ts proves that on the real Electron runtime, with the dev Electron binary as plain Node, in every mode including CI's packaged one).
   } else if (behaviour === Behaviour.crash) {
     throw new Error("scripted crash mid-request");
   } else if (behaviour === Behaviour.slow) {

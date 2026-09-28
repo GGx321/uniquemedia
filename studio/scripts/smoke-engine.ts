@@ -500,11 +500,12 @@ function checkProductionBundles(where: string, main: string, engine: string, pre
  * unit tests run under, does NOT: its `terminate()` never settles on such a
  * worker, which is why those tests hang the worker asynchronously instead), so
  * this proves it on the Electron runtime the engine actually ships in. Runs
- * Electron as plain Node (`ELECTRON_RUN_AS_NODE`), which a packaged app's
- * fuses forbid — so it checks the unpackaged runtime, the same Electron.
+ * the dev Electron binary (the same Electron version as the packaged app's) as
+ * plain Node (`ELECTRON_RUN_AS_NODE`) for EVERY target, packaged ones too — a
+ * packaged app's own fuses forbid runAsNode, so it cannot be that binary, and
+ * CI always passes `--app`.
  */
-async function checkRuntimeInterruptsBusyWorker(target: Target): Promise<void> {
-  if (target.asar !== null) return;
+async function checkRuntimeInterruptsBusyWorker(): Promise<void> {
   const busyWorkerSource = 'require("node:worker_threads").parentPort.postMessage(1); for (;;) Math.sqrt(Math.random());';
   const script = [
     'const { Worker } = require("node:worker_threads");',
@@ -516,7 +517,7 @@ async function checkRuntimeInterruptsBusyWorker(target: Target): Promise<void> {
     "  process.exit(0);",
     "}, 100));",
   ].join("\n");
-  const result = spawnSync(target.executable, ["-e", script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 30_000 });
+  const result = spawnSync(await electronBinary(), ["-e", script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 30_000 });
   const line = result.stdout.trim().split("\n").at(-1) ?? "";
   const parsed: unknown = (() => {
     try {
@@ -536,7 +537,7 @@ function checkFaceWorker(where: string, engine: string, worker: string | null, f
 }
 
 async function productionCheck(target: Target): Promise<void> {
-  await checkRuntimeInterruptsBusyWorker(target);
+  await checkRuntimeInterruptsBusyWorker();
   if (target.asar === null) {
     // `build:studio` output: the bundles only; a package is what launches.
     checkProductionBundles(
@@ -1644,7 +1645,7 @@ async function main(): Promise<void> {
   await ledger.append({ ...reserve, attemptId: "smoke-att-0002", worstMicros: 55_000 });
 
   checkPackage(target);
-  await checkRuntimeInterruptsBusyWorker(target);
+  await checkRuntimeInterruptsBusyWorker();
 
   // The live library's folder spelled with another letter case, for main's
   // folder dialog to answer with (it cannot be clicked). Only a disk that
