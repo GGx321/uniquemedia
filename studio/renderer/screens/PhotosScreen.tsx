@@ -263,27 +263,32 @@ function NoAvatar() {
  */
 export function PhotosScreen({ avatarId }: { avatarId: string | null }) {
   const view = useEngineView();
-  // L11: once a null avatarId (the sidebar's own «Фото», not a specific
-  // avatar's route) resolves to one, pin it locally for the rest of this
-  // mount. Left unpinned, `avatar` would be re-resolved fresh on every
-  // render, so a later change to view.avatars — another window archiving the
-  // resolved avatar, say — would silently switch this screen to a different
-  // one instead of just showing the same avatar now archived. (The prop
-  // itself only ever changes across a remount — App.tsx keys the screen on
-  // it — so pinning once here for its lifetime is enough.)
+  // L11/N5: once the route names no avatar (the sidebar's own «Фото»), or
+  // names one that is no longer present (a library switch, say — N5: a
+  // *named* route is just as exposed to this as the sidebar's own, and
+  // wasn't pinning at all before), pin the resolved avatar locally for the
+  // rest of this mount. Left unpinned, `avatar` would be re-resolved fresh
+  // on every render, so a later change to view.avatars — another window
+  // archiving the resolved avatar, say — would silently switch this screen
+  // to a different one instead of just showing the same avatar now
+  // archived. (The prop itself only ever changes across a remount —
+  // App.tsx keys the screen on it — so pinning once here for its lifetime
+  // is enough.) While the named id is present, it always wins outright —
+  // the pin exists only to stand in once it stops being.
   const [pinned, setPinned] = useState<string | null>(null);
-  const avatar = resolveAvatar(view.avatars, avatarId ?? pinned);
-  // LOW-9: the pinned id itself can disappear too — a library switch to a
-  // folder that does not have it, say — in which case `avatar` above already
-  // fell back to a fresh resolution this same render (resolveAvatar's own
-  // `asked` lookup simply fails). Left un-re-pinned, that fresh choice would
-  // stay exposed to the exact silent-switch bug this pin exists to prevent
-  // (the next avatars.list change would re-resolve it again, and again).
+  const askedPresent = avatarId !== null && view.avatars.some((a) => a.avatarId === avatarId);
+  const avatar = resolveAvatar(view.avatars, askedPresent ? avatarId : pinned);
+  // The pinned id itself can disappear too — a second library switch, say —
+  // in which case `avatar` above already fell back to a fresh resolution
+  // this same render (resolveAvatar's own `asked` lookup simply fails).
+  // Left un-re-pinned, that fresh choice would stay exposed to the exact
+  // silent-switch bug this pin exists to prevent (the next avatars.list
+  // change would re-resolve it again, and again).
   const pinnedGone = pinned !== null && !view.avatars.some((a) => a.avatarId === pinned);
 
   useEffect(() => {
-    if (avatarId === null && (pinned === null || pinnedGone) && avatar !== null) setPinned(avatar.avatarId);
-  }, [avatarId, pinned, pinnedGone, avatar]);
+    if (!askedPresent && (pinned === null || pinnedGone) && avatar !== null) setPinned(avatar.avatarId);
+  }, [askedPresent, pinned, pinnedGone, avatar]);
 
   if (view.phase === "connecting") {
     return (

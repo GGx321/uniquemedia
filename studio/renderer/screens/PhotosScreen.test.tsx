@@ -1047,6 +1047,32 @@ test("if the pinned avatar disappears (a library switch), the fallback is re-pin
   expect(screen.queryByRole("heading", { level: 1, name: "Elena" })).toBeNull();
 });
 
+test("a named route (from the grid) also pins its fallback once the named avatar disappears (N5)", async () => {
+  const { engine, client } = setup({ avatars: [MIA] });
+  fireEvent.click(await screen.findByRole("button", { name: "Mia" }));
+  expect(await screen.findByRole("heading", { level: 1, name: "Mia" })).toBeDefined();
+  await priced();
+
+  // A library switch: the new folder has Sofia and Elena, not Mia at all —
+  // the route still names Mia, but she is no longer present.
+  const ELENA = avatar("Elena", 3);
+  engine.setAvatarsForNextSnapshot([SOFIA, ELENA]);
+  await act(async () => {
+    await client.request("settings.setLibraryPath", { path: "/Users/studio/Other/library" });
+  });
+  await flush();
+  expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
+
+  // Another window archives Sofia: without pinning the fallback for a named
+  // route too, this would silently switch to Elena.
+  await act(async () => {
+    await client.request("avatars.archive", { avatarId: SOFIA.avatarId });
+  });
+  expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
+  expect(screen.getByText("Аватар в архиве — новые фото для него не создаются.")).toBeDefined();
+  expect(screen.queryByRole("heading", { level: 1, name: "Elena" })).toBeNull();
+});
+
 test("with no saved avatar the Photos screen points back to the Avatars screen", async () => {
   setup();
   await openSection("Фото");
