@@ -79,6 +79,15 @@ function messageOf(error: unknown): string {
  */
 const FACE_GATE_LOAD_TIMEOUT_MS = 25_000;
 
+/**
+ * T7c: how long the face worker may sit idle before it is terminated to give
+ * its memory back (measured on Electron's Node: ~610 MB resident after 2K
+ * checks and a 12 MP master, ~44 MB for the engine alone). A photo run's
+ * checks arrive seconds apart, far inside this window; the next check after
+ * a real pause pays a ~0.2 s respawn.
+ */
+const FACE_WORKER_IDLE_RECYCLE_MS = 60_000;
+
 type FaceGateLoad = { faceGate: WorkerFaceGate } | { error: string };
 
 /**
@@ -112,6 +121,7 @@ async function loadFaceGate(): Promise<FaceGateLoad> {
       config: defaultFaceGateConfig(),
     }),
     loadTimeoutMs: FACE_GATE_LOAD_TIMEOUT_MS,
+    idleRecycleMs: FACE_WORKER_IDLE_RECYCLE_MS,
   });
   const timeout = timeoutSignal(FACE_GATE_LOAD_TIMEOUT_MS);
   try {

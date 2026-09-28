@@ -37,7 +37,7 @@ afterEach(async () => {
   await Promise.all(gates.splice(0).map((g) => g.dispose()));
 });
 
-function harness(options: { startups?: Startup[]; loadTimeoutMs?: number } = {}): Harness {
+function harness(options: { startups?: Startup[]; loadTimeoutMs?: number; idleRecycleMs?: number } = {}): Harness {
   const probe = new SharedArrayBuffer(8);
   const probeView = new Int32Array(probe);
   const startups = [...(options.startups ?? [])];
@@ -46,6 +46,7 @@ function harness(options: { startups?: Startup[]; loadTimeoutMs?: number } = {})
   const aliveAtSpawn: number[] = [];
   const gate = createWorkerFaceGate({
     loadTimeoutMs: options.loadTimeoutMs,
+    idleRecycleMs: options.idleRecycleMs,
     spawnWorker: () => {
       aliveAtSpawn.push(alive);
       spawned += 1;
@@ -317,5 +318,56 @@ describe("dispose", () => {
     await h.gate.dispose();
     expect(await running).toBeInstanceOf(Error);
     expect(h.alive()).toBe(0);
+  });
+});
+
+describe("idle recycling: an idle worker's memory is given back", () => {
+  test("a worker left idle for idleRecycleMs is terminated", async () => {
+    const h = harness({ idleRecycleMs: 40 });
+    await h.gate.check(checkInput(), live());
+    expect(h.alive()).toBe(1);
+    await Bun.sleep(150);
+    expect(h.alive()).toBe(0);
+  });
+
+  test("the next check after a recycle respawns a worker and succeeds, with no overlap between the two workers", async () => {
+    const h = harness({ idleRecycleMs: 40 });
+    await h.gate.check(checkInput(), live());
+    await Bun.sleep(150);
+    expect((await h.gate.check(checkInput(), live())).kind).toBe("match");
+    expect(h.spawned()).toBe(2);
+    expect(h.aliveAtSpawn).toEqual([0, 0]);
+  });
+
+  test("a check inside the idle window keeps the same worker", async () => {
+    const h = harness({ idleRecycleMs: 200 });
+    await h.gate.check(checkInput(), live());
+    await Bun.sleep(50);
+    await h.gate.check(checkInput(), live());
+    expect(h.spawned()).toBe(1);
+  });
+
+  test("the idle timer never fires during a computation, however long it outlasts idleRecycleMs", async () => {
+    const h = harness({ idleRecycleMs: 20 });
+    await h.gate.start();
+    await Bun.sleep(5);
+    // ~80 ms of work against a 20 ms idle window: the worker must survive it and answer.
+    expect((await h.gate.check(checkInput(Behaviour.slow), live())).kind).toBe("match");
+    expect(h.spawned()).toBe(1);
+  });
+
+  test("without idleRecycleMs a worker is never recycled", async () => {
+    const h = harness();
+    await h.gate.check(checkInput(), live());
+    await Bun.sleep(150);
+    expect(h.alive()).toBe(1);
+  });
+
+  test("a check that arrives while a recycle is terminating the worker waits for it to be gone before a new one starts", async () => {
+    const h = harness({ idleRecycleMs: 30 });
+    await h.gate.check(checkInput(), live());
+    await Bun.sleep(30); // land right around the timer
+    await h.gate.check(checkInput(), live());
+    expect(h.aliveAtSpawn.every((n) => n === 0)).toBe(true);
   });
 });

@@ -45,6 +45,14 @@ export interface WorkerFaceGateOptions {
   spawnWorker: () => Worker;
   /** How long a freshly spawned worker may take to report `ready`. `FACE_WORKER_LOAD_TIMEOUT_MS` unless a test overrides it. */
   loadTimeoutMs?: number;
+  /**
+   * Terminate the worker once it has been idle this long, giving its memory
+   * back (the next check respawns one, ~0.2 s). onnxruntime-web's WASM heap
+   * grows with the largest input it ever saw and never shrinks (T7b re-review,
+   * N5) — measured on Electron's Node: ~340 MB just loaded, ~610 MB after
+   * 2K checks and a 12 MP master, all returned by a terminate. Off unless set.
+   */
+  idleRecycleMs?: number;
 }
 
 export interface WorkerFaceGate {
@@ -130,6 +138,34 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
     });
   }
 
+  // ---- idle recycling -----------------------------------------------------
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cancelIdleTimer(): void {
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+
+  /** Arms the recycle when the lane is idle and a worker is live. The recycle itself takes the lane, so a check arriving mid-terminate waits for the worker to be gone before a new one starts. */
+  function scheduleIdleRecycle(): void {
+    cancelIdleTimer();
+    const after = options.idleRecycleMs;
+    if (after === undefined || disposed || busy || live === null) return;
+    idleTimer = setTimeout(() => {
+      idleTimer = null;
+      if (busy || live === null) return;
+      void acquire(NEVER_ABORTED).then(async (release) => {
+        try {
+          if (live !== null) await kill(live);
+        } finally {
+          release();
+          scheduleIdleRecycle();
+        }
+      });
+    }, after);
+    idleTimer.unref?.();
+  }
+
   // ---- the worker ---------------------------------------------------------
   function spawn(): Live {
     const worker = options.spawnWorker();
@@ -211,7 +247,14 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
   /** Runs `body` on the live worker, alone (the lane), and interruptibly: abort — or any failure that is not the worker's own clean report — terminates the worker before this settles. */
   async function inLane<T>(signal: AbortSignal, body: (entry: Live) => Promise<Outcome<T>>): Promise<T> {
     if (disposed) throw new Error("the face worker gate is disposed");
-    const release = await acquire(signal);
+    cancelIdleTimer();
+    let release: () => void;
+    try {
+      release = await acquire(signal);
+    } catch (error) {
+      scheduleIdleRecycle(); // cancelled while queued: whoever holds the lane re-arms it; when nobody does, re-arm here
+      throw error;
+    }
     try {
       signal.throwIfAborted();
       if (disposed) throw new Error("the face worker gate is disposed");
@@ -227,6 +270,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
       return outcome.value;
     } finally {
       release();
+      scheduleIdleRecycle();
     }
   }
 
@@ -284,6 +328,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
 
     async dispose(): Promise<void> {
       disposed = true;
+      cancelIdleTimer();
       for (const waiter of queue.splice(0)) waiter.reject(new Error("the face worker gate is disposed"));
       if (live !== null) await kill(live);
     },
