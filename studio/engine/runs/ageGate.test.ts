@@ -87,6 +87,7 @@ function input(m: Money, overrides: Partial<QaInput> = {}): QaInput {
     beforeSend: () => true,
     photosByAvatar: (): readonly PhotoSidecar[] => [],
     master: asLibraryReference(Uint8Array.of(0xff, 0xd8, 0xff)),
+    masterSha256: "test-master-sha256",
     decodeImage: () => {
       throw new Error("must not be called: the age gate never decodes for identity");
     },

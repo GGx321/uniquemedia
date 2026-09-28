@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import type { FaceGateImage, FaceGateInput } from "../face";
 import type { PlanSlot } from "../scenes";
 import { asLibraryReference, setupMoney, type Money } from "../openrouter/testing/fakes";
@@ -40,6 +41,9 @@ const SLOT: PlanSlot = {
 const MASTER_BYTES = asLibraryReference(Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 1, 2, 3));
 const MASTER_ORIGINAL_A = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 1);
 const MASTER_ORIGINAL_B = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 2);
+/** N10: the sha256 `check()` must be given to match what `prepare()` (given MASTER_ORIGINAL_A, faceGate.ts's own internal hash) actually cached. */
+const MASTER_ORIGINAL_A_SHA256 = createHash("sha256").update(MASTER_ORIGINAL_A).digest("hex");
+const MASTER_ORIGINAL_B_SHA256 = createHash("sha256").update(MASTER_ORIGINAL_B).digest("hex");
 const CANDIDATE_BYTES = Uint8Array.of(0xff, 0xd8, 0xff, 0xe1, 4, 5, 6);
 const MASTER_EMBEDDING = new Float32Array([1, 0, 0]);
 const DECODED: FaceGateImage = { format: "rgba", width: 4, height: 4, data: new Uint8Array(4 * 4 * 4) };
@@ -83,6 +87,7 @@ function input(overrides: Partial<QaInput> = {}, money_: Money): QaInput {
     beforeSend: () => true,
     photosByAvatar: () => [],
     master: MASTER_BYTES,
+    masterSha256: MASTER_ORIGINAL_A_SHA256,
     decodeImage: async () => DECODED,
     ...overrides,
   };
@@ -246,6 +251,105 @@ describe("check() requires a prior prepare()", () => {
     const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
 
     await expect(gate.check(input({}, m))).rejects.toThrow(/prepare/);
+  });
+
+  test("N10: throws if the cached embedding's sha does not match this job's own masterSha256 (a stale or differently keyed preparation)", async () => {
+    const m = await money();
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
+    // prepare()d for MASTER_ORIGINAL_A, but this check() claims a DIFFERENT job's masterSha256 (B).
+    await gate.prepare?.(prepareInput({ masterOriginal: MASTER_ORIGINAL_A }));
+
+    await expect(gate.check(input({ masterSha256: MASTER_ORIGINAL_B_SHA256 }, m))).rejects.toThrow(/prepare/);
+  });
+
+  test("N10: succeeds when the cached embedding's sha matches this job's own masterSha256", async () => {
+    const m = await money();
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
+    await gate.prepare?.(prepareInput({ masterOriginal: MASTER_ORIGINAL_A }));
+
+    const verdict = await gate.check(input({ masterSha256: MASTER_ORIGINAL_A_SHA256 }, m));
+
+    expect(verdict.verdict).toBe("pass");
+  });
+});
+
+describe("N5: face checks are serialized (memory) — a mutex around decode + check", () => {
+  test("two concurrent checks never overlap inside the underlying faceGate.check()", async () => {
+    const m = await money();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        check: async () => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          inFlight--;
+          return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
+        },
+      }),
+    });
+    await gate.prepare?.(prepareInput());
+
+    await Promise.all([
+      gate.check(input({ attemptId: "run-1:slot-1#1" }, m)),
+      gate.check(input({ attemptId: "run-1:slot-2#1" }, m)),
+      gate.check(input({ attemptId: "run-1:slot-3#1" }, m)),
+    ]);
+
+    expect(maxInFlight).toBe(1);
+  });
+
+  test("a cancelled waiter leaves the lane: it rejects instead of blocking the next waiter forever", async () => {
+    const m = await money();
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let holderAcquired = false;
+    let secondRan = false;
+    let calls = 0;
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        check: async () => {
+          const isHolder = calls++ === 0;
+          if (isHolder) {
+            holderAcquired = true;
+            await firstGate; // the first caller holds the lock until released
+          } else {
+            secondRan = true;
+          }
+          return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
+        },
+      }),
+    });
+    await gate.prepare?.(prepareInput());
+
+    const holderController = new AbortController();
+    const holder = gate.check(input({ attemptId: "run-1:slot-1#1", signal: holderController.signal }, m));
+    // Wait for the holder to actually be inside the underlying check() (i.e. it holds the
+    // mutex) before starting the waiter — otherwise the waiter could race the holder for the
+    // lock itself, which is not what this test is about. Bounded (macrotask hops, never a tight
+    // microtask spin) so a real bug here fails loudly instead of hanging the whole suite.
+    for (let i = 0; i < 100 && !holderAcquired; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+    if (!holderAcquired) throw new Error("the holder never reached the underlying check()");
+
+    const waiterController = new AbortController();
+    const waiter = gate.check(input({ attemptId: "run-1:slot-2#1", signal: waiterController.signal }, m));
+    // Let the waiter's own master-embedding lookup settle (a resolved promise, but still a real
+    // microtask hop) so it is genuinely queued on the mutex itself before we abort it.
+    await Promise.resolve();
+    await Promise.resolve();
+    waiterController.abort(new Error("cancelled while waiting for the lock"));
+    await expect(waiter).rejects.toThrow("cancelled while waiting for the lock");
+    expect(secondRan).toBe(false); // the waiter never actually ran the underlying check
+
+    // The lane must still be free for a THIRD caller once the holder releases it — the
+    // cancelled waiter must not have left the mutex permanently locked.
+    releaseFirst?.();
+    await holder;
+    const third = await gate.check(input({ attemptId: "run-1:slot-3#1" }, m));
+    expect(third.verdict).toBe("pass");
   });
 });
 

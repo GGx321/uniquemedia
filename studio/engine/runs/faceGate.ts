@@ -102,9 +102,53 @@ interface CachedEmbedding {
   promise: Promise<Float32Array>;
 }
 
+/**
+ * Re-review N5 (memory): ORT's WASM heap grows with the largest input it
+ * has ever seen and never shrinks — decoding and running inference for
+ * several candidates at once (the run's own CPU pool lets several free
+ * gates overlap) multiplies that peak by however many run concurrently.
+ * Measured: +270 MB at 4.2 MP, +950 MB at 12 MP for ONE decode+inference;
+ * several concurrent ones compound. Serializing every face check's own
+ * decode+inference (never the master-embedding cache lookup, which is
+ * cheap and already deduplicated by H2) bounds the peak to one at a time —
+ * throughput is unaffected, since the ONNX WASM inference itself already
+ * runs synchronously on this one event loop regardless of how many
+ * `check()` calls are in flight; this only stops them queuing their own
+ * decode+inference memory on top of each other.
+ *
+ * A plain FIFO mutex: each acquire is a promise chained onto the previous
+ * holder's own release, so it costs nothing when uncontended. A caller
+ * whose own signal aborts while WAITING (never once it holds the lock —
+ * `body` below is not itself abort-aware, matching every other paid/free
+ * gate's own shape) rejects immediately and still releases its own queue
+ * slot, so a cancelled waiter never blocks whoever is behind it.
+ */
+function createMutex(): <T>(signal: AbortSignal, body: () => Promise<T>) => Promise<T> {
+  let tail: Promise<void> = Promise.resolve();
+  return async function withLock<T>(signal: AbortSignal, body: () => Promise<T>): Promise<T> {
+    const waitFor = tail;
+    let release: () => void = () => {};
+    tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      await abortableWait(waitFor, signal);
+    } catch (error) {
+      release(); // never acquired: free this slot for whoever is queued behind us.
+      throw error;
+    }
+    try {
+      return await body();
+    } finally {
+      release();
+    }
+  };
+}
+
 export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
   /** H2: one cached (possibly still-pending) embedding per avatarId, keyed together with the master bytes' sha256; only a successful result is kept. */
   const masterEmbeddings = new Map<string, CachedEmbedding>();
+  const lock = createMutex();
 
   function computeEmbedding(avatarId: string, masterOriginal: Uint8Array, sha256: string, decodeImage: QaPrepareInput["decodeImage"]): Promise<Float32Array> {
     // Independent of any one caller's signal (H2): a fresh internal
@@ -147,31 +191,40 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
     },
 
     async check(input: QaInput): Promise<QaVerdict> {
+      // N10: keyed by avatarId, but a cache entry is only trusted when its
+      // own sha256 matches the masterSha256 THIS job's own prepareGates()
+      // recorded — never whatever happens to be cached for the avatarId
+      // right now, which could be a stale or differently keyed preparation
+      // in this same long-lived engine process.
       const cached = masterEmbeddings.get(input.avatarId);
-      if (cached === undefined) {
-        throw new Error(`faceGate: no master embedding prepared for avatar ${input.avatarId} — prepare() must run before check() (runJob.ts's own wiring bug, not a per-photo problem)`);
+      if (cached === undefined || cached.sha256 !== input.masterSha256) {
+        throw new Error(
+          `faceGate: no master embedding prepared for avatar ${input.avatarId} matching this job's own master (sha ${input.masterSha256 ?? "null"}) — prepare() must run before check() with the same master (runJob.ts's own wiring bug, not a per-photo problem)`,
+        );
       }
       const masterEmbedding = await abortableWait(cached.promise, input.signal);
 
-      // Security review, section A.4: propagates uncaught, never a retry —
-      // see this file's own header.
-      const image: FaceGateImage = await input.decodeImage(input.image.bytes, input.signal);
+      return lock(input.signal, async () => {
+        // Security review, section A.4: propagates uncaught, never a retry —
+        // see this file's own header.
+        const image: FaceGateImage = await input.decodeImage(input.image.bytes, input.signal);
 
-      const verdict = await deps.faceGate.check({ pose: input.slot.pose, image, masterEmbedding });
-      switch (verdict.kind) {
-        case "match":
-          return { verdict: "pass", qa: qaOf(verdict) };
-        case "skipped-by-pose":
-          return { verdict: "pass" };
-        case "mismatch":
-          return { verdict: "retry", reason: `similarity ${verdict.similarity} is below the identity threshold (gross drift)` };
-        case "no-face":
-          return { verdict: "retry", reason: "no face was detected in the photo" };
-        case "multiple-faces":
-          return { verdict: "retry", reason: `${verdict.faces} prominent faces were detected` };
-        case "unexpected-face":
-          return { verdict: "retry", reason: `a face was detected on a shot posed from behind (headRatio ${verdict.headRatio})` };
-      }
+        const verdict = await deps.faceGate.check({ pose: input.slot.pose, image, masterEmbedding });
+        switch (verdict.kind) {
+          case "match":
+            return { verdict: "pass", qa: qaOf(verdict) };
+          case "skipped-by-pose":
+            return { verdict: "pass" };
+          case "mismatch":
+            return { verdict: "retry", reason: `similarity ${verdict.similarity} is below the identity threshold (gross drift)` };
+          case "no-face":
+            return { verdict: "retry", reason: "no face was detected in the photo" };
+          case "multiple-faces":
+            return { verdict: "retry", reason: `${verdict.faces} prominent faces were detected` };
+          case "unexpected-face":
+            return { verdict: "retry", reason: `a face was detected on a shot posed from behind (headRatio ${verdict.headRatio})` };
+        }
+      });
     },
   };
 }

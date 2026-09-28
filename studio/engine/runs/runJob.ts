@@ -84,10 +84,10 @@ export interface RunJobDeps {
   /** Run in order on every paid image that passed its media checks; none are wired in T6. */
   gates: readonly QaGate[];
   /**
-   * T7b: decodes to tagged RGBA/BGRA pixels via the real main process
-   * (qa.ts's own `QaInput.decodeImage` comment has the full reasoning);
-   * threaded straight into every gate's `QaInput` unchanged — only the face
-   * gate calls it today.
+   * T7b: decodes to tagged RGBA pixels with the engine's own WASM JPEG/PNG
+   * decoder (qa.ts's own `QaInput.decodeImage` comment has the full
+   * reasoning); threaded straight into every gate's `QaInput` unchanged —
+   * only the face gate calls it today.
    */
   decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
   /** Wall clock, for the journal's and the history's `at`. */
@@ -148,6 +148,19 @@ interface Context {
   limited: EngineError | null;
   done: number;
   total: number;
+  /**
+   * Re-review N10: the sha256 of whatever bytes THIS job's own
+   * `prepareGates()` handed every gate's `prepare()` as `masterOriginal`
+   * (the avatar's original file, or the N1 fallback reference) — threaded
+   * into every `QaInput` so a gate's own `check()` can verify it is reading
+   * the SAME cached preparation this job made, not a stale or differently
+   * keyed one a concurrent job (or a leftover from an earlier one, in this
+   * same long-lived engine process) left behind. Set once, by
+   * `prepareGates()`, before any slot runs; null only if `prepareGates()`
+   * itself never ran (unreachable in production — `work()` always calls it
+   * before any slot).
+   */
+  masterSha256: string | null;
 }
 
 function sha256(text: string): string {
@@ -269,6 +282,10 @@ async function prepareGates(ctx: Context, reference: LibraryReference): Promise<
       return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${plan.avatarId} has no usable master photo` } } };
     }
     const masterOriginal = masterOriginalFor(original, reference);
+    // N10: recorded before any gate's prepare() runs, so a concurrent (or
+    // stale, leftover) check() in this same engine process can tell whether
+    // it is reading the preparation THIS job made.
+    ctx.masterSha256 = createHash("sha256").update(masterOriginal).digest("hex");
     const input: QaPrepareInput = { avatarId: plan.avatarId, masterOriginal, decodeImage: deps.decodeImage, signal };
     await untilAborted(
       Promise.all(deps.gates.map((prepareGate) => prepareGate.prepare?.(input))),
@@ -526,6 +543,8 @@ async function runGates(ctx: Context, slot: SlotState, attemptId: string, image:
     // path only the face gate uses.
     master,
     decodeImage: deps.decodeImage,
+    // N10: see Context.masterSha256's own comment.
+    masterSha256: ctx.masterSha256,
   };
   let qa: PhotoQa = {};
   for (const gate of deps.gates) {
@@ -826,6 +845,7 @@ export async function runPhotoRun(deps: RunJobDeps, job: RunJob): Promise<RunJob
     limited: null,
     done: 0,
     total: job.plan.scenes.slots.length,
+    masterSha256: null,
   };
   let end: RunJobEnd;
   try {

@@ -133,11 +133,26 @@ export interface QaInput {
   /**
    * T7b: the avatar's master portrait, the same encoded bytes `runJob.ts`'s
    * `loadMaster()` already loaded as the image attempt's own OpenRouter
-   * reference — never a second read of the library. The face gate is the
-   * only gate that needs it (its master embedding, computed once per
-   * avatar and cached, is compared against every candidate's own face).
+   * reference — never a second read of the library. Re-review N8: no
+   * current gate reads this field directly any more (M1/N1 moved the face
+   * gate's own master source to `QaPrepareInput.masterOriginal`, computed
+   * once by `prepareGates()` — the original file, or this same reference as
+   * a fallback when the original is not JPEG/PNG); it stays on `QaInput`
+   * because `runGates()` already has it in hand for exactly that fallback
+   * and threading it costs nothing, not because a gate's own `check()`
+   * needs it.
    */
   master: LibraryReference;
+  /**
+   * Re-review N10: the sha256 of whatever bytes THIS job's own
+   * `prepareGates()` used as `masterOriginal` (`Context.masterSha256`'s own
+   * comment, runJob.ts, has the full reasoning) — a gate's own `check()`
+   * that cached an embedding keyed by avatarId+sha (H2) can verify it is
+   * reading the preparation this exact job made, not a stale or
+   * differently keyed one. Null only if `prepareGates()` itself never ran
+   * (unreachable in production).
+   */
+  masterSha256: string | null;
   /**
    * Security review, T7b section A: decoding network-sourced image bytes
    * with native Chromium decoders in the privileged main process (which can
