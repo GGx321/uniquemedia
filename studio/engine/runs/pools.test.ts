@@ -14,10 +14,10 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
-function tracked(pool: NetworkPool, signal = never) {
+function tracked(pool: NetworkPool, signal = never, opts: { priority?: boolean } = {}) {
   let release: Release | null = null;
   let error: unknown = null;
-  const promise = pool.acquire(signal).then(
+  const promise = pool.acquire(signal, opts).then(
     (r) => {
       release = r;
     },
@@ -317,5 +317,100 @@ describe("CpuPool", () => {
     release();
     await first;
     expect(ran).toBe(false);
+  });
+});
+
+// T7a review (finding 1): a paid QA gate's own request is work already paid
+// for (and, per finding 3, a request that shrinks the window in which a stop
+// would otherwise drop that paid image) — it must not be starved behind a
+// stream of brand new image attempts in a busy run. `acquire`'s own
+// `{ priority: true }` gives it a separate, first-served queue.
+describe("NetworkPool priority lane", () => {
+  test("a priority acquire is granted before an earlier-queued, non-priority waiter", async () => {
+    const pool = new NetworkPool({ max: 1 });
+    const holder = tracked(pool);
+    await settle();
+    expect(holder.granted()).toBe(true);
+
+    const ordinary = tracked(pool); // queued first, no priority
+    await settle();
+    const priority = tracked(pool, never, { priority: true }); // queued second, but priority
+    await settle();
+    expect([ordinary.granted(), priority.granted()]).toEqual([false, false]);
+
+    holder.release();
+    await settle();
+
+    expect(priority.granted()).toBe(true);
+    expect(ordinary.granted()).toBe(false);
+  });
+
+  test("priority waiters are served in the order they asked, among themselves", async () => {
+    const pool = new NetworkPool({ max: 1 });
+    const holder = tracked(pool);
+    await settle();
+    const order: string[] = [];
+    const first = pool.acquire(never, { priority: true }).then((r) => {
+      order.push("first");
+      return r;
+    });
+    const second = pool.acquire(never, { priority: true }).then((r) => {
+      order.push("second");
+      return r;
+    });
+    await settle();
+
+    holder.release();
+    (await first)();
+    (await second)();
+
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  test("non-priority waiters still get their turn once every priority waiter is served", async () => {
+    const pool = new NetworkPool({ max: 1 });
+    const holder = tracked(pool);
+    await settle();
+    const ordinary = tracked(pool);
+    const priority = tracked(pool, never, { priority: true });
+    await settle();
+
+    holder.release();
+    await settle();
+    expect(priority.granted()).toBe(true);
+    expect(ordinary.granted()).toBe(false);
+
+    priority.release();
+    await settle();
+    expect(ordinary.granted()).toBe(true);
+  });
+
+  test("without the option, acquire behaves exactly as before (plain FIFO, no priority queue involved)", async () => {
+    const pool = new NetworkPool({ max: 1 });
+    const first = tracked(pool);
+    const second = tracked(pool);
+    await settle();
+    expect([first.granted(), second.granted()]).toEqual([true, false]);
+    first.release();
+    await settle();
+    expect(second.granted()).toBe(true);
+  });
+
+  test("an aborted priority waiter is removed from its own queue, not the other one", async () => {
+    const pool = new NetworkPool({ max: 1 });
+    const holder = tracked(pool);
+    await settle();
+    const controller = new AbortController();
+    const priority = tracked(pool, controller.signal, { priority: true });
+    const ordinary = tracked(pool);
+    await settle();
+
+    controller.abort(new Error("cancelled"));
+    await settle();
+    expect(priority.error()).not.toBeNull();
+
+    holder.release();
+    await settle();
+    expect(ordinary.granted()).toBe(true);
   });
 });

@@ -25,11 +25,25 @@ function assertPositiveInt(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be a positive integer, got ${value}`);
 }
 
+/** `acquire`'s own options. */
+export interface AcquireOptions {
+  /**
+   * T7a (review finding 1): served from a separate queue, always ahead of
+   * every plain waiter — for work that is already paid for (a QA gate's own
+   * request on an image already generated), so it is not starved behind a
+   * steady stream of brand new attempts in a busy run, and so a stop has a
+   * smaller window in which to drop that paid image (finding 3). Priority
+   * waiters are still served FIFO among themselves.
+   */
+  priority?: boolean;
+}
+
 /** A FIFO counting semaphore whose limit can move while slots are held. */
 class Slots {
   #limit: number;
   #active = 0;
   readonly #waiters: Waiter[] = [];
+  readonly #priorityWaiters: Waiter[] = [];
 
   constructor(limit: number) {
     this.#limit = limit;
@@ -48,8 +62,9 @@ class Slots {
     this.#wake();
   }
 
-  acquire(signal: AbortSignal): Promise<Release> {
+  acquire(signal: AbortSignal, opts: AcquireOptions = {}): Promise<Release> {
     if (signal.aborted) return Promise.reject(signal.reason);
+    const queue = opts.priority ? this.#priorityWaiters : this.#waiters;
     return new Promise<Release>((resolve, reject) => {
       const waiter: Waiter = {
         signal,
@@ -59,13 +74,13 @@ class Slots {
           resolve(this.#releaser());
         },
         onAbort: () => {
-          const at = this.#waiters.indexOf(waiter);
-          if (at >= 0) this.#waiters.splice(at, 1);
+          const at = queue.indexOf(waiter);
+          if (at >= 0) queue.splice(at, 1);
           reject(signal.reason);
         },
       };
       signal.addEventListener("abort", waiter.onAbort, { once: true });
-      this.#waiters.push(waiter);
+      queue.push(waiter);
       this.#wake();
     });
   }
@@ -80,9 +95,10 @@ class Slots {
     };
   }
 
+  /** Every priority waiter is served before any plain one, each queue in its own FIFO order. */
   #wake(): void {
     while (this.#active < this.#limit) {
-      const next = this.#waiters.shift();
+      const next = this.#priorityWaiters.shift() ?? this.#waiters.shift();
       if (next === undefined) return;
       next.grant();
     }
@@ -127,9 +143,9 @@ export class NetworkPool {
     return this.#slots.active;
   }
 
-  /** A slot for one request, in the order asked; rejects with the signal's reason if it aborts first. */
-  acquire(signal: AbortSignal): Promise<Release> {
-    return this.#slots.acquire(signal);
+  /** A slot for one request, in the order asked (or, with `{ priority: true }`, ahead of every non-priority waiter); rejects with the signal's reason if it aborts first. */
+  acquire(signal: AbortSignal, opts?: AcquireOptions): Promise<Release> {
+    return this.#slots.acquire(signal, opts);
   }
 
   onResponse(status: number): void {
