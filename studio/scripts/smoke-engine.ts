@@ -1068,6 +1068,37 @@ async function endEventOf(cdp: Cdp, jobId: unknown): Promise<unknown> {
 }
 
 /**
+ * The distinct attempt ids `userData/ledger.jsonl` has a `reserve` line for,
+ * among those starting with `prefix` — read as plain text, never through the
+ * `Ledger` class (which the live engine's own `Budget` already owns; this
+ * only reads, like every other direct userData/library read in this file).
+ * A reserve is written before its request leaves (invariant 2), and
+ * `Budget.tryReserve` checks the persisted ledger itself, not only this
+ * process's memory, so a reused attempt id throws `ATTEMPT_ID_REUSED`
+ * whichever process — this engine boot or an earlier, crashed one — reserved
+ * it first (money/budget.ts): every id here was reserved at most once, ever.
+ * A torn last line (a crash mid-append) is skipped, exactly like the real
+ * reader's own tolerance for one.
+ */
+async function reservedAttemptIds(userData: string, prefix: string): Promise<string[]> {
+  const text = await readFile(join(userData, "ledger.jsonl"), "utf8").catch(() => "");
+  const ids = new Set<string>();
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (field(parsed, "type") !== "reserve") continue;
+    const attemptId = field(parsed, "attemptId");
+    if (typeof attemptId === "string" && attemptId.startsWith(prefix)) ids.add(attemptId);
+  }
+  return [...ids];
+}
+
+/**
  * Creates one active avatar the same way the avatar scenario does (its own
  * draft → candidates → pick), so this scenario's photo run has a master
  * photo to reference. Kept apart from `runAvatarScenario`'s own avatar: this
@@ -1145,6 +1176,8 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     check("run scenario: runs.estimate prices a 20-photo run", field(runEstimate, "ok") === true, runEstimate);
     const startAcceptedWorstMicros = Number(field(runEstimate, "result", "estimate", "worstMicros"));
     const usageBeforeRun = mock.totalUsageUsd();
+    const imagesBeforeRun = mock.imageRequests().length;
+    const writersBeforeRun = mock.sceneWriterRequests().length;
     const started = await req(cdp, "runs.start", { ...runRequest, acceptedWorstMicros: startAcceptedWorstMicros });
     check("run scenario: runs.start plans and launches the run", field(started, "ok") === true, started);
     const runId = String(field(started, "result", "runId"));
@@ -1267,7 +1300,32 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       attemptIds,
     );
 
-    // 9. Credits and the cap: the mock's real usage for this run alone (its
+    // 9. The wire, not only the journal: a crash can end the engine between
+    // an attempt's send and its journal write, so the journal alone (step 8)
+    // cannot prove a kill never doubles a *send*, only that it never doubles
+    // a *journaled outcome*. `userData/ledger.jsonl`'s own `reserve` lines
+    // are written before the request leaves (invariant 2) and are checked
+    // against the persisted ledger itself, cross-process (the comment on
+    // reservedAttemptIds above): so the mock's own request count for this
+    // run — every image and every scene-writer call it actually received,
+    // across both engine lifetimes — can never exceed the run's distinct
+    // reserved attempt ids, image and writer counted separately.
+    const imagesForRun = mock.imageRequests().length - imagesBeforeRun;
+    const reservedImageIds = await reservedAttemptIds(userData, `${runId}:slot-`);
+    check(
+      "run scenario: the mock's image requests for this run never exceed the run's own reserved attempt ids",
+      imagesForRun <= reservedImageIds.length,
+      { imagesForRun, reservedImageAttemptIds: reservedImageIds.length },
+    );
+    const writersForRun = mock.sceneWriterRequests().length - writersBeforeRun;
+    const reservedWriterIds = await reservedAttemptIds(userData, `${runId}:writer-`);
+    check(
+      "run scenario: the mock's scene-writer requests for this run never exceed the run's own reserved attempt ids",
+      writersForRun <= reservedWriterIds.length,
+      { writersForRun, reservedWriterAttemptIds: reservedWriterIds.length },
+    );
+
+    // 10. Credits and the cap: the mock's real usage for this run alone (its
     // usage before the run minus its usage now) must never exceed the run's
     // own committed total (settled cost plus any reserve still open at its
     // worst case — RunSummary.committedMicros, "the run's summary" the plan
@@ -1287,7 +1345,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       { committedMicros, startAcceptedWorstMicros, resumeAcceptedWorstMicros },
     );
 
-    // 10. Cancel: a second, small run, stopped mid-flight.
+    // 11. Cancel: a second, small run, stopped mid-flight.
     const CANCEL_COUNT = 4;
     const cancelRequest = { avatarId, count: CANCEL_COUNT, categories: RUN_CATEGORIES, resolution: RUN_RESOLUTION, poses: RUN_POSES };
     const cancelEstimate = await req(cdp, "runs.estimate", cancelRequest);

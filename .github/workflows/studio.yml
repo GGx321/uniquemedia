@@ -183,8 +183,15 @@ jobs:
           fi
       - name: Smoke-test the E2E package (avatar end-to-end against the mock)
         if: env.PACKAGE == 'true'
-        # The reconcile check alone waits out the ledger's 120 s quiet period.
-        timeout-minutes: 15
+        # The avatar scenario's own reconcile check alone waits out the
+        # ledger's 120 s quiet period; the kill-and-resume scenario (T6) adds
+        # a real ~5 min wait of its own (invariant 4: after a restart nothing
+        # is spent until the owner reconciles, and that reconcile needs
+        # REQUEST_TIMEOUT_MS + RECONCILE_QUIET_MS of quiet since the engine
+        # reopened its ledger). Packaged Windows measured ~2.5 min for the
+        # avatar + import scenarios alone before that scenario existed; 25
+        # keeps real margin now that a single run pushes past 8.
+        timeout-minutes: 25
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then

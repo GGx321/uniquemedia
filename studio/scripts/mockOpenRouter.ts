@@ -30,9 +30,14 @@
  * can poll `requests`/`imageRequests()` to know a request has genuinely
  * arrived (and is being held) before it decides to act — never a fixed
  * sleep. `distinctImages` serves a different rendered image per call instead
- * of the one cached portrait: T7a is adding a PDQ near-duplicate QA gate to
- * photo runs, so identical fake images would start being retried as
- * duplicates once it lands.
+ * of the one cached portrait: T7a is adding an always-on PDQ near-duplicate
+ * QA gate to photo runs (threshold 20 of 256 bits), so identical — or merely
+ * different-hued but structurally uniform — fake images would be retried as
+ * duplicates once it lands. Each pool image is a distinct pattern
+ * (distinctPattern.ts, checkerboards and rotated stripes, encoded with
+ * grayscalePng.ts): studio/scripts/distinctPattern.test.ts proves every pair
+ * over 40 bits apart with PDQ itself (src/core/pdq), double the gate's own
+ * threshold.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -42,6 +47,8 @@ import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
+import { patternFor, renderGray } from "./distinctPattern";
+import { encodeGrayscalePng } from "./grayscalePng";
 
 const FIXTURES = join(import.meta.dirname, "../engine/money/fixtures");
 
@@ -67,36 +74,22 @@ function b64(bytes: Uint8Array): string {
 
 // ---------- distinct images (T6's kill-and-resume scenario) ----------
 
-/** HSL to a 6-digit hex string, s and l in [0, 1]. */
-function hslToHex(h: number, s: number, l: number): string {
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = l - c / 2;
-  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  const channel = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
-  return `${channel(r)}${channel(g)}${channel(b)}`;
-}
+const DISTINCT_WIDTH = 200;
+const DISTINCT_HEIGHT = 356;
 
 /**
- * A real, valid, non-animated PNG, distinct by `index` (a different solid
- * colour per index, golden-angle spaced so neighbours are visually far
- * apart), from the bundled ffmpeg — never a committed binary blob. Every
- * image a photo run's slots receive must be visually distinct: T7a is adding
- * a PDQ near-duplicate QA gate, so identical fake images would be retried as
- * duplicates once it lands (see the module doc above).
+ * A real, valid, non-animated PNG, structurally distinct by `index`
+ * (distinctPattern.ts's checkerboards and rotated stripes, encoded with
+ * grayscalePng.ts — never a committed binary blob, never a round trip
+ * through ffmpeg): PDQ compares luminance structure, not hue, so every image
+ * a photo run's slots receive must differ in structure, not just colour —
+ * see the module doc above and distinctPattern.test.ts's own proof.
  */
 function distinctPortraitPng(index: number): Uint8Array {
-  const hue = (index * 137) % 360;
-  const hex = hslToHex(hue, 0.65, 0.5);
-  const r = spawnSync(ffmpegPath(), [
-    "-f", "lavfi", "-i", `color=c=0x${hex}:size=200x356:d=1`,
-    "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1",
-  ], { timeout: 30_000 });
-  if (r.status !== 0) throw new Error(`the mock OpenRouter could not render distinct portrait #${index}: ${r.stderr.toString()}`);
-  return new Uint8Array(r.stdout);
+  return encodeGrayscalePng(DISTINCT_WIDTH, DISTINCT_HEIGHT, renderGray(patternFor(index), DISTINCT_WIDTH, DISTINCT_HEIGHT));
 }
 
-/** Every distinct image up front (never mid-request): each call spawns ffmpeg, which must not add latency while a caller is timing a request's arrival. */
+/** Every distinct image up front (never mid-request), so nothing adds latency while a caller is timing a request's arrival. */
 function buildDistinctPool(size: number): Uint8Array[] {
   return Array.from({ length: size }, (_, i) => distinctPortraitPng(i));
 }
