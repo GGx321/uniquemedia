@@ -3,6 +3,7 @@ import { ENGINE_GONE_DETAIL, type AvatarTraits, type EngineCommandMessage, type 
 import { DESCRIPTOR_MAX_ATTEMPTS } from "../engine/avatars/descriptor";
 import { COMMAND_DEADLINE_MS, type EngineInit } from "../engine/control";
 import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
+import { REFERENCE_TIMEOUT_MS } from "../engine/runs/timeouts";
 import { MAX_ATTEMPT_MS } from "../engine/openrouter/transport";
 import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort } from "./engineHost";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -423,7 +424,11 @@ describe("request deadline", () => {
     expect(COMMAND_DEADLINE_MS["avatars.generateCandidates"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });
 
-  test.each(["runs.estimate", "runs.estimateResume", "runs.start", "runs.resume", "runs.list"] as const)(
+  test("runs.start also waits for the master's preflight (a bounded load, then a bounded prepare of the gates) before it answers", () => {
+    expect(COMMAND_DEADLINE_MS["runs.start"]).toBe(PRICE_FETCH_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + 30_000);
+  });
+
+  test.each(["runs.estimate", "runs.estimateResume", "runs.resume", "runs.list"] as const)(
     "%s answers once its checks and a price load are done (a run's job runs on), so it waits as long as an estimate",
     (type) => {
       expect(COMMAND_DEADLINE_MS[type]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);

@@ -4,6 +4,7 @@ import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
 import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
+import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 
 // Messages between main and the engine that are not part of the
 // renderer-facing contract (studio/shared/engine). They never reach the
@@ -163,7 +164,10 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // and reports by events.
   "runs.estimate": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "runs.estimateResume": PRICE_FETCH_TIMEOUT_MS + 15_000,
-  "runs.start": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  // Also waits for the master's own look before a run exists (`preflightMaster`): a bounded load of the master,
+  // then a bounded prepare of the gates on it, one REFERENCE_TIMEOUT_MS each. Bounding the preflight inside the
+  // slack instead would refuse a slow but healthy master; the deadline is sized to the awaited path, as createDraft's is.
+  "runs.start": PRICE_FETCH_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + COMMAND_SLACK_MS,
   "runs.resume": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "runs.list": PRICE_FETCH_TIMEOUT_MS + 15_000,
 };

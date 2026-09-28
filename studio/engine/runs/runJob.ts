@@ -1,3 +1,4 @@
+import { REFERENCE_TIMEOUT_MS } from "./timeouts";
 import { createHash } from "node:crypto";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
 import { NoFaceInReferenceError } from "../face/noFaceError";
@@ -57,8 +58,7 @@ import { runWriterPhase } from "./writerPhase";
 /** What the job needs of the library: the run's journal, the master as a reference (and, for a gate's own prepare(), the master's original bytes — M1/N1), and the photos. */
 export type RunLibrary = Pick<Library, "appendJournal" | "readJournal" | "addPhoto" | "loadReference" | "loadMasterOriginal" | "photosByAvatar" | "appendHistory">;
 
-/** How long preparing the master as a reference (an ffmpeg downscale) may take before the run fails for free. */
-export const REFERENCE_TIMEOUT_MS = 30_000;
+export { REFERENCE_TIMEOUT_MS };
 
 /**
  * How long a free gate may take on an image that arrived after the user's
