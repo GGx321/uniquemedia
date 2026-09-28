@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
-import { NoFaceInReferenceError } from "../face";
+import { NoFaceInReferenceError } from "../face/noFaceError";
 import type { Library, NewPhotoMeta, PhotoQa } from "../library";
 import { imageSize, isAnimatedImage, sniffImageMediaType, type LibraryReference } from "../library/media";
 import type { Budget } from "../money/budget";

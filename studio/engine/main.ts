@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { EngineInit } from "./control";
 import { ortWasmPathsFrom } from "./decode/wasmPaths";
 import { deliver, Engine, exitIfStartFails } from "./engine";
-import { defaultFaceGateConfig } from "./face";
+import { defaultFaceGateConfig } from "./face/config";
 import { createFaceWorkerSpawner } from "./face/worker/spawn";
 import { createWorkerFaceGate, type WorkerFaceGate } from "./face/worker/workerGate";
 import { timeoutSignal, untilAborted } from "./money/timeoutSignal";
