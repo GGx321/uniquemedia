@@ -426,6 +426,8 @@ describe.each([
   { name: "AGE_GATE_UNAVAILABLE", text: ERROR_MESSAGES_RU.AGE_GATE_UNAVAILABLE, options: { imageAgeCheck: "on" as const }, arm: (e: MockEngine) => e.setAgeGateAvailable(false) },
   { name: "LIBRARY_UNAVAILABLE", text: ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE, options: {}, arm: (e: MockEngine) => e.setLibraryAvailable(false) },
   { name: "a missing master (NOT_FOUND)", text: ERROR_MESSAGES_RU.NOT_FOUND, options: {}, arm: (e: MockEngine) => e.removeMaster(MIA.avatarId) },
+  { name: "MASTER_FACE_UNUSABLE", text: ERROR_MESSAGES_RU.MASTER_FACE_UNUSABLE, options: {}, arm: (e: MockEngine) => e.setMasterPreflightFailure(MIA.avatarId, { code: "MASTER_FACE_UNUSABLE" }) },
+  { name: "INTERNAL (the gates could not be prepared)", text: ERROR_MESSAGES_RU.INTERNAL, options: {}, arm: (e: MockEngine) => e.setMasterPreflightFailure(MIA.avatarId, { code: "INTERNAL" }) },
 ])("a start refused with $name", ({ text, options, arm }) => {
   test("shows the Russian text, keeps the price, and starts nothing", async () => {
     const { engine, client } = await openPhotos(options);

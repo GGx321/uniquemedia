@@ -401,6 +401,22 @@ describe("runs.start refusals, in the real engine's order", () => {
     expect(unknown).toMatchObject({ ok: false, error: { code: "NOT_FOUND", detail: expect.not.stringContaining("master") } });
   });
 
+  test.each(["MASTER_FACE_UNUSABLE", "INTERNAL"] as const)("%s from the master's own look before a run exists: refused free, no run is created", async (code) => {
+    const { engine, client } = makeMock();
+    engine.setMasterPreflightFailure(MIA.avatarId, { code });
+    expect(await client.request("runs.start", START)).toMatchObject({ ok: false, error: { code } });
+    expect(await runCount(client)).toBe(0);
+    // Cleared, the same start goes through.
+    engine.setMasterPreflightFailure(MIA.avatarId, null);
+    expect((await client.request("runs.start", START)).ok).toBe(true);
+  });
+
+  test("the master's own look comes after the price: a start that would be PRICE_CHANGED never gets that far", async () => {
+    const { engine, client } = makeMock();
+    engine.setMasterPreflightFailure(MIA.avatarId, { code: "MASTER_FACE_UNUSABLE" });
+    expect(await client.request("runs.start", { ...START, acceptedWorstMicros: 1 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
+  });
+
   test("the order: key, then the ledger, then the library, then the avatar, then the master, then the gates, then the price", async () => {
     const { engine, client } = makeMock({ imageAgeCheck: "on" });
     engine.setAgeGateAvailable(false);

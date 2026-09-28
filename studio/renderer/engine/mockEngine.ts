@@ -408,6 +408,8 @@ export class MockEngine implements EngineBridge {
   private faceGate: { available: boolean; loadError?: string } = { available: true };
   private ageGateAvailable = true;
   private readonly mastersMissing = new Set<string>();
+  /** What the engine's own look at the master (the gates' prepare) answers at a run start, per avatar. */
+  private readonly masterPreflight = new Map<string, EngineError>();
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -617,6 +619,17 @@ export class MockEngine implements EngineBridge {
   /** The avatar's master photo is gone from the library: runs.start answers NOT_FOUND up front; a resume starts and its job fails NOT_FOUND. */
   removeMaster(avatarId: string): void {
     this.mastersMissing.add(avatarId);
+  }
+
+  /**
+   * The gates' own look at the master before a run is planned fails for this
+   * avatar (`MASTER_FACE_UNUSABLE`: no usable face; `INTERNAL`: the gates
+   * could not be prepared): runs.start refuses it free, after the price
+   * checks and before any run exists, as the engine does. `null` clears it.
+   */
+  setMasterPreflightFailure(avatarId: string, error: EngineError | null): void {
+    if (error === null) this.masterPreflight.delete(avatarId);
+    else this.masterPreflight.set(avatarId, error);
   }
 
   /** Undoes `removeMaster`. */
@@ -982,7 +995,8 @@ export class MockEngine implements EngineBridge {
           this.runnableRefusal(request.avatarId) ??
           this.masterRefusal(request.avatarId) ??
           this.gateRefusal(this.settings.imageAgeCheck === "on") ??
-          this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros);
+          this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros) ??
+          (this.masterPreflight.get(request.avatarId) ?? null);
         if (refusal) return this.fail(c, refusal);
         const run: MockRun = {
           runId: this.nextId("run"),
