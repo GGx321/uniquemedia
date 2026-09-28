@@ -260,6 +260,49 @@ describe("prepare() (H1: computes the master embedding eagerly, before any check
     expect(embedCalls).toBe(1); // the hung computation never actually called embed(); the fresh one did, exactly once.
   });
 
+  test("B2: a SLOW (not hung) computation evicted mid-flight, then resolving, still leaves check() a usable entry", async () => {
+    // Round-2 verification, B2: job 1 is cancelled during a slow (>30 s in
+    // production) master computation; the resume (job 2) reuses the very
+    // same pending promise; N11's own eviction timer fires while it is
+    // still pending; the computation THEN resolves successfully — job 2's
+    // own prepare() call, still awaiting that exact promise, succeeds. But
+    // the cache entry was already evicted, so the FIRST check() afterwards
+    // found nothing and threw GateBroken after a paid image. Fixed:
+    // embeddingFor re-installs the successful result if the slot is still
+    // empty (or unchanged) once the awaited value actually arrives.
+    const m = await money();
+    let release: (() => void) | undefined;
+    const gateP = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({ embed: async () => MASTER_EMBEDDING }),
+      embeddingComputeTimeoutMs: 30,
+    });
+    const decodeImage = async () => {
+      await gateP;
+      return DECODED;
+    };
+
+    const j1Controller = new AbortController();
+    setTimeout(() => j1Controller.abort(new Error("job 1 gave up")), 10);
+    const j1 = gate.prepare?.(prepareInput({ signal: j1Controller.signal, decodeImage })).catch(() => "j1 gave up");
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // job 2 (a resume) starts with a much longer bound, reusing the same pending computation.
+    const j2 = gate.prepare?.(prepareInput({ signal: new AbortController().signal, decodeImage }));
+
+    // Past embeddingComputeTimeoutMs (30 ms since the computation started at
+    // t=0): the eviction timer fires while the computation is STILL pending.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    release?.(); // the computation finishes at ~40ms+, after eviction.
+    await j2; // job 2's own prepare() succeeded.
+    await j1;
+
+    const verdict = await gate.check(input({}, m));
+    expect(verdict.verdict).toBe("pass");
+  });
+
   test("an already-aborted signal rejects prepare() immediately", async () => {
     const gate = createFaceQaGate({ faceGate: fakeFaceGate() });
     const controller = new AbortController();

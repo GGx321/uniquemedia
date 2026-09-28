@@ -243,7 +243,23 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
     const sha256 = createHash("sha256").update(input.masterOriginal).digest("hex");
     const cached = masterEmbeddings.get(input.avatarId);
     const promise = cached !== undefined && cached.sha256 === sha256 ? cached.promise : computeEmbedding(input.avatarId, input.masterOriginal, sha256, input.decodeImage);
-    return abortableWait(promise, input.signal);
+    return abortableWait(promise, input.signal).then((value) => {
+      // Round-2 verification, B2: N11's own eviction timer can fire while
+      // this exact computation is still pending (a slow, not hung,
+      // decode+embed — a job 1 cancelled mid-flight, a resume reusing the
+      // same pending promise) and THEN the computation succeeds anyway —
+      // this caller's own `prepare()` resolves correctly, but the cache
+      // entry it was reading from is already gone, so a later `check()`
+      // would find nothing (GateBroken, after a paid image). Re-install a
+      // settled entry here, but only if the slot is still empty or still
+      // holds this exact sha — never clobber a genuinely newer/different
+      // preparation that has since taken over.
+      const current = masterEmbeddings.get(input.avatarId);
+      if (current === undefined || current.sha256 === sha256) {
+        masterEmbeddings.set(input.avatarId, { sha256, promise: Promise.resolve(value) });
+      }
+      return value;
+    });
   }
 
   return {
