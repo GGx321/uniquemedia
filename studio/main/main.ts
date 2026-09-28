@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   MessageChannelMain,
+  nativeImage,
   protocol,
   safeStorage,
   utilityProcess,
@@ -19,6 +20,7 @@ import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { engineEnv } from "./engineEnv";
 import { EngineHost } from "./engineHost";
+import { handleImageDecodeCall, nativeImageDecoder } from "./imageDecode";
 import { handleImportPhotoCommand } from "./importFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
 import { handleMediaRequest, MEDIA_SCHEME } from "./mediaProtocol";
@@ -215,6 +217,10 @@ async function startStudio(): Promise<void> {
     onExit: (error, restarting) => {
       if (restarting) notices.add("engine-restarted", error.detail);
     },
+    // T7b: the engine's utilityProcess has no Electron nativeImage of its
+    // own (the runtime rule forbids importing "electron" there anyway) — the
+    // face gate's decode call is answered here, the one place that has it.
+    onCall: async (call) => handleImageDecodeCall(call, { decode: nativeImageDecoder(nativeImage) }),
   });
   app.on("will-quit", () => engine.stop());
 
