@@ -659,16 +659,27 @@ describe("a run with the real createAgeGate wired (not the local fake)", () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await engineOver(runNetwork(), { imageAgeCheck: "on", qaGates: [createAgeGate()] });
 
-    const { runId, jobId } = started(await engine.handle(startRun(avatarId, FOUR_ON_WORST)));
+    const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_ON_WORST)));
     expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 0 } } });
 
-    const reserves = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve");
+    const lines = readLedgerLines(join(dir(), "userData", "ledger.jsonl"));
+    const reserves = lines.filter((l) => l.type === "reserve");
     const ageReserves = reserves.filter((r) => typeof r.attemptId === "string" && r.attemptId.endsWith(":age"));
     expect(ageReserves).toHaveLength(4);
-    void runId;
+    // T7a re-review (finding L4): the title promises "settled" and "qa.age stored" — pin both, not
+    // just that a reserve line exists (a reserve alone says nothing about how the attempt ended).
+    for (const reserve of ageReserves) {
+      const close = lines.find((l) => l.type !== "reserve" && l.attemptId === reserve.attemptId);
+      expect(close?.type).toBe("settle");
+    }
+    // Excludes seedAvatar's own master photo (also carries a qa.age, but is not one of the run's own).
+    const masterPhotoId = engine.library?.getAvatar(avatarId)?.masterPhotoId;
+    const generated = (engine.library?.photosByAvatar(avatarId) ?? []).filter((p) => p.id !== masterPhotoId);
+    expect(generated).toHaveLength(4);
+    expect(generated.every((p) => p.qa.age?.adult === true)).toBe(true);
   });
 
-  test("network 1, a slow image: the age gate's own instant check is not spuriously timed out by the FIFO wait behind other slots' images (T7a review, finding 1's own repro A, at the engine level)", async () => {
+  test("network 1, a slow image: no deadlock and no lost slots with the real age gate under a constrained pool (a basic sanity check — NOT a proof of finding 1's own fix: a 60 ms image against a ~682 s gate timeout cannot distinguish 'fixed' from 'still broken'; runJob.test.ts's own repro A pins that)", async () => {
     const avatarId = await seedAvatar();
     const net = runNetwork({
       image: async (_call, n) => {
