@@ -41,6 +41,15 @@ const Empty = z.strictObject({});
 /** runs.list answers at most this many runs, newest first. */
 export const MAX_LISTED_RUNS = 100;
 
+/**
+ * photos.list answers at most this many photos, newest first: no cursor yet
+ * (T8b). A single run already caps at 100 photos (RunRequest.count); this is
+ * a generous multiple of that for one avatar's whole gallery across many
+ * runs, picked as a simple bound for now rather than because anything today
+ * demands more — revisit with a cursor if a real library ever approaches it.
+ */
+export const MAX_LISTED_PHOTOS = 500;
+
 /** Avatar records the engine could not list normally, kept bounded (the Snapshot and avatars.list). */
 export const MAX_UNREADABLE_AVATARS = 200;
 const UnreadableAvatars = z.array(UnreadableAvatar).max(MAX_UNREADABLE_AVATARS);
@@ -229,8 +238,12 @@ const ENGINE_SPECS = [
   defineCommand("runs.resume", z.strictObject({ runId: Id, ...AcceptedWorst }), z.strictObject({ runId: Id, jobId: Id })),
   // Every run the open library holds, newest first (bounded), read from disk: how to find a run to resume after a restart.
   defineCommand("runs.list", Empty, z.strictObject({ runs: z.array(RunSummary).max(MAX_LISTED_RUNS) })),
-  // Not implemented yet (T8b's gallery).
-  defineCommand("photos.list", z.strictObject({ avatarId: Id }), z.strictObject({ photos: z.array(PhotoSummary) })),
+  // T8b's gallery: an avatar's stored run photos, newest first, bounded at
+  // MAX_LISTED_PHOTOS. NOT_FOUND only for an avatarId the library does not
+  // have at all — a draft, an active avatar and an archived one all get
+  // their (possibly empty) list, like avatars.list already lists archived
+  // avatars normally; see engine.ts's own comment on this handler.
+  defineCommand("photos.list", z.strictObject({ avatarId: Id }), z.strictObject({ photos: z.array(PhotoSummary).max(MAX_LISTED_PHOTOS) })),
   // engine
   defineCommand("engine.snapshot", Empty, Snapshot),
   defineCommand("engine.events", z.strictObject({ afterSeq: Count, bootId: Id }), EventsSince),

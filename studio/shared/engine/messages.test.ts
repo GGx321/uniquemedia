@@ -137,6 +137,18 @@ const photo: PhotoSummary = {
   category: "home",
   resolution: "1k",
   createdAt: "2026-09-24T11:00:00Z",
+  qa: { faceCos: 0.81, age: { adult: true, confidence: 0.95 } },
+};
+
+// A photo made before T7b's face gate, or with the image age check off: no
+// qa fields at all, additive and optional on PhotoSummary itself.
+const photoWithoutQa: PhotoSummary = {
+  photoId: "photo-0003",
+  avatarId: "avatar-0001",
+  runId: "run-00000001",
+  category: "travel",
+  resolution: "2k",
+  createdAt: "2026-09-24T11:05:00Z",
 };
 
 const progressEvent: EventMessage = {
@@ -209,7 +221,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "runs.estimateResume": { payload: { runId: "run-00000001" }, result: { estimate: { ...estimate, expectedMicros: 500_000, worstMicros: 1_650_000 } } },
   "runs.resume": { payload: { runId: "run-00000001", acceptedWorstMicros: 1_650_000 }, result: { runId: "run-00000001", jobId: "job-00000003" } },
   "runs.list": { payload: {}, result: { runs: [runSummary] } },
-  "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo] } },
+  "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo, photoWithoutQa] } },
   "engine.snapshot": {
     payload: {},
     result: {

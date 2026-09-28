@@ -9,6 +9,7 @@ import {
   JobProgress,
   JobState,
   MoneyStatus,
+  PhotoSummary,
   ReconcileResult,
   RunRequest,
   RunSummary,
@@ -129,6 +130,15 @@ const avatar = {
   createdAt: "2026-09-24T10:00:00Z",
   status: "active",
   photoCount: 0,
+};
+
+const photo = {
+  photoId: "photo-0002",
+  avatarId: "avatar-0001",
+  runId: "run-00000001",
+  category: "home",
+  resolution: "1k",
+  createdAt: "2026-09-24T11:00:00Z",
 };
 
 describe("ApiKeyStatus", () => {
@@ -801,5 +811,46 @@ describe("RunSummary (T6: a run as runs.list finds it on disk)", () => {
 
   test("accepts a committed amount above the cap: a bill above its worst case can put it there, and the list must still say so", () => {
     expect(RunSummary.safeParse({ ...runSummary, committedMicros: 3_385_001 }).success).toBe(true);
+  });
+});
+
+describe("PhotoSummary (T8b: the Photos screen's gallery)", () => {
+  test("accepts a photo with no qa at all: additive and optional", () => {
+    expect(PhotoSummary.safeParse(photo).success).toBe(true);
+  });
+
+  test("accepts qa with just a face-similarity badge", () => {
+    expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: 0.81 } }).success).toBe(true);
+  });
+
+  test("accepts qa with just an age verdict", () => {
+    expect(PhotoSummary.safeParse({ ...photo, qa: { age: { adult: true, confidence: 0.95 } } }).success).toBe(true);
+  });
+
+  test("accepts qa with both fields", () => {
+    expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: 0.81, age: { adult: true, confidence: 0.95 } } }).success).toBe(true);
+  });
+
+  test("rejects a faceCos outside -1..1", () => {
+    expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: 1.5 } }).success).toBe(false);
+    expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: -1.5 } }).success).toBe(false);
+  });
+
+  test("rejects an age confidence outside 0..1", () => {
+    expect(PhotoSummary.safeParse({ ...photo, qa: { age: { adult: true, confidence: 1.2 } } }).success).toBe(false);
+  });
+
+  test("rejects an unknown qa field", () => {
+    expect(PhotoSummary.safeParse({ ...photo, qa: { pdq: "a".repeat(64) } }).success).toBe(false);
+  });
+
+  test("rejects a null runId being anything but a valid id or null", () => {
+    expect(PhotoSummary.safeParse({ ...photo, runId: null }).success).toBe(true);
+    expect(PhotoSummary.safeParse({ ...photo, runId: "" }).success).toBe(false);
+  });
+
+  test("rejects an unknown category or resolution", () => {
+    expect(PhotoSummary.safeParse({ ...photo, category: "lingerie" }).success).toBe(false);
+    expect(PhotoSummary.safeParse({ ...photo, resolution: "4k" }).success).toBe(false);
   });
 });

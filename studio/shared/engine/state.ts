@@ -498,6 +498,24 @@ export const RunSummary = z
   .refine((r) => r.done + r.failed + r.open === r.total, { message: "done, failed and open slots must add up to the total", path: ["open"] })
   .refine((r) => r.resumable === (!r.running && r.open > 0), { message: "a run is resumable exactly when it is not running and has open slots", path: ["resumable"] });
 
+/**
+ * The subset of a photo's QA verdicts worth showing as a gallery badge
+ * (T8b): the owner's hybrid face gate (T7b) carries a similarity score on
+ * every photo it judges, not only its rejections — the gate auto-retries
+ * only a clear failure and otherwise leaves the rest to the owner's own eye
+ * — and the age check's own verdict, when the toggle was on for this photo.
+ * Optional on `PhotoSummary` itself: a photo made before T7b, or with the
+ * age check off (the default), simply carries none of this. Each field is
+ * independently optional too, since a photo can carry one without the
+ * other. Mirrors `library/schemas.ts`'s `PhotoQa`, but only the fields the
+ * gallery has a use for — this is a display contract, not the engine's own
+ * QA record.
+ */
+export const PhotoQaSummary = z.strictObject({
+  faceCos: z.number().min(-1).max(1).optional(),
+  age: z.strictObject({ adult: z.boolean(), confidence: z.number().min(0).max(1) }).optional(),
+});
+
 export const PhotoSummary = z.strictObject({
   photoId: Id,
   avatarId: Id,
@@ -505,6 +523,7 @@ export const PhotoSummary = z.strictObject({
   category: SceneCategory,
   resolution: Resolution,
   createdAt: IsoDateTime,
+  qa: PhotoQaSummary.optional(),
 });
 
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
@@ -538,4 +557,5 @@ export type JobResult = z.infer<typeof JobResult>;
 export type FailedCandidateSlot = z.infer<typeof FailedCandidateSlot>;
 export type RunRequest = z.infer<typeof RunRequest>;
 export type RunSummary = z.infer<typeof RunSummary>;
+export type PhotoQaSummary = z.infer<typeof PhotoQaSummary>;
 export type PhotoSummary = z.infer<typeof PhotoSummary>;
