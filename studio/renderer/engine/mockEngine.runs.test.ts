@@ -178,6 +178,21 @@ test("a resume never offers more than the run's cap leaves", async () => {
   expect(estimate.expectedMicros).toBeLessThanOrEqual(estimate.worstMicros);
 });
 
+test("a capped resume's own reserves never push committedMicros past the run's cap (N6)", async () => {
+  const { client, engine } = makeMock();
+  // capMicros $0.60: $0.40 already settled (8 done at $0.05), $0.20 left for
+  // 4 open slots whose raw worst case (4 × 3 × $0.05 = $0.60) is 3× that.
+  const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 8 * 50_000 + 200_000);
+  const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
+  expect(estimate.worstMicros).toBe(200_000);
+
+  const resumed = await unwrap(client.request("runs.resume", { runId, acceptedWorstMicros: estimate.worstMicros }));
+  const [run] = (await unwrap(client.request("runs.list", {}))).runs;
+  expect(run).toMatchObject({ runId, capMicros: 600_000, committedMicros: 600_000 });
+  expect(run?.committedMicros).toBeLessThanOrEqual(run?.capMicros ?? 0);
+  expect(resumed.runId).toBe(runId);
+});
+
 test("runs.estimateResume on a fully ended run answers VALIDATION, like runs.resume itself (L7)", async () => {
   const { client, engine } = makeMock();
   const runId = engine.seedRun({ ...REQUEST, count: 3, categories: ["home"] }, 3); // every slot already done

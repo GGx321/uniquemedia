@@ -1198,7 +1198,16 @@ export class MockEngine implements EngineBridge {
       cancelTimers: [],
     };
     this.runJobs = [...this.runJobs, job];
-    for (const key of job.reserveKeys) this.reserves.set(key, MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst);
+    // N6: reserved at most what the cap leaves, in total — every open slot's
+    // full worst case regardless of the cap could push committedMicros past
+    // it (a capped resume, whose runs.estimateResume already capped this
+    // same sum). Matches resumePrice's own min(rawRemaining, capLeft).
+    let capLeft = Math.max(0, run.capMicros - run.settledMicros);
+    for (const key of job.reserveKeys) {
+      const reserve = Math.min(MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst, capLeft);
+      this.reserves.set(key, reserve);
+      capLeft -= reserve;
+    }
     this.emitMoney();
 
     openIndexes.forEach((slotIndex, step) => {
