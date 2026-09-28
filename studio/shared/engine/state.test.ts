@@ -121,6 +121,7 @@ const runSummary = {
   committedMicros: 1_200_000,
   running: false,
   resumable: true,
+  capExhausted: false,
   remainingWorstMicros: 1_650_000,
 };
 
@@ -855,8 +856,27 @@ describe("RunSummary (T6: a run as runs.list finds it on disk)", () => {
     expect(RunSummary.safeParse({ ...runSummary, done: 19, open: 0 }).success).toBe(false);
   });
 
-  test("rejects a stopped run with slots open that does not say it is resumable", () => {
-    expect(RunSummary.safeParse({ ...runSummary, resumable: false }).success).toBe(false);
+  test("rejects a stopped run with slots open that says neither that it is resumable nor that its cap is used up", () => {
+    expect(RunSummary.safeParse({ ...runSummary, resumable: false, capExhausted: false }).success).toBe(false);
+  });
+
+  // A run whose cap cannot fund one more attempt has reached a real end: not resumable, and says why.
+  test("accepts a stopped run with slots open whose cap is used up: not resumable, capExhausted", () => {
+    expect(RunSummary.safeParse({ ...runSummary, resumable: false, capExhausted: true, remainingWorstMicros: 12_000 }).success).toBe(true);
+  });
+
+  test("rejects a run that is both resumable and cap-exhausted", () => {
+    expect(RunSummary.safeParse({ ...runSummary, capExhausted: true }).success).toBe(false);
+  });
+
+  test("rejects a cap-exhausted run that is running or has no slot left open", () => {
+    expect(RunSummary.safeParse({ ...runSummary, resumable: false, capExhausted: true, running: true }).success).toBe(false);
+    expect(RunSummary.safeParse({ ...runSummary, resumable: false, capExhausted: true, done: 19, open: 0 }).success).toBe(false);
+  });
+
+  test("rejects a summary without the capExhausted flag", () => {
+    const { capExhausted: _c, ...without } = runSummary;
+    expect(RunSummary.safeParse(without).success).toBe(false);
   });
 
   test("accepts a committed amount above the cap: a bill above its worst case can put it there, and the list must still say so", () => {

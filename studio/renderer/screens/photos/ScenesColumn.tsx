@@ -127,32 +127,25 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
   // Another paid command (the generate card's or another row's) is in flight for this avatar (L5): this row locks too, though it is not the one sending.
   const lockedByOther = paidInFlight && busy === null;
   const effectiveBlockedReason = blockedReason ?? (lockedByOther ? "Дождитесь окончания другого платного действия." : null);
-  // The run's cap has nothing left for its open slots (L6): a resume would
-  // only ever be refused at zero, so this is not a price to confirm — show a
-  // plain non-paid state instead of a button reading «до $0.00».
-  const capExhausted = estimate !== null && estimate.worstMicros === 0;
   const title =
     busy === "estimate"
       ? "Считаем…"
       : busy === "resume"
         ? "Продолжаем…"
-        : capExhausted
-          ? "Лимит запуска исчерпан"
-          : previousWorst !== null
+        : previousWorst !== null
             ? "Подтвердить новую цену"
             : estimate
               ? "Продолжить"
               : "Узнать цену";
-  const paidClick = estimate !== null && effectiveBlockedReason === null && !capExhausted;
+  const paidClick = estimate !== null && effectiveBlockedReason === null;
   const clickable = busy === null && (estimate === null || paidClick);
   // B2: whether the row offers (or would offer, once priced) a paid resume,
   // so its own second line's height never jumps between "no price yet" and
   // "a price is in" — including the very first frame, always busy="estimate"
-  // before its own mount-time price ever lands. Not the exhausted-cap state
-  // (L6, no price to confirm at all) and not "Узнать цену" (a free re-ask,
-  // reached only after a failed estimate, with nothing in flight and no
-  // price known).
-  const offersPaidStart = !capExhausted && (busy !== null || estimate !== null);
+  // before its own mount-time price ever lands. Not "Узнать цену" (a free
+  // re-ask, reached only after a failed estimate, with nothing in flight and
+  // no price known).
+  const offersPaidStart = busy !== null || estimate !== null;
   const failed = run.failed > 0 ? ` · не получилось ${run.failed}` : "";
   const dateId = useId();
 
@@ -171,7 +164,7 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
           <p className="photos-scene-text">
             Готово {run.done} из {run.total} · осталось {run.open}
             {failed}
-            {estimate && !capExhausted && <span className="mono"> · ≈ {formatUsd(estimate.expectedMicros)}</span>}
+            {estimate && <span className="mono"> · ≈ {formatUsd(estimate.expectedMicros)}</span>}
           </p>
         </div>
         <button
@@ -211,6 +204,36 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
   );
 }
 
+/**
+ * A run whose cap cannot fund one more attempt has reached its end (`runs.list`'s
+ * `capExhausted`): a plain summary of what it made, with nothing to click or
+ * price. Its photos are in the gallery; what is missing needs a new run.
+ */
+function EndedRunRow({ run }: { run: RunSummary }) {
+  const titleId = useId();
+  const dateId = useId();
+  const failed = run.failed > 0 ? ` · не получилось ${run.failed}` : "";
+  return (
+    <article className="photos-scene photos-run" aria-labelledby={`${titleId} ${dateId}`}>
+      <div className="photos-scene-main">
+        <div className="photos-scene-tags">
+          <span id={titleId} className="tag">
+            Лимит исчерпан
+          </span>
+          <span id={dateId} className="tag tag-o">
+            {RUN_DATE.format(Date.parse(run.createdAt))}
+          </span>
+        </div>
+        <p className="photos-scene-text">
+          Готово {run.done} из {run.total} · не дорисовано {run.open}
+          {failed}
+        </p>
+        <p className="field-hint">Лимит расходов этого запуска исчерпан, продолжить его нельзя. Недостающие фото — новым запуском.</p>
+      </div>
+    </article>
+  );
+}
+
 /** How the run this screen watched ended: the gallery shows its photos, this says what else happened. */
 function RunOutcome({ job }: { job: JobView }) {
   if (job.status === "failed" && job.error) return <ErrorNotice error={job.error} />;
@@ -242,6 +265,7 @@ interface ScenesColumnProps {
   activeRunId: string | null;
   /** Whether the latest run job was seen running on this screen: only then does its ending get a notice. */
   watched: boolean;
+  /** This avatar's runs from `runs.list`: the resumable ones get a resume row, the ones ended by their cap a plain summary. */
   runs: readonly RunSummary[];
   runsError: EngineError | null;
   /** Retries the `runs.list` this screen asks for its stopped runs. */
@@ -350,7 +374,10 @@ export function ScenesColumn({
       )}
 
       {/* Keyed on what is left too: a run whose open slots changed (another window, a resync) is priced again. */}
-      {runs.map((run) => (
+      {runs.filter((run) => run.capExhausted).map((run) => (
+        <EndedRunRow key={run.runId} run={run} />
+      ))}
+      {runs.filter((run) => run.resumable).map((run) => (
         <ResumeRow
           key={`${run.runId}:${run.open}`}
           run={run}

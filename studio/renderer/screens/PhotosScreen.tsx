@@ -143,7 +143,6 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
 
   // The active job's own runId, straight off its events (or the start/resume reply): cancel never waits on runs.list.
   const activeRunId = runActive && runJob !== null ? runJob.runId : null;
-  const resumable = runs.filter((r) => r.resumable);
   const pending: PendingSlots | null =
     runJob !== null && runActive && runJob.total > runJob.done
       ? { remaining: runJob.total - runJob.done, drawing: Math.min(runJob.total - runJob.done, view.settings?.concurrency.network ?? 1) }
@@ -200,7 +199,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
             runJob={runJob}
             activeRunId={activeRunId}
             watched={runJob !== null && (watched.has(runJob.jobId) || !knownAtOpen.has(runJob.jobId))}
-            runs={resumable}
+            runs={runs}
             runsError={runsError}
             onRetryRuns={() => setRunsRefresh((n) => n + 1)}
             paidInFlight={paidInFlight}

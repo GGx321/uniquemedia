@@ -128,6 +128,7 @@ const runSummary: RunSummary = {
   committedMicros: 1_200_000,
   running: false,
   resumable: true,
+  capExhausted: false,
   remainingWorstMicros: 1_650_000,
 };
 

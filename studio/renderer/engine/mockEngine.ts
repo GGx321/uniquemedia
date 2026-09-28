@@ -952,6 +952,7 @@ export class MockEngine implements EngineBridge {
         if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
         // L7: matches the real engine's own #remaining, which runs.resume already shares with this command.
         if (run.slots.every((s) => s.end !== null)) return this.fail(c, { code: "VALIDATION", detail: `run ${run.runId} has nothing left to resume: every slot already ended` });
+        if (this.capExhausted(run)) return this.fail(c, this.capEndedError(run));
         return this.ok(c, { estimate: this.resumePrice(run) });
       }
       case "runs.resume": {
@@ -963,6 +964,7 @@ export class MockEngine implements EngineBridge {
           (this.jobRunningFor(run.avatarId) ? { code: "IN_FLIGHT" as const } : null) ??
           this.runnableRefusal(run.avatarId) ??
           (run.slots.every((s) => s.end !== null) ? { code: "VALIDATION" as const, detail: "every slot of this run already ended" } : null) ??
+          (this.capExhausted(run) ? this.capEndedError(run) : null) ??
           this.priceGate(c.payload.acceptedWorstMicros, this.resumePrice(run).worstMicros);
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
@@ -1138,6 +1140,20 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
+   * Whether the run's cap leaves too little to fund one more attempt, so it
+   * has ended (protocol 4): a stopped run with open slots, like the real
+   * engine's `capFundsResume`. A running one is never ended by it.
+   */
+  private capExhausted(run: MockRun): boolean {
+    if (this.activeRunJob(run.runId) !== null || this.openSlots(run) === 0) return false;
+    return run.capMicros - this.runCommitted(run) < this.slotPrice(run).attemptWorst;
+  }
+
+  private capEndedError(run: MockRun): EngineError {
+    return { code: "RUN_CAP_EXCEEDED", detail: `run ${run.runId}'s cap leaves too little for one more attempt: it has ended` };
+  }
+
+  /**
    * Every run, newest `createdAt` first, tied by `runId` descending (L7: the
    * real engine's own #listRuns sort, `engine.ts:1068`) — never insertion
    * order: a seeded run's own `createdAt` runs backwards from
@@ -1153,6 +1169,7 @@ export class MockEngine implements EngineBridge {
     const failed = run.slots.filter((s) => s.end === "failed").length;
     const open = this.openSlots(run);
     const running = this.activeRunJob(run.runId) !== null;
+    const capExhausted = this.capExhausted(run);
     return {
       runId: run.runId,
       avatarId: run.avatarId,
@@ -1164,7 +1181,8 @@ export class MockEngine implements EngineBridge {
       capMicros: run.capMicros,
       committedMicros: this.runCommitted(run),
       running,
-      resumable: !running && open > 0,
+      resumable: !running && open > 0 && !capExhausted,
+      capExhausted,
       remainingWorstMicros: this.resumePrice(run).worstMicros,
     };
   }

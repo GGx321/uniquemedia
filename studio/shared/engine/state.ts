@@ -497,6 +497,11 @@ export const RunRequest = z.strictObject({
  * after a bill above its worst case. `remainingWorstMicros`: what a resume
  * could still spend at today's prices, never more than the cap leaves; null
  * when prices cannot be loaded right now (`runs.estimateResume` asks again).
+ * `capExhausted`: a stopped run with open slots whose cap leaves too little
+ * to fund even one more attempt (protocol 4). It has reached its end: not
+ * resumable, and `runs.estimateResume` / `runs.resume` refuse it for free
+ * with RUN_CAP_EXCEEDED. Never true while prices cannot be loaded (`remainingWorstMicros` null): the
+ * engine cannot tell then, and keeps such a run resumable.
  */
 export const RunSummary = z
   .strictObject({
@@ -511,10 +516,15 @@ export const RunSummary = z
     committedMicros: Micros,
     running: z.boolean(),
     resumable: z.boolean(),
+    capExhausted: z.boolean(),
     remainingWorstMicros: Micros.nullable(),
   })
   .refine((r) => r.done + r.failed + r.open === r.total, { message: "done, failed and open slots must add up to the total", path: ["open"] })
-  .refine((r) => r.resumable === (!r.running && r.open > 0), { message: "a run is resumable exactly when it is not running and has open slots", path: ["resumable"] });
+  .refine((r) => r.resumable === (!r.running && r.open > 0 && !r.capExhausted), {
+    message: "a run is resumable exactly when it is not running, has open slots and its cap is not used up",
+    path: ["resumable"],
+  })
+  .refine((r) => !r.capExhausted || (!r.running && r.open > 0), { message: "only a stopped run with open slots can have its cap used up", path: ["capExhausted"] });
 
 /**
  * The subset of a photo's QA verdicts worth showing as a gallery badge

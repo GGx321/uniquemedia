@@ -5,8 +5,9 @@ import { z } from "zod";
  *
  * - 2 (2026-09-29): 2K removed: `RunRequest` and `PhotoSummary` no longer carry a `resolution`.
  * - 3 (2026-09-29): `job.progress`, `job.failed` and `job.cancelled` carry the job's `kind`, `avatarId` and (a run) `runId`.
+ * - 4 (2026-09-29): `RunSummary.capExhausted`; a run whose cap cannot fund one more attempt is no longer `resumable`.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
 /** An event's position in the engine's event stream; starts at 1 and only grows. */

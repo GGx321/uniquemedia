@@ -77,7 +77,7 @@ import { buildRunPlan, RunPlanSchema, runEstimate, runPriceModels, sceneCategory
 import { CpuPool, NetworkPool } from "./runs/pools";
 import { FACE_GATE_NAME } from "./runs/faceGate";
 import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
-import { remainingEstimate, scopeCommitted } from "./runs/remaining";
+import { capFundsResume, remainingPlan, scopeCommitted } from "./runs/remaining";
 import { reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
 import { plan as planScenes } from "./scenes";
 
@@ -1034,7 +1034,12 @@ export class Engine {
     const state = foldRun(plan, { events, ...ledger, photos: library.photosByAvatar(plan.avatarId) });
     if (state.slots.every((s) => s.end !== null)) throw new EngineFailure({ code: "VALIDATION", detail: `run ${plan.runId} has nothing left to resume: every slot already ended` });
     const priced = await this.#prices.get(runPriceModels({ imageModel: plan.models.image, textModel: plan.models.text }, plan.imageAgeCheck));
-    const estimate = remainingEstimate(priced, plan, state, scopeCommitted(budget.ledger, { runId: plan.runId }), ledger);
+    const committed = scopeCommitted(budget.ledger, { runId: plan.runId });
+    const { estimate, minToProgressMicros } = remainingPlan(priced, plan, state, committed, ledger);
+    // A cap that cannot fund one more attempt has ended the run: refused free, before anything is claimed or accepted.
+    if (!capFundsResume(plan, committed, minToProgressMicros)) {
+      throw new EngineFailure({ code: "RUN_CAP_EXCEEDED", detail: `run ${plan.runId}'s cap leaves ${Math.max(0, plan.capMicros - committed)} micro-dollars, less than the ${minToProgressMicros ?? 0} its next attempt could cost: it has ended` });
+    }
     return { state, estimate, priced, budget };
   }
 
@@ -1079,6 +1084,9 @@ export class Engine {
       const open = state.slots.length - done - failed;
       const running = this.#jobs.runningJobOf(runId) !== null;
       const book = priced.get(JSON.stringify(models)) ?? null;
+      // Ended by its cap only when prices are known: unpriced, the engine cannot tell and leaves the run resumable.
+      const remaining = open === 0 || book === null ? null : remainingPlan(book, plan, state, committed, ledger);
+      const capExhausted = !running && open > 0 && remaining !== null && !capFundsResume(plan, committed, remaining.minToProgressMicros);
       return {
         runId,
         avatarId: plan.avatarId,
@@ -1090,8 +1098,9 @@ export class Engine {
         capMicros: plan.capMicros,
         committedMicros: committed,
         running,
-        resumable: !running && open > 0,
-        remainingWorstMicros: open === 0 ? 0 : book === null ? null : remainingEstimate(book, plan, state, committed, ledger).worstMicros,
+        resumable: !running && open > 0 && !capExhausted,
+        capExhausted,
+        remainingWorstMicros: open === 0 ? 0 : remaining === null ? null : remaining.estimate.worstMicros,
       };
     });
     runs.sort((a, b) => (a.createdAt === b.createdAt ? (a.runId < b.runId ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));

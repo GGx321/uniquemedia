@@ -594,6 +594,88 @@ describe("runs.resume", () => {
     expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(posts);
   });
 
+  // ---------- a run whose cap is used up has ended ----------
+
+  /** What the run has committed once every open reserve is closed at its worst case: the writer, two photos, two aborted requests. */
+  const COMMITTED_AFTER_TWO = 11_200 + 2 * 40_000 + 2 * 50_000;
+  /** One more image attempt, the least the two open slots' resume must still be able to reserve (the writer is done). */
+  const ONE_ATTEMPT = 50_000;
+
+  /** Lowers the run's cap on disk so that `room` micros are left over what it has committed. */
+  async function capLeaving(runId: string, room: number): Promise<void> {
+    const plan = planOf(runId);
+    await writeFile(join(dir(), "library", "runs", runId, "plan.json"), JSON.stringify({ ...plan, capMicros: COMMITTED_AFTER_TWO + room }, null, 2));
+  }
+
+  function summaryOf(response: ResponseMessage, runId: string) {
+    const answer = ok(response);
+    if (answer.type !== "runs.list") throw new Error(`expected a runs.list answer, got ${answer.type}`);
+    return answer.result.runs.find((r) => r.runId === runId);
+  }
+
+  test("runs.list: a stopped run whose cap cannot fund one more attempt has ended: not resumable, capExhausted, its slots still open", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    await capLeaving(runId, ONE_ATTEMPT - 1);
+    const second = await restarted(received);
+
+    expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({
+      open: 2,
+      running: false,
+      resumable: false,
+      capExhausted: true,
+      remainingWorstMicros: ONE_ATTEMPT - 1,
+    });
+  });
+
+  test("runs.list: a cap that leaves exactly one attempt still funds the resume (the boundary)", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    await capLeaving(runId, ONE_ATTEMPT);
+    const second = await restarted(received);
+
+    expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ open: 2, resumable: true, capExhausted: false });
+  });
+
+  test("runs.list: a cap with no room at all left is exhausted too, and so is one already committed past (a bill above its worst case)", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    await capLeaving(runId, 0);
+    const second = await restarted(received);
+    expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true, remainingWorstMicros: 0 });
+
+    await capLeaving(runId, -1);
+    const third = await restarted(received);
+    expect(summaryOf(await third.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true, remainingWorstMicros: 0 });
+  });
+
+  test("runs.estimateResume and runs.resume refuse a cap-exhausted run with RUN_CAP_EXCEEDED, free: nothing is sent and the ledger does not move", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    await capLeaving(runId, ONE_ATTEMPT - 1);
+    const second = await restarted(received);
+    second.advance(10 * 60_000);
+    ok(await second.engine.handle(command("money.reconcile")));
+    const posts = second.net.calls.filter((c) => c.method === "POST").length;
+    const ledger = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).length;
+
+    expect(failed(await second.engine.handle(command("runs.estimateResume", { runId }))).error.code).toBe("RUN_CAP_EXCEEDED");
+    expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("RUN_CAP_EXCEEDED");
+    // Asking again gives the same answer: the refused resume left the avatar unclaimed and no job behind.
+    expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("RUN_CAP_EXCEEDED");
+    expect(second.net.calls.filter((c) => c.method === "POST")).toHaveLength(posts);
+    expect(readLedgerLines(join(dir(), "userData", "ledger.jsonl"))).toHaveLength(ledger);
+    expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true, running: false });
+  });
+
+  test("a cap-exhausted run's refusal keeps the resume's order: the ledger's RECONCILE_REQUIRED first, then NOT_FOUND for an unknown run, then RUN_CAP_EXCEEDED", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    await capLeaving(runId, 0);
+    const second = await restarted(received);
+
+    expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("RECONCILE_REQUIRED");
+    second.advance(10 * 60_000);
+    ok(await second.engine.handle(command("money.reconcile")));
+    expect(failed(await second.engine.handle(resumeAnyway("run-00000404"))).error.code).toBe("NOT_FOUND");
+    expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("RUN_CAP_EXCEEDED");
+  });
+
   test("the key OpenRouter rejected mid-run is marked rejected, and a resume is refused until a new key is stored", async () => {
     const avatarId = await seedAvatar();
     const net = runNetwork({ image: () => ({ status: 401, body: { error: { message: "No auth credentials found" } } }) });
@@ -1119,6 +1201,7 @@ describe("runs.list", () => {
         committedMicros: 11_200 + 2 * 40_000 + 2 * 50_000,
         running: false,
         resumable: true,
+        capExhausted: false,
         remainingWorstMicros: 2 * 2 * 50_000,
       },
     ]);

@@ -304,3 +304,28 @@ test("a run's job events all carry kind, runId and avatarId: progress, then fail
   });
   void engine;
 });
+
+// A run whose cap cannot fund one more attempt has ended (protocol 4): the mock follows the real engine's rule.
+test("a seeded run whose cap the done slots used up is listed as ended by its cap, not resumable", async () => {
+  const { engine, client } = makeMock();
+  // 8 done slots settled $0.05 each; the cap is exactly that, so nothing is left for the 4 open slots.
+  const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
+  const run = (await unwrap(client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
+  expect(run).toMatchObject({ done: 8, open: 4, running: false, resumable: false, capExhausted: true, remainingWorstMicros: 0 });
+});
+
+test("a cap that leaves exactly one attempt still funds a resume; one micro-dollar less ends the run (the boundary)", async () => {
+  const { engine, client } = makeMock();
+  const funded = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000 + 50_000);
+  const ended = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000 + 49_999);
+  const runs = (await unwrap(client.request("runs.list", {}))).runs;
+  expect(runs.find((r) => r.runId === funded)).toMatchObject({ resumable: true, capExhausted: false });
+  expect(runs.find((r) => r.runId === ended)).toMatchObject({ resumable: false, capExhausted: true });
+});
+
+test("runs.estimateResume and runs.resume refuse a cap-exhausted run with RUN_CAP_EXCEEDED", async () => {
+  const { engine, client } = makeMock();
+  const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
+  expect(await client.request("runs.estimateResume", { runId })).toMatchObject({ ok: false, error: { code: "RUN_CAP_EXCEEDED" } });
+  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: 0 })).toMatchObject({ ok: false, error: { code: "RUN_CAP_EXCEEDED" } });
+});

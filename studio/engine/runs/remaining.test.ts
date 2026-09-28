@@ -6,7 +6,7 @@ import { setupMoney, type Money } from "../openrouter/testing/fakes";
 import { plan } from "../scenes";
 import { foldRun, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, runEstimate, type RunPlan } from "./plan";
-import { remainingEstimate, scopeCommitted } from "./remaining";
+import { remainingEstimate, remainingPlan, scopeCommitted } from "./remaining";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -59,10 +59,64 @@ function estimateFor(run: RunPlan, record: Record_ = {}, committed = 0) {
   return remainingEstimate(PRICED, run, state, committed, ledger);
 }
 
+function planFor(run: RunPlan, record: Record_ = {}, committed = 0) {
+  const reserves = new Map((record.reserves ?? []).map((r) => [r.attemptId, r]));
+  const closes = new Map((record.closes ?? []).map((c) => [c.attemptId, c]));
+  const ledger = { reserveOf: (id: string) => reserves.get(id), closeOf: (id: string) => closes.get(id) };
+  const state = foldRun(run, { events: record.events ?? [], photos: [], ...ledger });
+  return remainingPlan(PRICED, run, state, committed, ledger);
+}
+
 const writerDone = (run: RunPlan): RunEvent[] =>
   run.writerChunks.map((c) => ({ type: "writer", chunk: c.chunk, sentences: c.slotIndexes.map((slotIndex) => ({ slotIndex, sentence: "She reads by the window." })), at: AT }));
 
 const slotDone = (slotIndex: number): RunEvent => ({ type: "slot", slotIndex, status: "done", photoId: `photo-000${slotIndex}0`, at: AT });
+
+// What a resume must still be able to reserve to send anything: the writer's
+// ceiling for an unwritten chunk plus the cheapest next attempt of an open
+// slot. A run whose cap room is below it can only be refused: it has ended.
+describe("remainingPlan's minToProgressMicros", () => {
+  test("a fresh run needs the writer's ceiling and one image attempt", () => {
+    expect(planFor(runPlan(4)).minToProgressMicros).toBe(WRITER_WORST + IMAGE_WORST);
+  });
+
+  test("once the writer is done, one image attempt", () => {
+    const run = runPlan(4);
+    expect(planFor(run, { events: writerDone(run) }).minToProgressMicros).toBe(IMAGE_WORST);
+  });
+
+  test("with the image age check on, the attempt carries its age check", () => {
+    const run = runPlan(4, "on");
+    expect(planFor(run, { events: writerDone(run) }).minToProgressMicros).toBe(IMAGE_WORST + AGE_WORST);
+  });
+
+  test("a slot whose next attempt is the cheaper Seedream fallback lowers it to that", () => {
+    const run = runPlan(1);
+    const [a1] = run.slotAttempts[0]?.attemptIds ?? [];
+    const plan = planFor(run, {
+      events: [...writerDone(run), { type: "attempt", slotIndex: 1, attemptId: a1 ?? "", model: PRIMARY, outcome: "refused", at: AT }],
+    });
+    expect(plan.minToProgressMicros).toBe(SEEDREAM_WORST);
+  });
+
+  test("a run with nothing to send (its only open slot closes at once on a used fallback) needs nothing: null", () => {
+    const run = runPlan(1);
+    const [a1, a2] = run.slotAttempts[0]?.attemptIds ?? [];
+    const plan = planFor(run, {
+      events: [
+        ...writerDone(run),
+        { type: "attempt", slotIndex: 1, attemptId: a1 ?? "", model: PRIMARY, outcome: "refused", at: AT },
+        { type: "attempt", slotIndex: 1, attemptId: a2 ?? "", model: FALLBACK_IMAGE_MODEL, outcome: "qa-retry", at: AT },
+      ],
+    });
+    expect(plan.minToProgressMicros).toBeNull();
+  });
+
+  test("the estimate is the one remainingEstimate answers", () => {
+    const run = runPlan(4);
+    expect(planFor(run, {}, 60_000).estimate).toEqual(estimateFor(run, {}, 60_000));
+  });
+});
 
 describe("remainingEstimate", () => {
   test("a run nothing happened to yet: its whole estimate, which is its cap", () => {

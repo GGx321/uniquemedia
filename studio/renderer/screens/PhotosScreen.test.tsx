@@ -895,16 +895,31 @@ test("a reconcileNeeded flip while this row's own resume is in flight does not c
   expect(callsOf(engine, "runs.estimateResume").length).toBeGreaterThan(asksBefore);
 });
 
-test("a resume whose cap is fully used up shows a non-paid «limit exhausted» state, never «до $0.00» (L6)", async () => {
+test("a run whose cap is used up is shown as ended: a plain summary with no button, nothing priced and nothing to resume (L6)", async () => {
   const harness = setup({ avatars: [MIA] });
   // 8 done slots at $0.05 each settled $0.40; the cap is seeded at exactly that, leaving nothing for the 4 open slots.
   harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
   await openSection("Фото");
 
-  await screen.findByText("Лимит запуска исчерпан");
+  await screen.findByText("Лимит исчерпан");
+  expect(screen.getByText(/Готово 8 из 12 · не дорисовано 4/)).toBeDefined();
   expect(screen.queryByRole("button", { name: /Продолжить/ })).toBeNull();
   expect(screen.queryByText("до $0.00")).toBeNull();
+  expect(screen.queryByText("Остановлен")).toBeNull();
+  expect(document.querySelector(".photos-run-go")).toBeNull();
+  // Not resumable, so no price is even asked for it, and nothing can be sent.
+  expect(callsOf(harness.engine, "runs.estimateResume")).toHaveLength(0);
   expect(callsOf(harness.engine, "runs.resume")).toHaveLength(0);
+});
+
+test("a run whose cap still leaves one attempt stays a resume row: «Остановлен» with its price", async () => {
+  const harness = setup({ avatars: [MIA] });
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8, 400_000 + 50_000);
+  await openSection("Фото");
+
+  await screen.findByRole("button", { name: /Продолжить/ });
+  expect(screen.getByText("Остановлен")).toBeDefined();
+  expect(screen.queryByText("Лимит исчерпан")).toBeNull();
 });
 
 // ---------- the gallery ----------
