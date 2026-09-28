@@ -370,30 +370,44 @@ test("a running run shows its progress and pending tiles; each step refreshes th
   expect(screen.getAllByText("лицо не проверялось")).toHaveLength(4);
 });
 
-test("cancel shows «Отменяем…» until the job really ends, then the stopped run can be resumed", async () => {
+test("cancel shows «Отменяем…» until the job really ends; the cancelled attempts' reserves stay open until reconciled (M3)", async () => {
   const { engine, scheduler, client } = await openPhotos();
   fireEvent.click(await priced());
   await screen.findByText("Рисуем фото: 0 из 20");
   tick(scheduler, 1);
   await screen.findByText("Рисуем фото: 1 из 20");
-  const listed = await client.request("runs.list", {});
-  const started = (listed.ok ? listed.result.runs.find((r) => r.running)?.runId : undefined) ?? "no running run";
 
   fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
   expect(screen.getByRole("button", { name: "Отменяем…" }).hasAttribute("disabled")).toBe(true);
   await flush();
-  // Exactly the run this screen started — not merely some run.
-  expect(started).toMatch(/^run-/);
-  expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([started]);
+  expect(callsOf(engine, "runs.cancel")).toHaveLength(1);
   // Accepted, but the job has not ended yet.
   expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
   expect(screen.queryByText("Генерация остановлена")).toBeNull();
 
   runAll(scheduler);
   await screen.findByText("Генерация остановлена");
-  // 19 slots left: 57 attempts × $0.05, within what the cap leaves.
-  expect(await screen.findByRole("button", { name: "Продолжить · до $2.85" })).toBeDefined();
-  expect(screen.getByText(/Готово 1 из 20 · осталось 19/)).toBeDefined();
+  await screen.findByText(/Готово 1 из 20 · осталось 19/);
+  // The 19 cancelled slots' worst-case reserves stay open, like the real
+  // engine's own open-reserves rule (and the mock's avatar.candidates
+  // cancel): no paid start or resume until a reconcile.
+  expect(screen.getAllByText("Платные запросы остановлены до сверки расходов.").length).toBeGreaterThan(0);
+  expect(isDisabled(goButton())).toBe(true);
+  // The row still shows its price — runs.estimateResume is free — but cannot be clicked while blocked.
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $2.85" });
+  expect(isDisabled(resume)).toBe(true);
+
+  await act(async () => {
+    await client.request("money.reconcile", {});
+  });
+  await waitFor(() => expect(screen.queryByText("Платные запросы остановлены до сверки расходов.")).toBeNull());
+  expect(isDisabled(goButton())).toBe(false);
+  const resumeAfter = await screen.findByRole("button", { name: "Продолжить · до $2.85" });
+  expect(isDisabled(resumeAfter)).toBe(false);
+
+  fireEvent.click(resumeAfter);
+  await screen.findByText("Рисуем фото: 1 из 20");
+  expect(callsOf(engine, "runs.resume")).toHaveLength(1);
 });
 
 test("cancel targets the run this window started even after the screen remounts and runs.list then fails (M2)", async () => {

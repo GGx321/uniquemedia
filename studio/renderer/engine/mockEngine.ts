@@ -1185,15 +1185,20 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
-   * Like avatars.cancel: no more slots are drawn from the answer on, but the
-   * job itself ends on a later tick (job.cancelled). The slots it had not
-   * drawn yet were never sent, so their reserves are released; they stay
-   * open in the run, which a resume can continue.
+   * Like avatars.cancel (mockEngine.ts's own candidate-batch cancel, which
+   * never touches `this.reserves` either): no more slots are drawn from the
+   * answer on, but the job itself ends on a later tick (job.cancelled), and
+   * an aborted attempt's reserve stays open at its worst case — unknown
+   * whether OpenRouter billed it — exactly like the real engine's own
+   * open-reserves rule (`studio/engine/engine.ts`'s `#moneyStatus`:
+   * `status.openAttempts - budget.inFlightCount() > 0`). The slots stay open
+   * in the run, which a resume can continue once reconciled.
    */
   private cancelRunJob(job: MockRunJob): void {
     for (const cancel of job.cancelTimers) cancel();
-    for (const key of job.reserveKeys) this.reserves.delete(key);
-    job.reserveKeys = [];
+    if (job.reserveKeys.length > 0 && !this.reconcileReasons.includes("open-reserves")) {
+      this.reconcileReasons = [...this.reconcileReasons, "open-reserves"];
+    }
     this.emitMoney();
     job.cancelTimers = [
       this.scheduler.schedule(CANCEL_CONFIRM_DELAY_MS, () => {

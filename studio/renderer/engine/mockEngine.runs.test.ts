@@ -100,7 +100,7 @@ test("runs.estimate and runs.start answer NOT_FOUND for an avatar that is not sa
   expect(await unwrap(client.request("photos.list", { avatarId: archived.avatarId }))).toEqual({ photos: [], skippedTotal: 0 });
 });
 
-test("a cancel ends the job on a later tick; the run is then resumable at what its open slots could still cost", async () => {
+test("a cancel ends the job on a later tick; its reserves stay open until reconciled, then the run is resumable at what its open slots could still cost", async () => {
   const { scheduler, client, events } = makeMock();
   const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
   scheduler.next(); // one slot lands
@@ -115,6 +115,16 @@ test("a cancel ends the job on a later tick; the run is then resumable at what i
   expect(run).toMatchObject({ runId, done: 1, open: 19, running: false, resumable: true, remainingWorstMicros: 19 * 3 * 50_000 });
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
   expect(estimate).toMatchObject({ expectedMicros: 19 * 50_000, worstMicros: 19 * 3 * 50_000 });
+
+  // The 19 cancelled slots' reserves stay open at their worst case (M3): any
+  // paid call, a resume included, is refused until a reconcile — mirrors the
+  // real engine's own open-reserves rule and the mock's own avatars.cancel.
+  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: estimate.worstMicros })).toMatchObject({ ok: false, error: { code: "RECONCILE_REQUIRED" } });
+  const status = await unwrap(client.request("money.status", {}));
+  if (status.ledger !== "open") throw new Error("expected an open ledger");
+  expect(status).toMatchObject({ reconcileNeeded: true, reconcileReasons: ["open-reserves"] });
+
+  expect((await unwrap(client.request("money.reconcile", {}))).status).toBe("done");
 
   expect(await client.request("runs.resume", { runId, acceptedWorstMicros: estimate.worstMicros - 1 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
   const resumed = await unwrap(client.request("runs.resume", { runId, acceptedWorstMicros: estimate.worstMicros }));
