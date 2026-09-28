@@ -114,7 +114,8 @@ type RunCategory = RunRequest["categories"][number];
  */
 export const MOCK_RUN_IMAGE = 50_000;
 export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
-export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerChunk: 70_000, photosPerChunk: 25 } as const;
+/** The writer's worst case per chunk is the real engine's (money/estimate.ts: 2 attempts × $0.0375, T5c's raised ceiling), so mock and engine prices agree to the micro-dollar. */
+export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerChunk: 75_000, photosPerChunk: 25 } as const;
 
 /** The mock gate's similarity scores, cycled over a run's slots; every fifth slot carries none (a profile or back shot, or a photo from before the gate). */
 const MOCK_FACE_COS = [0.86, 0.81, 0.71, 0.78] as const;
@@ -188,6 +189,14 @@ interface MockRun {
   ageCheck: boolean;
   slots: MockRunSlot[];
   photoIds: string[];
+  /**
+   * Whether the scene writer already answered for this run. A run stopped
+   * before that has the writer's own ceiling in what a resume could still
+   * spend, and in what its cap must still fund (the real engine's
+   * `remainingPlan` counts an unwritten chunk the same way). The mock has no
+   * writer phase of its own: a job marks it done as it starts.
+   */
+  writerDone: boolean;
 }
 
 interface MockRunJob {
@@ -394,6 +403,11 @@ export class MockEngine implements EngineBridge {
   private failedRunSlotsNext = 0;
   /** seedRun's own id counter, apart from nextId's, so a seed never shifts the ids handed out later. */
   private seedCounter = 0;
+  /** Test controls for the refusals a run start or resume can meet before it spends anything: see `setLibraryAvailable`, `setFaceGateAvailable`, `setAgeGateAvailable`, `removeMaster`. */
+  private libraryOpen = true;
+  private faceGate: { available: boolean; loadError?: string } = { available: true };
+  private ageGateAvailable = true;
+  private readonly mastersMissing = new Set<string>();
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -575,6 +589,41 @@ export class MockEngine implements EngineBridge {
     this.failedSlotsNextJob = { count: Math.max(0, Math.min(CANDIDATES_PER_JOB, count)), error, reserveLeftOpen };
   }
 
+  /**
+   * Closes or reopens the library, as a moved or unreadable folder does:
+   * runs.start, runs.resume and runs.estimateResume answer LIBRARY_UNAVAILABLE
+   * (after the key and the ledger), runs.estimate and photos.list cannot find
+   * anything (NOT_FOUND), runs.list has no runs — the real engine's answers.
+   */
+  setLibraryAvailable(available: boolean): void {
+    this.libraryOpen = available;
+  }
+
+  /**
+   * No face gate wired into photo runs (the models or onnxruntime-web failed
+   * to load at engine start): runs.start and runs.resume answer
+   * FACE_GATE_UNAVAILABLE for free. `loadError` rides along in the detail, as
+   * the engine's `faceGateLoadError` does.
+   */
+  setFaceGateAvailable(available: boolean, loadError?: string): void {
+    this.faceGate = { available, ...(loadError === undefined ? {} : { loadError }) };
+  }
+
+  /** No age gate wired in: a run with the image age check on is refused AGE_GATE_UNAVAILABLE; with it off the gate is not in its path. */
+  setAgeGateAvailable(available: boolean): void {
+    this.ageGateAvailable = available;
+  }
+
+  /** The avatar's master photo is gone from the library: runs.start answers NOT_FOUND up front; a resume starts and its job fails NOT_FOUND. */
+  removeMaster(avatarId: string): void {
+    this.mastersMissing.add(avatarId);
+  }
+
+  /** Undoes `removeMaster`. */
+  restoreMaster(avatarId: string): void {
+    this.mastersMissing.delete(avatarId);
+  }
+
   /** T8b: changes one image attempt's price, so a run accepted at a lower worst case gets PRICE_CHANGED. */
   setRunImagePrice(micros: number): void {
     this.runImagePrice = micros;
@@ -595,7 +644,7 @@ export class MockEngine implements EngineBridge {
    * settled slots have used up, without needing a real run to actually
    * exhaust it slot by slot). Answers the run's id.
    */
-  seedRun(request: RunRequest, done: number, capMicros?: number): string {
+  seedRun(request: RunRequest, done: number, capMicros?: number, opts: { writerDone?: boolean } = {}): string {
     this.seedCounter += 1;
     const n = String(this.seedCounter).padStart(4, "0");
     const runId = `run-seed-${n}`;
@@ -611,6 +660,7 @@ export class MockEngine implements EngineBridge {
       ageCheck: this.settings.imageAgeCheck === "on",
       slots,
       photoIds: [],
+      writerDone: opts.writerDone ?? done > 0,
     };
     const { expected } = this.slotPrice(run);
     slots.slice(0, Math.min(done, slots.length)).forEach((slot, i) => {
@@ -904,7 +954,7 @@ export class MockEngine implements EngineBridge {
       case "photos.list": {
         const { avatarId } = c.payload;
         // NOT_FOUND only for an id the library does not have at all: a draft, an active and an archived avatar all get their list.
-        const known = this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId);
+        const known = this.libraryOpen && (this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId));
         if (!known) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
         const photos = this.photos.filter((p) => p.avatarId === avatarId).reverse().slice(0, MAX_LISTED_PHOTOS);
         return this.ok(c, { photos, skippedTotal: this.skippedPhotos[avatarId] ?? 0 });
@@ -913,10 +963,11 @@ export class MockEngine implements EngineBridge {
         // L7: an unavailable ledger answers no runs at all, like the real
         // engine's own #listRuns (it needs the ledger for every run's own
         // committed/remaining figures, not just the list itself).
-        if (this.unavailable !== null) return this.ok(c, { runs: [] });
+        if (this.unavailable !== null || !this.libraryOpen) return this.ok(c, { runs: [] });
         return this.ok(c, { runs: this.sortedRuns().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
       case "runs.estimate": {
-        const refusal = this.runnableRefusal(c.payload.avatarId);
+        // No library open: the engine cannot find the avatar either.
+        const refusal = this.libraryOpen ? this.runnableRefusal(c.payload.avatarId) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { estimate: this.runPrice(c.payload) });
       }
@@ -924,7 +975,14 @@ export class MockEngine implements EngineBridge {
         const { acceptedWorstMicros, ...request } = c.payload;
         // The engine's order: the avatar is claimed first, then the key and the ledger, the avatar itself, and the price.
         if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
-        const refusal = this.keyAndLedgerGate() ?? this.runnableRefusal(request.avatarId) ?? this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros);
+        // Then, in the engine's own order: the library, the avatar, its master, the age gate (only when the check is on), the face gate, the price.
+        const refusal =
+          this.keyAndLedgerGate() ??
+          this.libraryGate() ??
+          this.runnableRefusal(request.avatarId) ??
+          this.masterRefusal(request.avatarId) ??
+          this.gateRefusal(this.settings.imageAgeCheck === "on") ??
+          this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros);
         if (refusal) return this.fail(c, refusal);
         const run: MockRun = {
           runId: this.nextId("run"),
@@ -936,6 +994,7 @@ export class MockEngine implements EngineBridge {
           ageCheck: this.settings.imageAgeCheck === "on",
           slots: mockRunSlots(request.count, request.categories),
           photoIds: [],
+          writerDone: false,
         };
         this.runs = [...this.runs, run];
         return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
@@ -948,21 +1007,31 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { runId: run.runId });
       }
       case "runs.estimateResume": {
+        // The engine's order: the library, then the run's own plan, then (in #remaining) the ledger, VALIDATION and the cap.
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
         const run = this.runs.find((r) => r.runId === c.payload.runId);
         if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
+        const stopped = this.unavailable === null ? null : { code: this.unavailable.cause, detail: this.unavailable.detail };
+        if (stopped) return this.fail(c, stopped);
         // L7: matches the real engine's own #remaining, which runs.resume already shares with this command.
         if (run.slots.every((s) => s.end !== null)) return this.fail(c, { code: "VALIDATION", detail: `run ${run.runId} has nothing left to resume: every slot already ended` });
         if (this.capExhausted(run)) return this.fail(c, this.capEndedError(run));
         return this.ok(c, { estimate: this.resumePrice(run) });
       }
       case "runs.resume": {
+        // The engine's order: a run already running is IN_FLIGHT before anything else; then the key, the ledger, the
+        // library, the run's own plan (NOT_FOUND), the avatar claimed by another job (IN_FLIGHT), the avatar itself,
+        // the run's own age gate (the mode it started with) and the face gate, VALIDATION, the cap, and the price.
+        // No master check: the engine only finds a missing master when the job loads it.
         const run = this.runs.find((r) => r.runId === c.payload.runId);
-        if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
-        if (this.activeRunJob(run.runId)) return this.fail(c, { code: "IN_FLIGHT", detail: `run ${run.runId} is already running` });
+        if (run && this.activeRunJob(run.runId)) return this.fail(c, { code: "IN_FLIGHT", detail: `run ${run.runId} is already running` });
+        const early = this.keyAndLedgerGate() ?? this.libraryGate() ?? (run ? null : { code: "NOT_FOUND" as const, detail: `no run ${c.payload.runId}` });
+        if (early || !run) return this.fail(c, early ?? { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
         const refusal =
-          this.keyAndLedgerGate() ??
           (this.jobRunningFor(run.avatarId) ? { code: "IN_FLIGHT" as const } : null) ??
           this.runnableRefusal(run.avatarId) ??
+          this.gateRefusal(run.ageCheck) ??
           (run.slots.every((s) => s.end !== null) ? { code: "VALIDATION" as const, detail: "every slot of this run already ended" } : null) ??
           (this.capExhausted(run) ? this.capEndedError(run) : null) ??
           this.priceGate(c.payload.acceptedWorstMicros, this.resumePrice(run).worstMicros);
@@ -1052,6 +1121,28 @@ export class MockEngine implements EngineBridge {
 
   // ---------- photo runs (T8b) ----------
 
+  /** The engine's `#liveLibrary()`: no library open refuses a paid run command before it looks at what the command names. */
+  private libraryGate(): EngineError | null {
+    return this.libraryOpen ? null : { code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" };
+  }
+
+  /** A run start's master check: NOT_FOUND when the avatar's master photo is gone. */
+  private masterRefusal(avatarId: string): EngineError | null {
+    return this.mastersMissing.has(avatarId) ? { code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` } : null;
+  }
+
+  /** The engine's `#assertAgeGate` (only when the run's image age check is on) and then `#assertFaceGate`. */
+  private gateRefusal(ageCheckOn: boolean): EngineError | null {
+    if (ageCheckOn && !this.ageGateAvailable) {
+      return { code: "AGE_GATE_UNAVAILABLE", detail: "the image age check is on, but this build has no age gate among the engine's QA gates" };
+    }
+    if (!this.faceGate.available) {
+      const base = "no face gate is wired into photo runs; restart Studio, or reinstall it if this persists";
+      return { code: "FACE_GATE_UNAVAILABLE", detail: this.faceGate.loadError === undefined ? base : `${base} (${this.faceGate.loadError})` };
+    }
+    return null;
+  }
+
   /** runs.estimate/start/resume's avatar check: NOT_FOUND unless it is saved and active, DESCRIPTOR_INVALID for a descriptor to rewrite first. */
   private runnableRefusal(avatarId: string): EngineError | null {
     const avatar = this.avatars.find((a) => a.avatarId === avatarId);
@@ -1135,8 +1226,11 @@ export class MockEngine implements EngineBridge {
     const open = this.openSlots(run);
     const slot = this.slotPrice(run);
     const capLeft = Math.max(0, run.capMicros - this.runCommitted(run));
-    const worstMicros = Math.min(open * MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst, capLeft);
-    return { expectedMicros: Math.min(open * slot.expected, worstMicros), worstMicros, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf };
+    // The real engine's remainingEstimate: an unwritten chunk adds the writer's ceiling (the mock has one chunk per 25 photos of the run), and its typical share per scene.
+    const writerWorst = run.writerDone ? 0 : Math.ceil(run.slots.length / MOCK_RUN_WRITER.photosPerChunk) * MOCK_RUN_WRITER.worstPerChunk;
+    const writerExpected = run.writerDone ? 0 : run.slots.length * MOCK_RUN_WRITER.expectedPerPhoto;
+    const worstMicros = Math.min(open * MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst + writerWorst, capLeft);
+    return { expectedMicros: Math.min(open * slot.expected + writerExpected, worstMicros), worstMicros, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf };
   }
 
   /**
@@ -1146,7 +1240,9 @@ export class MockEngine implements EngineBridge {
    */
   private capExhausted(run: MockRun): boolean {
     if (this.activeRunJob(run.runId) !== null || this.openSlots(run) === 0) return false;
-    return run.capMicros - this.runCommitted(run) < this.slotPrice(run).attemptWorst;
+    // The real engine's minToProgress: an unwritten chunk's ceiling (the writer runs first) plus one image attempt.
+    const writer = run.writerDone ? 0 : MOCK_RUN_WRITER.worstPerChunk;
+    return run.capMicros - this.runCommitted(run) < writer + this.slotPrice(run).attemptWorst;
   }
 
   private capEndedError(run: MockRun): EngineError {
@@ -1226,6 +1322,16 @@ export class MockEngine implements EngineBridge {
       capLeft -= reserve;
     }
     this.emitMoney();
+
+    // The writer answers first, whatever a later stop does; the mock has no phase of its own for it.
+    run.writerDone = true;
+    // A master that is gone is found by the job's own loadMaster, as in the real engine: the job fails NOT_FOUND before any slot.
+    if (this.mastersMissing.has(run.avatarId)) {
+      job.cancelTimers.push(
+        this.scheduler.schedule(this.stepMs, () => this.failRunJob(job, { code: "NOT_FOUND", detail: `avatar ${run.avatarId} has no usable master photo to use as the face reference` })),
+      );
+      return job.jobId;
+    }
 
     openIndexes.forEach((slotIndex, step) => {
       job.cancelTimers.push(

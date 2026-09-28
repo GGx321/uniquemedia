@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EventMessage, RunRequest } from "../../shared/engine";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
@@ -35,21 +35,21 @@ async function unwrap<T>(reply: Promise<{ ok: true; result: T } | { ok: false; e
   return r.result;
 }
 
-test("runs.estimate prices a run like the Photos mockup: 20 photos is ≈ $1.01, до $3.07", async () => {
+test("runs.estimate prices a run like the Photos mockup: 20 photos is ≈ $1.01, до $3.08", async () => {
   const { client } = makeMock();
   const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));
-  expect(estimate).toMatchObject({ expectedMicros: 1_009_160, worstMicros: 3_070_000 });
+  expect(estimate).toMatchObject({ expectedMicros: 1_009_160, worstMicros: 3_075_000 });
 });
 
 test("the age check, when on, is priced into every attempt", async () => {
   const { client } = makeMock({ imageAgeCheck: "on" });
   const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));
-  expect(estimate.worstMicros).toBe(3_070_000 + 60 * 2_000);
+  expect(estimate.worstMicros).toBe(3_075_000 + 60 * 2_000);
 });
 
 test("a whole run goes through the validating client: progress per slot, job.done, and its photos listed newest first", async () => {
   const { scheduler, client, events } = makeMock();
-  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
 
   scheduler.runAll();
   const progress = events.flatMap((e) => (e.type === "job.progress" ? [e.payload.done] : []));
@@ -70,7 +70,7 @@ test("a whole run goes through the validating client: progress per slot, job.don
 
   const { runs } = await unwrap(client.request("runs.list", {}));
   expect(runs).toEqual([
-    expect.objectContaining({ runId, total: 20, done: 20, failed: 0, open: 0, running: false, resumable: false, capMicros: 3_070_000, committedMicros: 1_000_000 }),
+    expect.objectContaining({ runId, total: 20, done: 20, failed: 0, open: 0, running: false, resumable: false, capMicros: 3_075_000, committedMicros: 1_000_000 }),
   ]);
 
   const money = await unwrap(client.request("money.status", {}));
@@ -79,7 +79,7 @@ test("a whole run goes through the validating client: progress per slot, job.don
 
 test("a stored run photo bumps its avatar's photoCount and announces avatar.changed, like the real engine does per photo (MEDIUM-3)", async () => {
   const { scheduler, client, events } = makeMock();
-  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
 
   scheduler.next(); // one slot lands
   const firstChanged = events.filter((e) => e.type === "avatar.changed");
@@ -102,11 +102,11 @@ test("runs.start refuses a price the user did not accept, and a second run of a 
   expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_069_999 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
   expect(await unwrap(client.request("runs.list", {}))).toEqual({ runs: [] });
 
-  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
-  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
+  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
 
   engine.setRunImagePrice(60_000);
-  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(3_670_000);
+  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(3_675_000);
 });
 
 test("runs.estimate and runs.start answer NOT_FOUND for an avatar that is not saved and active", async () => {
@@ -120,7 +120,7 @@ test("runs.estimate and runs.start answer NOT_FOUND for an avatar that is not sa
 
 test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconciling frees the rest for the resume to price again", async () => {
   const { scheduler, client, events } = makeMock(); // default concurrency: 6
-  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
   scheduler.next(); // one slot lands
 
   expect(await unwrap(client.request("runs.cancel", { runId }))).toEqual({ runId });
@@ -132,11 +132,11 @@ test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconci
   // 19 open slots, but only 6 (the network's own concurrency) were ever
   // actually in flight: their reserves ($0.90) stay open, the other 13's
   // ($1.95, never sent) are released for free. Committed so far: $0.05
-  // settled + $0.90 reserved = $0.95; the cap ($3.07) leaves $2.12.
+  // settled + $0.90 reserved = $0.95; the cap ($3.08) leaves $2.12.
   const [run] = (await unwrap(client.request("runs.list", {}))).runs;
-  expect(run).toMatchObject({ runId, done: 1, open: 19, running: false, resumable: true, committedMicros: 950_000, remainingWorstMicros: 2_120_000 });
+  expect(run).toMatchObject({ runId, done: 1, open: 19, running: false, resumable: true, committedMicros: 950_000, remainingWorstMicros: 2_125_000 });
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate).toMatchObject({ expectedMicros: 950_000, worstMicros: 2_120_000 });
+  expect(estimate).toMatchObject({ expectedMicros: 950_000, worstMicros: 2_125_000 });
 
   // The 6 in-flight slots' reserves stay open at their worst case (M3): any
   // paid call, a resume included, is refused until a reconcile — mirrors the
@@ -163,7 +163,7 @@ test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconci
   const done = events.find((e) => e.type === "job.done");
   if (done?.type !== "job.done" || done.payload.result.kind !== "run") throw new Error("expected the resumed run's job.done");
   expect(done.payload.result.photoIds).toHaveLength(20);
-  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: 3_070_000 })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: 3_075_000 })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
 });
 
 test("a resume never offers more than the run's cap leaves", async () => {
@@ -172,7 +172,7 @@ test("a resume never offers more than the run's cap leaves", async () => {
   engine.setRunImagePrice(1_000_000);
   // 4 open slots × 3 × $1 would be $12; the cap ($1.87) less its $0.40 settled leaves $1.47.
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate.worstMicros).toBe(1_870_000 - 400_000);
+  expect(estimate.worstMicros).toBe(1_875_000 - 400_000);
   expect(estimate.expectedMicros).toBeLessThanOrEqual(estimate.worstMicros);
 });
 
@@ -213,7 +213,7 @@ test("runs.list orders runs by createdAt, newest first, regardless of seed order
 
 test("a run keeps the age-check mode it started with: its resume price and reserves include the checks", async () => {
   const { scheduler, client, engine } = makeMock({ imageAgeCheck: "on" });
-  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 15 * 52_000 + 70_000 }));
+  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 15 * 52_000 + 75_000 }));
   scheduler.next();
   const during = await unwrap(client.request("money.status", {}));
   expect(during).toMatchObject({ ledger: "open", unsettledMicros: 4 * 3 * 52_000 });
@@ -227,14 +227,14 @@ test("a run keeps the age-check mode it started with: its resume price and reser
   // ($0.85), leaving only $0.1746 more before a reconcile.
   await unwrap(client.request("settings.setImageAgeCheck", { imageAgeCheck: "off" }));
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate).toMatchObject({ expectedMicros: 174_600, worstMicros: 174_600 });
+  expect(estimate).toMatchObject({ expectedMicros: 179_600, worstMicros: 179_600 });
   expect(engine.calls.at(-1)?.type).toBe("runs.estimateResume");
 });
 
 test("failed slots end without a photo and are counted in the run's result", async () => {
   const { scheduler, client, events, engine } = makeMock();
   engine.failNextRunSlots(3);
-  await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 5 * 3 * 50_000 + 70_000 }));
+  await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 5 * 3 * 50_000 + 75_000 }));
   scheduler.runAll();
   const done = events.find((e) => e.type === "job.done");
   if (done?.type !== "job.done" || done.payload.result.kind !== "run") throw new Error("expected a run's job.done");
@@ -252,14 +252,14 @@ test("photos.list is NOT_FOUND only for an unknown avatar, and carries the unrea
 
 test("a running run is in the snapshot as a run job, with its runId and avatar", async () => {
   const { client } = makeMock();
-  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
   const snapshot = await unwrap(client.request("engine.snapshot", {}));
   expect(snapshot.jobs).toEqual([{ kind: "run", jobId, runId, avatarId: MIA.avatarId, status: "queued", done: 0, total: 20 }]);
 });
 
 test("a rejected key fails a running run; its open slots stay open for a resume", async () => {
   const { scheduler, client, engine, events } = makeMock();
-  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
   scheduler.next();
   engine.rejectKey();
   expect(events.some((e) => e.type === "job.failed")).toBe(true);
@@ -281,14 +281,14 @@ test("the demo library seeds Mia's gallery and a stopped run to resume, without 
   expect(mia.photoCount).toBe(gallery.photos.length + gallery.skippedTotal);
   expect((await unwrap(client.request("runs.list", {}))).runs).toEqual([expect.objectContaining({ avatarId: mia.avatarId, done: 8, open: 4, resumable: true })]);
   // The first id the demo hands out afterwards is still its first.
-  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, avatarId: mia.avatarId, acceptedWorstMicros: 3_070_000 }));
+  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, avatarId: mia.avatarId, acceptedWorstMicros: 3_075_000 }));
   expect(runId).toBe("run-0001");
 });
 
 // Protocol 3: every job event names its job (kind, avatar and, for a run, the runId).
 test("a run's job events all carry kind, runId and avatarId: progress, then failed or cancelled", async () => {
   const { engine, scheduler, client, events } = makeMock();
-  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
   scheduler.next();
   await unwrap(client.request("runs.cancel", { runId }));
   scheduler.runAll();
@@ -297,7 +297,7 @@ test("a run's job events all carry kind, runId and avatarId: progress, then fail
   expect(events.find((e) => e.type === "job.cancelled")).toMatchObject({ payload: ref });
 
   const failing = makeMock();
-  const started = await unwrap(failing.client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  const started = await unwrap(failing.client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
   failing.engine.rejectKey();
   expect(failing.events.find((e) => e.type === "job.failed")).toMatchObject({
     payload: { kind: "run", jobId: started.jobId, runId: started.runId, avatarId: MIA.avatarId, error: { code: "AUTH_INVALID" } },
@@ -328,4 +328,184 @@ test("runs.estimateResume and runs.resume refuse a cap-exhausted run with RUN_CA
   const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
   expect(await client.request("runs.estimateResume", { runId })).toMatchObject({ ok: false, error: { code: "RUN_CAP_EXCEEDED" } });
   expect(await client.request("runs.resume", { runId, acceptedWorstMicros: 0 })).toMatchObject({ ok: false, error: { code: "RUN_CAP_EXCEEDED" } });
+});
+
+// ---------- parity with the real engine: the refusals a mock run never used to produce ----------
+
+const WORST_20 = 20 * 3 * 50_000 + 75_000;
+const START = { ...REQUEST, acceptedWorstMicros: WORST_20 };
+
+async function runCount(client: ReturnType<typeof makeMock>["client"]): Promise<number> {
+  return (await unwrap(client.request("runs.list", {}))).runs.length;
+}
+
+test("the writer's worst case is the real engine's 75,000 micro-dollars per chunk: 20 photos are «до $3.08» exactly", async () => {
+  const { client } = makeMock();
+  const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));
+  expect(estimate.worstMicros).toBe(WORST_20);
+  // 100 photos are four writer chunks, like the real engine's ceil(100 / 25).
+  const { estimate: hundred } = await unwrap(client.request("runs.estimate", { ...REQUEST, count: 100 }));
+  expect(hundred.worstMicros).toBe(100 * 3 * 50_000 + 4 * 75_000);
+});
+
+describe("runs.start refusals, in the real engine's order", () => {
+  test("FACE_GATE_UNAVAILABLE when no face gate is wired: free, no run is created", async () => {
+    const { engine, client } = makeMock();
+    engine.setFaceGateAvailable(false);
+    expect(await client.request("runs.start", START)).toMatchObject({ ok: false, error: { code: "FACE_GATE_UNAVAILABLE" } });
+    expect(await runCount(client)).toBe(0);
+  });
+
+  test("the face gate's load error rides along in the refusal's detail, as in the engine", async () => {
+    const { engine, client } = makeMock();
+    engine.setFaceGateAvailable(false, "the yunet model could not be read");
+    const reply = await client.request("runs.start", START);
+    expect(reply.ok ? "" : (reply.error.detail ?? "")).toContain("the yunet model could not be read");
+  });
+
+  test("AGE_GATE_UNAVAILABLE only when the image age check is on: off, the missing age gate is not in the run's path", async () => {
+    const off = makeMock({ imageAgeCheck: "off" });
+    off.engine.setAgeGateAvailable(false);
+    expect((await off.client.request("runs.start", START)).ok).toBe(true);
+
+    const on = makeMock({ imageAgeCheck: "on" });
+    on.engine.setAgeGateAvailable(false);
+    const worstOn = (await unwrap(on.client.request("runs.estimate", REQUEST))).estimate.worstMicros;
+    expect(await on.client.request("runs.start", { ...REQUEST, acceptedWorstMicros: worstOn })).toMatchObject({ ok: false, error: { code: "AGE_GATE_UNAVAILABLE" } });
+    expect(await runCount(on.client)).toBe(0);
+  });
+
+  test("the age gate is checked before the face gate, as the engine does", async () => {
+    const { engine, client } = makeMock({ imageAgeCheck: "on" });
+    engine.setAgeGateAvailable(false);
+    engine.setFaceGateAvailable(false);
+    const worstOn = (await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros;
+    expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: worstOn })).toMatchObject({ ok: false, error: { code: "AGE_GATE_UNAVAILABLE" } });
+  });
+
+  test("LIBRARY_UNAVAILABLE when no library is open: runs.start refuses it, runs.estimate cannot find the avatar (NOT_FOUND) and runs.list has no runs", async () => {
+    const { engine, client } = makeMock();
+    engine.setLibraryAvailable(false);
+    expect(await client.request("runs.start", START)).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+    expect(await client.request("runs.estimate", REQUEST)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(await runCount(client)).toBe(0);
+  });
+
+  test("a missing master photo is NOT_FOUND at start, after the avatar itself is found", async () => {
+    const { engine, client } = makeMock();
+    engine.removeMaster(MIA.avatarId);
+    expect(await client.request("runs.start", START)).toMatchObject({ ok: false, error: { code: "NOT_FOUND", detail: expect.stringContaining("master") } });
+    expect(await runCount(client)).toBe(0);
+    // An avatar the library does not have is NOT_FOUND too, but about the avatar.
+    const unknown = await client.request("runs.start", { ...START, avatarId: "avatar-nobody-9999" });
+    expect(unknown).toMatchObject({ ok: false, error: { code: "NOT_FOUND", detail: expect.not.stringContaining("master") } });
+  });
+
+  test("the order: key, then the ledger, then the library, then the avatar, then the master, then the gates, then the price", async () => {
+    const { engine, client } = makeMock({ imageAgeCheck: "on" });
+    engine.setAgeGateAvailable(false);
+    engine.setFaceGateAvailable(false);
+    engine.removeMaster(MIA.avatarId);
+    engine.setLibraryAvailable(false);
+    engine.requireReconcile(["open-reserves"]);
+    const cheap = { ...START, acceptedWorstMicros: 1 };
+    const codes: string[] = [];
+    const next = async (): Promise<void> => {
+      const reply = await client.request("runs.start", cheap);
+      codes.push(reply.ok ? "ok" : reply.error.code);
+    };
+
+    await next(); // the ledger wants a reconcile
+    await unwrap(client.request("money.reconcile", {}));
+    await next(); // the library is not open
+    engine.setLibraryAvailable(true);
+    await next(); // the master is gone
+    engine.restoreMaster(MIA.avatarId);
+    await next(); // the age gate
+    engine.setAgeGateAvailable(true);
+    await next(); // the face gate
+    engine.setFaceGateAvailable(true);
+    await next(); // only now the price
+
+    expect(codes).toEqual(["RECONCILE_REQUIRED", "LIBRARY_UNAVAILABLE", "NOT_FOUND", "AGE_GATE_UNAVAILABLE", "FACE_GATE_UNAVAILABLE", "PRICE_CHANGED"]);
+  });
+});
+
+describe("runs.resume and runs.estimateResume, in the real engine's order", () => {
+  const resumeOf = (runId: string) => ({ runId, acceptedWorstMicros: 10_000_000 });
+
+  test("an unknown run is answered by the key, the ledger and the library first, NOT_FOUND only after them", async () => {
+    const { engine, client } = makeMock();
+    const codes: string[] = [];
+    const next = async (): Promise<void> => {
+      const reply = await client.request("runs.resume", resumeOf("run-nobody-9999"));
+      codes.push(reply.ok ? "ok" : reply.error.code);
+    };
+    engine.requireReconcile(["open-reserves"]);
+    await next();
+    await unwrap(client.request("money.reconcile", {}));
+    engine.setLibraryAvailable(false);
+    await next();
+    engine.setLibraryAvailable(true);
+    await next();
+    expect(codes).toEqual(["RECONCILE_REQUIRED", "LIBRARY_UNAVAILABLE", "NOT_FOUND"]);
+  });
+
+  test("a run that is running is IN_FLIGHT before anything else, the key included", async () => {
+    const { engine, client } = makeMock();
+    const { runId } = await unwrap(client.request("runs.start", START));
+    engine.requireReconcile(["open-reserves"]);
+    expect(await client.request("runs.resume", resumeOf(runId))).toMatchObject({ ok: false, error: { code: "IN_FLIGHT", detail: expect.stringContaining("already running") } });
+  });
+
+  test("the face gate and the library refuse a resume free, and the price is compared last", async () => {
+    const { engine, client } = makeMock();
+    const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8);
+    engine.setFaceGateAvailable(false);
+    expect(await client.request("runs.resume", resumeOf(runId))).toMatchObject({ ok: false, error: { code: "FACE_GATE_UNAVAILABLE" } });
+    engine.setFaceGateAvailable(true);
+    engine.setLibraryAvailable(false);
+    expect(await client.request("runs.resume", resumeOf(runId))).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+    expect(await client.request("runs.estimateResume", { runId })).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+    engine.setLibraryAvailable(true);
+    expect(await client.request("runs.resume", { runId, acceptedWorstMicros: 1 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
+    expect(await runCount(client)).toBe(1);
+  });
+
+  test("a resume whose master is gone starts, then its job fails NOT_FOUND, as the real job's loadMaster does (the engine refuses only a start up front)", async () => {
+    const { engine, client, scheduler, events } = makeMock();
+    const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8);
+    engine.removeMaster(MIA.avatarId);
+    const { jobId } = await unwrap(client.request("runs.resume", resumeOf(runId)));
+    scheduler.runAll();
+    expect(events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { kind: "run", jobId, runId, avatarId: MIA.avatarId, error: { code: "NOT_FOUND" } } });
+  });
+});
+
+describe("resumePrice carries the writer term when the writer has not finished", () => {
+  test("a run stopped before its writer answered: every open slot's attempts plus the writer chunk's own ceiling", async () => {
+    const { engine, client } = makeMock();
+    const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, undefined, { writerDone: false });
+    const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
+    expect(estimate.worstMicros).toBe(12 * 3 * 50_000 + 75_000);
+    expect(estimate.expectedMicros).toBe(12 * 50_000 + 12 * 458);
+  });
+
+  test("a run whose writer is done has no writer term", async () => {
+    const { engine, client } = makeMock();
+    const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8);
+    const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
+    expect(estimate.worstMicros).toBe(4 * 3 * 50_000);
+    expect(estimate.expectedMicros).toBe(4 * 50_000);
+  });
+
+  test("the writer's ceiling counts in whether the cap funds a resume: room for one image attempt but not the writer ends the run", async () => {
+    const { engine, client } = makeMock();
+    // Nothing committed yet (no slot done): the cap is all the room there is.
+    const funded = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 + 75_000, { writerDone: false });
+    const ended = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 + 75_000 - 1, { writerDone: false });
+    const runs = (await unwrap(client.request("runs.list", {}))).runs;
+    expect(runs.find((r) => r.runId === funded)).toMatchObject({ resumable: true, capExhausted: false });
+    expect(runs.find((r) => r.runId === ended)).toMatchObject({ resumable: false, capExhausted: true });
+  });
 });

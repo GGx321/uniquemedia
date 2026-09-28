@@ -89,7 +89,7 @@ test("trackRunJob never overrides progress that beat the reply", async () => {
     count: 5,
     categories: ["home"],
     poses: { profile: false, back: false },
-    acceptedWorstMicros: 5 * 3 * 50_000 + 70_000,
+    acceptedWorstMicros: 5 * 3 * 50_000 + 75_000,
   });
   if (!reply.ok) throw new Error(`expected ok, got ${reply.error.code}`);
   scheduler.next(); // the first slot's job.progress lands before this window tracks the job
@@ -107,7 +107,7 @@ test("trackRunJob on a run whose job.done beat the reply keeps it complete, neve
     count: 5,
     categories: ["home"],
     poses: { profile: false, back: false },
-    acceptedWorstMicros: 5 * 3 * 50_000 + 70_000,
+    acceptedWorstMicros: 5 * 3 * 50_000 + 75_000,
   });
   if (!reply.ok) throw new Error(`expected ok, got ${reply.error.code}`);
   scheduler.runAll(); // every progress event and job.done land first
