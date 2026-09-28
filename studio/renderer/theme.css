@@ -49,6 +49,15 @@
   --accent-35: rgba(255, 122, 89, 0.35);
   --accent-40: rgba(255, 122, 89, 0.4);
   --scrim: rgba(9, 9, 12, 0.8);
+  /* The photo-select box and a secondary badge on a photo: the sheet's lighter scrim and white ring. */
+  --scrim-soft: rgba(9, 9, 12, 0.55);
+  --pick-ring: rgba(255, 255, 255, 0.7);
+
+  /* photo surfaces with no image (the Photos sheet's tiles): empty, being drawn, queued, unreadable */
+  --photo-empty: #1b1b23;
+  --photo-drawing: linear-gradient(170deg, #3a3f55 0%, #1b1d27 100%);
+  --photo-queued: linear-gradient(165deg, #1a1a22 0%, #15151c 100%);
+  --photo-dim: linear-gradient(170deg, #1f1f28 0%, #15151c 100%);
 
   /* status tints: same alpha-step pattern as --accent-*, from each status's own colour above. */
   --danger-08: rgba(255, 138, 155, 0.08);

@@ -8,7 +8,9 @@ export type Route =
   | { name: "avatarNew"; draftId: string | null }
   | { name: "avatarImport" }
   | { name: "settings"; focus?: SettingsFocus }
-  | { name: "section"; id: "photo" | "montage" | "autopilot" };
+  /** T8b: an avatar's photos; null opens the one shown last, else the first active avatar. */
+  | { name: "photos"; avatarId: string | null }
+  | { name: "section"; id: "montage" | "autopilot" };
 
 export type SettingsFocus = "key" | "money";
 
@@ -32,6 +34,8 @@ export function sectionOf(route: Route): SectionId {
       return "avatars";
     case "settings":
       return "settings";
+    case "photos":
+      return "photo";
     case "section":
       return route.id;
   }

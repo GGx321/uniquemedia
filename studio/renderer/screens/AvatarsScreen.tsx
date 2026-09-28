@@ -72,6 +72,7 @@ function photosLabel(count: number): string {
  * photo count are drawn, each in its own slot.
  */
 function AvatarCard({ avatar }: { avatar: AvatarSummary }) {
+  const navigate = useNavigate();
   const titleId = `avatar-${avatar.avatarId}`;
   return (
     <article className="card avatar-card" aria-labelledby={titleId}>
@@ -86,7 +87,10 @@ function AvatarCard({ avatar }: { avatar: AvatarSummary }) {
       <div className="avatar-body">
         <div className="avatar-row">
           <h2 id={titleId} className="avatar-name">
-            {avatar.name}
+            {/* The sheet's name is a link to the avatar's photos (Main.dc.html → Photos.dc.html), drawn as the plain name. */}
+            <button type="button" className="avatar-link" onClick={() => navigate({ name: "photos", avatarId: avatar.avatarId })}>
+              {avatar.name}
+            </button>
           </h2>
         </div>
         <span className="mono muted">{photosLabel(avatar.photoCount)}</span>

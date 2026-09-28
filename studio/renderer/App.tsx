@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { EngineClient } from "./engine/client";
 import { EngineProvider, useEngineView } from "./engine/react";
 import { isActiveJob } from "./engine/store";
@@ -7,6 +7,7 @@ import { NavigationProvider, type Route, type SectionId, sectionOf } from "./nav
 import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
+import { PhotosScreen } from "./screens/PhotosScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
 import { formatUsd } from "./lib/money";
@@ -72,10 +73,13 @@ const SECTIONS: readonly Section[] = [
   },
 ];
 
-function routeFor(id: SectionId): Route {
+/** `lastPhotos`: the avatar the Photos screen showed last, so the sidebar's «Фото» comes back to it. */
+function routeFor(id: SectionId, lastPhotos: string | null): Route {
   switch (id) {
     case "avatars":
       return { name: "avatars" };
+    case "photo":
+      return { name: "photos", avatarId: lastPhotos };
     case "settings":
       return { name: "settings" };
     default:
@@ -93,6 +97,8 @@ function Screen({ route }: { route: Route }) {
       return <AvatarImport />;
     case "settings":
       return <SettingsScreen focus={route.focus} />;
+    case "photos":
+      return <PhotosScreen avatarId={route.avatarId} />;
     case "section": {
       const label = SECTIONS.find((s) => s.id === route.id)?.label ?? "";
       return (
@@ -106,7 +112,16 @@ function Screen({ route }: { route: Route }) {
 }
 
 function screenKey(route: Route): string {
-  return route.name === "avatarNew" ? `avatarNew:${route.draftId ?? "new"}` : route.name === "section" ? route.id : route.name;
+  switch (route.name) {
+    case "avatarNew":
+      return `avatarNew:${route.draftId ?? "new"}`;
+    case "photos":
+      return `photos:${route.avatarId ?? "last"}`;
+    case "section":
+      return route.id;
+    default:
+      return route.name;
+  }
 }
 
 /** Engine-wide notices belong above every screen, not one of them: useEngineView needs the provider, which App sits outside of. */
@@ -171,6 +186,10 @@ export function App({ client }: { client: EngineClient }) {
   const [route, setRoute] = useState<Route>({ name: "avatars" });
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
+  const lastPhotos = useRef<string | null>(null);
+  useEffect(() => {
+    if (route.name === "photos" && route.avatarId !== null) lastPhotos.current = route.avatarId;
+  }, [route]);
 
   useEffect(() => {
     let alive = true;
@@ -208,7 +227,7 @@ export function App({ client }: { client: EngineClient }) {
                     type="button"
                     className={isActive ? "nav-item active" : "nav-item"}
                     aria-current={isActive ? "page" : undefined}
-                    onClick={() => setRoute(routeFor(s.id))}
+                    onClick={() => setRoute(routeFor(s.id, lastPhotos.current))}
                   >
                     <svg
                       className="nav-icon"

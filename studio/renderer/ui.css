@@ -248,6 +248,12 @@
   font-size: 12.5px;
 }
 
+/* A segment that exists in the design but not yet in the contract ("скоро"): dimmed like any disabled button. */
+.seg button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ── switch · .sw 34 × 20 · role="switch" ── */
 
 .sw {
@@ -328,6 +334,19 @@
 .lock:disabled .choice-input,
 .lock:disabled .choice-face {
   cursor: default;
+}
+
+/* The sheet's own .lock dimming (60 %), for a form locked only while a
+   paid request is on its way (Photos): there the lock is a state the owner
+   must see, which the mockup's runtime never draws (it drops `disabled`). */
+.lock-dim:disabled .chip,
+.lock-dim:disabled .seg {
+  opacity: 0.6;
+}
+
+/* Inside a locked form the segment control as a whole is dimmed once, not again per button. */
+.lock:disabled .seg button:disabled {
+  opacity: 1;
 }
 
 /* ── fields · .in 40 · .in-s 34 ── */
@@ -609,6 +628,12 @@ input[type="range"]::-webkit-slider-thumb {
   white-space: nowrap;
 }
 
+/* .tag-o: the outlined tag — a shot type, a date. */
+.tag-o {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
 /* ── photo surface, shimmer, spinner, progress · .bar 4, plan tile · .tile ── */
 
 .ph {
@@ -880,6 +905,22 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The name opens the avatar's photos: the sheet draws it as the plain name, no link colour and no hover change. */
+.avatar-link {
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .avatar-note {
@@ -1559,6 +1600,499 @@ input[type="range"]::-webkit-slider-thumb {
   text-align: center;
 }
 
+/* ── Photos (Photos.dc.html) ── */
+
+.photos-page {
+  gap: 16px;
+}
+
+/* The «Фото» tab's panel: everything under the header, spaced like the page itself. */
+.photos-panel {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: 16px;
+}
+
+.photos-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.photos-avatar {
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+  border-radius: 14px;
+}
+
+.photos-avatar .portrait-silhouette {
+  height: 88%;
+}
+
+.photos-sub {
+  margin: 5px 0 0;
+}
+
+.photos-tabs {
+  margin-left: 24px;
+}
+
+.photos-montage {
+  margin-left: auto;
+}
+
+/* The generation card: the form on the left, the price and its button in a 232px column. */
+.photos-gen {
+  display: flex;
+  align-items: stretch;
+  gap: 28px;
+  padding: 18px 20px;
+}
+
+.photos-gen-main {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: 16px;
+}
+
+/* At the mockup's width everything sits on one row; narrower (down to the
+   window's 1200px minimum) the shot column and the pose hint wrap under. */
+.photos-gen-fields {
+  display: flex;
+  flex-grow: 1;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 16px 28px;
+}
+
+.photos-gen-count,
+.photos-gen-cats {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.photos-gen-count {
+  width: 190px;
+}
+
+.photos-gen-cats {
+  width: 336px;
+}
+
+.photos-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.photos-count {
+  display: inline-block;
+  width: 56px;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.photos-lbl-gap {
+  margin-top: 8px;
+}
+
+.photos-res {
+  align-self: flex-start;
+}
+
+.photos-chips,
+.photos-chips-row {
+  display: flex;
+  gap: 6px;
+}
+
+.photos-chips {
+  flex-wrap: wrap;
+}
+
+.photos-chip-n {
+  font-size: 10.5px;
+  opacity: 0.85;
+}
+
+.photos-chip-fixed {
+  cursor: default;
+}
+
+.photos-note {
+  font-size: 11.5px;
+}
+
+.photos-cats-note {
+  margin-top: 2px;
+}
+
+.photos-gen-shots {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* A label with a "скоро" tag beside it: the 20px tag overhangs, so the label sits where its neighbours' do. */
+.photos-lbl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.photos-lbl-row .tag {
+  margin: -2px 0;
+}
+
+.photos-shot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.photos-shot-legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.photos-shot-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+.shot-friend {
+  background: var(--accent);
+}
+
+.shot-selfie {
+  background: var(--warn);
+}
+
+.shot-mirror {
+  background: var(--info);
+}
+
+.shot-candid {
+  background: var(--ok);
+}
+
+.shot-photographer {
+  background: var(--text-2);
+}
+
+.photos-shot-caption {
+  margin-top: auto;
+}
+
+.photos-angles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+/* 190px column + 28px gap = 202px + 16px gap: the pose chips line up with the categories. */
+.photos-angles > .lbl {
+  width: 202px;
+  flex-shrink: 0;
+}
+
+.photos-angles-hint {
+  flex: 1 1 200px;
+  min-width: 0;
+  text-wrap: balance;
+}
+
+.photos-gen-side {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+  width: 232px;
+  padding-left: 24px;
+  border-left: 1px solid var(--border);
+}
+
+.photos-cost-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.photos-cost-total {
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.photos-review {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.photos-review .tag {
+  margin-left: auto;
+}
+
+.photos-go {
+  width: 100%;
+  margin-top: auto;
+}
+
+/* The two columns under the card: scenes 516px, the gallery the rest. */
+.photos-body {
+  display: flex;
+  flex-grow: 1;
+  gap: 20px;
+  min-height: 0;
+}
+
+.photos-scenes,
+.photos-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.photos-scenes {
+  width: 516px;
+  flex-shrink: 0;
+}
+
+.photos-gallery {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.photos-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+}
+
+.photos-sec-action {
+  margin-left: auto;
+}
+
+/* A row of the scenes column, the mockup's scene article: inset, 10px corners. */
+.photos-scene {
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--inset);
+}
+
+.photos-scene-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.photos-scene-tags {
+  display: flex;
+  gap: 6px;
+}
+
+.photos-scene-text {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.photos-run {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.photos-run-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.photos-run-go {
+  min-width: 132px;
+}
+
+.photos-run > .notice {
+  padding: 10px 12px;
+}
+
+/* What the scenes column will hold once the contract carries a scene plan: dashed, like any slot not filled yet. */
+.photos-soon {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 12px;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 10px;
+}
+
+.photos-soon .photos-scene-text {
+  color: var(--faint);
+}
+
+/* Four columns at the mockup's width (142.5px tiles), fewer in a narrower window, more in a wider one. */
+.photos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  gap: 10px;
+}
+
+.photo-tile {
+  height: 224px;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: var(--photo-empty);
+}
+
+.photo-tile-on {
+  border-color: var(--accent);
+}
+
+.photo-tile .portrait-silhouette {
+  height: 70%;
+}
+
+.photo-pick {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1.5px solid var(--pick-ring);
+  border-radius: 8px;
+  background: var(--scrim-soft);
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+
+.photo-pick[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.photo-badges {
+  position: absolute;
+  top: 10px;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.photo-badge {
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.photo-face {
+  color: var(--ok);
+}
+
+/* Still stored under the gate's retry threshold (its attempts ran out): the owner's eye decides, the badge says so. */
+.photo-face-low {
+  color: var(--warn);
+}
+
+.photo-face-none {
+  max-width: 92px;
+  height: auto;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--muted);
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.photo-label {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  font-weight: 500;
+}
+
+.photo-status {
+  position: absolute;
+  top: 10px;
+  left: 8px;
+}
+
+/* A pill's status colour (the sheet's: text carries the status, the scrim stays). */
+.photo-status-drawing {
+  color: var(--link);
+}
+
+.photo-status-queued {
+  color: var(--muted);
+}
+
+.photo-tile-drawing {
+  background: var(--photo-drawing);
+}
+
+.photo-tile-queued {
+  background: var(--photo-queued);
+}
+
+.photo-tile-skipped {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  background: var(--photo-dim);
+  text-align: center;
+}
+
+.photos-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 224px;
+  padding: 12px;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 10px;
+  text-align: center;
+}
+
 @media (max-width: 1279px) {
   /* Narrower than the mockup, a wide control wraps under its label: keep air around it. */
   .row {
@@ -1572,5 +2106,9 @@ input[type="range"]::-webkit-slider-thumb {
 
   .wizard {
     grid-template-columns: 420px minmax(0, 1fr);
+  }
+
+  .photos-scenes {
+    width: 400px;
   }
 }

@@ -20,6 +20,18 @@ const PATHS = {
     </>
   ),
   check: <path d="M5 12l5 5 9-10" />,
+  reload: (
+    <>
+      <path d="M20 11a8 8 0 10-2.3 5.7" />
+      <path d="M20 4v7h-7" />
+    </>
+  ),
+  film: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4" />
+    </>
+  ),
   alert: (
     <>
       <path d="M12 4l9 16H3z" />
