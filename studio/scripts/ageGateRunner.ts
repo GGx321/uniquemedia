@@ -17,9 +17,12 @@
  * inject a fake fetch; see ageGateRunner.test.ts) or by an agent — only the
  * owner, by hand, decides to spend.
  *
- * Usage:
- *   OPENROUTER_API_KEY=sk-or-v1-... bun studio/scripts/ageGateRunner.ts <folder> --dry-run
- *   OPENROUTER_API_KEY=sk-or-v1-... bun studio/scripts/ageGateRunner.ts <folder> --yes [--max 50] [--csv out.csv]
+ * Usage (the key never goes on the command line: it would land in the shell
+ * history and in `ps`; put it in the environment first, silently, with
+ * `read -rs OPENROUTER_API_KEY && export OPENROUTER_API_KEY`, and `unset` it
+ * afterwards):
+ *   bun studio/scripts/ageGateRunner.ts <folder> --dry-run
+ *   bun studio/scripts/ageGateRunner.ts <folder> --yes [--max 50] [--csv out.csv]
  *
  * The key is read only from the OPENROUTER_API_KEY environment variable and
  * is never printed, logged, or written to the CSV — it reaches only the
@@ -184,7 +187,9 @@ export function parseArgs(argv: readonly string[]): AgeGateOptions {
 
 function printUsage(): void {
   console.log(
-    "Usage: OPENROUTER_API_KEY=sk-or-v1-... bun studio/scripts/ageGateRunner.ts <folder> [options]\n\n" +
+    "Usage: bun studio/scripts/ageGateRunner.ts <folder> [options]\n\n" +
+      "The key comes from the OPENROUTER_API_KEY environment variable. Set it without leaving it in your shell history:\n" +
+      "  read -rs OPENROUTER_API_KEY && export OPENROUTER_API_KEY     (then run this; `unset OPENROUTER_API_KEY` afterwards)\n\n" +
       "Options:\n" +
       "  --dry-run       print only the plan and the worst-case estimate; no key, no --yes, no network call\n" +
       "  --yes           required to actually spend money on real age checks\n" +

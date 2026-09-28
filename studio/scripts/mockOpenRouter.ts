@@ -196,6 +196,25 @@ export interface MockRequest {
   schemaName: string | null;
   /** The request's Authorization header, verbatim; null when it sent none (the price-fetch GETs send none — see openrouter/priceFetch.ts). */
   authorization: string | null;
+  /** The full request URL as it arrived, query string included. */
+  url: string;
+  /** Every request header (names in lower case), as sent. */
+  headers: Record<string, string>;
+  /** The body exactly as it was sent ("" for a GET), whether or not it parsed as JSON. */
+  bodyText: string;
+}
+
+/**
+ * Whether any of `words` is anywhere in the request, in any letter case: its
+ * URL (query included), its headers or its body as sent — the same scan
+ * engine.canary.test.ts's `carriesMarker` makes over a fake fetch's call, so
+ * the packaged smoke is no weaker than the unit test. Finds the words only as
+ * plain text; a leak that transforms them first (base64, a hash, a
+ * paraphrase) is not caught here, as in the unit test.
+ */
+export function requestCarries(request: MockRequest, words: readonly string[]): boolean {
+  const text = `${request.url}\n${JSON.stringify(request.headers)}\n${request.bodyText}`.toLowerCase();
+  return words.some((word) => text.includes(word));
 }
 
 /** T6c: the vision describe call's own strict JSON answer (the M5 subject check, traits, and descriptor in one). */
@@ -309,6 +328,14 @@ export interface MockOpenRouter {
   stop(): Promise<void>;
 }
 
+/** A request body as the mock read it: the text as sent, and its JSON when it parsed. */
+interface SentBody {
+  json: unknown;
+  text: string;
+}
+
+const NO_BODY: SentBody = { json: null, text: "" };
+
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
   const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, writer: 0.011, ...opts.costsUsd };
@@ -335,8 +362,17 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   }
 
-  function record(req: Request, path: string, body: unknown): MockRequest {
-    const entry: MockRequest = { method: req.method, path, body, schemaName: schemaNameOf(body), authorization: req.headers.get("authorization") };
+  function record(req: Request, path: string, sent: SentBody): MockRequest {
+    const entry: MockRequest = {
+      method: req.method,
+      path,
+      body: sent.json,
+      schemaName: schemaNameOf(sent.json),
+      authorization: req.headers.get("authorization"),
+      url: req.url,
+      headers: Object.fromEntries(req.headers.entries()),
+      bodyText: sent.text,
+    };
     requests.push(entry);
     return entry;
   }
@@ -357,8 +393,16 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     };
   }
 
-  async function jsonBody(req: Request): Promise<unknown> {
-    return req.json().catch(() => null);
+  /** The body as text, and parsed when it is JSON (null when it is not). */
+  async function bodyOf(req: Request): Promise<SentBody> {
+    const text = await req.text().catch(() => "");
+    let json: unknown = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+    return { json, text };
   }
 
   const server = Bun.serve({
@@ -377,19 +421,19 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         // `runPriceModels`), so both endpoints must answer; the same fixture
         // stands in for either model — a run's own estimate/cap checks never
         // depend on the two carrying different numbers.
-        record(req, path, null);
+        record(req, path, NO_BODY);
         return new Response(endpointsFixture, { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "GET" && path === "/api/v1/models") {
-        record(req, path, null);
+        record(req, path, NO_BODY);
         return new Response(modelsFixture, { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "GET" && path === "/api/v1/credits") {
-        record(req, path, null);
+        record(req, path, NO_BODY);
         return json({ data: { total_usage: totalUsageUsd } });
       }
       if (method === "POST" && path === "/api/v1/chat/completions") {
-        const entry = record(req, path, await jsonBody(req));
+        const entry = record(req, path, await bodyOf(req));
         if (entry.schemaName === "avatar_descriptor") {
           return json(chatCompletion(JSON.stringify({ descriptor: opts.descriptorText }), costs.descriptor));
         }
@@ -416,7 +460,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         return loudly404(entry);
       }
       if (method === "POST" && path === "/api/v1/images") {
-        record(req, path, await jsonBody(req));
+        record(req, path, await bodyOf(req));
         if (imageDelayMs > 0) await Bun.sleep(imageDelayMs);
         totalUsageUsd += costs.image;
         const fallback = opts.faceFixture ? faceFixtureBytes() : portraitPng();
@@ -427,7 +471,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         const mediaType = opts.faceFixture ? "image/jpeg" : "image/png";
         return json({ created: 1_790_000_000, data: [{ b64_json: b64(bytes), media_type: mediaType }], usage: { cost: costs.image } });
       }
-      return loudly404(record(req, path, method === "POST" ? await jsonBody(req) : null));
+      return loudly404(record(req, path, method === "POST" ? await bodyOf(req) : NO_BODY));
     },
   });
 

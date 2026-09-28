@@ -67,7 +67,7 @@ import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
-import { DEFAULT_IMPORT_DESCRIBE_ANSWER, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
+import { DEFAULT_IMPORT_DESCRIBE_ANSWER, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { looksLikeAStackTrace } from "./stackTrace";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -643,10 +643,9 @@ async function filesUnder(dir: string): Promise<string[]> {
     .map((e) => join(e.parentPath, e.name).slice(dir.length + 1).replaceAll("\\", "/"));
 }
 
-/** Whether any marker word is anywhere in a mock request's body, in any letter case (engine.canary.test.ts's own `carriesMarker`). */
+/** Whether any marker word is anywhere in a mock request: URL, headers or body, in any letter case (engine.canary.test.ts's own `carriesMarker` scan). */
 function carriesMarker(request: MockRequest): boolean {
-  const text = JSON.stringify(request.body).toLowerCase();
-  return AVATAR_MARKER_WORDS.some((word) => text.includes(word));
+  return requestCarries(request, AVATAR_MARKER_WORDS);
 }
 
 /**
