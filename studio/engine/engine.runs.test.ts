@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { computePdqHash } from "../../src/core/pdq/pdq";
 import { JobState, type EventMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { decodeGray64 } from "../node/pdqPixels";
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { RunPlanSchema, type RunPlan } from "./runs/plan";
 import { plan as planScenes } from "./scenes";
@@ -46,6 +48,23 @@ const FOUR_ON_WORST = 4 * 3 * 55_250 + 75_000;
  */
 function faceGate(): QaGate {
   return { name: "face", paid: false, check: async () => ({ verdict: "pass" }) };
+}
+
+/**
+ * Money review M4: a test's own `qaGates` (arbitrary fakes, in whatever
+ * order it wrote them) plus the auto-inserted fake face gate, reassembled
+ * into the production order — pdq, then face, then age, then anything else
+ * — never a face gate blindly appended at the end (which used to put it
+ * AFTER a test's own age gate: wrong, and exactly backwards from
+ * `productionGates.ts`'s own rule that money is spent only on an image
+ * every free gate, face included, already accepted).
+ */
+function inProductionOrder(gates: readonly QaGate[]): QaGate[] {
+  const pdq = gates.filter((g) => g.name === "pdq");
+  const face = gates.filter((g) => g.name === "face");
+  const age = gates.filter((g) => g.name === "age");
+  const other = gates.filter((g) => g.name !== "pdq" && g.name !== "face" && g.name !== "age");
+  return [...pdq, ...(face.length > 0 ? face : [faceGate()]), ...age, ...other];
 }
 
 /** A fake age gate registered under the name the engine looks for: it passes every photo and spends nothing. */
@@ -202,6 +221,7 @@ function engineOver(
     monthlyBudgetMicros?: number;
     imageModel?: string;
     decodeImage?: EngineDeps["decodeImage"];
+    faceGateLoadError?: string;
   } = {},
 ) {
   const settings = engineSettings(dir(), {
@@ -217,19 +237,13 @@ function engineOver(
     deps: {
       ...(opts.clock === undefined ? {} : { clock: opts.clock }),
       ...(opts.monotonic === undefined ? {} : { monotonic: opts.monotonic }),
+      ...(opts.faceGateLoadError === undefined ? {} : { faceGateLoadError: opts.faceGateLoadError }),
       ...(opts.decodeImage === undefined ? {} : { decodeImage: opts.decodeImage }),
       // T7b: every run needs a wired face gate now (#assertFaceGate); a test
       // that passes its own qaGates keeps a face gate too, unless it already
       // named one of its own. `qaGates: null` opts all the way out (a test
       // proving FACE_GATE_UNAVAILABLE).
-      qaGates:
-        opts.qaGates === null
-          ? []
-          : opts.qaGates === undefined
-            ? [faceGate()]
-            : opts.qaGates.some((g) => g.name === "face")
-              ? opts.qaGates
-              : [...opts.qaGates, faceGate()],
+      qaGates: opts.qaGates === null ? [] : inProductionOrder(opts.qaGates ?? []),
     },
   });
 }
@@ -684,6 +698,16 @@ describe("a run with no face gate wired", () => {
     expect(readdirSync(join(dir(), "library", "runs"))).toEqual([]);
   });
 
+  test("M3: FACE_GATE_UNAVAILABLE carries the startup load error in its detail, when the engine was told one", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net, { qaGates: null, faceGateLoadError: "the face models could not be read: ENOENT models/face_detection_yunet_2023mar.onnx" });
+
+    const response = failed(await engine.handle(startRun(avatarId)));
+    expect(response.error.code).toBe("FACE_GATE_UNAVAILABLE");
+    expect(response.error.detail).toContain("the face models could not be read");
+  });
+
   test("a resume is also refused with FACE_GATE_UNAVAILABLE by an engine without one", async () => {
     const avatarId = await seedAvatar();
     const net = runNetwork({ image: () => ({ hang: true }) });
@@ -836,8 +860,23 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
     expect(generated.every((p) => typeof p.qa.faceCos === "number")).toBe(true);
   });
 
-  test("pdq runs before face: a near-duplicate is caught by pdq and the face gate is never reached for that attempt", async () => {
+  // Money review M4: the version of this test before the fix only ever ran
+  // ONE slot with no actual duplicate in play — it pinned that pdq's check()
+  // was CALLED first, never that a near-duplicate is caught by pdq and the
+  // face gate is skipped entirely for that attempt (its own title's claim).
+  // This version seeds a real prior photo whose stored `qa.pdq` hash is the
+  // real PDQ hash of the exact bytes every attempt below will generate
+  // (computed the same way the production gate does: decodeGray64 +
+  // computePdqHash), so pdq's own real check() genuinely retries every
+  // attempt as a duplicate — the face gate must never be reached at all.
+  test("pdq runs before face: a near-duplicate is caught by pdq and the face gate is never called for that attempt", async () => {
     const avatarId = await seedAvatar();
+    const duplicateBytes = portraitPng(3);
+    const duplicateHash = Buffer.from(computePdqHash(await decodeGray64(duplicateBytes))).toString("hex");
+
+    const { library: seedLibrary } = await openLibrary(join(dir(), "library"), { newId: sequentialIds("dup") });
+    await seedLibrary.addPhoto(avatarId, duplicateBytes, samplePhotoMeta({ qa: { pdq: duplicateHash } }));
+
     const order: string[] = [];
     const face = createFaceQaGate({
       faceGate: {
@@ -857,16 +896,20 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
       },
       releaseClaim: pdqReal.releaseClaim?.bind(pdqReal),
     };
-    const { engine, events } = await engineOver(runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPng(3), { cost: 0.04 }) }) }), {
+    const { engine, events } = await engineOver(runNetwork({ image: () => ({ status: 200, body: imageBody(duplicateBytes, { cost: 0.04 }) }) }), {
       qaGates: [pdq, face],
       decodeImage: async () => decoded,
     });
 
     const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
-    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done" });
+    // Every one of the slot's 3 attempts generates the identical (seeded)
+    // bytes, so pdq retries every one of them as a duplicate: the slot ends
+    // without a photo, never having reached the face gate at all.
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 1 } } });
 
-    expect(order[0]).toBe("pdq");
-    expect(order).toContain("face");
+    expect(order.length).toBeGreaterThan(0);
+    expect(order.every((g) => g === "pdq")).toBe(true);
+    expect(order).not.toContain("face");
   });
 });
 

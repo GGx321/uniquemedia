@@ -144,6 +144,16 @@ export interface EngineDeps {
    * real one.
    */
   decodeImage?: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
+  /**
+   * Money review M3: when `studio/engine/main.ts` could not load the face
+   * gate (missing/corrupt models, a WASM codec failure, or its own load
+   * timed out — never a hung ORT init left the engine unresponsive), this
+   * carries WHY, so `#assertFaceGate()`'s `FACE_GATE_UNAVAILABLE` detail
+   * says more than a generic "no face gate is wired" — useful in a support
+   * report even though the app's own UI still shows the same fixed Russian
+   * message either way (errorMessagesRu.ts).
+   */
+  faceGateLoadError?: string;
 }
 
 /** Local work in flight at once: the cores but one for the engine's own event loop, at most 4, at least 1. */
@@ -435,6 +445,8 @@ export class Engine {
   readonly #cpuPool: CpuPool;
   /** T6: the QA gates of every photo run; none until T7a/T7b wire theirs. */
   readonly #qaGates: readonly QaGate[];
+  /** M3: why the face gate could not be loaded, when `deps.faceGateLoadError` said — `#assertFaceGate()`'s own detail. */
+  readonly #faceGateLoadError: string | undefined;
   /** T7b: the run's own way to decode an image to tagged pixels with the engine's own WASM decoder (only the face gate calls it). */
   readonly #decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 
@@ -457,6 +469,7 @@ export class Engine {
     this.#networkPool = new NetworkPool({ max: init.settings.concurrency.network });
     this.#cpuPool = new CpuPool(deps.cpuPoolSize ?? defaultCpuPoolSize());
     this.#qaGates = deps.qaGates ?? [];
+    this.#faceGateLoadError = deps.faceGateLoadError;
     this.#decodeImage =
       deps.decodeImage ??
       (() => Promise.reject(new Error("studio engine: no image decoder is wired (the face gate needs one)")));
@@ -1011,7 +1024,8 @@ export class Engine {
    */
   #assertFaceGate(): void {
     if (!this.#qaGates.some((gate) => gate.name === FACE_GATE_NAME)) {
-      throw new EngineFailure({ code: "FACE_GATE_UNAVAILABLE", detail: "no face gate is wired into photo runs; restart Studio, or reinstall it if this persists" });
+      const base = "no face gate is wired into photo runs; restart Studio, or reinstall it if this persists";
+      throw new EngineFailure({ code: "FACE_GATE_UNAVAILABLE", detail: this.#faceGateLoadError === undefined ? base : `${base} (${this.#faceGateLoadError})` });
     }
   }
 

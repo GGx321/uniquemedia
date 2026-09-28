@@ -14,10 +14,11 @@ import { createWasmImageDecoder } from "./decode/wasmDecode";
 import { ortWasmPathsFrom } from "./decode/wasmPaths";
 import { deliver, Engine, exitIfStartFails } from "./engine";
 import { createFaceGate, defaultFaceGateConfig, type FaceGate, type FaceGateImage } from "./face";
+import { timeoutSignal, untilAborted } from "./money/timeoutSignal";
 import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
 import { createPdqGate } from "./runs/pdqGate";
-import type { QaGate } from "./runs/qa";
+import { productionGateOrder } from "./runs/productionGates";
 
 const parentPort = process.parentPort;
 if (!parentPort) throw new Error("the studio engine must run as an Electron utilityProcess");
@@ -49,29 +50,51 @@ function messageOf(error: unknown): string {
 }
 
 /**
+ * Money review M3: a hung ORT init (or a hung WASM codec load) must never
+ * leave the engine unresponsive — before this, `loadFaceGate()` had no
+ * bound of its own, so the `await` at the top of the port's init handler
+ * could hang forever, and the engine would never even become responsive to
+ * a plain, free command. `untilAborted` bounds the work even when it
+ * ignores the signal itself (a hung native call), exactly the same shape
+ * `runJob.ts`'s own `loadMaster()`/`prepareGates()` use.
+ */
+const FACE_GATE_LOAD_TIMEOUT_MS = 60_000;
+
+type FaceGateLoad = { faceGate: FaceGate; decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> } | { error: string };
+
+/**
  * Reads the two model files, builds the real face gate, AND builds the
  * engine's own WASM image decoder (decode/realBackend.ts) — the face gate
  * cannot run without a working decoder either way (it is the only caller),
  * so the two are loaded together and fail together. Never throws: a dev
- * build that skipped `faceModelCache.ts`/`prepareFaceAssets.ts`, or a
- * genuinely broken package (models OR the WASM codecs), logs clearly and
- * starts the engine WITHOUT a face gate — `Engine`'s own `#assertFaceGate`
- * then refuses any run rather than silently storing photos no identity
- * check has ever seen (T7b wiring decisions,
- * docs/studio/2026-09-24-stage-2-plan.md).
+ * build that skipped `faceModelCache.ts`/`prepareFaceAssets.ts`, a
+ * genuinely broken package (models OR the WASM codecs), or a load that
+ * outlives `FACE_GATE_LOAD_TIMEOUT_MS`, logs clearly and starts the engine
+ * WITHOUT a face gate — `Engine`'s own `#assertFaceGate` then refuses any
+ * run rather than silently storing photos no identity check has ever seen
+ * (T7b wiring decisions, docs/studio/2026-09-24-stage-2-plan.md), and
+ * `EngineDeps.faceGateLoadError` (M3) carries why, into the refusal's own
+ * detail.
  */
-async function loadFaceGate(): Promise<{ faceGate: FaceGate; decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> } | null> {
+async function loadFaceGate(): Promise<FaceGateLoad> {
+  const timeout = timeoutSignal(FACE_GATE_LOAD_TIMEOUT_MS);
   try {
-    const [yunet, sface, decodeBackend] = await Promise.all([
-      readFile(join(MODEL_DIR, "face_detection_yunet_2023mar.onnx")),
-      readFile(join(MODEL_DIR, "face_recognition_sface_2021dec.onnx")),
-      createRealDecodeBackend(NODE_MODULES_DIR),
-    ]);
-    const faceGate = await createFaceGate({ yunet, sface }, defaultFaceGateConfig(), WASM_PATHS);
-    return { faceGate, decodeImage: createWasmImageDecoder(decodeBackend) };
+    const work = (async (): Promise<FaceGateLoad> => {
+      const [yunet, sface, decodeBackend] = await Promise.all([
+        readFile(join(MODEL_DIR, "face_detection_yunet_2023mar.onnx")),
+        readFile(join(MODEL_DIR, "face_recognition_sface_2021dec.onnx")),
+        createRealDecodeBackend(NODE_MODULES_DIR),
+      ]);
+      const faceGate = await createFaceGate({ yunet, sface }, defaultFaceGateConfig(), WASM_PATHS);
+      return { faceGate, decodeImage: createWasmImageDecoder(decodeBackend) };
+    })();
+    return await untilAborted(work, timeout.signal);
   } catch (error) {
-    console.error(`studio engine: the face gate could not be loaded (${messageOf(error)}); photo runs will refuse to start until this is fixed`);
-    return null;
+    const why = timeout.signal.aborted ? `it took longer than ${FACE_GATE_LOAD_TIMEOUT_MS} ms` : messageOf(error);
+    console.error(`studio engine: the face gate could not be loaded (${why}); photo runs will refuse to start until this is fixed`);
+    return { error: why };
+  } finally {
+    timeout.clear();
   }
 }
 
@@ -96,7 +119,7 @@ parentPort.once("message", (event) => {
     const pdqGate = createPdqGate();
     const ageGate = createAgeGate();
     const loaded = await loadFaceGate();
-    const qaGates: QaGate[] = loaded === null ? [pdqGate, ageGate] : [pdqGate, createFaceQaGate({ faceGate: loaded.faceGate }), ageGate];
+    const qaGates = productionGateOrder({ pdq: pdqGate, face: "error" in loaded ? null : createFaceQaGate({ faceGate: loaded.faceGate }), age: ageGate });
 
     const ready = Engine.start(init.data, {
       bootId: randomUUID(),
@@ -107,7 +130,7 @@ parentPort.once("message", (event) => {
       // The runtime's own fetch (Electron's Node); only the OpenRouter client uses it.
       fetch: (url, init) => fetch(url, init),
       qaGates,
-      ...(loaded === null ? {} : { decodeImage: loaded.decodeImage }),
+      ...("error" in loaded ? { faceGateLoadError: loaded.error } : { decodeImage: loaded.decodeImage }),
     });
 
     // A failed start ends the process, so main restarts it and tells the windows.
