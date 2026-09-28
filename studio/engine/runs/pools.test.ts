@@ -287,6 +287,22 @@ describe("CpuPool", () => {
     expect(ran).toBe(true);
   });
 
+  test("an abort that lands between the slot's grant and the task's start still frees the slot (final review, micro-window)", async () => {
+    const pool = new CpuPool(1);
+    const controller = new AbortController();
+    // The slot is granted at once, but run() resumes after its await only on a later microtask: abort before that.
+    const hung = pool.run(() => new Promise<never>(() => {}), controller.signal);
+    void hung;
+    controller.abort(new Error("cancelled"));
+    let ran = false;
+    const next = pool.run(async () => {
+      ran = true;
+    }, never);
+    await settle();
+    expect(ran).toBe(true);
+    await next;
+  });
+
   test("a task still waiting is dropped on abort and never runs", async () => {
     const pool = new CpuPool(1);
     let release: () => void = () => {};

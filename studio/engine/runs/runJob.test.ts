@@ -15,8 +15,8 @@ import { plan as planScenes, type PlanSlot } from "../scenes";
 import { RunEventSchema, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
 import { CpuPool, NetworkPool } from "./pools";
-import type { QaGate, QaInput, QaVerdict } from "./qa";
-import { reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
+import { QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
+import { CANCELLED_GATE_TIMEOUT_MS, reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -193,6 +193,7 @@ function start(
     /** Called as the job starts each attempt (it already holds its network slot). */
     onStart?: () => void;
     clientOverrides?: Partial<OpenRouterClientOptions>;
+    cancelledGateTimeoutMs?: number;
   } = {},
 ): Harness {
   const net = opts.net ?? network();
@@ -222,6 +223,7 @@ function start(
       now: () => new Date(NOW),
       errorOf: (error: unknown): EngineError => ({ code: "INTERNAL", detail: error instanceof Error ? error.message : String(error) }),
       onSlot: (p) => progress.push(p),
+      ...(opts.cancelledGateTimeoutMs === undefined ? {} : { cancelledGateTimeoutMs: opts.cancelledGateTimeoutMs }),
     },
     { plan: run, jobId: opts.jobId ?? JOB_ID, descriptor: DESCRIPTOR, signal: opts.signal ?? new AbortController().signal },
   );
@@ -900,6 +902,30 @@ describe("cancel", () => {
     expect(await end).toEqual({ status: "cancelled" });
     expect(hung.inputs).toHaveLength(1);
     expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
+  });
+
+  // Final review LOW-1: a free gate with no timeout of its own gets the gates' default (60 s), which the
+  // after-cancel bound must cut short: a hung gate may not hold the end of a cancelled job.
+  test("a free gate with no timeout of its own that hangs after the cancel is cut off by the after-cancel bound, not the gates' default", async () => {
+    const run = await newRun(2);
+    const controller = new AbortController();
+    const hung = gate("face", () => new Promise<QaVerdict>(() => {}));
+    const { end } = start(run, {
+      gates: [hung],
+      signal: controller.signal,
+      pool: new NetworkPool({ max: 1 }),
+      generateImage: cancelAsFirstImageArrives(controller),
+      cancelledGateTimeoutMs: 50,
+    });
+
+    const late = new Promise<"still running">((resolve) => setTimeout(() => resolve("still running"), 1_000));
+    expect(await Promise.race([end, late])).toEqual({ status: "cancelled" });
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
+  });
+
+  test("the after-cancel bound is short: five seconds, far under the gates' default", () => {
+    expect(CANCELLED_GATE_TIMEOUT_MS).toBe(5_000);
+    expect(CANCELLED_GATE_TIMEOUT_MS).toBeLessThan(QA_GATE_TIMEOUT_MS);
   });
 });
 

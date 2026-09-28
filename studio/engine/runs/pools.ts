@@ -175,6 +175,8 @@ export class CpuPool {
   async run<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
     const release = await this.#slots.acquire(signal);
     signal.addEventListener("abort", release, { once: true });
+    // An abort between the grant and this line fired no listener: free the slot now (release is idempotent).
+    if (signal.aborted) release();
     try {
       return await work();
     } finally {

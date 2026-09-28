@@ -92,6 +92,8 @@ export interface RunJobDeps {
   warn?: (line: string) => void;
   /** REFERENCE_TIMEOUT_MS unless a test says otherwise. */
   referenceTimeoutMs?: number;
+  /** CANCELLED_GATE_TIMEOUT_MS unless a test says otherwise. */
+  cancelledGateTimeoutMs?: number;
 }
 
 export interface RunJob {
@@ -272,7 +274,7 @@ class GateDropped extends Error {}
  */
 async function checkOne(ctx: Context, gate: QaGate, input: Omit<QaInput, "signal">, afterCancel: boolean): Promise<QaVerdict> {
   const { deps, job } = ctx;
-  const ms = afterCancel ? Math.min(gate.timeoutMs ?? QA_GATE_TIMEOUT_MS, CANCELLED_GATE_TIMEOUT_MS) : (gate.timeoutMs ?? QA_GATE_TIMEOUT_MS);
+  const ms = afterCancel ? Math.min(gate.timeoutMs ?? QA_GATE_TIMEOUT_MS, deps.cancelledGateTimeoutMs ?? CANCELLED_GATE_TIMEOUT_MS) : (gate.timeoutMs ?? QA_GATE_TIMEOUT_MS);
   const timeout = timeoutSignal(ms);
   const signal = afterCancel ? timeout.signal : AbortSignal.any([job.signal, timeout.signal]);
   const check = (): Promise<QaVerdict> => gate.check({ ...input, signal });
@@ -280,6 +282,8 @@ async function checkOne(ctx: Context, gate: QaGate, input: Omit<QaInput, "signal
     const release = await deps.pool.acquire(signal);
     // Freed on the abort too: a gate that ignores its abort must not hold a network slot (review round 3, L-c).
     signal.addEventListener("abort", release, { once: true });
+    // An abort between the grant and this line fired no listener: free the slot now (release is idempotent).
+    if (signal.aborted) release();
     try {
       return await check();
     } finally {
