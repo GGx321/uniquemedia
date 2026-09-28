@@ -57,8 +57,12 @@ function carriesMarker(call: FetchCall): boolean {
   return MARKER_WORDS.some((word) => text.includes(word));
 }
 
+function descriptorAttemptsIn(engineDir: string): string[] {
+  return ledgerLines(engineDir).flatMap((l) => (l.type === "reserve" && /:descriptor#\d+$/.test(String(l.attemptId)) ? [String(l.attemptId)] : []));
+}
+
 function descriptorAttempts(): string[] {
-  return ledgerLines(dir()).flatMap((l) => (l.type === "reserve" && /:descriptor#\d+$/.test(String(l.attemptId)) ? [String(l.attemptId)] : []));
+  return descriptorAttemptsIn(dir());
 }
 
 async function createMarkedDraft(engine: Awaited<ReturnType<typeof startEngine>>["engine"]): Promise<string> {
@@ -223,6 +227,18 @@ describe("photo runs: no writer, image or age-check request carries the vibe", (
     return calls.filter((c) => c.url.endsWith("/chat/completions") && schemaName(c) === "scene_sentences");
   }
 
+  /**
+   * Every outgoing call of the engine, not a filtered subset: the only calls
+   * allowed to carry the marker are the `:descriptor#N` attempts, and a photo
+   * run on a seeded avatar makes none, so none may carry it (a leak through
+   * a request kind this file did not think of still fails).
+   */
+  function expectNoCallCarriesMarkerExceptDescriptorAttempts(net: { calls: readonly FetchCall[] }): void {
+    const carrying = net.calls.filter(carriesMarker);
+    expect(carrying).toHaveLength(descriptorAttemptsIn(runsDir()).length);
+    expect(carrying.every((call) => schemaName(call) === "avatar_descriptor")).toBe(true);
+  }
+
   function runIds(response: ResponseMessage): { runId: string; jobId: string } {
     const answer = ok(response);
     if (answer.type !== "runs.start" && answer.type !== "runs.resume") throw new Error(`expected a run answer, got ${answer.type}`);
@@ -246,7 +262,7 @@ describe("photo runs: no writer, image or age-check request carries the vibe", (
     expect(end.type).toBe("job.done");
     expect(net.imageCalls().length).toBeGreaterThan(0);
     expect(writerCallsOf(net.calls).length).toBeGreaterThan(0);
-    expect([...net.imageCalls(), ...writerCallsOf(net.calls)].filter(carriesMarker)).toEqual([]);
+    expectNoCallCarriesMarkerExceptDescriptorAttempts(net);
   });
 
   test("runs.start, the image age check on: no writer, image or age-check request carries it", async () => {
@@ -267,7 +283,7 @@ describe("photo runs: no writer, image or age-check request carries the vibe", (
     expect(net.imageCalls().length).toBeGreaterThan(0);
     expect(net.ageCalls().length).toBeGreaterThan(0);
     expect(writerCallsOf(net.calls).length).toBeGreaterThan(0);
-    expect([...net.imageCalls(), ...net.ageCalls(), ...writerCallsOf(net.calls)].filter(carriesMarker)).toEqual([]);
+    expectNoCallCarriesMarkerExceptDescriptorAttempts(net);
   });
 
   test("runs.resume after an interruption: no writer, image or age-check request carries it, across the whole run", async () => {
@@ -301,6 +317,6 @@ describe("photo runs: no writer, image or age-check request carries the vibe", (
     expect(net.ageCalls().length).toBeGreaterThan(0);
     // resume uses plan.json and never re-plans (T6): the writer is asked once, not once per stop.
     expect(writerCallsOf(net.calls)).toHaveLength(1);
-    expect([...net.imageCalls(), ...net.ageCalls(), ...writerCallsOf(net.calls)].filter(carriesMarker)).toEqual([]);
+    expectNoCallCarriesMarkerExceptDescriptorAttempts(net);
   });
 });
