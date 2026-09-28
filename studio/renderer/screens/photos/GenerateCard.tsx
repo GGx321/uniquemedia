@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { SceneCategory, type AvatarSummary, type EngineError, type Estimate, type RunRequest } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { EngineView } from "../../engine/store";
@@ -82,10 +82,11 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const sending = useRef(false);
   /** The request's current key, live: `start`'s PRICE_CHANGED re-price must never overwrite a fresher key's own estimate (M1). */
   const keyRef = useRef<string | null>(null);
+  /** The worst case actually sent to runs.start/resume, held while `busy` (LOW-4): what shows on the button while sending is what is in flight, not a fresher key's own price that landed in the meantime. */
+  const inFlightWorstRef = useRef<number | null>(null);
 
   const [priced, setPriced] = useState<Priced | null>(null);
   const [previousWorst, setPreviousWorst] = useState<number | null>(null);
-  const [estimating, setEstimating] = useState(false);
   // True from the click through runs.start and, on PRICE_CHANGED, the fresh estimate after it.
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<EngineError | null>(null);
@@ -97,9 +98,22 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   // price is not shown meanwhile.
   const settings = view.settings;
   const key = `${requestKey(request)}|${settings?.imageAgeCheck ?? ""}|${settings?.imageModel ?? ""}|${settings?.textModel ?? ""}`;
-  keyRef.current = key;
+  // LOW-10: a layout effect, not a render-body assignment — still committed
+  // before `start`'s own async continuations can ever read it (they only
+  // resume after an await, always later than any synchronous commit), but
+  // without mutating a ref as a side effect of rendering itself.
+  useLayoutEffect(() => {
+    keyRef.current = key;
+  }, [key]);
   const ready = view.phase === "ready";
   const canPrice = ready && avatar.status === "active" && request.categories.length > 0;
+
+  const current = priced !== null && priced.key === key ? priced : null;
+  // LOW-5: derived from what is already known, not a separate state a step
+  // behind it — a `setEstimating(true)` inside the effect below only ever
+  // commits after this component's very first paint, which would otherwise
+  // show "Сгенерировать N фото · до …" for one frame before "Считаем…".
+  const estimating = canPrice && current === null && error === null;
 
   // The free price, asked again whenever the request changes. An answer for
   // a request that is gone by then is dropped (`alive`), so a quick run of
@@ -108,16 +122,13 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
     if (!canPrice) {
       // Nothing to price (no category chosen, say, L12): an error from
       // before must not linger once there is no longer a request it is for.
-      setEstimating(false);
       setError(null);
       return;
     }
     let alive = true;
-    setEstimating(true);
     setError(null);
     void client.request("runs.estimate", request).then((reply) => {
       if (!alive) return;
-      setEstimating(false);
       if (reply.ok) {
         setPriced({ key, request, estimate: reply.result.estimate });
         setPreviousWorst(null);
@@ -131,12 +142,11 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
     };
   }, [canPrice, key, retry, client]); // `request` and the settings it is priced under are `key`'s own content
 
-  const current = priced !== null && priced.key === key ? priced : null;
-
   async function start(accepted: Priced): Promise<void> {
     // A second click before React re-renders the disabled button must never send twice.
     if (sending.current) return;
     sending.current = true;
+    inFlightWorstRef.current = accepted.estimate.worstMicros;
     setBusy(true);
     onPaidInFlightChange(true);
     setError(null);
@@ -177,6 +187,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
       setError(fresh.error);
     } finally {
       sending.current = false;
+      inFlightWorstRef.current = null;
       onPaidInFlightChange(false);
       if (mounted.current) setBusy(false);
     }
@@ -205,7 +216,15 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
 
   // ---------- the button ----------
 
-  const worst = current ? `до ${formatUsd(current.estimate.worstMicros, 2, "up")}` : null;
+  // LOW-4: while sending, the price actually in flight (what was accepted at
+  // click time) — never a fresher key's own price that happened to land in
+  // the meantime, which is not what this send will actually be charged.
+  const worst =
+    busy && inFlightWorstRef.current !== null
+      ? `до ${formatUsd(inFlightWorstRef.current, 2, "up")}`
+      : current
+        ? `до ${formatUsd(current.estimate.worstMicros, 2, "up")}`
+        : null;
   let title: string;
   let onClick: (() => void) | null = null;
   let primary = true;

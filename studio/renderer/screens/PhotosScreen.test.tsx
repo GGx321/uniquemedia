@@ -369,9 +369,11 @@ test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's o
   await act(async () => {
     await client.request("settings.setImageAgeCheck", { imageAgeCheck: "on" });
   });
-  // K2's own estimate, asked for by the key change alone, lands first (the
-  // button still reads "Отправляем…" — runs.start for K1 has not answered yet).
-  await waitFor(() => expect(goButton().textContent).toContain("до $3.19"));
+  // K2's own estimate, asked for by the key change alone, lands in the
+  // background — but while sending, the button shows K1's own accepted worst
+  // (LOW-4), the price actually in flight, not K2's fresher one.
+  await flush();
+  expect(goButton().textContent).toBe("Отправляем… · до $3.07");
 
   tick(scheduler, 1); // runs.start (sent for K1) is handled now: PRICE_CHANGED
   await flush();
