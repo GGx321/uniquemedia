@@ -48,7 +48,7 @@ import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { servedPoolImagePng } from "./distinctPattern";
-import { FACE_FIXTURE_PATH, facePoolImagePng } from "./facePool";
+import { FACE_FIXTURE_PATH, facePoolImagePng, facePoolNoFacePng } from "./facePool";
 
 const FIXTURES = join(import.meta.dirname, "../engine/money/fixtures");
 
@@ -76,8 +76,16 @@ function b64(bytes: Uint8Array): string {
 
 let faceFixtureCache: Uint8Array | null = null;
 
-/** The same fixture parity.test.ts pins to the OpenCV/nativeImage numbers, served as the mock avatar's master/candidate portrait when `faceFixture` is on. */
-function faceFixturePng(): Uint8Array {
+/**
+ * L9: fixed a stale name/comment — this was called `faceFixturePng` while
+ * actually reading `FACE_FIXTURE_PATH` (fixtures/images/master.jpg), a real
+ * JPEG file, and the response handler below labelled every image
+ * `media_type: "image/png"` regardless. The same fixture parity.test.ts
+ * pins to the OpenCV/nativeImage numbers, served as the mock avatar's
+ * master/candidate portrait when `faceFixture` is on and the image is not
+ * coming from the composited pool (`buildFacePool`, also real JPEG now).
+ */
+function faceFixtureBytes(): Uint8Array {
   faceFixtureCache ??= readFileSync(FACE_FIXTURE_PATH);
   return faceFixtureCache;
 }
@@ -102,9 +110,20 @@ function buildDistinctPool(size: number): Uint8Array[] {
  * face on every image instead of retrying every front/three-quarter slot
  * forever. distinctPattern.test.ts's own extension proves both properties
  * hold (PDQ-distinct, face-matching) for exactly this function's output.
+ * Real JPEG now (L9), not PNG — production's own image model returns JPEG,
+ * so this is what actually exercises the engine's WASM JPEG decode path.
+ *
+ * `mismatchOnce`: pool index 0 is `facePoolNoFacePng` instead (L9) — a
+ * real, deterministic "no face detected" on exactly one served image (never
+ * a composited different-person's face landed in the gross-drift range by
+ * luck: measured, the fixture impostor composited here scores 0.647, still
+ * a "match" under the hybrid policy). A run whose slots are all
+ * front/three-quarter (RUN_POSES) sees exactly one attempt hit this and
+ * retry — smoke-engine.ts's own run scenario proves the slot then still
+ * passes on a later attempt.
  */
-function buildFacePool(size: number): Uint8Array[] {
-  return Array.from({ length: size }, (_, i) => facePoolImagePng(i));
+function buildFacePool(size: number, mismatchOnce: boolean): Uint8Array[] {
+  return Array.from({ length: size }, (_, i) => (mismatchOnce && i === 0 ? facePoolNoFacePng(i, "jpeg") : facePoolImagePng(i, FACE_FIXTURE_PATH, "jpeg")));
 }
 
 // ---------- the scene writer (schema "scene_sentences") ----------
@@ -231,11 +250,22 @@ export interface MockOpenRouterOptions {
    * candidate portraits become the fixture face directly; with
    * `distinctImages` also on, the run's own pool composites that SAME face
    * onto each PDQ-distinct background (`facePool.ts`) instead of serving the
-   * bare pattern. Off by default: every scenario that never turns the face
-   * gate on (avatar creation, import, T6's own kill-and-resume proof) has no
-   * need for it, and the bare mandelbrot/pattern stays cheaper to render.
+   * bare pattern. Real JPEG bytes (L9), correctly labelled `image/jpeg` —
+   * not the PNG every other scenario serves. Off by default: every scenario
+   * that never turns the face gate on (avatar creation, import, T6's own
+   * kill-and-resume proof) has no need for it, and the bare
+   * mandelbrot/pattern stays cheaper to render.
    */
   faceFixture?: boolean;
+  /**
+   * L9: only with `faceFixture` and `distinctImages` both on — pool index 0
+   * serves a genuine "no face detected" image instead of the matching face
+   * (`facePool.ts`'s `facePoolNoFacePng`), so exactly one run image is a
+   * real, provable clear-failure: that slot's first attempt must retry, and
+   * a later attempt (a different pool index, the matching face again) must
+   * pass. Off by default — most scenarios want every attempt to pass first try.
+   */
+  faceMismatchOnce?: boolean;
 }
 
 export interface MockOpenRouter {
@@ -272,7 +302,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   let imageCount = 0;
   // Built once, up front: rendering must never add latency inside a request a
   // caller is timing the arrival of (see the module doc above).
-  const distinctPool = opts.distinctImages ? (opts.faceFixture ? buildFacePool(48) : buildDistinctPool(48)) : [];
+  const distinctPool = opts.distinctImages ? (opts.faceFixture ? buildFacePool(48, opts.faceMismatchOnce ?? false) : buildDistinctPool(48)) : [];
 
   // Reused verbatim: the exact bodies studio/engine/money/prices.test.ts
   // already proved the real client parses, so the mock's prices are exactly
@@ -369,9 +399,13 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         record(req, path, await jsonBody(req));
         if (imageDelayMs > 0) await Bun.sleep(imageDelayMs);
         totalUsageUsd += costs.image;
-        const fallback = opts.faceFixture ? faceFixturePng() : portraitPng();
+        const fallback = opts.faceFixture ? faceFixtureBytes() : portraitPng();
         const bytes = distinctPool.length > 0 ? (distinctPool[imageCount++ % distinctPool.length] ?? fallback) : fallback;
-        return json({ created: 1_790_000_000, data: [{ b64_json: b64(bytes), media_type: "image/png" }], usage: { cost: costs.image } });
+        // L9: the media type must describe the actual bytes — faceFixture mode
+        // serves real JPEG (faceFixtureBytes()/buildFacePool(), both JPEG-encoded
+        // now), every other mode the rendered PNG it always was.
+        const mediaType = opts.faceFixture ? "image/jpeg" : "image/png";
+        return json({ created: 1_790_000_000, data: [{ b64_json: b64(bytes), media_type: mediaType }], usage: { cost: costs.image } });
       }
       return loudly404(record(req, path, method === "POST" ? await jsonBody(req) : null));
     },

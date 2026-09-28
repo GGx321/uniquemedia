@@ -1157,11 +1157,15 @@ async function createActiveAvatarForRun(cdp: Cdp, name: string): Promise<unknown
  * since it already runs real photo runs end-to-end in the packaged app —
  * the face gate is wired unconditionally (unlike the age gate, never a
  * Settings toggle), so it runs here whether this scenario asks for it or
- * not; `faceFixture: true` makes the mock serve a real, matching face
- * (studio/engine/face/fixtures, composited onto every run image's own
- * PDQ-distinct background by facePool.ts) instead of a faceless mandelbrot
- * portrait and pattern, so every front/three-quarter slot (RUN_POSES keeps
- * profile/back off) can actually pass instead of retrying forever.
+ * not; `faceFixture: true` makes the mock serve a real, matching face, real
+ * JPEG bytes (studio/engine/face/fixtures, composited onto every run
+ * image's own PDQ-distinct background by facePool.ts) instead of a faceless
+ * mandelbrot portrait and pattern, so every front/three-quarter slot
+ * (RUN_POSES keeps profile/back off) can actually pass instead of retrying
+ * forever. L9: `faceMismatchOnce: true` additionally makes exactly one
+ * served image a genuine "no face detected" instead — this scenario's own
+ * step 8c proves that slot's first attempt retries and a later attempt
+ * passes, not only that the always-matches path works.
  *
  * Its own app instance, its own temp userData and library, its own mock
  * server — kept apart from every other scenario's money and events. The
@@ -1175,6 +1179,10 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     writerDelayMs: RUN_REQUEST_DELAY_MS,
     distinctImages: true,
     faceFixture: true,
+    // L9: exactly one served image (pool index 0) is a genuine "no face
+    // detected" instead of the matching fixture face, so this scenario also
+    // proves a real face-gate retry — not just the always-matches path.
+    faceMismatchOnce: true,
   });
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-run-"));
   const userData = join(tmp, "userData");
@@ -1306,9 +1314,10 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     check("run scenario: the resumed run finished as job.done", field(end, "type") === "job.done", end);
     const photoIds = field(end, "payload", "result", "photoIds");
     const failedSlots = Number(field(end, "payload", "result", "failedSlots"));
+    const photoIdCount = Array.isArray(photoIds) ? photoIds.length : -1;
     check(
       "run scenario: the final state is fully accounted for (20 done, or done + failed = 20)",
-      Array.isArray(photoIds) && photoIds.length + failedSlots === PHOTO_COUNT,
+      photoIdCount >= 0 && photoIdCount + failedSlots === PHOTO_COUNT,
       { photoIds, failedSlots },
     );
     const listedFinal = await req(cdp, "runs.list");
@@ -1336,16 +1345,42 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     // unconditionally (never a Settings toggle, unlike the age gate), so
     // with a real fixture face served for both the master and every run
     // image (this scenario's own `faceFixture: true` mock option), the gate
-    // must have actually run — for real, models and onnxruntime-web's WASM
-    // loaded from inside app.asar (electron-builder.studio.yml) — and passed:
-    // every generated photo's sidecar carries a `qa.faceCos`. Read the same
-    // way step 3's import scenario already reads a photo's own qa verdict.
+    // must have actually run — for real, models, onnxruntime-web's WASM and
+    // the engine's own WASM JPEG decoder all loaded from inside app.asar
+    // (electron-builder.studio.yml) — and passed: every generated photo's
+    // sidecar carries a `qa.faceCos` at or above the gate's own 0.55 hybrid
+    // threshold (RUN_POSES keeps profile/back off, so every slot is
+    // front/three-quarter — identity is checked on all of them, invariant:
+    // a pass never stores below the threshold). L9: also the exact stored
+    // count, not just "some photos exist". Read the same way step 3's
+    // import scenario already reads a photo's own qa verdict.
     const avatarIdStr = String(avatarId);
     const generatedPhotos = library.photosByAvatar(avatarIdStr).filter((p) => p.id !== library.getAvatar(avatarIdStr)?.masterPhotoId);
     check(
-      "run scenario: every generated photo carries qa.faceCos — the face gate ran for real, models and ORT loaded from inside app.asar",
-      generatedPhotos.length > 0 && generatedPhotos.every((p) => typeof p.qa.faceCos === "number"),
+      "run scenario: exactly PHOTO_COUNT photos are stored, matching the run's own reported photoIds",
+      generatedPhotos.length === PHOTO_COUNT && generatedPhotos.length === photoIdCount,
+      { stored: generatedPhotos.length, reported: photoIdCount, PHOTO_COUNT },
+    );
+    check(
+      "run scenario: every generated photo carries qa.faceCos >= 0.55 — the face gate ran for real, models and ORT loaded from inside app.asar",
+      generatedPhotos.length > 0 && generatedPhotos.every((p) => typeof p.qa.faceCos === "number" && p.qa.faceCos >= 0.55),
       generatedPhotos.map((p) => ({ id: p.id, faceCos: p.qa.faceCos })),
+    );
+
+    // 8c. L9: this scenario's own induced face mismatch (mockOpenRouter's
+    // `faceMismatchOnce`: exactly one served run image is a genuine "no
+    // face detected") must have made at least one slot actually retry — a
+    // qa-retry attempt outcome in the journal — and every slot still ended
+    // with a stored photo (step 8b's own exact-count check already proves
+    // the run fully recovered): the gate does not just always pass, it
+    // genuinely rejects a bad image and the retry mechanism genuinely works
+    // end to end in the packaged app.
+    const isQaRetry = (e: RunEvent): boolean => e.type === "attempt" && e.outcome === "qa-retry";
+    const qaRetries = journalEvents.filter(isQaRetry);
+    check(
+      "run scenario: the induced face mismatch made at least one slot retry (qa-retry in the journal), and the run still finished with every photo stored",
+      qaRetries.length >= 1,
+      { qaRetries: qaRetries.length },
     );
 
     // 9. The wire, not only the journal: a crash can end the engine between

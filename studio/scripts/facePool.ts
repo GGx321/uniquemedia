@@ -39,9 +39,13 @@ export const FACE_PATCH_Y = 20;
  * Composites `faceImagePath` (a real image file on disk — this runs only in
  * the harness/test process, never in the engine, so a plain ffmpeg file
  * input is fine) onto `servedPoolImagePng(index)`'s own background via
- * ffmpeg's `overlay` filter: a real, valid, non-animated PNG.
+ * ffmpeg's `overlay` filter: a real, valid, non-animated PNG (or, with
+ * `format: "jpeg"`, a real baseline JPEG — L9: production's own image model
+ * returns JPEG, and the mock served only PNG before this, so the packaged
+ * E2E smoke never actually exercised the engine's WASM JPEG decode path,
+ * only its PNG one).
  */
-export function facePoolImagePng(index: number, faceImagePath: string = FACE_FIXTURE_PATH): Uint8Array {
+export function facePoolImagePng(index: number, faceImagePath: string = FACE_FIXTURE_PATH, format: "png" | "jpeg" = "png"): Uint8Array {
   const background = servedPoolImagePng(index);
   const args = [
     "-hide_banner",
@@ -50,12 +54,46 @@ export function facePoolImagePng(index: number, faceImagePath: string = FACE_FIX
     "-i", faceImagePath,
     "-filter_complex", `[1:v]scale=${FACE_PATCH_WIDTH}:${FACE_PATCH_HEIGHT}[face];[0:v][face]overlay=${FACE_PATCH_X}:${FACE_PATCH_Y}`,
     "-frames:v", "1",
-    "-f", "image2pipe", "-c:v", "png",
+    "-f", "image2pipe", "-c:v", format === "jpeg" ? "mjpeg" : "png",
+    ...(format === "jpeg" ? ["-q:v", "3"] : []),
     "pipe:1",
   ];
   const result = spawnSync(ffmpegPath(), args, { input: Buffer.from(background), maxBuffer: 32 * 1024 * 1024, timeout: 30_000 });
   if (result.status !== 0) {
     throw new Error(`ffmpeg (${ffmpegPath()}) could not composite a face pool image (index ${index}): ${result.stderr.toString()}`);
+  }
+  return new Uint8Array(result.stdout);
+}
+
+/**
+ * L9: exactly `servedPoolImagePng(index)`'s own background, with NO face
+ * composited — a deterministic, genuine "no face detected" for the real
+ * gate (measured directly: `{ kind: "no-face", faces: 0 }`), unlike trying
+ * to land a composited different-person's face in the gross-drift range by
+ * luck (measured: the fixture impostor composited at this patch size scores
+ * 0.647, comfortably inside "match" — the hybrid policy's own point is that
+ * it does NOT reject a look-alike). `mockOpenRouter.ts`'s `faceMismatchOnce`
+ * option serves this for exactly one pool slot, so exactly one run image is
+ * a real, provable clear-failure the gate must retry. `format: "jpeg"`
+ * re-encodes the same background as a real baseline JPEG (a plain ffmpeg
+ * passthrough, no face filter) so it stays byte-consistent with the rest of
+ * a JPEG-mode pool — the mock's own `media_type` must never claim a format
+ * the bytes are not.
+ */
+export function facePoolNoFacePng(index: number, format: "png" | "jpeg" = "png"): Uint8Array {
+  const background = servedPoolImagePng(index);
+  if (format === "png") return background;
+  const args = [
+    "-hide_banner",
+    "-loglevel", "error",
+    "-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0",
+    "-frames:v", "1",
+    "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3",
+    "pipe:1",
+  ];
+  const result = spawnSync(ffmpegPath(), args, { input: Buffer.from(background), maxBuffer: 32 * 1024 * 1024, timeout: 30_000 });
+  if (result.status !== 0) {
+    throw new Error(`ffmpeg (${ffmpegPath()}) could not re-encode a no-face pool image (index ${index}) as JPEG: ${result.stderr.toString()}`);
   }
   return new Uint8Array(result.stdout);
 }
