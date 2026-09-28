@@ -241,6 +241,7 @@ export function ScenesColumn({
   const mounted = useMounted();
   const cancelSending = useRef(false);
   const progressId = useId();
+  const titleId = useId(); // L12: was the hardcoded "scenes-title", which duplicate-broke aria-labelledby if this column ever rendered twice
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState<EngineError | null>(null);
 
@@ -266,9 +267,9 @@ export function ScenesColumn({
   const textModel = view.settings ? modelName(view.settings.textModel) : null;
 
   return (
-    <section className="photos-scenes" aria-labelledby="scenes-title">
+    <section className="photos-scenes" aria-labelledby={titleId}>
       <div className="photos-sec-head">
-        <h2 id="scenes-title" className="card-title">
+        <h2 id={titleId} className="card-title">
           Сцены
         </h2>
         <span className="mono muted">

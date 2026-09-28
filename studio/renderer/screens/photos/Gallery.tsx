@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type { EngineError, PhotoSummary } from "../../../shared/engine";
 import { countOf } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
@@ -91,15 +92,16 @@ interface GalleryProps {
  * contract does not carry yet, so only «Все» works.
  */
 export function Gallery({ gallery, error, pending, picked, onToggle, onRetry }: GalleryProps) {
+  const titleId = useId(); // L12: was the hardcoded "gallery-title"
   const loading = gallery === null && error === null;
   const photos = gallery?.photos ?? [];
   const skipped = gallery?.skippedTotal ?? 0;
   const empty = gallery !== null && photos.length === 0 && skipped === 0 && pending === null;
 
   return (
-    <section className="photos-gallery" aria-labelledby="gallery-title" aria-busy={loading}>
+    <section className="photos-gallery" aria-labelledby={titleId} aria-busy={loading}>
       <div className="photos-sec-head">
-        <h2 id="gallery-title" className="card-title">
+        <h2 id={titleId} className="card-title">
           Галерея
         </h2>
         <div className="seg photos-sec-action" role="group" aria-label="Фильтр галереи">

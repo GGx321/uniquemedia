@@ -212,14 +212,15 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
 /** No saved avatar to show photos for: the library has none yet. */
 function NoAvatar() {
   const navigate = useNavigate();
+  const titleId = useId(); // L12: was the hardcoded "photos-empty-title"
   return (
     <div className="page photos-page">
       <ScreenTitle>Фото</ScreenTitle>
-      <section className="card empty" aria-labelledby="photos-empty-title">
+      <section className="card empty" aria-labelledby={titleId}>
         <span className="tile-icon" aria-hidden="true">
           <Icon name="plus" size={22} strokeWidth={2.2} />
         </span>
-        <h2 id="photos-empty-title" className="empty-title">
+        <h2 id={titleId} className="empty-title">
           Сначала нужен аватар
         </h2>
         <p className="empty-text">Фото генерируются для сохранённого аватара: его мастер-портрет — референс лица для каждого кадра.</p>

@@ -106,7 +106,10 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   // stepper clicks can never leave an older price on the button.
   useEffect(() => {
     if (!canPrice) {
+      // Nothing to price (no category chosen, say, L12): an error from
+      // before must not linger once there is no longer a request it is for.
       setEstimating(false);
+      setError(null);
       return;
     }
     let alive = true;

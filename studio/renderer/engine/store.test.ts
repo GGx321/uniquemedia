@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ENGINE_GONE_DETAIL, PROTOCOL_VERSION, type AvatarSummary, type CommandMessage, type EventMessage, type JobState, type UnsequencedEvent } from "../../shared/engine";
-import { createEngineClient } from "./client";
+import { createEngineClient, type EngineClient } from "./client";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";

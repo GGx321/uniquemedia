@@ -191,6 +191,25 @@ test("with no category chosen there is nothing to price and nothing to start", a
   expect(screen.queryByText(/Гламур — только неоткровенные наряды/)).toBeNull();
 });
 
+test("turning off every category clears a stale estimate error, not just the price (L12)", async () => {
+  const { engine } = await openPhotos();
+  await priced();
+  fireEvent.click(screen.getByRole("button", { name: /^Дом/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Путешествия/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Фотосессия/ }));
+  await flush();
+
+  // Two categories left; the next estimate (for one category left) fails.
+  engine.failNext("runs.estimate", { code: "NETWORK" });
+  fireEvent.click(screen.getByRole("button", { name: /^Гламур 18\+/ })); // one left: Фитнес
+  await screen.findByText(ERROR_MESSAGES_RU.NETWORK);
+
+  fireEvent.click(screen.getByRole("button", { name: /^Фитнес/ })); // the last one off: nothing left to price
+  await flush();
+  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK)).toBeNull();
+  expect(screen.getByText("Выберите хотя бы одну категорию.")).toBeDefined();
+});
+
 // ---------- start ----------
 
 test("start sends exactly the request and the worst case the button showed", async () => {
