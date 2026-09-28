@@ -271,6 +271,20 @@ class GateDropped extends Error {}
  * (review L5), inside the CPU pool. On an image that arrived after the
  * cancel (`afterCancel`), the cancel does not abort it: a short bound of its
  * own does (CANCELLED_GATE_TIMEOUT_MS).
+ *
+ * T7a whole-slice re-review (finding M1): only the job's own cancel
+ * (`job.signal.aborted`) reads a thrown error as `GateDropped` here — not
+ * `!sending(ctx)`, which also goes false the moment some OTHER slot's fatal
+ * image failure stops the run. A free gate keeps running on images already
+ * in flight after such a stop (T6 M1's own rule: they are still paid for,
+ * and still go through free gates); if the gate ITSELF throws in that
+ * window, that is a genuine gate failure, not "nothing to see here because
+ * we already stopped" — it must become `GateBroken` (systemic: it sets
+ * `gatesBroken`, so a later image is dropped without wasting a second on a
+ * gate already known broken) with its own error preserved, exactly as it
+ * would if the run were still sending normally. `checkPaid` keeps
+ * `!sending(ctx)` instead (see its own comment): a paid gate must never
+ * send after ANY stop, cancel or not.
  */
 async function checkFree(ctx: Context, gate: QaGate, input: Omit<QaInput, "signal">, afterCancel: boolean): Promise<QaVerdict> {
   const { deps, job } = ctx;
@@ -284,10 +298,18 @@ async function checkFree(ctx: Context, gate: QaGate, input: Omit<QaInput, "signa
     );
   } catch (error) {
     if (error instanceof GateFailure) throw error;
-    if (!sending(ctx)) throw new GateDropped();
+    if (job.signal.aborted) throw new GateDropped();
     throw new GateBroken(`the QA gate "${gate.name}" could not run: ${timeout.signal.aborted ? `it took longer than ${ms} ms` : messageOf(error)}`);
   } finally {
     timeout.clear();
+  }
+}
+
+/** Stops the run the moment the ledger is found halted (T7a review, finding 7: an above-worst bill from a paid gate's own attempt is kept — the image is paid for and its verdict stands — but no more paid requests may follow). The ledger may also be halted by another job entirely (a different run's or avatar job's own attempt) — this gate did not necessarily cause it, so the wording stays neutral (T7a re-review, finding L6). */
+function haltIfLedgerHalted(ctx: Context): void {
+  const status = ctx.deps.budget.status();
+  if (status.haltCause !== null) {
+    stopSending(ctx, { code: status.haltCause, detail: `the ledger is halted (${status.haltCause}); no more paid requests can be sent` });
   }
 }
 
@@ -308,6 +330,16 @@ async function checkFree(ctx: Context, gate: QaGate, input: Omit<QaInput, "signa
  * Finding 3: right after the slot is granted, `sending(ctx)` is re-checked —
  * the run may have stopped sending for some other reason while this gate was
  * queued — before the gate's own request is ever allowed to leave.
+ *
+ * T7a re-review (finding L1): `haltIfLedgerHalted` is checked HERE, inside
+ * this function's own `try` block, synchronously right after the gate's
+ * verdict comes back and before this same block's `finally` releases the
+ * network slot below — not from `runGates` after `checkOne` has already
+ * returned, which left a window where the slot was already free and a
+ * DIFFERENT gate (e.g. another slot's own paid gate, queued for the same
+ * slot) could acquire it and reach its own reserve attempt before the halt
+ * was visible. T6's own rule: decide synchronously right after the result,
+ * before anything else awaits.
  */
 async function checkPaid(ctx: Context, gate: QaGate, input: Omit<QaInput, "signal">): Promise<QaVerdict> {
   const { deps, job } = ctx;
@@ -329,7 +361,9 @@ async function checkPaid(ctx: Context, gate: QaGate, input: Omit<QaInput, "signa
   // An abort between the grant and this line fired no listener: free the slot now (release is idempotent).
   if (signal.aborted) release();
   try {
-    return await untilAborted(gate.check({ ...input, signal }), signal);
+    const verdict = await untilAborted(gate.check({ ...input, signal }), signal);
+    haltIfLedgerHalted(ctx);
+    return verdict;
   } catch (error) {
     if (error instanceof GateFailure) throw error;
     if (!sending(ctx)) throw new GateDropped();
@@ -346,38 +380,39 @@ function checkOne(ctx: Context, gate: QaGate, input: Omit<QaInput, "signal">, af
 }
 
 /**
- * Releases every gate in `passed` that made a provisional claim (T7a's pdq
- * gate: a `pass` is not a commitment until the photo is actually stored).
- * `keepImage` calls this in a `finally` around every attempt's gates and
- * store, whatever the outcome — including a successful store, after which
- * the library's own index already carries the hash, so the claim would only
- * ever be redundant if kept, never needed again (T7a review, finding 4): an
- * unstored claim must never outlive its own attempt, or a resume in the same
- * long-lived engine process could read it as a duplicate of a photo that was
- * never actually written.
+ * Releases every gate's provisional claim, if any, for one attempt (T7a's
+ * pdq gate: a `pass` is not a commitment until the photo is actually
+ * stored). `keepImage` calls this in a `finally` around every attempt's
+ * gates and store, whatever the outcome — including a successful store,
+ * after which the library's own index already carries the hash, so the
+ * claim would only ever be redundant if kept, never needed again (T7a
+ * review, finding 4): an unstored claim must never outlive its own attempt,
+ * or a resume in the same long-lived engine process could read it as a
+ * duplicate of a photo that was never actually written.
+ *
+ * T7a re-review (finding L8): called on every gate in `deps.gates`, not
+ * only the ones `runGates` is known to have reached a `pass` verdict for.
+ * Tracking "only the gates that passed" relied on `runGates`'s own loop
+ * actually finishing its `passed.push(gate)` step for a gate whose `check()`
+ * had already claimed internally — a gate whose check raced an abort or a
+ * timeout could claim and then never reach that line, leaking the claim.
+ * `releaseClaim` is defined to be a harmless no-op for an attempt a gate
+ * never actually claimed (`PdqClaims.release`'s own contract), so releasing
+ * every gate unconditionally costs nothing and needs no such guarantee.
  */
-function releaseClaims(passed: readonly QaGate[], avatarId: string, attemptId: string): void {
-  for (const gate of passed) gate.releaseClaim?.(avatarId, attemptId);
-}
-
-/** Stops the run the moment a paid gate's own attempt leaves the ledger halted (T7a review, finding 7: an above-worst bill is kept — the image is paid for and its verdict stands — but no more paid requests may follow). */
-function haltIfLedgerHalted(ctx: Context): void {
-  const status = ctx.deps.budget.status();
-  if (status.haltCause !== null) {
-    stopSending(ctx, { code: status.haltCause, detail: `a paid QA gate's own attempt left the ledger halted (${status.haltCause}); no more paid requests can be sent` });
-  }
+function releaseClaims(gates: readonly QaGate[], avatarId: string, attemptId: string): void {
+  for (const gate of gates) gate.releaseClaim?.(avatarId, attemptId);
 }
 
 /**
  * The QA gates in order; the first that does not pass decides. A paid gate
  * is never run once the run stopped sending. `afterCancel`: the image
  * arrived after the user's cancel, and the caller already made sure every
- * gate is free. Every gate that passes is pushed onto `passed` (an out
- * parameter: `keepImage` owns its whole lifetime, so it can release every
- * claim in `passed` from its own `finally`, even when this function itself
- * throws partway through).
+ * gate is free. `keepImage` releases every gate's own claim for this
+ * attempt from its own `finally`, unconditionally (finding L8) — this
+ * function does not need to track which gates passed for that.
  */
-async function runGates(ctx: Context, slot: SlotState, attemptId: string, image: ImageOk, size: { width: number; height: number }, afterCancel: boolean, passed: QaGate[]): Promise<GateResult> {
+async function runGates(ctx: Context, slot: SlotState, attemptId: string, image: ImageOk, size: { width: number; height: number }, afterCancel: boolean): Promise<GateResult> {
   const { deps, job, plan } = ctx;
   const input: Omit<QaInput, "signal"> = {
     runId: plan.runId,
@@ -404,10 +439,10 @@ async function runGates(ctx: Context, slot: SlotState, attemptId: string, image:
   let qa: PhotoQa = {};
   for (const gate of deps.gates) {
     if (gate.paid && !sending(ctx)) return { verdict: "dropped" };
+    // A paid gate's own halt (T7a re-review, finding L1) is checked inside checkPaid itself,
+    // before its network slot is released — not here, which would already be too late.
     const verdict = await checkOne(ctx, gate, input, afterCancel);
-    if (gate.paid) haltIfLedgerHalted(ctx);
     if (verdict.verdict !== "pass") return { verdict: verdict.verdict, gate: gate.name, reason: verdict.reason };
-    passed.push(gate);
     qa = { ...qa, ...verdict.qa };
   }
   return { verdict: "pass", qa };
@@ -459,14 +494,14 @@ async function keepImage(ctx: Context, slot: SlotState, attemptId: string, model
     await attemptEvent(ctx, slot, attemptId, model, "dropped");
     return { next: "stop" };
   }
-  // T7a review (finding 4): every gate that passes before this attempt's outcome is finally decided —
-  // whatever that outcome is — has its claim released in the `finally` below, so an unstored (or even a
-  // stored) claim never outlives its own attempt.
-  const passed: QaGate[] = [];
+  // T7a review (finding 4, re-review finding L8): every gate in deps.gates has its own claim for
+  // this attempt released in the `finally` below, unconditionally, whatever the outcome — so an
+  // unstored (or even a stored) claim never outlives its own attempt, and a gate that never ran (an
+  // earlier one ended the attempt first) or whose own check raced an abort is still covered.
   try {
     let gates: GateResult;
     try {
-      gates = await runGates(ctx, slot, attemptId, image, size, afterCancel, passed);
+      gates = await runGates(ctx, slot, attemptId, image, size, afterCancel);
     } catch (error) {
       if (error instanceof GateFailure) {
         // T7a review (finding 8): a limit (the run's cap, the month) stops only this slot, mirroring
@@ -509,7 +544,7 @@ async function keepImage(ctx: Context, slot: SlotState, attemptId: string, model
     });
     return { next: "done" };
   } finally {
-    releaseClaims(passed, plan.avatarId, attemptId);
+    releaseClaims(deps.gates, plan.avatarId, attemptId);
   }
 }
 

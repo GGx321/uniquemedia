@@ -16,6 +16,7 @@ import { RunEventSchema, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
 import { CpuPool, NetworkPool } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
+import { createAgeGate } from "./ageGate";
 import { CANCELLED_GATE_TIMEOUT_MS, reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -128,11 +129,22 @@ function imageReply(cost = 0.04): Reply {
 
 type Handler = (call: FetchCall, n: number) => Reply | Promise<Reply>;
 
-function network(opts: { image?: Handler; writer?: Handler } = {}) {
+/** A paid age gate's own request carries an image (image_url); the scene writer's never does. */
+function isAgeCall(call: FetchCall): boolean {
+  return call.url.endsWith("/chat/completions") && JSON.stringify(call.json()).includes("image_url");
+}
+
+function ageReply(cost = 0.001): Reply {
+  return { status: 200, body: chatBody(JSON.stringify({ adult: true, confidence: 0.95, reason: "Mature features of a woman in her mid-20s." }), { cost }) };
+}
+
+function network(opts: { image?: Handler; writer?: Handler; age?: Handler } = {}) {
   let images = 0;
   let writes = 0;
+  let ages = 0;
   const route = async (call: FetchCall): Promise<Reply> => {
     if (call.url.endsWith("/images")) return (opts.image ?? (() => imageReply()))(call, ++images);
+    if (isAgeCall(call)) return (opts.age ?? (() => ageReply()))(call, ++ages);
     if (call.url.endsWith("/chat/completions")) return (opts.writer ?? ((c) => writerReply(c)))(call, ++writes);
     throw new Error(`unexpected request to ${call.url}`);
   };
@@ -141,7 +153,8 @@ function network(opts: { image?: Handler; writer?: Handler } = {}) {
     fetch: net.fetch,
     calls: net.calls,
     imageCalls: () => net.calls.filter((c) => c.url.endsWith("/images")),
-    writerCalls: () => net.calls.filter((c) => c.url.endsWith("/chat/completions")),
+    writerCalls: () => net.calls.filter((c) => c.url.endsWith("/chat/completions") && !isAgeCall(c)),
+    ageCalls: () => net.calls.filter(isAgeCall),
   };
 }
 type Network = ReturnType<typeof network>;
@@ -812,6 +825,39 @@ describe("images that arrive after a fatal error elsewhere", () => {
     expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-2#1` }]);
   });
 
+  test("a free gate that throws after another slot's own fatal image failure is recorded as broken (gatesBroken), never silently dropped (review M1)", async () => {
+    const run = await newRun(3);
+    const net = network({
+      image: async (_call, n) => {
+        if (n === 1) return { status: 402, body: { error: { message: "Insufficient credits" } } };
+        if (n === 2) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return imageReply();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return imageReply();
+      },
+    });
+    const broken = gate("pdq", () => {
+      throw new Error("decoder broke");
+    });
+    const { end } = start(run, { net, gates: [broken], pool: new NetworkPool({ max: 3 }) });
+
+    // The run's own overall error stays the FIRST fatal reason (the 402, invariant: "the first
+    // reason no attempt may start any more") — that part of the design is unchanged and correct.
+    expect(await end).toMatchObject({ status: "failed", error: { code: "INSUFFICIENT_CREDITS" } });
+    // gatesBroken stopped the third (later) image from ever being offered to the gate again.
+    expect(broken.inputs).toHaveLength(1);
+    const attempts = (await journal()).flatMap((e) => (e.type === "attempt" ? [e] : []));
+    const outcomes = attempts.map((e) => e.outcome);
+    expect(outcomes).toContain("dropped"); // the later image, correctly dropped once the gate is known broken
+    // The gate's own throw is recorded on ITS OWN attempt, with its own error — never silently
+    // discarded as "dropped" just because the run had already stopped sending for another reason.
+    const brokenAttempt = attempts.find((e) => e.outcome === "failed" && e.error?.detail?.includes("decoder broke"));
+    expect(brokenAttempt).toBeDefined();
+    expect(brokenAttempt?.error?.code).toBe("INTERNAL");
+  });
+
   test("an image billed above its worst case is kept, and the run stops with SETTLE_ABOVE_WORST", async () => {
     const run = await newRun(2);
     const { end, net } = start(run, { net: network({ image: () => imageReply(0.06) }), pool: new NetworkPool({ max: 1 }) });
@@ -1332,6 +1378,26 @@ describe("GateFailure: a paid gate's own systemic or transient failure", () => {
   });
 });
 
+// ---------- T7a re-review (finding L1): the halt from a paid gate's own attempt must be noticed before its network slot is released ----------
+
+describe("a paid gate's own halt is decided before its network slot is released", () => {
+  test("above-worst on slot 1's age check: slot 2's own age gate is never even invoked — dropped, not a failed reserve attempt of its own", async () => {
+    const run = await newRun(2);
+    const net = network({ age: (_call, n) => (n === 1 ? ageReply(50) : ageReply()) });
+    const { end } = start(run, { net, gates: [createAgeGate({ downscale: async () => JPEG })], pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "SETTLE_ABOVE_WORST" } });
+    const attempts = (await journal()).flatMap((e) => (e.type === "attempt" ? [e] : []));
+    const slot2 = attempts.find((e) => e.slotIndex === 2);
+    // Had the halt only been noticed AFTER slot 1's network slot was released (T6 review round 3's own
+    // bug this re-review caught), slot 2's gate could have grabbed that freed slot and reached its own
+    // reserve attempt before the halt was visible — recorded as "failed" with SETTLE_ABOVE_WORST, not
+    // "dropped". T6's own rule: decide synchronously right after the result, before anything else awaits.
+    expect(slot2?.outcome).toBe("dropped");
+    expect(slot2?.error).toBeUndefined();
+  });
+});
+
 // ---------- T7a whole-slice review: a passed gate's claim is released after every attempt, whatever the outcome (finding 4) ----------
 
 describe("a passed gate's claim is always released once its attempt is decided", () => {
@@ -1404,6 +1470,25 @@ describe("a passed gate's claim is always released once its attempt is decided",
     const { end } = start(run, { gates: [pdq], library: throwingLibrary });
 
     expect(await end).toMatchObject({ status: "failed" });
+    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
+  });
+
+  test("T7a re-review (finding L8): a gate that never even ran for this attempt still gets releaseClaim called (a no-op) — release does not rely on the `passed` list alone", async () => {
+    const run = await newRun(1);
+    const released: { avatarId: string; attemptId: string }[] = [];
+    // The earlier gate rejects immediately, so this one is never invoked at all for this attempt.
+    const rejecting = gate("pdq", () => ({ verdict: "reject", reason: "not adult" }));
+    const neverRan: QaGate = {
+      name: "age",
+      paid: true,
+      check: async () => {
+        throw new Error("must never be called: the earlier gate already rejected");
+      },
+      releaseClaim: (avatarId, attemptId) => released.push({ avatarId, attemptId }),
+    };
+    const { end } = start(run, { gates: [rejecting, neverRan] });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 1 });
     expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
   });
 });
