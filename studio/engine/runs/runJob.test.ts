@@ -15,7 +15,7 @@ import { plan as planScenes, type PlanSlot } from "../scenes";
 import { RunEventSchema, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
 import { CpuPool, NetworkPool } from "./pools";
-import { QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
+import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
 import { CANCELLED_GATE_TIMEOUT_MS, reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -187,7 +187,7 @@ function start(
     gates?: QaGate[];
     signal?: AbortSignal;
     budget?: Budget;
-    library?: Library;
+    library?: RunJobDeps["library"];
     jobId?: string;
     generateImage?: RunJobDeps["generateImage"];
     /** Called as the job starts each attempt (it already holds its network slot). */
@@ -623,9 +623,17 @@ describe("QA gates", () => {
     const { end } = start(run, { gates: [pdq, age] });
 
     expect(await end).toMatchObject({ status: "done" });
-    // Slot 1's first attempt: pdq passed and claimed, then age retried it — the claim must be released.
-    // The second attempt's own pdq pass is never released (it is the one that actually got stored).
-    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
+    // T7a whole-slice review (finding 4) deliberately replaces this
+    // assertion: the first attempt's claim is released because age retried
+    // it; the SECOND attempt's own claim is ALSO released, now, once the
+    // photo is stored — the library's own index carries the hash from then
+    // on, so keeping the claim around would only ever be redundant (never
+    // needed again), and a leaked claim on a resume in the same long-lived
+    // engine process is worse than a redundant release.
+    expect(released).toEqual([
+      { avatarId, attemptId: `${RUN_ID}:slot-1#1` },
+      { avatarId, attemptId: `${RUN_ID}:slot-1#2` },
+    ]);
   });
 
   test("a later gate's reject also releases an earlier passing gate's claim, and ends the slot", async () => {
@@ -1224,5 +1232,178 @@ describe("crash and resume", () => {
     expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
     expect(resumed.net.imageCalls().map(modelOf)).toEqual([FALLBACK_IMAGE_MODEL]);
     expect(resumed.sent).toEqual([`${RUN_ID}:slot-1#2`]);
+  });
+});
+
+// ---------- T7a whole-slice review: a paid gate's own queue wait must not count against its timeout (finding 1) ----------
+
+describe("a paid gate's timeout starts only once it actually has a network slot", () => {
+  test("repro A: pool 1, 3 slots, a 60 ms image and a 100 ms gate timeout — the gate's own instant check must not be timed out by the FIFO wait behind other slots' images", async () => {
+    const run = await newRun(3);
+    const paid: QaGate = { name: "age", paid: true, timeoutMs: 100, check: async () => ({ verdict: "pass" }) };
+    const net = network({
+      image: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return imageReply();
+      },
+    });
+    const { end } = start(run, { net, gates: [paid], pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+  });
+});
+
+// ---------- T7a whole-slice review: no paid gate request once the run stopped sending (finding 3) ----------
+
+describe("a paid gate re-checks sending() the moment its network slot is granted", () => {
+  test("repro B: a fatal error on slot 2's image while slot 1's gate is still queued means no age request for slot 1", async () => {
+    const run = await newRun(2);
+    const pool = new NetworkPool({ max: 1 });
+    let calls = 0;
+    const paid: QaGate = {
+      name: "age",
+      paid: true,
+      check: async () => {
+        calls++;
+        return { verdict: "pass" };
+      },
+    };
+    const net = network({
+      image: async (_call, n) => {
+        if (n === 1) return imageReply();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { status: 402, body: { error: { message: "Insufficient credits" } } };
+      },
+    });
+    const { end } = start(run, { net, gates: [paid], pool });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "INSUFFICIENT_CREDITS" } });
+    // Slot 1's image already succeeded and paid; its gate must never have been asked to run,
+    // since by the time it could get a network slot, slot 2's failure had already stopped the run.
+    expect(calls).toBe(0);
+  });
+});
+
+// ---------- T7a whole-slice review: a paid gate's own failure, classified like an image's (findings 2, 6, 7, 8) ----------
+
+describe("GateFailure: a paid gate's own systemic or transient failure", () => {
+  function paidThatThrows(error: EngineError): QaGate {
+    return { name: "age", paid: true, check: async () => { throw new GateFailure(error); } };
+  }
+
+  test("AUTH_INVALID stops the whole run, its code preserved (not collapsed to INTERNAL), and the slot stays open for a resume", async () => {
+    const run = await newRun(2);
+    const gate = paidThatThrows({ code: "AUTH_INVALID", detail: "the stored key was rejected" });
+    const { end } = start(run, { gates: [gate], pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "AUTH_INVALID" } });
+    // Neither slot ended: both stay open for a resume, exactly like an image attempt's own fatal error.
+    expect((await journal()).some((e) => e.type === "slot")).toBe(false);
+  });
+
+  test("a limit failure (RUN_CAP_EXCEEDED) leaves this slot open without stopping other slots (mirrors ctx.limited for images)", async () => {
+    const run = await newRun(2);
+    let n = 0;
+    const gate: QaGate = {
+      name: "age",
+      paid: true,
+      check: async () => {
+        n++;
+        if (n === 1) throw new GateFailure({ code: "RUN_CAP_EXCEEDED", detail: "no room left in the run's cap" });
+        return { verdict: "pass" };
+      },
+    };
+    const { end } = start(run, { gates: [gate], pool: new NetworkPool({ max: 2 }) });
+
+    const result = await end;
+    // The run overall failed (one slot never got a photo), but the OTHER slot completed normally —
+    // a limit failure must not halt sending for every slot the way a fatal one does.
+    expect(result).toMatchObject({ status: "failed" });
+    expect(library.photosByAvatar(avatarId)).toHaveLength(2); // the master, and the one slot that got through
+  });
+
+  test("BUDGET_EXCEEDED behaves the same way as RUN_CAP_EXCEEDED: a limit, not a run-wide halt", async () => {
+    const run = await newRun(1);
+    const gate = paidThatThrows({ code: "BUDGET_EXCEEDED", detail: "the month has no room left" });
+    const { end } = start(run, { gates: [gate], pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "failed" });
+    expect((await journal()).some((e) => e.type === "slot")).toBe(false); // stayed open, not QA_REJECTED
+  });
+});
+
+// ---------- T7a whole-slice review: a passed gate's claim is released after every attempt, whatever the outcome (finding 4) ----------
+
+describe("a passed gate's claim is always released once its attempt is decided", () => {
+  function releasableGate(verdicts: (() => QaVerdict | Promise<QaVerdict>) | QaVerdict, released: { avatarId: string; attemptId: string }[]): QaGate {
+    return {
+      name: "pdq",
+      paid: false,
+      check: async () => (typeof verdicts === "function" ? verdicts() : verdicts),
+      releaseClaim: (avatarId, attemptId) => released.push({ avatarId, attemptId }),
+    };
+  }
+
+  test("released after a successful store, not only on a later rejection: the claims map ends empty either way", async () => {
+    const run = await newRun(1);
+    const released: { avatarId: string; attemptId: string }[] = [];
+    const pdq = releasableGate({ verdict: "pass", qa: { pdq: "e".repeat(64) } }, released);
+    const { end } = start(run, { gates: [pdq] });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
+  });
+
+  test("released when a cancel drops the image while a later paid gate runs", async () => {
+    const run = await newRun(1);
+    const released: { avatarId: string; attemptId: string }[] = [];
+    const pdq = releasableGate({ verdict: "pass" }, released);
+    const controller = new AbortController();
+    let checking = false;
+    const slow: QaGate = {
+      name: "age",
+      paid: true,
+      check: async () => {
+        checking = true;
+        return new Promise<QaVerdict>(() => {});
+      },
+    };
+    const { end } = start(run, { gates: [pdq, slow], signal: controller.signal });
+    await until(() => checking, "the paid gate's check");
+    controller.abort(new Error("cancelled by the user"));
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
+  });
+
+  test("released when a later gate throws unexpectedly (GateBroken)", async () => {
+    const run = await newRun(1);
+    const released: { avatarId: string; attemptId: string }[] = [];
+    const pdq = releasableGate({ verdict: "pass" }, released);
+    const broken = gate("face", () => {
+      throw new Error("the face model could not be loaded");
+    });
+    const { end } = start(run, { gates: [pdq, broken] });
+
+    expect(await end).toMatchObject({ status: "failed" });
+    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
+  });
+
+  test("released even when storing the photo itself fails (addPhoto throws)", async () => {
+    const run = await newRun(1);
+    const released: { avatarId: string; attemptId: string }[] = [];
+    const pdq = releasableGate({ verdict: "pass" }, released);
+    const throwingLibrary: RunJobDeps["library"] = {
+      appendJournal: library.appendJournal.bind(library),
+      readJournal: library.readJournal.bind(library),
+      addPhoto: () => Promise.reject(new Error("disk is full")),
+      loadReference: library.loadReference.bind(library),
+      photosByAvatar: library.photosByAvatar.bind(library),
+      appendHistory: library.appendHistory.bind(library),
+    };
+    const { end } = start(run, { gates: [pdq], library: throwingLibrary });
+
+    expect(await end).toMatchObject({ status: "failed" });
+    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
   });
 });
