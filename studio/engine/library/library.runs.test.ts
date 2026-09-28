@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { openLibrary, type LibraryDeps } from "./library";
@@ -184,5 +184,30 @@ describe("appendJournal and readJournal", () => {
     await expectLibraryError(library.appendJournal(RUN, event("reserve"), Event), "run-not-found");
     await expectLibraryError(library.readJournal(RUN, Event), "run-not-found");
     expect(await readdir(join(root(), "runs"))).toEqual([]);
+  });
+});
+
+// T6 review M4: after a restart, the engine finds the runs to offer for a resume on disk.
+describe("listRuns", () => {
+  test("names every run folder, sorted", async () => {
+    const library = await open();
+    await library.createRun("run-00000002", PLAN, Plan);
+    await library.createRun(RUN, PLAN, Plan);
+    expect(await library.listRuns()).toEqual([RUN, "run-00000002"]);
+  });
+
+  test("is empty for a library without runs", async () => {
+    const library = await open();
+    expect(await library.listRuns()).toEqual([]);
+  });
+
+  test("skips what is not a run folder: a crashed createRun's temp folder, a stray file, a name that breaks the id pattern", async () => {
+    const library = await open();
+    await library.createRun(RUN, PLAN, Plan);
+    const runs = join(root(), "runs");
+    await mkdir(join(runs, ".run-00000009.abcdef.tmp"));
+    await mkdir(join(runs, "Not-A-Run"));
+    await writeFile(join(runs, "run-00000003"), "a file, not a folder");
+    expect(await library.listRuns()).toEqual([RUN]);
   });
 });

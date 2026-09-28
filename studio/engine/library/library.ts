@@ -589,6 +589,23 @@ export class Library {
     });
   }
 
+  /**
+   * Every run folder's id, sorted (T6: the runs a window can offer for a
+   * resume after a restart). Only folders whose name is a valid id: a
+   * crashed createRun's temp folder, a stray file or a foreign name is not a
+   * run. Whether its plan still reads is the caller's business (readRun).
+   */
+  async listRuns(): Promise<string[]> {
+    const entries = await readdir(this.#runsDir(), { withFileTypes: true }).catch((error: unknown) => {
+      if (hasErrorCode(error, "ENOENT")) return [];
+      throw error;
+    });
+    return entries
+      .filter((e) => e.isDirectory() && isLibraryId(e.name))
+      .map((e) => e.name)
+      .sort();
+  }
+
   async readRun<T>(runId: string, schema: z.ZodType<T>): Promise<T> {
     const path = join(this.#runDir(runId), PLAN_FILE);
     const raw = await readJsonFile(path);
