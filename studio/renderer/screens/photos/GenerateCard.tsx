@@ -82,13 +82,16 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const sending = useRef(false);
   /** The request's current key, live: `start`'s PRICE_CHANGED re-price must never overwrite a fresher key's own estimate (M1). */
   const keyRef = useRef<string | null>(null);
-  /** The worst case actually sent to runs.start/resume, held while `busy` (LOW-4): what shows on the button while sending is what is in flight, not a fresher key's own price that landed in the meantime. */
-  const inFlightWorstRef = useRef<number | null>(null);
 
   const [priced, setPriced] = useState<Priced | null>(null);
   const [previousWorst, setPreviousWorst] = useState<number | null>(null);
   // True from the click through runs.start and, on PRICE_CHANGED, the fresh estimate after it.
   const [busy, setBusy] = useState(false);
+  // L2: the worst case actually sent to runs.start/resume, held while `busy`
+  // (LOW-4) — state, not a ref, since what shows on the button while sending
+  // must re-render with it: what is in flight, not a fresher key's own price
+  // that landed in the meantime.
+  const [busyWorst, setBusyWorst] = useState<number | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
   const [retry, setRetry] = useState(0);
 
@@ -146,7 +149,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
     // A second click before React re-renders the disabled button must never send twice.
     if (sending.current) return;
     sending.current = true;
-    inFlightWorstRef.current = accepted.estimate.worstMicros;
+    setBusyWorst(accepted.estimate.worstMicros);
     setBusy(true);
     onPaidInFlightChange(true);
     setError(null);
@@ -187,9 +190,11 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
       setError(fresh.error);
     } finally {
       sending.current = false;
-      inFlightWorstRef.current = null;
       onPaidInFlightChange(false);
-      if (mounted.current) setBusy(false);
+      if (mounted.current) {
+        setBusy(false);
+        setBusyWorst(null);
+      }
     }
   }
 
@@ -220,8 +225,8 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   // click time) — never a fresher key's own price that happened to land in
   // the meantime, which is not what this send will actually be charged.
   const worst =
-    busy && inFlightWorstRef.current !== null
-      ? `до ${formatUsd(inFlightWorstRef.current, 2, "up")}`
+    busy && busyWorst !== null
+      ? `до ${formatUsd(busyWorst, 2, "up")}`
       : current
         ? `до ${formatUsd(current.estimate.worstMicros, 2, "up")}`
         : null;
