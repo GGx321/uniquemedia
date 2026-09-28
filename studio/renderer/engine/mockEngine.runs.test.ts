@@ -499,13 +499,29 @@ describe("resumePrice carries the writer term when the writer has not finished",
     expect(estimate.expectedMicros).toBe(4 * 50_000);
   });
 
-  test("the writer's ceiling counts in whether the cap funds a resume: room for one image attempt but not the writer ends the run", async () => {
+  // The engine's minToProgressMicros adds ONE writer call's ceiling (37,500), not the chunk's two attempts (75,000).
+  test("the writer's ceiling counts in whether the cap funds a resume: room for one image attempt and one writer call is enough, a micro-dollar less ends the run", async () => {
     const { engine, client } = makeMock();
     // Nothing committed yet (no slot done): the cap is all the room there is.
-    const funded = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 + 75_000, { writerDone: false });
-    const ended = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 + 75_000 - 1, { writerDone: false });
+    const funded = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 + 37_500, { writerDone: false });
+    const ended = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 + 37_500 - 1, { writerDone: false });
     const runs = (await unwrap(client.request("runs.list", {}))).runs;
     expect(runs.find((r) => r.runId === funded)).toMatchObject({ resumable: true, capExhausted: false });
     expect(runs.find((r) => r.runId === ended)).toMatchObject({ resumable: false, capExhausted: true });
   });
+});
+
+// Open reserves count at their worst case only until a reconcile: while one is needed, the cap room is not final, so the
+// engine (and the mock) never call a run ended by its cap, and its estimate still answers.
+test("while a reconcile is needed a run is not reported cap-exhausted, and runs.estimateResume still answers; after it, it is", async () => {
+  const { engine, client } = makeMock();
+  const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
+  engine.requireReconcile(["open-reserves"]);
+  const during = (await unwrap(client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
+  expect(during).toMatchObject({ resumable: true, capExhausted: false });
+  expect((await client.request("runs.estimateResume", { runId })).ok).toBe(true);
+
+  await unwrap(client.request("money.reconcile", {}));
+  const after = (await unwrap(client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
+  expect(after).toMatchObject({ resumable: false, capExhausted: true });
 });

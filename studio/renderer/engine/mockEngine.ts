@@ -115,7 +115,7 @@ type RunCategory = RunRequest["categories"][number];
 export const MOCK_RUN_IMAGE = 50_000;
 export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
 /** The writer's worst case per chunk is the real engine's (money/estimate.ts: 2 attempts × $0.0375, T5c's raised ceiling), so mock and engine prices agree to the micro-dollar. */
-export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerChunk: 75_000, photosPerChunk: 25 } as const;
+export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerCall: 37_500, worstPerChunk: 75_000, photosPerChunk: 25 } as const;
 
 /** The mock gate's similarity scores, cycled over a run's slots; every fifth slot carries none (a profile or back shot, or a photo from before the gate). */
 const MOCK_FACE_COS = [0.86, 0.81, 0.71, 0.78] as const;
@@ -1240,8 +1240,10 @@ export class MockEngine implements EngineBridge {
    */
   private capExhausted(run: MockRun): boolean {
     if (this.activeRunJob(run.runId) !== null || this.openSlots(run) === 0) return false;
-    // The real engine's minToProgress: an unwritten chunk's ceiling (the writer runs first) plus one image attempt.
-    const writer = run.writerDone ? 0 : MOCK_RUN_WRITER.worstPerChunk;
+    // Not while a reconcile is needed: open reserves count at their worst case until then, so the room is not final.
+    if (this.reconcileReasons.length > 0) return false;
+    // The real engine's minToProgress: ONE writer call's ceiling for an unwritten chunk (the writer runs first) plus one image attempt.
+    const writer = run.writerDone ? 0 : MOCK_RUN_WRITER.worstPerCall;
     return run.capMicros - this.runCommitted(run) < writer + this.slotPrice(run).attemptWorst;
   }
 
