@@ -42,7 +42,7 @@ function engineSplit(count: number, categories: readonly RunCategory[]): Map<Run
 }
 
 test("runForm's per-category split matches the engine planner's own for every count 5..100", () => {
-  const categories = SceneCategory.options as readonly RunCategory[];
+  const categories: readonly RunCategory[] = SceneCategory.options;
   for (let count = COUNT_MIN; count <= COUNT_MAX; count += COUNT_STEP) {
     const rendererSplit = photosPerCategory(count, categories);
     const engine = engineSplit(count, categories);
