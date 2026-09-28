@@ -169,6 +169,50 @@ describe("loadReference (invariant 9: a face reference comes only from the libra
   });
 });
 
+// Money review M1/N1: the face gate's master embedding must come from the
+// ORIGINAL stored master file, never loadReference()'s <=1024px downscale
+// sent to OpenRouter (measured drift: master embedding cos 0.9388 vs
+// calibration, candidate shifts up to +0.029 — larger than the face gate's
+// own 0.001 parity budget). loadMasterOriginal() gives the same sha256/size
+// check as loadReference() (survey.ts's own check, re-run here since the
+// file can rot on disk any time after that survey) but skips the downscale
+// step and returns the raw bytes, unbranded (never sent to OpenRouter,
+// so it is not a LibraryReference).
+describe("loadMasterOriginal (M1/N1: the original file, never the OpenRouter-bound downscale)", () => {
+  test("returns the master's raw, undownscaled bytes — the injected downscaleReference is never called", async () => {
+    let downscaleCalls = 0;
+    const { library } = await openLibrary(root(), deps({ downscaleReference: async (bytes) => (downscaleCalls++, bytes) }));
+    const mia = await library.createAvatar(SAMPLE_AVATAR);
+    const master = await library.addPhoto(mia.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(mia.id, { masterPhotoId: master.id, status: "active" });
+
+    const original = await library.loadMasterOriginal(mia.id);
+
+    expect(original).toEqual(PNG_1X1);
+    expect(downscaleCalls).toBe(0);
+  });
+
+  test("is null wherever referencePhoto is null (no master, a draft, an unknown avatar)", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const mia = await library.createAvatar(SAMPLE_AVATAR);
+    expect(await library.loadMasterOriginal(mia.id)).toBeNull();
+    expect(await library.loadMasterOriginal("unknown-avatar")).toBeNull();
+  });
+
+  test("verifies the sidecar's sha256 and size, like loadReference: a bit-rotted master throws reference-corrupt", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const mia = await library.createAvatar(SAMPLE_AVATAR);
+    const master = await library.addPhoto(mia.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(mia.id, { masterPhotoId: master.id, status: "active" });
+    await writeFile(join(root(), "avatars", mia.id, "photos", master.file), Buffer.concat([Buffer.from(PNG_1X1), Buffer.from([0])]));
+
+    const error = await rejectionOf(library.loadMasterOriginal(mia.id));
+
+    expect(error).toBeInstanceOf(LibraryError);
+    expect((error as LibraryError).code).toBe("reference-corrupt");
+  });
+});
+
 describe("master check on open", () => {
   test("a quarantined master is reported as missing, the manifest is left as is, and there is no reference", async () => {
     const { mia, master } = await avatarsWithMaster();

@@ -524,6 +524,36 @@ export class Library {
     return jpeg as LibraryReference;
   }
 
+  /**
+   * Money review M1/N1: the avatar's ORIGINAL master file bytes — the same
+   * sha256/size check `loadReference()` runs (the sidecar's own record,
+   * re-verified here since the file can rot on disk any time after the
+   * startup survey), but skipping the downscale step entirely. Never
+   * branded `LibraryReference`: these bytes are never sent to OpenRouter
+   * (loadReference()'s own downscaled copy is), so `LibraryReference`'s own
+   * "the only bytes ImageParams.references may carry" contract does not
+   * apply. The face gate's master embedding (T7b, runs/faceGate.ts) must be
+   * computed from THESE bytes, not loadReference()'s — the ≤1024px
+   * downscale measurably drifted the embedding past the gate's own 0.001
+   * parity budget (cos 0.9388 vs calibration, candidate shifts up to
+   * +0.029). Null in exactly the cases `referencePhoto()` is; throws
+   * `LibraryError("reference-corrupt", ...)` for a master that fails its
+   * own sidecar's check, exactly like `loadReference()`.
+   */
+  async loadMasterOriginal(avatarId: string): Promise<Uint8Array | null> {
+    const ref = this.referencePhoto(avatarId);
+    if (ref === null) return null;
+    const raw = await readFile(ref.path);
+    if (raw.length !== ref.photo.bytes) {
+      throw new LibraryError("reference-corrupt", `${ref.photo.file} has ${raw.length} bytes, the sidecar recorded ${ref.photo.bytes}`);
+    }
+    const sha256 = createHash("sha256").update(raw).digest("hex");
+    if (sha256 !== ref.photo.sha256) {
+      throw new LibraryError("reference-corrupt", `${ref.photo.file} does not match the sha256 in its sidecar`);
+    }
+    return new Uint8Array(raw);
+  }
+
   getPhoto(photoId: string): PhotoSidecar | undefined {
     return this.#photos.get(photoId);
   }
