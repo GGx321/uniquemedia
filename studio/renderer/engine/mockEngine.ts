@@ -1102,6 +1102,21 @@ export class MockEngine implements EngineBridge {
     };
   }
 
+  /**
+   * A stored run photo's own avatar summary gains one to its photoCount and
+   * announces avatar.changed, like the real engine does per photo
+   * (`engine.ts:1245`, MEDIUM-3). Keeps the rule photoCount = gallery
+   * photos, so the Avatars grid and the Photos screen's own gallery count
+   * never drift apart, the way the demo's Mia once did.
+   */
+  private bumpPhotoCount(avatarId: string): void {
+    const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+    if (avatar === undefined) return;
+    const updated = { ...avatar, photoCount: avatar.photoCount + 1 };
+    this.avatars = this.avatars.map((a) => (a === avatar ? updated : a));
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: updated } });
+  }
+
   /** What a resume could still spend: its open slots' attempts at today's prices, never more than the cap leaves. */
   private resumePrice(run: MockRun): Estimate {
     const open = this.openSlots(run);
@@ -1194,6 +1209,7 @@ export class MockEngine implements EngineBridge {
             run.photoIds.push(photoId);
             run.settledMicros += slot.expected;
             this.spend(slot.expected);
+            this.bumpPhotoCount(run.avatarId);
           }
           job.status = "running";
           job.done += 1;

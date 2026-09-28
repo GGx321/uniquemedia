@@ -79,6 +79,26 @@ test("a whole run goes through the validating client: progress per slot, job.don
   expect(money).toMatchObject({ ledger: "open", unsettledMicros: 0 });
 });
 
+test("a stored run photo bumps its avatar's photoCount and announces avatar.changed, like the real engine does per photo (MEDIUM-3)", async () => {
+  const { scheduler, client, events } = makeMock();
+  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+
+  scheduler.next(); // one slot lands
+  const firstChanged = events.filter((e) => e.type === "avatar.changed");
+  expect(firstChanged).toHaveLength(1);
+  if (firstChanged[0]?.type !== "avatar.changed") throw new Error("expected avatar.changed");
+  expect(firstChanged[0].payload.avatar.photoCount).toBe(MIA.photoCount + 1);
+
+  scheduler.runAll(); // the other 19 land
+  const list = await unwrap(client.request("avatars.list", {}));
+  const mia = list.avatars.find((a) => a.avatarId === MIA.avatarId);
+  // The rule (L7/MEDIUM-3): photoCount equals the gallery's own photo count.
+  const gallery = await unwrap(client.request("photos.list", { avatarId: MIA.avatarId }));
+  expect(mia?.photoCount).toBe(MIA.photoCount + 20);
+  expect(mia?.photoCount).toBe(MIA.photoCount + gallery.photos.length);
+  expect(events.filter((e) => e.type === "avatar.changed")).toHaveLength(20);
+});
+
 test("runs.start refuses a price the user did not accept, and a second run of a busy avatar", async () => {
   const { client, engine } = makeMock();
   expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_069_999 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
