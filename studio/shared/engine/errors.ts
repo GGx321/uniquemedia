@@ -44,9 +44,11 @@ import { Count, SafeText } from "./primitives";
  *   check has seen; nothing is started or spent. Unlike the age gate this is never a Settings
  *   toggle — the face gate is always required, so this only ever means the gate itself is broken.
  * - MASTER_FACE_UNUSABLE: money review H1 — a gate's `prepare()` (runs/qa.ts) failed before any
- *   paid work of the job (the writer phase, an image request): the face gate could not compute a
- *   usable identity embedding from the avatar's master photo (no detectable face, a broken decode).
- *   The job ends failed right there, before a single request is sent.
+ *   paid work of the job (the writer phase, an image request), specifically because the face gate
+ *   found no detectable face in the avatar's master photo (re-review N3: `NoFaceInReferenceError`
+ *   only — a decode/library/ORT failure in `prepare()` is systemic instead, INTERNAL, never this
+ *   code, since it does not mean the master itself is unusable). The job ends failed right there,
+ *   before a single request is sent.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
