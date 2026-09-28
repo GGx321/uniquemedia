@@ -225,9 +225,9 @@ export interface QaGate {
    * Releases a provisional claim this gate made for one attempt (T7a's pdq
    * gate: a `pass` is not a commitment until the photo is actually stored —
    * a hash must never block a future image unless its photo was really
-   * stored). `runJob.ts`'s `runGates` calls it, for every gate that already
-   * passed, the moment a later gate in the same pipeline ends the attempt
-   * without storing the photo. Optional: a gate with no claim to release (the
+   * stored). `runJob.ts`'s `keepImage` calls it for every gate, in its
+   * `finally`, once the attempt is over — whether its photo was stored or
+   * not (a no-op for an attempt the gate never claimed). Optional: a gate with no claim to release (the
    * age gate, the face gate) simply never implements it.
    */
   releaseClaim?(avatarId: string, attemptId: string): void;
