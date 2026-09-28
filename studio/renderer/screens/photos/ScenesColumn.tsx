@@ -97,8 +97,23 @@ function ResumeRow({ run, blockedReason, paidInFlight, onPaidInFlightChange, onR
   // Another paid command (the generate card's or another row's) is in flight for this avatar (L5): this row locks too, though it is not the one sending.
   const lockedByOther = paidInFlight && busy === null;
   const effectiveBlockedReason = blockedReason ?? (lockedByOther ? "Дождитесь окончания другого платного действия." : null);
-  const title = busy === "estimate" ? "Считаем…" : busy === "resume" ? "Продолжаем…" : previousWorst !== null ? "Подтвердить новую цену" : estimate ? "Продолжить" : "Узнать цену";
-  const paidClick = estimate !== null && effectiveBlockedReason === null;
+  // The run's cap has nothing left for its open slots (L6): a resume would
+  // only ever be refused at zero, so this is not a price to confirm — show a
+  // plain non-paid state instead of a button reading «до $0.00».
+  const capExhausted = estimate !== null && estimate.worstMicros === 0;
+  const title =
+    busy === "estimate"
+      ? "Считаем…"
+      : busy === "resume"
+        ? "Продолжаем…"
+        : capExhausted
+          ? "Лимит запуска исчерпан"
+          : previousWorst !== null
+            ? "Подтвердить новую цену"
+            : estimate
+              ? "Продолжить"
+              : "Узнать цену";
+  const paidClick = estimate !== null && effectiveBlockedReason === null && !capExhausted;
   const clickable = busy === null && (estimate === null || paidClick);
   const failed = run.failed > 0 ? ` · не получилось ${run.failed}` : "";
   const dateId = useId();
@@ -118,7 +133,7 @@ function ResumeRow({ run, blockedReason, paidInFlight, onPaidInFlightChange, onR
           <p className="photos-scene-text">
             Готово {run.done} из {run.total} · осталось {run.open}
             {failed}
-            {estimate && <span className="mono"> · ≈ {formatUsd(estimate.expectedMicros)}</span>}
+            {estimate && !capExhausted && <span className="mono"> · ≈ {formatUsd(estimate.expectedMicros)}</span>}
           </p>
         </div>
         <button
@@ -133,7 +148,7 @@ function ResumeRow({ run, blockedReason, paidInFlight, onPaidInFlightChange, onR
             {busy !== null && <Spin />}
             {title}
           </span>
-          {estimate && busy !== "estimate" && (
+          {estimate && busy !== "estimate" && !capExhausted && (
             <>
               <span className="sr-only"> · </span>
               <span className="mono">до {formatUsd(estimate.worstMicros, 2, "up")}</span>

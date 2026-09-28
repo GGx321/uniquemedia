@@ -590,9 +590,12 @@ export class MockEngine implements EngineBridge {
    * first `done` slots already have their photos, the rest are open (so it is
    * resumable while any are). No events, and its own ids (`run-seed-…`,
    * `photo-seed-…`) and dates, so seeding never shifts the ids or times the
-   * mock hands out afterwards. Answers the run's id.
+   * mock hands out afterwards. `capMicros`, when given, overrides the run's
+   * own worst-case cap (L6: lets a test seed a run whose cap the already-
+   * settled slots have used up, without needing a real run to actually
+   * exhaust it slot by slot). Answers the run's id.
    */
-  seedRun(request: RunRequest, done: number): string {
+  seedRun(request: RunRequest, done: number, capMicros?: number): string {
     this.seedCounter += 1;
     const n = String(this.seedCounter).padStart(4, "0");
     const runId = `run-seed-${n}`;
@@ -603,7 +606,7 @@ export class MockEngine implements EngineBridge {
       avatarId: request.avatarId,
       createdAt,
       request,
-      capMicros: this.runPrice(request).worstMicros,
+      capMicros: capMicros ?? this.runPrice(request).worstMicros,
       settledMicros: 0,
       ageCheck: this.settings.imageAgeCheck === "on",
       slots,

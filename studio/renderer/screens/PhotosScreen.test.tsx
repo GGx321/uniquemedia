@@ -677,6 +677,18 @@ test("a resume row whose very first (mount-time) estimateResume fails shows «У
   expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK)).toBeNull();
 });
 
+test("a resume whose cap is fully used up shows a non-paid «limit exhausted» state, never «до $0.00» (L6)", async () => {
+  const harness = setup({ avatars: [MIA] });
+  // 8 done slots at $0.05 each settled $0.40; the cap is seeded at exactly that, leaving nothing for the 4 open slots.
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8, 400_000);
+  await openSection("Фото");
+
+  await screen.findByText("Лимит запуска исчерпан");
+  expect(screen.queryByRole("button", { name: /Продолжить/ })).toBeNull();
+  expect(screen.queryByText("до $0.00")).toBeNull();
+  expect(callsOf(harness.engine, "runs.resume")).toHaveLength(0);
+});
+
 // ---------- the gallery ----------
 
 test("a failed refresh keeps the gallery already shown and says what went wrong above it", async () => {
