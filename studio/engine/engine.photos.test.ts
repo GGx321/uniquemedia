@@ -100,6 +100,37 @@ describe("photos.list", () => {
     expect(photos.map((p) => p.photoId)).toEqual([...photoIds].reverse());
   });
 
+  // AvatarSummary.photoCount is the gallery's own count: the master, candidates and imports are not gallery photos.
+  test("avatars.list counts the gallery's photos: the master portrait is not one of them", async () => {
+    const { avatarId } = await seedAvatar({ count: 3 });
+    const { engine } = await startEngine(dir());
+    const answer = ok(await engine.handle(command("avatars.list", {})));
+    if (answer.type !== "avatars.list") throw new Error(`expected avatars.list, got ${answer.type}`);
+    expect(answer.result.avatars.find((a) => a.avatarId === avatarId)?.photoCount).toBe(3);
+  });
+
+  test("an avatar with only its master portrait has a photoCount of 0", async () => {
+    const { avatarId } = await seedAvatar({ count: 0 });
+    const { engine } = await startEngine(dir());
+    const answer = ok(await engine.handle(command("avatars.list", {})));
+    if (answer.type !== "avatars.list") throw new Error(`expected avatars.list, got ${answer.type}`);
+    expect(answer.result.avatars.find((a) => a.avatarId === avatarId)?.photoCount).toBe(0);
+  });
+
+  test("photoCount agrees with the gallery: listed photos plus the skipped ones", async () => {
+    const { avatarId, photoIds } = await seedAvatar({ count: 3 });
+    const sidecarPath = join(dir(), "library", "avatars", avatarId, "photos", `${photoIds[0]}.json`);
+    const sidecar = JSON.parse(await readFile(sidecarPath, "utf8")) as { source: { category: string } };
+    sidecar.source.category = "retired-category";
+    await writeFile(sidecarPath, JSON.stringify(sidecar));
+    const { engine } = await startEngine(dir());
+
+    const gallery = await engine.handle(command("photos.list", { avatarId }));
+    const answer = ok(await engine.handle(command("avatars.list", {})));
+    if (answer.type !== "avatars.list") throw new Error(`expected avatars.list, got ${answer.type}`);
+    expect(answer.result.avatars.find((a) => a.avatarId === avatarId)?.photoCount).toBe(listed(gallery).length + skippedTotalOf(gallery));
+  });
+
   test("skippedTotal is 0 when nothing was skipped", async () => {
     const { avatarId } = await seedAvatar({ count: 2 });
     const { engine } = await startEngine(dir());

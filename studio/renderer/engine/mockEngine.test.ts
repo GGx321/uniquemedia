@@ -53,7 +53,8 @@ test("a whole avatar flow goes through the validating client without contract er
 
   const photoId = done.payload.result.candidates[1]?.photoId ?? "";
   const { avatar } = await unwrap(client.request("avatars.pick", { avatarId: draft.avatarId, photoId, name: "Mia" }));
-  expect(avatar).toMatchObject({ name: "Mia", masterPhotoId: photoId, status: "active" });
+  // photoCount is the gallery's count: the picked master is not a gallery photo.
+  expect(avatar).toMatchObject({ name: "Mia", masterPhotoId: photoId, status: "active", photoCount: 0 });
 
   const money = await unwrap(client.request("money.status", {}));
   expect(money).toMatchObject({ ledger: "open", spentMicros: MOCK_ESTIMATE.expectedMicros, unsettledMicros: 0, halt: null });
@@ -717,6 +718,15 @@ test("avatars.pickImportPhoto: a fresh stage replaces an earlier one; only the n
   expect(
     await client.request("avatars.importAvatar", { stagingId: first.stagingId, name: "Zoe", confirmedAiPersona: true, acceptedWorstMicros: worst }),
   ).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+});
+
+test("avatars.importAvatar: the imported master is not a gallery photo, so the new avatar has a photoCount of 0", async () => {
+  const { client } = makeMock();
+  const staged = await unwrap(client.request("avatars.pickImportPhoto", {}));
+  if (!staged.picked) throw new Error("expected a picked photo");
+  const worst = (await unwrap(client.request("avatars.estimateImport", { stagingId: staged.stagingId }))).worstMicros;
+  const { avatar } = await unwrap(client.request("avatars.importAvatar", { stagingId: staged.stagingId, name: "Zoe", confirmedAiPersona: true, acceptedWorstMicros: worst }));
+  expect(avatar.photoCount).toBe(0);
 });
 
 test("runs.list answers an empty list through the validating client before any run starts", async () => {

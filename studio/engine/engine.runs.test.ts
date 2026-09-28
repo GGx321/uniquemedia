@@ -363,11 +363,11 @@ describe("runs.start", () => {
     const { jobId } = started(await engine.handle(startRun(avatarId)));
     await jobEnd(events, jobId);
 
-    // One announcement per stored photo, each with the count at that moment (slots store concurrently), ending at the master + 4.
+    // One announcement per stored photo, each with the count at that moment (slots store concurrently), ending at the run's 4 (the master is not a gallery photo).
     const counts = events().flatMap((e) => (e.type === "avatar.changed" && e.payload.avatar.avatarId === avatarId ? [e.payload.avatar.photoCount] : []));
     expect(counts).toHaveLength(4);
     expect(counts.every((c, i) => i === 0 || c >= (counts[i - 1] ?? 0))).toBe(true);
-    expect(counts.at(-1)).toBe(5);
+    expect(counts.at(-1)).toBe(4);
   });
 
   test("the snapshot lists the run's job with its avatar, as the contract's JobState", async () => {

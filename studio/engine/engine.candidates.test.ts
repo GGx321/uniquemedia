@@ -679,7 +679,7 @@ describe("avatars.pick", () => {
 
     const answer = ok(await engine.handle(pick(draftId, chosen, "  Lena  ")));
 
-    const avatar = { avatarId: draftId, name: "Lena", descriptor: { age: 25, text: GOOD }, masterPhotoId: chosen, status: "active", photoCount: 1 };
+    const avatar = { avatarId: draftId, name: "Lena", descriptor: { age: 25, text: GOOD }, masterPhotoId: chosen, status: "active", photoCount: 0 };
     expect(answer.result).toMatchObject({ avatar });
     expect(events().slice(before).map((e) => e.type)).toEqual(["avatar.changed"]);
     expect(events().at(-1)).toMatchObject({ payload: { avatar } });

@@ -559,7 +559,7 @@ describe("the library the settings name", () => {
 
     const response = ok(await engine.handle(command("engine.snapshot")));
     if (response.type !== "engine.snapshot") throw new Error("wrong type");
-    expect(response.result.avatars).toMatchObject([{ avatarId: seeded.avatarId, name: "Mia", status: "active", photoCount: 1 }]);
+    expect(response.result.avatars).toMatchObject([{ avatarId: seeded.avatarId, name: "Mia", status: "active", photoCount: 0 }]);
     expect(response.result.drafts).toEqual([
       {
         avatarId: seeded.draftId,

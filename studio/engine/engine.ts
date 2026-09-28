@@ -54,7 +54,7 @@ import {
   type AvatarModels,
 } from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
-import { avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
+import { avatarSummaryFrom, combineUnreadable, draftFrom, galleryPhotoCount, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
@@ -1866,7 +1866,7 @@ export class Engine {
       const manifest = library.getAvatar(avatarId);
       if (manifest === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
       if (manifest.status !== "draft") this.#assertDescriptorReadable(manifest);
-      const current = avatarSummaryFrom(manifest, library.photoCount(avatarId));
+      const current = avatarSummaryFrom(manifest, galleryPhotoCount(library, avatarId));
       if (current === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
       if (current.status === "archived") return { avatar: current };
       await library.updateAvatar(avatarId, { status: "archived" });
@@ -1879,7 +1879,7 @@ export class Engine {
   /** The saved avatar as the grid lists it, announced with avatar.changed. */
   #announceAvatar(library: Library, avatarId: string): AvatarSummary {
     const manifest = library.getAvatar(avatarId);
-    const avatar = manifest === undefined ? null : avatarSummaryFrom(manifest, library.photoCount(avatarId));
+    const avatar = manifest === undefined ? null : avatarSummaryFrom(manifest, galleryPhotoCount(library, avatarId));
     if (avatar === null) throw new Error(`the saved avatar ${avatarId} does not fit the contract`);
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.changed", payload: { avatar } });
     return avatar;

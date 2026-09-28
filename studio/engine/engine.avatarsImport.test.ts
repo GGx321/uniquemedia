@@ -334,7 +334,7 @@ describe("avatars.importAvatar: happy path", () => {
 
     const answer = ok(response);
     if (answer.type !== "avatars.importAvatar") throw new Error("wrong type");
-    expect(answer.result.avatar).toMatchObject({ name: "Zoe", status: "active", photoCount: 1, descriptor: { age: 25, text: GOOD } });
+    expect(answer.result.avatar).toMatchObject({ name: "Zoe", status: "active", photoCount: 0, descriptor: { age: 25, text: GOOD } });
 
     const { library } = await openLibrary(join(dir(), "library"));
     const manifest = library.getAvatar(answer.result.avatar.avatarId);

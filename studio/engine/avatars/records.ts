@@ -11,6 +11,7 @@ import {
 } from "../../shared/engine";
 import { isLibraryId, type Library, type QuarantineEntry } from "../library";
 import type { AvatarManifest, PhotoSidecar, TraitValue } from "../library/schemas";
+import { looksLikeRunPhoto } from "../library/photoRecords";
 import { passesAgeThreshold } from "./ageCheck";
 
 /** The two skip reasons `libraryView` can tell apart; the third, `manifest-unreadable`, never reaches here — see engine.ts. */
@@ -66,6 +67,17 @@ export function draftFrom(manifest: AvatarManifest, photos: readonly PhotoSideca
     estimate: null,
   });
   return parsed.success ? parsed.data : null;
+}
+
+/**
+ * `AvatarSummary.photoCount`: the avatar's gallery photos, the same set
+ * `photos.list` shows (`looksLikeRunPhoto`, so a run photo the contract
+ * cannot list still counts, as the gallery's own "skipped" tally does). The
+ * master portrait, unpicked candidates and imported photos are not gallery
+ * photos.
+ */
+export function galleryPhotoCount(library: Pick<Library, "photosByAvatar">, avatarId: string): number {
+  return library.photosByAvatar(avatarId).filter(looksLikeRunPhoto).length;
 }
 
 /** A saved avatar as the grid lists it; null for a draft or a record the contract refuses. */
@@ -153,7 +165,7 @@ export function libraryView(library: Library): LibraryView {
       if (draft === null) view.skipped.push({ avatarId: manifest.id, name: skippedNameOf(manifest), reason: skipReason(manifest) });
       else view.drafts.push(draft);
     } else {
-      const avatar = avatarSummaryFrom(manifest, library.photoCount(manifest.id));
+      const avatar = avatarSummaryFrom(manifest, galleryPhotoCount(library, manifest.id));
       if (avatar === null) view.skipped.push({ avatarId: manifest.id, name: skippedNameOf(manifest), reason: skipReason(manifest) });
       else view.avatars.push(avatar);
     }

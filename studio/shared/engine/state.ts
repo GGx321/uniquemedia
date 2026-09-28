@@ -287,6 +287,12 @@ export const AvatarSummary = z.strictObject({
   masterPhotoId: Id,
   createdAt: IsoDateTime,
   status: AvatarStatus.exclude(["draft"]),
+  /**
+   * The avatar's gallery photos: the run photos `photos.list` shows for it
+   * (and counts as skipped when it cannot list one). The master portrait,
+   * unpicked candidates and imported photos are not gallery photos, so a
+   * fresh avatar has 0.
+   */
   photoCount: Count,
 });
 

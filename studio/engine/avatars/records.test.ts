@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { AvatarSummary, Draft, MAX_UNREADABLE_AVATARS, type AvatarTraits, type UnreadableAvatar } from "../../shared/engine";
 import { openLibrary, type QuarantineEntry } from "../library";
 import { AvatarManifestSchema, type AvatarManifest, type PhotoSidecar } from "../library/schemas";
-import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../library/testing/helpers";
+import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../library/testing/helpers";
 import { avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./records";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -260,9 +260,23 @@ describe("libraryView over a real library", () => {
 
     const view = libraryView(library);
 
-    expect(view.avatars.map((a) => [a.avatarId, a.photoCount])).toEqual([[saved.id, 1]]);
+    // The master portrait is not a gallery photo, so a saved avatar with only it has none.
+    expect(view.avatars.map((a) => [a.avatarId, a.photoCount])).toEqual([[saved.id, 0]]);
     expect(view.drafts.map((d) => [d.avatarId, d.candidates.map((c) => c.photoId)])).toEqual([[draft.id, [candidate.id]]]);
     expect(view.skipped).toEqual([{ avatarId: early.id, name: "Early", reason: "contract-mismatch" }]);
+  });
+
+  test("photoCount is the run photos only: a master, an unpicked candidate and an import are not gallery photos", async () => {
+    const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds("count") });
+    const saved = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
+    const master = await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta());
+    await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta({ source: SAMPLE_IMPORTED_SOURCE }));
+    await library.updateAvatar(saved.id, { status: "active", masterPhotoId: master.id });
+    const generated = samplePhotoMeta().source;
+    if (generated.kind !== "generated") throw new Error("expected a generated sample source");
+    for (const n of [1, 2]) await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta({ source: { ...generated, category: "home", attemptId: `run-00000001:slot-${n}#1`, slot: `slot-${n}` } }));
+
+    expect(libraryView(library).avatars.map((a) => a.photoCount)).toEqual([2]);
   });
 
   test("names a saved avatar whose stored descriptor no longer fits today's rules with reason descriptor-invalid", async () => {

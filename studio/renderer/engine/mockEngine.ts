@@ -819,7 +819,7 @@ export class MockEngine implements EngineBridge {
           masterPhotoId: c.payload.photoId,
           createdAt: this.nowIso(),
           status: "active",
-          photoCount: 1,
+          photoCount: 0,
         };
         this.drafts = this.drafts.filter((d) => d !== draft);
         this.avatars = [...this.avatars, avatar];
@@ -894,7 +894,7 @@ export class MockEngine implements EngineBridge {
           masterPhotoId: this.nextId("photo"),
           createdAt: this.nowIso(),
           status: "active",
-          photoCount: 1,
+          photoCount: 0,
         };
         this.avatars = [...this.avatars, avatar];
         this.spend(this.importPrice().expectedMicros);
