@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createRealDecodeBackend, looksLikeFatalWasmFailure } from "./realBackend";
+import { createRealDecodeBackend, looksLikeFatalWasmFailure, SMOKE_TEST_JPEG, SMOKE_TEST_PNG } from "./realBackend";
 import { createWasmImageDecoder } from "./wasmDecode";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -26,7 +26,12 @@ const REAL_WEBP_2X2 = Uint8Array.from(Buffer.from("UklGRj4AAABXRUJQVlA4IDIAAADwA
 
 describe("looksLikeFatalWasmFailure (N6)", () => {
   test("matches a real WebAssembly.RuntimeError", () => {
-    expect(looksLikeFatalWasmFailure(new WebAssembly.RuntimeError("unreachable"))).toBe(true);
+    // Round 3, small item e: the message itself ("unreachable" would also
+    // match the fallback regex below, `/.../i` includes "unreachable") must
+    // NOT be one the regex matches, or this test would still pass with the
+    // `instanceof WebAssembly.RuntimeError` branch deleted — proving
+    // nothing about that branch specifically.
+    expect(looksLikeFatalWasmFailure(new WebAssembly.RuntimeError("integer divide by zero"))).toBe(true);
   });
 
   test("matches emscripten's own \"Aborted(...)\" message — the word-boundary bug this fixes", () => {
@@ -63,6 +68,22 @@ describe("createRealDecodeBackend (N7: a smoke decode at load)", () => {
     const backend = await createRealDecodeBackend(NODE_MODULES_DIR);
     expect(typeof backend.decodeJpeg).toBe("function");
     expect(typeof backend.decodePng).toBe("function");
+  });
+
+  // Round 3, small item f: the load-time smoke decode's own result was never
+  // checked — createRealDecodeBackend() discards it (`await Promise.all([...])`
+  // with no assertion), so a mutation that fed it the wrong bytes, or a
+  // decoder that silently returned the wrong geometry, would not be caught
+  // here. Decoding the SAME embedded smoke bytes directly through the real
+  // backend and pinning their size closes that gap.
+  test("N7: the embedded smoke JPEG and PNG are both genuinely 2x2 (the size the module comment claims)", async () => {
+    const backend = await createRealDecodeBackend(NODE_MODULES_DIR);
+    const jpeg = await backend.decodeJpeg(SMOKE_TEST_JPEG);
+    const png = await backend.decodePng(SMOKE_TEST_PNG);
+    expect({ width: jpeg.width, height: jpeg.height }).toEqual({ width: 2, height: 2 });
+    expect({ width: png.width, height: png.height }).toEqual({ width: 2, height: 2 });
+    expect(jpeg.data.length).toBe(2 * 2 * 4);
+    expect(png.data.length).toBe(2 * 2 * 4);
   });
 });
 

@@ -10,13 +10,13 @@ import type { DecodeBackend, RawDecoded } from "./wasmDecode";
  * never hand-typed base64) — decoded once at load so a broken codec fails
  * there, not mid-run.
  */
-const SMOKE_TEST_JPEG = Uint8Array.from(
+export const SMOKE_TEST_JPEG = Uint8Array.from(
   Buffer.from(
     "/9j/4AAQSkZJRgABAgAAAQABAAD//gAPTGF2YzYwLjMuMTAwAP/bAEMACAQEBAQEBQUFBQUFBgYGBgYGBgYGBgYGBgcHBwgICAcHBwYGBwcICAgICQkJCAgICAkJCgoKDAwLCw4ODhERFP/EAEwAAQEAAAAAAAAAAAAAAAAAAAAGAQEBAAAAAAAAAAAAAAAAAAAGBxABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAAIAAgMBIgACEQADEQD/2gAMAwEAAhEDEQA/AIsAUX9//9k=",
     "base64",
   ),
 );
-const SMOKE_TEST_PNG = Uint8Array.from(
+export const SMOKE_TEST_PNG = Uint8Array.from(
   Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAEElEQVR4nGP4w8AARAwQCgAfjgPxzzTeXgAAAABJRU5ErkJggg==", "base64"),
 );
 

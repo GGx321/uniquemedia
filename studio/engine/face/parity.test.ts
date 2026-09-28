@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { faceModelPaths } from "../../scripts/faceModelCache";
+import { ffmpegPath } from "../../node/ffmpegBinary";
 import { createRealDecodeBackend } from "../decode/realBackend";
 import { createWasmImageDecoder } from "../decode/wasmDecode";
 import { ortWasmPathsFrom } from "../decode/wasmPaths";
@@ -110,6 +112,46 @@ describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real m
       await gate.dispose();
     }
   }, 60_000);
+
+  // Round 3, small item a: every existing candidate fixture (TRUE_RENDERS)
+  // is already at or below FACE_PIPELINE_MAX_SIDE, so normalizeForFacePipeline()
+  // is a no-op on all of them — a mutation that deleted the normalize() call
+  // from check() specifically (leaving embed()'s untouched) would not be
+  // caught by any test above. A genuine close-up candidate WELL above the
+  // cap (master.jpg upscaled 2x, 1728x2304 — its face already occupies a
+  // large fraction of the frame at headRatio 0.482, so 2x pushes it past
+  // the ~630px "undetected at full scale" measurement from the round 2
+  // re-review) fails detection entirely without normalization and matches
+  // cleanly with it — verified against a temporarily-reverted check() while
+  // writing this test.
+  test("M1 (a): check() normalizes the CANDIDATE, not just embed()'s master — a 2x close-up candidate still matches", async () => {
+    const masterPath = join(IMAGE_DIR, MASTER.file);
+    const upscaled = spawnSync(
+      ffmpegPath(),
+      ["-y", "-hide_banner", "-loglevel", "error", "-i", masterPath, "-vf", "scale=1728:2304", "-c:v", "mjpeg", "-q:v", "2", "-f", "mjpeg", "pipe:1"],
+      { maxBuffer: 64 * 1024 * 1024 },
+    );
+    if (upscaled.status !== 0) throw new Error(`ffmpeg could not upscale the master fixture: ${upscaled.stderr.toString()}`);
+
+    const models = { yunet: readFileSync(MODEL_PATHS.yunet), sface: readFileSync(MODEL_PATHS.sface) };
+    const gate = await createFaceGate(models);
+    try {
+      const [masterImage, bigCandidate] = await Promise.all([
+        decodeFixtures([MASTER.file]).then((r) => r[0]!),
+        (async () => {
+          const backend = await createRealDecodeBackend(join(ROOT, "node_modules"));
+          const decode = createWasmImageDecoder(backend);
+          return decode(new Uint8Array(upscaled.stdout), new AbortController().signal);
+        })(),
+      ]);
+      expect(bigCandidate.width).toBeGreaterThan(1280);
+      const masterEmbedding = await gate.embed(masterImage);
+      const verdict = await gate.check({ pose: "front", image: bigCandidate, masterEmbedding });
+      expect(verdict.kind).toBe("match");
+    } finally {
+      await gate.dispose();
+    }
+  }, 30_000);
 
   test("createFaceGate honours an explicit wasmPaths (packaging: the asar-unpacked location) and still initializes", async () => {
     // Points at the real files node_modules already has, standing in for the
