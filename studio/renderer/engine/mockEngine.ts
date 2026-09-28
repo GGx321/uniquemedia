@@ -17,15 +17,23 @@ import {
   type ImageAgeCheck,
   IMPORT_FALLBACK_PRICE,
   type ImportPhotoPicked,
+  type JobResult,
   type JobState,
   type LedgerUnavailable,
+  MAX_LISTED_PHOTOS,
+  MAX_LISTED_RUNS,
   type MoneyHalt,
   type MoneyStatus,
   OkResponse,
+  type PhotoQaSummary,
+  type PhotoSummary,
   PROTOCOL_VERSION,
   type ReconcileReason,
   type ReconcileResult,
   type ResponseMessage,
+  type RunRequest,
+  type RunSummary,
+  SceneCategory,
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
@@ -95,6 +103,24 @@ const MOCK_IMPORT_TRAITS: AvatarTraits = {
   vibe: "",
 };
 
+type RunResolution = RunRequest["resolution"];
+type RunCategory = RunRequest["categories"][number];
+
+/**
+ * T8b: the mock photo run's prices, in micro-dollars. One image attempt at
+ * each resolution; a slot's worst case is every one of its paid attempts
+ * (the real engine's RUN_ATTEMPTS_PER_SLOT); the scene writer's expected
+ * share per photo and its worst case per chunk of photos it writes at once.
+ * With the Photos mockup's own numbers: 20 photos at 1K are ≈ $1.01, до $3.07.
+ */
+export const MOCK_RUN_IMAGE: Readonly<Record<RunResolution, number>> = { "1k": 50_000, "2k": 70_000 };
+export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
+export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerChunk: 70_000, photosPerChunk: 25 } as const;
+
+/** The mock gate's similarity scores, cycled over a run's slots; every fifth slot carries none (a profile or back shot, or a photo from before the gate). */
+const MOCK_FACE_COS = [0.86, 0.81, 0.71, 0.78] as const;
+const MOCK_UNCHECKED_EVERY = 5;
+
 const START_OF_TIME = Date.UTC(2026, 8, 24, 10, 0, 0);
 
 type SlotOutcome = "success" | "age-rejected" | "failed";
@@ -137,6 +163,58 @@ export interface MockEngineOptions {
   concurrency?: number;
   /** Matches the app's own default, "off" (owner's decision, 2026-09-27). Tests that exercise the age-check path (MOCK_ESTIMATE's numbers, rejectNextByAgeCheck, ...) must set "on" explicitly. */
   imageAgeCheck?: ImageAgeCheck;
+  /** Run photos already in the library (T8b's gallery), any order; `photos.list` answers them newest first. */
+  photos?: PhotoSummary[];
+  /** Per avatarId: run photos whose sidecar could not be read, counted in `photos.list`'s `skippedTotal`. */
+  skippedPhotos?: Record<string, number>;
+}
+
+/** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
+interface MockRunSlot {
+  category: RunCategory;
+  end: "done" | "failed" | null;
+}
+
+/** A persisted photo run (T6): it outlives its jobs, so a resume is a new job of the same run. */
+interface MockRun {
+  runId: string;
+  avatarId: string;
+  createdAt: string;
+  request: RunRequest;
+  /** The worst case accepted at start: the run's cap for its whole life, resumes included. */
+  capMicros: number;
+  /** Money settled for this run so far. */
+  settledMicros: number;
+  /** Whether the run checks age, captured at start like the real plan's `imageAgeCheck`: a resume keeps it. */
+  ageCheck: boolean;
+  slots: MockRunSlot[];
+  photoIds: string[];
+}
+
+interface MockRunJob {
+  jobId: string;
+  runId: string;
+  avatarId: string;
+  status: JobState["status"];
+  done: number;
+  total: number;
+  error: EngineError | null;
+  /** The reserve keys this job still holds open, one per slot it has not ended yet. */
+  reserveKeys: string[];
+  cancelTimers: (() => void)[];
+}
+
+/** The planner's split (scenes/planner.ts's `distribute`): `count` spread as evenly as possible, the remainder to the categories earliest in canonical order. */
+function mockRunSlots(count: number, categories: readonly RunCategory[]): MockRunSlot[] {
+  const ordered = SceneCategory.options.filter((c) => categories.includes(c));
+  const base = Math.floor(count / ordered.length);
+  const remainder = count % ordered.length;
+  return ordered.flatMap((category, i) => Array.from({ length: base + (i < remainder ? 1 : 0) }, () => ({ category, end: null })));
+}
+
+function mockFaceQa(slotIndex: number): PhotoQaSummary | null {
+  if (slotIndex % MOCK_UNCHECKED_EVERY === MOCK_UNCHECKED_EVERY - 1) return null;
+  return { faceCos: MOCK_FACE_COS[slotIndex % MOCK_FACE_COS.length] ?? MOCK_FACE_COS[0] };
 }
 
 /**
@@ -305,6 +383,17 @@ export class MockEngine implements EngineBridge {
   private nextImportAgeCheckFails = false;
   /** T6c review round 3, L4: see failNextImportAfterConsuming's own doc comment. */
   private nextImportFailure: EngineError | null = null;
+  /** T8b: photo runs, oldest first (runs.list answers newest first), and their jobs. */
+  private runs: MockRun[] = [];
+  private runJobs: MockRunJob[] = [];
+  /** Every stored run photo, oldest first (photos.list answers newest first). */
+  private photos: PhotoSummary[];
+  private readonly skippedPhotos: Record<string, number>;
+  private runImagePrice: Record<RunResolution, number> = { ...MOCK_RUN_IMAGE };
+  /** The next run job's trailing `count` open slots end without a photo. */
+  private failedRunSlotsNext = 0;
+  /** seedRun's own id counter, apart from nextId's, so a seed never shifts the ids handed out later. */
+  private seedCounter = 0;
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -330,6 +419,16 @@ export class MockEngine implements EngineBridge {
     this.spentMicros = options.money?.spentMicros ?? (options.preset === "demo" ? 1_420_000 : 0);
     this.halt = options.money?.halt ?? null;
     this.unavailable = options.money?.unavailable ?? null;
+    this.photos = [...(options.photos ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    this.skippedPhotos = { ...options.skippedPhotos };
+    if (options.preset === "demo" && options.photos === undefined) this.seedDemoRun();
+  }
+
+  /** The dev build's Mia: a stopped run of 12 photos, 8 of them drawn, 4 left to resume. */
+  private seedDemoRun(): void {
+    const mia = this.avatars.find((a) => a.name === "Mia");
+    if (mia === undefined) return;
+    this.seedRun({ avatarId: mia.avatarId, count: 12, categories: ["home", "travel", "shoot", "glam", "fit"], resolution: "1k", poses: { profile: false, back: true } }, 8);
   }
 
   // ---------- EngineBridge ----------
@@ -398,6 +497,9 @@ export class MockEngine implements EngineBridge {
     this.settings = { ...this.settings, apiKey: { ...this.settings.apiKey, rejected: true } };
     for (const job of this.jobs.filter((j) => j.status === "queued" || j.status === "running")) {
       this.failJob(job, { code: "AUTH_INVALID" });
+    }
+    for (const job of this.runJobs.filter((j) => j.status === "queued" || j.status === "running")) {
+      this.failRunJob(job, { code: "AUTH_INVALID" });
     }
   }
 
@@ -473,6 +575,55 @@ export class MockEngine implements EngineBridge {
     this.failedSlotsNextJob = { count: Math.max(0, Math.min(CANDIDATES_PER_JOB, count)), error, reserveLeftOpen };
   }
 
+  /** T8b: changes one image attempt's price at `resolution`, so a run accepted at a lower worst case gets PRICE_CHANGED. */
+  setRunImagePrice(resolution: RunResolution, micros: number): void {
+    this.runImagePrice = { ...this.runImagePrice, [resolution]: micros };
+  }
+
+  /** The next run job's trailing `count` open slots end without a photo (their attempts all failed). */
+  failNextRunSlots(count: number): void {
+    this.failedRunSlotsNext = Math.max(0, count);
+  }
+
+  /**
+   * A run stopped earlier, as `runs.list` would find it after a restart: its
+   * first `done` slots already have their photos, the rest are open (so it is
+   * resumable while any are). No events, and its own ids (`run-seed-…`,
+   * `photo-seed-…`) and dates, so seeding never shifts the ids or times the
+   * mock hands out afterwards. Answers the run's id.
+   */
+  seedRun(request: RunRequest, done: number): string {
+    this.seedCounter += 1;
+    const n = String(this.seedCounter).padStart(4, "0");
+    const runId = `run-seed-${n}`;
+    const createdAt = new Date(START_OF_TIME - this.seedCounter * 3_600_000).toISOString();
+    const slots = mockRunSlots(request.count, request.categories);
+    const run: MockRun = {
+      runId,
+      avatarId: request.avatarId,
+      createdAt,
+      request,
+      capMicros: this.runPrice(request).worstMicros,
+      settledMicros: 0,
+      ageCheck: this.settings.imageAgeCheck === "on",
+      slots,
+      photoIds: [],
+    };
+    const { expected } = this.slotPrice(run);
+    slots.slice(0, Math.min(done, slots.length)).forEach((slot, i) => {
+      slot.end = "done";
+      const photoId = `photo-seed-${n}-${String(i + 1).padStart(3, "0")}`;
+      run.photoIds.push(photoId);
+      run.settledMicros += expected;
+      const qa = mockFaceQa(i);
+      const at = new Date(Date.parse(createdAt) + (i + 1) * 60_000).toISOString();
+      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, resolution: request.resolution, createdAt: at, ...(qa ? { qa } : {}) });
+    });
+    this.photos.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    this.runs = [...this.runs, run];
+    return runId;
+  }
+
   /** While off, events go into the log but are not delivered: the window misses them. */
   setDelivery(on: boolean): void {
     this.delivering = on;
@@ -498,7 +649,7 @@ export class MockEngine implements EngineBridge {
 
   /** The engine process restarts: a new bootId, seq from 1, running jobs are gone, open reserves need a reconcile. */
   restart(): void {
-    for (const job of this.jobs) {
+    for (const job of [...this.jobs, ...this.runJobs]) {
       for (const cancel of job.cancelTimers) cancel();
       if (job.status === "queued" || job.status === "running") job.status = "cancelled";
     }
@@ -735,16 +886,66 @@ export class MockEngine implements EngineBridge {
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });
         return this.ok(c, { avatar });
       }
-      case "photos.list":
-        return this.ok(c, { photos: [], skippedTotal: 0 });
+      case "photos.list": {
+        const { avatarId } = c.payload;
+        // NOT_FOUND only for an id the library does not have at all: a draft, an active and an archived avatar all get their list.
+        const known = this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId);
+        if (!known) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        const photos = this.photos.filter((p) => p.avatarId === avatarId).reverse().slice(0, MAX_LISTED_PHOTOS);
+        return this.ok(c, { photos, skippedTotal: this.skippedPhotos[avatarId] ?? 0 });
+      }
       case "runs.list":
-        return this.ok(c, { runs: [] });
-      case "runs.estimate":
-      case "runs.start":
-      case "runs.cancel":
-      case "runs.estimateResume":
-      case "runs.resume":
-        return this.fail(c, { code: "INTERNAL", detail: "photo runs are not simulated by the mock engine" });
+        return this.ok(c, { runs: [...this.runs].reverse().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
+      case "runs.estimate": {
+        const refusal = this.runnableRefusal(c.payload.avatarId);
+        if (refusal) return this.fail(c, refusal);
+        return this.ok(c, { estimate: this.runPrice(c.payload) });
+      }
+      case "runs.start": {
+        const { acceptedWorstMicros, ...request } = c.payload;
+        // The engine's order: the avatar is claimed first, then the key and the ledger, the avatar itself, and the price.
+        if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
+        const refusal = this.keyAndLedgerGate() ?? this.runnableRefusal(request.avatarId) ?? this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros);
+        if (refusal) return this.fail(c, refusal);
+        const run: MockRun = {
+          runId: this.nextId("run"),
+          avatarId: request.avatarId,
+          createdAt: this.nowIso(),
+          request,
+          capMicros: this.runPrice(request).worstMicros,
+          settledMicros: 0,
+          ageCheck: this.settings.imageAgeCheck === "on",
+          slots: mockRunSlots(request.count, request.categories),
+          photoIds: [],
+        };
+        this.runs = [...this.runs, run];
+        return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
+      }
+      case "runs.cancel": {
+        const run = this.runs.find((r) => r.runId === c.payload.runId);
+        if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
+        const job = this.activeRunJob(run.runId);
+        if (job) this.cancelRunJob(job);
+        return this.ok(c, { runId: run.runId });
+      }
+      case "runs.estimateResume": {
+        const run = this.runs.find((r) => r.runId === c.payload.runId);
+        if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
+        return this.ok(c, { estimate: this.resumePrice(run) });
+      }
+      case "runs.resume": {
+        const run = this.runs.find((r) => r.runId === c.payload.runId);
+        if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
+        if (this.activeRunJob(run.runId)) return this.fail(c, { code: "IN_FLIGHT", detail: `run ${run.runId} is already running` });
+        const refusal =
+          this.keyAndLedgerGate() ??
+          (this.jobRunningFor(run.avatarId) ? { code: "IN_FLIGHT" as const } : null) ??
+          this.runnableRefusal(run.avatarId) ??
+          (run.slots.every((s) => s.end !== null) ? { code: "VALIDATION" as const, detail: "every slot of this run already ended" } : null) ??
+          this.priceGate(c.payload.acceptedWorstMicros, this.resumePrice(run).worstMicros);
+        if (refusal) return this.fail(c, refusal);
+        return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
+      }
       case "engine.snapshot":
         return this.ok(c, this.snapshot());
       case "engine.events":
@@ -820,9 +1021,195 @@ export class MockEngine implements EngineBridge {
     return this.ok(c, result);
   }
 
-  /** Whether an avatar has a candidate batch still queued or running: a second batch or a pick must wait. */
+  /** Whether an avatar has a candidate batch or a photo run still queued or running: a second batch, a pick or a run must wait. */
   private jobRunningFor(avatarId: string): boolean {
-    return this.jobs.some((j) => j.avatarId === avatarId && (j.status === "queued" || j.status === "running"));
+    const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
+    return this.jobs.some(active) || this.runJobs.some(active);
+  }
+
+  // ---------- photo runs (T8b) ----------
+
+  /** runs.estimate/start/resume's avatar check: NOT_FOUND unless it is saved and active, DESCRIPTOR_INVALID for a descriptor to rewrite first. */
+  private runnableRefusal(avatarId: string): EngineError | null {
+    const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+    if (avatar?.status !== "active") return { code: "NOT_FOUND", detail: `avatar ${avatarId} is not a saved, active avatar` };
+    if (!AvatarDescriptor.safeParse(avatar.descriptor).success) return { code: "DESCRIPTOR_INVALID" };
+    return null;
+  }
+
+  /** A whole run at today's mock prices: every slot's every attempt, the writer chunked, and the age checks when they are on. */
+  private runPrice(request: Pick<RunRequest, "count" | "resolution">): Estimate {
+    const { count } = request;
+    const image = this.runImagePrice[request.resolution];
+    const attempts = count * MOCK_RUN_ATTEMPTS_PER_SLOT;
+    const ageOn = this.settings.imageAgeCheck === "on";
+    const chunks = Math.ceil(count / MOCK_RUN_WRITER.photosPerChunk);
+    return {
+      expectedMicros: count * image + count * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      worstMicros: attempts * image + chunks * MOCK_RUN_WRITER.worstPerChunk + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+      prices: this.price.prices,
+      pricesAsOf: this.price.pricesAsOf,
+    };
+  }
+
+  private openSlots(run: MockRun): number {
+    return run.slots.filter((s) => s.end === null).length;
+  }
+
+  /** What the run has committed: its settled money plus the reserves its job still holds open. */
+  private runCommitted(run: MockRun): number {
+    const job = this.activeRunJob(run.runId);
+    const open = job ? job.reserveKeys.reduce((sum, key) => sum + (this.reserves.get(key) ?? 0), 0) : 0;
+    return run.settledMicros + open;
+  }
+
+  /**
+   * One slot of `run` at today's prices: what a success is expected to cost
+   * (one image, and its age check when the run has them) and the worst case
+   * of one attempt. The age-check mode is the run's own, captured at start.
+   */
+  private slotPrice(run: MockRun): { expected: number; attemptWorst: number } {
+    const image = this.runImagePrice[run.request.resolution];
+    return {
+      expected: image + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      attemptWorst: image + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+    };
+  }
+
+  /** What a resume could still spend: its open slots' attempts at today's prices, never more than the cap leaves. */
+  private resumePrice(run: MockRun): Estimate {
+    const open = this.openSlots(run);
+    const slot = this.slotPrice(run);
+    const capLeft = Math.max(0, run.capMicros - this.runCommitted(run));
+    const worstMicros = Math.min(open * MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst, capLeft);
+    return { expectedMicros: Math.min(open * slot.expected, worstMicros), worstMicros, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf };
+  }
+
+  private runSummary(run: MockRun): RunSummary {
+    const done = run.slots.filter((s) => s.end === "done").length;
+    const failed = run.slots.filter((s) => s.end === "failed").length;
+    const open = this.openSlots(run);
+    const running = this.activeRunJob(run.runId) !== null;
+    return {
+      runId: run.runId,
+      avatarId: run.avatarId,
+      createdAt: run.createdAt,
+      total: run.slots.length,
+      done,
+      failed,
+      open,
+      capMicros: run.capMicros,
+      committedMicros: this.runCommitted(run),
+      running,
+      resumable: !running && open > 0,
+      remainingWorstMicros: this.resumePrice(run).worstMicros,
+    };
+  }
+
+  private activeRunJob(runId: string): MockRunJob | null {
+    return this.runJobs.find((j) => j.runId === runId && (j.status === "queued" || j.status === "running")) ?? null;
+  }
+
+  /**
+   * A job over the run's open slots, one step each: a photo stored (with its
+   * similarity, or none) and its reserve settled, or — for the trailing
+   * `failNextRunSlots` — the slot ended without one. `done` starts at the
+   * slots already ended, so a resume continues the run's own count.
+   */
+  private startRunJob(run: MockRun): string {
+    const openIndexes = run.slots.flatMap((s, i) => (s.end === null ? [i] : []));
+    const failing = Math.min(this.failedRunSlotsNext, openIndexes.length);
+    this.failedRunSlotsNext = 0;
+    // Fixed at job start, like the real reserve: a later setRunImagePrice must not change what a slot already owes.
+    const slot = this.slotPrice(run);
+    const job: MockRunJob = {
+      jobId: this.nextId("job"),
+      runId: run.runId,
+      avatarId: run.avatarId,
+      status: "queued",
+      done: run.slots.length - openIndexes.length,
+      total: run.slots.length,
+      error: null,
+      reserveKeys: openIndexes.map((i) => this.slotReserveKey(run.runId, i + 1)),
+      cancelTimers: [],
+    };
+    this.runJobs = [...this.runJobs, job];
+    for (const key of job.reserveKeys) this.reserves.set(key, MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst);
+    this.emitMoney();
+
+    openIndexes.forEach((slotIndex, step) => {
+      job.cancelTimers.push(
+        this.scheduler.schedule(this.stepMs * (step + 1), () => {
+          const planned = run.slots[slotIndex];
+          if (planned === undefined) return;
+          const key = this.slotReserveKey(run.runId, slotIndex + 1);
+          this.reserves.delete(key);
+          job.reserveKeys = job.reserveKeys.filter((k) => k !== key);
+          if (step >= openIndexes.length - failing) {
+            // Every attempt was refused or failed: a definite non-2xx each time, settled at zero.
+            planned.end = "failed";
+            this.emitMoney();
+          } else {
+            planned.end = "done";
+            const photoId = this.nextId("photo");
+            const qa = mockFaceQa(slotIndex);
+            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, resolution: run.request.resolution, createdAt: this.nowIso(), ...(qa ? { qa } : {}) });
+            run.photoIds.push(photoId);
+            run.settledMicros += slot.expected;
+            this.spend(slot.expected);
+          }
+          job.status = "running";
+          job.done += 1;
+          this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { jobId: job.jobId, avatarId: job.avatarId, done: job.done, total: job.total } });
+        }),
+      );
+    });
+    job.cancelTimers.push(this.scheduler.schedule(this.stepMs * (openIndexes.length + 1), () => this.finishRunJob(job, run)));
+    return job.jobId;
+  }
+
+  private finishRunJob(job: MockRunJob, run: MockRun): void {
+    job.status = "done";
+    job.cancelTimers = [];
+    this.emit({
+      v: PROTOCOL_VERSION,
+      id: this.nextId("evt"),
+      kind: "event",
+      type: "job.done",
+      payload: { jobId: job.jobId, result: this.runResult(run) },
+    });
+  }
+
+  private runResult(run: MockRun): Extract<JobResult, { kind: "run" }> {
+    return { kind: "run", runId: run.runId, avatarId: run.avatarId, photoIds: [...run.photoIds], failedSlots: run.slots.filter((s) => s.end === "failed").length };
+  }
+
+  /**
+   * Like avatars.cancel: no more slots are drawn from the answer on, but the
+   * job itself ends on a later tick (job.cancelled). The slots it had not
+   * drawn yet were never sent, so their reserves are released; they stay
+   * open in the run, which a resume can continue.
+   */
+  private cancelRunJob(job: MockRunJob): void {
+    for (const cancel of job.cancelTimers) cancel();
+    for (const key of job.reserveKeys) this.reserves.delete(key);
+    job.reserveKeys = [];
+    this.emitMoney();
+    job.cancelTimers = [
+      this.scheduler.schedule(CANCEL_CONFIRM_DELAY_MS, () => {
+        job.status = "cancelled";
+        job.cancelTimers = [];
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { jobId: job.jobId } });
+      }),
+    ];
+  }
+
+  private runJobState(j: MockRunJob): JobState {
+    const base = { kind: "run" as const, jobId: j.jobId, runId: j.runId, avatarId: j.avatarId, status: j.status, done: j.done, total: j.total };
+    const run = this.runs.find((r) => r.runId === j.runId);
+    if (j.status === "done" && run) return { ...base, result: this.runResult(run) };
+    if (j.status === "failed" && j.error) return { ...base, error: j.error };
+    return base;
   }
 
   /** One slot's own reserve, keyed apart from its siblings: cancel, a crash, or `reserveLeftOpen` can leave just this one open. */
@@ -952,6 +1339,18 @@ export class MockEngine implements EngineBridge {
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { jobId: job.jobId, error } });
   }
 
+  /** A run job fails as a whole (e.g. AUTH_INVALID): its open slots stay open for a resume, their unsent reserves released. */
+  private failRunJob(job: MockRunJob, error: EngineError): void {
+    for (const cancel of job.cancelTimers) cancel();
+    job.cancelTimers = [];
+    for (const key of job.reserveKeys) this.reserves.delete(key);
+    job.reserveKeys = [];
+    job.status = "failed";
+    job.error = error;
+    this.emitMoney();
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { jobId: job.jobId, error } });
+  }
+
   // ---------- state ----------
 
   private snapshot(): Snapshot {
@@ -964,7 +1363,7 @@ export class MockEngine implements EngineBridge {
       drafts: this.drafts,
       unreadableAvatars: this.unreadable,
       unreadableTotal: this.unreadableCount(),
-      jobs: this.jobs.map((j) => this.jobState(j)),
+      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j))],
       librarySwitchGeneration: this.librarySwitchGeneration,
       notices: [],
     };
@@ -1090,8 +1489,9 @@ export class MockEngine implements EngineBridge {
     return total;
   }
 
-  private running(): MockJob[] {
-    return this.jobs.filter((j) => j.status === "queued" || j.status === "running");
+  /** Every job still queued or running, candidate batches and photo runs alike: a library switch or a reconcile waits for them. */
+  private running(): (MockJob | MockRunJob)[] {
+    return [...this.jobs, ...this.runJobs].filter((j) => j.status === "queued" || j.status === "running");
   }
 
   private spend(micros: number): void {
