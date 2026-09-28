@@ -76,6 +76,8 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const ids = useId();
   const mounted = useMounted();
   const sending = useRef(false);
+  /** The request's current key, live: `start`'s PRICE_CHANGED re-price must never overwrite a fresher key's own estimate (M1). */
+  const keyRef = useRef<string | null>(null);
 
   const [priced, setPriced] = useState<Priced | null>(null);
   const [previousWorst, setPreviousWorst] = useState<number | null>(null);
@@ -91,6 +93,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   // price is not shown meanwhile.
   const settings = view.settings;
   const key = `${requestKey(request)}|${settings?.imageAgeCheck ?? ""}|${settings?.imageModel ?? ""}|${settings?.textModel ?? ""}`;
+  keyRef.current = key;
   const ready = view.phase === "ready";
   const canPrice = ready && avatar.status === "active" && request.categories.length > 0;
 
@@ -132,7 +135,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
     try {
       const reply = await client.request("runs.start", { ...accepted.request, acceptedWorstMicros: accepted.estimate.worstMicros });
       // The run is under way whether or not this screen is still open: the (window-wide) store learns of it either way.
-      if (reply.ok) store.trackRunJob(reply.result.jobId, accepted.request.avatarId, accepted.request.count);
+      if (reply.ok) store.trackRunJob(reply.result.jobId, reply.result.runId, accepted.request.avatarId, accepted.request.count);
       if (!mounted.current) return;
       if (reply.ok) {
         setPreviousWorst(null);
@@ -146,6 +149,15 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
       // Still busy: the refused price stays on a disabled button until the new one replaces it.
       const fresh = await client.request("runs.estimate", accepted.request);
       if (!mounted.current) return;
+      if (accepted.key !== keyRef.current) {
+        // The key moved on while this re-price was in flight (a settings
+        // change, another window's toggle): that key already has its own
+        // estimate effect running or landed. Applying this stale reply here
+        // would overwrite a fresher price with one stamped under the old
+        // key, leaving `current` null and the button dead — drop it and let
+        // the live key's own estimate stand.
+        return;
+      }
       if (fresh.ok) {
         setPriced({ ...accepted, estimate: fresh.result.estimate });
         setPreviousWorst(accepted.estimate.worstMicros);

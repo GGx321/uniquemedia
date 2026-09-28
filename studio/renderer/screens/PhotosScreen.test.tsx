@@ -275,6 +275,43 @@ test("a failed re-price after PRICE_CHANGED drops the refused price: the button 
   expect(callsOf(engine, "runs.start")).toHaveLength(1);
 });
 
+test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's own re-estimate already landed", async () => {
+  // K1: age check off, до $3.07. Clicking accepts K1's price; while runs.start
+  // is in flight, another window turns the age check on — a genuinely new key
+  // (K2) whose own estimate effect fires and lands ($3.19) before runs.start
+  // answers PRICE_CHANGED for the (now stale) K1 request it was sent with.
+  const { engine, scheduler, client } = await openPhotos();
+  const button = await priced();
+  expect(button.textContent).toBe("Сгенерировать 20 фото · до $3.07");
+
+  engine.delayNext("runs.start", 50);
+  fireEvent.click(button);
+
+  await act(async () => {
+    await client.request("settings.setImageAgeCheck", { imageAgeCheck: "on" });
+  });
+  // K2's own estimate, asked for by the key change alone, lands first (the
+  // button still reads "Отправляем…" — runs.start for K1 has not answered yet).
+  await waitFor(() => expect(goButton().textContent).toContain("до $3.19"));
+
+  tick(scheduler, 1); // runs.start (sent for K1) is handled now: PRICE_CHANGED
+  await flush();
+
+  // K2's price must still be the one shown — not clobbered by the stale
+  // re-price the PRICE_CHANGED path asks for K1 — and the button must be
+  // clickable, not stuck disabled with nothing to accept.
+  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.19");
+  expect(isDisabled(goButton())).toBe(false);
+  expect(screen.queryByText("Цена выросла")).toBeNull();
+
+  fireEvent.click(goButton());
+  await screen.findByText(/Рисуем фото/);
+  expect(callsOf(engine, "runs.start").map((c) => c.payload)).toEqual([
+    { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_070_000 },
+    { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_190_000 },
+  ]);
+});
+
 test("a refusal other than PRICE_CHANGED is shown and the price stays for another try", async () => {
   const { engine } = await openPhotos({ money: { monthlyBudgetMicros: 1_000_000 } });
   fireEvent.click(await priced());
