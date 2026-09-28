@@ -6,8 +6,6 @@ import { join } from "node:path";
 import type { PhotoSidecar } from "../library";
 import type { PlanSlot } from "../scenes";
 import { MAX_ATTEMPT_MS } from "../openrouter/transport";
-import { ageCheckMessages, ageJsonSchema } from "../avatars/ageCheck";
-import { chatAttemptWorstMicros } from "../openrouter/chat";
 import { AGE_CHECK_CALL } from "../money/estimate";
 import { ffmpegPath } from "../../node/ffmpegBinary";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
@@ -126,7 +124,7 @@ describe("createAgeGate: against the real client, a fake fetch and a real ledger
     expect(net.calls).toHaveLength(1);
   });
 
-  test("T7a whole-slice review: the age call's own worst-case reserve equals the ceiling the run's own estimate prices for it (AGE_CHECK_CALL, the one source of truth for both)", async () => {
+  test("T7a re-review (finding L2): the age call's own actual reserve equals the ceiling the run's own estimate prices for it (AGE_CHECK_CALL, priceBook.chatWorstCase — the estimate's own formula, money/estimate.ts and runs/remaining.ts, not the client's own chatAttemptWorstMicros compared to itself)", async () => {
     const m = await money();
     const net = fakeFetch([ageAnswer(true, 0.95)]);
     const { client } = makeClient(net.fetch);
@@ -136,10 +134,14 @@ describe("createAgeGate: against the real client, a fake fetch and a real ledger
 
     const reserve = m.ledger.reserveOf(ageGateAttemptId("run-1:slot-1#1"));
     if (reserve === undefined) throw new Error("expected a reserve for the age attempt");
-    const expected = chatAttemptWorstMicros(m.priceBook, {
+    // The run's own estimate (money/estimate.ts:163, runs/remaining.ts:39) prices the age check
+    // straight from AGE_CHECK_CALL's own ceilings, with no prompt-token floor computed from the
+    // actual messages — unlike chatAttemptWorstMicros, which the client uses to size ITS OWN
+    // reserve. Comparing against that same client formula would only prove it agrees with itself;
+    // this instead proves the client's real reserve never exceeds what the run's cap already paid
+    // for, independent of how the client happens to compute its own number.
+    const expected = m.priceBook.chatWorstCase({
       model: AGE_CHECK_CALL.model,
-      messages: ageCheckMessages(),
-      jsonSchema: ageJsonSchema(),
       maxTokens: AGE_CHECK_CALL.maxTokens,
       inputTokens: AGE_CHECK_CALL.inputTokens,
       images: AGE_CHECK_CALL.images,
