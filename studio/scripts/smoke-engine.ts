@@ -1458,10 +1458,18 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       usageDeltaMicros <= committedMicros,
       { usageDeltaMicros, committedMicros },
     );
+    // The cap is set once, at plan time, and never raised (T6 decisions) —
+    // `summaryFinal.capMicros` is that one persisted number. Comparing
+    // against `startAcceptedWorstMicros + resumeAcceptedWorstMicros` instead
+    // allowed spend up to roughly 2x the actual cap: the resume's own
+    // accepted worst case is the REMAINING room at resume time (already
+    // priced against the same cap), not a second cap added on top of the
+    // start's.
+    const capMicros = Number(field(summaryFinal, "capMicros"));
     check(
-      "run scenario: the run's cap was never exceeded (spend <= the accepted worst case of the start plus the resume)",
-      committedMicros <= startAcceptedWorstMicros + resumeAcceptedWorstMicros,
-      { committedMicros, startAcceptedWorstMicros, resumeAcceptedWorstMicros },
+      "run scenario: the run's cap was never exceeded (committed spend <= the run's own persisted cap)",
+      committedMicros <= capMicros,
+      { committedMicros, capMicros, startAcceptedWorstMicros, resumeAcceptedWorstMicros },
     );
 
     // 11. Cancel: a second, small run, stopped mid-flight.
