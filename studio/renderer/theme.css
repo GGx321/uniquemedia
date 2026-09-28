@@ -53,8 +53,7 @@
   --scrim-soft: rgba(9, 9, 12, 0.55);
   --pick-ring: rgba(255, 255, 255, 0.7);
 
-  /* photo surfaces with no image (the Photos sheet's tiles): empty, being drawn, queued, unreadable */
-  --photo-empty: #1b1b23;
+  /* photo surfaces with no image (the Photos sheet's tiles): being drawn, queued, unreadable. B3: no separate "empty" token — an empty/loading tile reuses --photo-queued, the artboard's own image-less tile. */
   --photo-drawing: linear-gradient(170deg, #3a3f55 0%, #1b1d27 100%);
   --photo-queued: linear-gradient(165deg, #1a1a22 0%, #15151c 100%);
   --photo-dim: linear-gradient(170deg, #1f1f28 0%, #15151c 100%);

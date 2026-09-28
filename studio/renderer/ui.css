@@ -344,6 +344,14 @@
   opacity: 0.6;
 }
 
+/* B4: the stepper's own +/- buttons and count must dim at the same 60% as
+   the chips/segs above, not the generic .ibtn:disabled 45% — one opacity
+   for the whole locked form, not two competing ones. */
+.lock-dim:disabled .ibtn,
+.lock-dim:disabled .photos-count {
+  opacity: 0.6;
+}
+
 /* Inside a locked form the segment control as a whole is dimmed once, not again per button. */
 .lock:disabled .seg button:disabled {
   opacity: 1;
@@ -949,7 +957,7 @@ input[type="range"]::-webkit-slider-thumb {
   flex-grow: 1;
   height: auto;
   min-height: 150px;
-  background: linear-gradient(170deg, #1f1f28 0%, #15151c 100%);
+  background: var(--photo-dim);
 }
 
 .unreadable-ph .portrait-silhouette g {
@@ -1406,7 +1414,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .cand-slot-hidden {
-  background: linear-gradient(170deg, #1f1f28 0%, #15151c 100%);
+  background: var(--photo-dim);
 }
 
 .cand-slot-title {
@@ -1961,10 +1969,10 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--faint);
 }
 
-/* Four columns at the mockup's width (142.5px tiles), fewer in a narrower window, more in a wider one. */
+/* Four columns at the mockup's width (142.5px tiles), fewer in a narrower window, more in a wider one. B1: 142px (not 136px) keeps the 92px "лицо не проверялось" badge clear of the 28px pick checkbox at every width the layout actually reaches — 1440px with a classic scrollbar included — while still fitting 4 × 142.5px at 1440. */
 .photos-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
   gap: 10px;
 }
 
@@ -1972,7 +1980,7 @@ input[type="range"]::-webkit-slider-thumb {
   height: 224px;
   border: 2px solid transparent;
   border-radius: 10px;
-  background: var(--photo-empty);
+  background: var(--photo-queued); /* B3: no separate "empty" token — reuses the artboard's own image-less tile */
 }
 
 .photo-tile-on {

@@ -43,9 +43,9 @@ const SHOT_TYPES = [
   { label: "Фотограф", tone: "photographer" },
 ] as const;
 
-const PRICE_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });
+const PRICE_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
-/** "OpenRouter · 24 сент." for live prices, "резервные · 24 сент." for the dated fallback table. */
+/** "OpenRouter · 24 сент. 2026 г." for live prices, "резервные · 24 сент. 2026 г." for the dated fallback table (B5: the year, like the sheet's own). */
 function priceSource(estimate: Estimate): string {
   const date = PRICE_DATE.format(Date.parse(`${estimate.pricesAsOf}T00:00:00Z`));
   return estimate.prices === "live" ? `OpenRouter · ${date}` : `резервные · ${date}`;
@@ -209,6 +209,13 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   let title: string;
   let onClick: (() => void) | null = null;
   let primary = true;
+  // B2: whether the button offers (or would offer, once priced) a paid
+  // start, so its second line's height never jumps between "no price yet"
+  // and "a price is in". False when nothing is even being priced
+  // (`canPrice`: no category, an archived avatar) — there is no placeholder
+  // worth showing for a price that will never be asked for — and in the
+  // free-retry branch below, which is not a paid start at all.
+  let offersPaidStart = canPrice;
   if (busy) title = "Отправляем…";
   else if (estimating) title = "Считаем…";
   else if (current) {
@@ -218,6 +225,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
     // No price to accept: the only thing the button can do is ask for one again (free).
     title = "Повторить оценку";
     primary = false;
+    offersPaidStart = false;
     onClick = () => setRetry((n) => n + 1);
   } else title = `Сгенерировать ${form.count} фото`;
   const buttonBusy = busy || estimating;
@@ -373,7 +381,8 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
         <div className="photos-gen-side">
           <div className="mono photos-cost-row">
             <span>Цены</span>
-            <span className={current?.estimate.prices === "fallback" ? "warn-text" : undefined}>{current ? priceSource(current.estimate) : "—"}</span>
+            {/* B5: faint like the sheet's own price-source row; warn-text stays for the dated fallback table. */}
+            <span className={current?.estimate.prices === "fallback" ? "warn-text" : "faint"}>{current ? priceSource(current.estimate) : "—"}</span>
           </div>
           <div className="mono photos-cost-row">
             <span>Проверка возраста</span>
@@ -384,7 +393,11 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
             <span aria-live="polite">{current ? `≈ ${formatUsd(current.estimate.expectedMicros)}` : "—"}</span>
           </div>
           <div className="photos-review">
-            <button type="button" className="sw" role="switch" aria-checked="false" aria-labelledby={reviewLabel} aria-describedby={reviewSoon} disabled />
+            {/* Owner decision: full opacity, not the usual 45%-dimmed disabled
+                track (near-invisible, "has no colour") — aria-disabled, not
+                the native attribute, so it stays non-interactive without the
+                dimming; the "скоро" tag alone says it is not available yet. */}
+            <button type="button" className="sw" role="switch" aria-checked="false" aria-disabled="true" aria-labelledby={reviewLabel} aria-describedby={reviewSoon} />
             <span id={reviewLabel}>Сцены на проверку</span>
             <span id={reviewSoon} className="tag">
               скоро
@@ -402,10 +415,10 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
               {buttonBusy && <Spin />}
               {title}
             </span>
-            {worst && !estimating && (
+            {offersPaidStart && (
               <>
                 <span className="sr-only"> · </span>
-                <span className="mono">{worst}</span>
+                <span className="mono">{worst ?? "до …"}</span>
               </>
             )}
           </button>

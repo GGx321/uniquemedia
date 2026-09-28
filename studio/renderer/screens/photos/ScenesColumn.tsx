@@ -115,6 +115,14 @@ function ResumeRow({ run, blockedReason, paidInFlight, onPaidInFlightChange, onR
               : "Узнать цену";
   const paidClick = estimate !== null && effectiveBlockedReason === null && !capExhausted;
   const clickable = busy === null && (estimate === null || paidClick);
+  // B2: whether the row offers (or would offer, once priced) a paid resume,
+  // so its own second line's height never jumps between "no price yet" and
+  // "a price is in" — including the very first frame, always busy="estimate"
+  // before its own mount-time price ever lands. Not the exhausted-cap state
+  // (L6, no price to confirm at all) and not "Узнать цену" (a free re-ask,
+  // reached only after a failed estimate, with nothing in flight and no
+  // price known).
+  const offersPaidStart = !capExhausted && (busy !== null || estimate !== null);
   const failed = run.failed > 0 ? ` · не получилось ${run.failed}` : "";
   const dateId = useId();
 
@@ -148,10 +156,10 @@ function ResumeRow({ run, blockedReason, paidInFlight, onPaidInFlightChange, onR
             {busy !== null && <Spin />}
             {title}
           </span>
-          {estimate && busy !== "estimate" && !capExhausted && (
+          {offersPaidStart && (
             <>
               <span className="sr-only"> · </span>
-              <span className="mono">до {formatUsd(estimate.worstMicros, 2, "up")}</span>
+              <span className="mono">{estimate && busy !== "estimate" ? `до ${formatUsd(estimate.worstMicros, 2, "up")}` : "до …"}</span>
             </>
           )}
         </button>

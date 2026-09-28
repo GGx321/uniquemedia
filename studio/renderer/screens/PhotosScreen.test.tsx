@@ -824,7 +824,10 @@ test("what the contract cannot do yet is drawn disabled and marked «скоро�
   expect(isDisabled(screen.getByRole("button", { name: "Неиспользованные" }))).toBe(true);
   expect(isDisabled(screen.getByRole("button", { name: "Отклонённые" }))).toBe(true);
   const review = screen.getByRole("switch", { name: "Сцены на проверку" });
-  expect(isDisabled(review)).toBe(true);
+  // Owner decision: aria-disabled, not the native attribute — full opacity,
+  // not the near-invisible 45%-dimmed disabled track; the «скоро» tag alone says it is not available yet.
+  expect(isDisabled(review)).toBe(false);
+  expect(review.getAttribute("aria-disabled")).toBe("true");
   expect(review.getAttribute("aria-checked")).toBe("false");
   expect(screen.getAllByText("скоро").length).toBeGreaterThanOrEqual(3);
 });
