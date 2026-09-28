@@ -825,14 +825,14 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
               {money && <ReconcileBlock phase={view.phase} money={money} engineError={view.engineError} />}
             </Card>
             <Card title="Модели" id="settings-models">
-              {/* T5b's scenes/writer.ts and assembler.ts exist but are not wired into the job pipeline yet — no run uses this model for scenes today. */}
+              {/* The text model writes the descriptor (avatar jobs) and every photo run's scene sentences (scenes/writer.ts); the image model makes the avatar portraits and every photo run's photos. */}
               <Row
                 label="Сцены"
-                hint={ageCheckOn ? "дескриптор и проверка «явно старше 21» · сцены — появятся вместе с фото-ранами" : "дескриптор · сцены появятся вместе с фото-ранами"}
+                hint={ageCheckOn ? "дескриптор аватара, сценарист фото-ранов и проверка «явно старше 21»" : "дескриптор аватара и сценарист фото-ранов"}
               >
                 <span className="mono row-value">{settings.textModel}</span>
               </Row>
-              <Row label="Фото" hint="портреты · 1K · сцены появятся вместе с фото-ранами">
+              <Row label="Фото" hint="портреты аватара и фото-раны · разрешение фото-рана, 1K или 2K, выбирается на экране «Фото»">
                 <span className="mono row-value">{settings.imageModel}</span>
               </Row>
               <ImageAgeCheckRow settings={settings} />

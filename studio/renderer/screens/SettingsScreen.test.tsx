@@ -368,11 +368,35 @@ test("models are shown read-only, with the face check's hybrid mode", async () =
   const threshold = defaultFaceGateConfig().identity.strategy.threshold;
   expect(document.body.textContent).toContain(`сходство ниже ${threshold}`);
   // Money review M5: the gate is wired into photo runs now (T7b) — the hint
-  // must no longer say it "will appear along with photo runs", unlike the
-  // scenes/image-model rows above it, which genuinely still do (T5b is not
-  // wired into the job pipeline yet).
+  // must no longer say it "will appear along with photo runs".
   const faceRow = screen.getByText("Сходство лица").closest(".row");
   expect(faceRow?.textContent).not.toContain("появится вместе с фото-ранами");
+});
+
+// Photo runs exist (slice 2b): the scene writer runs on the text model and the
+// runs' photos on the image model, so neither row may still promise them.
+describe("model rows describe what photo runs use them for", () => {
+  test("the scenes row says the text model writes the scenes of photo runs, not that they will appear", async () => {
+    await openSettings();
+    const row = screen.getByText("Сцены").closest(".row");
+    expect(row?.textContent).not.toContain("появятся вместе с фото-ранами");
+    expect(row?.textContent).toContain("сценарист фото-ранов");
+  });
+
+  test("the scenes row also names the age check when the image age check is on", async () => {
+    await openSettings(STORED, { imageAgeCheck: "on" });
+    const row = screen.getByText("Сцены").closest(".row");
+    expect(row?.textContent).toContain("сценарист фото-ранов");
+    expect(row?.textContent).toContain("проверка «явно старше 21»");
+  });
+
+  test("the photos row says the image model makes both portraits and photo runs' photos, and where the resolution is chosen", async () => {
+    await openSettings();
+    const row = screen.getByText("x-ai/grok-imagine-image-2.0").closest(".row");
+    expect(row?.textContent).not.toContain("появятся вместе с фото-ранами");
+    expect(row?.textContent).toContain("портреты аватара и фото-раны");
+    expect(row?.textContent).toContain("1K или 2K");
+  });
 });
 
 // Owner's decision (2026-09-27): the paid image age check is optional, off by default.
