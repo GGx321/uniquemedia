@@ -9,7 +9,9 @@ useNativeGlobals();
 // the allow-list, the pixel cap, the post-decode checks and the "every
 // failure is systemic" contract (A.4) — against a fake DecodeBackend; the
 // real backend (real @jsquash decode, real WASM) is exercised by
-// wasmDecode.parity.test.ts against fixtures and the Electron reference.
+// face/parity.test.ts against fixtures and the committed reference hashes
+// (captured once from Electron's nativeImage before that decode path was
+// removed — parity.test.ts never talks to Electron at run time).
 
 const JPEG_MAGIC = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1);
 // A minimal, real 1x1 JPEG (SOF0 baseline) so imageSize() reads a real header.

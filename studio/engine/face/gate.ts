@@ -168,7 +168,9 @@ export async function createFaceGate(
       // Re-review, MUST FIX 1: every candidate is normalized to the
       // calibrated geometry before detection — a no-op at or below
       // FACE_PIPELINE_MAX_SIDE (normalize.ts's own header has the full
-      // reasoning), so a run image (always <= 2K) never actually resizes.
+      // reasoning). A run image is NOT a no-op here: a 2K 9:16 render
+      // (1536x2752) is well above the 1280 px cap and IS downscaled, to
+      // 714x1280 — measured, not assumed (round 3's "small" item b).
       const bgr = toBgrImage(normalizeForFacePipeline(input.image));
       return runFaceGate(bgr, input, detector, config, similarityFn);
     },

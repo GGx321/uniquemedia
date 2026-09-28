@@ -267,10 +267,13 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
     paid: false,
 
     async prepare(input: QaPrepareInput): Promise<void> {
-      // Propagates uncaught on failure (see this file's own header): a
-      // broken master, a broken decoder or a missing model are all "this
-      // gate cannot run for this avatar/at all" — runJob.ts's work() reads
-      // that as MASTER_FACE_UNUSABLE, before any paid work.
+      // Propagates uncaught on failure (see this file's own header).
+      // runJob.ts's prepareGates() classifies it, not this gate: only
+      // NoFaceInReferenceError (a real, detectable "no face on the master")
+      // becomes MASTER_FACE_UNUSABLE (N3); every other failure (a broken
+      // decoder, a missing model, a master that fails to decode at all) is
+      // systemic and becomes INTERNAL — or, since M1, gets one retry
+      // against the OpenRouter reference before failing at all.
       await embeddingFor(input);
     },
 
