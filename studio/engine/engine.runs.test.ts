@@ -9,6 +9,7 @@ import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { RunPlanSchema, type RunPlan } from "./runs/plan";
 import { plan as planScenes } from "./scenes";
+import { createAgeGate } from "./runs/ageGate";
 import type { QaGate, QaInput } from "./runs/qa";
 import type { Estimate, ImageAgeCheck, ResponseMessage } from "../shared/engine";
 import type { Engine } from "./engine";
@@ -112,6 +113,13 @@ function isWriter(call: FetchCall): boolean {
   return typeof format === "object" && format !== null && "json_schema" in format && JSON.stringify(format.json_schema).includes("scene_sentences");
 }
 
+/** T7a: a paid age gate's own request — its json_schema is named "age_check" (ageGate.ts's own ageJsonSchema()). */
+function isAge(call: FetchCall): boolean {
+  if (!call.url.endsWith("/chat/completions")) return false;
+  const format = call.json().response_format;
+  return typeof format === "object" && format !== null && "json_schema" in format && JSON.stringify(format.json_schema).includes("age_check");
+}
+
 type Handler = (call: FetchCall, n: number) => Reply | Promise<Reply>;
 
 /**
@@ -121,10 +129,11 @@ type Handler = (call: FetchCall, n: number) => Reply | Promise<Reply>;
  * reserve cannot land before this request is sent — so `received` is what
  * the network saw, by attempt id.
  */
-function runNetwork(opts: { image?: Handler; writer?: Handler; prices?: (call: FetchCall) => Reply | Promise<Reply>; credits?: Reply; received?: string[] } = {}) {
+function runNetwork(opts: { image?: Handler; writer?: Handler; age?: Handler; prices?: (call: FetchCall) => Reply | Promise<Reply>; credits?: Reply; received?: string[] } = {}) {
   const received = opts.received ?? [];
   let images = 0;
   let writes = 0;
+  let ages = 0;
   const claim = (): string => {
     const reserves = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).flatMap((l) => (l.type === "reserve" && typeof l.attemptId === "string" ? [l.attemptId] : []));
     const id = [...reserves].reverse().find((r) => !received.includes(r));
@@ -136,6 +145,12 @@ function runNetwork(opts: { image?: Handler; writer?: Handler; prices?: (call: F
     if (call.url.endsWith("/images")) {
       claim();
       return (opts.image ?? (() => ({ status: 200, body: imageBody(portraitPng(2), { cost: 0.04 }) })))(call, ++images);
+    }
+    if (isAge(call)) {
+      claim();
+      const n = ++ages;
+      if (opts.age !== undefined) return opts.age(call, n);
+      return { status: 200, body: chatBody(JSON.stringify({ adult: true, confidence: 0.95, reason: "Mature features of a woman in her mid-20s." }), { cost: 0.0014 }) };
     }
     if (isWriter(call)) {
       claim();
@@ -155,6 +170,7 @@ function runNetwork(opts: { image?: Handler; writer?: Handler; prices?: (call: F
     received,
     imageCalls: () => net.calls.filter((c) => c.url.endsWith("/images")),
     writerCalls: () => net.calls.filter(isWriter),
+    ageCalls: () => net.calls.filter(isAge),
   };
 }
 
@@ -619,7 +635,7 @@ describe("a run with the image age check on", () => {
 
 // ---------- T7a: a wired age gate is never called (and never reserved for) while the toggle is off ----------
 
-describe("a run with the image age check off, even with a real age gate wired", () => {
+describe("a run with the image age check off, even with a fake age gate wired", () => {
   test("never calls the age gate and never reserves for it", async () => {
     const avatarId = await seedAvatar();
     const gate = ageGate();
@@ -631,6 +647,39 @@ describe("a run with the image age check off, even with a real age gate wired", 
 
     const reserves = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve");
     expect(reserves.some((r) => typeof r.attemptId === "string" && r.attemptId.endsWith(":age"))).toBe(false);
+  });
+});
+
+// ---------- T7a whole-slice review: the REAL age gate, wired through a real engine and run ----------
+// (a run-level test with createAgeGate itself, not the local fake — this is what would have caught
+// findings 1-3: the FIFO-queued timeout, the paid-gate-after-stop send, and the missing beforeSend forward).
+
+describe("a run with the real createAgeGate wired (not the local fake)", () => {
+  test("every photo passes through it for real: reserved, sent and settled under its own :age attempt id, qa.age stored on each photo", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork(), { imageAgeCheck: "on", qaGates: [createAgeGate()] });
+
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId, FOUR_ON_WORST)));
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 0 } } });
+
+    const reserves = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve");
+    const ageReserves = reserves.filter((r) => typeof r.attemptId === "string" && r.attemptId.endsWith(":age"));
+    expect(ageReserves).toHaveLength(4);
+    void runId;
+  });
+
+  test("network 1, a slow image: the age gate's own instant check is not spuriously timed out by the FIFO wait behind other slots' images (T7a review, finding 1's own repro A, at the engine level)", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork({
+      image: async (_call, n) => {
+        if (n > 1) await new Promise((resolve) => setTimeout(resolve, 60));
+        return { status: 200, body: imageBody(portraitPng(2), { cost: 0.04 }) };
+      },
+    });
+    const { engine, events } = await engineOver(net, { imageAgeCheck: "on", qaGates: [createAgeGate()], network: 1 });
+
+    const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_ON_WORST)));
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 0 } } });
   });
 });
 

@@ -69,7 +69,7 @@ import { PriceCache, type PricedBook } from "./money/priceCache";
 import type { PriceBook } from "./money/prices";
 import { loadPriceBook, OPENROUTER_API_BASE } from "./money/prices";
 import type { ReconcileResult as LedgerReconcileResult, ReconcileWarning as LedgerReconcileWarning } from "./money/reconcile";
-import { createOpenRouterClient, fromOpenRouterError, OpenRouterError, type ChatParams, type ChatResult, type OpenRouterClient, type OpenRouterFetch } from "./openrouter";
+import { createOpenRouterClient, fromOpenRouterError, OpenRouterError, type OpenRouterClient, type OpenRouterFetch } from "./openrouter";
 import { priceFetchFrom } from "./openrouter/priceFetch";
 import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
@@ -526,19 +526,6 @@ export class Engine {
   /** The one Budget over the ledger, for the paid jobs; null when the ledger could not be read. */
   get budget(): Budget | null {
     return this.#money.ok ? this.#money.budget : null;
-  }
-
-  /**
-   * T7a: a paid chat request for a QA gate that cannot hold an OpenRouter
-   * client of its own — a gate is wired in through `EngineDeps.qaGates`
-   * before `Engine.start` even returns, so before this engine has any key at
-   * all (it arrives later, over a control message, and can rotate over the
-   * engine's life). Built exactly like a run's own client (`#openRouter`):
-   * the same base URL rule (invariant 13), the same raw-body save path.
-   * Throws the same way `#usableKey` does when there is no usable key.
-   */
-  async gateChat(params: ChatParams): Promise<ChatResult> {
-    return this.#openRouter(this.#usableKey("run a QA gate's paid check")).chat(params);
   }
 
   /** Handles one message from main: a control message is applied, a call or a command is answered through `post`. */

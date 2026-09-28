@@ -24,24 +24,14 @@ parentPort.once("message", (event) => {
 
   // T7a: the production QA gates, in order — pdq first (free), an obvious
   // place for T7b's face gate, age last (paid, so money is spent only on
-  // images that already passed every free gate). Both need something only
-  // the engine has once it exists (the live library, for pdq's known
-  // hashes; a client bound to the current key, for the age gate's own
-  // request) — neither of which exists yet at this point, and the key can
-  // rotate over the engine's whole life besides. `engine` below is filled in
-  // the moment `Engine.start` resolves; nothing calls into a gate before
-  // then, since a command (and with it, a run) can only reach the engine
-  // once `ready` has resolved (see `deliver`, below).
-  let engine: Pick<Engine, "library" | "gateChat"> | undefined;
-  const pdqGate = createPdqGate({
-    knownHashesFor: (avatarId) => engine?.library?.photosByAvatar(avatarId).flatMap((photo) => (photo.qa.pdq === undefined ? [] : [photo.qa.pdq])) ?? [],
-  });
-  const ageGate = createAgeGate({
-    chat: (params) => {
-      if (engine === undefined) throw new Error("the age gate was asked to run before the engine had started");
-      return engine.gateChat(params);
-    },
-  });
+  // images that already passed every free gate). Neither gate holds a
+  // client, a key or the library of its own (T7a whole-slice review, the
+  // architectural finding): the run job hands each paid gate the run's own
+  // resources through `QaInput` itself (`chat`, `beforeSend`, `photosByAvatar`
+  // — see runs/qa.ts's own header), so wiring them in here needs nothing
+  // from the engine at all, and no late-bound reference to it either.
+  const pdqGate = createPdqGate();
+  const ageGate = createAgeGate();
 
   const ready = Engine.start(init.data, {
     bootId: randomUUID(),
@@ -53,9 +43,6 @@ parentPort.once("message", (event) => {
     fetch: (url, init) => fetch(url, init),
     qaGates: [pdqGate, ageGate],
   });
-  ready.then((started) => {
-    engine = started;
-  }, () => undefined);
 
   // A failed start ends the process, so main restarts it and tells the windows.
   exitIfStartFails(ready, (code) => process.exit(code));
