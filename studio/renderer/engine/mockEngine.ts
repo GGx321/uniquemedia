@@ -1066,9 +1066,25 @@ export class MockEngine implements EngineBridge {
     return run.slots.filter((s) => s.end === null).length;
   }
 
-  /** What the run has committed: its settled money plus the reserves its job still holds open. */
+  /** This run's own most recently started job, whatever its status — unlike `activeRunJob`, also finds a cancelled one whose in-flight slots' reserves (MEDIUM-2) are still its own to count. */
+  private latestRunJobOf(runId: string): MockRunJob | null {
+    for (let i = this.runJobs.length - 1; i >= 0; i--) {
+      const job = this.runJobs[i];
+      if (job !== undefined && job.runId === runId) return job;
+    }
+    return null;
+  }
+
+  /**
+   * What the run has committed: its settled money plus the reserves its own
+   * job still holds open — a running job's every open slot, or (MEDIUM-2)
+   * a cancelled job's surviving in-flight ones, exactly as `cancelRunJob`
+   * left `reserveKeys`. Mirrors the real engine's `scopeCommitted`, which
+   * counts open reserves regardless of whether the job that opened them is
+   * still running (`studio/engine/runs/remaining.ts`).
+   */
   private runCommitted(run: MockRun): number {
-    const job = this.activeRunJob(run.runId);
+    const job = this.latestRunJobOf(run.runId);
     const open = job ? job.reserveKeys.reduce((sum, key) => sum + (this.reserves.get(key) ?? 0), 0) : 0;
     return run.settledMicros + open;
   }
@@ -1206,17 +1222,27 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
-   * Like avatars.cancel (mockEngine.ts's own candidate-batch cancel, which
-   * never touches `this.reserves` either): no more slots are drawn from the
-   * answer on, but the job itself ends on a later tick (job.cancelled), and
-   * an aborted attempt's reserve stays open at its worst case — unknown
-   * whether OpenRouter billed it — exactly like the real engine's own
-   * open-reserves rule (`studio/engine/engine.ts`'s `#moneyStatus`:
-   * `status.openAttempts - budget.inFlightCount() > 0`). The slots stay open
-   * in the run, which a resume can continue once reconciled.
+   * No more slots are drawn from the answer on, but the job itself ends on a
+   * later tick (job.cancelled). Only the slots actually in flight — bounded
+   * by the network's own concurrency, never every open slot at once
+   * (MEDIUM-2: the mock reserves per slot upfront, but a slot past that
+   * bound was never actually dispatched) — keep their reserve open at its
+   * worst case, unknown whether OpenRouter billed it, exactly like the real
+   * engine's own open-reserves rule (`studio/engine/engine.ts`'s
+   * `#moneyStatus`: `status.openAttempts - budget.inFlightCount() > 0`) and
+   * like the mock's own avatars.cancel (candidate batches, at most 4 slots,
+   * so every one of them is already "in flight" by this same rule). The rest
+   * are released for free — never sent, never billable — same as
+   * avatars.cancel's own untouched reserves would be past its own slot
+   * count. The slots stay open in the run, which a resume can continue once
+   * reconciled.
    */
   private cancelRunJob(job: MockRunJob): void {
     for (const cancel of job.cancelTimers) cancel();
+    const inFlight = Math.min(this.settings.concurrency.network, job.reserveKeys.length);
+    const release = job.reserveKeys.slice(inFlight);
+    job.reserveKeys = job.reserveKeys.slice(0, inFlight);
+    for (const key of release) this.reserves.delete(key);
     if (job.reserveKeys.length > 0 && !this.reconcileReasons.includes("open-reserves")) {
       this.reconcileReasons = [...this.reconcileReasons, "open-reserves"];
     }

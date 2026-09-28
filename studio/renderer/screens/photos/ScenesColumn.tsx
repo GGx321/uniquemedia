@@ -24,13 +24,15 @@ type ResumeBusy = "estimate" | "resume" | null;
 interface ResumeRowProps {
   run: RunSummary;
   blockedReason: string | null;
+  /** `view.money?.reconcileNeeded` (MEDIUM-1): a resume's price this row already has can go stale the moment this flips — either way, not just cleared — since it changes what the cap has left. */
+  reconcileNeeded: boolean;
   /** A paid runs.start or runs.resume is in flight for this avatar, from this row or the generate card or another row (L5). */
   paidInFlight: boolean;
   onPaidInFlightChange: (inFlight: boolean) => void;
   onResumed: (resumed: { runId: string; jobId: string }) => void;
 }
 
-function ResumeRow({ run, blockedReason, paidInFlight, onPaidInFlightChange, onResumed }: ResumeRowProps) {
+function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidInFlightChange, onResumed }: ResumeRowProps) {
   const { client, store } = useEngine();
   const mounted = useMounted();
   const sending = useRef(false);
@@ -54,9 +56,13 @@ function ResumeRow({ run, blockedReason, paidInFlight, onPaidInFlightChange, onR
     } else setError(reply.error);
   }
 
+  // Once per run (a retry is the button's own) and again whenever
+  // reconcileNeeded flips (MEDIUM-1): a reconcile changes what the run's cap
+  // has left, so a price this row already has — shown even while blocked,
+  // runs.estimateResume being free — must not go stale once the block lifts.
   useEffect(() => {
     void askPrice();
-  }, [run.runId]); // once per run: a retry is the button's own
+  }, [run.runId, reconcileNeeded]);
 
   async function resume(accepted: Estimate): Promise<void> {
     if (sending.current) return;
@@ -257,6 +263,7 @@ export function ScenesColumn({
   // "Отменяем…" while runs.cancel is in flight and for as long after as the job has no real end yet (store.markCancelling).
   const cancelling = cancelBusy || (runJob !== null && view.cancellingJobs.has(runJob.jobId));
   const total = runJob?.total ?? 0;
+  const reconcileNeeded = view.money?.reconcileNeeded ?? false;
 
   async function cancel(): Promise<void> {
     if (runJob === null || activeRunId === null || cancelSending.current) return;
@@ -324,6 +331,7 @@ export function ScenesColumn({
           key={`${run.runId}:${run.open}`}
           run={run}
           blockedReason={running ? "Дождитесь конца текущего запуска." : blockedReason}
+          reconcileNeeded={reconcileNeeded}
           paidInFlight={paidInFlight}
           onPaidInFlightChange={onPaidInFlightChange}
           onResumed={onResumed}

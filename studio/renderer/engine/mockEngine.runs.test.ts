@@ -100,8 +100,8 @@ test("runs.estimate and runs.start answer NOT_FOUND for an avatar that is not sa
   expect(await unwrap(client.request("photos.list", { avatarId: archived.avatarId }))).toEqual({ photos: [], skippedTotal: 0 });
 });
 
-test("a cancel ends the job on a later tick; its reserves stay open until reconciled, then the run is resumable at what its open slots could still cost", async () => {
-  const { scheduler, client, events } = makeMock();
+test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconciling frees the rest for the resume to price again", async () => {
+  const { scheduler, client, events } = makeMock(); // default concurrency: 6
   const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
   scheduler.next(); // one slot lands
 
@@ -111,25 +111,33 @@ test("a cancel ends the job on a later tick; its reserves stay open until reconc
   expect(events.filter((e) => e.type === "job.cancelled").map((e) => (e.type === "job.cancelled" ? e.payload.jobId : ""))).toEqual([jobId]);
   expect(events.some((e) => e.type === "job.done")).toBe(false);
 
+  // 19 open slots, but only 6 (the network's own concurrency) were ever
+  // actually in flight: their reserves ($0.90) stay open, the other 13's
+  // ($1.95, never sent) are released for free. Committed so far: $0.05
+  // settled + $0.90 reserved = $0.95; the cap ($3.07) leaves $2.12.
   const [run] = (await unwrap(client.request("runs.list", {}))).runs;
-  expect(run).toMatchObject({ runId, done: 1, open: 19, running: false, resumable: true, remainingWorstMicros: 19 * 3 * 50_000 });
+  expect(run).toMatchObject({ runId, done: 1, open: 19, running: false, resumable: true, committedMicros: 950_000, remainingWorstMicros: 2_120_000 });
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate).toMatchObject({ expectedMicros: 19 * 50_000, worstMicros: 19 * 3 * 50_000 });
+  expect(estimate).toMatchObject({ expectedMicros: 950_000, worstMicros: 2_120_000 });
 
-  // The 19 cancelled slots' reserves stay open at their worst case (M3): any
+  // The 6 in-flight slots' reserves stay open at their worst case (M3): any
   // paid call, a resume included, is refused until a reconcile — mirrors the
   // real engine's own open-reserves rule and the mock's own avatars.cancel.
   expect(await client.request("runs.resume", { runId, acceptedWorstMicros: estimate.worstMicros })).toMatchObject({ ok: false, error: { code: "RECONCILE_REQUIRED" } });
   const status = await unwrap(client.request("money.status", {}));
   if (status.ledger !== "open") throw new Error("expected an open ledger");
-  expect(status).toMatchObject({ reconcileNeeded: true, reconcileReasons: ["open-reserves"] });
+  expect(status).toMatchObject({ reconcileNeeded: true, reconcileReasons: ["open-reserves"], unsettledMicros: 900_000 });
 
   expect((await unwrap(client.request("money.reconcile", {}))).status).toBe("done");
 
-  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: estimate.worstMicros - 1 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
-  const resumed = await unwrap(client.request("runs.resume", { runId, acceptedWorstMicros: estimate.worstMicros }));
+  // Reconciled: the released slots' worst case is back in the cap the resume can offer.
+  const fresh = await unwrap(client.request("runs.estimateResume", { runId }));
+  expect(fresh.estimate).toMatchObject({ worstMicros: 19 * 3 * 50_000 });
+
+  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: fresh.estimate.worstMicros - 1 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
+  const resumed = await unwrap(client.request("runs.resume", { runId, acceptedWorstMicros: fresh.estimate.worstMicros }));
   expect(resumed.runId).toBe(runId);
-  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: estimate.worstMicros })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: fresh.estimate.worstMicros })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
 
   scheduler.runAll();
   const progress = events.flatMap((e) => (e.type === "job.progress" && e.payload.jobId === resumed.jobId ? [e.payload.done] : []));
@@ -179,10 +187,14 @@ test("a run keeps the age-check mode it started with: its resume price and reser
   await unwrap(client.request("runs.cancel", { runId }));
   scheduler.runAll();
 
-  // Turning the toggle off later does not change a run that was planned with it on.
+  // Turning the toggle off later does not change a run that was planned with
+  // it on. All 4 open slots stayed in flight at cancel (the network's own
+  // concurrency, 6, covers them): their reserve (4 × 3 × $0.052 = $0.624)
+  // is still open (MEDIUM-2) and already accounts for nearly the whole cap
+  // ($0.85), leaving only $0.1746 more before a reconcile.
   await unwrap(client.request("settings.setImageAgeCheck", { imageAgeCheck: "off" }));
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate).toMatchObject({ expectedMicros: 4 * 51_400, worstMicros: 4 * 3 * 52_000 });
+  expect(estimate).toMatchObject({ expectedMicros: 174_600, worstMicros: 174_600 });
   expect(engine.calls.at(-1)?.type).toBe("runs.estimateResume");
 });
 

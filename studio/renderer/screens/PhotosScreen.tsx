@@ -34,17 +34,25 @@ function photoCountLabel(list: GalleryList): string {
 /**
  * This avatar's latest photo-run job. A job this window did not start is
  * known only by its events until it ends, and `job.progress` carries no
- * kind: a job of a saved avatar whose kind is not yet confirmed could in
- * principle still be a candidates batch this window never tracked, from
- * when this id was a draft (L8) — so a job already confirmed `kind ===
- * "run"` is always preferred over an unconfirmed one, and only the latest
- * unconfirmed job stands in while none is confirmed yet (a run just
- * started elsewhere, seen only through its own job.progress so far).
+ * kind, so preference order is:
+ * 1. An active (queued/running) job, whatever its kind — an avatar's saved
+ *    record can never have a candidates batch still running for it (the
+ *    engine's own pick claims the avatar, engine.ts:1791), so an active job
+ *    of a saved avatar is always its run, confirmed kind or not. This is
+ *    what lets a second run, started by another window right after this
+ *    screen watched the first one finish, show as running instead of the
+ *    stale, already-done first one (regression from 8d604b2's own L8 fix,
+ *    which stopped at "confirmed" and missed this case entirely).
+ * 2. Failing that, the latest job already confirmed `kind === "run"` — a
+ *    finished run this screen knows about but no longer has an active job
+ *    for.
+ * 3. Failing that, whatever is latest at all — an unconfirmed job (kind
+ *    null) from a run just started elsewhere, seen only through its own
+ *    job.progress so far, with nothing confirmed-run to prefer over it.
  */
 function latestRunJob(jobs: readonly JobView[], avatarId: string): JobView | null {
   const own = jobs.filter((j) => j.avatarId === avatarId && j.kind !== "avatar.candidates");
-  const confirmed = own.filter((j) => j.kind === "run");
-  return confirmed.at(-1) ?? own.at(-1) ?? null;
+  return own.filter(isActiveJob).at(-1) ?? own.filter((j) => j.kind === "run").at(-1) ?? own.at(-1) ?? null;
 }
 
 function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineView }) {

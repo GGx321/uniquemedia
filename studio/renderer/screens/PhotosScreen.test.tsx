@@ -449,17 +449,47 @@ test("a running run shows its progress and pending tiles; each step refreshes th
   expect(screen.getAllByText("лицо не проверялось")).toHaveLength(4);
 });
 
+test("a second run started by another window after this one saw the first finish is shown as running (HIGH regression, P1)", async () => {
+  const { scheduler, client } = await openPhotos();
+  await priced();
+  // Both runs start straight through the engine, like another window's own
+  // GenerateCard would: this screen never calls store.trackRunJob for
+  // either, so each is known only through its own events.
+  const r1 = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_070_000 }));
+  if (!r1.ok) throw new Error(`r1 ${r1.error.code}`);
+  tick(scheduler, 1); // an intermediate render while running, so this screen actually watches it (and can then notice it end)
+  await screen.findByText("Рисуем фото: 1 из 20");
+  runAll(scheduler);
+  await flush();
+  await screen.findByText("Запуск завершён");
+
+  const r2 = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_070_000 }));
+  if (!r2.ok) throw new Error(`r2 ${r2.error.code}`);
+  tick(scheduler, 1);
+  await flush();
+
+  // The second run must show as running, not the first (already finished) one.
+  await screen.findByText("Рисуем фото: 1 из 20");
+  expect(isDisabled(goButton())).toBe(true);
+  expect(screen.getByText("Дождитесь конца текущего запуска.")).toBeDefined();
+  expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(false);
+});
+
 test("cancel shows «Отменяем…» until the job really ends; the cancelled attempts' reserves stay open until reconciled (M3)", async () => {
   const { engine, scheduler, client } = await openPhotos();
   fireEvent.click(await priced());
   await screen.findByText("Рисуем фото: 0 из 20");
   tick(scheduler, 1);
   await screen.findByText("Рисуем фото: 1 из 20");
+  const listed = await client.request("runs.list", {});
+  const started = (listed.ok ? listed.result.runs.find((r) => r.running)?.runId : undefined) ?? "no running run";
+  expect(started).toMatch(/^run-/);
 
   fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
   expect(screen.getByRole("button", { name: "Отменяем…" }).hasAttribute("disabled")).toBe(true);
   await flush();
-  expect(callsOf(engine, "runs.cancel")).toHaveLength(1);
+  // Exactly the run this screen started — not merely some run (LOW-1).
+  expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([started]);
   // Accepted, but the job has not ended yet.
   expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
   expect(screen.queryByText("Генерация остановлена")).toBeNull();
@@ -467,13 +497,16 @@ test("cancel shows «Отменяем…» until the job really ends; the cancel
   runAll(scheduler);
   await screen.findByText("Генерация остановлена");
   await screen.findByText(/Готово 1 из 20 · осталось 19/);
-  // The 19 cancelled slots' worst-case reserves stay open, like the real
-  // engine's own open-reserves rule (and the mock's avatar.candidates
-  // cancel): no paid start or resume until a reconcile.
+  // The 19 open slots' reserves stay open, like the real engine's own
+  // open-reserves rule (and the mock's avatar.candidates cancel) — but only
+  // 6 of them (the network's own default concurrency) were ever actually in
+  // flight (MEDIUM-2): no paid start or resume until a reconcile, and the
+  // price meanwhile is capped by what the cap has left on top of that (до
+  // $2.12), not the open slots' own raw worst case (до $2.85).
   expect(screen.getAllByText("Платные запросы остановлены до сверки расходов.").length).toBeGreaterThan(0);
   expect(isDisabled(goButton())).toBe(true);
   // The row still shows its price — runs.estimateResume is free — but cannot be clicked while blocked.
-  const resume = await screen.findByRole("button", { name: "Продолжить · до $2.85" });
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $2.12" });
   expect(isDisabled(resume)).toBe(true);
 
   await act(async () => {
@@ -481,20 +514,25 @@ test("cancel shows «Отменяем…» until the job really ends; the cancel
   });
   await waitFor(() => expect(screen.queryByText("Платные запросы остановлены до сверки расходов.")).toBeNull());
   expect(isDisabled(goButton())).toBe(false);
+  // Reconciling releases the 13 slots that were never actually sent: the row
+  // re-asks its price on its own (MEDIUM-1) and shows the higher, uncapped one.
   const resumeAfter = await screen.findByRole("button", { name: "Продолжить · до $2.85" });
   expect(isDisabled(resumeAfter)).toBe(false);
 
   fireEvent.click(resumeAfter);
   await screen.findByText("Рисуем фото: 1 из 20");
-  expect(callsOf(engine, "runs.resume")).toHaveLength(1);
+  expect(callsOf(engine, "runs.resume").map((c) => c.payload.runId)).toEqual([started]);
 });
 
 test("cancel targets the run this window started even after the screen remounts and runs.list then fails (M2)", async () => {
-  const { engine, scheduler } = await openPhotos();
+  const { engine, scheduler, client } = await openPhotos();
   fireEvent.click(await priced());
   await screen.findByText("Рисуем фото: 0 из 20");
   tick(scheduler, 1);
   await screen.findByText("Рисуем фото: 1 из 20");
+  const listed = await client.request("runs.list", {});
+  const started = (listed.ok ? listed.result.runs.find((r) => r.running)?.runId : undefined) ?? "no running run";
+  expect(started).toMatch(/^run-/);
 
   // Leaving and coming back remounts AvatarPhotos: any runId kept only in
   // component state (the old `ownRuns`) would be lost here. runs.list, which
@@ -510,8 +548,8 @@ test("cancel targets the run this window started even after the screen remounts 
   expect(cancel.hasAttribute("disabled")).toBe(false);
   fireEvent.click(cancel);
   await flush();
-  expect(callsOf(engine, "runs.cancel")).toHaveLength(1);
-  expect(callsOf(engine, "runs.cancel")[0]?.payload.runId).toMatch(/^run-/);
+  // Exactly the run this screen started — not merely some run (LOW-1).
+  expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([started]);
 });
 
 test("a run job seen only through another window's progress resolves its cancel target via runs.list, with a retry on failure (M2)", async () => {
@@ -834,8 +872,12 @@ test("what the contract cannot do yet is drawn disabled and marked «скоро�
 
 // ---------- navigation ----------
 
-test("avatar A's delayed runs.estimate and photos.list answering after a switch to B must not render on B (M4)", async () => {
-  const { engine, scheduler } = setup({ avatars: [MIA, SOFIA] });
+test("avatar A's delayed runs.estimate and photos.list answering after a switch to B must not render on B (M4, LOW-2)", async () => {
+  // Mia and Sofia must actually differ (LOW-2): with the same default form
+  // and an empty gallery for both, a leaked reply would be indistinguishable
+  // from the real one and this test could never fail. Mia gets two real
+  // photos of her own; Sofia gets none.
+  const { engine, scheduler } = setup({ avatars: [MIA, SOFIA], photos: [photo(1, { qa: { faceCos: 0.86 } }), photo(2, { category: "travel" })] });
   engine.delayNext("runs.estimate", 500);
   engine.delayNext("photos.list", 500);
   fireEvent.click(await screen.findByRole("button", { name: "Mia" }));
@@ -847,14 +889,17 @@ test("avatar A's delayed runs.estimate and photos.list answering after a switch 
   await openSection("Аватары");
   fireEvent.click(await screen.findByRole("button", { name: "Sofia" }));
   await screen.findByRole("heading", { level: 1, name: "Sofia" });
-  const sofiaButton = await priced(); // Sofia's own price, asked for fresh and not delayed
-  expect(sofiaButton.textContent).toBe("Сгенерировать 20 фото · до $3.07");
+  await priced(); // Sofia's own price, asked for fresh and not delayed
+  await screen.findByText("Фото пока нет"); // Sofia's own, real gallery: empty — nothing was ever seeded for her
 
-  tick(scheduler, 2); // Mia's stale runs.estimate and photos.list land now
+  tick(scheduler, 2); // Mia's stale runs.estimate and photos.list (with her 2 photos) land now
   await flush();
 
   expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
-  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.07");
+  // Still Sofia's own state: Mia's two photos did not leak onto her gallery.
+  expect(screen.getByText("Фото пока нет")).toBeDefined();
+  expect(screen.queryByText("лицо 0.86")).toBeNull();
+  expect(document.querySelectorAll(".photo-tile:not(.photo-tile-drawing):not(.photo-tile-queued)")).toHaveLength(0);
   expect(callsOf(engine, "photos.list").map((c) => c.payload.avatarId)).toContain(SOFIA.avatarId);
 });
 
