@@ -59,7 +59,6 @@ import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
 import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library } from "./library";
-import type { FaceGateImage } from "./face";
 import type { ImageMediaType } from "./library/media";
 import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
@@ -134,16 +133,6 @@ export interface EngineDeps {
   qaGates?: readonly QaGate[];
   /** T6: local work in flight at once (the QA gates); `defaultCpuPoolSize()` unless a test says otherwise. */
   cpuPoolSize?: number;
-  /**
-   * T7b (security review: decode moved into the engine itself): decodes an
-   * image to tagged RGBA pixels with the engine's own WASM JPEG/PNG decoder
-   * (studio/engine/decode/ — qa.ts's own `QaInput.decodeImage` comment has
-   * the full reasoning). Only the face gate calls it. Defaults to a stub
-   * that rejects clearly: every test that does not wire a face gate never
-   * calls it, and production (studio/engine/main.ts) always provides the
-   * real one.
-   */
-  decodeImage?: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
   /**
    * Money review M3: when `studio/engine/main.ts` could not load the face
    * gate (missing/corrupt models, a WASM codec failure, or its own load
@@ -447,8 +436,6 @@ export class Engine {
   readonly #qaGates: readonly QaGate[];
   /** M3: why the face gate could not be loaded, when `deps.faceGateLoadError` said — `#assertFaceGate()`'s own detail. */
   readonly #faceGateLoadError: string | undefined;
-  /** T7b: the run's own way to decode an image to tagged pixels with the engine's own WASM decoder (only the face gate calls it). */
-  readonly #decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
@@ -470,9 +457,6 @@ export class Engine {
     this.#cpuPool = new CpuPool(deps.cpuPoolSize ?? defaultCpuPoolSize());
     this.#qaGates = deps.qaGates ?? [];
     this.#faceGateLoadError = deps.faceGateLoadError;
-    this.#decodeImage =
-      deps.decodeImage ??
-      (() => Promise.reject(new Error("studio engine: no image decoder is wired (the face gate needs one)")));
     const priceFetch = priceFetchFrom(deps.fetch);
     this.#prices = new PriceCache({
       load: (models) => loadPriceBook({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl, ...models }),
@@ -1256,7 +1240,6 @@ export class Engine {
           // age gate is dropped from the list entirely: no call, no reserve,
           // whatever `deps.qaGates` (main.ts's wiring) contains.
           gates: plan.imageAgeCheck === "on" ? this.#qaGates : this.#qaGates.filter((gate) => gate.name !== AGE_GATE_NAME),
-          decodeImage: this.#decodeImage,
           now: () => new Date(this.#deps.clock()),
           errorOf: engineErrorFrom,
           onSlot: (progress) => this.#runSlotDone(run, progress),

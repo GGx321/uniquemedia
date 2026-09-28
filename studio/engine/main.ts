@@ -142,7 +142,7 @@ parentPort.once("message", (event) => {
     // neither does the ONNX inference), age last (paid, so money is spent
     // only on images that already passed every free gate). None hold a
     // client, a key or the library of its own (T7a whole-slice review, the
-    // architectural finding, widened by T7b to include `decodeImage` and
+    // architectural finding, widened by T7b to include
     // `master`): the run job hands each gate the run's own resources
     // through `QaInput` itself — see runs/qa.ts's own header.
     const pdqGate = createPdqGate();

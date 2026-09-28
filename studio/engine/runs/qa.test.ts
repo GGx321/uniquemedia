@@ -55,7 +55,6 @@ describe("QaGate.prepare (optional, H1)", () => {
     await gate.prepare?.({
       avatarId: "avatar-1",
       masterOriginal: new Uint8Array([1, 2, 3]),
-      decodeImage: async () => ({ format: "rgba", width: 1, height: 1, data: new Uint8Array(4) }),
       signal: new AbortController().signal,
     });
 

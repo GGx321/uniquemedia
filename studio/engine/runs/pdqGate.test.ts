@@ -71,9 +71,6 @@ function input(overrides: Partial<QaInput> = {}, money_: Money): QaInput {
     photosByAvatar: () => [],
     master: asLibraryReference(Uint8Array.of(0xff, 0xd8, 0xff)),
     masterSha256: "test-master-sha256",
-    decodeImage: () => {
-      throw new Error("must not be called: pdq never decodes for identity");
-    },
     ...overrides,
   };
 }

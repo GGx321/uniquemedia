@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import type { FaceGateImage } from "../face";
 import type { PlanSlot } from "../scenes";
 import { asLibraryReference, setupMoney, type Money } from "../openrouter/testing/fakes";
 import type { QaInput, QaPrepareInput } from "./qa";
@@ -50,7 +49,6 @@ const MASTER_ORIGINAL_A_SHA256 = createHash("sha256").update(MASTER_ORIGINAL_A).
 const MASTER_ORIGINAL_B_SHA256 = createHash("sha256").update(MASTER_ORIGINAL_B).digest("hex");
 const CANDIDATE_BYTES = Uint8Array.of(0xff, 0xd8, 0xff, 0xe1, 4, 5, 6);
 const MASTER_EMBEDDING = new Float32Array([1, 0, 0]);
-const DECODED: FaceGateImage = { format: "rgba", width: 4, height: 4, data: new Uint8Array(4 * 4 * 4) };
 
 const opened: Money[] = [];
 afterEach(async () => {
@@ -67,7 +65,6 @@ function prepareInput(overrides: Partial<QaPrepareInput> = {}): QaPrepareInput {
   return {
     avatarId: "avatar-1",
     masterOriginal: MASTER_ORIGINAL_A,
-    decodeImage: async () => DECODED,
     signal: new AbortController().signal,
     ...overrides,
   };
@@ -92,7 +89,6 @@ function input(overrides: Partial<QaInput> = {}, money_: Money): QaInput {
     photosByAvatar: () => [],
     master: MASTER_BYTES,
     masterSha256: MASTER_ORIGINAL_A_SHA256,
-    decodeImage: async () => DECODED,
     ...overrides,
   };
 }

@@ -1,5 +1,4 @@
 import type { EngineError } from "../../shared/engine";
-import type { FaceGateImage } from "../face";
 import type { ImageMediaType, LibraryReference, PhotoQa, PhotoSidecar } from "../library";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
@@ -153,24 +152,6 @@ export interface QaInput {
    * (unreachable in production).
    */
   masterSha256: string | null;
-  /**
-   * Security review, T7b section A: decoding network-sourced image bytes
-   * with native Chromium decoders in the privileged main process (which can
-   * decrypt the API key) was ruled out. The engine decodes to tagged RGBA
-   * pixels itself instead, with a WASM JPEG/PNG decoder
-   * (studio/engine/decode/ — `@jsquash/jpeg`/`@jsquash/png`, mozjpeg/squoosh
-   * WASM), measured byte-identical to Electron's `nativeImage` on the parity
-   * fixture set (face/parity.test.ts). Every decode failure — an unsupported
-   * format, a pixel count over the cap, a decode that throws, a decoded size
-   * that disagrees with the header — is treated as SYSTEMIC (decode/
-   * wasmDecode.ts's own header has the full reasoning) and propagates
-   * uncaught, never turned into a per-photo `retry` here or in
-   * `faceGate.ts`. Only the face gate calls this today; every other gate's
-   * own decode (pdq's 64x64 grayscale, the age gate's downscaled JPEG) stays
-   * on the engine's own ffmpeg, which has no identity-precision requirement
-   * to keep parity with.
-   */
-  decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 }
 
 export type QaVerdict =
@@ -199,8 +180,6 @@ export interface QaPrepareInput {
    * gate's own 0.001 parity budget.
    */
   masterOriginal: Uint8Array;
-  /** The same decode function `QaInput.decodeImage` is — see its own comment for the full reasoning. */
-  decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
   /** Aborts on the run's cancel or `runJob.ts`'s own bound on `prepare()` (mirrors `loadMaster()`'s own timeout). */
   signal: AbortSignal;
 }

@@ -61,8 +61,9 @@ function toUint8Array(data: Uint8Array | Uint8ClampedArray): Uint8Array {
 }
 
 /**
- * Builds the `QaInput.decodeImage` function (qa.ts's own header has the full
- * signature contract) from a `DecodeBackend`. Pure orchestration — the
+ * Builds the image decoder from a `DecodeBackend`. Since T7c it runs inside
+ * the face worker thread (face/worker/faceWorker.ts), never on the engine's
+ * own event loop: the engine hands the worker encoded bytes. Pure orchestration — the
  * allow-list, the pixel cap, and the post-decode consistency checks — with
  * no WASM of its own, so it is unit-testable against a fake backend
  * (wasmDecode.test.ts); realBackend.ts's real decode is proven byte-identical

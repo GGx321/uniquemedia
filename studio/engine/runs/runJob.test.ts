@@ -204,7 +204,6 @@ function start(
     library?: RunJobDeps["library"];
     jobId?: string;
     generateImage?: RunJobDeps["generateImage"];
-    decodeImage?: RunJobDeps["decodeImage"];
     /** Called as the job starts each attempt (it already holds its network slot). */
     onStart?: () => void;
     clientOverrides?: Partial<OpenRouterClientOptions>;
@@ -236,9 +235,6 @@ function start(
       pool,
       cpu: new CpuPool(2),
       gates: opts.gates ?? [],
-      decodeImage:
-        opts.decodeImage ??
-        (async () => ({ format: "rgba", width: 1, height: 1, data: new Uint8Array(4) })),
       now: () => new Date(NOW),
       errorOf: (error: unknown): EngineError => ({ code: "INTERNAL", detail: error instanceof Error ? error.message : String(error) }),
       onSlot: (p) => progress.push(p),

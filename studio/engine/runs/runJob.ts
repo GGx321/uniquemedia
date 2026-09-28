@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
-import { NoFaceInReferenceError, type FaceGateImage } from "../face";
+import { NoFaceInReferenceError } from "../face";
 import type { Library, NewPhotoMeta, PhotoQa } from "../library";
 import { imageSize, isAnimatedImage, sniffImageMediaType, type LibraryReference } from "../library/media";
 import type { Budget } from "../money/budget";
@@ -83,13 +83,6 @@ export interface RunJobDeps {
   cpu: CpuPool;
   /** Run in order on every paid image that passed its media checks; none are wired in T6. */
   gates: readonly QaGate[];
-  /**
-   * T7b: decodes to tagged RGBA pixels with the engine's own WASM JPEG/PNG
-   * decoder (qa.ts's own `QaInput.decodeImage` comment has the full
-   * reasoning); threaded straight into every gate's `QaInput` unchanged —
-   * only the face gate calls it today.
-   */
-  decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
   /** Wall clock, for the journal's and the history's `at`. */
   now: () => Date;
   /** A thrown error (a ledger or library write, a bug) in the T0 error model. */
@@ -287,7 +280,7 @@ function masterOriginalFor(original: Uint8Array, reference: LibraryReference): U
  */
 async function runPrepare(ctx: Context, masterOriginal: Uint8Array, signal: AbortSignal): Promise<void> {
   ctx.masterSha256 = createHash("sha256").update(masterOriginal).digest("hex");
-  const input: QaPrepareInput = { avatarId: ctx.plan.avatarId, masterOriginal, decodeImage: ctx.deps.decodeImage, signal };
+  const input: QaPrepareInput = { avatarId: ctx.plan.avatarId, masterOriginal, signal };
   await untilAborted(
     Promise.all(ctx.deps.gates.map((gate) => gate.prepare?.(input))),
     signal,
@@ -590,7 +583,6 @@ async function runGates(ctx: Context, slot: SlotState, attemptId: string, image:
     // loaded (loadMaster) — never a second library read — and the decode
     // path only the face gate uses.
     master,
-    decodeImage: deps.decodeImage,
     // N10: see Context.masterSha256's own comment.
     masterSha256: ctx.masterSha256,
   };

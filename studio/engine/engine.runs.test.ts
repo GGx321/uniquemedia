@@ -225,7 +225,6 @@ function engineOver(
     network?: number;
     monthlyBudgetMicros?: number;
     imageModel?: string;
-    decodeImage?: EngineDeps["decodeImage"];
     faceGateLoadError?: string;
   } = {},
 ) {
@@ -243,7 +242,6 @@ function engineOver(
       ...(opts.clock === undefined ? {} : { clock: opts.clock }),
       ...(opts.monotonic === undefined ? {} : { monotonic: opts.monotonic }),
       ...(opts.faceGateLoadError === undefined ? {} : { faceGateLoadError: opts.faceGateLoadError }),
-      ...(opts.decodeImage === undefined ? {} : { decodeImage: opts.decodeImage }),
       // T7b: every run needs a wired face gate now (#assertFaceGate); a test
       // that passes its own qaGates keeps a face gate too, unless it already
       // named one of its own. `qaGates: null` opts all the way out (a test
@@ -796,8 +794,6 @@ describe("a run with the real createAgeGate wired (not the local fake)", () => {
 // engine and run alongside the real pdq gate ----------
 
 describe("a run with the real createFaceQaGate wired, alongside the real pdq gate", () => {
-  const decoded = { format: "bgra" as const, width: 4, height: 4, data: new Uint8Array(4 * 4 * 4) };
-
   test("a face-gate retry does not leave a dangling pdq claim: the slot's next (byte-identical) attempt still passes pdq instead of wrongly reading its own earlier claim as a duplicate", async () => {
     const avatarId = await seedAvatar();
     let faceChecks = 0;
@@ -817,7 +813,6 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
     });
     const { engine, events } = await engineOver(runNetwork(), {
       qaGates: [createPdqGate(), face],
-      decodeImage: async () => decoded,
     });
 
     const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
@@ -852,7 +847,6 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
     });
     const { engine, events } = await engineOver(net, {
       qaGates: [createPdqGate(), face],
-      decodeImage: async () => decoded,
     });
 
     const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 3)));
@@ -903,7 +897,6 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
     };
     const { engine, events } = await engineOver(runNetwork({ image: () => ({ status: 200, body: imageBody(duplicateBytes, { cost: 0.04 }) }) }), {
       qaGates: [pdq, face],
-      decodeImage: async () => decoded,
     });
 
     const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
