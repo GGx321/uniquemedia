@@ -20,7 +20,7 @@ import {
   type RunForm,
   runRequest,
 } from "./runForm";
-import { useMounted } from "./shared";
+import { SEEDREAM_FALLBACK_IMAGE_MODEL, useMounted } from "./shared";
 
 /** A price for one exact request: the button may only ever send this request with this worst case. */
 interface Priced {
@@ -219,6 +219,10 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const reviewLabel = `${ids}-review`;
   const reviewSoon = `${ids}-review-soon`;
   const imageModel = view.settings ? modelName(view.settings.imageModel) : null;
+  // The engine's own route (runs/plan.ts's runRoute) sends quality "low" for
+  // the settings' own image model, but quality null once that model already
+  // is the Seedream fallback — nothing lower to fall back to (L3).
+  const imageQuality = view.settings && view.settings.imageModel !== SEEDREAM_FALLBACK_IMAGE_MODEL ? "low · " : "";
 
   return (
     <>
@@ -314,7 +318,11 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
                   </li>
                 ))}
               </ul>
-              {imageModel && <span className="faint photos-note photos-shot-caption">{imageModel} · low · 9:16 · референс — мастер-портрет</span>}
+              {imageModel && (
+                <span className="faint photos-note photos-shot-caption">
+                  {imageModel} · {imageQuality}9:16 · референс — мастер-портрет
+                </span>
+              )}
             </div>
           </div>
 
@@ -398,7 +406,10 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
       </section>
 
       {previousWorst !== null && current && (
-        <Notice tone="warn" title="Цена выросла">
+        // PRICE_CHANGED means the price at the moment of refusal was higher
+        // than what was accepted — not that the fresh one, fetched
+        // afterwards, still is (L4): title on what is actually shown.
+        <Notice tone="warn" title={current.estimate.worstMicros > previousWorst ? "Цена выросла" : "Цена изменилась"}>
           Было не больше <span className="mono">{formatUsd(previousWorst, 2, "up")}</span>, теперь не больше{" "}
           <span className="mono">{formatUsd(current.estimate.worstMicros, 2, "up")}</span>. Проверьте новую оценку и подтвердите снова — без
           подтверждения ничего не отправляется.

@@ -317,6 +317,24 @@ test("a failed re-price after PRICE_CHANGED drops the refused price: the button 
   expect(callsOf(engine, "runs.start")).toHaveLength(1);
 });
 
+test("PRICE_CHANGED reads «Цена изменилась», not «выросла», when the fresh price is not actually higher (L4)", async () => {
+  const { engine, scheduler } = await openPhotos();
+  const button = await priced(); // $3.07
+  engine.setRunImagePrice("1k", 60_000); // server-side price now higher; the client still shows $3.07
+  engine.delayNext("runs.estimate", 50); // delays the reprice inside start(), not the mount-time one already resolved
+
+  fireEvent.click(button); // accepts $3.07 — refused PRICE_CHANGED against the now-higher price
+  await waitFor(() => expect(callsOf(engine, "runs.estimate")).toHaveLength(2));
+
+  // The price drops back to exactly what was accepted before the reprice answers.
+  engine.setRunImagePrice("1k", 50_000);
+  tick(scheduler, 1);
+
+  await screen.findByText("Цена изменилась");
+  expect(screen.queryByText("Цена выросла")).toBeNull();
+  expect(goButton().textContent).toBe("Подтвердить новую цену · до $3.07");
+});
+
 test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's own re-estimate already landed", async () => {
   // K1: age check off, до $3.07. Clicking accepts K1's price; while runs.start
   // is in flight, another window turns the age check on — a genuinely new key
@@ -541,6 +559,25 @@ test("a resume refused with PRICE_CHANGED shows the new price and asks again", a
   ]);
 });
 
+test("a resume's PRICE_CHANGED also reads «Цена изменилась», not «выросла», when the fresh price is not actually higher (L4)", async () => {
+  const harness = setup({ avatars: [MIA] });
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  await openSection("Фото");
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
+  harness.engine.setRunImagePrice("1k", 60_000);
+  harness.engine.delayNext("runs.estimateResume", 50);
+
+  fireEvent.click(resume);
+  await waitFor(() => expect(callsOf(harness.engine, "runs.estimateResume")).toHaveLength(2));
+
+  harness.engine.setRunImagePrice("1k", 50_000); // back to exactly what was accepted, before the reprice answers
+  tick(harness.scheduler, 1);
+
+  await screen.findByText("Цена изменилась");
+  expect(screen.queryByText("Цена выросла")).toBeNull();
+  expect(await screen.findByRole("button", { name: "Подтвердить новую цену · до $0.60" })).toBeDefined();
+});
+
 test("a resume stays busy through its PRICE_CHANGED re-price, and a double click sends one resume", async () => {
   const harness = setup({ avatars: [MIA] });
   harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
@@ -637,6 +674,25 @@ test("the gallery shows each photo's face similarity, and says when the face was
   expect(screen.getByText("3 фото")).toBeDefined();
 });
 
+test("the low-score badge styling compares on the same rounded value it displays, not the raw score (L2)", async () => {
+  await openPhotos({
+    photos: [
+      photo(1, { qa: { faceCos: 0.5449 } }), // rounds down to «0.54»: below the line
+      photo(2, { category: "travel", qa: { faceCos: 0.545 } }), // rounds up to «0.55»: at the line, not below
+      photo(3, { category: "fit", qa: { faceCos: 0.55 } }), // exactly the line
+      photo(4, { category: "shoot", qa: { faceCos: 0.549 } }), // rounds up to «0.55»: must not read as low
+    ],
+  });
+  await screen.findByText("лицо 0.54");
+  expect(screen.getByText("лицо 0.54").className).toContain("photo-face-low");
+  for (const label of ["лицо 0.55"]) {
+    // Three photos (0.545, 0.55, 0.549) all round to the same displayed «0.55» and must all read the same way.
+    const badges = screen.getAllByText(label);
+    expect(badges).toHaveLength(3);
+    for (const badge of badges) expect(badge.className).not.toContain("photo-face-low");
+  }
+});
+
 test("photos picked for a montage are marked and counted; the montage itself is still to come", async () => {
   await openPhotos({ photos: [photo(1, { qa: { faceCos: 0.8 } }), photo(2)] });
   const pick = await screen.findAllByRole("button", { name: /Выбрать для монтажа/ });
@@ -674,6 +730,19 @@ test("a failed photos.list is shown with a retry", async () => {
 });
 
 // ---------- later stages, marked ----------
+
+test("the shot caption's quality word matches the model: «low» for the settings' own model, none for the Seedream fallback (L3)", async () => {
+  const { client } = await openPhotos();
+  await screen.findByText(/· low · 9:16 · референс — мастер-портрет$/);
+
+  await act(async () => {
+    await client.request("settings.setModels", { imageModel: "bytedance-seed/seedream-5-0-pro", textModel: "x-ai/grok-4.3" });
+  });
+  // The engine's own route sends quality: null once the settings' image model
+  // already is the fallback (nothing lower to fall back to): no «low» here either.
+  await screen.findByText(/· 9:16 · референс — мастер-портрет$/);
+  expect(screen.queryByText(/· low · 9:16/)).toBeNull();
+});
 
 test("what the contract cannot do yet is drawn disabled and marked «скоро»", async () => {
   await openPhotos();

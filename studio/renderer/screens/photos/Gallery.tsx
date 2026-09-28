@@ -20,7 +20,7 @@ export interface PendingSlots {
 
 const SKIPPED_FORMS = ["фото не читается", "фото не читаются", "фото не читаются"] as const;
 
-/** "лицо 0.86": the similarity to the master portrait, as the gate measured it. */
+/** "лицо 0.86": the similarity to the master portrait, rounded to what the badge shows. */
 function faceLabel(faceCos: number): string {
   return `лицо ${faceCos.toFixed(2)}`;
 }
@@ -28,6 +28,10 @@ function faceLabel(faceCos: number): string {
 function PhotoTile({ photo, position, picked, onToggle }: { photo: PhotoSummary; position: number; picked: boolean; onToggle: (photoId: string) => void }) {
   const label = CATEGORY_LABEL[photo.category];
   const faceCos = photo.qa?.faceCos;
+  // Compared on the same rounded value the badge displays (L2): a raw score
+  // just under the line that rounds up to the line itself (0.549 shows
+  // «0.55») must read the same as the line, never as low.
+  const low = faceCos !== undefined && Number(faceCos.toFixed(2)) < FACE_GATE_THRESHOLD;
   return (
     <div className={picked ? "ph photo-tile photo-tile-on" : "ph photo-tile"}>
       <Portrait avatarId={photo.avatarId} photoId={photo.photoId} label={`Фото ${position}: ${label}`} />
@@ -36,7 +40,7 @@ function PhotoTile({ photo, position, picked, onToggle }: { photo: PhotoSummary;
       </button>
       <div className="photo-badges">
         {faceCos !== undefined ? (
-          <span className={faceCos < FACE_GATE_THRESHOLD ? "pill mono photo-badge photo-face photo-face-low" : "pill mono photo-badge photo-face"}>{faceLabel(faceCos)}</span>
+          <span className={low ? "pill mono photo-badge photo-face photo-face-low" : "pill mono photo-badge photo-face"}>{faceLabel(faceCos)}</span>
         ) : (
           <span className="pill mono photo-badge photo-face-none">лицо не проверялось</span>
         )}

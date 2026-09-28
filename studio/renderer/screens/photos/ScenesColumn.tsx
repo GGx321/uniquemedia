@@ -133,7 +133,8 @@ function ResumeRow({ run, blockedReason, onResumed }: { run: RunSummary; blocked
         </p>
       )}
       {previousWorst !== null && estimate && (
-        <Notice tone="warn" title="Цена выросла">
+        // Same rule as the generate card's (L4): title on the fresh price actually shown, not on why it was refused.
+        <Notice tone="warn" title={estimate.worstMicros > previousWorst ? "Цена выросла" : "Цена изменилась"}>
           Было не больше <span className="mono">{formatUsd(previousWorst, 2, "up")}</span>, теперь не больше{" "}
           <span className="mono">{formatUsd(estimate.worstMicros, 2, "up")}</span>. Подтвердите снова — без подтверждения ничего не отправляется.
         </Notice>
