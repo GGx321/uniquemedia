@@ -40,6 +40,9 @@ import { FaceWorkerRequestSchema, FaceWorkerResponseSchema, type FaceWorkerReque
 /** Below main's own 30 s command deadline (`engineHost.ts`'s REQUEST_TIMEOUT_MS), for the same reason `FACE_GATE_LOAD_TIMEOUT_MS` in main.ts is: a load must succeed or fail informatively before main gives up on it. */
 export const FACE_WORKER_LOAD_TIMEOUT_MS = 25_000;
 
+/** A terminate is milliseconds; this only bounds a worker that will not die (a wedged runtime), which the gate then refuses to live alongside. */
+export const FACE_WORKER_KILL_TIMEOUT_MS = 5_000;
+
 export interface WorkerFaceGateOptions {
   /** Starts one worker thread. The engine's entry supplies `new Worker(<built faceWorker entry>, { workerData })`; tests supply a scripted one. */
   spawnWorker: () => Worker;
@@ -53,6 +56,8 @@ export interface WorkerFaceGateOptions {
    * 2K checks and a 12 MP master, all returned by a terminate. Off unless set.
    */
   idleRecycleMs?: number;
+  /** How long `worker.terminate()` may take before the gate gives up on the worker and declares itself broken. `FACE_WORKER_KILL_TIMEOUT_MS` unless a test overrides it. */
+  killTimeoutMs?: number;
 }
 
 export interface WorkerFaceGate {
@@ -98,6 +103,9 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
   let live: Live | null = null;
   let disposed = false;
   let nextRequestId = 0;
+  /** Set once a worker would not terminate: every later call fails with it (GateBroken) rather than spawn a second worker beside one that may still be running. */
+  let broken: Error | null = null;
+  const pendingKills = new Set<Promise<void>>();
 
   // ---- the lane -----------------------------------------------------------
   let busy = false;
@@ -184,9 +192,18 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
     let ready = false;
     let failure: Error | null = null;
 
+    /** The worker broke the contract (an unsolicited or undeserializable message): fail whoever is waiting on it, or — when nobody is — kill it under the lane so no second worker can overlap it. */
+    const violate = (reason: string): void => {
+      const error = new Error(reason);
+      if (!ready) failLoad(error);
+      else if (entry.onDeath !== null) entry.onDeath(error);
+      else killUnderLane(entry);
+    };
+
     worker.on("message", (raw: unknown) => {
       if (ready) {
-        entry.onMessage?.(raw);
+        if (entry.onMessage !== null) entry.onMessage(raw);
+        else violate("the face worker sent a message nobody asked for");
         return;
       }
       const parsed = FaceWorkerResponseSchema.safeParse(raw);
@@ -199,6 +216,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
         failLoad(new Error("the face worker sent something other than ready while loading"));
       }
     });
+    worker.on("messageerror", () => violate("the face worker sent a message that could not be deserialized (messageerror)"));
     worker.on("error", (error: Error) => {
       failure = error;
     });
@@ -213,21 +231,53 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
     return entry;
   }
 
-  /** Terminates `entry` and returns once it has really exited. Idempotent. */
+  /**
+   * Terminates `entry` and returns once it has really exited. Idempotent, and
+   * never rejects: a terminate that does not finish within `killTimeoutMs`
+   * (a wedged runtime) is logged and makes the gate BROKEN — every later call
+   * fails rather than spawn a worker beside one that may still be running.
+   */
   function kill(entry: Live): Promise<void> {
     if (live === entry) live = null;
-    entry.killing ??= (async () => {
-      // An already-exited worker is never asked to terminate: Bun's own
-      // `terminate()` on one never settles (Node's resolves), and there is
-      // nothing left to stop anyway.
-      if (!entry.dead) await entry.worker.terminate();
-      await entry.gone;
-    })();
+    if (entry.killing === null) {
+      const killing = (async () => {
+        // An already-exited worker is never asked to terminate: Bun's own
+        // `terminate()` on one never settles (Node's resolves), and there is
+        // nothing left to stop anyway.
+        if (entry.dead) return;
+        const bound = timeoutSignal(options.killTimeoutMs ?? FACE_WORKER_KILL_TIMEOUT_MS);
+        try {
+          await untilAborted(entry.worker.terminate().then(() => entry.gone), bound.signal);
+        } catch (error) {
+          if (!bound.signal.aborted) throw error;
+          broken = new Error(`the face worker could not be terminated within ${options.killTimeoutMs ?? FACE_WORKER_KILL_TIMEOUT_MS} ms; the face gate is broken until the engine restarts`);
+          console.error(`studio engine: ${broken.message}`);
+        } finally {
+          bound.clear();
+        }
+      })();
+      entry.killing = killing;
+      pendingKills.add(killing);
+      void killing.finally(() => pendingKills.delete(killing));
+    }
     return entry.killing;
+  }
+
+  /** Kills an idle `entry` while holding the lane, so a check arriving meanwhile waits for it to be gone before a new worker starts. */
+  function killUnderLane(entry: Live): void {
+    void acquire(NEVER_ABORTED).then(async (release) => {
+      try {
+        await kill(entry);
+      } finally {
+        release();
+        scheduleIdleRecycle();
+      }
+    });
   }
 
   /** The live worker, spawning and loading a fresh one when there is none. The load is bounded (`loadTimeoutMs`) and abortable; a failed load leaves no worker behind. */
   async function liveWorker(signal: AbortSignal): Promise<Live> {
+    if (broken !== null) throw broken;
     if (live !== null && !live.dead) return live;
     const entry = spawn();
     live = entry;
@@ -247,6 +297,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
   /** Runs `body` on the live worker, alone (the lane), and interruptibly: abort — or any failure that is not the worker's own clean report — terminates the worker before this settles. */
   async function inLane<T>(signal: AbortSignal, body: (entry: Live) => Promise<Outcome<T>>): Promise<T> {
     if (disposed) throw new Error("the face worker gate is disposed");
+    if (broken !== null) throw broken;
     cancelIdleTimer();
     let release: () => void;
     try {
@@ -304,7 +355,11 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
 
   /** What crosses to the worker is a copy: the caller still needs its own bytes (to store the photo), and a transferred buffer would be detached. The copy itself is transferred, not cloned again. */
   function copyForTransfer(bytes: Uint8Array): ArrayBuffer {
-    return bytes.slice().buffer;
+    // Not `bytes.slice()`: on a Node/Bun `Buffer` that is a VIEW of the same
+    // memory, and transferring it would detach the caller's own bytes.
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    return copy.buffer;
   }
 
   return {
@@ -312,18 +367,18 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
       await inLane(signal, async () => ({ ok: true, value: undefined }));
     },
 
-    check(input, signal) {
+    async check(input, signal) {
       const id = nextRequestId++;
       const bytes = copyForTransfer(input.bytes);
       const message = FaceWorkerRequestSchema.parse({ type: "check", id, pose: input.pose, bytes, masterEmbedding: input.masterEmbedding });
-      return inLane(signal, (entry) => request(entry, message, [bytes], (r) => (r.type === "checked" && r.id === id ? r.verdict : undefined)));
+      return await inLane(signal, (entry) => request(entry, message, [bytes], (r) => (r.type === "checked" && r.id === id ? r.verdict : undefined)));
     },
 
-    embed(bytes, signal) {
+    async embed(bytes, signal) {
       const id = nextRequestId++;
       const copy = copyForTransfer(bytes);
       const message = FaceWorkerRequestSchema.parse({ type: "embed", id, bytes: copy });
-      return inLane(signal, (entry) => request(entry, message, [copy], (r) => (r.type === "embedded" && r.id === id ? r.embedding : undefined)));
+      return await inLane(signal, (entry) => request(entry, message, [copy], (r) => (r.type === "embedded" && r.id === id ? r.embedding : undefined)));
     },
 
     async dispose(): Promise<void> {
@@ -331,6 +386,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
       cancelIdleTimer();
       for (const waiter of queue.splice(0)) waiter.reject(new Error("the face worker gate is disposed"));
       if (live !== null) await kill(live);
+      await Promise.all([...pendingKills]);
     },
   };
 }

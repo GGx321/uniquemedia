@@ -14,4 +14,6 @@ export const Behaviour = {
   noFace: 5,
   /** Answers after ~80 ms of asynchronous waiting. */
   slow: 6,
+  /** Answers, then sends an unsolicited message ~20 ms later (while the worker is idle). */
+  chatty: 7,
 } as const;

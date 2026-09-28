@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { NoFaceInReferenceError } from "../gate";
 import { Behaviour } from "../testing/behaviour";
+import { EMBEDDING_LENGTH } from "./protocol";
 import { createWorkerFaceGate, type WorkerFaceGate } from "./workerGate";
 useNativeGlobals();
 
@@ -15,7 +16,8 @@ useNativeGlobals();
 // workerGate.real.test.ts and parity.test.ts.
 
 const SCRIPT = fileURLToPath(new URL("../testing/scriptedFaceWorker.ts", import.meta.url));
-const EMBEDDING = new Float32Array([1, 0, 0]);
+const EMBEDDING = new Float32Array(EMBEDDING_LENGTH);
+EMBEDDING[0] = 1;
 /** A generous bound for "promptly": a terminate is milliseconds; CI machines are slow, not seconds-slow. */
 const PROMPTLY_MS = 1_000;
 
@@ -30,36 +32,48 @@ interface Harness {
   readonly alive: () => number;
   /** The most computations that were ever in flight inside one worker at once. */
   readonly maxInFlight: () => number;
+  /** Every worker ever spawned, in order. */
+  readonly workers: readonly Worker[];
 }
 
 const gates: WorkerFaceGate[] = [];
+/** Workers still running: the ones a test made unkillable (its own `terminate` replaced) are ended here with the real one. */
+const running = new Set<Worker>();
 afterEach(async () => {
   await Promise.all(gates.splice(0).map((g) => g.dispose()));
+  await Promise.all([...running].map((w) => Worker.prototype.terminate.call(w)));
+  running.clear();
 });
 
-function harness(options: { startups?: Startup[]; loadTimeoutMs?: number; idleRecycleMs?: number } = {}): Harness {
+function harness(options: { startups?: Startup[]; loadTimeoutMs?: number; idleRecycleMs?: number; killTimeoutMs?: number; tamper?: (worker: Worker) => void } = {}): Harness {
   const probe = new SharedArrayBuffer(8);
   const probeView = new Int32Array(probe);
   const startups = [...(options.startups ?? [])];
   let spawned = 0;
   let alive = 0;
   const aliveAtSpawn: number[] = [];
+  const workers: Worker[] = [];
   const gate = createWorkerFaceGate({
     loadTimeoutMs: options.loadTimeoutMs,
     idleRecycleMs: options.idleRecycleMs,
+    killTimeoutMs: options.killTimeoutMs,
     spawnWorker: () => {
       aliveAtSpawn.push(alive);
       spawned += 1;
       alive += 1;
       const worker = new Worker(SCRIPT, { workerData: { startup: startups.shift() ?? "ok", probe } });
+      running.add(worker);
       worker.on("exit", () => {
         alive -= 1;
+        running.delete(worker);
       });
+      workers.push(worker);
+      options.tamper?.(worker);
       return worker;
     },
   });
   gates.push(gate);
-  return { gate, spawned: () => spawned, aliveAtSpawn, alive: () => alive, maxInFlight: () => Atomics.load(probeView, 1) };
+  return { gate, spawned: () => spawned, aliveAtSpawn, alive: () => alive, maxInFlight: () => Atomics.load(probeView, 1), workers };
 }
 
 const live = (): AbortSignal => new AbortController().signal;
@@ -74,7 +88,7 @@ describe("a check and an embed through the worker", () => {
 
   test("embed returns the worker's embedding", async () => {
     const { gate } = harness();
-    expect(Array.from(await gate.embed(script(Behaviour.ok), live()))).toEqual([1, 0, 0]);
+    expect(Array.from(await gate.embed(script(Behaviour.ok), live()))).toEqual(Array.from(EMBEDDING));
   });
 
   test("a reference the worker reports as faceless rejects embed with NoFaceInReferenceError", async () => {
@@ -95,6 +109,32 @@ describe("a check and an embed through the worker", () => {
     await gate.check({ pose: "front", bytes, masterEmbedding: EMBEDDING }, live());
     expect(bytes.byteLength).toBe(4);
     expect(Array.from(bytes)).toEqual([Behaviour.ok, 7, 7, 7]);
+  });
+
+  test("a Node Buffer's memory is copied too, for check() and embed(): Buffer.slice() is a view, and transferring it would empty a paid image", async () => {
+    const { gate } = harness();
+    const forCheck = Buffer.alloc(10_000, 7);
+    forCheck[0] = Behaviour.ok;
+    await gate.check({ pose: "front", bytes: forCheck, masterEmbedding: EMBEDDING }, live());
+    expect(forCheck.byteLength).toBe(10_000);
+    expect(forCheck[9_999]).toBe(7);
+
+    const forEmbed = Buffer.alloc(10_000, 7);
+    forEmbed[0] = Behaviour.ok;
+    await gate.embed(forEmbed, live());
+    expect(forEmbed.byteLength).toBe(10_000);
+    expect(forEmbed[9_999]).toBe(7);
+  });
+
+  test("a request that fails validation rejects the returned promise instead of throwing synchronously", async () => {
+    const { gate } = harness();
+    let call: Promise<unknown>;
+    try {
+      call = gate.check({ pose: "front", bytes: script(Behaviour.ok), masterEmbedding: new Float32Array(3) }, live());
+    } catch {
+      throw new Error("check() threw synchronously instead of rejecting");
+    }
+    await expect(call).rejects.toThrow();
   });
 
   test("a signal that is already aborted rejects without spawning a worker", async () => {
@@ -369,5 +409,82 @@ describe("idle recycling: an idle worker's memory is given back", () => {
     await Bun.sleep(30); // land right around the timer
     await h.gate.check(checkInput(), live());
     expect(h.aliveAtSpawn.every((n) => n === 0)).toBe(true);
+  });
+});
+
+describe("a worker that misbehaves while idle or cannot be deserialized is killed", () => {
+  test("an unsolicited message from an idle worker kills it, and the next check respawns", async () => {
+    const h = harness();
+    await h.gate.check(checkInput(Behaviour.chatty), live());
+    await Bun.sleep(120); // the worker speaks out of turn ~20 ms after answering
+    expect(h.alive()).toBe(0);
+    expect((await h.gate.check(checkInput(), live())).kind).toBe("match");
+    expect(h.spawned()).toBe(2);
+  });
+
+  test("a messageerror while a check is in flight rejects it at once, kills the worker, and the next check respawns", async () => {
+    const h = harness();
+    const running = h.gate.check(checkInput(Behaviour.hang), live()).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : "not an error"),
+    );
+    await Bun.sleep(50);
+    h.workers[0]?.emit("messageerror", new Error("could not deserialize"));
+    expect(await running).toMatch(/could not be deserialized|messageerror|outside the protocol/);
+    expect(h.alive()).toBe(0);
+    expect((await h.gate.check(checkInput(), live())).kind).toBe("match");
+  });
+});
+
+describe("terminate() that does not finish", () => {
+  const hangTerminate = (worker: Worker): void => {
+    worker.terminate = () => new Promise<number>(() => {});
+  };
+
+  test("the kill is bounded: the cancelled check settles within killTimeoutMs and the gate is broken from then on", async () => {
+    const h = harness({ killTimeoutMs: 60, tamper: hangTerminate });
+    const controller = new AbortController();
+    const running = h.gate.check(checkInput(Behaviour.hang), controller.signal).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : "not an error"),
+    );
+    await Bun.sleep(50);
+    const abortedAt = performance.now();
+    controller.abort(new Error("cancelled"));
+    await running;
+    expect(performance.now() - abortedAt).toBeLessThan(PROMPTLY_MS);
+    await expect(h.gate.check(checkInput(), live())).rejects.toThrow(/could not be terminated/);
+    expect(h.spawned()).toBe(1); // never a second worker next to one that would not die
+  });
+
+  test("a check queued behind the stuck kill is rejected as GateBroken material, not left hanging", async () => {
+    const h = harness({ killTimeoutMs: 60, tamper: hangTerminate });
+    const controller = new AbortController();
+    const running = h.gate.check(checkInput(Behaviour.hang), controller.signal).catch(() => {});
+    const waiting = h.gate.check(checkInput(), live());
+    await Bun.sleep(50);
+    controller.abort(new Error("cancelled"));
+    await running;
+    await expect(waiting).rejects.toThrow(/could not be terminated/);
+  });
+
+  test("dispose() awaits a kill already in progress: the worker is gone when it resolves", async () => {
+    const h = harness({
+      tamper: (worker) => {
+        const real = worker.terminate.bind(worker);
+        worker.terminate = async () => {
+          await Bun.sleep(100);
+          return real();
+        };
+      },
+    });
+    const controller = new AbortController();
+    const running = h.gate.check(checkInput(Behaviour.hang), controller.signal).catch(() => {});
+    await Bun.sleep(50);
+    controller.abort(new Error("cancelled")); // starts a kill that takes ~100 ms
+    await Bun.sleep(10);
+    await h.gate.dispose();
+    expect(h.alive()).toBe(0);
+    await running;
   });
 });

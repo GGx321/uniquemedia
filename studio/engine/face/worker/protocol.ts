@@ -22,7 +22,18 @@ export type FaceWorkerInit = z.infer<typeof FaceWorkerInitSchema>;
 // `z.instanceof` is checked in the RECEIVING realm, which is also the realm
 // that owns the structured-clone result, so the class identity matches.
 const Bytes = z.instanceof(ArrayBuffer);
-const Embedding = z.custom<Float32Array>((value) => value instanceof Float32Array && value.length > 0, "an embedding is a non-empty Float32Array");
+
+/** SFace's embedding size; the only length either end accepts. */
+export const EMBEDDING_LENGTH = 128;
+
+const Embedding = z.custom<Float32Array>(
+  (value) => value instanceof Float32Array && value.length === EMBEDDING_LENGTH && value.every((x) => Number.isFinite(x)),
+  `an embedding is exactly ${EMBEDDING_LENGTH} finite floats`,
+);
+
+/** Free text from the worker (an error message) is bounded: a runaway one must not become a megabyte of engine log or error detail. */
+const MAX_MESSAGE_LENGTH = 2_000;
+const Message = z.string().max(MAX_MESSAGE_LENGTH);
 
 const RequestId = z.number().int().nonnegative();
 
@@ -47,9 +58,9 @@ export const FaceVerdictSchema = z.discriminatedUnion("kind", [
 /** Worker -> engine. `failed.code` tells the one expected failure (a reference with no face) apart from everything else, which is systemic. */
 export const FaceWorkerResponseSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ready") }),
-  z.strictObject({ type: z.literal("load-failed"), message: z.string() }),
+  z.strictObject({ type: z.literal("load-failed"), message: Message }),
   z.strictObject({ type: z.literal("checked"), id: RequestId, verdict: FaceVerdictSchema }),
   z.strictObject({ type: z.literal("embedded"), id: RequestId, embedding: Embedding }),
-  z.strictObject({ type: z.literal("failed"), id: RequestId, code: z.enum(["no-face-in-reference", "error"]), message: z.string() }),
+  z.strictObject({ type: z.literal("failed"), id: RequestId, code: z.enum(["no-face-in-reference", "error"]), message: Message }),
 ]);
 export type FaceWorkerResponse = z.infer<typeof FaceWorkerResponseSchema>;

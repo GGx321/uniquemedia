@@ -1,6 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { z } from "zod";
-import { FaceWorkerRequestSchema, type FaceWorkerResponse } from "../worker/protocol";
+import { EMBEDDING_LENGTH, FaceWorkerRequestSchema, type FaceWorkerResponse } from "../worker/protocol";
 import { Behaviour } from "./behaviour";
 
 // Test double for faceWorker.ts: speaks the real wire protocol
@@ -42,7 +42,8 @@ if (init.startup === "crash") {
   send({ type: "ready" });
 }
 
-const embedding = new Float32Array([1, 0, 0]);
+const embedding = new Float32Array(EMBEDDING_LENGTH);
+embedding[0] = 1;
 
 port.on("message", (raw: unknown) => {
   const request = FaceWorkerRequestSchema.parse(raw);
@@ -61,6 +62,7 @@ port.on("message", (raw: unknown) => {
       send({ type: "embedded", id: request.id, embedding });
     }
     leave();
+    if (behaviour === Behaviour.chatty) setTimeout(() => send({ type: "ready" }), 20);
   };
   if (behaviour === Behaviour.hang) {
     // Never answers. The thread stays idle: Bun's worker.terminate() cannot interrupt a synchronous busy loop (Node's, Electron's, can — the packaged smoke proves that on the real runtime).
