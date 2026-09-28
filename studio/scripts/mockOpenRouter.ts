@@ -8,25 +8,38 @@
  * answers ever reaches the real network, and the only API key ever sent to
  * it is a fake one (studio/scripts/smoke-engine.ts's SMOKE_KEY).
  *
- * It serves exactly what the avatar and import flows (studio/engine/avatars/*,
- * studio/engine/money/prices.ts) call:
+ * It serves exactly what the avatar, import and photo-run flows
+ * (studio/engine/avatars/*, studio/engine/runs/*, studio/engine/money/prices.ts) call:
  * - GET  /images/models/<imageModel>/endpoints  (image price; the exact
  *   fixture studio/engine/money/prices.test.ts already parses)
  * - GET  /models                                 (chat price; ditto)
  * - POST /chat/completions                       (the descriptor, schema
  *   "avatar_descriptor"; the age check, schema "age_check"; T6c's vision
- *   describe call, schema "import_describe")
- * - POST /images                                 (candidate portraits — a
- *   real, valid, non-animated PNG rendered once by the bundled ffmpeg, never
- *   a committed binary blob)
+ *   describe call, schema "import_describe"; the scene writer, schema
+ *   "scene_sentences")
+ * - POST /images                                 (candidate and scene
+ *   portraits — a real, valid, non-animated PNG rendered once by the bundled
+ *   ffmpeg, never a committed binary blob)
  * - GET  /credits                                (reconcile)
  * Anything else is a bug — this mock or a leak past invariant 13 — and
  * answers 404, loudly (logged to stderr and kept in `unexpected`, which the
  * caller must assert is empty).
+ *
+ * `imageDelayMs`/`writerDelayMs` (T6's kill-and-resume E2E scenario,
+ * smoke-engine.ts) hold a response after recording the request, so a caller
+ * can poll `requests`/`imageRequests()` to know a request has genuinely
+ * arrived (and is being held) before it decides to act — never a fixed
+ * sleep. `distinctImages` serves a different rendered image per call instead
+ * of the one cached portrait: T7a is adding a PDQ near-duplicate QA gate to
+ * photo runs, so identical fake images would start being retried as
+ * duplicates once it lands.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
+import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
+import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
 
@@ -50,6 +63,77 @@ function portraitPng(): Uint8Array {
 
 function b64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
+}
+
+// ---------- distinct images (T6's kill-and-resume scenario) ----------
+
+/** HSL to a 6-digit hex string, s and l in [0, 1]. */
+function hslToHex(h: number, s: number, l: number): string {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  const channel = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `${channel(r)}${channel(g)}${channel(b)}`;
+}
+
+/**
+ * A real, valid, non-animated PNG, distinct by `index` (a different solid
+ * colour per index, golden-angle spaced so neighbours are visually far
+ * apart), from the bundled ffmpeg — never a committed binary blob. Every
+ * image a photo run's slots receive must be visually distinct: T7a is adding
+ * a PDQ near-duplicate QA gate, so identical fake images would be retried as
+ * duplicates once it lands (see the module doc above).
+ */
+function distinctPortraitPng(index: number): Uint8Array {
+  const hue = (index * 137) % 360;
+  const hex = hslToHex(hue, 0.65, 0.5);
+  const r = spawnSync(ffmpegPath(), [
+    "-f", "lavfi", "-i", `color=c=0x${hex}:size=200x356:d=1`,
+    "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1",
+  ], { timeout: 30_000 });
+  if (r.status !== 0) throw new Error(`the mock OpenRouter could not render distinct portrait #${index}: ${r.stderr.toString()}`);
+  return new Uint8Array(r.stdout);
+}
+
+/** Every distinct image up front (never mid-request): each call spawns ffmpeg, which must not add latency while a caller is timing a request's arrival. */
+function buildDistinctPool(size: number): Uint8Array[] {
+  return Array.from({ length: size }, (_, i) => distinctPortraitPng(i));
+}
+
+// ---------- the scene writer (schema "scene_sentences") ----------
+
+const WriterRequestSlot = z.object({ slotIndex: z.number().int(), location: z.string(), timeOfDay: z.string(), outfit: z.string() }).loose();
+
+const WriterChatBody = z.object({ messages: z.array(z.object({ role: z.string(), content: z.string() })) });
+
+/**
+ * The plan's slots this writer chunk asked for, read back out of
+ * `scenes/writer.ts`'s own request shape (`writerMessages`): a user message
+ * whose text is `"Slots:\n" + JSON.stringify(slots, null, 2)`, optionally
+ * followed by a re-ask paragraph after a blank line. The JSON itself never
+ * contains a blank line (`JSON.stringify(..., null, 2)`'s own indentation
+ * only ever uses single newlines), so splitting on the first blank line
+ * isolates it safely.
+ */
+function writerSlotsOf(body: unknown): z.infer<typeof WriterRequestSlot>[] {
+  const parsed = WriterChatBody.parse(body);
+  const user = parsed.messages.find((m) => m.role === "user");
+  if (user === undefined) throw new Error("the scene writer request has no user message");
+  const json = (user.content.split("\n\n")[0] ?? "").replace(/^Slots:\n/, "");
+  return z.array(WriterRequestSlot).parse(JSON.parse(json));
+}
+
+/**
+ * One compliant scene sentence per slot: no youth or revealing word, no
+ * two-handed phrasing, and no mention of the camera at all (so it can never
+ * contradict a back or profile pose's own rule) — `scenes/writer.ts`'s
+ * `readWriterAnswer` accepts every one of these. `location`, `timeOfDay` and
+ * `outfit` come straight from the plan's own slot (already vetted by the
+ * planner's pools), so every slot's sentence differs with its scene.
+ */
+function writerSentenceFor(slot: z.infer<typeof WriterRequestSlot>): string {
+  return `She spends a quiet moment at ${slot.location} in the ${slot.timeOfDay}, wearing ${slot.outfit}, calm and unhurried.`;
 }
 
 /** The JSON schema a chat completion asked for ("avatar_descriptor", "age_check"), or null — studio/engine/testing/engineHarness.ts's `schemaName`, read from the parsed body instead of a captured fetch call. */
@@ -117,7 +201,23 @@ export interface MockOpenRouterOptions {
   /** Which age-check call, counted across the whole run (1-based), answers "not an adult"; 0 rejects none. */
   rejectAgeCheckNumber?: number;
   /** USD per call; /credits' total_usage is the running sum of exactly these. */
-  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number };
+  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; writer?: number };
+  /**
+   * T6's kill-and-resume scenario: held after the request is recorded (so a
+   * caller can see it arrive) and before the response is built, so a run
+   * stays genuinely mid-flight until the caller acts. 0 (the default) answers
+   * at once, as every other scenario needs.
+   */
+  imageDelayMs?: number;
+  /** Same as `imageDelayMs`, for the scene writer's "scene_sentences" calls. */
+  writerDelayMs?: number;
+  /**
+   * Serves a different rendered image per `/images` call instead of the one
+   * cached portrait (T6's kill-and-resume scenario: T7a's PDQ near-duplicate
+   * gate would retry identical images as duplicates once it lands). Off by
+   * default: the avatar and import scenarios do not need it.
+   */
+  distinctImages?: boolean;
 }
 
 export interface MockOpenRouter {
@@ -132,6 +232,8 @@ export interface MockOpenRouter {
   descriptorRequests(): MockRequest[];
   /** T6c: the vision describe call's own requests ("import_describe" schema), distinct from a plain new-avatar descriptor. */
   importDescribeRequests(): MockRequest[];
+  /** T6: the scene writer's own requests ("scene_sentences" schema). */
+  sceneWriterRequests(): MockRequest[];
   priceRequests(): MockRequest[];
   creditsRequests(): MockRequest[];
   /** The running total this mock has billed, in USD — what /credits reports. */
@@ -141,12 +243,18 @@ export interface MockOpenRouter {
 
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
-  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, ...opts.costsUsd };
+  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, writer: 0.011, ...opts.costsUsd };
   const rejectAt = opts.rejectAgeCheckNumber ?? 1;
+  const imageDelayMs = opts.imageDelayMs ?? 0;
+  const writerDelayMs = opts.writerDelayMs ?? 0;
   const requests: MockRequest[] = [];
   const unexpected: MockRequest[] = [];
   let totalUsageUsd = 0;
   let ageCheckCount = 0;
+  let imageCount = 0;
+  // Built once, up front: rendering must never add latency inside a request a
+  // caller is timing the arrival of (see the module doc above).
+  const distinctPool = opts.distinctImages ? buildDistinctPool(48) : [];
 
   // Reused verbatim: the exact bodies studio/engine/money/prices.test.ts
   // already proved the real client parses, so the mock's prices are exactly
@@ -192,7 +300,15 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       const { pathname: path } = new URL(req.url);
       const { method } = req;
 
-      if (method === "GET" && path === `/api/v1/images/models/${imageModel}/endpoints`) {
+      if (
+        method === "GET" &&
+        (path === `/api/v1/images/models/${imageModel}/endpoints` || path === `/api/v1/images/models/${FALLBACK_IMAGE_MODEL}/endpoints`)
+      ) {
+        // T6's photo runs price both the settings' image model and the
+        // one-attempt Seedream fallback up front (runs/plan.ts's
+        // `runPriceModels`), so both endpoints must answer; the same fixture
+        // stands in for either model — a run's own estimate/cap checks never
+        // depend on the two carrying different numbers.
         record(req, path, null);
         return new Response(endpointsFixture, { status: 200, headers: { "content-type": "application/json" } });
       }
@@ -223,12 +339,20 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
           const answer = opts.importDescribeAnswer ?? DEFAULT_IMPORT_DESCRIBE_ANSWER;
           return json(chatCompletion(JSON.stringify(answer), costs.importDescribe));
         }
+        if (entry.schemaName === WRITER_JSON_SCHEMA.name) {
+          if (writerDelayMs > 0) await Bun.sleep(writerDelayMs);
+          const slots = writerSlotsOf(entry.body);
+          const answer = { scenes: slots.map((s) => ({ slotIndex: s.slotIndex, sentence: writerSentenceFor(s) })) };
+          return json(chatCompletion(JSON.stringify(answer), costs.writer));
+        }
         return loudly404(entry);
       }
       if (method === "POST" && path === "/api/v1/images") {
         record(req, path, await jsonBody(req));
+        if (imageDelayMs > 0) await Bun.sleep(imageDelayMs);
         totalUsageUsd += costs.image;
-        return json({ created: 1_790_000_000, data: [{ b64_json: b64(portraitPng()), media_type: "image/png" }], usage: { cost: costs.image } });
+        const bytes = distinctPool.length > 0 ? (distinctPool[imageCount++ % distinctPool.length] ?? portraitPng()) : portraitPng();
+        return json({ created: 1_790_000_000, data: [{ b64_json: b64(bytes), media_type: "image/png" }], usage: { cost: costs.image } });
       }
       return loudly404(record(req, path, method === "POST" ? await jsonBody(req) : null));
     },
@@ -242,6 +366,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     ageCheckRequests: () => requests.filter((r) => r.schemaName === "age_check"),
     descriptorRequests: () => requests.filter((r) => r.schemaName === "avatar_descriptor"),
     importDescribeRequests: () => requests.filter((r) => r.schemaName === "import_describe"),
+    sceneWriterRequests: () => requests.filter((r) => r.schemaName === WRITER_JSON_SCHEMA.name),
     priceRequests: () => requests.filter((r) => r.path.endsWith("/endpoints") || r.path === "/api/v1/models"),
     creditsRequests: () => requests.filter((r) => r.path === "/api/v1/credits"),
     totalUsageUsd: () => totalUsageUsd,

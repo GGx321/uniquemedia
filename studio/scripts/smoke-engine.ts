@@ -62,6 +62,7 @@ import { basename, dirname, join, normalize, resolve } from "node:path";
 import { FACE_MODELS } from "../engine/face/modelSource";
 import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
+import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
@@ -260,6 +261,18 @@ function pidAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * `kill -9` an arbitrary pid that is not a child of this process (so
+ * `killTree`'s `ChildProcess`-based helper does not apply — T6's kill-and-resume
+ * scenario SIGKILLs the engine `utilityProcess`, a grandchild reached only by
+ * pid): a hard, unconditional termination, `taskkill /F` on Windows like
+ * `killTree`'s own branch.
+ */
+function hardKill(pid: number): void {
+  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+  else process.kill(pid, "SIGKILL");
 }
 
 /** The app's environment: the caller's, without anything OPENROUTER_* (bun loads .env) or ELECTRON_*. */
@@ -1025,6 +1038,302 @@ async function runImportScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- photo run: kill -9 + resume end-to-end scenario (slice 2b, T6) ----------
+
+/** A run's slot the plan committed to, once launched: enough for `req(cdp, "runs.*", ...)` payloads below. */
+const RUN_CATEGORIES = ["home"];
+const RUN_RESOLUTION = "1k";
+const RUN_POSES = { profile: false, back: false };
+
+/**
+ * Every request the mock holds this long before answering, after recording
+ * it: long enough that a 20-photo run (network pool of 6) is still genuinely
+ * mid-flight when this scenario polls for it, short enough that the whole
+ * scenario stays fast.
+ */
+const RUN_REQUEST_DELAY_MS = 700;
+
+/** `listResult` (a `runs.list` response) → the one `RunSummary` for `runId`, or undefined. */
+function findRunSummary(listResult: unknown, runId: unknown): unknown {
+  const runs = field(listResult, "result", "runs");
+  return Array.isArray(runs) ? runs.find((r: unknown) => field(r, "runId") === runId) : undefined;
+}
+
+/** Whichever of job.done/job.failed/job.cancelled came in for `jobId`, or null until one has. */
+async function endEventOf(cdp: Cdp, jobId: unknown): Promise<unknown> {
+  const found = await cdp.evaluate(
+    `window.__smoke.events.find((e) => (e.type === "job.done" || e.type === "job.failed" || e.type === "job.cancelled") && e.payload.jobId === ${JSON.stringify(jobId)}) ?? null`,
+  );
+  return found === null ? null : found;
+}
+
+/**
+ * Creates one active avatar the same way the avatar scenario does (its own
+ * draft → candidates → pick), so this scenario's photo run has a master
+ * photo to reference. Kept apart from `runAvatarScenario`'s own avatar: this
+ * scenario needs its own money and mock traffic, undisturbed by another
+ * scenario's checks.
+ */
+async function createActiveAvatarForRun(cdp: Cdp, name: string): Promise<unknown> {
+  const estimate = await req(cdp, "avatars.estimate", { traits: AVATAR_TRAITS });
+  const draft = await req(cdp, "avatars.createDraft", { traits: AVATAR_TRAITS, acceptedWorstMicros: field(estimate, "result", "worstMicros") });
+  check("run scenario: avatars.createDraft writes the descriptor and a draft", field(draft, "ok") === true, draft);
+  const avatarId = field(draft, "result", "draft", "avatarId");
+  const batchEstimate = await req(cdp, "avatars.estimateCandidates", { avatarId });
+  const generated = await req(cdp, "avatars.generateCandidates", { avatarId, acceptedWorstMicros: field(batchEstimate, "result", "worstMicros") });
+  const jobId = field(generated, "result", "jobId");
+  const done = await waitFor("the run scenario's own candidate job to end", () => endEventOf(cdp, jobId), 30_000);
+  check("run scenario: the candidate batch finished as job.done", field(done, "type") === "job.done", done);
+  const candidates = field(done, "payload", "result", "candidates");
+  const firstCandidate = Array.isArray(candidates) ? candidates[0] : undefined;
+  const pick = await req(cdp, "avatars.pick", { avatarId, photoId: field(firstCandidate, "photoId"), name });
+  check(
+    "run scenario: avatars.pick makes the draft an active avatar with a master photo",
+    field(pick, "ok") === true && field(pick, "result", "avatar", "status") === "active",
+    pick,
+  );
+  return avatarId;
+}
+
+/**
+ * Slice 2b's own "Done when" (stage-2-plan.md): after `kill -9` in the middle
+ * of a 20-photo run and a resume, no attempt id was ever sent twice, the
+ * `/credits` delta stays within the ledger's own total, and the run's cap is
+ * never exceeded; a second, small run's cancel stops it cleanly too. The
+ * T6-decisions follow-up this scenario closes: "the crash tests stop a job
+ * in-process; a real kill -9 of the packaged engine mid-run belongs to the
+ * E2E smoke."
+ *
+ * Its own app instance, its own temp userData and library, its own mock
+ * server — kept apart from every other scenario's money and events. The
+ * image-age-check toggle stays off (the app's own default): no age-check
+ * requests, and no `qa.age` verdict on any photo.
+ */
+async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({
+    descriptorText: AVATAR_DESCRIPTOR,
+    imageDelayMs: RUN_REQUEST_DELAY_MS,
+    writerDelayMs: RUN_REQUEST_DELAY_MS,
+    distinctImages: true,
+  });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-run-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "run-library");
+  await mkdir(userData, { recursive: true });
+  await mkdir(libraryRoot, { recursive: true });
+
+  const running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`]);
+  try {
+    const { cdp } = running;
+    const mainPid = running.child.pid ?? -1;
+
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("run scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+    const libSet = await req(cdp, "settings.setLibraryPath", { path: libraryRoot });
+    check(
+      "run scenario: settings.setLibraryPath adopts the temp library (via --studio-pick-folder)",
+      field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot,
+      libSet,
+    );
+
+    const avatarId = await createActiveAvatarForRun(cdp, "Nova");
+
+    // 1. Price and start a 20-photo run.
+    const PHOTO_COUNT = 20;
+    const runRequest = { avatarId, count: PHOTO_COUNT, categories: RUN_CATEGORIES, resolution: RUN_RESOLUTION, poses: RUN_POSES };
+    const runEstimate = await req(cdp, "runs.estimate", runRequest);
+    check("run scenario: runs.estimate prices a 20-photo run", field(runEstimate, "ok") === true, runEstimate);
+    const startAcceptedWorstMicros = Number(field(runEstimate, "result", "estimate", "worstMicros"));
+    const usageBeforeRun = mock.totalUsageUsd();
+    const started = await req(cdp, "runs.start", { ...runRequest, acceptedWorstMicros: startAcceptedWorstMicros });
+    check("run scenario: runs.start plans and launches the run", field(started, "ok") === true, started);
+    const runId = String(field(started, "result", "runId"));
+    const firstJobId = field(started, "result", "jobId");
+
+    // 2. Kill on an observed state — some slots done, some still in flight — never a fixed sleep.
+    const midFlight = await waitFor(
+      "some run slots done and some still in flight (job.progress)",
+      async () => {
+        const progress = await cdp.evaluate(
+          `window.__smoke.events.filter((e) => e.type === "job.progress" && e.payload.jobId === ${JSON.stringify(firstJobId)}).at(-1) ?? null`,
+        );
+        if (progress === null) return null;
+        const done = Number(field(progress, "payload", "done"));
+        const total = Number(field(progress, "payload", "total"));
+        return done >= 2 && done < total ? progress : null;
+      },
+      60_000,
+    );
+    check(
+      "run scenario: the run is genuinely mid-flight before the kill (some slots done, total still 20)",
+      Number(field(midFlight, "payload", "done")) >= 2 && Number(field(midFlight, "payload", "total")) === PHOTO_COUNT,
+      midFlight,
+    );
+
+    // 3. kill -9 the engine utilityProcess (Windows: taskkill /F), then wait
+    // for its restart — first the crash's own notice (only the *new* engine
+    // emits it), then a snapshot that answers again, then its new bootId
+    // (main.ts's flow, exactly like the earlier restart-policy check above).
+    const enginePidBeforeKill = await waitFor("the engine process", async () => enginePid(mainPid), 5_000);
+    hardKill(enginePidBeforeKill);
+    const crashEvent = await waitFor(
+      "an engine.notice event for this scenario's own engine",
+      async () => {
+        const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice")`);
+        return Array.isArray(events) && events.length > 0 ? events[0] : null;
+      },
+      30_000,
+    );
+    check("run scenario: a killed engine is reported as an engine-restarted notice", field(crashEvent, "payload", "notice", "code") === "engine-restarted", crashEvent);
+    const afterKill = await waitFor(
+      "a snapshot from the restarted engine",
+      async () => {
+        const s = await req(cdp, "engine.snapshot");
+        return field(s, "ok") === true ? s : null;
+      },
+      30_000,
+    );
+    check("run scenario: the restarted engine has a fresh bootId", typeof field(afterKill, "result", "bootId") === "string", afterKill);
+
+    // 4. runs.list shows the run resumable with open slots.
+    const listedAfterKill = await req(cdp, "runs.list");
+    const summaryAfterKill = findRunSummary(listedAfterKill, runId);
+    check(
+      "run scenario: runs.list shows the run resumable with open slots after the kill",
+      field(summaryAfterKill, "running") === false && field(summaryAfterKill, "resumable") === true && Number(field(summaryAfterKill, "open")) > 0,
+      summaryAfterKill,
+    );
+
+    // 5. Invariant 4: "after a restart nothing is spent without a user click."
+    // The kill left the in-flight attempt's reserve open, owned by an engine
+    // process that no longer exists — the resumed engine's own Budget starts
+    // with an empty "this process's own reserves" set, so that reserve reads
+    // as foreign and every paid command (runs.resume included) is refused
+    // RECONCILE_REQUIRED until the owner reconciles. A bounded poll of
+    // money.reconcile past its own quiet window (money/reconcile.ts's
+    // RECONCILE_QUIET_MS after REQUEST_TIMEOUT_MS since this engine opened
+    // the ledger — the same wait a real kill -9 would force on the owner).
+    const reconciledAfterKill = await waitFor(
+      "money.reconcile past its quiet window (invariant 4: nothing more is spent until reconciled)",
+      async () => {
+        const r = await req(cdp, "money.reconcile");
+        if (field(r, "ok") !== true || field(r, "result", "status") === "too-early") return null;
+        return r;
+      },
+      340_000,
+    );
+    check("run scenario: money.reconcile closes the reserve the kill left open, before any more paid calls", field(reconciledAfterKill, "result", "status") === "done", reconciledAfterKill);
+
+    // 6. runs.estimateResume gives a remaining worst case; runs.resume with it.
+    const resumeEstimate = await req(cdp, "runs.estimateResume", { runId });
+    check(
+      "run scenario: runs.estimateResume gives a remaining worst case",
+      field(resumeEstimate, "ok") === true && typeof field(resumeEstimate, "result", "estimate", "worstMicros") === "number",
+      resumeEstimate,
+    );
+    const resumeAcceptedWorstMicros = Number(field(resumeEstimate, "result", "estimate", "worstMicros"));
+    const resumed = await req(cdp, "runs.resume", { runId, acceptedWorstMicros: resumeAcceptedWorstMicros });
+    check("run scenario: runs.resume continues the run from its persisted state", field(resumed, "ok") === true, resumed);
+    const secondJobId = field(resumed, "result", "jobId");
+
+    // 7. Wait for the resumed run to finish, then check its final state.
+    const end = await waitFor("the resumed run job to end", () => endEventOf(cdp, secondJobId), 90_000);
+    check("run scenario: the resumed run finished as job.done", field(end, "type") === "job.done", end);
+    const photoIds = field(end, "payload", "result", "photoIds");
+    const failedSlots = Number(field(end, "payload", "result", "failedSlots"));
+    check(
+      "run scenario: the final state is fully accounted for (20 done, or done + failed = 20)",
+      Array.isArray(photoIds) && photoIds.length + failedSlots === PHOTO_COUNT,
+      { photoIds, failedSlots },
+    );
+    const listedFinal = await req(cdp, "runs.list");
+    const summaryFinal = findRunSummary(listedFinal, runId);
+    check("run scenario: no open slots remain once the resumed run is done", Number(field(summaryFinal, "open")) === 0, summaryFinal);
+
+    // 8. No attempt id was ever sent twice: the journal's own record of every
+    // attempt this run's two jobs made (attemptId is never put on the wire —
+    // OpenRouter's own request bodies carry no id at all — so the durable,
+    // fsynced record the money model itself relies on, runs/journal.ts's
+    // "attempt" events, is the black-box evidence: a duplicate here is
+    // exactly what invariant 5 forbids, and `Budget.tryReserve` itself would
+    // have thrown ATTEMPT_ID_REUSED had the engine tried it).
+    const { library } = await openLibrary(libraryRoot);
+    const { events: journalEvents } = await library.readJournal(runId, RunEventSchema);
+    const isAttemptEvent = (e: RunEvent): e is Extract<RunEvent, { type: "attempt" }> => e.type === "attempt";
+    const attemptIds = journalEvents.filter(isAttemptEvent).map((e) => e.attemptId);
+    check(
+      "run scenario: no attempt id was ever sent twice (the run's own journal, across both jobs)",
+      attemptIds.length > 0 && new Set(attemptIds).size === attemptIds.length,
+      attemptIds,
+    );
+
+    // 9. Credits and the cap: the mock's real usage for this run alone (its
+    // usage before the run minus its usage now) must never exceed the run's
+    // own committed total (settled cost plus any reserve still open at its
+    // worst case — RunSummary.committedMicros, "the run's summary" the plan
+    // points at); that committed total must in turn never exceed the sum of
+    // what the owner accepted at the start and at the resume — the run's cap
+    // is never raised (T6 decisions), so this is conservative by design.
+    const usageDeltaMicros = Math.round((mock.totalUsageUsd() - usageBeforeRun) * 1_000_000);
+    const committedMicros = Number(field(summaryFinal, "committedMicros"));
+    check(
+      "run scenario: the fake /credits usage delta for this run is within the ledger's own total for it",
+      usageDeltaMicros <= committedMicros,
+      { usageDeltaMicros, committedMicros },
+    );
+    check(
+      "run scenario: the run's cap was never exceeded (spend <= the accepted worst case of the start plus the resume)",
+      committedMicros <= startAcceptedWorstMicros + resumeAcceptedWorstMicros,
+      { committedMicros, startAcceptedWorstMicros, resumeAcceptedWorstMicros },
+    );
+
+    // 10. Cancel: a second, small run, stopped mid-flight.
+    const CANCEL_COUNT = 4;
+    const cancelRequest = { avatarId, count: CANCEL_COUNT, categories: RUN_CATEGORIES, resolution: RUN_RESOLUTION, poses: RUN_POSES };
+    const cancelEstimate = await req(cdp, "runs.estimate", cancelRequest);
+    check("cancel scenario: runs.estimate prices the small run", field(cancelEstimate, "ok") === true, cancelEstimate);
+    const imagesBeforeCancelRun = mock.imageRequests().length;
+    const cancelStarted = await req(cdp, "runs.start", { ...cancelRequest, acceptedWorstMicros: field(cancelEstimate, "result", "estimate", "worstMicros") });
+    check("cancel scenario: runs.start plans and launches the small run", field(cancelStarted, "ok") === true, cancelStarted);
+    const cancelRunId = field(cancelStarted, "result", "runId");
+    const cancelJobId = field(cancelStarted, "result", "jobId");
+
+    // Genuinely mid-flight: wait for an image request to actually arrive at
+    // the mock (it is held there by its own delay), never a fixed sleep.
+    await waitFor("an image request for the small run to arrive at the mock", async () => (mock.imageRequests().length > imagesBeforeCancelRun ? true : null), 20_000);
+    const cancelled = await req(cdp, "runs.cancel", { runId: cancelRunId });
+    check("cancel scenario: runs.cancel answers ok", field(cancelled, "ok") === true, cancelled);
+
+    const cancelEnd = await waitFor("the small run's job to end", () => endEventOf(cdp, cancelJobId), 20_000);
+    check("cancel scenario: the run stops via cancel", field(cancelEnd, "type") === "job.cancelled", cancelEnd);
+
+    // No request reaches the mock after the cancel settled (every request
+    // asks `beforeSend` right before it leaves): a grace period past the
+    // terminal event, watching for growth, not a timed action.
+    const requestsAtCancelEnd = mock.requests.length;
+    await Bun.sleep(1_500);
+    check(
+      "cancel scenario: no request reaches the mock after the cancel settled",
+      mock.requests.length === requestsAtCancelEnd,
+      { before: requestsAtCancelEnd, after: mock.requests.length },
+    );
+
+    const listedAfterCancel = await req(cdp, "runs.list");
+    const cancelSummary = findRunSummary(listedAfterCancel, cancelRunId);
+    check(
+      "cancel scenario: the in-flight reserves end as the plan says (open, for a future resume — worst case until reconciled, or settled)",
+      field(cancelSummary, "running") === false && field(cancelSummary, "resumable") === true && Number(field(cancelSummary, "open")) >= 1,
+      cancelSummary,
+    );
+
+    check("run scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  }
+}
+
 // ---------- main ----------
 
 function finish(): void {
@@ -1320,6 +1629,7 @@ async function main(): Promise<void> {
 
   await runAvatarScenario(target);
   await runImportScenario(target);
+  await runPhotoRunKillResumeScenario(target);
   finish();
 }
 
