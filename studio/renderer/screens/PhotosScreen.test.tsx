@@ -679,6 +679,22 @@ test("a run job seen only through another window's progress can be cancelled at 
   expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([reply.result.runId]);
 });
 
+// The launch announcement (done 0) is all another window ever hears before the first photo: enough to see the run and cancel it.
+test("another window's run is visible and cancellable from its launch announcement alone, before any slot ends", async () => {
+  const { engine, client } = await openPhotos();
+  await priced();
+  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  if (!started.ok) throw new Error(`expected ok, got ${started.error.code}`);
+  await flush();
+
+  await screen.findByText("Рисуем фото: 0 из 20");
+  const cancel = screen.getByRole("button", { name: "Отменить" });
+  expect(cancel.hasAttribute("disabled")).toBe(false);
+  fireEvent.click(cancel);
+  await flush();
+  expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([started.result.runId]);
+});
+
 // The backlog's gap: a run that failed before its first job.progress was invisible in every window but the one that started it.
 test("another window's run that fails before its first progress shows its own error here", async () => {
   const { engine, client } = await openPhotos();
@@ -806,7 +822,8 @@ test("a resume in flight locks the generate card too, until it answers (L5)", as
   await screen.findByText("Рисуем фото: 8 из 12");
   // The card unlocks from the shared flag, but stays blocked for the usual reason (a run is now active).
   expect(isDisabled(goButton())).toBe(true);
-  expect(screen.getByText("Дождитесь конца текущего запуска.")).toBeDefined();
+  // The run is announced at launch now, so the resume row (until runs.list refreshes) and the card both say it.
+  expect(screen.getAllByText("Дождитесь конца текущего запуска.").length).toBeGreaterThan(0);
 });
 
 test("the generate card in flight locks every resume row too, until it answers (L5)", async () => {

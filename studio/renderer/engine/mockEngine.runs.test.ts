@@ -53,7 +53,7 @@ test("a whole run goes through the validating client: progress per slot, job.don
 
   scheduler.runAll();
   const progress = events.flatMap((e) => (e.type === "job.progress" ? [e.payload.done] : []));
-  expect(progress).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+  expect(progress).toEqual(Array.from({ length: 21 }, (_, i) => i)); // the launch announcement (0), then one per slot
   const done = events.find((e) => e.type === "job.done");
   if (done?.type !== "job.done" || done.payload.result.kind !== "run") throw new Error("expected a run's job.done");
   expect(done.payload).toMatchObject({ jobId, result: { runId, avatarId: MIA.avatarId, failedSlots: 0 } });
@@ -159,7 +159,7 @@ test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconci
 
   scheduler.runAll();
   const progress = events.flatMap((e) => (e.type === "job.progress" && e.payload.jobId === resumed.jobId ? [e.payload.done] : []));
-  expect(progress[0]).toBe(2); // continues the run's own count
+  expect(progress.slice(0, 2)).toEqual([1, 2]); // announced at launch with the run's own count, then continues it
   const done = events.find((e) => e.type === "job.done");
   if (done?.type !== "job.done" || done.payload.result.kind !== "run") throw new Error("expected the resumed run's job.done");
   expect(done.payload.result.photoIds).toHaveLength(20);
@@ -524,4 +524,16 @@ test("while a reconcile is needed a run is not reported cap-exhausted, and runs.
   await unwrap(client.request("money.reconcile", {}));
   const after = (await unwrap(client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
   expect(after).toMatchObject({ resumable: false, capExhausted: true });
+});
+
+// Like the engine, the mock announces a run when it launches (done 0), so a window that did not start it sees it at once.
+test("a run, started or resumed, is announced with a job.progress at launch, before any slot ends", async () => {
+  const { client, events } = makeMock();
+  const { runId, jobId } = await unwrap(client.request("runs.start", START));
+  expect(events.filter((e) => e.type === "job.progress").map((e) => e.payload)).toEqual([{ kind: "run", jobId, runId, avatarId: MIA.avatarId, done: 0, total: 20 }]);
+
+  const other = makeMock();
+  const seeded = other.engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8);
+  const resumed = await unwrap(other.client.request("runs.resume", { runId: seeded, acceptedWorstMicros: 10_000_000 }));
+  expect(other.events.find((e) => e.type === "job.progress")).toMatchObject({ payload: { kind: "run", jobId: resumed.jobId, runId: seeded, done: 8, total: 12 } });
 });

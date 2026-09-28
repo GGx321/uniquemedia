@@ -1325,6 +1325,8 @@ export class MockEngine implements EngineBridge {
     }
     this.emitMoney();
 
+    // Announced at launch, like the engine: a window that did not start the run sees (and can cancel) it before its first slot ends.
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { kind: "run", jobId: job.jobId, runId: job.runId, avatarId: job.avatarId, done: job.done, total: job.total } });
     // The writer answers first, whatever a later stop does; the mock has no phase of its own for it.
     run.writerDone = true;
     // A master that is gone is found by the job's own loadMaster, as in the real engine: the job fails NOT_FOUND before any slot.

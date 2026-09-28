@@ -1244,6 +1244,14 @@ export class Engine {
     const { plan } = run;
     const signal = this.#jobs.startRun(run.jobId, { runId: plan.runId, avatarId: plan.avatarId, total: plan.scenes.slots.length, done });
     this.#caps.set(scopeKey({ runId: plan.runId }), plan.capMicros);
+    // Announced now, not at the first slot's end: the writer phase can take a while, and another window can only see
+    // (and cancel) a run it has been told about.
+    try {
+      const progress = this.#jobs.progress(run.jobId, done);
+      if (progress !== null) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "job.progress", payload: progress });
+    } catch (error) {
+      console.error(`studio engine: the launch of run job ${run.jobId} could not be announced (${errorKind(error)})`);
+    }
     void this.#runPhotos({ ...run, signal });
   }
 

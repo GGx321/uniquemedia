@@ -219,6 +219,16 @@ test("job.progress alone gives a run job its kind, runId and avatarId", async ()
   h.stop();
 });
 
+// The engine announces a run the moment it launches (done 0), before its writer has answered: a window that did not
+// start it sees it running, with its runId, and can cancel it at once.
+test("a run's launch announcement (done 0) makes it a running, cancellable job in a window that never started it", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { kind: "run", jobId: "job-00000013", runId: "run-00000013", avatarId: SAVED.avatarId, done: 0, total: 20 } });
+
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000013", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000013", status: "running", done: 0, total: 20, result: null, error: null }]);
+  h.stop();
+});
+
 test("job.failed as the first event of a run (it failed before its first progress) still creates the run's job, named and failed", async () => {
   const h = await host();
   await h.emit({ type: "job.failed", payload: { kind: "run", jobId: "job-00000011", runId: "run-00000011", avatarId: SAVED.avatarId, error: { code: "MASTER_FACE_UNUSABLE" } } });

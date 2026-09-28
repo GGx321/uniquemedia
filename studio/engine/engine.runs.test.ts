@@ -342,7 +342,7 @@ describe("runs.start", () => {
     expect(seen[0]?.slotAttempts.map((s) => s.attemptIds)).toEqual([1, 2, 3, 4].map((i) => [1, 2, 3, 4, 5].map((n) => `${runId}:slot-${i}#${n}`)));
   });
 
-  test("a run ends with job.progress per slot carrying the avatar, then money.changed and job.done with the run's photos", async () => {
+  test("a run is announced at launch, then ends with job.progress per slot carrying the avatar, then money.changed and job.done with the run's photos", async () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await engineOver(runNetwork());
 
@@ -350,7 +350,7 @@ describe("runs.start", () => {
     const end = await jobEnd(events, jobId);
 
     const progress = runEvents(events(), jobId).filter((e) => e.type === "job.progress");
-    expect(progress.map((e) => e.payload)).toEqual([1, 2, 3, 4].map((done) => ({ kind: "run", jobId, runId, avatarId, done, total: 4 })));
+    expect(progress.map((e) => e.payload)).toEqual([0, 1, 2, 3, 4].map((done) => ({ kind: "run", jobId, runId, avatarId, done, total: 4 })));
     expect(end).toMatchObject({ type: "job.done", payload: { jobId, result: { kind: "run", runId, avatarId, failedSlots: 0 } } });
     if (end.type !== "job.done" || end.payload.result.kind !== "run") throw new Error("expected a run's job.done");
     expect(end.payload.result.photoIds).toHaveLength(4);
@@ -369,6 +369,21 @@ describe("runs.start", () => {
     expect(counts).toHaveLength(4);
     expect(counts.every((c, i) => i === 0 || c >= (counts[i - 1] ?? 0))).toBe(true);
     expect(counts.at(-1)).toBe(4);
+  });
+
+  // The writer phase can take a while before any slot ends: without an event at launch, a window that did not start the
+  // run could neither see it running nor cancel it until the first photo.
+  test("a run is announced with a job.progress (done 0, kind, runId, avatarId) the moment it is launched, before any slot ends", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork({ writer: () => ({ hang: true }) });
+    const { engine, events } = await engineOver(net);
+
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    await until(() => net.writerCalls().length === 1, "the writer request");
+
+    expect(runEvents(events(), jobId).filter((e) => e.type === "job.progress").map((e) => e.payload)).toEqual([{ kind: "run", jobId, runId, avatarId, done: 0, total: 4 }]);
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
   });
 
   test("the snapshot lists the run's job with its avatar, as the contract's JobState", async () => {
@@ -502,7 +517,7 @@ describe("runs.resume", () => {
     else {
       await until(() => net.imageCalls().length === (opts.count ?? 4), "every slot's first request");
       // The images that did arrive are stored before the stop; only the hanging ones are cut off.
-      await until(() => runEvents(first.events(), jobId).filter((e) => e.type === "job.progress").length === opts.hangFrom - 1, "the photos that arrived");
+      await until(() => runEvents(first.events(), jobId).filter((e) => e.type === "job.progress").length === opts.hangFrom, "the launch and the photos that arrived");
     }
     ok(await first.engine.handle(command("runs.cancel", { runId })));
     await jobEnd(first.events, jobId);
@@ -539,7 +554,7 @@ describe("runs.resume", () => {
     expect(committed).toBeLessThanOrEqual(cap);
   });
 
-  test("the resumed job counts the slots the run already finished", async () => {
+  test("the resumed job counts the slots the run already finished, from its launch announcement on", async () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     const second = await restarted(received);
     second.advance(10 * 60_000);
@@ -548,7 +563,7 @@ describe("runs.resume", () => {
     const { jobId } = started(await resume(second.engine, runId));
     await jobEnd(second.events, jobId);
 
-    expect(runEvents(second.events(), jobId).filter((e) => e.type === "job.progress").map((e) => (e.type === "job.progress" ? e.payload.done : -1))).toEqual([3, 4]);
+    expect(runEvents(second.events(), jobId).filter((e) => e.type === "job.progress").map((e) => (e.type === "job.progress" ? e.payload.done : -1))).toEqual([2, 3, 4]);
   });
 
   test("resume uses plan.json and never re-plans: the writer is asked about the persisted slots, under its next id", async () => {
@@ -708,9 +723,9 @@ describe("runs.resume", () => {
     const { engine, events } = await engineOver(net);
     const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
 
-    // The run failed before any slot finished, so no job.progress ever named it: its end has to.
+    // The run failed before any slot finished, so no slot's progress ever named it (only its launch did): its end names it too.
     expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.failed", payload: { kind: "run", jobId, runId, avatarId, error: { code: "AUTH_INVALID" } } });
-    expect(runEvents(events(), jobId).some((e) => e.type === "job.progress")).toBe(false);
+    expect(runEvents(events(), jobId).some((e) => e.type === "job.progress" && e.payload.done > 0)).toBe(false);
     expect(events().some((e) => e.type === "settings.changed" && e.payload.settings.apiKey.rejected)).toBe(true);
     expect(failed(await engine.handle(resumeAnyway(runId))).error.code).toBe("AUTH_INVALID");
   });
@@ -723,7 +738,7 @@ describe("runs.resume", () => {
     const { engine, events } = await engineOver(net);
     const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
     await until(() => net.imageCalls().length === 4, "every slot's first request");
-    await until(() => runEvents(events(), jobId).filter((e) => e.type === "job.progress").length === 2, "the photos that arrived");
+    await until(() => runEvents(events(), jobId).filter((e) => e.type === "job.progress").length === 3, "the launch and the photos that arrived");
     ok(await engine.handle(command("runs.cancel", { runId })));
     await jobEnd(events, jobId);
 
@@ -1208,7 +1223,7 @@ describe("runs.list", () => {
     const first = await engineOver(net);
     const { runId, jobId } = started(await first.engine.handle(startRun(avatarId)));
     await until(() => net.imageCalls().length === 4, "every slot's first request");
-    await until(() => runEvents(first.events(), jobId).filter((e) => e.type === "job.progress").length === 2, "the photos that arrived");
+    await until(() => runEvents(first.events(), jobId).filter((e) => e.type === "job.progress").length === 3, "the launch and the photos that arrived");
     ok(await first.engine.handle(command("runs.cancel", { runId })));
     await jobEnd(first.events, jobId);
 
