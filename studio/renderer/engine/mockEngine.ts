@@ -898,7 +898,11 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { photos, skippedTotal: this.skippedPhotos[avatarId] ?? 0 });
       }
       case "runs.list":
-        return this.ok(c, { runs: [...this.runs].reverse().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
+        // L7: an unavailable ledger answers no runs at all, like the real
+        // engine's own #listRuns (it needs the ledger for every run's own
+        // committed/remaining figures, not just the list itself).
+        if (this.unavailable !== null) return this.ok(c, { runs: [] });
+        return this.ok(c, { runs: this.sortedRuns().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
       case "runs.estimate": {
         const refusal = this.runnableRefusal(c.payload.avatarId);
         if (refusal) return this.fail(c, refusal);
@@ -934,6 +938,8 @@ export class MockEngine implements EngineBridge {
       case "runs.estimateResume": {
         const run = this.runs.find((r) => r.runId === c.payload.runId);
         if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
+        // L7: matches the real engine's own #remaining, which runs.resume already shares with this command.
+        if (run.slots.every((s) => s.end !== null)) return this.fail(c, { code: "VALIDATION", detail: `run ${run.runId} has nothing left to resume: every slot already ended` });
         return this.ok(c, { estimate: this.resumePrice(run) });
       }
       case "runs.resume": {
@@ -1086,6 +1092,17 @@ export class MockEngine implements EngineBridge {
     const capLeft = Math.max(0, run.capMicros - this.runCommitted(run));
     const worstMicros = Math.min(open * MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst, capLeft);
     return { expectedMicros: Math.min(open * slot.expected, worstMicros), worstMicros, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf };
+  }
+
+  /**
+   * Every run, newest `createdAt` first, tied by `runId` descending (L7: the
+   * real engine's own #listRuns sort, `engine.ts:1068`) — never insertion
+   * order: a seeded run's own `createdAt` runs backwards from
+   * `START_OF_TIME` as more are seeded, so it cannot be relied on to already
+   * be in date order the way a live run's `nowIso()` (forward-ticking) is.
+   */
+  private sortedRuns(): MockRun[] {
+    return [...this.runs].sort((a, b) => (a.createdAt === b.createdAt ? (a.runId < b.runId ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
   }
 
   private runSummary(run: MockRun): RunSummary {

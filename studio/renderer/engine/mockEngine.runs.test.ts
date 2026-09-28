@@ -150,6 +150,26 @@ test("a resume never offers more than the run's cap leaves", async () => {
   expect(estimate.expectedMicros).toBeLessThanOrEqual(estimate.worstMicros);
 });
 
+test("runs.estimateResume on a fully ended run answers VALIDATION, like runs.resume itself (L7)", async () => {
+  const { client, engine } = makeMock();
+  const runId = engine.seedRun({ ...REQUEST, count: 3, categories: ["home"] }, 3); // every slot already done
+  expect(await client.request("runs.estimateResume", { runId })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+});
+
+test("runs.list answers no runs at all when the ledger is unavailable, like the real engine's own #listRuns (L7)", async () => {
+  const { client, engine } = makeMock({ money: { unavailable: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" } } });
+  engine.seedRun({ ...REQUEST, count: 3, categories: ["home"] }, 1);
+  expect(await unwrap(client.request("runs.list", {}))).toEqual({ runs: [] });
+});
+
+test("runs.list orders runs by createdAt, newest first, regardless of seed order (L7)", async () => {
+  const { client, engine } = makeMock();
+  const first = engine.seedRun({ ...REQUEST, count: 3, categories: ["home"] }, 1); // createdAt an hour before START_OF_TIME: the newer of the two
+  const second = engine.seedRun({ ...REQUEST, count: 3, categories: ["home"] }, 1); // createdAt two hours before: the older of the two
+  const { runs } = await unwrap(client.request("runs.list", {}));
+  expect(runs.map((r) => r.runId)).toEqual([first, second]);
+});
+
 test("a run keeps the age-check mode it started with: its resume price and reserves include the checks", async () => {
   const { scheduler, client, engine } = makeMock({ imageAgeCheck: "on" });
   const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 15 * 52_000 + 70_000 }));
