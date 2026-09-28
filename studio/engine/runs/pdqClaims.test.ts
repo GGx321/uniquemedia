@@ -37,6 +37,33 @@ describe("PdqClaims.checkAndClaim: the threshold boundary", () => {
   });
 });
 
+// T7a whole-slice review: the boundary above is pinned against a KNOWN
+// (already-stored) hash; this pins the very same boundary against a PENDING
+// (not yet stored) claim instead — the other branch inside checkAndClaim,
+// and the one the concurrent-duplicate guarantee actually depends on.
+describe("PdqClaims.checkAndClaim: the threshold boundary against a PENDING claim, not a known hash", () => {
+  test("exactly at the threshold counts as a duplicate of a pending claim", () => {
+    const claims = new PdqClaims();
+    expect(claims.checkAndClaim("avatar-1", "attempt-1", ZERO, [], 20)).toBe(false); // claims ZERO
+    const at20 = hashWithBitsSet(20);
+    expect(claims.checkAndClaim("avatar-1", "attempt-2", at20, [], 20)).toBe(true);
+  });
+
+  test("one bit over the threshold does not count as a duplicate of a pending claim", () => {
+    const claims = new PdqClaims();
+    expect(claims.checkAndClaim("avatar-1", "attempt-1", ZERO, [], 20)).toBe(false);
+    const at21 = hashWithBitsSet(21);
+    expect(claims.checkAndClaim("avatar-1", "attempt-2", at21, [], 20)).toBe(false);
+  });
+
+  test("one bit under the threshold counts as a duplicate of a pending claim", () => {
+    const claims = new PdqClaims();
+    expect(claims.checkAndClaim("avatar-1", "attempt-1", ZERO, [], 20)).toBe(false);
+    const at19 = hashWithBitsSet(19);
+    expect(claims.checkAndClaim("avatar-1", "attempt-2", at19, [], 20)).toBe(true);
+  });
+});
+
 describe("PdqClaims.checkAndClaim: known (already-stored) hashes", () => {
   test("an empty known set never blocks the first image", () => {
     const claims = new PdqClaims();

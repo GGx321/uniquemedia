@@ -130,7 +130,9 @@ export async function decodeGray64(bytes: Uint8Array, opts: Gray64Options = {}):
     "-f", format,
     "-i", "pipe:0",
     "-frames:v", "1",
-    "-vf", "scale=64:64,format=gray",
+    // flags=area: a box filter, closer to reference PDQ's own downscale than ffmpeg's default
+    // (bicubic), which can alias fine detail that a box average would properly blend (T7a review, LOW).
+    "-vf", "scale=64:64:flags=area,format=gray",
     "-f", "rawvideo",
     "pipe:1",
   ];

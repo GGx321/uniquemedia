@@ -146,6 +146,26 @@ const PNG_1X1_INPUT = Uint8Array.from(
 );
 const GRAY_OUT = new Uint8Array(PDQ_GRAY_FRAME_BYTES).fill(128);
 
+describe("decodeGray64's own ffmpeg command (T7a review, LOW)", () => {
+  test("scales with flags=area, closer to reference PDQ's own box filtering than ffmpeg's default", async () => {
+    let seenArgs: string[] = [];
+    const spawn: SpawnLike = (_command, args) => {
+      seenArgs = args;
+      const f = fakeChild();
+      queueMicrotask(() => {
+        f.stdout.emit("data", Buffer.from(GRAY_OUT));
+        f.close(0);
+      });
+      return f.child;
+    };
+
+    await decodeGray64(PNG_1X1_INPUT, { spawn });
+
+    const vf = seenArgs[seenArgs.indexOf("-vf") + 1];
+    expect(vf).toBe("scale=64:64:flags=area,format=gray");
+  });
+});
+
 describe("decodeGray64: a non-zero exit with real stderr never retries (a genuine decode failure)", () => {
   test("rejects with the ffmpeg stderr, no retry", async () => {
     const scripted = scriptedSpawn([
