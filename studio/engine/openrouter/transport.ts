@@ -69,6 +69,8 @@ export interface AttemptSpec<T> {
   worstMicros: number;
   budget: Budget;
   signal: AbortSignal;
+  /** Asked before every HTTP try; false ends the attempt like an abort at that point (types.ts's AttemptParams.beforeSend). */
+  beforeSend?: () => boolean;
   path: string;
   /** Called after the reserve; a throw here means the request was never sent. */
   buildBody: () => unknown;
@@ -211,7 +213,7 @@ async function sendAttempt<T>(ctx: ClientContext, spec: AttemptSpec<T>, finish: 
   /** The status of the last non-2xx received in this attempt, if any. */
   let lastStatus: number | null = null;
   for (let retry = 0; ; retry++) {
-    if (spec.signal.aborted) {
+    if (spec.signal.aborted || spec.beforeSend?.() === false) {
       // Nothing is in flight: either nothing was ever sent, or the last exchange was a final non-2xx.
       const outcome: AttemptOutcome =
         lastStatus === null ? { kind: "not-sent", reason: "aborted before the request was sent" } : { kind: "response", status: lastStatus, body: undefined };

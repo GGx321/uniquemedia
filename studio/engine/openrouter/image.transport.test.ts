@@ -147,6 +147,48 @@ test("releases the reserve when the signal aborts after the reserve but before t
   expect(money.lines().map((l) => l.type)).toEqual(["reserve", "release"]);
 });
 
+// T6 (review L1): a caller that stopped sending (a photo run after a fatal
+// error elsewhere) says so through `beforeSend`, asked right before every HTTP
+// try: the attempt ends like a cancel, without the request.
+test("releases the reserve when beforeSend says no after the reserve: nothing is sent", async () => {
+  const { fetch, calls } = fakeFetch([]);
+  const { client } = makeClient(fetch);
+  let asked = 0;
+  const result = await client.generateImage(
+    imageParams(money, {
+      beforeSend: () => {
+        asked++;
+        return false;
+      },
+    }),
+  );
+
+  expect(asked).toBe(1);
+  expect(calls).toHaveLength(0);
+  expect(result).toEqual({ status: "aborted", ledger: { action: "released" } });
+  expect(money.lines().map((l) => l.type)).toEqual(["reserve", "release"]);
+});
+
+test("beforeSend is asked before a transport retry too: a no settles the last non-2xx at zero and sends nothing more", async () => {
+  const { fetch, calls } = fakeFetch([{ status: 503 }]);
+  const { client } = makeClient(fetch);
+  let asked = 0;
+  const result = await client.generateImage(imageParams(money, { beforeSend: () => ++asked === 1 }));
+
+  expect(asked).toBe(2);
+  expect(calls).toHaveLength(1);
+  expect(result).toEqual({ status: "aborted", ledger: { action: "settled", costMicros: 0, estimated: false } });
+});
+
+test("a beforeSend that says yes changes nothing", async () => {
+  const { fetch, calls } = fakeFetch([{ status: 200, body: imageBody(PNG, { cost: 0.04 }) }]);
+  const { client } = makeClient(fetch);
+  const result = await client.generateImage(imageParams(money, { beforeSend: () => true }));
+
+  expect(calls).toHaveLength(1);
+  expect(result).toMatchObject({ status: "ok", costMicros: 40_000 });
+});
+
 test("stops at the backoff when the signal aborts, and settles the last non-2xx at zero", async () => {
   const controller = new AbortController();
   const { result, calls } = await run([{ status: 429 }], {

@@ -106,6 +106,7 @@ export async function chat(ctx: ClientContext, params: ChatParams): Promise<Chat
     worstMicros,
     budget: params.budget,
     signal: params.signal,
+    ...(params.beforeSend === undefined ? {} : { beforeSend: params.beforeSend }),
     path: "/chat/completions",
     buildBody: () => ({
       model: params.model,

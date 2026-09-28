@@ -56,6 +56,7 @@ export async function generateImage(ctx: ClientContext, params: ImageParams): Pr
     worstMicros,
     budget: params.budget,
     signal: params.signal,
+    ...(params.beforeSend === undefined ? {} : { beforeSend: params.beforeSend }),
     path: "/images",
     buildBody: () => ({
       model: params.model,

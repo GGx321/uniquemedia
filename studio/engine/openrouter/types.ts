@@ -172,6 +172,14 @@ export interface AttemptParams {
   budget: Budget;
   priceBook: PriceBook;
   signal: AbortSignal;
+  /**
+   * Asked right before every HTTP try, after the reserve (T6, review L1): a
+   * caller that stopped sending — a photo run after a fatal error in another
+   * slot — answers false, and the attempt ends as `aborted` without the
+   * request (its reserve released, or its last non-2xx settled at zero),
+   * exactly like an abort at that point. Omitted: always send.
+   */
+  beforeSend?: () => boolean;
 }
 
 export interface ImageParams extends AttemptParams {
