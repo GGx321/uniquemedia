@@ -1010,7 +1010,7 @@ export class Engine {
    */
   #assertAgeGate(imageAgeCheck: ImageAgeCheck): void {
     if (imageAgeCheck === "on" && !this.#qaGates.some((gate) => gate.name === AGE_GATE_NAME)) {
-      throw new EngineFailure({ code: "AGE_GATE_UNAVAILABLE", detail: "the image age check is on, but no age gate is wired into photo runs yet; turn it off in Settings to run" });
+      throw new EngineFailure({ code: "AGE_GATE_UNAVAILABLE", detail: "the image age check is on, but this build has no age gate among the engine's QA gates (a wiring defect, not fixed by a restart); turn the check off in Settings to run" });
     }
   }
 

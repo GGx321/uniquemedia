@@ -37,8 +37,9 @@ import { Count, SafeText } from "./primitives";
  *   woman; never retried (the photo does not change between attempts), nothing is stored.
  * - QA_REJECTED: a photo run's slot ended without a photo because a QA gate (face, near-duplicate,
  *   age) rejected its image, or asked for another attempt after the slot's last one (T6).
- * - AGE_GATE_UNAVAILABLE: the image age check is on, but no age gate is wired into photo runs yet,
- *   so a run would store photos no age check has seen (invariant 8); nothing is started or spent.
+ * - AGE_GATE_UNAVAILABLE: the image age check is on, but the engine has no age gate among its QA
+ *   gates (a wiring defect of the build: production always registers it), so a run would store
+ *   photos no age check has seen (invariant 8); nothing is started or spent.
  * - FACE_GATE_UNAVAILABLE: no face gate is wired into photo runs (T7b, e.g. the face models or
  *   onnxruntime-web failed to load at engine startup), so a run would store photos no identity
  *   check has seen; nothing is started or spent. Unlike the age gate this is never a Settings

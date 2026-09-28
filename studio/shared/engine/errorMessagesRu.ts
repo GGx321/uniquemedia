@@ -7,7 +7,8 @@ export const ERROR_MESSAGES_RU = {
   BUDGET_EXCEEDED: "Месячный бюджет исчерпан. Увеличьте его в Настройках или дождитесь следующего месяца.",
   RUN_CAP_EXCEEDED: "Запуск дошёл до своего лимита расходов и остановлен.",
   MODERATION_REFUSED: "Модель отказалась генерировать это изображение.",
-  RATE_LIMITED: "OpenRouter просит снизить частоту запросов. Ничего не повторяется само — чтобы продолжить, запустите действие ещё раз.",
+  RATE_LIMITED:
+    "OpenRouter просит снизить частоту запросов. Ничего не повторяется само. Фото-ран продолжите кнопкой «Продолжить» — новый ран запускать не нужно; действие с аватаром запустите ещё раз.",
   NETWORK: "Нет связи с OpenRouter. Проверьте подключение к интернету.",
   TIMEOUT: "OpenRouter не ответил вовремя. До сверки попытка считается по худшей цене.",
   RECONCILE_REQUIRED: "Нужна сверка расходов: до неё платные запросы остановлены.",
@@ -27,13 +28,16 @@ export const ERROR_MESSAGES_RU = {
   AGE_CHECK_FAILED: "Проверка возраста на фото не подтвердила уверенно, что это взрослый человек. Импорт отменён, ничего не сохранено; оплачена только проверка возраста.",
   IMPORT_SUBJECT_INVALID: "На фото должна быть ровно одна взрослая женщина — без других людей в кадре. Импорт отменён, ничего не сохранено.",
   QA_REJECTED: "Проверка качества отклонила фото этой сцены, попытки для неё закончились.",
-  // Reworded (2b whole-slice review): T7a wired the age gate into every
-  // photo run whose toggle is on, so `#assertAgeGate()` (engine.ts) no
-  // longer fires because the feature "is not yet connected" — in production
-  // the age gate is always registered, so this is unreachable there, only a
-  // defensive guard against a broken engine wiring (dev/build issue).
+  // Reworded twice (2b whole-slice review, then its follow-up): T7a wired the
+  // age gate into every photo run whose toggle is on, so `#assertAgeGate()`
+  // (engine.ts) no longer fires because the feature "is not yet connected" —
+  // in production the age gate is always registered, so this is unreachable
+  // there, only a defensive guard against a broken engine wiring. A wiring
+  // defect is in the build, so a restart cannot fix it: the text names the
+  // one thing that works (the age check switched off) and says the build is
+  // at fault.
   AGE_GATE_UNAVAILABLE:
-    "Проверка возраста на фото включена, но её модуль не подключён к движку — это внутренняя ошибка, а не обычная настройка. Выключите проверку в Настройках, чтобы продолжить, либо перезапустите Studio. Ничего не потрачено.",
+    "Проверка возраста на фото включена, но её модуль не подключён к движку — это дефект сборки приложения, перезапуск его не исправит. Выключите проверку в Настройках, чтобы продолжить; саму сборку нужно исправить. Ничего не потрачено.",
   FACE_GATE_UNAVAILABLE: "Проверка совпадения лица недоступна: запуск не может продолжаться без неё. Перезапустите Studio; если ошибка повторится, переустановите приложение. Ничего не потрачено.",
   MASTER_FACE_UNUSABLE: "На главном фото этого аватара не удалось найти лицо для проверки совпадения. Создайте нового аватара или импортируйте другое фото. Ничего не потрачено.",
 } as const satisfies Record<ErrorCode, string>;

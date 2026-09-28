@@ -87,4 +87,26 @@ describe("ERROR_MESSAGES_RU", () => {
     const texts = Object.values(ERROR_MESSAGES_RU);
     expect(new Set(texts).size).toBe(texts.length);
   });
+
+  test("the RATE_LIMITED message names «Продолжить» as the way to go on with a photo run, not a new run", () => {
+    expect(ERROR_MESSAGES_RU.RATE_LIMITED).toContain("«Продолжить»");
+    expect(ERROR_MESSAGES_RU.RATE_LIMITED).toMatch(/не нужно/);
+  });
+
+  test("the RATE_LIMITED message still tells an avatar action to be started again", () => {
+    expect(ERROR_MESSAGES_RU.RATE_LIMITED).toMatch(/аватар/i);
+    expect(ERROR_MESSAGES_RU.RATE_LIMITED).toMatch(/ещё раз/);
+  });
+
+  test("the AGE_GATE_UNAVAILABLE message does not offer a restart for a wiring defect a restart cannot fix", () => {
+    expect(ERROR_MESSAGES_RU.AGE_GATE_UNAVAILABLE).not.toMatch(/перезапуст/i);
+  });
+
+  test("the AGE_GATE_UNAVAILABLE message still names the working way out: switch the age check off", () => {
+    expect(ERROR_MESSAGES_RU.AGE_GATE_UNAVAILABLE).toMatch(/Выключите проверку в Настройках/);
+  });
+
+  test("the AGE_GATE_UNAVAILABLE message says the build itself is at fault", () => {
+    expect(ERROR_MESSAGES_RU.AGE_GATE_UNAVAILABLE).toMatch(/сборк/);
+  });
 });
