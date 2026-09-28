@@ -12,6 +12,8 @@
 // refusal's compiled output may take, not a hunt for every way a determined
 // author could obfuscate a bypass.
 
+import { posix } from "node:path";
+
 const SWITCH_NAMES = ["remote-debugging-port", "remote-debugging-pipe", "remote-debugging-address"] as const;
 
 /** Test-only switches and debug names that no production bundle (main, preload or renderer) may carry at all. */
@@ -135,5 +137,47 @@ export function productionRendererCssProblems(css: string): string[] {
   // Not `\.woff2\b`: a data: URI names it as a MIME type ("data:font/woff2;base64,…"),
   // with no leading dot the way a hashed asset filename has one.
   if (!/woff2/i.test(withoutComments)) problems.push("no woff2 font reference survived the build");
+  return problems;
+}
+
+/**
+ * The relative module specifiers a built ESM file loads: static `import`/
+ * `export ... from` and string-literal dynamic `import("...")`. Bare and
+ * `node:` specifiers are not listed — only files the build itself must have
+ * emitted next to the entry.
+ */
+export function relativeImportsOf(source: string): string[] {
+  const found: string[] = [];
+  const pattern = /(?:\bfrom\s*|\bimport\s*\(?\s*)["'](\.{1,2}\/[^"']+)["']/g;
+  for (const match of source.matchAll(pattern)) {
+    const specifier = match[1];
+    if (specifier !== undefined) found.push(specifier);
+  }
+  return found;
+}
+
+/**
+ * T7c: problems with the engine's face worker (`out-studio/engine/faceWorker.js`).
+ * It is a separate built entry that the engine loads by file URL and nothing
+ * imports, so a build that silently dropped it — or shipped it without a
+ * shared chunk it imports — would only fail at the first photo run. Checked
+ * from the built files (`worker` is null when the file does not exist);
+ * `fileExists` answers for a path relative to `out-studio/` (a build
+ * directory or a packaged asar alike).
+ */
+export function faceWorkerProblems(engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): string[] {
+  const problems: string[] = [];
+  if (!/new URL\(\s*["']\.\/faceWorker\.js["']\s*,\s*import\.meta\.url\s*\)/.test(engineMain)) {
+    problems.push('the engine does not resolve "./faceWorker.js" against its own import.meta.url');
+  }
+  if (worker === null || worker.trim().length === 0) {
+    problems.push("out-studio/engine/faceWorker.js is missing");
+    return problems;
+  }
+  if (!worker.includes("parentPort") || !worker.includes("workerData")) problems.push("faceWorker.js does not use worker_threads' parentPort/workerData");
+  if (/(?:\bfrom\s*|\bimport\s*\(?\s*)["']electron["']/.test(worker)) problems.push("faceWorker.js imports electron");
+  for (const specifier of relativeImportsOf(worker)) {
+    if (!fileExists(posix.normalize(posix.join("engine", specifier)))) problems.push(`faceWorker.js imports ${specifier}, which is not in the build`);
+  }
   return problems;
 }

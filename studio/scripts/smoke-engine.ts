@@ -65,7 +65,7 @@ import { Ledger } from "../engine/money/ledger";
 import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
-import { productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
+import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
 import { DEFAULT_IMPORT_DESCRIBE_ANSWER, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { looksLikeAStackTrace } from "./stackTrace";
 
@@ -435,6 +435,9 @@ function checkPackage(target: Target): void {
   ];
   const missingFaceAssets = [...modelFiles, ...ortFiles].filter((f) => !entries.includes(f));
   check("app.asar contains the face gate's models and onnxruntime-web's WASM runtime", missingFaceAssets.length === 0, { missingFaceAssets });
+  // T7c: the face worker thread is its own built entry, loaded by file URL
+  // from inside the asar (never unpacked, for the same integrity reason).
+  check("app.asar contains the face worker entry, and it is not unpacked", entries.includes("/out-studio/engine/faceWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "faceWorker.js")));
   const fuses = spawnSync("bunx", ["@electron/fuses", "read", "--app", target.app], { encoding: "utf8" }).stdout;
   const wrong = Object.entries(EXPECTED_FUSES).filter(([fuse, state]) => !new RegExp(`${fuse} is ${state}`).test(fuses));
   check("the Electron fuses are set (runAsNode, NODE_OPTIONS, --inspect off; asar-only with integrity; cookie encryption)", wrong.length === 0, { wrong, fuses });
@@ -490,7 +493,50 @@ function checkProductionBundles(where: string, main: string, engine: string, pre
   check(`${where}: renderer CSS has no unresolved @fontsource url() and still carries a woff2 reference`, rendererCssProblems.length === 0, rendererCssProblems);
 }
 
+/**
+ * T7c: the face worker design rests on one runtime property — a worker thread
+ * stuck in a synchronous loop (what a pathological WASM computation is) is
+ * ended by `worker.terminate()` promptly. Node/V8 guarantee it (Bun, which the
+ * unit tests run under, does NOT: its `terminate()` never settles on such a
+ * worker, which is why those tests hang the worker asynchronously instead), so
+ * this proves it on the Electron runtime the engine actually ships in. Runs
+ * Electron as plain Node (`ELECTRON_RUN_AS_NODE`), which a packaged app's
+ * fuses forbid — so it checks the unpackaged runtime, the same Electron.
+ */
+async function checkRuntimeInterruptsBusyWorker(target: Target): Promise<void> {
+  if (target.asar !== null) return;
+  const busyWorkerSource = 'require("node:worker_threads").parentPort.postMessage(1); for (;;) Math.sqrt(Math.random());';
+  const script = [
+    'const { Worker } = require("node:worker_threads");',
+    `const worker = new Worker(${JSON.stringify(busyWorkerSource)}, { eval: true });`,
+    'worker.once("message", () => setTimeout(async () => {',
+    "  const started = performance.now();",
+    '  const outcome = await Promise.race([worker.terminate().then(() => "terminated"), new Promise((r) => setTimeout(() => r("still running"), 5000))]);',
+    '  console.log(JSON.stringify({ outcome, ms: Math.round(performance.now() - started) }));',
+    "  process.exit(0);",
+    "}, 100));",
+  ].join("\n");
+  const result = spawnSync(target.executable, ["-e", script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 30_000 });
+  const line = result.stdout.trim().split("\n").at(-1) ?? "";
+  const parsed: unknown = (() => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      return null;
+    }
+  })();
+  const ok = typeof parsed === "object" && parsed !== null && "outcome" in parsed && parsed.outcome === "terminated" && "ms" in parsed && typeof parsed.ms === "number" && parsed.ms < 2000;
+  check("Electron's runtime ends a worker thread stuck in a synchronous loop within 2 s of terminate() (the face worker's cancel guarantee)", ok, { stdout: result.stdout, stderr: result.stderr.slice(0, 500) });
+}
+
+/** T7c: the face worker entry, wherever it was read from (bundleChecks.ts's `faceWorkerProblems`). */
+function checkFaceWorker(where: string, engine: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): void {
+  const problems = faceWorkerProblems(engine, worker, fileExists);
+  check(`${where}: the face worker entry is built, loaded by file URL, a worker thread, Electron-free, and every chunk it imports is present`, problems.length === 0, problems);
+}
+
 async function productionCheck(target: Target): Promise<void> {
+  await checkRuntimeInterruptsBusyWorker(target);
   if (target.asar === null) {
     // `build:studio` output: the bundles only; a package is what launches.
     checkProductionBundles(
@@ -500,6 +546,13 @@ async function productionCheck(target: Target): Promise<void> {
       await readFile(join(ROOT, "out-studio", "preload", "preload.cjs"), "utf8"),
       await rendererBundleText(target),
       await rendererCssText(target),
+    );
+    const workerPath = join(ROOT, "out-studio", "engine", "faceWorker.js");
+    checkFaceWorker(
+      "the production build",
+      await readFile(join(ROOT, "out-studio", "engine", "main.js"), "utf8"),
+      existsSync(workerPath) ? await readFile(workerPath, "utf8") : null,
+      (outStudioPath) => existsSync(join(ROOT, "out-studio", outStudioPath)),
     );
     return;
   }
@@ -511,6 +564,13 @@ async function productionCheck(target: Target): Promise<void> {
     asarText(target, join("out-studio", "preload", "preload.cjs")),
     await rendererBundleText(target),
     await rendererCssText(target),
+  );
+  const packagedEntries = new Set(listPackage(target.asar, { isPack: false }).map((p) => p.replaceAll("\\", "/")));
+  checkFaceWorker(
+    "the package",
+    asarText(target, join("out-studio", "engine", "main.js")),
+    packagedEntries.has("/out-studio/engine/faceWorker.js") ? asarText(target, join("out-studio", "engine", "faceWorker.js")) : null,
+    (outStudioPath) => packagedEntries.has(`/out-studio/${outStudioPath}`),
   );
 
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-prod-"));
@@ -1584,6 +1644,7 @@ async function main(): Promise<void> {
   await ledger.append({ ...reserve, attemptId: "smoke-att-0002", worstMicros: 55_000 });
 
   checkPackage(target);
+  await checkRuntimeInterruptsBusyWorker(target);
 
   // The live library's folder spelled with another letter case, for main's
   // folder dialog to answer with (it cannot be clicked). Only a disk that

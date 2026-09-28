@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
+import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems, relativeImportsOf } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -179,5 +179,65 @@ describe("productionRendererCssProblems: fonts.css must resolve to real asset re
 
   test("flags CSS with no woff2 reference at all", () => {
     expect(productionRendererCssProblems("body { color: red; }")).toContain("no woff2 font reference survived the build");
+  });
+});
+
+// T7c: the face worker is a separate built entry that the engine loads by
+// file URL and nothing imports, so a build that silently dropped it would
+// only fail at the first photo run. These checks make that a build failure.
+
+const ENGINE_WITH_WORKER = 'const FACE_WORKER_URL = new URL("./faceWorker.js", import.meta.url);\nspawn(FACE_WORKER_URL);';
+const WORKER = [
+  'import { i as imageSize } from "../media-Cef_5W6L.js";',
+  'import { n as FaceWorkerRequestSchema } from "../protocol-Dhrd3x2Q.js";',
+  'import { readFile } from "node:fs/promises";',
+  'import { parentPort, workerData } from "node:worker_threads";',
+  "parentPort.postMessage(workerData);",
+].join("\n");
+const ALL_PRESENT = (path: string): boolean => ["engine/faceWorker.js", "media-Cef_5W6L.js", "protocol-Dhrd3x2Q.js"].includes(path);
+
+describe("relativeImportsOf", () => {
+  test("lists static and string-literal dynamic relative imports, and nothing else", () => {
+    const source = [
+      'import { a } from "../chunk-a.js";',
+      'import "./side-effect.js";',
+      'export { b } from "../chunk-b.js";',
+      'import { readFile } from "node:fs/promises";',
+      'import * as ort from "onnxruntime-web";',
+      'const lazy = await import("../chunk-c.js");',
+    ].join("\n");
+    expect(relativeImportsOf(source)).toEqual(["../chunk-a.js", "./side-effect.js", "../chunk-b.js", "../chunk-c.js"]);
+  });
+});
+
+describe("faceWorkerProblems", () => {
+  test("passes a build whose engine points at a worker entry that is a worker thread with every chunk it imports present", () => {
+    expect(faceWorkerProblems(ENGINE_WITH_WORKER, WORKER, ALL_PRESENT)).toEqual([]);
+  });
+
+  test("fails when the worker entry was not built", () => {
+    expect(faceWorkerProblems(ENGINE_WITH_WORKER, null, ALL_PRESENT)).toContain("out-studio/engine/faceWorker.js is missing");
+  });
+
+  test("fails when the worker entry is empty", () => {
+    expect(faceWorkerProblems(ENGINE_WITH_WORKER, "", ALL_PRESENT)).toContain("out-studio/engine/faceWorker.js is missing");
+  });
+
+  test("fails when the engine no longer spawns it by that file URL", () => {
+    expect(faceWorkerProblems("spawn();", WORKER, ALL_PRESENT)).toContain('the engine does not resolve "./faceWorker.js" against its own import.meta.url');
+  });
+
+  test("fails when the worker entry is not a worker thread at all", () => {
+    expect(faceWorkerProblems(ENGINE_WITH_WORKER, "console.log(1);", ALL_PRESENT)).toContain("faceWorker.js does not use worker_threads' parentPort/workerData");
+  });
+
+  test("fails when a shared chunk the worker imports is missing", () => {
+    const problems = faceWorkerProblems(ENGINE_WITH_WORKER, WORKER, (path) => path !== "protocol-Dhrd3x2Q.js");
+    expect(problems).toEqual(["faceWorker.js imports ../protocol-Dhrd3x2Q.js, which is not in the build"]);
+  });
+
+  test("fails when the worker imports electron (the engine must stay Electron-free)", () => {
+    const problems = faceWorkerProblems(ENGINE_WITH_WORKER, `${WORKER}\nimport { app } from "electron";`, ALL_PRESENT);
+    expect(problems).toContain("faceWorker.js imports electron");
   });
 });

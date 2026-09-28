@@ -50,17 +50,21 @@ extraMetadata:
   name: uniquemedia-studio
 asarUnpack:
   - node_modules/ffmpeg-static/**
-  # T7b, the face gate: nothing loads it from the packaged app yet, so the
-  # face model files and onnxruntime-web's WASM runtime stay inside app.asar
-  # (see `files` above) rather than being listed here — an asarUnpack entry
-  # would put them outside the asar's integrity check
-  # (enableEmbeddedAsarIntegrityValidation), and WASM is executable code.
-  # When T7b wires the gate in, its packaged E2E smoke must prove the gate
-  # loads ORT's WASM and the two models from inside the asar (Electron's
-  # `fs` reads asar-packed files transparently). Only if that turns out to
-  # be impossible, unpack exactly those files, narrow
+  # T7b, the face gate: the face model files, onnxruntime-web's WASM runtime
+  # and — T7c — the face worker thread's own entry (out-studio/engine/
+  # faceWorker.js, loaded by file URL from the engine) all stay inside
+  # app.asar (see `files` above) rather than being listed here — an
+  # asarUnpack entry would put them outside the asar's integrity check
+  # (enableEmbeddedAsarIntegrityValidation), and WASM and a worker script are
+  # executable code. The packaged E2E smoke proves it: the run scenario's
+  # `qa.faceCos` exists only if the worker started from inside the asar and
+  # loaded ORT's WASM and the two models there (Electron's `fs` reads
+  # asar-packed files transparently), and smoke-engine.ts's asar checks
+  # require the worker entry to be in the asar and NOT unpacked. Only if that
+  # ever turns out to be impossible, unpack exactly those files, narrow
   # smoke-engine.ts's "the engine is not unpacked from the asar" check to
-  # allow exactly them, and verify the models' sha256 at load.
+  # allow exactly them, and verify the models' sha256 at load (the worker
+  # already does).
 # Electron fuses, flipped in the packaged binary: no ELECTRON_RUN_AS_NODE, no
 # NODE_OPTIONS, no --inspect, the app only from app.asar and that asar checked
 # against the hash embedded at build time, cookies encrypted at rest. Check
