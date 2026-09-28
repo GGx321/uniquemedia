@@ -17,19 +17,17 @@ import type { EngineClient } from "./client";
 
 export type JobStatus = JobState["status"];
 
-/** A job as the UI sees it. Events can arrive before the command that started the job answers, so kind and avatar may be unknown for a moment. */
+/**
+ * A job as the UI sees it. Whose job it is — kind, avatar and, for a run, the
+ * runId — is known from the first thing this window ever hears of it: a
+ * snapshot's `JobState`, any job event (each carries all three), or the
+ * command reply that started it. Nothing is guessed.
+ */
 export interface JobView {
   readonly jobId: string;
-  readonly kind: JobState["kind"] | null;
-  readonly avatarId: string | null;
-  /**
-   * A run job's own run, once known: from a snapshot's `JobState.runId`, from
-   * `trackRunJob` (the start/resume reply that started or resumed it in this
-   * window), or from `job.done`'s `RunResult.runId`. Null for a candidates
-   * job, and for a run job this window has only seen through another
-   * window's `job.progress` (that event carries no runId) — cancel must then
-   * fall back to `runs.list` (M2), not sit permanently unusable.
-   */
+  readonly kind: JobState["kind"];
+  readonly avatarId: string;
+  /** A run job's own run; null exactly for a candidates job. */
   readonly runId: string | null;
   readonly status: JobStatus;
   readonly done: number;
@@ -126,8 +124,11 @@ export function jobFromState(j: JobState): JobView {
   };
 }
 
-function emptyJob(jobId: string): JobView {
-  return { jobId, kind: null, avatarId: null, runId: null, status: "queued", done: 0, total: 0, result: null, error: null };
+/** The identity every job event carries: enough to create the job's view when it is the first this window hears of it. */
+type JobRef = { readonly jobId: string; readonly avatarId: string } & ({ readonly kind: "avatar.candidates" } | { readonly kind: "run"; readonly runId: string });
+
+function newJob(ref: JobRef): JobView {
+  return { jobId: ref.jobId, kind: ref.kind, avatarId: ref.avatarId, runId: ref.kind === "run" ? ref.runId : null, status: "queued", done: 0, total: 0, result: null, error: null };
 }
 
 /**
@@ -303,7 +304,7 @@ export class EngineStore {
 
   /** Records a job this window just started; merges with any events that beat the reply. */
   trackCandidatesJob(jobId: string, avatarId: string): void {
-    this.patchJob(jobId, (job) => ({ ...job, kind: "avatar.candidates", avatarId }));
+    this.patchJob({ kind: "avatar.candidates", jobId, avatarId }, (job) => job);
   }
 
   /**
@@ -312,12 +313,10 @@ export class EngineStore {
    * ended as done, until the first job.progress says otherwise (so the
    * sidebar queue never shows a batch's "|| 4" for a run, nor a resume
    * starting over from zero); merges with any events that beat the reply.
-   * `runId` comes straight off the same command reply (M2): recorded here,
-   * window-wide, so a cancel this window's own start or resume enabled never
-   * has to fall back to `runs.list` to find it.
+   * `runId` comes straight off the same command reply.
    */
   trackRunJob(jobId: string, runId: string, avatarId: string, total: number, ended = 0): void {
-    this.patchJob(jobId, (job) => {
+    this.patchJob({ kind: "run", jobId, runId, avatarId }, (job) => {
       const size = job.total || total;
       // A job that already ended before this reply is at least this resume's
       // own baseline (L9): "done" means every slot, including the newly
@@ -325,12 +324,13 @@ export class EngineStore {
       // beat the reply (a fast cancel, say) still keeps the slots this
       // resume started from — never drops back to 0 of them.
       const done = isFinished(job) ? Math.max(job.done, job.status === "done" ? size : ended) : job.done || ended;
-      return { ...job, kind: "run", avatarId, runId, total: size, done };
+      return { ...job, total: size, done };
     });
   }
 
   markJobCancelled(jobId: string): void {
-    this.patchJob(jobId, (job) => (isActiveJob(job) ? { ...job, status: "cancelled" } : job));
+    const job = this.view.jobs.find((j) => j.jobId === jobId);
+    if (job !== undefined && isActiveJob(job)) this.replaceJob({ ...job, status: "cancelled" });
   }
 
   /**
@@ -607,12 +607,10 @@ export class EngineStore {
     const lastSeq = event.seq;
     switch (event.type) {
       case "job.progress": {
-        const { jobId, avatarId, done, total } = event.payload;
-        // avatarId comes straight off the event now, so this is never a
-        // guess: a window that never started this job itself (another
-        // window's batch, or a progress event landing before this one's own
-        // trackCandidatesJob) still learns whose draft it is immediately.
-        this.patchJob(jobId, (job) => (isFinished(job) ? job : { ...job, avatarId, status: "running", done, total }), lastSeq);
+        const { done, total } = event.payload;
+        // The event names its job (kind, avatar, runId): a window that never
+        // started it, or hears of it first here, still knows exactly whose it is.
+        this.patchJob(event.payload, (job) => (isFinished(job) ? job : { ...job, status: "running", done, total }), lastSeq);
         return;
       }
       case "job.done": {
@@ -624,17 +622,11 @@ export class EngineStore {
         // always preferred when it is set.
         const resultTotal = result.kind === "run" ? result.photoIds.length + result.failedSlots : result.candidates.length + result.failedSlots.length;
         this.patchJob(
-          jobId,
+          result.kind === "run" ? { kind: "run", jobId, runId: result.runId, avatarId: result.avatarId } : { kind: "avatar.candidates", jobId, avatarId: result.avatarId },
           (job) => {
             const total = job.total || resultTotal;
             return {
               ...job,
-              kind: result.kind,
-              avatarId: result.kind === "avatar.candidates" ? result.avatarId : job.avatarId,
-              // A run job's own runId, straight off its result: fills it in even
-              // for a run this window only ever watched through another
-              // window's job.progress (which carries no runId at all).
-              runId: result.kind === "run" ? result.runId : job.runId,
               status: "done",
               total,
               done: Math.max(job.done, total),
@@ -650,8 +642,8 @@ export class EngineStore {
         return;
       }
       case "job.failed": {
-        const { jobId, error } = event.payload;
-        this.patchJob(jobId, (job) => ({ ...job, status: "failed", error }), lastSeq);
+        const { error } = event.payload;
+        this.patchJob(event.payload, (job) => ({ ...job, status: "failed", error }), lastSeq);
         this.afterError(error);
         return;
       }
@@ -674,7 +666,7 @@ export class EngineStore {
         this.afterError(event.payload.error);
         return;
       case "job.cancelled":
-        this.patchJob(event.payload.jobId, (job) => (isActiveJob(job) ? { ...job, status: "cancelled" } : job), lastSeq);
+        this.patchJob(event.payload, (job) => (isActiveJob(job) ? { ...job, status: "cancelled" } : job), lastSeq);
         return;
       case "settings.changed": {
         const { settings, librarySwitchGeneration } = event.payload;
@@ -700,11 +692,16 @@ export class EngineStore {
     }
   }
 
-  private patchJob(jobId: string, patch: (job: JobView) => JobView, lastSeq?: number): void {
-    const existing = this.view.jobs.find((j) => j.jobId === jobId);
-    const next = patch(existing ?? emptyJob(jobId));
+  /** Patches the job `ref` names, creating it (from the identity alone) when this is the first this window hears of it. */
+  private patchJob(ref: JobRef, patch: (job: JobView) => JobView, lastSeq?: number): void {
+    const existing = this.view.jobs.find((j) => j.jobId === ref.jobId);
+    const next = patch(existing ?? newJob(ref));
     const jobs = existing ? this.view.jobs.map((j) => (j === existing ? next : j)) : [...this.view.jobs, next];
     this.update(lastSeq === undefined ? { jobs } : { jobs, lastSeq });
+  }
+
+  private replaceJob(next: JobView): void {
+    this.update({ jobs: this.view.jobs.map((j) => (j.jobId === next.jobId ? next : j)) });
   }
 
   /**

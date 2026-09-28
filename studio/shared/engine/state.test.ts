@@ -6,6 +6,8 @@ import {
   Draft,
   EngineNotice,
   Estimate,
+  JobCancelled,
+  JobFailed,
   JobProgress,
   JobState,
   MoneyStatus,
@@ -524,10 +526,15 @@ describe("CandidatesResult", () => {
 });
 
 describe("JobProgress", () => {
-  const progress = { jobId: "job-00000001", avatarId: "avatar-0001", done: 1, total: 4 };
+  const progress = { kind: "avatar.candidates", jobId: "job-00000001", avatarId: "avatar-0001", done: 1, total: 4 };
+  const runProgress = { kind: "run", jobId: "job-00000002", runId: "run-00000001", avatarId: "avatar-0001", done: 3, total: 20 };
 
   test("accepts progress with the avatarId of the job it reports on", () => {
     expect(JobProgress.safeParse(progress).success).toBe(true);
+  });
+
+  test("accepts a run's progress with its runId and avatarId", () => {
+    expect(JobProgress.safeParse(runProgress).success).toBe(true);
   });
 
   test("rejects progress without an avatarId: the renderer must not have to guess it", () => {
@@ -535,8 +542,51 @@ describe("JobProgress", () => {
     expect(JobProgress.safeParse(withoutAvatar).success).toBe(false);
   });
 
+  test("rejects progress without a kind", () => {
+    const { kind: _k, ...withoutKind } = progress;
+    expect(JobProgress.safeParse(withoutKind).success).toBe(false);
+  });
+
+  test("rejects a run's progress without its runId", () => {
+    const { runId: _r, ...withoutRun } = runProgress;
+    expect(JobProgress.safeParse(withoutRun).success).toBe(false);
+  });
+
+  test("rejects a candidates job's progress that names a run", () => {
+    expect(JobProgress.safeParse({ ...progress, runId: "run-00000001" }).success).toBe(false);
+  });
+
   test("rejects done past total", () => {
     expect(JobProgress.safeParse({ ...progress, done: 5, total: 4 }).success).toBe(false);
+    expect(JobProgress.safeParse({ ...runProgress, done: 21, total: 20 }).success).toBe(false);
+  });
+});
+
+// The end of a job says whose it is too: a window that never saw its progress (the run failed before its first slot,
+// or another window started it) must not have to guess the kind, the run or the avatar.
+describe.each([
+  ["JobFailed", JobFailed, { error: { code: "MASTER_FACE_UNUSABLE" } }],
+  ["JobCancelled", JobCancelled, {}],
+] as const)("%s", (_name, schema, extra) => {
+  const candidates = { kind: "avatar.candidates", jobId: "job-00000001", avatarId: "avatar-0001", ...extra };
+  const run = { kind: "run", jobId: "job-00000002", runId: "run-00000001", avatarId: "avatar-0001", ...extra };
+
+  test("accepts a candidates job's end and a run's end", () => {
+    expect(schema.safeParse(candidates).success).toBe(true);
+    expect(schema.safeParse(run).success).toBe(true);
+  });
+
+  test("rejects an end without a kind, an avatarId, or (for a run) a runId", () => {
+    const { kind: _k, ...noKind } = run;
+    const { avatarId: _a, ...noAvatar } = run;
+    const { runId: _r, ...noRun } = run;
+    expect(schema.safeParse(noKind).success).toBe(false);
+    expect(schema.safeParse(noAvatar).success).toBe(false);
+    expect(schema.safeParse(noRun).success).toBe(false);
+  });
+
+  test("rejects a candidates job's end that names a run", () => {
+    expect(schema.safeParse({ ...candidates, runId: "run-00000001" }).success).toBe(false);
   });
 });
 

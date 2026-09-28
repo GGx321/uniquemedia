@@ -799,7 +799,7 @@ export class MockEngine implements EngineBridge {
               // An aborted attempt counts at its worst case until reconciled: the reserve stays open.
               job.status = "cancelled";
               job.cancelTimers = [];
-              this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { jobId: job.jobId } });
+              this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { kind: "avatar.candidates", jobId: job.jobId, avatarId: job.avatarId } });
             }),
           ];
         }
@@ -1233,7 +1233,7 @@ export class MockEngine implements EngineBridge {
           }
           job.status = "running";
           job.done += 1;
-          this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { jobId: job.jobId, avatarId: job.avatarId, done: job.done, total: job.total } });
+          this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { kind: "run", jobId: job.jobId, runId: job.runId, avatarId: job.avatarId, done: job.done, total: job.total } });
         }),
       );
     });
@@ -1287,7 +1287,7 @@ export class MockEngine implements EngineBridge {
       this.scheduler.schedule(CANCEL_CONFIRM_DELAY_MS, () => {
         job.status = "cancelled";
         job.cancelTimers = [];
-        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { jobId: job.jobId } });
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { kind: "run", jobId: job.jobId, runId: job.runId, avatarId: job.avatarId } });
       }),
     ];
   }
@@ -1388,7 +1388,7 @@ export class MockEngine implements EngineBridge {
             id: this.nextId("evt"),
             kind: "event",
             type: "job.progress",
-            payload: { jobId: job.jobId, avatarId: job.avatarId, done: job.done, total: job.total },
+            payload: { kind: "avatar.candidates", jobId: job.jobId, avatarId: job.avatarId, done: job.done, total: job.total },
           });
         }),
       );
@@ -1424,7 +1424,7 @@ export class MockEngine implements EngineBridge {
     job.cancelTimers = [];
     job.status = "failed";
     job.error = error;
-    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { jobId: job.jobId, error } });
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { kind: "avatar.candidates", jobId: job.jobId, avatarId: job.avatarId, error } });
   }
 
   /** A run job fails as a whole (e.g. AUTH_INVALID): its open slots stay open for a resume, their unsent reserves released. */
@@ -1436,7 +1436,7 @@ export class MockEngine implements EngineBridge {
     job.status = "failed";
     job.error = error;
     this.emitMoney();
-    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { jobId: job.jobId, error } });
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { kind: "run", jobId: job.jobId, runId: job.runId, avatarId: job.avatarId, error } });
   }
 
   // ---------- state ----------

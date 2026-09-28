@@ -340,15 +340,29 @@ const doneWithinTotal = {
   params: { message: "done must not exceed total", path: ["done"] },
 };
 
+/**
+ * Whose job a job event is about, in every event a job sends (protocol 3):
+ * its kind, its avatar and, for a photo run, the run itself. Straight off the
+ * event, so a window that never started the job — another window's, or one
+ * that failed before its first `job.progress` — never guesses any of them
+ * from other jobs, a local avatarId or `runs.list`.
+ */
+const candidatesJobRef = { kind: z.literal("avatar.candidates"), jobId: Id, avatarId: Id };
+const runJobRef = { kind: z.literal("run"), jobId: Id, runId: Id, avatarId: Id };
+const progressCounts = { done: Count, total: Count };
+
 export const JobProgress = z
-  .strictObject({
-    jobId: Id,
-    /** The job's own avatar, straight off the event: the renderer must not have to guess it from other jobs or a local avatarId. */
-    avatarId: Id,
-    done: Count,
-    total: Count,
-  })
+  .discriminatedUnion("kind", [z.strictObject({ ...candidatesJobRef, ...progressCounts }), z.strictObject({ ...runJobRef, ...progressCounts })])
   .refine(doneWithinTotal.check, doneWithinTotal.params);
+
+/** `job.failed`'s payload: the job's identity (see `JobProgress`) and why it failed. */
+export const JobFailed = z.discriminatedUnion("kind", [
+  z.strictObject({ ...candidatesJobRef, error: EngineError }),
+  z.strictObject({ ...runJobRef, error: EngineError }),
+]);
+
+/** `job.cancelled`'s payload: the job's identity (see `JobProgress`). */
+export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(runJobRef)]);
 
 /** A batch's slot, 1 to 4. */
 const CandidateSlot = z.number().int().min(1).max(4);
@@ -551,6 +565,7 @@ export const UNREADABLE_REASON_DETAIL: Record<UnreadableReason, UnreadableDetail
 };
 export type JobState = z.infer<typeof JobState>;
 export type JobResult = z.infer<typeof JobResult>;
+export type JobProgress = z.infer<typeof JobProgress>;
 export type FailedCandidateSlot = z.infer<typeof FailedCandidateSlot>;
 export type RunRequest = z.infer<typeof RunRequest>;
 export type RunSummary = z.infer<typeof RunSummary>;

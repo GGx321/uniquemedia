@@ -199,15 +199,39 @@ test("settings.changed replaces the settings, the key status included", async ()
   h.stop();
 });
 
-// A job.progress event is often the FIRST this window ever hears of a job it
-// did not start itself (another window's batch, say): before this, the
-// event carried no avatarId, so the store could only create it with
-// avatarId: null, and the wizard had to guess whose draft it belonged to.
-test("job.progress alone gives the job its avatarId: the store never has to leave it null for the renderer to guess", async () => {
+// A job event is often the FIRST this window ever hears of a job it did not
+// start itself (another window's batch or run, say): every job event carries
+// the job's kind, avatar and (a run) runId, so the store knows all three from
+// that first event and nothing downstream has to guess them.
+test("job.progress alone gives a candidates job its kind and avatarId, and no runId", async () => {
   const h = await host();
-  await h.emit({ type: "job.progress", payload: { jobId: "job-00000009", avatarId: DRAFT.avatarId, done: 1, total: 4 } });
+  await h.emit({ type: "job.progress", payload: { kind: "avatar.candidates", jobId: "job-00000009", avatarId: DRAFT.avatarId, done: 1, total: 4 } });
 
-  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: null, avatarId: DRAFT.avatarId, runId: null, status: "running", done: 1, total: 4, result: null, error: null }]);
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: "avatar.candidates", avatarId: DRAFT.avatarId, runId: null, status: "running", done: 1, total: 4, result: null, error: null }]);
+  h.stop();
+});
+
+test("job.progress alone gives a run job its kind, runId and avatarId", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { kind: "run", jobId: "job-00000010", runId: "run-00000010", avatarId: SAVED.avatarId, done: 3, total: 20 } });
+
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000010", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000010", status: "running", done: 3, total: 20, result: null, error: null }]);
+  h.stop();
+});
+
+test("job.failed as the first event of a run (it failed before its first progress) still creates the run's job, named and failed", async () => {
+  const h = await host();
+  await h.emit({ type: "job.failed", payload: { kind: "run", jobId: "job-00000011", runId: "run-00000011", avatarId: SAVED.avatarId, error: { code: "MASTER_FACE_UNUSABLE" } } });
+
+  expect(h.store.getView().jobs).toMatchObject([{ jobId: "job-00000011", kind: "run", runId: "run-00000011", avatarId: SAVED.avatarId, status: "failed", error: { code: "MASTER_FACE_UNUSABLE" } }]);
+  h.stop();
+});
+
+test("job.cancelled as the first event of a run creates the run's job, named and cancelled", async () => {
+  const h = await host();
+  await h.emit({ type: "job.cancelled", payload: { kind: "run", jobId: "job-00000012", runId: "run-00000012", avatarId: SAVED.avatarId } });
+
+  expect(h.store.getView().jobs).toMatchObject([{ jobId: "job-00000012", kind: "run", runId: "run-00000012", avatarId: SAVED.avatarId, status: "cancelled" }]);
   h.stop();
 });
 
@@ -286,7 +310,7 @@ test("job.cancelled cancels a running job", async () => {
   const running = { kind: "avatar.candidates" as const, jobId: "job-00000001", avatarId: DRAFT.avatarId, status: "running" as const, done: 1, total: 4 };
   const h = await host({ drafts: [DRAFT], jobs: [running] });
 
-  await h.emit({ type: "job.cancelled", payload: { jobId: "job-00000001" } });
+  await h.emit({ type: "job.cancelled", payload: { kind: "avatar.candidates", jobId: "job-00000001", avatarId: DRAFT.avatarId } });
 
   expect(h.store.getView().jobs).toMatchObject([{ jobId: "job-00000001", status: "cancelled", done: 1 }]);
   expect(h.store.getView().lastSeq).toBe(1);
@@ -298,7 +322,7 @@ test("job.cancelled leaves a job that already finished alone", async () => {
   const done = { kind: "avatar.candidates" as const, jobId: "job-00000001", avatarId: DRAFT.avatarId, status: "done" as const, done: 4, total: 4, result };
   const h = await host({ drafts: [DRAFT], jobs: [done] });
 
-  await h.emit({ type: "job.cancelled", payload: { jobId: "job-00000001" } });
+  await h.emit({ type: "job.cancelled", payload: { kind: "avatar.candidates", jobId: "job-00000001", avatarId: DRAFT.avatarId } });
 
   expect(h.store.getView().jobs).toMatchObject([{ jobId: "job-00000001", status: "done" }]);
   h.stop();

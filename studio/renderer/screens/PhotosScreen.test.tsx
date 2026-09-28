@@ -614,7 +614,7 @@ test("cancel targets the run this window started even after the screen remounts 
   expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([started]);
 });
 
-test("a run job seen only through another window's progress resolves its cancel target via runs.list, with a retry on failure (M2)", async () => {
+test("a run job seen only through another window's progress can be cancelled at once: its runId came with the event, runs.list is not asked for it", async () => {
   const { engine, scheduler, client } = setup({ avatars: [MIA] });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
   // Simulated another window: the run starts straight through the engine,
@@ -625,21 +625,44 @@ test("a run job seen only through another window's progress resolves its cancel 
   tick(scheduler, 1);
   await flush();
 
+  // Even with runs.list failing, the runId is already known from job.progress.
   engine.failNext("runs.list", { code: "INTERNAL" });
   await openSection("Фото");
   await screen.findByRole("heading", { level: 1, name: "Mia" });
   await screen.findByText("Рисуем фото: 1 из 20");
-  await screen.findByText(ERROR_MESSAGES_RU.INTERNAL);
-
-  // The runId is not known yet (only job.progress has been seen): cancel waits, not stuck forever.
-  expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
-
-  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(false));
+  expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(false);
 
   fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
   await flush();
   expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([reply.result.runId]);
+});
+
+// The backlog's gap: a run that failed before its first job.progress was invisible in every window but the one that started it.
+test("another window's run that fails before its first progress shows its own error here", async () => {
+  const { engine, client } = await openPhotos();
+  await priced();
+  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_070_000 }));
+  if (!started.ok) throw new Error(`expected ok, got ${started.error.code}`);
+  act(() => engine.rejectKey()); // no tick: not one job.progress was ever sent
+  await flush();
+
+  expect(await screen.findByText(ERROR_MESSAGES_RU.AUTH_INVALID)).toBeDefined();
+  expect(screen.queryByText("Запуск завершён")).toBeNull();
+});
+
+test("a finished run this window only finds in the store when the screen opens is not announced again", async () => {
+  const { scheduler, client } = await openPhotos();
+  await priced();
+  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_070_000 }));
+  if (!started.ok) throw new Error(`expected ok, got ${started.error.code}`);
+  runAll(scheduler);
+  await flush();
+
+  await openSection("Аватары");
+  await openSection("Фото");
+  await screen.findByRole("heading", { level: 1, name: "Mia" });
+  await flush();
+  expect(screen.queryByText("Запуск завершён")).toBeNull();
 });
 
 test("a stopped run is resumed with exactly the worst case runs.estimateResume showed", async () => {

@@ -284,3 +284,23 @@ test("the demo library seeds Mia's gallery and a stopped run to resume, without 
   const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, avatarId: mia.avatarId, acceptedWorstMicros: 3_070_000 }));
   expect(runId).toBe("run-0001");
 });
+
+// Protocol 3: every job event names its job (kind, avatar and, for a run, the runId).
+test("a run's job events all carry kind, runId and avatarId: progress, then failed or cancelled", async () => {
+  const { engine, scheduler, client, events } = makeMock();
+  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  scheduler.next();
+  await unwrap(client.request("runs.cancel", { runId }));
+  scheduler.runAll();
+  const ref = { kind: "run", jobId, runId, avatarId: MIA.avatarId };
+  expect(events.find((e) => e.type === "job.progress")).toMatchObject({ payload: ref });
+  expect(events.find((e) => e.type === "job.cancelled")).toMatchObject({ payload: ref });
+
+  const failing = makeMock();
+  const started = await unwrap(failing.client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
+  failing.engine.rejectKey();
+  expect(failing.events.find((e) => e.type === "job.failed")).toMatchObject({
+    payload: { kind: "run", jobId: started.jobId, runId: started.runId, avatarId: MIA.avatarId, error: { code: "AUTH_INVALID" } },
+  });
+  void engine;
+});

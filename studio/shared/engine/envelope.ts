@@ -4,8 +4,9 @@ import { z } from "zod";
  * Wire protocol version carried by every message as `v`.
  *
  * - 2 (2026-09-29): 2K removed: `RunRequest` and `PhotoSummary` no longer carry a `resolution`.
+ * - 3 (2026-09-29): `job.progress`, `job.failed` and `job.cancelled` carry the job's `kind`, `avatarId` and (a run) `runId`.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
 /** An event's position in the engine's event stream; starts at 1 and only grows. */

@@ -32,31 +32,15 @@ function photoCountLabel(list: GalleryList): string {
 }
 
 /**
- * This avatar's latest photo-run job. A job this window did not start is
- * known only by its events until it ends, and neither `job.progress` nor
- * `job.cancelled`/`job.failed` ever carry a kind, so preference order is:
- * 1. An active (queued/running) job, whatever its kind — an avatar's saved
- *    record can never have a candidates batch still running for it (the
- *    engine's own pick claims the avatar, engine.ts:1791), so an active job
- *    of a saved avatar is always its run, confirmed kind or not. This is
- *    what lets a second run, started by another window right after this
- *    screen watched the first one finish, show as running instead of the
- *    stale, already-done first one (regression from 8d604b2's own L8 fix,
- *    which stopped at "confirmed" and missed this case entirely).
- * 2. Failing that, the latest job already confirmed `kind === "run"`, OR
- *    one this screen itself watched active (N1): a run seen only via events
- *    that ends by job.cancelled or job.failed instead of job.done never
- *    gets its kind confirmed at all, so without this it would drop straight
- *    to step 3 the moment it stops being active — showing an *older*
- *    confirmed run's own "Запуск завершён" again instead of this one's
- *    "Генерация остановлена" or its own error.
- * 3. Failing that, whatever is latest at all — an unconfirmed, never-watched
- *    job (kind null) from a run just started elsewhere, seen only through
- *    its own job.progress so far, with nothing else to prefer over it.
+ * This avatar's photo-run job to show: its active (queued/running) run job,
+ * else its latest run job. Every job event names its kind and avatar, so
+ * nothing here guesses: an active job of a saved avatar is only ever its run
+ * when `kind` says so, and a second run started by another window right
+ * after this screen watched the first finish is simply the newer active job.
  */
-function latestRunJob(jobs: readonly JobView[], avatarId: string, seenActive: ReadonlySet<string>): JobView | null {
-  const own = jobs.filter((j) => j.avatarId === avatarId && j.kind !== "avatar.candidates");
-  return own.filter(isActiveJob).at(-1) ?? own.filter((j) => j.kind === "run" || seenActive.has(j.jobId)).at(-1) ?? own.at(-1) ?? null;
+function latestRunJob(jobs: readonly JobView[], avatarId: string): JobView | null {
+  const own = jobs.filter((j) => j.kind === "run" && j.avatarId === avatarId);
+  return own.filter(isActiveJob).at(-1) ?? own.at(-1) ?? null;
 }
 
 function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineView }) {
@@ -71,12 +55,20 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
   const [gallery, setGallery] = useState<GalleryList | null>(null);
   const [galleryError, setGalleryError] = useState<EngineError | null>(null);
   const [galleryRetry, setGalleryRetry] = useState(0);
-  /** This avatar's runs, with the job state they were read under: a running entry is trusted only for that state. */
-  const [runs, setRuns] = useState<{ forKey: string; runs: readonly RunSummary[] }>({ forKey: "", runs: [] });
+  /** This avatar's runs, for the resume rows. */
+  const [runs, setRuns] = useState<readonly RunSummary[]>([]);
   const [runsError, setRunsError] = useState<EngineError | null>(null);
   const [runsRefresh, setRunsRefresh] = useState(0);
   /** Run jobs seen queued or running on this screen: only their ending earns a notice. */
   const [watched, setWatched] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * The jobs the window already knew when this screen opened: a job that
+   * ended before then is old news (its notice was earned, or missed, back
+   * then), while one the store first hears of afterwards is news even if
+   * this screen never saw it running (a run that failed before its first
+   * progress, say).
+   */
+  const [knownAtOpen] = useState<ReadonlySet<string>>(() => new Set(view.jobs.map((j) => j.jobId)));
   /** Photos picked for a montage (stage 3): drawn as the mockup draws them, not sent anywhere yet. */
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   /**
@@ -90,7 +82,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
   const paidInFlight = view.paidInFlightAvatars.has(avatarId);
   const setPaidInFlight = (inFlight: boolean): void => store.setPaidInFlight(avatarId, inFlight);
 
-  const runJob = latestRunJob(view.jobs, avatarId, watched);
+  const runJob = latestRunJob(view.jobs, avatarId);
   const runActive = runJob !== null && isActiveJob(runJob);
   const runJobId = runJob?.jobId ?? null;
 
@@ -113,9 +105,8 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
     };
   }, [ready, client, avatarId, progressKey, galleryRetry]);
 
-  // The runs a resume can continue (and the running one's id, for its
-  // cancel): on open, whenever this avatar's run job starts or ends, and
-  // after this window's own start or resume.
+  // The runs a resume can continue: on open, whenever this avatar's run job
+  // starts or ends, and after this window's own start or resume.
   const statusKey = runJob ? `${runJob.jobId}:${runJob.status}` : "none";
   useEffect(() => {
     if (!ready) return;
@@ -123,7 +114,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
     void client.request("runs.list", {}).then((reply) => {
       if (!alive) return;
       if (reply.ok) {
-        setRuns({ forKey: statusKey, runs: reply.result.runs.filter((r) => r.avatarId === avatarId) });
+        setRuns(reply.result.runs.filter((r) => r.avatarId === avatarId));
         setRunsError(null);
       } else setRunsError(reply.error);
     });
@@ -150,14 +141,9 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
     });
   }
 
-  // One run per avatar at a time (the engine claims the avatar), so the running one in runs.list is this job's run —
-  // but only in a list read since this job last changed state: an older one may name a run that has ended since.
-  // Consulted only when the job's own runId is not yet known (M2): a run this
-  // window itself started or resumed always carries it from the store, and
-  // must never wait on (or be redirected by a stale) runs.list for its cancel.
-  const listedRunning = runs.forKey === statusKey ? (runs.runs.find((r) => r.running)?.runId ?? null) : null;
-  const activeRunId = runActive && runJob !== null ? (runJob.runId ?? listedRunning) : null;
-  const resumable = runs.runs.filter((r) => r.resumable);
+  // The active job's own runId, straight off its events (or the start/resume reply): cancel never waits on runs.list.
+  const activeRunId = runActive && runJob !== null ? runJob.runId : null;
+  const resumable = runs.filter((r) => r.resumable);
   const pending: PendingSlots | null =
     runJob !== null && runActive && runJob.total > runJob.done
       ? { remaining: runJob.total - runJob.done, drawing: Math.min(runJob.total - runJob.done, view.settings?.concurrency.network ?? 1) }
@@ -213,7 +199,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
             count={form.count}
             runJob={runJob}
             activeRunId={activeRunId}
-            watched={runJob !== null && watched.has(runJob.jobId)}
+            watched={runJob !== null && (watched.has(runJob.jobId) || !knownAtOpen.has(runJob.jobId))}
             runs={resumable}
             runsError={runsError}
             onRetryRuns={() => setRunsRefresh((n) => n + 1)}

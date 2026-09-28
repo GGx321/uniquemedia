@@ -63,7 +63,7 @@ function uniqueCandidates(lists: readonly (readonly Candidate[])[]): Candidate[]
 
 function latestCandidatesJob(jobs: readonly JobView[], avatarId: string | null): JobView | null {
   if (avatarId === null) return null;
-  const own = jobs.filter((j) => j.avatarId === avatarId && j.kind !== "run");
+  const own = jobs.filter((j) => j.avatarId === avatarId && j.kind === "avatar.candidates");
   return own[own.length - 1] ?? null;
 }
 

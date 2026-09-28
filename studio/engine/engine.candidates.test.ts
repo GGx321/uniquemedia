@@ -131,7 +131,7 @@ describe("avatars.generateCandidates", () => {
       "draft.changed", "job.progress", "draft.changed", "job.progress", "draft.changed", "job.progress", "draft.changed", "job.progress", "money.changed", "job.done",
     ]);
     expect(emitted.filter((e) => e.type === "job.progress").map((e) => e.payload)).toEqual(
-      [1, 2, 3, 4].map((done) => ({ jobId, avatarId: draftId, done, total: 4 })),
+      [1, 2, 3, 4].map((done) => ({ kind: "avatar.candidates", jobId, avatarId: draftId, done, total: 4 })),
     );
     expect(emitted.flatMap((e) => (e.type === "draft.changed" ? [e.payload.draft.candidates.length] : []))).toEqual([1, 2, 3, 4]);
     expect(emitted.find((e) => e.type === "draft.changed")).toMatchObject({ payload: { draft: { avatarId: draftId, traits: TRAITS, estimate: NEXT_BATCH } } });
@@ -311,7 +311,7 @@ describe("avatars.generateCandidates", () => {
     const jobId = jobIdOf(await engine.handle(generate(draftId)));
     const end = await jobEnd(events, jobId);
 
-    expect(end).toMatchObject({ type: "job.failed", payload: { jobId, error: { code: "AUTH_INVALID" } } });
+    expect(end).toMatchObject({ type: "job.failed", payload: { kind: "avatar.candidates", jobId, avatarId: draftId, error: { code: "AUTH_INVALID" } } });
     expect(net.imageCalls()).toHaveLength(1);
     expect(events().some((e) => e.type === "settings.changed" && e.payload.settings.apiKey.rejected)).toBe(true);
     expect((await snapshot(engine)).jobs).toMatchObject([{ jobId, status: "failed", error: { code: "AUTH_INVALID" } }]);
@@ -589,6 +589,7 @@ describe("avatars.cancel", () => {
     expect(ledgerLines(dir()).map((l) => [l.type, l.worstMicros])).toEqual([["reserve", IMAGE_WORST], ["reserve", IMAGE_WORST]]);
     const emitted = jobEvents(events().slice(before), jobId);
     expect(emitted.map((e) => e.type)).toEqual(["money.changed", "job.cancelled"]);
+    expect(emitted[1]).toMatchObject({ payload: { kind: "avatar.candidates", jobId, avatarId: draftId } });
     expect(emitted[0]).toMatchObject({ payload: { status: { unsettledMicros: 2 * IMAGE_WORST, unsettledCount: 2, reconcileNeeded: true, reconcileReasons: ["open-reserves"] } } });
     expect((await snapshot(engine)).jobs).toEqual([{ kind: "avatar.candidates", jobId, avatarId: draftId, status: "cancelled", done: 0, total: 4 }]);
     expect(engine.library?.photosByAvatar(draftId)).toEqual([]);

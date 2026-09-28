@@ -44,6 +44,8 @@ test("a whole avatar flow goes through the validating client without contract er
   scheduler.runAll();
   const progress = events.filter((e) => e.type === "job.progress");
   expect(progress.map((e) => (e.type === "job.progress" ? e.payload.done : -1))).toEqual([1, 2, 3, 4]);
+  // Protocol 3: every job event names its job.
+  expect(progress.every((e) => e.type === "job.progress" && e.payload.kind === "avatar.candidates" && e.payload.jobId === jobId && e.payload.avatarId === draft.avatarId)).toBe(true);
   const done = events.find((e) => e.type === "job.done");
   if (done?.type !== "job.done" || done.payload.result.kind !== "avatar.candidates") throw new Error("expected job.done");
   expect(done.payload.jobId).toBe(jobId);
@@ -132,11 +134,11 @@ test("budget, reconcile and key gates refuse paid commands", async () => {
 test("a 401 mid-job fails the job with AUTH_INVALID and marks the key rejected", async () => {
   const { scheduler, engine, client, events } = makeMock();
   const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));
-  await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
+  const started = await unwrap(client.request("avatars.generateCandidates", { avatarId: draft.avatarId, acceptedWorstMicros: 223_000 }));
   scheduler.next();
   engine.rejectKey();
   scheduler.runAll();
-  expect(events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { error: { code: "AUTH_INVALID" } } });
+  expect(events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { kind: "avatar.candidates", jobId: started.jobId, avatarId: draft.avatarId, error: { code: "AUTH_INVALID" } } });
   expect(events.some((e) => e.type === "job.done")).toBe(false);
   expect((await unwrap(client.request("settings.get", {}))).apiKey.rejected).toBe(true);
 });
@@ -535,7 +537,7 @@ test("candidates already drawn stay in the draft after the batch is cancelled mi
 
   expect(events.filter((e) => e.type === "draft.changed")).toHaveLength(1);
   expect(events.some((e) => e.type === "job.done")).toBe(false);
-  expect(events.find((e) => e.type === "job.cancelled")).toMatchObject({ payload: { jobId } });
+  expect(events.find((e) => e.type === "job.cancelled")).toMatchObject({ payload: { kind: "avatar.candidates", jobId, avatarId: draft.avatarId } });
   const snapshot = await unwrap(client.request("engine.snapshot", {}));
   expect(snapshot.drafts[0]?.candidates).toHaveLength(1);
 });

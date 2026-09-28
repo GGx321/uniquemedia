@@ -176,7 +176,7 @@ test("a resume's job.cancelled arriving before trackRunJob's own reply keeps the
   const { store, emit } = await rawHost();
   // As a genuinely fast cancel could race it: the job.cancelled event lands
   // here before this window's own runs.resume reply calls trackRunJob.
-  await emit({ type: "job.cancelled", payload: { jobId: "job-00000098" } });
+  await emit({ type: "job.cancelled", payload: { kind: "run", jobId: "job-00000098", runId: "run-00000098", avatarId: "avatar-zoe-0001" } });
 
   store.trackRunJob("job-00000098", "run-00000098", "avatar-zoe-0001", 12, 8);
   const job = store.getView().jobs.find((j) => j.jobId === "job-00000098");

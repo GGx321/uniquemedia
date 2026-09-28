@@ -238,13 +238,13 @@ interface ScenesColumnProps {
   count: number;
   /** This avatar's latest run job, if the window knows one. */
   runJob: JobView | null;
-  /** Its run, once known (the start reply, or `runs.list`); cancel needs it. */
+  /** Its run (from the job's own events or the start reply); cancel needs it. */
   activeRunId: string | null;
   /** Whether the latest run job was seen running on this screen: only then does its ending get a notice. */
   watched: boolean;
   runs: readonly RunSummary[];
   runsError: EngineError | null;
-  /** Retries the `runs.list` this screen asks for its stopped runs and, when a running job's own runId is not yet known, its cancel target (M2). */
+  /** Retries the `runs.list` this screen asks for its stopped runs. */
   onRetryRuns: () => void;
   /** Why a paid resume cannot be sent right now, if anything stops it. */
   blockedReason: string | null;

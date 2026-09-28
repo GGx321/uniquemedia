@@ -2,7 +2,7 @@ import { z } from "zod";
 import { nonEmpty, ProtocolVersion, Seq } from "./envelope";
 import { EngineError } from "./errors";
 import { Count, Id, Micros } from "./primitives";
-import { AvatarSummary, Draft, EngineNotice, JobProgress, JobResult, MoneyStatus, ReconcileReasons, Settings } from "./state";
+import { AvatarSummary, Draft, EngineNotice, JobCancelled, JobFailed, JobProgress, JobResult, MoneyStatus, ReconcileReasons, Settings } from "./state";
 
 function defineEvent<const T extends string, P extends z.ZodType>(type: T, payload: P) {
   return {
@@ -23,6 +23,7 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
 /**
  * Engine → renderer notifications. Each carries a `seq` and the `bootId` of the engine that emitted it.
  *
+ * - `job.progress`, `job.failed`, `job.cancelled`: each carries the job's kind, avatar and (a run) runId; `job.done` carries the same in its `result`.
  * - `job.cancelled`: the job stopped on a user's cancel; attempts it aborted count at their worst case until reconciled.
  * - `settings.changed`: the whole settings, key status included (`rejected` after a 401), whenever any of them changed.
  * - `avatar.changed`: a saved avatar was created (a draft was picked) or changed; a draft with its id is gone.
@@ -33,8 +34,8 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
 const EVENT_SPECS = [
   defineEvent("job.progress", JobProgress),
   defineEvent("job.done", z.strictObject({ jobId: Id, result: JobResult })),
-  defineEvent("job.failed", z.strictObject({ jobId: Id, error: EngineError })),
-  defineEvent("job.cancelled", z.strictObject({ jobId: Id })),
+  defineEvent("job.failed", JobFailed),
+  defineEvent("job.cancelled", JobCancelled),
   defineEvent("money.changed", z.strictObject({ status: MoneyStatus })),
   defineEvent("money.reconcileNeeded", z.strictObject({ reasons: ReconcileReasons.min(1), unsettledMicros: Micros })),
   /** `librarySwitchGeneration` is `Snapshot`'s own counter: it says whether this settings.changed is a genuine library switch. */

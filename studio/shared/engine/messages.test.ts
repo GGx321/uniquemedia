@@ -157,7 +157,7 @@ const progressEvent: EventMessage = {
   seq: 7,
   bootId: BOOT,
   type: "job.progress",
-  payload: { jobId: "job-00000001", avatarId: DRAFT_ID, done: 1, total: 4 },
+  payload: { kind: "avatar.candidates", jobId: "job-00000001", avatarId: DRAFT_ID, done: 1, total: 4 },
 };
 
 type CommandCase<T extends CommandType> = { payload: CommandPayload<T>; result: CommandResult<T> };
@@ -241,13 +241,13 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
 };
 
 const eventCases: { [T in EventType]: EventPayload<T> } = {
-  "job.progress": { jobId: "job-00000001", avatarId: DRAFT_ID, done: 2, total: 4 },
+  "job.progress": { kind: "avatar.candidates", jobId: "job-00000001", avatarId: DRAFT_ID, done: 2, total: 4 },
   "job.done": {
     jobId: "job-00000001",
     result: { kind: "avatar.candidates", avatarId: DRAFT_ID, candidates, rejectedByAgeCheck: 1, failedSlots: [{ slot: 4, reason: "age-rejected" }] },
   },
-  "job.failed": { jobId: "job-00000001", error: { code: "AUTH_INVALID", detail: "401 from OpenRouter" } },
-  "job.cancelled": { jobId: "job-00000001" },
+  "job.failed": { kind: "run", jobId: "job-00000001", runId: "run-00000001", avatarId: "avatar-0001", error: { code: "AUTH_INVALID", detail: "401 from OpenRouter" } },
+  "job.cancelled": { kind: "avatar.candidates", jobId: "job-00000001", avatarId: DRAFT_ID },
   "money.changed": { status: money },
   "money.reconcileNeeded": { reasons: ["open-reserves"], unsettledMicros: 55_000 },
   "settings.changed": { settings: { ...settings, apiKey: { ...keyStatus, rejected: true } }, librarySwitchGeneration: 2 },
@@ -728,13 +728,13 @@ describe("results", () => {
 
 describe("events", () => {
   test("rejects progress past the total", () => {
-    expect(reasonOf(event("job.progress", { jobId: "job-00000001", avatarId: DRAFT_ID, done: 5, total: 4 }))).toContain("payload.done");
+    expect(reasonOf(event("job.progress", { kind: "avatar.candidates", jobId: "job-00000001", avatarId: DRAFT_ID, done: 5, total: 4 }))).toContain("payload.done");
   });
 
   // The renderer must not have to guess a job's avatar (store.ts's job.progress
   // handler reads it straight off the event) — so it is required, not optional.
   test("rejects job.progress without an avatarId", () => {
-    expect(reasonOf(event("job.progress", { jobId: "job-00000001", done: 1, total: 4 }))).toContain("avatarId");
+    expect(reasonOf(event("job.progress", { kind: "avatar.candidates", jobId: "job-00000001", done: 1, total: 4 }))).toContain("avatarId");
   });
 
   test("rejects more than four candidates in one job", () => {
@@ -795,7 +795,25 @@ describe("events", () => {
   });
 
   test("rejects job.cancelled without the job id", () => {
-    expect(reasonOf(event("job.cancelled", {}))).toContain("payload.jobId");
+    expect(reasonOf(event("job.cancelled", { kind: "avatar.candidates", avatarId: DRAFT_ID }))).toContain("payload.jobId");
+  });
+
+  // Job events say whose job they are (owner-facing gap: a run that failed before its first progress
+  // was invisible in every other window, and the renderer guessed kind, run and avatar).
+  test.each(["job.progress", "job.failed", "job.cancelled"] as const)("%s rejects a payload without a kind", (type) => {
+    const base = { jobId: "job-00000001", avatarId: DRAFT_ID, done: 1, total: 4, error: { code: "INTERNAL" } };
+    const payload = type === "job.progress" ? { jobId: base.jobId, avatarId: base.avatarId, done: 1, total: 4 } : type === "job.failed" ? { jobId: base.jobId, avatarId: base.avatarId, error: base.error } : { jobId: base.jobId, avatarId: base.avatarId };
+    expect(reasonOf(event(type, payload))).toContain("kind");
+  });
+
+  test.each(["job.progress", "job.failed", "job.cancelled"] as const)("%s of a run rejects a payload without its runId", (type) => {
+    const payload =
+      type === "job.progress"
+        ? { kind: "run", jobId: "job-00000002", avatarId: "avatar-0001", done: 1, total: 4 }
+        : type === "job.failed"
+          ? { kind: "run", jobId: "job-00000002", avatarId: "avatar-0001", error: { code: "INTERNAL" } }
+          : { kind: "run", jobId: "job-00000002", avatarId: "avatar-0001" };
+    expect(reasonOf(event(type, payload))).toContain("runId");
   });
 });
 

@@ -1258,12 +1258,14 @@ export class Engine {
       this.#emitMoney();
       const state = this.#jobs.finishRun(run.jobId, end);
       const v = PROTOCOL_VERSION;
+      // The job's identity is the run's own, never read back from the registry: it must name the job even when the registry no longer knows it.
+      const ref = { kind: "run" as const, jobId: run.jobId, runId: plan.runId, avatarId: plan.avatarId };
       if (state?.status === "done" && state.result !== undefined) {
         this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.done", payload: { jobId: run.jobId, result: state.result } });
       } else if (end.status === "failed") {
-        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.failed", payload: { jobId: run.jobId, error: end.error } });
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.failed", payload: { ...ref, error: end.error } });
       } else if (end.status === "cancelled") {
-        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.cancelled", payload: { jobId: run.jobId } });
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.cancelled", payload: ref });
       }
     } catch (error) {
       console.error(`studio engine: the end of run job ${run.jobId} could not be announced (${errorKind(error)})`);
@@ -1771,12 +1773,13 @@ export class Engine {
       this.#emitMoney();
       const state = this.#jobs.finish(job.jobId, end);
       const v = PROTOCOL_VERSION;
+      const ref = { kind: "avatar.candidates" as const, jobId: job.jobId, avatarId: job.avatarId };
       if (state?.status === "done" && state.result !== undefined) {
         this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: state.result } });
       } else if (end.status === "failed") {
-        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.failed", payload: { jobId: job.jobId, error: end.error } });
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.failed", payload: { ...ref, error: end.error } });
       } else if (end.status === "cancelled") {
-        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.cancelled", payload: { jobId: job.jobId } });
+        this.#emit({ v, id: this.#deps.newId(), kind: "event", type: "job.cancelled", payload: ref });
       }
     } catch (error) {
       console.error(`studio engine: the end of job ${job.jobId} could not be announced (${errorKind(error)})`);

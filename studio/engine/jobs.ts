@@ -1,4 +1,4 @@
-import type { EngineError, FailedCandidateSlot, JobState } from "../shared/engine";
+import type { EngineError, FailedCandidateSlot, JobProgress, JobState } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
 // The engine's jobs as `Snapshot.jobs` lists them. In memory only: avatar
@@ -38,12 +38,14 @@ export class JobRegistry {
     return this.#start({ kind: "run", jobId, runId: run.runId, avatarId: run.avatarId, status: "running", done: run.done, total: run.total });
   }
 
-  /** Records how many slots are done; the `job.progress` payload, or null for a job that is not running. */
-  progress(jobId: string, done: number): { jobId: string; avatarId: string; done: number; total: number } | null {
+  /** Records how many slots are done; the `job.progress` payload (with the job's kind, avatar and run), or null for a job that is not running. */
+  progress(jobId: string, done: number): JobProgress | null {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined || entry.state.status !== "running") return null;
     entry.state = { ...entry.state, done };
-    return { jobId, avatarId: entry.state.avatarId, done, total: entry.state.total };
+    const { total } = entry.state;
+    if (entry.state.kind === "run") return { kind: "run", jobId, runId: entry.state.runId, avatarId: entry.state.avatarId, done, total };
+    return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
   }
 
   /** Ends a running candidates job; its final state, or null for any other job. */

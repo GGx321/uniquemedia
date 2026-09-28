@@ -349,7 +349,7 @@ describe("runs.start", () => {
     const end = await jobEnd(events, jobId);
 
     const progress = runEvents(events(), jobId).filter((e) => e.type === "job.progress");
-    expect(progress.map((e) => e.payload)).toEqual([1, 2, 3, 4].map((done) => ({ jobId, avatarId, done, total: 4 })));
+    expect(progress.map((e) => e.payload)).toEqual([1, 2, 3, 4].map((done) => ({ kind: "run", jobId, runId, avatarId, done, total: 4 })));
     expect(end).toMatchObject({ type: "job.done", payload: { jobId, result: { kind: "run", runId, avatarId, failedSlots: 0 } } });
     if (end.type !== "job.done" || end.payload.result.kind !== "run") throw new Error("expected a run's job.done");
     expect(end.payload.result.photoIds).toHaveLength(4);
@@ -464,7 +464,7 @@ describe("runs.cancel", () => {
     ok(await engine.handle(command("runs.cancel", { runId })));
     const end = await jobEnd(events, jobId);
 
-    expect(end.type).toBe("job.cancelled");
+    expect(end).toMatchObject({ type: "job.cancelled", payload: { kind: "run", jobId, runId, avatarId } });
     expect(net.imageCalls()).toHaveLength(4);
     const status = ok(await engine.handle(command("money.status")));
     expect(status).toMatchObject({ result: { unsettledCount: 4, unsettledMicros: 4 * 50_000, reconcileNeeded: true, reconcileReasons: ["open-reserves"] } });
@@ -600,7 +600,9 @@ describe("runs.resume", () => {
     const { engine, events } = await engineOver(net);
     const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
 
-    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.failed", payload: { error: { code: "AUTH_INVALID" } } });
+    // The run failed before any slot finished, so no job.progress ever named it: its end has to.
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.failed", payload: { kind: "run", jobId, runId, avatarId, error: { code: "AUTH_INVALID" } } });
+    expect(runEvents(events(), jobId).some((e) => e.type === "job.progress")).toBe(false);
     expect(events().some((e) => e.type === "settings.changed" && e.payload.settings.apiKey.rejected)).toBe(true);
     expect(failed(await engine.handle(resumeAnyway(runId))).error.code).toBe("AUTH_INVALID");
   });

@@ -23,7 +23,7 @@ describe("JobRegistry", () => {
     const jobs = new JobRegistry();
     jobs.startCandidates("job-00000001", DRAFT, 4);
 
-    expect(jobs.progress("job-00000001", 2)).toEqual({ jobId: "job-00000001", avatarId: DRAFT, done: 2, total: 4 });
+    expect(jobs.progress("job-00000001", 2)).toEqual({ kind: "avatar.candidates", jobId: "job-00000001", avatarId: DRAFT, done: 2, total: 4 });
     expect(jobs.states()).toMatchObject([{ status: "running", done: 2 }]);
     expect(jobs.progress("job-00000404", 1)).toBeNull();
   });
@@ -123,11 +123,11 @@ describe("JobRegistry: photo run jobs", () => {
     valid(jobs.states());
   });
 
-  test("progress of a run job carries its avatar, like a candidates job's", () => {
+  test("progress of a run job carries its kind, runId and avatar, like a candidates job's carries its kind and avatar", () => {
     const jobs = new JobRegistry();
     jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 20, done: 0 });
 
-    expect(jobs.progress("job-00000001", 4)).toEqual({ jobId: "job-00000001", avatarId: AVATAR, done: 4, total: 20 });
+    expect(jobs.progress("job-00000001", 4)).toEqual({ kind: "run", jobId: "job-00000001", runId: RUN, avatarId: AVATAR, done: 4, total: 20 });
   });
 
   test("a done run job carries its result: the run's photos and how many slots have none", () => {
