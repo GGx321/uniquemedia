@@ -14,6 +14,13 @@ useNativeGlobals();
 const ENGINE_DIR = dirname(fileURLToPath(import.meta.url));
 const STUDIO_DIR = resolve(ENGINE_DIR, "..");
 const ENTRY = join(ENGINE_DIR, "main.ts");
+/**
+ * T7c: the face worker thread is a second built entry (engine/faceWorker,
+ * electron.studio.vite.config.ts) that main.ts reaches only by URL, never by
+ * import — so the walk from ENTRY never sees it. It runs inside the same
+ * utilityProcess and holds the same rules (no `electron`, no environment).
+ */
+const WORKER_ENTRY = join(ENGINE_DIR, "face", "worker", "faceWorker.ts");
 
 /**
  * Bare packages the engine may bundle: the contract's validator, the ffmpeg
@@ -130,10 +137,10 @@ interface Graph {
   problems: string[];
 }
 
-function walkFromEntry(): Graph {
+function walkFromEntry(entry: string = ENTRY): Graph {
   const seen = new Set<string>();
   const problems: string[] = [];
-  const queue = [ENTRY];
+  const queue = [entry];
   while (queue.length > 0) {
     const file = queue.pop();
     if (file === undefined || seen.has(file)) continue;
@@ -196,4 +203,16 @@ test("the walk reaches the engine's dispatcher, the control schema, money and th
 
 test("every module reachable from the engine entry uses only node:* APIs and never reads the environment", () => {
   expect(walkFromEntry().problems).toEqual([]);
+});
+
+test("the walk from the face worker entry reaches its gate, decoder and protocol", () => {
+  const { files } = walkFromEntry(WORKER_ENTRY);
+  expect(files).toContain(join("engine", "face", "worker", "faceWorker.ts"));
+  expect(files).toContain(join("engine", "face", "worker", "protocol.ts"));
+  expect(files).toContain(join("engine", "face", "gate.ts"));
+  expect(files).toContain(join("engine", "decode", "realBackend.ts"));
+});
+
+test("every module reachable from the face worker entry uses only node:* APIs and never reads the environment", () => {
+  expect(walkFromEntry(WORKER_ENTRY).problems).toEqual([]);
 });

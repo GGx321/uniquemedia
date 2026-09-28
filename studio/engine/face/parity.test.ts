@@ -12,6 +12,8 @@ import { ortWasmPathsFrom } from "../decode/wasmPaths";
 import { createFaceGate, type FaceGateImage } from "./gate";
 import { ELECTRON_DECODE_HASHES } from "./fixtures/electronDecodeHashes";
 import { IMPOSTOR, MASTER, TRUE_RENDERS } from "./fixtures/expected";
+import { realWorkerSpawner } from "./testing/realWorker";
+import { createWorkerFaceGate } from "./worker/workerGate";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -107,6 +109,47 @@ describe.skipIf(!MODELS_PRESENT)("parity with the spike's OpenCV numbers (real m
         if (verdict.kind !== "match" && verdict.kind !== "mismatch") throw new Error(`${expected.file}: unexpected verdict ${verdict.kind}`);
         expect(Math.abs(verdict.similarity - expected.cosMaster)).toBeLessThanOrEqual(COSINE_TOLERANCE);
         expect(Math.abs(verdict.headRatio - expected.headRatio)).toBeLessThanOrEqual(0.001);
+      }
+    } finally {
+      await gate.dispose();
+    }
+  }, 60_000);
+
+  // T7c: the SAME numbers through the production path — bytes in, the face
+  // worker thread decoding and inferring, a small verdict out. The worker
+  // runs the identical decode + gate code, so this is not a second
+  // calibration: it pins that nothing about the worker boundary (transfer,
+  // structured clone of the embedding, zod at both ends) moved a single
+  // digit, at the same zero-drift bar as the in-thread test above.
+  test("T7c: through the worker thread the results are identical — same cosines, face counts and headRatios", async () => {
+    const fixtures = [MASTER, IMPOSTOR, ...TRUE_RENDERS];
+    const gate = createWorkerFaceGate({ spawnWorker: realWorkerSpawner() });
+    const live = new AbortController().signal;
+    try {
+      const inThreadModels = { yunet: readFileSync(MODEL_PATHS.yunet), sface: readFileSync(MODEL_PATHS.sface) };
+      const decoded = await decodeFixtures(fixtures.map((f) => f.file));
+      const inThread = await createFaceGate(inThreadModels);
+      try {
+        const [masterImage] = decoded;
+        if (!masterImage) throw new Error("no master image decoded");
+        const inThreadMaster = await inThread.embed(masterImage);
+        const masterBytes = new Uint8Array(readFileSync(join(IMAGE_DIR, MASTER.file)));
+        const viaWorkerMaster = await gate.embed(masterBytes, live);
+        expect(Array.from(viaWorkerMaster)).toEqual(Array.from(inThreadMaster)); // bit-identical, not merely close
+
+        for (let i = 0; i < fixtures.length; i++) {
+          const expected = fixtures[i]!;
+          const bytes = new Uint8Array(readFileSync(join(IMAGE_DIR, expected.file)));
+          const viaWorker = await gate.check({ pose: "front", bytes, masterEmbedding: viaWorkerMaster }, live);
+          const direct = await inThread.check({ pose: "front", image: decoded[i]!, masterEmbedding: inThreadMaster });
+          expect(viaWorker).toEqual(direct);
+          expect(viaWorker.faces).toBe(expected.faces);
+          if (viaWorker.kind !== "match" && viaWorker.kind !== "mismatch") throw new Error(`${expected.file}: unexpected verdict ${viaWorker.kind}`);
+          expect(Math.abs(viaWorker.similarity - expected.cosMaster)).toBeLessThanOrEqual(COSINE_TOLERANCE);
+          expect(Math.abs(viaWorker.headRatio - expected.headRatio)).toBeLessThanOrEqual(0.001);
+        }
+      } finally {
+        await inThread.dispose();
       }
     } finally {
       await gate.dispose();

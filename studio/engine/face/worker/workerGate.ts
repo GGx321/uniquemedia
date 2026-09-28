@@ -1,0 +1,291 @@
+import type { Worker } from "node:worker_threads";
+import { timeoutSignal, untilAborted } from "../../money/timeoutSignal";
+import type { FacePose } from "../config";
+import { NoFaceInReferenceError } from "../noFaceError";
+import type { FaceVerdict } from "../verdict";
+import { FaceWorkerRequestSchema, FaceWorkerResponseSchema, type FaceWorkerRequest, type FaceWorkerResponse } from "./protocol";
+
+// T7c: the engine side of the face worker. The face gate's heavy work —
+// image decode, YuNet, SFace — runs in ONE worker thread this module owns;
+// the engine sends bytes and gets back a small, validated verdict or
+// embedding, so its own event loop (commands, ledger fsyncs, progress
+// events) never waits on WASM.
+//
+// Why a worker AND a kill switch. Synchronous WASM work cannot be
+// interrupted from the thread it runs on, so neither a gate timeout nor a
+// job's cancel could ever stop a pathological input — the old design could
+// only abandon such a computation logically (T7b re-review, B1), leaving a
+// "zombie" that kept burning CPU and could overlap the next check. Here the
+// interruption is real: when the computation in flight is cancelled (or
+// times out), the worker is TERMINATED, and the lane is released only once
+// it has actually exited — so two computations can never overlap. The next
+// check lazily spawns a fresh worker (~0.2 s to load; the models are read
+// from the page cache).
+//
+// The lane is a plain FIFO: one worker is one computation at a time. A
+// caller cancelled while still queued leaves the queue at once (removed by
+// identity, so nothing behind it is disturbed — the T7b re-review's B1
+// hazard cannot arise from a chained-promise design it no longer has) and
+// never touches the worker that is busy for someone else.
+//
+// Failure classification is the one the in-thread gate had: a result the
+// worker reports as a clean failure (`failed`) keeps the worker alive and
+// surfaces as an ordinary Error (a decode failure, a broken model) — or
+// `NoFaceInReferenceError` for the one expected failure, a master with no
+// face. Everything else — a crash, an exit, a message outside the protocol,
+// a load failure or timeout — kills the worker and rejects with an Error:
+// systemic, never a per-photo retry, exactly like a broken in-thread gate
+// (runJob.ts's checkFree reads any uncaught gate failure as GateBroken).
+
+/** Below main's own 30 s command deadline (`engineHost.ts`'s REQUEST_TIMEOUT_MS), for the same reason `FACE_GATE_LOAD_TIMEOUT_MS` in main.ts is: a load must succeed or fail informatively before main gives up on it. */
+export const FACE_WORKER_LOAD_TIMEOUT_MS = 25_000;
+
+export interface WorkerFaceGateOptions {
+  /** Starts one worker thread. The engine's entry supplies `new Worker(<built faceWorker entry>, { workerData })`; tests supply a scripted one. */
+  spawnWorker: () => Worker;
+  /** How long a freshly spawned worker may take to report `ready`. `FACE_WORKER_LOAD_TIMEOUT_MS` unless a test overrides it. */
+  loadTimeoutMs?: number;
+}
+
+export interface WorkerFaceGate {
+  /** Spawns the worker and waits for it to load (the engine's preflight); a no-op when one is already live. Aborting `signal` terminates a load in progress. */
+  start(signal?: AbortSignal): Promise<void>;
+  /** Decodes `bytes` (JPEG/PNG), normalizes, detects, and — front/three-quarter with one prominent face — compares with `masterEmbedding`. `bytes` is copied, never transferred away from the caller. */
+  check(input: { pose: FacePose; bytes: Uint8Array; masterEmbedding: Float32Array }, signal: AbortSignal): Promise<FaceVerdict>;
+  /** The reference image's SFace embedding. Rejects with `NoFaceInReferenceError` when the worker finds no face. */
+  embed(bytes: Uint8Array, signal: AbortSignal): Promise<Float32Array>;
+  /** Terminates the worker for good; a computation in flight fails, and every later call rejects. */
+  dispose(): Promise<void>;
+}
+
+/** A worker's answer to one request: a value, or a failure the worker itself reported (it stays alive after those). */
+type Outcome<T> = { ok: true; value: T } | { ok: false; error: Error };
+
+interface Live {
+  readonly worker: Worker;
+  /** Settles when the worker reports `ready` (resolve) or `load-failed`/dies first (reject). */
+  readonly loaded: Promise<void>;
+  /** Resolves when the worker's `exit` event has fired. */
+  readonly gone: Promise<void>;
+  dead: boolean;
+  killing: Promise<void> | null;
+  /** Set only while a request is in flight. */
+  onMessage: ((raw: unknown) => void) | null;
+  onDeath: ((error: Error) => void) | null;
+}
+
+interface Waiter {
+  grant(): void;
+  reject(error: Error): void;
+}
+
+const NEVER_ABORTED = new AbortController().signal;
+
+function describeDeath(failure: Error | null, code: number): string {
+  return failure !== null ? failure.message : `exit code ${code}`;
+}
+
+export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFaceGate {
+  const loadTimeoutMs = options.loadTimeoutMs ?? FACE_WORKER_LOAD_TIMEOUT_MS;
+  let live: Live | null = null;
+  let disposed = false;
+  let nextRequestId = 0;
+
+  // ---- the lane -----------------------------------------------------------
+  let busy = false;
+  const queue: Waiter[] = [];
+
+  function acquire(signal: AbortSignal): Promise<() => void> {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      const next = queue.shift();
+      if (next !== undefined) next.grant();
+      else busy = false;
+    };
+    if (!busy) {
+      busy = true;
+      return Promise.resolve(release);
+    }
+    return new Promise<() => void>((resolve, reject) => {
+      const onAbort = (): void => {
+        const index = queue.indexOf(waiter);
+        if (index >= 0) queue.splice(index, 1);
+        reject(signal.reason);
+      };
+      const waiter: Waiter = {
+        grant: () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(release);
+        },
+        reject: (error) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      queue.push(waiter);
+    });
+  }
+
+  // ---- the worker ---------------------------------------------------------
+  function spawn(): Live {
+    const worker = options.spawnWorker();
+    let markLoaded: () => void = () => {};
+    let failLoad: (error: Error) => void = () => {};
+    const loaded = new Promise<void>((resolve, reject) => {
+      markLoaded = resolve;
+      failLoad = reject;
+    });
+    loaded.catch(() => {}); // every waiter handles it; this only keeps a load nobody awaits any more from surfacing as unhandled
+    let markGone: () => void = () => {};
+    const gone = new Promise<void>((resolve) => {
+      markGone = resolve;
+    });
+    const entry: Live = { worker, loaded, gone, dead: false, killing: null, onMessage: null, onDeath: null };
+    let ready = false;
+    let failure: Error | null = null;
+
+    worker.on("message", (raw: unknown) => {
+      if (ready) {
+        entry.onMessage?.(raw);
+        return;
+      }
+      const parsed = FaceWorkerResponseSchema.safeParse(raw);
+      if (parsed.success && parsed.data.type === "ready") {
+        ready = true;
+        markLoaded();
+      } else if (parsed.success && parsed.data.type === "load-failed") {
+        failLoad(new Error(`the face worker could not load: ${parsed.data.message}`));
+      } else {
+        failLoad(new Error("the face worker sent something other than ready while loading"));
+      }
+    });
+    worker.on("error", (error: Error) => {
+      failure = error;
+    });
+    worker.on("exit", (code: number) => {
+      entry.dead = true;
+      if (live === entry) live = null;
+      const error = new Error(`the face worker died (${describeDeath(failure, code)})`);
+      failLoad(error);
+      entry.onDeath?.(error);
+      markGone();
+    });
+    return entry;
+  }
+
+  /** Terminates `entry` and returns once it has really exited. Idempotent. */
+  function kill(entry: Live): Promise<void> {
+    if (live === entry) live = null;
+    entry.killing ??= (async () => {
+      // An already-exited worker is never asked to terminate: Bun's own
+      // `terminate()` on one never settles (Node's resolves), and there is
+      // nothing left to stop anyway.
+      if (!entry.dead) await entry.worker.terminate();
+      await entry.gone;
+    })();
+    return entry.killing;
+  }
+
+  /** The live worker, spawning and loading a fresh one when there is none. The load is bounded (`loadTimeoutMs`) and abortable; a failed load leaves no worker behind. */
+  async function liveWorker(signal: AbortSignal): Promise<Live> {
+    if (live !== null && !live.dead) return live;
+    const entry = spawn();
+    live = entry;
+    const timeout = timeoutSignal(loadTimeoutMs);
+    try {
+      await untilAborted(untilAborted(entry.loaded, signal), timeout.signal);
+      return entry;
+    } catch (error) {
+      await kill(entry);
+      if (timeout.signal.aborted && !signal.aborted) throw new Error(`the face worker did not become ready within ${loadTimeoutMs} ms`);
+      throw error;
+    } finally {
+      timeout.clear();
+    }
+  }
+
+  /** Runs `body` on the live worker, alone (the lane), and interruptibly: abort — or any failure that is not the worker's own clean report — terminates the worker before this settles. */
+  async function inLane<T>(signal: AbortSignal, body: (entry: Live) => Promise<Outcome<T>>): Promise<T> {
+    if (disposed) throw new Error("the face worker gate is disposed");
+    const release = await acquire(signal);
+    try {
+      signal.throwIfAborted();
+      if (disposed) throw new Error("the face worker gate is disposed");
+      const entry = await liveWorker(signal);
+      let outcome: Outcome<T>;
+      try {
+        outcome = await untilAborted(body(entry), signal);
+      } catch (error) {
+        await kill(entry);
+        throw error;
+      }
+      if (!outcome.ok) throw outcome.error;
+      return outcome.value;
+    } finally {
+      release();
+    }
+  }
+
+  /** Posts one request and waits for the response `pick` recognizes as its own; anything else is a protocol violation (the caller kills the worker). */
+  function request<T>(entry: Live, message: FaceWorkerRequest, transfer: ArrayBuffer[], pick: (response: FaceWorkerResponse) => T | undefined): Promise<Outcome<T>> {
+    return new Promise<Outcome<T>>((resolve, reject) => {
+      if (entry.dead) return reject(new Error("the face worker died before the request could be sent"));
+      const settle = (): void => {
+        entry.onMessage = null;
+        entry.onDeath = null;
+      };
+      entry.onDeath = (error) => {
+        settle();
+        reject(error);
+      };
+      entry.onMessage = (raw) => {
+        settle();
+        const parsed = FaceWorkerResponseSchema.safeParse(raw);
+        if (!parsed.success) return reject(new Error("the face worker answered with something outside the protocol"));
+        const response = parsed.data;
+        if (response.type === "failed" && response.id === message.id) {
+          return resolve({ ok: false, error: response.code === "no-face-in-reference" ? new NoFaceInReferenceError() : new Error(response.message) });
+        }
+        const value = pick(response);
+        if (value === undefined) return reject(new Error(`the face worker sent an unexpected ${response.type} response`));
+        resolve({ ok: true, value });
+      };
+      entry.worker.postMessage(message, transfer);
+    });
+  }
+
+  /** What crosses to the worker is a copy: the caller still needs its own bytes (to store the photo), and a transferred buffer would be detached. The copy itself is transferred, not cloned again. */
+  function copyForTransfer(bytes: Uint8Array): ArrayBuffer {
+    return bytes.slice().buffer;
+  }
+
+  return {
+    async start(signal: AbortSignal = NEVER_ABORTED): Promise<void> {
+      await inLane(signal, async () => ({ ok: true, value: undefined }));
+    },
+
+    check(input, signal) {
+      const id = nextRequestId++;
+      const bytes = copyForTransfer(input.bytes);
+      const message = FaceWorkerRequestSchema.parse({ type: "check", id, pose: input.pose, bytes, masterEmbedding: input.masterEmbedding });
+      return inLane(signal, (entry) => request(entry, message, [bytes], (r) => (r.type === "checked" && r.id === id ? r.verdict : undefined)));
+    },
+
+    embed(bytes, signal) {
+      const id = nextRequestId++;
+      const copy = copyForTransfer(bytes);
+      const message = FaceWorkerRequestSchema.parse({ type: "embed", id, bytes: copy });
+      return inLane(signal, (entry) => request(entry, message, [copy], (r) => (r.type === "embedded" && r.id === id ? r.embedding : undefined)));
+    },
+
+    async dispose(): Promise<void> {
+      disposed = true;
+      for (const waiter of queue.splice(0)) waiter.reject(new Error("the face worker gate is disposed"));
+      if (live !== null) await kill(live);
+    },
+  };
+}
