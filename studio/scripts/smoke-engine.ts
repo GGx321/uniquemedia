@@ -1162,10 +1162,11 @@ async function createActiveAvatarForRun(cdp: Cdp, name: string): Promise<unknown
  * image's own PDQ-distinct background by facePool.ts) instead of a faceless
  * mandelbrot portrait and pattern, so every front/three-quarter slot
  * (RUN_POSES keeps profile/back off) can actually pass instead of retrying
- * forever. L9: `faceMismatchOnce: true` additionally makes exactly one
- * served image a genuine "no face detected" instead — this scenario's own
- * step 8c proves that slot's first attempt retries and a later attempt
- * passes, not only that the always-matches path works.
+ * forever. L9: `faceMismatchAt` additionally makes exactly one served
+ * image — the run's own first slot attempt, past the 4 candidate portraits
+ * generated before it — a genuine "no face detected" instead: this
+ * scenario's own step 8c proves that slot's first attempt retries and a
+ * later attempt passes, not only that the always-matches path works.
  *
  * Its own app instance, its own temp userData and library, its own mock
  * server — kept apart from every other scenario's money and events. The
@@ -1173,16 +1174,27 @@ async function createActiveAvatarForRun(cdp: Cdp, name: string): Promise<unknown
  * requests, and no `qa.age` verdict on any photo.
  */
 async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
+  // L9: `createActiveAvatarForRun` below always generates exactly 4
+  // candidates (avatars.generateCandidates' own fixed batch size) before the
+  // run's own first image request — the mismatch index must land AFTER all
+  // of them, or it corrupts the master itself instead of a run slot
+  // (mockOpenRouter.ts's `buildFacePool` own comment has the full story of
+  // the bug this fixed: a mismatch at index 0 made `avatars.pick`'s own
+  // `candidates[0]` — always the FIRST generated candidate — a faceless
+  // master, failing the whole run as MASTER_FACE_UNUSABLE before any slot
+  // ever ran).
+  const CANDIDATES_BEFORE_RUN = 4;
   const mock = await startMockOpenRouter({
     descriptorText: AVATAR_DESCRIPTOR,
     imageDelayMs: RUN_REQUEST_DELAY_MS,
     writerDelayMs: RUN_REQUEST_DELAY_MS,
     distinctImages: true,
     faceFixture: true,
-    // L9: exactly one served image (pool index 0) is a genuine "no face
-    // detected" instead of the matching fixture face, so this scenario also
-    // proves a real face-gate retry — not just the always-matches path.
-    faceMismatchOnce: true,
+    // Exactly one served image — the run's own first slot attempt — is a
+    // genuine "no face detected" instead of the matching fixture face, so
+    // this scenario also proves a real face-gate retry, not just the
+    // always-matches path.
+    faceMismatchAt: CANDIDATES_BEFORE_RUN,
   });
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-run-"));
   const userData = join(tmp, "userData");
@@ -1368,7 +1380,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     );
 
     // 8c. L9: this scenario's own induced face mismatch (mockOpenRouter's
-    // `faceMismatchOnce`: exactly one served run image is a genuine "no
+    // `faceMismatchAt`: exactly one served run image is a genuine "no
     // face detected") must have made at least one slot actually retry — a
     // qa-retry attempt outcome in the journal — and every slot still ended
     // with a stored photo (step 8b's own exact-count check already proves
