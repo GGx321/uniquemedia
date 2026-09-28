@@ -208,7 +208,7 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
   const ageId = ageAttemptId(job.jobId, slot);
   const imageAgeCheck = job.imageAgeCheck;
   const ageShape = imageAgeCheck === "on" ? ageCheckShape() : null;
-  const holds = [{ attemptId, scope: job.scope, worstMicros: deps.priceBook.imageWorstCase({ model: choice.model, resolution: choice.resolution, quality: choice.quality, refs: choice.refs }) }];
+  const holds = [{ attemptId, scope: job.scope, worstMicros: deps.priceBook.imageWorstCase({ model: choice.model, quality: choice.quality, refs: choice.refs }) }];
   if (ageShape !== null) holds.push({ attemptId: ageId, scope: job.scope, worstMicros: chatAttemptWorstMicros(deps.priceBook, ageShape) });
   const held = await deps.budget.tryHold(holds);
   if (!held.ok) {
@@ -243,7 +243,6 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
     priceBook: deps.priceBook,
     signal: job.signal,
     prompt,
-    resolution: choice.resolution,
     aspectRatio: CANDIDATE_ASPECT_RATIO,
     quality: choice.quality,
     references: [],

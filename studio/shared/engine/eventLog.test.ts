@@ -2,13 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { EventLog } from "./eventLog";
 import type { UnsequencedEvent } from "./events";
 import { parseMessage } from "./messages";
+import { PROTOCOL_VERSION } from ".";
 
 const BOOT = "boot-00000001";
 const OLD_BOOT = "boot-00000000";
 
 function progress(n: number): UnsequencedEvent {
   return {
-    v: 1,
+    v: PROTOCOL_VERSION,
     id: `evt-${String(n).padStart(8, "0")}`,
     kind: "event",
     type: "job.progress",
@@ -19,7 +20,7 @@ function progress(n: number): UnsequencedEvent {
 /** Type-correct but breaks the contract's done <= total rule. */
 function progressPastTotal(): UnsequencedEvent {
   return {
-    v: 1,
+    v: PROTOCOL_VERSION,
     id: "evt-00000001",
     kind: "event",
     type: "job.progress",
@@ -180,7 +181,7 @@ describe("since", () => {
 
   test("answers in the engine.events result shape", () => {
     const result = logWith(3, 2).since(0, BOOT);
-    const msg = { v: 1, id: "msg-00000001", kind: "response", type: "engine.events", ok: true, result };
+    const msg = { v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "engine.events", ok: true, result };
     expect(parseMessage(msg).ok).toBe(true);
   });
 

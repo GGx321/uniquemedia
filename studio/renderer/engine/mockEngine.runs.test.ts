@@ -18,7 +18,7 @@ const MIA: AvatarSummary = {
   photoCount: 1,
 };
 
-const REQUEST: RunRequest = { avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], resolution: "1k", poses: { profile: false, back: false } };
+const REQUEST: RunRequest = { avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: false } };
 
 function makeMock(options: ConstructorParameters<typeof MockEngine>[0] = {}) {
   const scheduler = new ManualScheduler();
@@ -35,12 +35,10 @@ async function unwrap<T>(reply: Promise<{ ok: true; result: T } | { ok: false; e
   return r.result;
 }
 
-test("runs.estimate prices a run like the Photos mockup: 20 × 1K is ≈ $1.01, до $3.07", async () => {
+test("runs.estimate prices a run like the Photos mockup: 20 photos is ≈ $1.01, до $3.07", async () => {
   const { client } = makeMock();
   const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));
   expect(estimate).toMatchObject({ expectedMicros: 1_009_160, worstMicros: 3_070_000 });
-  const twoK = await unwrap(client.request("runs.estimate", { ...REQUEST, resolution: "2k" }));
-  expect(twoK.estimate.worstMicros).toBe(60 * 70_000 + 70_000);
 });
 
 test("the age check, when on, is priced into every attempt", async () => {
@@ -107,7 +105,7 @@ test("runs.start refuses a price the user did not accept, and a second run of a 
   await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 }));
   expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_070_000 })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
 
-  engine.setRunImagePrice("1k", 60_000);
+  engine.setRunImagePrice(60_000);
   expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(3_670_000);
 });
 
@@ -171,7 +169,7 @@ test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconci
 test("a resume never offers more than the run's cap leaves", async () => {
   const { client, engine } = makeMock();
   const runId = engine.seedRun({ ...REQUEST, count: 12 }, 8);
-  engine.setRunImagePrice("1k", 1_000_000);
+  engine.setRunImagePrice(1_000_000);
   // 4 open slots × 3 × $1 would be $12; the cap ($1.87) less its $0.40 settled leaves $1.47.
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
   expect(estimate.worstMicros).toBe(1_870_000 - 400_000);

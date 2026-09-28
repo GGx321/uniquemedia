@@ -240,7 +240,6 @@ export function imageParams(money: Money, overrides: Partial<ImageParams> = {}):
     scope: SCOPE,
     model: IMAGE_MODEL,
     prompt: "Head-and-shoulders portrait photo of a 25-year-old woman",
-    resolution: "1K",
     aspectRatio: "3:4",
     quality: "low",
     references: [asLibraryReference(JPEG)],

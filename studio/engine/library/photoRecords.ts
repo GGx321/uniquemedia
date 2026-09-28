@@ -14,28 +14,6 @@ import type { PhotoQa, PhotoSidecar } from "./schemas";
 // `looksLikeRunPhoto` is how the caller (engine.ts's #photosFor) tells them
 // apart to decide whether it is worth logging.
 
-/**
- * Between the long sides of the two sizes a photo run has ever requested, in
- * 9:16 (RUN_ASPECT_RATIO, runs/plan.ts — the only aspect ratio a run photo
- * uses): the spike measured 1K at 720×1280 and 2K at 1584×2816
- * (spike/studio-api/README.md), long side 1280 and 2816. Only used for a
- * sidecar that predates the `resolution` field, so it never needs to be
- * exact past those two real sizes — it just has to fall between them.
- */
-const RESOLUTION_MIGRATION_THRESHOLD = 1536;
-
-/**
- * `PhotoSidecar.resolution` (additive: runJob.ts's photoMeta now stores the
- * run's own requested resolution directly). A sidecar written before this
- * field existed has none — read here as a one-time migration: derived from
- * the stored pixel size, since the run that made it did not record which
- * resolution it asked for.
- */
-export function resolutionOf(sidecar: Pick<PhotoSidecar, "resolution" | "width" | "height">): "1k" | "2k" {
-  if (sidecar.resolution !== undefined) return sidecar.resolution;
-  return Math.max(sidecar.width, sidecar.height) >= RESOLUTION_MIGRATION_THRESHOLD ? "2k" : "1k";
-}
-
 /** The gallery badge fields worth showing from a photo's own QA verdicts; undefined when neither applies, so `PhotoSummary.qa` can stay unset instead of an always-present empty object. */
 function qaSummaryOf(qa: PhotoQa): PhotoQaSummary | undefined {
   const summary: PhotoQaSummary = {};
@@ -72,7 +50,6 @@ export function photoSummaryFrom(sidecar: PhotoSidecar): PhotoSummary | null {
     avatarId: sidecar.avatarId,
     runId,
     category: sidecar.source.category,
-    resolution: resolutionOf(sidecar),
     createdAt: sidecar.createdAt,
     qa: qaSummaryOf(sidecar.qa),
   });

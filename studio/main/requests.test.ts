@@ -5,6 +5,7 @@ import type { KeyCommand } from "./keyFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 // A renderer URL with a drive letter is an absolute path on every platform
@@ -26,26 +27,26 @@ function routesSpy() {
   const routes: RequestRoutes = {
     mainOnly: async (command) => {
       mainOnly.push(command);
-      return { v: 1, id: command.id, kind: "response", type: command.type, ok: true, result: { stored: false, last4: null, encryptionAvailable: true, rejected: false } };
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { stored: false, last4: null, encryptionAvailable: true, rejected: false } };
     },
     settings: async (command) => {
       settings.push(command);
-      return { v: 1, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
     importPhoto: async (command) => {
       importPhoto.push(command);
-      return { v: 1, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
     },
     engine: async (command) => {
       engine.push(command);
-      return { v: 1, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
   return { routes, mainOnly, settings, importPhoto, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
-  return { v: 1, id, kind: "command", type, payload };
+  return { v: PROTOCOL_VERSION, id, kind: "command", type, payload };
 }
 
 describe("isTrustedSender", () => {
@@ -154,7 +155,7 @@ describe("handleRendererRequest", () => {
     const cases: unknown[] = [
       null,
       "settings.get",
-      { v: 2, id: "cmd-00000001", kind: "command", type: "settings.get", payload: {} },
+      { v: PROTOCOL_VERSION + 1, id: "cmd-00000001", kind: "command", type: "settings.get", payload: {} },
       command("settings.get", { extra: true }),
       command("settings.setBudget", { monthlyBudgetMicros: 1.5 }),
       command("no.such.command"),
@@ -171,7 +172,7 @@ describe("handleRendererRequest", () => {
 
   test("responses and events sent by the renderer are refused", async () => {
     const { routes, engine } = routesSpy();
-    const event = { v: 1, id: "evt-00000001", kind: "event", seq: 1, bootId: "boot-00000001", type: "engine.error", payload: { error: { code: "INTERNAL" } } };
+    const event = { v: PROTOCOL_VERSION, id: "evt-00000001", kind: "event", seq: 1, bootId: "boot-00000001", type: "engine.error", payload: { error: { code: "INTERNAL" } } };
     const response = await handleRendererRequest(event, APP_FRAME, PACKAGED, routes);
     expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION", detail: "only commands may be sent" } });
     expect(engine).toEqual([]);
@@ -227,7 +228,7 @@ describe("handleRendererRequest", () => {
   test("engine commands are forwarded as parsed", async () => {
     const { routes, engine } = routesSpy();
     await handleRendererRequest(command("money.status"), APP_FRAME, PACKAGED, routes);
-    expect(engine).toEqual([{ v: 1, id: "cmd-00000001", kind: "command", type: "money.status", payload: {} }]);
+    expect(engine).toEqual([{ v: PROTOCOL_VERSION, id: "cmd-00000001", kind: "command", type: "money.status", payload: {} }]);
   });
 
   test("a route that throws becomes INTERNAL without the error's text", async () => {

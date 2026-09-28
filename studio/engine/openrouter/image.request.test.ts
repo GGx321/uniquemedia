@@ -44,13 +44,13 @@ test("writes the reserve to disk before the request leaves", async () => {
   expect(onDiskWhenSent).toEqual([expect.objectContaining({ type: "reserve", attemptId: "slot-1#1", worstMicros: WORST_ONE_REF })]);
 });
 
-test("reserves the price book's worst case for the model, quality, resolution and references", async () => {
+test("reserves the price book's worst case for the model, quality and references", async () => {
   const { fetch } = fakeFetch([{ status: 200, body: imageBody(PNG, { cost: 0.07 }) }]);
   const { client } = makeClient(fetch);
 
-  await client.generateImage(imageParams(money, { quality: "medium", resolution: "2K", references: [JPEG, JPEG_2].map(asLibraryReference) }));
+  await client.generateImage(imageParams(money, { quality: "medium", references: [JPEG, JPEG_2].map(asLibraryReference) }));
 
-  const expected = money.priceBook.imageWorstCase({ model: "x-ai/grok-imagine-image-2.0", resolution: "2K", quality: "medium", refs: 2 });
+  const expected = money.priceBook.imageWorstCase({ model: "x-ai/grok-imagine-image-2.0", quality: "medium", refs: 2 });
   expect(money.lines()[0]).toMatchObject({ type: "reserve", worstMicros: expected, jobId: "job-1", scope: { avatarJobId: "avjob-1" } });
 });
 

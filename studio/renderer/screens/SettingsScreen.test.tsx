@@ -390,12 +390,12 @@ describe("model rows describe what photo runs use them for", () => {
     expect(row?.textContent).toContain("проверка «явно старше 21»");
   });
 
-  test("the photos row says the image model makes both portraits and photo runs' photos, and where the resolution is chosen", async () => {
+  test("the photos row says the image model makes both portraits and photo runs' photos, with no resolution choice left", async () => {
     await openSettings();
     const row = screen.getByText("x-ai/grok-imagine-image-2.0").closest(".row");
     expect(row?.textContent).not.toContain("появятся вместе с фото-ранами");
     expect(row?.textContent).toContain("портреты аватара и фото-раны");
-    expect(row?.textContent).toContain("1K или 2K");
+    expect(row?.textContent).not.toContain("2K");
   });
 });
 

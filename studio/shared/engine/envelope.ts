@@ -1,7 +1,11 @@
 import { z } from "zod";
 
-/** Wire protocol version carried by every message as `v`. */
-export const PROTOCOL_VERSION = 1;
+/**
+ * Wire protocol version carried by every message as `v`.
+ *
+ * - 2 (2026-09-29): 2K removed: `RunRequest` and `PhotoSummary` no longer carry a `resolution`.
+ */
+export const PROTOCOL_VERSION = 2;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
 /** An event's position in the engine's event stream; starts at 1 and only grows. */

@@ -105,7 +105,7 @@ const runJob = { kind: "run", jobId: "job-00000002", runId: "run-00000001", avat
 
 const runResult = { kind: "run", runId: "run-00000001", avatarId: "avatar-0001", photoIds: ["photo-0002"], failedSlots: 19 };
 
-const run = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], resolution: "1k", poses: { profile: false, back: false } };
+const run = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], poses: { profile: false, back: false } };
 
 const runSummary = {
   runId: "run-00000001",
@@ -137,7 +137,6 @@ const photo = {
   avatarId: "avatar-0001",
   runId: "run-00000001",
   category: "home",
-  resolution: "1k",
   createdAt: "2026-09-24T11:00:00Z",
 };
 
@@ -764,8 +763,9 @@ describe("RunRequest", () => {
     expect(RunRequest.safeParse({ ...run, categories: ["lingerie"] }).success).toBe(false);
   });
 
-  test("rejects an unknown resolution", () => {
-    expect(RunRequest.safeParse({ ...run, resolution: "4k" }).success).toBe(false);
+  // Owner decision 2026-09-29: 2K removed, the only size is 1K, so a request no longer names one.
+  test.each(["1k", "2k"])("rejects a request that still names a resolution (%p)", (resolution) => {
+    expect(RunRequest.safeParse({ ...run, resolution }).success).toBe(false);
   });
 
   // T5c/T6 (owner decision): profile and back poses only when the run allows them; front and three-quarter always.
@@ -849,8 +849,11 @@ describe("PhotoSummary (T8b: the Photos screen's gallery)", () => {
     expect(PhotoSummary.safeParse({ ...photo, runId: "" }).success).toBe(false);
   });
 
-  test("rejects an unknown category or resolution", () => {
+  test("rejects an unknown category", () => {
     expect(PhotoSummary.safeParse({ ...photo, category: "lingerie" }).success).toBe(false);
-    expect(PhotoSummary.safeParse({ ...photo, resolution: "4k" }).success).toBe(false);
+  });
+
+  test("carries no resolution: a summary that names one is rejected (2K removed, 2026-09-29)", () => {
+    expect(PhotoSummary.safeParse({ ...photo, resolution: "1k" }).success).toBe(false);
   });
 });

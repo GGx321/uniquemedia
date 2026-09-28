@@ -29,7 +29,7 @@ export const CANDIDATES_PER_BATCH = 4;
 export const CANDIDATE_ASPECT_RATIO = "3:4";
 
 export function candidateImage(imageModel: string): ImageChoice {
-  return { model: imageModel, resolution: "1K", quality: "low", refs: 0 };
+  return { model: imageModel, quality: "low", refs: 0 };
 }
 
 /**

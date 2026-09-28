@@ -11,6 +11,7 @@ import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort, type H
 import { handleSettingsCommand, isSettingsCommand, reconcileLibraryPath, type SettingsCommand, type SettingsFlowDeps } from "./settingsFlow";
 import { loadSettings, SettingsStore } from "./settingsStore";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 // The divergence the T1 review found, end to end: main asks the engine to
@@ -96,13 +97,13 @@ class ManualTimers implements HostTimers {
 }
 
 function settingsCommand(type: SettingsCommand["type"], payload: unknown, id: string): SettingsCommand {
-  const parsed = CommandMessage.parse({ v: 1, id, kind: "command", type, payload });
+  const parsed = CommandMessage.parse({ v: PROTOCOL_VERSION, id, kind: "command", type, payload });
   if (!isSettingsCommand(parsed)) throw new Error(`${type} is not a settings command`);
   return parsed;
 }
 
 async function snapshotAvatars(host: EngineHost<string>): Promise<string[]> {
-  const command: EngineCommandMessage = { v: 1, id: "cmd-snapshot-0001", kind: "command", type: "engine.snapshot", payload: {} };
+  const command: EngineCommandMessage = { v: PROTOCOL_VERSION, id: "cmd-snapshot-0001", kind: "command", type: "engine.snapshot", payload: {} };
   const response: ResponseMessage = await host.request(command);
   if (!response.ok || response.type !== "engine.snapshot") throw new Error("expected a snapshot");
   return response.result.avatars.map((a) => a.avatarId);

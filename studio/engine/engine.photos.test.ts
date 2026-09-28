@@ -22,7 +22,6 @@ let seeded = 0;
 /** A run photo's own NewPhotoMeta, as runJob.ts's photoMeta would build it. */
 function runPhotoMeta(runId: string, slot: number, extra: Parameters<typeof samplePhotoMeta>[0] = {}) {
   return samplePhotoMeta({
-    resolution: "1k",
     source: {
       kind: "generated",
       model: "x-ai/grok-imagine-image-2.0",
@@ -107,25 +106,23 @@ describe("photos.list", () => {
     expect(skippedTotalOf(await engine.handle(command("photos.list", { avatarId })))).toBe(0);
   });
 
-  test("each photo carries its run, category and resolution", async () => {
+  test("each photo carries its run and category", async () => {
     const { avatarId } = await seedAvatar({ count: 1, runId: "run-00000042" });
     const { engine } = await startEngine(dir());
     const [photo] = listed(await engine.handle(command("photos.list", { avatarId })));
-    expect(photo).toMatchObject({ runId: "run-00000042", category: "home", resolution: "1k" });
+    expect(photo).toMatchObject({ runId: "run-00000042", category: "home" });
   });
 
-  test("an old sidecar with no stored resolution reads it back from its pixel size", async () => {
-    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seed${++seeded}`) });
-    const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
-    // A photo made before the resolution field existed: no `resolution`, but
-    // the spike's own real 2K 9:16 size (1584x2816, spike/studio-api/README.md).
-    const meta = runPhotoMeta("run-00000001", 1, { width: 1584, height: 2816, resolution: undefined });
-    const photo = await library.addPhoto(avatar.id, PNG_1X1, meta);
-    expect(photo.resolution).toBeUndefined();
+  test("a legacy sidecar that still carries a resolution (2K removed, 2026-09-29) lists, and the summary has none", async () => {
+    const { avatarId, photoIds } = await seedAvatar({ count: 1 });
+    const sidecarPath = join(dir(), "library", "avatars", avatarId, "photos", `${photoIds[0]}.json`);
+    const sidecar: unknown = JSON.parse(await readFile(sidecarPath, "utf8"));
+    await writeFile(sidecarPath, JSON.stringify({ ...(typeof sidecar === "object" && sidecar !== null ? sidecar : {}), resolution: "2k", width: 1584, height: 2816 }));
 
     const { engine } = await startEngine(dir());
-    const [listedPhoto] = listed(await engine.handle(command("photos.list", { avatarId: avatar.id })));
-    expect(listedPhoto?.resolution).toBe("2k");
+    const photos = listed(await engine.handle(command("photos.list", { avatarId })));
+    expect(photos.map((p) => p.photoId)).toEqual([photoIds[0]]);
+    expect("resolution" in (photos[0] ?? {})).toBe(false);
   });
 
   test("a corrupt sidecar (a category the contract no longer recognises) is skipped, not a failure of the whole list, and counted in skippedTotal", async () => {

@@ -1,7 +1,7 @@
 import type { ImageMediaType, LibraryReference } from "../library/media";
 import type { Budget, ReserveRefusal } from "../money/budget";
 import type { Scope } from "../money/ledger";
-import type { ImageQuality, PriceBook, Resolution } from "../money/prices";
+import type { ImageQuality, PriceBook } from "../money/prices";
 
 /** The part of a response body stream the client reads, byte-counted against a cap. */
 export interface BodyReader {
@@ -184,7 +184,6 @@ export interface AttemptParams {
 
 export interface ImageParams extends AttemptParams {
   prompt: string;
-  resolution: Resolution;
   aspectRatio: AspectRatio;
   quality?: ImageQuality | null;
   /** Already-downscaled JPEGs, sourced only through `Library.loadReference()` (invariant 9). */

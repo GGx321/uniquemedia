@@ -65,7 +65,7 @@ interface GenerateCardProps {
 }
 
 /**
- * The generation card: how many photos, at what resolution, in which
+ * The generation card: how many photos, in which
  * categories and poses, and the price before anything is spent. The free
  * `runs.estimate` is asked for on every change of the request; the button
  * carries its worst case («до $X») and sends exactly that as
@@ -258,7 +258,6 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const anglesLabel = `${ids}-angles`;
   const anglesHint = `${ids}-angles-hint`;
   const countLabel = `${ids}-count`;
-  const resLabel = `${ids}-res`;
   const catsLabel = `${ids}-cats`;
   const reviewLabel = `${ids}-review`;
   const reviewSoon = `${ids}-review-soon`;
@@ -301,22 +300,6 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
                 >
                   <Icon name="plus" size={14} strokeWidth={2.4} />
                 </button>
-              </div>
-              <span id={resLabel} className="lbl photos-lbl-gap">
-                Разрешение
-              </span>
-              <div className="seg photos-res" role="group" aria-labelledby={resLabel}>
-                {(["1k", "2k"] as const).map((res) => (
-                  <button
-                    key={res}
-                    type="button"
-                    className={form.resolution === res ? "on" : undefined}
-                    aria-pressed={form.resolution === res}
-                    onClick={() => onFormChange({ ...form, resolution: res })}
-                  >
-                    {res === "1k" ? "1K" : "2K"}
-                  </button>
-                ))}
               </div>
             </div>
 

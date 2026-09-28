@@ -205,7 +205,7 @@ describe("photo runs: no writer, image or age-check request carries the vibe", (
   }
 
   function runRequest(avatarId: string, count: number) {
-    return { avatarId, count, categories: ["home"], resolution: "1k", poses: { profile: false, back: false } };
+    return { avatarId, count, categories: ["home"], poses: { profile: false, back: false } };
   }
 
   /** The slot indices a writer chunk's own user message asks for (scenes/writer.ts's own JSON, embedded in the prompt text). */

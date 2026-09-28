@@ -3,13 +3,11 @@ import type { EngineView } from "../../engine/store";
 import { paidStop, restartStopText } from "../../lib/paidStop";
 
 export type RunCategory = RunRequest["categories"][number];
-export type RunResolution = RunRequest["resolution"];
 
 /** The Photos form (Photos.dc.html's generation card): what a run asks for, before it becomes a `RunRequest`. */
 export interface RunForm {
   count: number;
   categories: readonly RunCategory[];
-  resolution: RunResolution;
   /** Beyond front and three-quarter, which are always on (T5c, owner decision). */
   poses: RunRequest["poses"];
 }
@@ -24,11 +22,10 @@ export function clampCount(count: number, delta: number): number {
   return Math.min(COUNT_MAX, Math.max(COUNT_MIN, count + delta));
 }
 
-/** The mockup's opening state: 20 photos at 1K in every category, profile and back not allowed. */
+/** The mockup's opening state: 20 photos in every category, profile and back not allowed. */
 export const DEFAULT_RUN_FORM: RunForm = {
   count: 20,
   categories: SceneCategory.options,
-  resolution: "1k",
   poses: { profile: false, back: false },
 };
 
@@ -62,14 +59,13 @@ export function runRequest(avatarId: string, form: RunForm): RunRequest {
     avatarId,
     count: form.count,
     categories: SceneCategory.options.filter((c) => form.categories.includes(c)),
-    resolution: form.resolution,
     poses: { profile: form.poses.profile, back: form.poses.back },
   };
 }
 
 /** A stable identity for a request: an estimate belongs to exactly one. */
 export function requestKey(request: RunRequest): string {
-  return JSON.stringify([request.avatarId, request.count, request.categories, request.resolution, request.poses.profile, request.poses.back]);
+  return JSON.stringify([request.avatarId, request.count, request.categories, request.poses.profile, request.poses.back]);
 }
 
 /** Why a paid photo command cannot be sent right now (the wizard's own order and wording), or null. */

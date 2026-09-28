@@ -1125,7 +1125,7 @@ export class Engine {
     const key = this.#usableKey("start a photo run");
     const budget = this.#paidBudget();
     const library = await this.#liveLibrary();
-    const { avatarId, count, categories, resolution, poses } = payload;
+    const { avatarId, count, categories, poses } = payload;
     const manifest = this.#runnableAvatar(library, avatarId);
     if (library.referencePhoto(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` });
     // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
@@ -1157,7 +1157,7 @@ export class Engine {
       runId,
       avatarId,
       createdAt: new Date(this.#deps.clock()).toISOString(),
-      request: { avatarId, count, categories, resolution, poses },
+      request: { avatarId, count, categories, poses },
       imageAgeCheck,
       models,
       capMicros: estimate.worstMicros,

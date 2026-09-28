@@ -16,6 +16,7 @@ import { fakeFetch, type Step } from "./openrouter/testing/fakes";
 import type { OpenRouterFetch } from "./openrouter/types";
 import { descriptorReply, GOOD as HARNESS_GOOD, network, NEW_AVATAR as HARNESS_NEW_AVATAR, OFFLINE, TRAITS as HARNESS_TRAITS } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 const NOW = Date.parse("2026-09-24T12:00:00.000Z");
@@ -93,7 +94,7 @@ async function startEngine(overrides: Partial<EngineInit> = {}, deps: Partial<En
 
 let commandSeq = 0;
 function command(type: string, payload: unknown = {}): unknown {
-  return { v: 1, id: `cmd-${String(++commandSeq).padStart(8, "0")}`, kind: "command", type, payload };
+  return { v: PROTOCOL_VERSION, id: `cmd-${String(++commandSeq).padStart(8, "0")}`, kind: "command", type, payload };
 }
 
 /** The response must satisfy the T0 contract as main will parse it. */
@@ -146,7 +147,7 @@ describe("Engine command dispatch", () => {
 
   test("a garbage message gets a VALIDATION error response that keeps a readable id", async () => {
     const { engine } = await startEngine();
-    const response = await engine.handle({ v: 1, id: "cmd-bad-0001", kind: "command", type: "engine.snapshot", payload: { x: 1 } });
+    const response = await engine.handle({ v: PROTOCOL_VERSION, id: "cmd-bad-0001", kind: "command", type: "engine.snapshot", payload: { x: 1 } });
     expect(ResponseMessage.safeParse(response).success).toBe(true);
     expect(response).toMatchObject({ ok: false, id: "cmd-bad-0001", error: { code: "VALIDATION" } });
     expect(await engine.handle("not an object")).toMatchObject({ ok: false, id: null, error: { code: "VALIDATION" } });

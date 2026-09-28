@@ -423,7 +423,7 @@ describe("writerRunPrice", () => {
   // computed, via the public PriceBook API) image-only cost.
   test("agrees with estimateRun's writer term for the same slot count (drift guard)", () => {
     const book = PriceBook.fallback();
-    const image = { model: "x-ai/grok-imagine-image-2.0", resolution: "1K" as const, quality: "low" as const, refs: 1 };
+    const image = { model: "x-ai/grok-imagine-image-2.0", quality: "low" as const, refs: 1 };
     const imageOnlyPerPhoto = book.imageWorstCase(image);
 
     for (const slotCount of [0, 1, WRITER_CALL.slotsPerCall, WRITER_CALL.slotsPerCall + 1, 100]) {

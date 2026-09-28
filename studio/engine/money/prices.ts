@@ -9,7 +9,6 @@ export const FALLBACK_PRICES_DATE = "2026-09-24";
 /** Each price GET gives up after this long; its model then falls back to the dated table. */
 export const PRICE_FETCH_TIMEOUT_MS = 15_000;
 
-export type Resolution = "1K" | "2K";
 export type ImageQuality = "low" | "medium";
 export type PriceSource = "live" | "fallback";
 
@@ -39,7 +38,6 @@ export interface ChatPrice extends ChatRates {
 
 export interface ImageWorstCaseRequest {
   model: string;
-  resolution: Resolution;
   quality: ImageQuality | null;
   refs: number;
 }
@@ -200,42 +198,40 @@ function assertCount(name: string, value: number): void {
 const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+k|high_resolution)$/;
 
 /**
- * Output price for a resolution and quality, never an underestimate; variant
- * names are compared in lower case. Any unrecognised variant: the dearest
- * price (nothing can be mapped safely). Otherwise, in order:
- * - `<quality>_<res>` variants exist: the requested quality; if it is missing
+ * Output price of a 1K image at a quality, never an underestimate: Studio
+ * only ever asks for 1K (owner decision 2026-09-29: 2K removed), so a live
+ * price list's 2K, 4K and `high_resolution` tiers are parsed but never
+ * priced. Variant names are compared in lower case. Any unrecognised
+ * variant: the dearest price (nothing can be mapped safely). Otherwise, in
+ * order:
+ * - `<quality>_1k` variants exist: the requested quality; if it is missing
  *   or null, the dearest of them or the base price, whichever is higher;
- * - a `<res>` variant; for 2K, `high_resolution`;
- * - no variant for this resolution: the variant-less base price only for 1K,
- *   the lowest resolution, which the base must cover (Seedream: base = 1K,
- *   `high_resolution` = 2K); for 2K the dearest price (e.g. `{base, 4k}`).
+ * - a `1k` variant;
+ * - the variant-less base price (Seedream: base = 1K, `high_resolution` =
+ *   2K);
+ * - otherwise the dearest price.
  */
-function outputMicros(price: ImagePrice, resolution: Resolution, quality: ImageQuality | null): number {
-  const res = resolution === "1K" ? "1k" : "2k";
+function outputMicros(price: ImagePrice, quality: ImageQuality | null): number {
   const outputs = price.outputs.map((o) => ({ variant: o.variant === null ? null : o.variant.toLowerCase(), micros: o.micros }));
   const dearest = (list: ImagePrice["outputs"]): number => list.reduce((max, o) => Math.max(max, o.micros), 0);
   if (outputs.some((o) => o.variant !== null && !RECOGNISED_VARIANT.test(o.variant))) return dearest(outputs);
 
   const find = (variant: string | null): number | undefined => outputs.find((o) => o.variant === variant)?.micros;
   const base = find(null);
-  const withQuality = outputs.filter((o) => o.variant?.endsWith(`_${res}`));
+  const withQuality = outputs.filter((o) => o.variant?.endsWith("_1k"));
   if (withQuality.length > 0) {
-    const exact = quality === null ? undefined : find(`${quality}_${res}`);
+    const exact = quality === null ? undefined : find(`${quality}_1k`);
     return exact ?? Math.max(dearest(withQuality), base ?? 0);
   }
-  const plain = find(res);
+  const plain = find("1k");
   if (plain !== undefined) return plain;
-  if (res === "2k") {
-    const high = find("high_resolution");
-    if (high !== undefined) return high;
-  }
-  if (res === "1k" && base !== undefined) return base;
+  if (base !== undefined) return base;
   return dearest(outputs);
 }
 
 export function imageWorstCase(price: ImagePrice, req: Omit<ImageWorstCaseRequest, "model">): number {
   assertCount("refs", req.refs);
-  return outputMicros(price, req.resolution, req.quality) + req.refs * price.inputImageMicros;
+  return outputMicros(price, req.quality) + req.refs * price.inputImageMicros;
 }
 
 /** Cost of one chat call with these token and image counts, rounded up to a whole micro-dollar. */
@@ -276,9 +272,7 @@ const FALLBACK_IMAGE: ReadonlyMap<string, ImagePrice> = new Map([
     {
       outputs: [
         { variant: "low_1k", micros: 40_000 },
-        { variant: "low_2k", micros: 60_000 },
         { variant: "medium_1k", micros: 60_000 },
-        { variant: "medium_2k", micros: 80_000 },
       ],
       inputImageMicros: 10_000,
     },
@@ -286,20 +280,14 @@ const FALLBACK_IMAGE: ReadonlyMap<string, ImagePrice> = new Map([
   [
     "x-ai/grok-imagine-image-quality",
     {
-      outputs: [
-        { variant: "1k", micros: 50_000 },
-        { variant: "2k", micros: 70_000 },
-      ],
+      outputs: [{ variant: "1k", micros: 50_000 }],
       inputImageMicros: 10_000,
     },
   ],
   [
     "bytedance-seed/seedream-5-0-pro",
     {
-      outputs: [
-        { variant: null, micros: 45_000 },
-        { variant: "high_resolution", micros: 90_000 },
-      ],
+      outputs: [{ variant: null, micros: 45_000 }],
       inputImageMicros: 3_000,
     },
   ],

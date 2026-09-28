@@ -88,7 +88,6 @@ test("trackRunJob never overrides progress that beat the reply", async () => {
     avatarId: "avatar-zoe-0001",
     count: 5,
     categories: ["home"],
-    resolution: "1k",
     poses: { profile: false, back: false },
     acceptedWorstMicros: 5 * 3 * 50_000 + 70_000,
   });
@@ -107,7 +106,6 @@ test("trackRunJob on a run whose job.done beat the reply keeps it complete, neve
     avatarId: "avatar-zoe-0001",
     count: 5,
     categories: ["home"],
-    resolution: "1k",
     poses: { profile: false, back: false },
     acceptedWorstMicros: 5 * 3 * 50_000 + 70_000,
   });
@@ -642,7 +640,7 @@ test("a gap that never heals stops after a few resyncs and goes offline", async 
   await settle();
   // The engine keeps sending seq 50 from a boot whose snapshot says lastSeq 0 and whose log is empty.
   const stray: EventMessage = {
-    v: 1,
+    v: PROTOCOL_VERSION,
     id: "evt-stray-01",
     kind: "event",
     seq: 50,

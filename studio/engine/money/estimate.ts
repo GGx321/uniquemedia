@@ -1,4 +1,4 @@
-import type { ImageQuality, PriceBook, PriceSource, Resolution } from "./prices";
+import type { ImageQuality, PriceBook, PriceSource } from "./prices";
 
 /** Invariant 7: at most 3 paid attempts per slot across all QA branches and fallbacks. */
 export const MAX_ATTEMPTS_PER_SLOT = 3;
@@ -11,7 +11,6 @@ export interface TokenCounts {
 /** One image model configuration, as sent. */
 export interface ImageChoice {
   model: string;
-  resolution: Resolution;
   quality: ImageQuality | null;
   refs: number;
 }
@@ -152,7 +151,7 @@ function safe(value: number): number {
 }
 
 function imageMicros(book: PriceBook, image: ImageChoice): number {
-  return book.imageWorstCase({ model: image.model, resolution: image.resolution, quality: image.quality, refs: image.refs });
+  return book.imageWorstCase({ model: image.model, quality: image.quality, refs: image.refs });
 }
 
 function typicalMicros(book: PriceBook, call: ChatCall | null): number {

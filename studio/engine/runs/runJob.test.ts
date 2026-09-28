@@ -88,7 +88,7 @@ async function openMoney(clock: () => number): Promise<{ ledger: Ledger; budget:
 async function newRun(count: number, opts: { cap?: number; imageModel?: string; avatar?: string } = {}): Promise<RunPlan> {
   const imageModel = opts.imageModel ?? PRIMARY;
   const runAvatar = opts.avatar ?? avatarId;
-  const request = { avatarId: runAvatar, count, categories: ["home" as const], resolution: "1k" as const, poses: { profile: false, back: false } };
+  const request = { avatarId: runAvatar, count, categories: ["home" as const], poses: { profile: false, back: false } };
   const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel, textModel: TEXT }, request, "off").worstMicros;
   const cap = opts.cap ?? estimated;
   const run = buildRunPlan({
@@ -306,8 +306,8 @@ describe("a run from the start", () => {
         expect.objectContaining({ kind: "generated", model: PRIMARY, provider: "openrouter", jobId: JOB_ID, attemptId: `${RUN_ID}:slot-${i}#1`, slot: `slot-${i}`, category: "home", costMicros: 40_000 }),
       ),
     );
-    // T8b: the run's own requested resolution (newRun's request always asks for "1k") is stored on every photo, not derived later.
-    expect(photos.map((p) => p?.resolution)).toEqual(["1k", "1k", "1k"]);
+    // 2K removed (2026-09-29): a run photo's sidecar records no resolution.
+    expect(photos.map((p) => p !== undefined && "resolution" in p)).toEqual([false, false, false]);
   });
 
   test("journals the writer's chunk, then the prompts, then each slot's attempt before its end, then the job's end", async () => {

@@ -99,7 +99,7 @@ async function seedAvatar(opts: { status?: "active" | "draft" | "archived" } = {
 }
 
 function request(avatarId: string, count = 4) {
-  return { avatarId, count, categories: ["home"], resolution: "1k", poses: { profile: false, back: false } };
+  return { avatarId, count, categories: ["home"], poses: { profile: false, back: false } };
 }
 
 function estimate(avatarId: string, count = 4): unknown {
@@ -309,7 +309,7 @@ describe("runs.start", () => {
     const poses = { profile: true, back: true };
     const twenty = 20 * 3 * 50_000 + 2 * 37_500;
 
-    const { runId, jobId } = started(await engine.handle(command("runs.start", { avatarId, count: 20, categories: ["home", "travel"], resolution: "1k", poses, acceptedWorstMicros: twenty })));
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { avatarId, count: 20, categories: ["home", "travel"], poses, acceptedWorstMicros: twenty })));
     const stored = planOf(runId);
 
     expect(stored.request.poses).toEqual(poses);

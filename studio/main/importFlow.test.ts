@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { CommandMessage } from "../shared/engine";
 import { handleImportPhotoCommand, MAX_IMPORT_FILE_BYTES, type ImportFlowDeps, type ImportPhotoCommand } from "./importFlow";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 // T6c, design constraint 1: the renderer never sends a path or raw bytes.
@@ -14,7 +15,7 @@ useNativeGlobals();
 // engine (never the renderer) to validate and stage.
 
 function command(): ImportPhotoCommand {
-  const parsed = CommandMessage.parse({ v: 1, id: "cmd-pick-00001", kind: "command", type: "avatars.pickImportPhoto", payload: {} });
+  const parsed = CommandMessage.parse({ v: PROTOCOL_VERSION, id: "cmd-pick-00001", kind: "command", type: "avatars.pickImportPhoto", payload: {} });
   if (parsed.type !== "avatars.pickImportPhoto") throw new Error("wrong type");
   return parsed;
 }
@@ -51,7 +52,7 @@ describe("avatars.pickImportPhoto", () => {
     const { deps, staged } = harness({ pick: null });
     const response = await handleImportPhotoCommand(command(), deps);
 
-    expect(response).toEqual({ v: 1, id: "cmd-pick-00001", kind: "response", type: "avatars.pickImportPhoto", ok: true, result: { picked: false } });
+    expect(response).toEqual({ v: PROTOCOL_VERSION, id: "cmd-pick-00001", kind: "response", type: "avatars.pickImportPhoto", ok: true, result: { picked: false } });
     expect(staged).toHaveLength(0);
   });
 

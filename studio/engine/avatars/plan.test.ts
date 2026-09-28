@@ -26,7 +26,7 @@ const AGE_CHECK = { expected: 1_660, worst: 5_250 }; // 658 in / 335 out; ceilin
 const DESCRIPTOR = { expected: 2_625, worst: 13_750 }; // 900 in / 600 out; ceilings 5K in / 3K out
 
 test("a candidate is a 1K low-quality portrait without a reference, on the settings' image model", () => {
-  expect(candidateImage("bytedance-seed/seedream-5-0-pro")).toEqual({ model: "bytedance-seed/seedream-5-0-pro", resolution: "1K", quality: "low", refs: 0 });
+  expect(candidateImage("bytedance-seed/seedream-5-0-pro")).toEqual({ model: "bytedance-seed/seedream-5-0-pro", quality: "low", refs: 0 });
   expect(CANDIDATES_PER_BATCH).toBe(4);
 });
 

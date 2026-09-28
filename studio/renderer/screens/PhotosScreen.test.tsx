@@ -27,7 +27,6 @@ function photo(n: number, patch: Partial<PhotoSummary> = {}): PhotoSummary {
     avatarId: MIA.avatarId,
     runId: "run-00000001",
     category: "home",
-    resolution: "1k",
     createdAt: `2026-09-2${n}T10:00:00.000Z`,
     ...patch,
   };
@@ -40,22 +39,20 @@ function manyPhotos(n: number, avatarId: string, idPrefix: string, withFace: boo
     avatarId,
     runId: `run-${idPrefix}-0001`,
     category: "home" as const,
-    resolution: "1k" as const,
     createdAt: new Date(Date.UTC(2026, 8, 24, 10, 0, i)).toISOString(),
     ...(withFace && i === 0 ? { qa: { faceCos: 0.86 } } : {}),
   }));
 }
 
-/** The default request the screen opens with: 20 photos at 1K, every category, no profile or back. */
+/** The default request the screen opens with: 20 photos, every category, no profile or back. */
 const DEFAULT_REQUEST: RunRequest = {
   avatarId: MIA.avatarId,
   count: 20,
   categories: ["home", "travel", "shoot", "glam", "fit"],
-  resolution: "1k",
   poses: { profile: false, back: false },
 };
 
-/** Opens the Photos screen from the sidebar and waits for its first price: 20 × 1K is ≈ $1.01, до $3.07 in the mock. */
+/** Opens the Photos screen from the sidebar and waits for its first price: 20 photos is ≈ $1.01, до $3.07 in the mock. */
 async function openPhotos(options: Parameters<typeof setup>[0] = {}) {
   const harness = setup({ avatars: [MIA], ...options });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
@@ -112,16 +109,23 @@ test("every change of the request is priced again; the chips show the planner's 
   expect(screen.getByRole("button", { name: "Путешествия: 6 фото" })).toBeDefined();
   expect(screen.getByRole("button", { name: "Фитнес" }).getAttribute("aria-pressed")).toBe("false");
 
-  fireEvent.click(screen.getByRole("button", { name: "2K" }));
-  // 75 attempts × $0.07 + $0.07 = $5.32.
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 25 фото · до $5.32"));
-  expect(callsOf(engine, "runs.estimate").at(-1)?.payload).toEqual({ ...DEFAULT_REQUEST, count: 25, categories: ["home", "travel", "shoot", "glam"], resolution: "2k" });
+  expect(callsOf(engine, "runs.estimate").at(-1)?.payload).toEqual({ ...DEFAULT_REQUEST, count: 25, categories: ["home", "travel", "shoot", "glam"] });
+});
+
+// Owner decision 2026-09-29: 2K is removed end to end; a photo is always 1K.
+test("the generate card offers no resolution choice", async () => {
+  setup({ avatars: [MIA] });
+  await openSection("Фото");
+  await priced();
+  expect(screen.queryAllByRole("button", { name: "1K" }).length).toBe(0);
+  expect(screen.queryAllByRole("button", { name: "2K" }).length).toBe(0);
+  expect(screen.queryAllByText("Разрешение").length).toBe(0);
 });
 
 test("the worst case rounds up on the button, and the raw micros are what is sent", async () => {
   const harness = setup({ avatars: [MIA] });
   // 60 attempts × $0.050001 + $0.07 = $3.070060: never shown as $3.07, which would understate the limit.
-  harness.engine.setRunImagePrice("1k", 50_001);
+  harness.engine.setRunImagePrice(50_001);
   await openSection("Фото");
   const button = await priced();
   expect(button.textContent).toBe("Сгенерировать 20 фото · до $3.08");
@@ -308,7 +312,7 @@ test("unmounting mid-flight still tracks the started run in the window-wide stor
 test("PRICE_CHANGED keeps the button busy until the fresh price replaces it, then asks again", async () => {
   const { engine, scheduler } = await openPhotos();
   const button = await priced();
-  engine.setRunImagePrice("1k", 60_000);
+  engine.setRunImagePrice(60_000);
   engine.delayNext("runs.estimate", 50);
 
   fireEvent.click(button);
@@ -334,7 +338,7 @@ test("PRICE_CHANGED keeps the button busy until the fresh price replaces it, the
 test("a failed re-price after PRICE_CHANGED drops the refused price: the button can only ask again", async () => {
   const { engine } = await openPhotos();
   const button = await priced();
-  engine.setRunImagePrice("1k", 60_000);
+  engine.setRunImagePrice(60_000);
   engine.failNext("runs.estimate", { code: "NETWORK" });
 
   fireEvent.click(button);
@@ -352,14 +356,14 @@ test("a failed re-price after PRICE_CHANGED drops the refused price: the button 
 test("PRICE_CHANGED reads «Цена изменилась», not «выросла», when the fresh price is not actually higher (L4)", async () => {
   const { engine, scheduler } = await openPhotos();
   const button = await priced(); // $3.07
-  engine.setRunImagePrice("1k", 60_000); // server-side price now higher; the client still shows $3.07
+  engine.setRunImagePrice(60_000); // server-side price now higher; the client still shows $3.07
   engine.delayNext("runs.estimate", 50); // delays the reprice inside start(), not the mount-time one already resolved
 
   fireEvent.click(button); // accepts $3.07 — refused PRICE_CHANGED against the now-higher price
   await waitFor(() => expect(callsOf(engine, "runs.estimate")).toHaveLength(2));
 
   // The price drops back to exactly what was accepted before the reprice answers.
-  engine.setRunImagePrice("1k", 50_000);
+  engine.setRunImagePrice(50_000);
   tick(scheduler, 1);
 
   await screen.findByText("Цена изменилась");
@@ -640,7 +644,7 @@ test("a run job seen only through another window's progress resolves its cancel 
 
 test("a stopped run is resumed with exactly the worst case runs.estimateResume showed", async () => {
   const harness = setup({ avatars: [MIA] });
-  const runId = harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home", "travel"], resolution: "1k" }, 8);
+  const runId = harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home", "travel"] }, 8);
   await openSection("Фото");
 
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
@@ -657,10 +661,10 @@ test("a stopped run is resumed with exactly the worst case runs.estimateResume s
 
 test("a resume refused with PRICE_CHANGED shows the new price and asks again", async () => {
   const harness = setup({ avatars: [MIA] });
-  const runId = harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  const runId = harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
-  harness.engine.setRunImagePrice("1k", 60_000);
+  harness.engine.setRunImagePrice(60_000);
 
   fireEvent.click(resume);
   const confirm = await screen.findByRole("button", { name: "Подтвердить новую цену · до $0.72" });
@@ -676,16 +680,16 @@ test("a resume refused with PRICE_CHANGED shows the new price and asks again", a
 
 test("a resume's PRICE_CHANGED also reads «Цена изменилась», not «выросла», when the fresh price is not actually higher (L4)", async () => {
   const harness = setup({ avatars: [MIA] });
-  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
-  harness.engine.setRunImagePrice("1k", 60_000);
+  harness.engine.setRunImagePrice(60_000);
   harness.engine.delayNext("runs.estimateResume", 50);
 
   fireEvent.click(resume);
   await waitFor(() => expect(callsOf(harness.engine, "runs.estimateResume")).toHaveLength(2));
 
-  harness.engine.setRunImagePrice("1k", 50_000); // back to exactly what was accepted, before the reprice answers
+  harness.engine.setRunImagePrice(50_000); // back to exactly what was accepted, before the reprice answers
   tick(harness.scheduler, 1);
 
   await screen.findByText("Цена изменилась");
@@ -695,10 +699,10 @@ test("a resume's PRICE_CHANGED also reads «Цена изменилась», not
 
 test("a resume stays busy through its PRICE_CHANGED re-price, and a double click sends one resume", async () => {
   const harness = setup({ avatars: [MIA] });
-  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
-  harness.engine.setRunImagePrice("1k", 60_000);
+  harness.engine.setRunImagePrice(60_000);
   harness.engine.delayNext("runs.estimateResume", 50);
 
   fireEvent.click(resume);
@@ -720,7 +724,7 @@ test("a resume stays busy through its PRICE_CHANGED re-price, and a double click
 
 test("a resume in flight locks the generate card too, until it answers (L5)", async () => {
   const harness = setup({ avatars: [MIA] });
-  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
   await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.07"));
@@ -742,7 +746,7 @@ test("a resume in flight locks the generate card too, until it answers (L5)", as
 
 test("the generate card in flight locks every resume row too, until it answers (L5)", async () => {
   const harness = setup({ avatars: [MIA] });
-  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
   await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.07"));
@@ -784,10 +788,10 @@ test("a remount while runs.start is in flight still locks the new card, so a sec
 
 test("a failed re-price after a resume's PRICE_CHANGED drops the refused price: the row can only ask again", async () => {
   const harness = setup({ avatars: [MIA] });
-  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
-  harness.engine.setRunImagePrice("1k", 60_000);
+  harness.engine.setRunImagePrice(60_000);
   harness.engine.failNext("runs.estimateResume", { code: "NETWORK" });
 
   fireEvent.click(resume);
@@ -802,7 +806,7 @@ test("a failed re-price after a resume's PRICE_CHANGED drops the refused price: 
 
 test("a resume row whose very first (mount-time) estimateResume fails shows «Узнать цену», with a retry that gets it (M4)", async () => {
   const harness = setup({ avatars: [MIA] });
-  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   harness.engine.failNext("runs.estimateResume", { code: "NETWORK" });
   await openSection("Фото");
 
@@ -818,7 +822,7 @@ test("a resume row whose very first (mount-time) estimateResume fails shows «У
 
 test("an older estimateResume answer landing after a newer one must not win the button back (N2)", async () => {
   const { engine, scheduler } = setup({ avatars: [MIA] });
-  engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   engine.delayNext("runs.estimateResume", 300); // the mount-time ask: issued first, resolves LAST
   await openSection("Фото");
   await screen.findByRole("heading", { level: 1, name: "Mia" });
@@ -843,7 +847,7 @@ test("an older estimateResume answer landing after a newer one must not win the 
 
 test("a reconcileNeeded flip while this row's own resume is in flight does not clobber its busy state, and re-asks once it is done (N3)", async () => {
   const { engine, scheduler } = setup({ avatars: [MIA] });
-  engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
   const asksBefore = callsOf(engine, "runs.estimateResume").length;
@@ -871,7 +875,7 @@ test("a reconcileNeeded flip while this row's own resume is in flight does not c
 test("a resume whose cap is fully used up shows a non-paid «limit exhausted» state, never «до $0.00» (L6)", async () => {
   const harness = setup({ avatars: [MIA] });
   // 8 done slots at $0.05 each settled $0.40; the cap is seeded at exactly that, leaving nothing for the 4 open slots.
-  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8, 400_000);
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
   await openSection("Фото");
 
   await screen.findByText("Лимит запуска исчерпан");

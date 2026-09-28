@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PhotoSummary } from "../../shared/engine";
-import type { GeneratedPhotoSource, PhotoSidecar } from "./schemas";
-import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom, resolutionOf } from "./photoRecords";
+import { PhotoSidecarSchema, type GeneratedPhotoSource, type PhotoSidecar } from "./schemas";
+import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./photoRecords";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -34,7 +34,6 @@ function runPhotoSidecar(overrides: Partial<PhotoSidecar> = {}): PhotoSidecar {
     mediaType: "image/png",
     width: 1024,
     height: 1365,
-    resolution: "1k",
     bytes: 2048,
     sha256: "b".repeat(64),
     source: generatedSource(),
@@ -46,7 +45,6 @@ function runPhotoSidecar(overrides: Partial<PhotoSidecar> = {}): PhotoSidecar {
 
 function candidateSidecar(overrides: Partial<PhotoSidecar> = {}): PhotoSidecar {
   return runPhotoSidecar({
-    resolution: undefined,
     source: generatedSource({
       attemptId: "candidate-1#1",
       prompt: "Head-and-shoulders portrait photo",
@@ -57,37 +55,6 @@ function candidateSidecar(overrides: Partial<PhotoSidecar> = {}): PhotoSidecar {
   });
 }
 
-describe("resolutionOf", () => {
-  test("reads the stored resolution when the sidecar carries one", () => {
-    expect(resolutionOf({ resolution: "2k", width: 1, height: 1 })).toBe("2k");
-  });
-
-  // The spike's own measured run-photo sizes, 9:16 (RUN_ASPECT_RATIO):
-  // 1K is 720×1280, 2K is 1584×2816 (spike/studio-api/README.md).
-  test("derives 1k from the spike's own real 1K 9:16 size (720x1280) when the sidecar predates the field", () => {
-    expect(resolutionOf({ resolution: undefined, width: 720, height: 1280 })).toBe("1k");
-  });
-
-  test("derives 2k from the spike's own real 2K 9:16 size (1584x2816) when the sidecar predates the field", () => {
-    expect(resolutionOf({ resolution: undefined, width: 1584, height: 2816 })).toBe("2k");
-  });
-});
-
-describe("looksLikeRunPhoto", () => {
-  test("is true for a generated photo with a scene category", () => {
-    expect(looksLikeRunPhoto(runPhotoSidecar())).toBe(true);
-  });
-
-  test("is false for a candidate (generated, no category)", () => {
-    expect(looksLikeRunPhoto(candidateSidecar())).toBe(false);
-  });
-
-  test("is false for an imported photo", () => {
-    const imported = runPhotoSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z", confirmedAiPersona: true } });
-    expect(looksLikeRunPhoto(imported)).toBe(false);
-  });
-});
-
 describe("photoSummaryFrom", () => {
   test("maps a run photo to the contract's shape", () => {
     expect(photoSummaryFrom(runPhotoSidecar())).toEqual({
@@ -95,13 +62,15 @@ describe("photoSummaryFrom", () => {
       avatarId: "avatar-0001",
       runId: "run-00000001",
       category: "home",
-      resolution: "1k",
-      createdAt: "2026-09-24T11:00:00.000Z",
+        createdAt: "2026-09-24T11:00:00.000Z",
     });
   });
 
-  test("derives the resolution for a photo made before that field existed", () => {
-    expect(photoSummaryFrom(runPhotoSidecar({ resolution: undefined, width: 1584, height: 2816 }))?.resolution).toBe("2k");
+  test("a legacy 2K run photo lists like any other, with no resolution in its summary (2K removed, 2026-09-29)", () => {
+    const legacy = PhotoSidecarSchema.parse({ ...runPhotoSidecar(), resolution: "2k", width: 1584, height: 2816 });
+    const summary = photoSummaryFrom(legacy);
+    expect(summary?.photoId).toBe("photo-0002");
+    expect(summary !== null && "resolution" in summary).toBe(false);
   });
 
   test("carries the face-similarity and age qa badges when the sidecar has them", () => {
@@ -143,8 +112,7 @@ describe("finalizePhotoList", () => {
       avatarId: "avatar-0001",
       runId: "run-00000001",
       category: "home",
-      resolution: "1k",
-      createdAt: `2026-09-24T11:${String(minute).padStart(2, "0")}:00.000Z`,
+        createdAt: `2026-09-24T11:${String(minute).padStart(2, "0")}:00.000Z`,
     };
   }
 

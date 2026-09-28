@@ -13,6 +13,7 @@ import { openLibrary } from "../library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../library/testing/helpers";
 import { Ledger, type LedgerLine } from "../money/ledger";
 import { chatBody, fakeFetch, imageBody, readLedgerLines, type FetchCall, type Reply, type Step } from "../openrouter/testing/fakes";
+import { PROTOCOL_VERSION } from "../../shared/engine";
 
 // Test-only: an engine over a real ledger and library in a temp dir, and a
 // fake OpenRouter routed by URL and by the JSON schema a chat asks for.
@@ -196,7 +197,7 @@ export async function startEngine(
 
 let commandSeq = 0;
 export function command(type: string, payload: unknown = {}): unknown {
-  return { v: 1, id: `cmd-${String(++commandSeq).padStart(8, "0")}`, kind: "command", type, payload };
+  return { v: PROTOCOL_VERSION, id: `cmd-${String(++commandSeq).padStart(8, "0")}`, kind: "command", type, payload };
 }
 
 export function ok(response: ResponseMessage): Extract<ResponseMessage, { ok: true }> {

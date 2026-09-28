@@ -5,6 +5,13 @@ import { omitImageData } from "./redact";
 import { RAW_KEEP_BYTES_IMAGE, runPaidAttempt, type ClientContext, type Interpretation } from "./transport";
 import type { ImageParams, ImageResult } from "./types";
 
+/**
+ * The size every image request asks for. Studio only ever makes 1K images
+ * (owner decision 2026-09-29: 2K removed), so it is a constant of the wire
+ * format, not a parameter; prices (money/prices.ts) assume the same 1K.
+ */
+export const IMAGE_RESOLUTION = "1K";
+
 /** Lenient: only `data[0].b64_json` is required; everything else may be missing, null or unknown. */
 const ImageEnvelope = z.object({ data: z.array(z.unknown()).min(1) });
 const FirstImage = z.object({ b64_json: z.string().min(1) });
@@ -44,7 +51,6 @@ export async function generateImage(ctx: ClientContext, params: ImageParams): Pr
   const quality = params.quality ?? null;
   const worstMicros = params.priceBook.imageWorstCase({
     model: params.model,
-    resolution: params.resolution,
     quality,
     refs: params.references.length,
   });
@@ -61,7 +67,7 @@ export async function generateImage(ctx: ClientContext, params: ImageParams): Pr
     buildBody: () => ({
       model: params.model,
       prompt: params.prompt,
-      resolution: params.resolution,
+      resolution: IMAGE_RESOLUTION,
       aspect_ratio: params.aspectRatio,
       ...(quality === null ? {} : { quality }),
       ...(params.references.length > 0

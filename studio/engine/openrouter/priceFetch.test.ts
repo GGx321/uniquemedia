@@ -57,5 +57,5 @@ test("through the adapter the price loader reads live prices, and falls back per
 
   expect(net.calls.map((c) => c.url)).toEqual([`${LOCAL_BASE}/images/models/x-ai/grok-imagine-image-2.0/endpoints`, `${LOCAL_BASE}/models`]);
   expect([book.sourceOf("x-ai/grok-imagine-image-2.0"), book.sourceOf("x-ai/grok-4.3")]).toEqual(["live", "fallback"]);
-  expect(book.imageWorstCase({ model: "x-ai/grok-imagine-image-2.0", resolution: "1K", quality: "low", refs: 0 })).toBe(30_000);
+  expect(book.imageWorstCase({ model: "x-ai/grok-imagine-image-2.0", quality: "low", refs: 0 })).toBe(30_000);
 });

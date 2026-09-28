@@ -6,6 +6,7 @@ import { ResponseMessage } from "../shared/engine";
 import type { HostControl } from "../engine/control";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type KeyCommand, type SafeStorageLike } from "./keyFlow";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
@@ -44,9 +45,9 @@ afterEach(async () => {
 const secretsPath = () => join(userData, SECRETS_FILE);
 
 function setApiKey(key: string): KeyCommand {
-  return { v: 1, id: "cmd-set-0001", kind: "command", type: "settings.setApiKey", payload: { key } };
+  return { v: PROTOCOL_VERSION, id: "cmd-set-0001", kind: "command", type: "settings.setApiKey", payload: { key } };
 }
-const clearApiKey: KeyCommand = { v: 1, id: "cmd-clear-001", kind: "command", type: "settings.clearApiKey", payload: {} };
+const clearApiKey: KeyCommand = { v: PROTOCOL_VERSION, id: "cmd-clear-001", kind: "command", type: "settings.clearApiKey", payload: {} };
 
 function engineSpy() {
   const sent: HostControl[] = [];
@@ -77,7 +78,7 @@ describe("settings.setApiKey", () => {
 
     expect(ResponseMessage.safeParse(response).success).toBe(true);
     expect(response).toEqual({
-      v: 1,
+      v: PROTOCOL_VERSION,
       id: "cmd-set-0001",
       kind: "response",
       type: "settings.setApiKey",

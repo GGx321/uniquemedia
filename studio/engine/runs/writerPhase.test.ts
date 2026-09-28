@@ -25,7 +25,7 @@ function runPlan(count: number) {
     runId: RUN_ID,
     avatarId: "avatar-0001",
     createdAt: "2026-09-24T12:00:00.000Z",
-    request: { avatarId: "avatar-0001", count, categories: ["home"], resolution: "1k", poses: { profile: false, back: false } },
+    request: { avatarId: "avatar-0001", count, categories: ["home"], poses: { profile: false, back: false } },
     imageAgeCheck: "off",
     models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
     capMicros: 10_000_000,

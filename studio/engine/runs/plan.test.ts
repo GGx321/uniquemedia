@@ -33,18 +33,14 @@ const RUN_ID = "run-00000001";
 
 describe("runRoute", () => {
   test("is the settings' image model at quality low with the master as its one reference, then Seedream as the refusal fallback", () => {
-    expect(runRoute(MODELS.imageModel, "1k")).toEqual([
-      { model: "x-ai/grok-imagine-image-2.0", resolution: "1K", quality: "low", refs: 1 },
-      { model: FALLBACK_IMAGE_MODEL, resolution: "1K", quality: null, refs: 1 },
+    expect(runRoute(MODELS.imageModel)).toEqual([
+      { model: "x-ai/grok-imagine-image-2.0", quality: "low", refs: 1 },
+      { model: FALLBACK_IMAGE_MODEL, quality: null, refs: 1 },
     ]);
   });
 
-  test("carries the run's resolution to both models", () => {
-    expect(runRoute(MODELS.imageModel, "2k").map((c) => c.resolution)).toEqual(["2K", "2K"]);
-  });
-
   test("has no fallback when the settings' image model already is Seedream", () => {
-    expect(runRoute(FALLBACK_IMAGE_MODEL, "1k")).toEqual([{ model: FALLBACK_IMAGE_MODEL, resolution: "1K", quality: null, refs: 1 }]);
+    expect(runRoute(FALLBACK_IMAGE_MODEL)).toEqual([{ model: FALLBACK_IMAGE_MODEL, quality: null, refs: 1 }]);
   });
 });
 
@@ -65,23 +61,18 @@ describe("runEstimate (the plan's money model, at the dated fallback prices)", (
   // Writer on grok-4.3: 14K in, 8K out at the ceiling = 37_500 µ$ per attempt, 2 attempts per chunk of 25 slots (T5c).
 
   test("20 photos with the image age check off: cap ≈ $3.075 (20 × 3 × $0.05 + 1 chunk × 2 × $0.0375)", () => {
-    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20, resolution: "1k" }, "off");
+    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20 }, "off");
     expect(estimate).toEqual({ expectedMicros: 1_009_150, worstMicros: 3_075_000, prices: "fallback", pricesAsOf: "2026-09-24" });
   });
 
   test("20 photos with the image age check on: cap ≈ $3.39 (every attempt carries its age check)", () => {
-    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20, resolution: "1k" }, "on");
+    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20 }, "on");
     expect(estimate).toMatchObject({ expectedMicros: 1_042_350, worstMicros: 3_390_000 });
   });
 
   test("100 photos (four writer chunks): ≈ $15.30 off, ≈ $16.875 on", () => {
-    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100, resolution: "1k" }, "off").worstMicros).toBe(15_300_000);
-    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100, resolution: "1k" }, "on").worstMicros).toBe(16_875_000);
-  });
-
-  test("2K prices every attempt at the dearest 2K model of the route", () => {
-    // grok low 2K $0.06 + ref $0.01 = 70_000; Seedream high_resolution $0.09 + ref $0.003 = 93_000 (the dearest).
-    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 1, resolution: "2k" }, "off").worstMicros).toBe(3 * 93_000 + 2 * 37_500);
+    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100 }, "off").worstMicros).toBe(15_300_000);
+    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100 }, "on").worstMicros).toBe(16_875_000);
   });
 
   test("attempts per slot are the invariant's maximum", () => {
@@ -126,7 +117,7 @@ function newRun(count: number, request: Partial<RunRequest> = {}): NewRunPlan {
     runId: RUN_ID,
     avatarId: "avatar-0001",
     createdAt: "2026-09-24T12:00:00.000Z",
-    request: { avatarId: "avatar-0001", count, categories, resolution: "1k", poses: { profile: false, back: false }, ...request },
+    request: { avatarId: "avatar-0001", count, categories, poses: { profile: false, back: false }, ...request },
     imageAgeCheck: "off",
     models: MODELS,
     capMicros: 3_070_000,
@@ -158,6 +149,21 @@ describe("buildRunPlan", () => {
   test("round-trips through its own schema, as plan.json is written and read back", () => {
     const run = buildRunPlan(newRun(20));
     expect(RunPlanSchema.parse(JSON.parse(JSON.stringify(run)))).toEqual(run);
+  });
+
+  test("a plan.json written while runs still chose a resolution reads back: the legacy request.resolution is dropped, never refused (owner decision 2026-09-29: 2K removed)", () => {
+    const run = buildRunPlan(newRun(3));
+    for (const legacy of ["1k", "2k"]) {
+      const onDisk = JSON.parse(JSON.stringify({ ...run, request: { ...run.request, resolution: legacy } }));
+      const parsed = RunPlanSchema.parse(onDisk);
+      expect(parsed).toEqual(run);
+      expect("resolution" in parsed.request).toBe(false);
+    }
+  });
+
+  test("a plan.json whose legacy resolution is not 1k or 2k is refused", () => {
+    const run = buildRunPlan(newRun(1));
+    expect(RunPlanSchema.safeParse({ ...run, request: { ...run.request, resolution: "4k" } }).success).toBe(false);
   });
 
   test("the schema refuses a plan whose slot has no pre-allocated attempts", () => {

@@ -3,7 +3,7 @@ import { plan } from "../../../engine/scenes/planner";
 import { contractCategory } from "../../../engine/runs/plan";
 import type { Category } from "../../../engine/scenes";
 import { SceneCategory } from "../../../shared/engine";
-import { clampCount, COUNT_MAX, COUNT_MIN, COUNT_STEP, photosPerCategory, type RunCategory } from "./runForm";
+import { clampCount, COUNT_MAX, COUNT_MIN, COUNT_STEP, DEFAULT_RUN_FORM, photosPerCategory, runRequest, type RunCategory } from "./runForm";
 
 // ---------- clampCount (M4: the stepper's own boundaries) ----------
 
@@ -57,4 +57,10 @@ test("runForm's split matches the engine's for a subset of categories too, order
     const engine = engineSplit(count, subset);
     expect([...rendererSplit.entries()]).toEqual([...engine.entries()]);
   }
+});
+
+// ---------- 2K removed (owner decision 2026-09-29) ----------
+
+test("runRequest asks for nothing about resolution: only the avatar, the count, the categories and the poses", () => {
+  expect(Object.keys(runRequest("avatar-0001", DEFAULT_RUN_FORM)).sort()).toEqual(["avatarId", "categories", "count", "poses"]);
 });

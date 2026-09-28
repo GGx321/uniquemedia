@@ -29,12 +29,12 @@ export function scopeCommitted(ledger: Pick<Ledger, "lines" | "reserveOf" | "ope
 }
 
 function imageWorst(book: PriceBook, choice: ImageChoice): number {
-  return book.imageWorstCase({ model: choice.model, resolution: choice.resolution, quality: choice.quality, refs: choice.refs });
+  return book.imageWorstCase({ model: choice.model, quality: choice.quality, refs: choice.refs });
 }
 
 export function remainingEstimate(priced: PricedBook, plan: RunPlan, state: RunState, committedMicros: number, ledger: LedgerView): Estimate {
   const { book } = priced;
-  const [primary, fallback] = runRoute(plan.models.image, plan.request.resolution);
+  const [primary, fallback] = runRoute(plan.models.image);
   const ageOn = plan.imageAgeCheck === "on";
   const ageWorst = ageOn ? book.chatWorstCase({ model: AGE_CHECK_CALL.model, maxTokens: AGE_CHECK_CALL.maxTokens, inputTokens: AGE_CHECK_CALL.inputTokens, images: AGE_CHECK_CALL.images }) : 0;
   const ageTypical = ageOn ? book.chatCost({ model: AGE_CHECK_CALL.model, images: AGE_CHECK_CALL.images, ...AGE_CHECK_CALL.typical }) : 0;

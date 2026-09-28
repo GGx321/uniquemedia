@@ -103,17 +103,16 @@ const MOCK_IMPORT_TRAITS: AvatarTraits = {
   vibe: "",
 };
 
-type RunResolution = RunRequest["resolution"];
 type RunCategory = RunRequest["categories"][number];
 
 /**
- * T8b: the mock photo run's prices, in micro-dollars. One image attempt at
- * each resolution; a slot's worst case is every one of its paid attempts
+ * T8b: the mock photo run's prices, in micro-dollars. One image attempt (always
+ * 1K); a slot's worst case is every one of its paid attempts
  * (the real engine's RUN_ATTEMPTS_PER_SLOT); the scene writer's expected
  * share per photo and its worst case per chunk of photos it writes at once.
- * With the Photos mockup's own numbers: 20 photos at 1K are ≈ $1.01, до $3.07.
+ * With the Photos mockup's own numbers: 20 photos are ≈ $1.01, до $3.07.
  */
-export const MOCK_RUN_IMAGE: Readonly<Record<RunResolution, number>> = { "1k": 50_000, "2k": 70_000 };
+export const MOCK_RUN_IMAGE = 50_000;
 export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
 export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerChunk: 70_000, photosPerChunk: 25 } as const;
 
@@ -390,7 +389,7 @@ export class MockEngine implements EngineBridge {
   /** Every stored run photo, oldest first (photos.list answers newest first). */
   private photos: PhotoSummary[];
   private readonly skippedPhotos: Record<string, number>;
-  private runImagePrice: Record<RunResolution, number> = { ...MOCK_RUN_IMAGE };
+  private runImagePrice = MOCK_RUN_IMAGE;
   /** The next run job's trailing `count` open slots end without a photo. */
   private failedRunSlotsNext = 0;
   /** seedRun's own id counter, apart from nextId's, so a seed never shifts the ids handed out later. */
@@ -429,7 +428,7 @@ export class MockEngine implements EngineBridge {
   private seedDemoRun(): void {
     const mia = this.avatars.find((a) => a.name === "Mia");
     if (mia === undefined) return;
-    this.seedRun({ avatarId: mia.avatarId, count: 12, categories: ["home", "travel", "shoot", "glam", "fit"], resolution: "1k", poses: { profile: false, back: true } }, 8);
+    this.seedRun({ avatarId: mia.avatarId, count: 12, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: true } }, 8);
   }
 
   // ---------- EngineBridge ----------
@@ -576,9 +575,9 @@ export class MockEngine implements EngineBridge {
     this.failedSlotsNextJob = { count: Math.max(0, Math.min(CANDIDATES_PER_JOB, count)), error, reserveLeftOpen };
   }
 
-  /** T8b: changes one image attempt's price at `resolution`, so a run accepted at a lower worst case gets PRICE_CHANGED. */
-  setRunImagePrice(resolution: RunResolution, micros: number): void {
-    this.runImagePrice = { ...this.runImagePrice, [resolution]: micros };
+  /** T8b: changes one image attempt's price, so a run accepted at a lower worst case gets PRICE_CHANGED. */
+  setRunImagePrice(micros: number): void {
+    this.runImagePrice = micros;
   }
 
   /** The next run job's trailing `count` open slots end without a photo (their attempts all failed). */
@@ -621,7 +620,7 @@ export class MockEngine implements EngineBridge {
       run.settledMicros += expected;
       const qa = mockFaceQa(i);
       const at = new Date(Date.parse(createdAt) + (i + 1) * 60_000).toISOString();
-      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, resolution: request.resolution, createdAt: at, ...(qa ? { qa } : {}) });
+      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, createdAt: at, ...(qa ? { qa } : {}) });
     });
     this.photos.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     this.runs = [...this.runs, run];
@@ -1060,9 +1059,9 @@ export class MockEngine implements EngineBridge {
   }
 
   /** A whole run at today's mock prices: every slot's every attempt, the writer chunked, and the age checks when they are on. */
-  private runPrice(request: Pick<RunRequest, "count" | "resolution">): Estimate {
+  private runPrice(request: Pick<RunRequest, "count">): Estimate {
     const { count } = request;
-    const image = this.runImagePrice[request.resolution];
+    const image = this.runImagePrice;
     const attempts = count * MOCK_RUN_ATTEMPTS_PER_SLOT;
     const ageOn = this.settings.imageAgeCheck === "on";
     const chunks = Math.ceil(count / MOCK_RUN_WRITER.photosPerChunk);
@@ -1107,7 +1106,7 @@ export class MockEngine implements EngineBridge {
    * of one attempt. The age-check mode is the run's own, captured at start.
    */
   private slotPrice(run: MockRun): { expected: number; attemptWorst: number } {
-    const image = this.runImagePrice[run.request.resolution];
+    const image = this.runImagePrice;
     return {
       expected: image + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
       attemptWorst: image + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
@@ -1226,7 +1225,7 @@ export class MockEngine implements EngineBridge {
             planned.end = "done";
             const photoId = this.nextId("photo");
             const qa = mockFaceQa(slotIndex);
-            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, resolution: run.request.resolution, createdAt: this.nowIso(), ...(qa ? { qa } : {}) });
+            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, createdAt: this.nowIso(), ...(qa ? { qa } : {}) });
             run.photoIds.push(photoId);
             run.settledMicros += slot.expected;
             this.spend(slot.expected);

@@ -7,9 +7,9 @@ useNativeGlobals();
 const BOOK = PriceBook.fallback();
 
 /** The Stage 2 default: grok-imagine-image-2.0, low, 1K, the master as the one reference ($0.05). */
-const GROK_LOW_1K: ImageChoice = { model: "x-ai/grok-imagine-image-2.0", resolution: "1K", quality: "low", refs: 1 };
+const GROK_LOW_1K: ImageChoice = { model: "x-ai/grok-imagine-image-2.0", quality: "low", refs: 1 };
 /** The one-attempt refusal fallback. */
-const SEEDREAM_1K: ImageChoice = { model: "bytedance-seed/seedream-5-0-pro", resolution: "1K", quality: null, refs: 1 };
+const SEEDREAM_1K: ImageChoice = { model: "bytedance-seed/seedream-5-0-pro", quality: null, refs: 1 };
 
 function plan(overrides: Partial<RunPlanInput> = {}): RunPlanInput {
   return {
@@ -56,12 +56,11 @@ test("20 photos × 3 attempts on the default route: worst $3.39, expected $1.04 
 });
 
 test("the worst case takes the dearest model on the provider route, the expected cost the primary", () => {
-  const grok2K: ImageChoice = { ...GROK_LOW_1K, resolution: "2K" }; // 60k + 10k
-  const seedream2K: ImageChoice = { ...SEEDREAM_1K, resolution: "2K" }; // 90k + 3k
+  const quality: ImageChoice = { model: "x-ai/grok-imagine-image-quality", quality: null, refs: 1 }; // 50k + 10k
 
-  expect(estimateRun(BOOK, plan({ photos: 1, route: [grok2K, seedream2K] }))).toEqual({
-    expectedMicros: 70_000 + AGE_TYPICAL + 458,
-    worstMicros: 3 * (93_000 + 5_250) + 2 * 37_500,
+  expect(estimateRun(BOOK, plan({ photos: 1, route: [SEEDREAM_1K, quality] }))).toEqual({
+    expectedMicros: 48_000 + AGE_TYPICAL + 458,
+    worstMicros: 3 * (60_000 + 5_250) + 2 * 37_500,
     priceSource: "fallback",
   });
 });
@@ -128,7 +127,7 @@ test("the estimate reports live prices when the book has only live prices", () =
   };
 
   // 20 photos is one chunk (< slotsPerCall 25), retried once: 2 * the per-call ceiling (1_000).
-  expect(estimateRun(live, plan({ route: [{ model: "acme/img", resolution: "1K", quality: null, refs: 0 }], writer, ageChecks: chat }))).toEqual({
+  expect(estimateRun(live, plan({ route: [{ model: "acme/img", quality: null, refs: 0 }], writer, ageChecks: chat }))).toEqual({
     expectedMicros: 20 * (10_000 + 100) + 200,
     worstMicros: 60 * (10_000 + 1_000) + 2 * 1_000,
     priceSource: "live",
@@ -136,10 +135,10 @@ test("the estimate reports live prices when the book has only live prices", () =
 });
 
 const DESCRIPTOR_2K = { model: "x-ai/grok-4.3", maxTokens: 2_000, inputTokens: 2_000, images: 0, typical: { inputTokens: 600, outputTokens: 400 } };
-const QUALITY_1K_NO_REF: ImageChoice = { model: "x-ai/grok-imagine-image-quality", resolution: "1K", quality: null, refs: 0 };
+const QUALITY_1K_NO_REF: ImageChoice = { model: "x-ai/grok-imagine-image-quality", quality: null, refs: 0 };
 
 test("an avatar job: 4 candidates, a descriptor call and an age check per candidate (worst ≈ $0.23)", () => {
-  // 4 × ($0.05 + $0.00525) + one 2K/2K descriptor attempt ($0.0075).
+  // 4 × ($0.05 + $0.00525) + one descriptor attempt ($0.0075).
   expect(
     estimateAvatarJob(BOOK, {
       candidates: 4,

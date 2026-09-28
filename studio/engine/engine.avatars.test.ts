@@ -12,6 +12,7 @@ import { Ledger, type LedgerLine } from "./money/ledger";
 import { RAW_KEEP_BYTES_CHAT, RAW_KEEP_BYTES_IMAGE, rawFileName } from "./rawStore";
 import { chatBody, fakeFetch, readLedgerLines, withoutAt, type FetchCall, type Reply, type Step } from "./openrouter/testing/fakes";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 // The avatar commands of T6a part 2a against a real ledger and library in a
@@ -126,7 +127,7 @@ async function startEngine(opts: { init?: Partial<EngineInit>; net?: ReturnType<
 
 let commandSeq = 0;
 function command(type: string, payload: unknown = {}): unknown {
-  return { v: 1, id: `cmd-${String(++commandSeq).padStart(8, "0")}`, kind: "command", type, payload };
+  return { v: PROTOCOL_VERSION, id: `cmd-${String(++commandSeq).padStart(8, "0")}`, kind: "command", type, payload };
 }
 
 function ok(response: ResponseMessage): Extract<ResponseMessage, { ok: true }> {

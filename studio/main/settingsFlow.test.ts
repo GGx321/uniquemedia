@@ -7,6 +7,7 @@ import type { HostControl } from "../engine/control";
 import { handleSettingsCommand, isSettingsCommand, reconcileLibraryPath, type LibraryReconcileDeps, type SettingsCommand, type SettingsFlowDeps } from "./settingsFlow";
 import { loadSettings, SettingsStore } from "./settingsStore";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 const KEY_STATUS: ApiKeyStatus = { stored: true, last4: "wxyz", encryptionAvailable: true, rejected: false };
@@ -50,8 +51,8 @@ async function harness(
       },
       request: async (command) => {
         engineRequests.push(command);
-        if (options.engineDown) return { v: 1, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "the engine is not running" } };
-        return { v: 1, id: command.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: { ...KEY_STATUS, rejected: true }, ...engineSettings } };
+        if (options.engineDown) return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "the engine is not running" } };
+        return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: { ...KEY_STATUS, rejected: true }, ...engineSettings } };
       },
       openLibrary: async (path) => {
         if (options.engineDown) return { code: "INTERNAL", detail: "the engine is not running" };
@@ -78,7 +79,7 @@ async function harness(
 
 /** Built through the T0 schema, so a test never sends a command the contract would refuse. */
 function command(type: SettingsCommand["type"], payload: unknown): SettingsCommand {
-  const parsed = CommandMessage.parse({ v: 1, id: "cmd-set-00001", kind: "command", type, payload });
+  const parsed = CommandMessage.parse({ v: PROTOCOL_VERSION, id: "cmd-set-00001", kind: "command", type, payload });
   if (!isSettingsCommand(parsed)) throw new Error(`${type} is not a settings command`);
   return parsed;
 }
@@ -298,7 +299,7 @@ describe("reconcileLibraryPath", () => {
     const deps: LibraryReconcileDeps = {
       settings: store,
       engine: {
-        request: async (c) => ({ v: 1, id: c.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: KEY_STATUS, ...store.current, libraryPath: enginePath } }),
+        request: async (c) => ({ v: PROTOCOL_VERSION, id: c.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: KEY_STATUS, ...store.current, libraryPath: enginePath } }),
       },
       newId: () => `internal-${String(++n).padStart(4, "0")}`,
     };

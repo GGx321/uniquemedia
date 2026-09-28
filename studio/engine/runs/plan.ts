@@ -11,7 +11,6 @@ import { chunkSlots } from "../scenes/writer";
 // plan persisted as runs/<runId>/plan.json before the writer's first call
 // (invariant 6). A resume reads that plan back and never re-plans.
 
-export type RunResolution = RunRequest["resolution"];
 export type RunCategory = RunRequest["categories"][number];
 
 /** The one-attempt fallback on a moderation refusal (fixed decision, "Refusal fallback"). */
@@ -51,8 +50,6 @@ export interface RunModels {
   textModel: string;
 }
 
-const PRICE_RESOLUTION = { "1k": "1K", "2k": "2K" } as const satisfies Record<RunResolution, ImageChoice["resolution"]>;
-
 /** The contract's short names for the planner's categories (the Photos mockup's own labels). */
 const SCENE_CATEGORY = {
   home: "home",
@@ -85,11 +82,10 @@ export function contractCategory(category: Category): RunCategory {
  * after a moderation refusal. No fallback when the image model already is
  * Seedream. The estimate prices every attempt at the dearest of the route.
  */
-export function runRoute(imageModel: string, resolution: RunResolution): [ImageChoice, ...ImageChoice[]] {
-  const size = PRICE_RESOLUTION[resolution];
-  const fallback: ImageChoice = { model: FALLBACK_IMAGE_MODEL, resolution: size, quality: null, refs: 1 };
+export function runRoute(imageModel: string): [ImageChoice, ...ImageChoice[]] {
+  const fallback: ImageChoice = { model: FALLBACK_IMAGE_MODEL, quality: null, refs: 1 };
   if (imageModel === FALLBACK_IMAGE_MODEL) return [fallback];
-  return [{ model: imageModel, resolution: size, quality: "low", refs: 1 }, fallback];
+  return [{ model: imageModel, quality: "low", refs: 1 }, fallback];
 }
 
 /** The writer's call on the settings' text model, with the one source of truth's limits (money/estimate.ts). */
@@ -99,7 +95,7 @@ function writerCall(textModel: string): typeof WRITER_CALL {
 
 /** The models a run's estimate needs priced: the route's image models, the writer's text model and, when on, the age check's. */
 export function runPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck): PriceModels {
-  const imageModels = [...new Set(runRoute(models.imageModel, "1k").map((c) => c.model))];
+  const imageModels = [...new Set(runRoute(models.imageModel).map((c) => c.model))];
   const chatModels = imageAgeCheck === "on" ? [models.textModel, AGE_CHECK_CALL.model] : [models.textModel];
   return { imageModels, chatModels: [...new Set(chatModels)] };
 }
@@ -112,11 +108,11 @@ export function runPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck):
  * cap. The age checks are priced now, with the toggle, so the cap the owner
  * accepts already covers T7a's age gate when it is wired.
  */
-export function runEstimate(priced: PricedBook, models: RunModels, request: Pick<RunRequest, "count" | "resolution">, imageAgeCheck: ImageAgeCheck): Estimate {
+export function runEstimate(priced: PricedBook, models: RunModels, request: Pick<RunRequest, "count">, imageAgeCheck: ImageAgeCheck): Estimate {
   const estimate = estimateRun(priced.book, {
     photos: request.count,
     attemptsPerSlot: RUN_ATTEMPTS_PER_SLOT,
-    route: runRoute(models.imageModel, request.resolution),
+    route: runRoute(models.imageModel),
     writer: writerCall(models.textModel),
     ageChecks: imageAgeCheck === "on" ? AGE_CHECK_CALL : null,
   });
@@ -148,6 +144,19 @@ const WriterChunkSchema = z.strictObject({
 });
 
 /**
+ * A plan.json written while a run still chose 1K or 2K carries
+ * `request.resolution`. 2K was removed on 2026-09-29 (owner decision), but
+ * such a run must stay listable and resumable: the field is dropped on read
+ * (a resume renders at 1K, at or below the price its cap was set at). Any
+ * value other than the two old ones is still refused.
+ */
+function dropLegacyResolution(request: unknown): unknown {
+  if (typeof request !== "object" || request === null || !("resolution" in request)) return request;
+  const { resolution, ...rest } = request;
+  return resolution === "1k" || resolution === "2k" ? rest : request;
+}
+
+/**
  * runs/<runId>/plan.json. `scenes` is the planner's own ScenePlanSchema,
  * reused rather than copied, so a field the planner adds to its slots (T5c's
  * `pose`) is carried and validated by the planner's rules, never refused
@@ -163,7 +172,7 @@ export const RunPlanSchema = z
     runId: Id,
     avatarId: Id,
     createdAt: z.iso.datetime(),
-    request: RunRequest,
+    request: z.preprocess(dropLegacyResolution, RunRequest),
     imageAgeCheck: ImageAgeCheck,
     models: z.strictObject({ image: ModelId, fallback: ModelId.nullable(), text: ModelId }),
     capMicros: Micros,
@@ -210,7 +219,7 @@ export interface NewRunPlan {
 
 /** The plan to persist: the planner's slots with every attempt id pre-allocated, and the writer's chunks with theirs. */
 export function buildRunPlan(input: NewRunPlan): RunPlan {
-  const route = runRoute(input.models.imageModel, input.request.resolution);
+  const route = runRoute(input.models.imageModel);
   return RunPlanSchema.parse({
     schemaVersion: 1,
     runId: input.runId,

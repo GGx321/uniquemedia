@@ -64,6 +64,7 @@ import { openLibrary } from "../engine/library";
 import { Ledger } from "../engine/money/ledger";
 import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
+import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
 import { DEFAULT_IMPORT_DESCRIBE_ANSWER, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
@@ -321,7 +322,7 @@ async function connectPage(port: number): Promise<Cdp> {
   await cdp.evaluate(`
     window.__smoke = { events: [] };
     window.studio.subscribe((e) => window.__smoke.events.push(e));
-    window.__req = (type, payload = {}) => window.studio.request({ v: 1, id: crypto.randomUUID(), kind: "command", type, payload });
+    window.__req = (type, payload = {}) => window.studio.request({ v: ${PROTOCOL_VERSION}, id: crypto.randomUUID(), kind: "command", type, payload });
     true`);
   return cdp;
 }
@@ -1105,7 +1106,6 @@ async function runImportScenario(target: Target): Promise<void> {
 
 /** A run's slot the plan committed to, once launched: enough for `req(cdp, "runs.*", ...)` payloads below. */
 const RUN_CATEGORIES = ["home"];
-const RUN_RESOLUTION = "1k";
 const RUN_POSES = { profile: false, back: false };
 
 /**
@@ -1281,7 +1281,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
 
     // 1. Price and start a 20-photo run.
     const PHOTO_COUNT = 20;
-    const runRequest = { avatarId, count: PHOTO_COUNT, categories: RUN_CATEGORIES, resolution: RUN_RESOLUTION, poses: RUN_POSES };
+    const runRequest = { avatarId, count: PHOTO_COUNT, categories: RUN_CATEGORIES, poses: RUN_POSES };
     const runEstimate = await req(cdp, "runs.estimate", runRequest);
     check("run scenario: runs.estimate prices a 20-photo run", field(runEstimate, "ok") === true, runEstimate);
     const startAcceptedWorstMicros = Number(field(runEstimate, "result", "estimate", "worstMicros"));
@@ -1528,7 +1528,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
 
     // 11. Cancel: a second, small run, stopped mid-flight.
     const CANCEL_COUNT = 4;
-    const cancelRequest = { avatarId, count: CANCEL_COUNT, categories: RUN_CATEGORIES, resolution: RUN_RESOLUTION, poses: RUN_POSES };
+    const cancelRequest = { avatarId, count: CANCEL_COUNT, categories: RUN_CATEGORIES, poses: RUN_POSES };
     const cancelEstimate = await req(cdp, "runs.estimate", cancelRequest);
     check("cancel scenario: runs.estimate prices the small run", field(cancelEstimate, "ok") === true, cancelEstimate);
     const imagesBeforeCancelRun = mock.imageRequests().length;
@@ -1685,7 +1685,7 @@ async function main(): Promise<void> {
     );
 
     // 2. Main validates.
-    const bad = await cdp.evaluate(`window.studio.request({ v: 1, id: "smoke-bad-0001", kind: "command", type: "no.such.command", payload: {} })`);
+    const bad = await cdp.evaluate(`window.studio.request({ v: ${PROTOCOL_VERSION}, id: "smoke-bad-0001", kind: "command", type: "no.such.command", payload: {} })`);
     check("main refuses a command that breaks the contract", field(bad, "ok") === false && field(bad, "error", "code") === "VALIDATION", bad);
 
     // 3. studio-media://

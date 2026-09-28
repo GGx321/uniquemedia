@@ -117,14 +117,6 @@ export interface NewPhotoMeta {
   mediaType: ImageMediaType;
   width: number;
   height: number;
-  /**
-   * The run's own requested resolution (T8b): only the caller that made this
-   * photo knows what it asked for, so it is stored as given rather than
-   * derived here. Unset for anything that is not a run photo (a candidate,
-   * an import) — photos.list already leaves those out of the gallery for
-   * lacking a scene category, so their resolution is moot.
-   */
-  resolution?: "1k" | "2k";
   source: PhotoSource;
   qa?: PhotoQa;
 }
@@ -293,7 +285,6 @@ export class Library {
       mediaType: input.photoMeta.mediaType,
       width: input.photoMeta.width,
       height: input.photoMeta.height,
-      resolution: input.photoMeta.resolution,
       bytes: input.photoBytes.length,
       sha256: createHash("sha256").update(input.photoBytes).digest("hex"),
       source: input.photoMeta.source,
@@ -390,7 +381,6 @@ export class Library {
       mediaType: meta.mediaType,
       width: meta.width,
       height: meta.height,
-      resolution: meta.resolution,
       bytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       source: meta.source,

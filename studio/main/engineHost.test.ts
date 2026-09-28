@@ -6,6 +6,7 @@ import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
 import { MAX_ATTEMPT_MS } from "../engine/openrouter/transport";
 import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort } from "./engineHost";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
@@ -137,12 +138,12 @@ function setup(options: { key?: () => string | null; fork?: () => FakeChild; ini
 
 let n = 0;
 function command(type: "engine.snapshot" | "settings.get" = "settings.get"): EngineCommandMessage {
-  return { v: 1, id: `cmd-${String(++n).padStart(8, "0")}`, kind: "command", type, payload: {} };
+  return { v: PROTOCOL_VERSION, id: `cmd-${String(++n).padStart(8, "0")}`, kind: "command", type, payload: {} };
 }
 
 function settingsResponse(id: string, last4: string | null = null): ResponseMessage {
   return {
-    v: 1,
+    v: PROTOCOL_VERSION,
     id,
     kind: "response",
     type: "settings.get",
@@ -207,7 +208,7 @@ describe("requests", () => {
     const cmd = command();
     const pending = host.request(cmd);
     await Bun.sleep(0);
-    ports[0]?.fromEngine({ v: 1, id: cmd.id, kind: "response", type: "settings.get", ok: true, result: { nope: 1 } });
+    ports[0]?.fromEngine({ v: PROTOCOL_VERSION, id: cmd.id, kind: "response", type: "settings.get", ok: true, result: { nope: 1 } });
     expect(await pending).toMatchObject({ ok: false, id: cmd.id, error: { code: "INTERNAL" } });
   });
 
@@ -244,7 +245,7 @@ describe("requests", () => {
   test("valid events are passed on; invalid ones are dropped", async () => {
     const { host, ports, events } = setup();
     await host.start();
-    const event: EventMessage = { v: 1, id: "evt-00000001", kind: "event", seq: 1, bootId: "boot-00000001", type: "engine.error", payload: { error: { code: "INTERNAL" } } };
+    const event: EventMessage = { v: PROTOCOL_VERSION, id: "evt-00000001", kind: "event", seq: 1, bootId: "boot-00000001", type: "engine.error", payload: { error: { code: "INTERNAL" } } };
     ports[0]?.fromEngine(event);
     ports[0]?.fromEngine({ ...event, seq: 0 });
     expect(events).toEqual([event]);
@@ -388,7 +389,7 @@ describe("request deadline", () => {
       age: 25, ethnicity: "european", skinTone: "light", hairColor: "black", hairLength: "long",
       hairTexture: "wavy", eyeColor: "blue", build: "slim", marks: [], vibe: "",
     };
-    return { v: 1, id: `cmd-${String(++n).padStart(8, "0")}`, kind: "command", type: "avatars.createDraft", payload: { traits, acceptedWorstMicros: 207_500 } };
+    return { v: PROTOCOL_VERSION, id: `cmd-${String(++n).padStart(8, "0")}`, kind: "command", type: "avatars.createDraft", payload: { traits, acceptedWorstMicros: 207_500 } };
   }
 
   test("avatars.createDraft is not failed at 30 s: main waits out its own deadline, then answers INTERNAL", async () => {

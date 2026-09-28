@@ -452,7 +452,6 @@ export const JobState = z
 
 /** Scene categories from the Photos mockup; revealing outfits are out of Stage 2. */
 export const SceneCategory = z.enum(["home", "travel", "shoot", "glam", "fit"]);
-export const Resolution = z.enum(["1k", "2k"]);
 
 /**
  * Which poses beyond front and three-quarter a run allows (T5c, owner
@@ -466,7 +465,6 @@ export const RunRequest = z.strictObject({
   avatarId: Id,
   count: z.number().int().min(1).max(100),
   categories: z.array(SceneCategory).min(1).refine(unique, "categories must not repeat"),
-  resolution: Resolution,
   poses: RunPoses,
 });
 
@@ -521,7 +519,6 @@ export const PhotoSummary = z.strictObject({
   avatarId: Id,
   runId: Id.nullable(),
   category: SceneCategory,
-  resolution: Resolution,
   createdAt: IsoDateTime,
   qa: PhotoQaSummary.optional(),
 });

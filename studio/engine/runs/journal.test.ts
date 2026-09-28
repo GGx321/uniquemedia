@@ -21,7 +21,7 @@ function runPlan(count = 3): RunPlan {
     runId: RUN_ID,
     avatarId: "avatar-0001",
     createdAt: AT,
-    request: { avatarId: "avatar-0001", count, categories: ["home"], resolution: "1k", poses: { profile: false, back: false } },
+    request: { avatarId: "avatar-0001", count, categories: ["home"], poses: { profile: false, back: false } },
     imageAgeCheck: "off",
     models: { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" },
     capMicros: 1_000_000,

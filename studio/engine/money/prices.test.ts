@@ -147,67 +147,56 @@ const SEEDREAM_PRICE: ImagePrice = {
 };
 
 test("the default photo (grok 2.0, low, 1K, one reference) costs $0.05 at worst", () => {
-  expect(imageWorstCase(GROK_2_PRICE, { resolution: "1K", quality: "low", refs: 1 })).toBe(50_000);
-});
-
-test("grok 2.0 medium 2K without references uses the medium_2k price", () => {
-  expect(imageWorstCase(GROK_2_PRICE, { resolution: "2K", quality: "medium", refs: 0 })).toBe(80_000);
+  expect(imageWorstCase(GROK_2_PRICE, { quality: "low", refs: 1 })).toBe(50_000);
 });
 
 test("without a quality the dearest quality at that resolution is the worst case", () => {
-  expect(imageWorstCase(GROK_2_PRICE, { resolution: "1K", quality: null, refs: 0 })).toBe(60_000);
+  expect(imageWorstCase(GROK_2_PRICE, { quality: null, refs: 0 })).toBe(60_000);
 });
 
-test("resolution-only variants: grok quality 2K with two references", () => {
+test("seedream: the base price is the worst case (its high_resolution tier is never used) and a quality is ignored", () => {
+  expect(imageWorstCase(SEEDREAM_PRICE, { quality: "low", refs: 1 })).toBe(48_000);
+  expect(imageWorstCase(SEEDREAM_PRICE, { quality: null, refs: 0 })).toBe(45_000);
+});
+
+test("resolution-only variants: the 1k price counts, the 2k price never does", () => {
   const price: ImagePrice = { outputs: [{ variant: "1k", micros: 50_000 }, { variant: "2k", micros: 70_000 }], inputImageMicros: 10_000 };
 
-  expect(imageWorstCase(price, { resolution: "2K", quality: null, refs: 2 })).toBe(90_000);
-});
-
-test("seedream: 1K uses the base price, 2K the high_resolution price, and a quality is ignored", () => {
-  expect(imageWorstCase(SEEDREAM_PRICE, { resolution: "1K", quality: "low", refs: 1 })).toBe(48_000);
-  expect(imageWorstCase(SEEDREAM_PRICE, { resolution: "2K", quality: null, refs: 0 })).toBe(90_000);
+  expect(imageWorstCase(price, { quality: null, refs: 2 })).toBe(70_000);
 });
 
 test("variants that match nothing fall back to the dearest output price", () => {
   const price: ImagePrice = { outputs: [{ variant: "turbo", micros: 70_000 }, { variant: "eco", micros: 30_000 }], inputImageMicros: 0 };
 
-  expect(imageWorstCase(price, { resolution: "1K", quality: "low", refs: 0 })).toBe(70_000);
+  expect(imageWorstCase(price, { quality: "low", refs: 0 })).toBe(70_000);
 });
 
-test("variant names match case-insensitively: an upper-case 2K variant beats the base price", () => {
-  const price: ImagePrice = { outputs: [{ variant: null, micros: 40_000 }, { variant: "2K", micros: 80_000 }], inputImageMicros: 0 };
+test("variant names match case-insensitively: an upper-case 1K variant beats the base price", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 40_000 }, { variant: "1K", micros: 80_000 }], inputImageMicros: 0 };
 
-  expect(imageWorstCase(price, { resolution: "2K", quality: null, refs: 0 })).toBe(80_000);
-  expect(imageWorstCase(price, { resolution: "1K", quality: null, refs: 0 })).toBe(40_000);
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(80_000);
 });
 
-test("a resolution without its own variant never gets a base price below a dearer variant: {base, 4k} prices 2K at 4k", () => {
+test("the base price stays when every variant names a higher resolution (seedream's high_resolution)", () => {
   const price: ImagePrice = { outputs: [{ variant: null, micros: 40_000 }, { variant: "4k", micros: 120_000 }], inputImageMicros: 0 };
 
-  expect(imageWorstCase(price, { resolution: "2K", quality: null, refs: 0 })).toBe(120_000);
-});
-
-test("1K keeps the base price when every variant names a higher resolution (seedream's high_resolution)", () => {
-  const price: ImagePrice = { outputs: [{ variant: null, micros: 40_000 }, { variant: "4k", micros: 120_000 }], inputImageMicros: 0 };
-
-  expect(imageWorstCase(price, { resolution: "1K", quality: null, refs: 0 })).toBe(40_000);
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(40_000);
 });
 
 test("a requested quality without its variant never prices below the base", () => {
   const price: ImagePrice = { outputs: [{ variant: null, micros: 90_000 }, { variant: "medium_1k", micros: 60_000 }], inputImageMicros: 0 };
 
-  expect(imageWorstCase(price, { resolution: "1K", quality: "low", refs: 0 })).toBe(90_000);
+  expect(imageWorstCase(price, { quality: "low", refs: 0 })).toBe(90_000);
 });
 
 test("an unrecognised variant disables the base price: the dearest output is the worst case", () => {
   const price: ImagePrice = { outputs: [{ variant: null, micros: 40_000 }, { variant: "ultra", micros: 90_000 }], inputImageMicros: 0 };
 
-  expect(imageWorstCase(price, { resolution: "1K", quality: null, refs: 0 })).toBe(90_000);
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(90_000);
 });
 
 test("a quality the model does not list takes the dearest quality at that resolution", () => {
-  expect(imageWorstCase(GROK_2_PRICE, { resolution: "2K", quality: "low", refs: 0 })).toBe(60_000);
+  expect(imageWorstCase(GROK_2_PRICE, { quality: "medium", refs: 0 })).toBe(60_000);
   const noLow: ImagePrice = {
     outputs: [
       { variant: "medium_1k", micros: 60_000 },
@@ -216,12 +205,12 @@ test("a quality the model does not list takes the dearest quality at that resolu
     ],
     inputImageMicros: 0,
   };
-  expect(imageWorstCase(noLow, { resolution: "1K", quality: "low", refs: 0 })).toBe(70_000);
+  expect(imageWorstCase(noLow, { quality: "low", refs: 0 })).toBe(70_000);
 });
 
 test("refs must be a non-negative integer", () => {
-  expect(() => imageWorstCase(GROK_2_PRICE, { resolution: "1K", quality: "low", refs: -1 })).toThrow(TypeError);
-  expect(() => imageWorstCase(GROK_2_PRICE, { resolution: "1K", quality: "low", refs: 1.5 })).toThrow(TypeError);
+  expect(() => imageWorstCase(GROK_2_PRICE, { quality: "low", refs: -1 })).toThrow(TypeError);
+  expect(() => imageWorstCase(GROK_2_PRICE, { quality: "low", refs: 1.5 })).toThrow(TypeError);
 });
 
 // ---------- chat prices ----------
@@ -345,7 +334,7 @@ test("loadPriceBook uses live prices when every fetch succeeds", async () => {
 
   expect(book.source).toBe("live");
   expect(book.fallbackDate).toBeNull();
-  expect(book.imageWorstCase({ model: GROK_2, resolution: "1K", quality: "low", refs: 1 })).toBe(50_000);
+  expect(book.imageWorstCase({ model: GROK_2, quality: "low", refs: 1 })).toBe(50_000);
   expect(book.chatWorstCase({ model: GROK_CHAT, maxTokens: 8_000, inputTokens: 8_000, images: 0 })).toBe(30_000);
   expect([...fetch.urls].sort()).toEqual(
     [`${BASE}/images/models/${GROK_2}/endpoints`, `${BASE}/images/models/${SEEDREAM}/endpoints`, `${BASE}/models`].sort()
@@ -391,7 +380,7 @@ test("a failed image fetch falls back to the dated table for that model and flag
   expect(book.fallbackDate).toBe(FALLBACK_PRICES_DATE);
   expect(book.sourceOf(GROK_2)).toBe("fallback");
   expect(book.sourceOf(SEEDREAM)).toBe("live");
-  expect(book.imageWorstCase({ model: GROK_2, resolution: "1K", quality: "low", refs: 1 })).toBe(50_000);
+  expect(book.imageWorstCase({ model: GROK_2, quality: "low", refs: 1 })).toBe(50_000);
 });
 
 test("a non-2xx price response falls back", async () => {
@@ -441,7 +430,7 @@ test("a model unknown to both the live endpoint and the fallback table is PRICE_
 test("asking the book for a model it was not loaded with is PRICE_UNAVAILABLE", () => {
   const book = PriceBook.fallback();
 
-  expect(codeOf(() => book.imageWorstCase({ model: "acme/unknown-image", resolution: "1K", quality: null, refs: 0 }))).toBe("PRICE_UNAVAILABLE");
+  expect(codeOf(() => book.imageWorstCase({ model: "acme/unknown-image", quality: null, refs: 0 }))).toBe("PRICE_UNAVAILABLE");
   expect(codeOf(() => book.chatWorstCase({ model: "acme/unknown-chat", maxTokens: 1, inputTokens: 1, images: 0 }))).toBe("PRICE_UNAVAILABLE");
 });
 
@@ -456,11 +445,9 @@ test("the fallback table matches the live responses saved on its date", () => {
   expect(book.source).toBe("fallback");
   for (const { model, file } of cases) {
     const live = parseImageEndpoints(fixture(file), model);
-    for (const resolution of ["1K", "2K"] as const) {
-      for (const quality of ["low", "medium", null] as const) {
-        for (const refs of [0, 1, 3]) {
-          expect(book.imageWorstCase({ model, resolution, quality, refs })).toBe(imageWorstCase(live, { resolution, quality, refs }));
-        }
+    for (const quality of ["low", "medium", null] as const) {
+      for (const refs of [0, 1, 3]) {
+        expect(book.imageWorstCase({ model, quality, refs })).toBe(imageWorstCase(live, { quality, refs }));
       }
     }
   }

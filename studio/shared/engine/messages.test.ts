@@ -26,6 +26,7 @@ import type {
   Settings,
   UnreadableAvatar,
 } from "./state";
+import { PROTOCOL_VERSION } from ".";
 
 // ---------- fixtures ----------
 
@@ -113,7 +114,7 @@ const job: JobState = {
 
 const unreadable: UnreadableAvatar = { avatarId: "avatar-0009", name: "Zoe", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" };
 
-const runRequest: RunRequest = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], resolution: "1k", poses: { profile: true, back: false } };
+const runRequest: RunRequest = { avatarId: "avatar-0001", count: 20, categories: ["home", "travel"], poses: { profile: true, back: false } };
 
 const runSummary: RunSummary = {
   runId: "run-00000001",
@@ -135,7 +136,6 @@ const photo: PhotoSummary = {
   avatarId: "avatar-0001",
   runId: "run-00000001",
   category: "home",
-  resolution: "1k",
   createdAt: "2026-09-24T11:00:00Z",
   qa: { faceCos: 0.81, age: { adult: true, confidence: 0.95 } },
 };
@@ -147,12 +147,11 @@ const photoWithoutQa: PhotoSummary = {
   avatarId: "avatar-0001",
   runId: "run-00000001",
   category: "travel",
-  resolution: "2k",
   createdAt: "2026-09-24T11:05:00Z",
 };
 
 const progressEvent: EventMessage = {
-  v: 1,
+  v: PROTOCOL_VERSION,
   id: "evt-00000007",
   kind: "event",
   seq: 7,
@@ -273,9 +272,9 @@ function reasonOf(input: unknown): string {
   return r.reason;
 }
 
-const command = (type: string, payload: unknown) => ({ v: 1, id: "msg-00000001", kind: "command", type, payload });
+const command = (type: string, payload: unknown) => ({ v: PROTOCOL_VERSION, id: "msg-00000001", kind: "command", type, payload });
 const okResponse = (type: string, result: unknown) => ({
-  v: 1,
+  v: PROTOCOL_VERSION,
   id: "msg-00000001",
   kind: "response",
   type,
@@ -283,7 +282,7 @@ const okResponse = (type: string, result: unknown) => ({
   result,
 });
 const event = (type: string, payload: unknown, seq: unknown = 1) => ({
-  v: 1,
+  v: PROTOCOL_VERSION,
   id: "evt-00000001",
   kind: "event",
   seq,
@@ -385,18 +384,18 @@ describe("round trip", () => {
   const eventEntries = Object.entries(eventCases);
 
   test.each(commandEntries)("%s command survives JSON and parses back unchanged", (type, c) => {
-    const msg = { v: 1, id: crypto.randomUUID(), kind: "command", type, payload: c.payload };
+    const msg = { v: PROTOCOL_VERSION, id: crypto.randomUUID(), kind: "command", type, payload: c.payload };
     expectRoundTrip(msg);
   });
 
   test.each(commandEntries)("%s success response survives JSON and parses back unchanged", (type, c) => {
-    const msg = { v: 1, id: crypto.randomUUID(), kind: "response", type, ok: true, result: c.result };
+    const msg = { v: PROTOCOL_VERSION, id: crypto.randomUUID(), kind: "response", type, ok: true, result: c.result };
     expectRoundTrip(msg);
   });
 
   test.each(commandEntries)("%s error response survives JSON and parses back unchanged", (type) => {
     const msg = {
-      v: 1,
+      v: PROTOCOL_VERSION,
       id: crypto.randomUUID(),
       kind: "response",
       type,
@@ -407,7 +406,7 @@ describe("round trip", () => {
   });
 
   test.each(eventEntries)("%s event survives JSON and parses back unchanged", (type, payload) => {
-    const msg = { v: 1, id: crypto.randomUUID(), kind: "event", seq: 42, bootId: BOOT, type, payload };
+    const msg = { v: PROTOCOL_VERSION, id: crypto.randomUUID(), kind: "event", seq: 42, bootId: BOOT, type, payload };
     expectRoundTrip(msg);
   });
 
@@ -431,7 +430,7 @@ describe("envelope", () => {
     expect(reasonOf(input)).toContain("object");
   });
 
-  test.each([0, 2, "1", null, 1.0000001])("rejects protocol version %p", (v) => {
+  test.each([0, PROTOCOL_VERSION + 1, "1", null, 1.0000001])("rejects protocol version %p", (v) => {
     expect(reasonOf({ ...command("settings.get", {}), v })).toMatch(/version/);
   });
 
@@ -597,18 +596,18 @@ describe("results", () => {
   });
 
   test("an error response with an unknown code is rejected", () => {
-    const msg = { v: 1, id: "msg-00000001", kind: "response", type: "money.status", ok: false, error: { code: "E_TOO_BAD" } };
+    const msg = { v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "money.status", ok: false, error: { code: "E_TOO_BAD" } };
     expect(reasonOf(msg)).toContain("error.code");
   });
 
   test("an error response for an unknown command type is rejected", () => {
-    const msg = { v: 1, id: "msg-00000001", kind: "response", type: "money.spend", ok: false, error: { code: "INTERNAL" } };
+    const msg = { v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "money.spend", ok: false, error: { code: "INTERNAL" } };
     expect(reasonOf(msg)).toContain("type");
   });
 
   test("an error response whose detail carries the key arrives with the key stripped", () => {
     const msg = {
-      v: 1,
+      v: PROTOCOL_VERSION,
       id: "msg-00000001",
       kind: "response",
       type: "settings.setApiKey",
@@ -805,7 +804,7 @@ describe("events", () => {
 describe("parseMessage never throws", () => {
   test("on an otherwise valid command whose payload getter throws", () => {
     const hostile = {
-      v: 1,
+      v: PROTOCOL_VERSION,
       id: "msg-00000001",
       kind: "command",
       type: "settings.get",
@@ -891,7 +890,7 @@ describe("estimate before spend", () => {
   });
 
   test("a PRICE_CHANGED refusal parses as an error response", () => {
-    const msg = { v: 1, id: "msg-00000001", kind: "response", type: "avatars.createDraft", ok: false, error: { code: "PRICE_CHANGED" } };
+    const msg = { v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "avatars.createDraft", ok: false, error: { code: "PRICE_CHANGED" } };
     expect(parseMessage(msg).ok).toBe(true);
   });
 });
@@ -902,12 +901,12 @@ describe("error responses for unparseable commands", () => {
   const validation = { code: "VALIDATION" as const, detail: "type: unknown command" };
 
   test("an error response may carry a null type", () => {
-    const msg = { v: 1, id: "msg-00000001", kind: "response", type: null, ok: false, error: validation };
+    const msg = { v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: null, ok: false, error: validation };
     expect(parseMessage(msg).ok).toBe(true);
   });
 
   test("an error response may carry a null id", () => {
-    const msg = { v: 1, id: null, kind: "response", type: null, ok: false, error: validation };
+    const msg = { v: PROTOCOL_VERSION, id: null, kind: "response", type: null, ok: false, error: validation };
     expect(parseMessage(msg).ok).toBe(true);
   });
 
@@ -919,7 +918,7 @@ describe("error responses for unparseable commands", () => {
   test("errorResponseFor keeps the command's id when only the type is unknown", () => {
     const input = command("settings.delete", {});
     expect(errorResponseFor(input, validation)).toEqual({
-      v: 1,
+      v: PROTOCOL_VERSION,
       id: "msg-00000001",
       kind: "response",
       type: null,
@@ -991,7 +990,7 @@ describe("parseEngineCommand", () => {
   });
 
   test("rejects an unknown protocol version", () => {
-    const r = parseEngineCommand({ ...command("money.status", {}), v: 2 });
+    const r = parseEngineCommand({ ...command("money.status", {}), v: PROTOCOL_VERSION + 1 });
     expect(r.ok ? "" : r.reason).toMatch(/version/);
   });
 

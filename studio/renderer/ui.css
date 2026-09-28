@@ -1713,14 +1713,6 @@ input[type="range"]::-webkit-slider-thumb {
   text-align: center;
 }
 
-.photos-lbl-gap {
-  margin-top: 8px;
-}
-
-.photos-res {
-  align-self: flex-start;
-}
-
 .photos-chips,
 .photos-chips-row {
   display: flex;

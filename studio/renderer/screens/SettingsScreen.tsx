@@ -832,7 +832,7 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
               >
                 <span className="mono row-value">{settings.textModel}</span>
               </Row>
-              <Row label="Фото" hint="портреты аватара и фото-раны · разрешение фото-рана, 1K или 2K, выбирается на экране «Фото»">
+              <Row label="Фото" hint="портреты аватара и фото-раны">
                 <span className="mono row-value">{settings.imageModel}</span>
               </Row>
               <ImageAgeCheckRow settings={settings} />

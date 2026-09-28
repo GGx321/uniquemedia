@@ -26,7 +26,7 @@ const WRITER_WORST = 37_500;
 const AGE_WORST = 5_250;
 
 function runPlan(count: number, imageAgeCheck: ImageAgeCheck = "off"): RunPlan {
-  const request = { avatarId: "avatar-0001", count, categories: ["home" as const], resolution: "1k" as const, poses: { profile: false, back: false } };
+  const request = { avatarId: "avatar-0001", count, categories: ["home" as const], poses: { profile: false, back: false } };
   const worst = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, request, imageAgeCheck).worstMicros;
   return buildRunPlan({
     runId: RUN_ID,
@@ -135,24 +135,6 @@ describe("remainingEstimate", () => {
       closes: four.map((id) => ({ type: "settle" as const, attemptId: id, costMicros: 0, estimated: false, at: AT })),
     });
     expect(estimate.worstMicros).toBe(IMAGE_WORST);
-  });
-
-  test("at 2K the fallback is the dearest model of the route: every remaining attempt is priced at it (review round 3, L-a)", () => {
-    const request = { avatarId: "avatar-0001", count: 1, categories: ["home" as const], resolution: "2k" as const, poses: { profile: false, back: false } };
-    const worst = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, request, "off").worstMicros;
-    const run = buildRunPlan({
-      runId: RUN_ID,
-      avatarId: "avatar-0001",
-      createdAt: AT,
-      request,
-      imageAgeCheck: "off",
-      models: { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" },
-      capMicros: worst,
-      plannedWorstMicros: worst,
-      scenes: plan({ seed: 3, count: 1, categories: ["home"] }),
-    });
-    // Seedream high_resolution $0.09 + one reference $0.003, above the primary's low 2K $0.06 + $0.01.
-    expect(estimateFor(run, { events: writerDone(run) }).worstMicros).toBe(3 * 93_000);
   });
 
   test("with the image age check on, every remaining attempt carries its age check", () => {

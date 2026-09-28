@@ -44,7 +44,7 @@ function setup(books: (PriceBook | Error)[] = [liveBook()]) {
 }
 
 function imageMicros(book: PriceBook): number {
-  return book.imageWorstCase({ model: "x-ai/grok-imagine-image-2.0", resolution: "1K", quality: null, refs: 0 });
+  return book.imageWorstCase({ model: "x-ai/grok-imagine-image-2.0", quality: null, refs: 0 });
 }
 
 test("a second request within the refresh time is answered from the cache", async () => {

@@ -140,16 +140,6 @@ export const PhotoSidecarSchema = z
     mediaType: z.enum(IMAGE_MEDIA_TYPES),
     width: z.int().positive(),
     height: z.int().positive(),
-    /**
-     * The run's own requested resolution (T8b, additive): runJob.ts's
-     * photoMeta stores this directly, since only the run that made the
-     * photo knows what it asked for. Optional, not required: a sidecar
-     * written before this field existed has none — photoRecords.ts's
-     * resolutionOf reads such a photo's resolution back from its stored
-     * pixel size instead, as a one-time migration read, never rejecting the
-     * older sidecar over a field it could not have written.
-     */
-    resolution: z.enum(["1k", "2k"]).optional(),
     bytes: z.int().positive(),
     /** Of the image file; checked with `bytes` on every open. */
     sha256: Sha256Hex,
