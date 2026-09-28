@@ -29,12 +29,13 @@
  */
 export { defaultFaceGateConfig, FaceGateConfigSchema, FacePoseSchema, IdentityStrategySchema } from "./config";
 export type { FaceGateConfig, FacePose, IdentityStrategy } from "./config";
-export { createFaceGate, runFaceGate } from "./gate";
+export { createFaceGate, NoFaceInReferenceError, runFaceGate } from "./gate";
 export type { FaceGate, FaceGateImage, FaceGateInput, SimilarityContext, SimilarityFn } from "./gate";
 export { aggregateSimilarity, evaluateBestOfN, evaluateFixedThreshold, sweepFixedThreshold } from "./calibration";
 export type { Aggregate, BestOfNEvaluation, ThresholdEvaluation } from "./calibration";
 export { decideFaceVerdict, prominentFaces } from "./policy";
 export type { DetectedFaceBox, FaceGatePolicyInput } from "./policy";
+export { FACE_PIPELINE_MAX_SIDE, normalizeForFacePipeline } from "./normalize";
 export { FACE_MODELS, verifyModelBytes } from "./modelSource";
 export type { FaceModelKey, FaceModelSource } from "./modelSource";
 export type { FaceVerdict } from "./verdict";

@@ -2,6 +2,7 @@ import { aggregateSimilarity } from "./calibration";
 import type { FaceGateConfig } from "./config";
 import type { FacePose } from "./config";
 import { defaultFaceGateConfig } from "./config";
+import { normalizeForFacePipeline } from "./normalize";
 import { toBgrImage } from "./pixels";
 import type { BgrImage, TaggedPixels } from "./pixels";
 import { decideFaceVerdict, prominentFaces } from "./policy";
@@ -31,10 +32,28 @@ export interface FaceGateInput {
 
 export interface FaceGate {
   check(input: FaceGateInput): Promise<FaceVerdict>;
-  /** The reference image's SFace embedding, for the caller to cache (the master, or a gallery frame). Throws if it finds no face. */
+  /** The reference image's SFace embedding, for the caller to cache (the master, or a gallery frame). Throws `NoFaceInReferenceError` if it finds no face. */
   embed(image: FaceGateImage): Promise<Float32Array>;
   /** Releases the onnxruntime-web sessions. */
   dispose(): Promise<void>;
+}
+
+/**
+ * Money review N3: `embed()`'s one specific, expected failure — the
+ * reference image genuinely has no detectable face — needs to be told apart
+ * from every other way `embed()`/`check()` can fail (a decode failure
+ * upstream, an ORT/WASM crash, a timeout): those are systemic (the gate
+ * itself is broken, not "this master has no face"), and `runJob.ts`'s
+ * `prepareGates()` must route them differently — `MASTER_FACE_UNUSABLE`'s
+ * own Russian text tells the owner to fix the master; that text is wrong,
+ * and possibly the master is fine, for anything else. A dedicated class
+ * (not string-matching `error.message`) is the only reliable way to tell
+ * the two apart across that boundary.
+ */
+export class NoFaceInReferenceError extends Error {
+  constructor() {
+    super("face/gate: embed() found no face in the reference image");
+  }
 }
 
 function toBox(row: Float32Array): DetectedFaceBox {
@@ -146,14 +165,21 @@ export async function createFaceGate(
 
   return {
     async check(input: FaceGateInput): Promise<FaceVerdict> {
-      const bgr = toBgrImage(input.image);
+      // Re-review, MUST FIX 1: every candidate is normalized to the
+      // calibrated geometry before detection — a no-op at or below
+      // FACE_PIPELINE_MAX_SIDE (normalize.ts's own header has the full
+      // reasoning), so a run image (always <= 2K) never actually resizes.
+      const bgr = toBgrImage(normalizeForFacePipeline(input.image));
       return runFaceGate(bgr, input, detector, config, similarityFn);
     },
     async embed(image: FaceGateImage): Promise<Float32Array> {
-      const bgr = toBgrImage(image);
+      // Re-review, MUST FIX 1: the master goes through the identical
+      // normalization — a 12 MP imported photo must detect a face just as
+      // reliably as a calibrated 864x1152 generated one.
+      const bgr = toBgrImage(normalizeForFacePipeline(image));
       const faces = await detect(detector, bgr);
       const face = largestByArea(faces);
-      if (face === undefined) throw new Error("face/gate: embed() found no face in the reference image");
+      if (face === undefined) throw new NoFaceInReferenceError();
       return feature(recognizer, alignCrop(bgr, face));
     },
     async dispose(): Promise<void> {
