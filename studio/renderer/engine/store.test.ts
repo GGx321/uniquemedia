@@ -421,6 +421,19 @@ test("markCancelling keeps the job active until job.cancelled actually arrives",
   expect(store.getView().cancellingJobs.has(jobId)).toBe(false);
 });
 
+test("setPaidInFlight records a per-avatar flag window-wide, unaffected by any one screen's own remount (LOW-3)", async () => {
+  const { store } = await started({ avatars: [zoe()] });
+  expect(store.getView().paidInFlightAvatars.has("avatar-zoe-0001")).toBe(false);
+
+  store.setPaidInFlight("avatar-zoe-0001", true);
+  expect(store.getView().paidInFlightAvatars.has("avatar-zoe-0001")).toBe(true);
+  // Another avatar's own flag is untouched.
+  expect(store.getView().paidInFlightAvatars.has("avatar-other-0001")).toBe(false);
+
+  store.setPaidInFlight("avatar-zoe-0001", false);
+  expect(store.getView().paidInFlightAvatars.has("avatar-zoe-0001")).toBe(false);
+});
+
 test("markCancelling is a no-op for a job that is not active (nothing to wait for)", async () => {
   const { scheduler, engine, store } = await started();
   const client = mockEngineClient(engine);

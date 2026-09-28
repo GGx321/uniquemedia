@@ -70,6 +70,16 @@ export interface EngineView {
    * clears it for free, without each of those needing to know this set exists.
    */
   readonly cancellingJobs: ReadonlySet<string>;
+  /**
+   * avatarIds with a paid runs.start or runs.resume in flight (T8b's L5,
+   * moved here from AvatarPhotos's own component state for LOW-3): a
+   * component-local flag is lost on every remount, so a screen left mid-send
+   * and come back to (or reopened by the sidebar) could send a second paid
+   * command the first one's own lock was supposed to prevent. Window-wide
+   * like every other in-flight tracking here, and keyed by avatarId (not a
+   * single flag) since a paid command is always scoped to one avatar.
+   */
+  readonly paidInFlightAvatars: ReadonlySet<string>;
 }
 
 const INITIAL: EngineView = {
@@ -87,6 +97,7 @@ const INITIAL: EngineView = {
   engineError: null,
   notices: [],
   cancellingJobs: new Set(),
+  paidInFlightAvatars: new Set(),
 };
 
 export function isActiveJob(job: JobView): boolean {
@@ -334,6 +345,20 @@ export class EngineStore {
     const job = this.view.jobs.find((j) => j.jobId === jobId);
     if (job === undefined || !isActiveJob(job)) return;
     this.update({ cancellingJobs: new Set([...this.view.cancellingJobs, jobId]) });
+  }
+
+  /**
+   * Records whether a paid runs.start or runs.resume is in flight for
+   * `avatarId` (T8b's L5/LOW-3), window-wide so a remount mid-send (the
+   * sidebar reopening the Photos screen, say) still sees it and cannot send
+   * a second one the first send's own lock was meant to prevent.
+   */
+  setPaidInFlight(avatarId: string, inFlight: boolean): void {
+    if (this.view.paidInFlightAvatars.has(avatarId) === inFlight) return;
+    const paidInFlightAvatars = new Set(this.view.paidInFlightAvatars);
+    if (inFlight) paidInFlightAvatars.add(avatarId);
+    else paidInFlightAvatars.delete(avatarId);
+    this.update({ paidInFlightAvatars });
   }
 
   async refreshAvatars(): Promise<void> {

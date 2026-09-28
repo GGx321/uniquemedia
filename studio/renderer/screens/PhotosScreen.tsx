@@ -56,7 +56,7 @@ function latestRunJob(jobs: readonly JobView[], avatarId: string): JobView | nul
 }
 
 function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineView }) {
-  const { client } = useEngine();
+  const { client, store } = useEngine();
   const ready = view.phase === "ready";
   const { avatarId } = avatar;
   const tabId = useId();
@@ -75,8 +75,16 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
   const [watched, setWatched] = useState<ReadonlySet<string>>(new Set());
   /** Photos picked for a montage (stage 3): drawn as the mockup draws them, not sent anywhere yet. */
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  /** A paid runs.start or runs.resume is in flight for this avatar, from the generate card or any resume row (L5): locks the others until it answers. */
-  const [paidInFlight, setPaidInFlight] = useState(false);
+  /**
+   * A paid runs.start or runs.resume is in flight for this avatar, from the
+   * generate card or any resume row (L5): locks the others until it
+   * answers. Read from the window-wide store, not local state (LOW-3): a
+   * remount mid-send (leaving and coming back through the sidebar, say)
+   * must still see it, or a second paid command could slip through the
+   * very lock this flag exists to enforce.
+   */
+  const paidInFlight = view.paidInFlightAvatars.has(avatarId);
+  const setPaidInFlight = (inFlight: boolean): void => store.setPaidInFlight(avatarId, inFlight);
 
   const runJob = latestRunJob(view.jobs, avatarId);
   const runActive = runJob !== null && isActiveJob(runJob);

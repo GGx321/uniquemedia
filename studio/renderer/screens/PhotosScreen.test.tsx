@@ -700,6 +700,30 @@ test("the generate card in flight locks every resume row too, until it answers (
   await screen.findByText(/Рисуем фото/);
 });
 
+test("a remount while runs.start is in flight still locks the new card, so a second start cannot be sent (LOW-3, P2)", async () => {
+  const { engine, scheduler } = await openPhotos();
+  const btn = await priced();
+  engine.delayNext("runs.start", 50);
+  fireEvent.click(btn);
+
+  // Leaving and coming back remounts AvatarPhotos entirely: a paid-in-flight
+  // flag kept only in its own component state would be lost here.
+  await openSection("Аватары");
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+  await openSection("Фото");
+  await screen.findByRole("heading", { level: 1, name: "Mia" });
+
+  await waitFor(() => expect(goButton().textContent).toContain("до $"));
+  expect(isDisabled(goButton())).toBe(true);
+  expect(screen.getByText("Дождитесь окончания другого платного действия.")).toBeDefined();
+
+  fireEvent.click(goButton()); // must really do nothing, not merely look disabled
+  await flush();
+  tick(scheduler, 1); // the original runs.start answers now
+  await flush();
+  expect(callsOf(engine, "runs.start")).toHaveLength(1);
+});
+
 test("a failed re-price after a resume's PRICE_CHANGED drops the refused price: the row can only ask again", async () => {
   const harness = setup({ avatars: [MIA] });
   harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
