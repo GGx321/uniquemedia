@@ -18,7 +18,7 @@ import { buildRunPlan, FALLBACK_IMAGE_MODEL, RunPlanSchema, runEstimate, type Ru
 import { CpuPool, NetworkPool } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
 import { createAgeGate } from "./ageGate";
-import { CANCELLED_GATE_TIMEOUT_MS, reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
+import { CANCELLED_GATE_TIMEOUT_MS, preflightMaster, reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -772,6 +772,68 @@ describe("QA gates", () => {
     const events = await journal();
     expect(events.filter((e) => e.type === "attempt").map((e) => (e.type === "attempt" ? e.outcome : null))).toEqual(["dropped"]);
     expect(events.some((e) => e.type === "slot")).toBe(false);
+  });
+});
+
+// ---------- a start's own look at the master, before a run exists ----------
+
+describe("preflightMaster (runs.start looks at the master before it plans anything)", () => {
+  const face = (prepare: QaGate["prepare"]): QaGate => ({ name: "face", paid: false, ...(prepare === undefined ? {} : { prepare }), check: async () => ({ verdict: "pass" }) });
+  const look = (gates: QaGate[], opts: { referenceTimeoutMs?: number; avatar?: string } = {}) =>
+    preflightMaster({ library, gates, ...(opts.referenceTimeoutMs === undefined ? {} : { referenceTimeoutMs: opts.referenceTimeoutMs }) }, opts.avatar ?? avatarId, new AbortController().signal);
+
+  test("a master with no usable face is MASTER_FACE_UNUSABLE, and nothing is written or spent", async () => {
+    const calls: string[] = [];
+    const result = await look([
+      face(async (input) => {
+        calls.push(input.avatarId);
+        throw new NoFaceInReferenceError();
+      }),
+    ]);
+
+    expect(result).toMatchObject({ ok: false, end: { status: "failed", error: { code: "MASTER_FACE_UNUSABLE" } } });
+    expect(calls).toEqual([avatarId]);
+    expect(ledgerLines()).toEqual([]);
+  });
+
+  test("a systemic prepare failure is INTERNAL, never MASTER_FACE_UNUSABLE", async () => {
+    const result = await look([
+      face(async () => {
+        throw new Error("onnxruntime-web: session run failed");
+      }),
+    ]);
+
+    expect(result).toMatchObject({ ok: false, end: { status: "failed", error: { code: "INTERNAL" } } });
+  });
+
+  test("a passing prepare() and a gate with none both pass", async () => {
+    expect(await look([face(async () => undefined)])).toEqual({ ok: true });
+    expect(await look([face(undefined)])).toEqual({ ok: true });
+  });
+
+  test("a decode failure on the original file is retried once on the downscaled reference, like the job's own prepare (M1)", async () => {
+    const seen: number[] = [];
+    const result = await look([
+      face(async (input) => {
+        seen.push(input.masterOriginal.length);
+        if (seen.length === 1) throw new Error("Unsupported color conversion");
+      }),
+    ]);
+
+    expect(result).toEqual({ ok: true });
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(JPEG.length);
+  });
+
+  test("an avatar with no master photo is NOT_FOUND", async () => {
+    const bare = await library.createAvatar({ name: "Bare", age: 25, traits: {}, descriptor: DESCRIPTOR.text });
+    expect(await look([face(async () => undefined)], { avatar: bare.id })).toMatchObject({ ok: false, end: { status: "failed", error: { code: "NOT_FOUND" } } });
+  });
+
+  test("bounded like the job's own prepare: a prepare() that never answers ends INTERNAL after the reference timeout", async () => {
+    const result = await look([face(() => new Promise<void>(() => undefined))], { referenceTimeoutMs: 40 });
+
+    expect(result).toMatchObject({ ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: expect.stringContaining("took longer than 40 ms") } } });
   });
 });
 

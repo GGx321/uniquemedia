@@ -213,19 +213,44 @@ async function endSlot(ctx: Context, slot: SlotState, end: SlotEnd): Promise<voi
   ctx.deps.onSlot?.({ done: ctx.done, total: ctx.total, photoId: end.status === "done" ? end.photoId : null });
 }
 
+/**
+ * What loading the master and preparing the gates need, whether a job asks
+ * (its own signal, and its own `masterSha256` to set) or a start looks at
+ * the master before any run exists (`preflightMaster`, no job at all).
+ */
+interface MasterTarget {
+  deps: Pick<RunJobDeps, "library" | "gates" | "referenceTimeoutMs">;
+  avatarId: string;
+  /** The user's cancel: aborts the bounded work, which then ends `cancelled`. */
+  signal: AbortSignal;
+  /** Told the sha256 of the bytes every gate's `prepare()` is about to get, before any of them runs (N10). */
+  onMasterSha?: (sha256: string) => void;
+}
+
+function masterTargetOf(ctx: Context): MasterTarget {
+  return {
+    deps: ctx.deps,
+    avatarId: ctx.plan.avatarId,
+    signal: ctx.job.signal,
+    onMasterSha: (sha) => {
+      ctx.masterSha256 = sha;
+    },
+  };
+}
+
 /** The master as the face reference, bounded; an error end when the run cannot have one. */
-async function loadMaster(ctx: Context): Promise<{ ok: true; master: LibraryReference } | { ok: false; end: RunJobEnd }> {
-  const { deps, job, plan } = ctx;
+async function loadMaster(target: MasterTarget): Promise<{ ok: true; master: LibraryReference } | { ok: false; end: RunJobEnd }> {
+  const { deps, avatarId } = target;
   const ms = deps.referenceTimeoutMs ?? REFERENCE_TIMEOUT_MS;
   // timeoutSignal(), not AbortSignal.timeout(): a bound that guards money must not depend on an unref'd timer (timeoutSignal.ts).
   const timeout = timeoutSignal(ms);
-  const signal = AbortSignal.any([job.signal, timeout.signal]);
+  const signal = AbortSignal.any([target.signal, timeout.signal]);
   try {
-    const master = await untilAborted(deps.library.loadReference(plan.avatarId, signal), signal);
-    if (master === null) return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${plan.avatarId} has no usable master photo to use as the face reference` } } };
+    const master = await untilAborted(deps.library.loadReference(avatarId, signal), signal);
+    if (master === null) return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` } } };
     return { ok: true, master };
   } catch (error) {
-    if (job.signal.aborted) return { ok: false, end: { status: "cancelled" } };
+    if (target.signal.aborted) return { ok: false, end: { status: "cancelled" } };
     const why = timeout.signal.aborted ? `it took longer than ${ms} ms` : messageOf(error);
     return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`the master photo could not be prepared as the face reference: ${why}`) } } };
   } finally {
@@ -278,11 +303,11 @@ function masterOriginalFor(original: Uint8Array, reference: LibraryReference): U
  * Factored out of `prepareGates()` so M1's retry below can call it twice
  * with two different byte sources under the same signal/timeout budget.
  */
-async function runPrepare(ctx: Context, masterOriginal: Uint8Array, signal: AbortSignal): Promise<void> {
-  ctx.masterSha256 = createHash("sha256").update(masterOriginal).digest("hex");
-  const input: QaPrepareInput = { avatarId: ctx.plan.avatarId, masterOriginal, signal };
+async function runPrepare(target: MasterTarget, masterOriginal: Uint8Array, signal: AbortSignal): Promise<void> {
+  target.onMasterSha?.(createHash("sha256").update(masterOriginal).digest("hex"));
+  const input: QaPrepareInput = { avatarId: target.avatarId, masterOriginal, signal };
   await untilAborted(
-    Promise.all(ctx.deps.gates.map((gate) => gate.prepare?.(input))),
+    Promise.all(target.deps.gates.map((gate) => gate.prepare?.(input))),
     signal,
   );
 }
@@ -298,19 +323,19 @@ async function runPrepare(ctx: Context, masterOriginal: Uint8Array, signal: Abor
  * ends failed, resumable, with no implication that the master itself needs
  * fixing.
  */
-async function prepareGates(ctx: Context, reference: LibraryReference): Promise<{ ok: true } | { ok: false; end: RunJobEnd }> {
-  const { deps, job, plan } = ctx;
+async function prepareGates(target: MasterTarget, reference: LibraryReference): Promise<{ ok: true } | { ok: false; end: RunJobEnd }> {
+  const { deps, avatarId } = target;
   const ms = deps.referenceTimeoutMs ?? REFERENCE_TIMEOUT_MS;
   const timeout = timeoutSignal(ms);
-  const signal = AbortSignal.any([job.signal, timeout.signal]);
+  const signal = AbortSignal.any([target.signal, timeout.signal]);
   try {
-    const original = await untilAborted(deps.library.loadMasterOriginal(plan.avatarId), signal);
+    const original = await untilAborted(deps.library.loadMasterOriginal(avatarId), signal);
     if (original === null) {
-      return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${plan.avatarId} has no usable master photo` } } };
+      return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo` } } };
     }
     const masterOriginal = masterOriginalFor(original, reference);
     try {
-      await runPrepare(ctx, masterOriginal, signal);
+      await runPrepare(target, masterOriginal, signal);
     } catch (error) {
       // M1: masterOriginalFor() only sniffs the FORMAT (JPEG/PNG vs. not) —
       // a JPEG/PNG original can still fail to DECODE (e.g. a CMYK color
@@ -330,11 +355,11 @@ async function prepareGates(ctx: Context, reference: LibraryReference): Promise<
       // AbortController), so retrying here after a stop would start real,
       // wasted work that outlives the job instead of just rethrowing.
       if (masterOriginal === reference || error instanceof NoFaceInReferenceError || signal.aborted) throw error;
-      await runPrepare(ctx, reference, signal);
+      await runPrepare(target, reference, signal);
     }
     return { ok: true };
   } catch (error) {
-    if (job.signal.aborted) return { ok: false, end: { status: "cancelled" } };
+    if (target.signal.aborted) return { ok: false, end: { status: "cancelled" } };
     if (error instanceof NoFaceInReferenceError) {
       return { ok: false, end: { status: "failed", error: { code: "MASTER_FACE_UNUSABLE", detail: truncate(error.message) } } };
     }
@@ -842,9 +867,10 @@ async function work(ctx: Context): Promise<RunJobEnd> {
   ctx.done = state.slots.filter((s) => s.end !== null).length;
   if (job.signal.aborted) return { status: "cancelled" };
 
-  const reference = await loadMaster(ctx);
+  const target = masterTargetOf(ctx);
+  const reference = await loadMaster(target);
   if (!reference.ok) return reference.end;
-  const prepared = await prepareGates(ctx, reference.master);
+  const prepared = await prepareGates(target, reference.master);
   if (!prepared.ok) return prepared.end;
   const prompts = await promptsOf(ctx, state, reference.master);
   if (!prompts.ok) return prompts.end;
@@ -863,6 +889,25 @@ async function work(ctx: Context): Promise<RunJobEnd> {
     }),
   );
   return endOf(ctx, state.slots);
+}
+
+/**
+ * A start's own free look at the master, before any run exists: the same
+ * bounded `loadMaster()` and gate `prepare()` the job itself does first
+ * (`work()`), against the abstract `QaGate` list. A master no gate can work
+ * with (`MASTER_FACE_UNUSABLE`, today only the face gate's "no usable face")
+ * is discovered here, so `runs.start` can refuse it for free before it
+ * writes a plan or reserves anything — instead of leaving a dead, resumable
+ * run behind for every click. The job still prepares the gates itself (a
+ * resume needs it, and the face gate caches the master's embedding, so the
+ * second call is cheap); this never claims a run's `masterSha256`. Never
+ * throws: every failure is an `end`, exactly as the job would have ended.
+ */
+export async function preflightMaster(deps: MasterTarget["deps"], avatarId: string, signal: AbortSignal): Promise<{ ok: true } | { ok: false; end: RunJobEnd }> {
+  const target: MasterTarget = { deps, avatarId, signal };
+  const reference = await loadMaster(target);
+  if (!reference.ok) return reference;
+  return prepareGates(target, reference.master);
 }
 
 /** Runs one job of the run to its end. Never throws: whatever fails ends it as failed. */

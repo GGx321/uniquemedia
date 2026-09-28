@@ -8,6 +8,7 @@ import { computePdqHash } from "../../src/core/pdq/pdq";
 import { JobState, type EventMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { sharedRealFaceGate } from "./face/testing/realWorker";
+import { NoFaceInReferenceError } from "./face";
 import { openLibrary } from "./library";
 import { samplePhotoMeta, SAMPLE_IMPORTED_SOURCE, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { ffmpegPath } from "../node/ffmpegBinary";
@@ -1226,6 +1227,91 @@ describe("runs.list", () => {
 
     ok(await engine.handle(command("runs.cancel", { runId: running.runId })));
     await jobEnd(events, running.jobId);
+  });
+});
+
+// ---------- an unusable master is refused before a run exists ----------
+
+describe("runs.start with an unusable master: the gates' prepare() runs before anything is planned, reserved or sent", () => {
+  /** A face gate whose prepare() says the master has no usable face until `failures` calls have been made. */
+  function noFaceGate(prepared: string[], failures = Number.POSITIVE_INFINITY): QaGate {
+    return {
+      name: "face",
+      paid: false,
+      prepare: async (input) => {
+        prepared.push(input.avatarId);
+        if (prepared.length <= failures) throw new NoFaceInReferenceError();
+      },
+      check: async () => ({ verdict: "pass" }),
+    };
+  }
+
+  test("MASTER_FACE_UNUSABLE, free: 0 POSTs, no reserve, no run folder, runs.list unchanged, however many times it is clicked", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const prepared: string[] = [];
+    const { engine } = await engineOver(net, { qaGates: [noFaceGate(prepared)] });
+
+    for (let click = 0; click < 3; click++) {
+      expect(failed(await engine.handle(startRun(avatarId))).error.code).toBe("MASTER_FACE_UNUSABLE");
+    }
+
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve")).toEqual([]);
+    expect(readdirSync(join(dir(), "library", "runs"))).toEqual([]);
+    const list = ok(await engine.handle(command("runs.list")));
+    expect(list.type === "runs.list" ? list.result.runs : "not a list").toEqual([]);
+    expect(prepared).toEqual([avatarId, avatarId, avatarId]);
+  });
+
+  test("a systemic prepare failure (not «no face») refuses INTERNAL, just as free, with no run folder", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const broken: QaGate = {
+      name: "face",
+      paid: false,
+      prepare: async () => {
+        throw new Error("onnxruntime-web: session run failed");
+      },
+      check: async () => ({ verdict: "pass" }),
+    };
+    const { engine } = await engineOver(net, { qaGates: [broken] });
+
+    expect(failed(await engine.handle(startRun(avatarId))).error.code).toBe("INTERNAL");
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(readdirSync(join(dir(), "library", "runs"))).toEqual([]);
+  });
+
+  test("a refused start leaves the avatar free: the next start, with the master now usable, runs", async () => {
+    const avatarId = await seedAvatar();
+    const prepared: string[] = [];
+    const { engine, events } = await engineOver(runNetwork(), { qaGates: [noFaceGate(prepared, 1)] });
+
+    expect(failed(await engine.handle(startRun(avatarId))).error.code).toBe("MASTER_FACE_UNUSABLE");
+    const { jobId } = started(await engine.handle(startRun(avatarId)));
+
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done" });
+    expect(readdirSync(join(dir(), "library", "runs"))).toHaveLength(1);
+  });
+
+  test("a start that passes prepares the gates twice: its own look before planning, and the job's own (cheap once cached), which a resume needs too", async () => {
+    const avatarId = await seedAvatar();
+    const prepared: string[] = [];
+    const { engine, events } = await engineOver(runNetwork(), { qaGates: [noFaceGate(prepared, 0)] });
+
+    const { jobId } = started(await engine.handle(startRun(avatarId)));
+    await jobEnd(events, jobId);
+
+    expect(prepared).toEqual([avatarId, avatarId]);
+  });
+
+  test("the refusals that come first still come first: PRICE_CHANGED is answered without preparing anything", async () => {
+    const avatarId = await seedAvatar();
+    const prepared: string[] = [];
+    const { engine } = await engineOver(runNetwork(), { qaGates: [noFaceGate(prepared)] });
+
+    expect(failed(await engine.handle(startRun(avatarId, FOUR_WORST - 1))).error.code).toBe("PRICE_CHANGED");
+    expect(prepared).toEqual([]);
   });
 });
 

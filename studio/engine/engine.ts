@@ -78,7 +78,7 @@ import { CpuPool, NetworkPool } from "./runs/pools";
 import { FACE_GATE_NAME } from "./runs/faceGate";
 import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
 import { capFundsResume, remainingPlan, scopeCommitted } from "./runs/remaining";
-import { reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
+import { preflightMaster, reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
 import { plan as planScenes } from "./scenes";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
@@ -1147,6 +1147,16 @@ export class Engine {
     Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
 
+    // The gates' own look at the master (a face gate finds a master with no usable face here), free and
+    // before a run exists: a refused start leaves no plan.json, reserve or run folder behind. The job
+    // still prepares them itself (a resume needs that too; cached embeddings make it cheap).
+    const gates = this.#gatesFor(imageAgeCheck);
+    const preflight = await preflightMaster({ library, gates }, avatarId, new AbortController().signal);
+    if (!preflight.ok) {
+      if (preflight.end.status === "failed") throw new EngineFailure(preflight.end.error);
+      throw new EngineFailure({ code: "INTERNAL", detail: "the master photo could not be checked before the run" });
+    }
+
     const runId = this.#deps.newId();
     const jobId = this.#deps.newId();
     const recent = await library.recentPairs(avatarId, RECENT_PAIRS).catch((error: unknown) => {
@@ -1215,6 +1225,18 @@ export class Engine {
     }
   }
 
+  /**
+   * A run's QA gates. T7a: a wired age gate is only ever run for a run that
+   * was itself started (or resumed) with the image age check on — its own
+   * mode, captured once at plan time (a mid-flight toggle change never
+   * affects a job already running). With the toggle off the age gate is
+   * dropped from the list entirely: no call, no reserve, whatever
+   * `deps.qaGates` (main.ts's wiring) contains.
+   */
+  #gatesFor(imageAgeCheck: ImageAgeCheck): readonly QaGate[] {
+    return imageAgeCheck === "on" ? this.#qaGates : this.#qaGates.filter((gate) => gate.name !== AGE_GATE_NAME);
+  }
+
   /** Registers the run's job under its own scope, capped by its plan, and runs it on after the answer. */
   #launchRun(run: Omit<RunningRun, "signal">, done: number): void {
     const { plan } = run;
@@ -1248,7 +1270,7 @@ export class Engine {
           // never affects a job already running). With the toggle off, the
           // age gate is dropped from the list entirely: no call, no reserve,
           // whatever `deps.qaGates` (main.ts's wiring) contains.
-          gates: plan.imageAgeCheck === "on" ? this.#qaGates : this.#qaGates.filter((gate) => gate.name !== AGE_GATE_NAME),
+          gates: this.#gatesFor(plan.imageAgeCheck),
           now: () => new Date(this.#deps.clock()),
           errorOf: engineErrorFrom,
           onSlot: (progress) => this.#runSlotDone(run, progress),
