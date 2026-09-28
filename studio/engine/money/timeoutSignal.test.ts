@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { untilAborted } from "../avatars/candidateJob";
-import { timeoutSignal } from "./timeoutSignal";
+import { timeoutSignal, untilAborted } from "./timeoutSignal";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 

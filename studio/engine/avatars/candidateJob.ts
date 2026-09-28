@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { FfmpegError } from "../../node/runFfmpeg";
-import { timeoutSignal } from "../money/timeoutSignal";
+import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
 import type { AvatarDescriptor, EngineError, FailedCandidateSlot, ImageAgeCheck } from "../../shared/engine";
 import type { CandidatesJobEnd } from "../jobs";
 import type { NewPhotoMeta } from "../library";
@@ -131,31 +131,6 @@ function failedBy(slot: number, result: ImageResult | ChatResult, what: string):
 
 function internal(slot: number, detail: string): SlotOutcome {
   return failed(slot, { code: "INTERNAL", detail }, false);
-}
-
-/**
- * `work`, or the signal's reason as soon as it fires; a late rejection of the
- * abandoned work is dropped. Bounds `work` even when it ignores `signal`
- * itself (a hung native call, or a test double that does not bother) — the
- * race here is what settles, not `work`'s own cooperation.
- */
-export function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  work.catch(() => {});
-  return new Promise<T>((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason);
-    const onAbort = (): void => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    work.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
 }
 
 /**

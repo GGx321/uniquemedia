@@ -55,3 +55,30 @@ export function timeoutSignal(ms: number): TimeoutSignal {
     clear: () => clearTimeout(timer),
   };
 }
+
+/**
+ * `work`, or the signal's reason as soon as it fires; a late rejection of the
+ * abandoned work is dropped. Bounds `work` even when it ignores `signal`
+ * itself (a hung native call, or a test double that does not bother) — the
+ * race here is what settles, not `work`'s own cooperation. The partner of
+ * `timeoutSignal` above: every bound that guards money or a claim pairs the
+ * two, so both live here, where every engine module can import them.
+ */
+export function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  work.catch(() => {});
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const onAbort = (): void => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}

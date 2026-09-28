@@ -33,9 +33,9 @@ import {
   UNREADABLE_REASON_DETAIL,
 } from "../shared/engine";
 import { downscaleToJpeg, MAX_SOURCE_PIXELS, preflightDownscale } from "../node/downscale";
-import { timeoutSignal } from "./money/timeoutSignal";
+import { timeoutSignal, untilAborted } from "./money/timeoutSignal";
 import { AGE_CHECK_MAX_SIDE, passesAgeThreshold } from "./avatars/ageCheck";
-import { candidateJobEnd, runCandidateJob, untilAborted, type SlotOutcome } from "./avatars/candidateJob";
+import { candidateJobEnd, runCandidateJob, type SlotOutcome } from "./avatars/candidateJob";
 import { runDescriptorJob } from "./avatars/descriptorJob";
 import { runImportJob, type ImportJobResult } from "./avatars/importJob";
 import { checkImportPhoto, IMPORT_DESCRIBE_MAX_SIDE } from "./avatars/importStaging";
