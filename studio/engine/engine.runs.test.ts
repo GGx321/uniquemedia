@@ -1345,6 +1345,30 @@ describe("runs.start with an unusable master: the gates' prepare() runs before a
     expect(prepared).toEqual([avatarId, avatarId]);
   });
 
+  test("a run whose master turns unusable after its start check ends its open slots: runs.list shows it ended, not resumable", async () => {
+    const avatarId = await seedAvatar();
+    const prepared: string[] = [];
+    // The start's own look passes (call 1); the job's prepare (call 2) finds no usable face.
+    const late: QaGate = {
+      name: "face",
+      paid: false,
+      prepare: async (input) => {
+        prepared.push(input.avatarId);
+        if (prepared.length > 1) throw new NoFaceInReferenceError();
+      },
+      check: async () => ({ verdict: "pass" }),
+    };
+    const net = runNetwork();
+    const { engine, events } = await engineOver(net, { qaGates: [late] });
+
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.failed", payload: { kind: "run", runId, error: { code: "MASTER_FACE_UNUSABLE" } } });
+
+    const list = ok(await engine.handle(command("runs.list")));
+    expect(list.type === "runs.list" ? list.result.runs.find((r) => r.runId === runId) : "not a list").toMatchObject({ done: 0, failed: 4, open: 0, resumable: false, capExhausted: false });
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
   test("the refusals that come first still come first: PRICE_CHANGED is answered without preparing anything", async () => {
     const avatarId = await seedAvatar();
     const prepared: string[] = [];

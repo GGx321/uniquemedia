@@ -898,6 +898,29 @@ describe("prepare() (H1: a gate that cannot run for this avatar stops the job be
     expect(prepareCalls).toEqual([{ avatarId }, { avatarId }]);
   });
 
+  // A run planned before runs.start looked at the master first can already be sitting on disk, open and resumable. A
+  // master with no usable face never gets better, so its job ends the open slots: nothing is left to resume.
+  test("MASTER_FACE_UNUSABLE ends the run's open slots failed, so it is no longer resumable, and the job still ends with that error", async () => {
+    const run = await newRun(2);
+    const { end, net } = start(run, { gates: [unusableFaceGate([])] });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "MASTER_FACE_UNUSABLE" } });
+    expect(net.calls).toHaveLength(0);
+    const slots = (await journal()).filter((e) => e.type === "slot");
+    expect(slots.map((e) => [e.slotIndex, e.status, e.status === "failed" ? (e.error?.code ?? "") : ""])).toEqual([
+      [1, "failed", "MASTER_FACE_UNUSABLE"],
+      [2, "failed", "MASTER_FACE_UNUSABLE"],
+    ]);
+  });
+
+  test("a systemic prepare failure leaves the slots open: the master may be fine, a resume can try again", async () => {
+    const run = await newRun(2);
+    const { end } = start(run, { gates: [brokenPrepareGate()] });
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect((await journal()).filter((e) => e.type === "slot")).toEqual([]);
+  });
+
   test("a gate with no prepare (pdq, age) is unaffected: the run proceeds normally", async () => {
     const run = await newRun(1);
     const pdq = gate("pdq", () => ({ verdict: "pass", qa: { pdq: "d".repeat(64) } }));

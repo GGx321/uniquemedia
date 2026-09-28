@@ -871,7 +871,15 @@ async function work(ctx: Context): Promise<RunJobEnd> {
   const reference = await loadMaster(target);
   if (!reference.ok) return reference.end;
   const prepared = await prepareGates(target, reference.master);
-  if (!prepared.ok) return prepared.end;
+  if (!prepared.ok) {
+    // A master with no usable face never gets better: end the open slots, or the run stays resumable forever (a run
+    // planned before runs.start looked at the master first can already be on disk like that). Any other failure,
+    // a systemic one or a cancel, leaves them open for a resume.
+    if (prepared.end.status === "failed" && prepared.end.error.code === "MASTER_FACE_UNUSABLE") {
+      for (const slot of state.slots) if (slot.end === null) await endSlot(ctx, slot, { status: "failed", error: prepared.end.error });
+    }
+    return prepared.end;
+  }
   const prompts = await promptsOf(ctx, state, reference.master);
   if (!prompts.ok) return prompts.end;
 
