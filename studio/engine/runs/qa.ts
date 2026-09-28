@@ -86,3 +86,27 @@ export interface QaGate {
   readonly timeoutMs?: number;
   check(input: QaInput): Promise<QaVerdict>;
 }
+
+/**
+ * An additive, optional extension of QaGate (not a change to the contract
+ * above): a gate whose own `pass` is provisional, not a commitment — T7a's
+ * pdq gate claims a hash on `pass` so a second, concurrent near-duplicate
+ * cannot also pass before either is stored, but that claim must not outlive
+ * the attempt if a *later* gate then retries or rejects the same photo (a
+ * hash must never block a future image unless its photo was really stored).
+ * `runJob.ts`'s `runGates` calls `releaseClaim` for every gate that already
+ * passed, the moment a later gate in the same pipeline ends the attempt
+ * without storing the photo — duck-typed (`"releaseClaim" in gate`), so a
+ * gate that has no claim to release (the age gate, the face gate) simply
+ * never implements this and is never asked.
+ */
+export interface ReleasableGate {
+  releaseClaim(avatarId: string, attemptId: string): void;
+}
+
+/** Whether `gate` implements `ReleasableGate`; null when it does not, so a caller never needs its own cast. */
+export function releasable(gate: QaGate): (QaGate & ReleasableGate) | null {
+  if (!("releaseClaim" in gate) || typeof gate.releaseClaim !== "function") return null;
+  // Verified above at runtime: `gate` really does carry a `releaseClaim` of the right shape.
+  return gate as QaGate & ReleasableGate;
+}

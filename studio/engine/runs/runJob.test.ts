@@ -610,6 +610,40 @@ describe("QA gates", () => {
     expect((await journal()).find((e) => e.type === "slot")).toMatchObject({ status: "failed", error: { code: "QA_REJECTED" } });
   });
 
+  test("a later gate's retry releases an earlier passing gate's claim (T7a: a pdq pass is provisional until stored)", async () => {
+    const run = await newRun(1);
+    const released: { avatarId: string; attemptId: string }[] = [];
+    const pdq: QaGate & { releaseClaim(avatarId: string, attemptId: string): void } = {
+      name: "pdq",
+      paid: false,
+      check: async () => ({ verdict: "pass", qa: { pdq: "a".repeat(64) } }),
+      releaseClaim: (avatarId, attemptId) => released.push({ avatarId, attemptId }),
+    };
+    const age = gate("age", (_i, n) => (n === 1 ? { verdict: "retry", reason: "not clearly adult" } : { verdict: "pass" }));
+    const { end } = start(run, { gates: [pdq, age] });
+
+    expect(await end).toMatchObject({ status: "done" });
+    // Slot 1's first attempt: pdq passed and claimed, then age retried it — the claim must be released.
+    // The second attempt's own pdq pass is never released (it is the one that actually got stored).
+    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
+  });
+
+  test("a later gate's reject also releases an earlier passing gate's claim, and ends the slot", async () => {
+    const run = await newRun(1);
+    const released: { avatarId: string; attemptId: string }[] = [];
+    const pdq: QaGate & { releaseClaim(avatarId: string, attemptId: string): void } = {
+      name: "pdq",
+      paid: false,
+      check: async () => ({ verdict: "pass", qa: { pdq: "b".repeat(64) } }),
+      releaseClaim: (avatarId, attemptId) => released.push({ avatarId, attemptId }),
+    };
+    const age = gate("age", () => ({ verdict: "reject", reason: "not clearly adult" }));
+    const { end } = start(run, { gates: [pdq, age] });
+
+    expect(await end).toEqual({ status: "done", photoIds: [], failedSlots: 1 });
+    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
+  });
+
   test("a gate that throws stops the run: the job fails and no request is sent after it", async () => {
     const run = await newRun(6);
     let callsAtThrow = -1;
@@ -752,6 +786,22 @@ describe("images that arrive after a fatal error elsewhere", () => {
     expect(age.inputs).toHaveLength(0);
     expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toContain("dropped");
     expect(library.photosByAvatar(avatarId)).toHaveLength(1);
+  });
+
+  test("a dropped image (a paid gate after the stop) also releases an earlier free gate's own claim", async () => {
+    const run = await newRun(4);
+    const released: { avatarId: string; attemptId: string }[] = [];
+    const pdq: QaGate & { releaseClaim(avatarId: string, attemptId: string): void } = {
+      name: "pdq",
+      paid: false,
+      check: async () => ({ verdict: "pass", qa: { pdq: "d".repeat(64) } }),
+      releaseClaim: (avatarId, attemptId) => released.push({ avatarId, attemptId }),
+    };
+    const age = gate("age", () => ({ verdict: "pass" }), { paid: true });
+    const { end } = start(run, { net: lateArrival(), gates: [pdq, age], pool: new NetworkPool({ max: 2 }) });
+
+    await end;
+    expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-2#1` }]);
   });
 
   test("an image billed above its worst case is kept, and the run stops with SETTLE_ABOVE_WORST", async () => {

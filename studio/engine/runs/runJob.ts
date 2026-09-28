@@ -13,7 +13,7 @@ import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
 import { contractCategory, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, runRoute, type RunPlan } from "./plan";
 import type { CpuPool, NetworkPool, Release } from "./pools";
-import { QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
+import { QA_GATE_TIMEOUT_MS, releasable, type QaGate, type QaInput, type QaVerdict } from "./qa";
 import { runWriterPhase } from "./writerPhase";
 
 // T6: one job of a photo run — a fresh start or a resume, the same code.
@@ -302,6 +302,17 @@ async function checkOne(ctx: Context, gate: QaGate, input: Omit<QaInput, "signal
 }
 
 /**
+ * Releases every gate in `passed` that made a provisional claim (T7a's pdq
+ * gate: a `pass` is not a commitment until the photo is actually stored — see
+ * qa.ts's `ReleasableGate`), for this one attempt. Called the moment a later
+ * gate ends the attempt without a final pass, so an earlier gate's hash never
+ * lingers to block a genuinely different future image.
+ */
+function releaseClaims(passed: readonly QaGate[], avatarId: string, attemptId: string): void {
+  for (const gate of passed) releasable(gate)?.releaseClaim(avatarId, attemptId);
+}
+
+/**
  * The QA gates in order; the first that does not pass decides. A paid gate
  * is never run once the run stopped sending. `afterCancel`: the image
  * arrived after the user's cancel, and the caller already made sure every
@@ -321,10 +332,18 @@ async function runGates(ctx: Context, slot: SlotState, attemptId: string, image:
     image: { bytes: image.bytes, mediaType: image.mediaType, ...size },
   };
   let qa: PhotoQa = {};
+  const passed: QaGate[] = [];
   for (const gate of deps.gates) {
-    if (gate.paid && !sending(ctx)) return { verdict: "dropped" };
+    if (gate.paid && !sending(ctx)) {
+      releaseClaims(passed, plan.avatarId, attemptId);
+      return { verdict: "dropped" };
+    }
     const verdict = await checkOne(ctx, gate, input, afterCancel);
-    if (verdict.verdict !== "pass") return { verdict: verdict.verdict, gate: gate.name, reason: verdict.reason };
+    if (verdict.verdict !== "pass") {
+      releaseClaims(passed, plan.avatarId, attemptId);
+      return { verdict: verdict.verdict, gate: gate.name, reason: verdict.reason };
+    }
+    passed.push(gate);
     qa = { ...qa, ...verdict.qa };
   }
   return { verdict: "pass", qa };
