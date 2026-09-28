@@ -155,6 +155,28 @@ describe("addPhoto", () => {
     expect(report.quarantined).toEqual([]);
     expect(library.getPhoto(photo.id)).toEqual(photo);
   });
+
+  // T8b: a run photo carries the run's own requested resolution, stored
+  // directly by whoever calls addPhoto (runJob.ts's photoMeta); a candidate
+  // or any other caller that never sets it leaves the sidecar without one.
+  test("stores the resolution when the caller provides it", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const avatar = await library.createAvatar(SAMPLE_AVATAR);
+
+    const photo = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ resolution: "2k" }));
+
+    expect(photo.resolution).toBe("2k");
+    expect(library.getPhoto(photo.id)?.resolution).toBe("2k");
+  });
+
+  test("leaves the resolution unset when the caller does not provide it", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const avatar = await library.createAvatar(SAMPLE_AVATAR);
+
+    const photo = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta());
+
+    expect(photo.resolution).toBeUndefined();
+  });
 });
 
 describe("startup reconciliation of photos", () => {

@@ -155,6 +155,24 @@ describe("PhotoSidecarSchema", () => {
     expect<unknown>(PhotoSidecarSchema.parse(sidecar)).toEqual(sidecar);
   });
 
+  // T8b: additive. A sidecar written before this field existed simply has
+  // none (photoRecords.ts's resolutionOf reads it back with a pixel-size
+  // fallback); a new one carries the run's own requested resolution directly.
+  describe("resolution (T8b)", () => {
+    test("accepts a sidecar with a resolution of 1k or 2k, and keeps it", () => {
+      expect<unknown>(PhotoSidecarSchema.parse(validSidecar({ resolution: "1k" }))).toEqual(validSidecar({ resolution: "1k" }));
+      expect<unknown>(PhotoSidecarSchema.parse(validSidecar({ resolution: "2k" }))).toEqual(validSidecar({ resolution: "2k" }));
+    });
+
+    test("accepts a sidecar with no resolution at all (a pre-migration sidecar)", () => {
+      expect(PhotoSidecarSchema.safeParse(validSidecar()).success).toBe(true);
+    });
+
+    test("rejects an unknown resolution", () => {
+      expect(PhotoSidecarSchema.safeParse(validSidecar({ resolution: "4k" })).success).toBe(false);
+    });
+  });
+
   test("rejects a source kind other than generated", () => {
     const sidecar = validSidecar({ source: sourceWith({ kind: "user" }) });
     expect(PhotoSidecarSchema.safeParse(sidecar).success).toBe(false);
