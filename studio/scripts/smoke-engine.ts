@@ -211,7 +211,8 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitFor<T>(what: string, probe: () => Promise<T | null>, timeoutMs = 30_000): Promise<T> {
+/** `intervalMs`: the default 200 ms suits a state that can change in well under a second; a wait with a known multi-second floor (e.g. money.reconcile's quiet window) should poll far less often. */
+async function waitFor<T>(what: string, probe: () => Promise<T | null>, timeoutMs = 30_000, intervalMs = 200): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
   while (Date.now() < deadline) {
@@ -221,7 +222,7 @@ async function waitFor<T>(what: string, probe: () => Promise<T | null>, timeoutM
     } catch (error) {
       lastError = error;
     }
-    await Bun.sleep(200);
+    await Bun.sleep(intervalMs);
   }
   throw new Error(`timed out waiting for ${what}${lastError ? `: ${String(lastError)}` : ""}`);
 }
@@ -1069,31 +1070,47 @@ async function endEventOf(cdp: Cdp, jobId: unknown): Promise<unknown> {
 
 /**
  * The distinct attempt ids `userData/ledger.jsonl` has a `reserve` line for,
- * among those starting with `prefix` — read as plain text, never through the
- * `Ledger` class (which the live engine's own `Budget` already owns; this
- * only reads, like every other direct userData/library read in this file).
- * A reserve is written before its request leaves (invariant 2), and
+ * among those starting with `prefix` — read as plain bytes, never through
+ * the `Ledger` class (which the live engine's own `Budget` already owns;
+ * this only reads, like every other direct userData/library read in this
+ * file). A reserve is written before its request leaves (invariant 2), and
  * `Budget.tryReserve` checks the persisted ledger itself, not only this
  * process's memory, so a reused attempt id throws `ATTEMPT_ID_REUSED`
  * whichever process — this engine boot or an earlier, crashed one — reserved
  * it first (money/budget.ts): every id here was reserved at most once, ever.
- * A torn last line (a crash mid-append) is skipped, exactly like the real
- * reader's own tolerance for one.
+ *
+ * Tolerates only a torn *last* line (a crash mid-append), exactly like
+ * `Ledger`'s own reader (money/ledger.ts's `load()`, ~lines 283-305): a line
+ * counts as "last" when nothing meaningful follows it, whether or not it
+ * ends in a newline. An unparseable line anywhere else is real corruption,
+ * not a crash artefact, and throws — this reader has no business silently
+ * hiding that from a check whose whole point is proving nothing was missed.
  */
 async function reservedAttemptIds(userData: string, prefix: string): Promise<string[]> {
-  const text = await readFile(join(userData, "ledger.jsonl"), "utf8").catch(() => "");
+  const path = join(userData, "ledger.jsonl");
+  const bytes = await readFile(path).catch(() => null);
+  if (bytes === null) return [];
   const ids = new Set<string>();
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
+  let start = 0;
+  let lineNo = 0;
+  while (start < bytes.length) {
+    lineNo++;
+    const newline = bytes.indexOf(0x0a, start);
+    const terminated = newline !== -1;
+    const end = terminated ? newline : bytes.length;
+    const isLast = !terminated || end + 1 >= bytes.length;
     let parsed: unknown;
     try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue;
+      parsed = JSON.parse(bytes.subarray(start, end).toString("utf8"));
+    } catch (error) {
+      if (isLast) break; // a torn last line: tolerated, like Ledger's own reader
+      throw new Error(`${path}:${lineNo} is not valid JSON — a corrupt middle line, not a torn tail: ${String(error)}`);
     }
-    if (field(parsed, "type") !== "reserve") continue;
-    const attemptId = field(parsed, "attemptId");
-    if (typeof attemptId === "string" && attemptId.startsWith(prefix)) ids.add(attemptId);
+    if (field(parsed, "type") === "reserve") {
+      const attemptId = field(parsed, "attemptId");
+      if (typeof attemptId === "string" && attemptId.startsWith(prefix)) ids.add(attemptId);
+    }
+    start = end + 1;
   }
   return [...ids];
 }
@@ -1245,7 +1262,9 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     // RECONCILE_REQUIRED until the owner reconciles. A bounded poll of
     // money.reconcile past its own quiet window (money/reconcile.ts's
     // RECONCILE_QUIET_MS after REQUEST_TIMEOUT_MS since this engine opened
-    // the ledger — the same wait a real kill -9 would force on the owner).
+    // the ledger — the same wait a real kill -9 would force on the owner):
+    // a known >= 300 s floor, so a 3 s poll interval finds it just as
+    // promptly as the default 200 ms would, for a fraction of the calls.
     const reconciledAfterKill = await waitFor(
       "money.reconcile past its quiet window (invariant 4: nothing more is spent until reconciled)",
       async () => {
@@ -1254,6 +1273,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
         return r;
       },
       340_000,
+      3_000,
     );
     check("run scenario: money.reconcile closes the reserve the kill left open, before any more paid calls", field(reconciledAfterKill, "result", "status") === "done", reconciledAfterKill);
 
@@ -1317,6 +1337,14 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       imagesForRun <= reservedImageIds.length,
       { imagesForRun, reservedImageAttemptIds: reservedImageIds.length },
     );
+    // Known gap, documented rather than covered: a 20-photo run fits in one
+    // writer chunk (WRITER_CALL.slotsPerCall=25), and the writer's single
+    // call finishes near-instantly next to the run's 20 image slots — so the
+    // mid-flight kill above (step 2) always lands during the image phase,
+    // never mid-writer-attempt. This check still proves the writer's own
+    // reserve accounting is sound for the (here, trivial) writer work this
+    // scenario does; a kill genuinely interrupting an in-flight writer
+    // attempt, and its resume, is not exercised by this scenario.
     const writersForRun = mock.sceneWriterRequests().length - writersBeforeRun;
     const reservedWriterIds = await reservedAttemptIds(userData, `${runId}:writer-`);
     check(

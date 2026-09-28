@@ -47,8 +47,7 @@ import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
-import { patternFor, renderGray } from "./distinctPattern";
-import { encodeGrayscalePng } from "./grayscalePng";
+import { servedPoolImagePng } from "./distinctPattern";
 
 const FIXTURES = join(import.meta.dirname, "../engine/money/fixtures");
 
@@ -74,24 +73,15 @@ function b64(bytes: Uint8Array): string {
 
 // ---------- distinct images (T6's kill-and-resume scenario) ----------
 
-const DISTINCT_WIDTH = 200;
-const DISTINCT_HEIGHT = 356;
-
 /**
- * A real, valid, non-animated PNG, structurally distinct by `index`
- * (distinctPattern.ts's checkerboards and rotated stripes, encoded with
- * grayscalePng.ts — never a committed binary blob, never a round trip
- * through ffmpeg): PDQ compares luminance structure, not hue, so every image
- * a photo run's slots receive must differ in structure, not just colour —
- * see the module doc above and distinctPattern.test.ts's own proof.
+ * Every distinct image up front (never mid-request, so nothing adds latency
+ * while a caller is timing a request's arrival): `distinctPattern.ts`'s
+ * `servedPoolImagePng`, the one function that also produces
+ * distinctPattern.test.ts's own proof bytes — never a second, drifting copy
+ * of the render.
  */
-function distinctPortraitPng(index: number): Uint8Array {
-  return encodeGrayscalePng(DISTINCT_WIDTH, DISTINCT_HEIGHT, renderGray(patternFor(index), DISTINCT_WIDTH, DISTINCT_HEIGHT));
-}
-
-/** Every distinct image up front (never mid-request), so nothing adds latency while a caller is timing a request's arrival. */
 function buildDistinctPool(size: number): Uint8Array[] {
-  return Array.from({ length: size }, (_, i) => distinctPortraitPng(i));
+  return Array.from({ length: size }, (_, i) => servedPoolImagePng(i));
 }
 
 // ---------- the scene writer (schema "scene_sentences") ----------

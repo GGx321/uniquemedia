@@ -1,3 +1,5 @@
+import { encodeGrayscalePng } from "./grayscalePng";
+
 // T7a (merging soon) adds an always-on PDQ near-duplicate QA gate to photo
 // runs: any pair of images whose PDQ hash sits within 20 of 256 bits is read
 // as a duplicate and retried (src/core/pdq). PDQ's hash comes from the SIGN
@@ -8,17 +10,25 @@
 // structure, not colour. Every fake image T6's kill-and-resume scenario
 // feeds a photo run must therefore differ in luminance structure.
 //
-// This module is the one place that structure is generated, so
-// studio/scripts/mockOpenRouter.ts (a real served image, via grayscalePng.ts)
-// and studio/scripts/distinctPattern.test.ts (the proof, hashed directly with
-// src/core/pdq) always agree on exactly the same pattern math.
+// This module is the one place that structure is generated, and
+// `servedPoolImagePng` is the one function that turns an index into the
+// exact served bytes: studio/scripts/mockOpenRouter.ts and
+// studio/scripts/distinctPattern.test.ts both call it, so they can never
+// drift apart the way a hand-copied render once did (round 1 review, HIGH:
+// the test hashed a pattern rendered directly at 64x64, but the mock served
+// it at 200x356 with pixel-absolute stripe math — geometrically a different
+// image, so the test proved nothing about the shipped artifact).
 //
 // Two families, chosen because a few large regions is squarely a LOW spatial
 // frequency — inside PDQ's kept 16x16 DCT band, unlike a fine-grained
-// pattern, which would alias away under PDQ's own 64x64 downscale the same
-// way a solid colour does: a checkerboard of a few large blocks, and stripes
-// at a rotated angle. Every parameter is a plain number `patternFor` bakes in
-// once (including the trig), so no caller needs its own.
+// pattern, which would alias away under PDQ's own downscale the same way a
+// solid colour does: a checkerboard of a few large blocks, and stripes at a
+// rotated angle. Every parameter is a plain number `patternFor` bakes in once
+// (including the trig), so no caller needs its own. Both families are
+// resolution-independent (every coordinate is a fraction of width/height,
+// never an absolute pixel), so the served size never changes the geometry —
+// the test still decodes the real served pixels through the real gate
+// command rather than trusting that alone (see distinctPattern.test.ts).
 
 export interface CheckerboardPattern {
   readonly family: "checkerboard";
@@ -33,7 +43,7 @@ export interface StripesPattern {
   /** A unit direction (cosA, sinA), precomputed once so no caller needs its own trig. */
   readonly cosA: number;
   readonly sinA: number;
-  /** Full light+dark cycles across the image's longer side. */
+  /** Full light+dark cycles across the unit square's diagonal projection. */
   readonly cycles: number;
   readonly light: number;
   readonly dark: number;
@@ -43,10 +53,14 @@ export type PoolPattern = CheckerboardPattern | StripesPattern;
 
 /**
  * Kept far from zero so `floor()`'s sign convention (positive vs negative
- * input) never enters into it, whatever renders this pattern: every pixel
- * projection a realistic image size can produce stays comfortably positive.
+ * input) never enters into it: every fractional projection this pattern can
+ * produce (roughly ±1.5 either side of zero) stays comfortably positive.
  */
-const PROJECTION_OFFSET = 10_000;
+const PROJECTION_OFFSET = 1_000;
+
+/** The served pool images' own size (9:16-ish, matching a photo run's own aspect ratio) — the one place it is decided. */
+export const POOL_IMAGE_WIDTH = 200;
+export const POOL_IMAGE_HEIGHT = 356;
 
 /**
  * Every pool index gets its own pattern: even indices a checkerboard (block
@@ -68,15 +82,23 @@ export function patternFor(index: number): PoolPattern {
   return { family: "stripes", cosA: Math.cos(angleRad), sinA: Math.sin(angleRad), cycles, light, dark };
 }
 
-/** The pattern's luminance (0..255) at one pixel, at any resolution — the same function a renderer and the proof test both call. */
+/**
+ * The pattern's luminance (0..255) at one pixel, at any resolution — the
+ * same function a renderer and the proof test both call. Every coordinate
+ * used is `x/width`/`y/height` (a fraction in [0, 1)), never an absolute
+ * pixel: the pattern's geometry is the same fraction of the image whatever
+ * its resolution or aspect ratio.
+ */
 export function luminanceAt(pattern: PoolPattern, x: number, y: number, width: number, height: number): number {
+  const nx = x / width;
+  const ny = y / height;
   if (pattern.family === "checkerboard") {
-    const bx = Math.floor((x * pattern.blocksX) / width);
-    const by = Math.floor((y * pattern.blocksY) / height);
+    const bx = Math.floor(nx * pattern.blocksX);
+    const by = Math.floor(ny * pattern.blocksY);
     return (bx + by) % 2 === 0 ? pattern.light : pattern.dark;
   }
-  const period = Math.max(width, height) / pattern.cycles;
-  const projection = x * pattern.cosA + y * pattern.sinA + PROJECTION_OFFSET;
+  const period = 1 / pattern.cycles;
+  const projection = nx * pattern.cosA + ny * pattern.sinA + PROJECTION_OFFSET;
   return Math.floor(projection / period) % 2 === 0 ? pattern.light : pattern.dark;
 }
 
@@ -90,4 +112,16 @@ export function renderGray(pattern: PoolPattern, width: number, height: number):
     for (let x = 0; x < width; x++) gray[y * width + x] = luminanceAt(pattern, x, y, width, height);
   }
   return gray;
+}
+
+/**
+ * The exact bytes a photo run's slot `index` (0-based, wrapping every 48)
+ * gets served as its fake image: a real, valid, non-animated PNG, at the
+ * pool's own size (`POOL_IMAGE_WIDTH` x `POOL_IMAGE_HEIGHT`). The one
+ * function studio/scripts/mockOpenRouter.ts serves from and
+ * studio/scripts/distinctPattern.test.ts proves PDQ-distinct — never two
+ * separate renders of "the same" pattern.
+ */
+export function servedPoolImagePng(index: number): Uint8Array {
+  return encodeGrayscalePng(POOL_IMAGE_WIDTH, POOL_IMAGE_HEIGHT, renderGray(patternFor(index), POOL_IMAGE_WIDTH, POOL_IMAGE_HEIGHT));
 }
