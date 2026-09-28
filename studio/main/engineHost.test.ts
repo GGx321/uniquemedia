@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ENGINE_GONE_DETAIL, type AvatarTraits, type EngineCommandMessage, type EngineError, type EventMessage, type ResponseMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "../engine/avatars/descriptor";
-import { COMMAND_DEADLINE_MS, type EngineCall, type EngineInit, type MainReply } from "../engine/control";
+import { COMMAND_DEADLINE_MS, type EngineInit } from "../engine/control";
 import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
 import { MAX_ATTEMPT_MS } from "../engine/openrouter/transport";
 import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort } from "./engineHost";
@@ -107,7 +107,7 @@ class FakeTimers {
   }
 }
 
-function setup(options: { key?: () => string | null; fork?: () => FakeChild; init?: () => Promise<EngineInit>; onCall?: (call: EngineCall) => Promise<MainReply> } = {}) {
+function setup(options: { key?: () => string | null; fork?: () => FakeChild; init?: () => Promise<EngineInit> } = {}) {
   const children: FakeChild[] = [];
   const ports: FakePort[] = [];
   const events: EventMessage[] = [];
@@ -128,7 +128,6 @@ function setup(options: { key?: () => string | null; fork?: () => FakeChild; ini
     apiKey: async () => (options.key ? options.key() : null),
     onEvent: (event) => events.push(event),
     onExit: (error, restarting) => exits.push({ error, restarting }),
-    ...(options.onCall === undefined ? {} : { onCall: options.onCall }),
     timers,
   });
   /** Ends the restart backoff (1 s) and lets the relaunch finish. */
@@ -598,65 +597,6 @@ describe("calls to the engine (import.stagePhoto)", () => {
     expect(await pending).toEqual({ error: { code: "INTERNAL", detail: "the engine did not answer within 30 s" }, stage: undefined });
   });
 
-});
-
-// T7b: the one call that goes the OTHER way — the engine asks main to decode
-// an image (control.ts's EngineCall/MainReply), because only main has
-// Electron's nativeImage. EngineHost answers it through `deps.onCall`
-// (studio/main/imageDecode.ts's real handler in production) and posts the
-// `MainReply` straight back onto the same port the call arrived on.
-describe("calls FROM the engine (image.decode)", () => {
-  test("routes an incoming image.decode call to deps.onCall and posts its MainReply back", async () => {
-    const received: unknown[] = [];
-    const { host, ports } = setup({
-      onCall: async (call) => {
-        received.push(call);
-        return { kind: "control", type: "mainReply", callId: call.callId, image: { format: "bgra", width: 2, height: 2, data: new Uint8Array(16) } };
-      },
-    });
-    await host.start();
-
-    const bytes = Uint8Array.from([0xff, 0xd8, 0xff]);
-    ports[0]?.fromEngine({ kind: "control", type: "image.decode", callId: "engine-call-1", bytes });
-    await Bun.sleep(0);
-
-    expect(received).toEqual([{ kind: "control", type: "image.decode", callId: "engine-call-1", bytes }]);
-    expect(ports[0]?.posted).toContainEqual({
-      kind: "control",
-      type: "mainReply",
-      callId: "engine-call-1",
-      image: { format: "bgra", width: 2, height: 2, data: new Uint8Array(16) },
-    });
-  });
-
-  test("no deps.onCall wired: the call is dropped, nothing is posted back, nothing throws", async () => {
-    const { host, ports } = setup();
-    await host.start();
-
-    ports[0]?.fromEngine({ kind: "control", type: "image.decode", callId: "engine-call-1", bytes: Uint8Array.of(1) });
-    await Bun.sleep(0);
-
-    expect(ports[0]?.posted).toEqual([]);
-  });
-
-  test("a rejecting deps.onCall still answers the engine, with an INTERNAL MainReply, rather than leaving it waiting forever", async () => {
-    const { host, ports } = setup({
-      onCall: async () => {
-        throw new Error("nativeImage blew up");
-      },
-    });
-    await host.start();
-
-    ports[0]?.fromEngine({ kind: "control", type: "image.decode", callId: "engine-call-1", bytes: Uint8Array.of(1) });
-    await Bun.sleep(0);
-
-    expect(ports[0]?.posted).toContainEqual({
-      kind: "control",
-      type: "mainReply",
-      callId: "engine-call-1",
-      error: { code: "INTERNAL", detail: expect.stringContaining("nativeImage blew up") },
-    });
-  });
 });
 
 describe("calls to the engine (import.stagePhoto), continued", () => {

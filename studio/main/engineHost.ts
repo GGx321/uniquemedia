@@ -8,7 +8,7 @@ import {
   type EngineError,
 } from "../shared/engine";
 import { randomUUID } from "node:crypto";
-import { COMMAND_DEADLINE_MS, EngineCall, EngineReply, type EngineInit, type HostCall, type HostControl, type MainReply } from "../engine/control";
+import { COMMAND_DEADLINE_MS, EngineReply, type EngineInit, type HostCall, type HostControl } from "../engine/control";
 
 /** An unexpected exit is followed by one restart, after this delay; a second one is final. */
 export const RESTART_DELAY_MS = 1000;
@@ -76,16 +76,6 @@ export interface EngineHostDeps<Transfer> {
   onEvent(event: EventMessage): void;
   /** Surfaces an unexpected exit; `restarting` is false once the host gave up. */
   onExit(error: EngineError, restarting: boolean): void;
-  /**
-   * T7b: answers a call FROM the engine (control.ts's `EngineCall` — today
-   * only `image.decode`, since the face gate needs Electron's `nativeImage`,
-   * which only main has). Production wires `studio/main/imageDecode.ts`'s
-   * `handleImageDecodeCall`; omitted, an incoming call is dropped (logged),
-   * never left unanswered forever — a rejecting or missing `onCall` still
-   * gets the engine an `INTERNAL` `MainReply` instead of hanging its own
-   * `decodeImage` call until ITS OWN deadline.
-   */
-  onCall?(call: EngineCall): Promise<MainReply>;
   timers?: HostTimers;
   /** Ids for calls to the engine. */
   newId?: () => string;
@@ -386,38 +376,9 @@ export class EngineHost<Transfer> {
     for (const entry of [...this.#calls.values()]) this.#settleCall(entry, { error: { code: "INTERNAL", detail } });
   }
 
-  /**
-   * T7b: answers a call FROM the engine (never left unanswered — a missing
-   * or rejecting `onCall` still gets an `INTERNAL` `MainReply`, so the
-   * engine's own `decodeImage` never hangs until its own separate deadline
-   * for a reason main already knows about). The port is captured before the
-   * `await`: if the engine crashes and restarts while `onCall` is still
-   * running, the reply goes to the port the call actually arrived on (now
-   * closing or closed), never to a new, unrelated engine's port.
-   */
-  async #answerEngineCall(call: EngineCall): Promise<void> {
-    const port = this.#port;
-    if (this.#deps.onCall === undefined) {
-      console.warn(`studio: dropped an engine call (${call.type}) — no onCall handler is wired`);
-      return;
-    }
-    let reply: MainReply;
-    try {
-      reply = await this.#deps.onCall(call);
-    } catch (error) {
-      reply = { kind: "control", type: "mainReply", callId: call.callId, error: { code: "INTERNAL", detail: describe(error) } };
-    }
-    port?.postMessage(reply);
-  }
-
   #fromEngine(data: unknown): void {
     const kind = kindOf(data);
     if (kind === "control") {
-      const call = EngineCall.safeParse(data);
-      if (call.success) {
-        void this.#answerEngineCall(call.data);
-        return;
-      }
       const reply = EngineReply.safeParse(data);
       const entry = reply.success ? this.#calls.get(reply.data.callId) : undefined;
       if (reply.success && entry !== undefined) this.#settleCall(entry, { error: reply.data.error ?? null, stage: reply.data.stage });

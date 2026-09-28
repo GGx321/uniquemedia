@@ -135,43 +135,6 @@ export function isControlMessage(message: unknown): boolean {
   return typeof message === "object" && message !== null && "kind" in message && message.kind === "control";
 }
 
-/**
- * T7b's own decode decision: the face gate needs Electron's `nativeImage`
- * (the same decoder the spike's parity numbers were measured against), and
- * only the REAL main process has it — the engine's utilityProcess has none
- * (confirmed empirically) and the runtime rule forbids importing `electron`
- * from anywhere reachable from the engine entry regardless (invariant 1).
- * `EngineCall`/`MainReply` are the one call that travels the OTHER
- * way (engine to main) over the same MessagePort every `HostCall` already
- * uses — `studio/main/imageDecode.ts` answers it, `studio/engine/main.ts`
- * sends it and awaits the correlated reply.
- *
- * A generated photo is far smaller than this (a 1K/2K JPEG, a few hundred
- * KB), but the cap guards the channel the same way `MAX_IMPORT_PHOTO_BYTES`
- * already does for `import.stagePhoto` — never trusting the sender alone.
- */
-export const MAX_DECODE_IMAGE_BYTES = 20 * 1024 * 1024;
-
-export const EngineCall = z.discriminatedUnion("type", [
-  z.strictObject({
-    kind: z.literal("control"),
-    type: z.literal("image.decode"),
-    callId: Id,
-    bytes: z.instanceof(Uint8Array).refine((b) => b.byteLength <= MAX_DECODE_IMAGE_BYTES, `must be at most ${MAX_DECODE_IMAGE_BYTES} bytes`),
-  }),
-]);
-export type EngineCall = z.infer<typeof EngineCall>;
-
-/** Main's answer to an `EngineCall`: `error` on failure, `image` (tagged BGRA — `nativeImage.toBitmap()`'s own byte order) on success, never both. */
-export const MainReply = z.strictObject({
-  kind: z.literal("control"),
-  type: z.literal("mainReply"),
-  callId: Id,
-  error: EngineError.optional(),
-  image: z.strictObject({ format: z.literal("bgra"), width: Count, height: Count, data: z.instanceof(Uint8Array) }).optional(),
-});
-export type MainReply = z.infer<typeof MainReply>;
-
 /** Room for the engine's own work around its network waits: ledger fsyncs, the library write, a reserve queued behind a reconcile. */
 const COMMAND_SLACK_MS = 30_000;
 
