@@ -431,7 +431,7 @@ describe("envelope", () => {
     expect(reasonOf(input)).toContain("object");
   });
 
-  test.each([0, PROTOCOL_VERSION + 1, "1", null, 1.0000001])("rejects protocol version %p", (v) => {
+  test.each([0, PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1, "1", null, 1.0000001])("rejects protocol version %p", (v) => {
     expect(reasonOf({ ...command("settings.get", {}), v })).toMatch(/version/);
   });
 
