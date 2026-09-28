@@ -59,6 +59,9 @@ interface GenerateCardProps {
   /** A run of this avatar is queued or running: the engine refuses a second one, so the button waits. */
   runActive: boolean;
   onStarted: (started: { runId: string; jobId: string }) => void;
+  /** A paid runs.start or runs.resume is in flight for this avatar, from this card or any resume row (L5). */
+  paidInFlight: boolean;
+  onPaidInFlightChange: (inFlight: boolean) => void;
 }
 
 /**
@@ -71,7 +74,7 @@ interface GenerateCardProps {
  * refused one, which must then be confirmed by a new click; a failed
  * re-price leaves no price at all, only a retry.
  */
-export function GenerateCard({ avatar, view, form, onFormChange, runActive, onStarted }: GenerateCardProps) {
+export function GenerateCard({ avatar, view, form, onFormChange, runActive, onStarted, paidInFlight, onPaidInFlightChange }: GenerateCardProps) {
   const { client, store } = useEngine();
   const navigate = useNavigate();
   const ids = useId();
@@ -132,6 +135,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
+    onPaidInFlightChange(true);
     setError(null);
     try {
       const reply = await client.request("runs.start", { ...accepted.request, acceptedWorstMicros: accepted.estimate.worstMicros });
@@ -170,11 +174,14 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
       setError(fresh.error);
     } finally {
       sending.current = false;
+      onPaidInFlightChange(false);
       if (mounted.current) setBusy(false);
     }
   }
 
-  const locked = busy;
+  // Another paid command (a resume row's) is in flight for this avatar (L5): this card locks too, though it is not the one sending.
+  const lockedByOther = paidInFlight && !busy;
+  const locked = busy || lockedByOther;
   const perCategory = photosPerCategory(form.count, form.categories);
   const blockedReason =
     paidBlockedReason(view) ??
@@ -184,7 +191,9 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
         ? "Выберите хотя бы одну категорию."
         : runActive
           ? "Дождитесь конца текущего запуска."
-          : null);
+          : lockedByOther
+            ? "Дождитесь окончания другого платного действия."
+            : null);
 
   function toggleCategory(category: RunCategory): void {
     const on = form.categories.includes(category);

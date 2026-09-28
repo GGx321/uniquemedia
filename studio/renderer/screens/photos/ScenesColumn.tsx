@@ -21,7 +21,16 @@ type ResumeBusy = "estimate" | "resume" | null;
  * generation card: busy through a PRICE_CHANGED re-price, the refused price
  * dropped when the re-price fails, never two sends.
  */
-function ResumeRow({ run, blockedReason, onResumed }: { run: RunSummary; blockedReason: string | null; onResumed: (resumed: { runId: string; jobId: string }) => void }) {
+interface ResumeRowProps {
+  run: RunSummary;
+  blockedReason: string | null;
+  /** A paid runs.start or runs.resume is in flight for this avatar, from this row or the generate card or another row (L5). */
+  paidInFlight: boolean;
+  onPaidInFlightChange: (inFlight: boolean) => void;
+  onResumed: (resumed: { runId: string; jobId: string }) => void;
+}
+
+function ResumeRow({ run, blockedReason, paidInFlight, onPaidInFlightChange, onResumed }: ResumeRowProps) {
   const { client, store } = useEngine();
   const mounted = useMounted();
   const sending = useRef(false);
@@ -53,6 +62,7 @@ function ResumeRow({ run, blockedReason, onResumed }: { run: RunSummary; blocked
     if (sending.current) return;
     sending.current = true;
     setBusy("resume");
+    onPaidInFlightChange(true);
     setError(null);
     try {
       const reply = await client.request("runs.resume", { runId: run.runId, acceptedWorstMicros: accepted.worstMicros });
@@ -79,12 +89,16 @@ function ResumeRow({ run, blockedReason, onResumed }: { run: RunSummary; blocked
       setError(fresh.error);
     } finally {
       sending.current = false;
+      onPaidInFlightChange(false);
       if (mounted.current) setBusy(null);
     }
   }
 
+  // Another paid command (the generate card's or another row's) is in flight for this avatar (L5): this row locks too, though it is not the one sending.
+  const lockedByOther = paidInFlight && busy === null;
+  const effectiveBlockedReason = blockedReason ?? (lockedByOther ? "Дождитесь окончания другого платного действия." : null);
   const title = busy === "estimate" ? "Считаем…" : busy === "resume" ? "Продолжаем…" : previousWorst !== null ? "Подтвердить новую цену" : estimate ? "Продолжить" : "Узнать цену";
-  const paidClick = estimate !== null && blockedReason === null;
+  const paidClick = estimate !== null && effectiveBlockedReason === null;
   const clickable = busy === null && (estimate === null || paidClick);
   const failed = run.failed > 0 ? ` · не получилось ${run.failed}` : "";
   const dateId = useId();
@@ -112,7 +126,7 @@ function ResumeRow({ run, blockedReason, onResumed }: { run: RunSummary; blocked
           className={previousWorst !== null ? "btn btn-p btn-stack photos-run-go" : "btn btn-stack photos-run-go"}
           disabled={!clickable}
           aria-busy={busy !== null}
-          aria-describedby={blockedReason && estimate ? hintId : undefined}
+          aria-describedby={effectiveBlockedReason && estimate ? hintId : undefined}
           onClick={() => void (estimate ? resume(estimate) : askPrice())}
         >
           <span className="btn-stack-line">
@@ -127,9 +141,9 @@ function ResumeRow({ run, blockedReason, onResumed }: { run: RunSummary; blocked
           )}
         </button>
       </div>
-      {blockedReason && estimate && (
+      {effectiveBlockedReason && estimate && (
         <p id={hintId} className="field-hint">
-          {blockedReason}
+          {effectiveBlockedReason}
         </p>
       )}
       {previousWorst !== null && estimate && (
@@ -181,6 +195,9 @@ interface ScenesColumnProps {
   onRetryRuns: () => void;
   /** Why a paid resume cannot be sent right now, if anything stops it. */
   blockedReason: string | null;
+  /** A paid runs.start or runs.resume is in flight for this avatar, from the generate card or any resume row (L5). */
+  paidInFlight: boolean;
+  onPaidInFlightChange: (inFlight: boolean) => void;
   onResumed: (resumed: { runId: string; jobId: string }) => void;
 }
 
@@ -191,7 +208,20 @@ interface ScenesColumnProps {
  * how the watched run ended, and the stopped runs a resume can continue —
  * and marks the scene list itself as coming.
  */
-export function ScenesColumn({ view, count, runJob, activeRunId, watched, runs, runsError, onRetryRuns, blockedReason, onResumed }: ScenesColumnProps) {
+export function ScenesColumn({
+  view,
+  count,
+  runJob,
+  activeRunId,
+  watched,
+  runs,
+  runsError,
+  onRetryRuns,
+  blockedReason,
+  paidInFlight,
+  onPaidInFlightChange,
+  onResumed,
+}: ScenesColumnProps) {
   const { client, store } = useEngine();
   const mounted = useMounted();
   const cancelSending = useRef(false);
@@ -266,7 +296,14 @@ export function ScenesColumn({ view, count, runJob, activeRunId, watched, runs, 
 
       {/* Keyed on what is left too: a run whose open slots changed (another window, a resync) is priced again. */}
       {runs.map((run) => (
-        <ResumeRow key={`${run.runId}:${run.open}`} run={run} blockedReason={running ? "Дождитесь конца текущего запуска." : blockedReason} onResumed={onResumed} />
+        <ResumeRow
+          key={`${run.runId}:${run.open}`}
+          run={run}
+          blockedReason={running ? "Дождитесь конца текущего запуска." : blockedReason}
+          paidInFlight={paidInFlight}
+          onPaidInFlightChange={onPaidInFlightChange}
+          onResumed={onResumed}
+        />
       ))}
 
       <article className="photos-soon" aria-label="Список сцен — скоро">

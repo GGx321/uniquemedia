@@ -67,6 +67,8 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
   const [watched, setWatched] = useState<ReadonlySet<string>>(new Set());
   /** Photos picked for a montage (stage 3): drawn as the mockup draws them, not sent anywhere yet. */
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  /** A paid runs.start or runs.resume is in flight for this avatar, from the generate card or any resume row (L5): locks the others until it answers. */
+  const [paidInFlight, setPaidInFlight] = useState(false);
 
   const runJob = latestRunJob(view.jobs, avatarId);
   const runActive = runJob !== null && isActiveJob(runJob);
@@ -174,7 +176,16 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
       <div id={panelId} className="photos-panel" role="tabpanel" aria-labelledby={tabId}>
         {view.phase === "offline" ? <EngineOffline view={view} /> : <AccountBanner view={view} />}
 
-        <GenerateCard avatar={avatar} view={view} form={form} onFormChange={setForm} runActive={runActive} onStarted={launched} />
+        <GenerateCard
+          avatar={avatar}
+          view={view}
+          form={form}
+          onFormChange={setForm}
+          runActive={runActive}
+          onStarted={launched}
+          paidInFlight={paidInFlight}
+          onPaidInFlightChange={setPaidInFlight}
+        />
 
         <div className="photos-body">
           <ScenesColumn
@@ -186,6 +197,8 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
             runs={resumable}
             runsError={runsError}
             onRetryRuns={() => setRunsRefresh((n) => n + 1)}
+            paidInFlight={paidInFlight}
+            onPaidInFlightChange={setPaidInFlight}
             blockedReason={paidBlockedReason(view) ?? (avatar.status !== "active" ? "Аватар в архиве — новые фото для него не создаются." : null)}
             onResumed={launched}
           />

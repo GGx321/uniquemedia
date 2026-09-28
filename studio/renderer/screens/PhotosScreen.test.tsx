@@ -603,6 +603,46 @@ test("a resume stays busy through its PRICE_CHANGED re-price, and a double click
   expect(callsOf(harness.engine, "runs.resume").map((c) => c.payload.acceptedWorstMicros)).toEqual([600_000, 720_000]);
 });
 
+test("a resume in flight locks the generate card too, until it answers (L5)", async () => {
+  const harness = setup({ avatars: [MIA] });
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  await openSection("Фото");
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.07"));
+
+  harness.engine.delayNext("runs.resume", 50);
+  fireEvent.click(resume);
+  expect(isDisabled(goButton())).toBe(true);
+  expect(screen.getByText(/Дождитесь окончания другого платного действия/)).toBeDefined();
+  fireEvent.click(goButton()); // must really do nothing, not merely look disabled
+  await flush();
+  expect(callsOf(harness.engine, "runs.start")).toHaveLength(0);
+
+  tick(harness.scheduler, 1);
+  await screen.findByText("Рисуем фото: 8 из 12");
+  // The card unlocks from the shared flag, but stays blocked for the usual reason (a run is now active).
+  expect(isDisabled(goButton())).toBe(true);
+  expect(screen.getByText("Дождитесь конца текущего запуска.")).toBeDefined();
+});
+
+test("the generate card in flight locks every resume row too, until it answers (L5)", async () => {
+  const harness = setup({ avatars: [MIA] });
+  harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
+  await openSection("Фото");
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.07"));
+
+  harness.engine.delayNext("runs.start", 50);
+  fireEvent.click(goButton());
+  expect(isDisabled(resume)).toBe(true);
+  fireEvent.click(resume); // must really do nothing
+  await flush();
+  expect(callsOf(harness.engine, "runs.resume")).toHaveLength(0);
+
+  tick(harness.scheduler, 1);
+  await screen.findByText(/Рисуем фото/);
+});
+
 test("a failed re-price after a resume's PRICE_CHANGED drops the refused price: the row can only ask again", async () => {
   const harness = setup({ avatars: [MIA] });
   harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"], resolution: "1k" }, 8);
