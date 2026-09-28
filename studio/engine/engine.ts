@@ -59,6 +59,7 @@ import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
 import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library } from "./library";
+import type { FaceGateImage } from "./face";
 import type { ImageMediaType } from "./library/media";
 import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
@@ -75,6 +76,7 @@ import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
 import { buildRunPlan, RunPlanSchema, runEstimate, runPriceModels, sceneCategory, type RunPlan } from "./runs/plan";
 import { CpuPool, NetworkPool } from "./runs/pools";
+import { FACE_GATE_NAME } from "./runs/faceGate";
 import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
 import { remainingEstimate, scopeCommitted } from "./runs/remaining";
 import { reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
@@ -132,6 +134,15 @@ export interface EngineDeps {
   qaGates?: readonly QaGate[];
   /** T6: local work in flight at once (the QA gates); `defaultCpuPoolSize()` unless a test says otherwise. */
   cpuPoolSize?: number;
+  /**
+   * T7b: decodes an image to tagged RGBA/BGRA pixels via the real main
+   * process (qa.ts's own `QaInput.decodeImage` comment has the full
+   * reasoning — the engine's utilityProcess has no `nativeImage` of its
+   * own). Only the face gate calls it. Defaults to a stub that rejects
+   * clearly: every test that does not wire a face gate never calls it, and
+   * production (studio/engine/main.ts) always provides the real one.
+   */
+  decodeImage?: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 }
 
 /** Local work in flight at once: the cores but one for the engine's own event loop, at most 4, at least 1. */
@@ -423,6 +434,8 @@ export class Engine {
   readonly #cpuPool: CpuPool;
   /** T6: the QA gates of every photo run; none until T7a/T7b wire theirs. */
   readonly #qaGates: readonly QaGate[];
+  /** T7b: the run's own way to decode an image to tagged pixels through main (only the face gate calls it). */
+  readonly #decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
 
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
@@ -443,6 +456,9 @@ export class Engine {
     this.#networkPool = new NetworkPool({ max: init.settings.concurrency.network });
     this.#cpuPool = new CpuPool(deps.cpuPoolSize ?? defaultCpuPoolSize());
     this.#qaGates = deps.qaGates ?? [];
+    this.#decodeImage =
+      deps.decodeImage ??
+      (() => Promise.reject(new Error("studio engine: no image decoder is wired (the face gate needs one)")));
     const priceFetch = priceFetchFrom(deps.fetch);
     this.#prices = new PriceCache({
       load: (models) => loadPriceBook({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl, ...models }),
@@ -984,6 +1000,20 @@ export class Engine {
     }
   }
 
+  /**
+   * T7b: unlike the age gate, the face gate is never a Settings toggle — it
+   * is always required, so a run cannot start, or resume, without it among
+   * its QA gates. Its only real absence is a startup-time failure (the face
+   * models or onnxruntime-web could not be loaded, studio/engine/main.ts's
+   * own wiring) — this refuses the run for free rather than silently storing
+   * photos no identity check has ever seen.
+   */
+  #assertFaceGate(): void {
+    if (!this.#qaGates.some((gate) => gate.name === FACE_GATE_NAME)) {
+      throw new EngineFailure({ code: "FACE_GATE_UNAVAILABLE", detail: "no face gate is wired into photo runs; restart Studio, or reinstall it if this persists" });
+    }
+  }
+
   /** The ledger's record of attempt ids, for a run's fold (the one Budget's ledger). */
   #ledgerView(budget: Budget): LedgerView {
     return { reserveOf: (attemptId) => budget.ledger.reserveOf(attemptId), closeOf: (attemptId) => budget.ledger.closeOf(attemptId) };
@@ -1102,6 +1132,7 @@ export class Engine {
     // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
     const imageAgeCheck = this.#settings.imageAgeCheck;
     this.#assertAgeGate(imageAgeCheck);
+    this.#assertFaceGate();
     const models = this.#avatarModels();
     const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck));
     const estimate = runEstimate(priced, models, payload, imageAgeCheck);
@@ -1162,6 +1193,7 @@ export class Engine {
     try {
       const manifest = this.#runnableAvatar(library, plan.avatarId);
       this.#assertAgeGate(plan.imageAgeCheck);
+      this.#assertFaceGate();
       const { state, estimate, priced, budget } = await this.#remaining(library, plan);
       Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
       Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
@@ -1209,6 +1241,7 @@ export class Engine {
           // age gate is dropped from the list entirely: no call, no reserve,
           // whatever `deps.qaGates` (main.ts's wiring) contains.
           gates: plan.imageAgeCheck === "on" ? this.#qaGates : this.#qaGates.filter((gate) => gate.name !== AGE_GATE_NAME),
+          decodeImage: this.#decodeImage,
           now: () => new Date(this.#deps.clock()),
           errorOf: engineErrorFrom,
           onSlot: (progress) => this.#runSlotDone(run, progress),

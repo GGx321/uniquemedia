@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
+import type { FaceGateImage } from "../face";
 import type { Library, NewPhotoMeta, PhotoQa } from "../library";
 import { imageSize, isAnimatedImage, type LibraryReference } from "../library/media";
 import type { Budget } from "../money/budget";
@@ -82,6 +83,13 @@ export interface RunJobDeps {
   cpu: CpuPool;
   /** Run in order on every paid image that passed its media checks; none are wired in T6. */
   gates: readonly QaGate[];
+  /**
+   * T7b: decodes to tagged RGBA/BGRA pixels via the real main process
+   * (qa.ts's own `QaInput.decodeImage` comment has the full reasoning);
+   * threaded straight into every gate's `QaInput` unchanged — only the face
+   * gate calls it today.
+   */
+  decodeImage: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
   /** Wall clock, for the journal's and the history's `at`. */
   now: () => Date;
   /** A thrown error (a ledger or library write, a bug) in the T0 error model. */
@@ -412,7 +420,7 @@ function releaseClaims(gates: readonly QaGate[], avatarId: string, attemptId: st
  * attempt from its own `finally`, unconditionally (finding L8) — this
  * function does not need to track which gates passed for that.
  */
-async function runGates(ctx: Context, slot: SlotState, attemptId: string, image: ImageOk, size: { width: number; height: number }, afterCancel: boolean): Promise<GateResult> {
+async function runGates(ctx: Context, slot: SlotState, attemptId: string, image: ImageOk, size: { width: number; height: number }, afterCancel: boolean, master: LibraryReference): Promise<GateResult> {
   const { deps, job, plan } = ctx;
   const input: Omit<QaInput, "signal"> = {
     runId: plan.runId,
@@ -435,6 +443,11 @@ async function runGates(ctx: Context, slot: SlotState, attemptId: string, image:
     chat: deps.chat,
     beforeSend: () => sending(ctx),
     photosByAvatar: (id) => deps.library.photosByAvatar(id),
+    // T7b: the same master reference `runSlot`'s own image attempt already
+    // loaded (loadMaster) — never a second library read — and the decode
+    // path only the face gate uses.
+    master,
+    decodeImage: deps.decodeImage,
   };
   let qa: PhotoQa = {};
   for (const gate of deps.gates) {
@@ -478,7 +491,7 @@ function photoMeta(ctx: Context, slot: SlotState, attemptId: string, model: stri
  * `next`: done (stored), retry (the slot's next attempt), end (the slot ends
  * without a photo), stop (nothing more for this slot in this job).
  */
-async function keepImage(ctx: Context, slot: SlotState, attemptId: string, model: string, prompt: string, image: ImageOk): Promise<{ next: "done" | "retry" | "end" | "stop"; error?: EngineError }> {
+async function keepImage(ctx: Context, slot: SlotState, attemptId: string, model: string, prompt: string, image: ImageOk, master: LibraryReference): Promise<{ next: "done" | "retry" | "end" | "stop"; error?: EngineError }> {
   const { deps, job, plan } = ctx;
   const size = imageSize(image.bytes);
   if (size === null || isAnimatedImage(image.bytes)) {
@@ -501,7 +514,7 @@ async function keepImage(ctx: Context, slot: SlotState, attemptId: string, model
   try {
     let gates: GateResult;
     try {
-      gates = await runGates(ctx, slot, attemptId, image, size, afterCancel);
+      gates = await runGates(ctx, slot, attemptId, image, size, afterCancel, master);
     } catch (error) {
       if (error instanceof GateFailure) {
         // T7a review (finding 8): a limit (the run's cap, the month) stops only this slot, mirroring
@@ -665,7 +678,7 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
       case "ok": {
         // Billed above its worst case: the price table is wrong, nothing more is sent — but the image is paid for and kept (review M1).
         if (result.aboveWorst) stopSending(ctx, { code: "SETTLE_ABOVE_WORST", detail: `attempt ${attemptId} was billed ${result.costMicros} µ$, above its reserved worst case; the price table is wrong` });
-        const kept = await keepImage(ctx, slot, attemptId, choice.model, prompt, result);
+        const kept = await keepImage(ctx, slot, attemptId, choice.model, prompt, result, master);
         if (kept.next === "done" || kept.next === "stop") return;
         lastError = kept.error ?? lastError;
         if (kept.next === "end") return endSlot(ctx, slot, { status: "failed", error: kept.error ?? { code: "QA_REJECTED" } });

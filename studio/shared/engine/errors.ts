@@ -39,6 +39,10 @@ import { Count, SafeText } from "./primitives";
  *   age) rejected its image, or asked for another attempt after the slot's last one (T6).
  * - AGE_GATE_UNAVAILABLE: the image age check is on, but no age gate is wired into photo runs yet,
  *   so a run would store photos no age check has seen (invariant 8); nothing is started or spent.
+ * - FACE_GATE_UNAVAILABLE: no face gate is wired into photo runs (T7b, e.g. the face models or
+ *   onnxruntime-web failed to load at engine startup), so a run would store photos no identity
+ *   check has seen; nothing is started or spent. Unlike the age gate this is never a Settings
+ *   toggle — the face gate is always required, so this only ever means the gate itself is broken.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -67,6 +71,7 @@ export const ERROR_CODES = [
   "IMPORT_SUBJECT_INVALID",
   "QA_REJECTED",
   "AGE_GATE_UNAVAILABLE",
+  "FACE_GATE_UNAVAILABLE",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);

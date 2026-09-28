@@ -10,9 +10,11 @@ import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type R
 import { RunPlanSchema, type RunPlan } from "./runs/plan";
 import { plan as planScenes } from "./scenes";
 import { createAgeGate } from "./runs/ageGate";
+import { createFaceQaGate } from "./runs/faceGate";
+import { createPdqGate } from "./runs/pdqGate";
 import type { QaGate, QaInput } from "./runs/qa";
 import type { Estimate, ImageAgeCheck, ResponseMessage } from "../shared/engine";
-import type { Engine } from "./engine";
+import type { Engine, EngineDeps } from "./engine";
 import { command, engineSettings, failed, GOOD, jobEnd, MODERATION, NOW, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -32,6 +34,19 @@ const TWENTY_ON = { expectedMicros: 1_042_350, worstMicros: 3_390_000, prices: "
 const FOUR_WORST = 4 * 3 * 50_000 + 75_000;
 /** 4 photos, image age check on: 4 × 3 × ($0.05 + $0.00525) + one writer chunk × 2 × $0.0375. */
 const FOUR_ON_WORST = 4 * 3 * 55_250 + 75_000;
+
+/**
+ * A fake face gate registered under the name the engine looks for (T7b): it
+ * passes every photo (no qa fields — most of this file is not testing the
+ * face gate itself, only that a run can start now that one is required,
+ * invariant-mirroring the age gate's own `#assertAgeGate`). `engineOver`
+ * wires it in by default so every existing run test keeps working without
+ * having to know about T7b; a test can still override `qaGates` (e.g. to
+ * omit it and prove `FACE_GATE_UNAVAILABLE`).
+ */
+function faceGate(): QaGate {
+  return { name: "face", paid: false, check: async () => ({ verdict: "pass" }) };
+}
 
 /** A fake age gate registered under the name the engine looks for: it passes every photo and spends nothing. */
 function ageGate(): QaGate & { inputs: QaInput[] } {
@@ -176,7 +191,18 @@ function runNetwork(opts: { image?: Handler; writer?: Handler; age?: Handler; pr
 
 function engineOver(
   net: ReturnType<typeof runNetwork>,
-  opts: { bootId?: string; clock?: () => number; monotonic?: () => number; imageAgeCheck?: ImageAgeCheck; qaGates?: QaGate[]; network?: number; monthlyBudgetMicros?: number; imageModel?: string } = {},
+  opts: {
+    bootId?: string;
+    clock?: () => number;
+    monotonic?: () => number;
+    imageAgeCheck?: ImageAgeCheck;
+    /** `undefined`: the default face gate only. An array: that array, plus the default face gate unless it already named one. `null`: no gates at all — for a test proving FACE_GATE_UNAVAILABLE. */
+    qaGates?: QaGate[] | null;
+    network?: number;
+    monthlyBudgetMicros?: number;
+    imageModel?: string;
+    decodeImage?: EngineDeps["decodeImage"];
+  } = {},
 ) {
   const settings = engineSettings(dir(), {
     imageAgeCheck: opts.imageAgeCheck ?? "off",
@@ -191,7 +217,19 @@ function engineOver(
     deps: {
       ...(opts.clock === undefined ? {} : { clock: opts.clock }),
       ...(opts.monotonic === undefined ? {} : { monotonic: opts.monotonic }),
-      ...(opts.qaGates === undefined ? {} : { qaGates: opts.qaGates }),
+      ...(opts.decodeImage === undefined ? {} : { decodeImage: opts.decodeImage }),
+      // T7b: every run needs a wired face gate now (#assertFaceGate); a test
+      // that passes its own qaGates keeps a face gate too, unless it already
+      // named one of its own. `qaGates: null` opts all the way out (a test
+      // proving FACE_GATE_UNAVAILABLE).
+      qaGates:
+        opts.qaGates === null
+          ? []
+          : opts.qaGates === undefined
+            ? [faceGate()]
+            : opts.qaGates.some((g) => g.name === "face")
+              ? opts.qaGates
+              : [...opts.qaGates, faceGate()],
     },
   });
 }
@@ -633,6 +671,36 @@ describe("a run with the image age check on", () => {
   });
 });
 
+// ---------- T7b: the face gate is always required, never a toggle (unlike the age gate) ----------
+
+describe("a run with no face gate wired", () => {
+  test("is refused with FACE_GATE_UNAVAILABLE: nothing is written or sent", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net, { qaGates: null });
+
+    expect(failed(await engine.handle(startRun(avatarId))).error.code).toBe("FACE_GATE_UNAVAILABLE");
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(readdirSync(join(dir(), "library", "runs"))).toEqual([]);
+  });
+
+  test("a resume is also refused with FACE_GATE_UNAVAILABLE by an engine without one", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork({ image: () => ({ hang: true }) });
+    const first = await engineOver(net, {});
+    const { runId, jobId } = started(await first.engine.handle(startRun(avatarId)));
+    await until(() => net.imageCalls().length === 4, "every slot's first request");
+    ok(await first.engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(first.events, jobId);
+
+    let mono = 0;
+    const second = await engineOver(runNetwork(), { qaGates: null, bootId: "boot-0000-cccc", clock: () => NOW + 10 * 60_000, monotonic: () => mono });
+    mono += 10 * 60_000;
+    ok(await second.engine.handle(command("money.reconcile")));
+    expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("FACE_GATE_UNAVAILABLE");
+  });
+});
+
 // ---------- T7a: a wired age gate is never called (and never reserved for) while the toggle is off ----------
 
 describe("a run with the image age check off, even with a fake age gate wired", () => {
@@ -691,6 +759,114 @@ describe("a run with the real createAgeGate wired (not the local fake)", () => {
 
     const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_ON_WORST)));
     expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 0 } } });
+  });
+});
+
+// ---------- T7b whole-slice: the real face gate adapter (a fake underlying FaceGate, so no ONNX
+// model is needed here — parity.test.ts and faceGate.test.ts cover that), wired through a real
+// engine and run alongside the real pdq gate ----------
+
+describe("a run with the real createFaceQaGate wired, alongside the real pdq gate", () => {
+  const decoded = { format: "bgra" as const, width: 4, height: 4, data: new Uint8Array(4 * 4 * 4) };
+
+  test("a face-gate retry does not leave a dangling pdq claim: the slot's next (byte-identical) attempt still passes pdq instead of wrongly reading its own earlier claim as a duplicate", async () => {
+    const avatarId = await seedAvatar();
+    let faceChecks = 0;
+    const face = createFaceQaGate({
+      faceGate: {
+        embed: async () => new Float32Array([1, 0, 0]),
+        // This slot's first attempt mismatches (retried); its second matches. The network's default
+        // handler returns the exact same image bytes for both — a real near-duplicate by content —
+        // so this pins that pdq's own claim from the first (never-stored) attempt was released: the
+        // second attempt must still pass pdq, not be wrongly retried as a duplicate of its own slot's
+        // earlier, already-released claim.
+        check: async () => {
+          faceChecks++;
+          return faceChecks === 1 ? { kind: "mismatch" as const, similarity: 0.3, faces: 1, headRatio: 0.3 } : { kind: "match" as const, similarity: 0.9, faces: 1, headRatio: 0.3 };
+        },
+      },
+    });
+    const { engine, events } = await engineOver(runNetwork(), {
+      qaGates: [createPdqGate(), face],
+      decodeImage: async () => decoded,
+    });
+
+    const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 0 } } });
+    expect(faceChecks).toBe(2);
+
+    const masterPhotoId = engine.library?.getAvatar(avatarId)?.masterPhotoId;
+    const generated = (engine.library?.photosByAvatar(avatarId) ?? []).filter((p) => p.id !== masterPhotoId);
+    expect(generated).toHaveLength(1);
+    expect(generated[0]?.qa.faceCos).toBeCloseTo(0.9, 6);
+    expect(generated[0]?.qa.headRatio).toBeCloseTo(0.3, 6);
+    expect(typeof generated[0]?.qa.pdq).toBe("string"); // pdq ran too, and recorded its own verdict — no interference either way.
+  });
+
+  test("computes the master embedding once and reuses it across every one of the run's photos", async () => {
+    const avatarId = await seedAvatar();
+    let embedCalls = 0;
+    const net = runNetwork({
+      // A different render per attempt (pdq's own near-duplicate check would otherwise retry every
+      // slot after the first against the run's own earlier, already-stored photo — not what this
+      // test is about; the master-embed test above covers same-bytes retries within one slot).
+      image: (_call, n) => ({ status: 200, body: imageBody(portraitPng(n), { cost: 0.04 }) }),
+    });
+    const face = createFaceQaGate({
+      faceGate: {
+        embed: async () => {
+          embedCalls++;
+          return new Float32Array([1, 0, 0]);
+        },
+        check: async () => ({ kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 }),
+      },
+    });
+    const { engine, events } = await engineOver(net, {
+      qaGates: [createPdqGate(), face],
+      decodeImage: async () => decoded,
+    });
+
+    const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 3)));
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 0 } } });
+
+    const masterPhotoId = engine.library?.getAvatar(avatarId)?.masterPhotoId;
+    const generated = (engine.library?.photosByAvatar(avatarId) ?? []).filter((p) => p.id !== masterPhotoId);
+    expect(generated).toHaveLength(3);
+    expect(embedCalls).toBe(1);
+    expect(generated.every((p) => typeof p.qa.faceCos === "number")).toBe(true);
+  });
+
+  test("pdq runs before face: a near-duplicate is caught by pdq and the face gate is never reached for that attempt", async () => {
+    const avatarId = await seedAvatar();
+    const order: string[] = [];
+    const face = createFaceQaGate({
+      faceGate: {
+        embed: async () => new Float32Array([1, 0, 0]),
+        check: async () => {
+          order.push("face");
+          return { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 };
+        },
+      },
+    });
+    const pdqReal = createPdqGate();
+    const pdq: QaGate = {
+      ...pdqReal,
+      check: async (input) => {
+        order.push("pdq");
+        return pdqReal.check(input);
+      },
+      releaseClaim: pdqReal.releaseClaim?.bind(pdqReal),
+    };
+    const { engine, events } = await engineOver(runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPng(3), { cost: 0.04 }) }) }), {
+      qaGates: [pdq, face],
+      decodeImage: async () => decoded,
+    });
+
+    const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+    expect(await jobEnd(events, jobId)).toMatchObject({ type: "job.done" });
+
+    expect(order[0]).toBe("pdq");
+    expect(order).toContain("face");
   });
 });
 
