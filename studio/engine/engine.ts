@@ -1519,19 +1519,22 @@ export class Engine {
     let check: ExportRootCheck;
     try {
       check = await untilAborted(
-        // The probe is inside the bounded call too: a disk that hangs on it must not outlast the timeout.
-        this.#caseProbe.isCaseInsensitive(exportPath).then((caseInsensitive) =>
-          checkExportRoot({
-            fs: this.#exportRootFs,
-            exportPath,
-            libraryPath: this.#settings.libraryPath,
-            mayCreate: exportPath === this.#defaultExportPath,
-            newId: this.#deps.newId,
-            now: () => new Date(this.#deps.clock()),
-            caseInsensitive,
-            ...(requiredBytes === undefined ? {} : { requiredBytes }),
-          }),
-        ),
+        // The overlap check comes FIRST and assumes the volume folds case (the cautious guess: it can only find MORE overlaps), so nothing
+        // is written into the folder until it is known not to be the library or inside it. The volume is probed only once the check has
+        // passed, and inside the same bounded call: a disk that hangs on the probe must not outlast the timeout.
+        checkExportRoot({
+          fs: this.#exportRootFs,
+          exportPath,
+          libraryPath: this.#settings.libraryPath,
+          mayCreate: exportPath === this.#defaultExportPath,
+          newId: this.#deps.newId,
+          now: () => new Date(this.#deps.clock()),
+          caseInsensitive: true,
+          ...(requiredBytes === undefined ? {} : { requiredBytes }),
+        }).then(async (checked) => {
+          if (checked.ok) await this.#caseProbe.isCaseInsensitive(exportPath);
+          return checked;
+        }),
         timeout.signal,
       );
     } catch (error) {

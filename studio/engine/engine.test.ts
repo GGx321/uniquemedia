@@ -2059,7 +2059,7 @@ describe("the export folder's status (task 3a.8a)", () => {
     expect(await readdir(inside)).toEqual([]);
   });
 
-  describe("case folding is asked of the export folder's own volume (task 3a.8b.1)", () => {
+  describe("the volume's case folding is probed only after the overlap check (task 3a.8b.1, round 3)", () => {
     /** A disk where every path is a folder and the marker is valid, so only the overlap rule can refuse. */
     const identityFs: ExportRootFs = {
       stat: async () => ({ isDirectory: () => true }),
@@ -2073,18 +2073,31 @@ describe("the export folder's status (task 3a.8a)", () => {
     };
     const differsOnlyInCase = () => ({ ...init().settings, exportPath: join(dir, "LIBRARY", "out") });
 
-    test("on a volume that folds case, a folder in another letter case inside the library still overlaps it", async () => {
+    test("a folder in another letter case inside the library overlaps it, whatever the volume says: the overlap check is cautious", async () => {
       const probed: string[] = [];
-      const caseProbe = { isCaseInsensitive: async (root: string) => (probed.push(root), true) };
+      const caseProbe = { isCaseInsensitive: async (root: string) => (probed.push(root), false) }; // even a case-sensitive answer cannot let it through
       const { engine } = await startEngine({ settings: differsOnlyInCase() }, { exportRootFs: identityFs, caseProbe });
       expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "overlaps-library" });
-      expect(probed).toEqual([join(dir, "LIBRARY", "out")]);
+      expect(probed).toEqual([]); // and the refused folder was never probed
     });
 
-    test("on a case-sensitive volume the same two spellings are two folders, whatever the platform is", async () => {
-      const caseProbe = { isCaseInsensitive: async () => false };
-      const { engine } = await startEngine({ settings: differsOnlyInCase() }, { exportRootFs: identityFs, caseProbe });
+    test("a folder inside the library is never probed: no probe file is written into the library", async () => {
+      const inside = join(dir, "library", "out");
+      await mkdir(inside);
+      const probed: string[] = [];
+      const caseProbe = { isCaseInsensitive: async (root: string) => (probed.push(root), true) };
+      const { engine } = await startEngine({ settings: { ...init().settings, exportPath: inside }, defaultExportPath: inside }, { caseProbe });
+      expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "overlaps-library" });
+      expect(probed).toEqual([]);
+      expect(await readdir(inside)).toEqual([]);
+    });
+
+    test("a usable folder is probed once the check has passed", async () => {
+      const probed: string[] = [];
+      const caseProbe = { isCaseInsensitive: async (root: string) => (probed.push(root), true) };
+      const { engine } = await startEngine({}, { exportRootFs: identityFs, caseProbe });
       expect(await statusNow(engine)).toEqual({ status: "ok" });
+      expect(probed).toEqual([init().settings.exportPath]);
     });
   });
 
