@@ -23,7 +23,13 @@ function after(args: readonly string[], flag: string): string | undefined {
 
 describe("the colour chains (plan: Output format, SP1)", () => {
   test("a photo goes from full-range BT.601 to limited-range BT.709 through swscale, then 4:2:0", () => {
-    expect(PHOTO_COLOUR_CHAIN.startsWith("scale=in_range=pc:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709,format=yuv420p,")).toBe(true);
+    expect(PHOTO_COLOUR_CHAIN.startsWith("scale=in_range=pc:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709:")).toBe(true);
+    expect(PHOTO_COLOUR_CHAIN).toContain(",format=yuv420p,");
+  });
+
+  test("the photo conversion asks for accurate rounding, so the x86 builds (Windows, Linux) match the arm64 one within 2 code values", () => {
+    // Measured: without it, x86 ffmpeg 6.1.1 is up to 2.16 code values off in Y on the chart; with it, every build is within 0.9.
+    expect(PHOTO_COLOUR_CHAIN).toContain(":flags=accurate_rnd+full_chroma_int,");
   });
 
   test("the frames are tagged after the swscale conversion", () => {

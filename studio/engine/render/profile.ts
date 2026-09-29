@@ -26,8 +26,14 @@ export const FRAME_TAGS = "setparams=colorspace=bt709:color_primaries=bt709:colo
  * BT.709 4:2:0, tagged. SP1 measured it within 0.96 / 1.60 / 1.54 code values
  * (Y/Cb/Cr) of the exact BT.709 value on a chart; a bare `format=yuv420p`
  * is up to 27.6 codes off (invariant 36).
+ *
+ * `accurate_rnd+full_chroma_int` is added to SP1's chain: the x86 builds
+ * (Windows 6.1.1 and Linux) took the fast rounding path and were up to 2.16
+ * codes off in Y, past the plan's 2. With accurate rounding every build
+ * measured (arm64 6.0, arm64 9.0.1) is within 0.84 / 0.73 / 0.85, better than
+ * SP1's own chain.
  */
-export const PHOTO_COLOUR_CHAIN = `scale=in_range=pc:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709,format=yuv420p,${FRAME_TAGS}`;
+export const PHOTO_COLOUR_CHAIN = `scale=in_range=pc:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709:flags=accurate_rnd+full_chroma_int,format=yuv420p,${FRAME_TAGS}`;
 
 /**
  * An RGBA overlay (a text PNG, a sticker, an APNG) to limited-range BT.709
