@@ -11,23 +11,25 @@ import {
   PHOTOS_DIR,
   RUNS_DIR,
   THUMBS_DIR,
-  USED_FILE,
+  REJECTED_FILE,
   isFromNewerVersion,
   MANIFEST_SCHEMA_VERSION,
   SIDECAR_SCHEMA_VERSION,
   isLibraryFileTemp,
 } from "./layout";
+import { replayRejected } from "./eligibility";
 import { isImageExtension } from "./media";
 import type { QuarantineReason } from "./quarantine";
+import { readVideoRecords, type VideoRecordUse } from "./videoRecords";
 import {
   AvatarManifestSchema,
   PhotoSidecarSchema,
-  UsedEntrySchema,
+  RejectedEntrySchema,
   type AvatarManifest,
   type PhotoSidecar,
 } from "./schemas";
 
-/** A log with a bad complete line; the avatar's writes to it are blocked until it is repaired. */
+/** A log or a record that cannot be read: `rejected.jsonl` with a bad complete line, or a file in `videos/` that is not a usable record. `file` is relative to the avatar folder. */
 export interface LogIssue {
   avatarId: string;
   file: string;
@@ -46,7 +48,10 @@ export interface Survey {
   moves: PendingMove[];
   avatars: AvatarManifest[];
   photos: PhotoSidecar[];
-  usedPhotoIds: string[];
+  /** Photos the owner's marks leave rejected, replayed per avatar; an avatar whose log is unreadable has an entry in `logIssues` instead. */
+  rejectedPhotoIds: string[];
+  /** Every readable video record, with the avatar it was filed under. */
+  videoRecords: { avatarId: string; record: VideoRecordUse }[];
   logIssues: LogIssue[];
 }
 
@@ -166,7 +171,7 @@ async function surveyPhotos(dir: string, avatarId: string, survey: Survey): Prom
 }
 
 export async function surveyLibrary(root: string): Promise<Survey> {
-  const survey: Survey = { moves: [], avatars: [], photos: [], usedPhotoIds: [], logIssues: [] };
+  const survey: Survey = { moves: [], avatars: [], photos: [], rejectedPhotoIds: [], videoRecords: [], logIssues: [] };
 
   for (const { name } of await entriesOf(root)) {
     if (isLibraryFileTemp(name)) survey.moves.push({ path: join(root, name), reason: "temp-file" });
@@ -197,15 +202,20 @@ export async function surveyLibrary(root: string): Promise<Survey> {
       if (isTempName(name) || name.includes(".part-")) survey.moves.push({ path: join(thumbsDir, name), reason: "temp-file" });
     }
     // A torn last line is an interrupted append; the next append moves it to
-    // used.jsonl.torn, so it is only skipped here. A bad complete line is not
-    // a crash: it blocks this avatar's usage tracking, not the whole library.
+    // rejected.jsonl.torn, so it is only skipped here. A bad complete line is
+    // not a crash: it makes this avatar's marks unreadable (fail closed, see
+    // Library), not the whole library. The legacy used.jsonl is never read:
+    // "used" is derived from the video records (invariant 24).
     try {
-      const used = await readJsonl(join(path, USED_FILE), UsedEntrySchema);
-      for (const entry of used.entries) survey.usedPhotoIds.push(entry.photoId);
+      const rejected = await readJsonl(join(path, REJECTED_FILE), RejectedEntrySchema);
+      survey.rejectedPhotoIds.push(...replayRejected(rejected.entries));
     } catch (error) {
       if (!(error instanceof LibraryError && error.code === "corrupt-log")) throw error;
-      survey.logIssues.push({ avatarId: manifest.value.id, file: USED_FILE, detail: error.message });
+      survey.logIssues.push({ avatarId: manifest.value.id, file: REJECTED_FILE, detail: error.message });
     }
+    const videos = await readVideoRecords(path, manifest.value.id);
+    for (const record of videos.records) survey.videoRecords.push({ avatarId: manifest.value.id, record });
+    for (const problem of videos.problems) survey.logIssues.push({ avatarId: manifest.value.id, ...problem });
   }
 
   // A temp folder in runs/ is a createRun that crashed before its rename.

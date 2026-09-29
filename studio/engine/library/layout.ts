@@ -6,7 +6,10 @@ export const QUARANTINE_DIR = "quarantine";
 export const MANIFEST_FILE = "avatar.json";
 export const PHOTOS_DIR = "photos";
 export const THUMBS_DIR = "thumbs";
-export const USED_FILE = "used.jsonl";
+/** The owner's "do not use" marks: append-only `{ photoId, op: "reject" | "restore", at }` lines. */
+export const REJECTED_FILE = "rejected.jsonl";
+/** Video records, one write-once JSON per video (task 3a.8b writes them; 3a.2 reads them). "Used" is derived from these, never from a log of its own. */
+export const VIDEOS_DIR = "videos";
 export const HISTORY_FILE = "history.jsonl";
 export const PLAN_FILE = "plan.json";
 export const JOURNAL_FILE = "journal.jsonl";

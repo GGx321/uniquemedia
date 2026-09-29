@@ -16,6 +16,7 @@ import {
   writeFileDurable,
   writeJsonAtomic,
 } from "./durableFs";
+import { isEligiblePhoto, type PhotoState } from "./eligibility";
 import { LibraryError } from "./errors";
 import { isLibraryId } from "./ids";
 import { runExclusive } from "./keyedMutex";
@@ -31,7 +32,7 @@ import {
   REFUSED_IMPORTS_FILE,
   RUNS_DIR,
   THUMBS_DIR,
-  USED_FILE,
+  REJECTED_FILE,
   isFromNewerVersion,
   LIBRARY_FILE_SCHEMA_VERSION,
   REFUSED_IMPORTS_SCHEMA_VERSION,
@@ -40,6 +41,7 @@ import {
 } from "./layout";
 import { extensionFor, sniffImageMediaType, type ImageMediaType, type LibraryReference } from "./media";
 import { Quarantine, type QuarantineEntry } from "./quarantine";
+import { looksLikeRunPhoto } from "./photoRecords";
 import { renameWithRetry } from "./renameRetry";
 import {
   AvatarManifestSchema,
@@ -47,7 +49,7 @@ import {
   LibraryFileSchema,
   PhotoSidecarSchema,
   RefusedImportsFileSchema,
-  UsedEntrySchema,
+  RejectedEntrySchema,
   type AvatarManifest,
   type AvatarStatus,
   type HistoryEntry,
@@ -56,6 +58,7 @@ import {
   type PhotoSource,
 } from "./schemas";
 import { surveyLibrary, type LogIssue } from "./survey";
+import { readVideoRecords, type VideoRecordUse } from "./videoRecords";
 
 export type { QuarantineEntry, QuarantineReason } from "./quarantine";
 export type { LogIssue } from "./survey";
@@ -76,6 +79,12 @@ export interface LibraryDeps {
    * dependency's business, not `loadReference()`'s.
    */
   downscaleReference?: (bytes: Uint8Array, signal?: AbortSignal) => Promise<Uint8Array>;
+  /**
+   * The photos of `avatarId` that queued or running renders hold (S16), asked
+   * afresh on every use. The real render queue provides it in task 3a.6; until
+   * then, and in a library opened without one, nothing is reserved.
+   */
+  reservedPhotos?: (avatarId: string) => ReadonlySet<string>;
 }
 
 /** An avatar whose manifest names a face reference the library cannot use. */
@@ -163,9 +172,15 @@ export class Library {
   readonly #thumbRenders = new Map<string, Promise<string>>();
   readonly #avatars = new Map<string, AvatarManifest>();
   readonly #photos = new Map<string, PhotoSidecar>();
-  readonly #used = new Set<string>();
-  /** Avatars whose used.jsonl has a bad line, with the reason. */
-  readonly #brokenUsedLogs = new Map<string, string>();
+  readonly #reservedPhotos: (avatarId: string) => ReadonlySet<string>;
+  /** Photos the owner's marks leave rejected (rejected.jsonl replayed at open, then kept in step by setRejected). */
+  readonly #rejected = new Set<string>();
+  /** Avatars whose rejected.jsonl has a bad line, with the reason: none of their photos is eligible until it is repaired. */
+  readonly #brokenRejectLogs = new Map<string, string>();
+  /** Each avatar's readable video records: what "used" is derived from. */
+  readonly #videosByAvatar = new Map<string, VideoRecordUse[]>();
+  /** Avatars with a file in videos/ that is not a usable record, with the reason: their usage cannot be trusted. */
+  readonly #brokenVideoRecords = new Map<string, string>();
   /** T6c (H2): sha256 of every imported photo's raw bytes the mandatory one-time age check has already refused. */
   #refusedImportHashes = new Set<string>();
 
@@ -175,6 +190,7 @@ export class Library {
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;
+    this.#reservedPhotos = deps.reservedPhotos ?? (() => new Set<string>());
     this.#renderThumbnail = deps.renderThumbnail ?? renderWebpThumbnail;
     this.#downscaleReference = deps.downscaleReference ?? ((bytes, signal) => downscaleToJpeg(bytes, { maxSide: REFERENCE_MAX_SIDE, signal }));
   }
@@ -198,8 +214,12 @@ export class Library {
 
     for (const avatar of survey.avatars) library.#avatars.set(avatar.id, avatar);
     for (const photo of survey.photos) library.#photos.set(photo.id, photo);
-    for (const photoId of survey.usedPhotoIds) library.#used.add(photoId);
-    for (const issue of survey.logIssues) library.#brokenUsedLogs.set(issue.avatarId, issue.detail);
+    for (const photoId of survey.rejectedPhotoIds) library.#rejected.add(photoId);
+    for (const { avatarId, record } of survey.videoRecords) library.#videosByAvatar.set(avatarId, [...(library.#videosByAvatar.get(avatarId) ?? []), record]);
+    for (const issue of survey.logIssues) {
+      const broken = issue.file === REJECTED_FILE ? library.#brokenRejectLogs : library.#brokenVideoRecords;
+      if (!broken.has(issue.avatarId)) broken.set(issue.avatarId, `${issue.file}: ${issue.detail}`);
+    }
     library.#refusedImportHashes = await loadRefusedImports(root);
 
     // Reported, never "fixed" by rewriting the manifest: restoring the photo
@@ -558,26 +578,109 @@ export class Library {
     return this.photosByAvatar(avatarId).filter((p) => p.source.kind === "generated" && p.source.category === category);
   }
 
-  /** Photos with no entry in the avatar's used.jsonl. */
-  unusedPhotos(avatarId: string): PhotoSidecar[] {
-    // Unreadable usage would make used photos look unused and get them reused.
-    this.#assertUsedLogReadable(avatarId);
-    return this.photosByAvatar(avatarId).filter((p) => !this.#used.has(p.id));
-  }
-
   photoCount(avatarId: string): number {
     return this.photosByAvatar(avatarId).length;
   }
 
-  /** Records that a video used a photo; the log is append-only. */
-  async markUsed(photoId: string, videoId: string): Promise<void> {
+  /**
+   * The ONE eligibility rule's answer for every photo of the avatar, with where
+   * each stands on the other axes (see eligibility.ts). Everything that lists,
+   * counts or picks photos reads this and nothing else, so no caller can
+   * disagree with another. `reserved` is asked of the injected provider afresh
+   * on every call. Fails closed: an avatar whose rejected.jsonl cannot be read
+   * has no eligible photo, since a mark may hide in the unreadable part.
+   */
+  photoStates(avatarId: string): Map<string, PhotoState> {
+    const masterPhotoId = this.#avatars.get(avatarId)?.masterPhotoId ?? null;
+    const reserved = this.#reservedPhotos(avatarId);
+    const marksReadable = !this.#brokenRejectLogs.has(avatarId);
+    const usedIn = new Map<string, string[]>();
+    for (const { videoId, photoIds } of this.#videosByAvatar.get(avatarId) ?? []) {
+      for (const photoId of photoIds) usedIn.set(photoId, [...(usedIn.get(photoId) ?? []), videoId]);
+    }
+    const states = new Map<string, PhotoState>();
+    for (const photo of this.photosByAvatar(avatarId)) {
+      const rejected = this.#rejected.has(photo.id);
+      states.set(photo.id, {
+        eligible: marksReadable && isEligiblePhoto(photo, { masterPhotoId, rejected }),
+        rejected,
+        reserved: reserved.has(photo.id),
+        usedIn: (usedIn.get(photo.id) ?? []).sort(),
+      });
+    }
+    return states;
+  }
+
+  /** The photos that may go into a video, oldest first (the rule in eligibility.ts). */
+  eligiblePhotos(avatarId: string): PhotoSidecar[] {
+    const states = this.photoStates(avatarId);
+    return this.photosByAvatar(avatarId).filter((p) => states.get(p.id)?.eligible === true);
+  }
+
+  /**
+   * Eligible photos in no video record and in no queued or running render,
+   * oldest first; `category` keeps one scene category. Refuses with
+   * `log-needs-repair` while a file in the avatar's `videos/` cannot be read:
+   * the record may hold photos that would look free and get reused.
+   */
+  eligibleUnusedPhotos(avatarId: string, category?: string): PhotoSidecar[] {
+    const detail = this.#brokenVideoRecords.get(avatarId);
+    if (detail !== undefined) throw new LibraryError("log-needs-repair", `the video records of avatar ${avatarId} need repair: ${detail}`);
+    const states = this.photoStates(avatarId);
+    return this.photosByAvatar(avatarId).filter((p) => {
+      const state = states.get(p.id);
+      if (state === undefined || !state.eligible || state.reserved || state.usedIn.length > 0) return false;
+      return category === undefined || (p.source.kind === "generated" && p.source.category === category);
+    });
+  }
+
+  /** `eligibleUnusedPhotos().length` for a listing, where a refusal must not make the avatar vanish: 0 while its records cannot be trusted. */
+  eligibleUnusedCount(avatarId: string): number {
+    return this.#brokenVideoRecords.has(avatarId) ? 0 : this.eligibleUnusedPhotos(avatarId).length;
+  }
+
+  /** The avatar's video records, whatever state their files are in. */
+  videoCount(avatarId: string): number {
+    return this.#videosByAvatar.get(avatarId)?.length ?? 0;
+  }
+
+  /**
+   * Re-reads the avatar's `videos/` folder into the used index: after a record
+   * is added or deleted (task 3a.8b's commit and delete call this), and the
+   * way a test changes the records under an open library.
+   */
+  async reloadVideoRecords(avatarId: string): Promise<void> {
+    if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+    const { records, problems } = await readVideoRecords(this.#avatarDir(avatarId), avatarId);
+    this.#videosByAvatar.set(avatarId, records);
+    const first = problems[0];
+    if (first === undefined) this.#brokenVideoRecords.delete(avatarId);
+    else this.#brokenVideoRecords.set(avatarId, `${first.file}: ${first.detail}`);
+  }
+
+  /**
+   * The owner's own mark: "do not use this photo" (`rejected`) or its restore,
+   * appended to the avatar's rejected.jsonl. Only a scene photo of this avatar
+   * can be marked: the master, a candidate and an import are never eligible, so
+   * a mark on them would mean nothing. Marking a photo the way it already is
+   * writes nothing.
+   */
+  async setRejected(avatarId: string, photoId: string, rejected: boolean): Promise<void> {
+    if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
     const photo = this.#photos.get(photoId);
-    if (!photo) throw new LibraryError("photo-not-found", `no photo ${photoId}`);
-    if (!isLibraryId(videoId)) throw new LibraryError("invalid-id", `video id ${JSON.stringify(videoId)} breaks the id pattern`);
-    this.#assertUsedLogReadable(photo.avatarId);
-    const entry = UsedEntrySchema.parse({ photoId, videoId, at: this.#now().toISOString() });
-    await appendJsonLine(join(this.#avatarDir(photo.avatarId), USED_FILE), entry);
-    this.#used.add(photoId);
+    if (!photo || photo.avatarId !== avatarId || !looksLikeRunPhoto(photo)) {
+      throw new LibraryError("photo-not-found", `avatar ${avatarId} has no scene photo ${photoId}`);
+    }
+    const path = join(this.#avatarDir(avatarId), REJECTED_FILE);
+    await runExclusive(`rejected:${path}`, async () => {
+      const detail = this.#brokenRejectLogs.get(avatarId);
+      if (detail !== undefined) throw new LibraryError("log-needs-repair", `${REJECTED_FILE} of avatar ${avatarId} needs repair: ${detail}`);
+      if (this.#rejected.has(photoId) === rejected) return;
+      const entry = RejectedEntrySchema.parse({ photoId, op: rejected ? "reject" : "restore", at: this.#now().toISOString() });
+      await appendJsonLine(path, entry);
+      if (rejected) this.#rejected.add(photoId);
+      else this.#rejected.delete(photoId);
+    });
   }
 
   /** Records the location + outfit pair a scene used, so the planner can avoid repeating it. */
@@ -699,13 +802,6 @@ export class Library {
     await renameWithRetry(temp, output);
     await fsyncDir(thumbsDir);
     return output;
-  }
-
-  #assertUsedLogReadable(avatarId: string): void {
-    const detail = this.#brokenUsedLogs.get(avatarId);
-    if (detail !== undefined) {
-      throw new LibraryError("log-needs-repair", `${USED_FILE} of avatar ${avatarId} needs repair: ${detail}`);
-    }
   }
 
   #referenceProblem(avatarId: string, photoId: string): MasterIssue["reason"] | null {

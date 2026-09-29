@@ -109,13 +109,13 @@ export const HistoryEntrySchema = z.object({
 });
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
 
-/** One line of `avatars/<avatarId>/used.jsonl`. */
-export const UsedEntrySchema = z.object({
+/** One line of `avatars/<avatarId>/rejected.jsonl`: the owner's own mark on a photo, or its restore. */
+export const RejectedEntrySchema = z.object({
   photoId: LibraryIdSchema,
-  videoId: LibraryIdSchema,
+  op: z.enum(["reject", "restore"]),
   at: IsoTimestamp,
 });
-export type UsedEntry = z.infer<typeof UsedEntrySchema>;
+export type RejectedEntry = z.infer<typeof RejectedEntrySchema>;
 
 /**
  * `<root>/refused-imports.json` (T6c, H2): the sha256 of every imported
