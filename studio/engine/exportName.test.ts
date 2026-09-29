@@ -1,10 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isSafeName, RelativePath, VideoKindToken } from "../shared/engine";
-import { claimExportName, exportFileName, formatExportDate, kindToken, NODE_EXPORT_NAME_FS, safeName, type ExportNameFs } from "./exportName";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import {
+  claimExportName,
+  ExportFolderError,
+  exportFileName,
+  formatExportDate,
+  kindToken,
+  NODE_EXPORT_FOLDER_FS,
+  NODE_EXPORT_NAME_FS,
+  prepareExportFolder,
+  safeName,
+  suffixedFolderName,
+  type ExportFolderFs,
+  type ExportNameFs,
+  type PreparedFolder,
+} from "./exportName";
 useNativeGlobals();
 
 const AVATAR = "avatar-0001";
@@ -21,7 +35,7 @@ function prng(seed: number): () => number {
 }
 
 const HOSTILE_PIECES = [
-  "Con", "CON", "nul.txt", "aux", "PRN", "com1", "LPT9", "COM0", "Мия", "Ольга", "😀", "👩‍👩‍👧", "é", "ñ", "ß", "Ａｂｃ", "\u0000", "\n", "\t",
+  "Con", "CON", "nul.txt", "aux", "PRN", "com1", "LPT9", "COM0", "Мия", "Ольга", "Ёлка", "Съезд", "😀", "👩‍👩‍👧", "é", "ñ", "ß", "Ａｂｃ", "\u0000", "\n", "\t",
   " ", "  ", ".", "..", "...", "/", "\\", ":", "*", "?", "\"", "<", ">", "|", "~", "-", "_", "--", "__", "‮", "‍", "a", "Z", "9", "x".repeat(200),
 ];
 
@@ -49,8 +63,40 @@ describe("safeName", () => {
     expect(safeName("Zoë Ñandú", AVATAR)).toBe("Zoe_Nandu");
   });
 
-  test("falls back to the avatar id for a Cyrillic name", () => {
-    expect(safeName("Мия", AVATAR)).toBe(AVATAR);
+  test.each([
+    ["Мия", "Miya"],
+    ["Ольга", "Olga"],
+    ["Ёлка", "Yolka"],
+    ["Мия 2", "Miya_2"],
+    ["Щука", "Shchuka"],
+    ["Съезд", "Sezd"],
+    ["Соль", "Sol"],
+    ["Жанна", "Zhanna"],
+    ["Юля", "Yulya"],
+    ["Анна-Мария", "Anna-Mariya"],
+    ["Їжак", "Yizhak"],
+    ["Цветы", "Tsvety"],
+    ["Хлоя", "Khloya"],
+    ["Mia Мия", "Mia_Miya"],
+  ])("transliterates the Cyrillic name %s to %s", (name, expected) => {
+    expect(safeName(name, AVATAR)).toBe(expected);
+  });
+
+  test("keeps an all-capitals Cyrillic name in capitals", () => {
+    expect(safeName("МИЯ", AVATAR)).toBe("MIYA");
+    expect(safeName("ЮЛЯ", AVATAR)).toBe("YULYA");
+  });
+
+  test("gives the same result for the same name every time", () => {
+    expect(safeName("Мия", "avatar-0002")).toBe(safeName("Мия", "avatar-0009"));
+  });
+
+  test.each(["A", "2", "A2", "-a-", "ь", "_1_"])("falls back to the avatar id when %p has fewer than two letters", (name) => {
+    expect(safeName(name, AVATAR)).toBe(AVATAR);
+  });
+
+  test("keeps a name of exactly two letters", () => {
+    expect(safeName("Ab", AVATAR)).toBe("Ab");
   });
 
   test("falls back to the avatar id for an emoji-only name", () => {
@@ -65,8 +111,17 @@ describe("safeName", () => {
     expect(safeName("...  --  __", AVATAR)).toBe(AVATAR);
   });
 
+  test("falls back to the avatar id for a name in a script with no table (Chinese)", () => {
+    expect(safeName("小明", AVATAR)).toBe(AVATAR);
+  });
+
   test.each(["Con", "CON", "prn", "Aux", "NUL", "com1", "COM9", "lpt1", "LPT9", "com0"])("does not use the Windows device name %s as a folder", (name) => {
     expect(safeName(name, AVATAR)).toBe(AVATAR);
+  });
+
+  test("a Cyrillic word that reads as a device name once transliterated falls back too", () => {
+    expect(safeName("Прн", AVATAR)).toBe(AVATAR);
+    expect(safeName("Нул", AVATAR)).toBe(AVATAR);
   });
 
   test("turns nul.txt into a name that is not a device (the dot becomes an underscore)", () => {
@@ -78,13 +133,11 @@ describe("safeName", () => {
   });
 
   test("keeps at most 64 characters of a 200-character name", () => {
-    const name = safeName("a".repeat(200), AVATAR);
-    expect(name).toBe("a".repeat(64));
+    expect(safeName("a".repeat(200), AVATAR)).toBe("a".repeat(64));
   });
 
   test("does not end on a separator after the 64-character cut", () => {
-    const name = safeName(`${"a".repeat(63)} b`, AVATAR);
-    expect(name).toBe("a".repeat(63));
+    expect(safeName(`${"a".repeat(63)} b`, AVATAR)).toBe("a".repeat(63));
   });
 
   test("a device name followed by more words is not a device name", () => {
@@ -96,22 +149,21 @@ describe("safeName", () => {
     expect(safeName("../../etc/passwd", AVATAR)).toBe("etc_passwd");
   });
 
-  test("two case variants stay distinct strings (the folder merge on a case-insensitive disk is harmless)", () => {
+  test("two case variants stay distinct strings (the folder merge on a case-insensitive disk is handled where the folder is opened)", () => {
     expect(safeName("MIA", AVATAR)).not.toBe(safeName("mia", AVATAR));
   });
 
   test("property: over 5000 hostile names the result is a SafeName and the full path always satisfies RelativePath", () => {
     const random = prng(20260929);
     for (let i = 0; i < 5000; i++) {
-      const raw = hostileName(random);
-      const name = safeName(raw, AVATAR);
+      const name = safeName(hostileName(random), AVATAR);
       expect(isSafeName(name)).toBe(true);
       const relPath = `${name}/${exportFileName("2026-09-29", "collage3", 1 + Math.floor(random() * 999))}`;
       expect(RelativePath.safeParse(relPath).success).toBe(true);
     }
   });
 
-  test("property: a name that is already valid comes back unchanged", () => {
+  test("property: a name that is already valid and has two letters comes back unchanged", () => {
     const random = prng(7);
     const alphabet = "abcXYZ019_-";
     for (let i = 0; i < 500; i++) {
@@ -119,14 +171,31 @@ describe("safeName", () => {
       const length = 1 + Math.floor(random() * 30);
       for (let j = 0; j < length; j++) raw += alphabet[Math.floor(random() * alphabet.length)];
       const core = raw.replace(/^[_-]+|[_-]+$/g, "");
-      if (core === "" || !isSafeName(core)) continue;
+      if (!isSafeName(core) || (core.match(/[A-Za-z]/g) ?? []).length < 2) continue;
       expect(safeName(core, AVATAR)).toBe(core);
     }
   });
 
   test("an avatar id that is itself hostile still gives a valid folder", () => {
-    expect(isSafeName(safeName("Мия", "CON"))).toBe(true);
-    expect(isSafeName(safeName("Мия", "😀"))).toBe(true);
+    expect(isSafeName(safeName("😀", "CON"))).toBe(true);
+    expect(isSafeName(safeName("😀", "😀"))).toBe(true);
+  });
+});
+
+describe("suffixedFolderName", () => {
+  test("adds the first eight characters of the avatar id", () => {
+    expect(suffixedFolderName("Mia", "avatar-0001")).toBe("Mia_avatar-0");
+  });
+
+  test("stays within 64 characters for a 64-character name", () => {
+    const name = suffixedFolderName("a".repeat(64), "avatar-0001");
+    expect(name.length).toBeLessThanOrEqual(64);
+    expect(isSafeName(name)).toBe(true);
+  });
+
+  test("is a SafeName even when the id is hostile", () => {
+    expect(isSafeName(suffixedFolderName("Mia", "😀"))).toBe(true);
+    expect(isSafeName(suffixedFolderName("CON", "CON"))).toBe(true);
   });
 });
 
@@ -171,19 +240,217 @@ describe("exportFileName and formatExportDate", () => {
   });
 });
 
+// ---------- opening the avatar's folder (B1) ----------
+
+interface FakeEntry {
+  kind: "dir" | "link" | "file";
+  /** Where a link or a directory really is, as `realpath` says. */
+  real?: string;
+}
+
+/** A tiny in-memory disk for the folder rules: which path is what, and where `realpath` leads. */
+function fakeFolderFs(entries: Record<string, FakeEntry>): ExportFolderFs & { made: string[] } {
+  const table = new Map(Object.entries(entries));
+  const made: string[] = [];
+  return {
+    made,
+    async mkdir(path) {
+      if (table.has(path)) throw Object.assign(new Error("exists"), { code: "EEXIST" });
+      const parent = path.slice(0, path.lastIndexOf("/"));
+      if (parent !== "" && !table.has(parent)) throw Object.assign(new Error("no parent"), { code: "ENOENT" });
+      table.set(path, { kind: "dir" });
+      made.push(path);
+    },
+    async lstat(path) {
+      const entry = table.get(path);
+      if (entry === undefined) throw Object.assign(new Error("gone"), { code: "ENOENT" });
+      return { isDirectory: () => entry.kind === "dir", isSymbolicLink: () => entry.kind === "link" };
+    },
+    async realpath(path) {
+      const entry = table.get(path);
+      if (entry === undefined) throw Object.assign(new Error("gone"), { code: "ENOENT" });
+      return entry.real ?? path;
+    },
+  };
+}
+
+describe("prepareExportFolder with a fake disk", () => {
+  const base = { root: "/export", safeName: "Mia", avatarId: AVATAR, caseInsensitive: false };
+
+  test("creates a missing folder and returns its name and path", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" } });
+    expect(await prepareExportFolder({ fs, ...base })).toEqual({ name: "Mia", path: "/export/Mia" });
+    expect(fs.made).toEqual(["/export/Mia"]);
+  });
+
+  test("reuses a folder that is already there", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "dir" } });
+    expect(await prepareExportFolder({ fs, ...base })).toEqual({ name: "Mia", path: "/export/Mia" });
+    expect(fs.made).toEqual([]);
+  });
+
+  test("a symlink in the folder's place is not written through: the suffixed folder is used", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "link", real: "/elsewhere" }, "/elsewhere": { kind: "dir" } });
+    expect(await prepareExportFolder({ fs, ...base })).toEqual({ name: "Mia_avatar-0", path: "/export/Mia_avatar-0" });
+  });
+
+  test("a junction reads as a symlink and is refused the same way", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "link", real: "/library" } });
+    expect((await prepareExportFolder({ fs, ...base })).name).toBe("Mia_avatar-0");
+  });
+
+  test("a regular file in the folder's place gives the suffixed folder, not a raw EEXIST", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "file" } });
+    expect((await prepareExportFolder({ fs, ...base })).name).toBe("Mia_avatar-0");
+  });
+
+  test("a directory whose real path is elsewhere (a mount or a bind) is refused", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "dir", real: "/other/place/Mia" } });
+    expect((await prepareExportFolder({ fs, ...base })).name).toBe("Mia_avatar-0");
+  });
+
+  test("when the suffixed folder is also a link, it refuses with not-writable", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "link", real: "/x" }, "/export/Mia_avatar-0": { kind: "link", real: "/y" } });
+    const error = await prepareExportFolder({ fs, ...base }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ExportFolderError);
+    expect(error instanceof ExportFolderError ? error.reason : null).toBe("not-writable");
+  });
+
+  test("a vanished export root refuses with missing, and nothing is created", async () => {
+    const fs = fakeFolderFs({});
+    const error = await prepareExportFolder({ fs, ...base }).catch((e: unknown) => e);
+    expect(error instanceof ExportFolderError ? error.reason : null).toBe("missing");
+    expect(fs.made).toEqual([]);
+  });
+
+  test("returns the name the disk stores, not the one asked for", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "dir", real: "/export/mia" } });
+    expect(await prepareExportFolder({ fs, ...base, caseInsensitive: true })).toEqual({ name: "mia", path: "/export/mia" });
+  });
+
+  test("an on-disk name that is not a SafeName is not used", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "dir", real: "/export/M ia" } });
+    expect((await prepareExportFolder({ fs, ...base, caseInsensitive: true })).name).toBe("Mia_avatar-0");
+  });
+
+  test("the parent of the real folder may differ from the root in letter case on a case-insensitive volume only", async () => {
+    const entries = { "/export": { kind: "dir" as const, real: "/EXPORT" }, "/export/Mia": { kind: "dir" as const, real: "/export/Mia" } };
+    expect((await prepareExportFolder({ fs: fakeFolderFs(entries), ...base, caseInsensitive: true })).name).toBe("Mia");
+    await expect(prepareExportFolder({ fs: fakeFolderFs(entries), ...base, caseInsensitive: false })).rejects.toBeInstanceOf(ExportFolderError);
+  });
+
+  test("an unexpected error is not swallowed", async () => {
+    const fs: ExportFolderFs = {
+      mkdir: async () => Promise.reject(Object.assign(new Error("EIO"), { code: "EIO" })),
+      lstat: async () => Promise.reject(new Error("unused")),
+      realpath: async () => Promise.reject(new Error("unused")),
+    };
+    const error = await prepareExportFolder({ fs, ...base }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ExportFolderError);
+  });
+
+  test("refuses an unsafe folder name before touching the disk", async () => {
+    const fs = fakeFolderFs({ "/export": { kind: "dir" } });
+    await expect(prepareExportFolder({ fs, ...base, safeName: "CON" })).rejects.toThrow();
+    await expect(prepareExportFolder({ fs, ...base, safeName: "../x" })).rejects.toThrow();
+    expect(fs.made).toEqual([]);
+  });
+});
+
+describe("prepareExportFolder on the real disk", () => {
+  async function withDirs(run: (dirs: { root: string; outside: string; library: string }) => Promise<void>): Promise<void> {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "studio-export-folder-")));
+    const dirs = { root: join(dir, "export"), outside: join(dir, "outside"), library: join(dir, "library") };
+    await mkdir(dirs.root);
+    await mkdir(dirs.outside);
+    await mkdir(dirs.library);
+    try {
+      await run(dirs);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  const base = { fs: NODE_EXPORT_FOLDER_FS, safeName: "Mia", avatarId: AVATAR, caseInsensitive: process.platform !== "linux" };
+
+  test("creates the folder under the root", async () => {
+    await withDirs(async ({ root }) => {
+      const folder = await prepareExportFolder({ ...base, root });
+      expect((await stat(folder.path)).isDirectory()).toBe(true);
+      expect(folder.name).toBe("Mia");
+    });
+  });
+
+  test("a planted symlink to another folder is never written through", async () => {
+    await withDirs(async ({ root, outside }) => {
+      await symlink(outside, join(root, "Mia"));
+      const folder = await prepareExportFolder({ ...base, root });
+      expect(folder.name).toBe("Mia_avatar-0");
+      expect(folder.path).toBe(join(root, "Mia_avatar-0"));
+      expect(await readdir(outside)).toEqual([]);
+    });
+  });
+
+  test("a planted symlink into the library never lands a file in the library", async () => {
+    await withDirs(async ({ root, library }) => {
+      await symlink(library, join(root, "Zoe"));
+      const folder = await prepareExportFolder({ ...base, root, safeName: "Zoe" });
+      const claim = await claimExportName({ fs: NODE_EXPORT_NAME_FS, folder, date: "2026-09-29", kind: "photo" });
+      expect(claim.absPath.startsWith(join(root, "Zoe_avatar-0"))).toBe(true);
+      expect(await readdir(library)).toEqual([]);
+    });
+  });
+
+  test("a regular file at the folder's name gives the suffixed folder", async () => {
+    await withDirs(async ({ root }) => {
+      await writeFile(join(root, "Mia"), "a file");
+      const folder = await prepareExportFolder({ ...base, root });
+      expect(folder.name).toBe("Mia_avatar-0");
+      expect(await readFile(join(root, "Mia"), "utf8")).toBe("a file");
+    });
+  });
+
+  test("a vanished root is refused as missing and is not recreated with its parents", async () => {
+    await withDirs(async ({ root }) => {
+      await rm(root, { recursive: true });
+      const error = await prepareExportFolder({ ...base, root }).catch((e: unknown) => e);
+      expect(error instanceof ExportFolderError ? error.reason : null).toBe("missing");
+      expect(await stat(root).catch(() => null)).toBeNull();
+    });
+  });
+
+  test("a root that is itself a symlink to a real folder still works", async () => {
+    await withDirs(async ({ root, outside }) => {
+      const via = join(outside, "..", "via-link");
+      await symlink(root, via);
+      const folder = await prepareExportFolder({ ...base, root: via });
+      expect(folder.name).toBe("Mia");
+      expect(await readdir(root)).toEqual(["Mia"]);
+    });
+  });
+
+  test("case variants of one name end in the folder the disk actually has", async () => {
+    await withDirs(async ({ root }) => {
+      const first = await prepareExportFolder({ ...base, root, safeName: "Mia" });
+      const second = await prepareExportFolder({ ...base, root, safeName: "mia" });
+      const onDisk = await readdir(root);
+      expect(onDisk).toContain(first.name);
+      expect(onDisk).toContain(second.name);
+      if (onDisk.length === 1) expect(second.name).toBe(first.name);
+    });
+  });
+});
+
+// ---------- claiming the file name ----------
+
 describe("claimExportName with a fake disk", () => {
   /** An in-memory folder: `createExclusive` fails with EEXIST for a taken path, comparing case-insensitively when asked. */
-  function fakeFs(taken: string[], opts: { caseInsensitive?: boolean } = {}): ExportNameFs & { made: string[]; dirs: string[] } {
+  function fakeFs(taken: string[], opts: { caseInsensitive?: boolean } = {}): ExportNameFs & { made: string[] } {
     const norm = (p: string) => (opts.caseInsensitive === true ? p.toLowerCase() : p);
     const files = new Set(taken.map(norm));
     const made: string[] = [];
-    const dirs: string[] = [];
     return {
       made,
-      dirs,
-      async mkdir(path) {
-        dirs.push(path);
-      },
       async createExclusive(path) {
         if (files.has(norm(path))) throw Object.assign(new Error("exists"), { code: "EEXIST" });
         files.add(norm(path));
@@ -192,36 +459,32 @@ describe("claimExportName with a fake disk", () => {
     };
   }
 
-  const base = { root: "/export", safeName: "Mia", date: "2026-09-29", kind: "photo" };
+  const folder: PreparedFolder = { name: "Mia", path: join("/export", "Mia") };
+  const base = { folder, date: "2026-09-29", kind: "photo" };
 
   test("claims NNN 001 in an empty folder", async () => {
-    const fs = fakeFs([]);
-    const claim = await claimExportName({ fs, ...base });
+    const claim = await claimExportName({ fs: fakeFs([]), ...base });
     expect(claim).toEqual({ relPath: "Mia/2026-09-29_photo_001.mp4", absPath: join("/export", "Mia", "2026-09-29_photo_001.mp4"), n: 1 });
   });
 
-  test("creates the avatar's folder before claiming", async () => {
-    const fs = fakeFs([]);
-    await claimExportName({ fs, ...base });
-    expect(fs.dirs).toEqual([join("/export", "Mia")]);
+  test("uses the folder name the disk stores in the relative path", async () => {
+    const claim = await claimExportName({ fs: fakeFs([]), ...base, folder: { name: "mia", path: join("/export", "mia") } });
+    expect(claim.relPath).toBe("mia/2026-09-29_photo_001.mp4");
   });
 
   test("moves to the next number when the first is taken", async () => {
     const fs = fakeFs([join("/export", "Mia", "2026-09-29_photo_001.mp4")]);
-    const claim = await claimExportName({ fs, ...base });
-    expect(claim.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+    expect((await claimExportName({ fs, ...base })).relPath).toBe("Mia/2026-09-29_photo_002.mp4");
   });
 
   test("skips a run of taken numbers", async () => {
     const taken = [1, 2, 3, 5].map((n) => join("/export", "Mia", exportFileName("2026-09-29", "photo", n)));
-    const claim = await claimExportName({ fs: fakeFs(taken), ...base });
-    expect(claim.n).toBe(4);
+    expect((await claimExportName({ fs: fakeFs(taken), ...base })).n).toBe(4);
   });
 
   test("a taken number with another letter case counts as taken on a case-insensitive disk", async () => {
     const fs = fakeFs([join("/export", "Mia", "2026-09-29_PHOTO_001.MP4")], { caseInsensitive: true });
-    const claim = await claimExportName({ fs, ...base });
-    expect(claim.n).toBe(2);
+    expect((await claimExportName({ fs, ...base })).n).toBe(2);
   });
 
   test("a different kind or date does not collide", async () => {
@@ -231,13 +494,11 @@ describe("claimExportName with a fake disk", () => {
 
   test("goes past 999 into four digits", async () => {
     const taken = Array.from({ length: 999 }, (_, i) => join("/export", "Mia", exportFileName("2026-09-29", "photo", i + 1)));
-    const claim = await claimExportName({ fs: fakeFs(taken), ...base });
-    expect(claim.relPath).toBe("Mia/2026-09-29_photo_1000.mp4");
+    expect((await claimExportName({ fs: fakeFs(taken), ...base })).relPath).toBe("Mia/2026-09-29_photo_1000.mp4");
   });
 
   test("gives up after 999999 instead of producing a name the contract refuses", async () => {
     const fs: ExportNameFs = {
-      mkdir: async () => undefined,
       createExclusive: async () => {
         throw Object.assign(new Error("exists"), { code: "EEXIST" });
       },
@@ -248,7 +509,6 @@ describe("claimExportName with a fake disk", () => {
   test("propagates an error that is not a collision, without retrying", async () => {
     let calls = 0;
     const fs: ExportNameFs = {
-      mkdir: async () => undefined,
       createExclusive: async () => {
         calls++;
         throw Object.assign(new Error("read-only"), { code: "EROFS" });
@@ -260,9 +520,8 @@ describe("claimExportName with a fake disk", () => {
 
   test("refuses an unsafe folder name before touching the disk", async () => {
     const fs = fakeFs([]);
-    await expect(claimExportName({ fs, ...base, safeName: "CON" })).rejects.toThrow();
-    await expect(claimExportName({ fs, ...base, safeName: "../x" })).rejects.toThrow();
-    expect(fs.dirs).toEqual([]);
+    await expect(claimExportName({ fs, ...base, folder: { name: "CON", path: "/export/CON" } })).rejects.toThrow();
+    await expect(claimExportName({ fs, ...base, folder: { name: "../x", path: "/x" } })).rejects.toThrow();
     expect(fs.made).toEqual([]);
   });
 
@@ -274,46 +533,47 @@ describe("claimExportName with a fake disk", () => {
 });
 
 describe("claimExportName on the real disk", () => {
-  async function withDir(run: (dir: string) => Promise<void>): Promise<void> {
-    const dir = await mkdtemp(join(tmpdir(), "studio-export-name-"));
+  async function withFolder(run: (folder: PreparedFolder, root: string) => Promise<void>): Promise<void> {
+    const root = await mkdtemp(join(tmpdir(), "studio-export-name-"));
     try {
-      await run(dir);
+      const folder = await prepareExportFolder({ fs: NODE_EXPORT_FOLDER_FS, root, safeName: "Mia", avatarId: AVATAR, caseInsensitive: process.platform !== "linux" });
+      await run(folder, root);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   }
 
-  const base = { safeName: "Mia", date: "2026-09-29", kind: "photo", fs: NODE_EXPORT_NAME_FS };
+  const base = { date: "2026-09-29", kind: "photo", fs: NODE_EXPORT_NAME_FS };
 
   test("leaves an empty placeholder file under the claimed name", async () => {
-    await withDir(async (root) => {
-      const claim = await claimExportName({ ...base, root });
+    await withFolder(async (folder) => {
+      const claim = await claimExportName({ ...base, folder });
       expect((await readFile(claim.absPath)).byteLength).toBe(0);
-      expect(await readdir(join(root, "Mia"))).toEqual(["2026-09-29_photo_001.mp4"]);
+      expect(await readdir(folder.path)).toEqual(["2026-09-29_photo_001.mp4"]);
     });
   });
 
   test("never overwrites a file the owner put there", async () => {
-    await withDir(async (root) => {
-      await claimExportName({ ...base, root });
-      await writeFile(join(root, "Mia", "2026-09-29_photo_001.mp4"), "the owner's video");
-      const claim = await claimExportName({ ...base, root });
+    await withFolder(async (folder) => {
+      await claimExportName({ ...base, folder });
+      await writeFile(join(folder.path, "2026-09-29_photo_001.mp4"), "the owner's video");
+      const claim = await claimExportName({ ...base, folder });
       expect(claim.n).toBe(2);
-      expect(await readFile(join(root, "Mia", "2026-09-29_photo_001.mp4"), "utf8")).toBe("the owner's video");
+      expect(await readFile(join(folder.path, "2026-09-29_photo_001.mp4"), "utf8")).toBe("the owner's video");
     });
   });
 
   test("twelve concurrent claims get twelve different names", async () => {
-    await withDir(async (root) => {
-      const claims = await Promise.all(Array.from({ length: 12 }, () => claimExportName({ ...base, root })));
+    await withFolder(async (folder) => {
+      const claims = await Promise.all(Array.from({ length: 12 }, () => claimExportName({ ...base, folder })));
       expect(new Set(claims.map((c) => c.relPath)).size).toBe(12);
-      expect((await readdir(join(root, "Mia"))).length).toBe(12);
+      expect((await readdir(folder.path)).length).toBe(12);
     });
   });
 
   test("every claimed relPath satisfies the contract", async () => {
-    await withDir(async (root) => {
-      const claim = await claimExportName({ ...base, root, safeName: safeName("Мия", AVATAR) });
+    await withFolder(async (folder) => {
+      const claim = await claimExportName({ ...base, folder });
       expect(RelativePath.safeParse(claim.relPath).success).toBe(true);
     });
   });
