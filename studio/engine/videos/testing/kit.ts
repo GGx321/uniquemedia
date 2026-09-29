@@ -12,7 +12,8 @@ import { openLibrary, type Library } from "../../library";
 import { PNG_1X1, SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import type { AvatarManifest, PhotoSidecar } from "../../library/schemas";
 import { NODE_COMMIT_FS, type CommitFs } from "../commitFs";
-import { partNameOf, type VideoRecord } from "../record";
+import { commitVideo, type CommitInput } from "../commit";
+import { partNameOf, videoPaths, type VideoRecord } from "../record";
 import type { VerifiedFile } from "../../verify";
 import type { z } from "zod";
 
@@ -249,3 +250,75 @@ export const acceptingVerify = async (path: string): Promise<VerifiedFile> => {
   const bytes = readFileSync(path);
   return { result: { ok: true }, sha256: sha256Of(bytes), bytes: bytes.length };
 };
+
+// ---------- a commit rig ----------
+
+export const MARKER = ".studio-export.json";
+
+
+export interface Rig {
+  readonly w: World;
+  readonly fs: FaultyFs;
+  readonly bytes: Uint8Array;
+  readonly temp: string;
+  readonly input: CommitInput;
+  readonly logs: string[];
+  target(): Parameters<typeof commitVideo>[0];
+  run(over?: Partial<Parameters<typeof commitVideo>[2]>): ReturnType<typeof commitVideo>;
+}
+
+export async function rig(world: () => World, over: { bytes?: Uint8Array; forbiddenStrings?: string[]; input?: Partial<CommitInput> } = {}): Promise<Rig> {
+  const w = world();
+  const folder = await openFolder(w);
+  const bytes = over.bytes ?? fakeVideoBytes(4096);
+  const input: CommitInput = {
+    jobId: "job-00000001",
+    videoId: "video-00000001",
+    avatarId: w.avatar.id,
+    videoKind: "photo",
+    date: "2026-09-29",
+    createdAt: "2026-09-29T10:00:00.000Z",
+    frames: 30,
+    durationMs: 1000,
+    montageId: null,
+    music: null,
+    spec: specOf(w.avatar.id, [w.photos[0]?.id ?? ""]),
+    forbiddenStrings: over.forbiddenStrings ?? [],
+    ...over.input,
+  };
+  const temp = writeTemp(folder, input.jobId, bytes);
+  const fs = faultyFs();
+  const logs: string[] = [];
+  const target = { folder, root: w.exportRoot, rootId: w.rootId, caseInsensitive: false };
+  return {
+    w,
+    fs,
+    bytes,
+    temp,
+    input,
+    logs,
+    target: () => target,
+    run: (extra = {}) => commitVideo(target, input, { fs, libraryRoot: w.libraryRoot, verify: acceptingVerify, log: (line) => logs.push(line), ...extra }),
+  };
+}
+
+export const exportFiles = async (w: World) => (await listTree(w.exportRoot)).filter((f) => f !== MARKER);
+export const libraryVideoFiles = async (w: World) => {
+  try {
+    return await listTree(videoPaths(w.libraryRoot, w.avatar.id).videosDir);
+  } catch {
+    return [];
+  }
+};
+export const FINAL = "Mia/2026-09-29_photo_001.mp4";
+
+/** The failure a promise ended with, whatever it was. */
+export async function failureOf(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the commit to fail");
+}
+

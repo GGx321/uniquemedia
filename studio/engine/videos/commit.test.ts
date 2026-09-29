@@ -6,8 +6,24 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { RenderFailure } from "../renderQueue/queue";
 import type { VerifiedFile } from "../verify";
 import { commitVideo, VerifyRefusedError, type CommitInput, type CommitStep } from "./commit";
-import { VideoRecordSchema, videoPaths } from "./record";
-import { acceptingVerify, errnoError, fakeVideoBytes, faultyFs, listTree, openFolder, sha256Of, specOf, useWorld, writeTemp, type FaultyFs, type World } from "./testing/kit";
+import { videoPaths, VideoRecordSchema } from "./record";
+import {
+  acceptingVerify,
+  errnoError,
+  exportFiles,
+  failureOf,
+  fakeVideoBytes,
+  faultyFs,
+  FINAL,
+  libraryVideoFiles,
+  listTree,
+  openFolder,
+  rig,
+  sha256Of,
+  useWorld,
+  writeTemp,
+  type World,
+} from "./testing/kit";
 useNativeGlobals();
 
 // Task 3a.8b.1: the commit pipeline (Commit row, steps 2-6), on the real disk
@@ -16,77 +32,10 @@ useNativeGlobals();
 // failure modes that must roll back cleanly.
 
 const world = useWorld();
-const MARKER = ".studio-export.json";
-
-interface Rig {
-  readonly w: World;
-  readonly fs: FaultyFs;
-  readonly bytes: Uint8Array;
-  readonly temp: string;
-  readonly input: CommitInput;
-  readonly logs: string[];
-  target(): Parameters<typeof commitVideo>[0];
-  run(over?: Partial<Parameters<typeof commitVideo>[2]>): ReturnType<typeof commitVideo>;
-}
-
-async function rig(over: { bytes?: Uint8Array; forbiddenStrings?: string[]; input?: Partial<CommitInput> } = {}): Promise<Rig> {
-  const w = world();
-  const folder = await openFolder(w);
-  const bytes = over.bytes ?? fakeVideoBytes(4096);
-  const input: CommitInput = {
-    jobId: "job-00000001",
-    videoId: "video-00000001",
-    avatarId: w.avatar.id,
-    videoKind: "photo",
-    date: "2026-09-29",
-    createdAt: "2026-09-29T10:00:00.000Z",
-    frames: 30,
-    durationMs: 1000,
-    montageId: null,
-    music: null,
-    spec: specOf(w.avatar.id, [w.photos[0]?.id ?? ""]),
-    forbiddenStrings: over.forbiddenStrings ?? [],
-    ...over.input,
-  };
-  const temp = writeTemp(folder, input.jobId, bytes);
-  const fs = faultyFs();
-  const logs: string[] = [];
-  const target = { folder, root: w.exportRoot, rootId: w.rootId, caseInsensitive: false };
-  return {
-    w,
-    fs,
-    bytes,
-    temp,
-    input,
-    logs,
-    target: () => target,
-    run: (extra = {}) => commitVideo(target, input, { fs, libraryRoot: w.libraryRoot, verify: acceptingVerify, log: (line) => logs.push(line), ...extra }),
-  };
-}
-
-const exportFiles = async (w: World) => (await listTree(w.exportRoot)).filter((f) => f !== MARKER);
-const libraryVideoFiles = async (w: World) => {
-  try {
-    return await listTree(videoPaths(w.libraryRoot, w.avatar.id).videosDir);
-  } catch {
-    return [];
-  }
-};
-const FINAL = "Mia/2026-09-29_photo_001.mp4";
-
-/** The failure a commit ended with, whatever it was. */
-async function failureOf(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise;
-  } catch (error) {
-    return error;
-  }
-  throw new Error("expected the commit to fail");
-}
 
 describe("the commit's happy path", () => {
   test("puts the verified bytes under the claimed name, and the temp is gone", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const out = await r.run();
     expect(out.record.file.relPath).toBe(FINAL);
     expect(readFileSync(join(r.w.exportRoot, FINAL))).toEqual(Buffer.from(r.bytes));
@@ -94,7 +43,7 @@ describe("the commit's happy path", () => {
   });
 
   test("commits a record that names the file by root id and relative path, with its size, sha256 and mtime", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const out = await r.run();
     const onDisk = VideoRecordSchema.parse(JSON.parse(readFileSync(videoPaths(r.w.libraryRoot, r.w.avatar.id).record(r.input.videoId), "utf8")));
     expect(onDisk).toEqual(out.record);
@@ -104,26 +53,26 @@ describe("the commit's happy path", () => {
   });
 
   test("leaves no intent: the library's videos/ folder holds the record alone", async () => {
-    const r = await rig();
+    const r = await rig(world);
     await r.run();
     expect(await libraryVideoFiles(r.w)).toEqual([`${r.input.videoId}.json`]);
   });
 
   test("returns the job's RenderResult: video id, avatar, size, duration, kind and relative path", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const out = await r.run();
     expect(out.result).toEqual({ kind: "render", videoId: r.input.videoId, avatarId: r.w.avatar.id, bytes: r.bytes.length, durationMs: 1000, videoKind: "photo", relPath: FINAL });
   });
 
   test("the record it wrote makes the photos used when the library is opened again (invariant 24)", async () => {
-    const r = await rig();
+    const r = await rig(world);
     await r.run();
     const reopened = await r.w.reopen();
     expect(reopened.photoStates(r.w.avatar.id).get(r.w.photos[0]?.id ?? "")?.usedIn).toEqual([r.input.videoId]);
   });
 
   test("follows invariant 23's order: fsync the temp, claim, intent, rename, fsync the folder, then the record", async () => {
-    const r = await rig();
+    const r = await rig(world);
     await r.run();
     const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
     const at = (needle: string | RegExp): number => r.fs.calls.findIndex((c) => (typeof needle === "string" ? c.startsWith(needle) : needle.test(c)));
@@ -141,13 +90,13 @@ describe("the commit's happy path", () => {
   });
 
   test("fsyncs the temp through fsyncFile, which opens it r+, never through a read-only handle (Windows EPERM)", async () => {
-    const r = await rig();
+    const r = await rig(world);
     await r.run();
     expect(r.fs.calls.filter((c) => c.startsWith("fsyncFile"))).toEqual([`fsyncFile ${r.temp}`]);
   });
 
   test("hands the verifier the temp, the exact frame count and the forbidden strings", async () => {
-    const r = await rig({ forbiddenStrings: ["Jane Q. Photographer"] });
+    const r = await rig(world, { forbiddenStrings: ["Jane Q. Photographer"] });
     const seen: unknown[] = [];
     await r.run({
       verify: async (path, expected) => {
@@ -159,14 +108,14 @@ describe("the commit's happy path", () => {
   });
 
   test("takes the sha256 from the verifier's own pass: there is no second read of the file in the commit's disk interface", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const out = await r.run({ verify: async (path) => ({ ...(await acceptingVerify(path)), sha256: sha256Of(r.bytes) }) });
     expect(out.record.file.sha256).toBe(sha256Of(r.bytes));
     expect(Object.keys(r.fs).some((op) => /^(read|hash)/i.test(op))).toBe(false);
   });
 
   test("moves to the next number when the name is taken, and never touches the owner's file", async () => {
-    const r = await rig();
+    const r = await rig(world);
     writeFileSync(join(r.w.exportRoot, FINAL), "the owner's own video");
     const out = await r.run();
     expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
@@ -175,7 +124,7 @@ describe("the commit's happy path", () => {
 
   test("two commits at once never share a name", async () => {
     const w = world();
-    const a = await rig({ input: { jobId: "job-00000001", videoId: "video-00000001" } });
+    const a = await rig(world, { input: { jobId: "job-00000001", videoId: "video-00000001" } });
     const folder = await openFolder(w);
     writeTemp(folder, "job-00000002", fakeVideoBytes(3000, 9));
     const bInput: CommitInput = { ...a.input, jobId: "job-00000002", videoId: "video-00000002" };
@@ -195,7 +144,7 @@ describe("the verifier refuses", () => {
     });
 
   test("fails the job with RENDER_VERIFY_FAILED, keeps nothing and claims no name", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const error = await failureOf(r.run({ verify: refusing([{ code: "FRAME_COUNT_MISMATCH", path: "moov/trak" }]) }));
     expect(error).toBeInstanceOf(VerifyRefusedError);
     expect(error).toBeInstanceOf(RenderFailure);
@@ -206,13 +155,13 @@ describe("the verifier refuses", () => {
   });
 
   test("SOURCE_METADATA_STRING is never retried automatically with the same spec", async () => {
-    const r = await rig({ forbiddenStrings: ["Jane Q. Photographer"] });
+    const r = await rig(world, { forbiddenStrings: ["Jane Q. Photographer"] });
     const error = await failureOf(r.run({ verify: refusing([{ code: "SOURCE_METADATA_STRING", path: "mdat" }]) }));
     expect(error).toMatchObject({ autoRetryable: false, codes: ["SOURCE_METADATA_STRING"] });
   });
 
   test("logs the reason codes and box paths, and never a forbidden string or a file path", async () => {
-    const r = await rig({ forbiddenStrings: ["Jane Q. Photographer"] });
+    const r = await rig(world, { forbiddenStrings: ["Jane Q. Photographer"] });
     await failureOf(r.run({ verify: refusing([{ code: "SOURCE_METADATA_STRING", path: "moov/udta", message: "caller string #0 found; Jane Q. Photographer" }, { code: "TEXT_IN_INDEX" }]) }));
     const text = r.logs.join("\n");
     expect(text).toContain("SOURCE_METADATA_STRING");
@@ -223,21 +172,21 @@ describe("the verifier refuses", () => {
   });
 
   test("a verifier that could not hash the file (no complete read) is an internal failure, not a pass", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const error = await failureOf(r.run({ verify: async () => ({ result: { ok: true }, sha256: null, bytes: 4096 }) }));
     expect(error).toMatchObject({ engineError: { code: "INTERNAL" } });
     expect(await exportFiles(r.w)).toEqual([]);
   });
 
   test("a temp the verifier cannot read fails the job and leaves nothing", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const error = await failureOf(r.run({ verify: () => Promise.reject(errnoError("EIO")) }));
     expect(error).toMatchObject({ engineError: { code: "INTERNAL" } });
     expect(await exportFiles(r.w)).toEqual([]);
   });
 
   test("a temp that is a symlink is refused before anything reads it", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const target = join(r.w.dir, "elsewhere.mp4");
     writeFileSync(target, r.bytes);
     await rename(r.temp, `${r.temp}.real`);
@@ -250,7 +199,7 @@ describe("the verifier refuses", () => {
 
 describe("cancel and \"done wins\" (decision: a cancel is honoured up to the claim and ignored from the claim on)", () => {
   test("a cancel before the commit starts stops it with the abort reason, and removes the temp", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const controller = new AbortController();
     const reason = new Error("user cancelled");
     controller.abort(reason);
@@ -260,7 +209,7 @@ describe("cancel and \"done wins\" (decision: a cancel is honoured up to the cla
   });
 
   test("a cancel that arrives while the file is being verified stops before the claim: no name, no intent, no temp", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const controller = new AbortController();
     const reason = new Error("user cancelled");
     const error = await failureOf(
@@ -279,7 +228,7 @@ describe("cancel and \"done wins\" (decision: a cancel is honoured up to the cla
   });
 
   test("a cancel between the temp's fsync and the claim still stops cleanly", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const controller = new AbortController();
     const reason = new Error("user cancelled");
     const error = await failureOf(
@@ -300,7 +249,7 @@ describe("cancel and \"done wins\" (decision: a cancel is honoured up to the cla
   test.each<CommitStep>(["name-claimed", "intent-temp-written", "intent-written", "renamed", "dir-synced", "record-committed"])(
     "a cancel that arrives after %s changes nothing: the commit finishes, the record is committed, no half state",
     async (step) => {
-      const r = await rig();
+      const r = await rig(world);
       const controller = new AbortController();
       const out = await r.run({
         signal: controller.signal,
@@ -320,7 +269,7 @@ describe("cancel and \"done wins\" (decision: a cancel is honoured up to the cla
 
 describe("failure modes roll back to a clean folder", () => {
   test("a full disk on the export volume when claiming the name fails EXPORT_UNAVAILABLE not-enough-space and removes the temp", async () => {
-    const r = await rig();
+    const r = await rig(world);
     r.fs.failOnce("createExclusive", errnoError("ENOSPC"));
     const error = await failureOf(r.run());
     expect(error).toMatchObject({ engineError: { code: "EXPORT_UNAVAILABLE", exportReason: "not-enough-space" } });
@@ -329,7 +278,7 @@ describe("failure modes roll back to a clean folder", () => {
   });
 
   test("a full disk on the intent removes the placeholder and the temp, writes no record, and says INTERNAL, not an export problem", async () => {
-    const r = await rig();
+    const r = await rig(world);
     r.fs.failOnce("writeNew", errnoError("ENOSPC"));
     const error = await failureOf(r.run());
     expect(error).toMatchObject({ engineError: { code: "INTERNAL" } });
@@ -340,7 +289,7 @@ describe("failure modes roll back to a clean folder", () => {
   });
 
   test("the claim running out of numbers fails the job and removes the temp", async () => {
-    const r = await rig();
+    const r = await rig(world);
     writeFileSync(join(r.w.exportRoot, "Mia", "2026-09-29_photo_999999.mp4"), "the owner's");
     const error = await failureOf(r.run({ claimStartAt: 999_999 }));
     expect(error).toMatchObject({ engineError: { code: "INTERNAL" } });
@@ -350,7 +299,7 @@ describe("failure modes roll back to a clean folder", () => {
   });
 
   test("the export folder vanishing mid-commit is EXPORT_UNAVAILABLE missing, and nothing is left in the library", async () => {
-    const r = await rig();
+    const r = await rig(world);
     r.fs.failOnce("rename", errnoError("ENOENT"), (args) => args[0] === r.temp);
     const error = await failureOf(r.run());
     expect(error).toMatchObject({ engineError: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
@@ -358,7 +307,7 @@ describe("failure modes roll back to a clean folder", () => {
   });
 
   test("a rename failing for another reason rolls the claim and the intent back", async () => {
-    const r = await rig();
+    const r = await rig(world);
     r.fs.failOnce("rename", errnoError("EACCES"), (args) => args[0] === r.temp);
     const error = await failureOf(r.run());
     expect(error).toMatchObject({ engineError: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
@@ -367,7 +316,7 @@ describe("failure modes roll back to a clean folder", () => {
   });
 
   test("the intent's fsync of the directory failing after the rename removes the file, the intent and leaves no record", async () => {
-    const r = await rig();
+    const r = await rig(world);
     r.fs.failOnce("fsyncDir", errnoError("EIO"), (args) => args[0] === join(r.w.exportRoot, "Mia"));
     const error = await failureOf(r.run());
     expect(error).toMatchObject({ engineError: { code: "EXPORT_UNAVAILABLE" } });
@@ -376,7 +325,7 @@ describe("failure modes roll back to a clean folder", () => {
   });
 
   test("the record's own rename failing removes the file and the intent: no file without a record survives a failed job", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
     r.fs.failOnce("rename", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId));
     const error = await failureOf(r.run());
@@ -386,7 +335,7 @@ describe("failure modes roll back to a clean folder", () => {
   });
 
   test("a file that cannot be removed during the rollback keeps its intent, so recovery adopts it instead of orphaning it", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
     r.fs.failOnce("rename", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId));
     r.fs.failOnce("unlink", errnoError("EBUSY"), (args) => args[0] === join(r.w.exportRoot, FINAL));
@@ -396,7 +345,7 @@ describe("failure modes roll back to a clean folder", () => {
   });
 
   test("a temp that changes after it was verified is refused (RENDER_VERIFY_FAILED) and everything is removed", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const error = await failureOf(
       r.run({
         hooks: {
@@ -414,7 +363,7 @@ describe("failure modes roll back to a clean folder", () => {
 
 describe("the EXDEV fallback (a sub-mount inside the export root)", () => {
   test("copies into the placeholder, syncs, deletes the temp, and commits the same record", async () => {
-    const r = await rig();
+    const r = await rig(world);
     r.fs.failOnce("rename", errnoError("EXDEV"), (args) => args[0] === r.temp);
     const out = await r.run();
     expect(readFileSync(join(r.w.exportRoot, FINAL))).toEqual(Buffer.from(r.bytes));
@@ -426,7 +375,7 @@ describe("the EXDEV fallback (a sub-mount inside the export root)", () => {
   });
 
   test("a copy that does not match the verified bytes removes the partial file, the placeholder, the intent and the temp", async () => {
-    const r = await rig();
+    const r = await rig(world);
     r.fs.failOnce("rename", errnoError("EXDEV"), (args) => args[0] === r.temp);
     // The temp changed between the hash and the copy: only its first half is copied.
     r.fs.override({
@@ -459,7 +408,7 @@ describe("containment: the file lands inside the export root, or the commit fail
   }
 
   test("a folder swapped for a symlink BEFORE the rename fails the job, and nothing is deleted or written through the link", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const { outside, canary } = outsideWithCanary(r.w);
     const error = await failureOf(
       r.run({
@@ -477,7 +426,7 @@ describe("containment: the file lands inside the export root, or the commit fail
   });
 
   test("a folder swapped for a symlink BEFORE the claim never gets a placeholder created through the link", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const outside = join(r.w.dir, "outside");
     mkdirSync(outside);
     const error = await failureOf(
@@ -495,7 +444,7 @@ describe("containment: the file lands inside the export root, or the commit fail
   });
 
   test("a folder swapped for a symlink AFTER the rename fails the job, drops the intent, commits no record, and touches nothing outside", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const { outside, canary } = outsideWithCanary(r.w);
     const error = await failureOf(
       r.run({
@@ -514,7 +463,7 @@ describe("containment: the file lands inside the export root, or the commit fail
   });
 
   test("a folder that is replaced by another real folder outside the root also fails: the real path is what counts", async () => {
-    const r = await rig();
+    const r = await rig(world);
     const outside = join(r.w.dir, "outside");
     mkdirSync(outside);
     const error = await failureOf(
