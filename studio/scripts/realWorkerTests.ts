@@ -2,12 +2,15 @@
  * Runs `bun test` with a bounded retry for one known cause: Bun itself crashing.
  *
  *   bun run test:studio:real-worker                      the real-worker file, alone (T7c)
- *   bun studio/scripts/realWorkerTests.ts ./studio       the main suite, same retry
- *   bun studio/scripts/realWorkerTests.ts ./studio --randomize
+ *   bun run test:studio:suite                            the main suite, same retry
+ *   bun studio/scripts/realWorkerTests.ts --suite ./studio --randomize
+ *   bun studio/scripts/realWorkerTests.ts --known-crashes-only --suite ./studio
  *
  * With no arguments it runs `workerGate.real.test.ts` — the tests that spin up
  * the REAL face worker (real models, ORT with its own threads) and terminate
- * it. With arguments they are handed to `bun test` as they are.
+ * it. After `--suite` the arguments are handed to `bun test` as they are;
+ * `--known-crashes-only` narrows the retry to the worker-teardown segfaults
+ * (the canary). Any other argument is a usage error.
  *
  * Why a crash is retried at all: Bun segfaults ("Segmentation fault at address
  * 0x18" or 0xFFFFFFFFFFFFFFF8, exit 133) while tearing down a worker that runs
@@ -21,9 +24,10 @@
  * never runs inside the main suite.
  *
  * The retry (at most 3 attempts) fires ONLY when the output shows the Bun
- * crash and no failed test (no `(fail)` line, no red cross, no `N fail`
- * summary with N above zero; the child also runs with colour off): a real test
- * failure fails the step at once and is never retried into a pass. An attempt
+ * crash and no failure (no `(fail)` line, no red cross, no `N fail` or `N error`
+ * summary with N above zero, no "Unhandled error between tests" load error; the
+ * child also runs with colour off): a real failure fails the step at once and is
+ * never retried into a pass. Each retry prints a `::warning::` annotation. An attempt
  * that runs past its own time bound is killed and fails at once too: a hang is
  * not a crash. Each attempt has that bound, so the step's `timeout-minutes` is
  * (attempts x bound) plus slack, and a hang still ends in minutes.
@@ -35,12 +39,31 @@ export const ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000;
 
 const ANSI = /\u001b\[[0-9;]*m/g;
 
-/** True when `output` shows Bun crashing itself and not a single failed test. A failure is read three ways, so colour cannot hide one: the literal `(fail)` line, a red cross, and a `N fail` summary with N above zero. */
-export function isBunCrashOnly(output: string): boolean {
+/** Any crash of Bun itself. */
+export const ANY_BUN_CRASH: readonly RegExp[] = [/Bun has crashed/, /Segmentation fault/, /^panic:/m];
+
+/**
+ * The one crash that is known and understood: the segfault while a terminated WASM worker is torn down, at
+ * address 0x18 (the real-worker file) or 0xFFFFFFFFFFFFFFF8 (right after workerGate.test.ts's interruption
+ * test). A crash anywhere else is news, and the canary exists to report it.
+ */
+export const WORKER_TEARDOWN_CRASHES: readonly RegExp[] = [/Segmentation fault at address 0x18\b/i, /Segmentation fault at address 0xFFFFFFFFFFFFFFF8\b/i];
+
+/**
+ * True when `output` shows Bun crashing itself (one of `signatures`, any crash by default) and not a single
+ * failure. A failure is read five ways, so neither colour nor a load error can hide one: the literal `(fail)`
+ * line, a red cross, a `N fail` summary with N above zero, Bun's `# Unhandled error between tests` block (a file
+ * that failed to load prints no `(fail)` line), and a `N error(s)` summary with N above zero.
+ */
+export function isBunCrashOnly(output: string, signatures: readonly RegExp[] = ANY_BUN_CRASH): boolean {
   const plain = output.replace(ANSI, "");
-  const crashed = /Bun has crashed|Segmentation fault|^panic:/m.test(plain);
-  const failedATest = /^\s*\(fail\)|^\s*✗/m.test(plain) || /^\s*[1-9]\d*\s+fail\b/m.test(plain);
-  return crashed && !failedATest;
+  const crashed = signatures.some((signature) => signature.test(plain));
+  const failed =
+    /^\s*\(fail\)|^\s*✗/m.test(plain) ||
+    /^\s*[1-9]\d*\s+fail\b/m.test(plain) ||
+    /^# Unhandled error between tests/m.test(plain) ||
+    /^\s*[1-9]\d*\s+errors?\b/m.test(plain);
+  return crashed && !failed;
 }
 
 /** The child's environment: colour off (FORCE_COLOR dropped), so a failure prints as the literal `(fail)` this file's detector reads, and the real-worker tests on only when asked (the default). */
@@ -52,9 +75,27 @@ export function childEnv(
   return options.realWorker ? { ...rest, NO_COLOR: "1", STUDIO_REAL_WORKER_TESTS: "1" } : { ...rest, NO_COLOR: "1" };
 }
 
-/** What to hand to `bun test`: the script's own arguments, or the real-worker file when there are none. */
-export function testTarget(argv: readonly string[]): { testArgs: string[]; realWorker: boolean } {
-  return argv.length === 0 ? { testArgs: [REAL_WORKER_TEST_FILE], realWorker: true } : { testArgs: [...argv], realWorker: false };
+export interface TestTarget {
+  testArgs: string[];
+  /** Run with STUDIO_REAL_WORKER_TESTS=1 (the real-worker file's own mode). */
+  realWorker: boolean;
+  /** Retry only the known worker-teardown crashes (the canary), not any Bun crash. */
+  knownCrashesOnly: boolean;
+}
+
+const USAGE = "usage: realWorkerTests.ts   (the real-worker file)  |  realWorkerTests.ts [--known-crashes-only] --suite <bun test arguments...>";
+
+/**
+ * What to hand to `bun test`. No arguments: the real-worker file. `--suite <args...>`: exactly those `bun test`
+ * arguments (the main suite), with `--known-crashes-only` before it to narrow the retry. Anything else is a
+ * usage error, so an extra flag never quietly turns one mode into the other.
+ */
+export function testTarget(argv: readonly string[]): TestTarget {
+  if (argv.length === 0) return { testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: false };
+  const knownCrashesOnly = argv[0] === "--known-crashes-only";
+  const rest = knownCrashesOnly ? argv.slice(1) : argv;
+  if (rest[0] !== "--suite" || rest.length < 2) throw new Error(USAGE);
+  return { testArgs: rest.slice(1), realWorker: false, knownCrashesOnly };
 }
 
 export interface AttemptResult {
@@ -66,47 +107,66 @@ export interface AttemptResult {
 
 /**
  * Runs `attempt` until it passes, fails for real, or has crashed `maxAttempts` times. Returns the exit code
- * for the process: 0 for a pass, otherwise the failing attempt's own (never 0 for a failure).
+ * for the process: 0 for a pass, otherwise the failing attempt's own (never 0 for a failure). Every retry is
+ * announced through `warn` as a GitHub `::warning::` annotation, so the crash rate stays visible in the run.
  */
 export async function runWithCrashRetry(
   attempt: () => Promise<AttemptResult>,
-  options: { maxAttempts?: number; warn?: (line: string) => void } = {},
+  options: { maxAttempts?: number; warn?: (line: string) => void; signatures?: readonly RegExp[] } = {},
 ): Promise<number> {
   const maxAttempts = options.maxAttempts ?? MAX_ATTEMPTS;
   const warn = options.warn ?? (() => undefined);
   for (let n = 1; ; n++) {
     const result = await attempt();
     if (result.exitCode === 0 && result.timedOut !== true) return 0;
-    const retry = n < maxAttempts && result.timedOut !== true && isBunCrashOnly(result.output);
+    const retry = n < maxAttempts && result.timedOut !== true && isBunCrashOnly(result.output, options.signatures);
     if (!retry) return result.exitCode === 0 ? 1 : result.exitCode;
-    warn(`\nrealWorkerTests: Bun crashed (its known worker-teardown segfault) with no failed test: attempt ${n} of ${maxAttempts}, retrying\n`);
+    warn(`::warning::realWorkerTests: Bun crashed with no failed test: attempt ${n} of ${maxAttempts}, retrying`);
   }
 }
 
-async function runOnce(testArgs: readonly string[], realWorker: boolean): Promise<AttemptResult> {
-  const child = Bun.spawn([process.execPath, "--no-env-file", "test", ...testArgs], {
-    env: childEnv(process.env, { realWorker }),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+export interface RunOnceOptions {
+  command: readonly string[];
+  env: Record<string, string | undefined>;
+  /** The attempt is killed after this long. */
+  timeoutMs: number;
+  /** After the child is gone, how long its output pipes may stay open (a grandchild can hold them) before they are cut. */
+  graceMs: number;
+  /** Copy the child's output to this process's own. */
+  echo: boolean;
+}
+
+/** One attempt: the command, its output collected, bounded by `timeoutMs`; a hung child is killed with SIGKILL. */
+export async function runOnce(options: RunOnceOptions): Promise<AttemptResult> {
+  const child = Bun.spawn([...options.command], { env: options.env, stdout: "pipe", stderr: "pipe" });
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    child.kill();
-  }, ATTEMPT_TIMEOUT_MS);
+    child.kill("SIGKILL");
+  }, options.timeoutMs);
   let output = "";
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
   const pump = async (stream: ReadableStream<Uint8Array>, sink: (text: string) => void): Promise<void> => {
+    const reader = stream.getReader();
+    readers.push(reader);
     const decoder = new TextDecoder();
-    for await (const chunk of stream) {
-      const text = decoder.decode(chunk, { stream: true });
+    for (;;) {
+      const { done, value } = await reader.read().catch(() => ({ done: true as const, value: undefined }));
+      if (done) return;
+      const text = decoder.decode(value, { stream: true });
       output += text;
-      sink(text);
+      if (options.echo) sink(text);
     }
   };
+  const pumps = Promise.all([pump(child.stdout, (t) => process.stdout.write(t)), pump(child.stderr, (t) => process.stderr.write(t))]);
   try {
-    await Promise.all([pump(child.stdout, (t) => process.stdout.write(t)), pump(child.stderr, (t) => process.stderr.write(t))]);
     const exitCode = await child.exited;
-    if (timedOut) console.error(`\nrealWorkerTests: the attempt ran past ${ATTEMPT_TIMEOUT_MS / 1000} s and was killed; not retried\n`);
+    // The child is gone; whatever it wrote is in the pipes already. A grandchild that inherited them would keep them open: cut them after the grace.
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([pumps, new Promise<void>((resolve) => (grace = setTimeout(resolve, options.graceMs)))]);
+    clearTimeout(grace);
+    for (const reader of readers) await reader.cancel().catch(() => undefined);
+    if (timedOut && options.echo) console.error(`\nrealWorkerTests: the attempt ran past ${options.timeoutMs / 1000} s and was killed; not retried\n`);
     return { exitCode, output, timedOut };
   } finally {
     clearTimeout(timer);
@@ -114,6 +174,20 @@ async function runOnce(testArgs: readonly string[], realWorker: boolean): Promis
 }
 
 if (import.meta.main) {
-  const { testArgs, realWorker } = testTarget(process.argv.slice(2));
-  process.exit(await runWithCrashRetry(() => runOnce(testArgs, realWorker), { warn: (line) => console.warn(line) }));
+  let target: TestTarget;
+  try {
+    target = testTarget(process.argv.slice(2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
+  const run = () =>
+    runOnce({
+      command: [process.execPath, "--no-env-file", "test", ...target.testArgs],
+      env: childEnv(process.env, { realWorker: target.realWorker }),
+      timeoutMs: ATTEMPT_TIMEOUT_MS,
+      graceMs: 2_000,
+      echo: true,
+    });
+  process.exit(await runWithCrashRetry(run, { warn: (line) => console.warn(line), ...(target.knownCrashesOnly ? { signatures: WORKER_TEARDOWN_CRASHES } : {}) }));
 }
