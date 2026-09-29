@@ -382,6 +382,32 @@ describe("RenderQueue: cancel", () => {
     expect(jobs.states()[0]).toMatchObject({ status: "cancelled" });
   });
 
+  test("a cancel that arrives while the commit is past its claim does not hide a real commit failure: the job is failed with that error", async () => {
+    const { queue, jobs } = setup();
+    const a = submission(1);
+    queue.submit(a);
+    await a.gate.started.promise;
+    queue.cancel("job-00000001"); // the commit ignores it from the claim on and then fails for a real reason
+
+    a.gate.finish.reject(new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-enough-space", detail: "the export folder's disk is full" }));
+    await queue.idle();
+
+    expect(jobs.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-enough-space" } });
+  });
+
+  test("a verifier refusal after a cancel is a failure too, never a silent cancel", async () => {
+    const { queue, jobs } = setup();
+    const a = submission(1);
+    queue.submit(a);
+    await a.gate.started.promise;
+    queue.cancel("job-00000001");
+
+    a.gate.finish.reject(new RenderFailure({ code: "RENDER_VERIFY_FAILED", detail: "the output failed verification (FRAME_COUNT_MISMATCH)" }));
+    await queue.idle();
+
+    expect(jobs.states()[0]).toMatchObject({ status: "failed", error: { code: "RENDER_VERIFY_FAILED" } });
+  });
+
   test("the next job starts only once a cancelled running job has really stopped", async () => {
     const { queue, jobs } = setup();
     const [a, b] = [submission(1), submission(2)];

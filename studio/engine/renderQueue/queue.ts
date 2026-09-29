@@ -287,8 +287,12 @@ export class RenderQueue {
       });
       end = { status: "done", result };
     } catch (error) {
-      // A cancel decides how a job that stopped with an error ended, whatever error the kill produced.
-      if (signal.aborted) end = { status: "cancelled" };
+      // A cancel decides how a job that stopped with an error ended, whatever error the KILL produced (a
+      // signal reason, an ffmpeg that died on SIGKILL). A `RenderFailure` is not a kill artifact: it is the
+      // work's own verdict (the commit, past its claim where a cancel is ignored, refused or could not save;
+      // the verifier said no), and hiding it behind `cancelled` would report a video that was never made as
+      // a plain stop.
+      if (signal.aborted && !(error instanceof RenderFailure)) end = { status: "cancelled" };
       else end = { status: "failed", error: renderErrorFrom(error, this.#home) };
       cause = error;
     }
