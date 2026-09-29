@@ -44,8 +44,15 @@ export class JobRegistry {
     if (entry === undefined || entry.state.status !== "running") return null;
     entry.state = { ...entry.state, done };
     const { total } = entry.state;
-    if (entry.state.kind === "run") return { kind: "run", jobId, runId: entry.state.runId, avatarId: entry.state.avatarId, done, total };
-    return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
+    switch (entry.state.kind) {
+      case "run":
+        return { kind: "run", jobId, runId: entry.state.runId, avatarId: entry.state.avatarId, done, total };
+      case "render":
+        // Nothing registers a render job before task 3a.6 (the render queue); its identity is already part of the contract.
+        return { kind: "render", jobId, videoId: entry.state.videoId, avatarId: entry.state.avatarId, montageId: entry.state.montageId, done, total };
+      case "avatar.candidates":
+        return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
+    }
   }
 
   /** Ends a running candidates job; its final state, or null for any other job. */

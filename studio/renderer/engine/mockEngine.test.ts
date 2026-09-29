@@ -491,6 +491,8 @@ test("avatars.archive answers DESCRIPTOR_INVALID for a saved avatar whose descri
         createdAt: "2026-09-24T09:00:00.000Z",
         status: "active",
         photoCount: 1,
+        videoCount: 0,
+        eligibleUnusedCount: 0,
       },
     ],
   });
@@ -732,4 +734,43 @@ test("avatars.importAvatar: the imported master is not a gallery photo, so the n
 test("runs.list answers an empty list through the validating client before any run starts", async () => {
   const { client } = makeMock({ imageAgeCheck: "off" });
   expect(await unwrap(client.request("runs.list", {}))).toEqual({ runs: [] });
+});
+
+// Stage 3 task 3a.1 adds the montage and video commands; the mock's parity with the engine behind them is task 3d.1b.
+// Until then it answers exactly what the real engine answers for a command it does not implement yet.
+test.each([
+  ["videos.render", { montageId: "montage-00000001" }],
+  ["videos.cancel", { jobId: "job-00000004" }],
+  ["videos.list", { avatarId: "avatar-0001" }],
+  ["videos.delete", { videoId: "video-00000001" }],
+  ["photos.setRejected", { avatarId: "avatar-0001", photoId: "photo-0002", rejected: true }],
+  ["settings.setExportPath", { path: "/Users/studio/Studio/export" }],
+  ["montages.create", { avatarId: "avatar-0001", photoIds: [] }],
+] as const)("%s answers the typed INTERNAL refusal the real engine gives, and the mock keeps working", async (type, payload) => {
+  const { client } = makeMock();
+  const reply = await client.request(type, payload);
+  expect(reply).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+  expect((await client.request("settings.get", {})).ok).toBe(true);
+});
+
+test("the mock's settings carry the export folder and automatic render concurrency", async () => {
+  const { client } = makeMock();
+  const settings = await unwrap(client.request("settings.get", {}));
+  expect(settings).toMatchObject({ exportPath: "/Users/studio/Studio/export", renderConcurrency: "auto" });
+});
+
+test("the demo avatars have no videos, and every gallery photo is still eligible and unused", async () => {
+  const { client } = makeMock({ preset: "demo" });
+  const { avatars } = await unwrap(client.request("avatars.list", {}));
+  expect(avatars.length).toBeGreaterThan(0);
+  for (const avatar of avatars) expect(avatar).toMatchObject({ videoCount: 0, eligibleUnusedCount: avatar.photoCount });
+});
+
+test("the mock's run photos are unused and unmarked", async () => {
+  const { client } = makeMock({ preset: "demo" });
+  const { avatars } = await unwrap(client.request("avatars.list", {}));
+  const mia = avatars.find((a) => a.name === "Mia");
+  const { photos } = await unwrap(client.request("photos.list", { avatarId: mia?.avatarId ?? "" }));
+  expect(photos.length).toBeGreaterThan(0);
+  for (const photo of photos) expect(photo).toMatchObject({ used: false, usedIn: [], rejected: false });
 });

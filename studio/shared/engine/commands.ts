@@ -3,13 +3,16 @@ import { AvatarName, AvatarTraits } from "./avatar";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
+import { MAX_CLIPS, Montage, MontageShape } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId } from "./primitives";
+import { MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
   ApiKeyStatus,
   AvatarSummary,
   Draft,
   EngineNotice,
   Estimate,
+  ExportPathResult,
   ImageAgeCheck,
   JobState,
   MoneyStatus,
@@ -49,6 +52,15 @@ export const MAX_LISTED_RUNS = 100;
  * demands more — revisit with a cursor if a real library ever approaches it.
  */
 export const MAX_LISTED_PHOTOS = 500;
+
+/**
+ * `montages.create`'s photos: none (an empty draft, «Новый монтаж») up to the
+ * clip cap, each at most once (a scene photo appears once per montage).
+ */
+const MontagePhotoIds = z
+  .array(Id)
+  .max(MAX_CLIPS)
+  .refine((ids) => new Set(ids).size === ids.length, "photoIds must not repeat");
 
 /** Avatar records the engine could not list normally, kept bounded (the Snapshot and avatars.list). */
 export const MAX_UNREADABLE_AVATARS = 200;
@@ -148,6 +160,9 @@ const MAIN_ONLY_SPECS = [
   // engine over the control channel (control.ts's `import.stagePhoto`),
   // never through this command.
   defineCommand("avatars.pickImportPhoto", Empty, ImportPhotoPicked),
+  // Stage 3 (3e): «Показать в папке». Only main can open the system file manager (`shell.showItemInFolder`),
+  // and only for a video whose file is `present`; the engine has no such command.
+  defineCommand("videos.reveal", z.strictObject({ videoId: Id }), z.strictObject({ videoId: Id })),
 ] as const;
 
 /** Commands main forwards to the engine. */
@@ -252,6 +267,34 @@ const ENGINE_SPECS = [
     z.strictObject({ avatarId: Id }),
     z.strictObject({ photos: z.array(PhotoSummary).max(MAX_LISTED_PHOTOS), skippedTotal: Count }),
   ),
+  // Stage 3: montages and rendered videos. A render spends nothing.
+  // The owner's own "do not use" mark on a photo (rejected.jsonl); the mark is set or cleared, and the photo answered as it now stands.
+  defineCommand(
+    "photos.setRejected",
+    z.strictObject({ avatarId: Id, photoId: Id, rejected: z.boolean() }),
+    z.strictObject({ photo: PhotoSummary }),
+  ),
+  // Queues a render of a saved draft, or of a spec straight from a headless caller. Refused up front, free, with
+  // EXPORT_UNAVAILABLE when the export folder is unusable, MONTAGE_INVALID (with issues) for a montage that is not
+  // complete or not yet supported, PHOTO_UNAVAILABLE for a scene photo that is not eligible. `spec` takes the montage's
+  // shape only, so a structurally invalid one gets that issue list rather than a bare VALIDATION error.
+  defineCommand(
+    "videos.render",
+    z.union([z.strictObject({ montageId: Id }), z.strictObject({ spec: MontageShape })]),
+    z.strictObject({ jobId: Id, videoId: Id }),
+  ),
+  // Cancels a queued or running render; ok for one that already ended, NOT_FOUND for an unknown job.
+  defineCommand("videos.cancel", z.strictObject({ jobId: Id }), z.strictObject({ jobId: Id })),
+  // An avatar's video records, newest first, bounded at MAX_LISTED_VIDEOS; each with its file's state, checked on this read.
+  defineCommand("videos.list", z.strictObject({ avatarId: Id }), z.strictObject({ videos: z.array(VideoSummary).max(MAX_LISTED_VIDEOS) })),
+  // Deletes the file when the record resolves to it and it is present, then the record; the photos are freed.
+  // With the file already gone, changed or in another root it deletes only the record («Удалить запись»).
+  defineCommand("videos.delete", z.strictObject({ videoId: Id }), z.strictObject({ videoId: Id })),
+  // Points «Готовые видео» at a folder, reading or writing its root marker; answers the root's identity and how many records resolve.
+  defineCommand("settings.setExportPath", z.strictObject({ path: AbsolutePath }), ExportPathResult),
+  // A new draft for an avatar from 0 to 20 of its scene photos (0: an empty draft, «Новый монтаж»), with the focus of
+  // every placed photo resolved.
+  defineCommand("montages.create", z.strictObject({ avatarId: Id, photoIds: MontagePhotoIds }), z.strictObject({ montage: Montage })),
   // engine
   defineCommand("engine.snapshot", Empty, Snapshot),
   defineCommand("engine.events", z.strictObject({ afterSeq: Count, bootId: Id }), EventsSince),

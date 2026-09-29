@@ -2,6 +2,7 @@ import { z } from "zod";
 import { nonEmpty, ProtocolVersion, Seq } from "./envelope";
 import { EngineError } from "./errors";
 import { Count, Id, Micros } from "./primitives";
+import { VideoSummary } from "./video";
 import { AvatarSummary, Draft, EngineNotice, JobCancelled, JobFailed, JobProgress, JobResult, MoneyStatus, ReconcileReasons, Settings } from "./state";
 
 function defineEvent<const T extends string, P extends z.ZodType>(type: T, payload: P) {
@@ -30,6 +31,7 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
  * - `draft.changed`: a draft was created or changed (e.g. a batch of candidates landed).
  * - `engine.error`: a failure that belongs to no command.
  * - `engine.notice`: something the windows must be told that is not an error; also pending in the snapshot.
+ * - `video.changed`: a video record was committed or changed (`upserted`, with its record and current file state), or is gone (`removed`).
  */
 const EVENT_SPECS = [
   defineEvent("job.progress", JobProgress),
@@ -44,6 +46,13 @@ const EVENT_SPECS = [
   defineEvent("draft.changed", z.strictObject({ draft: Draft })),
   defineEvent("engine.error", z.strictObject({ error: EngineError })),
   defineEvent("engine.notice", z.strictObject({ notice: EngineNotice })),
+  defineEvent(
+    "video.changed",
+    z.discriminatedUnion("change", [
+      z.strictObject({ change: z.literal("upserted"), video: VideoSummary }),
+      z.strictObject({ change: z.literal("removed"), videoId: Id, avatarId: Id }),
+    ]),
+  ),
 ] as const;
 
 type EventSpec = (typeof EVENT_SPECS)[number];

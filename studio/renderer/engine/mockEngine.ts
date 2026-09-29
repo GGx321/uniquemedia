@@ -334,6 +334,9 @@ function demoAvatars(): AvatarSummary[] {
       createdAt: new Date(START_OF_TIME - (i + 1) * 86_400_000 * 3).toISOString(),
       status,
       photoCount,
+      // The mock has no videos yet (mock parity is task 3d.1b): every demo gallery photo is eligible and unused.
+      videoCount: 0,
+      eligibleUnusedCount: photoCount,
     };
   });
 }
@@ -427,6 +430,8 @@ export class MockEngine implements EngineBridge {
       textModel: "x-ai/grok-4.3",
       concurrency: { network: options.concurrency ?? 6 },
       imageAgeCheck: options.imageAgeCheck ?? "off",
+      exportPath: "/Users/studio/Studio/export",
+      renderConcurrency: "auto",
     };
     this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.drafts = options.drafts ?? [];
@@ -683,7 +688,7 @@ export class MockEngine implements EngineBridge {
       run.settledMicros += expected;
       const qa = mockFaceQa(i);
       const at = new Date(Date.parse(createdAt) + (i + 1) * 60_000).toISOString();
-      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, createdAt: at, ...(qa ? { qa } : {}) });
+      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, createdAt: at, used: false, usedIn: [], rejected: false, ...(qa ? { qa } : {}) });
     });
     this.photos.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     this.runs = [...this.runs, run];
@@ -883,6 +888,8 @@ export class MockEngine implements EngineBridge {
           createdAt: this.nowIso(),
           status: "active",
           photoCount: 0,
+          videoCount: 0,
+          eligibleUnusedCount: 0,
         };
         this.drafts = this.drafts.filter((d) => d !== draft);
         this.avatars = [...this.avatars, avatar];
@@ -958,6 +965,8 @@ export class MockEngine implements EngineBridge {
           createdAt: this.nowIso(),
           status: "active",
           photoCount: 0,
+          videoCount: 0,
+          eligibleUnusedCount: 0,
         };
         this.avatars = [...this.avatars, avatar];
         this.spend(this.importPrice().expectedMicros);
@@ -1053,6 +1062,17 @@ export class MockEngine implements EngineBridge {
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
       }
+      case "videos.render":
+      case "videos.cancel":
+      case "videos.list":
+      case "videos.delete":
+      case "videos.reveal":
+      case "photos.setRejected":
+      case "settings.setExportPath":
+      case "montages.create":
+        // Stage 3, task 3a.1: the contract exists, the behaviour comes with its slices (mock parity: task 3d.1b).
+        // Until then the mock refuses exactly as the real engine does for a command it does not implement yet.
+        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
       case "engine.snapshot":
         return this.ok(c, this.snapshot());
       case "engine.events":
@@ -1232,7 +1252,7 @@ export class MockEngine implements EngineBridge {
   private bumpPhotoCount(avatarId: string): void {
     const avatar = this.avatars.find((a) => a.avatarId === avatarId);
     if (avatar === undefined) return;
-    const updated = { ...avatar, photoCount: avatar.photoCount + 1 };
+    const updated = { ...avatar, photoCount: avatar.photoCount + 1, eligibleUnusedCount: avatar.eligibleUnusedCount + 1 };
     this.avatars = this.avatars.map((a) => (a === avatar ? updated : a));
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: updated } });
   }
@@ -1372,7 +1392,7 @@ export class MockEngine implements EngineBridge {
             planned.end = "done";
             const photoId = this.nextId("photo");
             const qa = mockFaceQa(slotIndex);
-            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, createdAt: this.nowIso(), ...(qa ? { qa } : {}) });
+            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, ...(qa ? { qa } : {}) });
             run.photoIds.push(photoId);
             run.settledMicros += slot.expected;
             this.spend(slot.expected);
@@ -1683,6 +1703,8 @@ export class MockEngine implements EngineBridge {
       createdAt: target.createdAt ?? this.nowIso(),
       status: target.status,
       photoCount: target.photoCount ?? 0,
+      videoCount: 0,
+      eligibleUnusedCount: target.photoCount ?? 0,
     };
     this.avatars = [...this.avatars, avatar];
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });

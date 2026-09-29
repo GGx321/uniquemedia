@@ -75,6 +75,8 @@ export function engineInit(dir: string, overrides: Partial<EngineInit> = {}): En
       // engine.imageAgeCheck.test.ts overrides this to "off" to cover the
       // app's real default.
       imageAgeCheck: "on",
+      exportPath: join(dir, "export"),
+      renderConcurrency: "auto",
     },
     encryptionAvailable: true,
     notices: [],

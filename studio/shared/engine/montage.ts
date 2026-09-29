@@ -299,6 +299,21 @@ export type MontageSpec = z.infer<typeof MontageSpec>;
 export const MontageDraft = MontageShape.superRefine(structural("draft"));
 export type MontageDraft = z.infer<typeof MontageDraft>;
 
+/** A saved montage's name as the owner sees it: 1 to 80 characters, no control characters. */
+export const MontageName = z
+  .string()
+  .min(1)
+  .max(80)
+  .refine((name) => !/\p{Cc}/u.test(name), "must not contain control characters");
+
+/**
+ * A saved montage draft as `montages.create` returns it: the draft itself
+ * (which may be incomplete: «Новый монтаж» starts with no clips) with its
+ * name and id. The focus of every placed photo is resolved by then.
+ */
+export const Montage = z.strictObject({ montageId: Id, name: MontageName, spec: MontageDraft, updatedAt: z.iso.datetime() });
+export type Montage = z.infer<typeof Montage>;
+
 export type Clip = z.infer<typeof Clip>;
 export type Layer = z.infer<typeof Layer>;
 export type Cell = z.infer<typeof Cell>;

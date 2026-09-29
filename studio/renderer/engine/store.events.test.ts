@@ -40,6 +40,8 @@ const SAVED: AvatarSummary = {
   createdAt: "2026-09-24T10:10:00.000Z",
   status: "active",
   photoCount: 1,
+  videoCount: 0,
+  eligibleUnusedCount: 0,
 };
 
 async function flush(): Promise<void> {
@@ -335,5 +337,75 @@ test("job.cancelled leaves a job that already finished alone", async () => {
   await h.emit({ type: "job.cancelled", payload: { kind: "avatar.candidates", jobId: "job-00000001", avatarId: DRAFT.avatarId } });
 
   expect(h.store.getView().jobs).toMatchObject([{ jobId: "job-00000001", status: "done" }]);
+  h.stop();
+});
+
+// Stage 3 (protocol 5): render jobs and video records.
+const RENDER_REF = { kind: "render", jobId: "job-render-0001", videoId: "video-0000001", avatarId: "avatar-draft-0001", montageId: "montage-0000001" } as const;
+const RENDER_RESULT = {
+  kind: "render",
+  videoId: "video-0000001",
+  avatarId: "avatar-draft-0001",
+  bytes: 3_100_000,
+  durationMs: 8_000,
+  videoKind: "photo",
+  relPath: "Lena/2026-09-29_photo_001.mp4",
+} as const;
+
+test("a snapshot that lists a queued render restores it as a render job with no runId", async () => {
+  const queued: Snapshot["jobs"][number] = { ...RENDER_REF, status: "queued", done: 0, total: 240 };
+  const h = await host({ jobs: [queued] });
+  expect(h.store.getView().jobs).toEqual([
+    { jobId: "job-render-0001", kind: "render", avatarId: "avatar-draft-0001", runId: null, status: "queued", done: 0, total: 240, result: null, error: null },
+  ]);
+  h.stop();
+});
+
+test("job.progress of a render the window never started creates its view and counts frames", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 60, total: 240 } });
+  expect(h.store.getView().jobs).toMatchObject([{ jobId: "job-render-0001", kind: "render", avatarId: "avatar-draft-0001", runId: null, status: "running", done: 60, total: 240 }]);
+  expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("job.done of a render whose progress was never heard reads as complete, not 0 of 0: the frame count comes from the video's length", async () => {
+  const h = await host();
+  await h.emit({ type: "job.done", payload: { jobId: RENDER_REF.jobId, result: RENDER_RESULT } });
+  expect(h.store.getView().jobs).toMatchObject([{ kind: "render", status: "done", done: 240, total: 240, result: RENDER_RESULT }]);
+  h.stop();
+});
+
+test("job.failed of a render keeps its error, and job.cancelled of another render cancels only that one", async () => {
+  const h = await host();
+  const other = { ...RENDER_REF, jobId: "job-render-0002", videoId: "video-0000002" };
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 1, total: 240 } });
+  await h.emit({ type: "job.progress", payload: { ...other, done: 1, total: 240 } });
+  await h.emit({ type: "job.failed", payload: { ...RENDER_REF, error: { code: "RENDER_FAILED", detail: "ffmpeg exited with code 1" } } });
+  await h.emit({ type: "job.cancelled", payload: other });
+  expect(h.store.getView().jobs).toMatchObject([
+    { jobId: "job-render-0001", status: "failed", error: { code: "RENDER_FAILED" } },
+    { jobId: "job-render-0002", status: "cancelled" },
+  ]);
+  h.stop();
+});
+
+test("video.changed moves lastSeq on and changes nothing else: the video lists arrive with the Photos «Видео» tab", async () => {
+  const h = await host();
+  const before = h.store.getView();
+  const video = {
+    videoId: "video-0000001",
+    avatarId: "avatar-draft-0001",
+    kind: "photo",
+    durationMs: 8_000,
+    bytes: 3_100_000,
+    createdAt: "2026-09-29T12:00:00.000Z",
+    relPath: "Lena/2026-09-29_photo_001.mp4",
+    fileState: "present",
+  } as const;
+  await h.emit({ type: "video.changed", payload: { change: "upserted", video } });
+  await h.emit({ type: "video.changed", payload: { change: "removed", videoId: video.videoId, avatarId: video.avatarId } });
+  expect(h.store.getView()).toEqual({ ...before, lastSeq: before.lastSeq + 2 });
+  expect(h.snapshots()).toBe(1);
   h.stop();
 });

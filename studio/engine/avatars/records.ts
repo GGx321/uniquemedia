@@ -82,6 +82,9 @@ export function galleryPhotoCount(library: Pick<Library, "photosByAvatar">, avat
 
 /** A saved avatar as the grid lists it; null for a draft or a record the contract refuses. */
 export function avatarSummaryFrom(manifest: AvatarManifest, photoCount: number): AvatarSummary | null {
+  // `videoCount` and `eligibleUnusedCount` are derived from the video records
+  // and the one eligibility function (task 3a.2); until those exist an avatar
+  // has no videos, and nothing counts as eligible.
   if (manifest.status === "draft") return null;
   const parsed = AvatarSummary.safeParse({
     avatarId: manifest.id,
@@ -91,6 +94,8 @@ export function avatarSummaryFrom(manifest: AvatarManifest, photoCount: number):
     createdAt: manifest.createdAt,
     status: manifest.status,
     photoCount,
+    videoCount: 0,
+    eligibleUnusedCount: 0,
   });
   return parsed.success ? parsed.data : null;
 }

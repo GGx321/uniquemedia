@@ -15,6 +15,8 @@ function avatar(name: string, n: number, status: AvatarSummary["status"] = "acti
     createdAt: "2026-09-24T09:00:00.000Z",
     status,
     photoCount: 1,
+    videoCount: 0,
+    eligibleUnusedCount: 0,
   };
 }
 
@@ -28,6 +30,9 @@ function photo(n: number, patch: Partial<PhotoSummary> = {}): PhotoSummary {
     runId: "run-00000001",
     category: "home",
     createdAt: `2026-09-2${n}T10:00:00.000Z`,
+    used: false,
+    usedIn: [],
+    rejected: false,
     ...patch,
   };
 }
@@ -40,6 +45,9 @@ function manyPhotos(n: number, avatarId: string, idPrefix: string, withFace: boo
     runId: `run-${idPrefix}-0001`,
     category: "home" as const,
     createdAt: new Date(Date.UTC(2026, 8, 24, 10, 0, i)).toISOString(),
+    used: false,
+    usedIn: [],
+    rejected: false,
     ...(withFace && i === 0 ? { qa: { faceCos: 0.86 } } : {}),
   }));
 }

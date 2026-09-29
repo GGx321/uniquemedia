@@ -193,6 +193,20 @@ describe("handleRendererRequest", () => {
     expect(engine).toEqual([]);
   });
 
+  test("videos.reveal is main's alone: until its handler lands (task 3e) it answers a typed refusal and is never forwarded to the engine", async () => {
+    const { routes, mainOnly, settings, importPhoto, engine } = routesSpy();
+    const response = await handleRendererRequest(command("videos.reveal", { videoId: "video-00000001" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: false, type: "videos.reveal", error: { code: "INTERNAL" } });
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect([mainOnly, settings, importPhoto, engine]).toEqual([[], [], [], []]);
+  });
+
+  test("a Stage 3 engine command (videos.list) is forwarded to the engine", async () => {
+    const { routes, engine } = routesSpy();
+    await handleRendererRequest(command("videos.list", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
+    expect(engine.map((c) => c.type)).toEqual(["videos.list"]);
+  });
+
   test("a validation failure on a key command never echoes the key", async () => {
     const { routes, mainOnly } = routesSpy();
     const response = await handleRendererRequest(command("settings.setApiKey", { key: `${KEY} with spaces` }), APP_FRAME, PACKAGED, routes);

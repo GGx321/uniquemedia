@@ -16,6 +16,8 @@ const MIA: AvatarSummary = {
   createdAt: "2026-09-24T09:00:00.000Z",
   status: "active",
   photoCount: 1,
+  videoCount: 0,
+  eligibleUnusedCount: 0,
 };
 
 const REQUEST: RunRequest = { avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: false } };

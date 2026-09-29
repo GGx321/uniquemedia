@@ -6,6 +6,7 @@ import {
   Draft,
   EngineNotice,
   Estimate,
+  ExportPathResult,
   JobCancelled,
   JobFailed,
   JobProgress,
@@ -29,6 +30,8 @@ const settings = {
   textModel: "x-ai/grok-4.3",
   concurrency: { network: 6 },
   imageAgeCheck: "off",
+  exportPath: "/Users/alex/Studio/export",
+  renderConcurrency: "auto",
 };
 
 const money = {
@@ -133,6 +136,8 @@ const avatar = {
   createdAt: "2026-09-24T10:00:00Z",
   status: "active",
   photoCount: 0,
+  videoCount: 0,
+  eligibleUnusedCount: 0,
 };
 
 const photo = {
@@ -141,6 +146,30 @@ const photo = {
   runId: "run-00000001",
   category: "home",
   createdAt: "2026-09-24T11:00:00Z",
+  used: false,
+  usedIn: [] as string[],
+  rejected: false,
+};
+
+const renderJob = {
+  kind: "render",
+  jobId: "job-00000003",
+  videoId: "video-00000001",
+  avatarId: "avatar-0001",
+  montageId: "montage-00000001",
+  status: "running",
+  done: 90,
+  total: 240,
+};
+
+const renderResult = {
+  kind: "render",
+  videoId: "video-00000001",
+  avatarId: "avatar-0001",
+  bytes: 3_100_000,
+  durationMs: 8_000,
+  videoKind: "photo",
+  relPath: "Mia/2026-09-29_photo_001.mp4",
 };
 
 describe("ApiKeyStatus", () => {
@@ -223,6 +252,32 @@ describe("Settings", () => {
 
   test("rejects an imageAgeCheck outside off/on", () => {
     expect(Settings.safeParse({ ...settings, imageAgeCheck: "true" }).success).toBe(false);
+  });
+
+  test("rejects a relative export path", () => {
+    expect(Settings.safeParse({ ...settings, exportPath: "Studio/export" }).success).toBe(false);
+  });
+
+  test("rejects an export path with a .. segment", () => {
+    expect(Settings.safeParse({ ...settings, exportPath: "/Users/alex/../export" }).success).toBe(false);
+  });
+
+  test("rejects a missing export path: the default is settingsStore's, the contract always names a folder", () => {
+    const { exportPath: _e, ...rest } = settings;
+    expect(Settings.safeParse(rest).success).toBe(false);
+  });
+
+  test.each(["auto", 1, 4, 8])("accepts render concurrency %p", (renderConcurrency) => {
+    expect(Settings.safeParse({ ...settings, renderConcurrency }).success).toBe(true);
+  });
+
+  test.each([0, 9, 2.5, -1, "2", "Auto", null])("rejects render concurrency %p", (renderConcurrency) => {
+    expect(Settings.safeParse({ ...settings, renderConcurrency }).success).toBe(false);
+  });
+
+  test("rejects a missing render concurrency", () => {
+    const { renderConcurrency: _r, ...rest } = settings;
+    expect(Settings.safeParse(rest).success).toBe(false);
   });
 
   test("rejects a missing imageAgeCheck: no default at the contract's own boundary, only in settingsStore's file-loading (backward compatibility lives there, not here)", () => {
@@ -453,6 +508,33 @@ describe("AvatarSummary", () => {
     const { status: _s, ...rest } = avatar;
     expect(AvatarSummary.safeParse({ ...rest, archived: false }).success).toBe(false);
   });
+
+  test("carries the number of video records and of eligible unused photos", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, photoCount: 12, videoCount: 3, eligibleUnusedCount: 9 }).success).toBe(true);
+  });
+
+  test("rejects a summary without videoCount or eligibleUnusedCount", () => {
+    const { videoCount: _v, ...noVideos } = avatar;
+    const { eligibleUnusedCount: _e, ...noEligible } = avatar;
+    expect(AvatarSummary.safeParse(noVideos).success).toBe(false);
+    expect(AvatarSummary.safeParse(noEligible).success).toBe(false);
+  });
+
+  test.each([-1, 1.5])("rejects a videoCount of %p", (videoCount) => {
+    expect(AvatarSummary.safeParse({ ...avatar, videoCount }).success).toBe(false);
+  });
+
+  test("accepts every gallery photo being eligible and unused", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, photoCount: 5, eligibleUnusedCount: 5 }).success).toBe(true);
+  });
+
+  test("rejects more eligible unused photos than gallery photos: eligible photos are a subset of the gallery", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, photoCount: 5, eligibleUnusedCount: 6 }).success).toBe(false);
+  });
+
+  test("videos may outnumber photos: a video lists several", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, photoCount: 2, videoCount: 7 }).success).toBe(true);
+  });
 });
 
 describe("UnreadableAvatar", () => {
@@ -680,6 +762,99 @@ describe("JobState", () => {
 
   test("rejects an unknown kind", () => {
     expect(JobState.safeParse({ ...candidatesJob, kind: "video" }).success).toBe(false);
+  });
+});
+
+describe("a render job", () => {
+  test("its progress names the video, the avatar and the montage, and counts frames", () => {
+    const { status: _s, ...progressFields } = renderJob;
+    expect(JobProgress.safeParse(progressFields).success).toBe(true);
+  });
+
+  test("a headless render has no montage: montageId is null, not missing", () => {
+    const { status: _s, ...progressFields } = renderJob;
+    expect(JobProgress.safeParse({ ...progressFields, montageId: null }).success).toBe(true);
+    const { montageId: _m, ...withoutMontage } = progressFields;
+    expect(JobProgress.safeParse(withoutMontage).success).toBe(false);
+  });
+
+  test("its progress rejects done past total", () => {
+    const { status: _s, ...progressFields } = renderJob;
+    expect(JobProgress.safeParse({ ...progressFields, done: 241 }).success).toBe(false);
+  });
+
+  test("its progress rejects a missing videoId or avatarId", () => {
+    const { status: _s, ...progressFields } = renderJob;
+    const { videoId: _v, ...noVideo } = progressFields;
+    const { avatarId: _a, ...noAvatar } = progressFields;
+    expect(JobProgress.safeParse(noVideo).success).toBe(false);
+    expect(JobProgress.safeParse(noAvatar).success).toBe(false);
+  });
+
+  test("its progress rejects a runId: a render is not a photo run", () => {
+    const { status: _s, ...progressFields } = renderJob;
+    expect(JobProgress.safeParse({ ...progressFields, runId: "run-00000001" }).success).toBe(false);
+  });
+
+  test("its failure carries the same identity and the error", () => {
+    const { status: _s, done: _d, total: _t, ...ref } = renderJob;
+    expect(JobFailed.safeParse({ ...ref, error: { code: "RENDER_FAILED", detail: "ffmpeg exited with code 1" } }).success).toBe(true);
+    expect(JobFailed.safeParse({ ...ref, error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } }).success).toBe(true);
+  });
+
+  test("its cancellation carries the same identity", () => {
+    const { status: _s, done: _d, total: _t, ...ref } = renderJob;
+    expect(JobCancelled.safeParse(ref).success).toBe(true);
+    const { videoId: _v, ...noVideo } = ref;
+    expect(JobCancelled.safeParse(noVideo).success).toBe(false);
+  });
+
+  test("JobState accepts it running", () => {
+    expect(JobState.safeParse(renderJob).success).toBe(true);
+  });
+
+  test("JobState accepts it queued, before its first frame", () => {
+    expect(JobState.safeParse({ ...renderJob, status: "queued", done: 0, total: 240 }).success).toBe(true);
+  });
+
+  test("JobState accepts it done with its result", () => {
+    expect(JobState.safeParse({ ...renderJob, status: "done", done: 240, result: renderResult }).success).toBe(true);
+  });
+
+  test("JobState accepts it failed with its error", () => {
+    expect(JobState.safeParse({ ...renderJob, status: "failed", error: { code: "RENDER_VERIFY_FAILED" } }).success).toBe(true);
+  });
+
+  test("JobState rejects a done render without a result", () => {
+    expect(JobState.safeParse({ ...renderJob, status: "done", done: 240 }).success).toBe(false);
+  });
+
+  test("JobState rejects a result for another video", () => {
+    const other = { ...renderResult, videoId: "video-00000002" };
+    expect(JobState.safeParse({ ...renderJob, status: "done", done: 240, result: other }).success).toBe(false);
+  });
+
+  test("JobState rejects a result for another avatar", () => {
+    const other = { ...renderResult, avatarId: "avatar-0002" };
+    expect(JobState.safeParse({ ...renderJob, status: "done", done: 240, result: other }).success).toBe(false);
+  });
+
+  test("JobState rejects a render result on a run job", () => {
+    expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result: renderResult }).success).toBe(false);
+  });
+
+  test("JobState rejects a render job without its videoId", () => {
+    const { videoId: _v, ...noVideo } = renderJob;
+    expect(JobState.safeParse(noVideo).success).toBe(false);
+  });
+
+  test("JobState rejects done above total", () => {
+    expect(JobState.safeParse({ ...renderJob, done: 241 }).success).toBe(false);
+  });
+
+  test("the render result names the video kind apart from the job kind", () => {
+    const { videoKind: _k, ...noKind } = renderResult;
+    expect(JobState.safeParse({ ...renderJob, status: "done", done: 240, result: noKind }).success).toBe(false);
   });
 });
 
@@ -925,5 +1100,69 @@ describe("PhotoSummary (T8b: the Photos screen's gallery)", () => {
 
   test("carries no resolution: a summary that names one is rejected (2K removed, 2026-09-29)", () => {
     expect(PhotoSummary.safeParse({ ...photo, resolution: "1k" }).success).toBe(false);
+  });
+});
+
+describe("PhotoSummary: usage and reject marks (Stage 3)", () => {
+  test("a photo in one video is used and names it", () => {
+    expect(PhotoSummary.safeParse({ ...photo, used: true, usedIn: ["video-00000001"] }).success).toBe(true);
+  });
+
+  test("a photo in several videos names each", () => {
+    expect(PhotoSummary.safeParse({ ...photo, used: true, usedIn: ["video-00000001", "video-00000002"] }).success).toBe(true);
+  });
+
+  test("a rejected photo is unused or used: the mark is the owner's own", () => {
+    expect(PhotoSummary.safeParse({ ...photo, rejected: true }).success).toBe(true);
+    expect(PhotoSummary.safeParse({ ...photo, rejected: true, used: true, usedIn: ["video-00000001"] }).success).toBe(true);
+  });
+
+  test("rejects used without a video that used it", () => {
+    expect(PhotoSummary.safeParse({ ...photo, used: true, usedIn: [] }).success).toBe(false);
+  });
+
+  test("rejects a video that used a photo marked unused", () => {
+    expect(PhotoSummary.safeParse({ ...photo, used: false, usedIn: ["video-00000001"] }).success).toBe(false);
+  });
+
+  test("rejects the same video listed twice", () => {
+    expect(PhotoSummary.safeParse({ ...photo, used: true, usedIn: ["video-00000001", "video-00000001"] }).success).toBe(false);
+  });
+
+  test("rejects a usedIn entry that breaks the id pattern", () => {
+    expect(PhotoSummary.safeParse({ ...photo, used: true, usedIn: ["../video"] }).success).toBe(false);
+  });
+
+  test("rejects a summary without used, usedIn or rejected", () => {
+    const { used: _u, ...noUsed } = photo;
+    const { usedIn: _i, ...noUsedIn } = photo;
+    const { rejected: _r, ...noRejected } = photo;
+    expect(PhotoSummary.safeParse(noUsed).success).toBe(false);
+    expect(PhotoSummary.safeParse(noUsedIn).success).toBe(false);
+    expect(PhotoSummary.safeParse(noRejected).success).toBe(false);
+  });
+
+  test("rejects a rejected flag that is not a boolean", () => {
+    expect(PhotoSummary.safeParse({ ...photo, rejected: "yes" }).success).toBe(false);
+  });
+});
+
+describe("ExportPathResult (settings.setExportPath)", () => {
+  const result = { settings, rootId: "root-00000001", resolvedVideos: 12 };
+
+  test("answers the new settings, the root's identity and how many records now resolve", () => {
+    expect(ExportPathResult.safeParse(result).success).toBe(true);
+  });
+
+  test("accepts no record resolving", () => {
+    expect(ExportPathResult.safeParse({ ...result, resolvedVideos: 0 }).success).toBe(true);
+  });
+
+  test("rejects a negative count", () => {
+    expect(ExportPathResult.safeParse({ ...result, resolvedVideos: -1 }).success).toBe(false);
+  });
+
+  test("rejects a rootId that breaks the id pattern", () => {
+    expect(ExportPathResult.safeParse({ ...result, rootId: "../root" }).success).toBe(false);
   });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarDescriptor, AvatarTraits } from "./avatar";
+import type { MontageDraft } from "./montage";
+import type { VideoSummary } from "./video";
 import {
   COMMAND_TYPES,
   ENGINE_COMMAND_TYPES,
@@ -43,6 +45,8 @@ const settings: Settings = {
   textModel: "x-ai/grok-4.3",
   concurrency: { network: 6 },
   imageAgeCheck: "off",
+  exportPath: "/Users/alex/Studio/export",
+  renderConcurrency: "auto",
 };
 
 const money: MoneyStatus = {
@@ -101,6 +105,8 @@ const avatar: AvatarSummary = {
   createdAt: "2026-09-24T10:00:00Z",
   status: "active",
   photoCount: 0,
+  videoCount: 0,
+  eligibleUnusedCount: 0,
 };
 
 const job: JobState = {
@@ -139,6 +145,9 @@ const photo: PhotoSummary = {
   category: "home",
   createdAt: "2026-09-24T11:00:00Z",
   qa: { faceCos: 0.81, age: { adult: true, confidence: 0.95 } },
+  used: true,
+  usedIn: ["video-00000001"],
+  rejected: false,
 };
 
 // A photo made before T7b's face gate, or with the image age check off: no
@@ -149,7 +158,41 @@ const photoWithoutQa: PhotoSummary = {
   runId: "run-00000001",
   category: "travel",
   createdAt: "2026-09-24T11:05:00Z",
+  used: false,
+  usedIn: [],
+  rejected: false,
 };
+
+const video: VideoSummary = {
+  videoId: "video-00000001",
+  avatarId: "avatar-0001",
+  kind: "photo",
+  durationMs: 8_000,
+  bytes: 3_100_000,
+  createdAt: "2026-09-29T12:00:00.000Z",
+  relPath: "Mia/2026-09-29_photo_001.mp4",
+  fileState: "present",
+};
+
+const montageDraft: MontageDraft = {
+  schemaVersion: 1,
+  avatarId: "avatar-0001",
+  clips: [
+    {
+      clipId: "clip-0001",
+      durationMs: 8_000,
+      transitionIn: "cut",
+      kind: "photo",
+      cell: { photo: { source: "scene", photoId: "photo-0002" }, focus: { x: 0.5, y: 0.38 } },
+      motion: "kenburns",
+    },
+  ],
+  layers: [],
+  music: null,
+  seed: 7,
+};
+
+const emptyDraft: MontageDraft = { ...montageDraft, clips: [] };
 
 const progressEvent: EventMessage = {
   v: PROTOCOL_VERSION,
@@ -222,6 +265,23 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "runs.resume": { payload: { runId: "run-00000001", acceptedWorstMicros: 1_650_000 }, result: { runId: "run-00000001", jobId: "job-00000003" } },
   "runs.list": { payload: {}, result: { runs: [runSummary] } },
   "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo, photoWithoutQa], skippedTotal: 1 } },
+  "photos.setRejected": {
+    payload: { avatarId: "avatar-0001", photoId: "photo-0003", rejected: true },
+    result: { photo: { ...photoWithoutQa, rejected: true } },
+  },
+  "videos.render": { payload: { montageId: "montage-00000001" }, result: { jobId: "job-00000004", videoId: "video-00000002" } },
+  "videos.cancel": { payload: { jobId: "job-00000004" }, result: { jobId: "job-00000004" } },
+  "videos.list": { payload: { avatarId: "avatar-0001" }, result: { videos: [video] } },
+  "videos.delete": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
+  "videos.reveal": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
+  "settings.setExportPath": {
+    payload: { path: "/Users/alex/Studio/export" },
+    result: { settings, rootId: "root-00000001", resolvedVideos: 1 },
+  },
+  "montages.create": {
+    payload: { avatarId: "avatar-0001", photoIds: ["photo-0002"] },
+    result: { montage: { montageId: "montage-00000001", name: "Монтаж 1", spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
+  },
   "engine.snapshot": {
     payload: {},
     result: {
@@ -256,6 +316,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "draft.changed": { draft },
   "engine.error": { error: { code: "INTERNAL" } },
   "engine.notice": { notice },
+  "video.changed": { change: "upserted", video },
 };
 
 // ---------- helpers ----------
@@ -329,6 +390,14 @@ describe("contract surface", () => {
         "runs.resume",
         "runs.list",
         "photos.list",
+        "photos.setRejected",
+        "videos.render",
+        "videos.cancel",
+        "videos.list",
+        "videos.delete",
+        "videos.reveal",
+        "settings.setExportPath",
+        "montages.create",
         "engine.snapshot",
         "engine.events",
       ].sort(),
@@ -350,6 +419,7 @@ describe("contract surface", () => {
         "draft.changed",
         "engine.error",
         "engine.notice",
+        "video.changed",
       ].sort(),
     );
   });
@@ -366,9 +436,13 @@ describe("contract surface", () => {
     expect(covered).toEqual(all);
   });
 
-  test("only the API key commands and the import photo dialog are handled by main alone", () => {
+  test("only the API key commands, the import photo dialog and «show in folder» are handled by main alone", () => {
     const actual: string[] = [...MAIN_ONLY_COMMANDS].sort();
-    expect(actual).toEqual(["avatars.pickImportPhoto", "settings.clearApiKey", "settings.setApiKey"]);
+    expect(actual).toEqual(["avatars.pickImportPhoto", "settings.clearApiKey", "settings.setApiKey", "videos.reveal"]);
+  });
+
+  test("the protocol is at version 5: render jobs, video records and the Stage 3 fields", () => {
+    expect(PROTOCOL_VERSION).toBe(5);
   });
 
   test("the engine accepts every command except the main-only ones", () => {
@@ -1019,5 +1093,190 @@ describe("parseEngineCommand", () => {
     };
     const hostile = new Proxy({}, { get: trap, has: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
     expect(parseEngineCommand(hostile).ok).toBe(false);
+  });
+});
+
+// ---------- Stage 3: videos, photos.setRejected, montages.create ----------
+
+describe("Stage 3 payloads", () => {
+  const send = (type: string, payload: unknown) => parseMessage(command(type, payload)).ok;
+
+  test("videos.render takes a saved montage", () => {
+    expect(send("videos.render", { montageId: "montage-00000001" })).toBe(true);
+  });
+
+  test("videos.render takes a spec, for a headless caller", () => {
+    expect(send("videos.render", { spec: montageDraft })).toBe(true);
+  });
+
+  test("videos.render refuses a montage and a spec together", () => {
+    expect(send("videos.render", { montageId: "montage-00000001", spec: montageDraft })).toBe(false);
+  });
+
+  test("videos.render refuses neither", () => {
+    expect(send("videos.render", {})).toBe(false);
+  });
+
+  test("videos.render lets a structurally invalid spec through, so the engine answers MONTAGE_INVALID with its issues", () => {
+    const tooShort = { ...montageDraft, clips: [{ ...montageDraft.clips[0], durationMs: 3_900 }] };
+    expect(send("videos.render", { spec: tooShort })).toBe(true);
+    expect(send("videos.render", { spec: emptyDraft })).toBe(true);
+  });
+
+  test("videos.render refuses a spec whose shape is broken", () => {
+    const broken = { ...montageDraft, clips: [{ ...montageDraft.clips[0], durationMs: 3_950 }] };
+    expect(send("videos.render", { spec: broken })).toBe(false);
+    expect(send("videos.render", { spec: { ...montageDraft, title: "x" } })).toBe(false);
+  });
+
+  test("videos.render refuses a montageId that breaks the id pattern", () => {
+    expect(send("videos.render", { montageId: "../montage" })).toBe(false);
+  });
+
+  test("videos.cancel, videos.delete and videos.reveal each name one id", () => {
+    expect(send("videos.cancel", { jobId: "job-00000004" })).toBe(true);
+    expect(send("videos.delete", { videoId: "video-00000001" })).toBe(true);
+    expect(send("videos.reveal", { videoId: "video-00000001" })).toBe(true);
+    expect(send("videos.delete", {})).toBe(false);
+    expect(send("videos.reveal", { videoId: "video-00000001", path: "/tmp" })).toBe(false);
+  });
+
+  test("videos.list names an avatar", () => {
+    expect(send("videos.list", { avatarId: "avatar-0001" })).toBe(true);
+    expect(send("videos.list", {})).toBe(false);
+  });
+
+  test("photos.setRejected names the avatar, the photo and the mark to set", () => {
+    expect(send("photos.setRejected", { avatarId: "avatar-0001", photoId: "photo-0003", rejected: false })).toBe(true);
+    expect(send("photos.setRejected", { avatarId: "avatar-0001", photoId: "photo-0003" })).toBe(false);
+    expect(send("photos.setRejected", { avatarId: "avatar-0001", photoId: "photo-0003", rejected: "yes" })).toBe(false);
+  });
+
+  test("settings.setExportPath takes an absolute path", () => {
+    expect(send("settings.setExportPath", { path: "/Users/alex/Studio/export" })).toBe(true);
+    expect(send("settings.setExportPath", { path: "Studio/export" })).toBe(false);
+    expect(send("settings.setExportPath", { path: "/Users/alex/../export" })).toBe(false);
+  });
+});
+
+describe("montages.create", () => {
+  const photoIds = (n: number) => Array.from({ length: n }, (_, k) => `photo-${String(k + 1).padStart(4, "0")}`);
+  const send = (payload: unknown) => parseMessage(command("montages.create", payload)).ok;
+
+  test("with no photo it creates an empty draft: «Новый монтаж»", () => {
+    expect(send({ avatarId: "avatar-0001", photoIds: [] })).toBe(true);
+  });
+
+  test("1 photo is accepted", () => {
+    expect(send({ avatarId: "avatar-0001", photoIds: photoIds(1) })).toBe(true);
+  });
+
+  test("20 photos are accepted: the clip cap", () => {
+    expect(send({ avatarId: "avatar-0001", photoIds: photoIds(20) })).toBe(true);
+  });
+
+  test("21 photos are refused", () => {
+    expect(send({ avatarId: "avatar-0001", photoIds: photoIds(21) })).toBe(false);
+  });
+
+  test("the same photo twice is refused: a scene photo appears once per montage", () => {
+    expect(send({ avatarId: "avatar-0001", photoIds: ["photo-0001", "photo-0001"] })).toBe(false);
+  });
+
+  test("a photo id that breaks the id pattern is refused", () => {
+    expect(send({ avatarId: "avatar-0001", photoIds: ["../photo"] })).toBe(false);
+  });
+
+  test("a missing photoIds is refused: an empty list is the way to ask for an empty draft", () => {
+    expect(send({ avatarId: "avatar-0001" })).toBe(false);
+  });
+
+  test("its result carries a draft that may have no clips", () => {
+    const empty = { montage: { montageId: "montage-00000001", name: "Новый монтаж", spec: emptyDraft, updatedAt: "2026-09-29T12:00:00.000Z" } };
+    expect(parseMessage(okResponse("montages.create", empty)).ok).toBe(true);
+  });
+
+  test("its result refuses a draft that breaks the draft's structure", () => {
+    const twice = { ...montageDraft, clips: [...montageDraft.clips, { ...montageDraft.clips[0], clipId: "clip-0002" }] };
+    const result = { montage: { montageId: "montage-00000001", name: "Монтаж", spec: twice, updatedAt: "2026-09-29T12:00:00.000Z" } };
+    expect(parseMessage(okResponse("montages.create", result)).ok).toBe(false);
+  });
+
+  test("its result refuses an empty name", () => {
+    const result = { montage: { montageId: "montage-00000001", name: "", spec: emptyDraft, updatedAt: "2026-09-29T12:00:00.000Z" } };
+    expect(parseMessage(okResponse("montages.create", result)).ok).toBe(false);
+  });
+});
+
+describe("Stage 3 results and events", () => {
+  test("videos.list answers at most 500 records", () => {
+    const some = Array.from({ length: 500 }, () => video);
+    expect(parseMessage(okResponse("videos.list", { videos: some })).ok).toBe(true);
+    expect(parseMessage(okResponse("videos.list", { videos: [...some, video] })).ok).toBe(false);
+  });
+
+  test("video.changed also says a record is gone", () => {
+    const removed = { change: "removed", videoId: "video-00000001", avatarId: "avatar-0001" };
+    expect(parseMessage(event("video.changed", removed)).ok).toBe(true);
+  });
+
+  test("video.changed refuses a change it does not know", () => {
+    expect(parseMessage(event("video.changed", { change: "renamed", video })).ok).toBe(false);
+  });
+
+  test("video.changed refuses an upsert without its record", () => {
+    expect(parseMessage(event("video.changed", { change: "upserted" })).ok).toBe(false);
+  });
+
+  test("job.progress of a render carries the video, the avatar and the montage", () => {
+    const progress = { kind: "render", jobId: "job-00000004", videoId: "video-00000002", avatarId: "avatar-0001", montageId: null, done: 30, total: 240 };
+    expect(parseMessage(event("job.progress", progress)).ok).toBe(true);
+  });
+
+  test("job.done of a render carries its result", () => {
+    const result = { kind: "render", videoId: "video-00000002", avatarId: "avatar-0001", bytes: 3_100_000, durationMs: 8_000, videoKind: "photo", relPath: "Mia/2026-09-29_photo_001.mp4" };
+    expect(parseMessage(event("job.done", { jobId: "job-00000004", result })).ok).toBe(true);
+  });
+
+  test("job.failed of a render can say the export folder is unusable, and why", () => {
+    const failed = {
+      kind: "render",
+      jobId: "job-00000004",
+      videoId: "video-00000002",
+      avatarId: "avatar-0001",
+      montageId: "montage-00000001",
+      error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" },
+    };
+    expect(parseMessage(event("job.failed", failed)).ok).toBe(true);
+  });
+
+  test("an error response for videos.render can carry the montage's issues", () => {
+    const msg = {
+      v: PROTOCOL_VERSION,
+      id: "msg-00000001",
+      kind: "response",
+      type: "videos.render",
+      ok: false,
+      error: { code: "MONTAGE_INVALID", issues: [{ code: "duration-too-short", path: ["clips"] }] },
+    };
+    expect(parseMessage(msg).ok).toBe(true);
+  });
+
+  test("a snapshot can list a queued render", () => {
+    const queued = { kind: "render", jobId: "job-00000004", videoId: "video-00000002", avatarId: "avatar-0001", montageId: null, status: "queued", done: 0, total: 240 };
+    const snapshot = {
+      bootId: BOOT,
+      lastSeq: 7,
+      settings,
+      money,
+      avatars: [avatar],
+      drafts: [],
+      unreadableAvatars: [],
+      unreadableTotal: 0,
+      jobs: [queued],
+      librarySwitchGeneration: 0,
+      notices: [],
+    };
+    expect(parseMessage(okResponse("engine.snapshot", snapshot)).ok).toBe(true);
   });
 });

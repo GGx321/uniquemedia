@@ -47,6 +47,8 @@ function zoe(): AvatarSummary {
     createdAt: "2026-09-24T09:00:00.000Z",
     status: "active",
     photoCount: 3,
+    videoCount: 0,
+    eligibleUnusedCount: 0,
   };
 }
 

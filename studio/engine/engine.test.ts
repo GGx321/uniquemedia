@@ -57,6 +57,8 @@ function init(overrides: Partial<EngineInit> = {}): EngineInit {
       // this file's own createDraft calls; engine.imageAgeCheck.test.ts
       // covers the toggle itself.
       imageAgeCheck: "on",
+      exportPath: join(dir, "export"),
+      renderConcurrency: "auto",
     },
     encryptionAvailable: true,
     notices: [],
@@ -1965,5 +1967,49 @@ describe("money.reconcile", () => {
 
     expect(await engine.handle(command("money.reconcile"))).toMatchObject({ ok: false, error: { code: "NETWORK" } });
     expect(ok(await engine.handle(command("money.status")))).toMatchObject({ result: { unsettledCount: 1, reconcileNeeded: true } });
+  });
+});
+
+// Stage 3 task 3a.1 adds the montage and video commands to the contract; the engine behind them lands in later
+// tasks. Until then each answers a typed refusal (like any command the engine does not implement yet) and the
+// engine stays usable: nothing crashes, nothing is stored, nothing is spent.
+describe("Stage 3 commands before their tasks land", () => {
+  const AVATAR = "avatar-0001";
+  const unbuilt: [string, unknown][] = [
+    ["videos.render", { montageId: "montage-00000001" }],
+    ["videos.cancel", { jobId: "job-00000004" }],
+    ["videos.list", { avatarId: AVATAR }],
+    ["videos.delete", { videoId: "video-00000001" }],
+    ["photos.setRejected", { avatarId: AVATAR, photoId: "photo-0002", rejected: true }],
+    ["settings.setExportPath", { path: "/Users/alex/Studio/export" }],
+    ["montages.create", { avatarId: AVATAR, photoIds: [] }],
+  ];
+
+  test.each(unbuilt)("%s answers a typed refusal instead of throwing", async (type, payload) => {
+    const { engine } = await startEngine();
+    const response = await engine.handle(command(type, payload));
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(response).toMatchObject({ ok: false, type, error: { code: "INTERNAL" } });
+    expect(response.ok ? "" : response.error.detail).toContain("not implemented yet");
+  });
+
+  test("videos.render with a spec is refused the same way, and refuses nothing else", async () => {
+    const { engine } = await startEngine();
+    const spec = { schemaVersion: 1, avatarId: AVATAR, clips: [], layers: [], music: null, seed: 1 };
+    const response = await engine.handle(command("videos.render", { spec }));
+    expect(response).toMatchObject({ ok: false, type: "videos.render", error: { code: "INTERNAL" } });
+  });
+
+  test("main-only videos.reveal never reaches the engine: its schema does not know it", async () => {
+    const { engine } = await startEngine();
+    const response = await engine.handle(command("videos.reveal", { videoId: "video-00000001" }));
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+  });
+
+  test("the engine still answers settings.get afterwards, with the export folder and render concurrency", async () => {
+    const { engine } = await startEngine();
+    await engine.handle(command("videos.list", { avatarId: AVATAR }));
+    const settings = ok(await engine.handle(command("settings.get")));
+    expect(settings.type === "settings.get" ? settings.result : null).toMatchObject({ exportPath: join(dir, "export"), renderConcurrency: "auto" });
   });
 });

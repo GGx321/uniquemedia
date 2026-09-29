@@ -78,6 +78,9 @@ describe("photoSummaryFrom", () => {
       runId: "run-00000001",
       category: "home",
       createdAt: "2026-09-24T11:00:00.000Z",
+      used: false,
+      usedIn: [],
+      rejected: false,
     });
   });
 
@@ -128,6 +131,9 @@ describe("finalizePhotoList", () => {
       runId: "run-00000001",
       category: "home",
       createdAt: `2026-09-24T11:${String(minute).padStart(2, "0")}:00.000Z`,
+      used: false,
+      usedIn: [],
+      rejected: false,
     };
   }
 

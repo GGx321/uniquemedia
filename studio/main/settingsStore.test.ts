@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultSettings, loadSettings, saveSettings, SETTINGS_FILE, SettingsStore } from "./settingsStore";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -16,7 +16,7 @@ afterEach(async () => {
 
 const path = () => join(userData, SETTINGS_FILE);
 
-test("a missing file gives the defaults: $10 a month, the library in userData, the plan's models, the image age check off", async () => {
+test("a missing file gives the defaults: $10 a month, the library in userData, the plan's models, the image age check off, exports in ~/Studio/export, automatic render concurrency", async () => {
   const loaded = await loadSettings(userData);
   expect(loaded).toEqual({
     source: "missing",
@@ -27,8 +27,40 @@ test("a missing file gives the defaults: $10 a month, the library in userData, t
       textModel: "x-ai/grok-4.3",
       concurrency: { network: 6 },
       imageAgeCheck: "off",
+      exportPath: join(homedir(), "Studio", "export"),
+      renderConcurrency: "auto",
     },
   });
+});
+
+test("the default export folder is named from the home folder it is given", () => {
+  expect(defaultSettings(userData, "/home/mia").exportPath).toBe(join("/home/mia", "Studio", "export"));
+});
+
+test("an older file that predates the export folder and render concurrency loads them as the defaults, and the file is left untouched", async () => {
+  const { exportPath: _e, renderConcurrency: _r, ...older } = defaultSettings(userData);
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...older }));
+  const loaded = await loadSettings(userData);
+  expect(loaded).toEqual({ source: "file", settings: defaultSettings(userData) });
+  const onDisk = JSON.parse(await readFile(path(), "utf8"));
+  expect(onDisk).not.toHaveProperty("exportPath");
+  expect(onDisk).not.toHaveProperty("renderConcurrency");
+});
+
+test("an older file keeps an export folder and a render concurrency it already carries", async () => {
+  const chosen = { ...defaultSettings(userData), exportPath: "/Volumes/Posted/Reels", renderConcurrency: 3 };
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...chosen }));
+  expect(await loadSettings(userData)).toEqual({ source: "file", settings: chosen });
+});
+
+test("a file with an explicit export folder that breaks the schema is invalid, not silently backfilled", async () => {
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...defaultSettings(userData), exportPath: "relative/export" }));
+  expect(await loadSettings(userData)).toMatchObject({ source: "invalid" });
+});
+
+test("a file with an explicit render concurrency outside auto or 1 to 8 is invalid", async () => {
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...defaultSettings(userData), renderConcurrency: 9 }));
+  expect(await loadSettings(userData)).toMatchObject({ source: "invalid" });
 });
 
 test("an older file that predates the image age check loads it as off, and the file itself is left untouched (no rewrite on read)", async () => {

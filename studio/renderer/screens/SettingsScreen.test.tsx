@@ -481,6 +481,8 @@ test("picking the library folder again (it was missing at start) refetches the s
     createdAt: "2026-09-24T09:00:00.000Z",
     status: "active",
     photoCount: 1,
+    videoCount: 0,
+    eligibleUnusedCount: 0,
   });
 
   changeLibraryTo("/Users/studio/Studio/library");

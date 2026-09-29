@@ -125,7 +125,11 @@ export function jobFromState(j: JobState): JobView {
 }
 
 /** The identity every job event carries: enough to create the job's view when it is the first this window hears of it. */
-type JobRef = { readonly jobId: string; readonly avatarId: string } & ({ readonly kind: "avatar.candidates" } | { readonly kind: "run"; readonly runId: string });
+type JobRef = { readonly jobId: string; readonly avatarId: string } & (
+  | { readonly kind: "avatar.candidates" }
+  | { readonly kind: "run"; readonly runId: string }
+  | { readonly kind: "render" }
+);
 
 function newJob(ref: JobRef): JobView {
   return { jobId: ref.jobId, kind: ref.kind, avatarId: ref.avatarId, runId: ref.kind === "run" ? ref.runId : null, status: "queued", done: 0, total: 0, result: null, error: null };
@@ -620,9 +624,21 @@ export class EngineStore {
         // otherwise a job whose first-ever event is its own job.done would
         // read "0 of 0" instead of complete. `job.total` (already known) is
         // always preferred when it is set.
-        const resultTotal = result.kind === "run" ? result.photoIds.length + result.failedSlots : result.candidates.length + result.failedSlots.length;
+        // A render counts frames: 30 fps, so 3 frames per 100 ms of the finished video.
+        const resultTotal =
+          result.kind === "run"
+            ? result.photoIds.length + result.failedSlots
+            : result.kind === "render"
+              ? Math.round((result.durationMs * 3) / 100)
+              : result.candidates.length + result.failedSlots.length;
+        const ref: JobRef =
+          result.kind === "run"
+            ? { kind: "run", jobId, runId: result.runId, avatarId: result.avatarId }
+            : result.kind === "render"
+              ? { kind: "render", jobId, avatarId: result.avatarId }
+              : { kind: "avatar.candidates", jobId, avatarId: result.avatarId };
         this.patchJob(
-          result.kind === "run" ? { kind: "run", jobId, runId: result.runId, avatarId: result.avatarId } : { kind: "avatar.candidates", jobId, avatarId: result.avatarId },
+          ref,
           (job) => {
             const total = job.total || resultTotal;
             return {
@@ -688,6 +704,10 @@ export class EngineStore {
         return;
       case "engine.notice":
         this.update({ notices: mergeNotice(this.view.notices, event.payload.notice), lastSeq });
+        return;
+      case "video.changed":
+        // Video records are listed on demand (videos.list, the Photos «Видео» tab); the event only has to keep the seq moving.
+        this.update({ lastSeq });
         return;
     }
   }

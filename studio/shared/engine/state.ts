@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { EngineError } from "./errors";
 import { AbsolutePath, Count, Id, Micros, ModelId, SafeText } from "./primitives";
+import { RenderResult } from "./video";
 
 const IsoDateTime = z.iso.datetime();
 const IsoDate = z.iso.date();
@@ -50,6 +51,13 @@ export const NetworkConcurrency = z.number().int().min(1).max(16);
  */
 export const ImageAgeCheck = z.enum(["off", "on"]);
 
+/**
+ * How many renders run at once: «Авто» (the engine picks from the CPU and the
+ * memory, never 0) or a fixed 1 to 8. Stage 3 shows «Авто» only; the rest of
+ * the row stays disabled until Stage 4.
+ */
+export const RenderConcurrency = z.union([z.literal("auto"), z.number().int().min(1).max(8)]);
+
 export const Settings = z.strictObject({
   apiKey: ApiKeyStatus,
   monthlyBudgetMicros: Micros,
@@ -58,7 +66,24 @@ export const Settings = z.strictObject({
   textModel: ModelId,
   concurrency: z.strictObject({ network: NetworkConcurrency }),
   imageAgeCheck: ImageAgeCheck,
+  /**
+   * The «Готовые видео» folder, where every rendered MP4 lives (its only
+   * copy). Required for rendering: a render is refused up front without a
+   * usable one (EXPORT_UNAVAILABLE). settingsStore.ts supplies the default,
+   * `~/Studio/export`; like `imageAgeCheck`, the contract itself has none.
+   */
+  exportPath: AbsolutePath,
+  renderConcurrency: RenderConcurrency,
 });
+
+/**
+ * `settings.setExportPath`'s answer: the settings as they now stand, the
+ * chosen folder's identity (`rootId`, from its `.studio-export.json` marker)
+ * and how many video records resolve against it. Pointing at a moved folder
+ * (the same `rootId`) makes every record resolve again; a different folder
+ * leaves the old records `elsewhere`.
+ */
+export const ExportPathResult = z.strictObject({ settings: Settings, rootId: Id, resolvedVideos: Count });
 
 // ---------- money ----------
 
@@ -294,6 +319,17 @@ export const AvatarSummary = z.strictObject({
    * fresh avatar has 0.
    */
   photoCount: Count,
+  /** Video records of this avatar, whatever state their files are in. */
+  videoCount: Count,
+  /**
+   * Gallery photos a montage may still use: eligible (a generated scene photo
+   * that passes the age threshold and is not rejected), in no video and in no
+   * queued or running render. A subset of `photoCount`.
+   */
+  eligibleUnusedCount: Count,
+}).refine((a) => a.eligibleUnusedCount <= a.photoCount, {
+  message: "eligible unused photos are a subset of the gallery photos",
+  path: ["eligibleUnusedCount"],
 });
 
 /**
@@ -338,7 +374,7 @@ export const UnreadableAvatar = z.strictObject({
 
 // ---------- jobs ----------
 
-export const JobKind = z.enum(["avatar.candidates", "run"]);
+export const JobKind = z.enum(["avatar.candidates", "run", "render"]);
 export const JobStatus = z.enum(["queued", "running", "done", "failed", "cancelled"]);
 
 const doneWithinTotal = {
@@ -355,20 +391,31 @@ const doneWithinTotal = {
  */
 const candidatesJobRef = { kind: z.literal("avatar.candidates"), jobId: Id, avatarId: Id };
 const runJobRef = { kind: z.literal("run"), jobId: Id, runId: Id, avatarId: Id };
+/**
+ * A render's identity (protocol 5): the video it makes, its avatar and the
+ * montage draft it came from (null for a headless `videos.render {spec}`).
+ * Its `done` and `total` count frames.
+ */
+const renderJobRef = { kind: z.literal("render"), jobId: Id, videoId: Id, avatarId: Id, montageId: Id.nullable() };
 const progressCounts = { done: Count, total: Count };
 
 export const JobProgress = z
-  .discriminatedUnion("kind", [z.strictObject({ ...candidatesJobRef, ...progressCounts }), z.strictObject({ ...runJobRef, ...progressCounts })])
+  .discriminatedUnion("kind", [
+    z.strictObject({ ...candidatesJobRef, ...progressCounts }),
+    z.strictObject({ ...runJobRef, ...progressCounts }),
+    z.strictObject({ ...renderJobRef, ...progressCounts }),
+  ])
   .refine(doneWithinTotal.check, doneWithinTotal.params);
 
 /** `job.failed`'s payload: the job's identity (see `JobProgress`) and why it failed. */
 export const JobFailed = z.discriminatedUnion("kind", [
   z.strictObject({ ...candidatesJobRef, error: EngineError }),
   z.strictObject({ ...runJobRef, error: EngineError }),
+  z.strictObject({ ...renderJobRef, error: EngineError }),
 ]);
 
 /** `job.cancelled`'s payload: the job's identity (see `JobProgress`). */
-export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(runJobRef)]);
+export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(runJobRef), z.strictObject(renderJobRef)]);
 
 /** A batch's slot, 1 to 4. */
 const CandidateSlot = z.number().int().min(1).max(4);
@@ -423,7 +470,7 @@ export const RunResult = z.strictObject({
   failedSlots: Count,
 });
 
-export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, RunResult]);
+export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, RunResult, RenderResult]);
 
 const jobCommon = {
   jobId: Id,
@@ -450,6 +497,15 @@ export const JobState = z
       ...jobCommon,
       result: RunResult.optional(),
     }),
+    z.strictObject({
+      kind: z.literal("render"),
+      videoId: Id,
+      avatarId: Id,
+      /** The draft it was rendered from; null for a headless spec. */
+      montageId: Id.nullable(),
+      ...jobCommon,
+      result: RenderResult.optional(),
+    }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
   .refine((j) => (j.status === "done") === (j.result !== undefined), {
@@ -462,8 +518,10 @@ export const JobState = z
   })
   .refine(
     (j) => {
-      if (j.kind === "avatar.candidates") return j.result === undefined || j.result.avatarId === j.avatarId;
-      return j.result === undefined || (j.result.runId === j.runId && j.result.avatarId === j.avatarId);
+      if (j.result === undefined) return true;
+      if (j.kind === "avatar.candidates") return j.result.kind === "avatar.candidates" && j.result.avatarId === j.avatarId;
+      if (j.kind === "run") return j.result.kind === "run" && j.result.runId === j.runId && j.result.avatarId === j.avatarId;
+      return j.result.kind === "render" && j.result.videoId === j.videoId && j.result.avatarId === j.avatarId;
     },
     { message: "result must belong to this job", path: ["result"] },
   );
@@ -544,18 +602,34 @@ export const PhotoQaSummary = z.strictObject({
   age: z.strictObject({ adult: z.boolean(), confidence: z.number().min(0).max(1) }).optional(),
 });
 
-export const PhotoSummary = z.strictObject({
-  photoId: Id,
-  avatarId: Id,
-  runId: Id.nullable(),
-  category: SceneCategory,
-  createdAt: IsoDateTime,
-  qa: PhotoQaSummary.optional(),
-});
+/** A photo can be in this many videos at most, a generous bound for the `usedIn` list. */
+export const MAX_PHOTO_USED_IN = 1000;
+
+export const PhotoSummary = z
+  .strictObject({
+    photoId: Id,
+    avatarId: Id,
+    runId: Id.nullable(),
+    category: SceneCategory,
+    createdAt: IsoDateTime,
+    qa: PhotoQaSummary.optional(),
+    /** Some committed video record lists this photo. Derived from the records, never from whether an MP4 still exists. */
+    used: z.boolean(),
+    /** The videos that list it, so «Удалить запись» and a video's delete can say which photos they free. */
+    usedIn: z.array(Id).max(MAX_PHOTO_USED_IN).refine(unique, "a video must not be listed twice"),
+    /** The owner's own «do not use» mark (rejected.jsonl); a mark is not a verdict of any gate. */
+    rejected: z.boolean(),
+  })
+  .refine((p) => p.used === p.usedIn.length > 0, {
+    message: "used must be true exactly when a video lists the photo",
+    path: ["used"],
+  });
 
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
 export type ImageAgeCheck = z.infer<typeof ImageAgeCheck>;
 export type Settings = z.infer<typeof Settings>;
+export type RenderConcurrency = z.infer<typeof RenderConcurrency>;
+export type ExportPathResult = z.infer<typeof ExportPathResult>;
 export type ReconcileReason = z.infer<typeof ReconcileReason>;
 export type MoneyHalt = z.infer<typeof MoneyHalt>;
 export type LedgerUnavailable = z.infer<typeof LedgerUnavailable>;

@@ -25,6 +25,8 @@ const INIT: EngineInit = {
     textModel: "x-ai/grok-4.3",
     concurrency: { network: 6 },
     imageAgeCheck: "off",
+    exportPath: "/tmp/userData/export",
+    renderConcurrency: "auto",
   },
   encryptionAvailable: true,
   notices: [],

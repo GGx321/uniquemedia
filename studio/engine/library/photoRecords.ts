@@ -52,6 +52,12 @@ export function photoSummaryFrom(sidecar: PhotoSidecar): PhotoSummary | null {
     category: sidecar.source.category,
     createdAt: sidecar.createdAt,
     qa: qaSummaryOf(sidecar.qa),
+    // Usage and the owner's reject marks come from the video records and
+    // rejected.jsonl (task 3a.2). No video record exists before then, so every
+    // photo is unused and unmarked.
+    used: false,
+    usedIn: [],
+    rejected: false,
   });
   return parsed.success ? parsed.data : null;
 }

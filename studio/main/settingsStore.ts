@@ -1,4 +1,5 @@
 import { readFile, rename } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { EngineSettings } from "../engine/control";
@@ -20,6 +21,17 @@ export const DEFAULT_NETWORK_CONCURRENCY = 6;
  * check on by surprise.
  */
 export const DEFAULT_IMAGE_AGE_CHECK = "off";
+/** Render concurrency picks itself from the CPU and the memory ("Авто"); the engine never runs zero renders. */
+export const DEFAULT_RENDER_CONCURRENCY = "auto";
+
+/**
+ * The «Готовые видео» folder of the default settings: `~/Studio/export`. The
+ * engine creates it on first use (task 3a.8a); a folder the owner chose must
+ * already exist.
+ */
+export function defaultExportPath(home: string): string {
+  return join(home, "Studio", "export");
+}
 
 /** On disk: the non-secret settings plus a version, strict so a stray field (a key) is refused. */
 const SettingsFile = EngineSettings.extend({ schemaVersion: z.literal(1) });
@@ -29,7 +41,7 @@ export function defaultLibraryPath(userData: string): string {
   return join(userData, "library");
 }
 
-export function defaultSettings(userData: string): EngineSettings {
+export function defaultSettings(userData: string, home: string = homedir()): EngineSettings {
   return EngineSettings.parse({
     monthlyBudgetMicros: DEFAULT_MONTHLY_BUDGET_MICROS,
     libraryPath: defaultLibraryPath(userData),
@@ -37,6 +49,8 @@ export function defaultSettings(userData: string): EngineSettings {
     textModel: DEFAULT_TEXT_MODEL,
     concurrency: { network: DEFAULT_NETWORK_CONCURRENCY },
     imageAgeCheck: DEFAULT_IMAGE_AGE_CHECK,
+    exportPath: defaultExportPath(home),
+    renderConcurrency: DEFAULT_RENDER_CONCURRENCY,
   });
 }
 
@@ -50,33 +64,40 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+/** Settings added after the first release: an older file lacks them, and `loadSettings` fills in the default. */
+const BACKFILLED_KEYS = ["imageAgeCheck", "exportPath", "renderConcurrency"] as const;
+
+function withMissingKeysBackfilled(raw: unknown, defaults: EngineSettings): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  const filled: Record<string, unknown> = { ...raw };
+  for (const key of BACKFILLED_KEYS) if (!(key in filled)) filled[key] = defaults[key];
+  return filled;
+}
+
 /** Reads `userData/settings.json`, Zod-validated. Never throws for a missing or invalid file. */
-export async function loadSettings(userData: string): Promise<LoadedSettings> {
+export async function loadSettings(userData: string, home: string = homedir()): Promise<LoadedSettings> {
   const path = join(userData, SETTINGS_FILE);
   let text: string;
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if (isMissing(error)) return { source: "missing", settings: defaultSettings(userData) };
+    if (isMissing(error)) return { source: "missing", settings: defaultSettings(userData, home) };
     throw error;
   }
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
-    return { source: "invalid", settings: defaultSettings(userData), problem: `${SETTINGS_FILE} is not valid JSON` };
+    return { source: "invalid", settings: defaultSettings(userData, home), problem: `${SETTINGS_FILE} is not valid JSON` };
   }
-  // Backward compatibility for a file written before imageAgeCheck existed:
-  // backfill the default only when the key is truly absent, never overriding
-  // an explicit (even if later invalid) value the file already carries.
-  const withImageAgeCheckDefault =
-    typeof raw === "object" && raw !== null && !Array.isArray(raw) && !("imageAgeCheck" in raw)
-      ? { ...raw, imageAgeCheck: DEFAULT_IMAGE_AGE_CHECK }
-      : raw;
-  const parsed = SettingsFile.safeParse(withImageAgeCheckDefault);
+  // Backward compatibility for a file written before imageAgeCheck, exportPath
+  // or renderConcurrency existed: backfill each default only when its key is
+  // truly absent, never overriding an explicit (even if later invalid) value
+  // the file already carries.
+  const parsed = SettingsFile.safeParse(withMissingKeysBackfilled(raw, defaultSettings(userData, home)));
   if (!parsed.success) {
     const where = parsed.error.issues.map((i) => i.path.map(String).join(".") || "(root)").join(", ");
-    return { source: "invalid", settings: defaultSettings(userData), problem: `${SETTINGS_FILE} breaks its schema at ${where}` };
+    return { source: "invalid", settings: defaultSettings(userData, home), problem: `${SETTINGS_FILE} breaks its schema at ${where}` };
   }
   const { schemaVersion: _version, ...settings } = parsed.data;
   return { source: "file", settings };
