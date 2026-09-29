@@ -10,6 +10,8 @@
  * - studio-media:// answers 404 for a malformed and an unknown id and 200 (image
  *   MIME, nosniff) for a real photo in a temp library;
  * - main refuses a command that breaks the contract;
+ * - the `videos.*` commands are wired in the engine: refusals only (an empty list, NOT_FOUND, the N9 "not yet
+ *   supported" answer), nothing rendered or written (a real render, kill and restart is the packaged E2E, 3a.9);
  * - settings.setApiKey stores only ciphertext and hands the key to the engine;
  * - settings.setBudget is persisted by main and reaches the engine;
  * - the live library's folder picked again with another letter case (main's
@@ -1730,6 +1732,33 @@ async function main(): Promise<void> {
     // 2. Main validates.
     const bad = await cdp.evaluate(`window.studio.request({ v: ${PROTOCOL_VERSION}, id: "smoke-bad-0001", kind: "command", type: "no.such.command", payload: {} })`);
     check("main refuses a command that breaks the contract", field(bad, "ok") === false && field(bad, "error", "code") === "VALIDATION", bad);
+
+    // 2b. The video commands are wired in the packaged engine (3a.8b.2). Refusals only: nothing here renders, writes or
+    // spends (a real render, kill and restart in the packaged app is 3a.9's smoke).
+    const videosList = await req(cdp, "videos.list", { avatarId: avatar.id });
+    check("videos.list answers an avatar with no videos with an empty list", field(videosList, "ok") === true && JSON.stringify(field(videosList, "result", "videos")) === "[]", videosList);
+    const videosCancel = await req(cdp, "videos.cancel", { jobId: "smoke-no-such-job-0001" });
+    check("videos.cancel of an unknown job is NOT_FOUND", field(videosCancel, "ok") === false && field(videosCancel, "error", "code") === "NOT_FOUND", videosCancel);
+    const videosDelete = await req(cdp, "videos.delete", { videoId: "smoke-no-such-video-01" });
+    check("videos.delete of an unknown video is NOT_FOUND", field(videosDelete, "ok") === false && field(videosDelete, "error", "code") === "NOT_FOUND", videosDelete);
+    const videosDraft = await req(cdp, "videos.render", { montageId: "smoke-no-such-montage-01" });
+    check("videos.render of a montage draft is NOT_FOUND until drafts exist", field(videosDraft, "ok") === false && field(videosDraft, "error", "code") === "NOT_FOUND", videosDraft);
+    const layered = {
+      schemaVersion: 1,
+      avatarId: avatar.id,
+      seed: 1,
+      music: null,
+      clips: [{ clipId: "smoke-clip-0001", kind: "photo", cell: { photo: { source: "scene", photoId: photo.id }, focus: null }, motion: "static", durationMs: 4000, transitionIn: "cut" }],
+      layers: [{ layerId: "smoke-layer-0001", kind: "text", startMs: 0, endMs: 1000, value: "hello", font: "manrope", style: "none", color: "#ffffff", x: 0.5, y: 0.5, scale: 1 }],
+    };
+    const videosLayered = await req(cdp, "videos.render", { spec: layered });
+    check(
+      "videos.render refuses a spec with a text layer as not-yet-supported (N9), before touching anything",
+      field(videosLayered, "ok") === false && field(videosLayered, "error", "code") === "MONTAGE_INVALID" && JSON.stringify(field(videosLayered, "error", "issues")).includes("not-yet-supported"),
+      videosLayered,
+    );
+    const engineJobs = await req(cdp, "engine.snapshot");
+    check("none of those refusals left a render job behind", Array.isArray(field(engineJobs, "result", "jobs")) && !JSON.stringify(field(engineJobs, "result", "jobs")).includes('"render"'), engineJobs);
 
     // 3. studio-media://
     const media = await cdp.evaluate(`(async () => {
