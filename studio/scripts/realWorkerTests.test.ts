@@ -215,7 +215,7 @@ describe("retry warnings", () => {
   test("a retry limited to known crashes does not retry an unknown one", async () => {
     let n = 0;
     const unknown = { exitCode: 133, output: "panic: Segmentation fault at address 0x7FFF1234\noh no: Bun has crashed." };
-    const code = await runWithCrashRetry(async () => (n++, unknown), { signatures: WORKER_TEARDOWN_CRASHES });
+    const code = await runWithCrashRetry(async () => (n++, unknown), { signatures: WORKER_TEARDOWN_CRASHES, warn: () => undefined });
     expect(code).toBe(133);
     expect(n).toBe(1);
   });
@@ -223,11 +223,14 @@ describe("retry warnings", () => {
   test("a retry limited to known crashes retries a known one", async () => {
     let n = 0;
     const known = { exitCode: 133, output: "panic: Segmentation fault at address 0x18\noh no: Bun has crashed." };
-    const code = await runWithCrashRetry(async () => (n++ === 0 ? known : { exitCode: 0, output: "" }), { signatures: WORKER_TEARDOWN_CRASHES });
+    const code = await runWithCrashRetry(async () => (n++ === 0 ? known : { exitCode: 0, output: "" }), { signatures: WORKER_TEARDOWN_CRASHES, warn: () => undefined });
     expect(code).toBe(0);
     expect(n).toBe(2);
   });
 });
+
+/** Retries announce themselves on stdout as `::warning::` annotations; a test must not raise one in the real run's log. */
+const quiet = { warn: () => undefined };
 
 describe("runWithCrashRetry", () => {
   const ok = { exitCode: 0, output: " 8 pass\n 0 fail" };
@@ -249,49 +252,49 @@ describe("runWithCrashRetry", () => {
 
   test("a clean first run passes with one attempt", async () => {
     const run = playing([ok]);
-    expect(await runWithCrashRetry(run.attempt)).toBe(0);
+    expect(await runWithCrashRetry(run.attempt, quiet)).toBe(0);
     expect(run.calls.n).toBe(1);
   });
 
   test("a real failure fails at once and is never retried into a pass", async () => {
     const run = playing([failure, ok]);
-    expect(await runWithCrashRetry(run.attempt)).toBe(1);
+    expect(await runWithCrashRetry(run.attempt, quiet)).toBe(1);
     expect(run.calls.n).toBe(1);
   });
 
   test("a Bun crash with no failed test is retried, and a clean second run passes", async () => {
     const run = playing([crash, ok]);
-    expect(await runWithCrashRetry(run.attempt)).toBe(0);
+    expect(await runWithCrashRetry(run.attempt, quiet)).toBe(0);
     expect(run.calls.n).toBe(2);
   });
 
   test("a crash that follows a failed test is not retried", async () => {
     const run = playing([{ exitCode: 133, output: `${failure.output}\n${CRASH}` }, ok]);
-    expect(await runWithCrashRetry(run.attempt)).toBe(133);
+    expect(await runWithCrashRetry(run.attempt, quiet)).toBe(133);
     expect(run.calls.n).toBe(1);
   });
 
   test("a real failure on the retry fails there, without a third attempt", async () => {
     const run = playing([crash, failure, ok]);
-    expect(await runWithCrashRetry(run.attempt)).toBe(1);
+    expect(await runWithCrashRetry(run.attempt, quiet)).toBe(1);
     expect(run.calls.n).toBe(2);
   });
 
   test("three crashes in a row fail with the last exit code, after exactly three attempts", async () => {
     const run = playing([crash, crash, crash, ok]);
-    expect(await runWithCrashRetry(run.attempt)).toBe(133);
+    expect(await runWithCrashRetry(run.attempt, quiet)).toBe(133);
     expect(run.calls.n).toBe(MAX_ATTEMPTS);
   });
 
   test("an attempt that ran out of time fails at once even if its output looks like a crash", async () => {
     const run = playing([{ ...crash, timedOut: true }, ok]);
-    expect(await runWithCrashRetry(run.attempt)).not.toBe(0);
+    expect(await runWithCrashRetry(run.attempt, quiet)).not.toBe(0);
     expect(run.calls.n).toBe(1);
   });
 
   test("a non-zero exit with no output at all is not a known crash and is not retried", async () => {
     const run = playing([{ exitCode: 2, output: "" }, ok]);
-    expect(await runWithCrashRetry(run.attempt)).toBe(2);
+    expect(await runWithCrashRetry(run.attempt, quiet)).toBe(2);
     expect(run.calls.n).toBe(1);
   });
 
