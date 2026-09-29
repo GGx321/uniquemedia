@@ -215,7 +215,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
   const checkPlaced = async (absPath: string, bytes: number): Promise<void> => {
     const realFolder = await checkFolder();
     const info = await fs.lstat(absPath);
-    if (info.isSymbolicLink || !info.isFile || info.nlink !== 1 || info.size !== bytes) throw new ContainmentError("the saved file is not the file that was written");
+    if (info.isSymbolicLink || !info.isFile || info.nlink > 1 || info.size !== bytes) throw new ContainmentError("the saved file is not the file that was written");
     const realFile = await fs.realpath(absPath);
     if (placeOf(nodePath, dirname(realFile), target.caseInsensitive) !== placeOf(nodePath, realFolder, target.caseInsensitive)) throw new ContainmentError("the saved file resolves outside its folder");
   };

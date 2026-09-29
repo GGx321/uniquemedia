@@ -197,7 +197,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
 
     const facts = await lstatOrNull(fs, file);
     if (facts === null) return drop("no-file");
-    if (facts.isSymbolicLink || !facts.isFile || facts.nlink !== 1) return drop("not-a-file");
+    if (facts.isSymbolicLink || !facts.isFile || facts.nlink > 1) return drop("not-a-file");
 
     if (facts.size === 0) {
       // Our placeholder, never filled: file first, then the intent, so every step is a state this recovery settles.
@@ -256,7 +256,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
         try {
           const facts = await lstatOrNull(fs, path);
           // A 0-byte MP4 is never a real video; anything with content is the owner's.
-          if (facts !== null && facts.isFile && !facts.isSymbolicLink && facts.size === 0 && facts.nlink === 1) {
+          if (facts !== null && facts.isFile && !facts.isSymbolicLink && facts.size === 0 && facts.nlink <= 1) {
             await fs.unlink(path);
             report.removed.placeholders++;
           }
@@ -287,7 +287,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
           const linkedToMarker = marker !== null && marker.isFile && marker.ino === facts.ino && marker.dev === facts.dev;
           // Linked to the marker: an interrupted publish (heal the marker's link count). Alone: a publish that never linked.
           // Linked to something else: not ours.
-          if (linkedToMarker || facts.nlink === 1) {
+          if (linkedToMarker || facts.nlink <= 1) {
             await fs.unlink(path);
             report.removed.markerTemps++;
           }

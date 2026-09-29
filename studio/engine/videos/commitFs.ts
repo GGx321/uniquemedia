@@ -62,7 +62,7 @@ async function copyOver(source: string, destination: string, expected: { bytes: 
   const target = await open(destination, constants.O_RDWR | noFollow);
   try {
     const info = await target.stat();
-    if (!info.isFile() || info.size !== 0 || info.nlink !== 1) throw new CopyMismatchError("the destination is not an empty, single-link regular file");
+    if (!info.isFile() || info.size !== 0 || info.nlink > 1) throw new CopyMismatchError("the destination is not an empty, single-link regular file");
     const from = await open(source, "r");
     try {
       const hash = createHash("sha256");
