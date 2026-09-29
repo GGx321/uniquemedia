@@ -4,7 +4,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { removeDir } from "../render/render.testkit";
 import type { VerifyExpected, VerifyReasonCode, VerifyResult } from "./types";
 import { verifyRenderedMp4 } from "./verifyMp4";
-import { appendChild, concat, findAscii, FIXTURE_FRAMES, locate, makeBox, makeForeign, patched, remux, renderFixture, setU32, spliceInside, writeCopy, type Fixture } from "./verify.testkit";
+import { appendChild, concat, findAscii, FIXTURE_FRAMES, locate, makeBox, makeForeign, patched, remux, renderFixture, setU32, shiftChunkOffsets, spliceInside, writeCopy, type Fixture } from "./verify.testkit";
 useNativeGlobals();
 
 // REAL ffmpeg: review round 1 of the verifier. Everything here was accepted
@@ -287,8 +287,8 @@ describe("LOW: limits, options and markers", () => {
 
   test("a second top-level free box is DUPLICATE_BOX", async () => {
     const free = locate(fx.bytes, "free");
-    const bytes = concat(fx.bytes.subarray(0, free.end), makeBox("free"), fx.bytes.subarray(free.end));
-    expect(codesOf(await run("two-free.mp4", bytes))).toContain("DUPLICATE_BOX");
+    const bytes = shiftChunkOffsets(concat(fx.bytes.subarray(0, free.end), makeBox("free"), fx.bytes.subarray(free.end)), 8);
+    expect(codesOf(await run("two-free.mp4", bytes))).toEqual(["DUPLICATE_BOX"]);
   });
 
   test.each([Number.NaN, 0, -1, Number.POSITIVE_INFINITY])("refuses maxBytes %f as a caller error", async (maxBytes) => {

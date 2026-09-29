@@ -5,7 +5,7 @@ import { removeDir } from "../render/render.testkit";
 import { AUDIO_OVER_MS, AUDIO_UNDER_MS, MOVIE_TOLERANCE_MS, VIDEO_TOLERANCE_MS } from "./structure";
 import type { VerifyReasonCode, VerifyResult } from "./types";
 import { verifyRenderedMp4 } from "./verifyMp4";
-import { concat, findAscii, FIXTURE_FRAMES, locate, makeBox, makeForeign, patched, remux, renderFixture, setU32, swapTopLevel, writeCopy, type Fixture } from "./verify.testkit";
+import { concat, findAscii, FIXTURE_FRAMES, locate, makeBox, makeForeign, patched, remux, renderFixture, setU32, shiftChunkOffsets, swapTopLevel, writeCopy, type Fixture } from "./verify.testkit";
 useNativeGlobals();
 
 // REAL ffmpeg: the structure checks (invariant 20, A4) on a real render and
@@ -120,8 +120,10 @@ describe("the duration (invariant 20)", () => {
 
 describe("the index before the media data (+faststart)", () => {
   test("refuses moov placed after mdat with NOT_FASTSTART", async () => {
-    const codes = codesOf(await run("moov-last.mp4", swapTopLevel(fx.bytes, "moov", "mdat")));
-    expect(codes).toContain("NOT_FASTSTART");
+    // After the swap the media data starts right behind ftyp, so the chunk offsets move with it.
+    const mdat = locate(fx.bytes, "mdat");
+    const swapped = shiftChunkOffsets(swapTopLevel(fx.bytes, "moov", "mdat"), locate(fx.bytes, "ftyp").end - mdat.start);
+    expect(codesOf(await run("moov-last.mp4", swapped))).toEqual(["NOT_FASTSTART"]);
   });
 
   test("refuses a real ffmpeg copy written without +faststart with NOT_FASTSTART", async () => {

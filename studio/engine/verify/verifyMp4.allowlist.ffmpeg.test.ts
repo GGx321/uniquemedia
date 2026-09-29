@@ -4,7 +4,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { readBytes, removeDir } from "../render/render.testkit";
 import type { VerifyReasonCode, VerifyResult } from "./types";
 import { verifyRenderedMp4 } from "./verifyMp4";
-import { appendChild, concat, FIXTURE_FRAMES, locate, makeBox, patched, renderFixture, setU32, spliceInside, writeCopy, type Fixture } from "./verify.testkit";
+import { appendChild, concat, FIXTURE_FRAMES, locate, makeBox, patched, renderFixture, setU32, shiftChunkOffsets, spliceInside, writeCopy, type Fixture } from "./verify.testkit";
 useNativeGlobals();
 
 // REAL ffmpeg: the metadata allowlist (invariant 14) on a real render and on
@@ -118,8 +118,9 @@ describe("forbidden boxes, each refused with its own code", () => {
 
   test("a payload hidden in the free box is FREE_BOX_NOT_EMPTY", async () => {
     const free = locate(fx.bytes, "free");
-    const bytes = concat(fx.bytes.subarray(0, free.start), makeBox("free", ascii("hidden note")), fx.bytes.subarray(free.end));
-    expect(codesOf(await run("free-payload.mp4", bytes))).toContain("FREE_BOX_NOT_EMPTY");
+    const hidden = makeBox("free", ascii("hidden note"));
+    const bytes = shiftChunkOffsets(concat(fx.bytes.subarray(0, free.start), hidden, fx.bytes.subarray(free.end)), hidden.length - (free.end - free.start));
+    expect(codesOf(await run("free-payload.mp4", bytes))).toEqual(["FREE_BOX_NOT_EMPTY"]);
   });
 
   test("a box the format allows but the engine never writes is UNKNOWN_BOX", async () => {

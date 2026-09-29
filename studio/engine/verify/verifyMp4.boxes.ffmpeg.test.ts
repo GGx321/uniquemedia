@@ -108,19 +108,20 @@ describe("verifyRenderedMp4: the box walk", () => {
 
   test("refuses a second moov with DUPLICATE_BOX", async () => {
     const free = locate(fx.bytes, "free");
-    const bytes = concat(fx.bytes.subarray(0, free.start), makeBox("moov"), fx.bytes.subarray(free.start));
-    expect(codesOf(await verifyBytes("two-moov.mp4", bytes))).toContain("DUPLICATE_BOX");
+    const bytes = shiftChunkOffsets(concat(fx.bytes.subarray(0, free.start), makeBox("moov"), fx.bytes.subarray(free.start)), 8);
+    expect(codesOf(await verifyBytes("two-moov.mp4", bytes))).toEqual(["DUPLICATE_BOX"]);
   });
 
   test("refuses a file with no mdat with MISSING_BOX", async () => {
     const mdat = locate(fx.bytes, "mdat");
-    expect(codesOf(await verifyBytes("no-mdat.mp4", fx.bytes.slice(0, mdat.start)))).toContain("MISSING_BOX");
+    expect(codesOf(await verifyBytes("no-mdat.mp4", fx.bytes.slice(0, mdat.start)))).toEqual(["MISSING_BOX"]);
   });
 
   test("refuses a file that does not start with ftyp with FTYP_NOT_FIRST", async () => {
     const ftyp = locate(fx.bytes, "ftyp");
-    const bytes = concat(makeBox("free"), fx.bytes.subarray(ftyp.start));
-    expect(codesOf(await verifyBytes("free-first.mp4", bytes))).toContain("FTYP_NOT_FIRST");
+    const bytes = shiftChunkOffsets(concat(makeBox("free"), fx.bytes.subarray(ftyp.start)), 8);
+    // The extra free box is also a second free box.
+    expect(codesOf(await verifyBytes("free-first.mp4", bytes)).sort()).toEqual(["DUPLICATE_BOX", "FTYP_NOT_FIRST"]);
   });
 
   test("meets 200 levels of nested udta boxes with UNKNOWN_BOX, not with a deep walk", async () => {
