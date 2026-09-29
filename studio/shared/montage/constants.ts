@@ -30,3 +30,12 @@ export const PAN_ZOOM_PERMILLE = 1150;
 
 /** A collage stagger step is at most this long. */
 export const STAGGER_MAX_STEP_MS = 300;
+
+// Mirrors of the contract's limits (studio/shared/engine/montage.ts). They are
+// copied, not imported, because importing a VALUE from the contract would pull
+// zod into every bundle that uses this module; `constants.test.ts` pins that
+// each equals the contract's.
+export const MIN_TOTAL_MS = 4_000;
+export const MAX_TOTAL_MS = 15_000;
+export const MIN_CLIP_MS = 500;
+export const MAX_CLIPS = 20;
