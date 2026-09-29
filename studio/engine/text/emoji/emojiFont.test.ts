@@ -197,4 +197,17 @@ describe("opening", () => {
     padded.fill(0);
     expect(sha16(opened.bitmap("😀")?.png ?? new Uint8Array())).toBe("10d6305ce9241ddf");
   });
+
+  test("refuses a detached buffer with a typed error, not a TypeError", async () => {
+    const bytes = await loadPinnedEmojiFont();
+    structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+    expect(() => openEmojiFont(bytes)).toThrow(expect.objectContaining({ name: "EmojiFontError", code: "NOT_A_FONT" }));
+  });
+
+  test("keeps its own copy when the input is a Node Buffer, whose slice() is a view", async () => {
+    const buffer = Buffer.from(await loadPinnedEmojiFont());
+    const opened = openEmojiFont(buffer);
+    buffer.fill(0);
+    expect(sha16(opened.bitmap("😀")?.png ?? new Uint8Array())).toBe("10d6305ce9241ddf");
+  });
 });

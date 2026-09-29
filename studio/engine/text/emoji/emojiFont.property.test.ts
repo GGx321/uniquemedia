@@ -122,7 +122,7 @@ describe("near-emoji that are not emoji", () => {
     expect(accepted).toEqual([]);
   });
 
-  test("the stage-2 fallback: a black flag followed by the tag terminator alone is drawn as the black flag glyph HarfBuzz gives it", () => {
+  test("a black flag followed only by the tag terminator (U+1F3F4 U+E007F) is accepted as glyph 1481, the one HarfBuzz gives it", () => {
     // Accepted deliberately: HarfBuzz shapes it to the same single glyph (1481), so refusing it would make the reader
     // stricter than the shaper for a sequence that is drawn as a real emoji bitmap anyway.
     expect([font.glyphId([0x1f3f4, 0xe007f]), font.has([0x1f3f4, 0xe007f])]).toEqual([1481, true]);

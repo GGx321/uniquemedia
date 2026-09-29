@@ -418,13 +418,23 @@ function codePointsOf(sequence: string | readonly number[]): number[] | null {
   return points.length === 0 || points.length > MAX_SEQUENCE ? null : points;
 }
 
+/** A detached or otherwise unreadable buffer makes `slice` throw a TypeError; the reader's only error is its own. */
+function copyOf(input: Uint8Array): Uint8Array {
+  try {
+    // Not `input.slice()`: on a Node Buffer (what readFile returns) that is a view, not a copy.
+    return new Uint8Array(input);
+  } catch {
+    throw new EmojiFontError("NOT_A_FONT", "the input buffer is detached or unreadable");
+  }
+}
+
 /**
  * Opens the font. Throws an `EmojiFontError` when the bytes are not a CBDT font this reader can trust, and nothing
  * else. The returned object never throws, and does not depend on `input` after this call returns.
  */
 export function openEmojiFont(input: Uint8Array): EmojiFont {
   // The font keeps its own copy (about 1 ms): the caller may transfer, reuse or overwrite its buffer afterwards.
-  const bytes = input.slice();
+  const bytes = copyOf(input);
   const { table } = readDirectory(bytes);
   const maxp = table("maxp");
   const numGlyphs = maxp.u16(4);
