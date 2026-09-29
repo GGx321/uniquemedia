@@ -8,12 +8,25 @@ import type { Rect, Size } from "./types";
 // the graph builder can feed it straight to ffmpeg's `crop` and the preview
 // can show the same region.
 //
+// EVEN: every side and offset is even. ffmpeg's `crop` on yuv420p rounds an
+// odd size (and, without `exact=1`, an odd offset) to even on its own, so an
+// odd result here would make the render cut a different region than the
+// preview shows, and the canvas and anchor computed from it would be wrong.
+//
 // Rounding (pinned by tests):
-// - the crop keeps the cell's aspect ratio; its size on the axis that
-//   overflows is ROUNDED DOWN (`floor`), so it never exceeds the source, and
-//   the aspect is off by less than one source pixel;
-// - the crop is centred on the focus with `Math.round` (half up), then
-//   clamped into the image: it can never leave it.
+// - the axis that overflows keeps its full source size, rounded DOWN to even;
+//   the other side is `floor(that * cell ratio)`, rounded DOWN to even (at
+//   least 2), so the crop never exceeds the source and its aspect is off by
+//   under 2 source pixels;
+// - the crop is centred on the focus with `Math.round` (half up), clamped into
+//   the image, then rounded DOWN to an even offset;
+// - a source side of 1 cannot be even: such a source is returned whole
+//   (a 1 px photo is not a real input; the engine refuses it upstream).
+
+const evenFloor = (n: number): number => n - (n % 2);
+
+/** `value` rounded down to even, at least 2, and never above `cap` (a `cap` of 1 gives 1: it cannot be even). */
+const evenSide = (value: number, cap: number): number => Math.min(cap, Math.max(2, evenFloor(value)));
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
@@ -45,10 +58,10 @@ export function coverCrop(source: Size, cell: Size, focus: Focus | null | undefi
   // Compare aspects by cross-multiplying, so no division is involved: the
   // source is wider than the cell when source.w / source.h > cell.w / cell.h.
   const sourceIsWider = source.w * cell.h > cell.w * source.h;
-  const w = sourceIsWider ? Math.max(1, Math.floor((source.h * cell.w) / cell.h)) : source.w;
-  const h = sourceIsWider ? source.h : Math.max(1, Math.floor((source.w * cell.h) / cell.w));
+  const w = sourceIsWider ? evenSide(Math.floor((evenSide(source.h, source.h) * cell.w) / cell.h), source.w) : evenSide(source.w, source.w);
+  const h = sourceIsWider ? evenSide(source.h, source.h) : evenSide(Math.floor((evenSide(source.w, source.w) * cell.h) / cell.w), source.h);
 
-  const x = clamp(Math.round(f.x * source.w - w / 2), 0, source.w - w);
-  const y = clamp(Math.round(f.y * source.h - h / 2), 0, source.h - h);
+  const x = evenFloor(clamp(Math.round(f.x * source.w - w / 2), 0, source.w - w));
+  const y = evenFloor(clamp(Math.round(f.y * source.h - h / 2), 0, source.h - h));
   return { x, y, w, h };
 }

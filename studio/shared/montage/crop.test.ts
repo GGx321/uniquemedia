@@ -35,13 +35,13 @@ describe("coverCrop: exact cases", () => {
   });
 
   test("a wider source is cropped in width, centred on the focus (1600x1000 into 1080x1920)", () => {
-    // crop height 1000, width floor(1000 * 1080 / 1920) = 562, x = round(800 - 281) = 519.
-    expect(coverCrop({ w: 1600, h: 1000 }, full, { x: 0.5, y: 0.5 })).toEqual({ x: 519, y: 0, w: 562, h: 1000 });
+    // crop height 1000, width floor(1000 * 1080 / 1920) = 562, x = round(800 - 281) = 519, rounded down to even: 518.
+    expect(coverCrop({ w: 1600, h: 1000 }, full, { x: 0.5, y: 0.5 })).toEqual({ x: 518, y: 0, w: 562, h: 1000 });
   });
 
   test("a taller source is cropped in height, centred on the fallback focus (1000x3000 into 1080x1920)", () => {
-    // crop width 1000, height floor(1000 * 1920 / 1080) = 1777, y = round(0.38 * 3000 - 888.5) = 252.
-    expect(coverCrop({ w: 1000, h: 3000 }, full, null)).toEqual({ x: 0, y: 252, w: 1000, h: 1777 });
+    // crop width 1000, height floor(1000 * 1920 / 1080) = 1777, rounded down to even: 1776; y = round(0.38 * 3000 - 888) = 252.
+    expect(coverCrop({ w: 1000, h: 3000 }, full, null)).toEqual({ x: 0, y: 252, w: 1000, h: 1776 });
   });
 
   test("focus at the left edge pins the crop to x = 0", () => {
@@ -64,13 +64,33 @@ describe("coverCrop: exact cases", () => {
     const crop = coverCrop({ w: 720, h: 1280 }, { w: 1080, h: 954 }, { x: 0.5, y: 0.38 });
     expect(crop.w).toBe(720);
     expect(crop.h).toBe(636); // 720 * 954 / 1080 = 636 exactly
-    expect(crop.y).toBe(Math.round(0.38 * 1280 - 636 / 2));
+    expect(crop.y).toBe(168); // round(0.38 * 1280 - 318) = 168, already even
   });
 
-  test("a 1x1 source and an extreme aspect never give an empty crop", () => {
+  test("the probe sources from review: odd sides give even crops (1023x1791 and 1024x1024)", () => {
+    const a = coverCrop({ w: 1023, h: 1791 }, full, null);
+    expect([a.x, a.y, a.w, a.h].map((v) => v % 2)).toEqual([0, 0, 0, 0]);
+    expect(a.w).toBe(1006); // height 1791 -> 1790 (even); width floor(1790 * 1080 / 1920 = 1006.875) = 1006
+    const b = coverCrop({ w: 1024, h: 1024 }, full, { x: 0.3, y: 0.5 });
+    expect([b.x, b.y, b.w, b.h].map((v) => v % 2)).toEqual([0, 0, 0, 0]);
+    expect(b).toEqual({ x: 18, y: 0, w: 576, h: 1024 }); // x = round(307.2 - 288) = 19, rounded down to even;
+  });
+
+  test("an odd-sided source loses at most one pixel per side to the even rule (101x101 into the full frame)", () => {
+    const c = coverCrop({ w: 101, h: 101 }, full, null);
+    expect(c.w).toBeLessThanOrEqual(100);
+    expect(c.h).toBeLessThanOrEqual(100);
+    expect([c.x, c.y, c.w, c.h].map((v) => v % 2)).toEqual([0, 0, 0, 0]);
+  });
+
+  test("a source side of 1 cannot be even: a 1x1 source is returned whole, as {0,0,1,1}", () => {
     expect(coverCrop({ w: 1, h: 1 }, full, null)).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+
+  test("a 2x2 source is the smallest that gets an even crop, and an extreme aspect never gives an empty crop", () => {
+    expect(coverCrop({ w: 2, h: 2 }, full, null)).toEqual({ x: 0, y: 0, w: 2, h: 2 });
     const thin = coverCrop({ w: 1, h: 4000 }, { w: 1080, h: 954 }, null);
-    expect(thin.w).toBe(1);
+    expect(thin.w).toBe(1); // a 1 px wide source cannot be even
     expect(thin.h).toBeGreaterThanOrEqual(1);
   });
 
@@ -106,27 +126,43 @@ describe("coverCrop: properties over random sources, cells and focus points", ()
     }
   });
 
-  test("the crop has the cell's aspect within one source pixel and spans the source on one axis (cover)", () => {
+  test("every crop side and offset is even and inside the source (odd-sided sources included), so ffmpeg's crop cuts exactly this region", () => {
+    const rand = mulberry32(0xe7e2);
+    for (let run = 0; run < 5000; run++) {
+      const source = { w: randInt(rand, 2, 6001), h: randInt(rand, 2, 8001) };
+      const cell = pick(rand, cells);
+      const edge = rand() < 0.4;
+      const focus = edge ? { x: pick(rand, [0, 1, 0.5]), y: pick(rand, [0, 1, 0.38]) } : { x: rand(), y: rand() };
+      const c = coverCrop(source, cell, focus);
+      for (const v of [c.x, c.y, c.w, c.h]) expect(v % 2).toBe(0);
+      expect(c.w).toBeGreaterThanOrEqual(2);
+      expect(c.h).toBeGreaterThanOrEqual(2);
+      expect(c.x + c.w).toBeLessThanOrEqual(source.w);
+      expect(c.y + c.h).toBeLessThanOrEqual(source.h);
+    }
+  });
+
+  test("the crop has the cell's aspect within 2 source pixels and spans the source (within the even rule's one pixel) on one axis (cover)", () => {
     const rand = mulberry32(0xa5be);
     for (let run = 0; run < 3000; run++) {
       const source = { w: randInt(rand, 20, 6000), h: randInt(rand, 20, 8000) };
       const cell = pick(rand, cells);
       const c = coverCrop(source, cell, { x: rand(), y: rand() });
-      expect(c.w === source.w || c.h === source.h).toBe(true);
+      expect(c.w >= source.w - 1 || c.h >= source.h - 1).toBe(true);
       // |c.w / c.h - cell.w / cell.h| corresponds to under one pixel on the cropped side.
-      expect(Math.abs(c.w * cell.h - c.h * cell.w)).toBeLessThanOrEqual(Math.max(cell.w, cell.h));
+      expect(Math.abs(c.w * cell.h - c.h * cell.w)).toBeLessThanOrEqual(2 * Math.max(cell.w, cell.h));
     }
   });
 
-  test("when the crop is not pinned by an edge it is centred on the focus within half a pixel", () => {
+  test("when the crop is not pinned by an edge it is centred on the focus within a pixel and a half", () => {
     const rand = mulberry32(0xf0c5);
     for (let run = 0; run < 3000; run++) {
       const source = { w: randInt(rand, 50, 6000), h: randInt(rand, 50, 8000) };
       const cell = pick(rand, cells);
       const focus = { x: rand(), y: rand() };
       const c = coverCrop(source, cell, focus);
-      if (c.x > 0 && c.x + c.w < source.w) expect(Math.abs(c.x + c.w / 2 - focus.x * source.w)).toBeLessThanOrEqual(0.5);
-      if (c.y > 0 && c.y + c.h < source.h) expect(Math.abs(c.y + c.h / 2 - focus.y * source.h)).toBeLessThanOrEqual(0.5);
+      if (c.x > 0 && c.x + c.w < source.w - 1) expect(Math.abs(c.x + c.w / 2 - focus.x * source.w)).toBeLessThanOrEqual(1.5);
+      if (c.y > 0 && c.y + c.h < source.h - 1) expect(Math.abs(c.y + c.h / 2 - focus.y * source.h)).toBeLessThanOrEqual(1.5);
     }
   });
 
@@ -137,10 +173,10 @@ describe("coverCrop: properties over random sources, cells and focus points", ()
       const cell = pick(rand, cells);
       const focus = { x: rand(), y: rand() };
       const c = coverCrop(source, cell, focus);
-      expect(focus.x * source.w).toBeGreaterThanOrEqual(c.x - 0.5);
-      expect(focus.x * source.w).toBeLessThanOrEqual(c.x + c.w + 0.5);
-      expect(focus.y * source.h).toBeGreaterThanOrEqual(c.y - 0.5);
-      expect(focus.y * source.h).toBeLessThanOrEqual(c.y + c.h + 0.5);
+      expect(focus.x * source.w).toBeGreaterThanOrEqual(c.x - 1.5);
+      expect(focus.x * source.w).toBeLessThanOrEqual(c.x + c.w + 1.5);
+      expect(focus.y * source.h).toBeGreaterThanOrEqual(c.y - 1.5);
+      expect(focus.y * source.h).toBeLessThanOrEqual(c.y + c.h + 1.5);
     }
   });
 
