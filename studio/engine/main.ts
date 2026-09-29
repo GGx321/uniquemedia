@@ -210,7 +210,8 @@ parentPort.once("message", (event) => {
       // The runtime's own fetch (Electron's Node); only the OpenRouter client uses it.
       fetch: (url, init) => fetch(url, init),
       qaGates,
-      ...("error" in loaded ? { faceGateLoadError: loaded.error } : {}),
+      // The same worker gate serves the render's focus points (`videos.render`, S8); without it every photo takes the stand-in point.
+      ...("error" in loaded ? { faceGateLoadError: loaded.error } : { faceGate: loaded.faceGate }),
       ...(text !== null && "error" in text ? { textLoadError: text.error } : {}),
     });
 
