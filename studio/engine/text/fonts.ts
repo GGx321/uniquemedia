@@ -19,10 +19,11 @@ import { join } from "node:path";
  * - Playfair Display and PT Mono carry a Reserved Font Name, which OFL forbids
  *   on a modified version, so both are official statics, never re-cut:
  *   Playfair's is `static/PlayfairDisplay-SemiBold.ttf` from Google Fonts'
- *   own download (v40), PT Mono's is ParaType's `PTM55FT.ttf`.
+ *   own download (v40, URL in README.md), PT Mono's is ParaType's `PTM55FT.ttf`.
  * - Manrope, Oswald and Caveat have no Reserved Font Name; their statics are
  *   instances of the variable fonts (fontTools 4.66.1 `varLib.instancer`
- *   wght=800/600/600), because resvg 2.6.x does not instantiate variable fonts.
+ *   wght=800/600/600, names rewritten, byte-reproducible: recipe/make-statics.sh),
+ *   because resvg 2.6.x does not instantiate variable fonts.
  * - Noto Color Emoji is `NotoColorEmoji.ttf` (CBDT) of noto-emoji v2.051.
  */
 export const TEXT_FONT_KEYS = ["manrope", "playfair", "oswald", "ptmono", "caveat"] as const;
@@ -52,8 +53,8 @@ export const TEXT_FONTS: Readonly<Record<TextFontKey, TextFontSpec>> = {
     family: "Manrope",
     weight: 800,
     origin: "instanced",
-    sha256: "511e6f9fcce623a170683b294bbd7c8ac08d50917187a74252d33ac4f11c7d91",
-    bytes: 98_080,
+    sha256: "fd48ef02aef3f232b44f7ba94c54316a0d2a079eb04bcadb08ece575e624ae1a",
+    bytes: 98_056,
   },
   playfair: {
     file: "PlayfairDisplay-600.ttf",
@@ -70,8 +71,8 @@ export const TEXT_FONTS: Readonly<Record<TextFontKey, TextFontSpec>> = {
     family: "Oswald",
     weight: 600,
     origin: "instanced",
-    sha256: "e89eb6eee7d9e884b3359b31bfd56c16b69de74c2fa81042ffb442c93e5c9329",
-    bytes: 88_904,
+    sha256: "eafab583787ca3ef1871f7f1a6c4129db2a9349c2684386068f2fea6cb601de0",
+    bytes: 88_932,
   },
   ptmono: {
     file: "PTMono-400.ttf",
@@ -88,8 +89,8 @@ export const TEXT_FONTS: Readonly<Record<TextFontKey, TextFontSpec>> = {
     family: "Caveat",
     weight: 600,
     origin: "instanced",
-    sha256: "6b943dc6a1194f93635af32d73ef38f60a6220f561882241fc8cc62302281871",
-    bytes: 266_980,
+    sha256: "a16825c74473761bf0c5d026c0651acae63d280b8030bc206374bb5ef7460f67",
+    bytes: 267_148,
   },
 };
 

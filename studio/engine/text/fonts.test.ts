@@ -3,7 +3,8 @@ import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EMOJI_FONT, FontLoadError, loadEmojiFont, loadTextFonts, TEXT_FONT_KEYS, TEXT_FONTS, type TextFontKey } from "./fonts";
-import { cmapCoverage } from "./sfnt";
+import { TextFont } from "../../shared/engine/montage";
+import { cmapCoverage, fontInfo } from "./sfnt";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -137,5 +138,28 @@ describe("cmap coverage of the text fonts", () => {
 
   test("refuses bytes that are not an sfnt font", () => {
     expect(() => cmapCoverage(new Uint8Array([1, 2, 3]))).toThrow();
+  });
+});
+
+// A static cut from a variable font keeps the variable font's default names unless they are rewritten: Manrope 800
+// once called itself "Manrope ExtraLight". resvg matches by family and weight, so the names are part of the contract.
+describe("the font keys", () => {
+  test("are exactly the contract's TextFont, in the same order", () => {
+    expect([...TEXT_FONT_KEYS]).toEqual([...TextFont.options]);
+  });
+});
+
+describe("the name tables of the text fonts", () => {
+  const WEIGHT_NAMES: Record<number, string> = { 400: "Regular", 600: "SemiBold", 800: "ExtraBold" };
+
+  test.each([...TEXT_FONT_KEYS])("%s names its family and weight as the manifest says", async (key: TextFontKey) => {
+    const fonts = await loadTextFonts(FONT_DIR);
+    const spec = TEXT_FONTS[key];
+    const info = fontInfo(fonts[key]);
+    expect(info.families).toContain(spec.family);
+    expect(info.weightClass).toBe(spec.weight);
+    const weightName = WEIGHT_NAMES[spec.weight] ?? "";
+    expect(info.fullName === spec.family || info.fullName === `${spec.family} ${weightName}`).toBe(true);
+    expect(info.variable).toBe(false);
   });
 });
