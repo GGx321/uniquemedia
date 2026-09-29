@@ -21,6 +21,11 @@ export const HEALTHY_RESET_MS = 5 * 60_000;
  * e.g. a paid createDraft) wait that long instead.
  */
 export const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * How long a quitting app waits for the engine to stop its renders: over the engine's own wait for a commit past its
+ * claim (`SHUTDOWN_RENDER_WAIT_MS`, 5 s), and short enough that quitting never feels stuck.
+ */
+export const SHUTDOWN_WAIT_MS = 8_000;
 
 /** `setTimeout`/`clearTimeout`, injected so tests control time. */
 export interface HostTimers {
@@ -236,9 +241,9 @@ export class EngineHost<Transfer> {
     return this.#call(callId, { kind: "control", type: "import.stagePhoto", callId, bytes });
   }
 
-  #call(callId: string, call: HostCall): Promise<CallResult> {
+  #call(callId: string, call: HostCall, boundMs?: number): Promise<CallResult> {
     return new Promise((resolve) => {
-      const timeoutMs = this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+      const timeoutMs = boundMs ?? this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
       const entry: PendingCall = { callId, resolve, deadline: null };
       entry.deadline = this.#timers.set(
         () => this.#settleCall(entry, { error: { code: "INTERNAL", detail: `the engine did not answer within ${timeoutMs / 1000} s` } }),
@@ -264,6 +269,20 @@ export class EngineHost<Transfer> {
   send(control: HostControl): void {
     if (this.#phase === "running" && this.#port !== null) this.#port.postMessage(control);
     else if (this.#phase !== "failed" && this.#phase !== "stopped") this.#queuedControls.push(control);
+  }
+
+  /**
+   * The app is quitting. A running engine is first asked to stop its renders (it cancels every one, so no orphaned
+   * ffmpeg keeps writing into the export folder, and lets a commit that is past its claim finish), and is given at most
+   * `waitMs` to answer; then it is stopped either way. An engine that is not running is just stopped. Never rejects
+   * and never waits longer than `waitMs`: what a killed engine leaves, its next start's recovery settles.
+   */
+  async shutdown(waitMs: number = SHUTDOWN_WAIT_MS): Promise<void> {
+    if (this.#phase === "running" && this.#port !== null) {
+      const callId = (this.#deps.newId ?? randomUUID)();
+      await this.#call(callId, { kind: "control", type: "engine.shutdown", callId }, waitMs);
+    }
+    this.stop();
   }
 
   /** An intentional stop (app quit): no restart, waiting commands get INTERNAL. */

@@ -253,6 +253,19 @@ describe("requests", () => {
     ports[0]?.fromEngine({ ...event, seq: 0 });
     expect(events).toEqual([event]);
   });
+
+  test("a job.failed that carries the queue's raw `cause` is dropped, never forwarded to a window", async () => {
+    const { host, ports, events } = setup();
+    await host.start();
+    const failedJob = { kind: "render", jobId: "job-00000004", videoId: "video-00000002", avatarId: "avatar-0001", montageId: null, error: { code: "RENDER_FAILED" } };
+    const event = (payload: unknown) => ({ v: PROTOCOL_VERSION, id: "evt-00000001", kind: "event", seq: 1, bootId: "boot-00000001", type: "job.failed", payload });
+
+    ports[0]?.fromEngine(event(failedJob));
+    ports[0]?.fromEngine(event({ ...failedJob, cause: { path: "/Users/owner/photo.jpg", spawnargs: ["-i", "/Users/owner/photo.jpg"] } }));
+
+    expect(events).toHaveLength(1);
+    expect(JSON.stringify(events)).not.toContain("/Users/owner");
+  });
 });
 
 describe("restart policy", () => {
@@ -538,6 +551,61 @@ describe("calls to the engine (library.open)", () => {
     await endBackoff();
     children[1]?.crash(1);
     expect(await host.openLibrary("/Users/me/Studio")).toEqual({ code: "INTERNAL", detail: ENGINE_GONE_DETAIL });
+  });
+});
+
+describe("shutdown (the app is quitting)", () => {
+  const callIdOf = (message: unknown): unknown => (typeof message === "object" && message !== null && "callId" in message ? message.callId : null);
+
+  test("asks the engine to stop its renders, waits for its answer, and only then kills it", async () => {
+    const { host, ports, children } = setup();
+    await host.start();
+
+    const done = host.shutdown(8_000);
+    await Bun.sleep(0);
+
+    const call = ports[0]?.posted.at(-1);
+    expect(call).toMatchObject({ kind: "control", type: "engine.shutdown" });
+    expect(children[0]?.killed).toBe(false); // the engine is still finishing a commit
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId: callIdOf(call) });
+    await done;
+    expect(children[0]?.killed).toBe(true);
+    expect(host.phase).toBe("stopped");
+  });
+
+  test("never waits longer than its bound: an engine that does not answer is killed when the bound passes", async () => {
+    const { host, children, timers } = setup();
+    await host.start();
+
+    const done = host.shutdown(8_000);
+    await timers.advance(7_999);
+    expect(children[0]?.killed).toBe(false);
+    await timers.advance(1);
+    await done;
+
+    expect(children[0]?.killed).toBe(true);
+    expect(host.phase).toBe("stopped");
+  });
+
+  test("an engine that is not running is just stopped: nothing is sent, nothing waits", async () => {
+    const { host, children } = setup();
+
+    await host.shutdown(8_000); // never started
+
+    expect(host.phase).toBe("stopped");
+    expect(children).toEqual([]);
+  });
+
+  test("an error reply does not keep the app from quitting", async () => {
+    const { host, ports, children } = setup();
+    await host.start();
+
+    const done = host.shutdown(8_000);
+    await Bun.sleep(0);
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId: callIdOf(ports[0]?.posted.at(-1)), error: { code: "INTERNAL", detail: "x" } });
+    await done;
+
+    expect(children[0]?.killed).toBe(true);
   });
 });
 
