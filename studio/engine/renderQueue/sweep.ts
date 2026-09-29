@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
+import { lstat, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 // The leftovers of renders that a crash, a kill or a cancel could not clean:
@@ -69,6 +69,17 @@ export async function sweepRenderTmp(dir: string, deps: SweepDeps = {}): Promise
   const sleep = deps.sleep ?? defaultSleep;
   const result: SweepResult = { removed: [], skipped: [] };
 
+  // A render-tmp that is a symlink would have its TARGET emptied: refuse it, and say so.
+  try {
+    if ((await lstat(dir)).isSymbolicLink()) {
+      result.skipped.push({ path: dir, code: "SYMLINK" });
+      return result;
+    }
+  } catch (error) {
+    if (codeOf(error) !== "ENOENT") result.skipped.push({ path: dir, code: codeOf(error) });
+    return result;
+  }
+
   const entries = await listOrNothing(dir, result);
   for (const entry of entries ?? []) {
     const path = join(dir, entry.name);
@@ -85,6 +96,17 @@ const PART_NAME = /^\.studio-part-[A-Za-z0-9_-]+\.mp4$/;
 export interface SweepPartsDeps extends SweepDeps {
   /** Absolute paths of temps that belong to renders still running: kept. */
   readonly except?: ReadonlySet<string>;
+  /** Whether `path` is a real folder (not a symlink), asked right before going into it; `lstat` unless a test swaps the folder. */
+  readonly isRealDirectory?: (path: string) => Promise<boolean>;
+}
+
+async function lstatIsRealDirectory(path: string): Promise<boolean> {
+  try {
+    const info = await lstat(path);
+    return info.isDirectory() && !info.isSymbolicLink();
+  } catch {
+    return false; // gone, or unreadable: nothing to sweep in it
+  }
 }
 
 /**
@@ -117,6 +139,11 @@ export async function sweepPartFiles(exportRoot: string, deps: SweepPartsDeps = 
   };
 
   const subfolders = await sweepFolder(exportRoot);
-  for (const name of subfolders) await sweepFolder(join(exportRoot, name));
+  const isRealDirectory = deps.isRealDirectory ?? lstatIsRealDirectory;
+  for (const name of subfolders) {
+    const folder = join(exportRoot, name);
+    // The listing is a moment old: check again that it is still a real folder, not a symlink put in its place.
+    if (await isRealDirectory(folder)) await sweepFolder(folder);
+  }
   return result;
 }

@@ -139,6 +139,46 @@ describe("sweepRenderTmp", () => {
   });
 });
 
+describe("sweeps and symlinks (review round 1)", () => {
+  test("sweepRenderTmp refuses a render-tmp that is itself a symlink, and empties nothing behind it", async () => {
+    const base = tempDir();
+    const target = join(base, "precious");
+    mkdirSync(target);
+    writeFileSync(join(target, "keep.txt"), "x");
+    const root = join(base, "render-tmp");
+    symlinkSync(target, root);
+
+    const result = await sweepRenderTmp(root);
+
+    expect(result.removed).toEqual([]);
+    expect(result.skipped).toEqual([{ path: root, code: "SYMLINK" }]);
+    expect(existsSync(join(target, "keep.txt"))).toBe(true);
+  });
+
+  test("sweepPartFiles checks a folder again right before going into it, and leaves one that is no longer a real folder", async () => {
+    const root = tempDir();
+    mkdirSync(join(root, "Mia"));
+    const part = join(root, "Mia", ".studio-part-job-00000001.mp4");
+    writeFileSync(part, "x");
+
+    // Between the listing and the descent, Mia was swapped for a symlink.
+    const result = await sweepPartFiles(root, { isRealDirectory: async (path) => path !== join(root, "Mia") });
+
+    expect(result.removed).toEqual([]);
+    expect(existsSync(part)).toBe(true);
+  });
+
+  test("sweepPartFiles goes into a real folder when the check says so", async () => {
+    const root = tempDir();
+    mkdirSync(join(root, "Mia"));
+    writeFileSync(join(root, "Mia", ".studio-part-job-00000001.mp4"), "x");
+
+    const result = await sweepPartFiles(root);
+
+    expect(result.removed).toHaveLength(1);
+  });
+});
+
 describe("sweepPartFiles", () => {
   const PART = ".studio-part-job-00000001.mp4";
 
