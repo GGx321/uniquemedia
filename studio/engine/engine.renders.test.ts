@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { configureFfmpegEnv, configuredFfmpegEnv } from "../node/ffmpegEnv";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { PhotoSummary, RenderResult } from "../shared/engine";
@@ -95,6 +96,24 @@ describe("the engine sweeps render-tmp when it starts", () => {
 
 /** One render at a time, so what is queued and what runs does not depend on the machine «Авто» runs on. */
 const ONE_AT_A_TIME = () => ({ settings: engineSettings(dir(), { renderConcurrency: 1 }) });
+
+describe("the engine hands ffmpeg its environment", () => {
+  afterEach(() => configureFfmpegEnv(undefined));
+
+  test("configures every ffmpeg child from the init's ffmpegEnv, through the allowlist", async () => {
+    await startEngine(dir(), { init: { ffmpegEnv: { PATH: "/usr/bin", OPENROUTER_API_KEY: "sk-secret" } } });
+
+    expect(configuredFfmpegEnv()).toEqual({ PATH: "/usr/bin" });
+  });
+
+  test("leaves the configuration alone when main sent none", async () => {
+    configureFfmpegEnv({ PATH: "/before" });
+
+    await startEngine(dir());
+
+    expect(configuredFfmpegEnv()).toEqual({ PATH: "/before" });
+  });
+});
 
 describe("the engine's render queue", () => {
   test("lists queued and running renders in the snapshot", async () => {

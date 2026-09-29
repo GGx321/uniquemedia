@@ -82,6 +82,7 @@ import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
 import { capFundsResume, remainingPlan, scopeCommitted } from "./runs/remaining";
 import { preflightMaster, reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
 import { plan as planScenes } from "./scenes";
+import { configureFfmpegEnv } from "../node/ffmpegEnv";
 import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
 import { sweepRenderTmp } from "./renderQueue/sweep";
@@ -565,6 +566,7 @@ export class Engine {
     // Before any job can run: at start no render is running, so whatever is in
     // render-tmp is a crash's leftover. Tolerant: a locked file is skipped (the
     // next start gets it), and nothing here stops the engine.
+    if (init.ffmpegEnv !== undefined) configureFfmpegEnv(init.ffmpegEnv);
     if (init.renderTmpDir !== undefined) {
       const swept = await sweepRenderTmp(init.renderTmpDir);
       for (const { code } of swept.skipped) console.warn(`studio engine: a leftover in render-tmp could not be removed (${code}); the next start tries again`);

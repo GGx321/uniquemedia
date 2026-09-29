@@ -6,6 +6,7 @@ import type { Readable } from "node:stream";
 import { parseProgressFraction } from "../../src/node/ffmpegProgress";
 import { allowlistedEnv } from "./childEnv";
 import { ffmpegPath } from "./ffmpegBinary";
+import { configuredFfmpegEnv } from "./ffmpegEnv";
 
 /** One ffmpeg input. `options` are flags that must precede this input's
  *  `-i`, e.g. `["-loop", "1", "-t", "8"]` to loop a still for 8 seconds. */
@@ -29,15 +30,22 @@ export interface FfmpegChild {
 
 export interface FfmpegSpawnOptions {
   readonly cwd: string | undefined;
-  /** The allowlisted environment (S4): never the parent's whole one, never `{}`. */
-  readonly env: Record<string, string>;
+  /**
+   * The allowlisted environment (S4), never `{}`. `undefined` only when the
+   * process entry configured none (`ffmpegEnv.ts`: tests and tools), and then the
+   * child inherits its parent's.
+   */
+  readonly env: Record<string, string> | undefined;
   readonly windowsHide: true;
   readonly stdio: ["ignore", "pipe", "pipe"];
 }
 
 export type FfmpegSpawner = (command: string, args: readonly string[], options: FfmpegSpawnOptions) => FfmpegChild;
 
-const nodeSpawner: FfmpegSpawner = (command, args, options) => spawn(command, [...args], { ...options, stdio: [...options.stdio] });
+const nodeSpawner: FfmpegSpawner = (command, args, options) => {
+  const { env, ...rest } = options;
+  return spawn(command, [...args], { ...rest, ...(env === undefined ? {} : { env }), stdio: [...options.stdio] });
+};
 
 /** The variables the supervision reads its child's environment from. */
 type ParentEnv = Readonly<Record<string, string | undefined>>;
@@ -48,7 +56,10 @@ interface SupervisionOptions {
   timeoutMs?: number;
   /** ffmpeg's working directory; the process's own when absent. */
   cwd?: string;
-  /** Where the child's environment is taken from, through the allowlist; `process.env` when absent. */
+  /**
+   * Where the child's environment is taken from, through the allowlist; else what
+   * `configureFfmpegEnv` set at the process entry (the engine's start does).
+   */
   env?: ParentEnv;
   /** Starts the child; Node's `spawn` when absent (a test injects a scripted one). */
   spawner?: FfmpegSpawner;
@@ -216,6 +227,11 @@ function buildArgvArgs(argv: readonly string[]): string[] {
   return [...caps, ...body, "-progress", "pipe:1", "-nostats", output];
 }
 
+function envFor(given: ParentEnv | undefined): Record<string, string> | undefined {
+  if (given !== undefined) return allowlistedEnv(given);
+  return configuredFfmpegEnv();
+}
+
 interface Supervised extends SupervisionOptions {
   args: string[];
   /** Sees each whole `-progress` report while the run is live; a throw kills the child and rejects the call with it. */
@@ -243,7 +259,7 @@ function supervise(run: Supervised): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const child = spawner(ffmpegPath(), run.args, {
       cwd: run.cwd,
-      env: allowlistedEnv(run.env ?? process.env),
+      env: envFor(run.env),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

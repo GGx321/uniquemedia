@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FILTER_THREAD_ARGS as BUILDER_FILTER_THREAD_ARGS } from "../engine/render/profile";
-import { ENV_ALLOWLIST } from "./childEnv";
+import { configureFfmpegEnv } from "./ffmpegEnv";
 import { fakeSpawner, outputOf, type FakeFfmpegChild } from "./fakeFfmpeg.testkit";
 import { FfmpegError, FfmpegTimeoutError, FILTER_THREAD_ARGS, runFfmpeg, runFfmpegArgv } from "./runFfmpeg";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -39,18 +39,36 @@ describe("runFfmpegArgv: how the child is started", () => {
     expect(calls[0]?.options.env).toEqual({ PATH: "/usr/bin" });
   });
 
-  test("reads the process environment when none is given, and still leaves out what is not allowlisted", async () => {
+  test("uses the configured environment when none is given, through the allowlist", async () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
-    process.env.STUDIO_TEST_SECRET = "sk-secret";
+    configureFfmpegEnv({ PATH: "/usr/bin", STUDIO_TEST_SECRET: "sk-secret" });
     try {
       await runFfmpegArgv({ argv: ARGV, spawner });
     } finally {
-      delete process.env.STUDIO_TEST_SECRET;
+      configureFfmpegEnv(undefined);
     }
 
-    const keys = Object.keys(calls[0]?.options.env ?? {});
-    expect(keys).not.toContain("STUDIO_TEST_SECRET");
-    expect(keys.every((k) => ENV_ALLOWLIST.has(k.toUpperCase()))).toBe(true);
+    expect(calls[0]?.options.env).toEqual({ PATH: "/usr/bin" });
+  });
+
+  test("passes no environment at all when none is given and none is configured: the child inherits its parent's (tests and tools only)", async () => {
+    const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
+
+    await runFfmpegArgv({ argv: ARGV, spawner });
+
+    expect(calls[0]?.options.env).toBeUndefined();
+  });
+
+  test("an environment given to the call wins over the configured one", async () => {
+    const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
+    configureFfmpegEnv({ PATH: "/configured" });
+    try {
+      await runFfmpegArgv({ argv: ARGV, spawner, env: { PATH: "/given" } });
+    } finally {
+      configureFfmpegEnv(undefined);
+    }
+
+    expect(calls[0]?.options.env).toEqual({ PATH: "/given" });
   });
 
   test("starts the child in the given working directory", async () => {

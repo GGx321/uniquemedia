@@ -45,6 +45,13 @@ export const EngineInit = z.strictObject({
    * engine sweeps it when it starts. Absent, nothing is swept.
    */
   renderTmpDir: AbsolutePath.optional(),
+  /**
+   * The environment every ffmpeg child gets (S4): main's `engineEnv` allowlist.
+   * The engine never reads the process environment, so it arrives here; the
+   * engine filters it through the allowlist once more. Absent, a child inherits
+   * its parent's environment (tests and tools only).
+   */
+  ffmpegEnv: z.record(z.string().max(256), z.string().max(32_768)).optional(),
   settings: EngineSettings,
   encryptionAvailable: z.boolean(),
   /** A mock OpenRouter for end-to-end tests; honoured only by an E2E build (invariant 13). */

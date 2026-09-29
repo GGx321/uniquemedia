@@ -197,6 +197,8 @@ async function startStudio(): Promise<void> {
       defaultExportPath: defaultSettings(userData).exportPath,
       rawDir: join(userData, RAW_DIR),
       renderTmpDir: join(userData, RENDER_TMP_DIR),
+      // The same allowlist the engine process itself was forked with (S4): the engine never reads its environment.
+      ffmpegEnv: engineEnv(process.env),
       settings: settings.current,
       encryptionAvailable: keys.status().encryptionAvailable,
       openRouterBaseUrl: openRouterBaseUrlForTests(),

@@ -69,4 +69,12 @@ describe("EngineInit.defaultExportPath", () => {
   test.each(["", "render-tmp", "../render-tmp"])("renderTmpDir refuses %p, which is not absolute", (renderTmpDir) => {
     expect(EngineInit.safeParse({ ...base, renderTmpDir }).success).toBe(false);
   });
+
+  test("ffmpegEnv is optional, and accepts a record of strings", () => {
+    expect(EngineInit.safeParse({ ...base, ffmpegEnv: { PATH: "/usr/bin", TMPDIR: "/tmp" } }).success).toBe(true);
+  });
+
+  test("ffmpegEnv refuses a value that is not a string", () => {
+    expect(EngineInit.safeParse({ ...base, ffmpegEnv: { PATH: 1 } }).success).toBe(false);
+  });
 });
