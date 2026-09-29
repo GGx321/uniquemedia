@@ -14,22 +14,32 @@
  * which only this script sets, and the rest of the suite stays deterministic.
  *
  * The retry (at most 3 attempts) fires ONLY when the output shows the Bun
- * crash and no `(fail)` line: a real test failure fails the step at once and is
- * never retried into a pass.
+ * crash and no failed test (no `(fail)` line, no red cross, no `N fail`
+ * summary with N above zero; the child also runs with colour off): a real test
+ * failure fails the step at once and is never retried into a pass.
  */
 export const REAL_WORKER_TEST_FILE = "studio/engine/face/worker/workerGate.real.test.ts";
 export const MAX_ATTEMPTS = 3;
 
-/** True when `output` shows Bun crashing itself and not a single failed test. */
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+/** True when `output` shows Bun crashing itself and not a single failed test. A failure is read three ways, so colour cannot hide one: the literal `(fail)` line, a red cross, and a `N fail` summary with N above zero. */
 export function isBunCrashOnly(output: string): boolean {
-  const crashed = /Bun has crashed|Segmentation fault|^panic:/m.test(output);
-  const failedATest = /^\(fail\)/m.test(output);
+  const plain = output.replace(ANSI, "");
+  const crashed = /Bun has crashed|Segmentation fault|^panic:/m.test(plain);
+  const failedATest = /^\s*\(fail\)|^\s*✗/m.test(plain) || /^\s*[1-9]\d*\s+fail\b/m.test(plain);
   return crashed && !failedATest;
+}
+
+/** The child's environment: colour off (FORCE_COLOR dropped), so a failure prints as the literal `(fail)` this file's detector reads, and the real-worker tests enabled. */
+export function childEnv(parent: Readonly<Record<string, string | undefined>>): Record<string, string | undefined> {
+  const { FORCE_COLOR: _dropped, ...rest } = parent;
+  return { ...rest, NO_COLOR: "1", STUDIO_REAL_WORKER_TESTS: "1" };
 }
 
 async function runOnce(): Promise<{ exitCode: number; output: string }> {
   const child = Bun.spawn([process.execPath, "--no-env-file", "test", REAL_WORKER_TEST_FILE], {
-    env: { ...process.env, STUDIO_REAL_WORKER_TESTS: "1" },
+    env: childEnv(process.env),
     stdout: "pipe",
     stderr: "pipe",
   });
