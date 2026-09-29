@@ -99,8 +99,8 @@ export class FfmpegError extends Error {
   readonly exitCode: number | null;
   readonly stderrTail: string;
 
-  constructor(message: string, exitCode: number | null, stderrTail: string) {
-    super(message);
+  constructor(message: string, exitCode: number | null, stderrTail: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "FfmpegError";
     this.exitCode = exitCode;
     this.stderrTail = stderrTail;
@@ -111,8 +111,8 @@ export class FfmpegError extends Error {
 export class FfmpegTimeoutError extends FfmpegError {
   readonly timeoutMs: number;
 
-  constructor(timeoutMs: number, stderrTail: string) {
-    super(`ffmpeg timed out after ${timeoutMs} ms and was killed`, null, stderrTail);
+  constructor(timeoutMs: number, stderrTail: string, options?: ErrorOptions) {
+    super(`ffmpeg timed out after ${timeoutMs} ms and was killed`, null, stderrTail, options);
     this.name = "FfmpegTimeoutError";
     this.timeoutMs = timeoutMs;
   }

@@ -143,8 +143,8 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
       await run({ argv: job.argv, output: job.output, signal, timeoutMs: remaining, onFrames: options.onFrames, ...(options.cwd === undefined ? {} : { cwd: options.cwd }) });
     } catch (error) {
       // The tail may name the user's folders and files; what reaches the job's error says <tmp>, <export>, <photo>... instead.
-      if (error instanceof FfmpegTimeoutError) throw Object.assign(new FfmpegTimeoutError(budgetMs, scrubStderrTail(scrub, error.stderrTail)), { cause: error });
-      if (error instanceof FfmpegError) throw Object.assign(new FfmpegError(scrub(error.message), error.exitCode, scrubStderrTail(scrub, error.stderrTail)), { cause: error });
+      if (error instanceof FfmpegTimeoutError) throw new FfmpegTimeoutError(budgetMs, scrubStderrTail(scrub, error.stderrTail), { cause: error });
+      if (error instanceof FfmpegError) throw new FfmpegError(scrub(error.message), error.exitCode, scrubStderrTail(scrub, error.stderrTail), { cause: error });
       // Anything else that is not the cancel itself (whose reason must come out as it is) is a plain error: a spawn error names the binary's path.
       if (error instanceof Error && !signal.aborted && error !== listenerError) throw scrubbedCopy(error);
       throw error;

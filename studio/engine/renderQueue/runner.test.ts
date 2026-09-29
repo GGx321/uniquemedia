@@ -395,6 +395,34 @@ describe("runRenderJob: the user's input paths stay out of the error", () => {
     expect(error.stderrTail).toBe("Error opening input file <photo>: No such file or directory\n");
   });
 
+  test("the raw error is kept as a non-enumerable cause: serialising the scrubbed error shows no raw path", async () => {
+    const r = rig();
+    const photo = r.input.resolvePhoto({ source: "scene", photoId: "photo-a" })?.path ?? "";
+    const { deps } = depsWith(failWith(`Error opening input file ${photo}\n`));
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof FfmpegError)) throw error;
+    expect(JSON.stringify(error)).not.toContain(dirname(r.tmpRoot));
+    expect(Object.keys(error)).not.toContain("cause");
+    expect(error.cause instanceof FfmpegError && error.cause.stderrTail).toContain(photo); // the raw one, for the log
+  });
+
+  test("a timeout's copy keeps its raw cause out of serialisation too", async () => {
+    const r = rig();
+    const clock = { now: 0 };
+    const run = (): Promise<void> => {
+      clock.now += 1;
+      return Promise.reject(new FfmpegTimeoutError(5, `writing ${r.output}`));
+    };
+
+    const error = await runRenderJob(r.input, { run, now: () => clock.now }).catch((e: unknown) => e);
+
+    if (!(error instanceof FfmpegTimeoutError)) throw error;
+    expect(JSON.stringify(error)).not.toContain(r.exportDir);
+    expect(error.cause).toBeInstanceOf(FfmpegTimeoutError);
+  });
+
   test("an overlay's path in ffmpeg's error reaches the job as <overlay>", async () => {
     const r = rig();
     const overlayPath = join(dirname(r.tmpRoot), "stickers", "star.png");
