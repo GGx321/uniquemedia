@@ -305,8 +305,11 @@ describe("detect (S8): the largest face's box, no embedding", () => {
   });
 
   test("a worker that answers a detect with a check verdict is a protocol violation, not a face", async () => {
-    const { gate } = harness();
-    await expect(gate.detect(script(Behaviour.wrongKind), live())).rejects.toThrow(/unexpected/);
+    const h = harness();
+    await expect(h.gate.detect(script(Behaviour.wrongKind), live())).rejects.toThrow(/unexpected/);
+    expect(h.alive()).toBe(0); // the worker that broke the contract is terminated, not kept
+    expect((await h.gate.detect(script(Behaviour.ok), live())).face).not.toBeNull(); // and the next detect starts a fresh one
+    expect(h.spawned()).toBe(2);
   });
 });
 

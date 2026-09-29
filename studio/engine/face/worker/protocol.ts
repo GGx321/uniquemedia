@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_DECODE_PIXELS } from "../../decode/wasmDecode";
 import { FaceGateConfigSchema, FacePoseSchema } from "../config";
 import type { FaceVerdict } from "../verdict";
 
@@ -65,6 +66,11 @@ export const FaceVerdictSchema = z.discriminatedUnion("kind", [
 /** A face box in SOURCE-image pixels (the worker scales it back from the normalised image it detected on). It may reach past the image edge a little: YuNet boxes do. */
 const FaceBoxSchema = z.strictObject({ x: finite, y: finite, width: finite.positive(), height: finite.positive() });
 
+/** YuNet boxes may overhang an edge, but a box that misses the image entirely, or dwarfs it, is not a face found in it. */
+function faceTouchesImage(box: { x: number; y: number; width: number; height: number }, image: { width: number; height: number }): boolean {
+  return box.x < image.width && box.x + box.width > 0 && box.y < image.height && box.y + box.height > 0 && box.width <= 4 * image.width && box.height <= 4 * image.height;
+}
+
 /** Worker -> engine. `failed.code` tells the one expected failure (a reference with no face) apart from everything else, which is systemic. */
 export const FaceWorkerResponseSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ready") }),
@@ -72,7 +78,10 @@ export const FaceWorkerResponseSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("checked"), id: RequestId, verdict: FaceVerdictSchema }),
   z.strictObject({ type: z.literal("embedded"), id: RequestId, embedding: Embedding }),
   /** `width`/`height` are the decoded source image's, so the engine can turn the box into fractions without a second decode. */
-  z.strictObject({ type: z.literal("detected"), id: RequestId, width: z.number().int().positive(), height: z.number().int().positive(), face: FaceBoxSchema.nullable() }),
+  z
+    .strictObject({ type: z.literal("detected"), id: RequestId, width: z.number().int().positive(), height: z.number().int().positive(), face: FaceBoxSchema.nullable() })
+    .refine((r) => r.width * r.height <= MAX_DECODE_PIXELS, { message: `an image is at most ${MAX_DECODE_PIXELS} pixels`, path: ["width"] })
+    .refine((r) => r.face === null || faceTouchesImage(r.face, r), { message: "a face box must overlap the image it was found in and be no more than 4x its size", path: ["face"] }),
   z.strictObject({ type: z.literal("failed"), id: RequestId, code: z.enum(["no-face-in-reference", "error"]), message: Message }),
 ]);
 export type FaceWorkerResponse = z.infer<typeof FaceWorkerResponseSchema>;

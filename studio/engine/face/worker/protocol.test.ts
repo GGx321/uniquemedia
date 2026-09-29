@@ -113,6 +113,28 @@ describe("detect (S8: the focus point of a placed photo)", () => {
     expect(FaceWorkerResponseSchema.safeParse(detected({ face: { ...face, height: -4 } })).success).toBe(false);
   });
 
+  test("accepts a box that overhangs the image edge but still overlaps it", () => {
+    expect(FaceWorkerResponseSchema.safeParse(detected({ face: { x: -10, y: -10, width: 30, height: 30 } })).success).toBe(true);
+  });
+
+  test.each([
+    ["entirely to the right", { x: 100, y: 20, width: 30, height: 40 }],
+    ["entirely to the left", { x: -30, y: 20, width: 30, height: 40 }],
+    ["entirely below", { x: 10, y: 200, width: 30, height: 40 }],
+    ["entirely above", { x: 10, y: -40, width: 30, height: 40 }],
+  ])("rejects a box %s of the image it was detected in", (_where, box) => {
+    expect(FaceWorkerResponseSchema.safeParse(detected({ face: box })).success).toBe(false);
+  });
+
+  test("rejects an image size past the decoder's pixel cap", () => {
+    expect(FaceWorkerResponseSchema.safeParse(detected({ width: 5_000, height: 5_000 })).success).toBe(false);
+    expect(FaceWorkerResponseSchema.safeParse(detected({ width: 4_096, height: 4_096 })).success).toBe(true);
+  });
+
+  test("rejects a box larger than the image could hold", () => {
+    expect(FaceWorkerResponseSchema.safeParse(detected({ face: { x: 0, y: 0, width: 1_000_000, height: 30 } })).success).toBe(false);
+  });
+
   test("rejects a face box with an unknown field", () => {
     expect(FaceWorkerResponseSchema.safeParse(detected({ face: { ...face, score: 0.9 } })).success).toBe(false);
   });
