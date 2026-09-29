@@ -5,7 +5,7 @@ import { z } from "zod";
 import { ffmpegPath } from "../../../node/ffmpegBinary";
 import { probeJson, runBinary } from "../../render/ffmpeg.testkit";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
-import { musicLists, musicTracks, type MusicListFixture, type MusicTrackFixture } from "./index";
+import { cdnHostPatterns, musicLists, musicTracks, type MusicListFixture, type MusicTrackFixture } from "./index";
 useNativeGlobals();
 
 // Lenient on purpose, like the 3c.3 schema will be: only `id` is required.
@@ -113,7 +113,7 @@ describe("music fixtures: lists", () => {
     for (const f of Object.values(musicLists)) {
       const hosts = new Set(readList(f).response.items.map((i) => new URL(i.track.progressive_download_url ?? "").host));
       expect([...hosts].sort()).toEqual([...f.downloadHosts].sort());
-      for (const h of hosts) expect(/^instagram\.[a-z0-9-]+\.fna\.fbcdn\.net$|^scontent-[a-z0-9-]+\.cdninstagram\.com$/.test(h)).toBe(true);
+      for (const h of hosts) expect(cdnHostPatterns.some((p) => p.test(h))).toBe(true);
     }
     for (const f of Object.values(musicLists)) {
       for (const i of readList(f).response.items) {
@@ -142,7 +142,7 @@ describe("music fixtures: lists", () => {
 
 describe("music fixtures: tracks", () => {
   test.each(Object.entries(musicTracks))("%s is HE-AAC stereo at its indexed sample rate and length", async (_name, f) => {
-    const probed = await probeJson(f.file, ["-show_entries", "stream=codec_name,profile,sample_rate,channels,duration:format=duration"]);
+    const probed = await probeJson(f.file, ["-show_entries", "stream=codec_name,profile,sample_rate,channels,duration:format=duration:format_tags:stream_tags"]);
     const stream = probed.streams[0];
     expect(probed.streams).toHaveLength(1);
     expect(stream?.codec_name).toBe("aac");
@@ -150,8 +150,11 @@ describe("music fixtures: tracks", () => {
     expect(stream?.channels).toBe(2);
     expect(Number(stream?.sample_rate)).toBe(f.sampleRate);
     expect(Math.abs(Number(stream?.duration) * 1000 - f.durationMs)).toBeLessThan(15);
-    expect(probed.format.tags?.title).toBeUndefined();
-    expect(probed.format.tags?.artist).toBeUndefined();
+    const tagKeys = Object.keys(probed.format.tags ?? {});
+    expect(tagKeys.length).toBeGreaterThan(0); // proves the tag query itself works
+    for (const key of tagKeys) expect(["major_brand", "minor_version", "compatible_brands", "encoder"]).toContain(key);
+    for (const key of ["title", "artist", "album", "comment"]) expect(tagKeys).not.toContain(key);
+    expect(Object.keys(stream?.tags ?? {}).filter((k) => ["title", "artist", "album", "comment"].includes(k))).toEqual([]);
   });
 
   test.each(Object.entries(musicTracks))("%s keeps its measured true peak and comes from a track in a list", async (_name, f) => {

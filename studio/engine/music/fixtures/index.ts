@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 
 const here = (relative: string): string => fileURLToPath(new URL(relative, import.meta.url));
 
+/** The two download-host patterns of invariant 31 (label-boundary, lowercase); 3c.4 imports these. */
+export const cdnHostPatterns: readonly RegExp[] = [/^scontent-[a-z0-9]+-[0-9]+\.cdninstagram\.com$/, /^instagram\.[a-z0-9]+-[0-9]+\.fna\.fbcdn\.net$/];
+
 export interface MusicListFixture {
   readonly file: string;
   readonly bytes: number;

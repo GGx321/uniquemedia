@@ -21,20 +21,21 @@ RapidAPI key (the key travels in a request header, which was never stored); the 
 for it anyway.
 
 **The signed CDN URLs (`oh=`, `oe=`) are left in.** They expired about 104 to 108 hours
-after the capture (2026-09-27), so they grant nothing. The `oe=` values are still useful as
+after the capture (2026-09-27), so they grant nothing. The `_nc_gid` parameter in them is a CDN session id of flashapi's requester, not the owner's,
+and it expired with the URLs. The `oe=` values are still useful as
 real-world input for the expiry parser.
 
 | File | Edge | Items | Notable |
 | --- | --- | --- | --- |
 | `list-2026-09-27T2042Z-kyiv.json` | `instagram.fkiv8-1.fna.fbcdn.net` | 30 | 4 items without `ig_username`/`artist_id`, 8 explicit, 17 with unsorted highlights |
-| `list-2026-09-27T2151Z-frankfurt.json` | `scontent-fra{3,5}-{1,2}.cdninstagram.com` | 30 | 3 items without `ig_username`/`artist_id`, 10 explicit, 19 with unsorted highlights |
+| `list-2026-09-27T2151Z-frankfurt.json` | `scontent-fra3-{1,2}.cdninstagram.com` (downloads; `fra5` appears only in previews and covers) | 30 | 3 items without `ig_username`/`artist_id`, 10 explicit, 19 with unsorted highlights |
 
 Together the lists hold the 7 items lacking `ig_username`/`artist_id`, the explicit ones,
 the two CDN host patterns, `1500` as a highlight, and no `is_trending_in_clips`.
 
 ## Tracks (`tracks/`)
 
-HE-AAC (`mp4a.40.5`) stereo in MP4, as the API delivers it (`-c copy`, tags dropped). The
+HE-AAC (`mp4a.40.5`) stereo in MP4, as the API delivers it (`-c copy`; the source tags are dropped, only the container brands and `encoder=Lavf60.3.100` from the cut remain). The
 true peaks and loudness were measured on the excerpts themselves with ffmpeg
 `ebur128=peak=true`, because invariant 21 measures the clip segment, not the whole track.
 
