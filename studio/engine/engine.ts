@@ -88,7 +88,10 @@ import { configureFfmpegEnv } from "../node/ffmpegEnv";
 import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
 import { maskHome } from "./renderQueue/scrubber";
-import { sweepRenderTmp } from "./renderQueue/sweep";
+import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
+import { CommitTracker } from "./videos/live";
+import { FileStateChecker } from "./videos/fileState";
+import { VideoService, type VideoServiceDeps } from "./videos/service";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -174,7 +177,20 @@ export interface EngineDeps {
    * Nothing reads it yet.
    */
   textLoadError?: string;
+  /**
+   * The face worker's gate as the focus resolver uses it (`videos.render` fills every missing focus point, S8). Absent
+   * or null: every cell takes the stand-in point, and the render goes on (a focus never blocks a render).
+   */
+  faceGate?: FocusFaceGate | null;
+  /** Test seams of the video pipeline: the focus resolver, ffmpeg and the commit's steps, recovery, the stale-index retry. */
+  videos?: Partial<Pick<VideoServiceDeps, "fs" | "focus" | "renderOverrides" | "recover" | "staleRetryDelaysMs">>;
 }
+
+/** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
+export const RENDER_FOCUS_BUDGET_MS = 15_000;
+
+/** How long the engine waits, when it is told to stop, for renders to end (a commit past its claim finishes in a few flushes). Under main's own bound on that wait. */
+export const SHUTDOWN_RENDER_WAIT_MS = 5_000;
 
 /** Local work in flight at once: the cores but one for the engine's own event loop, at most 4, at least 1. */
 export function defaultCpuPoolSize(): number {
@@ -401,8 +417,8 @@ export class Engine {
   #exportStatus: ExportStatus = { status: "ok" };
   /** The export checks run one at a time in the order asked (a fresh folder's marker is written by one of them, never raced), so a slow older one cannot overwrite a newer one. */
   #exportChain: Promise<unknown> = Promise.resolve();
-  /** The latest queued check that has not started yet and carries no size estimate; later callers without one join it. */
-  #queuedExport: Promise<ExportRootCheck> | null = null;
+  /** The latest queued check that has not started yet, with the size estimate it carries (or none); a later caller asking for exactly the same joins it. */
+  #queuedExport: { readonly run: Promise<ExportRootCheck>; readonly requiredBytes: number | undefined } | null = null;
   readonly #exportCheckTimeoutMs: number;
   readonly #preflight: (signal: AbortSignal) => Promise<void>;
   readonly #preflightTimeoutMs: number;
@@ -488,9 +504,14 @@ export class Engine {
   readonly #jobs = new JobRegistry();
   /**
    * The render queue (3a.6): a pool over `#jobs`, sized from the settings.
-   * `videos.render` (3a.8b) submits to it; nothing else does yet.
+   * `videos.render` submits to it through `#videos`.
    */
   readonly #renders: RenderQueue;
+  /** The video commands, the queue's events as `job.*` and `video.changed`, recovery and the stop (3a.8b.2). */
+  readonly #videos: VideoService;
+  /** The renders' commits in flight: shared by every render's `execute` and by recovery, so recovery never touches a live commit. */
+  readonly #commits = new CommitTracker();
+  readonly #focusResolvers = new WeakMap<Library, FocusResolver>();
   /**
    * Avatars a running job or command is changing: a candidate job holds its
    * draft until it ends, pick and archive while they write. Anything else
@@ -524,6 +545,28 @@ export class Engine {
       jobs: this.#jobs,
       // Read at every start, so a settings change applies to the next job.
       size: () => renderPoolSize(this.#settings.renderConcurrency, { cores: availableParallelism(), totalMem: totalmem() }),
+      // Events carry a job's state and result, never the error's `cause` (raw, with the owner's paths).
+      onEvent: (event) => this.#videos.onQueueEvent(event),
+      onListenerError: (error) => this.#videos.onListenerError(error),
+    });
+    this.#videos = new VideoService({
+      queue: this.#renders,
+      tracker: this.#commits,
+      checker: new FileStateChecker(),
+      withLibrary: (work) => this.#withLiveLibrary(work),
+      openLibrary: () => this.library,
+      checkExport: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
+      caseProbe: this.#caseProbe,
+      focus: deps.videos?.focus ?? ((library) => this.#focusOf(library)),
+      renderTmpDir: init.renderTmpDir,
+      newId: deps.newId,
+      now: () => new Date(deps.clock()),
+      emit: (event) => this.#emit(event),
+      log: (line) => console.warn(`studio engine: ${line}`),
+      ...(deps.videos?.fs === undefined ? {} : { fs: deps.videos.fs }),
+      ...(deps.videos?.renderOverrides === undefined ? {} : { renderOverrides: deps.videos.renderOverrides }),
+      ...(deps.videos?.recover === undefined ? {} : { recover: deps.videos.recover }),
+      ...(deps.videos?.staleRetryDelaysMs === undefined ? {} : { staleRetryDelaysMs: deps.videos.staleRetryDelaysMs }),
     });
     this.#pendingLibraryPath = init.settings.libraryPath;
     this.#encryptionAvailable = init.encryptionAvailable;
@@ -571,14 +614,7 @@ export class Engine {
       money = { ok: false, unavailable: ledgerUnavailable(error) };
     }
     const engine = new Engine(init, money, caps, deps);
-    // Before any job can run: at start no render is running, so whatever is in
-    // render-tmp is a crash's leftover. Tolerant: a locked file is skipped (the
-    // next start gets it), and nothing here stops the engine.
     if (init.ffmpegEnv !== undefined) configureFfmpegEnv(init.ffmpegEnv);
-    if (init.renderTmpDir !== undefined) {
-      const swept = await sweepRenderTmp(init.renderTmpDir);
-      for (const { code } of swept.skipped) console.warn(`studio engine: a leftover in render-tmp could not be removed (${code}); the next start tries again`);
-    }
     // First run: the default folder does not exist yet. Only the default is
     // created; a folder the user chose may be a volume that is not mounted.
     if (init.settings.libraryPath === init.defaultLibraryPath) {
@@ -587,9 +623,28 @@ export class Engine {
       });
     }
     engine.#live = await engine.#openOrNull(init.settings.libraryPath);
-    await engine.#refreshExportStatus();
+    const exportCheck = await engine.#refreshExportStatus();
     for (const notice of init.notices) engine.#addNotice(notice);
+    // In the BACKGROUND, never awaited (main's start deadline is 30 s, a locked leftover costs a second and a hung export
+    // drive costs as long as it likes): the render-tmp sweep (which leaves the folder of a job that is running) and
+    // the recovery of the crash windows of the open library. A render started meanwhile is safe: it registers in the same
+    // tracker recovery reads, and recovery holds the export root's lock a commit needs.
+    engine.#videos.startup(engine.#live?.library ?? null, exportCheck);
     return engine;
+  }
+
+  /** Resolves once the background work of the start and of library switches is done (recovery, the render-tmp sweep). Tests wait on it; nothing else does. */
+  settled(): Promise<void> {
+    return this.#videos.settled();
+  }
+
+  /**
+   * Stops the engine's work before its process ends (the app quits, main's `engine.shutdown` call): no render is
+   * accepted, every queued and running render is cancelled, and a bounded wait lets a commit that is past its claim
+   * finish, so its file, record and used mark are complete and nothing is left for the next start to settle.
+   */
+  shutdown(waitMs: number = SHUTDOWN_RENDER_WAIT_MS): Promise<{ idle: boolean }> {
+    return this.#videos.shutdown(waitMs);
   }
 
   /**
@@ -708,6 +763,8 @@ export class Engine {
         const beforeIdentity = this.#live?.identity ?? null;
         if (staged.identity !== beforeIdentity) this.#librarySwitchGeneration++;
         this.#live = staged;
+        // A different library is live: settle its crash windows in the background (never awaited here).
+        if (staged.identity !== beforeIdentity) this.#videos.libraryOpened(staged.library);
         this.#settings = { ...this.#settings, libraryPath: call.path };
         this.#pendingLibraryPath = call.path;
         // Every other folder still staged (candidates main gave up on) is
@@ -718,6 +775,10 @@ export class Engine {
         // there without a fresh pick would be surprising, not a convenience.
         this.#importStaging = null;
         this.#emitSettings();
+        return { kind: "control", type: "reply", callId: call.callId };
+      }
+      case "engine.shutdown": {
+        await this.shutdown();
         return { kind: "control", type: "reply", callId: call.callId };
       }
       case "import.stagePhoto": {
@@ -1032,16 +1093,42 @@ export class Engine {
       }
       case "photos.setRejected":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#setRejected(command.payload) };
-      case "videos.render": {
-        // Invariant 35: refused up front, free, before anything else about the render is looked at.
-        const check = await this.#refreshExportStatus();
-        if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
-        // The queue, the montage checks and the size estimate arrive with the render tasks (3a.6 to 3a.8b).
-        return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
-      }
+      case "videos.render":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.render(command.payload) };
+      case "videos.cancel":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: this.#videos.cancel(command.payload.jobId) };
+      case "videos.list":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { videos: await this.#videos.list(command.payload.avatarId) } };
+      case "videos.delete":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.delete(command.payload.videoId) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
+  }
+
+  /**
+   * Runs `work` with the live library, counted as a small write like `#setRejected`: a library switch waits for it, so
+   * the library a render's checks ran against is the one the render is queued in. Refuses like every write does
+   * (LIBRARY_UNAVAILABLE, IN_FLIGHT during a switch).
+   */
+  async #withLiveLibrary<T>(work: (library: Library) => Promise<T>): Promise<T> {
+    // Counted before the first await, so a library switch cannot slip in while the library is being re-verified.
+    this.#librarySmallWrites++;
+    try {
+      return await work(await this.#liveLibrary());
+    } finally {
+      this.#librarySmallWrites--;
+    }
+  }
+
+  /** The focus resolver of a library, kept for its life (it holds the in-flight computations and the cache), with a fill budget that fits main's command deadline. */
+  #focusOf(library: Library): Pick<FocusResolver, "fillMissingFocus"> {
+    let resolver = this.#focusResolvers.get(library);
+    if (resolver === undefined) {
+      resolver = createFocusResolver({ library, faceGate: this.#deps.faceGate ?? null, fillBudgetMs: RENDER_FOCUS_BUDGET_MS });
+      this.#focusResolvers.set(library, resolver);
+    }
+    return resolver;
   }
 
   /**
@@ -1503,16 +1590,18 @@ export class Engine {
    * logged and read as not writable, so neither start nor a render can hang on it.
    */
   #refreshExportStatus(requiredBytes?: number): Promise<ExportRootCheck> {
-    // A check still waiting its turn reads the settings only when it starts, so a caller with no size
-    // estimate can share it: N attempts on a mute volume cost one timeout and one hung call, not N.
-    if (requiredBytes === undefined && this.#queuedExport !== null) return this.#queuedExport;
+    // A check still waiting its turn reads the settings only when it starts, so a caller that wants exactly what it
+    // wants (the same size estimate, or none) can share it: N attempts on a mute volume cost one timeout and one hung
+    // call, not N. A different estimate is a different question (free space), so it never joins.
+    const queued = this.#queuedExport;
+    if (queued !== null && queued.requiredBytes === requiredBytes) return queued.run;
     const run: Promise<ExportRootCheck> = this.#exportChain.then(() => {
-      if (this.#queuedExport === run) this.#queuedExport = null;
+      if (this.#queuedExport?.run === run) this.#queuedExport = null;
       return this.#checkExportOnce(requiredBytes);
     });
     // Whatever `run` does, the chain goes on: one failure must not wedge every later check.
     this.#exportChain = run.catch(() => undefined);
-    if (requiredBytes === undefined) this.#queuedExport = run;
+    this.#queuedExport = { run, requiredBytes };
     return run;
   }
 
@@ -2466,6 +2555,8 @@ export class Engine {
         // must not spend a staged photo's one chance on a transient outage.
         if (live !== null) this.#importStaging = null;
         this.#live = live;
+        // A different library is live: settle its crash windows in the background (never awaited here).
+        if (live !== null && live.identity !== beforeIdentity) this.#videos.libraryOpened(live.library);
       }
       this.#settings = { ...this.#settings, libraryPath: next.libraryPath };
     }

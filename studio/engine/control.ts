@@ -132,6 +132,13 @@ export const HostCall = z.discriminatedUnion("type", [
     callId: Id,
     bytes: z.instanceof(Uint8Array).refine((b) => b.byteLength <= MAX_IMPORT_PHOTO_BYTES, `must be at most ${MAX_IMPORT_PHOTO_BYTES} bytes`),
   }),
+  /**
+   * The app is quitting (main's `will-quit`), and its engine process is about to be killed. The engine stops accepting
+   * renders, cancels every queued and running one (an orphaned ffmpeg would keep writing into the export folder with
+   * no timeout), and waits a bounded while so a commit already past its claim can finish, then replies. Main bounds its
+   * own wait on the reply and kills the process either way; whatever is left, the next start's recovery settles.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("engine.shutdown"), callId: Id }),
 ]);
 export type HostCall = z.infer<typeof HostCall>;
 

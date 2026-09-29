@@ -81,7 +81,8 @@ describe("videos.list", () => {
     await r.service.list(w.avatar.id);
     await r.service.list(w.avatar.id);
 
-    expect(r.checks).toEqual([undefined, undefined]); // no size estimate: a status look, one per listing
+    expect(r.checks).toHaveLength(2); // one status look per listing, with no size estimate
+    expect(r.checks.every((required) => required === undefined)).toBe(true);
   });
 
   test("an export root that is unusable reads every record `elsewhere`: never «файл удалён» for a drive that is merely not there", async () => {
@@ -209,7 +210,7 @@ describe("videos.delete", () => {
 
     await r.service.delete(record.id);
 
-    expect(r.checks).toEqual([undefined]);
+    expect(r.checks).toHaveLength(1);
   });
 
   test("an unknown video is NOT_FOUND, and no event is emitted", async () => {

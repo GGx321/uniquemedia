@@ -48,6 +48,8 @@ function init(overrides: Partial<EngineInit> = {}): EngineInit {
     ledgerPath: join(dir, "ledger.jsonl"),
     defaultLibraryPath: join(dir, "userData", "library"),
     rawDir: join(dir, "userData", "raw"),
+    // As main passes it: a render is refused without one.
+    renderTmpDir: join(dir, "userData", "render-tmp"),
     settings: {
       monthlyBudgetMicros: 10_000_000,
       libraryPath: join(dir, "library"),
@@ -1971,21 +1973,27 @@ describe("money.reconcile", () => {
   });
 });
 
-// Stage 3 task 3a.1 adds the montage and video commands to the contract; the engine behind them lands in later
-// tasks. Until then each answers a typed refusal (like any command the engine does not implement yet) and the
-// engine stays usable: nothing crashes, nothing is stored, nothing is spent.
+/**
+ * A render request that is valid in shape (one 4 s photo clip) for an avatar that need not exist: what the export-folder
+ * tests below send, since `videos.render` looks at the export folder before anything else about a well-formed spec.
+ */
+const RENDER_ATTEMPT = {
+  schemaVersion: 1,
+  avatarId: "avatar-0001",
+  layers: [],
+  music: null,
+  seed: 1,
+  clips: [{ clipId: "clip-00000001", kind: "photo", cell: { photo: { source: "scene", photoId: "photo-00000001" }, focus: null }, motion: "static", durationMs: 4000, transitionIn: "cut" }],
+};
+
+// The montage commands come with 3d.1a; until then `montages.create` answers a typed refusal (like any command the
+// engine does not implement yet) and the engine stays usable: nothing crashes, nothing is stored, nothing is spent.
+// The `videos.*` commands are real since 3a.8b.2 (engine.videos.test.ts).
 describe("Stage 3 commands before their tasks land", () => {
   const AVATAR = "avatar-0001";
-  const unbuilt: [string, unknown][] = [
-    ["videos.render", { montageId: "montage-00000001" }],
-    ["videos.cancel", { jobId: "job-00000004" }],
-    ["videos.list", { avatarId: AVATAR }],
-    ["videos.delete", { videoId: "video-00000001" }],
-    ["montages.create", { avatarId: AVATAR, photoIds: [] }],
-  ];
+  const unbuilt: [string, unknown][] = [["montages.create", { avatarId: AVATAR, photoIds: [] }]];
 
   test.each(unbuilt)("%s answers a typed refusal instead of throwing", async (type, payload) => {
-    // A render is checked against the export folder first (task 3a.8a); give it a usable one.
     await mkdir(join(dir, "export"));
     const { engine } = await startEngine();
     const response = await engine.handle(command(type, payload));
@@ -1994,12 +2002,11 @@ describe("Stage 3 commands before their tasks land", () => {
     expect(response.ok ? "" : response.error.detail).toContain("not implemented yet");
   });
 
-  test("videos.render with a spec is refused the same way, and refuses nothing else", async () => {
+  test("videos.render with a montageId is NOT_FOUND until drafts exist (3d.1a)", async () => {
     await mkdir(join(dir, "export"));
     const { engine } = await startEngine();
-    const spec = { schemaVersion: 1, avatarId: AVATAR, clips: [], layers: [], music: null, seed: 1 };
-    const response = await engine.handle(command("videos.render", { spec }));
-    expect(response).toMatchObject({ ok: false, type: "videos.render", error: { code: "INTERNAL" } });
+    const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    expect(response).toMatchObject({ ok: false, type: "videos.render", error: { code: "NOT_FOUND" } });
   });
 
   test("main-only videos.reveal never reaches the engine: its schema does not know it", async () => {
@@ -2128,7 +2135,7 @@ describe("the export folder's status (task 3a.8a)", () => {
 
   test("videos.render is refused up front with EXPORT_UNAVAILABLE and the reason when the folder is gone", async () => {
     const { engine, posted } = await startEngine();
-    const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    const response = await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     expect(response).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
     expect(ResponseMessage.safeParse(response).success).toBe(true);
     expect(posted.some((m) => JSON.stringify(m).includes("job.progress"))).toBe(false);
@@ -2140,14 +2147,14 @@ describe("the export folder's status (task 3a.8a)", () => {
     expect(await statusNow(engine)).toEqual({ status: "ok" });
     await rm(join(dir, "export"), { recursive: true });
     expect(await statusNow(engine)).toEqual({ status: "ok" });
-    await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "missing" });
   });
 
   test("with a usable folder a render attempt gets past the export check", async () => {
     await mkdir(join(dir, "export"));
     const { engine } = await startEngine();
-    const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    const response = await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     expect(response).not.toMatchObject({ error: { code: "EXPORT_UNAVAILABLE" } });
   });
 
@@ -2155,7 +2162,7 @@ describe("the export folder's status (task 3a.8a)", () => {
     await mkdir(join(dir, "export"));
     await writeFile(join(dir, "export", MARKER), "[]");
     const { engine } = await startEngine();
-    const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    const response = await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     expect(response).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "invalid-marker" } });
     expect(await Bun.file(join(dir, "export", MARKER)).text()).toBe("[]");
   });
@@ -2163,7 +2170,7 @@ describe("the export folder's status (task 3a.8a)", () => {
   test("twenty renders attempted at once on a fresh default folder never see a half-written marker", async () => {
     const { engine } = await startEngine({ defaultExportPath: join(dir, "export") });
     await rm(join(dir, "export"), { recursive: true });
-    const responses = await Promise.all(Array.from({ length: 20 }, () => engine.handle(command("videos.render", { montageId: "montage-00000001" }))));
+    const responses = await Promise.all(Array.from({ length: 20 }, () => engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }))));
     expect(responses.filter((r) => !r.ok && r.error.code === "EXPORT_UNAVAILABLE")).toEqual([]);
     expect(await statusNow(engine)).toEqual({ status: "ok" });
   });
@@ -2193,10 +2200,10 @@ describe("the export folder's status (task 3a.8a)", () => {
       },
     };
     const { engine } = await startEngine({}, { exportRootFs });
-    const older = engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    const older = engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     await reached;
     await rm(join(dir, "export"), { recursive: true });
-    const newer = engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    const newer = engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     release();
     await Promise.all([older, newer]);
     expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "missing" });
@@ -2220,7 +2227,7 @@ describe("the export folder's status (task 3a.8a)", () => {
     const errors = spyOn(console, "error").mockImplementation(() => undefined);
     try {
       const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: 30 });
-      const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+      const response = await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
       expect(response).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
     } finally {
       errors.mockRestore();
@@ -2236,7 +2243,7 @@ describe("the export folder's status (task 3a.8a)", () => {
       const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: 40 });
       const before = stats;
       const started = Date.now();
-      const responses = await Promise.all(Array.from({ length: 10 }, () => engine.handle(command("videos.render", { montageId: "montage-00000001" }))));
+      const responses = await Promise.all(Array.from({ length: 10 }, () => engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }))));
       expect(responses.every((r) => !r.ok && r.error.code === "EXPORT_UNAVAILABLE")).toBe(true);
       expect(stats - before).toBe(1);
       expect(Date.now() - started).toBeLessThan(40 * 4);
@@ -2249,10 +2256,10 @@ describe("the export folder's status (task 3a.8a)", () => {
     await mkdir(join(dir, "export"));
     await mkdir(join(dir, "better"));
     const { engine } = await startEngine();
-    const before = engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    const before = engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, exportPath: join(dir, "better") } });
     await before;
-    await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     expect(await statusNow(engine)).toEqual({ status: "ok" });
     const marker = await Bun.file(join(dir, "better", MARKER)).exists();
     expect(marker).toBe(true);
@@ -2266,7 +2273,7 @@ describe("the export folder's status (task 3a.8a)", () => {
     try {
       const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: 30 });
       hang = false;
-      await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+      await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
       expect(await statusNow(engine)).toEqual({ status: "ok" });
     } finally {
       errors.mockRestore();
@@ -2290,9 +2297,9 @@ describe("the export folder's status (task 3a.8a)", () => {
     await mkdir(join(dir, "export"));
     const { engine } = await startEngine();
     await rm(join(dir, "export"), { recursive: true });
-    await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     await mkdir(join(dir, "export"));
-    await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
     expect(await statusNow(engine)).toEqual({ status: "ok" });
   });
 });

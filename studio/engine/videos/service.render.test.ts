@@ -69,7 +69,7 @@ describe("videos.render: the answer", () => {
 
     expect(error.code).toBe("NOT_FOUND");
     await expectNothingTouched(r);
-    expect(r.checks).toEqual([]);
+    expect(r.checks).toHaveLength(0);
   });
 
   test("an avatar the library does not have is NOT_FOUND", async () => {
@@ -99,7 +99,7 @@ describe("videos.render: the answer", () => {
     const error = await failureOf(r.service.render({ spec: specFor(w) }));
 
     expect(error.code).toBe("INTERNAL");
-    expect(r.checks).toEqual([]);
+    expect(r.checks).toHaveLength(0);
     await expectNothingTouched(r);
   });
 });
@@ -152,7 +152,7 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
 
     expect(error.code).toBe("MONTAGE_INVALID");
     expect(error.issues).toContainEqual({ code: "not-yet-supported", path: path.map((p) => (/^\d+$/.test(p) ? Number(p) : p)) });
-    expect(r.checks).toEqual([]);
+    expect(r.checks).toHaveLength(0);
     await expectNothingTouched(r);
   });
 

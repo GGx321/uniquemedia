@@ -25,13 +25,14 @@ import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery"
 // and the export check come in as dependencies, so each mapping is tested with a fake.
 //
 // `videos.render` is ONE step before `submit`, and nothing is claimed, reserved or written until `submit` answers ok:
-//   1. the spec's structure and N9 (pure);           2. the avatar;
-//   3. the export folder, checked afresh (invariant 35), its marker's id going into the plan;
-//   4. eligibility and used (invariant 18) through the library's own refusal-aware function, BEFORE any focus work;
-//   5. the focus is filled, under a budget;          6. eligibility again, synchronously, then the photos' files and
+//   1. the spec's structure and N9 (pure);
+//   2. the export folder, checked afresh (invariant 35), its marker's id going into the plan; then the avatar;
+//   3. eligibility and used (invariant 18) through the library's own refusal-aware function, BEFORE any focus work;
+//   4. the focus is filled, under a budget;          5. eligibility again, synchronously, then the photos' files and
 //      stored sizes, then `submit`, with no await between them: a photo rejected or taken while the focus was being
 //      computed is caught, and the reservation `submit` makes closes the window for the next render.
-// The whole step runs as a counted write on the library (`withLibrary`), so a library switch waits for it.
+// From the avatar on, the step runs as a counted write on the library (`withLibrary`), so a library switch waits for it.
+// (The export check is asked first, in the validation's own tick, so attempts made together share one check.)
 
 /** Renders the queue holds and the window may be told about; see `RenderQueueEvent`. */
 export type VideoQueue = Pick<RenderQueue, "submit" | "cancel" | "states" | "idle">;
@@ -156,17 +157,18 @@ export class VideoService {
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
     if (renderTmpDir === undefined) throw new EngineFailure({ code: "INTERNAL", detail: "no render folder is configured, so nothing can be rendered" });
-    return this.#deps.withLibrary((library) => this.#render(library, spec, renderTmpDir));
+    // Invariant 35: the export folder, checked NOW, before anything else about the render is looked at (a spec that is
+    // valid in shape gets this answer whatever else is wrong with it); its marker's id is the one the job commits against.
+    // Asked in the same tick as the validation, so attempts made together share one check (a mute drive costs one timeout).
+    const check = await this.#deps.checkExport(estimateBytesUpper(spec.clips));
+    if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
+    return this.#deps.withLibrary((library) => this.#render(library, spec, renderTmpDir, check));
   }
 
-  async #render(library: Library, spec: MontageDraft, renderTmpDir: string): Promise<{ jobId: string; videoId: string }> {
+  async #render(library: Library, spec: MontageDraft, renderTmpDir: string, check: Extract<ExportRootCheck, { ok: true }>): Promise<{ jobId: string; videoId: string }> {
     const deps = this.#deps;
     const avatar = library.getAvatar(spec.avatarId);
     if (avatar === undefined || avatar.status === "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${spec.avatarId} in the open library` });
-
-    // Invariant 35: the export folder, checked NOW; its marker's id is the one the job commits against.
-    const check = await deps.checkExport(estimateBytesUpper(spec.clips));
-    if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
 
     const cells = sceneCells(spec);
     this.#assertAvailable(library, spec.avatarId, cells);
@@ -399,8 +401,8 @@ export class VideoService {
   // ---------- the export root ----------
 
   /** The export root as it is right now (its marker read now), or null when it is unusable: what the file states, delete and recovery judge files against. */
-  async #freshRoot(): Promise<ExportRootRef | null> {
-    const check = await this.#deps.checkExport();
+  async #freshRoot(known?: ExportRootCheck): Promise<ExportRootRef | null> {
+    const check = known ?? (await this.#deps.checkExport());
     if (!check.ok) return null;
     let caseInsensitive = true; // the cautious answer: it can only make comparisons stricter
     try {
@@ -417,11 +419,15 @@ export class VideoService {
    * At engine start: sweeps `render-tmp` (leaving the folders of live renders) and settles the open library's crash
    * windows. In the BACKGROUND: neither is awaited by the start, by a command or by a render; a hung disk costs nothing but
    * its own task, and a failure is logged. Never called from a commit path.
+   *
+   * `exportCheck` is the check the start has just made (its marker was read moments ago): recovery judges against it
+   * instead of asking again, so the background never adds a second look at a slow export drive and never moves the
+   * export status a window shows.
    */
-  startup(library: Library | null): void {
+  startup(library: Library | null, exportCheck?: ExportRootCheck): void {
     this.#chain(async () => {
       await this.#sweepRenderTmp();
-      if (library !== null) await this.#recover(library);
+      if (library !== null) await this.#recover(library, exportCheck);
     });
   }
 
@@ -448,13 +454,16 @@ export class VideoService {
     for (const { code } of swept.skipped) this.#deps.log(`a leftover in render-tmp could not be removed (${code}); the next start tries again`);
   }
 
-  async #recover(library: Library): Promise<void> {
+  async #recover(library: Library, exportCheck?: ExportRootCheck): Promise<void> {
     const deps = this.#deps;
     // A FRESH look at the root, and the SAME tracker the renders register in: a live commit is never taken for a crash's leftover.
-    const exportRoot = await this.#freshRoot();
+    const exportRoot = await this.#freshRoot(exportCheck);
     const run = deps.recover?.run ?? recoverVideos;
     const report = await run({ library, exportRoot, live: deps.tracker }, { log: deps.log, ...deps.recover?.deps });
-    deps.log(`recovery: ${report.adopted.length} adopted, ${report.dropped.length} dropped, ${report.deferred.length} deferred, ${report.left.length} left, ${report.skipped.length} skipped`);
+    // Counts only, and only when there was something to settle: a clean open is silent.
+    if (report.adopted.length + report.dropped.length + report.deferred.length + report.left.length + report.skipped.length > 0) {
+      deps.log(`recovery: ${report.adopted.length} adopted, ${report.dropped.length} dropped, ${report.deferred.length} deferred, ${report.left.length} left, ${report.skipped.length} skipped`);
+    }
     // Adopted records are new to the windows; a library that is no longer the live one has no windows to tell.
     if (deps.openLibrary() === library) {
       for (const videoId of report.adopted) await this.#announceAdopted(library, videoId);

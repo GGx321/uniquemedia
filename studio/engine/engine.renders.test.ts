@@ -68,15 +68,30 @@ async function listPhotos(engine: Awaited<ReturnType<typeof startEngine>>["engin
   return answer.result.photos;
 }
 
-describe("the engine sweeps render-tmp when it starts", () => {
+describe("the engine sweeps render-tmp when it starts (in the background, beside recovery)", () => {
   test("removes the job folders a crash left behind", async () => {
     await mkdir(join(renderTmp(), "job-00000009"), { recursive: true });
     await writeFile(join(renderTmp(), "job-00000009", "clip-00.mkv"), "half a clip");
     await writeFile(join(renderTmp(), "stray.tmp"), "x");
 
-    await startEngine(dir(), { init: { renderTmpDir: renderTmp() } });
+    const { engine } = await startEngine(dir(), { init: { renderTmpDir: renderTmp() } });
+    await engine.settled();
 
     expect(await readdir(renderTmp())).toEqual([]);
+  });
+
+  test("the start does not wait for the sweep: a leftover that is locked for a while cannot hold the engine's start", async () => {
+    await mkdir(join(renderTmp(), "job-00000009"), { recursive: true });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // A background sweep that is still busy when the engine has already started answering
+    const { engine } = await startEngine(dir(), { init: { renderTmpDir: renderTmp() }, deps: { videos: { recover: { run: () => held.then(() => ({ adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 }, skipped: [] })) } } } });
+
+    expect(ok(await engine.handle(command("engine.snapshot"))).type).toBe("engine.snapshot");
+    release();
+    await engine.settled();
   });
 
   test("starts anyway when the folder cannot be swept", async () => {

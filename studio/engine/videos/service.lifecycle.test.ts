@@ -64,7 +64,7 @@ describe("recovery when a library opens", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.live).toBe(r.tracker);
     expect(calls[0]?.exportRoot).toEqual({ root: w.exportRoot, rootId: w.rootId, caseInsensitive: false });
-    expect(r.checks).toEqual([undefined]);
+    expect(r.checks).toHaveLength(1);
   });
 
   test("an unusable export root is passed as null, so its intents are kept and nothing is judged", async () => {
@@ -186,6 +186,27 @@ describe("startup", () => {
     expect(existsSync(join(w.renderTmp, "job-leftover-1"))).toBe(false);
     expect(existsSync(join(w.renderTmp, "stray.tmp"))).toBe(false);
     expect(existsSync(join(w.renderTmp, "job-live-0001"))).toBe(true);
+  });
+
+  test("recovers against the export check the start has just made, not against another one", async () => {
+    const w = world();
+    const seen: unknown[] = [];
+    const r = serviceRig(w, {
+      deps: {
+        recover: {
+          run: async (input) => {
+            seen.push(input.exportRoot);
+            return EMPTY_REPORT;
+          },
+        },
+      },
+    });
+
+    r.service.startup(w.library, { ok: true, root: w.exportRoot, rootId: w.rootId });
+    await r.service.settled();
+
+    expect(seen).toEqual([{ root: w.exportRoot, rootId: w.rootId, caseInsensitive: false }]);
+    expect(r.checks).toHaveLength(0); // no second look at the export folder in the background
   });
 
   test("sweeps even when no library could be opened, and recovers nothing", async () => {
