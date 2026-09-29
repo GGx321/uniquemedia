@@ -4,7 +4,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { removeDir } from "../render/render.testkit";
 import { VerifyIoError, type VerifyReasonCode, type VerifyResult } from "./types";
 import { verifyRenderedMp4 } from "./verifyMp4";
-import { appendChild, concat, FIXTURE_FRAMES, locate, makeBox, patched, renderFixture, setU32, writeCopy, type Fixture } from "./verify.testkit";
+import { appendChild, concat, FIXTURE_FRAMES, locate, makeBox, patched, renderFixture, setU32, shiftChunkOffsets, writeCopy, type Fixture } from "./verify.testkit";
 useNativeGlobals();
 
 // REAL ffmpeg: the verifier's box walk on the bytes of a real render and on
@@ -15,7 +15,7 @@ let fx: Fixture;
 beforeAll(async () => {
   fx = await renderFixture("verify-boxes");
 }, 120_000);
-afterAll(() => removeDir(fx.dir));
+afterAll(() => fx && removeDir(fx.dir));
 
 const EXPECTED = { frames: FIXTURE_FRAMES };
 const codesOf = (r: VerifyResult): VerifyReasonCode[] => (r.ok ? [] : r.reasons.map((x) => x.code));
@@ -33,7 +33,7 @@ describe("verifyRenderedMp4: the box walk", () => {
     view.setUint32(0, 1);
     header.set([0x6d, 0x64, 0x61, 0x74], 4);
     view.setBigUint64(8, BigInt(mdat.end - mdat.start + 8));
-    const bytes = concat(fx.bytes.subarray(0, mdat.start), header, fx.bytes.subarray(mdat.start + 8));
+    const bytes = shiftChunkOffsets(concat(fx.bytes.subarray(0, mdat.start), header, fx.bytes.subarray(mdat.start + 8)), 8);
     expect(await verifyBytes("largesize.mp4", bytes)).toEqual({ ok: true });
   });
 

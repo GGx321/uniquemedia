@@ -8,27 +8,26 @@ import { latin1, u16, u32, u64, u8 } from "./reader";
 // durations relate. Every check reads the moov buffer and reports by code.
 
 /**
- * How far the movie and the audio track may be from the video track, in ms.
+ * The duration windows, in ms (the movie timescale is 1 ms, so every bound is
+ * a whole number of them).
  *
  * The video is exactly `frames / 30` s: the graph builds it that way and the
- * frame count is checked exactly. The audio cannot be exact: AAC works in
- * 1024-sample frames (21.333 ms at 48 kHz), so the encoder pads up to the next
- * frame and writes a priming delay (the spike found ~22 ms, one frame, over
- * the sum after a stream-copied concat, and 3a.5 measured the single-encode
- * audio between 0.5 ms over and 21.3 ms under the video). So the audio track
- * and the movie (the longer of the tracks) may each be up to TWO AAC frames,
- * 42.67 ms, from the video: one for the padding and one for the priming edit.
- * The movie timescale is 1 ms, so the bound is stated as 43. The duration is
- * never asserted exactly (spike README); the frame count is the exact check.
+ * frame count is checked exactly. Pass 2 re-encodes the audio inside the graph
+ * (`apad,atrim=end_sample=N`), so there is no stream-copied AAC concat and the
+ * spike's 22 ms priming surplus does not apply. What is left is AAC's frame
+ * size: 1024 samples, 21.333 ms at 48 kHz. 3a.5 measured the audio track
+ * between 0.5 ms over and 21.3 ms under the video, so:
+ *  - the audio may end at most one AAC frame plus rounding (23 ms) under the
+ *    video, and at most 1 ms over it: an `atrim` regression of one frame over
+ *    must fail;
+ *  - the movie and the video must each be within 2 ms of `frames / 30` s (the
+ *    rounding of a track header that counts in whole milliseconds, plus one).
+ * A frame is 33.3 ms, so none of these can hide a lost or added frame; the
+ * frame count is the exact check. 3a.9 confirms the numbers on Windows.
  */
-export const AV_TOLERANCE_MS = 43;
-
-/**
- * How far the video track may be from `frames / 30` s, in ms. The track header
- * counts in the movie timescale (1 ms), so rounding alone can be off by 1;
- * 2 leaves one millisecond for a build that rounds the other way. A frame is
- * 33.3 ms, so this still catches a wrong frame rate or a lost frame.
- */
+export const AUDIO_UNDER_MS = 23;
+export const AUDIO_OVER_MS = 1;
+export const MOVIE_TOLERANCE_MS = 2;
 export const VIDEO_TOLERANCE_MS = 2;
 
 const AVC_ENTRY = "avc1";
@@ -78,6 +77,21 @@ function trackDuration(bytes: Uint8Array, tkhd: Mp4Box): number | undefined {
   return version === 0 ? u32(bytes, tkhd.body + 20) : undefined;
 }
 
+/** The sum of an `elst`'s segment durations (movie timescale): 12-byte entries in version 0, 20 in version 1. */
+function editListTotal(bytes: Uint8Array, elst: Mp4Box): number | undefined {
+  const version = u8(bytes, elst.body);
+  const count = u32(bytes, elst.body + 4);
+  if ((version !== 0 && version !== 1) || count === undefined || elst.body + 8 + count * (version === 1 ? 20 : 12) > elst.end) return undefined;
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    const at = elst.body + 8 + i * (version === 1 ? 20 : 12);
+    const segment = version === 1 ? u64(bytes, at) : u32(bytes, at);
+    if (segment === undefined) return undefined;
+    total += segment;
+  }
+  return total;
+}
+
 function checkDurations(bytes: Uint8Array, mvhd: Mp4Box | undefined, video: Track | undefined, audio: Track | undefined, frames: number, findings: Findings): void {
   if (!mvhd) return void findings.add("MISSING_BOX", "moov has no mvhd box", "moov/mvhd");
   const timing = movieTiming(bytes, mvhd);
@@ -87,18 +101,25 @@ function checkDurations(bytes: Uint8Array, mvhd: Mp4Box | undefined, video: Trac
   const videoMs = video?.tkhd && ms(trackDuration(bytes, video.tkhd));
   const audioMs = audio?.tkhd && ms(trackDuration(bytes, audio.tkhd));
   const expectedMs = (frames * 1000) / FPS;
-  const show = (v: number): string => v.toFixed(1);
+  const show = (v: number | undefined): string => (v === undefined ? "unreadable" : `${v.toFixed(1)} ms`);
+  const mismatch = (message: string, path: string | undefined): void => findings.add("DURATION_MISMATCH", message, path);
 
-  if (video && videoMs === undefined) findings.add("DURATION_MISMATCH", "the video track header holds no readable duration", video.trak.path);
-  if (videoMs === undefined) return;
-  if (Math.abs(videoMs - expectedMs) > VIDEO_TOLERANCE_MS) {
-    findings.add("DURATION_MISMATCH", `the video track is ${show(videoMs)} ms, ${frames} frames at ${FPS} fps is ${show(expectedMs)} ms (tolerance ${VIDEO_TOLERANCE_MS} ms)`, video?.trak.path);
+  if (movieMs === undefined || Math.abs(movieMs - expectedMs) > MOVIE_TOLERANCE_MS) {
+    mismatch(`the movie is ${show(movieMs)}, ${frames} frames at ${FPS} fps is ${show(expectedMs)} (tolerance ${MOVIE_TOLERANCE_MS} ms)`, mvhd.path);
   }
-  if (movieMs === undefined || Math.abs(movieMs - videoMs) > AV_TOLERANCE_MS) {
-    findings.add("DURATION_MISMATCH", `the movie is ${movieMs === undefined ? "unreadable" : `${show(movieMs)} ms`}, the video track ${show(videoMs)} ms (tolerance ${AV_TOLERANCE_MS} ms)`, mvhd.path);
+  if (video && (videoMs === undefined || Math.abs(videoMs - expectedMs) > VIDEO_TOLERANCE_MS)) {
+    mismatch(`the video track is ${show(videoMs)}, ${frames} frames at ${FPS} fps is ${show(expectedMs)} (tolerance ${VIDEO_TOLERANCE_MS} ms)`, video.trak.path);
   }
-  if (audio && (audioMs === undefined || Math.abs(audioMs - videoMs) > AV_TOLERANCE_MS)) {
-    findings.add("DURATION_MISMATCH", `the audio track is ${audioMs === undefined ? "unreadable" : `${show(audioMs)} ms`}, the video track ${show(videoMs)} ms (tolerance ${AV_TOLERANCE_MS} ms)`, audio.trak.path);
+  if (audio && (audioMs === undefined || videoMs === undefined || audioMs - videoMs < -AUDIO_UNDER_MS || audioMs - videoMs > AUDIO_OVER_MS)) {
+    mismatch(`the audio track is ${show(audioMs)}, the video track ${show(videoMs)} (the audio may end up to ${AUDIO_UNDER_MS} ms before it or ${AUDIO_OVER_MS} ms after)`, audio.trak.path);
+  }
+  // A track's edit list must play exactly the length its header states.
+  for (const track of [video, audio]) {
+    const elst = track && kids(kids(track.trak, "edts")[0] ?? track.trak, "elst")[0];
+    const stated = track?.tkhd && trackDuration(bytes, track.tkhd);
+    if (!track || !elst || stated === undefined) continue;
+    const total = editListTotal(bytes, elst);
+    if (total !== stated) mismatch(`the edit list plays ${total === undefined ? "an unreadable length" : `${total} units`}, the track header states ${stated}`, elst.path);
   }
 }
 
@@ -125,7 +146,9 @@ function checkVideo(bytes: Uint8Array, track: Track, frames: number, findings: F
   if (w !== FRAME_W || h !== FRAME_H) wrong(`the video sample entry is ${w}x${h}, expected ${FRAME_W}x${FRAME_H}`, entry.path);
   const children = entry.children;
   if (!children.some((c) => c.type === "avcC")) wrong("the video sample entry has no avcC configuration", entry.path);
-  for (const colr of children.filter((c) => c.type === "colr")) checkColour(bytes, colr, findings);
+  const colrs = children.filter((c) => c.type === "colr");
+  if (colrs.length !== 1) findings.add("COLOUR_TAG_WRONG", `the video sample entry has ${colrs.length} colr boxes, expected exactly one (the engine always tags)`, entry.path);
+  for (const colr of colrs) checkColour(bytes, colr, findings);
 
   const count = track.stsz ? u32(bytes, track.stsz.body + 8) : undefined;
   if (count === undefined) return wrong("the video track has no readable stsz sample count");
@@ -140,7 +163,7 @@ function checkColour(bytes: Uint8Array, colr: Mp4Box, findings: Findings): void 
   const matrix = u16(bytes, colr.body + 8);
   const flags = u8(bytes, colr.body + 10);
   const ok = type === "nclx" && primaries === BT709 && transfer === BT709 && matrix === BT709 && flags !== undefined && (flags & 0x80) === 0;
-  if (!ok) findings.add("COLOUR_TAG_WRONG", `colr is ${type} ${primaries}/${transfer}/${matrix} flags ${flags}, expected nclx 1/1/1 with full_range 0 (BT.709 limited)`, colr.path);
+  if (!ok) findings.add("COLOUR_TAG_WRONG", `colr is ${findings.describe(type)} ${primaries}/${transfer}/${matrix} flags ${flags}, expected nclx 1/1/1 with full_range 0 (BT.709 limited)`, colr.path);
 }
 
 // ---------------------------------------------------------------------------
@@ -178,24 +201,30 @@ interface AudioConfig {
   readonly channels: number;
 }
 
-/** `esds`: version and flags, then ES_Descriptor (0x03) > DecoderConfigDescriptor (0x04) > DecoderSpecificInfo (0x05), whose first bits are the AudioSpecificConfig. */
+/**
+ * `esds`: version and flags, then ES_Descriptor (0x03) > DecoderConfigDescriptor (0x04) > DecoderSpecificInfo (0x05),
+ * whose first bits are the AudioSpecificConfig, and an SLConfigDescriptor (0x06, one byte, 0x02). ffmpeg writes
+ * every ES flag off (no URL, no dependsOn, no OCR) and the descriptors fill the box exactly; anything else, a
+ * `file:///` URL for one, is refused.
+ */
 function readAudioConfig(bytes: Uint8Array, esds: Mp4Box): AudioConfig | undefined {
   const es = readDescriptor(bytes, esds.body + 4, esds.end);
-  if (es?.tag !== 0x03) return undefined;
-  let at = es.bodyStart + 2; // ES_ID
-  const flags = u8(bytes, at++);
-  if (flags === undefined) return undefined;
-  if (flags & 0x80) at += 2; // dependsOn_ES_ID
-  if (flags & 0x40) at += 1 + (u8(bytes, at) ?? 0); // URL
-  if (flags & 0x20) at += 2; // OCR_ES_ID
-  const config = readDescriptor(bytes, at, es.bodyEnd);
+  if (es?.tag !== 0x03 || es.bodyEnd !== esds.end) return undefined;
+  if (u8(bytes, es.bodyStart + 2) !== 0) return undefined; // the flags: URL 0x40, dependsOn 0x80 and OCR 0x20 are all off
+  const config = readDescriptor(bytes, es.bodyStart + 3, es.bodyEnd);
   if (config?.tag !== 0x04) return undefined;
+  const sl = readDescriptor(bytes, config.bodyEnd, es.bodyEnd);
+  if (sl?.tag !== 0x06 || sl.bodyEnd !== es.bodyEnd || sl.bodyEnd - sl.bodyStart !== 1 || u8(bytes, sl.bodyStart) !== 0x02) return undefined;
   const objectType = u8(bytes, config.bodyStart);
   // objectTypeIndication, streamType, bufferSizeDB (3), maxBitrate (4), avgBitrate (4): 13 bytes.
   const specific = readDescriptor(bytes, config.bodyStart + 13, config.bodyEnd);
-  const b0 = specific?.tag === 0x05 ? u8(bytes, specific.bodyStart) : undefined;
-  const b1 = specific?.tag === 0x05 ? u8(bytes, specific.bodyStart + 1) : undefined;
-  if (objectType === undefined || b0 === undefined || b1 === undefined) return undefined;
+  if (specific?.tag !== 0x05 || specific.bodyEnd !== config.bodyEnd) return undefined;
+  // The AudioSpecificConfig is 2 bytes, or 5 with the extension ffmpeg appends (0x2b7 sync, SBR object type, flag off).
+  const length = specific.bodyEnd - specific.bodyStart;
+  const b0 = u8(bytes, specific.bodyStart);
+  const b1 = u8(bytes, specific.bodyStart + 1);
+  const extensionOk = length === 2 || (length === 5 && u8(bytes, specific.bodyStart + 2) === 0x56 && u8(bytes, specific.bodyStart + 3) === 0xe5 && u8(bytes, specific.bodyStart + 4) === 0);
+  if (objectType === undefined || b0 === undefined || b1 === undefined || !extensionOk) return undefined;
   return { objectType, audioObjectType: b0 >> 3, frequencyIndex: ((b0 & 7) << 1) | (b1 >> 7), channels: (b1 >> 3) & 0xf };
 }
 

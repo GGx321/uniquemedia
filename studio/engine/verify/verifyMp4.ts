@@ -1,32 +1,36 @@
-import { open, stat, type FileHandle } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import { BUILTIN_MARKERS, forbiddenCode, UUID_PAYLOAD_HEAD_BYTES } from "./allowlist";
+import { Findings, MOOV_MAX_BYTES, MOOV_SCHEMA, readAt, TOP_LEVEL_ALLOWED, walkNested, walkTopLevel, type TopBox } from "./boxes";
 import { checkFtyp, checkMoov } from "./checks";
 import { checkEngineLayout } from "./engineLayout";
-import { Findings, MOOV_MAX_BYTES, MOOV_SCHEMA, readAt, TOP_LEVEL_ALLOWED, walkNested, walkTopLevel, type TopBox } from "./boxes";
+import { checkMediaData } from "./media";
+import { quote } from "./reader";
 import { scanForNeedles, type Needle } from "./scan";
 import { checkStructure } from "./structure";
 import { MAX_OUTPUT_BYTES, MIN_FORBIDDEN_STRING_BYTES, VerifyIoError, type VerifyExpected, type VerifyOptions, type VerifyResult } from "./types";
 
 // The output verifier (plan slice 3a.7): walks the boxes of a finished MP4 and
 // refuses anything but the engine's own output. It returns every reason it
-// finds, as stable codes, and throws only when the file cannot be read.
+// finds, as stable codes, and throws only when the file cannot be read (and
+// RangeError for a bad argument).
 
-async function sizeOf(path: string): Promise<number> {
+/** Opens the file, so that the size and the reads all come from one handle (nothing can swap the file between them). */
+async function openFile(path: string): Promise<FileHandle> {
   try {
-    const info = await stat(path);
-    if (!info.isFile()) throw new VerifyIoError("not_a_file", path);
-    return info.size;
+    return await open(path, "r");
   } catch (cause) {
-    if (cause instanceof VerifyIoError) throw cause;
     const code = cause instanceof Error ? Reflect.get(cause, "code") : undefined;
     throw new VerifyIoError(code === "ENOENT" ? "not_found" : "read_failed", path, { cause });
   }
 }
 
-async function openFile(path: string): ReturnType<typeof open> {
+async function regularFileSize(handle: FileHandle, path: string): Promise<number> {
   try {
-    return await open(path, "r");
+    const info = await handle.stat();
+    if (!info.isFile()) throw new VerifyIoError("not_a_file", path);
+    return info.size;
   } catch (cause) {
+    if (cause instanceof VerifyIoError) throw cause;
     throw new VerifyIoError("read_failed", path, { cause });
   }
 }
@@ -41,65 +45,85 @@ const CALLER_LABEL = "caller-string-";
 
 /** Names a hit for the log; the caller's own string is never echoed back. */
 function describeNeedle(label: string): string {
-  return label.startsWith(CALLER_LABEL) ? `caller string #${label.slice(CALLER_LABEL.length)}` : `photo-metadata marker '${label}'`;
+  if (!label.startsWith(CALLER_LABEL)) return `photo-metadata marker '${label}'`;
+  const [index, encoding] = label.slice(CALLER_LABEL.length).split("/");
+  return `caller string #${index}${encoding ? ` (${encoding})` : ""}`;
 }
 
-/** A caller mistake, not a property of the file: refused before the file is opened. */
-function assertUsable(expected: VerifyExpected): Needle[] {
-  if (!Number.isSafeInteger(expected.frames) || expected.frames < 1) throw new RangeError(`expected.frames must be a positive whole number, got ${expected.frames}`);
-  return (expected.forbiddenStrings ?? []).map((text, i) => {
-    const bytes = new TextEncoder().encode(text);
-    if (bytes.length < MIN_FORBIDDEN_STRING_BYTES) throw new RangeError(`forbidden string #${i} is under ${MIN_FORBIDDEN_STRING_BYTES} bytes`);
-    return { label: `${CALLER_LABEL}${i}`, bytes };
+/** Each caller string is searched as UTF-8 and as UTF-16, either byte order (EXIF and XMP both carry text in those forms). */
+function callerNeedles(strings: readonly string[]): Needle[] {
+  return strings.flatMap((text, i) => {
+    const utf8 = new TextEncoder().encode(text);
+    if (utf8.length < MIN_FORBIDDEN_STRING_BYTES) throw new RangeError(`forbidden string #${i} is under ${MIN_FORBIDDEN_STRING_BYTES} bytes`);
+    const le = Buffer.from(text, "utf16le");
+    return [
+      { label: `${CALLER_LABEL}${i}`, bytes: utf8 },
+      { label: `${CALLER_LABEL}${i}/utf-16le`, bytes: Uint8Array.from(le) },
+      { label: `${CALLER_LABEL}${i}/utf-16be`, bytes: Uint8Array.from(Buffer.from(le).swap16()) },
+    ];
   });
 }
 
-export async function verifyRenderedMp4(path: string, expected: VerifyExpected, options: VerifyOptions = {}): Promise<VerifyResult> {
-  const callerNeedles = assertUsable(expected);
-  const findings = new Findings();
-  const size = await sizeOf(path);
+/** A caller mistake, not a property of the file: refused before the file is opened. */
+function assertUsable(expected: VerifyExpected, options: VerifyOptions): { needles: Needle[]; maxBytes: number } {
+  if (!Number.isSafeInteger(expected.frames) || expected.frames < 1) throw new RangeError(`expected.frames must be a positive whole number, got ${expected.frames}`);
   const maxBytes = options.maxBytes ?? MAX_OUTPUT_BYTES;
-  if (size > maxBytes) {
-    findings.add("FILE_TOO_LARGE", `${size} bytes is over the ${maxBytes}-byte cap`);
-    return { ok: false, reasons: findings.list };
-  }
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) throw new RangeError(`options.maxBytes must be a positive finite number, got ${maxBytes}`);
+  return { needles: callerNeedles(expected.forbiddenStrings ?? []), maxBytes };
+}
 
+export async function verifyRenderedMp4(path: string, expected: VerifyExpected, options: VerifyOptions = {}): Promise<VerifyResult> {
+  const { needles, maxBytes } = assertUsable(expected, options);
+  const findings = new Findings(expected.forbiddenStrings ?? []);
   const handle = await openFile(path);
   try {
-    const top = await walkTopLevel(handle, path, size, findings);
-    await checkTopLevel(handle, path, top, findings);
-    const ftyp = top.find((b) => b.type === "ftyp");
-    let ftypBytes: Uint8Array | undefined;
-    if (ftyp) {
-      if (ftyp.end - ftyp.start > FTYP_MAX_BYTES) findings.add("FTYP_BRAND_NOT_ALLOWED", `ftyp is ${ftyp.end - ftyp.start} bytes, over the ${FTYP_MAX_BYTES}-byte cap`, "ftyp");
-      else {
-        ftypBytes = await readAt(handle, path, ftyp.start, ftyp.end - ftyp.start);
-        checkFtyp(ftypBytes, ftyp.body - ftyp.start, findings);
-      }
+    const size = await regularFileSize(handle, path);
+    if (size > maxBytes) {
+      findings.add("FILE_TOO_LARGE", `${size} bytes is over the ${maxBytes}-byte cap`);
+      return { ok: false, reasons: findings.list };
     }
-    const moov = top.find((b) => b.type === "moov");
-    if (moov) {
-      if (moov.end - moov.start > MOOV_MAX_BYTES) {
-        findings.add("BOX_TOO_LARGE", `moov is ${moov.end - moov.start} bytes, over the ${MOOV_MAX_BYTES}-byte cap`, "moov");
-      } else {
-        const bytes = await readAt(handle, path, moov.start, moov.end - moov.start);
-        const children = walkNested(bytes, moov.body - moov.start, bytes.length, "moov", MOOV_SCHEMA, findings);
-        checkMoov(bytes, children, findings);
-        checkStructure(bytes, children, expected.frames, findings);
-        if (ftypBytes && findings.list.length === 0) checkEngineLayout(ftypBytes, bytes, findings);
-      }
-    }
-    const hits = await scanForNeedles(handle, path, size, [...BUILTIN_MARKERS, ...callerNeedles]);
-    for (const hit of hits) findings.add("SOURCE_METADATA_STRING", `${describeNeedle(hit.label)} found at byte ${hit.offset}`);
+    await verifyOpenFile(handle, path, size, expected, needles, findings);
   } finally {
     await handle.close();
   }
   return findings.list.length === 0 ? { ok: true } : { ok: false, reasons: findings.list };
 }
 
+async function verifyOpenFile(handle: FileHandle, path: string, size: number, expected: VerifyExpected, needles: readonly Needle[], findings: Findings): Promise<void> {
+  const top = await walkTopLevel(handle, path, size, findings);
+  await checkTopLevel(handle, path, top, findings);
+  const ftyp = top.find((b) => b.type === "ftyp");
+  let ftypBytes: Uint8Array | undefined;
+  if (ftyp) {
+    if (ftyp.end - ftyp.start > FTYP_MAX_BYTES) findings.add("FTYP_BRAND_NOT_ALLOWED", `ftyp is ${ftyp.end - ftyp.start} bytes, over the ${FTYP_MAX_BYTES}-byte cap`, "ftyp");
+    else {
+      ftypBytes = await readAt(handle, path, ftyp.start, ftyp.end - ftyp.start);
+      checkFtyp(ftypBytes, ftyp.body - ftyp.start, findings);
+    }
+  }
+  const moov = top.find((b) => b.type === "moov");
+  const mdat = top.find((b) => b.type === "mdat");
+  if (moov) {
+    if (moov.end - moov.start > MOOV_MAX_BYTES) {
+      findings.add("BOX_TOO_LARGE", `moov is ${moov.end - moov.start} bytes, over the ${MOOV_MAX_BYTES}-byte cap`, "moov");
+    } else {
+      const bytes = await readAt(handle, path, moov.start, moov.end - moov.start);
+      const children = walkNested(bytes, moov.body - moov.start, bytes.length, "moov", MOOV_SCHEMA, findings);
+      checkMoov(bytes, children, findings);
+      checkStructure(bytes, children, expected.frames, findings);
+      if (mdat) checkMediaData(bytes, children, mdat, findings);
+      if (ftypBytes && findings.list.length === 0) checkEngineLayout(ftypBytes, bytes, findings);
+    }
+  }
+  const hits = await scanForNeedles(handle, path, size, [...BUILTIN_MARKERS, ...needles]);
+  for (const hit of hits) findings.add("SOURCE_METADATA_STRING", `${describeNeedle(hit.label)} found at byte ${hit.offset}`);
+}
+
 /**
- * ftyp first, exactly one each of ftyp, moov and mdat, and nothing else but a
- * `free` that is empty. A forbidden type gets its own code, not UNKNOWN_BOX.
+ * ftyp first, exactly one each of ftyp, moov and mdat, at most one `free` and
+ * that one empty (ffmpeg writes exactly one, the reserved header of a faststart
+ * mdat; several would be several places for a note), and nothing else. A
+ * forbidden type gets its own code, not UNKNOWN_BOX.
  */
 async function checkTopLevel(handle: FileHandle, path: string, top: readonly TopBox[], findings: Findings): Promise<void> {
   for (const type of ["ftyp", "moov", "mdat"]) {
@@ -107,6 +131,8 @@ async function checkTopLevel(handle: FileHandle, path: string, top: readonly Top
     if (count === 0) findings.add("MISSING_BOX", `the file has no '${type}' box`, type);
     if (count > 1) findings.add("DUPLICATE_BOX", `the file has ${count} '${type}' boxes`, type);
   }
+  const frees = top.filter((b) => b.type === "free").length;
+  if (frees > 1) findings.add("DUPLICATE_BOX", `the file has ${frees} 'free' boxes, expected at most one`, "free");
   if (top.some((b) => b.type === "ftyp") && top[0]?.type !== "ftyp") findings.add("FTYP_NOT_FIRST", "ftyp is not the first box", "ftyp");
   const moovAt = top.find((b) => b.type === "moov")?.start;
   const mdatAt = top.find((b) => b.type === "mdat")?.start;
@@ -114,8 +140,8 @@ async function checkTopLevel(handle: FileHandle, path: string, top: readonly Top
   for (const b of top) {
     const head = b.type === "uuid" ? await readAt(handle, path, b.body, Math.min(UUID_PAYLOAD_HEAD_BYTES, b.end - b.body)) : new Uint8Array(0);
     const forbidden = forbiddenCode(b.type, head);
-    if (forbidden) findings.add(forbidden, `top-level box '${b.type}' at byte ${b.start} is never allowed`, b.type);
-    else if (!TOP_LEVEL_ALLOWED.has(b.type)) findings.add("UNKNOWN_BOX", `top-level box '${b.type}' is not allowed`, b.type);
+    if (forbidden) findings.add(forbidden, `top-level box ${quote(b.type)} at byte ${b.start} is never allowed`, b.type);
+    else if (!TOP_LEVEL_ALLOWED.has(b.type)) findings.add("UNKNOWN_BOX", `top-level box ${quote(b.type)} is not allowed`, b.type);
     else if (b.type === "free") await checkFree(handle, path, b, findings);
   }
 }

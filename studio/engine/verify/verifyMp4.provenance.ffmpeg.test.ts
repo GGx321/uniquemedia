@@ -36,8 +36,8 @@ beforeAll(async () => {
   });
 }, 180_000);
 afterAll(() => {
-  removeDir(fx.dir);
-  removeDir(c2paSource.dir);
+  if (fx) removeDir(fx.dir);
+  if (c2paSource) removeDir(c2paSource.dir);
 });
 
 const EXPECTED = { frames: FIXTURE_FRAMES };

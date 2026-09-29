@@ -31,6 +31,8 @@ export const VERIFY_REASON_CODES = [
   "METADATA_KEY_NOT_ALLOWED",
   "METADATA_VALUE_NOT_ALLOWED",
   "NONZERO_TIMESTAMP",
+  "FIELD_NOT_CANONICAL",
+  "TEXT_IN_INDEX",
   "SOURCE_METADATA_STRING",
   // The structure (invariant 20, A4)
   "UNEXPECTED_TRACKS",
@@ -39,6 +41,7 @@ export const VERIFY_REASON_CODES = [
   "AUDIO_FORMAT_WRONG",
   "COLOUR_TAG_WRONG",
   "FRAME_COUNT_MISMATCH",
+  "MEDIA_DATA_MISMATCH",
   "DURATION_MISMATCH",
 ] as const;
 
@@ -46,7 +49,7 @@ export type VerifyReasonCode = (typeof VERIFY_REASON_CODES)[number];
 
 export interface VerifyReason {
   readonly code: VerifyReasonCode;
-  /** Human-readable, for the log. Never carries the caller's `forbiddenStrings`. */
+  /** Human-readable, for the log. Quotes at most 32 characters of any file value and never a caller's `forbiddenStrings`. */
   readonly message: string;
   /** The box path the reason is about (`moov/trak/mdia/hdlr`), when there is one. */
   readonly path?: string;
@@ -71,7 +74,11 @@ export interface VerifyOptions {
   readonly maxBytes?: number;
 }
 
-/** The encode is capped near 50 MB (plan, Output format row); 64 MiB leaves room. */
+/**
+ * The most a valid output can weigh, with headroom. The longest timeline is 15 s; at the 3500 kbit/s
+ * VBV cap that is 6.6 MB, plus one 7000 kbit buffer (0.9 MB) and 192 kbit/s audio (0.4 MB): about
+ * 7.8 MB. 64 MiB is 8 times that, and bounds what the whole-file string scan has to read.
+ */
 export const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 /** A forbidden string shorter than this is refused as a caller mistake. */

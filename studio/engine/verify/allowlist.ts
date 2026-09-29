@@ -1,3 +1,4 @@
+import { latin1Bytes as latin1 } from "./reader";
 import type { Needle } from "./scan";
 import type { VerifyReasonCode } from "./types";
 
@@ -5,8 +6,6 @@ import type { VerifyReasonCode } from "./types";
 // A4). Everything here was measured on a real ffmpeg 6.0 render
 // (`render.pass2.ffmpeg.test.ts`); the ffmpeg version strings are matched by
 // shape because Windows bundles 6.1.1.
-
-const latin1 = (text: string): Uint8Array => Uint8Array.from(text, (c) => c.charCodeAt(0));
 
 /** Boxes refused wherever they appear, each with the code that names it. `uuid` is refined by its payload (see `forbiddenCode`). */
 const FORBIDDEN_BOXES: ReadonlyMap<string, VerifyReasonCode> = new Map([
@@ -72,6 +71,11 @@ export const BUILTIN_MARKERS: readonly Needle[] = [
   { label: "xpacket", bytes: latin1("<?xpacket") },
   { label: "exif-little-endian", bytes: latin1("Exif\u0000\u0000II*\u0000") },
   { label: "exif-big-endian", bytes: latin1("Exif\u0000\u0000MM\u0000*") },
+  { label: "tiff-little-endian", bytes: latin1("II*\u0000\u0008\u0000\u0000\u0000") },
+  { label: "tiff-big-endian", bytes: latin1("MM\u0000*\u0000\u0000\u0000\u0008") },
   { label: "c2pa-urn", bytes: latin1("urn:c2pa") },
+  // The JUMBF content type of a C2PA manifest store, 63327061-0011-0010-8000-00AA00389B71
+  // (c2pa-rs: CAI_BLOCK_UUID = "6332706100110010800000AA00389B71").
+  { label: "c2pa-jumbf-type", bytes: Uint8Array.from([0x63, 0x32, 0x70, 0x61, 0x00, 0x11, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71]) },
   { label: "icc-profile", bytes: latin1("ICC_PROFILE\u0000") },
 ];

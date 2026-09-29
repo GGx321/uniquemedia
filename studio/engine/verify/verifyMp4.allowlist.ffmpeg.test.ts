@@ -23,8 +23,8 @@ beforeAll(async () => {
   });
 }, 180_000);
 afterAll(() => {
-  removeDir(fx.dir);
-  removeDir(laden.dir);
+  if (fx) removeDir(fx.dir);
+  if (laden) removeDir(laden.dir);
 });
 
 const EXPECTED = { frames: FIXTURE_FRAMES };

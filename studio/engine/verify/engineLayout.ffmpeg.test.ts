@@ -13,7 +13,7 @@ let fx: Fixture;
 beforeAll(async () => {
   fx = await renderFixture("verify-layout");
 }, 120_000);
-afterAll(() => removeDir(fx.dir));
+afterAll(() => fx && removeDir(fx.dir));
 
 const boxBytes = (bytes: Uint8Array, path: string): Uint8Array => {
   const box = locate(bytes, path);

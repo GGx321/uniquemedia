@@ -4,7 +4,12 @@ import type { Findings } from "./boxes";
 /**
  * A second opinion from the uniquifier's own MOV walker
  * (`src/node/movSignature.ts`, imported and never modified), asked only of a
- * file that passed everything else. It walks `ftyp` and `moov` and throws on a
+ * file that passed everything else. HONESTLY: with every box walked against
+ * the schema and every fixed field pinned, this never fires on its own; the
+ * verifier's own checks refuse first. It is kept because the plan (N10) names
+ * `movSignature.ts` as the layout authority for the engine's output, so a change
+ * to that walker that started refusing our files would show up here, and
+ * because it costs one pass over a buffer that is already in memory. It walks `ftyp` and `moov` and throws on a
  * layout ffmpeg's muxer would not write (a brand other than `qt  ` or `isom`,
  * no `moov`, a sample entry too short for its vendor or compressor field). That
  * is the same walk the uniquifier trusts before it patches those fields, so a

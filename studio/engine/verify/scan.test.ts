@@ -14,7 +14,7 @@ let dir: string;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "studio-verify-scan-"));
 });
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => dir && rmSync(dir, { recursive: true, force: true }));
 
 const needle = (label: string, text: string): Needle => ({ label, bytes: Uint8Array.from(text, (c) => c.charCodeAt(0)) });
 

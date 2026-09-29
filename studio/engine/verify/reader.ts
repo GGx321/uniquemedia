@@ -24,6 +24,27 @@ export function u64(bytes: Uint8Array, at: number): number | undefined {
   return value > BigInt(Number.MAX_SAFE_INTEGER) ? Number.POSITIVE_INFINITY : Number(value);
 }
 
+/** Bytes `[start, end)` as a Latin-1 string. Uses Buffer, never a spread: a huge box must not overflow the call stack. */
 export function latin1(bytes: Uint8Array, start: number, end: number): string {
-  return String.fromCharCode(...bytes.subarray(start, end));
+  const from = Math.max(0, start);
+  const to = Math.min(bytes.length, end);
+  return to <= from ? "" : Buffer.from(bytes.buffer, bytes.byteOffset + from, to - from).toString("latin1");
+}
+
+/** A string as Latin-1 bytes (each character below 256). */
+export function latin1Bytes(text: string): Uint8Array {
+  return Uint8Array.from(Buffer.from(text, "latin1"));
+}
+
+/** How much of a file value a message may quote. */
+export const QUOTE_MAX_CHARS = 32;
+
+/**
+ * A value from the file, made safe to put in a message: at most
+ * `QUOTE_MAX_CHARS` characters, control and non-ASCII characters escaped, and
+ * the true length when it was cut. Never the whole value.
+ */
+export function quote(value: string): string {
+  const shown = value.slice(0, QUOTE_MAX_CHARS).replace(/[^\x20-\x7e]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
+  return value.length > QUOTE_MAX_CHARS ? `"${shown}"... (${value.length} chars)` : `"${shown}"`;
 }

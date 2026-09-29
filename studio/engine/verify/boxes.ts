@@ -1,5 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { forbiddenCode, UUID_PAYLOAD_HEAD_BYTES } from "./allowlist";
+import { latin1, quote } from "./reader";
 import { VerifyIoError, type VerifyReason, type VerifyReasonCode } from "./types";
 
 // A bounded, defensive ISO-BMFF box walker for the output verifier. It never
@@ -34,12 +35,32 @@ export interface Mp4Box {
   readonly children: readonly Mp4Box[];
 }
 
-/** Collects the reasons found, in order, without repeating one. */
+/**
+ * Collects the reasons found, in order, without repeating one. `masks` are the
+ * caller's forbidden strings: they are removed from every message, so a
+ * reason can never hand back what the caller is trying to keep out.
+ */
 export class Findings {
   private readonly seen = new Set<string>();
+  private readonly masks: readonly string[];
   readonly list: VerifyReason[] = [];
 
-  add(code: VerifyReasonCode, message: string, path?: string): void {
+  constructor(masks: readonly string[] = []) {
+    // A mask is matched as written and as the Latin-1 reading of its UTF-8 bytes (what `latin1()` shows for non-ASCII text).
+    this.masks = masks.flatMap((m) => (m === "" ? [] : [m, Buffer.from(m, "utf8").toString("latin1")]));
+  }
+
+  private mask(text: string): string {
+    return this.masks.reduce((t, m) => t.split(m).join("[caller string]"), text);
+  }
+
+  /** A file value, quoted for a message: masked, then cut to 32 escaped characters. */
+  describe(value: string): string {
+    return quote(this.mask(value));
+  }
+
+  add(code: VerifyReasonCode, rawMessage: string, path?: string): void {
+    const message = this.mask(rawMessage);
     const key = `${code}\u0000${path ?? ""}\u0000${message}`;
     if (this.seen.has(key)) return;
     this.seen.add(key);
@@ -56,17 +77,15 @@ export type Header =
   | { readonly kind: "out_of_bounds"; readonly type: string }
   | { readonly kind: "bad_size"; readonly type: string; readonly size: number };
 
-const latin1 = (bytes: Uint8Array, at: number, length: number): string => String.fromCharCode(...bytes.subarray(at, at + length));
-
 /**
  * Decodes the box header at the start of `head` (at least the first 16 bytes
  * of what follows, fewer at the very end). `available` is how many bytes the
  * parent has left from this box's start: the box may not claim more.
  */
 export function decodeHeader(head: Uint8Array, available: number): Header {
-  if (available < 8 || head.length < 8) return { kind: "out_of_bounds", type: head.length >= 8 ? latin1(head, 4, 4) : "????" };
+  if (available < 8 || head.length < 8) return { kind: "out_of_bounds", type: head.length >= 8 ? latin1(head, 4, 8) : "????" };
   const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
-  const type = latin1(head, 4, 4);
+  const type = latin1(head, 4, 8);
   const size32 = view.getUint32(0);
   if (size32 === 1) {
     if (available < 16 || head.length < 16) return { kind: "out_of_bounds", type };
@@ -86,13 +105,12 @@ export function decodeHeader(head: Uint8Array, available: number): Header {
 // ---------------------------------------------------------------------------
 
 /**
- * Where a box may appear and what it may hold. A `strict` node is refused any
- * type not in `allowed`: that is every place metadata can live or a file with
- * extra content would grow, and it includes the sample entries, where a note
- * can hide as easily as anywhere. Only the sample-table and `dinf` levels are
- * tolerant of a type they do not know: they hold numbers, not content, and
- * ffmpeg versions differ there (`sdtp`, `cslg`). Forbidden types are refused at
- * every level either way.
+ * Where a box may appear and what it may hold. Every node is strict: a type
+ * not in `allowed` is refused at every level, the sample tables, `dinf` and
+ * the sample entries included, because a note can hide in any of them. The
+ * lists hold what ffmpeg 6.0 writes and nothing more; a build that writes one
+ * more box (6.1.1 on Windows) is refused until 3a.9 shows it and the list is
+ * extended on purpose. Forbidden types get their own codes at every level.
  */
 export interface SchemaNode {
   readonly strict: boolean;
@@ -117,6 +135,8 @@ const VISUAL_ENTRY_PREFIX = 78;
 const SOUND_ENTRY_PREFIX = 28;
 /** `stsd` is a full box (4) followed by an entry count (4). */
 const STSD_PREFIX = 8;
+/** `dref` is a full box (4) followed by an entry count (4). */
+const DREF_PREFIX = 8;
 /** `meta` is a full box: four bytes of version and flags. */
 const META_PREFIX = 4;
 
@@ -127,8 +147,9 @@ const UDTA = node(true, set("meta"), new Map([["meta", container(META_PREFIX, ME
 const AVC1 = node(true, set("avcC", "colr", "pasp", "btrt", "fiel", "clap"));
 const MP4A = node(true, set("esds", "btrt"));
 const STSD = node(true, set("avc1", "mp4a"), new Map([["avc1", container(VISUAL_ENTRY_PREFIX, AVC1)], ["mp4a", container(SOUND_ENTRY_PREFIX, MP4A)]]));
-const STBL = node(false, set("stsd", "stts", "stss", "ctts", "stsc", "stsz", "stco", "co64", "sgpd", "sbgp", "sdtp", "cslg", "stps"), new Map([["stsd", container(STSD_PREFIX, STSD)]]));
-const DINF = node(false, set("dref"));
+const DREF = node(true, set("url "));
+const STBL = node(true, set("stsd", "stts", "stss", "ctts", "stsc", "stsz", "stco", "co64", "sgpd", "sbgp", "sdtp", "cslg", "stps"), new Map([["stsd", container(STSD_PREFIX, STSD)]]));
+const DINF = node(true, set("dref"), new Map([["dref", container(DREF_PREFIX, DREF)]]));
 const MINF = node(true, set("vmhd", "smhd", "dinf", "stbl"), new Map([["dinf", container(0, DINF)], ["stbl", container(0, STBL)]]));
 const MDIA = node(true, set("mdhd", "hdlr", "minf"), new Map([["minf", container(0, MINF)]]));
 const EDTS = node(true, set("elst"));
@@ -167,27 +188,27 @@ function walkRegion(w: Walk, from: number, to: number, parentPath: string, schem
     }
     const header = decodeHeader(w.bytes.subarray(at, Math.min(at + 16, to)), to - at);
     if (header.kind === "out_of_bounds") {
-      w.findings.add("BOX_OUT_OF_BOUNDS", `box '${header.type}' at byte ${at} claims more than '${parentPath}' holds`, parentPath);
+      w.findings.add("BOX_OUT_OF_BOUNDS", `box ${quote(header.type)} at byte ${at} claims more than '${parentPath}' holds`, parentPath);
       break;
     }
     if (header.kind === "bad_size") {
-      w.findings.add("BOX_BAD_SIZE", `box '${header.type}' at byte ${at} has size ${header.size}, smaller than its own header`, parentPath);
+      w.findings.add("BOX_BAD_SIZE", `box ${quote(header.type)} at byte ${at} has size ${header.size}, smaller than its own header`, parentPath);
       break;
     }
     const path = `${parentPath}/${header.type}`;
-    if (header.zeroSize) w.findings.add("BOX_ZERO_SIZE", `box '${header.type}' at byte ${at} has size 0, which is only valid for a last top-level mdat`, path);
+    if (header.zeroSize) w.findings.add("BOX_ZERO_SIZE", `box ${quote(header.type)} at byte ${at} has size 0, which is only valid for a last top-level mdat`, path);
     const end = at + header.size;
     const known = schema.containers.get(header.type);
     let children: Mp4Box[] = [];
     const forbidden = forbiddenCode(header.type, w.bytes.subarray(at + header.headerLength, Math.min(end, at + header.headerLength + UUID_PAYLOAD_HEAD_BYTES)));
     if (forbidden) {
-      w.findings.add(forbidden, `box '${header.type}' at byte ${at} is never allowed`, path);
+      w.findings.add(forbidden, `box ${quote(header.type)} at byte ${at} is never allowed`, path);
     } else if (known && !header.zeroSize) {
       const childrenFrom = at + header.headerLength + known.prefix;
-      if (childrenFrom > end) w.findings.add("STRUCTURE_UNRECOGNISED", `box '${header.type}' at byte ${at} is too short for its own fixed fields`, path);
+      if (childrenFrom > end) w.findings.add("STRUCTURE_UNRECOGNISED", `box ${quote(header.type)} at byte ${at} is too short for its own fixed fields`, path);
       else children = walkRegion(w, childrenFrom, end, path, known.node);
     } else if (!schema.allowed.has(header.type) && schema.strict) {
-      w.findings.add(schema.unknownCode, `box '${header.type}' is not allowed in '${parentPath}'`, path);
+      w.findings.add(schema.unknownCode, `box ${quote(header.type)} is not allowed in '${parentPath}'`, path);
     }
     boxes.push({ type: header.type, path, start: at, body: at + header.headerLength, end, children });
     at = end;
@@ -237,15 +258,15 @@ export async function walkTopLevel(handle: FileHandle, path: string, size: numbe
     }
     const header = decodeHeader(await readAt(handle, path, at, Math.min(16, size - at)), size - at);
     if (header.kind === "out_of_bounds") {
-      findings.add("FILE_TRUNCATED", `box '${header.type}' at byte ${at} claims more than the file holds (${size} bytes)`, header.type);
+      findings.add("FILE_TRUNCATED", `box ${quote(header.type)} at byte ${at} claims more than the file holds (${size} bytes)`, header.type);
       break;
     }
     if (header.kind === "bad_size") {
-      findings.add("BOX_BAD_SIZE", `box '${header.type}' at byte ${at} has size ${header.size}, smaller than its own header`, header.type);
+      findings.add("BOX_BAD_SIZE", `box ${quote(header.type)} at byte ${at} has size ${header.size}, smaller than its own header`, header.type);
       break;
     }
     if (header.zeroSize && header.type !== "mdat") {
-      findings.add("BOX_ZERO_SIZE", `top-level box '${header.type}' at byte ${at} has size 0, which is only valid for the last mdat`, header.type);
+      findings.add("BOX_ZERO_SIZE", `top-level box ${quote(header.type)} at byte ${at} has size 0, which is only valid for the last mdat`, header.type);
     }
     boxes.push({ type: header.type, start: at, body: at + header.headerLength, end: at + header.size });
     at += header.size;

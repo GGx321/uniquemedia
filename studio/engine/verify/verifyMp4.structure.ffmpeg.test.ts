@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { removeDir } from "../render/render.testkit";
-import { AV_TOLERANCE_MS, VIDEO_TOLERANCE_MS } from "./structure";
+import { AUDIO_OVER_MS, AUDIO_UNDER_MS, MOVIE_TOLERANCE_MS, VIDEO_TOLERANCE_MS } from "./structure";
 import type { VerifyReasonCode, VerifyResult } from "./types";
 import { verifyRenderedMp4 } from "./verifyMp4";
 import { concat, findAscii, FIXTURE_FRAMES, locate, makeBox, makeForeign, patched, remux, renderFixture, setU32, swapTopLevel, writeCopy, type Fixture } from "./verify.testkit";
@@ -16,7 +16,7 @@ let fx: Fixture;
 beforeAll(async () => {
   fx = await renderFixture("verify-structure");
 }, 120_000);
-afterAll(() => removeDir(fx.dir));
+afterAll(() => fx && removeDir(fx.dir));
 
 const EXPECTED = { frames: FIXTURE_FRAMES };
 const codesOf = (r: VerifyResult): VerifyReasonCode[] => (r.ok ? [] : r.reasons.map((x) => x.code));
@@ -48,51 +48,60 @@ describe("the frame count (invariant 20)", () => {
   });
 });
 
-describe("the duration (invariant 20, and the AAC priming note)", () => {
-  // The audio is built one AAC frame (1024 samples, 21.333 ms) short of the video at most, and
-  // the priming edit can add one more; a stream-copied concat reported 22 ms over (spike README).
-  // So the movie and the audio track may differ from the video by two AAC frames, 42.67 ms,
-  // rounded up to the 43 ms the movie timescale (1 ms) can state.
+describe("the duration (invariant 20)", () => {
+  // Pass 2 re-encodes the audio inside the graph (`apad,atrim=end_sample=N`), so there is no stream-copied
+  // AAC concat and the spike's 22 ms priming surplus does not apply. Measured: the audio track ends between
+  // 0.5 ms over and 21.3 ms (one AAC frame, 1024 samples) under the video. The pinned window is one AAC
+  // frame under plus rounding, and 1 ms over: an `atrim` regression of a frame over must fail.
   const ms = (b: Uint8Array, at: number): number => u32At(b, at);
 
+  /** Sets a track's duration in its `tkhd` and in its single `elst` segment, which must agree (see below). */
+  const setTrackMs = (b: Uint8Array, trak: number, value: number): void => {
+    setU32(b, tkhdDurationAt(b, trak), value);
+    setU32(b, locate(b, "moov/trak/edts/elst", trak).start + 16, value);
+  };
+
   test("states the tolerances the checks below pin", () => {
-    expect({ av: AV_TOLERANCE_MS, video: VIDEO_TOLERANCE_MS }).toEqual({ av: 43, video: 2 });
+    expect({ under: AUDIO_UNDER_MS, over: AUDIO_OVER_MS, movie: MOVIE_TOLERANCE_MS, video: VIDEO_TOLERANCE_MS }).toEqual({ under: 23, over: 1, movie: 2, video: 2 });
   });
 
-  test("the real render has a video of exactly 1500 ms and an audio under it by less than one AAC frame", () => {
+  test("the real render has a video of exactly 1500 ms and an audio inside the pinned window", () => {
     expect(ms(fx.bytes, tkhdDurationAt(fx.bytes, 0))).toBe(1500);
-    const gap = 1500 - ms(fx.bytes, tkhdDurationAt(fx.bytes, 1));
-    expect(gap).toBeGreaterThanOrEqual(0);
-    expect(gap).toBeLessThanOrEqual(22);
+    const audio = ms(fx.bytes, tkhdDurationAt(fx.bytes, 1));
+    expect(audio - 1500).toBeGreaterThanOrEqual(-AUDIO_UNDER_MS);
+    expect(audio - 1500).toBeLessThanOrEqual(AUDIO_OVER_MS);
   });
 
-  test("accepts a movie duration 43 ms over the video's", async () => {
-    expect(await run("mvhd-43.mp4", patched(fx.bytes, (b) => setU32(b, mvhdDurationAt(b), 1500 + AV_TOLERANCE_MS)))).toEqual({ ok: true });
+  test("accepts a movie duration 2 ms off the expected length and refuses 3 ms, over and under, with DURATION_MISMATCH", async () => {
+    expect(await run("mvhd-2.mp4", patched(fx.bytes, (b) => setU32(b, mvhdDurationAt(b), 1500 + MOVIE_TOLERANCE_MS)))).toEqual({ ok: true });
+    expect(await run("mvhd--2.mp4", patched(fx.bytes, (b) => setU32(b, mvhdDurationAt(b), 1500 - MOVIE_TOLERANCE_MS)))).toEqual({ ok: true });
+    expect(codesOf(await run("mvhd-3.mp4", patched(fx.bytes, (b) => setU32(b, mvhdDurationAt(b), 1500 + MOVIE_TOLERANCE_MS + 1))))).toContain("DURATION_MISMATCH");
+    expect(codesOf(await run("mvhd--3.mp4", patched(fx.bytes, (b) => setU32(b, mvhdDurationAt(b), 1500 - MOVIE_TOLERANCE_MS - 1))))).toContain("DURATION_MISMATCH");
   });
 
-  test("refuses a movie duration 44 ms over the video's with DURATION_MISMATCH", async () => {
-    expect(codesOf(await run("mvhd-44.mp4", patched(fx.bytes, (b) => setU32(b, mvhdDurationAt(b), 1500 + AV_TOLERANCE_MS + 1))))).toContain("DURATION_MISMATCH");
+  test("refuses a movie one AAC frame (21 ms) over the expected length, the atrim regression, with DURATION_MISMATCH", async () => {
+    expect(codesOf(await run("mvhd-21.mp4", patched(fx.bytes, (b) => setU32(b, mvhdDurationAt(b), 1521))))).toContain("DURATION_MISMATCH");
   });
 
-  test("refuses a movie duration 44 ms under the video's with DURATION_MISMATCH", async () => {
-    expect(codesOf(await run("mvhd-under.mp4", patched(fx.bytes, (b) => setU32(b, mvhdDurationAt(b), 1500 - AV_TOLERANCE_MS - 1))))).toContain("DURATION_MISMATCH");
+  test("accepts an audio track 23 ms under the video and refuses 24 ms under, with DURATION_MISMATCH", async () => {
+    expect(await run("audio--23.mp4", patched(fx.bytes, (b) => setTrackMs(b, 1, 1500 - AUDIO_UNDER_MS)))).toEqual({ ok: true });
+    expect(codesOf(await run("audio--24.mp4", patched(fx.bytes, (b) => setTrackMs(b, 1, 1500 - AUDIO_UNDER_MS - 1))))).toContain("DURATION_MISMATCH");
   });
 
-  test("accepts an audio track 43 ms under the video and refuses one 44 ms under, with DURATION_MISMATCH", async () => {
-    const audioAt = tkhdDurationAt(fx.bytes, 1);
-    expect(await run("audio-43.mp4", patched(fx.bytes, (b) => setU32(b, audioAt, 1500 - AV_TOLERANCE_MS)))).toEqual({ ok: true });
-    expect(codesOf(await run("audio-44.mp4", patched(fx.bytes, (b) => setU32(b, audioAt, 1500 - AV_TOLERANCE_MS - 1))))).toContain("DURATION_MISMATCH");
+  test("accepts an audio track 1 ms over the video and refuses 2 ms over, with DURATION_MISMATCH", async () => {
+    expect(await run("audio-1.mp4", patched(fx.bytes, (b) => setTrackMs(b, 1, 1500 + AUDIO_OVER_MS)))).toEqual({ ok: true });
+    expect(codesOf(await run("audio-2.mp4", patched(fx.bytes, (b) => setTrackMs(b, 1, 1500 + AUDIO_OVER_MS + 1))))).toContain("DURATION_MISMATCH");
   });
 
-  test("refuses an audio track 44 ms over the video with DURATION_MISMATCH", async () => {
-    expect(codesOf(await run("audio-over.mp4", patched(fx.bytes, (b) => setU32(b, tkhdDurationAt(b, 1), 1500 + AV_TOLERANCE_MS + 1))))).toContain("DURATION_MISMATCH");
+  test("refuses an audio track one AAC frame (21 ms) over the video with DURATION_MISMATCH", async () => {
+    expect(codesOf(await run("audio-21.mp4", patched(fx.bytes, (b) => setTrackMs(b, 1, 1521))))).toContain("DURATION_MISMATCH");
   });
 
   test("accepts a video track 2 ms off the frame count's length and refuses 3 ms, with DURATION_MISMATCH", async () => {
     // The movie duration follows the video track so that only the video-versus-frames check can fire.
     const both = (b: Uint8Array, video: number): void => {
-      setU32(b, tkhdDurationAt(b, 0), video);
-      setU32(b, mvhdDurationAt(b), video);
+      setTrackMs(b, 0, video);
+      setU32(b, mvhdDurationAt(b), 1500);
     };
     expect(await run("video-2.mp4", patched(fx.bytes, (b) => both(b, 1500 + VIDEO_TOLERANCE_MS)))).toEqual({ ok: true });
     expect(codesOf(await run("video-3.mp4", patched(fx.bytes, (b) => both(b, 1500 + VIDEO_TOLERANCE_MS + 1))))).toContain("DURATION_MISMATCH");
@@ -101,6 +110,11 @@ describe("the duration (invariant 20, and the AAC priming note)", () => {
   test("refuses a movie timescale of 0 with DURATION_MISMATCH instead of dividing by it", async () => {
     const at = locate(fx.bytes, "moov/mvhd").start + 20;
     expect(codesOf(await run("timescale0.mp4", patched(fx.bytes, (b) => setU32(b, at, 0))))).toContain("DURATION_MISMATCH");
+  });
+
+  test.each([0, 1])("refuses an edit list whose segments do not add up to the track %i's duration, with DURATION_MISMATCH", async (trak) => {
+    const elst = locate(fx.bytes, "moov/trak/edts/elst", trak);
+    expect(codesOf(await run("elst-sum.mp4", patched(fx.bytes, (b) => setU32(b, elst.start + 16, u32At(b, elst.start + 16) - 5))))).toContain("DURATION_MISMATCH");
   });
 });
 
@@ -248,8 +262,8 @@ describe("the colour tags (colr nclx, BT.709, limited range)", () => {
     expect(codesOf(await run("colr-prof.mp4", patched(fx.bytes, (b) => b.set([0x70, 0x72, 0x6f, 0x66], colrAt(b) + 4))))).toContain("COLOUR_TAG_WRONG");
   });
 
-  test("accepts a file with no colr box at all, since the tags are checked only if present", async () => {
+  test("refuses a file with no colr box, since the engine always tags, with COLOUR_TAG_WRONG", async () => {
     // The colr box is retyped as `fiel`, another box the entry may hold, so that only the tag is gone.
-    expect(await run("no-colr.mp4", patched(fx.bytes, (b) => b.set([0x66, 0x69, 0x65, 0x6c], colrAt(b))))).toEqual({ ok: true });
+    expect(codesOf(await run("no-colr.mp4", patched(fx.bytes, (b) => b.set([0x66, 0x69, 0x65, 0x6c], colrAt(b)))))).toContain("COLOUR_TAG_WRONG");
   });
 });

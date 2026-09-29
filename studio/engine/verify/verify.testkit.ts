@@ -96,6 +96,25 @@ export function spliceInside(bytes: Uint8Array, target: Box, at: number, deleteC
   const around = walkBoxes(bytes).filter((b) => b.start <= target.start && b.end >= target.end);
   for (const b of around) view.setUint32(b.start, view.getUint32(b.start) + delta);
   for (const offset of extraSizeAt) view.setUint32(offset, view.getUint32(offset) + delta);
+  const mdat = walkBoxes(bytes).find((b) => b.path === "mdat");
+  // Bytes added before the media data move it, so the chunk offsets move with it (the verifier checks them).
+  return mdat && at <= mdat.start ? shiftChunkOffsets(out, delta) : out;
+}
+
+/** Adds `delta` to every 32- and 64-bit chunk offset (`stco`, `co64`) in the file. */
+export function shiftChunkOffsets(bytes: Uint8Array, delta: number): Uint8Array {
+  const out = bytes.slice();
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  for (const box of walkBoxes(out)) {
+    if (box.type !== "stco" && box.type !== "co64") continue;
+    const wide = box.type === "co64";
+    const count = view.getUint32(box.start + 12);
+    for (let i = 0; i < count; i++) {
+      const at = box.start + 16 + i * (wide ? 8 : 4);
+      if (wide) view.setBigUint64(at, view.getBigUint64(at) + BigInt(delta));
+      else view.setUint32(at, view.getUint32(at) + delta);
+    }
+  }
   return out;
 }
 
