@@ -1,13 +1,15 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectApng, STICKER_LIMITS } from "../../shared/stickers/apng";
-import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
+import { STICKER_MANIFEST, stickerById } from "../../shared/stickers/manifest";
+import { runFfmpegOk } from "../../engine/render/ffmpeg.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { decodeFrames } from "./apngDecode.testkit";
 import { DESIGNS } from "./designs";
-import { buildCatalog, catalogJson, generateSticker, generateStickerSet, renderStickerFrames, STICKER_ASSET_DIR, type GeneratedSticker } from "./generateStickers";
+import { buildCatalog, catalogJson, generateSticker, removeStaleStickers, renderStickerFrames, STICKER_ASSET_DIR, writeStickerSet, type GeneratedSticker } from "./generateStickers";
 useNativeGlobals();
 
 // The committed set under studio/assets/stickers/ must be exactly what the
@@ -17,10 +19,19 @@ useNativeGlobals();
 const GENERATOR = join(import.meta.dir, "generateStickers.ts");
 const sha256 = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 
+// Every sticker is rendered once and shared by all the groups below.
+const rendered = new Map<string, Uint8Array[]>();
 let fresh: GeneratedSticker[] = [];
 beforeAll(() => {
-  fresh = generateStickerSet();
+  for (const entry of STICKER_MANIFEST) rendered.set(entry.id, renderStickerFrames(entry));
+  fresh = STICKER_MANIFEST.map((entry) => generateSticker(entry, rendered.get(entry.id)));
 }, 300_000);
+
+function framesOf(id: string): Uint8Array[] {
+  const frames = rendered.get(id);
+  if (frames === undefined) throw new Error(`no rendered frames for ${id}`);
+  return frames;
+}
 
 describe("the designs", () => {
   test("cover exactly the manifest's ids", () => {
@@ -28,41 +39,84 @@ describe("the designs", () => {
   });
 });
 
-describe("a generated sticker's frames", () => {
-  const meanAbsDiff = (a: Uint8Array, b: Uint8Array): number => {
-    let sum = 0;
-    for (let i = 0; i < a.length; i++) sum += Math.abs((a[i] ?? 0) - (b[i] ?? 0));
-    return sum / a.length;
-  };
+/** Mean absolute difference of two frames on premultiplied RGBA: the colour of an invisible pixel does not count. */
+function premultipliedDiff(a: Uint8Array, b: Uint8Array): number {
+  let sum = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    const aa = (a[i + 3] ?? 0) / 255;
+    const ab = (b[i + 3] ?? 0) / 255;
+    for (let c = 0; c < 3; c++) sum += Math.abs((a[i + c] ?? 0) * aa - (b[i + c] ?? 0) * ab);
+    sum += Math.abs((a[i + 3] ?? 0) - (b[i + 3] ?? 0));
+  }
+  return sum / a.length;
+}
 
+/**
+ * Judges the step from the last frame back to the first against the steps on
+ * either side of it (0 to 1, and n-2 to n-1). A seam step of 0 means the last
+ * frame repeats the first (the `t = i / (n - 1)` off-by-one: a visible stall on
+ * every loop); a seam step far above its neighbours is a jump. Returns the
+ * problem, or undefined when the seam is like any other step.
+ */
+function seamProblem(frames: readonly Uint8Array[]): string | undefined {
+  const at = (i: number): Uint8Array => frames[i] ?? new Uint8Array(0);
+  const n = frames.length;
+  const seam = premultipliedDiff(at(n - 1), at(0));
+  const neighbours = [premultipliedDiff(at(0), at(1)), premultipliedDiff(at(n - 2), at(n - 1))];
+  for (const step of neighbours) {
+    if (seam < step * 0.25) return `the seam step ${seam.toFixed(3)} is under 0.25x its neighbour ${step.toFixed(3)} (a stall)`;
+    if (seam > step * 2.5) return `the seam step ${seam.toFixed(3)} is over 2.5x its neighbour ${step.toFixed(3)} (a jump)`;
+  }
+  return undefined;
+}
+
+/** The one loop that restarts on purpose: a strike at frame 0 that decays. */
+const RESTARTS_ON_PURPOSE = new Set(["lightning-flash"]);
+
+describe("the seam check itself (negative controls)", () => {
+  for (const id of ["sun-rays", "heart-pulse", "sparkle-twinkle"]) {
+    test(`${id}: a sticky loop, whose last frame repeats the first, is caught`, () => {
+      const frames = framesOf(id).slice();
+      frames[frames.length - 1] = frames[0] ?? new Uint8Array(0);
+      expect(seamProblem(frames)).toMatch(/stall/);
+    });
+    test(`${id}: a jump loop, cut at 80% of its length, is caught`, () => {
+      const frames = framesOf(id).slice(0, Math.floor(framesOf(id).length * 0.8));
+      expect(seamProblem(frames)).toMatch(/jump/);
+    });
+    test(`${id}: the real loop passes`, () => {
+      expect(seamProblem(framesOf(id))).toBeUndefined();
+    });
+  }
+});
+
+describe("a generated sticker's frames", () => {
   for (const entry of STICKER_MANIFEST) {
     test(`${entry.id}: renders loopFrames frames of size*size RGBA`, () => {
-      const frames = renderStickerFrames(entry);
+      const frames = framesOf(entry.id);
       expect(frames.length).toBe(entry.loopFrames);
       for (const f of frames) expect(f.length).toBe(entry.size * entry.size * 4);
     });
-  }
 
-  for (const entry of STICKER_MANIFEST.filter((e) => e.id !== "lightning-flash")) {
-    test(`${entry.id}: the step from the last frame back to the first is no bigger than 2.5x the largest step inside the loop`, () => {
-      const frames = renderStickerFrames(entry);
-      let largest = 0;
-      for (let i = 1; i < frames.length; i++) largest = Math.max(largest, meanAbsDiff(frames[i - 1] ?? new Uint8Array(0), frames[i] ?? new Uint8Array(0)));
-      const wrap = meanAbsDiff(frames[frames.length - 1] ?? new Uint8Array(0), frames[0] ?? new Uint8Array(0));
-      expect(wrap).toBeLessThanOrEqual(largest * 2.5);
-    });
-  }
+    if (RESTARTS_ON_PURPOSE.has(entry.id)) {
+      test(`${entry.id}: restarts on purpose, so its seam is a jump (the exception stays explicit)`, () => {
+        expect(seamProblem(framesOf(entry.id))).toMatch(/jump/);
+      });
+    } else {
+      test(`${entry.id}: the seam step is like its neighbours (0.25x to 2.5x), on premultiplied RGBA`, () => {
+        expect(seamProblem(framesOf(entry.id))).toBeUndefined();
+      });
+    }
 
-  for (const entry of STICKER_MANIFEST) {
     test(`${entry.id}: has soft alpha (many pixels strictly between 0 and 255) and a transparent corner`, () => {
-      const frame = renderStickerFrames(entry)[0] ?? new Uint8Array(0);
+      const frame = framesOf(entry.id)[0] ?? new Uint8Array(0);
       let soft = 0;
       for (let i = 3; i < frame.length; i += 4) if ((frame[i] ?? 0) > 0 && (frame[i] ?? 0) < 255) soft += 1;
       expect(soft).toBeGreaterThan(400);
       expect(frame[3]).toBe(0);
     });
     test(`${entry.id}: moves (its frames are not all identical)`, () => {
-      const frames = renderStickerFrames(entry);
+      const frames = framesOf(entry.id);
       const first = frames[0] ?? new Uint8Array(0);
       expect(frames.some((f) => Buffer.compare(f, first) !== 0)).toBe(true);
     });
@@ -114,6 +168,56 @@ describe("the committed set", () => {
       expect(result.info.frames.every((f) => f.delayNum === 1 && f.delayDen === 30)).toBe(true);
     });
   }
+});
+
+describe("the committed files, decoded", () => {
+  for (const entry of STICKER_MANIFEST) {
+    test(`${entry.id}.apng inflates (system zlib) and unfilters to exactly the rendered frames`, () => {
+      const decoded = decodeFrames(readFileSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)), entry.size, entry.size);
+      const expected = framesOf(entry.id);
+      expect(decoded.length).toBe(expected.length);
+      decoded.forEach((d, i) => expect(Buffer.compare(d, expected[i] ?? new Uint8Array(0))).toBe(0));
+    });
+
+    test(`${entry.id}.apng decodes in ffmpeg with -xerror to loopFrames frames of the same pixels`, async () => {
+      // ffmpeg exits 0 on a broken frame and drops it, so count the frames it delivers.
+      const r = await runFfmpegOk(["-v", "error", "-xerror", "-f", "apng", "-i", join(STICKER_ASSET_DIR, `${entry.id}.apng`), "-vf", "fps=30,format=rgba", "-f", "rawvideo", "-pix_fmt", "rgba", "-"]);
+      const frameBytes = entry.size * entry.size * 4;
+      expect(r.stderr).toBe("");
+      expect(r.stdout.length).toBe(frameBytes * entry.loopFrames);
+      const expected = framesOf(entry.id);
+      for (let i = 0; i < entry.loopFrames; i++) {
+        expect(Buffer.compare(r.stdout.subarray(i * frameBytes, (i + 1) * frameBytes), expected[i] ?? new Uint8Array(0))).toBe(0);
+      }
+    }, 60_000);
+  }
+});
+
+describe("writing the set", () => {
+  test("leaves foreign .apng files alone in any folder but the asset folder, and still writes the catalog", () => {
+    const out = mkdtempSync(join(tmpdir(), "b5-write-"));
+    try {
+      writeFileSync(join(out, "foreign.apng"), "not ours");
+      writeStickerSet(out, fresh, true);
+      expect(readdirSync(out).sort()).toEqual([...fresh.map((f) => f.file), "catalog.json", "foreign.apng"].sort());
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+  test("removeStaleStickers deletes only .apng files that are not kept", () => {
+    const dir = mkdtempSync(join(tmpdir(), "b5-stale-"));
+    try {
+      for (const name of ["keep.apng", "stale.apng", "notes.txt"]) writeFileSync(join(dir, name), "x");
+      removeStaleStickers(dir, new Set(["keep.apng"]));
+      expect(readdirSync(dir).sort()).toEqual(["keep.apng", "notes.txt"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  test("catalog.json records each sticker's poster frame, 0 unless the manifest says otherwise", () => {
+    const catalog = buildCatalog(fresh);
+    for (const s of catalog.stickers) expect(s.posterFrame).toBe(stickerById(s.id)?.posterFrame ?? 0);
+  });
 });
 
 describe("determinism", () => {
