@@ -173,4 +173,28 @@ describe("opening", () => {
   test("refuses the empty input with a typed error", () => {
     expect(() => openEmojiFont(new Uint8Array(0))).toThrow(expect.objectContaining({ code: "NOT_A_FONT" }));
   });
+
+  test("keeps working when the caller's buffer is transferred away after open", async () => {
+    const bytes = await loadPinnedEmojiFont();
+    const opened = openEmojiFont(bytes);
+    structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+    expect(bytes.byteLength).toBe(0);
+    expect(sha16(opened.bitmap("😀")?.png ?? new Uint8Array())).toBe("10d6305ce9241ddf");
+  });
+
+  test("keeps its answers when the caller overwrites the buffer after open", async () => {
+    const bytes = await loadPinnedEmojiFont();
+    const opened = openEmojiFont(bytes);
+    bytes.fill(0);
+    expect([opened.has("👩‍💻"), sha16(opened.bitmap("😀")?.png ?? new Uint8Array())]).toEqual([true, "10d6305ce9241ddf"]);
+  });
+
+  test("opens a font handed over as a view into a larger buffer", async () => {
+    const font = await loadPinnedEmojiFont();
+    const padded = new Uint8Array(font.byteLength + 100).fill(0xaa);
+    padded.set(font, 50);
+    const opened = openEmojiFont(padded.subarray(50, 50 + font.byteLength));
+    padded.fill(0);
+    expect(sha16(opened.bitmap("😀")?.png ?? new Uint8Array())).toBe("10d6305ce9241ddf");
+  });
 });

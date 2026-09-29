@@ -411,9 +411,11 @@ function codePointsOf(sequence: string | readonly number[]): number[] | null {
 
 /**
  * Opens the font. Throws an `EmojiFontError` when the bytes are not a CBDT font this reader can trust, and nothing
- * else. The returned object never throws.
+ * else. The returned object never throws, and does not depend on `input` after this call returns.
  */
-export function openEmojiFont(bytes: Uint8Array): EmojiFont {
+export function openEmojiFont(input: Uint8Array): EmojiFont {
+  // The font keeps its own copy (about 1 ms): the caller may transfer, reuse or overwrite its buffer afterwards.
+  const bytes = input.slice();
   const { table } = readDirectory(bytes);
   const maxp = table("maxp");
   const numGlyphs = maxp.u16(4);
