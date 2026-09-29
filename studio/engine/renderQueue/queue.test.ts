@@ -3,7 +3,7 @@ import type { JobState, RenderResult } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import { JobRegistry } from "../jobs";
 import { RenderGraphError } from "../render";
-import { MAX_UNFINISHED_RENDERS, RenderFailure, RenderQueue, type RenderContext, type RenderQueueDeps, type RenderQueueEvent, type RenderSubmission } from "./queue";
+import { MAX_UNFINISHED_RENDERS, RenderFailure, RenderQueue, renderErrorFrom, type RenderContext, type RenderQueueDeps, type RenderQueueEvent, type RenderSubmission } from "./queue";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -670,5 +670,42 @@ describe("RenderQueue: the length of the queue", () => {
     queue.cancel(`job-${String(MAX_UNFINISHED_RENDERS).padStart(8, "0")}`);
 
     expect(queue.submit(nth(MAX_UNFINISHED_RENDERS + 1))).toEqual({ ok: true });
+  });
+});
+
+describe("RenderQueue: submit's own checks", () => {
+  test("a duplicate job id throws even when the queue is full (the documented throw comes before QUEUE_FULL)", () => {
+    const { queue } = setup();
+    for (let i = 1; i <= MAX_UNFINISHED_RENDERS; i++) {
+      const pad = String(i).padStart(8, "0");
+      queue.submit({ ...submission(1, { jobId: `job-${pad}`, photoIds: [`photo-${pad}`] }) });
+    }
+
+    expect(() => queue.submit(submission(1, { jobId: "job-00000005", photoIds: ["photo-other"] }))).toThrow(/already registered/);
+  });
+
+  test("a photo conflict answers with the code PHOTOS_RESERVED and the photos in conflict", () => {
+    const { queue } = setup();
+    queue.submit(submission(1, { photoIds: ["p1"] }));
+
+    expect(queue.submit(submission(2, { photoIds: ["p1", "p2"] }))).toEqual({ ok: false, code: "PHOTOS_RESERVED", photoIds: ["p1"] });
+  });
+});
+
+describe("renderErrorFrom: the user's home never reaches detail", () => {
+  const HOME = "/Users/Mia Secret";
+
+  test("an INTERNAL error's message has the home masked as ~", () => {
+    const error = renderErrorFrom(new Error(`ENOENT: no such file or directory, open '${HOME}/Reels/.studio-part-x.mp4'`), HOME);
+
+    expect(error.code).toBe("INTERNAL");
+    expect(error.detail).toBe("ENOENT: no such file or directory, open '~/Reels/.studio-part-x.mp4'");
+  });
+
+  test("an ffmpeg failure's detail is masked too, whatever its own scrubbing did", () => {
+    const error = renderErrorFrom(new FfmpegError("ffmpeg exited with code 1", 1, `boom ${HOME}/x`), HOME);
+
+    expect(error.detail).toContain("boom ~/x");
+    expect(error.detail).not.toContain("Mia Secret");
   });
 });

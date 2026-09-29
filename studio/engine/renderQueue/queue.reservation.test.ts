@@ -74,7 +74,7 @@ describe("RenderQueue: the reserved set", () => {
 
     const refused = queue.submit(spec(3, ["p3", "p4", "p1"]));
 
-    expect(refused).toEqual({ ok: false, photoIds: ["p3", "p1"] });
+    expect(refused).toEqual({ ok: false, code: "PHOTOS_RESERVED", photoIds: ["p3", "p1"] });
     expect(queue.reservedPhotos(AVATAR)).toEqual(new Set(["p1", "p2", "p3"]));
     expect(queue.active()).toBe(2);
   });
@@ -261,7 +261,7 @@ describe("RenderQueue as the library's reserved-photos provider (invariant 24, b
 
     expect(freeIds(library, avatar.id)).toEqual([p4]);
     expect(library.photoStates(avatar.id).get(p3)).toMatchObject({ reserved: true, eligible: true });
-    expect(queue.submit(spec(3, [p3, p4], avatar.id))).toEqual({ ok: false, photoIds: [p3] });
+    expect(queue.submit(spec(3, [p3, p4], avatar.id))).toEqual({ ok: false, code: "PHOTOS_RESERVED", photoIds: [p3] });
     expect(queue.submit(spec(4, [p4], avatar.id))).toEqual({ ok: true });
     expect(freeIds(library, avatar.id)).toEqual([]);
   });

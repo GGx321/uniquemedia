@@ -2,6 +2,7 @@ import type { EngineError, JobProgress, JobState, RenderResult } from "../../sha
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import type { JobRegistry, RenderJobEnd, RenderJobRef } from "../jobs";
 import { RenderGraphError } from "../render";
+import { maskHome } from "./scrubber";
 
 // The render queue (task 3a.6): a pool of N over the engine's JobRegistry.
 // Jobs are queued, then run first in, first out as slots free; a queued or a
@@ -61,7 +62,7 @@ export type SubmitResult =
   /** Queued (or already started). */
   | { ok: true }
   /** Refused, nothing registered or reserved: these photos are held by another queued or running spec. */
-  | { ok: false; photoIds: string[] }
+  | { ok: false; code: "PHOTOS_RESERVED"; photoIds: string[] }
   /** Refused, nothing registered or reserved: `limit` render jobs are already queued or running. The command layer maps `code`. */
   | { ok: false; code: "QUEUE_FULL"; limit: number };
 
@@ -75,7 +76,10 @@ export interface ReleaseInfo {
 export type RenderQueueEvent =
   | { type: "started"; state: JobState }
   | { type: "progress"; progress: JobProgress }
-  /** `cause` is the raw error of a failed job (its stderr tail included), for the log. */
+  /**
+   * `cause` is the error the job threw, for the log. The runner's errors carry the RAW one (paths and all) in their
+   * own `.cause`: log it, never send it to the renderer. `state.error` is what may be sent.
+   */
   | { type: "ended"; state: JobState; cause?: unknown };
 
 export interface RenderQueueDeps {
@@ -110,7 +114,13 @@ const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
  *   fault or a wiring defect, and the same spec is refused the same way: nothing retries it;
  * - anything else is INTERNAL.
  */
-export function renderErrorFrom(error: unknown): EngineError {
+export function renderErrorFrom(error: unknown, home?: string): EngineError {
+  const mapped = renderErrorUnmasked(error);
+  // The last net: whatever text becomes a `detail` loses the user's home folder here, even when no job scrubber ever saw it.
+  return mapped.detail === undefined ? mapped : { ...mapped, detail: maskHome(mapped.detail, home) };
+}
+
+function renderErrorUnmasked(error: unknown): EngineError {
   if (error instanceof RenderFailure) return error.engineError;
   if (error instanceof RenderGraphError) return { code: "RENDER_FAILED", detail: `the render graph was refused (${error.code}): ${oneLine(error.message)}`.slice(0, 300) };
   if (error instanceof FfmpegTimeoutError) return { code: "TIMEOUT", detail: `the render ran past its time limit of ${Math.round(error.timeoutMs / 1000)} s` };
@@ -147,11 +157,13 @@ export class RenderQueue {
    * queued or running. Throws for a job id the registry already has.
    */
   submit(submission: RenderSubmission): SubmitResult {
+    // The documented throw comes first: a duplicate id is a caller's defect whether or not the queue is full.
+    if (this.#deps.jobs.stateOf(submission.jobId) !== undefined) throw new Error(`job ${submission.jobId} is already registered`);
     if (this.#held.size >= MAX_UNFINISHED_RENDERS) return { ok: false, code: "QUEUE_FULL", limit: MAX_UNFINISHED_RENDERS };
     const photos = new Set(submission.photoIds);
     const taken = this.#heldBy(submission.ref.avatarId);
     const conflicts = [...photos].filter((id) => taken.has(id));
-    if (conflicts.length > 0) return { ok: false, photoIds: conflicts };
+    if (conflicts.length > 0) return { ok: false, code: "PHOTOS_RESERVED", photoIds: conflicts };
 
     const signal = this.#deps.jobs.queueRender(submission.jobId, submission.ref, submission.totalFrames);
     const held: Held = { submission, photos, signal };
