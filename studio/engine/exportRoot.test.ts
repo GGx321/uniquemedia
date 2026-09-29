@@ -398,6 +398,15 @@ describe("the probe", () => {
     expect(removed).toEqual([]);
   });
 
+  test("a probe that something else removed first (the open-time recovery sweeps probes of our shape) is not a refusal: the folder was writable", async () => {
+    await mkdir(exportPath);
+    const fs = faulty({ remove: async () => Promise.reject(errno("ENOENT")) });
+
+    const result = await check({ fs });
+
+    expect(result).toMatchObject({ ok: true });
+  });
+
   test("a probe this call created is removed even when a later step fails", async () => {
     await mkdir(exportPath);
     const removed: string[] = [];

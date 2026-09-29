@@ -259,7 +259,12 @@ export async function checkExportRoot(options: CheckExportRootOptions): Promise<
   try {
     await fs.createExclusive(probe, "");
     created = true;
-    await fs.remove(probe);
+    // The probe was created, so the folder took a write. Something else may have taken the probe away already: the recovery
+    // that runs when a library opens sweeps empty `.studio-probe-*` files (a crash's leftovers) and cannot tell a live one.
+    // "Already gone" is what this remove wanted, not a refusal.
+    await fs.remove(probe).catch((error: unknown) => {
+      if (!hasErrorCode(error, "ENOENT")) throw error;
+    });
   } catch {
     if (created) await fs.remove(probe).catch(() => undefined);
     return refuse("not-writable");
