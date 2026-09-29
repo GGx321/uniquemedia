@@ -122,6 +122,43 @@ describe("JobRegistry, render jobs", () => {
   });
 });
 
+describe("JobRegistry, review round 1", () => {
+  test("progress ignores a count that is not a number, and keeps what was reached", () => {
+    const jobs = new JobRegistry();
+    jobs.queueRender("job-00000001", REF, 120);
+    jobs.startRender("job-00000001");
+    jobs.progress("job-00000001", 40);
+
+    expect(jobs.progress("job-00000001", Number.NaN)).toMatchObject({ done: 40 });
+    expect(jobs.progress("job-00000001", Number.POSITIVE_INFINITY)).toMatchObject({ done: 40 });
+    expect(jobs.states()[0]).toMatchObject({ done: 40 });
+    valid(jobs.states());
+  });
+
+  test("progress floors a fractional count, so done stays an integer", () => {
+    const jobs = new JobRegistry();
+    jobs.queueRender("job-00000001", REF, 120);
+    jobs.startRender("job-00000001");
+
+    expect(jobs.progress("job-00000001", 10.9)).toMatchObject({ done: 10 });
+    valid(jobs.states());
+  });
+
+  test("a job that has just ended is never the one evicted, even when it is the oldest finished", () => {
+    const jobs = new JobRegistry({ keepFinished: 1 });
+    jobs.queueRender("job-00000001", REF, 120); // queued first, so first in start order
+    for (const n of [2, 3]) {
+      jobs.queueRender(`job-0000000${n}`, { ...REF, videoId: `video-0000000${n}` }, 120);
+      jobs.finishRender(`job-0000000${n}`, { status: "cancelled" });
+    }
+
+    jobs.cancel("job-00000001");
+
+    expect(jobs.stateOf("job-00000001")).toMatchObject({ status: "cancelled" });
+    expect(jobs.states().map((s) => s.jobId)).toEqual(["job-00000001"]);
+  });
+});
+
 describe("JobRegistry, reading a job", () => {
   test("stateOf gives a job's state as the snapshot lists it, and undefined for an unknown job", () => {
     const jobs = new JobRegistry();

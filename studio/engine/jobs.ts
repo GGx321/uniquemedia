@@ -89,7 +89,9 @@ export class JobRegistry {
   progress(jobId: string, reported: number): JobProgress | null {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined || entry.state.status !== "running") return null;
-    const done = entry.state.kind === "render" ? Math.min(entry.state.total, Math.max(entry.state.done, reported)) : reported;
+    // A count that is not a number changes nothing (it would poison `done` for good); a fraction is floored.
+    const counted = Number.isFinite(reported) ? Math.floor(reported) : entry.state.done;
+    const done = entry.state.kind === "render" ? Math.min(entry.state.total, Math.max(entry.state.done, counted)) : counted;
     entry.state = { ...entry.state, done };
     const { total } = entry.state;
     switch (entry.state.kind) {
@@ -122,7 +124,7 @@ export class JobRegistry {
         entry.state = { ...common, status: "cancelled" };
         break;
     }
-    this.#dropOldFinished();
+    this.#dropOldFinished(jobId);
     return entry.state;
   }
 
@@ -143,7 +145,7 @@ export class JobRegistry {
         entry.state = { ...common, status: "cancelled" };
         break;
     }
-    this.#dropOldFinished();
+    this.#dropOldFinished(jobId);
     return entry.state;
   }
 
@@ -165,7 +167,7 @@ export class JobRegistry {
         entry.state = { ...common, status: "cancelled", done };
         break;
     }
-    this.#dropOldFinished();
+    this.#dropOldFinished(jobId);
     return entry.state;
   }
 
@@ -201,8 +203,10 @@ export class JobRegistry {
     return controller.signal;
   }
 
-  #dropOldFinished(): void {
+  /** Keeps the latest finished jobs; `justEnded` is never evicted, so what its owner reads back next is still there. */
+  #dropOldFinished(justEnded?: string): void {
     const finished = [...this.#jobs.values()].filter((entry) => entry.state.status !== "running" && entry.state.status !== "queued");
-    for (const entry of finished.slice(0, Math.max(0, finished.length - this.#keepFinished))) this.#jobs.delete(entry.state.jobId);
+    const evictable = finished.filter((entry) => entry.state.jobId !== justEnded);
+    for (const entry of evictable.slice(0, Math.max(0, finished.length - this.#keepFinished))) this.#jobs.delete(entry.state.jobId);
   }
 }
