@@ -18,9 +18,9 @@
  */
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { inspectApng, STICKER_LIMITS } from "../../shared/stickers/apng";
-import { STICKER_MANIFEST, type StickerManifestEntry } from "../../shared/stickers/manifest";
+import { STICKER_MANIFEST, type StickerCategoryId, type StickerManifestEntry } from "../../shared/stickers/manifest";
 import { encodeApng } from "./apngWriter";
 import { DESIGNS } from "./designs";
 import { Raster } from "./raster";
@@ -40,7 +40,9 @@ export interface CatalogEntry {
   readonly height: number;
   /** The loop period in 30 fps frames: what the render's loop and the preview's `mod` both use. */
   readonly loopFrames: number;
-  readonly category: string;
+  readonly category: StickerCategoryId;
+  /** The frame a thumbnail shows. */
+  readonly posterFrame: number;
   readonly tags: readonly string[];
 }
 
@@ -65,12 +67,12 @@ export function renderStickerFrames(entry: StickerManifestEntry): Uint8Array[] {
   return frames;
 }
 
-/** Renders, encodes and self-checks one sticker against the caps and the 30 fps grid. */
-export function generateSticker(entry: StickerManifestEntry): GeneratedSticker {
+/** Renders (or takes the already rendered `frames` of), encodes and self-checks one sticker against the caps and the 30 fps grid. */
+export function generateSticker(entry: StickerManifestEntry, frames?: readonly Uint8Array[]): GeneratedSticker {
   if (!Object.hasOwn(DESIGNS, entry.id)) throw new Error(`no design for sticker "${entry.id}"`);
   if (entry.size > STICKER_LIMITS.maxSide) throw new Error(`size ${entry.size} is over the ${STICKER_LIMITS.maxSide} px cap`);
   if (entry.loopFrames > STICKER_LIMITS.maxLoopFrames) throw new Error(`loop of ${entry.loopFrames} frames is over the ${STICKER_LIMITS.maxLoopFrames} frame cap`);
-  const bytes = encodeApng({ width: entry.size, height: entry.size, frames: renderStickerFrames(entry) });
+  const bytes = encodeApng({ width: entry.size, height: entry.size, frames: frames ?? renderStickerFrames(entry) });
   const checked = inspectApng(bytes, STICKER_LIMITS);
   if (!checked.ok) throw new Error(`${entry.id} fails its own check: ${checked.code}: ${checked.detail}`);
   if (checked.info.width !== entry.size || checked.info.height !== entry.size) throw new Error(`${entry.id} came out ${checked.info.width}x${checked.info.height}`);
@@ -87,7 +89,7 @@ export function generateStickerSet(only?: readonly string[]): GeneratedSticker[]
     const unknown = only.filter((id) => !STICKER_MANIFEST.some((s) => s.id === id));
     if (unknown.length > 0) throw new Error(`unknown sticker id(s): ${unknown.join(", ")}`);
   }
-  return wanted.map(generateSticker);
+  return wanted.map((entry) => generateSticker(entry));
 }
 
 export function buildCatalog(stickers: readonly GeneratedSticker[]): Catalog {
@@ -103,6 +105,7 @@ export function buildCatalog(stickers: readonly GeneratedSticker[]): Catalog {
       height: entry.size,
       loopFrames: entry.loopFrames,
       category: entry.category,
+      posterFrame: entry.posterFrame ?? 0,
       tags: entry.tags,
     })),
   };
@@ -110,6 +113,24 @@ export function buildCatalog(stickers: readonly GeneratedSticker[]): Catalog {
 
 export function catalogJson(catalog: Catalog): string {
   return `${JSON.stringify(catalog, null, 2)}\n`;
+}
+
+/** Deletes the `*.apng` files in `dir` that are not in `keep`. Only for the asset folder itself. */
+export function removeStaleStickers(dir: string, keep: ReadonlySet<string>): void {
+  for (const name of readdirSync(dir)) if (name.endsWith(".apng") && !keep.has(name)) rmSync(join(dir, name));
+}
+
+/**
+ * Writes the stickers into `out`. A complete set also writes `catalog.json`.
+ * Stale `*.apng` files are removed only when `out` is the committed asset
+ * folder: any other folder may hold files that are not ours.
+ */
+export function writeStickerSet(out: string, set: readonly GeneratedSticker[], complete: boolean): void {
+  mkdirSync(out, { recursive: true });
+  for (const s of set) writeFileSync(join(out, s.file), s.bytes);
+  if (!complete) return;
+  writeFileSync(join(out, "catalog.json"), catalogJson(buildCatalog(set)));
+  if (resolve(out) === resolve(STICKER_ASSET_DIR)) removeStaleStickers(out, new Set(set.map((s) => s.file)));
 }
 
 function optionValue(args: readonly string[], name: string): string | undefined {
@@ -123,13 +144,7 @@ if (import.meta.main) {
   const onlyArg = optionValue(args, "--only");
   const only = onlyArg === undefined ? undefined : onlyArg.split(",").filter((s) => s.length > 0);
   const set = generateStickerSet(only);
-  mkdirSync(out, { recursive: true });
-  for (const s of set) writeFileSync(join(out, s.file), s.bytes);
-  if (only === undefined) {
-    writeFileSync(join(out, "catalog.json"), catalogJson(buildCatalog(set)));
-    const keep = new Set([...set.map((s) => s.file), "catalog.json"]);
-    for (const name of readdirSync(out)) if (name.endsWith(".apng") && !keep.has(name)) rmSync(join(out, name));
-  }
+  writeStickerSet(out, set, only === undefined);
   const total = set.reduce((n, s) => n + s.bytes.length, 0);
   console.log(`wrote ${set.length} stickers (${total} bytes) to ${out}`);
 }

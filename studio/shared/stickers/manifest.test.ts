@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Id } from "../engine/primitives";
 import { STICKER_LIMITS } from "./apng";
 import { STICKER_CATEGORIES, STICKER_ID_PATTERN, STICKER_MANIFEST, stickerById } from "./manifest";
 
@@ -57,5 +58,22 @@ describe("the built-in sticker manifest", () => {
     expect(stickerById("nope")).toBeUndefined();
     expect(stickerById("constructor")).toBeUndefined();
     expect(stickerById("__proto__")).toBeUndefined();
+  });
+  test("gives every sticker an id the contract's Id accepts, so it survives zod", () => {
+    for (const s of STICKER_MANIFEST) expect(Id.safeParse(s.id).success).toBe(true);
+  });
+  test("uses an id pattern that agrees with the contract's Id on the edges", () => {
+    for (const candidate of ["star", "abcdefg", "abcdefgh", "a".repeat(64), "a".repeat(65), "Abcdefgh", "abcd_efgh", "12345678", "-------"]) {
+      expect(STICKER_ID_PATTERN.test(candidate)).toBe(Id.safeParse(candidate).success);
+    }
+  });
+  test("keeps an optional poster frame inside the loop, and gives the lightning one, whose frame 0 is a flash", () => {
+    for (const s of STICKER_MANIFEST) {
+      if (s.posterFrame === undefined) continue;
+      expect(Number.isInteger(s.posterFrame)).toBe(true);
+      expect(s.posterFrame).toBeGreaterThanOrEqual(0);
+      expect(s.posterFrame).toBeLessThan(s.loopFrames);
+    }
+    expect(stickerById("lightning-flash")?.posterFrame ?? 0).toBeGreaterThan(0);
   });
 });

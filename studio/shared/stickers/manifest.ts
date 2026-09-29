@@ -27,9 +27,12 @@ export interface StickerManifestEntry {
   readonly size: number;
   /** The loop length in 30 fps frames. */
   readonly loopFrames: number;
+  /** The frame index a thumbnail should show, when frame 0 is not representative (a flash). Defaults to 0. */
+  readonly posterFrame?: number;
 }
 
-export const STICKER_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
+/** The contract's `Id` (studio/shared/engine/primitives.ts), so a sticker id also passes the spec's zod schema. */
+export const STICKER_ID_PATTERN = /^[a-z0-9-]{8,64}$/;
 
 /** Every built-in sticker is authored at this square size, upscaled by the render to its box (at most 0.6 of the frame width, 648 px). */
 export const BUILTIN_STICKER_SIZE = 320;
@@ -49,7 +52,7 @@ export const STICKER_MANIFEST: readonly StickerManifestEntry[] = [
   { id: "sparkle-twinkle", nameRu: "Искры", category: "sparkle", tags: ["sparkle", "twinkle", "shine", "magic"], size: BUILTIN_STICKER_SIZE, loopFrames: 30 },
   { id: "star-spin", nameRu: "Звезда", category: "sparkle", tags: ["star", "spin", "gold", "award"], size: BUILTIN_STICKER_SIZE, loopFrames: 36 },
   { id: "fire-flicker", nameRu: "Огонь", category: "mood", tags: ["fire", "flame", "hot", "trend"], size: BUILTIN_STICKER_SIZE, loopFrames: 24 },
-  { id: "lightning-flash", nameRu: "Молния", category: "mood", tags: ["lightning", "bolt", "energy", "shock"], size: BUILTIN_STICKER_SIZE, loopFrames: 24 },
+  { id: "lightning-flash", nameRu: "Молния", category: "mood", tags: ["lightning", "bolt", "energy", "shock"], size: BUILTIN_STICKER_SIZE, loopFrames: 24, posterFrame: 6 },
   { id: "bubble-float", nameRu: "Пузыри", category: "nature", tags: ["bubbles", "float", "water", "calm"], size: BUILTIN_STICKER_SIZE, loopFrames: 48 },
   { id: "sun-rays", nameRu: "Солнце", category: "nature", tags: ["sun", "rays", "summer", "warm"], size: BUILTIN_STICKER_SIZE, loopFrames: 30 },
   { id: "confetti-fall", nameRu: "Конфетти", category: "party", tags: ["confetti", "party", "celebrate", "birthday"], size: BUILTIN_STICKER_SIZE, loopFrames: 48 },
