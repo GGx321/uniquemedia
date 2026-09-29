@@ -61,4 +61,12 @@ describe("EngineInit.defaultExportPath", () => {
   test.each(["", "Studio/export", "../export"])("refuses %p, which is not absolute", (defaultExportPath) => {
     expect(EngineInit.safeParse({ ...base, defaultExportPath }).success).toBe(false);
   });
+
+  test("renderTmpDir is optional, and accepts an absolute path", () => {
+    expect(EngineInit.safeParse({ ...base, renderTmpDir: "/data/render-tmp" }).success).toBe(true);
+  });
+
+  test.each(["", "render-tmp", "../render-tmp"])("renderTmpDir refuses %p, which is not absolute", (renderTmpDir) => {
+    expect(EngineInit.safeParse({ ...base, renderTmpDir }).success).toBe(false);
+  });
 });

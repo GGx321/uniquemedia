@@ -148,6 +148,11 @@ export class RenderQueue {
     return this.#heldBy(avatarId);
   }
 
+  /** The render jobs as the snapshot lists them: queued, running, and the latest finished. */
+  states(): JobState[] {
+    return this.#deps.jobs.states().filter((state) => state.kind === "render");
+  }
+
   /** How many jobs are queued or running: what a library switch must wait for. */
   active(): number {
     return this.#deps.jobs.activeRenders();

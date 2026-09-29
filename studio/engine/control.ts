@@ -39,6 +39,12 @@ export const EngineInit = z.strictObject({
   defaultExportPath: AbsolutePath.optional(),
   /** `userData/raw`: where the body of a paid answer that could not be used is kept, redacted. */
   rawDir: AbsolutePath,
+  /**
+   * `userData/render-tmp`: where a render job keeps its pass-1 intermediates,
+   * one folder per job. Local on purpose: they are near-lossless and large. The
+   * engine sweeps it when it starts. Absent, nothing is swept.
+   */
+  renderTmpDir: AbsolutePath.optional(),
   settings: EngineSettings,
   encryptionAvailable: z.boolean(),
   /** A mock OpenRouter for end-to-end tests; honoured only by an E2E build (invariant 13). */

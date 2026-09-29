@@ -63,6 +63,7 @@ const RENDERER_FILE = join(import.meta.dirname, "../renderer/index.html");
 const ENGINE_ENTRY = join(import.meta.dirname, "../engine/main.js");
 /** In userData, next to the ledger: bodies of paid answers that could not be used, kept (redacted) as evidence. */
 const RAW_DIR = "raw";
+const RENDER_TMP_DIR = "render-tmp";
 const TRUSTED: TrustedRenderer = { devServerUrl, fileUrl: pathToFileURL(RENDERER_FILE).href };
 
 function isDevServer(url: string): boolean {
@@ -195,6 +196,7 @@ async function startStudio(): Promise<void> {
       defaultLibraryPath: defaultLibraryPath(userData),
       defaultExportPath: defaultSettings(userData).exportPath,
       rawDir: join(userData, RAW_DIR),
+      renderTmpDir: join(userData, RENDER_TMP_DIR),
       settings: settings.current,
       encryptionAvailable: keys.status().encryptionAvailable,
       openRouterBaseUrl: openRouterBaseUrlForTests(),

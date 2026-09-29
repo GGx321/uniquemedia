@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
-import { availableParallelism } from "node:os";
+import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import {
   AGE_CHECK_ALREADY_REFUSED_DETAIL,
@@ -82,6 +82,9 @@ import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
 import { capFundsResume, remainingPlan, scopeCommitted } from "./runs/remaining";
 import { preflightMaster, reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
 import { plan as planScenes } from "./scenes";
+import { RenderQueue } from "./renderQueue/queue";
+import { renderPoolSize } from "./renderQueue/pool";
+import { sweepRenderTmp } from "./renderQueue/sweep";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -112,8 +115,8 @@ export interface EngineDeps {
   /**
    * The scene photos of `avatarId` that queued or running renders hold (S16),
    * asked afresh each time; the library keeps them out of `eligibleUnusedPhotos`
-   * and marks them `reserved`. Nothing is reserved by default: the render queue
-   * provides this in task 3a.6, a stub in tests.
+   * and marks them `reserved`. Absent, the engine's own render queue provides it
+   * (queued and running specs); tests inject a stub to try the library's rule alone.
    */
   reservedPhotos?: (avatarId: string) => ReadonlySet<string>;
   /**
@@ -475,6 +478,11 @@ export class Engine {
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs = new JobRegistry();
   /**
+   * The render queue (3a.6): a pool over `#jobs`, sized from the settings.
+   * `videos.render` (3a.8b) submits to it; nothing else does yet.
+   */
+  readonly #renders: RenderQueue;
+  /**
    * Avatars a running job or command is changing: a candidate job holds its
    * draft until it ends, pick and archive while they write. Anything else
    * that would change one of them is refused with IN_FLIGHT.
@@ -503,6 +511,11 @@ export class Engine {
     this.#liveLibraryIdentityTimeoutMs = deps.liveLibraryIdentityTimeoutMs ?? LIVE_LIBRARY_IDENTITY_TIMEOUT_MS;
     this.#events = new EventLog(EVENT_LOG_CAPACITY, deps.bootId);
     this.#settings = init.settings;
+    this.#renders = new RenderQueue({
+      jobs: this.#jobs,
+      // Read at every start, so a settings change applies to the next job.
+      size: () => renderPoolSize(this.#settings.renderConcurrency, { cores: availableParallelism(), totalMem: totalmem() }),
+    });
     this.#pendingLibraryPath = init.settings.libraryPath;
     this.#encryptionAvailable = init.encryptionAvailable;
     this.#openRouterBaseUrl = resolveOpenRouterBaseUrl(init.openRouterBaseUrl, STUDIO_E2E);
@@ -549,6 +562,13 @@ export class Engine {
       money = { ok: false, unavailable: ledgerUnavailable(error) };
     }
     const engine = new Engine(init, money, caps, deps);
+    // Before any job can run: at start no render is running, so whatever is in
+    // render-tmp is a crash's leftover. Tolerant: a locked file is skipped (the
+    // next start gets it), and nothing here stops the engine.
+    if (init.renderTmpDir !== undefined) {
+      const swept = await sweepRenderTmp(init.renderTmpDir);
+      for (const { code } of swept.skipped) console.warn(`studio engine: a leftover in render-tmp could not be removed (${code}); the next start tries again`);
+    }
     // First run: the default folder does not exist yet. Only the default is
     // created; a folder the user chose may be a volume that is not mounted.
     if (init.settings.libraryPath === init.defaultLibraryPath) {
@@ -590,6 +610,11 @@ export class Engine {
   }
 
   /** The library of the saved settings, if it is open. */
+  /** The render queue. Task 3a.8b's `videos.render` submits to it; the engine's tests do until then. */
+  get renders(): RenderQueue {
+    return this.#renders;
+  }
+
   get library(): Library | null {
     return this.#live?.library ?? null;
   }
@@ -731,9 +756,9 @@ export class Engine {
     }
   }
 
-  /** True while a job or paid command writes into the live library, a pick/archive is running, or a reject mark is being written: a library switch must be refused. */
+  /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, or a render is queued or running (invariant 25): a library switch must be refused. */
   #busy(): boolean {
-    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
+    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || this.#renders.active() > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
   }
 
   #inFlightRefusal(): EngineError {
@@ -2446,7 +2471,8 @@ export class Engine {
       const opened = await pending;
       return { library: opened.library, identity, unreadable: opened.unreadable };
     }
-    const opening = openLibrary(path, this.#deps.reservedPhotos === undefined ? {} : { reservedPhotos: this.#deps.reservedPhotos }).then((opened) => {
+    const reservedPhotos = this.#deps.reservedPhotos ?? ((avatarId: string) => this.#renders.reservedPhotos(avatarId));
+    const opening = openLibrary(path, { reservedPhotos }).then((opened) => {
       // Fail-closed records and logs: said once per open, by avatar, relative file and reason class only (no absolute path, no content).
       for (const line of logIssueLines(opened.report.logIssues)) console.warn(line);
       return { library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) };
