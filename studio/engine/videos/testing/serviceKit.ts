@@ -1,0 +1,134 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import type { MontageDraft } from "../../../shared/engine/montage";
+import { EventMessage, type UnsequencedEvent } from "../../../shared/engine";
+import type { RunFfmpegArgvOptions } from "../../../node/runFfmpeg";
+import { JobRegistry } from "../../jobs";
+import type { Library } from "../../library";
+import { RenderQueue } from "../../renderQueue/queue";
+import { FileStateChecker } from "../fileState";
+import { CommitTracker } from "../live";
+import { VideoService, type VideoServiceDeps } from "../service";
+import { acceptingVerify, fakeVideoBytes, type World } from "./kit";
+
+// Test support for the video service (3a.8b.2): a service over a real library, a real export root and a real queue,
+// with the export check, the focus resolver and ffmpeg replaced by scripted ones. Test-only.
+
+export const BYTES = fakeVideoBytes(4096, 11);
+
+/** A fake ffmpeg: every call writes its output file, as a successful one would. */
+export const writingRun = async (opts: RunFfmpegArgvOptions): Promise<void> => {
+  await mkdir(dirname(opts.output), { recursive: true });
+  await writeFile(opts.output, BYTES);
+};
+
+/** `library` with some methods replaced, still bound to the real instance (its private state lives there). */
+export function withOverrides(library: Library, patch: Partial<Record<keyof Library, unknown>>): Library {
+  return new Proxy(library, {
+    get(target, property) {
+      if (typeof property === "string" && property in patch) return Reflect.get(patch, property);
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/** A focus resolver that fills every null focus with (0.5, 0.4), and says which specs it saw. */
+export function fillingFocus(seen: MontageDraft[] = []): { fillMissingFocus: (spec: MontageDraft) => Promise<{ spec: MontageDraft; unresolved: [] }> } {
+  return {
+    fillMissingFocus: async (spec) => {
+      seen.push(spec);
+      const fill = <C extends { focus: { x: number; y: number } | null }>(cell: C): C => ({ ...cell, focus: cell.focus ?? { x: 0.5, y: 0.4 } });
+      const clips = spec.clips.map((clip) => {
+        if (clip.kind === "photo") return { ...clip, cell: fill(clip.cell) };
+        if (clip.kind === "collage") return { ...clip, cells: clip.cells.map(fill) };
+        return { ...clip, focus: clip.focus ?? { x: 0.5, y: 0.4 } };
+      });
+      return { spec: { ...spec, clips }, unresolved: [] };
+    },
+  };
+}
+
+export interface ServiceRig {
+  readonly w: World;
+  readonly service: VideoService;
+  readonly queue: RenderQueue;
+  readonly jobs: JobRegistry;
+  readonly tracker: CommitTracker;
+  readonly checker: FileStateChecker;
+  readonly events: UnsequencedEvent[];
+  readonly logs: string[];
+  /** The `requiredBytes` of every export check made. */
+  readonly checks: Array<number | undefined>;
+  /** Every event, stamped the way the engine's log stamps it, so the contract's schema can judge it. */
+  stamped(): EventMessage[];
+  deps: VideoServiceDeps;
+}
+
+export interface ServiceRigOptions {
+  library?: Library;
+  deps?: Partial<VideoServiceDeps>;
+  size?: number;
+}
+
+let ids = 0;
+
+export function serviceRig(w: World, options: ServiceRigOptions = {}): ServiceRig {
+  const library = options.library ?? w.library;
+  const tracker = new CommitTracker();
+  const checker = new FileStateChecker();
+  const jobs = new JobRegistry();
+  const events: UnsequencedEvent[] = [];
+  const logs: string[] = [];
+  const checks: Array<number | undefined> = [];
+  const holder: { service?: VideoService } = {};
+  const queue = new RenderQueue({
+    jobs,
+    size: () => options.size ?? 1,
+    onEvent: (event) => holder.service?.onQueueEvent(event),
+    onListenerError: (error) => holder.service?.onListenerError(error),
+  });
+  const deps: VideoServiceDeps = {
+    queue,
+    tracker,
+    checker,
+    withLibrary: (work) => work(library),
+    openLibrary: () => library,
+    checkExport: async (requiredBytes) => {
+      checks.push(requiredBytes);
+      return { ok: true, root: w.exportRoot, rootId: w.rootId };
+    },
+    caseProbe: { isCaseInsensitive: async () => false },
+    focus: () => fillingFocus(),
+    renderTmpDir: w.renderTmp,
+    newId: () => `id-${String(++ids).padStart(8, "0")}`,
+    now: () => new Date(2026, 8, 29, 10, 0, 0),
+    emit: (event) => void events.push(event),
+    log: (line) => void logs.push(line),
+    renderOverrides: { verify: acceptingVerify, runDeps: { run: writingRun } },
+    staleRetryDelaysMs: [5, 5, 5],
+    ...options.deps,
+  };
+  const service = new VideoService(deps);
+  holder.service = service;
+  return {
+    w,
+    service,
+    queue,
+    jobs,
+    tracker,
+    checker,
+    events,
+    logs,
+    checks,
+    deps,
+    stamped: () => events.map((event, i) => EventMessage.parse({ ...event, seq: i + 1, bootId: "boot-0000-aaaa" })),
+  };
+}
+
+/** Polls `condition` every 5 ms for up to `timeoutMs` of wall time. */
+export async function until(condition: () => boolean, what = "the condition", timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+  if (!condition()) throw new Error(`timed out waiting for ${what}`);
+}
