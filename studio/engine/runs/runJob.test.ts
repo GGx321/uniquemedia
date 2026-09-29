@@ -780,6 +780,19 @@ describe("QA gates", () => {
     expect(pool.active).toBe(0);
   });
 
+  // Real clock, nothing injected: the PAID gate's own timeout through the production wiring (`timeoutSignal`). A
+  // timeout that is never armed or is far too long ends at `endWithin`'s 10 s, not at the gate's 60 s fallback.
+  test("real clock: a paid gate that outlives its own timeout is read as broken and the run fails naming that timeout", async () => {
+    const run = await newRun(1);
+    const hung = gate("age", () => new Promise<QaVerdict>(() => {}), { paid: true, timeoutMs: 50 });
+    const { end } = start(run, { gates: [hung], pool: new NetworkPool({ max: 2 }) });
+
+    const result = await endWithin(end, 10_000);
+    expect(result).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    if (result === "still running" || result.status !== "failed") throw new Error("the paid gate's timeout never fired");
+    expect(result.error.detail).toContain('the QA gate "age" could not run: it took longer than 50 ms');
+  });
+
   test("a gate that outlives its timeout is read as broken: the run stops, nothing more is sent, and the image in flight then is dropped", async () => {
     const run = await newRun(3);
     const hung = gate("face", () => new Promise<QaVerdict>(() => {}), { timeoutMs: 30 });
@@ -1386,6 +1399,25 @@ describe("cancel", () => {
     await until(() => timeouts.pending.length === 1, "the gate's timeout to be armed after the cancel");
     expect(timeouts.pending[0]?.ms).toBe(50); // the after-cancel bound, not the gates' 60 s default
     timeouts.pending[0]?.fire();
+    expect(await endWithin(end, 10_000)).toEqual({ status: "cancelled" });
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
+  });
+
+  // The two tests above read the bound off an injected timeout. This one injects nothing: it runs the production
+  // wiring (`timeoutSignal`, a ref'd real timer) and the real clock, so a bound that is never armed, an unref'd timer,
+  // or a fallback of 60 s shows here. 10 s leaves room for a Windows file-lock stall and is far under that fallback.
+  test("real clock: a free gate with no timeout of its own that hangs after the cancel is cut off by the production after-cancel bound", async () => {
+    const run = await newRun(2);
+    const controller = new AbortController();
+    const hung = gate("face", () => new Promise<QaVerdict>(() => {}));
+    const { end } = start(run, {
+      gates: [hung],
+      signal: controller.signal,
+      pool: new NetworkPool({ max: 1 }),
+      generateImage: cancelAsFirstImageArrives(controller),
+      cancelledGateTimeoutMs: 50,
+    });
+
     expect(await endWithin(end, 10_000)).toEqual({ status: "cancelled" });
     expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
   });
