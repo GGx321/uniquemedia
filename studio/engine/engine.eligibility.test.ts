@@ -1,0 +1,193 @@
+import { describe, expect, test } from "bun:test";
+import { appendFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { AvatarSummary, PhotoSummary } from "../shared/engine";
+import { manifestTraits } from "./avatars/records";
+import { openLibrary } from "./library";
+import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { sceneSpec, writeVideoRecord } from "./library/testing/videoRecords";
+import { command, failed, GOOD, ok, startEngine, TRAITS, useEngineDir } from "./testing/engineHarness";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
+
+// Task 3a.2 through the engine: photos.list, the avatar counts and
+// photos.setRejected all answer from the library's one eligibility function,
+// the video records and the reject marks. Records are written straight to
+// disk; the render queue's reserved set is injected.
+
+const dir = useEngineDir("studio-engine-eligibility-");
+const libraryRoot = () => join(dir(), "library");
+
+let seeded = 0;
+
+interface Seeded {
+  avatarId: string;
+  masterId: string;
+  /** Scene photos, oldest first. */
+  photoIds: string[];
+}
+
+/** A saved avatar with a master portrait and `count` scene photos, the first `failing` of them carrying a failing age verdict. */
+async function seedAvatar(count: number, opts: { failing?: number; unchecked?: boolean } = {}): Promise<Seeded> {
+  const { library } = await openLibrary(libraryRoot(), { now: steppingClock(), newId: sequentialIds(`elig${++seeded}`) });
+  const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+  const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
+  await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  const photoIds: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const base = samplePhotoMeta().source;
+    if (base.kind !== "generated") throw new Error("expected a generated sample source");
+    const failing = i < (opts.failing ?? 0);
+    const qa = failing ? { age: { adult: false, confidence: 0.9 } } : opts.unchecked ? {} : { age: { adult: true, confidence: 0.95 } };
+    const photo = await library.addPhoto(
+      avatar.id,
+      PNG_1X1,
+      samplePhotoMeta({ source: { ...base, category: "home", attemptId: `run-00000001:slot-${i + 1}#1`, slot: `slot-${i + 1}` }, qa }),
+    );
+    photoIds.push(photo.id);
+  }
+  return { avatarId: avatar.id, masterId: master.id, photoIds };
+}
+
+async function listPhotos(engine: Awaited<ReturnType<typeof startEngine>>["engine"], avatarId: string): Promise<PhotoSummary[]> {
+  const answer = ok(await engine.handle(command("photos.list", { avatarId })));
+  if (answer.type !== "photos.list") throw new Error(`expected photos.list, got ${answer.type}`);
+  return answer.result.photos;
+}
+
+async function avatarSummary(engine: Awaited<ReturnType<typeof startEngine>>["engine"], avatarId: string): Promise<AvatarSummary> {
+  const answer = ok(await engine.handle(command("avatars.list", {})));
+  if (answer.type !== "avatars.list") throw new Error(`expected avatars.list, got ${answer.type}`);
+  const found = answer.result.avatars.find((a) => a.avatarId === avatarId);
+  if (found === undefined) throw new Error("the avatar is not listed");
+  return found;
+}
+
+function rejectedAnswer(response: Parameters<typeof ok>[0]): PhotoSummary {
+  const answer = ok(response);
+  if (answer.type !== "photos.setRejected") throw new Error(`expected photos.setRejected, got ${answer.type}`);
+  return answer.result.photo;
+}
+
+const byId = (photos: readonly PhotoSummary[], photoId: string): PhotoSummary => {
+  const found = photos.find((p) => p.photoId === photoId);
+  if (found === undefined) throw new Error(`photo ${photoId} is not listed`);
+  return found;
+};
+
+describe("photos.list reports the derived state", () => {
+  test("a photo a video record lists is used, with the video in usedIn, and the others are not", async () => {
+    const { avatarId, photoIds } = await seedAvatar(3);
+    await writeVideoRecord(libraryRoot(), "video-00000001", sceneSpec(avatarId, [photoIds[0] ?? ""]));
+    const { engine } = await startEngine(dir());
+    const photos = await listPhotos(engine, avatarId);
+    expect(byId(photos, photoIds[0] ?? "")).toMatchObject({ used: true, usedIn: ["video-00000001"], eligible: true });
+    expect(byId(photos, photoIds[1] ?? "")).toMatchObject({ used: false, usedIn: [] });
+  });
+
+  test("an age-failed photo is listed but not eligible, and a photo with no verdict is eligible", async () => {
+    const { avatarId, photoIds } = await seedAvatar(2, { failing: 1 });
+    const { engine } = await startEngine(dir());
+    const photos = await listPhotos(engine, avatarId);
+    expect(byId(photos, photoIds[0] ?? "").eligible).toBe(false);
+    expect(byId(photos, photoIds[1] ?? "").eligible).toBe(true);
+
+    const unchecked = await seedAvatar(1, { unchecked: true });
+    const restarted = await startEngine(dir());
+    expect((await listPhotos(restarted.engine, unchecked.avatarId))[0]?.eligible).toBe(true);
+  });
+
+  test("a photo the injected reserved provider names is reserved, and only while it names it", async () => {
+    const { avatarId, photoIds } = await seedAvatar(2);
+    const reserved = new Set<string>([photoIds[1] ?? ""]);
+    const { engine } = await startEngine(dir(), { deps: { reservedPhotos: () => reserved } });
+    expect(byId(await listPhotos(engine, avatarId), photoIds[1] ?? "")).toMatchObject({ reserved: true, eligible: true });
+    reserved.clear();
+    expect(byId(await listPhotos(engine, avatarId), photoIds[1] ?? "").reserved).toBe(false);
+  });
+});
+
+describe("the avatar counts", () => {
+  test("videoCount counts the records and eligibleUnusedCount is eligible minus used minus rejected minus reserved", async () => {
+    const { avatarId, photoIds } = await seedAvatar(5, { failing: 1 });
+    const [, used, rejected, held, free] = photoIds;
+    await writeVideoRecord(libraryRoot(), "video-00000001", sceneSpec(avatarId, [used ?? ""]));
+    const reserved = new Set<string>([held ?? ""]);
+    const { engine } = await startEngine(dir(), { deps: { reservedPhotos: () => reserved } });
+    ok(await engine.handle(command("photos.setRejected", { avatarId, photoId: rejected ?? "", rejected: true })));
+
+    const summary = await avatarSummary(engine, avatarId);
+    expect(summary).toMatchObject({ photoCount: 5, videoCount: 1, eligibleUnusedCount: 1 });
+    const photos = await listPhotos(engine, avatarId);
+    expect(photos.filter((p) => p.eligible && !p.used && !p.reserved).map((p) => p.photoId)).toEqual([free ?? ""]);
+  });
+
+  test("the snapshot carries the same counts as avatars.list", async () => {
+    const { avatarId, photoIds } = await seedAvatar(2);
+    await writeVideoRecord(libraryRoot(), "video-00000001", sceneSpec(avatarId, [photoIds[0] ?? ""]));
+    const { engine } = await startEngine(dir());
+    const snapshot = ok(await engine.handle(command("engine.snapshot")));
+    if (snapshot.type !== "engine.snapshot") throw new Error(`expected engine.snapshot, got ${snapshot.type}`);
+    expect(snapshot.result.avatars.find((a) => a.avatarId === avatarId)).toEqual(await avatarSummary(engine, avatarId));
+  });
+});
+
+describe("photos.setRejected", () => {
+  test("marks a photo rejected: it is answered as it now stands, not eligible", async () => {
+    const { avatarId, photoIds } = await seedAvatar(2);
+    const { engine } = await startEngine(dir());
+    const photo = rejectedAnswer(await engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: true })));
+    expect(photo).toMatchObject({ photoId: photoIds[0], rejected: true, eligible: false });
+  });
+
+  test("restoring the photo makes it eligible again", async () => {
+    const { avatarId, photoIds } = await seedAvatar(1);
+    const { engine } = await startEngine(dir());
+    ok(await engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: true })));
+    const photo = rejectedAnswer(await engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: false })));
+    expect(photo).toMatchObject({ rejected: false, eligible: true });
+  });
+
+  test("announces the avatar with its new eligibleUnusedCount, down on a reject and up on a restore", async () => {
+    const { avatarId, photoIds } = await seedAvatar(2);
+    const { engine, events } = await startEngine(dir());
+    ok(await engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: true })));
+    ok(await engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: false })));
+    const counts = events().flatMap((e) => (e.type === "avatar.changed" ? [e.payload.avatar.eligibleUnusedCount] : []));
+    expect(counts).toEqual([1, 2]);
+  });
+
+  test("a mark survives an engine restart", async () => {
+    const { avatarId, photoIds } = await seedAvatar(2);
+    const first = await startEngine(dir());
+    ok(await first.engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: true })));
+
+    const second = await startEngine(dir());
+    const photos = await listPhotos(second.engine, avatarId);
+    expect(byId(photos, photoIds[0] ?? "")).toMatchObject({ rejected: true, eligible: false });
+    expect(byId(photos, photoIds[1] ?? "").rejected).toBe(false);
+    expect((await avatarSummary(second.engine, avatarId)).eligibleUnusedCount).toBe(1);
+  });
+
+  test("is NOT_FOUND for an unknown avatar, an unknown photo, another avatar's photo and the master", async () => {
+    const mia = await seedAvatar(1);
+    const lena = await seedAvatar(1);
+    const { engine } = await startEngine(dir());
+    const notFound = async (avatarId: string, photoId: string) =>
+      failed(await engine.handle(command("photos.setRejected", { avatarId, photoId, rejected: true }))).error.code;
+    expect(await notFound("avatar-00000404", mia.photoIds[0] ?? "")).toBe("NOT_FOUND");
+    expect(await notFound(mia.avatarId, "photo-00000404")).toBe("NOT_FOUND");
+    expect(await notFound(mia.avatarId, lena.photoIds[0] ?? "")).toBe("NOT_FOUND");
+    expect(await notFound(mia.avatarId, mia.masterId)).toBe("NOT_FOUND");
+  });
+
+  test("refuses while the avatar's rejected.jsonl is unreadable, and changes nothing", async () => {
+    const { avatarId, photoIds } = await seedAvatar(1);
+    await appendFile(join(libraryRoot(), "avatars", avatarId, "rejected.jsonl"), "not json\n");
+    const { engine } = await startEngine(dir());
+    const refusal = failed(await engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: true }))).error;
+    expect(refusal.code).toBe("INTERNAL");
+    expect(refusal.detail).toContain("rejected.jsonl");
+    expect(byId(await listPhotos(engine, avatarId), photoIds[0] ?? "").eligible).toBe(false);
+  });
+});

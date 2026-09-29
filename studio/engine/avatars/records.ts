@@ -80,11 +80,30 @@ export function galleryPhotoCount(library: Pick<Library, "photosByAvatar">, avat
   return library.photosByAvatar(avatarId).filter(looksLikeRunPhoto).length;
 }
 
+/** The counts an avatar tile shows, all derived: photos, video records and the photos a montage may still use. */
+export interface AvatarCounts {
+  photoCount: number;
+  videoCount: number;
+  eligibleUnusedCount: number;
+}
+
+/**
+ * The avatar's counts from the library, every one through the library's own
+ * answers: the gallery photos, the video records (whatever state their files
+ * are in) and `eligibleUnusedCount` (the one eligibility rule, minus used,
+ * minus reserved; 0 while the avatar's video records cannot all be read, so a
+ * listing never fails over it).
+ */
+export function avatarCounts(library: Pick<Library, "photosByAvatar" | "videoCount" | "eligibleUnusedCount">, avatarId: string): AvatarCounts {
+  return {
+    photoCount: galleryPhotoCount(library, avatarId),
+    videoCount: library.videoCount(avatarId),
+    eligibleUnusedCount: library.eligibleUnusedCount(avatarId),
+  };
+}
+
 /** A saved avatar as the grid lists it; null for a draft or a record the contract refuses. */
-export function avatarSummaryFrom(manifest: AvatarManifest, photoCount: number): AvatarSummary | null {
-  // `videoCount` and `eligibleUnusedCount` are derived from the video records
-  // and the one eligibility function (task 3a.2); until those exist an avatar
-  // has no videos, and nothing counts as eligible.
+export function avatarSummaryFrom(manifest: AvatarManifest, counts: AvatarCounts): AvatarSummary | null {
   if (manifest.status === "draft") return null;
   const parsed = AvatarSummary.safeParse({
     avatarId: manifest.id,
@@ -93,9 +112,9 @@ export function avatarSummaryFrom(manifest: AvatarManifest, photoCount: number):
     masterPhotoId: manifest.masterPhotoId,
     createdAt: manifest.createdAt,
     status: manifest.status,
-    photoCount,
-    videoCount: 0,
-    eligibleUnusedCount: 0,
+    photoCount: counts.photoCount,
+    videoCount: counts.videoCount,
+    eligibleUnusedCount: counts.eligibleUnusedCount,
   });
   return parsed.success ? parsed.data : null;
 }
@@ -135,7 +154,7 @@ export function isRewritable(manifest: AvatarManifest): boolean {
   if (manifest.schemaVersion < 2) return false;
   if (!AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age }).success) return false;
   const withPlaceholder = { ...manifest, descriptor: placeholderDescriptor(manifest.age) };
-  return manifest.status === "draft" ? draftFrom(withPlaceholder, []) !== null : avatarSummaryFrom(withPlaceholder, 0) !== null;
+  return manifest.status === "draft" ? draftFrom(withPlaceholder, []) !== null : avatarSummaryFrom(withPlaceholder, { photoCount: 0, videoCount: 0, eligibleUnusedCount: 0 }) !== null;
 }
 
 /**
@@ -170,7 +189,7 @@ export function libraryView(library: Library): LibraryView {
       if (draft === null) view.skipped.push({ avatarId: manifest.id, name: skippedNameOf(manifest), reason: skipReason(manifest) });
       else view.drafts.push(draft);
     } else {
-      const avatar = avatarSummaryFrom(manifest, galleryPhotoCount(library, manifest.id));
+      const avatar = avatarSummaryFrom(manifest, avatarCounts(library, manifest.id));
       if (avatar === null) view.skipped.push({ avatarId: manifest.id, name: skippedNameOf(manifest), reason: skipReason(manifest) });
       else view.avatars.push(avatar);
     }

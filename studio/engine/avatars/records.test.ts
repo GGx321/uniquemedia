@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { AvatarSummary, Draft, MAX_UNREADABLE_AVATARS, type AvatarTraits, type UnreadableAvatar } from "../../shared/engine";
 import { openLibrary, type QuarantineEntry } from "../library";
 import { AvatarManifestSchema, type AvatarManifest, type PhotoSidecar } from "../library/schemas";
 import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../library/testing/helpers";
+import { sceneSpec, writeVideoRecord } from "../library/testing/videoRecords";
 import { avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./records";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -184,10 +186,11 @@ describe("draftFrom", () => {
 });
 
 describe("avatarSummaryFrom", () => {
+  const NO_PHOTOS = { photoCount: 0, videoCount: 0, eligibleUnusedCount: 0 };
   const active = manifest({ status: "active", masterPhotoId: "photo-0001", name: "Mia" });
 
-  test("builds the contract's summary with the photo count", () => {
-    const summary = avatarSummaryFrom(active, 3);
+  test("builds the contract's summary with the photo, video and eligible-unused counts", () => {
+    const summary = avatarSummaryFrom(active, { photoCount: 3, videoCount: 2, eligibleUnusedCount: 1 });
     expect(summary).toEqual({
       avatarId: "avatar-0001",
       name: "Mia",
@@ -196,22 +199,22 @@ describe("avatarSummaryFrom", () => {
       createdAt: "2026-09-24T10:00:00.000Z",
       status: "active",
       photoCount: 3,
-      videoCount: 0,
-      eligibleUnusedCount: 0,
+      videoCount: 2,
+      eligibleUnusedCount: 1,
     });
     expect(AvatarSummary.safeParse(summary).success).toBe(true);
   });
 
   test("keeps an archived avatar archived", () => {
-    expect(avatarSummaryFrom({ ...active, status: "archived" }, 0)?.status).toBe("archived");
+    expect(avatarSummaryFrom({ ...active, status: "archived" }, NO_PHOTOS)?.status).toBe("archived");
   });
 
   test("is null for a draft: drafts are listed separately", () => {
-    expect(avatarSummaryFrom(manifest(), 0)).toBeNull();
+    expect(avatarSummaryFrom(manifest(), NO_PHOTOS)).toBeNull();
   });
 
   test("is null for a name the contract refuses", () => {
-    expect(avatarSummaryFrom({ ...active, name: "x".repeat(61) }, 0)).toBeNull();
+    expect(avatarSummaryFrom({ ...active, name: "x".repeat(61) }, NO_PHOTOS)).toBeNull();
   });
 });
 
@@ -279,6 +282,48 @@ describe("libraryView over a real library", () => {
     for (const n of [1, 2]) await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta({ source: { ...generated, category: "home", attemptId: `run-00000001:slot-${n}#1`, slot: `slot-${n}` } }));
 
     expect(libraryView(library).avatars.map((a) => a.photoCount)).toEqual([2]);
+  });
+
+  /** A saved avatar with three scene photos (oldest first) in a real library; the master is a promoted candidate. */
+  async function avatarWithScenes(prefix: string) {
+    const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds(prefix) });
+    const saved = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
+    const master = await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(saved.id, { status: "active", masterPhotoId: master.id });
+    const generated = samplePhotoMeta().source;
+    if (generated.kind !== "generated") throw new Error("expected a generated sample source");
+    const photos = [];
+    for (const n of [1, 2, 3]) photos.push(await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta({ source: { ...generated, category: "home", attemptId: `run-00000001:slot-${n}#1`, slot: `slot-${n}` } })));
+    return { library, saved, photos };
+  }
+
+  test("videoCount counts the records and eligibleUnusedCount leaves out the used, the rejected and the reserved", async () => {
+    const reserved = new Set<string>();
+    const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds("cnt"), reservedPhotos: () => reserved });
+    const saved = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
+    const master = await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(saved.id, { status: "active", masterPhotoId: master.id });
+    const generated = samplePhotoMeta().source;
+    if (generated.kind !== "generated") throw new Error("expected a generated sample source");
+    const scenes = [];
+    for (const n of [1, 2, 3, 4]) scenes.push(await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta({ source: { ...generated, category: "home", attemptId: `run-00000001:slot-${n}#1`, slot: `slot-${n}` } })));
+    const [used, rejected, held, free] = scenes;
+    if (used === undefined || rejected === undefined || held === undefined || free === undefined) throw new Error("expected four scene photos");
+    await writeVideoRecord(root(), "video-00000001", sceneSpec(saved.id, [used.id]));
+    await library.reloadVideoRecords(saved.id);
+    await library.setRejected(saved.id, rejected.id, true);
+    reserved.add(held.id);
+
+    const [summary] = libraryView(library).avatars;
+    expect(summary).toMatchObject({ photoCount: 4, videoCount: 1, eligibleUnusedCount: 1 });
+  });
+
+  test("an avatar whose video records cannot all be read is still listed, with no eligible-unused photo", async () => {
+    const { library, saved } = await avatarWithScenes("brk");
+    await mkdir(join(root(), "avatars", saved.id, "videos"), { recursive: true });
+    await writeFile(join(root(), "avatars", saved.id, "videos", "video-00000001.json"), "{ not json");
+    await library.reloadVideoRecords(saved.id);
+    expect(libraryView(library).avatars.map((a) => [a.photoCount, a.videoCount, a.eligibleUnusedCount])).toEqual([[3, 0, 0]]);
   });
 
   test("names a saved avatar whose stored descriptor no longer fits today's rules with reason descriptor-invalid", async () => {

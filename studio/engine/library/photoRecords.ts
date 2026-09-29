@@ -1,5 +1,5 @@
-import { PhotoSummary, type PhotoQaSummary } from "../../shared/engine";
-import { passesAgeThreshold } from "../avatars/ageCheck";
+import { MAX_PHOTO_USED_IN, PhotoSummary, type PhotoQaSummary } from "../../shared/engine";
+import type { PhotoState } from "./eligibility";
 import type { PhotoQa, PhotoSidecar } from "./schemas";
 
 // T8b (the Photos screen): mapping the library's own photo sidecars into the
@@ -30,6 +30,11 @@ export function looksLikeRunPhoto(sidecar: PhotoSidecar): boolean {
 
 /**
  * `photos.list`'s mapping from a stored sidecar to the contract's shape.
+ * `state` is the library's own answer for this photo (`Library.photoStates`,
+ * the one eligibility rule, the video records, the reject marks and the
+ * reserved set): nothing here decides any of it, so a caller cannot show
+ * something the rule refuses. `usedIn` is cut at the contract's bound with
+ * `used` still true, since a derived list must never make a photo vanish.
  * `runId` is not itself stored on the sidecar: it is the prefix of the
  * photo's own `attemptId`, `${runId}:slot-N#k` (runs/plan.ts's
  * `slotAttemptIds`/`writerAttemptIds`) — the run's own attempt-id format is
@@ -39,7 +44,7 @@ export function looksLikeRunPhoto(sidecar: PhotoSidecar): boolean {
  * does not fit the id pattern) — defensive; this should never happen for
  * anything this engine itself wrote.
  */
-export function photoSummaryFrom(sidecar: PhotoSidecar): PhotoSummary | null {
+export function photoSummaryFrom(sidecar: PhotoSidecar, state: PhotoState): PhotoSummary | null {
   if (!looksLikeRunPhoto(sidecar) || sidecar.source.kind !== "generated") return null;
   // split(":")[0] is always a string (never undefined) — String.split always
   // returns at least one element — so an attemptId with no ":" at all (or
@@ -53,16 +58,11 @@ export function photoSummaryFrom(sidecar: PhotoSidecar): PhotoSummary | null {
     category: sidecar.source.category,
     createdAt: sidecar.createdAt,
     qa: qaSummaryOf(sidecar.qa),
-    // Usage and the owner's reject marks come from the video records and
-    // rejected.jsonl (task 3a.2). No video record exists before then, so every
-    // photo is unused and unmarked.
-    used: false,
-    usedIn: [],
-    rejected: false,
-    reserved: false,
-    // The one eligibility rule (task 3a.2) adds the reject mark and the avatar
-    // check; until then a run photo is eligible unless its age verdict fails.
-    eligible: passesAgeThreshold(sidecar.qa.age),
+    used: state.usedIn.length > 0,
+    usedIn: state.usedIn.slice(0, MAX_PHOTO_USED_IN),
+    rejected: state.rejected,
+    reserved: state.reserved,
+    eligible: state.eligible,
   });
   return parsed.success ? parsed.data : null;
 }

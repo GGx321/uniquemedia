@@ -54,7 +54,7 @@ import {
   type AvatarModels,
 } from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
-import { avatarSummaryFrom, combineUnreadable, draftFrom, galleryPhotoCount, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
+import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
@@ -101,6 +101,13 @@ export interface EngineDeps {
   fetch: OpenRouterFetch;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
+  /**
+   * The scene photos of `avatarId` that queued or running renders hold (S16),
+   * asked afresh each time; the library keeps them out of `eligibleUnusedPhotos`
+   * and marks them `reserved`. Nothing is reserved by default: the render queue
+   * provides this in task 3a.6, a stub in tests.
+   */
+  reservedPhotos?: (avatarId: string) => ReadonlySet<string>;
   /**
    * Downscales a tiny built-in image through the same ffmpeg path a real
    * slot's image would take (M8's `generateCandidates` preflight). Defaults
@@ -937,9 +944,33 @@ export class Engine {
         const { photos, skippedTotal } = this.#photosFor(library, avatarId);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { photos, skippedTotal } };
       }
+      case "photos.setRejected":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#setRejected(command.payload) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
+  }
+
+  /**
+   * The owner's «do not use» mark on a scene photo, or its restore. Free and
+   * idempotent. Announces the avatar, since its `eligibleUnusedCount` moved,
+   * and answers the photo as it now stands.
+   */
+  async #setRejected(payload: CommandPayload<"photos.setRejected">): Promise<{ photo: PhotoSummary }> {
+    const { avatarId, photoId, rejected } = payload;
+    const library = await this.#liveLibrary();
+    try {
+      await library.setRejected(avatarId, photoId, rejected);
+    } catch (error) {
+      if (error instanceof LibraryError && (error.code === "avatar-not-found" || error.code === "photo-not-found")) {
+        throw new EngineFailure({ code: "NOT_FOUND", detail: `no scene photo ${photoId} of avatar ${avatarId} in the open library` });
+      }
+      throw error;
+    }
+    this.#announceAvatarOrLog(library, avatarId);
+    const photo = this.#photoSummaries(library, avatarId).photos.find((p) => p.photoId === photoId);
+    if (photo === undefined) throw new EngineFailure({ code: "INTERNAL", detail: `photo ${photoId} was marked but does not fit the contract` });
+    return { photo };
   }
 
   /**
@@ -958,17 +989,29 @@ export class Engine {
    * not only those among the returned (and possibly capped) photos.
    */
   #photosFor(library: Library, avatarId: string): { photos: PhotoSummary[]; skippedTotal: number } {
+    const { photos, skippedTotal } = this.#photoSummaries(library, avatarId);
+    return { photos: finalizePhotoList(photos, MAX_LISTED_PHOTOS), skippedTotal };
+  }
+
+  /**
+   * Every gallery photo of the avatar as the contract shows it, unordered and
+   * unbounded, with the library's own answer for each (`Library.photoStates`:
+   * the one eligibility rule, used, rejected, reserved), asked once.
+   */
+  #photoSummaries(library: Library, avatarId: string): { photos: PhotoSummary[]; skippedTotal: number } {
+    const states = library.photoStates(avatarId);
     const photos: PhotoSummary[] = [];
     let skippedTotal = 0;
     for (const sidecar of library.photosByAvatar(avatarId)) {
-      const summary = photoSummaryFrom(sidecar);
+      const state = states.get(sidecar.id);
+      const summary = state === undefined ? null : photoSummaryFrom(sidecar, state);
       if (summary !== null) photos.push(summary);
       else if (looksLikeRunPhoto(sidecar)) {
         skippedTotal++;
         console.warn(`studio engine: photo ${sidecar.id} of avatar ${avatarId} does not fit the contract and is not listed in its gallery`);
       }
     }
-    return { photos: finalizePhotoList(photos, MAX_LISTED_PHOTOS), skippedTotal };
+    return { photos, skippedTotal };
   }
 
   // ---------- photo runs (T6) ----------
@@ -1915,7 +1958,7 @@ export class Engine {
       const manifest = library.getAvatar(avatarId);
       if (manifest === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
       if (manifest.status !== "draft") this.#assertDescriptorReadable(manifest);
-      const current = avatarSummaryFrom(manifest, galleryPhotoCount(library, avatarId));
+      const current = avatarSummaryFrom(manifest, avatarCounts(library, avatarId));
       if (current === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
       if (current.status === "archived") return { avatar: current };
       await library.updateAvatar(avatarId, { status: "archived" });
@@ -1928,7 +1971,7 @@ export class Engine {
   /** The saved avatar as the grid lists it, announced with avatar.changed. */
   #announceAvatar(library: Library, avatarId: string): AvatarSummary {
     const manifest = library.getAvatar(avatarId);
-    const avatar = manifest === undefined ? null : avatarSummaryFrom(manifest, galleryPhotoCount(library, avatarId));
+    const avatar = manifest === undefined ? null : avatarSummaryFrom(manifest, avatarCounts(library, avatarId));
     if (avatar === null) throw new Error(`the saved avatar ${avatarId} does not fit the contract`);
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.changed", payload: { avatar } });
     return avatar;
@@ -2287,7 +2330,7 @@ export class Engine {
       const opened = await pending;
       return { library: opened.library, identity, unreadable: opened.unreadable };
     }
-    const opening = openLibrary(path).then((opened) => ({ library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) }));
+    const opening = openLibrary(path, this.#deps.reservedPhotos === undefined ? {} : { reservedPhotos: this.#deps.reservedPhotos }).then((opened) => ({ library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) }));
     this.#opening.set(identity, opening);
     try {
       const opened = await opening;

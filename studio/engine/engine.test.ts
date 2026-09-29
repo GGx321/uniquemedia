@@ -1980,7 +1980,6 @@ describe("Stage 3 commands before their tasks land", () => {
     ["videos.cancel", { jobId: "job-00000004" }],
     ["videos.list", { avatarId: AVATAR }],
     ["videos.delete", { videoId: "video-00000001" }],
-    ["photos.setRejected", { avatarId: AVATAR, photoId: "photo-0002", rejected: true }],
     ["montages.create", { avatarId: AVATAR, photoIds: [] }],
   ];
 
