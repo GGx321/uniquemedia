@@ -692,6 +692,43 @@ describe("RenderQueue: submit's own checks", () => {
   });
 });
 
+describe("RenderQueue: the home folder in a failed job's error", () => {
+  const HOME = "/Users/Mia Secret";
+
+  test("a job that throws a plain error ends failed with the queue's home masked in detail", async () => {
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({ jobs, size: () => 1, home: HOME });
+    const a = submission(1);
+    queue.submit(a);
+    await a.gate.started.promise;
+
+    a.gate.finish.reject(new Error(`ENOSPC: no space left on device, write '${HOME}/Reels/x.mp4'`));
+    await queue.idle();
+
+    expect(jobs.states()[0]).toMatchObject({ status: "failed", error: { code: "INTERNAL", detail: "ENOSPC: no space left on device, write '~/Reels/x.mp4'" } });
+  });
+
+  test("a beforeRelease that throws is masked the same way", async () => {
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({
+      jobs,
+      size: () => 1,
+      home: HOME,
+      beforeRelease: () => {
+        throw new Error(`EACCES: open '${HOME}/lib/index.json'`);
+      },
+    });
+    const a = submission(1);
+    queue.submit(a);
+    await a.gate.started.promise;
+
+    a.gate.finish.resolve(resultOf(1));
+    await queue.idle();
+
+    expect(jobs.states()[0]).toMatchObject({ status: "failed", error: { detail: "EACCES: open '~/lib/index.json'" } });
+  });
+});
+
 describe("renderErrorFrom: the user's home never reaches detail", () => {
   const HOME = "/Users/Mia Secret";
 

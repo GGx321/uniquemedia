@@ -2,6 +2,7 @@ import type { EngineError, JobProgress, JobState, RenderResult } from "../../sha
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import type { JobRegistry, RenderJobEnd, RenderJobRef } from "../jobs";
 import { RenderGraphError } from "../render";
+import { homedir } from "node:os";
 import { maskHome } from "./scrubber";
 
 // The render queue (task 3a.6): a pool of N over the engine's JobRegistry.
@@ -86,6 +87,8 @@ export interface RenderQueueDeps {
   readonly jobs: JobRegistry;
   /** How many jobs run at once; asked at every start, so a settings change applies to the next job. Below 1 counts as 1. */
   readonly size: () => number;
+  /** The user's home folder, masked as `~` in every failed job's `detail`; `os.homedir()` (read once, at construction) when absent. Tests give a fake one. */
+  readonly home?: string;
   readonly onEvent?: (event: RenderQueueEvent) => void;
   /** Where the error of a throwing `onEvent` goes (the log); `console.error` when absent. */
   readonly onListenerError?: (error: unknown) => void;
@@ -114,7 +117,7 @@ const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
  *   fault or a wiring defect, and the same spec is refused the same way: nothing retries it;
  * - anything else is INTERNAL.
  */
-export function renderErrorFrom(error: unknown, home?: string): EngineError {
+export function renderErrorFrom(error: unknown, home: string): EngineError {
   const mapped = renderErrorUnmasked(error);
   // The last net: whatever text becomes a `detail` loses the user's home folder here, even when no job scrubber ever saw it.
   return mapped.detail === undefined ? mapped : { ...mapped, detail: maskHome(mapped.detail, home) };
@@ -139,6 +142,7 @@ interface Held {
 
 export class RenderQueue {
   readonly #deps: RenderQueueDeps;
+  readonly #home: string;
   /** Every queued and running job, by id; a job leaves it, and gives its photos back, in one step. */
   readonly #held = new Map<string, Held>();
   /** Jobs waiting for a slot, first in, first out. They carry their own `Held`, so starting one needs no lookup that could miss. */
@@ -148,6 +152,8 @@ export class RenderQueue {
 
   constructor(deps: RenderQueueDeps) {
     this.#deps = deps;
+    // Once, here: a homedir() that threw inside a job's catch would strand the job as running with its slot and photos held.
+    this.#home = deps.home ?? homedir();
   }
 
   /**
@@ -283,7 +289,7 @@ export class RenderQueue {
     } catch (error) {
       // A cancel decides how a job that stopped with an error ended, whatever error the kill produced.
       if (signal.aborted) end = { status: "cancelled" };
-      else end = { status: "failed", error: renderErrorFrom(error) };
+      else end = { status: "failed", error: renderErrorFrom(error, this.#home) };
       cause = error;
     }
 
@@ -292,7 +298,7 @@ export class RenderQueue {
       try {
         await this.#deps.beforeRelease({ jobId, ref: submission.ref, photoIds: [...held.photos], result: end.result });
       } catch (error) {
-        end = { status: "failed", error: renderErrorFrom(error) };
+        end = { status: "failed", error: renderErrorFrom(error, this.#home) };
         cause = error;
       }
     }
