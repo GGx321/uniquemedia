@@ -1,10 +1,10 @@
 import type { Findings, Mp4Box } from "./boxes";
 import { kids } from "./checks";
-import { u32, u64 } from "./reader";
+import { u32 } from "./reader";
 
 // The media data must be exactly what the index describes. ffmpeg writes the
 // chunks of both tracks back to back, so the chunks, laid out from `stsc`,
-// `stsz` and `stco`/`co64`, tile the payload of `mdat` with no gap, no overlap
+// `stsz` and `stco`, tile the payload of `mdat` with no gap, no overlap
 // and no byte left over. Anything else (60 MiB of zeros appended to `mdat`, a
 // chunk pointing outside it, two chunks sharing bytes) is media data the
 // index does not account for, and a place to carry a payload.
@@ -18,9 +18,7 @@ interface Chunk {
 function trackChunks(bytes: Uint8Array, stbl: Mp4Box): Chunk[] | string {
   const stsz = kids(stbl, "stsz")[0];
   const stsc = kids(stbl, "stsc")[0];
-  const stco = kids(stbl, "stco")[0];
-  const co64 = kids(stbl, "co64")[0];
-  const offsets = stco ?? co64;
+  const offsets = kids(stbl, "stco")[0];
   if (!stsz || !stsc || !offsets) return "a track lacks stsz, stsc or a chunk offset table";
 
   const uniform = u32(bytes, stsz.body + 4);
@@ -31,8 +29,7 @@ function trackChunks(bytes: Uint8Array, stbl: Mp4Box): Chunk[] | string {
   const runCount = u32(bytes, stsc.body + 4);
   if (runCount === undefined || runCount === 0 || stsc.body + 8 + runCount * 12 > stsc.end) return "stsc is unreadable";
   const chunkCount = u32(bytes, offsets.body + 4);
-  const wide = offsets === co64;
-  if (chunkCount === undefined || offsets.body + 8 + chunkCount * (wide ? 8 : 4) > offsets.end) return "the chunk offset table is unreadable";
+  if (chunkCount === undefined || offsets.body + 8 + chunkCount * 4 > offsets.end) return "the chunk offset table is unreadable";
 
   const runFirst = (i: number): number => u32(bytes, stsc.body + 8 + i * 12) ?? 0;
   const runSamples = (i: number): number => u32(bytes, stsc.body + 12 + i * 12) ?? 0;
@@ -49,8 +46,8 @@ function trackChunks(bytes: Uint8Array, stbl: Mp4Box): Chunk[] | string {
     if (uniform !== 0) length = per * uniform;
     else for (let i = 0; i < per; i++) length += u32(bytes, stsz.body + 12 + (sample + i) * 4) ?? 0;
     sample += per;
-    const at = offsets.body + 8 + (chunk - 1) * (wide ? 8 : 4);
-    const start = wide ? u64(bytes, at) : u32(bytes, at);
+    const at = offsets.body + 8 + (chunk - 1) * 4;
+    const start = u32(bytes, at);
     if (start === undefined) return "a chunk offset is unreadable";
     chunks.push({ start, end: start + length });
   }

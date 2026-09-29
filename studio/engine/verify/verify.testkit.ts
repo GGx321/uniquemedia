@@ -101,18 +101,16 @@ export function spliceInside(bytes: Uint8Array, target: Box, at: number, deleteC
   return mdat && at <= mdat.start ? shiftChunkOffsets(out, delta) : out;
 }
 
-/** Adds `delta` to every 32- and 64-bit chunk offset (`stco`, `co64`) in the file. */
+/** Adds `delta` to every chunk offset (`stco`, the only offset table the engine writes) in the file. */
 export function shiftChunkOffsets(bytes: Uint8Array, delta: number): Uint8Array {
   const out = bytes.slice();
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
   for (const box of walkBoxes(out)) {
-    if (box.type !== "stco" && box.type !== "co64") continue;
-    const wide = box.type === "co64";
+    if (box.type !== "stco") continue;
     const count = view.getUint32(box.start + 12);
     for (let i = 0; i < count; i++) {
-      const at = box.start + 16 + i * (wide ? 8 : 4);
-      if (wide) view.setBigUint64(at, view.getBigUint64(at) + BigInt(delta));
-      else view.setUint32(at, view.getUint32(at) + delta);
+      const at = box.start + 16 + i * 4;
+      view.setUint32(at, view.getUint32(at) + delta);
     }
   }
   return out;

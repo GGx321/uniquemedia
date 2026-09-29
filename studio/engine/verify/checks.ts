@@ -125,7 +125,7 @@ function checkDref(bytes: Uint8Array, box: Mp4Box, findings: Findings): void {
 /** Every table's size follows from its own entry count; a byte more is a place to hide something. */
 function checkTable(bytes: Uint8Array, box: Mp4Box, findings: Findings): void {
   const count = u32(bytes, box.body + 4);
-  const perEntry = { stts: 8, stss: 4, ctts: 8, stsc: 12, stco: 4, co64: 8 }[box.type];
+  const perEntry = { stts: 8, stss: 4, ctts: 8, stsc: 12, stco: 4 }[box.type];
   if (perEntry !== undefined) {
     if (count === undefined) return unreadable(findings, box, "no entry count");
     sizeIs(findings, box, 16 + count * perEntry);
@@ -134,6 +134,14 @@ function checkTable(bytes: Uint8Array, box: Mp4Box, findings: Findings): void {
     const samples = u32(bytes, box.body + 8);
     if (uniform === undefined || samples === undefined) return unreadable(findings, box, "no sample count");
     sizeIs(findings, box, uniform === 0 ? 20 + samples * 4 : 20);
+  } else if (box.type === "sgpd") {
+    // The AAC roll-recovery group: version 1, `roll`, default length 2, one entry, roll distance -1. All constant.
+    if (sizeIs(findings, box, 26)) equals(findings, bytes, box, 8, [1, 0, 0, 0, 0x72, 0x6f, 0x6c, 0x6c, 0, 0, 0, 2, 0, 0, 0, 1, 0xff, 0xff], "the roll group description");
+  } else if (box.type === "sbgp") {
+    // `roll`, one run; the run's sample count (bytes 20-23) is the audio frame count and varies, the rest is constant.
+    if (!sizeIs(findings, box, 28)) return;
+    equals(findings, bytes, box, 8, [0, 0, 0, 0, 0x72, 0x6f, 0x6c, 0x6c, 0, 0, 0, 1], "the roll sample-to-group header");
+    equals(findings, bytes, box, 24, [0, 0, 0, 1], "the group description index");
   }
 }
 
@@ -225,7 +233,7 @@ function checkSoundEntry(bytes: Uint8Array, entry: Mp4Box, findings: Findings): 
 
 /** The exact sizes of the boxes inside an entry, and `avcC` to the byte. */
 function checkEntryChildren(bytes: Uint8Array, entry: Mp4Box, findings: Findings): void {
-  const sizes: Record<string, number> = { colr: 19, pasp: 16, btrt: 20, fiel: 10, clap: 40 };
+  const sizes: Record<string, number> = { colr: 19, pasp: 16, btrt: 20 };
   for (const child of entry.children) {
     const expected = sizes[child.type];
     if (expected !== undefined) sizeIs(findings, child, expected);

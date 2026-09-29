@@ -3,7 +3,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { removeDir } from "../render/render.testkit";
 import type { VerifyExpected, VerifyReasonCode, VerifyResult } from "./types";
 import { verifyRenderedMp4 } from "./verifyMp4";
-import { appendChild, concat, FIXTURE_FRAMES, locate, makeBox, renderFixture, spliceInside, writeCopy, type Fixture } from "./verify.testkit";
+import { appendChild, concat, FIXTURE_FRAMES, locate, makeBox, patched, renderFixture, spliceInside, writeCopy, type Fixture } from "./verify.testkit";
 useNativeGlobals();
 
 // REAL ffmpeg: the last review round. A second copy of a container or a table
@@ -68,5 +68,47 @@ describe("a second copy of a container or a table is DUPLICATE_BOX", () => {
 
   test("the real render has two tracks and one of everything else, so nothing above is a false alarm", async () => {
     expect(await verifyRenderedMp4(fx.path, EXPECTED)).toEqual({ ok: true });
+  });
+});
+
+describe("sample-table types the engine never writes are refused, and the two it writes are pinned", () => {
+  test.each(["sdtp", "cslg", "stps", "co64"])("a %s box with text fragments in the video stbl is UNKNOWN_BOX", async (type) => {
+    const box = makeBox(type, concat(new Uint8Array(4), FRAGMENTS));
+    expect(codesOf(await run("stbl-unwritten.mp4", appendChild(fx.bytes, STBL, box)))).toContain("UNKNOWN_BOX");
+  });
+
+  test.each(["fiel", "clap"])("a %s box with text fragments in the video sample entry is UNKNOWN_BOX", async (type) => {
+    const stsd = locate(fx.bytes, `${STBL}/stsd`);
+    const entry = stsd.start + 16;
+    const entryEnd = entry + new DataView(fx.bytes.buffer, fx.bytes.byteOffset).getUint32(entry);
+    const out = spliceInside(fx.bytes, stsd, entryEnd, 0, makeBox(type, FRAGMENTS), [entry]);
+    expect(codesOf(await run("entry-unwritten.mp4", out))).toContain("UNKNOWN_BOX");
+  });
+
+  test("the real roll sample-group boxes are the bytes pinned: sgpd 26, sbgp 28", () => {
+    const sgpd = locate(fx.bytes, `${STBL}/sgpd`);
+    const sbgp = locate(fx.bytes, `${STBL}/sbgp`);
+    expect(Buffer.from(fx.bytes.subarray(sgpd.start, sgpd.end)).toString("hex")).toBe("0000001a7367706401000000726f6c6c0000000200000001ffff");
+    expect(Buffer.from(fx.bytes.subarray(sbgp.start, sbgp.end)).toString("hex")).toMatch(/^0000001c7362677000000000726f6c6c00000001[0-9a-f]{8}00000001$/);
+  });
+
+  test.each(["sgpd", "sbgp"])("%s followed by 15 text bytes is FIELD_NOT_CANONICAL", async (type) => {
+    const box = locate(fx.bytes, `${STBL}/${type}`);
+    expect(codesOf(await run("group-tail-15.mp4", spliceInside(fx.bytes, box, box.end, 0, ascii("Jane Doe Berlin"))))).toContain("FIELD_NOT_CANONICAL");
+  });
+
+  test.each(["sgpd", "sbgp"])("%s followed by text fragments is FIELD_NOT_CANONICAL", async (type) => {
+    const box = locate(fx.bytes, `${STBL}/${type}`);
+    expect(codesOf(await run("group-tail.mp4", spliceInside(fx.bytes, box, box.end, 0, FRAGMENTS)))).toContain("FIELD_NOT_CANONICAL");
+  });
+
+  test("an sgpd with another roll distance is FIELD_NOT_CANONICAL", async () => {
+    const box = locate(fx.bytes, `${STBL}/sgpd`);
+    expect(codesOf(await run("sgpd-roll.mp4", patched(fx.bytes, (b) => b.set([0x4a, 0x61], box.end - 2))))).toContain("FIELD_NOT_CANONICAL");
+  });
+
+  test.each([["grouping type", 12], ["entry count", 19], ["group description index", 27]] as const)("an sbgp with another %s is FIELD_NOT_CANONICAL", async (_what, offset) => {
+    const box = locate(fx.bytes, `${STBL}/sbgp`);
+    expect(codesOf(await run("sbgp-field.mp4", patched(fx.bytes, (b) => (b[box.start + offset] = 0x4a))))).toContain("FIELD_NOT_CANONICAL");
   });
 });
