@@ -110,7 +110,7 @@ export interface FocusResolver {
    * and the scene-photo cells that could not be judged. A focus that is already set is returned
    * untouched. `spec` itself is not modified.
    */
-  fillMissingFocus(spec: MontageDraft, signal?: AbortSignal): Promise<FilledSpec>;
+  fillMissingFocus(spec: MontageDraft, signal?: AbortSignal, options?: { budgetMs?: number }): Promise<FilledSpec>;
   /** Resolves when every cache save started so far has settled (successfully or not; failures are logged, not thrown). For shutdown and tests. */
   flush(): Promise<void>;
 }
@@ -129,7 +129,7 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
   const { library, faceGate } = deps;
   const cache = deps.cache ?? realCache;
   const detectTimeoutMs = deps.detectTimeoutMs ?? FOCUS_DETECT_TIMEOUT_MS;
-  const fillBudgetMs = deps.fillBudgetMs ?? FOCUS_FILL_BUDGET_MS;
+  const defaultFillBudgetMs = deps.fillBudgetMs ?? FOCUS_FILL_BUDGET_MS;
   /** In-memory answers (and computations still running, so concurrent callers share one), keyed by photo id and valid only for the sha256 they were made for. */
   const memo = new Map<string, { sha256: string; promise: Promise<FocusResult> }>();
   const saves = new Set<Promise<void>>();
@@ -201,8 +201,10 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     return signal === undefined ? entry.promise : untilAborted(entry.promise, signal);
   }
 
-  async function fillMissingFocus(spec: MontageDraft, signal?: AbortSignal): Promise<FilledSpec> {
+  async function fillMissingFocus(spec: MontageDraft, signal?: AbortSignal, options: { budgetMs?: number } = {}): Promise<FilledSpec> {
     signal?.throwIfAborted();
+    // A caller with less time than the resolver's own budget (a command with a deadline) can only shorten it.
+    const fillBudgetMs = Math.min(defaultFillBudgetMs, options.budgetMs ?? Number.POSITIVE_INFINITY);
     const budget = timeoutSignal(fillBudgetMs);
     const startedAt = performance.now();
     const left: UnresolvedCell[] = [];

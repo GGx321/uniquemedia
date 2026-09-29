@@ -660,6 +660,28 @@ describe("fillMissingFocus", () => {
     expect(slow.calls).toHaveLength(1);
   });
 
+  test("a budget given for ONE call cuts it short and keeps every cell already judged: the rest take the fallback and are reported", async () => {
+    const f = await fixture(2);
+    const slow = fakeGate();
+    slow.detect = async (bytes) => {
+      slow.calls.push(bytes);
+      await Bun.sleep(60);
+      return FACE;
+    };
+    const { fillMissingFocus } = createFocusResolver({ library: f.library, faceGate: slow, fillBudgetMs: 10_000 });
+    const [a = "", b = ""] = f.photoIds;
+    const { spec, unresolved } = await fillMissingFocus(
+      specOf(f.avatarId, [
+        { ...base(1), kind: "photo", motion: "static", cell: { photo: scene(a), focus: null } },
+        { ...base(2), kind: "photo", motion: "static", cell: { photo: scene(b), focus: null } },
+      ]),
+      undefined,
+      { budgetMs: 100 },
+    );
+    expect(spec.clips.map((c) => (c.kind === "photo" ? c.cell.focus : null))).toEqual([FACE_FOCUS, FALLBACK]);
+    expect(unresolved).toEqual([{ clipId: "clip-002", cellIndex: 0 }]);
+  });
+
   test("a cell that is still being resolved when the budget runs out takes the fallback at once, and the shared detection carries on", async () => {
     const f = await fixture();
     let release: (value: FaceDetection) => void = () => {};
