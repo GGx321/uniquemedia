@@ -61,12 +61,30 @@ export interface RecoverInput {
   readonly exportRoot: ExportRootRef | null;
   /** The renders running now (`CommitTracker`). */
   readonly live?: LiveCommits;
+  /**
+   * Ends the run early: checked between steps, so a library that is no longer the live one (a switch) stops holding the
+   * export root's lock. What was done stays done, and every step is idempotent, so the next open settles the rest.
+   */
+  readonly signal?: AbortSignal;
+  /**
+   * TARGETED settle: only the commit intents of these video ids, and none of the sweeps (placeholders, render temps, the
+   * root's scratch). Used after a render failed in this session, to settle a leftover intent under the root lock at once
+   * instead of leaving its photos free until the next open.
+   */
+  readonly only?: { readonly videoIds: readonly string[] };
 }
 
 export interface RecoverDeps {
   readonly fs?: CommitFs;
   /** How long to wait for the export root's lock (a commit holds it from its claim to its record) before deferring the root as `root-busy`. 30 s when absent. */
   readonly lockWaitMs?: number;
+  /**
+   * How long ONE disk call may take (the library's or the export folder's) before the whole run is given up: a pulled USB
+   * drive must not hold the export root's lock for ever. 30 s when absent.
+   */
+  readonly ioTimeoutMs?: number;
+  /** How the LIBRARY's pending folders and intents are read (before the export root's lock is taken); the real disk unless a test plays a library that does not answer. */
+  readonly libraryFs?: LibraryReadFs;
   /** Test seams. `locked` runs inside the lock, before anything is settled. */
   readonly hooks?: { locked?: () => void | Promise<void> };
   /** Ids, counts and codes only; never a path or a file value. */
@@ -87,6 +105,17 @@ export interface RecoveryReport {
   /** Steps a disk error stopped; they are retried at the next open. */
   readonly skipped: Array<{ what: string; code: string }>;
 }
+
+/** The two reads recovery makes of the library itself. */
+export interface LibraryReadFs {
+  readdir(path: string): Promise<Array<{ name: string; isFile: boolean }>>;
+  readFile(path: string): Promise<string>;
+}
+
+const NODE_LIBRARY_READ_FS: LibraryReadFs = {
+  readdir: async (path) => (await readdir(path, { withFileTypes: true })).map((e) => ({ name: e.name, isFile: e.isFile() })),
+  readFile: (path) => readFile(path, "utf8"),
+};
 
 const INTENT_NAME = /^([a-z0-9-]{8,64})\.json$/;
 const PLACEHOLDER_NAME = /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])_[a-z][a-z0-9]{0,15}_\d{3,6}\.mp4$/;
@@ -156,13 +185,13 @@ async function hasPublishSibling(fs: CommitFs, root: string): Promise<boolean> {
  * Whether another record of the library (and, with `includeIntents`, another commit intent) names `(rootId, relPath)`, other
  * than `exceptVideoId`: a file must belong to one video.
  */
-async function otherNamesFile(libraryRoot: string, avatarIds: readonly string[], rootId: string, relPath: string, exceptVideoId: string, includeIntents: boolean): Promise<boolean> {
+async function otherNamesFile(lib: LibraryReadFs, libraryRoot: string, avatarIds: readonly string[], rootId: string, relPath: string, exceptVideoId: string, includeIntents: boolean): Promise<boolean> {
   for (const avatarId of avatarIds) {
     const paths = videoPaths(libraryRoot, avatarId);
     for (const dir of includeIntents ? [paths.videosDir, paths.pendingDir] : [paths.videosDir]) {
       let names: string[];
       try {
-        names = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile() && INTENT_NAME.test(e.name)).map((e) => e.name);
+        names = (await lib.readdir(dir)).filter((e) => e.isFile && INTENT_NAME.test(e.name)).map((e) => e.name);
       } catch (error) {
         if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) continue;
         throw error;
@@ -170,7 +199,7 @@ async function otherNamesFile(libraryRoot: string, avatarIds: readonly string[],
       for (const name of names) {
         if (name === `${exceptVideoId}.json`) continue;
         try {
-          const parsed = VideoRecordSchema.safeParse(JSON.parse(await readFile(join(dir, name), "utf8")));
+          const parsed = VideoRecordSchema.safeParse(JSON.parse(await lib.readFile(join(dir, name))));
           if (parsed.success && parsed.data.file.rootId === rootId && parsed.data.file.relPath === relPath) return true;
         } catch (error) {
           if (!(error instanceof SyntaxError) && !hasErrorCode(error, "ENOENT")) throw error;
@@ -181,34 +210,170 @@ async function otherNamesFile(libraryRoot: string, avatarIds: readonly string[],
   return false;
 }
 
+/** One file of an avatar's `.pending/` folder, read (or not) BEFORE the export root's lock is taken. */
+interface PendingFile {
+  readonly avatarId: string;
+  readonly name: string;
+  readonly relative: string;
+  readonly kind: "foreign" | "temp" | "intent";
+  /** An intent: what it turned out to be. */
+  readonly videoId?: string;
+  readonly left?: "unreadable" | "too-new";
+  readonly record?: VideoRecord;
+}
+
+const IO_TIMEOUT_MS = 30_000;
+
 export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {}): Promise<RecoveryReport> {
-  const fs = deps.fs ?? NODE_COMMIT_FS;
   const log = deps.log ?? (() => undefined);
   const report: RecoveryReport = { adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 }, skipped: [] };
   const skip = (what: string, error: unknown): void => {
     report.skipped.push({ what, code: codeOf(error) });
     log(`recovery: ${what} skipped (${codeOf(error)})`);
   };
-  const root = await usableRoot(fs, input.exportRoot, log);
+
+  // A run that is told to stop, or whose disk stops answering, ends: the export root's lock is held across these calls, and
+  // a pulled drive would otherwise hold it (and every commit that needs it) for ever. The FIRST call that times out ends the
+  // whole run (a dead drive is not asked again and again); what was done stays done and every step is idempotent.
+  const stopper = new AbortController();
+  const signal = input.signal === undefined ? stopper.signal : AbortSignal.any([input.signal, stopper.signal]);
+  const ioMs = deps.ioTimeoutMs ?? IO_TIMEOUT_MS;
+  const io = async <T>(work: () => Promise<T>): Promise<T> => {
+    signal.throwIfAborted();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const out = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const timeout = Object.assign(new Error("a disk call did not answer"), { code: "ETIMEDOUT" });
+        stopper.abort(timeout);
+        reject(timeout);
+      }, ioMs);
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    out.catch(() => undefined);
+    try {
+      return await Promise.race([work(), out]);
+    } finally {
+      clearTimeout(timer);
+      if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+    }
+  };
+  const baseFs = deps.fs ?? NODE_COMMIT_FS;
+  const fs: CommitFs = {
+    lstat: (p) => io(() => baseFs.lstat(p)),
+    realpath: (p) => io(() => baseFs.realpath(p)),
+    readdir: (p) => io(() => baseFs.readdir(p)),
+    mkdir: (p) => io(() => baseFs.mkdir(p)),
+    createExclusive: (p) => io(() => baseFs.createExclusive(p)),
+    writeNew: (p, text) => io(() => baseFs.writeNew(p, text)),
+    fsyncFile: (p) => io(() => baseFs.fsyncFile(p)),
+    fsyncDir: (p) => io(() => baseFs.fsyncDir(p)),
+    rename: (a, b) => io(() => baseFs.rename(a, b)),
+    link: (a, b) => io(() => baseFs.link(a, b)),
+    unlink: (p) => io(() => baseFs.unlink(p)),
+  };
+  const baseLib = deps.libraryFs ?? NODE_LIBRARY_READ_FS;
+  const lib: LibraryReadFs = { readdir: (p) => io(() => baseLib.readdir(p)), readFile: (p) => io(() => baseLib.readFile(p)) };
+  const only = input.only === undefined ? null : new Set(input.only.videoIds);
+  /** The report, once the run is over: a disk call that did not answer is said (a stop asked from outside is not a fault). */
+  const finished = (): RecoveryReport => {
+    if (stopper.signal.aborted) skip("a disk call did not answer", stopper.signal.reason);
+    return report;
+  };
+
+  if (signal.aborted) return finished();
+  let root: UsableRoot | null;
+  try {
+    root = await io(() => usableRoot(fs, input.exportRoot, log));
+  } catch (error) {
+    skip("export root", error);
+    return finished();
+  }
   const live = input.live;
   /** A path under the real root, as the running jobs know it: through the root as the settings spell it. */
   const configured = (path: string): string => (root === null ? path : join(root.ref.root, nodePath.relative(root.real, path)));
 
-  async function settleIntent(videoId: string, avatarId: string, relative: string, avatarIds: readonly string[]): Promise<void> {
+  /**
+   * The library's pending intents, read and parsed with NO lock held: a library on a drive that has been pulled hangs here,
+   * and it must not hang inside the export root's lock. What the lock is then taken for is the export root's files.
+   */
+  async function loadPending(): Promise<PendingFile[]> {
+    const loaded: PendingFile[] = [];
+    for (const avatar of input.library.listAvatars()) {
+      signal.throwIfAborted();
+      const paths = videoPaths(input.library.root, avatar.id);
+      let names: Array<{ name: string; isFile: boolean }>;
+      try {
+        names = await lib.readdir(paths.pendingDir);
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR")) skip("pending folder", error);
+        continue;
+      }
+      for (const { name, isFile } of names.sort((x, y) => (x.name < y.name ? -1 : 1))) {
+        const relative = `avatars/${avatar.id}/videos/.pending/${name}`;
+        if (!isFile) {
+          if (only === null) loaded.push({ avatarId: avatar.id, name, relative, kind: "foreign" });
+          continue;
+        }
+        if (isTempName(name)) {
+          if (only === null) loaded.push({ avatarId: avatar.id, name, relative, kind: "temp" });
+          continue;
+        }
+        const match = INTENT_NAME.exec(name);
+        if (match?.[1] === undefined) {
+          if (only === null) loaded.push({ avatarId: avatar.id, name, relative, kind: "foreign" });
+          continue;
+        }
+        const videoId = match[1];
+        if (only !== null && !only.has(videoId)) continue;
+        const base = { avatarId: avatar.id, name, relative, kind: "intent" as const, videoId };
+        try {
+          const info = await fs.lstat(paths.intent(videoId));
+          if (info.size > MAX_INTENT_BYTES || !info.isFile) {
+            loaded.push({ ...base, left: "unreadable" });
+            continue;
+          }
+          let value: unknown;
+          try {
+            value = JSON.parse(await lib.readFile(paths.intent(videoId)));
+          } catch (error) {
+            if (hasErrorCode(error, "ETIMEDOUT") || signal.aborted) throw error;
+            loaded.push({ ...base, left: "unreadable" });
+            continue;
+          }
+          if (isFromNewerVersion(value, VIDEO_RECORD_SCHEMA_VERSION)) {
+            loaded.push({ ...base, left: "too-new" });
+            continue;
+          }
+          const parsed = VideoRecordSchema.safeParse(value);
+          if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) loaded.push({ ...base, left: "unreadable" });
+          else loaded.push({ ...base, record: parsed.data });
+        } catch (error) {
+          if (hasErrorCode(error, "ENOENT")) continue; // consumed while we looked: nothing to settle
+          if (signal.aborted) throw error;
+          skip("intent", error);
+        }
+      }
+    }
+    return loaded;
+  }
+
+  async function settleIntent(pending: PendingFile, avatarIds: readonly string[]): Promise<void> {
+    const { avatarId, relative } = pending;
+    const videoId = pending.videoId ?? "";
     const paths = videoPaths(input.library.root, avatarId);
     const intentPath = paths.intent(videoId);
-    const info = await fs.lstat(intentPath);
-    if (info.size > MAX_INTENT_BYTES || !info.isFile) return void report.left.push({ file: relative, reason: "unreadable" });
-    let value: unknown;
+    if (pending.left !== undefined) return void report.left.push({ file: relative, reason: pending.left });
+    const record = pending.record;
+    if (record === undefined) return;
+    // Read before the lock: it may be gone by now (a commit that finished linked it). Nothing to settle then.
     try {
-      value = JSON.parse(await readFile(intentPath, "utf8"));
-    } catch {
-      return void report.left.push({ file: relative, reason: "unreadable" });
+      await fs.lstat(intentPath);
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) return;
+      throw error;
     }
-    if (isFromNewerVersion(value, VIDEO_RECORD_SCHEMA_VERSION)) return void report.left.push({ file: relative, reason: "too-new" });
-    const parsed = VideoRecordSchema.safeParse(value);
-    if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatarId) return void report.left.push({ file: relative, reason: "unreadable" });
-    const record: VideoRecord = parsed.data;
 
     const drop = async (reason: DropReason): Promise<void> => {
       await fs.unlink(intentPath);
@@ -249,11 +414,11 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
 
     // Adoption needs the file to be the verified one (size and sha256) and to belong to no other record: two records must
     // never name one file. Its stored mtime (which survives a rename) settles a tie between intents, and nothing more.
-    const isVerifiedFile = facts.size === record.file.bytes && (await hashFile(file)) === record.file.sha256;
+    const isVerifiedFile = facts.size === record.file.bytes && (await io(() => hashFile(file))) === record.file.sha256;
     if (!isVerifiedFile) return drop("mismatch");
-    if (await otherNamesFile(input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId, false)) return drop("file-claimed");
+    if (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId, false)) return drop("file-claimed");
     // Right bytes, other mtime (DST on FAT32, a copy round trip): still ours, unless another intent names the same file and this one cannot show it is the one.
-    if (record.file.mtimeMs !== undefined && record.file.mtimeMs !== facts.mtimeMs && (await otherNamesFile(input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId, true))) {
+    if (record.file.mtimeMs !== undefined && record.file.mtimeMs !== facts.mtimeMs && (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId, true))) {
       // Two intents, one file, and neither can show it is the one: both wait (whichever is looked at first), nothing is dropped or adopted.
       return void report.deferred.push({ videoId, reason: "file-shared" });
     }
@@ -272,44 +437,30 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     log(`recovery: adopted ${videoId}`);
   }
 
-  async function settleIntents(): Promise<void> {
-    const avatars = input.library.listAvatars();
-    const avatarIds = avatars.map((a) => a.id);
-    for (const avatar of avatars) {
-      const paths = videoPaths(input.library.root, avatar.id);
-      let names: Array<{ name: string; isFile: boolean }>;
-      try {
-        names = (await readdir(paths.pendingDir, { withFileTypes: true })).map((e) => ({ name: e.name, isFile: e.isFile() }));
-      } catch (error) {
-        if (!hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR")) skip("pending folder", error);
+  async function settleIntents(pending: readonly PendingFile[]): Promise<void> {
+    const avatarIds = input.library.listAvatars().map((a) => a.id);
+    for (const file of pending) {
+      if (signal.aborted) return;
+      const paths = videoPaths(input.library.root, file.avatarId);
+      if (file.kind === "foreign") {
+        report.left.push({ file: file.relative, reason: "foreign" });
         continue;
       }
-      for (const { name, isFile } of names.sort((x, y) => (x.name < y.name ? -1 : 1))) {
-        const relative = `avatars/${avatar.id}/videos/.pending/${name}`;
-        if (!isFile) {
-          report.left.push({ file: relative, reason: "foreign" });
-          continue;
-        }
-        if (isTempName(name)) {
-          // The remains of an intent whose write never finished: ours by shape, in our own folder.
-          try {
-            await fs.unlink(join(paths.pendingDir, name));
-            report.removed.intentTemps++;
-          } catch (error) {
-            if (!hasErrorCode(error, "ENOENT")) skip("intent temp", error);
-          }
-          continue;
-        }
-        const match = INTENT_NAME.exec(name);
-        if (match?.[1] === undefined) {
-          report.left.push({ file: relative, reason: "foreign" });
-          continue;
-        }
+      if (file.kind === "temp") {
+        // The remains of an intent whose write never finished: ours by shape, in our own folder.
         try {
-          await settleIntent(match[1], avatar.id, relative, avatarIds);
+          await fs.unlink(join(paths.pendingDir, file.name));
+          report.removed.intentTemps++;
         } catch (error) {
-          skip("intent", error);
+          if (!hasErrorCode(error, "ENOENT")) skip("intent temp", error);
         }
+        continue;
+      }
+      try {
+        await settleIntent(file, avatarIds);
+      } catch (error) {
+        if (signal.aborted) return;
+        skip("intent", error);
       }
     }
   }
@@ -403,8 +554,9 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     for (const avatar of input.library.listAvatars()) {
       let names: string[];
       try {
-        names = (await readdir(videoPaths(input.library.root, avatar.id).pendingDir, { withFileTypes: true })).filter((e) => e.isFile()).map((e) => e.name);
+        names = (await lib.readdir(videoPaths(input.library.root, avatar.id).pendingDir)).filter((e) => e.isFile).map((e) => e.name);
       } catch (error) {
+        if (signal.aborted) return;
         if (!hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR")) skip("pending folder", error);
         continue;
       }
@@ -415,11 +567,13 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     }
   }
 
-  async function body(ready: UsableRoot | null): Promise<void> {
+  async function body(ready: UsableRoot | null, pending: readonly PendingFile[]): Promise<void> {
     await deps.hooks?.locked?.();
+    if (signal.aborted) return;
     // 1. the intents of every avatar (before any sweep of temps)
-    await settleIntents();
-    if (ready === null) return;
+    await settleIntents(pending);
+    // A targeted run settles its intents and nothing else.
+    if (ready === null || only !== null || signal.aborted) return;
     // 2. empty placeholders no intent names
     await sweepPlaceholders(ready);
     // 3. render temps (the runner's own `.studio-part-*`), except live jobs'; the real root, each folder and each file checked again
@@ -429,7 +583,8 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
       const realFolder = await fs.realpath(folder);
       return placeOf(nodePath, dirname(realFolder), ready.ref.caseInsensitive) === placeOf(nodePath, ready.real, ready.ref.caseInsensitive);
     };
-    const parts = await sweepPartFiles(ready.real, {
+    // The sweep lists folders with the runtime's own calls: the whole of it is one bounded step.
+    const parts = await io(() => sweepPartFiles(ready.real, {
       keep: (path) => live?.hasTemp(configured(path)) === true,
       isRealDirectory: async (folder) => insideRoot(folder).catch(() => false),
       remove: async (path) => {
@@ -438,37 +593,52 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
           if (!hasErrorCode(error, "ENOENT")) throw error;
         });
       },
-    });
+    }));
     report.removed.partTemps += parts.removed.length;
     for (const skipped of parts.skipped) report.skipped.push({ what: "render temp", code: skipped.code });
     // 4. Studio's own scratch in the root
     await sweepRootScratch(ready);
   }
 
-  if (root === null) {
-    await body(null);
-    return report;
-  }
-  let started = false;
+  // The library is read first, with no lock held; a library that does not answer ends the run here, having blocked nobody.
+  let pending: PendingFile[];
   try {
-    await withRootLock(
-      fs,
-      root.real,
-      async () => {
-        started = true;
-        await body(root);
-      },
-      { waitMs: deps.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS },
-    );
+    pending = await loadPending();
   } catch (error) {
-    if (started) skip("recovery", error);
-    else if (error instanceof LockWaitTimeout) {
-      log("recovery: the export folder is busy; its intents are kept for the next open");
-      await deferAll("root-busy");
-    } else {
-      skip("export root lock", error);
-      await deferAll("export-unavailable");
-    }
+    if (!signal.aborted) skip("library", error);
+    return finished();
   }
-  return report;
+  if (signal.aborted) return finished();
+
+  try {
+    if (root === null) {
+      await body(null, pending);
+      return finished();
+    }
+    let started = false;
+    try {
+      await withRootLock(
+        fs,
+        root.real,
+        async () => {
+          started = true;
+          await body(root, pending);
+        },
+        { waitMs: deps.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS },
+      );
+    } catch (error) {
+      if (signal.aborted) return finished();
+      if (started) skip("recovery", error);
+      else if (error instanceof LockWaitTimeout) {
+        log("recovery: the export folder is busy; its intents are kept for the next open");
+        await deferAll("root-busy");
+      } else {
+        skip("export root lock", error);
+        await deferAll("export-unavailable");
+      }
+    }
+  } catch (error) {
+    if (!signal.aborted) skip("recovery", error);
+  }
+  return finished();
 }
