@@ -51,6 +51,28 @@ export function framesToMs(frames: number): number {
   return Math.floor((frames * 1000) / FPS);
 }
 
+/**
+ * The frame on screen at time `ms`, for scrubbing: any finite non-negative
+ * time (a pointer position may be fractional), ROUNDED DOWN (`floor(ms * 3 /
+ * 100)`). `msToFrames` stays strict for spec times; this one is for the UI.
+ */
+export function msToFrameFloor(ms: number): number {
+  if (!Number.isFinite(ms) || ms < 0) throw new RangeError(`ms must be a finite non-negative number, got ${ms}`);
+  return Math.floor((ms * FRAMES_PER_STEP) / STEP_MS);
+}
+
+/**
+ * The clip a timeline frame belongs to, with its index and the frame within
+ * the clip; null before the first or from the montage's end frame on. Ranges
+ * are half-open, so a clip's end frame belongs to the next clip.
+ */
+export function clipAtFrame(ranges: readonly ClipRange[], frame: number): { index: number; range: ClipRange; localFrame: number } | null {
+  if (!Number.isSafeInteger(frame)) throw new RangeError(`frame must be a whole number, got ${frame}`);
+  const index = ranges.findIndex((r) => frame >= r.startFrame && frame < r.endFrame);
+  const range = ranges[index];
+  return range === undefined ? null : { index, range, localFrame: frame - range.startFrame };
+}
+
 /** The clips laid back to back from frame 0. */
 export function clipRanges(clips: readonly { readonly clipId: string; readonly durationMs: number }[]): ClipRange[] {
   const ranges: ClipRange[] = [];

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_TOTAL_MS, MIN_CLIP_MS, MIN_TOTAL_MS } from "../engine/montage";
-import { clipRanges, framesToMs, layerRange, layerVisibleAt, msToFrames, totalFrames } from "./timeline";
+import { clipAtFrame, clipRanges, framesToMs, layerRange, layerVisibleAt, msToFrameFloor, msToFrames, totalFrames } from "./timeline";
 import { mulberry32, randInt } from "./random.testkit";
 
 /** Every valid duration: 500 ms to 15.0 s in 100 ms steps. */
@@ -145,5 +145,78 @@ describe("layerRange (inclusive start, exclusive end)", () => {
 
   test("refuses times that are not multiples of 100 ms", () => {
     expect(() => layerRange({ startMs: 10, endMs: 400 })).toThrow(RangeError);
+  });
+});
+
+describe("msToFrameFloor (for scrubbing: any time, rounded down to its frame)", () => {
+  test("agrees with msToFrames on every multiple of 100 ms", () => {
+    for (const ms of VALID_DURATIONS) expect(msToFrameFloor(ms)).toBe(msToFrames(ms));
+  });
+
+  test("rounds down inside a step: 33 ms is frame 0, 34 ms frame 1, 99 ms frame 2, 100 ms frame 3, 133 ms frame 3, 134 ms frame 4", () => {
+    expect([msToFrameFloor(0), msToFrameFloor(33), msToFrameFloor(34), msToFrameFloor(99), msToFrameFloor(100), msToFrameFloor(133), msToFrameFloor(134)]).toEqual([0, 0, 1, 2, 3, 3, 4]);
+  });
+
+  test("accepts a fractional millisecond time from a pointer position", () => {
+    expect(msToFrameFloor(1234.9)).toBe(37);
+  });
+
+  test("the frame it names starts at or before the time and the next one starts after it, over random times", () => {
+    const rand = mulberry32(17);
+    for (let i = 0; i < 2000; i++) {
+      const ms = randInt(rand, 0, 15_000);
+      const frame = msToFrameFloor(ms);
+      expect((frame * 1000) / 30).toBeLessThanOrEqual(ms);
+      expect(((frame + 1) * 1000) / 30).toBeGreaterThan(ms);
+    }
+  });
+
+  test.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("refuses %p", (ms) => {
+    expect(() => msToFrameFloor(ms)).toThrow(RangeError);
+  });
+});
+
+describe("clipAtFrame", () => {
+  const ranges = clipRanges([
+    { clipId: "clip-aaaa1", durationMs: 4000 },
+    { clipId: "clip-bbbb2", durationMs: 500 },
+    { clipId: "clip-cccc3", durationMs: 2500 },
+  ]);
+
+  test("finds the clip a frame belongs to, with its index and the frame within the clip", () => {
+    expect(clipAtFrame(ranges, 0)).toEqual({ index: 0, range: ranges[0], localFrame: 0 });
+    expect(clipAtFrame(ranges, 119)).toEqual({ index: 0, range: ranges[0], localFrame: 119 });
+    expect(clipAtFrame(ranges, 130)).toEqual({ index: 1, range: ranges[1], localFrame: 10 });
+    expect(clipAtFrame(ranges, 209)).toEqual({ index: 2, range: ranges[2], localFrame: 74 });
+  });
+
+  test("a clip's end frame belongs to the NEXT clip (half-open ranges)", () => {
+    expect(clipAtFrame(ranges, 120)?.index).toBe(1);
+    expect(clipAtFrame(ranges, 135)?.index).toBe(2);
+  });
+
+  test("a frame past the last one, or before the first, is in no clip", () => {
+    expect(clipAtFrame(ranges, 210)).toBeNull();
+    expect(clipAtFrame(ranges, -1)).toBeNull();
+    expect(clipAtFrame([], 0)).toBeNull();
+  });
+
+  test("every frame of a random timeline maps to exactly the clip whose range holds it", () => {
+    const rand = mulberry32(18);
+    const clips = Array.from({ length: 12 }, (_, i) => ({ clipId: `clip-look-${i}`, durationMs: randInt(rand, 5, 30) * 100 }));
+    const rs = clipRanges(clips);
+    for (let f = 0; f < totalFrames(clips); f++) {
+      const hit = clipAtFrame(rs, f);
+      expect(hit).not.toBeNull();
+      if (hit === null) continue;
+      expect(f).toBeGreaterThanOrEqual(hit.range.startFrame);
+      expect(f).toBeLessThan(hit.range.endFrame);
+      expect(hit.localFrame).toBe(f - hit.range.startFrame);
+    }
+    expect(clipAtFrame(rs, totalFrames(clips))).toBeNull();
+  });
+
+  test("refuses a fractional frame", () => {
+    expect(() => clipAtFrame(ranges, 1.5)).toThrow(RangeError);
   });
 });
