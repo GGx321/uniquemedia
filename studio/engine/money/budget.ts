@@ -314,6 +314,16 @@ export class Budget {
     return n;
   }
 
+  /**
+   * Whether `scope` has an open reserve that only a user's reconcile can close: one this process has no request
+   * in flight for (left by a crash, an abort or a timeout). Other scopes' reserves and a torn line are the
+   * ledger's business, not this scope's — its committed money cannot change by reconciling them.
+   */
+  scopeNeedsReconcile(scope: Scope): boolean {
+    const key = scopeKey(scope);
+    return this.ledger.openReserves().some((r) => scopeKey(r.scope) === key && this.own.get(r.attemptId)?.state !== "in-flight");
+  }
+
   /** Attempts after the latest reconcile marker that were billed above their worst case. */
   aboveWorstAttempts(): string[] {
     const lines = this.ledger.lines;

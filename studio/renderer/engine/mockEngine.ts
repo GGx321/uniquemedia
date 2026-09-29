@@ -1256,8 +1256,11 @@ export class MockEngine implements EngineBridge {
    */
   private capExhausted(run: MockRun): boolean {
     if (this.activeRunJob(run.runId) !== null || this.openSlots(run) === 0) return false;
-    // Not while a reconcile is needed: open reserves count at their worst case until then, so the room is not final.
-    if (this.reconcileReasons.length > 0) return false;
+    // Not while the run's OWN open reserves wait for a reconcile: they count at their worst case until then, so the room
+    // is not final. Another scope's reserve or a torn line does not change this run's committed money (the real engine's
+    // `Budget.scopeNeedsReconcile`).
+    const own = this.latestRunJobOf(run.runId);
+    if (own !== null && own.reserveKeys.some((key) => this.reserves.has(key))) return false;
     // The real engine's minToProgress: ONE writer call's ceiling for an unwritten chunk (the writer runs first) plus one image attempt.
     const writer = run.writerDone ? 0 : MOCK_RUN_WRITER.worstPerCall;
     return run.capMicros - this.runCommitted(run) < writer + this.slotPrice(run).attemptWorst;

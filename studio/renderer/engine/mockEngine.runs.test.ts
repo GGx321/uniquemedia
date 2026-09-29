@@ -323,6 +323,15 @@ test("a cap that leaves exactly one attempt still funds a resume; one micro-doll
   expect(runs.find((r) => r.runId === ended)).toMatchObject({ resumable: false, capExhausted: true });
 });
 
+test("a torn ledger line, which no run's own reserve caused, does not keep an ended run resumable (the real engine scopes the reconcile check to the run)", async () => {
+  const { engine, client } = makeMock();
+  const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
+  engine.requireReconcile(["torn-ledger-line"]);
+  const run = (await unwrap(client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
+  expect(run).toMatchObject({ resumable: false, capExhausted: true });
+  expect(await client.request("runs.estimateResume", { runId })).toMatchObject({ ok: false, error: { code: "RUN_CAP_EXCEEDED" } });
+});
+
 test("runs.estimateResume and runs.resume refuse a cap-exhausted run with RUN_CAP_EXCEEDED", async () => {
   const { engine, client } = makeMock();
   const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
@@ -527,15 +536,16 @@ describe("resumePrice carries the writer term when the writer has not finished",
   });
 });
 
-// Open reserves count at their worst case only until a reconcile: while one is needed, the cap room is not final, so the
-// engine (and the mock) never call a run ended by its cap, and its estimate still answers.
-test("while a reconcile is needed a run is not reported cap-exhausted, and runs.estimateResume still answers; after it, it is", async () => {
+// Open reserves count at their worst case only until a reconcile, so a run whose OWN reserves wait for one is never
+// called ended by its cap (the real engine pins that with a real run's reserves). A reconcile needed for another
+// scope's reserves says nothing about this run's money, so the run is ended all the same, and its estimate refuses.
+test("a reconcile needed for other scopes' reserves does not stop a run from being reported cap-exhausted; reconciling changes nothing for it", async () => {
   const { engine, client } = makeMock();
   const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 8, 400_000);
   engine.requireReconcile(["open-reserves"]);
   const during = (await unwrap(client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
-  expect(during).toMatchObject({ resumable: true, capExhausted: false });
-  expect((await client.request("runs.estimateResume", { runId })).ok).toBe(true);
+  expect(during).toMatchObject({ resumable: false, capExhausted: true });
+  expect(await client.request("runs.estimateResume", { runId })).toMatchObject({ ok: false, error: { code: "RUN_CAP_EXCEEDED" } });
 
   await unwrap(client.request("money.reconcile", {}));
   const after = (await unwrap(client.request("runs.list", {}))).runs.find((r) => r.runId === runId);

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { computePdqHash } from "../../src/core/pdq/pdq";
@@ -10,6 +10,7 @@ import { manifestTraits } from "./avatars/records";
 import { sharedRealFaceGate } from "./face/testing/realWorker";
 import { NoFaceInReferenceError } from "./face";
 import { openLibrary } from "./library";
+import { Ledger } from "./money/ledger";
 import { samplePhotoMeta, SAMPLE_IMPORTED_SOURCE, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { decodeGray64 } from "../node/pdqPixels";
@@ -716,6 +717,33 @@ describe("runs.resume", () => {
     second.advance(10 * 60_000);
     ok(await second.engine.handle(command("money.reconcile")));
     expect(summaryOf(await second.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true });
+  });
+
+  // The reconcile a run waits for is about ITS OWN open reserves. Another scope's leftover (or a torn line) makes the
+  // ledger need a reconcile, but it cannot change this run's committed money, so it must not keep a final run resumable.
+  test("runs.list: another scope's open reserve does not keep a cap-exhausted run resumable, and its estimate still refuses RUN_CAP_EXCEEDED", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    await capLeaving(runId, ONE_ATTEMPT - 1);
+    await restartedAndReconciled(received);
+    const ledger = await Ledger.open(join(dir(), "userData", "ledger.jsonl"));
+    await ledger.append({ type: "reserve", attemptId: "att-foreign-0001", jobId: "job-foreign-0001", scope: { avatarJobId: "job-foreign-0001" }, model: "x-ai/grok-4.3", worstMicros: 1_000, at: new Date(LATER).toISOString() });
+    const third = await restarted(received);
+
+    expect(ok(await third.engine.handle(command("money.status")))).toMatchObject({ result: { reconcileNeeded: true } });
+    expect(summaryOf(await third.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true });
+    expect(failed(await third.engine.handle(command("runs.estimateResume", { runId }))).error.code).toBe("RUN_CAP_EXCEEDED");
+  });
+
+  test("runs.list: a torn ledger line does not keep a cap-exhausted run resumable", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    await capLeaving(runId, ONE_ATTEMPT - 1);
+    await restartedAndReconciled(received);
+    await appendFile(join(dir(), "userData", "ledger.jsonl"), '{"type":"reserve","attem');
+    const third = await restarted(received);
+
+    expect(ok(await third.engine.handle(command("money.status")))).toMatchObject({ result: { reconcileNeeded: true, reconcileReasons: ["torn-ledger-line"] } });
+    expect(summaryOf(await third.engine.handle(command("runs.list")), runId)).toMatchObject({ resumable: false, capExhausted: true });
+    expect(failed(await third.engine.handle(command("runs.estimateResume", { runId }))).error.code).toBe("RUN_CAP_EXCEEDED");
   });
 
   test("runs.list: a cap with no room at all left is exhausted too, and so is one already committed past (a bill above its worst case)", async () => {

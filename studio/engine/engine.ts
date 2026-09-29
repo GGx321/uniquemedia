@@ -1037,8 +1037,8 @@ export class Engine {
     const committed = scopeCommitted(budget.ledger, { runId: plan.runId });
     const { estimate, minToProgressMicros } = remainingPlan(priced, plan, state, committed, ledger);
     // A cap that cannot fund one more attempt has ended the run: refused free, before anything is claimed or accepted.
-    // Not while the ledger needs a reconcile: open reserves count at their worst case until then, so the room is not final.
-    if (!this.#moneyStatus().reconcileNeeded && !capFundsResume(plan, committed, minToProgressMicros)) {
+    // Not while the run's own open reserves wait for a reconcile: they count at their worst case until then, so the room is not final.
+    if (!budget.scopeNeedsReconcile({ runId: plan.runId }) && !capFundsResume(plan, committed, minToProgressMicros)) {
       throw new EngineFailure({ code: "RUN_CAP_EXCEEDED", detail: `run ${plan.runId}'s cap leaves ${Math.max(0, plan.capMicros - committed)} micro-dollars, less than the ${minToProgressMicros ?? 0} its next attempt could cost: it has ended` });
     }
     return { state, estimate, priced, budget };
@@ -1058,7 +1058,6 @@ export class Engine {
     const money = this.#money;
     if (library === null || !money.ok) return [];
     const ledger = this.#ledgerView(money.budget);
-    const reconcileNeeded = this.#moneyStatus().reconcileNeeded;
     const read = await Promise.all(
       (await library.listRuns()).map(async (runId) => {
         try {
@@ -1088,7 +1087,7 @@ export class Engine {
       const book = priced.get(JSON.stringify(models)) ?? null;
       // Ended by its cap only when prices are known: unpriced, the engine cannot tell and leaves the run resumable.
       const remaining = open === 0 || book === null ? null : remainingPlan(book, plan, state, committed, ledger);
-      const capExhausted = !running && open > 0 && remaining !== null && !reconcileNeeded && !capFundsResume(plan, committed, remaining.minToProgressMicros);
+      const capExhausted = !running && open > 0 && remaining !== null && !money.budget.scopeNeedsReconcile({ runId }) && !capFundsResume(plan, committed, remaining.minToProgressMicros);
       return {
         runId,
         avatarId: plan.avatarId,
