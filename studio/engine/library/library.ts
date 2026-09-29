@@ -22,6 +22,7 @@ import { isLibraryId } from "./ids";
 import { runExclusive } from "./keyedMutex";
 import {
   AVATARS_DIR,
+  FOCUS_FILE,
   HISTORY_FILE,
   JOURNAL_FILE,
   LIBRARY_FILE,
@@ -579,6 +580,33 @@ export class Library {
       throw new LibraryError("reference-corrupt", `${ref.photo.file} does not match the sha256 in its sidecar`);
     }
     return new Uint8Array(raw);
+  }
+
+  /**
+   * A photo's file bytes, checked against its own sidecar (size and sha256 —
+   * survey.ts's check, re-run since the file can rot after the survey), for
+   * local readers such as the focus resolver. `photo-not-found` for an unknown
+   * photo, `reference-corrupt` for a file that fails the check; a missing or
+   * unreadable file rejects with the fs error. The bytes are the read's own
+   * buffer, not a copy.
+   */
+  async readPhotoVerified(photoId: string): Promise<Uint8Array> {
+    const photo = this.#photos.get(photoId);
+    if (photo === undefined) throw new LibraryError("photo-not-found", `no photo ${photoId}`);
+    const raw = await readFile(join(this.#photosDir(photo.avatarId), photo.file));
+    if (raw.length !== photo.bytes) {
+      throw new LibraryError("reference-corrupt", `${photo.file} has ${raw.length} bytes, the sidecar recorded ${photo.bytes}`);
+    }
+    if (createHash("sha256").update(raw).digest("hex") !== photo.sha256) {
+      throw new LibraryError("reference-corrupt", `${photo.file} does not match the sha256 in its sidecar`);
+    }
+    return raw;
+  }
+
+  /** Where the avatar's focus cache lives (S8); the id becomes a path segment, so it is validated. */
+  focusCachePath(avatarId: string): string {
+    if (!isLibraryId(avatarId)) throw new LibraryError("invalid-id", `avatar id ${JSON.stringify(avatarId)} breaks the id pattern`);
+    return join(this.#avatarDir(avatarId), FOCUS_FILE);
   }
 
   getPhoto(photoId: string): PhotoSidecar | undefined {

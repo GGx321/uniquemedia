@@ -10,6 +10,8 @@ export const THUMBS_DIR = "thumbs";
 export const REJECTED_FILE = "rejected.jsonl";
 /** Video records, one write-once JSON per video (task 3a.8b writes them; 3a.2 reads them). "Used" is derived from these, never from a log of its own. */
 export const VIDEOS_DIR = "videos";
+/** S8: an avatar's cached focus points (`avatars/<id>/focus.json`); a cache, rebuilt when missing or corrupt. */
+export const FOCUS_FILE = "focus.json";
 export const HISTORY_FILE = "history.jsonl";
 export const PLAN_FILE = "plan.json";
 export const JOURNAL_FILE = "journal.jsonl";
