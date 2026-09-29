@@ -33,7 +33,12 @@ beforeEach(async () => {
   await mkdir(library);
   idCounter = 0;
 });
+/** Set once a test has put an ACL deny on the export folder, so the cleanup below lifts it even when the test times out. */
+let aclDenied = false;
+
 afterEach(async () => {
+  if (aclDenied) spawnSync("icacls", [exportPath, "/remove:d", "*S-1-1-0"]);
+  aclDenied = false;
   await chmod(exportPath, 0o755).catch(() => undefined);
   await rm(dir, { recursive: true, force: true });
 });
@@ -198,13 +203,11 @@ describe("what is not a usable folder", () => {
   // share or a protected folder is on Windows. The probe must find out by trying to write.
   test.skipIf(process.platform !== "win32")("a real folder whose ACL denies creating files is not writable", async () => {
     await mkdir(exportPath);
+    aclDenied = true;
     const deny = spawnSync("icacls", [exportPath, "/deny", "*S-1-1-0:(WD,AD)"], { encoding: "utf8" });
-    expect(deny.status).toBe(0);
-    try {
-      expect(await check()).toEqual({ ok: false, reason: "not-writable" });
-    } finally {
-      spawnSync("icacls", [exportPath, "/remove:d", "*S-1-1-0"]);
-    }
+    // The deny not applying is a broken test setup, not a writable folder: say why.
+    expect({ status: deny.status, stderr: deny.stderr, stdout: deny.stdout }).toMatchObject({ status: 0 });
+    expect(await check()).toEqual({ ok: false, reason: "not-writable" });
   });
 
   test("a probe that is created but cannot be removed is not writable", async () => {
