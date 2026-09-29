@@ -262,7 +262,7 @@ export async function prepareExportFolder(options: PrepareExportFolderOptions): 
  * `\\?\UNC\srv\share` for `\\srv\share`) is dropped, separators are normalised, a trailing one is trimmed
  * (a drive root keeps its own), and letter case is folded on a case-insensitive volume.
  */
-function placeOf(api: PathFlavour, path: string, caseInsensitive: boolean): string {
+export function placeOf(api: PathFlavour, path: string, caseInsensitive: boolean): string {
   const unprefixed = api.sep === "\\" ? path.replace(/^\\\\[?.]\\UNC\\/i, "\\\\").replace(/^\\\\[?.]\\/, "") : path;
   const normal = api.normalize(unprefixed);
   // A backslash separates paths only on Windows; on POSIX it is a legal name character and stays.
@@ -309,6 +309,14 @@ export const NODE_EXPORT_NAME_FS: ExportNameFs = {
     await handle.close();
   },
 };
+
+/** Every number up to the counter's limit is taken for this date and kind. */
+export class ExportNamesExhaustedError extends Error {
+  constructor() {
+    super("no free name is left in the export folder for today");
+    this.name = "ExportNamesExhaustedError";
+  }
+}
 
 export interface ExportNameClaim {
   /** `<folder name>/<date>_<kind>_<NNN>.mp4`, always a valid `RelativePath`. */
@@ -357,5 +365,5 @@ export async function claimExportName(options: ClaimExportNameOptions): Promise<
     }
     return { relPath: `${folder.name}/${name}`, absPath, n };
   }
-  throw new Error("no free name is left in the export folder for today");
+  throw new ExportNamesExhaustedError();
 }

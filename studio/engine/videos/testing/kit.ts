@@ -1,16 +1,19 @@
 import { afterEach, beforeEach } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RelativePath } from "../../../shared/engine";
 import type { MontageShape } from "../../../shared/engine/montage";
+import { NODE_EXPORT_FOLDER_FS, prepareExportFolder, type PreparedFolder } from "../../exportName";
 import { checkExportRoot, NODE_EXPORT_ROOT_FS } from "../../exportRoot";
 import { openLibrary, type Library } from "../../library";
 import { PNG_1X1, SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import type { AvatarManifest, PhotoSidecar } from "../../library/schemas";
 import { NODE_COMMIT_FS, type CommitFs } from "../commitFs";
-import type { VideoRecord } from "../record";
+import { partNameOf, type VideoRecord } from "../record";
+import type { VerifiedFile } from "../../verify";
 import type { z } from "zod";
 
 // Test support for the video commit, its recovery, fileState and delete.
@@ -225,3 +228,24 @@ export async function readText(path: string): Promise<string> {
 export async function sizeOf(path: string): Promise<number> {
   return (await stat(path)).size;
 }
+
+// ---------- the commit's inputs ----------
+
+
+/** `<exportRoot>/Mia`, opened the way a render does. */
+export async function openFolder(world: World, caseInsensitive = false): Promise<PreparedFolder> {
+  return prepareExportFolder({ fs: NODE_EXPORT_FOLDER_FS, root: world.exportRoot, safeName: "Mia", avatarId: world.avatar.id, caseInsensitive });
+}
+
+/** Writes the finished temp a runner would leave: `<folder>/.studio-part-<jobId>.mp4`. */
+export function writeTemp(folder: PreparedFolder, jobId: string, bytes: Uint8Array): string {
+  const path = folder.fileIn(partNameOf(jobId));
+  writeFileSync(path, bytes);
+  return path;
+}
+
+/** A verifier that accepts the file and hashes what it reads (so a later recovery can check the same sha). */
+export const acceptingVerify = async (path: string): Promise<VerifiedFile> => {
+  const bytes = readFileSync(path);
+  return { result: { ok: true }, sha256: sha256Of(bytes), bytes: bytes.length };
+};
