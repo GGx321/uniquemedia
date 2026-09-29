@@ -24,6 +24,7 @@ import { handleImportPhotoCommand } from "./importFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
 import { handleMediaRequest, MEDIA_SCHEME } from "./mediaProtocol";
 import { HostNotices } from "./notices";
+import { createQuitFlow } from "./quitFlow";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { handleSettingsCommand, reconcileLibraryPath } from "./settingsFlow";
 import { defaultLibraryPath, defaultSettings, SettingsStore } from "./settingsStore";
@@ -230,16 +231,11 @@ async function startStudio(): Promise<void> {
   });
   // Quitting: the engine is first asked to cancel its renders and to let a commit that is past its claim finish (bounded
   // by `SHUTDOWN_WAIT_MS`), so no orphaned ffmpeg keeps writing into the export folder and no half-saved video is left for
-  // the next start to settle. `before-quit` is held once, then the quit goes on; `will-quit` is the net for a quit that
-  // skipped it.
-  let shutdownStarted = false;
-  app.on("before-quit", (event) => {
-    if (shutdownStarted) return;
-    shutdownStarted = true;
-    event.preventDefault();
-    void engine.shutdown().finally(() => app.quit());
-  });
-  app.on("will-quit", () => engine.stop());
+  // the next start to settle (quitFlow.ts): `before-quit` is held for the whole wait, however often it is pressed, and the
+  // engine's process is stopped only in `will-quit`, when the quit really goes on.
+  const quitFlow = createQuitFlow({ shutdown: () => engine.shutdown(), quit: () => app.quit(), stop: () => engine.stop() });
+  app.on("before-quit", (event) => quitFlow.beforeQuit(event));
+  app.on("will-quit", () => quitFlow.willQuit());
 
   protocol.handle(MEDIA_SCHEME, (request) => handleMediaRequest(request, { libraryRoot: () => settings.current.libraryPath }));
 

@@ -272,17 +272,16 @@ export class EngineHost<Transfer> {
   }
 
   /**
-   * The app is quitting. A running engine is first asked to stop its renders (it cancels every one, so no orphaned
-   * ffmpeg keeps writing into the export folder, and lets a commit that is past its claim finish), and is given at most
-   * `waitMs` to answer; then it is stopped either way. An engine that is not running is just stopped. Never rejects
-   * and never waits longer than `waitMs`: what a killed engine leaves, its next start's recovery settles.
+   * The app is quitting. A running engine is asked to stop its renders (it cancels every one, so no orphaned ffmpeg keeps
+   * writing into the export folder, and lets a commit that is past its claim finish), and is given at most `waitMs` to
+   * answer. It is NOT stopped here: the quit may still be cancelled by something else, and the process is ended by
+   * `stop()` when the quit really goes on (`will-quit`). Never rejects and never waits longer than `waitMs`; what a
+   * killed engine leaves, its next start's recovery settles. An engine that is not running is not waited for.
    */
   async shutdown(waitMs: number = SHUTDOWN_WAIT_MS): Promise<void> {
-    if (this.#phase === "running" && this.#port !== null) {
-      const callId = (this.#deps.newId ?? randomUUID)();
-      await this.#call(callId, { kind: "control", type: "engine.shutdown", callId }, waitMs);
-    }
-    this.stop();
+    if (this.#phase !== "running" || this.#port === null) return;
+    const callId = (this.#deps.newId ?? randomUUID)();
+    await this.#call(callId, { kind: "control", type: "engine.shutdown", callId }, waitMs);
   }
 
   /** An intentional stop (app quit): no restart, waiting commands get INTERNAL. */
