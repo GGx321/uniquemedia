@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { defaultSettings, loadSettings, saveSettings, SETTINGS_FILE, SettingsStore } from "./settingsStore";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -34,7 +34,29 @@ test("a missing file gives the defaults: $10 a month, the library in userData, t
 });
 
 test("the default export folder is named from the home folder it is given", () => {
-  expect(defaultSettings(userData, "/home/mia").exportPath).toBe(join("/home/mia", "Studio", "export"));
+  const home = join(userData, "home", "mia");
+  expect(defaultSettings(userData, home).exportPath).toBe(join(home, "Studio", "export"));
+});
+
+describe("the default export folder in each platform's own path spelling", () => {
+  test("a Windows drive home gives a backslash path under it", () => {
+    const settings = defaultSettings("C:\\Users\\mia\\AppData\\Roaming\\Studio", "C:\\Users\\mia", win32);
+    expect(settings.exportPath).toBe("C:\\Users\\mia\\Studio\\export");
+  });
+
+  test("a Windows UNC home is accepted", () => {
+    const settings = defaultSettings("C:\\Users\\mia\\AppData\\Roaming\\Studio", "\\\\srv\\home\\mia", win32);
+    expect(settings.exportPath).toBe("\\\\srv\\home\\mia\\Studio\\export");
+  });
+
+  test("a POSIX-style home on Windows (rooted, no drive) is not absolute there: the export folder falls back to userData", () => {
+    const settings = defaultSettings("C:\\Users\\mia\\AppData\\Roaming\\Studio", "/home/mia", win32);
+    expect(settings.exportPath).toBe("C:\\Users\\mia\\AppData\\Roaming\\Studio\\export");
+  });
+
+  test("a POSIX home gives a slash path under it", () => {
+    expect(defaultSettings("/Users/mia/Library/Application Support/Studio", "/Users/mia", posix).exportPath).toBe("/Users/mia/Studio/export");
+  });
 });
 
 test("an unusable home folder (empty HOME, a relative path) falls back to an export folder under userData instead of crashing the startup", () => {

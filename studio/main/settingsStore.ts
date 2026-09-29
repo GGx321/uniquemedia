@@ -1,8 +1,10 @@
 import { readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import * as nodePath from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
 import { EngineSettings } from "../engine/control";
+import { AbsolutePath } from "../shared/engine";
 import { writeJsonAtomic } from "../engine/library/durableFs";
 
 export const SETTINGS_FILE = "settings.json";
@@ -29,29 +31,33 @@ export const DEFAULT_RENDER_CONCURRENCY = "auto";
  * engine creates it on first use (task 3a.8a); a folder the owner chose must
  * already exist.
  */
-export function defaultExportPath(home: string): string {
-  return join(home, "Studio", "export");
+export function defaultExportPath(home: string, api: PathFlavour = nodePath): string {
+  return api.join(home, "Studio", "export");
 }
+
+/** The path flavour the defaults are spelled in: the platform's own unless a test plays another. */
+type PathFlavour = Pick<typeof nodePath.posix, "join">;
 
 /** On disk: the non-secret settings plus a version, strict so a stray field (a key) is refused. */
 const SettingsFile = EngineSettings.extend({ schemaVersion: z.literal(1) });
 
 /** The library folder of the default settings; the engine creates it on first run. */
-export function defaultLibraryPath(userData: string): string {
-  return join(userData, "library");
+export function defaultLibraryPath(userData: string, api: PathFlavour = nodePath): string {
+  return api.join(userData, "library");
 }
 
-export function defaultSettings(userData: string, home: string = homedir()): EngineSettings {
+export function defaultSettings(userData: string, home: string = homedir(), api: PathFlavour = nodePath): EngineSettings {
   return EngineSettings.parse({
     monthlyBudgetMicros: DEFAULT_MONTHLY_BUDGET_MICROS,
-    libraryPath: defaultLibraryPath(userData),
+    libraryPath: defaultLibraryPath(userData, api),
     imageModel: DEFAULT_IMAGE_MODEL,
     textModel: DEFAULT_TEXT_MODEL,
     concurrency: { network: DEFAULT_NETWORK_CONCURRENCY },
     imageAgeCheck: DEFAULT_IMAGE_AGE_CHECK,
-    // An empty HOME (or a relative one) would break the contract's absolute path and crash the startup:
-    // export next to the rest of the app's data instead.
-    exportPath: isAbsolute(home) ? defaultExportPath(home) : join(userData, "export"),
+    // An empty HOME, a relative one, or (on Windows) a rooted path with no drive would break the contract's
+    // absolute path and crash the startup: the contract judges the path that is actually built, so the two
+    // cannot disagree, and the export goes next to the rest of the app's data instead.
+    exportPath: [defaultExportPath(home, api), api.join(userData, "export")].find((path) => AbsolutePath.safeParse(path).success),
     renderConcurrency: DEFAULT_RENDER_CONCURRENCY,
   });
 }
