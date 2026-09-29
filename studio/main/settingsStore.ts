@@ -35,7 +35,6 @@ export function defaultExportPath(home: string, api: PathFlavour = nodePath): st
   return api.join(home, "Studio", "export");
 }
 
-
 /** On disk: the non-secret settings plus a version, strict so a stray field (a key) is refused. */
 const SettingsFile = EngineSettings.extend({ schemaVersion: z.literal(1) });
 
