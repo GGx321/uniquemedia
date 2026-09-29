@@ -122,6 +122,16 @@ describe("JobRegistry, render jobs", () => {
   });
 });
 
+describe("JobRegistry, reading a job", () => {
+  test("stateOf gives a job's state as the snapshot lists it, and undefined for an unknown job", () => {
+    const jobs = new JobRegistry();
+    jobs.queueRender("job-00000001", REF, 120);
+
+    expect(jobs.stateOf("job-00000001")).toEqual(jobs.states()[0]);
+    expect(jobs.stateOf("job-00000404")).toBeUndefined();
+  });
+});
+
 describe("JobRegistry, cancelling renders", () => {
   test("cancelling a queued render ends it as cancelled at once and fires its signal", () => {
     const jobs = new JobRegistry();

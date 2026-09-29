@@ -68,6 +68,11 @@ export class JobRegistry {
     return true;
   }
 
+  /** A job's state as the snapshot lists it, or undefined for an unknown (or long-forgotten) job. */
+  stateOf(jobId: string): JobState | undefined {
+    return this.#jobs.get(jobId)?.state;
+  }
+
   /** How many render jobs are queued or running: what a library switch must wait for. */
   activeRenders(): number {
     let n = 0;
