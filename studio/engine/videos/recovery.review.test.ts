@@ -134,7 +134,7 @@ describe("adoption", () => {
     expect(await libraryVideoFiles(w)).toEqual(["video-00000002.json"]);
   });
 
-  test("an intent whose stored mtime is not the file's is not adopted, even with the right bytes", async () => {
+  test("an intent whose stored mtime is not the file's is still adopted when it is the only one naming the file (the bytes are verified)", async () => {
     const w = world();
     const bytes = fakeVideoBytes(2048);
     const record = sampleRecord(w, { bytes, mtimeMs: 1_000 });
@@ -142,7 +142,7 @@ describe("adoption", () => {
     mkdirSync(join(w.exportRoot, "Mia"), { recursive: true });
     writeFileSync(join(w.exportRoot, FINAL), bytes);
     const report = await recoverVideos({ library: w.library, exportRoot: rootRef(w) });
-    expect(report.adopted).toEqual([]);
+    expect(report.adopted).toEqual([record.id]);
     expect(existsSync(join(w.exportRoot, FINAL))).toBe(true);
   });
 

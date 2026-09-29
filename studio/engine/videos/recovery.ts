@@ -15,7 +15,7 @@ import { commitIntent } from "./intents";
 import type { LiveCommits } from "./live";
 import { scenePhotoIds, videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
 import { readRootId } from "./rootMarker";
-import { withRootLock } from "./rootLock";
+import { LockWaitTimeout, withRootLock } from "./rootLock";
 
 // Settling the video commit's crash windows when a library is opened (Stage 3
 // plan, "Commit" row and invariant 23). The commit leaves the disk in one of a
@@ -65,6 +65,10 @@ export interface RecoverInput {
 
 export interface RecoverDeps {
   readonly fs?: CommitFs;
+  /** How long to wait for the export root's lock (a commit holds it from its claim to its record) before deferring the root as `root-busy`. 30 s when absent. */
+  readonly lockWaitMs?: number;
+  /** Test seams. `locked` runs inside the lock, before anything is settled. */
+  readonly hooks?: { locked?: () => void | Promise<void> };
   /** Ids, counts and codes only; never a path or a file value. */
   readonly log?: (line: string) => void;
 }
@@ -76,7 +80,7 @@ export interface RecoveryReport {
   readonly adopted: string[];
   readonly dropped: Array<{ videoId: string; reason: DropReason }>;
   /** Intents kept: their file cannot be judged now (another root, no usable root) or their job is running. */
-  readonly deferred: Array<{ videoId: string; reason: "other-root" | "export-unavailable" | "live" }>;
+  readonly deferred: Array<{ videoId: string; reason: "other-root" | "export-unavailable" | "live" | "root-busy" | "file-shared" }>;
   /** Files in `.pending/` recovery cannot settle, relative to the library. */
   readonly left: Array<{ file: string; reason: "unreadable" | "too-new" | "foreign" }>;
   readonly removed: { placeholders: number; intentTemps: number; markerTemps: number; probes: number; partTemps: number };
@@ -90,6 +94,7 @@ const MARKER_TEMP_NAME = /^\.studio-export\.json\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0
 /** Our two probe shapes: the case probe's `case-<id>z`, and the write probe's id (an `Id` or a uuid). */
 const PROBE_NAME = /^\.studio-probe-(?:case-[a-z0-9]+z|[a-z0-9-]{8,64})$/;
 const MAX_INTENT_BYTES = 1024 * 1024;
+const DEFAULT_LOCK_WAIT_MS = 30_000;
 
 function codeOf(error: unknown): string {
   return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "UNKNOWN";
@@ -147,24 +152,29 @@ async function hasPublishSibling(fs: CommitFs, root: string): Promise<boolean> {
   return false;
 }
 
-/** Every record of the library that names `(rootId, relPath)`, other than `exceptVideoId`: a file must belong to one record. */
-async function recordNamingFile(libraryRoot: string, avatarIds: readonly string[], rootId: string, relPath: string, exceptVideoId: string): Promise<boolean> {
+/**
+ * Whether another record of the library (and, with `includeIntents`, another commit intent) names `(rootId, relPath)`, other
+ * than `exceptVideoId`: a file must belong to one video.
+ */
+async function otherNamesFile(libraryRoot: string, avatarIds: readonly string[], rootId: string, relPath: string, exceptVideoId: string, includeIntents: boolean): Promise<boolean> {
   for (const avatarId of avatarIds) {
-    const dir = videoPaths(libraryRoot, avatarId).videosDir;
-    let names: string[];
-    try {
-      names = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile() && INTENT_NAME.test(e.name)).map((e) => e.name);
-    } catch (error) {
-      if (hasErrorCode(error, "ENOENT")) continue;
-      throw error;
-    }
-    for (const name of names) {
-      if (name === `${exceptVideoId}.json`) continue;
+    const paths = videoPaths(libraryRoot, avatarId);
+    for (const dir of includeIntents ? [paths.videosDir, paths.pendingDir] : [paths.videosDir]) {
+      let names: string[];
       try {
-        const parsed = VideoRecordSchema.safeParse(JSON.parse(await readFile(join(dir, name), "utf8")));
-        if (parsed.success && parsed.data.file.rootId === rootId && parsed.data.file.relPath === relPath) return true;
+        names = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile() && INTENT_NAME.test(e.name)).map((e) => e.name);
       } catch (error) {
-        if (!(error instanceof SyntaxError) && !hasErrorCode(error, "ENOENT")) throw error;
+        if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) continue;
+        throw error;
+      }
+      for (const name of names) {
+        if (name === `${exceptVideoId}.json`) continue;
+        try {
+          const parsed = VideoRecordSchema.safeParse(JSON.parse(await readFile(join(dir, name), "utf8")));
+          if (parsed.success && parsed.data.file.rootId === rootId && parsed.data.file.relPath === relPath) return true;
+        } catch (error) {
+          if (!(error instanceof SyntaxError) && !hasErrorCode(error, "ENOENT")) throw error;
+        }
       }
     }
   }
@@ -181,6 +191,8 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
   };
   const root = await usableRoot(fs, input.exportRoot, log);
   const live = input.live;
+  /** A path under the real root, as the running jobs know it: through the root as the settings spell it. */
+  const configured = (path: string): string => (root === null ? path : join(root.ref.root, nodePath.relative(root.real, path)));
 
   async function settleIntent(videoId: string, avatarId: string, relative: string, avatarIds: readonly string[]): Promise<void> {
     const paths = videoPaths(input.library.root, avatarId);
@@ -214,7 +226,8 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
 
     const [folderName, fileName] = record.file.relPath.split("/");
     if (folderName === undefined || fileName === undefined) return drop("no-file");
-    const folder = join(root.ref.root, folderName);
+    // Everything below works on the root's REAL path, resolved once: a root path re-pointed meanwhile changes nothing here.
+    const folder = join(root.real, folderName);
     const file = join(folder, fileName);
 
     const folderFacts = await lstatOrNull(fs, folder);
@@ -234,12 +247,16 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
       return drop("empty-placeholder");
     }
 
-    // Adoption needs the file to be the verified one, the very file this intent stored (its mtime survives a rename),
-    // and to belong to no other record: two records must never name one file.
+    // Adoption needs the file to be the verified one (size and sha256) and to belong to no other record: two records must
+    // never name one file. Its stored mtime (which survives a rename) settles a tie between intents, and nothing more.
     const isVerifiedFile = facts.size === record.file.bytes && (await hashFile(file)) === record.file.sha256;
     if (!isVerifiedFile) return drop("mismatch");
-    if (record.file.mtimeMs !== undefined && record.file.mtimeMs !== Math.floor(facts.mtimeMs)) return drop("mismatch");
-    if (await recordNamingFile(input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId)) return drop("file-claimed");
+    if (await otherNamesFile(input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId, false)) return drop("file-claimed");
+    // Right bytes, other mtime (DST on FAT32, a copy round trip): still ours, unless another intent names the same file and this one cannot show it is the one.
+    if (record.file.mtimeMs !== undefined && record.file.mtimeMs !== facts.mtimeMs && (await otherNamesFile(input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId, true))) {
+      // Two intents, one file, and neither can show it is the one: both wait (whichever is looked at first), nothing is dropped or adopted.
+      return void report.deferred.push({ videoId, reason: "file-shared" });
+    }
 
     try {
       await commitIntent(fs, input.library.root, avatarId, videoId, { log });
@@ -301,14 +318,14 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
   async function sweepPlaceholders(ready: UsableRoot): Promise<void> {
     let rootEntries;
     try {
-      rootEntries = await fs.readdir(ready.ref.root);
+      rootEntries = await fs.readdir(ready.real);
     } catch (error) {
       return skip("export folder", error);
     }
     for (const folderEntry of rootEntries) {
       // A real folder with a SafeName: never a symlink (the entry says so without following), never a folder of the owner's own naming.
       if (!folderEntry.isDirectory || folderEntry.isSymbolicLink || !isSafeName(folderEntry.name)) continue;
-      const folder = join(ready.ref.root, folderEntry.name);
+      const folder = join(ready.real, folderEntry.name);
       try {
         const before = await lstatOrNull(fs, folder);
         if (before === null || before.isSymbolicLink || !before.isDirectory) continue;
@@ -320,7 +337,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
         }
         for (const name of files) {
           const path = join(folder, name);
-          if (live?.hasPlaceholder(path) === true) continue;
+          if (live?.hasPlaceholder(configured(path)) === true) continue;
           const facts = await lstatOrNull(fs, path);
           // A 0-byte MP4 is never a real video; anything with content is the owner's.
           if (facts === null || !facts.isFile || facts.isSymbolicLink || facts.size !== 0 || facts.nlink > 1) continue;
@@ -343,10 +360,17 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
   /** Studio's own scratch in the root: marker temps (healing a marker they are linked to) and empty probes of our shapes. */
   async function sweepRootScratch(ready: UsableRoot): Promise<void> {
     try {
-      const marker = await lstatOrNull(fs, join(ready.ref.root, EXPORT_MARKER_FILE));
-      for (const entry of await fs.readdir(ready.ref.root)) {
+      const rootBefore = await fs.lstat(ready.real);
+      const marker = await lstatOrNull(fs, join(ready.real, EXPORT_MARKER_FILE));
+      const entries = await fs.readdir(ready.real);
+      const rootAfter = await fs.lstat(ready.real);
+      if (!sameInode(rootBefore, rootAfter)) {
+        log("recovery: the export root changed while it was listed; its scratch files are skipped");
+        return;
+      }
+      for (const entry of entries) {
         if (!entry.isFile || entry.isSymbolicLink) continue;
-        const path = join(ready.ref.root, entry.name);
+        const path = join(ready.real, entry.name);
         try {
           if (MARKER_TEMP_NAME.test(entry.name)) {
             const facts = await lstatOrNull(fs, path);
@@ -374,21 +398,77 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     }
   }
 
-  async function body(): Promise<void> {
+  /** Every intent of the library kept as deferred, untouched: the root is busy or cannot be locked. */
+  async function deferAll(reason: "root-busy" | "export-unavailable"): Promise<void> {
+    for (const avatar of input.library.listAvatars()) {
+      let names: string[];
+      try {
+        names = (await readdir(videoPaths(input.library.root, avatar.id).pendingDir, { withFileTypes: true })).filter((e) => e.isFile()).map((e) => e.name);
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR")) skip("pending folder", error);
+        continue;
+      }
+      for (const name of names.sort()) {
+        const match = INTENT_NAME.exec(name);
+        if (match?.[1] !== undefined) report.deferred.push({ videoId: match[1], reason });
+      }
+    }
+  }
+
+  async function body(ready: UsableRoot | null): Promise<void> {
+    await deps.hooks?.locked?.();
     // 1. the intents of every avatar (before any sweep of temps)
     await settleIntents();
-    if (root === null) return;
+    if (ready === null) return;
     // 2. empty placeholders no intent names
-    await sweepPlaceholders(root);
-    // 3. render temps (the runner's own `.studio-part-*`), except live jobs'
-    const parts = await sweepPartFiles(nodePath.resolve(root.ref.root), { keep: (path) => live?.hasTemp(path) === true });
+    await sweepPlaceholders(ready);
+    // 3. render temps (the runner's own `.studio-part-*`), except live jobs'; the real root, each folder and each file checked again
+    const insideRoot = async (folder: string): Promise<boolean> => {
+      const facts = await lstatOrNull(fs, folder);
+      if (facts === null || facts.isSymbolicLink || !facts.isDirectory) return false;
+      const realFolder = await fs.realpath(folder);
+      return placeOf(nodePath, dirname(realFolder), ready.ref.caseInsensitive) === placeOf(nodePath, ready.real, ready.ref.caseInsensitive);
+    };
+    const parts = await sweepPartFiles(ready.real, {
+      keep: (path) => live?.hasTemp(configured(path)) === true,
+      isRealDirectory: async (folder) => insideRoot(folder).catch(() => false),
+      remove: async (path) => {
+        if (!(await insideRoot(dirname(path)))) throw Object.assign(new Error("the folder no longer resolves inside the export root"), { code: "ELOOP" });
+        await fs.unlink(path).catch((error: unknown) => {
+          if (!hasErrorCode(error, "ENOENT")) throw error;
+        });
+      },
+    });
     report.removed.partTemps += parts.removed.length;
     for (const skipped of parts.skipped) report.skipped.push({ what: "render temp", code: skipped.code });
     // 4. Studio's own scratch in the root
-    await sweepRootScratch(root);
+    await sweepRootScratch(ready);
   }
 
-  if (root === null) await body();
-  else await withRootLock(fs, root.ref.root, root.ref.caseInsensitive, body);
+  if (root === null) {
+    await body(null);
+    return report;
+  }
+  let started = false;
+  try {
+    await withRootLock(
+      fs,
+      root.real,
+      async () => {
+        started = true;
+        await body(root);
+      },
+      { waitMs: deps.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS },
+    );
+  } catch (error) {
+    if (started) skip("recovery", error);
+    else if (error instanceof LockWaitTimeout) {
+      log("recovery: the export folder is busy; its intents are kept for the next open");
+      await deferAll("root-busy");
+    } else {
+      skip("export root lock", error);
+      await deferAll("export-unavailable");
+    }
+  }
   return report;
 }

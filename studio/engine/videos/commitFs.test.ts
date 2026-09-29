@@ -19,7 +19,7 @@ describe("createExclusive", () => {
   test("creates an empty file and reports the inode it created, from the open handle", async () => {
     const identity = await NODE_COMMIT_FS.createExclusive(join(dir, "a"));
     const info = statSync(join(dir, "a"));
-    expect(identity).toEqual({ dev: info.dev, ino: info.ino });
+    expect(identity).toEqual({ dev: String(info.dev), ino: String(info.ino) });
     expect(info.size).toBe(0);
   });
 

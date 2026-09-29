@@ -328,6 +328,7 @@ describe("failure modes roll back to a clean folder", () => {
     const r = await rig(world);
     const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
     r.fs.failOnce("link", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId));
+    r.fs.failOnce("rename", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId)); // and so does the exclusive-rename fallback
     const error = await failureOf(r.run());
     expect(error).toMatchObject({ engineError: { code: "INTERNAL" } });
     expect(await exportFiles(r.w)).toEqual([]);
@@ -338,6 +339,7 @@ describe("failure modes roll back to a clean folder", () => {
     const r = await rig(world);
     const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
     r.fs.failOnce("link", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId));
+    r.fs.failOnce("rename", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId)); // and so does the exclusive-rename fallback
     r.fs.failOnce("unlink", errnoError("EBUSY"), (args) => args[0] === join(r.w.exportRoot, FINAL));
     await failureOf(r.run());
     expect(await exportFiles(r.w)).toEqual([FINAL]);

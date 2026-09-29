@@ -138,7 +138,7 @@ describe("delete: order and errors", () => {
     await deleteVideo(record.id, depsOf(w, library, { fs }));
     const paths = videoPaths(w.libraryRoot, w.avatar.id);
     const calls = fs.calls.filter((c) => c.startsWith("unlink") || c.startsWith("fsyncDir"));
-    expect(calls).toEqual([expect.stringMatching(/^unlink .*Mia/), `fsyncDir ${join(w.exportRoot, "Mia")}`, `unlink ${paths.record(record.id)}`, `fsyncDir ${paths.videosDir}`]);
+    expect(calls).toEqual([expect.stringMatching(/^unlink .*Mia/), `fsyncDir ${join(w.exportRoot, "Mia")}`, `unlink ${paths.intent(record.id)}`, `unlink ${paths.record(record.id)}`, `fsyncDir ${paths.videosDir}`]);
   });
 
   test("a disk error that reaches the caller carries its code and no path", async () => {

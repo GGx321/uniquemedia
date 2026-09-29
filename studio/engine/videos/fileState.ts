@@ -54,8 +54,8 @@ export type Verification = "cheap" | "full";
 export interface Stamp {
   readonly size: number;
   readonly mtimeMs: number;
-  readonly ino: number;
-  readonly dev: number;
+  readonly ino: string;
+  readonly dev: string;
 }
 
 const stampOf = (facts: FileFacts): Stamp => ({ size: facts.size, mtimeMs: Math.floor(facts.mtimeMs), ino: facts.ino, dev: facts.dev });

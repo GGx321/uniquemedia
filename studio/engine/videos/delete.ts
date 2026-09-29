@@ -147,6 +147,18 @@ export async function deleteVideo(videoId: string, deps: DeleteVideoDeps): Promi
         await fs.fsyncDir(dirname(file)).catch((error: unknown) => log(`video ${videoId}: the export folder could not be flushed (${error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error"})`));
       }
     }
+    // A commit intent left beside the record (a crash between the link and the intent's removal, an antivirus holding it) would
+    // bring the deleted video back: recovery adopts an intent whose file it finds. It goes BEFORE the record, once retried, and if it
+    // will not go the delete fails with the record still in place, so it can be tried again and nothing half-deleted can resurrect.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await fs.unlink(found.paths.intent(videoId));
+        break;
+      } catch (error) {
+        if (hasErrorCode(error, "ENOENT")) break;
+        if (attempt >= 2) throw new VideoDiskError("the video's leftover commit intent could not be deleted", error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error");
+      }
+    }
     try {
       await fs.unlink(found.paths.record(videoId));
     } catch (error) {

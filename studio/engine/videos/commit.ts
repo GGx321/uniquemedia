@@ -240,8 +240,12 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
     if (placeOf(nodePath, dirname(realFile), target.caseInsensitive) !== placeOf(nodePath, realFolder, target.caseInsensitive)) throw new ContainmentError("the saved file resolves outside its folder");
   };
 
-  /** Removes `path` only if it is the inode we expect. True when nothing of ours is left there; false when it is ours and would not go. */
-  const removeIfOurs = async (what: string, path: string, expected: FileIdentity): Promise<boolean> => {
+  /**
+   * Removes `path` only if it is the file we expect: the inode AND its shape (`shape` says what our file looks like: size,
+   * mtime). FAT reuses inode numbers, so an owner's file that was handed our old number must not pass on identity alone.
+   * True when nothing of ours is left there; false when it is ours and would not go.
+   */
+  const removeIfOurs = async (what: string, path: string, expected: FileIdentity, shape: (facts: FileFacts) => boolean): Promise<boolean> => {
     let facts: FileFacts;
     try {
       facts = await fs.lstat(path);
@@ -250,7 +254,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
       log(`commit ${input.jobId}: could not look at the ${what} (${codeOf(error) ?? "error"})`);
       return false;
     }
-    if (facts.isSymbolicLink || !facts.isFile || !isIdentity(facts, expected)) {
+    if (facts.isSymbolicLink || !facts.isFile || !isIdentity(facts, expected) || !shape(facts)) {
       log(`commit ${input.jobId}: the ${what}'s name no longer leads to our file; it is left as it is`);
       return true;
     }
@@ -284,12 +288,21 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
       log(`commit ${input.jobId}: the export folder could not be checked for the rollback (${codeOf(error) ?? "containment"}); its files are left as they are`);
     }
     let fileGone = true;
-    if (foldersAreOurs && placeholder !== null) fileGone = await removeIfOurs("unfinished video file", placeholder.path, placed && tempFacts !== null ? tempFacts : placeholder.identity);
+    if (foldersAreOurs && placeholder !== null) {
+      const placedFacts = tempFacts;
+      fileGone =
+        placed && placedFacts !== null
+          ? await removeIfOurs("unfinished video file", placeholder.path, placedFacts, (facts) => facts.size === placedFacts.size && facts.mtimeMs === placedFacts.mtimeMs)
+          : await removeIfOurs("unfinished video file", placeholder.path, placeholder.identity, (facts) => facts.size === 0);
+    }
     // The intent goes only once the file is gone, and only if the folder could be judged: an intent whose file
     // could not be removed, or whose folder could not be checked, stays for recovery, which decides.
     const folderJudged = foldersAreOurs || placeholder === null;
     if (fileGone && folderJudged && intentMayExist) await undoIntent();
-    if (foldersAreOurs && tempFacts !== null && !placed) await removeIfOurs("temp file", temp, tempFacts);
+    if (foldersAreOurs && tempFacts !== null && !placed) {
+      const verifiedTemp = tempFacts;
+      await removeIfOurs("temp file", temp, verifiedTemp, () => true); // its name is ours alone; it may have been changed since it was verified, and is still ours to remove
+    }
     // The unlinks are made durable, so a crash right after the rollback does not bring the leftovers back.
     if (foldersAreOurs) await fs.fsyncDir(folder.path).catch((error: unknown) => log(`commit ${input.jobId}: the export folder could not be flushed after the rollback (${codeOf(error) ?? "error"})`));
     if (intentMayExist) await fs.fsyncDir(paths.pendingDir).catch((error: unknown) => log(`commit ${input.jobId}: .pending/ could not be flushed after the rollback (${codeOf(error) ?? "error"})`));
@@ -321,7 +334,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
 
     const spec = parseRecordSpec(input.spec);
     await inPhase("export", () => fs.realpath(target.root)); // a root that cannot be resolved is refused here, tagged as the export folder's
-    return await withRootLock(fs, target.root, target.caseInsensitive, async (): Promise<CommittedVideo> => {
+    return await withRootLock(fs, target.root, async (): Promise<CommittedVideo> => {
         // The LAST cancel point (after a wait for the lock, which recovery may hold). From the claim on, the commit runs to its record.
         signal?.throwIfAborted();
         try {
@@ -387,8 +400,12 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
 
           // 6. The record: the COMMIT POINT is the link. From here nothing rolls back.
           try {
-            await inPhase("library", () => commitIntent(fs, deps.libraryRoot, input.avatarId, input.videoId, { log, afterLink: () => reached("record-linked") }));
+            await inPhase("library", () => commitIntent(fs, deps.libraryRoot, input.avatarId, input.videoId, { log, afterLink: () => {
+              committed = true; // the record exists from here on: whatever the hook throws is not a failed link
+              return reached("record-linked");
+            } }));
           } catch (error) {
+            if (committed) throw error; // after the link: nothing to judge, nothing to roll back
             const original = error instanceof PhaseError ? error.original : error;
             if (hasErrorCode(original, "EEXIST")) {
               // A record with our id is already there: leave every file alone. It is ours if it names our file (a recovery adopted it); anything else is a conflict to report.
@@ -396,11 +413,16 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
               if (!(await recordIsOurs(paths.record(input.videoId), record))) throw new RenderFailure({ code: "INTERNAL", detail: "another video record already has this video's id" });
               await undoIntent();
               intentMayExist = false;
-            } else if (await exists(fs, paths.record(input.videoId))) {
-              // The link did happen (an error reported after it): it is committed.
-              log(`commit ${input.jobId}: the record exists although its link reported ${codeOf(original) ?? "an error"}`);
             } else {
-              throw error;
+              // The link (or the rename standing in for it) reported an error: did the record appear? If it did, it is committed. If the disk
+              // cannot say either, a record may name our file already, so NOTHING is rolled back: the intent stays and recovery decides.
+              const found = await exists(fs, paths.record(input.videoId)).catch((lookup: unknown) => {
+                log(`commit ${input.jobId}: could not tell whether the record exists (${codeOf(lookup) ?? "error"}); everything is left for recovery`);
+                return null;
+              });
+              if (found === false) throw error;
+              leaveEverything = found === null;
+              log(`commit ${input.jobId}: the record ${found === true ? "exists" : "may exist"} although its link reported ${codeOf(original) ?? "an error"}`);
             }
           }
           committed = true;
@@ -416,7 +438,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
           await rollback();
           throw error;
         }
-    });
+    }, signal === undefined ? {} : { signal });
   } catch (error) {
     await rollback();
     // A cancel (the signal's own reason) passes through; the rest is told without paths.

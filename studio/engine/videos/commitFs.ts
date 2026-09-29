@@ -16,16 +16,21 @@ export interface FileFacts {
   readonly isDirectory: boolean;
   readonly isSymbolicLink: boolean;
   readonly size: number;
+  /** Whole milliseconds. */
   readonly mtimeMs: number;
-  readonly ino: number;
-  readonly dev: number;
+  /**
+   * The inode and device as exact decimal strings, read as bigints: exFAT and FAT report the sentinel 2^64-1
+   * (and other volumes large numbers) that a `number` cannot hold apart from its neighbours.
+   */
+  readonly ino: string;
+  readonly dev: string;
   readonly nlink: number;
 }
 
 /** Which file a name led to at some moment: a name can be re-pointed, an inode cannot. */
 export interface FileIdentity {
-  readonly dev: number;
-  readonly ino: number;
+  readonly dev: string;
+  readonly ino: string;
 }
 
 export interface DirEntryFacts {
@@ -59,8 +64,8 @@ export interface CommitFs {
 
 export const NODE_COMMIT_FS: CommitFs = {
   lstat: async (path) => {
-    const info = await lstat(path);
-    return { isFile: info.isFile(), isDirectory: info.isDirectory(), isSymbolicLink: info.isSymbolicLink(), size: info.size, mtimeMs: info.mtimeMs, ino: info.ino, dev: info.dev, nlink: info.nlink };
+    const info = await lstat(path, { bigint: true });
+    return { isFile: info.isFile(), isDirectory: info.isDirectory(), isSymbolicLink: info.isSymbolicLink(), size: Number(info.size), mtimeMs: Number(info.mtimeMs), ino: String(info.ino), dev: String(info.dev), nlink: Number(info.nlink) };
   },
   realpath: (path) => realpath(path),
   readdir: async (path) => (await readdir(path, { withFileTypes: true })).map((e) => ({ name: e.name, isFile: e.isFile(), isDirectory: e.isDirectory(), isSymbolicLink: e.isSymbolicLink() })),
@@ -70,8 +75,8 @@ export const NODE_COMMIT_FS: CommitFs = {
   createExclusive: async (path) => {
     const handle = await open(path, "wx");
     try {
-      const info = await handle.stat();
-      return { dev: info.dev, ino: info.ino };
+      const info = await handle.stat({ bigint: true });
+      return { dev: String(info.dev), ino: String(info.ino) };
     } finally {
       await handle.close();
     }

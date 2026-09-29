@@ -20,6 +20,8 @@ export class CommitTracker implements LiveCommits {
   readonly #temps = new Set<string>();
   readonly #placeholders = new Set<string>();
   readonly #jobs = new Map<string, string>();
+  readonly #jobIds = new Set<string>();
+  readonly #videoIds = new Set<string>();
 
   /** A LIVE view (not a copy): it follows every later add and release. Keys are places, so use `hasTemp` to ask. */
   tempPaths(): ReadonlySet<string> {
@@ -33,11 +35,12 @@ export class CommitTracker implements LiveCommits {
 
   /** A live view of the running jobs' ids. */
   liveJobIds(): ReadonlySet<string> {
-    return new Set(this.#jobs.keys());
+    return this.#jobIds;
   }
 
+  /** A live view of the running jobs' video ids. */
   liveVideoIds(): ReadonlySet<string> {
-    return new Set(this.#jobs.values());
+    return this.#videoIds;
   }
 
   hasTemp(path: string): boolean {
@@ -54,10 +57,15 @@ export class CommitTracker implements LiveCommits {
 
   addJob(jobId: string, videoId: string): void {
     this.#jobs.set(jobId, videoId);
+    this.#jobIds.add(jobId);
+    this.#videoIds.add(videoId);
   }
 
   releaseJob(jobId: string): void {
+    const videoId = this.#jobs.get(jobId);
     this.#jobs.delete(jobId);
+    this.#jobIds.delete(jobId);
+    if (videoId !== undefined) this.#videoIds.delete(videoId);
   }
 
   addTemp(path: string): void {

@@ -67,9 +67,16 @@ function codeOf(error: unknown): string {
 }
 
 /**
- * Commits the record. THE COMMIT POINT IS `link(intent, record)`: it makes the record's name appear
- * atomically and refuses (EEXIST) to replace one, so the record is write-once even against a race.
- * A missing intent rejects with ENOENT. From the moment the link exists the video is committed, and
+ * Commits the record. THE COMMIT POINT IS THE MOMENT THE RECORD'S NAME EXISTS: `link(intent, record)` makes it
+ * appear atomically and refuses (EEXIST) to replace one, so the record is write-once even against a race.
+ *
+ * WHERE HARD LINKS DO NOT EXIST (a library on exFAT or FAT32, some network shares: ENOTSUP, EPERM, EISDIR on
+ * Windows), `link` fails with anything but EEXIST, and the same is done in two steps, as the export root's marker
+ * is published (`exportRoot.ts`): the record's name must not exist (`lstat` says ENOENT, else EEXIST), then
+ * `rename(intent, record)`. The rename is the commit point there. Its check-then-rename window is a single
+ * engine's own, and the intent is a file only this process writes.
+ *
+ * A missing intent rejects with ENOENT. From the moment the record exists the video is committed, and
  * nothing after it may undo that, so nothing after it throws:
  * - the intent's own name is removed (a failure leaves intent and record side by side, which recovery
  *   settles by dropping the intent);
@@ -80,9 +87,24 @@ function codeOf(error: unknown): string {
 export async function commitIntent(fs: CommitFs, libraryRoot: string, avatarId: string, videoId: string, options: CommitIntentOptions = {}): Promise<void> {
   const paths = videoPaths(libraryRoot, avatarId);
   const log = options.log ?? (() => undefined);
-  await fs.link(paths.intent(videoId), paths.record(videoId));
+  let renamed = false;
+  try {
+    await fs.link(paths.intent(videoId), paths.record(videoId));
+  } catch (error) {
+    if (hasErrorCode(error, "EEXIST")) throw error;
+    // No hard links here (or the link failed some other way): exclusive by lookup, then rename.
+    log(`video ${videoId}: link is not available (${codeOf(error)}); the record is written by an exclusive rename`);
+    try {
+      await fs.lstat(paths.record(videoId));
+      throw Object.assign(new Error("the video record already exists"), { code: "EEXIST" });
+    } catch (lookup) {
+      if (!hasErrorCode(lookup, "ENOENT")) throw lookup;
+    }
+    await fs.rename(paths.intent(videoId), paths.record(videoId));
+    renamed = true;
+  }
   await options.afterLink?.();
-  await fs.unlink(paths.intent(videoId)).catch((error: unknown) => log(`video ${videoId}: the intent could not be removed after its record was linked (${codeOf(error)})`));
+  if (!renamed) await fs.unlink(paths.intent(videoId)).catch((error: unknown) => log(`video ${videoId}: the intent could not be removed after its record was linked (${codeOf(error)})`));
   for (let attempt = 1; ; attempt++) {
     try {
       await fs.fsyncDir(paths.videosDir);
