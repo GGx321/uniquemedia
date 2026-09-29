@@ -90,12 +90,12 @@ export function parseEmojiTest(text: string): EmojiTestEntry[] {
 }
 
 export async function loadEmojiTest(): Promise<EmojiTestEntry[]> {
-  return parseEmojiTest(await readFile(join(HERE, "fixtures", "emoji-test-16.0.txt"), "utf8"));
+  return parseEmojiTest(await readFile(join(HERE, "fixtures", "emoji-test-17.0.txt"), "utf8"));
 }
 
-/** HarfBuzz's glyph id for each fully-qualified sequence (fixtures/emoji-test-16.0.hb-glyphs.txt), keyed by "1F600" / "1F469 200D 1F4BB". */
+/** HarfBuzz's glyph id for each fully-qualified sequence (fixtures/emoji-test-17.0.hb-glyphs.txt), keyed by "1F600" / "1F469 200D 1F4BB". */
 export async function loadHarfBuzzGlyphs(): Promise<Map<string, number>> {
-  const text = await readFile(join(HERE, "fixtures", "emoji-test-16.0.hb-glyphs.txt"), "utf8");
+  const text = await readFile(join(HERE, "fixtures", "emoji-test-17.0.hb-glyphs.txt"), "utf8");
   const glyphs = new Map<string, number>();
   for (const line of text.split(/\r?\n/)) {
     if (line === "" || line.startsWith("#")) continue;

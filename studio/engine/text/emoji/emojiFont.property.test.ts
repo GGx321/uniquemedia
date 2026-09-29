@@ -6,7 +6,7 @@ useNativeGlobals();
 
 // Invariant 22, the property test: the reader's GSUB pass is a simplification (lookups in lookup order, no
 // script/feature selection), so it is checked against the WHOLE Unicode emoji-test.txt for the version Noto Color
-// Emoji v2.051 was cut for (Emoji 16.0), and against HarfBuzz's own glyph ids for it.
+// Emoji v2.051 was cut for (Emoji 17.0), and against HarfBuzz's own glyph ids for it.
 
 let font: EmojiFont;
 let entries: EmojiTestEntry[];
@@ -20,13 +20,17 @@ beforeAll(async () => {
   harfBuzz = await loadHarfBuzzGlyphs();
 });
 
-/** Noto v2.051 covers Emoji 16.0 completely; anything newer than it would be listed here with its reason. */
+/**
+ * Noto v2.051 covers Emoji 17.0 completely, so nothing is unsupported. (Measured once against Emoji 18.0's list:
+ * 19 of its 3963 fully-qualified sequences, all "E18.0", are missing from this font release. They are newer
+ * than the font, not a reader gap.) A sequence that ever lands here needs its reason written next to it.
+ */
 const KNOWN_UNSUPPORTED: readonly string[] = [];
 
-describe("every fully-qualified emoji of Emoji 16.0", () => {
-  test("the list is Emoji 16.0 and none of it is newer than Noto v2.051", () => {
+describe("every fully-qualified emoji of Emoji 17.0", () => {
+  test("the list is Emoji 17.0 and none of it is newer than Noto v2.051", () => {
     const newest = Math.max(...entries.map((e) => Number(e.since.slice(1))));
-    expect([fullyQualified.length, newest]).toEqual([3781, 16]);
+    expect([fullyQualified.length, newest]).toEqual([3944, 17]);
   });
 
   test("resolves to a bitmap, except the recorded unsupported ones", () => {
@@ -83,8 +87,8 @@ describe("the other statuses", () => {
     };
     // Unqualified sequences (no VS16) are not emoji to type, but the font draws them all.
     expect({ fully: counts("fully-qualified"), minimally: counts("minimally-qualified"), unqualified: counts("unqualified"), component: counts("component") }).toEqual({
-      fully: [3781, 3781],
-      minimally: [1009, 1009],
+      fully: [3944, 3944],
+      minimally: [1029, 1029],
       unqualified: [243, 243],
       component: [9, 9],
     });

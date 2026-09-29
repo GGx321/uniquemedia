@@ -4,9 +4,9 @@ import { EMOJI_FONT_BYTES, keyOf, loadEmojiTest, loadHarfBuzzGlyphs, loadPinnedE
 useNativeGlobals();
 
 describe("the emoji test fixtures", () => {
-  test("the vendored emoji-test.txt is Unicode Emoji 16.0 with 3781 fully-qualified sequences", async () => {
+  test("the vendored emoji-test.txt is Unicode Emoji 17.0 with 3944 fully-qualified sequences", async () => {
     const entries = await loadEmojiTest();
-    expect(entries.filter((e) => e.status === "fully-qualified")).toHaveLength(3781);
+    expect(entries.filter((e) => e.status === "fully-qualified")).toHaveLength(3944);
   });
 
   test("parses a line into code points, status, version and name", () => {

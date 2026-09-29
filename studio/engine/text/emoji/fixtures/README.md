@@ -1,10 +1,12 @@
 # Emoji reader fixtures
 
-- `emoji-test-16.0.txt` is the unmodified `emoji-test.txt` of Unicode Emoji 16.0
-  (https://unicode.org/Public/emoji/16.0/emoji-test.txt), the version Noto Color Emoji
-  v2.051 supports. It is Unicode data, used under the Unicode License v3 (`UNICODE-LICENSE.txt`,
-  https://www.unicode.org/license.txt). Copyright (c) 2024 Unicode, Inc.
-- `emoji-test-16.0.hb-glyphs.txt` is generated data: the glyph HarfBuzz shapes each
+- `emoji-test-17.0.txt` is the unmodified `emoji-test.txt` of Unicode Emoji 17.0
+  (https://unicode.org/Public/17.0.0/emoji/emoji-test.txt, dated 2025-08-04). Noto Color Emoji
+  v2.051 covers every fully-qualified sequence of it. Emoji 18.0 (19 fully-qualified sequences
+  more) is not covered by that font release. The file is Unicode data, used under the
+  Unicode License v3 (`UNICODE-LICENSE.txt`, https://www.unicode.org/license.txt).
+  Copyright (c) 2025 Unicode, Inc.
+- `emoji-test-17.0.hb-glyphs.txt` is generated data: the glyph HarfBuzz shapes each
   fully-qualified sequence to. See its header.
 
 The font itself is never committed here. The tests fetch the pinned release into the
