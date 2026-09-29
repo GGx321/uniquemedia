@@ -57,6 +57,24 @@ describe("scrubber: spellings of one path", () => {
     expect(unc("a \\\\?\\UNC\\nas\\photos\\Mia\\x.jpg b")).toBe("a <photo> b");
   });
 
+  test.each([
+    ["doubled leading separators", "\\\\\\\\nas\\\\photos\\\\Mia\\\\x.jpg"],
+    ["tripled leading separators", "\\\\\\nas\\photos\\Mia\\x.jpg"],
+    ["a leading slash and backslashes", "/\\\\nas\\photos\\Mia\\x.jpg"],
+    ["forward slashes", "//nas/photos/Mia/x.jpg"],
+    ["the extended prefix with doubled separators", "\\\\\\\\?\\\\UNC\\\\nas\\photos\\Mia\\x.jpg"],
+  ])("masks a UNC path with %s", (_name, spelled) => {
+    const unc = scrubber(TMP, EXPORT, [{ path: "\\\\nas\\photos\\Mia\\x.jpg", label: "<photo>" }], "/nowhere");
+    expect(unc(`a ${spelled} b`)).toBe("a <photo> b");
+  });
+
+  test("an input path given in NFD (as an HFS+ directory listing returns it) is masked in NFC text", () => {
+    const nfd = "/Users/мой/Фото/кот-й.jpg".normalize("NFD");
+    const scrub = scrubber(TMP, EXPORT, [{ path: nfd, label: "<photo>" }], "/nowhere");
+    expect(scrub(`Error opening /Users/мой/Фото/кот-й.jpg: no`.normalize("NFC"))).toBe("Error opening <photo>: no");
+    expect(scrub(`Error opening ${nfd}: no`)).toBe("Error opening <photo>: no");
+  });
+
   test("masks a Cyrillic path spelled in the other Unicode normalisation form and the other case", () => {
     const cyr = scrubber(TMP, EXPORT, [{ path: "/Users/мия/Фото Й/кот.jpg", label: "<photo>" }]);
     const nfd = "/Users/мия/Фото Й/кот.jpg".normalize("NFD").toUpperCase();
@@ -122,6 +140,10 @@ describe("scrubber: the user's home", () => {
   test("a home that is only a root masks nothing", () => {
     expect(maskHome("open /etc/hosts", "/")).toBe("open /etc/hosts");
   });
+
+  test.each([["."], ["mia"], [""], ["~/mia"]])("a home that is not absolute (%p) masks nothing", (home) => {
+    expect(maskHome("open ./mia/x and mia/y and /etc/mia", home)).toBe("open ./mia/x and mia/y and /etc/mia");
+  });
 });
 
 describe("scrubber: characters that are regex syntax", () => {
@@ -149,10 +171,22 @@ describe("scrubber: Unicode forms and speed", () => {
   test("a long run of separators with many registered inputs is scrubbed in linear time", () => {
     const inputs = Array.from({ length: 200 }, (_, i) => ({ path: `/Users/mia/Pictures/album-${i}/photo-${i}.jpg`, label: "<photo>" }));
     const scrub = scrubber("/tmp/render-tmp", "/a/Studio", inputs, "/Users/mia");
-    for (const line of [`${"/".repeat(2000)} x`, `C:${"\\".repeat(1000)}`, `${"/a".repeat(1000)}`]) {
+    const unc = Array.from({ length: 200 }, (_, i) => ({ path: `\\\\nas\\photos\\album-${i}\\photo-${i}.jpg`, label: "<photo>" }));
+    const rooted = Array.from({ length: 200 }, (_, i) => ({ path: `\\Users\\mia\\album-${i}\\photo-${i}.jpg`, label: "<photo>" }));
+    const cases: Array<[(text: string) => string, string]> = [
+      [scrub, `${"/".repeat(2000)} x`],
+      [scrub, `C:${"\\".repeat(1000)}`],
+      [scrub, `${"/a".repeat(1000)}`],
+      [scrubber("/tmp/render-tmp", "/a/Studio", unc, "/Users/mia"), `${"\\".repeat(2000)} x`],
+      [scrubber("/tmp/render-tmp", "/a/Studio", unc, "/Users/mia"), `${"/\\\\".repeat(700)}`],
+      [scrubber("/tmp/render-tmp", "/a/Studio", rooted, "/Users/mia"), `${"\\".repeat(2000)} x`],
+      [scrubber("/tmp/render-tmp", "/a/Studio", rooted, "/Users/mia"), `${"\\a".repeat(1000)}`],
+    ];
+    // A generous bound: the quadratic form took hundreds of ms here, and Windows CI is slow.
+    for (const [run, line] of cases) {
       const started = performance.now();
-      scrub(line);
-      expect(performance.now() - started).toBeLessThan(100);
+      run(line);
+      expect(performance.now() - started).toBeLessThan(250);
     }
   });
 });

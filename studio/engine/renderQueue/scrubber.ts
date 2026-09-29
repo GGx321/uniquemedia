@@ -63,7 +63,7 @@ const WIN_SEP = "[\\\\/]+";
 const PREFIX = "(?:[\\\\/]{2}\\?[\\\\/])?";
 // A lead starts only at the beginning of a run of separators. Without the look-behind every position in a
 // run is a start, and scanning a long run against many paths is quadratic.
-const UNC_LEAD = "(?<![\\\\/])(?:[\\\\/]{2}\\?[\\\\/]UNC[\\\\/]|[\\\\/]{2})";
+const UNC_LEAD = "(?<![\\\\/])(?:[\\\\/]{2,}\\?[\\\\/]+UNC[\\\\/]+|[\\\\/]{2,})";
 
 function spellingOf(path: string): Spelling | undefined {
   const windows = isWindowsShaped(path);
@@ -82,12 +82,12 @@ function spellingOf(path: string): Spelling | undefined {
   return { windows, source, weight: segments.reduce((sum, segment) => sum + segment.length, 0) };
 }
 
-/** Every text a path may be printed as: as given, normalised, and in both Unicode forms of each. */
+/** Every text a path may be printed as: as given and normalised, in NFC (the text it is matched against is always NFC). */
 function spellings(raw: string): Spelling[] {
   const stripped = stripExtendedPrefix(raw);
   const flavour = isWindowsShaped(stripped) ? win32 : posix;
   const bases = [stripped, flavour.normalize(stripped)];
-  const texts = new Set(bases.flatMap((text) => [text, text.normalize("NFC"), text.normalize("NFD")]));
+  const texts = new Set(bases.map((text) => text.normalize("NFC")));
   const seen = new Set<string>();
   const out: Spelling[] = [];
   for (const text of texts) {
@@ -133,7 +133,8 @@ export function scrubber(tmpRoot: string, exportDir: string, inputs: readonly Sc
       { path: input.path, label: input.label, kind: "file" },
       { path: dirnameOf(input.path), label: "<dir>", kind: "dir" },
     ]),
-    { path: home, label: "~", kind: "dir" },
+    // A relative home (".", "mia") would mask ordinary words: only an absolute one is a home.
+    ...(posix.isAbsolute(home) || win32.isAbsolute(home) ? [{ path: home, label: "~", kind: "dir" as const }] : []),
   ];
 
   interface Alternative {
