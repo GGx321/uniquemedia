@@ -112,8 +112,8 @@ describe("runRenderJob on real ffmpeg", () => {
     const { spawner, pids } = recordingSpawner();
     const { input, jobDir } = rig([clip("a", 2000, "kenburns")]);
 
-    // The job's own budget is at least 90 s; the wrapper makes one call's slice 250 ms.
-    const error = await runRenderJob(input, { run: withSpawner(spawner, { timeoutMs: 250 }) }).catch((e: unknown) => e);
+    // The job's own budget is at least 90 s; the wrapper makes one call's slice 50 ms, far under the ~0.5 s pass 1 needs.
+    const error = await runRenderJob(input, { run: withSpawner(spawner, { timeoutMs: 50 }) }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(FfmpegTimeoutError);
     expect(pids).toHaveLength(1);

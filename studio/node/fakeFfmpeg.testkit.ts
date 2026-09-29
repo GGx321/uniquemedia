@@ -42,14 +42,19 @@ export class FakeFfmpegChild extends EventEmitter implements FfmpegChild {
     this.stderr.write(text);
   }
 
-  /** Ends the streams, then emits `close`, in the order a real child does. */
-  exit(code: number | null, signal: NodeJS.Signals | null = null): void {
+  /**
+   * Ends the streams, then emits `close`, in the order a real child does.
+   * `closeDelayMs` plays the gap between the process exiting (`exitCode` set)
+   * and `close` arriving, when the pipes still drain.
+   */
+  exit(code: number | null, signal: NodeJS.Signals | null = null, closeDelayMs = 0): void {
     if (this.closed) return;
     this.closed = true;
     this.exitCode = code;
     this.stdout.end();
     this.stderr.end();
-    setImmediate(() => this.emit("close", code, signal));
+    if (closeDelayMs > 0) setTimeout(() => this.emit("close", code, signal), closeDelayMs);
+    else setImmediate(() => this.emit("close", code, signal));
   }
 }
 

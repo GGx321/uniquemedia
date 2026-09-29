@@ -90,6 +90,8 @@ export interface RunFfmpegArgvOptions extends SupervisionOptions {
    * the caller chose, and the caller cleans up after a failure.
    */
   argv: readonly string[];
+  /** The path ffmpeg writes; asserted to be `argv`'s last element, so the two cannot drift apart. */
+  output: string;
 }
 
 export class FfmpegError extends Error {
@@ -219,11 +221,16 @@ function buildArgs(opts: RunFfmpegOptions, tempOutput: string): string[] {
   ];
 }
 
-function buildArgvArgs(argv: readonly string[]): string[] {
-  const output = argv.at(-1);
-  if (output === undefined) throw new TypeError("runFfmpegArgv: argv must end with the output path.");
+function buildArgvArgs(argv: readonly string[], output: string): string[] {
+  if (argv.at(-1) !== output) throw new TypeError("runFfmpegArgv: argv must end with the output path it was given.");
   const body = argv.slice(0, -1);
-  const caps = body.includes("-filter_threads") ? [] : [...FILTER_THREAD_ARGS];
+  // Each cap is added only when the builder did not write it: the pair is [flag, value].
+  const caps: string[] = [];
+  for (let i = 0; i < FILTER_THREAD_ARGS.length; i += 2) {
+    const flag = FILTER_THREAD_ARGS[i];
+    const value = FILTER_THREAD_ARGS[i + 1];
+    if (flag !== undefined && value !== undefined && !body.includes(flag)) caps.push(flag, value);
+  }
   return [...caps, ...body, "-progress", "pipe:1", "-nostats", output];
 }
 
@@ -293,6 +300,8 @@ function supervise(run: Supervised): Promise<void> {
       timer = setTimeout(() => {
         // An abort that already asked to stop keeps the reason it gave.
         if (settled || signal?.aborted || pendingError) return;
+        // Already exited (only `close` is still to come): the work is done, and a kill would change nothing.
+        if (child.exitCode !== null) return;
         timedOut = true;
         killIfAlive();
       }, run.timeoutMs);
@@ -335,21 +344,33 @@ function supervise(run: Supervised): Promise<void> {
       }
     });
 
-    child.on("error", (err) => {
+    const onChildError = (err: Error) => {
       if (pendingError) return;
       pendingError = { value: err };
       clearTimeout(timer);
       killIfAlive();
-    });
+    };
+    child.on("error", onChildError);
+    // A broken pipe on either stream would otherwise be an unhandled 'error' event; without its
+    // output ffmpeg cannot be watched, so it is killed and the call rejects with that error.
+    child.stdout?.on("error", onChildError);
+    child.stderr?.on("error", onChildError);
 
     child.on("close", (code, closeSignal) => {
       finish(() => {
-        const fail = (error: unknown) => run.onFailure().finally(() => reject(error));
+        // The run's own error is what the caller gets; a cleanup that itself rejects is that
+        // cleanup's business to report (the runner does), and must not become an unhandled rejection.
+        const fail = (error: unknown) => {
+          run.onFailure().then(
+            () => reject(error),
+            () => reject(error),
+          );
+        };
         if (pendingError) {
           fail(pendingError.value);
           return;
         }
-        if (timedOut && run.timeoutMs !== undefined) {
+        if (timedOut && code !== 0 && run.timeoutMs !== undefined) {
           fail(new FfmpegTimeoutError(run.timeoutMs, stderrTail.slice(-STDERR_ERROR_TAIL)));
           return;
         }
@@ -435,7 +456,7 @@ export async function runFfmpeg(opts: RunFfmpegOptions): Promise<void> {
  */
 export async function runFfmpegArgv(opts: RunFfmpegArgvOptions): Promise<void> {
   validateSupervision(opts);
-  const args = buildArgvArgs(opts.argv);
+  const args = buildArgvArgs(opts.argv, opts.output);
   let lastFrames = -1;
 
   return supervise({

@@ -13,6 +13,7 @@ useNativeGlobals();
 // cwd, timeout, kill, progress in frames, error shapes) without a real ffmpeg.
 
 const ARGV = ["-hide_banner", "-nostdin", "-y", "-i", "in.png", "-c:v", "libx264", "/out/clip.mkv"];
+const OUT = "/out/clip.mkv";
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5));
 
 const dirs: string[] = [];
@@ -34,7 +35,7 @@ describe("runFfmpegArgv: how the child is started", () => {
   test("passes the allowlisted environment only, never a secret", async () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
 
-    await runFfmpegArgv({ argv: ARGV, spawner, env: { PATH: "/usr/bin", OPENROUTER_API_KEY: "sk-secret", NODE_OPTIONS: "--inspect" } });
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: { PATH: "/usr/bin", OPENROUTER_API_KEY: "sk-secret", NODE_OPTIONS: "--inspect" } });
 
     expect(calls[0]?.options.env).toEqual({ PATH: "/usr/bin" });
   });
@@ -43,7 +44,7 @@ describe("runFfmpegArgv: how the child is started", () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
     configureFfmpegEnv({ PATH: "/usr/bin", STUDIO_TEST_SECRET: "sk-secret" });
     try {
-      await runFfmpegArgv({ argv: ARGV, spawner });
+      await runFfmpegArgv({ argv: ARGV, output: OUT, spawner });
     } finally {
       configureFfmpegEnv(undefined);
     }
@@ -54,7 +55,7 @@ describe("runFfmpegArgv: how the child is started", () => {
   test("passes no environment at all when none is given and none is configured: the child inherits its parent's (tests and tools only)", async () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
 
-    await runFfmpegArgv({ argv: ARGV, spawner });
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner });
 
     expect(calls[0]?.options.env).toBeUndefined();
   });
@@ -63,7 +64,7 @@ describe("runFfmpegArgv: how the child is started", () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
     configureFfmpegEnv({ PATH: "/configured" });
     try {
-      await runFfmpegArgv({ argv: ARGV, spawner, env: { PATH: "/given" } });
+      await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: { PATH: "/given" } });
     } finally {
       configureFfmpegEnv(undefined);
     }
@@ -74,7 +75,7 @@ describe("runFfmpegArgv: how the child is started", () => {
   test("starts the child in the given working directory", async () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
 
-    await runFfmpegArgv({ argv: ARGV, spawner, env: {}, cwd: "/work/job-1" });
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, cwd: "/work/job-1" });
 
     expect(calls[0]?.options.cwd).toBe("/work/job-1");
   });
@@ -82,7 +83,7 @@ describe("runFfmpegArgv: how the child is started", () => {
   test("puts the filter thread caps and the progress pipe in front of the output", async () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
 
-    await runFfmpegArgv({ argv: ARGV, spawner, env: {} });
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} });
 
     const args = calls[0]?.args ?? [];
     expect(args.slice(0, 4)).toEqual([...FILTER_THREAD_ARGS]);
@@ -94,7 +95,7 @@ describe("runFfmpegArgv: how the child is started", () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
     const argv = ["-hide_banner", "-nostdin", "-y", ...BUILDER_FILTER_THREAD_ARGS, "-i", "in.png", "/out/clip.mkv"];
 
-    await runFfmpegArgv({ argv, spawner, env: {} });
+    await runFfmpegArgv({ argv, output: OUT, spawner, env: {} });
 
     const args = calls[0]?.args ?? [];
     expect(args.filter((a) => a === "-filter_threads")).toHaveLength(1);
@@ -106,7 +107,7 @@ describe("runFfmpegArgv: how the child is started", () => {
   });
 
   test("refuses an empty argv", async () => {
-    await expect(runFfmpegArgv({ argv: [], env: {} })).rejects.toThrow(TypeError);
+    await expect(runFfmpegArgv({ argv: [], output: OUT, env: {} })).rejects.toThrow(TypeError);
   });
 });
 
@@ -119,7 +120,7 @@ describe("runFfmpegArgv: progress in frames", () => {
       succeed(c.child);
     });
 
-    await runFfmpegArgv({ argv: ARGV, spawner, env: {}, onFrames: (n) => seen.push(n) });
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, onFrames: (n) => seen.push(n) });
 
     expect(seen).toEqual([10, 20, 30]);
   });
@@ -134,7 +135,7 @@ describe("runFfmpegArgv: progress in frames", () => {
       succeed(c.child);
     });
 
-    await runFfmpegArgv({ argv: ARGV, spawner, env: {}, onFrames: (n) => seen.push(n) });
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, onFrames: (n) => seen.push(n) });
 
     expect(seen).toEqual([10, 12, 30]);
   });
@@ -147,7 +148,7 @@ describe("runFfmpegArgv: progress in frames", () => {
       succeed(c.child);
     });
 
-    await runFfmpegArgv({ argv: ARGV, spawner, env: {}, onFrames: (n) => seen.push(n) });
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, onFrames: (n) => seen.push(n) });
 
     expect(seen).toEqual([4, 9, 15, 30]);
   });
@@ -159,6 +160,7 @@ describe("runFfmpegArgv: progress in frames", () => {
     await expect(
       runFfmpegArgv({
         argv: ARGV,
+        output: OUT,
         spawner,
         env: {},
         onFrames: () => {
@@ -178,7 +180,7 @@ describe("runFfmpegArgv: how it ends", () => {
       c.child.exit(1);
     });
 
-    const error = await runFfmpegArgv({ argv: ARGV, spawner, env: {} }).catch((e: unknown) => e);
+    const error = await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(FfmpegError);
     if (!(error instanceof FfmpegError)) throw error;
@@ -193,7 +195,7 @@ describe("runFfmpegArgv: how it ends", () => {
       c.child.exit(-2);
     });
 
-    await expect(runFfmpegArgv({ argv: ARGV, spawner, env: {} })).rejects.toThrow("ENOENT");
+    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} })).rejects.toThrow("ENOENT");
   });
 
   test("rejects when the spawner itself throws", async () => {
@@ -201,7 +203,7 @@ describe("runFfmpegArgv: how it ends", () => {
       throw new Error("EAGAIN: no more processes");
     };
 
-    await expect(runFfmpegArgv({ argv: ARGV, spawner, env: {} })).rejects.toThrow("EAGAIN");
+    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} })).rejects.toThrow("EAGAIN");
   });
 
   test("rejects with the abort reason, after the child has really exited, and kills it", async () => {
@@ -209,7 +211,7 @@ describe("runFfmpegArgv: how it ends", () => {
     const reason = new Error("cancelled by the user");
     const { spawner, calls } = fakeSpawner((c) => c.child.report(5), false);
 
-    const run = runFfmpegArgv({ argv: ARGV, spawner, env: {}, signal: controller.signal });
+    const run = runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, signal: controller.signal });
     const outcome = run.then(
       () => "resolved",
       (e: unknown) => e,
@@ -231,7 +233,7 @@ describe("runFfmpegArgv: how it ends", () => {
     controller.abort(new Error("already stopped"));
     const { spawner, calls } = fakeSpawner(() => {});
 
-    await expect(runFfmpegArgv({ argv: ARGV, spawner, env: {}, signal: controller.signal })).rejects.toThrow("already stopped");
+    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, signal: controller.signal })).rejects.toThrow("already stopped");
     expect(calls).toHaveLength(0);
   });
 
@@ -242,7 +244,7 @@ describe("runFfmpegArgv: how it ends", () => {
       controller.abort(new Error("too late"));
     });
 
-    await expect(runFfmpegArgv({ argv: ARGV, spawner, env: {}, signal: controller.signal })).resolves.toBeUndefined();
+    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, signal: controller.signal })).resolves.toBeUndefined();
   });
 });
 
@@ -250,7 +252,7 @@ describe("runFfmpegArgv: the timeout", () => {
   test("kills a child that runs too long and rejects with a timeout error that says how long", async () => {
     const { spawner, calls } = fakeSpawner((c) => c.child.complain("still encoding\n"));
 
-    const error = await runFfmpegArgv({ argv: ARGV, spawner, env: {}, timeoutMs: 30 }).catch((e: unknown) => e);
+    const error = await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, timeoutMs: 30 }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(FfmpegTimeoutError);
     if (!(error instanceof FfmpegTimeoutError)) throw error;
@@ -265,7 +267,7 @@ describe("runFfmpegArgv: the timeout", () => {
   test("does not fire once the child has finished in time", async () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
 
-    await runFfmpegArgv({ argv: ARGV, spawner, env: {}, timeoutMs: 30 });
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, timeoutMs: 30 });
     await new Promise((resolve) => setTimeout(resolve, 60));
 
     expect(calls[0]?.child.killedWith).toEqual([]);
@@ -276,7 +278,7 @@ describe("runFfmpegArgv: the timeout", () => {
     const reason = new Error("stop");
     const { spawner } = fakeSpawner((c) => c.child.report(1));
 
-    const run = runFfmpegArgv({ argv: ARGV, spawner, env: {}, timeoutMs: 40, signal: controller.signal });
+    const run = runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, timeoutMs: 40, signal: controller.signal });
     const outcome = run.catch((e: unknown) => e);
     await flush();
     controller.abort(reason);
@@ -285,7 +287,7 @@ describe("runFfmpegArgv: the timeout", () => {
   });
 
   test("refuses a timeout that is not positive", async () => {
-    await expect(runFfmpegArgv({ argv: ARGV, env: {}, timeoutMs: 0 })).rejects.toThrow(TypeError);
+    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, env: {}, timeoutMs: 0 })).rejects.toThrow(TypeError);
   });
 });
 
@@ -336,5 +338,51 @@ describe("runFfmpeg (temp file, then rename) gets the same supervision", () => {
     expect(error).toBeInstanceOf(FfmpegTimeoutError);
     expect(existsSync(join(dir, "out.mp4"))).toBe(false);
     expect(Bun.spawnSync(["ls", "-A", dir]).stdout.toString()).toBe("");
+  });
+});
+
+describe("runFfmpegArgv: review round 1", () => {
+  test("refuses an argv that does not end with the output it was told, before any child starts", async () => {
+    const { spawner, calls } = fakeSpawner(() => {});
+
+    await expect(runFfmpegArgv({ argv: ARGV, output: "/elsewhere/other.mkv", spawner, env: {} })).rejects.toThrow(TypeError);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a timeout that fires after ffmpeg exited 0, before close, does not turn the success into a timeout", async () => {
+    const { spawner, calls } = fakeSpawner((c) => {
+      c.child.report(30, true);
+      c.child.exit(0, null, 80); // exited now, `close` 80 ms later; the 20 ms timer fires in between
+    });
+
+    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, timeoutMs: 20 })).resolves.toBeUndefined();
+    expect(calls[0]?.child.killedWith).toEqual([]);
+  });
+
+  test("a stream error on stdout kills the child and rejects with that error instead of crashing the process", async () => {
+    const broken = new Error("EPIPE: stdout broke");
+    const { spawner, calls } = fakeSpawner((c) => c.child.stdout.emit("error", broken));
+
+    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} })).rejects.toBe(broken);
+    expect(calls[0]?.child.killedWith).toEqual(["SIGKILL"]);
+  });
+
+  test("a stream error on stderr does the same", async () => {
+    const broken = new Error("EPIPE: stderr broke");
+    const { spawner } = fakeSpawner((c) => c.child.stderr.emit("error", broken));
+
+    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} })).rejects.toBe(broken);
+  });
+
+  test("adds the missing filter cap when the builder wrote only one of the two", async () => {
+    const { spawner, calls } = fakeSpawner((c) => succeed(c.child));
+    const argv = ["-hide_banner", "-nostdin", "-y", "-filter_threads", "2", "-i", "in.png", OUT];
+
+    await runFfmpegArgv({ argv, output: OUT, spawner, env: {} });
+
+    const args = calls[0]?.args ?? [];
+    expect(args.filter((a) => a === "-filter_threads")).toHaveLength(1);
+    expect(args.filter((a) => a === "-filter_complex_threads")).toHaveLength(1);
+    expect(args[args.indexOf("-filter_complex_threads") + 1]).toBe("2");
   });
 });

@@ -1,7 +1,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { Id } from "../../shared/engine";
 import type { Clip } from "../../shared/engine/montage";
-import { FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
+import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { buildPass1, buildPass2, type AudioSource, type OverlayInput, type PhotoResolver } from "../render";
 import { ProgressFold, renderTimeoutMs } from "./progress";
 
@@ -50,7 +51,25 @@ export interface RenderRunOutcome {
   readonly totalFrames: number;
 }
 
-const SAFE_JOB_ID = /^[A-Za-z0-9_-]+$/;
+/** The name of the temp output a job may write and, on failure, remove; nothing else. */
+const partName = (jobId: string): string => `.studio-part-${jobId}.mp4`;
+
+/** Replaces the user's folders in text that may reach the UI: the temp root and the export folder. */
+function scrubber(tmpRoot: string, exportDir: string): (text: string) => string {
+  const pairs: Array<[string, string]> = [
+    [tmpRoot, "<tmp>"],
+    [exportDir, "<export>"],
+  ];
+  return (text) => {
+    let out = text;
+    for (const [dir, label] of pairs) {
+      // Both spellings of the separator: ffmpeg prints a Windows path either way.
+      out = out.replaceAll(dir, label).replaceAll(dir.replaceAll("\\", "/"), label);
+      out = out.replaceAll(`${label}\\`, `${label}/`);
+    }
+    return out;
+  };
+}
 
 const defaultRemoveTree = (path: string): Promise<void> => rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 const defaultRemoveFile = (path: string): Promise<void> => rm(path, { force: true, maxRetries: 5, retryDelay: 100 });
@@ -64,7 +83,9 @@ const defaultRemoveFile = (path: string): Promise<void> => rm(path, { force: tru
  * job, `max(90 s, 30 × its seconds)`, shared by its calls.
  */
 export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = {}): Promise<RenderRunOutcome> {
-  if (!SAFE_JOB_ID.test(input.jobId)) throw new TypeError(`runRenderJob: unsafe job id ${JSON.stringify(input.jobId)}.`);
+  // The job id names a folder that is removed, and the output is removed on failure: both are checked before anything is built.
+  if (!Id.safeParse(input.jobId).success) throw new TypeError(`runRenderJob: unsafe job id ${JSON.stringify(input.jobId)}.`);
+  if (basename(input.output) !== partName(input.jobId)) throw new TypeError(`runRenderJob: the output must be named ${partName(input.jobId)}.`);
   const { signal } = input;
   signal.throwIfAborted();
 
@@ -82,19 +103,24 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   const budgetMs = renderTimeoutMs(totalFrames);
   const deadline = now() + budgetMs;
 
+  const scrub = scrubber(input.tmpRoot, dirname(input.output));
+
   const report = (done: number | null): void => {
-    if (done !== null) input.onProgress(done);
+    // Nothing is reported once the job is cancelled, even if ffmpeg had already exited 0.
+    if (done !== null && !signal.aborted) input.onProgress(done);
   };
 
   /** One ffmpeg call on what is left of the job's budget; a timeout is named after the whole budget. */
-  const call = async (argv: readonly string[], options: { cwd?: string; onFrames: (frames: number) => void }): Promise<void> => {
+  const call = async (job: { argv: readonly string[]; output: string }, options: { cwd?: string; onFrames: (frames: number) => void }): Promise<void> => {
     signal.throwIfAborted();
     const remaining = deadline - now();
     if (remaining <= 0) throw new FfmpegTimeoutError(budgetMs, "");
     try {
-      await run({ argv, signal, timeoutMs: remaining, onFrames: options.onFrames, ...(options.cwd === undefined ? {} : { cwd: options.cwd }) });
+      await run({ argv: job.argv, output: job.output, signal, timeoutMs: remaining, onFrames: options.onFrames, ...(options.cwd === undefined ? {} : { cwd: options.cwd }) });
     } catch (error) {
-      if (error instanceof FfmpegTimeoutError) throw new FfmpegTimeoutError(budgetMs, error.stderrTail);
+      // The tail may name the user's folders; what reaches the job's error says <tmp> and <export> instead.
+      if (error instanceof FfmpegTimeoutError) throw new FfmpegTimeoutError(budgetMs, scrub(error.stderrTail));
+      if (error instanceof FfmpegError) throw new FfmpegError(scrub(error.message), error.exitCode, scrub(error.stderrTail));
       throw error;
     }
   };
@@ -105,14 +131,14 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
 
     let framesOfDoneClips = 0;
     for (const job of pass1) {
-      await call(job.argv, { onFrames: (frames) => report(fold.pass1(framesOfDoneClips + Math.min(frames, job.frames))) });
+      await call(job, { onFrames: (frames) => report(fold.pass1(framesOfDoneClips + Math.min(frames, job.frames))) });
       framesOfDoneClips += job.frames;
       report(fold.pass1(framesOfDoneClips));
     }
 
     signal.throwIfAborted();
     await writeFile(join(clipDir, pass2.listFileName), pass2.listFileContents);
-    await call(pass2.argv, { cwd: pass2.cwd, onFrames: (frames) => report(fold.pass2(frames)) });
+    await call(pass2, { cwd: pass2.cwd, onFrames: (frames) => report(fold.pass2(frames)) });
 
     succeeded = true;
     return { totalFrames };

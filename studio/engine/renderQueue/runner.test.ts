@@ -290,6 +290,79 @@ describe("runRenderJob: the job folder and the output", () => {
 
     await expect(runRenderJob(r.input, {})).rejects.toThrow(TypeError);
   });
+
+  test.each(["JOB-00000001", "job-1", `job-${"0".repeat(70)}`, "job_00000001", ""])("refuses %p, which is not a contract Id", async (jobId) => {
+    const r = rig({ jobId });
+
+    await expect(runRenderJob(r.input, {})).rejects.toThrow(TypeError);
+  });
+
+  test.each([["precious.mp4"], [".studio-part-job-00000002.mp4"], [".studio-part-job-00000001.mov"]])(
+    "refuses an output named %p: only .studio-part-<jobId>.mp4 may be deleted on failure, so nothing is built, started or removed",
+    async (name) => {
+      const r = rig();
+      const output = join(r.exportDir, name);
+      writeFileSync(output, "the owner's own file");
+      const { deps, calls } = depsWith(goodFfmpeg);
+
+      await expect(runRenderJob({ ...r.input, output }, deps)).rejects.toThrow(TypeError);
+
+      expect(calls).toHaveLength(0);
+      expect(readFileSync(output, "utf8")).toBe("the owner's own file");
+      expect(existsSync(r.tmpRoot)).toBe(false);
+    },
+  );
+
+  test("reports no progress after the cancel, even when ffmpeg exited 0 in the same tick as the abort", async () => {
+    const controller = new AbortController();
+    const late: number[] = [];
+    const r = rig({
+      signal: controller.signal,
+      onProgress: (n) => {
+        if (controller.signal.aborted) late.push(n);
+      },
+    });
+    const { deps } = depsWith((call) => {
+      goodFfmpeg(call);
+      controller.abort(new Error("cancelled"));
+    });
+
+    await expect(runRenderJob(r.input, deps)).rejects.toThrow("cancelled");
+
+    expect(late).toEqual([]);
+  });
+
+  test("keeps the user's folders out of the stderr tail: the temp root becomes <tmp>, the export folder <export>", async () => {
+    const r = rig();
+    const { deps } = depsWith((call) => {
+      call.child.complain(`Error opening ${join(r.jobDir, "clip-00.mkv")}\nCannot write ${r.output}\n`);
+      call.child.exit(1);
+    });
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(FfmpegError);
+    if (!(error instanceof FfmpegError)) throw error;
+    expect(error.stderrTail).not.toContain(r.tmpRoot);
+    expect(error.stderrTail).not.toContain(r.exportDir);
+    expect(error.stderrTail).toContain(`<tmp>/job-00000001/clip-00.mkv`);
+    expect(error.stderrTail).toContain(`<export>/.studio-part-job-00000001.mp4`);
+  });
+
+  test("scrubs a timeout's tail the same way", async () => {
+    const r = rig();
+    const clock = { now: 0 };
+    const run = (): Promise<void> => {
+      clock.now += 1;
+      return Promise.reject(new FfmpegTimeoutError(5, `writing ${r.output}`));
+    };
+
+    const error = await runRenderJob(r.input, { run, now: () => clock.now }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(FfmpegTimeoutError);
+    if (!(error instanceof FfmpegTimeoutError)) throw error;
+    expect(error.stderrTail).toBe("writing <export>/.studio-part-job-00000001.mp4");
+  });
 });
 
 describe("runRenderJob: cancel", () => {
