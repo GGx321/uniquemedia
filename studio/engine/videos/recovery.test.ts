@@ -63,7 +63,9 @@ async function killedAt(point: CommitStep): Promise<Rig> {
 /** The library reopened (an engine restart) and the recovery run on it. */
 async function recover(w: World, over: Partial<RecoverInput> = {}) {
   const library = await w.reopen();
-  const report = await recoverVideos({ library, exportRoot: rootRef(w), ...over });
+  // These tests sweep scratch files made a moment ago: the age below which recovery keeps scratch alone (a live export check
+  // may own it) is its own test (recovery.bounded.test.ts).
+  const report = await recoverVideos({ library, exportRoot: rootRef(w), ...over }, { scratchMinAgeMs: 0 });
   return { library, report };
 }
 

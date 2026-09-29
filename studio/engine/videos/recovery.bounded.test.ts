@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, utimesSync, writeFileSync } from "node:fs";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import { writeIntent } from "./intents";
@@ -106,6 +106,43 @@ describe("the library is read BEFORE the export root's lock is taken", () => {
 
     controller.abort();
     await stuck;
+  });
+});
+
+describe("recovery leaves the root's FRESH scratch alone (the review's Windows failure)", () => {
+  // A render's export check creates `.studio-probe-<id>` and removes it a moment later, and a marker's publish makes
+  // `.studio-export.json.tmp-<id>`. Recovery runs in the background at engine start and used to sweep every scratch file of
+  // those shapes, so it could delete a LIVE one under a check that was running at the same time (a refusal on Windows, where
+  // the timing and the sharing rules differ). Only scratch older than a crash-and-restart could be is a leftover.
+  const PROBE = ".studio-probe-2f9f5b0e-7a53-4c3e-9d0a-3c1f7b1d2e44";
+  const MARKER_TMP = ".studio-export.json.tmp-2f9f5b0e-7a53-4c3e-9d0a-3c1f7b1d2e44";
+
+  test("a probe and a marker temp made moments ago are kept", async () => {
+    const w = world();
+    writeFileSync(join(w.exportRoot, PROBE), "");
+    writeFileSync(join(w.exportRoot, MARKER_TMP), "{}");
+    const library = await w.reopen();
+
+    await recoverVideos({ library, exportRoot: rootRef(w) });
+
+    expect(existsSync(join(w.exportRoot, PROBE))).toBe(true);
+    expect(existsSync(join(w.exportRoot, MARKER_TMP))).toBe(true);
+  });
+
+  test("the same files, old enough to be a crash's leftovers, are swept", async () => {
+    const w = world();
+    const longAgo = new Date(Date.now() - 10 * 60_000);
+    for (const name of [PROBE, MARKER_TMP]) {
+      writeFileSync(join(w.exportRoot, name), name === PROBE ? "" : "{}");
+      utimesSync(join(w.exportRoot, name), longAgo, longAgo);
+    }
+    const library = await w.reopen();
+
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) });
+
+    expect(existsSync(join(w.exportRoot, PROBE))).toBe(false);
+    expect(existsSync(join(w.exportRoot, MARKER_TMP))).toBe(false);
+    expect(report.removed.probes).toBe(1);
   });
 });
 

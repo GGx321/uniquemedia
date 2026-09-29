@@ -83,6 +83,8 @@ export interface RecoverDeps {
    * drive must not hold the export root's lock for ever. 30 s when absent.
    */
   readonly ioTimeoutMs?: number;
+  /** The age below which the root's probe and marker-temp files are left alone (a live export check may own them); `SCRATCH_MIN_AGE_MS` when absent. */
+  readonly scratchMinAgeMs?: number;
   /** How the LIBRARY's pending folders and intents are read (before the export root's lock is taken); the real disk unless a test plays a library that does not answer. */
   readonly libraryFs?: LibraryReadFs;
   /** Test seams. `locked` runs inside the lock, before anything is settled. */
@@ -223,6 +225,8 @@ interface PendingFile {
 }
 
 const IO_TIMEOUT_MS = 30_000;
+/** A probe or marker temp younger than this is not a crash's leftover (see `isFresh`). */
+export const SCRATCH_MIN_AGE_MS = 60_000;
 
 export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {}): Promise<RecoveryReport> {
   const log = deps.log ?? (() => undefined);
@@ -508,6 +512,13 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     }
   }
 
+  /**
+   * Scratch made moments ago may be LIVE: an export check's probe (created and removed within a call) or a marker's publish
+   * temp. Recovery runs in the background while checks run, and a leftover of a crash is older than the restart that follows it.
+   */
+  const scratchMinAgeMs = deps.scratchMinAgeMs ?? SCRATCH_MIN_AGE_MS;
+  const isFresh = (facts: FileFacts): boolean => Date.now() - facts.mtimeMs < scratchMinAgeMs;
+
   /** Studio's own scratch in the root: marker temps (healing a marker they are linked to) and empty probes of our shapes. */
   async function sweepRootScratch(ready: UsableRoot): Promise<void> {
     try {
@@ -525,7 +536,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
         try {
           if (MARKER_TEMP_NAME.test(entry.name)) {
             const facts = await lstatOrNull(fs, path);
-            if (facts === null || !facts.isFile) continue;
+            if (facts === null || !facts.isFile || isFresh(facts)) continue;
             const linkedToMarker = marker !== null && marker.isFile && sameInode(marker, facts);
             // Linked to the marker: an interrupted publish (heal the marker's link count). Alone: a publish that never linked.
             // Linked to something else: not ours.
@@ -535,7 +546,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
             }
           } else if (PROBE_NAME.test(entry.name)) {
             const facts = await lstatOrNull(fs, path);
-            if (facts !== null && facts.isFile && facts.size === 0) {
+            if (facts !== null && facts.isFile && facts.size === 0 && !isFresh(facts)) {
               await fs.unlink(path);
               report.removed.probes++;
             }

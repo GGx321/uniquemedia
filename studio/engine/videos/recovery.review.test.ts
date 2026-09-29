@@ -192,7 +192,7 @@ describe("what recovery may delete", () => {
     for (const name of keep) writeFileSync(join(w.exportRoot, name), "");
     const gone = [".studio-probe-case-abc123z", ".studio-probe-2f9f5b0e-7a53-4c3e-9d0a-3c1f7b1d2e44"];
     for (const name of gone) writeFileSync(join(w.exportRoot, name), "");
-    await recoverVideos({ library: w.library, exportRoot: rootRef(w) });
+    await recoverVideos({ library: w.library, exportRoot: rootRef(w) }, { scratchMinAgeMs: 0 });
     for (const name of keep) expect(existsSync(join(w.exportRoot, name)), name).toBe(true);
     for (const name of gone) expect(existsSync(join(w.exportRoot, name)), name).toBe(false);
   });
