@@ -1739,7 +1739,7 @@ async function main(): Promise<void> {
     check("videos.list answers an avatar with no videos with an empty list", field(videosList, "ok") === true && JSON.stringify(field(videosList, "result", "videos")) === "[]", videosList);
     const videosCancel = await req(cdp, "videos.cancel", { jobId: "smoke-no-such-job-0001" });
     check("videos.cancel of an unknown job is NOT_FOUND", field(videosCancel, "ok") === false && field(videosCancel, "error", "code") === "NOT_FOUND", videosCancel);
-    const videosDelete = await req(cdp, "videos.delete", { videoId: "smoke-no-such-video-01" });
+    const videosDelete = await req(cdp, "videos.delete", { videoId: "smoke-no-such-video-01", mode: "record" });
     check("videos.delete of an unknown video is NOT_FOUND", field(videosDelete, "ok") === false && field(videosDelete, "error", "code") === "NOT_FOUND", videosDelete);
     const videosDraft = await req(cdp, "videos.render", { montageId: "smoke-no-such-montage-01" });
     check("videos.render of a montage draft is NOT_FOUND until drafts exist", field(videosDraft, "ok") === false && field(videosDraft, "error", "code") === "NOT_FOUND", videosDraft);

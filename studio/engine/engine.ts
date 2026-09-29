@@ -565,6 +565,7 @@ export class Engine {
       newId: deps.newId,
       now: () => new Date(deps.clock()),
       emit: (event) => this.#emit(event),
+      announceAvatar: (library, avatarId) => this.#announceAvatarOrLog(library, avatarId),
       log: (line) => console.warn(`studio engine: ${line}`),
       ...(deps.videos?.fs === undefined ? {} : { fs: deps.videos.fs }),
       ...(deps.videos?.renderOverrides === undefined ? {} : { renderOverrides: deps.videos.renderOverrides }),
@@ -836,7 +837,7 @@ export class Engine {
   }
 
   #inFlightRefusal(): EngineError {
-    return { code: "IN_FLIGHT", detail: "paid requests, a pick or archive, or a reject mark are in flight; change the library folder when they end" };
+    return { code: "IN_FLIGHT", detail: "paid requests, a pick or archive, a reject mark, a video render or delete are in flight; change the library folder when they end" };
   }
 
   /**
@@ -1103,7 +1104,7 @@ export class Engine {
       case "videos.list":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { videos: await this.#videos.list(command.payload.avatarId) } };
       case "videos.delete":
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.delete(command.payload.videoId) };
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.delete(command.payload.videoId, command.payload.mode) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -1639,7 +1640,9 @@ export class Engine {
     } finally {
       timeout.clear();
     }
-    this.#exportStatus = exportStatusOf(check);
+    // "Not enough room" answers a question about THIS render's size (`requiredBytes`), not about the folder: a 4 s spec may fit
+    // where a 15 s one does not, so it is a refusal for that render and never the status every window shows.
+    if (requiredBytes === undefined || check.ok || check.reason !== "not-enough-space") this.#exportStatus = exportStatusOf(check);
     return check;
   }
 

@@ -8,8 +8,9 @@ import { NODE_COMMIT_FS } from "./commitFs";
 import { commitIntent, writeIntent } from "./intents";
 import type { RecoveryReport } from "./recovery";
 import type { VideoRecord } from "./record";
-import { FINAL, sampleRecord, specOf, useWorld, type World } from "./testing/kit";
-import { serviceRig, until, withOverrides } from "./testing/serviceKit";
+import { errnoError, faultyFs, FINAL, sampleRecord, specOf, useWorld, type World } from "./testing/kit";
+import { DEFAULT_STALE_RETRY_DELAYS_MS } from "./service";
+import { FakeTimers, serviceRig, until, withOverrides } from "./testing/serviceKit";
 useNativeGlobals();
 
 // What happens around a library opening and the engine stopping (3a.8b.2): recovery in the BACKGROUND with the very
@@ -161,12 +162,124 @@ describe("recovery when a library opens", () => {
     });
 
     r.service.libraryOpened(w.library);
+    await r.service.settled();
     r.service.libraryOpened(w.library);
     await r.service.settled();
 
     expect(attempt).toBe(2);
     expect(r.logs.join("\n")).toContain("EIO");
     expect(r.logs.join("\n")).not.toContain(w.exportRoot);
+  });
+});
+
+describe("a commit that stalls after its claim (the review's double-use probe)", () => {
+  test("its job stays running and its photos stay reserved, so a second render of them is refused and the photo is used exactly once", async () => {
+    const w = world();
+    let wake: () => void = () => undefined;
+    const release = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    const r = serviceRig(w, {
+      size: 2,
+      deps: { renderOverrides: { commitDeadlineMs: 50, hooks: { reached: async (step) => (step === "name-claimed" ? release : undefined) } } },
+    });
+
+    const first = await r.service.render({ spec: specFor(w) });
+    await until(() => r.jobs.stateOf(first.jobId)?.status === "running" && r.tracker.placeholderPaths().size === 1, "the first commit to claim its name");
+    await new Promise((resolve) => setTimeout(resolve, 200)); // four deadlines later
+    expect(r.jobs.stateOf(first.jobId)).toMatchObject({ status: "running", saving: true });
+
+    const second = await r.service.render({ spec: specFor(w) }).then(
+      () => "accepted",
+      (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
+    );
+    expect(second).toBe("PHOTO_UNAVAILABLE");
+
+    wake();
+    await r.queue.idle();
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.usedIn).toEqual([first.videoId]);
+  });
+});
+
+describe("recovery of a library that is no longer the live one", () => {
+  test("a switch tells the earlier library's recovery to stop, and the new one starts without waiting for it", async () => {
+    const w = world();
+    const signals: Array<{ library: unknown; signal: AbortSignal | undefined }> = [];
+    const first = w.library;
+    const second = withOverrides(w.library, {});
+    const r = serviceRig(w, {
+      deps: {
+        recover: {
+          run: (input) => {
+            signals.push({ library: input.library, signal: input.signal });
+            return input.library === first ? new Promise<RecoveryReport>(() => undefined) : Promise.resolve(EMPTY_REPORT); // the first one ignores its signal and hangs
+          },
+        },
+      },
+    });
+
+    r.service.libraryOpened(first);
+    await until(() => signals.length === 1, "the first recovery to start");
+    r.service.libraryOpened(second);
+    await until(() => signals.length === 2, "the second recovery to start although the first is stuck");
+
+    expect(signals[0]?.signal?.aborted).toBe(true);
+    expect(signals[1]?.signal?.aborted).toBe(false);
+  });
+});
+
+describe("a failed render's leftover intent is settled in this session", () => {
+  const boom = (): Error => new Error("the disk broke after the rename");
+
+  test("a commit that failed after the rename and could not take its file back: the video is adopted at once, its photos are used, and the window is told", async () => {
+    const w = world();
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) }); // the file is held (a player, an antivirus): the rollback cannot remove it
+    const r = serviceRig(w, {
+      deps: {
+        renderOverrides: {
+          fs,
+          hooks: {
+            reached: (step) => {
+              if (step === "renamed") throw boom();
+            },
+          },
+        },
+      },
+    });
+
+    const { jobId, videoId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+    await r.service.settled();
+
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.usedIn).toEqual([videoId]);
+    expect(existsSync(join(w.libraryRoot, "avatars", w.avatar.id, "videos", ".pending", `${videoId}.json`))).toBe(false);
+    const upserts = r.stamped().filter((e) => e.type === "video.changed" && e.payload.change === "upserted");
+    expect(upserts).toHaveLength(1);
+    expect(r.announced.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("the usual failure, whose rollback removed everything, starts no recovery at all", async () => {
+    const w = world();
+    let runs = 0;
+    const r = serviceRig(w, {
+      deps: {
+        renderOverrides: { verify: async () => ({ result: { ok: false, reasons: [{ code: "UUID_BOX", message: "m" }] }, sha256: null, bytes: 1 }) },
+        recover: {
+          run: async () => {
+            runs++;
+            return EMPTY_REPORT;
+          },
+        },
+      },
+    });
+
+    await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+    await r.service.settled();
+
+    expect(runs).toBe(0);
   });
 });
 
@@ -256,25 +369,51 @@ describe("a stale used index is read again in the background", () => {
     expect(w.library.eligibleUnusedPhotos(w.avatar.id).length).toBeGreaterThan(0);
   });
 
-  test("gives up after its delays when the records cannot be read, leaving the flag for the next open", async () => {
+  test("the default schedule is 2 s, 10 s, 60 s, and the last delay REPEATS: the avatar is not left closed for the session", async () => {
+    expect(DEFAULT_STALE_RETRY_DELAYS_MS).toEqual([2_000, 10_000, 60_000]);
     const w = world();
     w.library.flagVideoIndexStale(w.avatar.id, "video-committed-1");
     let reloads = 0;
     const library = withOverrides(w.library, {
       reloadVideoRecords: () => {
         reloads++;
-        return Promise.reject(new Error("EIO"));
+        return reloads < 6 ? Promise.reject(new Error("EIO")) : w.library.reloadVideoRecords(w.avatar.id);
       },
     });
-    const r = serviceRig(w, { library, deps: { recover: { run: async () => EMPTY_REPORT } } });
+    const timers = new FakeTimers();
+    // no `staleRetryDelaysMs`: the service's own default, on a clock the test moves
+    const r = serviceRig(w, { library, deps: { staleRetryDelaysMs: undefined, timers, recover: { run: async () => EMPTY_REPORT } } });
 
     r.service.libraryOpened(library);
     await r.service.settled();
-    await until(() => reloads >= 3, "the retries");
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(timers.delays).toEqual([2_000]);
+    await timers.advance(2_000);
+    expect(reloads).toBe(1);
+    expect(timers.delays).toEqual([10_000]);
+    await timers.advance(10_000);
+    expect(timers.delays).toEqual([60_000]);
+    await timers.advance(60_000);
+    expect(timers.delays).toEqual([60_000]); // the last delay again, not the end of the chain
+    await timers.advance(60_000);
+    await timers.advance(60_000);
+    await timers.advance(60_000);
+    expect(reloads).toBe(6);
+    expect(w.library.videoIndexStale(w.avatar.id)).toEqual([]);
+    expect(timers.delays).toEqual([]); // read at last: the chain is over
+  });
 
-    expect(reloads).toBe(3);
-    expect(w.library.videoIndexStale(w.avatar.id)).toEqual(["video-committed-1"]);
+  test("one chain per avatar: a job ending while a chain is running starts no second one", async () => {
+    const w = world();
+    w.library.flagVideoIndexStale(w.avatar.id, "video-committed-1");
+    const timers = new FakeTimers();
+    const r = serviceRig(w, { deps: { timers, recover: { run: async () => EMPTY_REPORT } } });
+    r.service.libraryOpened(w.library);
+    await r.service.settled();
+
+    await r.service.render({ spec: specFor(w) }).catch(() => undefined); // reads the index again on demand and goes through
+    await r.queue.idle();
+
+    expect(timers.delays.length).toBeLessThanOrEqual(1);
   });
 
   test("does not touch a library that is no longer the live one", async () => {
@@ -287,13 +426,36 @@ describe("a stale used index is read again in the background", () => {
         return Promise.resolve();
       },
     });
-    const r = serviceRig(w, { library, deps: { openLibrary: () => w.library, recover: { run: async () => EMPTY_REPORT } } });
+    const timers = new FakeTimers();
+    const r = serviceRig(w, { library, deps: { openLibrary: () => w.library, timers, recover: { run: async () => EMPTY_REPORT } } });
 
     r.service.libraryOpened(library);
     await r.service.settled();
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await timers.advance(120_000);
 
     expect(reloads).toBe(0);
+  });
+
+  test("a shutdown ends the chain: nothing is retried after it", async () => {
+    const w = world();
+    w.library.flagVideoIndexStale(w.avatar.id, "video-committed-1");
+    const timers = new FakeTimers();
+    let reloads = 0;
+    const library = withOverrides(w.library, {
+      reloadVideoRecords: () => {
+        reloads++;
+        return Promise.reject(new Error("EIO"));
+      },
+    });
+    const r = serviceRig(w, { library, deps: { timers, recover: { run: async () => EMPTY_REPORT } } });
+    r.service.libraryOpened(library);
+    await r.service.settled();
+
+    await r.service.shutdown(50);
+    await timers.advance(300_000);
+
+    expect(reloads).toBe(0);
+    expect(timers.delays).toEqual([]);
   });
 
   test("after a commit whose index update failed: the job still ends done, the avatar is closed, and the background retry reopens it", async () => {

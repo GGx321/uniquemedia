@@ -280,7 +280,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "videos.render": { payload: { montageId: "montage-00000001" }, result: { jobId: "job-00000004", videoId: "video-00000002" } },
   "videos.cancel": { payload: { jobId: "job-00000004" }, result: { jobId: "job-00000004" } },
   "videos.list": { payload: { avatarId: "avatar-0001" }, result: { videos: [video] } },
-  "videos.delete": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
+  "videos.delete": { payload: { videoId: "video-00000001", mode: "video" }, result: { videoId: "video-00000001", fileDeleted: true, fileState: "present" } },
   "videos.reveal": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
   "montages.create": {
     payload: { avatarId: "avatar-0001", photoIds: ["photo-0002"] },
@@ -1139,9 +1139,13 @@ describe("Stage 3 payloads", () => {
 
   test("videos.cancel, videos.delete and videos.reveal each name one id", () => {
     expect(send("videos.cancel", { jobId: "job-00000004" })).toBe(true);
-    expect(send("videos.delete", { videoId: "video-00000001" })).toBe(true);
+    expect(send("videos.delete", { videoId: "video-00000001", mode: "video" })).toBe(true);
+    expect(send("videos.delete", { videoId: "video-00000001", mode: "record" })).toBe(true);
     expect(send("videos.reveal", { videoId: "video-00000001" })).toBe(true);
     expect(send("videos.delete", {})).toBe(false);
+    // the owner's intent is part of the request: «Удалить» (the file too) or «Удалить запись» (never the file)
+    expect(send("videos.delete", { videoId: "video-00000001" })).toBe(false);
+    expect(send("videos.delete", { videoId: "video-00000001", mode: "everything" })).toBe(false);
     expect(send("videos.reveal", { videoId: "video-00000001", path: "/tmp" })).toBe(false);
   });
 

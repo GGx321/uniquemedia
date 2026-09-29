@@ -9,7 +9,8 @@ import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { videoPaths } from "./videos/record";
 import { CrashError, faultyFs, listTree } from "./videos/testing/kit";
-import { command, engineSettings, failed, GOOD, jobEnd, NOW, ok, startEngine, TRAITS, useEngineDir } from "./testing/engineHarness";
+import { NODE_EXPORT_ROOT_FS } from "./exportRoot";
+import { command, engineSettings, failed, GOOD, jobEnd, NOW, ok, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -128,7 +129,8 @@ describe("a real render through videos.render", () => {
 
       // videos.delete: the file, the record, the used marks, and the announcement
       const before = events().length;
-      ok(await engine.handle(command("videos.delete", { videoId })));
+      const deleted = ok(await engine.handle(command("videos.delete", { videoId, mode: "video" })));
+      expect(deleted.type === "videos.delete" ? deleted.result : null).toEqual({ videoId, fileDeleted: true, fileState: "present" });
       expect(existsSync(file)).toBe(false);
       expect(await listVideos(engine, avatarId)).toEqual([]);
       expect((await listPhotos(engine, avatarId)).filter((p) => p.used)).toEqual([]);
@@ -194,6 +196,8 @@ describe("a crash and a restart: the recovery the library opening starts settles
         init: { settings: settingsOf() },
         deps: {
           videos: {
+            // The dead process settles nothing either: its own leftover-intent settle (which a live engine runs after a failed job) meets the same dead disk.
+            recover: { deps: { fs } },
             renderOverrides: {
               fs,
               hooks: {
@@ -268,6 +272,45 @@ describe("a crash and a restart: the recovery the library opening starts settles
     expect(await readdir(renderTmp())).not.toContain(jobId);
     await first.engine.shutdown(50);
   }, REAL_RENDER_TIMEOUT_MS);
+});
+
+describe("the export status a window shows", () => {
+  test("a render refused for lack of room does not turn the whole export folder «unavailable»: that answer belongs to that render's size", async () => {
+    await mkdir(exportDir());
+    const { avatarId, photoIds } = await seedAvatar();
+    const tight = { ...NODE_EXPORT_ROOT_FS, freeBytes: async () => 1 };
+    const { engine } = await start({ init: { settings: settingsOf() }, deps: { exportRootFs: tight } });
+
+    const refused = failed(await engine.handle(command("videos.render", { spec: specOf(avatarId, photoIds.slice(0, 2)) })));
+
+    expect(refused.error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "not-enough-space" });
+    const snapshot = ok(await engine.handle(command("engine.snapshot")));
+    expect(snapshot.type === "engine.snapshot" ? snapshot.result.exportStatus : null).toEqual({ status: "ok" });
+  });
+});
+
+describe("avatar.changed follows a render through the engine", () => {
+  test("queued, and finished, a render tells the windows the avatar's counts moved", async () => {
+    await mkdir(exportDir());
+    const { avatarId, photoIds } = await seedAvatar();
+    const hang = new Promise<void>(() => undefined);
+    const { engine, events } = await start({ init: { settings: settingsOf() }, deps: { videos: { renderOverrides: { runDeps: { run: () => hang } } } } });
+    await engine.settled();
+    const before = events().filter((e) => e.type === "avatar.changed").length;
+
+    const { jobId } = await render(engine, specOf(avatarId, photoIds.slice(0, 2)));
+    const afterSubmit = events().filter((e) => e.type === "avatar.changed");
+    expect(afterSubmit.length).toBe(before + 1);
+    const changed = afterSubmit.at(-1);
+    expect(changed?.type === "avatar.changed" ? changed.payload.avatar.eligibleUnusedCount : null).toBe(1); // the two reserved photos are not free
+
+    ok(await engine.handle(command("videos.cancel", { jobId })));
+    await jobEnd(events, jobId);
+    await until(() => events().filter((e) => e.type === "avatar.changed").length === before + 2);
+    const freed = events().filter((e) => e.type === "avatar.changed").at(-1);
+    expect(freed?.type === "avatar.changed" ? freed.payload.avatar.eligibleUnusedCount : null).toBe(3);
+    await engine.shutdown(50);
+  });
 });
 
 describe("the focus of the photos is filled under the render's own budget", () => {

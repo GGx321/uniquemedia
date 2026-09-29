@@ -92,6 +92,17 @@ describe("videos.render: the answer", () => {
     expect(error.code).toBe("NOT_FOUND");
   });
 
+  test("an archived avatar is NOT_FOUND: rendering is making new content, and only an active avatar does (as photo runs do)", async () => {
+    const w = world();
+    await w.library.updateAvatar(w.avatar.id, { status: "archived" });
+    const r = serviceRig(w);
+
+    const error = await failureOf(r.service.render({ spec: specFor(w) }));
+
+    expect(error.code).toBe("NOT_FOUND");
+    await expectNothingTouched(r);
+  });
+
   test("with no render-tmp folder configured it refuses (no os.tmpdir fallback) and checks nothing else", async () => {
     const w = world();
     const r = serviceRig(w, { deps: { renderTmpDir: undefined } });
@@ -311,10 +322,23 @@ describe("videos.render: eligibility and used (invariant 18), before the focus i
     ]);
   });
 
-  test("an avatar whose used index is stale is refused for every scene cell: the library's own refusal is honoured, not the per-photo states", async () => {
+  test("a stale used index is read again on demand, and a render that then finds it in step goes through", async () => {
     const w = world();
     w.library.flagVideoIndexStale(w.avatar.id, "video-committed-1");
     const r = serviceRig(w);
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    expect(w.library.videoIndexStale(w.avatar.id)).toEqual([]);
+    expect(r.jobs.stateOf(jobId)?.status).toBe("done");
+  });
+
+  test("an avatar whose used index is stale and cannot be read again is refused for every scene cell: the library's own refusal is honoured, not the per-photo states", async () => {
+    const w = world();
+    w.library.flagVideoIndexStale(w.avatar.id, "video-committed-1");
+    const library = withOverrides(w.library, { reloadVideoRecords: () => Promise.reject(new Error("EIO")) });
+    const r = serviceRig(w, { library });
 
     const error = await failureOf(r.service.render({ spec: specFor(w) }));
 
@@ -747,5 +771,113 @@ describe("the render events", () => {
     await r.queue.idle();
 
     expect(r.queue.states()[0]?.status).toBe("done");
+  });
+
+  test("the saving phase is announced as job.progress with saving: true, before job.done", async () => {
+    const w = world();
+    const r = serviceRig(w);
+
+    await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    const events = r.stamped();
+    const saving = events.findIndex((e) => e.type === "job.progress" && e.payload.kind === "render" && e.payload.saving === true);
+    expect(saving).toBeGreaterThan(-1);
+    expect(saving).toBeLessThan(events.findIndex((e) => e.type === "job.done"));
+  });
+});
+
+describe("avatar.changed follows what changes an avatar's counts", () => {
+  test("a render that is queued (its photos are reserved), one whose record lands, and one that ends each announce the avatar", async () => {
+    const w = world();
+    const r = serviceRig(w);
+
+    await r.service.render({ spec: specFor(w) });
+    expect(r.announced).toEqual([w.avatar.id]);
+    await r.queue.idle();
+
+    expect(r.announced).toEqual([w.avatar.id, w.avatar.id, w.avatar.id]); // queued, committed (videoCount), ended (the reservation left)
+  });
+
+  test("a failed render and a cancelled one announce it too: their photos are free again", async () => {
+    const w = world();
+    const failing = serviceRig(w, { deps: { renderOverrides: { verify: async () => ({ result: { ok: false, reasons: [{ code: "UUID_BOX", message: "m" }] }, sha256: null, bytes: 1 }) } } });
+
+    await failing.service.render({ spec: specFor(w) });
+    await failing.queue.idle();
+
+    expect(failing.announced).toEqual([w.avatar.id, w.avatar.id]);
+  });
+
+  test("a refusal announces nothing", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { checkExport: async () => ({ ok: false, reason: "missing" }) } });
+
+    await failureOf(r.service.render({ spec: specFor(w) }));
+
+    expect(r.announced).toEqual([]);
+  });
+});
+
+describe("videos.render has its own deadline, under main's 30 s", () => {
+  const slowCheck = (ms: number, w: World) => async (): Promise<{ ok: true; root: string; rootId: string }> => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return { ok: true, root: w.exportRoot, rootId: w.rootId };
+  };
+
+  test("export checks that queue up past the deadline end in a refusal with no job, and nothing that finishes later creates one", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { commandDeadlineMs: 100, checkExport: slowCheck(300, w) } });
+
+    const error = await failureOf(r.service.render({ spec: specFor(w) }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" });
+    await expectNothingTouched(r);
+  });
+
+  test("what the checks cost is taken off the focus budget: a detector that never answers is cut in time for the answer to arrive inside the deadline", async () => {
+    const w = world();
+    let cutAfter = -1;
+    const seen: number[] = [];
+    const r = serviceRig(w, {
+      deps: {
+        commandDeadlineMs: 500,
+        commandMarginMs: 60,
+        checkExport: slowCheck(150, w),
+        focus: () => ({
+          fillMissingFocus: (spec, signal) =>
+            new Promise((_resolve, reject) => {
+              const started = Date.now();
+              seen.push(1);
+              signal?.addEventListener("abort", () => {
+                cutAfter = Date.now() - started;
+                reject(signal.reason);
+              });
+            }),
+        }),
+      },
+    });
+    const started = Date.now();
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(seen).toEqual([1]);
+    expect(cutAfter).toBeGreaterThan(50);
+    expect(cutAfter).toBeLessThan(300); // 500 - 150 (the check) - 60 (the margin), and some scheduling
+    expect(r.jobs.stateOf(jobId)).toBeDefined(); // it went on with the stand-in point
+    await r.queue.idle();
+  });
+
+  test("when the deadline is gone before there is anything left to spend on focus, it refuses and queues nothing", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { commandDeadlineMs: 120, commandMarginMs: 50, withLibrary: async (work) => (await new Promise((resolve) => setTimeout(resolve, 150)), work(w.library)) } });
+
+    const error = await failureOf(r.service.render({ spec: specFor(w) }));
+
+    expect(error.code).toBe("INTERNAL");
+    expect(error.detail).toContain("nothing was queued");
+    await expectNothingTouched(r);
   });
 });

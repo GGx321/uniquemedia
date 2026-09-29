@@ -58,6 +58,8 @@ export interface ServiceRig {
   readonly checker: FileStateChecker;
   readonly events: UnsequencedEvent[];
   readonly logs: string[];
+  /** The avatar ids `announceAvatar` was asked for, in order (each is an `avatar.changed` in the engine). */
+  readonly announced: string[];
   /** The `requiredBytes` of every export check made. */
   readonly checks: Array<number | undefined>;
   /** Every event, stamped the way the engine's log stamps it, so the contract's schema can judge it. */
@@ -80,6 +82,7 @@ export function serviceRig(w: World, options: ServiceRigOptions = {}): ServiceRi
   const jobs = new JobRegistry();
   const events: UnsequencedEvent[] = [];
   const logs: string[] = [];
+  const announced: string[] = [];
   const checks: Array<number | undefined> = [];
   const holder: { service?: VideoService } = {};
   const queue = new RenderQueue({
@@ -106,6 +109,7 @@ export function serviceRig(w: World, options: ServiceRigOptions = {}): ServiceRi
     emit: (event) => void events.push(event),
     log: (line) => void logs.push(line),
     renderOverrides: { verify: acceptingVerify, runDeps: { run: writingRun } },
+    announceAvatar: (_library, avatarId) => void announced.push(avatarId),
     staleRetryDelaysMs: [5, 5, 5],
     ...options.deps,
   };
@@ -120,10 +124,44 @@ export function serviceRig(w: World, options: ServiceRigOptions = {}): ServiceRi
     checker,
     events,
     logs,
+    announced,
     checks,
     deps,
     stamped: () => events.map((event, i) => EventMessage.parse({ ...event, seq: i + 1, bootId: "boot-0000-aaaa" })),
   };
+}
+
+/** A manual clock for the service's background timers: `advance` fires what falls due, in order, and lets promise continuations settle. */
+export class FakeTimers {
+  now = 0;
+  #next = 0;
+  #pending: Array<{ id: number; at: number; fn: () => void }> = [];
+
+  set = (fn: () => void, ms: number): number => {
+    const id = ++this.#next;
+    this.#pending.push({ id, at: this.now + ms, fn });
+    return id;
+  };
+  clear = (handle: unknown): void => {
+    this.#pending = this.#pending.filter((t) => t.id !== handle);
+  };
+  /** When each pending timer falls due, relative to now. */
+  get delays(): number[] {
+    return this.#pending.map((t) => t.at - this.now).sort((a, b) => a - b);
+  }
+  async advance(ms: number): Promise<void> {
+    const until = this.now + ms;
+    for (;;) {
+      const due = this.#pending.filter((t) => t.at <= until).sort((a, b) => a.at - b.at || a.id - b.id)[0];
+      if (due === undefined) break;
+      this.#pending = this.#pending.filter((t) => t !== due);
+      this.now = due.at;
+      due.fn();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    this.now = until;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 /** Polls `condition` every 5 ms for up to `timeoutMs` of wall time. */

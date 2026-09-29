@@ -9,8 +9,7 @@ import { FileStateChecker, type HashBudget } from "./fileState";
 import { commitIntent, writeIntent } from "./intents";
 import { videoPaths, type VideoRecord } from "./record";
 import { fakeVideoBytes, sampleRecord, useWorld, type World } from "./testing/kit";
-import { serviceRig } from "./testing/serviceKit";
-import { withOverrides } from "./testing/serviceKit";
+import { serviceRig, withOverrides } from "./testing/serviceKit";
 import { LibraryError } from "../library";
 import type { ExportRootRef } from "./recovery";
 useNativeGlobals();
@@ -163,6 +162,62 @@ describe("videos.list", () => {
   });
 });
 
+describe("videos.list, what can go wrong around it", () => {
+  test("a videos folder that cannot be read is INTERNAL with the errno code only: the library's absolute path never reaches the window", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const dir = videoPaths(w.libraryRoot, w.avatar.id).videosDir;
+    const { rmSync } = await import("node:fs");
+    rmSync(dir, { recursive: true, force: true });
+    writeFileSync(dir, "not a folder");
+
+    const error = await failureOf(r.service.list(w.avatar.id));
+
+    expect(error.code).toBe("INTERNAL");
+    expect(error.detail).toContain("ENOTDIR");
+    expect(error.detail).not.toContain(w.libraryRoot);
+    expect(error.detail).not.toContain("/var/");
+  });
+
+  test("a record whose file check never answers reads `elsewhere` after the per-record bound, and the listing goes on", async () => {
+    const w = world();
+    const checker = new FileStateChecker();
+    const stuck: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, {
+      check: (record: VideoRecord, root: ExportRootRef | null, options: { verify: "cheap" | "full"; budget?: HashBudget }): Promise<FileState> => (record.id === "video-0000000a" ? new Promise<FileState>(() => undefined) : checker.check(record, root, options)),
+    });
+    const r = serviceRig(w, { deps: { checker: stuck, recordCheckTimeoutMs: 40 } });
+    await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+    await committed(w, { videoId: "video-0000000b", jobId: "job-0000000b", relPath: "Mia/2026-09-29_photo_002.mp4" });
+
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(new Map(videos.map((v) => [v.videoId, v.fileState]))).toEqual(
+      new Map([
+        ["video-0000000a", "elsewhere"],
+        ["video-0000000b", "present"],
+      ]),
+    );
+  });
+
+  test("a stale used index is read again on demand before the list is answered", async () => {
+    const w = world();
+    let reloads = 0;
+    const library = withOverrides(w.library, {
+      reloadVideoRecords: (avatarId: string) => {
+        reloads++;
+        return w.library.reloadVideoRecords(avatarId);
+      },
+    });
+    const r = serviceRig(w, { library });
+    w.library.flagVideoIndexStale(w.avatar.id, "video-committed-1");
+
+    await r.service.list(w.avatar.id);
+
+    expect(reloads).toBe(1);
+    expect(w.library.videoIndexStale(w.avatar.id)).toEqual([]);
+  });
+});
+
 describe("videos.delete", () => {
   test("deletes a present file and its record, frees the photos, and announces the removal", async () => {
     const w = world();
@@ -170,14 +225,15 @@ describe("videos.delete", () => {
     const { record, path } = await committed(w);
     expect(w.library.photoStates(w.avatar.id).get(w.photos[0]?.id ?? "")?.usedIn).toEqual([record.id]);
 
-    const answer = await r.service.delete(record.id);
+    const answer = await r.service.delete(record.id, "video");
 
-    expect(answer).toEqual({ videoId: record.id });
+    expect(answer).toEqual({ videoId: record.id, fileDeleted: true, fileState: "present" });
     expect(existsSync(path)).toBe(false);
     expect(existsSync(videoPaths(w.libraryRoot, w.avatar.id).record(record.id))).toBe(false);
     expect(w.library.photoStates(w.avatar.id).get(w.photos[0]?.id ?? "")?.usedIn).toEqual([]);
     const changed = r.stamped().find((e) => e.type === "video.changed");
     expect(changed?.type === "video.changed" ? changed.payload : null).toEqual({ change: "removed", videoId: record.id, avatarId: w.avatar.id });
+    expect(r.announced).toEqual([w.avatar.id]); // eligibleUnusedCount and videoCount moved
   });
 
   test("«Удалить запись» for `elsewhere`: only the record goes and the photos are freed, while the file lives on in the other folder", async () => {
@@ -185,22 +241,74 @@ describe("videos.delete", () => {
     const r = serviceRig(w);
     const { record, path } = await committed(w, { rootId: "another-root-01" });
 
-    await r.service.delete(record.id);
+    const answer = await r.service.delete(record.id, "record");
 
+    expect(answer).toEqual({ videoId: record.id, fileDeleted: false, fileState: "elsewhere" });
     expect(existsSync(path)).toBe(true); // the file is not ours to reach for: another root
     expect(existsSync(videoPaths(w.libraryRoot, w.avatar.id).record(record.id))).toBe(false);
     expect(w.library.photoStates(w.avatar.id).get(w.photos[0]?.id ?? "")?.usedIn).toEqual([]);
   });
 
-  test("with the export root unusable, the record still goes and the file is left", async () => {
+  test("«Удалить запись» NEVER deletes the file: not one that is present, not when the check is transiently wrong about the root", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const { record, path } = await committed(w);
+
+    const answer = await r.service.delete(record.id, "record");
+
+    expect(answer).toEqual({ videoId: record.id, fileDeleted: false, fileState: "present" });
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(videoPaths(w.libraryRoot, w.avatar.id).record(record.id))).toBe(false);
+  });
+
+  test("«Удалить» with the export root unavailable answers EXPORT_UNAVAILABLE and deletes NOTHING: no file, no record, photos still used, no event", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { checkExport: async () => ({ ok: false, reason: "not-writable" }) } });
+    const { record, path } = await committed(w);
+
+    const error = await failureOf(r.service.delete(record.id, "video"));
+
+    expect(error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" });
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(videoPaths(w.libraryRoot, w.avatar.id).record(record.id))).toBe(true);
+    expect(w.library.photoStates(w.avatar.id).get(w.photos[0]?.id ?? "")?.usedIn).toEqual([record.id]);
+    expect(r.events).toEqual([]);
+  });
+
+  test("«Удалить» with the record's file in another root answers EXPORT_UNAVAILABLE `missing` and deletes nothing", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const { record, path } = await committed(w, { rootId: "another-root-01" });
+
+    const error = await failureOf(r.service.delete(record.id, "video"));
+
+    expect(error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "missing" });
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(videoPaths(w.libraryRoot, w.avatar.id).record(record.id))).toBe(true);
+  });
+
+  test("«Удалить запись» with the export root unavailable still removes the record and leaves the file", async () => {
     const w = world();
     const r = serviceRig(w, { deps: { checkExport: async () => ({ ok: false, reason: "missing" }) } });
     const { record, path } = await committed(w);
 
-    await r.service.delete(record.id);
+    const answer = await r.service.delete(record.id, "record");
 
+    expect(answer).toEqual({ videoId: record.id, fileDeleted: false, fileState: "elsewhere" });
     expect(existsSync(path)).toBe(true);
     expect(existsSync(videoPaths(w.libraryRoot, w.avatar.id).record(record.id))).toBe(false);
+  });
+
+  test("a file that is `missing` goes with only the record under «Удалить», and the answer says the file was already gone", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const { record, path } = await committed(w);
+    const { rmSync } = await import("node:fs");
+    rmSync(path);
+
+    const answer = await r.service.delete(record.id, "video");
+
+    expect(answer).toEqual({ videoId: record.id, fileDeleted: false, fileState: "missing" });
   });
 
   test("looks at the export root afresh for the delete", async () => {
@@ -208,7 +316,7 @@ describe("videos.delete", () => {
     const r = serviceRig(w);
     const { record } = await committed(w);
 
-    await r.service.delete(record.id);
+    await r.service.delete(record.id, "video");
 
     expect(r.checks).toHaveLength(1);
   });
@@ -217,7 +325,7 @@ describe("videos.delete", () => {
     const w = world();
     const r = serviceRig(w);
 
-    const error = await failureOf(r.service.delete("video-nobody-01"));
+    const error = await failureOf(r.service.delete("video-nobody-01", "video"));
 
     expect(error.code).toBe("NOT_FOUND");
     expect(r.events).toEqual([]);
@@ -230,7 +338,7 @@ describe("videos.delete", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "video-0000000c.json"), "{ not json");
 
-    const error = await failureOf(r.service.delete("video-0000000c"));
+    const error = await failureOf(r.service.delete("video-0000000c", "video"));
 
     expect(error).toEqual({ code: "INTERNAL", detail: "the video's record cannot be read" });
     expect(existsSync(join(dir, "video-0000000c.json"))).toBe(true);
@@ -243,7 +351,7 @@ describe("videos.delete", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "video-0000000d.json"), JSON.stringify({ schemaVersion: 99, id: "video-0000000d", avatarId: w.avatar.id }));
 
-    const error = await failureOf(r.service.delete("video-0000000d"));
+    const error = await failureOf(r.service.delete("video-0000000d", "video"));
 
     expect(error.code).toBe("LIBRARY_TOO_NEW");
     expect(existsSync(join(dir, "video-0000000d.json"))).toBe(true);
@@ -255,7 +363,7 @@ describe("videos.delete", () => {
     const r = serviceRig(w, { deps: { fs: failing } });
     const { record } = await committed(w);
 
-    const error = await failureOf(r.service.delete(record.id));
+    const error = await failureOf(r.service.delete(record.id, "video"));
 
     expect(error.code).toBe("INTERNAL");
     expect(error.detail).toContain("EBUSY");
@@ -271,7 +379,7 @@ describe("videos.delete", () => {
     const r = serviceRig(w, { deps: { checker: raw } });
     const { record } = await committed(w);
 
-    const error = await failureOf(r.service.delete(record.id));
+    const error = await failureOf(r.service.delete(record.id, "video"));
 
     expect(error).toEqual({ code: "INTERNAL", detail: "the video could not be deleted (EIO)" });
     expect(r.logs.join("\n")).not.toContain(w.exportRoot);
@@ -287,7 +395,7 @@ describe("videos.delete", () => {
       },
     });
 
-    expect((await failureOf(r.service.delete("video-0000000a"))).code).toBe("LIBRARY_UNAVAILABLE");
+    expect((await failureOf(r.service.delete("video-0000000a", "video"))).code).toBe("LIBRARY_UNAVAILABLE");
   });
 
   test("a library error other than too-new is not disguised as one", async () => {
@@ -299,7 +407,7 @@ describe("videos.delete", () => {
     });
     const r = serviceRig(w, { library });
 
-    const error = await failureOf(r.service.delete("video-0000000a"));
+    const error = await failureOf(r.service.delete("video-0000000a", "video"));
 
     expect(error.code).toBe("INTERNAL");
   });

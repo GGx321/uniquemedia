@@ -1,22 +1,25 @@
+import { lstat } from "node:fs/promises";
 import type { FileState, VideoSummary, CommandPayload, EngineError, UnsequencedEvent } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS, PROTOCOL_VERSION } from "../../shared/engine";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { estimateBytesUpper } from "../../shared/montage";
+import { resolveFocus } from "../../shared/montage/crop";
 import { EngineFailure } from "../engineFailure";
 import { safeName } from "../exportName";
 import type { ExportRootCheck } from "../exportRoot";
 import type { FocusResolver } from "../focus/focusResolver";
 import { LibraryError, type Library } from "../library";
+import { hasErrorCode } from "../library/durableFs";
 import type { PhotoSource } from "../render";
 import type { RenderQueue, RenderQueueEvent } from "../renderQueue/queue";
 import { sweepRenderTmp } from "../renderQueue/sweep";
 import type { CommitFs } from "./commitFs";
-import { deleteVideo, VideoDiskError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
+import { deleteVideo, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
 import { createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 import { newHashBudget, type FileStateChecker } from "./fileState";
 import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
 import type { CommitTracker } from "./live";
-import { scenePhotoIds, type VideoRecord } from "./record";
+import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
 
 // The command layer of the video pipeline (Stage 3 plan, 3a.8b.2): `videos.render`, `videos.cancel`, `videos.list` and
@@ -26,16 +29,26 @@ import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery"
 //
 // `videos.render` is ONE step before `submit`, and nothing is claimed, reserved or written until `submit` answers ok:
 //   1. the spec's structure and N9 (pure);
-//   2. the export folder, checked afresh (invariant 35), its marker's id going into the plan; then the avatar;
+//   2. the export folder, checked afresh (invariant 35), its marker's id going into the plan; then the avatar (active only);
 //   3. eligibility and used (invariant 18) through the library's own refusal-aware function, BEFORE any focus work;
-//   4. the focus is filled, under a budget;          5. eligibility again, synchronously, then the photos' files and
-//      stored sizes, then `submit`, with no await between them: a photo rejected or taken while the focus was being
-//      computed is caught, and the reservation `submit` makes closes the window for the next render.
-// From the avatar on, the step runs as a counted write on the library (`withLibrary`), so a library switch waits for it.
-// (The export check is asked first, in the validation's own tick, so attempts made together share one check.)
+//   4. the focus is filled, under what is left of the command's own deadline;
+//   5. eligibility again, synchronously, then the photos' files and stored sizes, then `submit`, with no await between
+//      them: a photo rejected or taken while the focus was being computed is caught, and the reservation `submit` makes
+//      closes the window for the next render.
+// From the avatar on, the step runs as a counted write on the library (`withLibrary`): a library switch is REFUSED
+// (IN_FLIGHT) while it runs, and while any render is queued or running. (The export check is asked first, in the
+// validation's own tick, so attempts made together share one check.)
+// The whole command has a deadline of its own, under main's 30 s: a request main has already answered with a timeout
+// must never go on to queue a job the window does not know about.
 
 /** Renders the queue holds and the window may be told about; see `RenderQueueEvent`. */
 export type VideoQueue = Pick<RenderQueue, "submit" | "cancel" | "states" | "idle">;
+
+/** Timers the background work uses, injected so tests control time. */
+export interface ServiceTimers {
+  set(fn: () => void, ms: number): unknown;
+  clear(handle: unknown): void;
+}
 
 export interface VideoServiceDeps {
   readonly queue: VideoQueue;
@@ -49,24 +62,66 @@ export interface VideoServiceDeps {
   /** A FRESH check of the export folder (its marker read now, never a snapshot). With `requiredBytes` it also wants twice that free. Never rejects. */
   readonly checkExport: (requiredBytes?: number) => Promise<ExportRootCheck>;
   readonly caseProbe: { isCaseInsensitive(root: string): Promise<boolean> };
-  /** The focus resolver of `library`, whose `fillMissingFocus` has its own budget. */
+  /** The focus resolver of `library`; `fillMissingFocus` takes a signal that ends it early. */
   readonly focus: (library: Library) => Pick<FocusResolver, "fillMissingFocus">;
   /** `userData/render-tmp`; a render is refused without it (no `os.tmpdir` fallback). */
   readonly renderTmpDir: string | undefined;
   readonly newId: () => string;
   readonly now: () => Date;
   readonly emit: (event: UnsequencedEvent) => void;
+  /** Tells the windows an avatar's counts moved (`avatar.changed`): its `eligibleUnusedCount` and `videoCount`. Never throws. */
+  readonly announceAvatar: (library: Library, avatarId: string) => void;
   /** Codes, ids and counts only: never a path, a message or a file's text. */
   readonly log: (line: string) => void;
   readonly fs?: CommitFs;
-  /** Test seams of the render itself (ffmpeg, the verifier, the commit's steps, its deadline). */
-  readonly renderOverrides?: Partial<Pick<VideoRenderDeps, "fs" | "folderFs" | "runJob" | "runDeps" | "verify" | "hooks" | "claimStartAt" | "commitDeadlineMs" | "createTemp">>;
+  /** Test seams of the render itself (ffmpeg, the verifier, the commit's steps, its deadlines). */
+  readonly renderOverrides?: Partial<Pick<VideoRenderDeps, "fs" | "folderFs" | "runJob" | "runDeps" | "verify" | "hooks" | "claimStartAt" | "commitDeadlineMs" | "stepDeadlineMs" | "createTemp">>;
   readonly recover?: { readonly run?: typeof recoverVideos; readonly deps?: RecoverDeps };
-  /** Waits before each background retry of a stale used index; 2 s, 10 s, 60 s when absent. */
+  /** Waits before each background retry of a stale used index; `DEFAULT_STALE_RETRY_DELAYS_MS` when absent. The last delay repeats until the index is in step. */
   readonly staleRetryDelaysMs?: readonly number[];
+  readonly timers?: ServiceTimers;
+  /** From entry to `videos.render` to its answer; `RENDER_COMMAND_DEADLINE_MS` when absent. */
+  readonly commandDeadlineMs?: number;
+  /** What `videos.render` keeps back from that deadline for the rest of its work after the focus; `RENDER_COMMAND_MARGIN_MS` when absent. */
+  readonly commandMarginMs?: number;
+  /** How long one record's file check may take in a listing; `RECORD_CHECK_TIMEOUT_MS` when absent. */
+  readonly recordCheckTimeoutMs?: number;
 }
 
-const DEFAULT_STALE_RETRY_DELAYS_MS: readonly number[] = [2_000, 10_000, 60_000];
+/** Waits before the background retries of a stale used index; the last one repeats until the records are read. */
+export const DEFAULT_STALE_RETRY_DELAYS_MS: readonly number[] = [2_000, 10_000, 60_000];
+/** Under main's 30 s command deadline (`REQUEST_TIMEOUT_MS`), with room for the answer to travel. */
+export const RENDER_COMMAND_DEADLINE_MS = 25_000;
+/** Kept back for eligibility, the sources and `submit` once the focus is done. */
+export const RENDER_COMMAND_MARGIN_MS = 2_000;
+/** One record's file check in a listing; a disk that does not answer reads `elsewhere`. */
+export const RECORD_CHECK_TIMEOUT_MS = 5_000;
+/** Reading the used index again on demand before a render or a list. */
+const STALE_RELOAD_BOUND_MS = 5_000;
+
+function realTimers(): ServiceTimers {
+  const live = new Map<number, ReturnType<typeof setTimeout>>();
+  let next = 0;
+  return {
+    set: (fn, ms) => {
+      const id = ++next;
+      const timer = setTimeout(() => {
+        live.delete(id);
+        fn();
+      }, ms);
+      // A background retry must never keep the engine alive.
+      if (typeof timer === "object" && "unref" in timer) timer.unref();
+      live.set(id, timer);
+      return id;
+    },
+    clear: (handle) => {
+      if (typeof handle !== "number") return;
+      const timer = live.get(handle);
+      if (timer !== undefined) clearTimeout(timer);
+      live.delete(handle);
+    },
+  };
+}
 
 // ---------- pure parts ----------
 
@@ -121,6 +176,17 @@ function sceneCells(spec: Pick<MontageDraft, "clips">): SceneCell[] {
   return cells;
 }
 
+/** `spec` with every null focus set to the stand-in point: what a render uses when the focus could not be judged in time. */
+function withStandInFocus(spec: MontageDraft): MontageDraft {
+  const fill = <C extends { focus: { x: number; y: number } | null }>(cell: C): C => ({ ...cell, focus: cell.focus ?? resolveFocus(null) });
+  const clips = spec.clips.map((clip) => {
+    if (clip.kind === "photo") return { ...clip, cell: fill(clip.cell) };
+    if (clip.kind === "collage") return { ...clip, cells: clip.cells.map(fill) };
+    return { ...clip, focus: clip.focus ?? resolveFocus(null) };
+  });
+  return { ...spec, clips };
+}
+
 function codeOf(error: unknown): string {
   return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error";
 }
@@ -134,22 +200,46 @@ function kindOf(error: unknown): string {
 const unavailable = (cells: readonly SceneCell[], detail?: string): EngineFailure =>
   new EngineFailure({ code: "PHOTO_UNAVAILABLE", issues: cells.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable", path: cell.path })), ...(detail === undefined ? {} : { detail }) });
 
+/** `work`, or `onTimeout()` once `ms` have passed (at once for `ms <= 0`); `work` itself is never cancelled. */
+async function within<T>(ms: number, work: () => Promise<T>, onTimeout: () => Error): Promise<T> {
+  if (ms <= 0) throw onTimeout();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(onTimeout()), ms);
+  });
+  late.catch(() => undefined);
+  try {
+    return await Promise.race([work(), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---------- the service ----------
 
 export class VideoService {
   readonly #deps: VideoServiceDeps;
+  readonly #timers: ServiceTimers;
   #closing = false;
-  /** Startup and recovery work, one after another. Never awaited by a command or by the library opening. */
-  #background: Promise<void> = Promise.resolve();
-  readonly #timers = new Set<ReturnType<typeof setTimeout>>();
+  /** Startup, recovery and settle work in the background. Never awaited by a command or by the library opening. */
+  readonly #tasks = new Set<Promise<void>>();
+  /** One controller per library whose recovery may still be running: a switch aborts every other one. */
+  readonly #recoveries = new Map<Library, AbortController>();
+  /** One retry chain per avatar whose used index is stale: the timer handle of its next attempt. */
+  readonly #staleChains = new Map<string, unknown>();
 
   constructor(deps: VideoServiceDeps) {
     this.#deps = deps;
+    this.#timers = deps.timers ?? realTimers();
   }
 
   // ---------- videos.render ----------
 
   async render(payload: CommandPayload<"videos.render">): Promise<{ jobId: string; videoId: string }> {
+    const entered = performance.now();
+    const budgetMs = this.#deps.commandDeadlineMs ?? RENDER_COMMAND_DEADLINE_MS;
+    const marginMs = this.#deps.commandMarginMs ?? RENDER_COMMAND_MARGIN_MS;
+    const remaining = (): number => budgetMs - (performance.now() - entered);
     if (this.#closing) throw new EngineFailure({ code: "INTERNAL", detail: "the engine is shutting down" });
     if ("montageId" in payload) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${payload.montageId}: drafts are not available yet` });
     const { spec } = payload;
@@ -160,30 +250,56 @@ export class VideoService {
     // Invariant 35: the export folder, checked NOW, before anything else about the render is looked at (a spec that is
     // valid in shape gets this answer whatever else is wrong with it); its marker's id is the one the job commits against.
     // Asked in the same tick as the validation, so attempts made together share one check (a mute drive costs one timeout).
-    const check = await this.#deps.checkExport(estimateBytesUpper(spec.clips));
+    const check = await within(
+      remaining(),
+      () => this.#deps.checkExport(estimateBytesUpper(spec.clips)),
+      () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time" }),
+    );
     if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
-    return this.#deps.withLibrary((library) => this.#render(library, spec, renderTmpDir, check));
+    return this.#deps.withLibrary((library) => this.#render(library, spec, renderTmpDir, check, { remaining, marginMs }));
   }
 
-  async #render(library: Library, spec: MontageDraft, renderTmpDir: string, check: Extract<ExportRootCheck, { ok: true }>): Promise<{ jobId: string; videoId: string }> {
+  async #render(
+    library: Library,
+    spec: MontageDraft,
+    renderTmpDir: string,
+    check: Extract<ExportRootCheck, { ok: true }>,
+    time: { remaining(): number; marginMs: number },
+  ): Promise<{ jobId: string; videoId: string }> {
     const deps = this.#deps;
+    const outOfTime = (): EngineFailure => new EngineFailure({ code: "INTERNAL", detail: "the render request ran out of time before it could be queued; nothing was queued" });
+    if (time.remaining() <= time.marginMs) throw outOfTime();
     const avatar = library.getAvatar(spec.avatarId);
-    if (avatar === undefined || avatar.status === "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${spec.avatarId} in the open library` });
+    // Only an ACTIVE avatar renders: a draft has no scene photos, and an archived one is retired: rendering makes new
+    // content, which photo runs refuse for it too. Its existing videos still list and delete.
+    if (avatar === undefined || avatar.status !== "active") throw new EngineFailure({ code: "NOT_FOUND", detail: `no active avatar ${spec.avatarId} in the open library` });
 
     const cells = sceneCells(spec);
+    await this.#readIndexAgain(library, spec.avatarId);
     this.#assertAvailable(library, spec.avatarId, cells);
 
     let filled: MontageDraft;
+    const focusMs = time.remaining() - time.marginMs;
+    if (focusMs <= 0) throw outOfTime();
+    const spent = new AbortController();
+    const timer = setTimeout(() => spent.abort(new Error("the focus budget of this render is spent")), focusMs);
     try {
-      const result = await deps.focus(library).fillMissingFocus(spec);
+      const result = await deps.focus(library).fillMissingFocus(spec, spent.signal);
       filled = result.spec;
       if (result.unresolved.length > 0) deps.log(`videos.render: ${result.unresolved.length} photo(s) could not be judged for their focus; the stand-in point is used`);
     } catch (error) {
-      if (error instanceof LibraryError && error.code === "photo-not-found") throw unavailable(cells);
-      throw error;
+      if (spent.signal.aborted) {
+        // What is left of the command's time is spent: the stand-in point, as for a photo that could not be judged.
+        deps.log("videos.render: the focus budget ran out; the stand-in point is used for what was not judged");
+        filled = withStandInFocus(spec);
+      } else if (error instanceof LibraryError && error.code === "photo-not-found") throw unavailable(cells);
+      else throw error;
+    } finally {
+      clearTimeout(timer);
     }
 
     // From here to `submit` nothing is awaited.
+    if (time.remaining() <= 0) throw outOfTime();
     this.#assertAvailable(library, spec.avatarId, cells);
     if (this.#closing) throw new EngineFailure({ code: "INTERNAL", detail: "the engine is shutting down" });
     const sources = new Map<string, PhotoSource>();
@@ -232,7 +348,22 @@ export class VideoService {
     // A render that has to wait is announced now; one that started already was, by its `started` event.
     const state = deps.queue.states().find((s) => s.jobId === jobId);
     if (state?.kind === "render" && state.status === "queued") this.#emitProgress(state);
+    // The photos are reserved now: the avatar's `eligibleUnusedCount` moved.
+    this.#announce(library, spec.avatarId);
     return { jobId, videoId };
+  }
+
+  /**
+   * The used index is behind the disk (`index-stale`: a commit's index update failed and could not be rebuilt): read the
+   * records again NOW, bounded, before the avatar is judged. The background retries are the fallback, not the way.
+   */
+  async #readIndexAgain(library: Library, avatarId: string): Promise<void> {
+    if (library.videoIndexStale(avatarId).length === 0) return;
+    try {
+      await within(STALE_RELOAD_BOUND_MS, () => library.reloadVideoRecords(avatarId), () => new Error("timeout"));
+    } catch (error) {
+      this.#deps.log(`the used index of avatar ${avatarId} could not be read again (${kindOf(error)})`);
+    }
   }
 
   /**
@@ -259,7 +390,7 @@ export class VideoService {
 
   // ---------- videos.cancel ----------
 
-  /** Render jobs only: any other id (an avatar job, an unknown one) is NOT_FOUND. A cancel past the commit's claim is ignored by the commit, so the answer is still ok and the job ends `done`. */
+  /** Render jobs only: any other id (an avatar job, an unknown one) is NOT_FOUND. A cancel past the commit's point of no return is ignored by the commit, so the answer is still ok and the job ends `done`. */
   cancel(jobId: string): { jobId: string } {
     if (!this.#deps.queue.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no render job ${jobId}` });
     return { jobId };
@@ -270,17 +401,26 @@ export class VideoService {
   async list(avatarId: string): Promise<VideoSummary[]> {
     const library = this.#deps.openLibrary();
     if (library?.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-    const read = await readVideoRecordFiles(library.root, avatarId);
+    await this.#readIndexAgain(library, avatarId);
+    let read;
+    try {
+      read = await readVideoRecordFiles(library.root, avatarId);
+    } catch (error) {
+      // A raw fs error names the library's absolute path, which `maskHome` cannot know for `/Volumes` or `/var`: only the code is told.
+      this.#deps.log(`videos.list: the records of avatar ${avatarId} could not be read (${kindOf(error)})`);
+      throw new EngineFailure({ code: "INTERNAL", detail: `the video records could not be read (${codeOf(error)})` });
+    }
     if (read.skipped > 0) this.#deps.log(`videos.list: ${read.skipped} record file(s) of avatar ${avatarId} could not be used and are left out`);
-    if (read.truncated) this.#deps.log(`videos.list: avatar ${avatarId} has more record files than one listing reads`);
+    if (read.truncated) this.#deps.log(`videos.list: avatar ${avatarId} has more record files than one listing reads; the newest are listed`);
     // One fresh look at the export root, one hash budget for the whole listing.
     const root = await this.#freshRoot();
     const budget = newHashBudget();
+    const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
     for (const record of read.records.slice(0, MAX_LISTED_VIDEOS)) {
       let state: FileState;
       try {
-        state = await this.#deps.checker.check(record, root, { verify: "cheap", budget });
+        state = await within(checkMs, () => this.#deps.checker.check(record, root, { verify: "cheap", budget }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
       } catch (error) {
         // A disk that cannot be looked at is "cannot look in the root" (`elsewhere`), not a claim that the file is gone, and not a failed list.
         this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
@@ -294,22 +434,32 @@ export class VideoService {
   // ---------- videos.delete ----------
 
   /**
-   * The file (when the FULL check finds it present) and the record. «Удалить запись» for a `missing`, `changed` or
-   * `elsewhere` file: only the record goes and the photos are freed. For `elsewhere` that is deliberate: the file lives on
-   * in another export folder, and the owner who deletes the record is telling Studio to forget the video, not to reach
-   * into a folder it cannot vouch for.
+   * By the OWNER'S intent, which the request carries (a state just looked at is never a substitute for it):
+   * - `video` («Удалить»): the file (when the FULL check finds it present) and the record. The export folder must be usable, or
+   *   nothing is deleted (EXPORT_UNAVAILABLE): a sleeping network drive must not turn this into a record-only delete that
+   *   orphans the file. A record whose file is in another root refuses the same way.
+   * - `record` («Удалить запись»): ONLY the record, whatever the file's state, and never the file. For `elsewhere` that frees
+   *   the photos while the file lives on in the other folder, which is what the owner asked for.
    */
-  async delete(videoId: string): Promise<{ videoId: string }> {
+  async delete(videoId: string, mode: "video" | "record"): Promise<{ videoId: string; fileDeleted: boolean; fileState: FileState }> {
     return this.#deps.withLibrary(async (library) => {
-      const root = await this.#freshRoot();
-      let avatarId: string;
+      let root: ExportRootRef | null;
+      if (mode === "video") {
+        const check = await this.#deps.checkExport();
+        if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
+        root = await this.#freshRoot(check);
+      } else {
+        root = await this.#freshRoot();
+      }
+      let outcome;
       try {
-        ({ avatarId } = await deleteVideo(videoId, { library, exportRoot: root, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log }));
+        outcome = await deleteVideo(videoId, { mode, library, exportRoot: root, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log });
       } catch (error) {
         throw this.#deleteFailure(videoId, error);
       }
-      this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId } });
-      return { videoId };
+      this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId: outcome.avatarId } });
+      this.#announce(library, outcome.avatarId);
+      return { videoId, fileDeleted: outcome.fileDeleted, fileState: outcome.fileState };
     });
   }
 
@@ -317,6 +467,7 @@ export class VideoService {
     if (error instanceof EngineFailure) return error;
     if (error instanceof VideoNotFoundError) return new EngineFailure({ code: "NOT_FOUND", detail: `no video ${videoId}` });
     if (error instanceof VideoRecordUnreadableError) return new EngineFailure({ code: "INTERNAL", detail: "the video's record cannot be read" });
+    if (error instanceof VideoFileUnreachableError) return new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "missing", detail: "the video's file is not in the current export folder" });
     if (error instanceof LibraryError && error.code === "library-too-new") return new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: "this video's record was written by a newer version of Studio" });
     // Its message names no path: `VideoDiskError` builds it from a fixed phrase and the disk's code.
     if (error instanceof VideoDiskError) return new EngineFailure({ code: "INTERNAL", detail: error.message });
@@ -361,7 +512,7 @@ export class VideoService {
       id: this.#deps.newId(),
       kind: "event",
       type: "job.progress",
-      payload: { kind: "render", jobId: state.jobId, videoId: state.videoId, avatarId: state.avatarId, montageId: state.montageId, done: state.done, total: state.total },
+      payload: { kind: "render", jobId: state.jobId, videoId: state.videoId, avatarId: state.avatarId, montageId: state.montageId, done: state.done, total: state.total, ...(state.saving === true ? { saving: true } : {}) },
     });
   }
 
@@ -379,14 +530,22 @@ export class VideoService {
     } else if (state.status === "cancelled") {
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "job.cancelled", payload: ref });
     }
-    // A commit whose index update failed left the avatar closed (`index-stale`): read the record back in the background.
     const library = this.#deps.openLibrary();
-    if (library !== null) this.#scheduleStaleRetry(library, state.avatarId, 0);
+    if (library === null) return;
+    // Whatever way it ended, its photos left the reservation: the avatar's counts moved.
+    this.#announce(library, state.avatarId);
+    // A commit whose index update failed left the avatar closed (`index-stale`): read the record back in the background.
+    this.#scheduleStaleRetry(library, state.avatarId);
+    // A job that failed may have left its commit intent behind (a file that would not go): settle it now, in the
+    // background and under the export root's lock, instead of leaving its photos free until the next open.
+    if (state.status === "failed") this.#settleLeftover(library, state.avatarId, state.videoId);
   }
 
   /** A record is committed and the used index has it: the window learns of it now, before `job.done`. */
   #committed(record: VideoRecord): void {
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "upserted", video: videoSummaryOf(record, "present") } });
+    const library = this.#deps.openLibrary();
+    if (library !== null) this.#announce(library, record.avatarId);
   }
 
   /** Emits, and never throws: a closed window must not fail a commit or stop the queue. */
@@ -395,6 +554,14 @@ export class VideoService {
       this.#deps.emit(event);
     } catch (error) {
       this.#deps.log(`an event (${event.type}) could not be emitted (${kindOf(error)})`);
+    }
+  }
+
+  #announce(library: Library, avatarId: string): void {
+    try {
+      this.#deps.announceAvatar(library, avatarId);
+    } catch (error) {
+      this.#deps.log(`avatar ${avatarId} could not be announced (${kindOf(error)})`);
     }
   }
 
@@ -425,25 +592,46 @@ export class VideoService {
    * export status a window shows.
    */
   startup(library: Library | null, exportCheck?: ExportRootCheck): void {
-    this.#chain(async () => {
+    this.#track(async () => {
       await this.#sweepRenderTmp();
-      if (library !== null) await this.#recover(library, exportCheck);
     });
+    if (library !== null) this.#startRecovery(library, exportCheck);
   }
 
-  /** A library became the live one (a switch): settle its crash windows, in the background. */
+  /**
+   * A library became the live one (a switch): the recovery of any other library is told to stop (it must not go on holding
+   * the export root's lock for a library nobody looks at), and this one's crash windows are settled, in the background.
+   */
   libraryOpened(library: Library): void {
-    this.#chain(() => this.#recover(library));
+    for (const [other, controller] of this.#recoveries) if (other !== library) controller.abort();
+    for (const handle of this.#staleChains.values()) this.#timers.clear(handle);
+    this.#staleChains.clear();
+    this.#startRecovery(library);
   }
 
-  /** Resolves once the background work queued so far is done (tests, and shutdown). Never rejects. */
-  settled(): Promise<void> {
-    return this.#background;
+  /** Resolves once the background work started so far is done (tests, and shutdown). Never rejects. */
+  async settled(): Promise<void> {
+    while (this.#tasks.size > 0) await Promise.allSettled([...this.#tasks]);
   }
 
-  #chain(work: () => Promise<void>): void {
-    this.#background = this.#background.then(work).catch((error: unknown) => {
+  #track(work: () => Promise<void>): void {
+    const task = work().catch((error: unknown) => {
       this.#deps.log(`background work failed (${kindOf(error)})`);
+    });
+    this.#tasks.add(task);
+    void task.finally(() => this.#tasks.delete(task));
+  }
+
+  #startRecovery(library: Library, exportCheck?: ExportRootCheck): void {
+    const controller = new AbortController();
+    this.#recoveries.get(library)?.abort();
+    this.#recoveries.set(library, controller);
+    this.#track(async () => {
+      try {
+        await this.#recover(library, controller.signal, { ...(exportCheck === undefined ? {} : { exportCheck }) });
+      } finally {
+        if (this.#recoveries.get(library) === controller) this.#recoveries.delete(library);
+      }
     });
   }
 
@@ -454,24 +642,32 @@ export class VideoService {
     for (const { code } of swept.skipped) this.#deps.log(`a leftover in render-tmp could not be removed (${code}); the next start tries again`);
   }
 
-  async #recover(library: Library, exportCheck?: ExportRootCheck): Promise<void> {
+  async #recover(library: Library, signal: AbortSignal, options: { exportCheck?: ExportRootCheck; only?: { videoIds: readonly string[] } }): Promise<void> {
     const deps = this.#deps;
     // A FRESH look at the root, and the SAME tracker the renders register in: a live commit is never taken for a crash's leftover.
-    const exportRoot = await this.#freshRoot(exportCheck);
+    const exportRoot = await this.#freshRoot(options.exportCheck);
+    if (signal.aborted) return;
     const run = deps.recover?.run ?? recoverVideos;
-    const report = await run({ library, exportRoot, live: deps.tracker }, { log: deps.log, ...deps.recover?.deps });
+    const report = await run({ library, exportRoot, live: deps.tracker, signal, ...(options.only === undefined ? {} : { only: options.only }) }, { log: deps.log, ...deps.recover?.deps });
     // Counts only, and only when there was something to settle: a clean open is silent.
     if (report.adopted.length + report.dropped.length + report.deferred.length + report.left.length + report.skipped.length > 0) {
       deps.log(`recovery: ${report.adopted.length} adopted, ${report.dropped.length} dropped, ${report.deferred.length} deferred, ${report.left.length} left, ${report.skipped.length} skipped`);
     }
     // Adopted records are new to the windows; a library that is no longer the live one has no windows to tell.
     if (deps.openLibrary() === library) {
-      for (const videoId of report.adopted) await this.#announceAdopted(library, videoId);
+      const avatars = new Set<string>();
+      for (const videoId of report.adopted) {
+        const avatarId = await this.#announceAdopted(library, videoId);
+        if (avatarId !== null) avatars.add(avatarId);
+      }
+      // Their photos are used now: the avatars' counts moved.
+      for (const avatarId of avatars) this.#announce(library, avatarId);
     }
-    for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id, 0);
+    if (options.only === undefined) for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id);
   }
 
-  async #announceAdopted(library: Library, videoId: string): Promise<void> {
+  /** The avatar the adopted record belongs to (announced), or null when it could not be read back. */
+  async #announceAdopted(library: Library, videoId: string): Promise<string | null> {
     for (const manifest of library.listAvatars()) {
       let record: VideoRecord | null;
       try {
@@ -481,21 +677,46 @@ export class VideoService {
         continue;
       }
       // Recovery has just verified the file's size and sha256: it is present.
-      if (record !== null) return this.#committed(record);
+      if (record !== null) {
+        this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "upserted", video: videoSummaryOf(record, "present") } });
+        return record.avatarId;
+      }
     }
+    return null;
   }
 
-  /** The used index of `avatarId` is behind its committed videos (`index-stale`): read the records again, a few times, in the background. */
-  #scheduleStaleRetry(library: Library, avatarId: string, attempt: number): void {
+  /** After a failed job: if its commit intent is still there, settle it (targeted recovery: adopt the file, or drop the intent). Nothing is done in the usual case, where the rollback removed it. */
+  #settleLeftover(library: Library, avatarId: string, videoId: string): void {
+    if (this.#closing) return;
+    this.#track(async () => {
+      try {
+        await lstat(videoPaths(library.root, avatarId).intent(videoId));
+      } catch (error) {
+        if (hasErrorCode(error, "ENOENT")) return; // the usual case: nothing was left
+        this.#deps.log(`the commit intent of ${videoId} could not be looked at (${kindOf(error)})`);
+        return;
+      }
+      const controller = new AbortController();
+      await this.#recover(library, controller.signal, { only: { videoIds: [videoId] } });
+    });
+  }
+
+  /**
+   * The used index of `avatarId` is behind its committed videos (`index-stale`): read the records again in the background,
+   * on a schedule whose last delay REPEATS until the records are read (or the library is no longer the live one). One chain
+   * per avatar: a second request while one is running changes nothing. (`videos.render` and `videos.list` also read the
+   * records again on demand, so the avatar is not closed for the wait.)
+   */
+  #scheduleStaleRetry(library: Library, avatarId: string, attempt = 0): void {
     const delays = this.#deps.staleRetryDelaysMs ?? DEFAULT_STALE_RETRY_DELAYS_MS;
-    if (this.#closing || attempt >= delays.length || library.videoIndexStale(avatarId).length === 0) return;
-    const timer = setTimeout(() => {
-      this.#timers.delete(timer);
+    if (this.#closing || delays.length === 0) return;
+    if (attempt === 0 && (this.#staleChains.has(avatarId) || library.videoIndexStale(avatarId).length === 0)) return;
+    const delay = delays[Math.min(attempt, delays.length - 1)] ?? 0;
+    const handle = this.#timers.set(() => {
+      this.#staleChains.delete(avatarId);
       void this.#retryStale(library, avatarId, attempt);
-    }, delays[attempt]);
-    // A retry must never keep the engine alive.
-    if (typeof timer === "object" && "unref" in timer) timer.unref();
-    this.#timers.add(timer);
+    }, delay);
+    this.#staleChains.set(avatarId, handle);
   }
 
   async #retryStale(library: Library, avatarId: string, attempt: number): Promise<void> {
@@ -506,7 +727,7 @@ export class VideoService {
       this.#deps.log(`the used index of avatar ${avatarId} could not be rebuilt (${kindOf(error)})`);
     }
     // Nothing else clears the flag: a quarantine or a "repair" must never act on it (no record is broken).
-    this.#scheduleStaleRetry(library, avatarId, attempt + 1);
+    if (library.videoIndexStale(avatarId).length > 0) this.#scheduleStaleRetry(library, avatarId, attempt + 1);
   }
 
   // ---------- stop ----------
@@ -520,8 +741,9 @@ export class VideoService {
    */
   async shutdown(boundMs: number): Promise<{ idle: boolean }> {
     this.#closing = true;
-    for (const timer of this.#timers) clearTimeout(timer);
-    this.#timers.clear();
+    for (const handle of this.#staleChains.values()) this.#timers.clear(handle);
+    this.#staleChains.clear();
+    for (const controller of this.#recoveries.values()) controller.abort();
     for (const state of this.#deps.queue.states()) {
       if (state.kind === "render" && (state.status === "queued" || state.status === "running")) this.#deps.queue.cancel(state.jobId);
     }
@@ -531,6 +753,10 @@ export class VideoService {
     });
     try {
       const outcome = await Promise.race([this.#deps.queue.idle().then(() => "idle" as const), bound]);
+      if (outcome === "timeout") {
+        const unfinished = this.#deps.queue.states().filter((s) => s.kind === "render" && (s.status === "queued" || s.status === "running")).length;
+        this.#deps.log(`shutdown: ${unfinished} render(s) had not ended within ${boundMs} ms; the next start's recovery settles what they left`);
+      }
       return { idle: outcome === "idle" };
     } finally {
       clearTimeout(timer);

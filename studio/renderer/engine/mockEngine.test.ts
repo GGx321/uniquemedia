@@ -742,7 +742,7 @@ test.each([
   ["videos.render", { montageId: "montage-00000001" }],
   ["videos.cancel", { jobId: "job-00000004" }],
   ["videos.list", { avatarId: "avatar-0001" }],
-  ["videos.delete", { videoId: "video-00000001" }],
+  ["videos.delete", { videoId: "video-00000001", mode: "video" }],
   ["montages.create", { avatarId: "avatar-0001", photoIds: [] }],
 ] as const)("%s answers the typed INTERNAL refusal the real engine gives, and the mock keeps working", async (type, payload) => {
   const { client } = makeMock();
