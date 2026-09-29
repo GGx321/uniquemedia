@@ -1,0 +1,67 @@
+{
+  "finals": {
+    "single graph, medium": {
+      "ssim": 0.979612,
+      "psnr": 31.731981
+    },
+    "two-pass qp0, medium": {
+      "ssim": 0.979578,
+      "psnr": 31.712256
+    },
+    "two-pass crf8, medium": {
+      "ssim": 0.978663,
+      "psnr": 31.700292
+    },
+    "two-pass crf10, medium": {
+      "ssim": 0.978454,
+      "psnr": 31.697035
+    }
+  },
+  "autoFormula": [
+    {
+      "machine": "this Mac",
+      "cores": 14,
+      "ramGiB": 36,
+      "peakRssMiB": 768,
+      "coresTerm": 4,
+      "ramTerm": 12,
+      "auto": 4
+    },
+    {
+      "machine": "16 GB, 8 cores",
+      "cores": 8,
+      "ramGiB": 16,
+      "peakRssMiB": 768,
+      "coresTerm": 3,
+      "ramTerm": 5,
+      "auto": 3
+    },
+    {
+      "machine": "16 GB, 4 cores",
+      "cores": 4,
+      "ramGiB": 16,
+      "peakRssMiB": 768,
+      "coresTerm": 1,
+      "ramTerm": 5,
+      "auto": 1
+    },
+    {
+      "machine": "8 GB, 8 cores",
+      "cores": 8,
+      "ramGiB": 8,
+      "peakRssMiB": 768,
+      "coresTerm": 3,
+      "ramTerm": 2,
+      "auto": 2
+    },
+    {
+      "machine": "8 GB, 4 cores",
+      "cores": 4,
+      "ramGiB": 8,
+      "peakRssMiB": 768,
+      "coresTerm": 1,
+      "ramTerm": 2,
+      "auto": 1
+    }
+  ]
+}

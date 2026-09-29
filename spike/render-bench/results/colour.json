@@ -1,0 +1,1108 @@
+{
+  "jpegRoundTripMaxRgbDev": 1,
+  "explicit (lossless)": {
+    "note": "the plan's chain: swscale pc/601 -> tv/709 for the photo, explicit 709 tv for the sticker",
+    "maxAbsDev": {
+      "Y": 0.96,
+      "Cb": 1.6,
+      "Cr": 1.54
+    },
+    "worstByPatchGroup": {
+      "grid": 1.54,
+      "blockL": 1.25,
+      "blockR": 1.6,
+      "stickerOpaque": 0.48,
+      "stickerA128": 1.02
+    },
+    "patches": [
+      {
+        "patch": "grid0",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid1",
+        "dY": -0.19,
+        "dCb": -0.11,
+        "dCr": -0.69
+      },
+      {
+        "patch": "grid2",
+        "dY": -0.16,
+        "dCb": -1.22,
+        "dCr": -1.11
+      },
+      {
+        "patch": "grid3",
+        "dY": -0.32,
+        "dCb": -0.33,
+        "dCr": -0.8
+      },
+      {
+        "patch": "grid4",
+        "dY": 0.28,
+        "dCb": -0.67,
+        "dCr": -1.2
+      },
+      {
+        "patch": "grid5",
+        "dY": 0.13,
+        "dCb": 0.22,
+        "dCr": 0.11
+      },
+      {
+        "patch": "grid6",
+        "dY": 0.16,
+        "dCb": 0.11,
+        "dCr": -0.31
+      },
+      {
+        "patch": "grid7",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid8",
+        "dY": -0.56,
+        "dCb": -0.34,
+        "dCr": -1
+      },
+      {
+        "patch": "grid9",
+        "dY": -0.63,
+        "dCb": 0.34,
+        "dCr": -0.27
+      },
+      {
+        "patch": "grid10",
+        "dY": 0.19,
+        "dCb": -1,
+        "dCr": -0.73
+      },
+      {
+        "patch": "grid11",
+        "dY": -0.19,
+        "dCb": 0,
+        "dCr": -0.27
+      },
+      {
+        "patch": "grid12",
+        "dY": -0.44,
+        "dCb": -0.66,
+        "dCr": -1
+      },
+      {
+        "patch": "grid13",
+        "dY": -0.37,
+        "dCb": -1.34,
+        "dCr": -0.73
+      },
+      {
+        "patch": "grid14",
+        "dY": -0.96,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid15",
+        "dY": -0.93,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid16",
+        "dY": -0.89,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid17",
+        "dY": -0.06,
+        "dCb": -0.34,
+        "dCr": -1.54
+      },
+      {
+        "patch": "grid18",
+        "dY": -0.19,
+        "dCb": -0.84,
+        "dCr": -0.57
+      },
+      {
+        "patch": "grid19",
+        "dY": -0.55,
+        "dCb": -0.69,
+        "dCr": -0.85
+      },
+      {
+        "patch": "grid20",
+        "dY": -0.91,
+        "dCb": 0.04,
+        "dCr": -0.42
+      },
+      {
+        "patch": "grid21",
+        "dY": -0.74,
+        "dCb": -0.73,
+        "dCr": -0.7
+      },
+      {
+        "patch": "grid22",
+        "dY": -0.74,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid23",
+        "dY": -0.82,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "blockL",
+        "dY": 0.17,
+        "dCb": -0.39,
+        "dCr": -1.25
+      },
+      {
+        "patch": "blockR",
+        "dY": 0.05,
+        "dCb": -1.6,
+        "dCr": -0.55
+      },
+      {
+        "patch": "stickerOpaque0",
+        "dY": -0.22,
+        "dCb": 0.12,
+        "dCr": -0.06
+      },
+      {
+        "patch": "stickerA128_0",
+        "dY": 0.07,
+        "dCb": -0.54,
+        "dCr": 0.46
+      },
+      {
+        "patch": "stickerOpaque1",
+        "dY": 0.41,
+        "dCb": -0.38,
+        "dCr": -0.34
+      },
+      {
+        "patch": "stickerA128_1",
+        "dY": 0.78,
+        "dCb": -0.25,
+        "dCr": -0.42
+      },
+      {
+        "patch": "stickerOpaque2",
+        "dY": -0.08,
+        "dCb": 0.48,
+        "dCr": 0.21
+      },
+      {
+        "patch": "stickerA128_2",
+        "dY": -0.37,
+        "dCb": 0.48,
+        "dCr": -0.21
+      },
+      {
+        "patch": "stickerOpaque3",
+        "dY": -0.07,
+        "dCb": -0.07,
+        "dCr": 0.21
+      },
+      {
+        "patch": "stickerA128_3",
+        "dY": 0.47,
+        "dCb": -1.02,
+        "dCr": -0.32
+      }
+    ]
+  },
+  "explicit-zscale-photo (lossless)": {
+    "note": "photo through zscale (frames tagged before zscale, SP3) instead of swscale",
+    "maxAbsDev": {
+      "Y": 0.78,
+      "Cb": 1.02,
+      "Cr": 0.85
+    },
+    "worstByPatchGroup": {
+      "grid": 0.85,
+      "blockL": 0.62,
+      "blockR": 0.6,
+      "stickerOpaque": 0.48,
+      "stickerA128": 1.02
+    },
+    "patches": [
+      {
+        "patch": "grid0",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid1",
+        "dY": -0.19,
+        "dCb": -0.11,
+        "dCr": -0.69
+      },
+      {
+        "patch": "grid2",
+        "dY": -0.16,
+        "dCb": -0.22,
+        "dCr": -0.11
+      },
+      {
+        "patch": "grid3",
+        "dY": -0.32,
+        "dCb": 0.67,
+        "dCr": 0.2
+      },
+      {
+        "patch": "grid4",
+        "dY": 0.28,
+        "dCb": -0.67,
+        "dCr": -0.2
+      },
+      {
+        "patch": "grid5",
+        "dY": 0.13,
+        "dCb": 0.22,
+        "dCr": 0.11
+      },
+      {
+        "patch": "grid6",
+        "dY": 0.16,
+        "dCb": 0.11,
+        "dCr": 0.69
+      },
+      {
+        "patch": "grid7",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid8",
+        "dY": -0.56,
+        "dCb": -0.34,
+        "dCr": 0
+      },
+      {
+        "patch": "grid9",
+        "dY": 0.37,
+        "dCb": 0.34,
+        "dCr": -0.27
+      },
+      {
+        "patch": "grid10",
+        "dY": 0.19,
+        "dCb": 0,
+        "dCr": -0.73
+      },
+      {
+        "patch": "grid11",
+        "dY": -0.19,
+        "dCb": 0,
+        "dCr": -0.27
+      },
+      {
+        "patch": "grid12",
+        "dY": 0.56,
+        "dCb": 0.34,
+        "dCr": 0
+      },
+      {
+        "patch": "grid13",
+        "dY": -0.37,
+        "dCb": -0.34,
+        "dCr": 0.27
+      },
+      {
+        "patch": "grid14",
+        "dY": 0.04,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid15",
+        "dY": 0.07,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid16",
+        "dY": 0.11,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid17",
+        "dY": -0.06,
+        "dCb": 0.66,
+        "dCr": -0.54
+      },
+      {
+        "patch": "grid18",
+        "dY": -0.19,
+        "dCb": 0.16,
+        "dCr": 0.43
+      },
+      {
+        "patch": "grid19",
+        "dY": -0.55,
+        "dCb": -0.69,
+        "dCr": -0.85
+      },
+      {
+        "patch": "grid20",
+        "dY": 0.09,
+        "dCb": 0.04,
+        "dCr": -0.42
+      },
+      {
+        "patch": "grid21",
+        "dY": -0.74,
+        "dCb": -0.73,
+        "dCr": 0.3
+      },
+      {
+        "patch": "grid22",
+        "dY": 0.26,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid23",
+        "dY": 0.18,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "blockL",
+        "dY": 0.17,
+        "dCb": -0.14,
+        "dCr": -0.62
+      },
+      {
+        "patch": "blockR",
+        "dY": 0.05,
+        "dCb": -0.6,
+        "dCr": 0.45
+      },
+      {
+        "patch": "stickerOpaque0",
+        "dY": -0.22,
+        "dCb": 0.12,
+        "dCr": -0.06
+      },
+      {
+        "patch": "stickerA128_0",
+        "dY": 0.07,
+        "dCb": -0.54,
+        "dCr": 0.46
+      },
+      {
+        "patch": "stickerOpaque1",
+        "dY": 0.41,
+        "dCb": -0.38,
+        "dCr": -0.34
+      },
+      {
+        "patch": "stickerA128_1",
+        "dY": 0.78,
+        "dCb": -0.25,
+        "dCr": -0.42
+      },
+      {
+        "patch": "stickerOpaque2",
+        "dY": -0.08,
+        "dCb": 0.48,
+        "dCr": 0.21
+      },
+      {
+        "patch": "stickerA128_2",
+        "dY": -0.37,
+        "dCb": 0.48,
+        "dCr": -0.21
+      },
+      {
+        "patch": "stickerOpaque3",
+        "dY": -0.07,
+        "dCb": -0.07,
+        "dCr": 0.21
+      },
+      {
+        "patch": "stickerA128_3",
+        "dY": 0.47,
+        "dCb": -1.02,
+        "dCr": -0.32
+      }
+    ]
+  },
+  "sticker-implicit-601 (lossless)": {
+    "note": "TRAP: sticker converted by the auto-inserted scaler (BT.601 matrix) and mixed with 709 video",
+    "maxAbsDev": {
+      "Y": 14.59,
+      "Cb": 8.88,
+      "Cr": 4.79
+    },
+    "worstByPatchGroup": {
+      "grid": 1.54,
+      "blockL": 1.25,
+      "blockR": 1.6,
+      "stickerOpaque": 14.59,
+      "stickerA128": 7.22
+    },
+    "patches": [
+      {
+        "patch": "grid0",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid1",
+        "dY": -0.19,
+        "dCb": -0.11,
+        "dCr": -0.69
+      },
+      {
+        "patch": "grid2",
+        "dY": -0.16,
+        "dCb": -1.22,
+        "dCr": -1.11
+      },
+      {
+        "patch": "grid3",
+        "dY": -0.32,
+        "dCb": -0.33,
+        "dCr": -0.8
+      },
+      {
+        "patch": "grid4",
+        "dY": 0.28,
+        "dCb": -0.67,
+        "dCr": -1.2
+      },
+      {
+        "patch": "grid5",
+        "dY": 0.13,
+        "dCb": 0.22,
+        "dCr": 0.11
+      },
+      {
+        "patch": "grid6",
+        "dY": 0.16,
+        "dCb": 0.11,
+        "dCr": -0.31
+      },
+      {
+        "patch": "grid7",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid8",
+        "dY": -0.56,
+        "dCb": -0.34,
+        "dCr": -1
+      },
+      {
+        "patch": "grid9",
+        "dY": -0.63,
+        "dCb": 0.34,
+        "dCr": -0.27
+      },
+      {
+        "patch": "grid10",
+        "dY": 0.19,
+        "dCb": -1,
+        "dCr": -0.73
+      },
+      {
+        "patch": "grid11",
+        "dY": -0.19,
+        "dCb": 0,
+        "dCr": -0.27
+      },
+      {
+        "patch": "grid12",
+        "dY": -0.44,
+        "dCb": -0.66,
+        "dCr": -1
+      },
+      {
+        "patch": "grid13",
+        "dY": -0.37,
+        "dCb": -1.34,
+        "dCr": -0.73
+      },
+      {
+        "patch": "grid14",
+        "dY": -0.96,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid15",
+        "dY": -0.93,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid16",
+        "dY": -0.89,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid17",
+        "dY": -0.06,
+        "dCb": -0.34,
+        "dCr": -1.54
+      },
+      {
+        "patch": "grid18",
+        "dY": -0.19,
+        "dCb": -0.84,
+        "dCr": -0.57
+      },
+      {
+        "patch": "grid19",
+        "dY": -0.55,
+        "dCb": -0.69,
+        "dCr": -0.85
+      },
+      {
+        "patch": "grid20",
+        "dY": -0.91,
+        "dCb": 0.04,
+        "dCr": -0.42
+      },
+      {
+        "patch": "grid21",
+        "dY": -0.74,
+        "dCb": -0.73,
+        "dCr": -0.7
+      },
+      {
+        "patch": "grid22",
+        "dY": -0.74,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid23",
+        "dY": -0.82,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "blockL",
+        "dY": 0.17,
+        "dCb": -0.39,
+        "dCr": -1.25
+      },
+      {
+        "patch": "blockR",
+        "dY": 0.05,
+        "dCb": -1.6,
+        "dCr": -0.55
+      },
+      {
+        "patch": "stickerOpaque0",
+        "dY": 13.78,
+        "dCb": -8.88,
+        "dCr": -0.06
+      },
+      {
+        "patch": "stickerA128_0",
+        "dY": 7.07,
+        "dCb": -4.54,
+        "dCr": 0.46
+      },
+      {
+        "patch": "stickerOpaque1",
+        "dY": -14.59,
+        "dCb": 6.62,
+        "dCr": 3.66
+      },
+      {
+        "patch": "stickerA128_1",
+        "dY": -7.22,
+        "dCb": 2.75,
+        "dCr": 1.58
+      },
+      {
+        "patch": "stickerOpaque2",
+        "dY": 1.92,
+        "dCb": 1.48,
+        "dCr": -4.79
+      },
+      {
+        "patch": "stickerA128_2",
+        "dY": 0.63,
+        "dCb": 0.48,
+        "dCr": -3.21
+      },
+      {
+        "patch": "stickerOpaque3",
+        "dY": -0.07,
+        "dCb": -3.07,
+        "dCr": 4.21
+      },
+      {
+        "patch": "stickerA128_3",
+        "dY": 0.47,
+        "dCb": -2.02,
+        "dCr": 1.68
+      }
+    ]
+  },
+  "photo-untouched (lossless)": {
+    "note": "TRAP: photo only range-converted (601 coefficients kept) but tagged bt709",
+    "maxAbsDev": {
+      "Y": 27.63,
+      "Cb": 12.34,
+      "Cr": 7.73
+    },
+    "worstByPatchGroup": {
+      "grid": 27.63,
+      "blockL": 2.25,
+      "blockR": 4.6,
+      "stickerOpaque": 0.48,
+      "stickerA128": 1.48
+    },
+    "patches": [
+      {
+        "patch": "grid0",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid1",
+        "dY": -7.19,
+        "dCb": -0.11,
+        "dCr": 5.31
+      },
+      {
+        "patch": "grid2",
+        "dY": -14.16,
+        "dCb": 8.78,
+        "dCr": -0.11
+      },
+      {
+        "patch": "grid3",
+        "dY": -21.32,
+        "dCb": 9.67,
+        "dCr": 6.2
+      },
+      {
+        "patch": "grid4",
+        "dY": 21.28,
+        "dCb": -9.67,
+        "dCr": -6.2
+      },
+      {
+        "patch": "grid5",
+        "dY": 14.13,
+        "dCb": -8.78,
+        "dCr": 0.11
+      },
+      {
+        "patch": "grid6",
+        "dY": 7.16,
+        "dCb": 0.11,
+        "dCr": -5.31
+      },
+      {
+        "patch": "grid7",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid8",
+        "dY": 18.44,
+        "dCb": -12.34,
+        "dCr": 0
+      },
+      {
+        "patch": "grid9",
+        "dY": -27.63,
+        "dCb": 12.34,
+        "dCr": 7.73
+      },
+      {
+        "patch": "grid10",
+        "dY": 9.19,
+        "dCb": 0,
+        "dCr": -7.73
+      },
+      {
+        "patch": "grid11",
+        "dY": -9.19,
+        "dCb": 0,
+        "dCr": 7.73
+      },
+      {
+        "patch": "grid12",
+        "dY": -18.44,
+        "dCb": 12.34,
+        "dCr": 0
+      },
+      {
+        "patch": "grid13",
+        "dY": 27.63,
+        "dCb": -12.34,
+        "dCr": -7.73
+      },
+      {
+        "patch": "grid14",
+        "dY": 0.04,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid15",
+        "dY": 0.07,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid16",
+        "dY": 0.11,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid17",
+        "dY": 1.94,
+        "dCb": -2.34,
+        "dCr": 1.46
+      },
+      {
+        "patch": "grid18",
+        "dY": 1.81,
+        "dCb": -2.84,
+        "dCr": 1.43
+      },
+      {
+        "patch": "grid19",
+        "dY": 2.45,
+        "dCb": -3.69,
+        "dCr": 2.15
+      },
+      {
+        "patch": "grid20",
+        "dY": 1.09,
+        "dCb": -1.96,
+        "dCr": 1.58
+      },
+      {
+        "patch": "grid21",
+        "dY": 0.26,
+        "dCb": -1.73,
+        "dCr": 1.3
+      },
+      {
+        "patch": "grid22",
+        "dY": 0.26,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid23",
+        "dY": 0.18,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "blockL",
+        "dY": -1.83,
+        "dCb": 1.99,
+        "dCr": -2.25
+      },
+      {
+        "patch": "blockR",
+        "dY": 4.05,
+        "dCb": -4.6,
+        "dCr": 2.45
+      },
+      {
+        "patch": "stickerOpaque0",
+        "dY": -0.22,
+        "dCb": 0.12,
+        "dCr": -0.06
+      },
+      {
+        "patch": "stickerA128_0",
+        "dY": -0.93,
+        "dCb": 0.46,
+        "dCr": -0.54
+      },
+      {
+        "patch": "stickerOpaque1",
+        "dY": 0.41,
+        "dCb": -0.38,
+        "dCr": -0.34
+      },
+      {
+        "patch": "stickerA128_1",
+        "dY": -0.22,
+        "dCb": 0.75,
+        "dCr": -1.42
+      },
+      {
+        "patch": "stickerOpaque2",
+        "dY": -0.08,
+        "dCb": 0.48,
+        "dCr": 0.21
+      },
+      {
+        "patch": "stickerA128_2",
+        "dY": -1.37,
+        "dCb": 1.48,
+        "dCr": -0.21
+      },
+      {
+        "patch": "stickerOpaque3",
+        "dY": -0.07,
+        "dCb": -0.07,
+        "dCr": 0.21
+      },
+      {
+        "patch": "stickerA128_3",
+        "dY": -0.53,
+        "dCb": -0.02,
+        "dCr": -0.32
+      }
+    ]
+  },
+  "explicit (final encode CRF 20)": {
+    "note": "the plan's chain: swscale pc/601 -> tv/709 for the photo, explicit 709 tv for the sticker",
+    "maxAbsDev": {
+      "Y": 0.96,
+      "Cb": 1.6,
+      "Cr": 1.54
+    },
+    "worstByPatchGroup": {
+      "grid": 1.54,
+      "blockL": 1.12,
+      "blockR": 1.6,
+      "stickerOpaque": 0.48,
+      "stickerA128": 1.02
+    },
+    "patches": [
+      {
+        "patch": "grid0",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid1",
+        "dY": -0.19,
+        "dCb": -0.11,
+        "dCr": -0.69
+      },
+      {
+        "patch": "grid2",
+        "dY": -0.16,
+        "dCb": -1.22,
+        "dCr": -1.11
+      },
+      {
+        "patch": "grid3",
+        "dY": -0.32,
+        "dCb": -0.33,
+        "dCr": -0.8
+      },
+      {
+        "patch": "grid4",
+        "dY": 0.28,
+        "dCb": -0.67,
+        "dCr": -1.2
+      },
+      {
+        "patch": "grid5",
+        "dY": 0.13,
+        "dCb": 0.22,
+        "dCr": 0.11
+      },
+      {
+        "patch": "grid6",
+        "dY": 0.16,
+        "dCb": 0.11,
+        "dCr": -0.31
+      },
+      {
+        "patch": "grid7",
+        "dY": 0,
+        "dCb": 0,
+        "dCr": 0
+      },
+      {
+        "patch": "grid8",
+        "dY": -0.56,
+        "dCb": -0.34,
+        "dCr": -1
+      },
+      {
+        "patch": "grid9",
+        "dY": -0.63,
+        "dCb": 0.34,
+        "dCr": -0.27
+      },
+      {
+        "patch": "grid10",
+        "dY": 0.19,
+        "dCb": -1,
+        "dCr": -0.73
+      },
+      {
+        "patch": "grid11",
+        "dY": -0.19,
+        "dCb": 0,
+        "dCr": -0.27
+      },
+      {
+        "patch": "grid12",
+        "dY": -0.44,
+        "dCb": -0.66,
+        "dCr": -1
+      },
+      {
+        "patch": "grid13",
+        "dY": -0.37,
+        "dCb": -1.34,
+        "dCr": -0.73
+      },
+      {
+        "patch": "grid14",
+        "dY": -0.96,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid15",
+        "dY": -0.93,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid16",
+        "dY": -0.89,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid17",
+        "dY": -0.06,
+        "dCb": -0.34,
+        "dCr": -1.54
+      },
+      {
+        "patch": "grid18",
+        "dY": -0.19,
+        "dCb": -0.84,
+        "dCr": -0.57
+      },
+      {
+        "patch": "grid19",
+        "dY": -0.55,
+        "dCb": -0.69,
+        "dCr": -0.85
+      },
+      {
+        "patch": "grid20",
+        "dY": -0.91,
+        "dCb": 0.04,
+        "dCr": -0.42
+      },
+      {
+        "patch": "grid21",
+        "dY": -0.74,
+        "dCb": -0.73,
+        "dCr": -0.7
+      },
+      {
+        "patch": "grid22",
+        "dY": -0.74,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "grid23",
+        "dY": -0.82,
+        "dCb": 0,
+        "dCr": -1
+      },
+      {
+        "patch": "blockL",
+        "dY": 0.17,
+        "dCb": -0.39,
+        "dCr": -1.12
+      },
+      {
+        "patch": "blockR",
+        "dY": 0.05,
+        "dCb": -1.6,
+        "dCr": -0.55
+      },
+      {
+        "patch": "stickerOpaque0",
+        "dY": -0.22,
+        "dCb": 0.12,
+        "dCr": -0.06
+      },
+      {
+        "patch": "stickerA128_0",
+        "dY": 0.07,
+        "dCb": -0.54,
+        "dCr": 0.46
+      },
+      {
+        "patch": "stickerOpaque1",
+        "dY": 0.41,
+        "dCb": -0.38,
+        "dCr": -0.34
+      },
+      {
+        "patch": "stickerA128_1",
+        "dY": 0.78,
+        "dCb": -0.25,
+        "dCr": -0.42
+      },
+      {
+        "patch": "stickerOpaque2",
+        "dY": -0.08,
+        "dCb": 0.48,
+        "dCr": 0.21
+      },
+      {
+        "patch": "stickerA128_2",
+        "dY": -0.37,
+        "dCb": 0.48,
+        "dCr": -0.21
+      },
+      {
+        "patch": "stickerOpaque3",
+        "dY": -0.07,
+        "dCb": -0.07,
+        "dCr": 0.21
+      },
+      {
+        "patch": "stickerA128_3",
+        "dY": 0.47,
+        "dCb": -1.02,
+        "dCr": -0.32
+      }
+    ]
+  }
+}

@@ -1,0 +1,183 @@
+{
+  "machine": {
+    "platform": "darwin-arm64",
+    "cores": 14,
+    "totalMemBytes": 38654705664,
+    "loadavgStart": [
+      5.5,
+      6,
+      8.5
+    ]
+  },
+  "runs": 3,
+  "rows": [
+    {
+      "clip": "photo kb",
+      "inter": "qp0",
+      "sizeMB": 79.1,
+      "medianMs": 1084,
+      "runsMs": [
+        1084,
+        1083,
+        1086
+      ],
+      "peakRssMB": 178,
+      "medianRssMB": 177,
+      "load1": 7
+    },
+    {
+      "clip": "photo kb",
+      "inter": "crf8",
+      "sizeMB": 33.4,
+      "medianMs": 973,
+      "runsMs": [
+        973,
+        979,
+        965
+      ],
+      "peakRssMB": 193,
+      "medianRssMB": 179,
+      "load1": 7
+    },
+    {
+      "clip": "photo kb",
+      "inter": "crf10",
+      "sizeMB": 25.4,
+      "medianMs": 917,
+      "runsMs": [
+        920,
+        917,
+        915
+      ],
+      "peakRssMB": 185,
+      "medianRssMB": 168,
+      "load1": 7.3
+    },
+    {
+      "clip": "photo pan",
+      "inter": "qp0",
+      "sizeMB": 45.9,
+      "medianMs": 886,
+      "runsMs": [
+        886,
+        879,
+        891
+      ],
+      "peakRssMB": 168,
+      "medianRssMB": 162,
+      "load1": 7.3
+    },
+    {
+      "clip": "photo pan",
+      "inter": "crf8",
+      "sizeMB": 25.4,
+      "medianMs": 915,
+      "runsMs": [
+        915,
+        927,
+        908
+      ],
+      "peakRssMB": 192,
+      "medianRssMB": 179,
+      "load1": 6.9
+    },
+    {
+      "clip": "photo pan",
+      "inter": "crf10",
+      "sizeMB": 21.9,
+      "medianMs": 895,
+      "runsMs": [
+        895,
+        913,
+        893
+      ],
+      "peakRssMB": 195,
+      "medianRssMB": 184,
+      "load1": 6.8
+    },
+    {
+      "clip": "collage3 kb+stagger",
+      "inter": "qp0",
+      "sizeMB": 77,
+      "medianMs": 2092,
+      "runsMs": [
+        2092,
+        2090,
+        2112
+      ],
+      "peakRssMB": 393,
+      "medianRssMB": 389,
+      "load1": 6.6
+    },
+    {
+      "clip": "collage3 kb+stagger",
+      "inter": "crf8",
+      "sizeMB": 35.3,
+      "medianMs": 2111,
+      "runsMs": [
+        2120,
+        2095,
+        2111
+      ],
+      "peakRssMB": 399,
+      "medianRssMB": 386,
+      "load1": 6.4
+    },
+    {
+      "clip": "collage3 kb+stagger",
+      "inter": "crf10",
+      "sizeMB": 27.4,
+      "medianMs": 2098,
+      "runsMs": [
+        2097,
+        2099,
+        2098
+      ],
+      "peakRssMB": 402,
+      "medianRssMB": 398,
+      "load1": 5.9
+    },
+    {
+      "clip": "collage4 kb+stagger",
+      "inter": "qp0",
+      "sizeMB": 71.1,
+      "medianMs": 3240,
+      "runsMs": [
+        3246,
+        3233,
+        3240
+      ],
+      "peakRssMB": 526,
+      "medianRssMB": 525,
+      "load1": 5.6
+    },
+    {
+      "clip": "collage4 kb+stagger",
+      "inter": "crf8",
+      "sizeMB": 40.3,
+      "medianMs": 3258,
+      "runsMs": [
+        3258,
+        3252,
+        3261
+      ],
+      "peakRssMB": 539,
+      "medianRssMB": 535,
+      "load1": 5.3
+    },
+    {
+      "clip": "collage4 kb+stagger",
+      "inter": "crf10",
+      "sizeMB": 30.8,
+      "medianMs": 3278,
+      "runsMs": [
+        3278,
+        3262,
+        3309
+      ],
+      "peakRssMB": 539,
+      "medianRssMB": 539,
+      "load1": 5.5
+    }
+  ]
+}

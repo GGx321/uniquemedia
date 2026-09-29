@@ -1,0 +1,455 @@
+{
+  "tech": "zp4",
+  "runs": 3,
+  "totalSeconds": 15,
+  "totalFrames": 450,
+  "machine": {
+    "platform": "darwin-arm64",
+    "cores": 14,
+    "totalMemBytes": 38654705664,
+    "loadavgStart": [
+      5.3,
+      10.6,
+      14.8
+    ]
+  },
+  "single": {
+    "medianMs": 12071,
+    "runsMs": [
+      12071,
+      12001,
+      12420
+    ],
+    "peakRssMB": 1552,
+    "load1": 5.2,
+    "sizeMB": 5.34,
+    "facts": {
+      "frames": 450,
+      "ptsDeltaMs": {
+        "min": 33.333,
+        "max": 33.334
+      },
+      "streams": [
+        {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 1080,
+          "height": 1920,
+          "pix_fmt": "yuv420p",
+          "color_range": "tv",
+          "color_space": "bt709",
+          "color_transfer": "bt709",
+          "color_primaries": "bt709",
+          "r_frame_rate": "30/1",
+          "duration": "15.000000",
+          "nb_frames": "450"
+        },
+        {
+          "codec_name": "aac",
+          "profile": "LC",
+          "sample_rate": "48000",
+          "channels": 2,
+          "r_frame_rate": "0/0",
+          "duration": "15.000000",
+          "nb_frames": "705"
+        }
+      ],
+      "container": {
+        "duration": "15.000000",
+        "size": "5604212"
+      }
+    }
+  },
+  "twoPass": {
+    "qp0": {
+      "perClip": [
+        {
+          "kind": "photo",
+          "motion": "kb",
+          "seconds": 4,
+          "ms": 1058,
+          "rssMB": 180,
+          "sizeMB": 79.07
+        },
+        {
+          "kind": "collage3",
+          "motion": "kb",
+          "seconds": 3,
+          "ms": 1618,
+          "rssMB": 395,
+          "sizeMB": 55.78
+        },
+        {
+          "kind": "photo",
+          "motion": "pan",
+          "seconds": 3,
+          "ms": 697,
+          "rssMB": 180,
+          "sizeMB": 38.5
+        },
+        {
+          "kind": "collage2",
+          "motion": "kb",
+          "seconds": 3,
+          "ms": 1024,
+          "rssMB": 269,
+          "sizeMB": 54.71
+        },
+        {
+          "kind": "collage4",
+          "motion": "kb",
+          "seconds": 2,
+          "ms": 1767,
+          "rssMB": 538,
+          "sizeMB": 30.63
+        }
+      ],
+      "pass1TotalMs": 6164,
+      "pass1PeakRssMB": 538,
+      "intermediatesTotalMB": 258.7,
+      "pass2": {
+        "medianMs": 9086,
+        "runsMs": [
+          9086,
+          9099,
+          9083
+        ],
+        "peakRssMB": 688,
+        "load1": 6.9
+      },
+      "totalMs": 15250,
+      "peakRssMB": 688,
+      "finalSizeMB": 5.35,
+      "facts": {
+        "frames": 450,
+        "ptsDeltaMs": {
+          "min": 33.333,
+          "max": 33.334
+        },
+        "streams": [
+          {
+            "codec_name": "h264",
+            "profile": "High",
+            "width": 1080,
+            "height": 1920,
+            "pix_fmt": "yuv420p",
+            "color_range": "tv",
+            "color_space": "bt709",
+            "color_transfer": "bt709",
+            "color_primaries": "bt709",
+            "r_frame_rate": "30/1",
+            "duration": "15.000000",
+            "nb_frames": "450"
+          },
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "15.000000",
+            "nb_frames": "705"
+          }
+        ],
+        "container": {
+          "duration": "15.000000",
+          "size": "5607952"
+        }
+      }
+    },
+    "crf8": {
+      "perClip": [
+        {
+          "kind": "photo",
+          "motion": "kb",
+          "seconds": 4,
+          "ms": 966,
+          "rssMB": 191,
+          "sizeMB": 33.37
+        },
+        {
+          "kind": "collage3",
+          "motion": "kb",
+          "seconds": 3,
+          "ms": 1628,
+          "rssMB": 406,
+          "sizeMB": 26.27
+        },
+        {
+          "kind": "photo",
+          "motion": "pan",
+          "seconds": 3,
+          "ms": 693,
+          "rssMB": 181,
+          "sizeMB": 19.22
+        },
+        {
+          "kind": "collage2",
+          "motion": "kb",
+          "seconds": 3,
+          "ms": 982,
+          "rssMB": 278,
+          "sizeMB": 24.35
+        },
+        {
+          "kind": "collage4",
+          "motion": "kb",
+          "seconds": 2,
+          "ms": 1762,
+          "rssMB": 533,
+          "sizeMB": 16.91
+        }
+      ],
+      "pass1TotalMs": 6031,
+      "pass1PeakRssMB": 533,
+      "intermediatesTotalMB": 120.1,
+      "pass2": {
+        "medianMs": 9712,
+        "runsMs": [
+          9838,
+          9712,
+          9703
+        ],
+        "peakRssMB": 640,
+        "load1": 6.1
+      },
+      "totalMs": 15743,
+      "peakRssMB": 640,
+      "finalSizeMB": 5.76,
+      "facts": {
+        "frames": 450,
+        "ptsDeltaMs": {
+          "min": 33.333,
+          "max": 33.334
+        },
+        "streams": [
+          {
+            "codec_name": "h264",
+            "profile": "High",
+            "width": 1080,
+            "height": 1920,
+            "pix_fmt": "yuv420p",
+            "color_range": "tv",
+            "color_space": "bt709",
+            "color_transfer": "bt709",
+            "color_primaries": "bt709",
+            "r_frame_rate": "30/1",
+            "duration": "15.000000",
+            "nb_frames": "450"
+          },
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "15.000000",
+            "nb_frames": "705"
+          }
+        ],
+        "container": {
+          "duration": "15.000000",
+          "size": "6038088"
+        }
+      }
+    },
+    "crf10": {
+      "perClip": [
+        {
+          "kind": "photo",
+          "motion": "kb",
+          "seconds": 4,
+          "ms": 915,
+          "rssMB": 174,
+          "sizeMB": 25.39
+        },
+        {
+          "kind": "collage3",
+          "motion": "kb",
+          "seconds": 3,
+          "ms": 1619,
+          "rssMB": 395,
+          "sizeMB": 20.5
+        },
+        {
+          "kind": "photo",
+          "motion": "pan",
+          "seconds": 3,
+          "ms": 676,
+          "rssMB": 180,
+          "sizeMB": 16.53
+        },
+        {
+          "kind": "collage2",
+          "motion": "kb",
+          "seconds": 3,
+          "ms": 955,
+          "rssMB": 275,
+          "sizeMB": 18.8
+        },
+        {
+          "kind": "collage4",
+          "motion": "kb",
+          "seconds": 2,
+          "ms": 1758,
+          "rssMB": 533,
+          "sizeMB": 13.45
+        }
+      ],
+      "pass1TotalMs": 5923,
+      "pass1PeakRssMB": 533,
+      "intermediatesTotalMB": 94.7,
+      "pass2": {
+        "medianMs": 9969,
+        "runsMs": [
+          9968,
+          9969,
+          9973
+        ],
+        "peakRssMB": 630,
+        "load1": 4.9
+      },
+      "totalMs": 15892,
+      "peakRssMB": 630,
+      "finalSizeMB": 6.02,
+      "facts": {
+        "frames": 450,
+        "ptsDeltaMs": {
+          "min": 33.333,
+          "max": 33.334
+        },
+        "streams": [
+          {
+            "codec_name": "h264",
+            "profile": "High",
+            "width": 1080,
+            "height": 1920,
+            "pix_fmt": "yuv420p",
+            "color_range": "tv",
+            "color_space": "bt709",
+            "color_transfer": "bt709",
+            "color_primaries": "bt709",
+            "r_frame_rate": "30/1",
+            "duration": "15.000000",
+            "nb_frames": "450"
+          },
+          {
+            "codec_name": "aac",
+            "profile": "LC",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "15.000000",
+            "nb_frames": "705"
+          }
+        ],
+        "container": {
+          "duration": "15.000000",
+          "size": "6307347"
+        }
+      }
+    }
+  },
+  "quality": {
+    "qp0": {
+      "vsSingle": {
+        "ssim": 0.999859,
+        "psnr": 54.800856,
+        "minFrameSsim": 0.980978
+      },
+      "vsQp0Final": null
+    },
+    "crf8": {
+      "vsSingle": {
+        "ssim": 0.99119,
+        "psnr": 46.358534,
+        "minFrameSsim": 0.972034
+      },
+      "vsQp0Final": {
+        "ssim": 0.991228,
+        "psnr": 46.98109,
+        "minFrameSsim": 0.987003
+      }
+    },
+    "crf10": {
+      "vsSingle": {
+        "ssim": 0.990879,
+        "psnr": 46.224766,
+        "minFrameSsim": 0.971851
+      },
+      "vsQp0Final": {
+        "ssim": 0.990917,
+        "psnr": 46.827624,
+        "minFrameSsim": 0.98666
+      }
+    }
+  },
+  "intermediateFidelity": {
+    "crf8": {
+      "ssim": 0.996912,
+      "psnr": 53.278456
+    },
+    "crf10": {
+      "ssim": 0.995979,
+      "psnr": 51.927147
+    }
+  },
+  "presets": {
+    "fast": {
+      "medianMs": 7558,
+      "runsMs": [
+        7558,
+        7608,
+        7544
+      ],
+      "peakRssMB": 569,
+      "load1": 8.3,
+      "deterministic": true,
+      "sizeMB": 5.89,
+      "kbps": 3291,
+      "vsLossless": {
+        "ssim": 0.978673,
+        "psnr": 31.697539
+      }
+    },
+    "medium": {
+      "medianMs": 9708,
+      "runsMs": [
+        9708,
+        9667,
+        9798
+      ],
+      "peakRssMB": 638,
+      "load1": 7.9,
+      "deterministic": true,
+      "sizeMB": 5.76,
+      "kbps": 3220,
+      "vsLossless": {
+        "ssim": 0.978663,
+        "psnr": 31.700292
+      }
+    },
+    "slow": {
+      "medianMs": 14959,
+      "runsMs": [
+        14959,
+        15138,
+        14897
+      ],
+      "peakRssMB": 712,
+      "load1": 7.2,
+      "deterministic": true,
+      "sizeMB": 5.47,
+      "kbps": 3057,
+      "vsLossless": {
+        "ssim": 0.97877,
+        "psnr": 31.700209
+      }
+    }
+  },
+  "loadavgEnd": [
+    7.2,
+    8.4,
+    12.5
+  ]
+}

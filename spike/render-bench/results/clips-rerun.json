@@ -1,0 +1,471 @@
+{
+  "machine": {
+    "platform": "darwin-arm64",
+    "cores": 14,
+    "totalMemBytes": 38654705664,
+    "loadavgStart": [
+      5.2,
+      5.9,
+      8.4
+    ],
+    "caps": "none"
+  },
+  "loadavgEnd": [
+    6.9,
+    7.3,
+    8.5
+  ],
+  "runs": 3,
+  "rows": [
+    {
+      "kind": "photo",
+      "motion": "kb",
+      "tech": "zp1",
+      "frames": 120,
+      "medianMs": 687,
+      "runsMs": [
+        687,
+        687,
+        732
+      ],
+      "peakRssMB": 133,
+      "medianRssMB": 126,
+      "load1": 5.1
+    },
+    {
+      "kind": "photo",
+      "motion": "kb",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 777,
+      "runsMs": [
+        777,
+        781,
+        775
+      ],
+      "peakRssMB": 158,
+      "medianRssMB": 150,
+      "load1": 5.1
+    },
+    {
+      "kind": "photo",
+      "motion": "kb",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 989,
+      "runsMs": [
+        969,
+        989,
+        1091
+      ],
+      "peakRssMB": 192,
+      "medianRssMB": 184,
+      "load1": 5.1
+    },
+    {
+      "kind": "photo",
+      "motion": "kb",
+      "tech": "sc2",
+      "frames": 120,
+      "medianMs": 2149,
+      "runsMs": [
+        2149,
+        2142,
+        2174
+      ],
+      "peakRssMB": 868,
+      "medianRssMB": 854,
+      "load1": 5.1
+    },
+    {
+      "kind": "photo",
+      "motion": "kb",
+      "tech": "sc4",
+      "frames": 120,
+      "medianMs": 4773,
+      "runsMs": [
+        4653,
+        5263,
+        4773
+      ],
+      "peakRssMB": 1996,
+      "medianRssMB": 1991,
+      "load1": 6.5
+    },
+    {
+      "kind": "photo",
+      "motion": "pan",
+      "tech": "zp1",
+      "frames": 120,
+      "medianMs": 638,
+      "runsMs": [
+        637,
+        639,
+        638
+      ],
+      "peakRssMB": 129,
+      "medianRssMB": 129,
+      "load1": 6.7
+    },
+    {
+      "kind": "photo",
+      "motion": "pan",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 752,
+      "runsMs": [
+        765,
+        752,
+        747
+      ],
+      "peakRssMB": 157,
+      "medianRssMB": 156,
+      "load1": 6.9
+    },
+    {
+      "kind": "photo",
+      "motion": "pan",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 954,
+      "runsMs": [
+        972,
+        951,
+        954
+      ],
+      "peakRssMB": 190,
+      "medianRssMB": 184,
+      "load1": 6.9
+    },
+    {
+      "kind": "photo",
+      "motion": "pan",
+      "tech": "cv2e",
+      "frames": 120,
+      "medianMs": 679,
+      "runsMs": [
+        686,
+        676,
+        679
+      ],
+      "peakRssMB": 190,
+      "medianRssMB": 185,
+      "load1": 6.9
+    },
+    {
+      "kind": "photo",
+      "motion": "pan",
+      "tech": "cv4e",
+      "frames": 120,
+      "medianMs": 819,
+      "runsMs": [
+        826,
+        815,
+        819
+      ],
+      "peakRssMB": 270,
+      "medianRssMB": 264,
+      "load1": 6.7
+    },
+    {
+      "kind": "collage2",
+      "motion": "kb",
+      "tech": "zp1",
+      "frames": 120,
+      "medianMs": 748,
+      "runsMs": [
+        745,
+        748,
+        750
+      ],
+      "peakRssMB": 202,
+      "medianRssMB": 199,
+      "load1": 6.7
+    },
+    {
+      "kind": "collage2",
+      "motion": "kb",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 955,
+      "runsMs": [
+        944,
+        955,
+        962
+      ],
+      "peakRssMB": 233,
+      "medianRssMB": 230,
+      "load1": 6.9
+    },
+    {
+      "kind": "collage2",
+      "motion": "kb",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 1295,
+      "runsMs": [
+        1357,
+        1295,
+        1282
+      ],
+      "peakRssMB": 276,
+      "medianRssMB": 272,
+      "load1": 6.8
+    },
+    {
+      "kind": "collage2",
+      "motion": "kb",
+      "tech": "sc2",
+      "frames": 120,
+      "medianMs": 3213,
+      "runsMs": [
+        3106,
+        3213,
+        4001
+      ],
+      "peakRssMB": 510,
+      "medianRssMB": 507,
+      "load1": 7.8
+    },
+    {
+      "kind": "collage2",
+      "motion": "kb",
+      "tech": "sc4",
+      "frames": 120,
+      "medianMs": 6828,
+      "runsMs": [
+        6525,
+        6981,
+        6828
+      ],
+      "peakRssMB": 1900,
+      "medianRssMB": 1888,
+      "load1": 12.5
+    },
+    {
+      "kind": "collage3",
+      "motion": "kb",
+      "tech": "zp1",
+      "frames": 120,
+      "medianMs": 850,
+      "runsMs": [
+        890,
+        850,
+        838
+      ],
+      "peakRssMB": 261,
+      "medianRssMB": 259,
+      "load1": 11.9
+    },
+    {
+      "kind": "collage3",
+      "motion": "kb",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 1340,
+      "runsMs": [
+        1205,
+        1340,
+        1580
+      ],
+      "peakRssMB": 309,
+      "medianRssMB": 308,
+      "load1": 11.8
+    },
+    {
+      "kind": "collage3",
+      "motion": "kb",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 2431,
+      "runsMs": [
+        2559,
+        2421,
+        2431
+      ],
+      "peakRssMB": 418,
+      "medianRssMB": 402,
+      "load1": 12.3
+    },
+    {
+      "kind": "collage3",
+      "motion": "kb",
+      "tech": "sc2",
+      "frames": 120,
+      "medianMs": 3996,
+      "runsMs": [
+        3579,
+        3996,
+        4703
+      ],
+      "peakRssMB": 547,
+      "medianRssMB": 532,
+      "load1": 11.7
+    },
+    {
+      "kind": "collage3",
+      "motion": "kb",
+      "tech": "sc4",
+      "frames": 120,
+      "medianMs": 7654,
+      "runsMs": [
+        8024,
+        7590,
+        7654
+      ],
+      "peakRssMB": 2185,
+      "medianRssMB": 2183,
+      "load1": 8.9
+    },
+    {
+      "kind": "collage4",
+      "motion": "kb",
+      "tech": "zp1",
+      "frames": 120,
+      "medianMs": 908,
+      "runsMs": [
+        917,
+        906,
+        908
+      ],
+      "peakRssMB": 317,
+      "medianRssMB": 315,
+      "load1": 8.7
+    },
+    {
+      "kind": "collage4",
+      "motion": "kb",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 1441,
+      "runsMs": [
+        1441,
+        1413,
+        1443
+      ],
+      "peakRssMB": 396,
+      "medianRssMB": 395,
+      "load1": 8.5
+    },
+    {
+      "kind": "collage4",
+      "motion": "kb",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 3313,
+      "runsMs": [
+        3366,
+        3313,
+        3304
+      ],
+      "peakRssMB": 540,
+      "medianRssMB": 537,
+      "load1": 8.3
+    },
+    {
+      "kind": "collage4",
+      "motion": "kb",
+      "tech": "sc2",
+      "frames": 120,
+      "medianMs": 4326,
+      "runsMs": [
+        4367,
+        4326,
+        4303
+      ],
+      "peakRssMB": 573,
+      "medianRssMB": 571,
+      "load1": 7.3
+    },
+    {
+      "kind": "collage4",
+      "motion": "kb",
+      "tech": "sc4",
+      "frames": 120,
+      "medianMs": 9244,
+      "runsMs": [
+        9244,
+        9238,
+        9327
+      ],
+      "peakRssMB": 1419,
+      "medianRssMB": 1416,
+      "load1": 8.1
+    },
+    {
+      "kind": "collage4",
+      "motion": "pan",
+      "tech": "zp1",
+      "frames": 120,
+      "medianMs": 843,
+      "runsMs": [
+        851,
+        843,
+        842
+      ],
+      "peakRssMB": 311,
+      "medianRssMB": 311,
+      "load1": 8.1
+    },
+    {
+      "kind": "collage4",
+      "motion": "pan",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 1334,
+      "runsMs": [
+        1337,
+        1330,
+        1334
+      ],
+      "peakRssMB": 398,
+      "medianRssMB": 392,
+      "load1": 7.9
+    },
+    {
+      "kind": "collage4",
+      "motion": "pan",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 2953,
+      "runsMs": [
+        2969,
+        2953,
+        2936
+      ],
+      "peakRssMB": 539,
+      "medianRssMB": 532,
+      "load1": 7.1
+    },
+    {
+      "kind": "collage4",
+      "motion": "pan",
+      "tech": "cv2e",
+      "frames": 120,
+      "medianMs": 865,
+      "runsMs": [
+        868,
+        865,
+        860
+      ],
+      "peakRssMB": 398,
+      "medianRssMB": 394,
+      "load1": 6.9
+    },
+    {
+      "kind": "collage4",
+      "motion": "pan",
+      "tech": "cv4e",
+      "frames": 120,
+      "medianMs": 1040,
+      "runsMs": [
+        1050,
+        1037,
+        1040
+      ],
+      "peakRssMB": 497,
+      "medianRssMB": 489,
+      "load1": 6.9
+    }
+  ]
+}

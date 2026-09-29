@@ -1,0 +1,70 @@
+{
+  "machine": {
+    "platform": "darwin-arm64",
+    "cores": 14,
+    "totalMemBytes": 38654705664,
+    "loadavgStart": [
+      6.4,
+      7.3,
+      11.4
+    ]
+  },
+  "cores": 14,
+  "runs": 3,
+  "rows": [
+    {
+      "caps": "default threads",
+      "parallel": 1,
+      "batchWallMs": 3229,
+      "perProcessMs": 3229,
+      "perProcessPeakRssMB": 567,
+      "sumRssMB": 547,
+      "load1": 4.7
+    },
+    {
+      "caps": "default threads",
+      "parallel": 2,
+      "batchWallMs": 3261,
+      "perProcessMs": 3260,
+      "perProcessPeakRssMB": 554,
+      "sumRssMB": 1074,
+      "load1": 4.9
+    },
+    {
+      "caps": "default threads",
+      "parallel": 4,
+      "batchWallMs": 3347,
+      "perProcessMs": 3340,
+      "perProcessPeakRssMB": 547,
+      "sumRssMB": 2156,
+      "load1": 4.8
+    },
+    {
+      "caps": "-filter_threads 2 -filter_complex_threads 2",
+      "parallel": 1,
+      "batchWallMs": 3116,
+      "perProcessMs": 3116,
+      "perProcessPeakRssMB": 303,
+      "sumRssMB": 298,
+      "load1": 4.7
+    },
+    {
+      "caps": "-filter_threads 2 -filter_complex_threads 2",
+      "parallel": 2,
+      "batchWallMs": 3169,
+      "perProcessMs": 3166,
+      "perProcessPeakRssMB": 302,
+      "sumRssMB": 601,
+      "load1": 4.8
+    },
+    {
+      "caps": "-filter_threads 2 -filter_complex_threads 2",
+      "parallel": 4,
+      "batchWallMs": 3280,
+      "perProcessMs": 3277,
+      "perProcessPeakRssMB": 308,
+      "sumRssMB": 1216,
+      "load1": 6.4
+    }
+  ]
+}

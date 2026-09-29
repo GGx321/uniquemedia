@@ -1,0 +1,201 @@
+{
+  "machine": {
+    "platform": "darwin-arm64",
+    "cores": 14,
+    "totalMemBytes": 38654705664,
+    "loadavgStart": [
+      5.4,
+      7,
+      11.2
+    ],
+    "caps": "-filter_threads 2 -filter_complex_threads 2"
+  },
+  "loadavgEnd": [
+    4.7,
+    6.5,
+    10.7
+  ],
+  "runs": 3,
+  "rows": [
+    {
+      "kind": "photo",
+      "motion": "kb",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 745,
+      "runsMs": [
+        743,
+        764,
+        745
+      ],
+      "peakRssMB": 97,
+      "medianRssMB": 94,
+      "load1": 5.4
+    },
+    {
+      "kind": "photo",
+      "motion": "kb",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 918,
+      "runsMs": [
+        918,
+        915,
+        919
+      ],
+      "peakRssMB": 109,
+      "medianRssMB": 108,
+      "load1": 5.3
+    },
+    {
+      "kind": "photo",
+      "motion": "pan",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 708,
+      "runsMs": [
+        708,
+        709,
+        707
+      ],
+      "peakRssMB": 91,
+      "medianRssMB": 90,
+      "load1": 5.2
+    },
+    {
+      "kind": "photo",
+      "motion": "pan",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 886,
+      "runsMs": [
+        886,
+        886,
+        889
+      ],
+      "peakRssMB": 113,
+      "medianRssMB": 108,
+      "load1": 5.2
+    },
+    {
+      "kind": "collage2",
+      "motion": "kb",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 922,
+      "runsMs": [
+        919,
+        923,
+        922
+      ],
+      "peakRssMB": 130,
+      "medianRssMB": 127,
+      "load1": 4.9
+    },
+    {
+      "kind": "collage2",
+      "motion": "kb",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 1233,
+      "runsMs": [
+        1232,
+        1234,
+        1233
+      ],
+      "peakRssMB": 154,
+      "medianRssMB": 154,
+      "load1": 4.8
+    },
+    {
+      "kind": "collage3",
+      "motion": "kb",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 1081,
+      "runsMs": [
+        1079,
+        1081,
+        1082
+      ],
+      "peakRssMB": 157,
+      "medianRssMB": 153,
+      "load1": 5
+    },
+    {
+      "kind": "collage3",
+      "motion": "kb",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 2059,
+      "runsMs": [
+        2059,
+        2047,
+        2102
+      ],
+      "peakRssMB": 222,
+      "medianRssMB": 222,
+      "load1": 4.9
+    },
+    {
+      "kind": "collage4",
+      "motion": "kb",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 1341,
+      "runsMs": [
+        1362,
+        1339,
+        1341
+      ],
+      "peakRssMB": 191,
+      "medianRssMB": 190,
+      "load1": 5
+    },
+    {
+      "kind": "collage4",
+      "motion": "kb",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 3215,
+      "runsMs": [
+        3199,
+        3215,
+        3215
+      ],
+      "peakRssMB": 303,
+      "medianRssMB": 300,
+      "load1": 4.7
+    },
+    {
+      "kind": "collage4",
+      "motion": "pan",
+      "tech": "zp2",
+      "frames": 120,
+      "medianMs": 1247,
+      "runsMs": [
+        1246,
+        1247,
+        1338
+      ],
+      "peakRssMB": 191,
+      "medianRssMB": 187,
+      "load1": 4.8
+    },
+    {
+      "kind": "collage4",
+      "motion": "pan",
+      "tech": "zp4",
+      "frames": 120,
+      "medianMs": 2721,
+      "runsMs": [
+        2791,
+        2708,
+        2721
+      ],
+      "peakRssMB": 304,
+      "medianRssMB": 303,
+      "load1": 4.7
+    }
+  ]
+}
