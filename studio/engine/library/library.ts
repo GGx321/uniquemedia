@@ -615,6 +615,15 @@ export class Library {
     return this.#photos.get(photoId);
   }
 
+  /**
+   * Where a photo's image file is, by the library's own naming (`avatars/<avatarId>/photos/<file>`); undefined for a
+   * photo the library does not have. A render's resolver hands it to ffmpeg, so nothing here comes from a caller's string.
+   */
+  photoFilePath(photoId: string): string | undefined {
+    const photo = this.#photos.get(photoId);
+    return photo === undefined ? undefined : join(this.#photosDir(photo.avatarId), photo.file);
+  }
+
   /** One avatar's photos, oldest first. */
   photosByAvatar(avatarId: string): PhotoSidecar[] {
     return [...this.#photos.values()].filter((p) => p.avatarId === avatarId).sort(byCreation);
