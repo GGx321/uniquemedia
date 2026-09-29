@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "fps": 30,
+  "stickers": [
+    {
+      "id": "heart-pulse",
+      "file": "heart-pulse.apng",
+      "sha256": "383f19feb8c4c22cdee718a0cc69b543a4d749c879f71eca7e86cf7e70a2a350",
+      "bytes": 388251,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 24,
+      "category": "love",
+      "tags": [
+        "heart",
+        "love",
+        "pulse",
+        "romance"
+      ]
+    },
+    {
+      "id": "sparkle-twinkle",
+      "file": "sparkle-twinkle.apng",
+      "sha256": "8ea02e74ae0653e41704be3c0cc3242d735477e5ff616a5cc43f19144cb0bbfb",
+      "bytes": 558337,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 30,
+      "category": "sparkle",
+      "tags": [
+        "sparkle",
+        "twinkle",
+        "shine",
+        "magic"
+      ]
+    },
+    {
+      "id": "star-spin",
+      "file": "star-spin.apng",
+      "sha256": "bb68994988c31869f2d020e9861d3de0ca490a74ce6b95fa41112fa5397fb3c4",
+      "bytes": 790650,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 36,
+      "category": "sparkle",
+      "tags": [
+        "star",
+        "spin",
+        "gold",
+        "award"
+      ]
+    },
+    {
+      "id": "fire-flicker",
+      "file": "fire-flicker.apng",
+      "sha256": "3e56e460542fd1f974f2d1941618da3a2da095da2bd3916b19a39c0771287cf2",
+      "bytes": 522713,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 24,
+      "category": "mood",
+      "tags": [
+        "fire",
+        "flame",
+        "hot",
+        "trend"
+      ]
+    },
+    {
+      "id": "lightning-flash",
+      "file": "lightning-flash.apng",
+      "sha256": "5ade8702394e229e9ed801324fd4e52b3819396ff8c6d2b754d85b26f5c94750",
+      "bytes": 722095,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 24,
+      "category": "mood",
+      "tags": [
+        "lightning",
+        "bolt",
+        "energy",
+        "shock"
+      ]
+    },
+    {
+      "id": "bubble-float",
+      "file": "bubble-float.apng",
+      "sha256": "6711bb8e2ebf87fb6eeae41511ec7001c3697a712066d5950d4a107f293587ec",
+      "bytes": 1331630,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 48,
+      "category": "nature",
+      "tags": [
+        "bubbles",
+        "float",
+        "water",
+        "calm"
+      ]
+    },
+    {
+      "id": "sun-rays",
+      "file": "sun-rays.apng",
+      "sha256": "1fe85b6ffd9df78406ac2e513bda6a6865e65e29c7386fc5f457870bd30543db",
+      "bytes": 973133,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 30,
+      "category": "nature",
+      "tags": [
+        "sun",
+        "rays",
+        "summer",
+        "warm"
+      ]
+    },
+    {
+      "id": "confetti-fall",
+      "file": "confetti-fall.apng",
+      "sha256": "df27fc5122d1580d7d94789caf01e4ce8e16c8ac663ba151ebb3755ae4817ef7",
+      "bytes": 476126,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 48,
+      "category": "party",
+      "tags": [
+        "confetti",
+        "party",
+        "celebrate",
+        "birthday"
+      ]
+    },
+    {
+      "id": "ripple-rings",
+      "file": "ripple-rings.apng",
+      "sha256": "a772694bd04758ff9ed37c776dc87ffe274cf6b95d186b4120b29b6b94e1df41",
+      "bytes": 1355657,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 36,
+      "category": "abstract",
+      "tags": [
+        "ripple",
+        "rings",
+        "wave",
+        "pulse"
+      ]
+    },
+    {
+      "id": "arrow-bounce",
+      "file": "arrow-bounce.apng",
+      "sha256": "22cc5dc921aeeba1060834e840bae8e71928586f3b5f68e7ae84ea24bf8f16e1",
+      "bytes": 196456,
+      "width": 320,
+      "height": 320,
+      "loopFrames": 24,
+      "category": "pointer",
+      "tags": [
+        "arrow",
+        "down",
+        "bounce",
+        "look"
+      ]
+    }
+  ]
+}
