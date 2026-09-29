@@ -403,6 +403,23 @@ describe("idle recycling: an idle worker's memory is given back", () => {
     expect(h.alive()).toBe(1);
   });
 
+  test("an unsolicited-message kill takes the lane: a check arriving mid-kill never overlaps the dying worker", async () => {
+    const h = harness({
+      tamper: (worker) => {
+        const real = worker.terminate.bind(worker);
+        worker.terminate = async () => {
+          await Bun.sleep(150);
+          return real();
+        };
+      },
+    });
+    await h.gate.check(checkInput(Behaviour.chatty), live());
+    await Bun.sleep(60); // the worker speaks out of turn ~20 ms after answering: the kill is now in progress (~150 ms)
+    expect((await h.gate.check(checkInput(), live())).kind).toBe("match");
+    expect(h.spawned()).toBe(2);
+    expect(h.aliveAtSpawn.every((n) => n === 0)).toBe(true);
+  });
+
   test("a check that arrives while a recycle is terminating the worker waits for it to be gone before a new one starts", async () => {
     const h = harness({ idleRecycleMs: 30 });
     await h.gate.check(checkInput(), live());
