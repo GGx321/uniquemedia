@@ -3,9 +3,12 @@
  * a cluster is the reader's `has()`, asked by the caller (3b.3 refuses the caption, 3b.4b draws it).
  *
  * The clusters are `Intl.Segmenter` graphemes, so VS16, ZWJ sequences, skin tones, flags, keycaps and tag
- * sequences arrive as one unit. A cluster is an emoji when it is meant to be drawn as one: it starts with an
- * emoji-presentation character (which covers flags and skin tone modifiers), or it starts with a pictograph that
- * carries VS16, a ZWJ or a skin tone, or it is a keycap. "©", "❤", a digit or a lone VS16 stay text.
+ * sequences arrive as one unit. A cluster is an emoji when the caption should show it as one: it starts with an
+ * emoji-presentation character (which covers flags and skin tone modifiers), or with ANY pictograph, or it is a
+ * keycap. That includes text-style pictographs without VS16 (❤ ✔ ✈ ☀): no text font has them, so they must not
+ * reach a text run as tofu; the emoji font either draws them or `has()` says no and the caption is refused.
+ * The exceptions are a bare ©, ® and ™, which the text fonts have (with VS16 they are emoji). A digit, a hash,
+ * a letter or a lone VS16 or ZWJ stay text.
  */
 
 export type CaptionRun = { kind: "text"; text: string } | { kind: "emoji"; text: string; codePoints: readonly number[] };
@@ -14,12 +17,14 @@ const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
 
 const STARTS_EMOJI_PRESENTATION = /^\p{Emoji_Presentation}/u;
 const STARTS_PICTOGRAPH = /^\p{Extended_Pictographic}/u;
-const CARRIES_EMOJI_FORM = /[️‍]|\p{Emoji_Modifier}/u;
-const KEYCAP = /^[0-9#*]️?⃣$/;
+const CARRIES_EMOJI_FORM = /[\u{FE0F}\u{200D}]|\p{Emoji_Modifier}/u;
+const KEYCAP = /^[0-9#*]\u{FE0F}?\u{20E3}$/u;
+/** Pictographs the text fonts have as letters-like signs; bare, they are text. The owner has not approved them as emoji for captions. */
+const TEXT_FONT_SIGNS: ReadonlySet<string> = new Set(["\u{A9}", "\u{AE}", "\u{2122}"]);
 
 function isEmoji(cluster: string): boolean {
   if (STARTS_EMOJI_PRESENTATION.test(cluster)) return true;
-  if (STARTS_PICTOGRAPH.test(cluster)) return CARRIES_EMOJI_FORM.test(cluster);
+  if (STARTS_PICTOGRAPH.test(cluster)) return !TEXT_FONT_SIGNS.has(cluster) || CARRIES_EMOJI_FORM.test(cluster);
   return KEYCAP.test(cluster);
 }
 

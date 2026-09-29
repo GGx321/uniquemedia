@@ -89,8 +89,16 @@ describe("what is not an emoji", () => {
     expect(segmentCaption("1 # *")).toEqual([text("1 # *")]);
   });
 
-  test("a text-presentation symbol without VS16 stays text", () => {
-    expect(segmentCaption("© ❤ ☺")).toEqual([text("© ❤ ☺")]);
+  test("© ® and ™ without VS16 stay text: the text fonts have them", () => {
+    expect(segmentCaption("© ® ™")).toEqual([text("© ® ™")]);
+  });
+
+  test("★ (U+2605) is not an Extended_Pictographic and stays text", () => {
+    expect(segmentCaption("★")).toEqual([text("★")]);
+  });
+
+  test("a text-style pictograph without VS16 is an emoji run, for has() to judge (no text font has it)", () => {
+    expect(segmentCaption("❤ ✔ ✈ ☀ ❄ ➡ ✌ ☝ ‼")).toEqual([emoji("❤"), text(" "), emoji("✔"), text(" "), emoji("✈"), text(" "), emoji("☀"), text(" "), emoji("❄"), text(" "), emoji("➡"), text(" "), emoji("✌"), text(" "), emoji("☝"), text(" "), emoji("‼")]);
   });
 
   test("the same symbol with VS16 is an emoji", () => {
@@ -115,6 +123,37 @@ test("no two text runs touch", () => {
   const runs = segmentCaption("ab 😀 cd 👍🏽 e");
   const kinds = runs.map((r) => r.kind);
   expect(kinds.some((kind, i) => kind === "text" && kinds[i + 1] === "text")).toBe(false);
+});
+
+describe("properties over every code point", () => {
+  test("every Extended_Pictographic code point Noto covers, except © ® ™, segments as one emoji run", async () => {
+    const font = openEmojiFont(await loadPinnedEmojiFont());
+    const wrong: string[] = [];
+    let covered = 0;
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      const character = String.fromCodePoint(cp);
+      if (!/^\p{Extended_Pictographic}$/u.test(character) || !font.has([cp]) || [0xa9, 0xae, 0x2122].includes(cp)) continue;
+      covered++;
+      const runs = segmentCaption(character);
+      if (runs.length !== 1 || runs[0]?.kind !== "emoji") wrong.push(cp.toString(16));
+    }
+    expect(wrong).toEqual([]);
+    expect(covered).toBeGreaterThan(1000);
+  });
+
+  test("no character of the Latin, Latin Extended and Cyrillic blocks or ASCII segments as an emoji, © ® ™ included", () => {
+    const ranges: [number, number][] = [
+      [0x20, 0x7e],
+      [0xa0, 0x24f],
+      [0x400, 0x4ff],
+      [0x2122, 0x2122],
+    ];
+    const emojiRuns: string[] = [];
+    for (const [from, to] of ranges) {
+      for (let cp = from; cp <= to; cp++) if (segmentCaption(String.fromCodePoint(cp)).some((run) => run.kind === "emoji")) emojiRuns.push(cp.toString(16));
+    }
+    expect(emojiRuns).toEqual([]);
+  });
 });
 
 describe("against the whole emoji-test.txt", () => {
