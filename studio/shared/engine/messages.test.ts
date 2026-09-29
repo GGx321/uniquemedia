@@ -1260,6 +1260,27 @@ describe("Stage 3 results and events", () => {
     expect(parseMessage(event("job.failed", failed)).ok).toBe(true);
   });
 
+  // 3a.8b.2: the render queue's raw error `cause` (a Node system error carries `path`, `dest` and `spawnargs`, the whole
+  // argv with the owner's photo paths) must never travel. The job.* payloads are strict, so an event that still carries
+  // one is refused by main's schema check (EngineHost drops it) and cannot reach a window.
+  const renderRef = { kind: "render", jobId: "job-00000004", videoId: "video-00000002", avatarId: "avatar-0001", montageId: null };
+  test.each([
+    ["job.progress", { ...renderRef, done: 3, total: 120 }],
+    ["job.failed", { ...renderRef, error: { code: "RENDER_FAILED", detail: "ffmpeg exited with code 1" } }],
+    ["job.cancelled", renderRef],
+    ["job.done", { jobId: "job-00000004", result: { kind: "render", videoId: "video-00000002", avatarId: "avatar-0001", bytes: 10, durationMs: 4000, videoKind: "photo", relPath: "Mia/2026-09-29_photo_001.mp4" } }],
+  ])("%s of a render is strict: a `cause`, `spawnargs` or `path` next to its fields is refused", (type, payload) => {
+    expect(parseMessage(event(type, payload)).ok).toBe(true);
+    for (const extra of [{ cause: { spawnargs: ["-i", "/Users/owner/photo.jpg"] } }, { spawnargs: ["-i", "/Users/owner/photo.jpg"] }, { path: "/Users/owner/photo.jpg" }]) {
+      expect(parseMessage(event(type, { ...(payload as object), ...extra })).ok).toBe(false);
+    }
+  });
+
+  test("the error inside job.failed is strict too: no `cause` next to its code", () => {
+    const payload = { ...renderRef, error: { code: "RENDER_FAILED", cause: { spawnargs: ["-i", "/Users/owner/photo.jpg"] } } };
+    expect(parseMessage(event("job.failed", payload)).ok).toBe(false);
+  });
+
   test("an error response for videos.render can carry the montage's issues", () => {
     const msg = {
       v: PROTOCOL_VERSION,
