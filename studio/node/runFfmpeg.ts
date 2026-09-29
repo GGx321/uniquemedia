@@ -129,7 +129,7 @@ export const FILTER_THREAD_ARGS: readonly string[] = ["-filter_threads", "2", "-
 // FfmpegError.stderrTail then takes the last ~2000 chars of this, which is
 // plenty to show what ffmpeg complained about.
 const STDERR_ROLLING_LIMIT = 4096;
-const STDERR_ERROR_TAIL = 2000;
+export const STDERR_ERROR_TAIL = 2000;
 
 // One `-progress` report is a run of `key=value` lines ending in
 // `progress=continue` or `progress=end`. ffmpeg can flush several of these

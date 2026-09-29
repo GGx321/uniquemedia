@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { fakeSpawner, outputOf, type SpawnCall } from "../../node/fakeFfmpeg.testkit";
@@ -362,6 +362,71 @@ describe("runRenderJob: the job folder and the output", () => {
     expect(error).toBeInstanceOf(FfmpegTimeoutError);
     if (!(error instanceof FfmpegTimeoutError)) throw error;
     expect(error.stderrTail).toBe("writing <export>/.studio-part-job-00000001.mp4");
+  });
+});
+
+describe("runRenderJob: the user's input paths stay out of the error", () => {
+  const failWith = (text: string): ((call: SpawnCall) => void) => (call) => {
+    call.child.complain(text);
+    call.child.exit(1);
+  };
+
+  test("a library photo's path in ffmpeg's error reaches the job as <photo>", async () => {
+    const r = rig();
+    const photo = r.input.resolvePhoto({ source: "scene", photoId: "photo-a" })?.path ?? "";
+    const { deps } = depsWith(failWith(`Error opening input file ${photo}: No such file or directory\n`));
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(FfmpegError);
+    if (!(error instanceof FfmpegError)) throw error;
+    expect(error.stderrTail).toBe("Error opening input file <photo>: No such file or directory\n");
+  });
+
+  test("an overlay's path in ffmpeg's error reaches the job as <overlay>", async () => {
+    const r = rig();
+    const overlayPath = join(dirname(r.tmpRoot), "stickers", "star.png");
+    const overlay = { path: overlayPath, format: "png" as const, box: { x: 100, y: 300, w: 880, h: 200 }, resize: false, startFrame: 0, endFrame: 30 };
+    const { deps } = depsWith(failWith(`Error opening input file ${overlayPath}: Invalid data\n`));
+
+    const error = await runRenderJob({ ...r.input, overlays: [overlay] }, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof FfmpegError)) throw error;
+    expect(error.stderrTail).toBe("Error opening input file <overlay>: Invalid data\n");
+  });
+
+  test("a path split by the 2000-character cut leaves no fragment of the user's folders", async () => {
+    const r = rig();
+    const photo = r.input.resolvePhoto({ source: "scene", photoId: "photo-a" })?.path ?? "";
+    const prefix = "Error opening input file ";
+    const line = `${prefix}${photo}: No such file`;
+    // The tail's first character lands inside the temp folder's name, so the tail begins mid-path.
+    const before = `${"x".repeat(100)}\n`;
+    const cutAt = before.length + prefix.length + photo.indexOf("studio-runner-") + 3;
+    const filler = "y".repeat(cutAt + 2000 - (before.length + line.length + 2));
+    const stderr = `${before}${line}\n${filler}\n`;
+    expect(stderr.length - cutAt).toBe(2000);
+    const { deps } = depsWith(failWith(stderr));
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof FfmpegError)) throw error;
+    expect(error.stderrTail).not.toContain("dio-runner-");
+    expect(error.stderrTail).not.toContain("photo-a");
+  });
+});
+
+describe("runRenderJob: a file-system error names no user folder either", () => {
+  test("a job folder that cannot be made fails with the temp root masked as <tmp>", async () => {
+    const r = rig();
+    writeFileSync(r.tmpRoot, "a file where the temp root should be");
+    const { deps } = depsWith(goodFfmpeg);
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof Error)) throw new Error("expected the job to fail");
+    expect(error.message).not.toContain(r.tmpRoot);
+    expect(error.message).toContain("<tmp>");
   });
 });
 

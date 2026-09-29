@@ -5,6 +5,10 @@ import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { buildPass1, buildPass2, type AudioSource, type OverlayInput, type PhotoResolver } from "../render";
 import { ProgressFold, renderTimeoutMs } from "./progress";
+import { scrubber, scrubStderrTail, type ScrubInput } from "./scrubber";
+
+// The scrubber lives in its own module; it stays importable from here.
+export { scrubber };
 
 // The runner of ONE render job (task 3a.6): pass 1 once per visual clip into
 // the job's own folder, then pass 2 into the temp output it is given, one
@@ -54,23 +58,6 @@ export interface RenderRunOutcome {
 /** The name of the temp output a job may write and, on failure, remove; nothing else. */
 const partName = (jobId: string): string => `.studio-part-${jobId}.mp4`;
 
-/** Replaces the user's folders in text that may reach the UI: the temp root and the export folder. */
-export function scrubber(tmpRoot: string, exportDir: string): (text: string) => string {
-  const pairs: Array<[string, string]> = [
-    [tmpRoot, "<tmp>"],
-    [exportDir, "<export>"],
-  ];
-  return (text) => {
-    let out = text;
-    for (const [dir, label] of pairs) {
-      // Both spellings of the separator: ffmpeg prints a Windows path either way.
-      out = out.replaceAll(dir, label).replaceAll(dir.replaceAll("\\", "/"), label);
-    }
-    // The rest of a scrubbed path (`<tmp>\job-1\clip.mkv`) keeps its own backslashes otherwise: read with slashes all the way down.
-    return out.replace(/<(?:tmp|export)>[^\s"'<>|]*/g, (path) => path.replaceAll("\\", "/"));
-  };
-}
-
 const defaultRemoveTree = (path: string): Promise<void> => rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 const defaultRemoveFile = (path: string): Promise<void> => rm(path, { force: true, maxRetries: 5, retryDelay: 100 });
 
@@ -96,18 +83,38 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   const warn = deps.warn ?? ((what, error) => console.warn(`studio render: the ${what} could not be removed (${error instanceof Error ? error.message : String(error)})`));
 
   const clipDir = join(input.tmpRoot, input.jobId);
-  const pass1 = buildPass1({ seed: input.seed, clips: input.clips, resolvePhoto: input.resolvePhoto, clipDir });
+  // Every path the job hands to ffmpeg as an input, for the scrubber: what the builder resolves is what ffmpeg may print back.
+  const scrubInputs: ScrubInput[] = [];
+  const resolvePhoto: PhotoResolver = (ref) => {
+    const source = input.resolvePhoto(ref);
+    if (source !== undefined) scrubInputs.push({ path: source.path, label: "<photo>" });
+    return source;
+  };
+  for (const overlay of input.overlays) scrubInputs.push({ path: overlay.path, label: "<overlay>" });
+  // `input.audio` is silence in 3a and has no file; music (3c) adds its path here, labelled `<audio>`.
+
+  const pass1 = buildPass1({ seed: input.seed, clips: input.clips, resolvePhoto, clipDir });
   const pass2 = buildPass2({ clips: input.clips.map((c) => ({ clipId: c.clipId, durationMs: c.durationMs })), clipDir, output: input.output, overlays: input.overlays, audio: input.audio });
   const totalFrames = pass2.totalFrames;
   const fold = new ProgressFold(totalFrames);
   const budgetMs = renderTimeoutMs(totalFrames);
   const deadline = now() + budgetMs;
 
-  const scrub = scrubber(input.tmpRoot, dirname(input.output));
+  const scrub = scrubber(input.tmpRoot, dirname(input.output), scrubInputs);
 
   const report = (done: number | null): void => {
     // Nothing is reported once the job is cancelled, even if ffmpeg had already exited 0.
     if (done !== null && !signal.aborted) input.onProgress(done);
+  };
+
+  /** A file-system error of the job's own folders names them in its message, and that message reaches the UI: it says <tmp> instead. The original stays as `cause`, for the log. */
+  const scrubFs = async (work: Promise<unknown>): Promise<void> => {
+    try {
+      await work;
+    } catch (error) {
+      if (error instanceof Error) throw new Error(scrub(error.message), { cause: error });
+      throw error;
+    }
   };
 
   /** One ffmpeg call on what is left of the job's budget; a timeout is named after the whole budget. */
@@ -118,16 +125,16 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     try {
       await run({ argv: job.argv, output: job.output, signal, timeoutMs: remaining, onFrames: options.onFrames, ...(options.cwd === undefined ? {} : { cwd: options.cwd }) });
     } catch (error) {
-      // The tail may name the user's folders; what reaches the job's error says <tmp> and <export> instead.
-      if (error instanceof FfmpegTimeoutError) throw new FfmpegTimeoutError(budgetMs, scrub(error.stderrTail));
-      if (error instanceof FfmpegError) throw new FfmpegError(scrub(error.message), error.exitCode, scrub(error.stderrTail));
+      // The tail may name the user's folders and files; what reaches the job's error says <tmp>, <export>, <photo>... instead.
+      if (error instanceof FfmpegTimeoutError) throw new FfmpegTimeoutError(budgetMs, scrubStderrTail(scrub, error.stderrTail));
+      if (error instanceof FfmpegError) throw new FfmpegError(scrub(error.message), error.exitCode, scrubStderrTail(scrub, error.stderrTail));
       throw error;
     }
   };
 
   let succeeded = false;
   try {
-    await mkdir(clipDir, { recursive: true });
+    await scrubFs(mkdir(clipDir, { recursive: true }));
 
     let framesOfDoneClips = 0;
     for (const job of pass1) {
@@ -137,7 +144,7 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     }
 
     signal.throwIfAborted();
-    await writeFile(join(clipDir, pass2.listFileName), pass2.listFileContents);
+    await scrubFs(writeFile(join(clipDir, pass2.listFileName), pass2.listFileContents));
     await call(pass2, { cwd: pass2.cwd, onFrames: (frames) => report(fold.pass2(frames)) });
 
     succeeded = true;
