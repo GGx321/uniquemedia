@@ -18,8 +18,8 @@ export interface CaseProbeFs {
   /** Whether something answers to `path` (a `stat` that follows nothing it must not: the probe is a plain file). */
   exists(path: string): Promise<boolean>;
   remove(path: string): Promise<void>;
-  /** `path` itself if it is a folder, otherwise its nearest parent that is. */
-  nearestExistingFolder(path: string): Promise<string>;
+  /** Whether `path` is a folder now. A root that is not there yet is NOT probed through its parent: another folder can sit on another volume. */
+  isDirectory(path: string): Promise<boolean>;
 }
 
 export const NODE_CASE_PROBE_FS: CaseProbeFs = {
@@ -37,14 +37,12 @@ export const NODE_CASE_PROBE_FS: CaseProbeFs = {
     }
   },
   remove: (path) => rm(path),
-  nearestExistingFolder: async (path) => {
-    for (let at = nodePath.resolve(path); ; at = nodePath.dirname(at)) {
-      try {
-        if ((await stat(at)).isDirectory()) return at;
-      } catch (error) {
-        if (!hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR")) throw error;
-      }
-      if (nodePath.dirname(at) === at) return at;
+  isDirectory: async (path) => {
+    try {
+      return (await stat(path)).isDirectory();
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return false;
+      throw error;
     }
   },
 };
@@ -62,20 +60,23 @@ function probeName(id: string): string {
 
 /**
  * Answers `isCaseInsensitive(root)` once per root and remembers it. The probe
- * runs in the root itself, or in its nearest existing parent when it does not
- * exist yet (the default folder is created on first use). If the probe file
- * cannot be created (a read-only or full volume) the answer is `true`, the
- * cautious one (more names count as the same), and it is NOT remembered, so the
- * next question asks the disk again.
+ * runs in the root itself and nowhere else: a root that does not exist yet (the
+ * default folder is created on first use) is not judged by its parent, which can be
+ * another volume. If the root is not there, or the probe file cannot be created (a
+ * read-only or full volume), the answer is `true`, the cautious one (more names count
+ * as the same), and it is NOT remembered, so the next question asks the disk again.
  */
 export class CaseSensitivityProbe {
   readonly #fs: CaseProbeFs;
   readonly #newId: () => string;
+  readonly #log: (line: string) => void;
   readonly #answers = new Map<string, Promise<boolean | null>>();
 
-  constructor(fs: CaseProbeFs = NODE_CASE_PROBE_FS, newId: () => string = defaultNewId) {
+  /** `log` gets the codes of a probe that could not be made (never a path). */
+  constructor(fs: CaseProbeFs = NODE_CASE_PROBE_FS, newId: () => string = defaultNewId, log: (line: string) => void = () => undefined) {
     this.#fs = fs;
     this.#newId = newId;
+    this.#log = log;
   }
 
   async isCaseInsensitive(root: string): Promise<boolean> {
@@ -92,28 +93,35 @@ export class CaseSensitivityProbe {
     return result;
   }
 
-  /** True/false from the disk, or null when it could not be asked. */
+  /** True/false from the disk, or null when it could not be asked (a root that is not there yet, or a probe that could not be made). */
   async #probe(root: string): Promise<boolean | null> {
-    let folder: string;
+    const code = (error: unknown): string => (error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error");
     try {
-      folder = await this.#fs.nearestExistingFolder(root);
-    } catch {
+      // Only the root itself is probed: its parent may be another volume, with another answer.
+      if (!(await this.#fs.isDirectory(root))) {
+        this.#log("case probe: the export folder is not there yet; the cautious answer is used until it is");
+        return null;
+      }
+    } catch (error) {
+      this.#log(`case probe: the export folder could not be looked at (${code(error)})`);
       return null;
     }
     const name = probeName(this.#newId());
-    const path = nodePath.join(folder, name);
+    const path = nodePath.join(root, name);
     try {
       await this.#fs.createExclusive(path);
-    } catch {
+    } catch (error) {
+      this.#log(`case probe: the probe file could not be created (${code(error)})`);
       return null;
     }
     try {
-      return await this.#fs.exists(nodePath.join(folder, name.toUpperCase()));
-    } catch {
+      return await this.#fs.exists(nodePath.join(root, name.toUpperCase()));
+    } catch (error) {
+      this.#log(`case probe: the case-flipped name could not be looked up (${code(error)})`);
       return null;
     } finally {
       // A probe that cannot be removed is a 0-byte `.studio-probe-*`: the sweep on open collects it.
-      await this.#fs.remove(path).catch(() => undefined);
+      await this.#fs.remove(path).catch((error: unknown) => this.#log(`case probe: the probe file could not be removed (${code(error)}); the next sweep takes it`));
     }
   }
 }

@@ -33,7 +33,7 @@ function volume(foldsCase: boolean, options: { failCreate?: boolean } = {}): Cas
       names.delete(key(path));
       removed.push(path);
     },
-    nearestExistingFolder: async (path) => path,
+    isDirectory: async () => true,
   };
 }
 
@@ -92,11 +92,15 @@ describe("CaseSensitivityProbe", () => {
     expect(fs.created).toHaveLength(2);
   });
 
-  test("a folder that does not exist yet is judged by its nearest existing parent", async () => {
-    const fs = { ...volume(true), nearestExistingFolder: async () => "/parent" };
+  test("a folder that does not exist yet is NOT judged by its parent (another volume): the cautious answer, no probe file anywhere, and not remembered", async () => {
+    let exists = false;
+    const fs = { ...volume(false), isDirectory: async () => exists };
     const probe = new CaseSensitivityProbe(fs, ids());
-    await probe.isCaseInsensitive("/parent/not/yet");
-    expect(fs.created[0]?.startsWith("/parent/.studio-probe-case-")).toBe(true);
+    expect(await probe.isCaseInsensitive("/parent/not/yet")).toBe(true);
+    expect(fs.created).toEqual([]);
+    exists = true;
+    expect(await probe.isCaseInsensitive("/parent/not/yet")).toBe(false); // asked again once the root is there
+    expect(fs.created).toHaveLength(1);
   });
 
   test("when the probe file cannot be created it answers case-insensitive, the cautious guess, and does not cache it", async () => {
@@ -131,11 +135,10 @@ describe("the real disk", () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
-  test("a folder that is not there is judged by the nearest folder that is", async () => {
+  test("a folder that is not there leaves its parent untouched and answers cautiously", async () => {
     const dir = mkdtempSync(join(tmpdir(), "studio-case-"));
     dirs.push(dir);
-    const there = await new CaseSensitivityProbe(NODE_CASE_PROBE_FS).isCaseInsensitive(dir);
-    expect(await new CaseSensitivityProbe(NODE_CASE_PROBE_FS).isCaseInsensitive(join(dir, "not", "yet"))).toBe(there);
+    expect(await new CaseSensitivityProbe(NODE_CASE_PROBE_FS).isCaseInsensitive(join(dir, "not", "yet"))).toBe(true);
     expect(readdirSync(dir)).toEqual([]);
   });
 });
