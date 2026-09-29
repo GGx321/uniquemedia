@@ -38,8 +38,10 @@ export const MAX_LAYERS = MAX_TEXT_LAYERS + MAX_STICKER_LAYERS;
 export const MAX_CAPTION_GRAPHEMES = 60;
 /**
  * The longest caption in UTF-16 code units: a cheap bound that runs before the
- * text is segmented into graphemes. Sixty of the longest emoji sequences (a ZWJ
- * family is 11 units, 660 in all) always fit under it.
+ * text is segmented into graphemes, and stops the checks after it (`Caption`
+ * aborts on it), so an enormous string never reaches the segmenter. Sixty of the
+ * longest emoji sequences (15 units, 900 in all: two people with skin tones and
+ * a kiss mark) always fit under it.
  */
 export const MAX_CAPTION_UNITS = 1024;
 /** The furthest into an own video or track a trim or a start may point: 10 minutes, the longest own music. */
@@ -130,17 +132,18 @@ const UNSAFE_CHARS = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 /**
- * On-video text: 1 to 60 graphemes, at most `MAX_CAPTION_UNITS` code units,
- * and free of control characters, bidi overrides and lone surrogates. That
- * much is checked here, up front, because it is what could crash or mislead
- * the rasteriser. The charset itself (printable ASCII, a few typographic
+ * On-video text: 1 to 60 graphemes, at most `MAX_CAPTION_UNITS` code units
+ * (checked first; a longer text fails there and nothing else runs on it), and
+ * free of control characters, bidi overrides and lone surrogates. That much is
+ * checked here, up front, because it is what could crash or mislead the
+ * rasteriser. The charset itself (printable ASCII, a few typographic
  * marks, the emoji the bundled font covers) and the age words are the
  * engine's caption rules (slice 3b).
  */
 export const Caption = z
   .string()
   .min(1)
-  .max(MAX_CAPTION_UNITS)
+  .max(MAX_CAPTION_UNITS, { abort: true })
   .refine((text) => !UNSAFE_CHARS.test(text), "must not contain control or bidi override characters")
   .refine((text) => !LONE_SURROGATE.test(text), "must be well-formed text")
   .refine((text) => graphemeCount(text) <= MAX_CAPTION_GRAPHEMES, `must be at most ${MAX_CAPTION_GRAPHEMES} characters`);

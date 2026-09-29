@@ -568,10 +568,33 @@ describe("text layers", () => {
     expect(MontageSpec.safeParse(withText({ value: `a${"\u0301".repeat(1_100)}` })).success).toBe(false);
   });
 
-  test("60 of the longest emoji sequences fit under the unit bound", () => {
-    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
-    expect(family.repeat(60).length).toBeLessThanOrEqual(1024);
-    expect(MontageSpec.safeParse(withText({ value: family.repeat(60) })).success).toBe(true);
+  test("60 of the longest emoji sequences (15 units each, 900 in all) fit under the unit bound", () => {
+    // Two people with skin tones and a kiss mark: the longest RGI sequence, 15 UTF-16 units.
+    const kiss = "\u{1F9D1}\u{1F3FB}\u200D\u2764\uFE0F\u200D\u{1F48B}\u200D\u{1F9D1}\u{1F3FC}";
+    expect(kiss).toHaveLength(15);
+    expect(kiss.repeat(60)).toHaveLength(900);
+    expect(MontageSpec.safeParse(withText({ value: kiss.repeat(60) })).success).toBe(true);
+    expect(MontageSpec.safeParse(withText({ value: kiss.repeat(61) })).success).toBe(false);
+  });
+
+  test("a caption over the unit bound is refused without ever being segmented into graphemes", () => {
+    const Original = Intl.Segmenter;
+    let segmenters = 0;
+    class Counting extends Original {
+      constructor(...args: ConstructorParameters<typeof Intl.Segmenter>) {
+        super(...args);
+        segmenters++;
+      }
+    }
+    Object.defineProperty(Intl, "Segmenter", { value: Counting, configurable: true, writable: true });
+    try {
+      expect(MontageSpec.safeParse(withText({ value: "a".repeat(100_000) })).success).toBe(false);
+      expect(segmenters).toBe(0);
+      expect(MontageSpec.safeParse(withText({ value: "a".repeat(60) })).success).toBe(true);
+      expect(segmenters).toBeGreaterThan(0);
+    } finally {
+      Object.defineProperty(Intl, "Segmenter", { value: Original, configurable: true, writable: true });
+    }
   });
 
   test.each([
