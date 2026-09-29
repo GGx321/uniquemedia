@@ -2140,14 +2140,14 @@ describe("the export folder's status (task 3a.8a)", () => {
     const exportRootFs: ExportRootFs = {
       ...NODE_EXPORT_ROOT_FS,
       stat: async (path) => {
-        const info = await NODE_EXPORT_ROOT_FS.stat(path).catch((error: unknown) => error);
+        const seen = await NODE_EXPORT_ROOT_FS.stat(path).then((value) => ({ value }), (error: unknown) => ({ error }));
         if (++calls === 2) {
           // The second stat is the first render attempt's: it holds still after having seen the folder.
           reachedGate();
           await gate;
         }
-        if (info instanceof Error) throw info;
-        return info;
+        if ("error" in seen) throw seen.error;
+        return seen.value;
       },
     };
     const { engine } = await startEngine({}, { exportRootFs });
