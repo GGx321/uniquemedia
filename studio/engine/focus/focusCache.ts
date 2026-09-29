@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { Focus } from "../../shared/engine/montage";
-import { writeJsonAtomic } from "../library/durableFs";
+import { writeFileAtomic } from "../library/durableFs";
 import { runExclusive } from "../library/keyedMutex";
 import { LibraryIdSchema } from "../library/schemas";
 
 // S8: the persisted focus answers, one small file per avatar
-// (`avatars/<avatarId>/focus.json`), so a restart does not run YuNet again.
+// (`avatars/<avatarId>/focus.json`, FOCUS_FILE in library/layout.ts, its path
+// from `Library.focusCachePath`), so a restart does not run YuNet again.
 //
 // Why one file per avatar next to the manifest, not one per photo in photos/:
 // the library's survey reads `photos/` and treats anything named like a photo's
@@ -18,9 +19,8 @@ import { LibraryIdSchema } from "../library/schemas";
 // unreadable, corrupt, wrong-shaped or wrong-method file reads as empty (the
 // answers are recomputed and the file rewritten); a photo's entry counts only
 // while its `sha256` still equals the sidecar's, so changed bytes are never
-// served a stale point.
-
-export const FOCUS_FILE = "focus.json";
+// served a stale point. Written compact (no indentation): thousands of photos
+// at four decimals stay a few hundred KB.
 
 /**
  * How the point is derived (focusPoint.ts). A file written by another method is
@@ -55,14 +55,16 @@ export async function readFocusCache(path: string): Promise<Map<string, FocusCac
 
 /**
  * Adds (or replaces) one photo's answer, atomically: re-read under a per-file
- * lock, merge, drop the entries of photos that no longer exist (`livePhotoIds`),
- * write a temp file, fsync and rename. Two answers for two photos of one avatar
- * therefore never overwrite each other.
+ * lock, merge, drop the entries of photos that are no longer live, write a temp
+ * file, fsync and rename. Two answers for two photos of one avatar therefore never
+ * overwrite each other. `isLive` is asked INSIDE the lock, so a photo deleted while
+ * its detection ran is not written back (nothing is written at all then).
  */
-export function rememberFocus(path: string, photoId: string, entry: FocusCacheEntry, livePhotoIds: ReadonlySet<string>): Promise<void> {
+export function rememberFocus(path: string, photoId: string, entry: FocusCacheEntry, isLive: (photoId: string) => boolean): Promise<void> {
   return runExclusive(`focus:${path}`, async () => {
-    const photos = new Map([...(await readFocusCache(path))].filter(([id]) => livePhotoIds.has(id)));
+    if (!isLive(photoId)) return;
+    const photos = new Map([...(await readFocusCache(path))].filter(([id]) => isLive(id)));
     photos.set(photoId, entry);
-    await writeJsonAtomic(path, { schemaVersion: 1, method: FOCUS_METHOD, photos: Object.fromEntries(photos) });
+    await writeFileAtomic(path, JSON.stringify({ schemaVersion: 1, method: FOCUS_METHOD, photos: Object.fromEntries(photos) }));
   });
 }

@@ -18,6 +18,7 @@ import type { FaceBox, ImageSize } from "../face/largestFace";
  * fixtures' box centres sit: 0.31 to 0.49 of the height, median 0.41.)
  */
 export function focusFromFace(face: FaceBox, source: ImageSize): Focus {
-  const clamp = (v: number): number => Math.min(1, Math.max(0, v));
-  return { x: clamp((face.x + face.width / 2) / source.width), y: clamp((face.y + face.height / 2) / source.height) };
+  // Four decimals is a tenth of a pixel on a 1000 px axis: more digits only bloat the stored file.
+  const unit = (v: number): number => Math.round(Math.min(1, Math.max(0, v)) * 10_000) / 10_000;
+  return { x: unit((face.x + face.width / 2) / source.width), y: unit((face.y + face.height / 2) / source.height) };
 }

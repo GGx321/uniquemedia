@@ -15,6 +15,10 @@ describe("focusFromFace", () => {
     expect(focusFromFace({ x: 400, y: 900, width: 200, height: 200 }, { width: 1000, height: 2000 })).toEqual({ x: 0.5, y: 0.5 });
   });
 
+  test("rounds each coordinate to four decimals (a stored point needs no more)", () => {
+    expect(focusFromFace({ x: 0, y: 0, width: 2_000 / 3, height: 5_000 / 3 }, { width: 1000, height: 1000 })).toEqual({ x: 0.3333, y: 0.8333 });
+  });
+
   test("clamps a box that reaches past the top-left edge into 0..1", () => {
     expect(focusFromFace({ x: -300, y: -500, width: 100, height: 100 }, { width: 1000, height: 1000 })).toEqual({ x: 0, y: 0 });
   });

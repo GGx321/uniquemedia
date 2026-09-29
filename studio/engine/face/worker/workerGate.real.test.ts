@@ -158,8 +158,9 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("the real face worker
     // The master letterboxed into 1536x2752: 1536x2048 of picture, 352 px of grey above and below.
     const face = detection.face;
     expect(face).not.toBeNull();
-    expect(((face?.x ?? 0) + (face?.width ?? 0) / 2) / 1536).toBeCloseTo(0.503, 1);
-    expect(((face?.y ?? 0) + (face?.height ?? 0) / 2) / 2752).toBeCloseTo((352 + 0.488 * 2048) / 2752, 1);
+    // Measured error in x: 0.014 (a different scale is a different detection). A box left in normalised pixels would miss by far more.
+    expect(Math.abs(((face?.x ?? 0) + (face?.width ?? 0) / 2) / 1536 - 0.503)).toBeLessThan(0.02);
+    expect(Math.abs(((face?.y ?? 0) + (face?.height ?? 0) / 2) / 2752 - (352 + 0.488 * 2048) / 2752)).toBeLessThan(0.02);
   }, 60_000);
 
   test("detect answers a null face, not an error, for an image with nothing to detect", async () => {
@@ -235,21 +236,24 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("focus resolution on 
     const size = file === MASTER.file ? { width: 864, height: 1152 } : { width: 720, height: 1280 };
     const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(file), ...size }]);
     const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
-    const focus = await focusFor(avatarId, photoIds[0] ?? "");
-    expect(Math.abs(focus.x - expected.x)).toBeLessThan(0.02);
-    expect(Math.abs(focus.y - expected.y)).toBeLessThan(0.02);
+    const { focus, resolved } = await focusFor(avatarId, photoIds[0] ?? "");
+    expect(resolved).toBe(true);
+    expect(Math.abs(focus.x - expected.x)).toBeLessThan(0.005);
+    expect(Math.abs(focus.y - expected.y)).toBeLessThan(0.005);
   }, 30_000);
 
   test("gives the (0.5, 0.38) fallback for an image with no face, and it is not an error", async () => {
     const { library, avatarId, photoIds } = await libraryWith([{ bytes: flatGreyJpeg(), width: 640, height: 640 }]);
     const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
-    expect(await focusFor(avatarId, photoIds[0] ?? "")).toEqual({ x: 0.5, y: 0.38 });
+    expect(await focusFor(avatarId, photoIds[0] ?? "")).toEqual({ focus: { x: 0.5, y: 0.38 }, resolved: true }); // judged: there is really no face
   }, 30_000);
 
   test("a restarted resolver answers from the saved file: the second one never reaches the detector", async () => {
     const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(MASTER.file), width: 864, height: 1152 }]);
     const real = sharedRealFaceGate();
-    const first = await createFocusResolver({ library, faceGate: real }).focusFor(avatarId, photoIds[0] ?? "");
+    const firstResolver = createFocusResolver({ library, faceGate: real });
+    const first = await firstResolver.focusFor(avatarId, photoIds[0] ?? "");
+    await firstResolver.flush();
     let detections = 0;
     const counting = {
       isBroken: () => real.isBroken(),
@@ -270,7 +274,7 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("focus resolution on 
     const { fillMissingFocus } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
     const [a = "", b = ""] = photoIds;
     const base = { durationMs: 2_000, transitionIn: "cut" as const, motion: "kenburns" as const };
-    const filled = await fillMissingFocus({
+    const { spec: filled, unresolved } = await fillMissingFocus({
       schemaVersion: 1,
       avatarId,
       layers: [],
@@ -283,8 +287,9 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("focus resolution on 
     });
     const [first, second] = filled.clips;
     const firstFocus = first?.kind === "photo" ? first.cell.focus : null;
-    expect(Math.abs((firstFocus?.x ?? 9) - 0.503)).toBeLessThan(0.02);
-    expect(Math.abs((firstFocus?.y ?? 9) - 0.488)).toBeLessThan(0.02);
+    expect(unresolved).toEqual([]);
+    expect(Math.abs((firstFocus?.x ?? 9) - 0.503)).toBeLessThan(0.005);
+    expect(Math.abs((firstFocus?.y ?? 9) - 0.488)).toBeLessThan(0.005);
     expect(second?.kind === "photo" ? second.cell.focus : null).toEqual({ x: 0.1, y: 0.9 });
   }, 30_000);
 });
