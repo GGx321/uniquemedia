@@ -29,9 +29,10 @@ export const FRAME_TAGS = "setparams=colorspace=bt709:color_primaries=bt709:colo
  *
  * `accurate_rnd+full_chroma_int` is added to SP1's chain: the x86 builds
  * (Windows 6.1.1 and Linux) took the fast rounding path and were up to 2.16
- * codes off in Y, past the plan's 2. With accurate rounding every build
- * measured (arm64 6.0, arm64 9.0.1) is within 0.84 / 0.73 / 0.85, better than
- * SP1's own chain.
+ * codes off in Y, past the plan's 2. Measured on the chart (worst Y / Cb / Cr,
+ * in code values) with accurate rounding: macOS arm64 6.0 0.84 / 0.73 / 0.85
+ * (arm64 9.0.1 the same), Windows x64 6.1.1 0.56 / 0.89 / 0.89; the Linux
+ * canary also passes. Better than SP1's own chain on macOS (0.96 / 1.60 / 1.54).
  */
 export const PHOTO_COLOUR_CHAIN = `scale=in_range=pc:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709:flags=accurate_rnd+full_chroma_int,format=yuv420p,${FRAME_TAGS}`;
 

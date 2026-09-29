@@ -42,7 +42,9 @@ function withQuality(job: Pass1Job, quality: readonly string[]): Pass1Job {
 }
 
 async function ssimAgainst(distorted: string, reference: string): Promise<number> {
-  const r = await runFfmpegOk(["-hide_banner", "-nostdin", "-i", distorted, "-i", reference, "-lavfi", "[0:v][1:v]ssim", "-f", "null", "-"]);
+  // Both streams are renumbered by frame (N at 1/30): the concat's timestamps are rounded to ms (0, 33, 67, ...) and the MP4's are exact
+  // (66.67), so pairing by timestamp would compare every third frame with the previous reference frame.
+  const r = await runFfmpegOk(["-hide_banner", "-nostdin", "-i", distorted, "-i", reference, "-lavfi", "[0:v]settb=1/30,setpts=N[a];[1:v]settb=1/30,setpts=N[b];[a][b]ssim", "-f", "null", "-"]);
   const m = /SSIM Y:[\d.]+ \([\d.]+\) U:[\d.]+ \([\d.]+\) V:[\d.]+ \([\d.]+\) All:([\d.]+)/.exec(r.stderr);
   if (!m?.[1]) throw new Error(`no SSIM in ${r.stderr.slice(-300)}`);
   return Number(m[1]);
@@ -91,7 +93,7 @@ describe("fidelity on real ffmpeg (invariant 36)", () => {
   });
 
   test("the score is a real similarity, not a degenerate one: the lossless final is close to its clips", () => {
-    expect(score("lossless")).toBeGreaterThan(0.9);
+    expect(score("lossless")).toBeGreaterThan(0.99);
     expect(score("lossless")).toBeLessThanOrEqual(1);
   });
 
