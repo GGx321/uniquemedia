@@ -1,96 +1,46 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { initWasm as resvgInitWasm, Resvg } from "@resvg/resvg-wasm";
+import { initWasm as resvgInitWasm, Resvg, type ResvgRenderOptions } from "@resvg/resvg-wasm";
 import { FontLoadError, loadTextFonts, TEXT_FONTS, type ReadBytes, type TextFontKey } from "./fonts";
+import { checkRasterWasmBytes, DEFAULT_RASTER_LIMITS, RASTER_WASM, RasterError, type Box, type RasterImage, type RasterLimits, type RasterRequest } from "./rasterTypes";
+
+export { checkRasterWasmBytes, DEFAULT_RASTER_LIMITS, RASTER_ERROR_CODES, RASTER_WASM, RasterError } from "./rasterTypes";
+export type { Box, RasterErrorCode, RasterImage, RasterLimits, RasterRequest } from "./rasterTypes";
 
 /**
- * The text rasteriser runtime (plan 3b.2; SP2, spike/text-raster/): resvg-wasm
- * initialised once in the engine, drawing an SVG the engine built into a PNG.
+ * The resvg-wasm rasteriser itself (plan 3b.2; SP2, spike/text-raster/). It runs INSIDE the text worker thread
+ * (worker/textWorker.ts), never on the engine's event loop: the round-1 review measured what the SP2 numbers
+ * had hidden. The «Без фона» shadow costs 67-284 ms per caption, any filter at 1080x360 at least 39 ms, a
+ * full-frame shadow 1.3-1.4 s and 20 blurred rects 4.5 s, and a synchronous wasm call cannot be interrupted from
+ * its own thread. So the engine talks to a worker through a gate that owns the deadline (`terminate()`).
  *
- * - **Loaded like the jsquash codecs** (decode/realBackend.ts): the `.wasm` is read
- *   from disk (or from inside app.asar, where Electron's `fs` reads it
- *   transparently and the integrity fuse keeps covering it), sha256-checked,
+ * - **Loaded like the jsquash codecs** (decode/realBackend.ts): the `.wasm` is read from disk (or from inside
+ *   app.asar, where the runtime's `fs` reads it transparently under the integrity fuse), sha256-checked,
  *   compiled, and the compiled Module handed to `initWasm`. Never `fetch`.
- * - **Fonts** are passed as `fontBuffers`, one text font per render; resvg has no
- *   system fonts in the wasm build, so nothing else can be drawn with.
- * - **In-process, not a worker.** SP2 measured 1-8 ms per caption box (the layer,
- *   never a whole frame) and 0.3-1.8 ms of layout, so a worker's own cost would
- *   dwarf the work. What keeps the event loop free instead:
- *   1. renders run one at a time and each starts on a fresh event-loop turn;
- *   2. the SVG's size in bytes and its canvas in pixels are capped BEFORE anything
- *      is allocated, and the canvas cap bounds the wasm call's worst case (a full
- *      1080x1920 frame is 32 ms in SP2);
- *   3. a render that still ran past `timeoutMs` is discarded as RENDER_TIMEOUT.
- *      That last bound is a tripwire, not preemption: a synchronous wasm call
- *      cannot be interrupted from its own thread, and (2) is what limits it.
- * - **The output is capped** (`maxOutputBytes`).
- * - **Every failure is a hard `RasterError`**, never a fallback picture: resvg
- *   throws on a control character, on malformed XML and on an empty document.
+ * - **Fonts** are passed as `fontBuffers`, one text font per render; resvg has no system fonts in the wasm
+ *   build, so nothing else can be drawn with.
+ * - **Bounds checked before the expensive part** (rasterTypes.ts derives the numbers): the SVG's bytes, then,
+ *   once resvg has parsed it, the canvas in pixels (each side rounded up) and the PNG's bytes; the elapsed time
+ *   of parse, shape and paint together is a tripwire that discards a late result.
+ * - **Every failure is a hard `RasterError`**, never a fallback picture: resvg throws on a control character, on
+ *   malformed XML and on an empty document.
+ * - **A wasm trap breaks the instance.** 600 nested `<g opacity>` ran resvg out of memory, and its `free()` then
+ *   threw "recursive use of an object", which used to replace the error and leak the object. After a failed
+ *   `render()` or `getBBox()`, or a `free()` that fails, the rasteriser is marked broken: it answers `BROKEN`
+ *   from then on, and its worker must be replaced (the gate terminates it).
  *
- * The engine resolves no path itself (runtime.test.ts), so the wasm path and the
- * font directory are parameters. The engine entry passes `out-studio/engine/...`
- * (copied there by scripts/prepareTextAssets.ts, so they sit inside app.asar);
- * tests pass `node_modules` and `studio/assets/fonts`.
+ * Nothing here resolves a path (runtime.test.ts): the wasm path and the font directory are parameters, handed in
+ * by the engine entry through the worker's `workerData`.
  */
 
-/** The wasm `@resvg/resvg-wasm` 2.6.2 ships, pinned: only this version was tested (SP2). */
-export const RASTER_WASM = {
-  version: "2.6.2",
-  file: "index_bg.wasm",
-  sha256: "22bf6e9f9a100d972da0411a69c5ba504367fc1fa87b3b64e3f35e53926d2d70",
-  bytes: 2_478_606,
-} as const;
-
-/** Throws WASM_UNAVAILABLE unless `bytes` is exactly the pinned resvg-wasm file. `label` names where it was read from. */
-export function checkRasterWasmBytes(bytes: Uint8Array, label: string): void {
-  const actual = createHash("sha256").update(bytes).digest("hex");
-  if (bytes.byteLength !== RASTER_WASM.bytes || actual !== RASTER_WASM.sha256) {
-    throw new RasterError("WASM_UNAVAILABLE", `${label} is not the pinned resvg-wasm ${RASTER_WASM.version} (${bytes.byteLength} bytes, sha256 ${actual})`);
-  }
+/** The parts of a resvg instance this file uses. The real `Resvg` satisfies it; tests reproduce a trap with a fake. */
+export interface ResvgLike {
+  readonly width: number;
+  readonly height: number;
+  render(): { readonly width: number; readonly height: number; asPng(): Uint8Array; free(): void };
+  getBBox(): { x: number; y: number; width: number; height: number; free(): void } | undefined;
+  free(): void;
 }
-
-export type RasterErrorCode =
-  | "WASM_UNAVAILABLE"
-  | "FONT_UNAVAILABLE"
-  | "NOT_INITIALISED"
-  | "SVG_TOO_LARGE"
-  | "RASTER_TOO_LARGE"
-  | "OUTPUT_TOO_LARGE"
-  | "RENDER_TIMEOUT"
-  | "RENDER_FAILED";
-
-export class RasterError extends Error {
-  readonly code: RasterErrorCode;
-
-  constructor(code: RasterErrorCode, message: string, options?: ErrorOptions) {
-    super(`text rasteriser: ${message}`, options);
-    this.name = "RasterError";
-    this.code = code;
-  }
-}
-
-export interface RasterLimits {
-  /** The SVG source, in UTF-8 bytes. */
-  maxSvgBytes: number;
-  /** Canvas width x height. */
-  maxPixels: number;
-  /** The encoded PNG, in bytes. */
-  maxOutputBytes: number;
-  /** A render slower than this is discarded. */
-  timeoutMs: number;
-}
-
-/**
- * A caption box is at most 1080 px wide and a few hundred tall; the ceiling is one
- * full Reels frame. 60 emoji inline as base64 PNGs come to about 0.2 MB of SVG.
- */
-export const DEFAULT_RASTER_LIMITS: Readonly<RasterLimits> = {
-  maxSvgBytes: 2 * 1024 * 1024,
-  maxPixels: 1080 * 1920,
-  maxOutputBytes: 8 * 1024 * 1024,
-  timeoutMs: 1000,
-};
 
 export interface RasterDeps {
   /** The resvg `index_bg.wasm`. */
@@ -104,27 +54,8 @@ export interface RasterDeps {
   initWasm?: (module: WebAssembly.Module) => Promise<void>;
   /** A monotonic clock in ms, injectable for tests. */
   now?: () => number;
-}
-
-export interface RasterRequest {
-  /** An SVG the engine built from its fixed template (invariant 17). */
-  svg: string;
-  /** The one text font resvg is given for this render. */
-  font: TextFontKey;
-}
-
-export interface RasterImage {
-  png: Uint8Array;
-  width: number;
-  height: number;
-}
-
-/** resvg's `getBBox()`: the ink box of everything drawn, in the SVG's own units. */
-export interface Box {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+  /** Injectable for tests; the default is resvg's own constructor. */
+  newResvg?: (svg: string, options: ResvgRenderOptions) => ResvgLike;
 }
 
 export interface TextRasteriser {
@@ -133,19 +64,20 @@ export interface TextRasteriser {
   /** Draws the SVG. Initialises on its own; renders run one at a time. Rejects with a `RasterError`. */
   render(request: RasterRequest): Promise<RasterImage>;
   /**
-   * resvg's own `getBBox()` (the measuring 3b.4b's layout uses: the shaper that draws is the
-   * one that measures), or null when nothing is drawn. Synchronous, so layout can loop over
-   * words; requires `init()` first. Throws a `RasterError`.
+   * resvg's own `getBBox()` (the measuring 3b.4b's layout uses: the shaper that draws is the one that measures),
+   * or null when nothing is drawn. Synchronous, so layout can loop over words; requires `init()` first.
+   * Throws a `RasterError`.
    */
   measure(request: RasterRequest): Box | null;
+  /** True after a wasm trap or a failed `free()`: every later call answers `BROKEN` and the owner must replace this rasteriser. */
+  isBroken(): boolean;
 }
 
 type InitWasm = (module: WebAssembly.Module) => Promise<void>;
-type ResvgInstance = InstanceType<typeof Resvg>;
 
 /**
- * resvg can be initialised once per process ("Already initialized"), while a test or a
- * respawn may build several rasterisers, so the initialisation is shared per `initWasm`.
+ * resvg can be initialised once per process ("Already initialized"), while a test or a respawn may build several
+ * rasterisers, so the initialisation is shared per `initWasm`.
  */
 const sharedInit = new Map<InitWasm, Promise<void>>();
 
@@ -163,6 +95,12 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** A wasm trap, or what resvg-wasm's own wrapper says once one has happened. An ordinary parse error is neither. */
+function looksLikeTrap(error: unknown): boolean {
+  if (error instanceof WebAssembly.RuntimeError) return true;
+  return /unreachable|out of bounds|out of memory|recursive use|aliasing|\babort(?:ed)?\b/i.test(messageOf(error));
+}
+
 /** Lets timers and I/O run before the next render. */
 function nextTurn(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
@@ -173,10 +111,12 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
   const read = deps.readFile ?? readFile;
   const initWasm: InitWasm = deps.initWasm ?? resvgInitWasm;
   const now = deps.now ?? (() => performance.now());
+  const newResvg = deps.newResvg ?? ((svg: string, options: ResvgRenderOptions): ResvgLike => new Resvg(svg, options));
 
   let fonts: Record<TextFontKey, Uint8Array> | null = null;
   let pending: Promise<void> | null = null;
   let tail: Promise<unknown> = Promise.resolve();
+  let broken = false;
 
   async function load(): Promise<Record<TextFontKey, Uint8Array>> {
     let bytes: Uint8Array;
@@ -200,6 +140,7 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
   }
 
   function init(): Promise<void> {
+    if (broken) return Promise.reject(brokenError());
     if (fonts !== null) return Promise.resolve();
     pending ??= load().then(
       (loaded) => {
@@ -213,57 +154,79 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
     return pending;
   }
 
-  /** Parses the SVG with the request's font. The caller frees the result. */
-  function open(request: RasterRequest): ResvgInstance {
+  function brokenError(): RasterError {
+    return new RasterError("BROKEN", "an earlier wasm failure left resvg unusable; the worker must be replaced");
+  }
+
+  /** Frees a resvg object. A `free()` that throws (it does after a trap) marks the instance broken and is otherwise ignored. */
+  function release(object: { free(): void }): void {
+    try {
+      object.free();
+    } catch {
+      broken = true;
+    }
+  }
+
+  /**
+   * The one path every render and measure takes: the checks that come before resvg does any work, the parse,
+   * the canvas cap, the work itself, and the deadline over all of it. `work` failing means resvg trapped or
+   * failed mid-call, so the instance is broken; a parse that throws is an ordinary error unless it looks like a trap.
+   */
+  function guarded<T>(request: RasterRequest, work: (resvg: ResvgLike) => T): T {
+    if (broken) throw brokenError();
     if (fonts === null) throw new RasterError("NOT_INITIALISED", "init() has not completed");
     if (Buffer.byteLength(request.svg, "utf8") > limits.maxSvgBytes) {
       throw new RasterError("SVG_TOO_LARGE", `the SVG is over ${limits.maxSvgBytes} bytes`);
     }
+    const started = now();
+    let resvg: ResvgLike;
     try {
-      return new Resvg(request.svg, {
+      resvg = newResvg(request.svg, {
         font: { fontBuffers: [fonts[request.font]], defaultFontFamily: TEXT_FONTS[request.font].family },
         shapeRendering: 2,
         textRendering: 1,
       });
     } catch (cause) {
+      if (looksLikeTrap(cause)) broken = true;
       throw new RasterError("RENDER_FAILED", `resvg refused the SVG: ${messageOf(cause)}`, { cause });
+    }
+    try {
+      const pixels = Math.ceil(resvg.width) * Math.ceil(resvg.height);
+      if (!(pixels <= limits.maxPixels)) {
+        throw new RasterError("RASTER_TOO_LARGE", `a ${resvg.width}x${resvg.height} canvas is over ${limits.maxPixels} pixels`);
+      }
+      let result: T;
+      try {
+        result = work(resvg);
+      } catch (cause) {
+        broken = true;
+        throw new RasterError("RENDER_FAILED", `resvg failed: ${messageOf(cause)}`, { cause });
+      }
+      const elapsed = now() - started;
+      if (elapsed > limits.timeoutMs) throw new RasterError("RENDER_TIMEOUT", `the call took ${Math.round(elapsed)} ms, over ${limits.timeoutMs} ms`);
+      return result;
+    } finally {
+      release(resvg);
     }
   }
 
   function renderNow(request: RasterRequest): RasterImage {
-    const resvg = open(request);
-    try {
-      const pixels = resvg.width * resvg.height;
-      if (!(pixels <= limits.maxPixels)) {
-        throw new RasterError("RASTER_TOO_LARGE", `a ${resvg.width}x${resvg.height} canvas is over ${limits.maxPixels} pixels`);
-      }
-      const started = now();
-      let width: number;
-      let height: number;
-      let png: Uint8Array;
+    const image = guarded(request, (resvg) => {
+      const painted = resvg.render();
       try {
-        const image = resvg.render();
-        try {
-          width = image.width;
-          height = image.height;
-          png = image.asPng();
-        } finally {
-          image.free();
-        }
-      } catch (cause) {
-        throw new RasterError("RENDER_FAILED", `resvg failed to render: ${messageOf(cause)}`, { cause });
+        return { width: painted.width, height: painted.height, png: painted.asPng() };
+      } finally {
+        release(painted);
       }
-      const elapsed = now() - started;
-      if (elapsed > limits.timeoutMs) throw new RasterError("RENDER_TIMEOUT", `the render took ${Math.round(elapsed)} ms, over ${limits.timeoutMs} ms`);
-      if (png.byteLength > limits.maxOutputBytes) throw new RasterError("OUTPUT_TOO_LARGE", `the PNG is ${png.byteLength} bytes, over ${limits.maxOutputBytes}`);
-      return { png, width, height };
-    } finally {
-      resvg.free();
-    }
+    });
+    if (image.png.byteLength > limits.maxOutputBytes) throw new RasterError("OUTPUT_TOO_LARGE", `the PNG is ${image.png.byteLength} bytes, over ${limits.maxOutputBytes}`);
+    return image;
   }
 
   return {
     init,
+
+    isBroken: () => broken,
 
     async render(request) {
       await init();
@@ -274,18 +237,13 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
     },
 
     measure(request) {
-      const resvg = open(request);
-      try {
+      return guarded(request, (resvg) => {
         const box = resvg.getBBox();
         if (box === undefined) return null;
         const measured = { x: box.x, y: box.y, width: box.width, height: box.height };
-        box.free();
+        release(box);
         return measured;
-      } catch (cause) {
-        throw new RasterError("RENDER_FAILED", `resvg failed to measure: ${messageOf(cause)}`, { cause });
-      } finally {
-        resvg.free();
-      }
+      });
     },
   };
 }

@@ -220,8 +220,7 @@ describe("render", () => {
     expect((await r.render({ svg: svg("edge"), font: "manrope" })).width).toBe(240);
   });
 
-  test("ships defaults that admit a full Reels frame and nothing bigger", () => {
-    expect(DEFAULT_RASTER_LIMITS.maxPixels).toBe(1080 * 1920);
+  test("ships a positive deadline by default", () => {
     expect(DEFAULT_RASTER_LIMITS.timeoutMs).toBeGreaterThan(0);
   });
 
