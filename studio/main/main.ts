@@ -18,6 +18,7 @@ import type { EventMessage } from "../shared/engine";
 import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { engineEnv } from "./engineEnv";
+import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
@@ -179,11 +180,17 @@ async function startStudio(): Promise<void> {
   if (notice !== null) notices.add("settings-reset", notice);
 
   const engine = new EngineHost<MessagePortMain>({
-    fork: () =>
-      utilityProcess.fork(ENGINE_ENTRY, [], {
+    fork: () => {
+      // Piped, not inherited, and relayed to main's own output: an inherited stream does not reach the launcher on
+      // Windows (engineOutput.ts), and the packaged smoke reads what the engine prints from main's output.
+      const child = utilityProcess.fork(ENGINE_ENTRY, [], {
         env: engineEnv(process.env),
         serviceName: "studio-engine",
-      }),
+        stdio: "pipe",
+      });
+      forwardEngineOutput(child, process.stdout, process.stderr);
+      return child;
+    },
     channel: () => {
       const { port1, port2 } = new MessageChannelMain();
       return { local: port1, remote: port2 };

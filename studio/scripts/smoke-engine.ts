@@ -557,7 +557,7 @@ function checkTextWorker(where: string, engine: string, worker: string | null, f
 async function checkTextRasteriser(where: string, output: () => string): Promise<void> {
   const ready = await waitFor("the text rasteriser's ready line", async () => (textRasteriserOutputProblems(output()).length === 0 ? true : null), 30_000).catch(() => false);
   const problems = textRasteriserOutputProblems(output());
-  check(`${where}: the engine loads resvg-wasm and the fonts and its Cyrillic self-test draws the pinned fingerprint`, ready === true && problems.length === 0, problems);
+  check(`${where}: the engine loads resvg-wasm and the fonts and its Cyrillic self-test draws the pinned fingerprint`, ready === true && problems.length === 0, { problems, outputTail: output().slice(-1500) });
 }
 
 async function productionCheck(target: Target): Promise<void> {
