@@ -8,6 +8,9 @@ import { ffmpegPath } from "../../../node/ffmpegBinary";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { createRealDecodeBackend } from "../../decode/realBackend";
 import { createWasmImageDecoder } from "../../decode/wasmDecode";
+import { createFocusResolver } from "../../focus/focusResolver";
+import { openLibrary } from "../../library/library";
+import { SAMPLE_AVATAR, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../../library/testing/helpers";
 import { createFaceGate } from "../gate";
 import { NoFaceInReferenceError } from "../noFaceError";
 import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, sharedRealFaceGate, twelveMegapixelJpeg, twoKJpeg } from "../testing/realWorker";
@@ -199,6 +202,91 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("start-up failures of
   test("a workerData the worker cannot parse is refused up front, by the engine, with the validation message", () => {
     expect(() => realWorkerSpawner({ nodeModulesDir: "" })).toThrow(/nodeModulesDir/);
   });
+});
+
+// S8: the focus resolver over the REAL detector, the real fixtures and a real
+// library folder. focusResolver.test.ts pins the caching, fallback and bounds
+// against a scripted gate; this pins that the point it derives really lands on
+// the face.
+describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("focus resolution on the real face fixtures", () => {
+  const libraryRoot = useTempDir("studio-focus-real-");
+
+  /** Points measured with YuNet on the committed fixtures: the centre of the largest face box, as fractions of the image. */
+  const MEASURED = {
+    [MASTER.file]: { x: 0.503, y: 0.488 },
+    "render-best-home-1.jpg": { x: 0.516, y: 0.408 },
+    "render-worst-fitness-3.jpg": { x: 0.371, y: 0.479 }, // a small face (11 percent of the height), off to the left
+  } as const;
+
+  async function libraryWith(images: ReadonlyArray<{ bytes: Uint8Array; width: number; height: number }>) {
+    const { library } = await openLibrary(libraryRoot(), { now: steppingClock(), newId: sequentialIds() });
+    const avatar = await library.createAvatar(SAMPLE_AVATAR);
+    const photoIds: string[] = [];
+    for (const image of images) {
+      const photo = await library.addPhoto(avatar.id, image.bytes, samplePhotoMeta({ mediaType: "image/jpeg", width: image.width, height: image.height }));
+      photoIds.push(photo.id);
+    }
+    return { library, avatarId: avatar.id, photoIds };
+  }
+
+  const fixtureJpeg = async (file: string) => new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, file)));
+
+  test.each(Object.entries(MEASURED))("centres the focus on the face in %s", async (file, expected) => {
+    const size = file === MASTER.file ? { width: 864, height: 1152 } : { width: 720, height: 1280 };
+    const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(file), ...size }]);
+    const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
+    const focus = await focusFor(avatarId, photoIds[0] ?? "");
+    expect(Math.abs(focus.x - expected.x)).toBeLessThan(0.02);
+    expect(Math.abs(focus.y - expected.y)).toBeLessThan(0.02);
+  }, 30_000);
+
+  test("gives the (0.5, 0.38) fallback for an image with no face, and it is not an error", async () => {
+    const { library, avatarId, photoIds } = await libraryWith([{ bytes: flatGreyJpeg(), width: 640, height: 640 }]);
+    const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
+    expect(await focusFor(avatarId, photoIds[0] ?? "")).toEqual({ x: 0.5, y: 0.38 });
+  }, 30_000);
+
+  test("a restarted resolver answers from the saved file: the second one never reaches the detector", async () => {
+    const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(MASTER.file), width: 864, height: 1152 }]);
+    const real = sharedRealFaceGate();
+    const first = await createFocusResolver({ library, faceGate: real }).focusFor(avatarId, photoIds[0] ?? "");
+    let detections = 0;
+    const counting = {
+      isBroken: () => real.isBroken(),
+      detect: (bytes: Uint8Array, signal: AbortSignal) => {
+        detections += 1;
+        return real.detect(bytes, signal);
+      },
+    };
+    expect(await createFocusResolver({ library, faceGate: counting }).focusFor(avatarId, photoIds[0] ?? "")).toEqual(first);
+    expect(detections).toBe(0);
+  }, 30_000);
+
+  test("fillMissingFocus fills a headless spec's null cells from the real detector and leaves a set focus alone", async () => {
+    const { library, avatarId, photoIds } = await libraryWith([
+      { bytes: await fixtureJpeg(MASTER.file), width: 864, height: 1152 },
+      { bytes: await fixtureJpeg("render-best-home-1.jpg"), width: 720, height: 1280 },
+    ]);
+    const { fillMissingFocus } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
+    const [a = "", b = ""] = photoIds;
+    const base = { durationMs: 2_000, transitionIn: "cut" as const, motion: "kenburns" as const };
+    const filled = await fillMissingFocus({
+      schemaVersion: 1,
+      avatarId,
+      layers: [],
+      music: null,
+      seed: 1,
+      clips: [
+        { ...base, clipId: "clip-001", kind: "photo", cell: { photo: { source: "scene", photoId: a }, focus: null } },
+        { ...base, clipId: "clip-002", kind: "photo", cell: { photo: { source: "scene", photoId: b }, focus: { x: 0.1, y: 0.9 } } },
+      ],
+    });
+    const [first, second] = filled.clips;
+    const firstFocus = first?.kind === "photo" ? first.cell.focus : null;
+    expect(Math.abs((firstFocus?.x ?? 9) - 0.503)).toBeLessThan(0.02);
+    expect(Math.abs((firstFocus?.y ?? 9) - 0.488)).toBeLessThan(0.02);
+    expect(second?.kind === "photo" ? second.cell.focus : null).toEqual({ x: 0.1, y: 0.9 });
+  }, 30_000);
 });
 
 function flatGreyJpeg(): Uint8Array {
