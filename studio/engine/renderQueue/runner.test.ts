@@ -1,0 +1,397 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Clip } from "../../shared/engine/montage";
+import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
+import { fakeSpawner, outputOf, type SpawnCall } from "../../node/fakeFfmpeg.testkit";
+import { renderTimeoutMs } from "./progress";
+import { runRenderJob, type RenderRunInput, type RenderRunDeps } from "./runner";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
+
+// The runner of one render job against a scripted ffmpeg and a real temp
+// folder: the two passes in order, the folded progress, the timeout, and the
+// cleanup on every way out.
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+function tempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "studio-runner-"));
+  dirs.push(dir);
+  return dir;
+}
+
+const scene = (id: string) => ({ photo: { source: "scene" as const, photoId: id }, focus: { x: 0.5, y: 0.5 } });
+const clip = (clipId: string, durationMs: number): Clip => ({ clipId, durationMs, transitionIn: "cut", kind: "photo", cell: scene(`photo-${clipId}`), motion: "static" });
+const CLIPS: Clip[] = [clip("a", 1000), clip("b", 1000)]; // 60 frames of the final video
+
+interface Rig {
+  readonly tmpRoot: string;
+  readonly exportDir: string;
+  readonly output: string;
+  readonly jobDir: string;
+  readonly input: RenderRunInput;
+  readonly progress: number[];
+}
+
+function rig(over: Partial<RenderRunInput> = {}): Rig {
+  const root = tempDir();
+  const tmpRoot = join(root, "render-tmp");
+  const exportDir = join(root, "export");
+  mkdirSync(exportDir, { recursive: true });
+  const output = join(exportDir, ".studio-part-job-00000001.mp4");
+  const progress: number[] = [];
+  const input: RenderRunInput = {
+    jobId: "job-00000001",
+    tmpRoot,
+    seed: 1,
+    clips: CLIPS,
+    resolvePhoto: (ref) => ({ path: join(root, `${ref.source === "scene" ? ref.photoId : ref.mediaId}.jpg`), width: 720, height: 1280 }),
+    overlays: [],
+    audio: { kind: "silent" },
+    output,
+    signal: new AbortController().signal,
+    onProgress: (done) => progress.push(done),
+    ...over,
+  };
+  return { tmpRoot, exportDir, output, jobDir: join(tmpRoot, "job-00000001"), input, progress };
+}
+
+/** A well-behaved ffmpeg: writes its output, reports its frames in steps, exits 0. */
+function goodFfmpeg(call: SpawnCall): void {
+  writeFileSync(outputOf(call.args), "data");
+  const frames = call.args.includes("concat") ? 60 : 30;
+  call.child.report(Math.floor(frames / 2));
+  call.child.report(frames, true);
+  call.child.exit(0);
+}
+
+function depsWith(script: (call: SpawnCall, index: number) => void, extra: Partial<RenderRunDeps> = {}, killExits = true): { deps: RenderRunDeps; calls: SpawnCall[] } {
+  const { spawner, calls } = fakeSpawner(script, killExits);
+  const run = (opts: RunFfmpegArgvOptions): Promise<void> => runFfmpegArgv({ ...opts, spawner, env: {} });
+  return { deps: { run, ...extra }, calls };
+}
+
+describe("runRenderJob: the passes", () => {
+  test("runs pass 1 for each clip into the job folder, then pass 2 into the given output, in that order", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await runRenderJob(r.input, deps);
+
+    expect(calls.map((c) => outputOf(c.args))).toEqual([join(r.jobDir, "clip-00.mkv"), join(r.jobDir, "clip-01.mkv"), r.output]);
+    expect(calls[2]?.args).toContain("concat");
+    expect(existsSync(r.output)).toBe(true);
+  });
+
+  test("runs one ffmpeg at a time within a job", async () => {
+    const r = rig();
+    let live = 0;
+    let peak = 0;
+    const { deps } = depsWith((call) => {
+      live++;
+      peak = Math.max(peak, live);
+      setTimeout(() => {
+        live--;
+        goodFfmpeg(call);
+      }, 5);
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(peak).toBe(1);
+  });
+
+  test("writes the concat list into the job folder before pass 2 starts and runs pass 2 there", async () => {
+    const r = rig();
+    let listAtPass2: string | undefined;
+    const { deps, calls } = depsWith((call, index) => {
+      if (index === 2) listAtPass2 = readFileSync(join(r.jobDir, "list.txt"), "utf8");
+      goodFfmpeg(call);
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(listAtPass2).toBe("file 'clip-00.mkv'\nfile 'clip-01.mkv'\n");
+    expect(calls[2]?.options.cwd).toBe(r.jobDir);
+    expect(calls[0]?.options.cwd).toBeUndefined();
+  });
+
+  test("resolves with the frames of the final video", async () => {
+    const r = rig();
+    const { deps } = depsWith(goodFfmpeg);
+
+    await expect(runRenderJob(r.input, deps)).resolves.toEqual({ totalFrames: 60 });
+  });
+});
+
+describe("runRenderJob: progress", () => {
+  test("reports frames of the final video: monotonic, and below the total until the job itself ends", async () => {
+    const r = rig();
+    const { deps } = depsWith(goodFfmpeg);
+
+    await runRenderJob(r.input, deps);
+
+    expect(r.progress.length).toBeGreaterThan(2);
+    for (let i = 1; i < r.progress.length; i++) expect(r.progress[i]).toBeGreaterThan(r.progress[i - 1] ?? 0);
+    expect(Math.max(...r.progress)).toBeLessThan(60);
+  });
+
+  test("reaches the end of pass 1's share before pass 2 reports anything", async () => {
+    const r = rig();
+    const seenBeforePass2: number[] = [];
+    const { deps } = depsWith((call, index) => {
+      if (index === 2) seenBeforePass2.push(...r.progress);
+      goodFfmpeg(call);
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(seenBeforePass2.at(-1)).toBe(21); // floor(60 x 35 / 100): both clips done
+    expect(r.progress.at(-1)).toBe(59);
+  });
+
+  test("counts the frames of clips already done when the next clip reports its own", async () => {
+    const r = rig();
+    const { deps } = depsWith((call, index) => {
+      if (index === 1) {
+        // The second clip's first report: 30 frames of clip 0 + 15 of clip 1 = 45 of 60 pass-1 frames.
+        call.child.report(15);
+        call.child.report(30, true);
+        writeFileSync(outputOf(call.args), "data");
+        call.child.exit(0);
+        return;
+      }
+      goodFfmpeg(call);
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(r.progress).toContain(Math.floor((45 * 35) / 100)); // 15
+  });
+
+  test("a listener that throws stops the job with its own error", async () => {
+    const boom = new Error("window closed");
+    const r = rig({
+      onProgress: () => {
+        throw boom;
+      },
+    });
+    const { deps } = depsWith((call) => call.child.report(10));
+
+    await expect(runRenderJob(r.input, deps)).rejects.toBe(boom);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+});
+
+describe("runRenderJob: the job folder and the output", () => {
+  test("removes the job folder and keeps the output when it succeeds", async () => {
+    const r = rig();
+    const { deps } = depsWith(goodFfmpeg);
+
+    await runRenderJob(r.input, deps);
+
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(readdirSync(r.tmpRoot)).toEqual([]);
+    expect(existsSync(r.output)).toBe(true);
+  });
+
+  test("when ffmpeg fails in pass 1, rejects with its error and a short stderr tail, runs no pass 2, and leaves nothing", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "half a clip");
+      call.child.complain(`${"noise\n".repeat(5000)}Error: Cannot open input\n`);
+      call.child.exit(1);
+    });
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(FfmpegError);
+    if (!(error instanceof FfmpegError)) throw error;
+    expect(error.exitCode).toBe(1);
+    expect(error.stderrTail.length).toBeLessThanOrEqual(2000);
+    expect(error.stderrTail).toContain("Cannot open input");
+    expect(calls).toHaveLength(1);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("when pass 2 fails, removes the half-written output and the job folder", async () => {
+    const r = rig();
+    const { deps } = depsWith((call, index) => {
+      if (index < 2) return goodFfmpeg(call);
+      writeFileSync(outputOf(call.args), "half a video");
+      call.child.exit(1);
+    });
+
+    await expect(runRenderJob(r.input, deps)).rejects.toBeInstanceOf(FfmpegError);
+
+    expect(existsSync(r.output)).toBe(false);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+
+  test("when ffmpeg cannot be started, rejects with that error and leaves nothing", async () => {
+    const r = rig();
+    const run = (): Promise<void> => Promise.reject(new Error("spawn ffmpeg ENOENT"));
+
+    await expect(runRenderJob(r.input, { run })).rejects.toThrow("ENOENT");
+
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("a folder that cannot be removed is reported through warn and never masks the render's own error", async () => {
+    const r = rig();
+    const warnings: Array<[string, unknown]> = [];
+    const { deps } = depsWith((call) => call.child.exit(1), {
+      removeTree: () => Promise.reject(Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" })),
+      removeFile: () => Promise.reject(Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" })),
+      warn: (what, error) => warnings.push([what, error]),
+    });
+
+    await expect(runRenderJob(r.input, deps)).rejects.toBeInstanceOf(FfmpegError);
+
+    expect(warnings.map(([what]) => what)).toEqual(["job folder", "unfinished output"]);
+    expect(warnings[0]?.[1]).toBeInstanceOf(Error);
+  });
+
+  test("a folder that cannot be removed after a good render is reported, and the render still succeeds", async () => {
+    const r = rig();
+    const warnings: string[] = [];
+    const { deps } = depsWith(goodFfmpeg, {
+      removeTree: () => Promise.reject(new Error("EPERM")),
+      warn: (what) => warnings.push(what),
+    });
+
+    await expect(runRenderJob(r.input, deps)).resolves.toEqual({ totalFrames: 60 });
+
+    expect(warnings).toEqual(["job folder"]);
+  });
+
+  test("refuses a job id that could leave the render-tmp folder", async () => {
+    const r = rig({ jobId: "../evil" });
+
+    await expect(runRenderJob(r.input, {})).rejects.toThrow(TypeError);
+  });
+});
+
+describe("runRenderJob: cancel", () => {
+  test("a cancel during pass 1 kills ffmpeg, rejects with the reason, runs nothing more and leaves nothing", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled");
+    const r = rig({ signal: controller.signal });
+    const { deps, calls } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "half a clip");
+      call.child.report(5);
+      setTimeout(() => controller.abort(reason), 5);
+    }, {}, true);
+
+    await expect(runRenderJob(r.input, deps)).rejects.toBe(reason);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.child.killedWith).toEqual(["SIGKILL"]);
+    expect(calls[0]?.child.closed).toBe(true);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("a cancel between the passes runs no pass 2", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled between passes");
+    const r = rig({ signal: controller.signal });
+    const { deps, calls } = depsWith((call, index) => {
+      goodFfmpeg(call);
+      if (index === 1) controller.abort(reason);
+    });
+
+    await expect(runRenderJob(r.input, deps)).rejects.toBe(reason);
+
+    expect(calls).toHaveLength(2);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+
+  test("a job cancelled before it starts creates no folder and starts no ffmpeg", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled while queued"));
+    const r = rig({ signal: controller.signal });
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await expect(runRenderJob(r.input, deps)).rejects.toThrow("cancelled while queued");
+
+    expect(calls).toHaveLength(0);
+    expect(existsSync(r.tmpRoot)).toBe(false);
+  });
+
+  test("a cancel that arrives after pass 2 exited 0 is too late: the render resolves and the output stays", async () => {
+    const controller = new AbortController();
+    const r = rig({ signal: controller.signal });
+    const { deps } = depsWith((call, index) => {
+      goodFfmpeg(call);
+      if (index === 2) controller.abort(new Error("too late"));
+    });
+
+    await expect(runRenderJob(r.input, deps)).resolves.toEqual({ totalFrames: 60 });
+
+    expect(existsSync(r.output)).toBe(true);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+});
+
+describe("runRenderJob: the timeout", () => {
+  function recordingRun(clock: { now: number }, advance: number[]): { run: (o: RunFfmpegArgvOptions) => Promise<void>; timeouts: Array<number | undefined> } {
+    const timeouts: Array<number | undefined> = [];
+    const run = (opts: RunFfmpegArgvOptions): Promise<void> => {
+      timeouts.push(opts.timeoutMs);
+      writeFileSync(opts.argv.at(-1) ?? "", "data");
+      clock.now += advance[timeouts.length - 1] ?? 0;
+      return Promise.resolve();
+    };
+    return { run, timeouts };
+  }
+
+  test("gives the whole job max(90 s, 30 x its seconds), shared by its calls: each gets what is left", async () => {
+    const r = rig();
+    const clock = { now: 1_000_000 };
+    const { run, timeouts } = recordingRun(clock, [10_000, 20_000, 0]);
+
+    await runRenderJob(r.input, { run, now: () => clock.now });
+
+    const whole = renderTimeoutMs(60);
+    expect(whole).toBe(90_000);
+    expect(timeouts).toEqual([whole, whole - 10_000, whole - 30_000]);
+  });
+
+  test("fails with a timeout error naming the whole budget, without starting a call the budget cannot pay for", async () => {
+    const r = rig();
+    const clock = { now: 0 };
+    const { run, timeouts } = recordingRun(clock, [95_000]);
+
+    const error = await runRenderJob(r.input, { run, now: () => clock.now }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(FfmpegTimeoutError);
+    if (!(error instanceof FfmpegTimeoutError)) throw error;
+    expect(error.timeoutMs).toBe(90_000);
+    expect(timeouts).toHaveLength(1);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("names the whole budget when a single call runs out its slice", async () => {
+    const r = rig();
+    const clock = { now: 0 };
+    const run = (opts: RunFfmpegArgvOptions): Promise<void> => {
+      clock.now += 30_000;
+      return Promise.reject(new FfmpegTimeoutError(opts.timeoutMs ?? 0, "last words"));
+    };
+
+    const error = await runRenderJob(r.input, { run, now: () => clock.now }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(FfmpegTimeoutError);
+    if (!(error instanceof FfmpegTimeoutError)) throw error;
+    expect(error.timeoutMs).toBe(90_000);
+    expect(error.stderrTail).toBe("last words");
+  });
+});
