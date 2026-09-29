@@ -24,6 +24,8 @@ export interface TestApng {
   readonly omitActl?: boolean;
   readonly colorType?: number;
   readonly bitDepth?: number;
+  /** Chunks written right after IHDR, before acTL. */
+  readonly early?: readonly Uint8Array[];
 }
 
 const u32 = (n: number): number[] => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
@@ -62,12 +64,14 @@ export function fctl(seq: number, w: number, h: number, x: number, y: number, de
 
 export const idat = (): Uint8Array => chunk("IDAT", [1, 2, 3, 4, 5]);
 export const fdat = (seq: number): Uint8Array => chunk("fdAT", [...u32(seq), 1, 2, 3]);
+export const plte = (colours = 2): Uint8Array => chunk("PLTE", Array.from({ length: colours * 3 }, (_, i) => i * 7));
 export const iend = (): Uint8Array => chunk("IEND", []);
 
 export function buildApng(spec: TestApng): Uint8Array {
   const width = spec.width ?? 8;
   const height = spec.height ?? 8;
   const parts: Uint8Array[] = [PNG_SIGNATURE, ihdr(width, height, spec.bitDepth ?? 8, spec.colorType ?? 6)];
+  parts.push(...(spec.early ?? []));
   if (!spec.omitActl) parts.push(actl(spec.declaredFrames ?? spec.frames.length, spec.numPlays ?? 0));
   let seq = 0;
   spec.frames.forEach((f, i) => {

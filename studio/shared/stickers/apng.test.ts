@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { inspectApng, STICKER_LIMITS, type ApngInspection, type ApngRejectCode } from "./apng";
-import { actl, buildApng, chunk, concat, fctl, fdat, idat, iend, ihdr, PNG_SIGNATURE } from "./apng.testkit";
+import { actl, buildApng, chunk, concat, fctl, fdat, idat, iend, ihdr, plte, PNG_SIGNATURE } from "./apng.testkit";
 import { crc32 } from "./crc32";
 
 const frames = (n: number, f: { delayNum?: number; delayDen?: number } = {}): { delayNum?: number; delayDen?: number }[] =>
@@ -225,5 +225,84 @@ describe("inspectApng: malformed input", () => {
       copy[i] = (copy[i] ?? 0) ^ 0xff;
       expect(() => inspectApng(copy)).not.toThrow();
     }
+  });
+});
+
+describe("inspectApng: files the preview and the render could read differently", () => {
+  test("refuses a chunk type with a digit in it", () => {
+    expect(rejected(inspectApng(buildApng({ frames: frames(2), early: [chunk("tE1t", [65])] })))).toBe("BAD_CHUNK_TYPE");
+  });
+  test("refuses a chunk type with a control byte in it", () => {
+    expect(rejected(inspectApng(buildApng({ frames: frames(2), early: [chunk("tE\u0001t", [65])] })))).toBe("BAD_CHUNK_TYPE");
+  });
+  test("accepts an unknown ancillary chunk (lower-case first letter)", () => {
+    accepted(inspectApng(buildApng({ frames: frames(2), early: [chunk("teXt", [65])] })));
+  });
+  test("refuses an unknown critical chunk (upper-case first letter)", () => {
+    expect(rejected(inspectApng(buildApng({ frames: frames(2), early: [chunk("ABCD", [1])] })))).toBe("UNKNOWN_CRITICAL_CHUNK");
+  });
+  test("refuses colour type 3 (palette) with no PLTE", () => {
+    expect(rejected(inspectApng(buildApng({ frames: frames(2), colorType: 3 })))).toBe("MISSING_PLTE");
+  });
+  test("accepts colour type 3 with a PLTE before the image data", () => {
+    accepted(inspectApng(buildApng({ frames: frames(2), colorType: 3, early: [plte()] })));
+  });
+  test("refuses a PLTE that comes after the image data", () => {
+    const bytes = concat([PNG_SIGNATURE, ihdr(8, 8), actl(1, 0), fctl(0, 8, 8, 0, 0, 1, 30), idat(), plte(), iend()]);
+    expect(rejected(inspectApng(bytes))).toBe("BAD_CHUNK_ORDER");
+  });
+  test("refuses a PLTE whose length is not a multiple of 3", () => {
+    expect(rejected(inspectApng(buildApng({ frames: frames(2), colorType: 3, early: [chunk("PLTE", [1, 2, 3, 4])] })))).toBe("BAD_CHUNK");
+  });
+  test("refuses a zero-length IDAT", () => {
+    const bytes = concat([PNG_SIGNATURE, ihdr(8, 8), actl(1, 0), fctl(0, 8, 8, 0, 0, 1, 30), chunk("IDAT", []), iend()]);
+    expect(rejected(inspectApng(bytes))).toBe("EMPTY_IDAT");
+  });
+  test("refuses a zero-length IDAT among others", () => {
+    const bytes = concat([PNG_SIGNATURE, ihdr(8, 8), actl(1, 0), fctl(0, 8, 8, 0, 0, 1, 30), idat(), chunk("IDAT", []), iend()]);
+    expect(rejected(inspectApng(bytes))).toBe("EMPTY_IDAT");
+  });
+});
+
+/** Recomputes every chunk CRC in place, walking as far as the lengths allow, so a mutation is judged on its structure and not stopped by BAD_CRC. */
+function fixCrcs(bytes: Uint8Array): void {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let pos = 8; pos + 12 <= bytes.length; ) {
+    const len = view.getUint32(pos);
+    if (len > bytes.length || pos + 12 + len > bytes.length) return;
+    view.setUint32(pos + 8 + len, crc32(bytes.subarray(pos + 4, pos + 8 + len)));
+    pos += 12 + len;
+  }
+}
+
+describe("inspectApng: mutation fuzz with the CRCs repaired", () => {
+  test("never throws, and whatever it accepts obeys the caps and its own totals (200k mutations)", () => {
+    const seeds = [buildApng({ frames: frames(3) }), buildApng({ frames: frames(4), colorType: 3, early: [plte()] })];
+    let state = 12345;
+    const next = (n: number): number => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return (state >>> 8) % n;
+    };
+    let accepted = 0;
+    for (let i = 0; i < 200_000; i++) {
+      const copy = Uint8Array.from(seeds[i % seeds.length] ?? new Uint8Array(0));
+      const edits = 1 + next(3);
+      for (let e = 0; e < edits; e++) copy[next(copy.length)] = next(256);
+      fixCrcs(copy);
+      const result = inspectApng(copy);
+      if (!result.ok) continue;
+      accepted += 1;
+      const { info } = result;
+      expect(info.frames.length).toBe(info.frameCount);
+      expect(info.frames.reduce((n, f) => n + f.delayFrames, 0)).toBe(info.loopFrames);
+      expect(info.loopFrames).toBeLessThanOrEqual(STICKER_LIMITS.maxLoopFrames);
+      expect(Math.max(info.width, info.height)).toBeLessThanOrEqual(STICKER_LIMITS.maxSide);
+      for (const f of info.frames) {
+        expect(f.x + f.width).toBeLessThanOrEqual(info.width);
+        expect(f.y + f.height).toBeLessThanOrEqual(info.height);
+        expect(Number.isInteger(f.delayFrames) && f.delayFrames >= 1).toBe(true);
+      }
+    }
+    expect(accepted).toBeGreaterThan(0);
   });
 });

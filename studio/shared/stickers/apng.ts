@@ -4,8 +4,15 @@ import { crc32 } from "./crc32";
 // chunk's CRC and the acTL/fcTL/fdAT structure, and never inflates a pixel, so
 // a hostile file costs one linear pass over bytes already in memory. It is the
 // gate for the built-in set (the generator's self-check) and for own stickers
-// (3b.6, 3f.5): what it accepts, the render's in-graph loop reads exactly as
-// the preview does.
+// (3b.6, 3f.5).
+//
+// What it promises: a well-formed chunk structure, the caps, and a whole-frame
+// delay grid, in a conservative subset that ffmpeg (the render) and Chrome's
+// ImageDecoder (the preview) read the same way: only letter chunk types, no
+// unknown critical chunk, a PLTE for palette images, no empty IDAT. What it
+// does not promise: that the compressed pixel data inflates. That is only
+// found by decoding, so an import (3f.5) must also decode the file once, with
+// ffmpeg `-xerror`, and count the frames.
 
 export const STICKER_FPS = 30;
 
@@ -46,7 +53,14 @@ export type ApngRejectCode =
   | "BAD_FRAME_REGION"
   | "MISSING_FRAME_DATA"
   | "BAD_CHUNK_ORDER"
-  | "TOO_MANY_CHUNKS";
+  | "TOO_MANY_CHUNKS"
+  | "BAD_CHUNK_TYPE"
+  | "UNKNOWN_CRITICAL_CHUNK"
+  | "MISSING_PLTE"
+  | "EMPTY_IDAT";
+
+const KNOWN_CRITICAL = ["IHDR", "PLTE", "IDAT", "IEND"];
+const isLetter = (b: number | undefined): boolean => b !== undefined && ((b >= 65 && b <= 90) || (b >= 97 && b <= 122));
 
 export interface ApngFrameInfo {
   readonly x: number;
@@ -116,6 +130,7 @@ export function inspectApng(bytes: Uint8Array, limits: StickerLimits = STICKER_L
   let loopFrames = 0;
   let sawIdat = false;
   let inIdatRun = false;
+  let sawPlte = false;
 
   while (true) {
     if (chunks >= MAX_CHUNKS) return fail("TOO_MANY_CHUNKS", `more than ${MAX_CHUNKS} chunks`);
@@ -126,6 +141,8 @@ export function inspectApng(bytes: Uint8Array, limits: StickerLimits = STICKER_L
     if (length > MAX_CHUNK_LENGTH) return fail("BAD_CHUNK", `${name} claims ${length} bytes`);
     const dataAt = pos + 8;
     if (dataAt + length + 4 > bytes.length) return fail("TRUNCATED", `${name} runs past the end of the file`);
+    for (let i = 0; i < 4; i++) if (!isLetter(bytes[pos + 4 + i])) return fail("BAD_CHUNK_TYPE", "a chunk type has a byte that is not a letter");
+    if ((bytes[pos + 4] ?? 0) <= 90 && !KNOWN_CRITICAL.includes(name)) return fail("UNKNOWN_CRITICAL_CHUNK", `${name} is critical and unknown`);
     if (crc32(bytes.subarray(pos + 4, dataAt + length)) !== u32(dataAt + length)) return fail("BAD_CRC", `${name} fails its CRC`);
     if (header === undefined && name !== "IHDR") return fail("BAD_IHDR", "the first chunk is not IHDR");
     const isIdat = name === "IDAT";
@@ -145,6 +162,11 @@ export function inspectApng(bytes: Uint8Array, limits: StickerLimits = STICKER_L
       if (width === 0 || height === 0) return fail("BAD_DIMENSIONS", `${width}x${height}`);
       if (width > limits.maxSide || height > limits.maxSide) return fail("SIDE_TOO_LARGE", `${width}x${height}, the cap is ${limits.maxSide} per side`);
       header = { width, height, bitDepth, colorType, interlaced: interlace === 1 };
+    } else if (name === "PLTE") {
+      if (header === undefined || sawIdat || sawPlte) return fail("BAD_CHUNK_ORDER", "PLTE is repeated or comes after the image data");
+      if (header.colorType === 0 || header.colorType === 4) return fail("BAD_CHUNK", "PLTE in a greyscale image");
+      if (length === 0 || length % 3 !== 0 || length > 768) return fail("BAD_CHUNK", `PLTE of ${length} bytes`);
+      sawPlte = true;
     } else if (name === "acTL") {
       if (declaredFrames !== undefined) return fail("BAD_ACTL", "a second acTL");
       if (sawIdat || frames.length > 0) return fail("NOT_ANIMATED", "acTL comes after the image data");
@@ -189,6 +211,8 @@ export function inspectApng(bytes: Uint8Array, limits: StickerLimits = STICKER_L
       if (declaredFrames === undefined) return fail("NOT_ANIMATED", "IDAT without acTL: a still PNG");
       if (frames.length === 0) return fail("DEFAULT_IMAGE_NOT_A_FRAME", "the image data comes before the first fcTL");
       if (frames.length > 1) return fail("BAD_CHUNK_ORDER", "IDAT after the first frame");
+      if (length === 0) return fail("EMPTY_IDAT", "an IDAT chunk carries no data");
+      if (!sawIdat && header?.colorType === 3 && !sawPlte) return fail("MISSING_PLTE", "a palette image has no PLTE before its image data");
       sawIdat = true;
       inIdatRun = true;
       frameHasData = true;
