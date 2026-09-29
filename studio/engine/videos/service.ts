@@ -15,10 +15,10 @@ import type { RenderQueue, RenderQueueEvent } from "../renderQueue/queue";
 import { sweepRenderTmp } from "../renderQueue/sweep";
 import type { CommitFs } from "./commitFs";
 import { deleteVideo, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
-import { createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
+import { createRenderExecute, totalFramesOf, type RenderPlan, type SettleInput, type VideoRenderDeps } from "./execute";
 import { newHashBudget, type FileStateChecker } from "./fileState";
 import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
-import type { CommitTracker } from "./live";
+import type { CommitTracker, LiveCommits } from "./live";
 import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
 
@@ -339,6 +339,8 @@ export class VideoService {
       now: deps.now,
       log: deps.log,
       onCommitted: (record) => this.#committed(record),
+      // A commit that fails and leaves its intent is settled inside the job, before it ends (the reservation still held).
+      settleLeftover: (input, signal) => this.#settleLeftover(library, input, signal),
       ...deps.renderOverrides,
     });
     // ONE number of frames: the queue's total, and the verifier's expectation (execute), come from the same function.
@@ -540,9 +542,6 @@ export class VideoService {
     this.#announce(library, state.avatarId);
     // A commit whose index update failed left the avatar closed (`index-stale`): read the record back in the background.
     this.#scheduleStaleRetry(library, state.avatarId);
-    // A job that failed may have left its commit intent behind (a file that would not go): settle it now, in the
-    // background and under the export root's lock, instead of leaving its photos free until the next open.
-    if (state.status === "failed") this.#settleLeftover(library, state.avatarId, state.videoId);
   }
 
   /** A record is committed and the used index has it: the window learns of it now, before `job.done`. */
@@ -689,20 +688,25 @@ export class VideoService {
     return null;
   }
 
-  /** After a failed job: if its commit intent is still there, settle it (targeted recovery: adopt the file, or drop the intent). Nothing is done in the usual case, where the rollback removed it. */
-  #settleLeftover(library: Library, avatarId: string, videoId: string): void {
-    if (this.#closing) return;
-    this.#track(async () => {
-      try {
-        await lstat(videoPaths(library.root, avatarId).intent(videoId));
-      } catch (error) {
-        if (hasErrorCode(error, "ENOENT")) return; // the usual case: nothing was left
-        this.#deps.log(`the commit intent of ${videoId} could not be looked at (${kindOf(error)})`);
-        return;
-      }
-      const controller = new AbortController();
-      await this.#recover(library, controller.signal, { only: { videoIds: [videoId] } });
-    });
+  /**
+   * A commit failed after it wrote its intent and could not take its file back: settle THAT intent now (targeted recovery under
+   * the export root's lock), from inside the job, while the queue still holds the photos. The record when it was adopted,
+   * else null (dropped, deferred, or nothing was left, the usual case: the rollback removed it).
+   * The job is told apart from the others so that its own intent is not "live"; the commit is over, so the lock is free.
+   */
+  async #settleLeftover(library: Library, input: SettleInput, signal: AbortSignal): Promise<VideoRecord | null> {
+    try {
+      await lstat(videoPaths(library.root, input.avatarId).intent(input.videoId));
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) this.#deps.log(`the commit intent of ${input.videoId} could not be looked at (${kindOf(error)})`);
+      return null;
+    }
+    const tracker = this.#deps.tracker;
+    const live: LiveCommits = { hasJob: (id) => id !== input.jobId && tracker.hasJob(id), hasTemp: (p) => tracker.hasTemp(p), hasPlaceholder: (p) => tracker.hasPlaceholder(p) };
+    const run = this.#deps.recover?.run ?? recoverVideos;
+    const report = await run({ library, exportRoot: input.exportRoot, live, signal, only: { videoIds: [input.videoId] } }, { log: this.#deps.log, ...this.#deps.recover?.deps });
+    if (!report.adopted.includes(input.videoId)) return null;
+    return readVideoRecordFile(library.root, input.avatarId, input.videoId);
   }
 
   /**
@@ -716,22 +720,25 @@ export class VideoService {
     if (this.#closing || delays.length === 0) return;
     if (attempt === 0 && (this.#staleChains.has(avatarId) || library.videoIndexStale(avatarId).length === 0)) return;
     const delay = delays[Math.min(attempt, delays.length - 1)] ?? 0;
-    const handle = this.#timers.set(() => {
-      this.#staleChains.delete(avatarId);
-      void this.#retryStale(library, avatarId, attempt);
-    }, delay);
+    // The chain's entry stays from the first timer until the chain ENDS (the records read, or the library gone), through the
+    // retry itself: a request that arrives while a retry is reading finds the entry and starts nothing (no forked chain).
+    const handle = this.#timers.set(() => void this.#retryStale(library, avatarId, attempt), delay);
     this.#staleChains.set(avatarId, handle);
   }
 
   async #retryStale(library: Library, avatarId: string, attempt: number): Promise<void> {
-    if (this.#closing || this.#deps.openLibrary() !== library) return;
+    if (this.#closing || this.#deps.openLibrary() !== library) {
+      this.#staleChains.delete(avatarId);
+      return;
+    }
     try {
       await library.reloadVideoRecords(avatarId);
     } catch (error) {
       this.#deps.log(`the used index of avatar ${avatarId} could not be rebuilt (${kindOf(error)})`);
     }
     // Nothing else clears the flag: a quarantine or a "repair" must never act on it (no record is broken).
-    if (library.videoIndexStale(avatarId).length > 0) this.#scheduleStaleRetry(library, avatarId, attempt + 1);
+    if (library.videoIndexStale(avatarId).length > 0 && !this.#closing) this.#scheduleStaleRetry(library, avatarId, attempt + 1);
+    else this.#staleChains.delete(avatarId);
   }
 
   // ---------- stop ----------

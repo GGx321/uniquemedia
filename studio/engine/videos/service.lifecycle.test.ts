@@ -228,21 +228,70 @@ describe("recovery of a library that is no longer the live one", () => {
   });
 });
 
-describe("a failed render's leftover intent is settled in this session", () => {
+describe("a commit that fails and leaves its intent is settled INSIDE the job, while the reservation is held", () => {
   const boom = (): Error => new Error("the disk broke after the rename");
 
-  test("a commit that failed after the rename and could not take its file back: the video is adopted at once, its photos are used, and the window is told", async () => {
+  test("the file could not be taken back (a player, an antivirus holds it): the video is adopted before the job ends, and the job ends DONE", async () => {
     const w = world();
     const fs = faultyFs();
-    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) }); // the file is held (a player, an antivirus): the rollback cannot remove it
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    const r = serviceRig(w, {
+      deps: { renderOverrides: { fs, hooks: { reached: (step) => void (step === "renamed" && (() => { throw boom(); })()) } } },
+    });
+
+    const { jobId, videoId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    expect(r.jobs.stateOf(jobId)).toMatchObject({ status: "done", result: { videoId } });
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.usedIn).toEqual([videoId]);
+    expect(existsSync(join(w.libraryRoot, "avatars", w.avatar.id, "videos", ".pending", `${videoId}.json`))).toBe(false);
+    const kinds = r.stamped().map((e) => e.type);
+    expect(kinds).not.toContain("job.failed");
+    expect(kinds.indexOf("video.changed")).toBeLessThan(kinds.indexOf("job.done"));
+    expect(r.tracker.liveJobIds().size).toBe(0);
+  });
+
+  test("the review's probe: the record link and the rename fail (EIO), the file is held (EBUSY): no window where a second render is accepted, one video, no event after job.failed", async () => {
+    const w = world();
+    const eio = () => errnoError("EIO");
+    const fs = faultyFs();
+    fs.override({
+      link: async (a, b) => (b.endsWith(".json") && !b.includes(".pending") ? Promise.reject(eio()) : NODE_COMMIT_FS.link(a, b)),
+      rename: async (a, b) => (a.includes(".pending") && b.endsWith(".json") && !b.includes(".pending") ? Promise.reject(eio()) : NODE_COMMIT_FS.rename(a, b)),
+      unlink: async (p) => (p.endsWith(".mp4") && !p.includes(".studio-part-") ? Promise.reject(errnoError("EBUSY")) : NODE_COMMIT_FS.unlink(p)),
+    });
+    const r = serviceRig(w, { size: 2, deps: { renderOverrides: { fs } } });
+    const spec = specFor(w);
+
+    const first = await r.service.render({ spec });
+    await until(() => ["done", "failed"].includes(r.jobs.stateOf(first.jobId)?.status ?? ""), "the first job to end");
+    const second = await r.service.render({ spec }).then(
+      () => "accepted",
+      (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
+    );
+    await r.queue.idle();
+    await r.service.settled();
+
+    expect(second).toBe("PHOTO_UNAVAILABLE");
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.usedIn).toEqual([first.videoId]);
+    const events = r.stamped();
+    const failedAt = events.findIndex((e) => e.type === "job.failed");
+    const upsertAt = events.findIndex((e) => e.type === "video.changed" && e.payload.change === "upserted");
+    if (failedAt >= 0) expect(upsertAt).toBeLessThan(failedAt); // nothing about that video after the failure
+  });
+
+  test("when settling drops the intent instead, the job ends FAILED and the photos are free: no record, no mark", async () => {
+    const w = world();
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    const inputs: Array<{ only: unknown; jobLive: boolean | undefined }> = [];
     const r = serviceRig(w, {
       deps: {
-        renderOverrides: {
-          fs,
-          hooks: {
-            reached: (step) => {
-              if (step === "renamed") throw boom();
-            },
+        renderOverrides: { fs, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
+        recover: {
+          run: async (input) => {
+            inputs.push({ only: input.only, jobLive: input.live?.hasJob("id-none") });
+            return { ...EMPTY_REPORT, dropped: [{ videoId: "x", reason: "no-file" }] };
           },
         },
       },
@@ -250,14 +299,58 @@ describe("a failed render's leftover intent is settled in this session", () => {
 
     const { jobId, videoId } = await r.service.render({ spec: specFor(w) });
     await r.queue.idle();
-    await r.service.settled();
 
     expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
-    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.usedIn).toEqual([videoId]);
-    expect(existsSync(join(w.libraryRoot, "avatars", w.avatar.id, "videos", ".pending", `${videoId}.json`))).toBe(false);
-    const upserts = r.stamped().filter((e) => e.type === "video.changed" && e.payload.change === "upserted");
-    expect(upserts).toHaveLength(1);
-    expect(r.announced.length).toBeGreaterThanOrEqual(3);
+    expect(inputs).toEqual([{ only: { videoIds: [videoId] }, jobLive: false }]);
+    expect(r.queue.reservedPhotos(w.avatar.id).size).toBe(0);
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.usedIn).toEqual([]);
+  });
+
+  test("the settle does not see its own job as live (or it would defer its own intent), but sees the others", async () => {
+    const w = world();
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    let seen: { own: boolean; other: boolean } | undefined;
+    const r = serviceRig(w, {
+      deps: {
+        renderOverrides: { fs, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
+        recover: {
+          run: async (input) => {
+            seen = { own: input.live?.hasJob(r.queue.states()[0]?.jobId ?? "") === true, other: input.live?.hasJob("job-other") === true };
+            return EMPTY_REPORT;
+          },
+        },
+      },
+    });
+    r.tracker.addJob("job-other", "video-other");
+    await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    expect(seen).toEqual({ own: false, other: true });
+  });
+
+  test("it is bounded: a settle that never answers fails the job at the step deadline and is told to stop", async () => {
+    const w = world();
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    let signal: AbortSignal | undefined;
+    const r = serviceRig(w, {
+      deps: {
+        renderOverrides: { fs, stepDeadlineMs: 50, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
+        recover: {
+          run: (input) => {
+            signal = input.signal;
+            return new Promise<RecoveryReport>(() => undefined);
+          },
+        },
+      },
+    });
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+    expect(signal?.aborted).toBe(true);
   });
 
   test("the usual failure, whose rollback removed everything, starts no recovery at all", async () => {

@@ -14,6 +14,7 @@ import { collectForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
+import type { ExportRootRef } from "./recovery";
 import { readRootId } from "./rootMarker";
 import { createTempExclusive } from "./tempFile";
 
@@ -104,11 +105,36 @@ export interface VideoRenderDeps {
   readonly commitDeadlineMs?: number;
   /** `EXPORT_STEP_DEADLINE_MS` unless a test says otherwise. */
   readonly stepDeadlineMs?: number;
+  /**
+   * Settles the commit intent a FAILED commit may have left, before the job ends (targeted recovery under the root lock):
+   * the adopted record, or null when it was dropped, deferred or nothing was left. The signal says to stop (the step deadline).
+   */
+  readonly settleLeftover?: (input: SettleInput, signal: AbortSignal) => Promise<VideoRecord | null>;
   /** Creates the empty temp exclusively (no link followed); the real one unless a test plays a volume. */
   readonly createTemp?: (path: string) => Promise<void>;
 }
 
 export { CommitTracker } from "./live";
+
+/** What a settle needs: the video, its own job (which it must not see as live), and the export root the commit used. */
+export interface SettleInput {
+  readonly avatarId: string;
+  readonly videoId: string;
+  readonly jobId: string;
+  readonly exportRoot: ExportRootRef;
+}
+
+/** The settle, cut at `ms`: a settle that does not answer is told to stop and counts as nothing settled (the job fails; the next open settles it). Never throws. */
+async function settleBounded(settle: NonNullable<VideoRenderDeps["settleLeftover"]>, input: SettleInput, ms: number, log: (line: string) => void): Promise<VideoRecord | null> {
+  const stop = new AbortController();
+  try {
+    return await guarded(new AbortController().signal, ms, () => settle(input, stop.signal));
+  } catch (error) {
+    stop.abort();
+    log(`render ${input.jobId}: the leftover intent could not be settled (${codeOf(error)})`);
+    return null;
+  }
+}
 
 /**
  * Runs `work` under two ways out: `ms` passing (EXPORT_UNAVAILABLE not-writable: the volume does not answer) and the
@@ -240,10 +266,12 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       const commitSignal = AbortSignal.any([context.signal, stop.signal]);
       // Armed until `onSaving`: at the deadline the commit is told to stop (it never claims, then) and the job fails.
       let pastNoReturn = false;
+      let deadlineFired = false;
       let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<never>((_resolve, reject) => {
         deadlineTimer = setTimeout(() => {
           if (pastNoReturn) return;
+          deadlineFired = true;
           const failure = new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "saving the video took too long: the export folder does not answer" });
           log(`render ${plan.jobId}: the commit passed its deadline of ${deadlineMs} ms before it claimed a name; the job is failed and the commit is asked to stop`);
           stop.abort(failure);
@@ -305,8 +333,26 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
 
       // The deadline covers only what comes BEFORE the point of no return. Past it (`onSaving`) the timer is gone: the job
       // stays running until the record lands, holding its queue slot, its photo reservation and the busy state.
-      const committed = await Promise.race([commit, deadline]).finally(() => clearTimeout(deadlineTimer));
-      return committed.result;
+      try {
+        const committed = await Promise.race([commit, deadline]).finally(() => clearTimeout(deadlineTimer));
+        return committed.result;
+      } catch (error) {
+        // A commit that failed AFTER writing its intent may have left it, with a file that would not go (a player or an
+        // antivirus holds it): settle it HERE, under the root lock, while the queue still holds the photos' reservation.
+        // Settled later, the photos would be free for a moment while a video exists, and a second render would take them.
+        // A deadline before the claim and a cancel leave nothing to settle.
+        const cancelled = context.signal.aborted && error === context.signal.reason;
+        if (deadlineFired || cancelled || deps.settleLeftover === undefined) throw error;
+        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive } }, stepMs, log);
+        if (adopted === null) throw error;
+        // The video exists: the job is done, not failed.
+        try {
+          deps.onCommitted?.(adopted);
+        } catch (listenerError) {
+          log(`render ${plan.jobId}: a listener of the committed video threw (${listenerError instanceof Error ? listenerError.name : "error"})`);
+        }
+        return { kind: "render", videoId: adopted.id, avatarId: adopted.avatarId, bytes: adopted.file.bytes, durationMs: adopted.durationMs, videoKind: adopted.kind, relPath: adopted.file.relPath };
+      }
     } finally {
       const release = (): void => {
         deps.tracker.release(temp, ...(placeholder === null ? [] : [placeholder]));
