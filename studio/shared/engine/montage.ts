@@ -1,0 +1,308 @@
+import { z } from "zod";
+import { Count, Id } from "./primitives";
+
+// The Stage 3 montage contract (plan: "Montage as data — MontageSpec v1").
+//
+// A montage is a timeline: clips played back to back (a photo, a collage of
+// two to four photos, or one of the owner's own videos), overlay layers (text
+// and stickers) with their own time ranges, and at most one music track. It
+// is the only input a render takes, and the renderer, the engine and Stage
+// 4's autopilot all produce and consume this one shape.
+//
+// Validation has two halves:
+// - the SHAPE (`MontageShape`): field types, bounds,
+//   array caps. A payload that breaks it is a VALIDATION error;
+// - the STRUCTURE (`montageIssues`): rules that span fields (the total
+//   length, layers against the timeline, a collage's cell count, repeated
+//   photos). It answers a closed list of issue codes, which is what
+//   MONTAGE_INVALID carries. `MontageSpec` and `MontageDraft` are the shape
+//   plus that structure, so nothing stored or returned can be malformed.
+//
+// The referential half (is this photo eligible, does that media exist) needs
+// the library and stays in the engine.
+
+// ---------- limits ----------
+
+/** A montage lasts 4.0 to 15.0 s. */
+export const MIN_TOTAL_MS = 4_000;
+export const MAX_TOTAL_MS = 15_000;
+/** Every clip duration and layer time is a multiple of this: 3 frames at 30 fps, so frame counts are integers. */
+export const TIME_STEP_MS = 100;
+export const MIN_CLIP_MS = 500;
+export const MAX_CLIPS = 20;
+export const MIN_LAYER_MS = 300;
+export const MAX_TEXT_LAYERS = 10;
+export const MAX_STICKER_LAYERS = 10;
+export const MAX_LAYERS = MAX_TEXT_LAYERS + MAX_STICKER_LAYERS;
+/** A caption is 1 to 60 graphemes (the engine's caption rules add the charset and the age words). */
+export const MAX_CAPTION_GRAPHEMES = 60;
+/**
+ * The longest caption in UTF-16 code units, checked before anything is
+ * segmented. Sixty of the longest emoji sequences (a ZWJ family is 11 units)
+ * still fit.
+ */
+export const MAX_CAPTION_UNITS = 700;
+/** The furthest into an own video or track a trim or a start may point: 10 minutes, the longest own music. */
+export const MAX_SOURCE_OFFSET_MS = 600_000;
+/** An issue list is cut at this many entries, so an error that carries it stays small. */
+export const MAX_MONTAGE_ISSUES = 64;
+
+// ---------- pieces ----------
+
+/** A time on the timeline: a whole number of 100 ms steps, within the longest montage. */
+const TimelineMs = z.number().int().min(0).max(MAX_TOTAL_MS).multipleOf(TIME_STEP_MS);
+
+const ClipDurationMs = z.number().int().min(MIN_CLIP_MS).max(MAX_TOTAL_MS).multipleOf(TIME_STEP_MS);
+
+/** A position inside a source photo, as fractions of its width and height; the crop keeps it in frame. */
+export const Focus = z.strictObject({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
+
+export const Motion = z.enum(["kenburns", "pan", "static"]);
+
+/**
+ * A photo a cell shows: a generated scene photo of the montage's avatar
+ * (`source: "scene"`), or one of the owner's own uploads (`source: "own"`,
+ * slice 3f). Only scene photos take part in the used/unused accounting.
+ */
+export const PhotoRef = z.discriminatedUnion("source", [
+  z.strictObject({ source: z.literal("scene"), photoId: Id }),
+  z.strictObject({ source: z.literal("own"), mediaId: Id }),
+]);
+
+/**
+ * One photo in a clip. `focus` is null only from headless callers that leave
+ * it to the engine; the editor resolves it when a photo is placed and always
+ * stores it.
+ */
+export const Cell = z.strictObject({ photo: PhotoRef, focus: Focus.nullable() });
+
+export const CollageLayout = z.enum(["collage2", "collage3", "collage4"]);
+
+/** How many cells each collage layout has. */
+export const COLLAGE_CELL_COUNT = { collage2: 2, collage3: 3, collage4: 4 } as const satisfies Record<z.infer<typeof CollageLayout>, number>;
+
+const clipBase = {
+  clipId: Id,
+  durationMs: ClipDurationMs,
+  /** Hard cuts only for now (V1); the literal stays so a crossfade can be added without breaking the shape. */
+  transitionIn: z.literal("cut"),
+};
+
+export const PhotoClip = z.strictObject({ ...clipBase, kind: z.literal("photo"), cell: Cell, motion: Motion });
+
+export const CollageClip = z.strictObject({
+  ...clipBase,
+  kind: z.literal("collage"),
+  layout: CollageLayout,
+  /** 2 to 4 cells; that the count matches `layout` is a structural rule (`cells-layout-mismatch`). */
+  cells: z.array(Cell).min(2).max(4),
+  motion: Motion,
+  stagger: z.boolean(),
+});
+
+/** One of the owner's own videos (slice 3f). Static: it has no motion, and its audio is always dropped. */
+export const VideoClip = z.strictObject({
+  ...clipBase,
+  kind: z.literal("video"),
+  mediaId: Id,
+  trimStartMs: z.number().int().min(0).max(MAX_SOURCE_OFFSET_MS),
+  focus: Focus.nullable(),
+});
+
+export const Clip = z.discriminatedUnion("kind", [PhotoClip, CollageClip, VideoClip]);
+
+/** The five bundled text fonts. */
+export const TextFont = z.enum(["manrope", "playfair", "oswald", "ptmono", "caveat"]);
+/** «Без фона» / «Плашка» / «Обводка». */
+export const TextStyle = z.enum(["none", "plaque", "outline"]);
+
+const graphemeCount = (text: string): number => [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text)].length;
+
+/**
+ * On-video text, bounded by length only. The charset (printable ASCII, a few
+ * typographic marks, the emoji the bundled font covers), the control
+ * characters and the age words are the engine's caption rules (slice 3b).
+ */
+export const Caption = z
+  .string()
+  .min(1)
+  .max(MAX_CAPTION_UNITS)
+  .refine((text) => graphemeCount(text) <= MAX_CAPTION_GRAPHEMES, `must be at most ${MAX_CAPTION_GRAPHEMES} characters`);
+
+const layerBase = { layerId: Id, startMs: TimelineMs, endMs: TimelineMs };
+const fraction = z.number().min(0).max(1);
+
+/** A text box anchored at its centre. */
+export const TextLayer = z.strictObject({
+  ...layerBase,
+  kind: z.literal("text"),
+  value: Caption,
+  font: TextFont,
+  style: TextStyle,
+  x: fraction,
+  y: fraction,
+  scale: z.number().min(0.5).max(2),
+});
+
+/** A sticker anchored at its centre; `size` is a fraction of the frame width. */
+export const StickerLayer = z.strictObject({
+  ...layerBase,
+  kind: z.literal("sticker"),
+  sticker: z.discriminatedUnion("source", [
+    z.strictObject({ source: z.literal("builtin"), stickerId: Id }),
+    z.strictObject({ source: z.literal("own"), mediaId: Id }),
+  ]),
+  x: fraction,
+  y: fraction,
+  size: z.number().min(0.05).max(0.6),
+});
+
+export const Layer = z.discriminatedUnion("kind", [TextLayer, StickerLayer]);
+
+const sourceOffset = z.number().int().min(0).max(MAX_SOURCE_OFFSET_MS);
+
+/** At most one track, baked in, with no fades. `trending` is a flashapi track; `own` is an upload (slice 3f). */
+export const MontageMusic = z
+  .discriminatedUnion("source", [
+    z.strictObject({ source: z.literal("trending"), trackId: Id, startMs: sourceOffset }),
+    z.strictObject({ source: z.literal("own"), mediaId: Id, startMs: sourceOffset }),
+  ])
+  .nullable();
+
+// ---------- the shapes ----------
+
+const common = {
+  schemaVersion: z.literal(1),
+  avatarId: Id,
+  /** Layers in z-order, later on top. */
+  layers: z.array(Layer).max(MAX_LAYERS),
+  music: MontageMusic,
+  /** Variety for the autopilot: the pan direction and Ken Burns in/out. */
+  seed: z.number().int().min(0).max(4_294_967_295),
+};
+
+/**
+ * The shape of every montage, spec or draft: 0 to 20 clips. Structure is
+ * checked apart (`montageIssues`), so an empty or too-short montage is still
+ * well formed here and gets the engine's issue list rather than a bare
+ * VALIDATION error. `videos.render {spec}` takes this shape for that reason.
+ */
+export const MontageShape = z.strictObject({ ...common, clips: z.array(Clip).max(MAX_CLIPS) });
+
+type Shape = z.infer<typeof MontageShape>;
+
+// ---------- structure ----------
+
+/**
+ * Why a montage cannot be rendered (or saved). A closed set: the wording lives
+ * in `MONTAGE_ISSUE_MESSAGES_RU` (errorMessagesRu.ts), never in the issue.
+ *
+ * - `no-clips`: a spec needs at least one clip;
+ * - `duration-too-short` / `duration-too-long`: a spec's clips add up to less than 4.0 s or more than 15.0 s;
+ * - `too-many-text-layers` / `too-many-sticker-layers`: more than 10 of a kind;
+ * - `cells-layout-mismatch`: a collage's cell count is not its layout's;
+ * - `layer-too-short`: a layer is shorter than 300 ms (or ends before it starts);
+ * - `layer-outside-timeline`: a spec's layer ends after its clips do;
+ * - `duplicate-clip-id` / `duplicate-layer-id`: an id is used twice;
+ * - `photo-repeated`: a scene photo appears more than once;
+ * - `not-yet-supported`: the engine's own answer for a part whose slice has not landed (N9); never produced here.
+ */
+export const MONTAGE_ISSUE_CODES = [
+  "no-clips",
+  "duration-too-short",
+  "duration-too-long",
+  "too-many-text-layers",
+  "too-many-sticker-layers",
+  "cells-layout-mismatch",
+  "layer-too-short",
+  "layer-outside-timeline",
+  "duplicate-clip-id",
+  "duplicate-layer-id",
+  "photo-repeated",
+  "not-yet-supported",
+] as const;
+
+export const MontageIssueCode = z.enum(MONTAGE_ISSUE_CODES);
+export type MontageIssueCode = z.infer<typeof MontageIssueCode>;
+
+/** Where the issue is: `["clips", 2, "cells"]`. No values, so no text the owner typed can travel in it. */
+const IssuePath = z.array(z.union([z.string().max(32), Count])).max(6);
+
+export const MontageIssue = z.strictObject({ code: MontageIssueCode, path: IssuePath });
+export type MontageIssue = z.infer<typeof MontageIssue>;
+
+export type MontageMode = "draft" | "spec";
+
+/**
+ * Every structural problem of a montage, in a fixed order (clips, layers,
+ * totals) and cut at `MAX_MONTAGE_ISSUES`.
+ *
+ * A draft may be incomplete: no clips, any total length, and layers not yet
+ * fitted to the clips. Those four checks are a spec's alone; the rest hold for
+ * both.
+ */
+export function montageIssues(montage: Shape, mode: MontageMode): MontageIssue[] {
+  const issues: MontageIssue[] = [];
+  const add = (code: MontageIssueCode, ...path: (string | number)[]) => {
+    if (issues.length < MAX_MONTAGE_ISSUES) issues.push({ code, path });
+  };
+
+  const clipIds = new Set<string>();
+  const scenePhotos = new Set<string>();
+  const scenePhoto = (cellPhoto: z.infer<typeof PhotoRef>, ...path: (string | number)[]) => {
+    if (cellPhoto.source !== "scene") return;
+    if (scenePhotos.has(cellPhoto.photoId)) add("photo-repeated", ...path);
+    scenePhotos.add(cellPhoto.photoId);
+  };
+  let totalMs = 0;
+  montage.clips.forEach((clip, i) => {
+    totalMs += clip.durationMs;
+    if (clipIds.has(clip.clipId)) add("duplicate-clip-id", "clips", i, "clipId");
+    clipIds.add(clip.clipId);
+    if (clip.kind === "photo") scenePhoto(clip.cell.photo, "clips", i, "cell");
+    if (clip.kind === "collage") {
+      if (clip.cells.length !== COLLAGE_CELL_COUNT[clip.layout]) add("cells-layout-mismatch", "clips", i, "cells");
+      clip.cells.forEach((cell, j) => scenePhoto(cell.photo, "clips", i, "cells", j));
+    }
+  });
+
+  const layerIds = new Set<string>();
+  montage.layers.forEach((layer, i) => {
+    if (layerIds.has(layer.layerId)) add("duplicate-layer-id", "layers", i, "layerId");
+    layerIds.add(layer.layerId);
+    if (layer.endMs - layer.startMs < MIN_LAYER_MS) add("layer-too-short", "layers", i);
+    else if (mode === "spec" && layer.endMs > totalMs) add("layer-outside-timeline", "layers", i, "endMs");
+  });
+  if (montage.layers.filter((l) => l.kind === "text").length > MAX_TEXT_LAYERS) add("too-many-text-layers", "layers");
+  if (montage.layers.filter((l) => l.kind === "sticker").length > MAX_STICKER_LAYERS) add("too-many-sticker-layers", "layers");
+
+  if (mode === "spec") {
+    if (montage.clips.length === 0) add("no-clips", "clips");
+    else if (totalMs < MIN_TOTAL_MS) add("duration-too-short", "clips");
+    else if (totalMs > MAX_TOTAL_MS) add("duration-too-long", "clips");
+  }
+  return issues;
+}
+
+/** Turns the issue list into Zod issues, so a parse failure names the same codes and paths. */
+function structural(mode: MontageMode) {
+  return (montage: Shape, ctx: z.RefinementCtx) => {
+    for (const issue of montageIssues(montage, mode)) ctx.addIssue({ code: "custom", message: issue.code, path: issue.path });
+  };
+}
+
+/** A complete, renderable montage: the shape and every structural rule. Only `videos.render` needs one. */
+export const MontageSpec = MontageShape.superRefine(structural("spec"));
+export type MontageSpec = z.infer<typeof MontageSpec>;
+
+/** A saved draft: the same shape, and the structure a draft can already satisfy. */
+export const MontageDraft = MontageShape.superRefine(structural("draft"));
+export type MontageDraft = z.infer<typeof MontageDraft>;
+
+export type Clip = z.infer<typeof Clip>;
+export type Layer = z.infer<typeof Layer>;
+export type Cell = z.infer<typeof Cell>;
+export type Focus = z.infer<typeof Focus>;
+export type Motion = z.infer<typeof Motion>;
+export type PhotoRef = z.infer<typeof PhotoRef>;
+export type MontageMusic = z.infer<typeof MontageMusic>;
