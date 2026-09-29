@@ -276,21 +276,39 @@ const ENGINE_SPECS = [
     z.strictObject({ avatarId: Id, photoId: Id, rejected: z.boolean() }),
     z.strictObject({ photo: PhotoSummary }),
   ),
-  // Queues a render of a saved draft, or of a spec straight from a headless caller. Refused up front, free, with
-  // EXPORT_UNAVAILABLE when the export folder is unusable, MONTAGE_INVALID (with issues) for a montage that is not
-  // complete or not yet supported, PHOTO_UNAVAILABLE for a scene photo that is not eligible. `spec` takes the montage's
-  // shape only, so a structurally invalid one gets that issue list rather than a bare VALIDATION error.
+  // Queues a render of a saved draft, or of a spec straight from a headless caller. Everything is checked in one step
+  // BEFORE anything is claimed or written, and a refusal costs nothing (no job, no reservation, no file):
+  //   MONTAGE_INVALID   (with issues) a montage that is not complete, or uses a part that is not supported yet
+  //                     (layers, music, own media: `not-yet-supported`, N9);
+  //   EXPORT_UNAVAILABLE (with exportReason) the export folder is unusable (invariant 35);
+  //   PHOTO_UNAVAILABLE (with `photo-unavailable` issues by cell path) a scene photo that is not an eligible, unused one
+  //                     of this avatar, or one another queued or running render holds; also an avatar whose usage cannot be
+  //                     trusted right now (an unreadable record or a stale index: `detail` says which);
+  //   RENDER_QUEUE_FULL (`detail` names the limit) too many renders are queued or running;
+  //   LIBRARY_TOO_NEW   a video record was written by a newer Studio;
+  //   NOT_FOUND         an unknown avatar, or a `montageId` (drafts arrive with 3d.1a, so it answers NOT_FOUND until then).
+  // `spec` takes the montage's shape only, so a structurally invalid one gets that issue list rather than a bare
+  // VALIDATION error. The answer carries the job and video ids; `job.progress`, then `job.done` / `job.failed` /
+  // `job.cancelled` follow, and `video.changed` when the record lands.
   defineCommand(
     "videos.render",
     z.union([z.strictObject({ montageId: Id }), z.strictObject({ spec: MontageShape })]),
     z.strictObject({ jobId: Id, videoId: Id }),
   ),
-  // Cancels a queued or running render; ok for one that already ended, NOT_FOUND for an unknown job.
+  // Cancels a queued or running render; NOT_FOUND for an unknown job or one that is not a render. Ok for a render that
+  // already ended (it stays as it ended). A cancel that arrives once the commit has claimed the video's name is IGNORED
+  // by the commit ("done wins"): the answer is still ok and the job ends `done` (or `failed` if saving then fails).
+  // The window shows a «сохранение» phase and disables Cancel once `done` reaches `total - 1`.
   defineCommand("videos.cancel", z.strictObject({ jobId: Id }), z.strictObject({ jobId: Id })),
-  // An avatar's video records, newest first, bounded at MAX_LISTED_VIDEOS; each with its file's state, checked on this read.
+  // An avatar's video records, newest first, bounded at MAX_LISTED_VIDEOS; each with its file's state, checked on this read
+  // (one shared hash budget per listing, so it stays a `stat` for almost every record). A record that cannot be read or
+  // checked never fails the list: an unreadable one is left out, an unchecked one reads `elsewhere`. NOT_FOUND for an unknown avatar.
   defineCommand("videos.list", z.strictObject({ avatarId: Id }), z.strictObject({ videos: z.array(VideoSummary).max(MAX_LISTED_VIDEOS) })),
   // Deletes the file when the record resolves to it and it is present, then the record; the photos are freed.
-  // With the file already gone, changed or in another root it deletes only the record («Удалить запись»).
+  // With the file already gone, changed or in another root it deletes only the record («Удалить запись»): for
+  // `elsewhere` that frees the photos while the file lives on in the other folder, which is what the owner asked for.
+  // NOT_FOUND for an unknown video; LIBRARY_TOO_NEW for a record from a newer Studio; INTERNAL (detail names no path)
+  // for a record that cannot be read or a disk that fails.
   defineCommand("videos.delete", z.strictObject({ videoId: Id }), z.strictObject({ videoId: Id })),
   // A new draft for an avatar from 0 to 20 of its scene photos (0: an empty draft, «Новый монтаж»), with the focus of
   // every placed photo resolved.

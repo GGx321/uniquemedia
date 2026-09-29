@@ -61,6 +61,10 @@ import { Count, SafeText } from "./primitives";
  *   Refused before a job is queued, or fails the job when the folder vanishes mid-render.
  * - RENDER_FAILED: ffmpeg or the render pipeline failed; the stderr tail goes to `detail`.
  * - RENDER_VERIFY_FAILED: the finished file did not pass the output verifier (metadata allowlist, frame count); it is not kept.
+ * - RENDER_QUEUE_FULL: `videos.render` was refused up front because the render queue already holds its most (queued and
+ *   running together); `detail` carries the limit. Nothing was reserved or written; retry once some renders end.
+ * - LIBRARY_TOO_NEW: a video record (or the usage it feeds) was written by a newer Studio, so `videos.render`,
+ *   `videos.list` and `videos.delete` refuse rather than guess; the owner updates the app.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -96,6 +100,8 @@ export const ERROR_CODES = [
   "EXPORT_UNAVAILABLE",
   "RENDER_FAILED",
   "RENDER_VERIFY_FAILED",
+  "RENDER_QUEUE_FULL",
+  "LIBRARY_TOO_NEW",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);

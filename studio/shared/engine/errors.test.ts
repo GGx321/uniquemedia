@@ -37,13 +37,15 @@ const EXPECTED_CODES = [
   "EXPORT_UNAVAILABLE",
   "RENDER_FAILED",
   "RENDER_VERIFY_FAILED",
+  "RENDER_QUEUE_FULL",
+  "LIBRARY_TOO_NEW",
 ];
 
 /** The two codes that must say more than their code: what is wrong with the montage, and why the folder is unusable. */
 const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE"];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of thirty-three codes", () => {
+  test("is exactly the closed set of thirty-five codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });
