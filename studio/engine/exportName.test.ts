@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isSafeName, RelativePath, VideoKindToken } from "../shared/engine";
 import { claimExportName, exportFileName, formatExportDate, kindToken, NODE_EXPORT_NAME_FS, safeName, type ExportNameFs } from "./exportName";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 const AVATAR = "avatar-0001";
 

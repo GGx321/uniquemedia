@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { ExportStatus } from "../shared/engine";
 import { checkExportRoot, EXPORT_MARKER_FILE, ExportMarker, exportStatusOf, NODE_EXPORT_ROOT_FS, pathsOverlap, type ExportRootFs } from "./exportRoot";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 let dir = "";
 let library = "";
