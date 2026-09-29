@@ -385,6 +385,37 @@ describe("videos.delete", () => {
     expect(r.logs.join("\n")).not.toContain(w.exportRoot);
   });
 
+  test("a file check that never answers ends the delete at its bound, so the library is not held (a switch can go on) for ever", async () => {
+    const w = world();
+    const checker = new FileStateChecker();
+    const stuck: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, { check: () => new Promise<FileState>(() => undefined) });
+    let held = 0;
+    let released = 0;
+    const r = serviceRig(w, {
+      deps: {
+        checker: stuck,
+        deleteTimeoutMs: 40,
+        withLibrary: async (work) => {
+          held++;
+          try {
+            return await work(w.library);
+          } finally {
+            released++;
+          }
+        },
+      },
+    });
+    // Its own id: the abandoned delete keeps this video's mutex (`video-delete:<id>`, process-wide) until its call wakes, which it never does here.
+    const { record } = await committed(w, { videoId: "video-stuck-0001", jobId: "job-stuck-0001", relPath: "Mia/2026-09-29_photo_009.mp4" });
+
+    const started = Date.now();
+    const error = await failureOf(r.service.delete(record.id, "video"));
+
+    expect(error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect([held, released]).toEqual([1, 1]);
+  });
+
   test("an engine refusal (no library, a switch in progress) passes through as it is", async () => {
     const w = world();
     const r = serviceRig(w, {

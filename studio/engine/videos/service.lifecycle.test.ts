@@ -509,6 +509,35 @@ describe("a stale used index is read again in the background", () => {
     expect(timers.delays.length).toBeLessThanOrEqual(1);
   });
 
+  test("the chain never forks: a job ending while a retry is still reading starts no second chain, and no handle is lost", async () => {
+    const w = world();
+    w.library.flagVideoIndexStale(w.avatar.id, "video-committed-1");
+    let failRead: (error: Error) => void = () => undefined;
+    const library = withOverrides(w.library, {
+      reloadVideoRecords: () =>
+        new Promise<void>((_resolve, reject) => {
+          failRead = reject;
+        }),
+    });
+    const timers = new FakeTimers();
+    const r = serviceRig(w, { library, deps: { staleRetryDelaysMs: undefined, timers, recover: { run: async () => EMPTY_REPORT } } });
+    r.service.libraryOpened(library);
+    await r.service.settled();
+    await timers.advance(2_000); // the first retry is now reading, and has not answered
+
+    const ref = { kind: "render" as const, jobId: "job-fork-0001", videoId: "video-fork-001", avatarId: w.avatar.id, montageId: null };
+    r.jobs.queueRender(ref.jobId, { videoId: ref.videoId, avatarId: ref.avatarId, montageId: null }, 120);
+    r.jobs.startRender(ref.jobId);
+    const state = r.jobs.finishRender(ref.jobId, { status: "cancelled" });
+    if (state === null) throw new Error("no state");
+    r.service.onQueueEvent({ type: "ended", state });
+
+    expect(timers.delays).toEqual([]); // no second chain beside the running one
+    failRead(new Error("EIO"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(timers.delays).toEqual([10_000]); // exactly one next step
+  });
+
   test("does not touch a library that is no longer the live one", async () => {
     const w = world();
     w.library.flagVideoIndexStale(w.avatar.id, "video-committed-1");

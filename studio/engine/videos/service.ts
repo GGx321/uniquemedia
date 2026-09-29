@@ -84,6 +84,8 @@ export interface VideoServiceDeps {
   readonly commandDeadlineMs?: number;
   /** What `videos.render` keeps back from that deadline for the rest of its work after the focus; `RENDER_COMMAND_MARGIN_MS` when absent. */
   readonly commandMarginMs?: number;
+  /** How long a `videos.delete`'s disk work may take; `DELETE_TIMEOUT_MS` when absent. */
+  readonly deleteTimeoutMs?: number;
   /** How long one record's file check may take in a listing; `RECORD_CHECK_TIMEOUT_MS` when absent. */
   readonly recordCheckTimeoutMs?: number;
 }
@@ -96,6 +98,8 @@ export const RENDER_COMMAND_DEADLINE_MS = 25_000;
 export const RENDER_COMMAND_MARGIN_MS = 2_000;
 /** One record's file check in a listing; a disk that does not answer reads `elsewhere`. */
 export const RECORD_CHECK_TIMEOUT_MS = 5_000;
+/** A delete's disk work (a full hash of a file up to 64 MiB, two unlinks, flushes). */
+export const DELETE_TIMEOUT_MS = 60_000;
 /** How long after the focus budget the abort net waits. */
 const FOCUS_NET_SLACK_MS = 25;
 /** Reading the used index again on demand before a render or a list. */
@@ -459,7 +463,14 @@ export class VideoService {
       }
       let outcome;
       try {
-        outcome = await deleteVideo(videoId, { mode, library, exportRoot: root, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log });
+        // Bounded: a hung stat or hash on a dropped drive must not hold the library (`withLibrary` counts this as a write, which
+        // a library switch waits for) for ever. What was done before the bound stays done: every step of a delete leaves a state
+        // the next one finishes, and the answer says the outcome is not known.
+        outcome = await within(
+          this.#deps.deleteTimeoutMs ?? DELETE_TIMEOUT_MS,
+          () => deleteVideo(videoId, { mode, library, exportRoot: root, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log }),
+          () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time; look at the video list before trying again" }),
+        );
       } catch (error) {
         throw this.#deleteFailure(videoId, error);
       }
