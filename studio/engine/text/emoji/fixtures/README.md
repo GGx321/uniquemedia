@@ -10,5 +10,5 @@
   fully-qualified sequence to. See its header. `makeHbGlyphs.sh <font> <emoji-test.txt>` regenerates it
   (needs `hb-shape` and `python3`), so moving to a new font or Unicode list is mechanical.
 
-The font itself is never committed here. The tests fetch the pinned release into the
-gitignored `.cache/` (`emojiFont.testkit.ts`) and check its sha256.
+The font itself is not here: the tests read the committed `studio/assets/fonts/NotoColorEmoji.ttf`
+through `loadEmojiFont`, which checks its sha256 (`emojiFont.testkit.ts`).

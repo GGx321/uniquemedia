@@ -1,80 +1,26 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { get } from "node:https";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadEmojiFont } from "../fonts";
 
 // Test support for the emoji reader. Never imported by production code.
 //
-// The 10.7 MB font is not committed twice: 3b.2 ships it as studio/assets/fonts/NotoColorEmoji.ttf, and this
-// reader must not depend on that file, so the tests fetch the same pinned release into the gitignored repo-root
-// `.cache/` and check its sha256 (the value 3b.2's manifest pins).
+// The font is the committed studio/assets/fonts/NotoColorEmoji.ttf, read through `loadEmojiFont`, the same
+// manifest-checked (sha256) loader the engine uses. No network, no second copy.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(HERE, "..", "..", "..", "..");
+const FONTS_DIR = join(HERE, "..", "..", "..", "assets", "fonts");
 
-export const EMOJI_FONT_SHA256 = "72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b";
 export const EMOJI_FONT_BYTES = 10_673_480;
-const EMOJI_FONT_URL = "https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.051/fonts/NotoColorEmoji.ttf";
-const DOWNLOAD_TIMEOUT_MS = 30_000;
-const DOWNLOAD_MAX_BYTES = 12_000_000;
-const CACHE_FILE = join(REPO_ROOT, ".cache", "emoji-font", "NotoColorEmoji-v2.051.ttf");
-
-function sha256(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-async function readCached(): Promise<Uint8Array | null> {
-  try {
-    const bytes = new Uint8Array(await readFile(CACHE_FILE));
-    return sha256(bytes) === EMOJI_FONT_SHA256 ? bytes : null;
-  } catch {
-    return null;
-  }
-}
-
-/** node:https rather than fetch: the root testSetup.ts swaps the global fetch for happy-dom's, which enforces CORS. */
-function download(url: string): Promise<Uint8Array> {
-  return new Promise((resolve, reject) => {
-    const request = get(url, { timeout: DOWNLOAD_TIMEOUT_MS }, (response) => {
-      if (response.statusCode !== 200) {
-        response.resume();
-        reject(new Error(`emoji font fetch failed: HTTP ${response.statusCode} for ${url}`));
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let received = 0;
-      response.on("data", (chunk: Buffer) => {
-        received += chunk.length;
-        if (received > DOWNLOAD_MAX_BYTES) request.destroy(new Error(`emoji font fetch: more than ${DOWNLOAD_MAX_BYTES} bytes`));
-        else chunks.push(chunk);
-      });
-      response.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
-      response.on("error", reject);
-    });
-    request.on("timeout", () => request.destroy(new Error(`emoji font fetch: no data for ${DOWNLOAD_TIMEOUT_MS} ms`)));
-    request.on("error", reject);
-  });
-}
 
 let pending: Promise<Uint8Array> | null = null;
 
-/** The pinned Noto Color Emoji v2.051 bytes. A fresh copy each call, so a test may mutate it. */
+/** The committed Noto Color Emoji v2.051 bytes. A fresh copy each call, so a test may mutate it. */
 export async function loadPinnedEmojiFont(): Promise<Uint8Array> {
-  pending ??= (async () => {
-    const cached = await readCached();
-    if (cached !== null) return cached;
-    const bytes = await download(EMOJI_FONT_URL);
-    if (sha256(bytes) !== EMOJI_FONT_SHA256) throw new Error("emoji font fetch: sha256 does not match the pinned release");
-    await mkdir(dirname(CACHE_FILE), { recursive: true });
-    // Written beside and renamed, so a parallel test file never reads half a font.
-    const temp = `${CACHE_FILE}.${process.pid}.tmp`;
-    await writeFile(temp, bytes);
-    await rename(temp, CACHE_FILE);
-    return bytes;
-  })();
+  pending ??= loadEmojiFont(FONTS_DIR);
   const shared = await pending;
-  return shared.slice();
+  // A copy: `loadEmojiFont` returns a Node Buffer, whose slice() would be a view.
+  return new Uint8Array(shared);
 }
 
 export interface EmojiTestEntry {
