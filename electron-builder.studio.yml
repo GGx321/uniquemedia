@@ -12,6 +12,14 @@ directories:
   output: release-studio
 afterPack: ./scripts/sign-adhoc.cjs
 files:
+  # Everything under out-studio/, and so also the text rasteriser's assets that
+  # studio/scripts/prepareTextAssets.ts copies next to the engine entry
+  # (3b.2): out-studio/engine/wasm/index_bg.wasm (resvg-wasm 2.6.2, a
+  # devDependency, so it is not in node_modules) and out-studio/engine/fonts/
+  # (the five text TTFs, NotoColorEmoji.ttf and the six OFL texts, ≈ 11 MiB
+  # in the installer). Like the face models they stay inside app.asar, under
+  # the integrity fuse; smoke-engine.ts checks they are there and that the
+  # engine loads them and draws the pinned self-test fingerprint.
   - out-studio/**/*
   - package.json
   # The generated built-in stickers (3b.5): 10 APNGs and catalog.json, ~7 MB,
