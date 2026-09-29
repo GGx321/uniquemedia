@@ -157,9 +157,9 @@ describe("EngineError for an unusable export folder", () => {
     expect(EngineError.safeParse({ code: "EXPORT_UNAVAILABLE", exportReason }).success).toBe(true);
   });
 
-  test("the reasons are exactly: missing, not a directory, not writable, not enough space, overlaps the library, invalid marker", () => {
+  test("the reasons are exactly: missing, not a directory, not writable, not enough space, overlaps the library, invalid marker, newer marker", () => {
     const actual: string[] = [...EXPORT_UNAVAILABLE_REASONS].sort();
-    expect(actual).toEqual(["invalid-marker", "missing", "not-a-directory", "not-enough-space", "not-writable", "overlaps-library"]);
+    expect(actual).toEqual(["invalid-marker", "missing", "newer-marker", "not-a-directory", "not-enough-space", "not-writable", "overlaps-library"]);
   });
 
   test("EXPORT_UNAVAILABLE without a reason is refused", () => {
@@ -233,6 +233,10 @@ describe("MONTAGE_ISSUE_MESSAGES_RU", () => {
 });
 
 describe("EXPORT_UNAVAILABLE_REASONS_RU", () => {
+  test("the newer-marker message does not tell the owner to delete the marker (that would orphan every record)", () => {
+    expect(EXPORT_UNAVAILABLE_REASONS_RU["newer-marker"]).not.toMatch(/удал|повреж/i);
+  });
+
   test("has a message for exactly the reasons, no more, no less", () => {
     const actual: string[] = Object.keys(EXPORT_UNAVAILABLE_REASONS_RU).sort();
     const expected: string[] = [...EXPORT_UNAVAILABLE_REASONS].sort();
