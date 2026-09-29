@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { largestFaceInSource } from "./largestFace";
 import { FACE_ROW } from "./yunet";
+useNativeGlobals();
 
 // S8: detect-only. Picks the largest face YuNet found and maps its box from the
 // image detection ran on (normalised to at most 1280 px) back to the SOURCE image.

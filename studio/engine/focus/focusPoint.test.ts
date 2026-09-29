@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { focusFromFace } from "./focusPoint";
+useNativeGlobals();
 
 // S8: where on the face the crop is centred. The box centre, as fractions of the
 // source image (see focusPoint.ts for why not the eyes line).
