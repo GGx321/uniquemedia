@@ -61,6 +61,7 @@ const textLayer = (n: number, over: Record<string, unknown> = {}) => ({
   value: "Coffee first",
   font: "manrope",
   style: "plaque",
+  color: "#111111",
   x: 0.5,
   y: 0.195,
   scale: 1,
@@ -327,6 +328,49 @@ describe("collage clips", () => {
   });
 });
 
+// ---------- empty cells (drafts) ----------
+
+describe("empty cells", () => {
+  const emptyCell = { photo: null, focus: null };
+
+  test("a draft may have an empty cell in a collage: the owner picks a layout first and drops photos later", () => {
+    const value = spec({ clips: [{ ...collageClip(1, "collage3", 3), cells: [cell(1), emptyCell, emptyCell] }] });
+    expect(MontageDraft.safeParse(value).success).toBe(true);
+    expect(issuesOf(value, "draft")).toEqual([]);
+  });
+
+  test("a draft may have an empty photo clip", () => {
+    expect(MontageDraft.safeParse(spec({ clips: [{ ...photoClip(1), cell: emptyCell }] })).success).toBe(true);
+  });
+
+  test("a spec refuses an empty cell, naming it", () => {
+    const value = spec({ clips: [{ ...collageClip(1, "collage3", 3), cells: [cell(1), emptyCell, emptyCell] }] });
+    expect(MontageSpec.safeParse(value).success).toBe(false);
+    expect(issuesOf(value, "spec")).toEqual([
+      { code: "cell-empty", path: ["clips", 0, "cells", 1] },
+      { code: "cell-empty", path: ["clips", 0, "cells", 2] },
+    ]);
+  });
+
+  test("a spec names an empty single-photo cell", () => {
+    const value = spec({ clips: [{ ...photoClip(1), cell: emptyCell }] });
+    expect(issuesOf(value, "spec")).toEqual([{ code: "cell-empty", path: ["clips", 0, "cell"] }]);
+  });
+
+  test("the shape-only schema lets an empty cell through, so the engine can list it", () => {
+    expect(MontageShape.safeParse(spec({ clips: [{ ...photoClip(1), cell: emptyCell }] })).success).toBe(true);
+  });
+
+  test("empty cells never count as the same photo twice", () => {
+    const value = spec({ clips: [{ ...collageClip(1, "collage2", 2), cells: [emptyCell, emptyCell] }] });
+    expect(issuesOf(value, "draft")).toEqual([]);
+  });
+
+  test("a cell without the photo key is refused: null is the only way to say empty", () => {
+    expect(MontageDraft.safeParse(spec({ clips: [{ ...photoClip(1), cell: { focus: null } }] })).success).toBe(false);
+  });
+});
+
 // ---------- focus ----------
 
 describe("focus", () => {
@@ -520,8 +564,52 @@ describe("text layers", () => {
     expect(MontageSpec.safeParse(withText({ value: family.repeat(61) })).success).toBe(false);
   });
 
-  test("a caption whose code units run past the bound is refused before it is segmented", () => {
-    expect(MontageSpec.safeParse(withText({ value: "́".repeat(5_000) })).success).toBe(false);
+  test("a caption over 1024 UTF-16 units is refused, even one made of a single grapheme", () => {
+    expect(MontageSpec.safeParse(withText({ value: `a${"\u0301".repeat(1_100)}` })).success).toBe(false);
+  });
+
+  test("60 of the longest emoji sequences fit under the unit bound", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
+    expect(family.repeat(60).length).toBeLessThanOrEqual(1024);
+    expect(MontageSpec.safeParse(withText({ value: family.repeat(60) })).success).toBe(true);
+  });
+
+  test.each([
+    ["a C0 control character", "a\u0001b"],
+    ["a newline", "line one\nline two"],
+    ["a tab", "a\tb"],
+    ["DEL", "a\u007fb"],
+    ["a C1 control character", "a\u0085b"],
+    ["a right-to-left override", "a\u202Eb"],
+    ["a left-to-right embedding", "a\u202Ab"],
+    ["a bidi isolate", "a\u2066b"],
+    ["a pop directional isolate", "a\u2069b"],
+    ["a lone high surrogate", "a\uD800b"],
+    ["a lone low surrogate", "a\uDC00b"],
+  ])("refuses %s: resvg would crash on it or the text would read otherwise than it shows", (_label, value) => {
+    expect(MontageSpec.safeParse(withText({ value })).success).toBe(false);
+  });
+
+  test("a well-formed surrogate pair is fine", () => {
+    expect(MontageSpec.safeParse(withText({ value: "coffee \u{2615}" })).success).toBe(true);
+  });
+
+  test("a caption with a control character is refused in a draft too", () => {
+    expect(MontageDraft.safeParse(withText({ value: "a\u0001b" })).success).toBe(false);
+  });
+
+  test("a colour is a lowercase #rrggbb: the text colour in every style", () => {
+    expect(MontageSpec.safeParse(withText({ color: "#ffffff" })).success).toBe(true);
+    expect(MontageSpec.safeParse(withText({ color: "#0a1b2c" })).success).toBe(true);
+  });
+
+  test.each(["#FFFFFF", "#fff", "#ggg000", "red", "rgb(0,0,0)", "ffffff", "#ffffff00", "url(x)", ""])("refuses the colour %p", (color) => {
+    expect(MontageSpec.safeParse(withText({ color })).success).toBe(false);
+  });
+
+  test("a text layer without a colour is refused", () => {
+    const { color: _c, ...bare } = textLayer(1);
+    expect(MontageSpec.safeParse(spec({ layers: [bare] })).success).toBe(false);
   });
 
   test("the schema bounds length only: Cyrillic is left to the engine's caption rules", () => {

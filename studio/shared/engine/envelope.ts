@@ -7,8 +7,8 @@ import { z } from "zod";
  * - 3 (2026-09-29): `job.progress`, `job.failed` and `job.cancelled` carry the job's `kind`, `avatarId` and (a run) `runId`.
  * - 4 (2026-09-29): `RunSummary.capExhausted`; a run whose cap cannot fund one more attempt is no longer `resumable`.
  * - 5 (2026-09-29): Stage 3's render contract: the `render` job kind (queued jobs, frames as progress) with its identity in the job events;
- *   `videos.*`, `photos.setRejected`, `settings.setExportPath`, `montages.create`, the `video.changed` event, `MontageSpec`/`MontageDraft`;
- *   `Settings.exportPath` and `.renderConcurrency`; `PhotoSummary.used`/`usedIn`/`rejected`; `AvatarSummary.videoCount`/`eligibleUnusedCount`;
+ *   `videos.*`, `photos.setRejected`, `montages.create`, the `video.changed` event, `MontageSpec`/`MontageDraft`;
+ *   `Settings.exportPath` and `.renderConcurrency`; `Snapshot.exportStatus`; `PhotoSummary.used`/`usedIn`/`rejected`/`reserved`/`eligible`; `AvatarSummary.videoCount`/`eligibleUnusedCount`;
  *   `EngineError.issues` and `.exportReason`; the error codes MONTAGE_INVALID, PHOTO_UNAVAILABLE, EXPORT_UNAVAILABLE, RENDER_FAILED, RENDER_VERIFY_FAILED.
  */
 export const PROTOCOL_VERSION = 5;

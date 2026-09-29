@@ -148,6 +148,8 @@ const photo: PhotoSummary = {
   used: true,
   usedIn: ["video-00000001"],
   rejected: false,
+  reserved: false,
+  eligible: true,
 };
 
 // A photo made before T7b's face gate, or with the image age check off: no
@@ -161,6 +163,8 @@ const photoWithoutQa: PhotoSummary = {
   used: false,
   usedIn: [],
   rejected: false,
+  reserved: false,
+  eligible: true,
 };
 
 const video: VideoSummary = {
@@ -172,6 +176,10 @@ const video: VideoSummary = {
   createdAt: "2026-09-29T12:00:00.000Z",
   relPath: "Mia/2026-09-29_photo_001.mp4",
   fileState: "present",
+  montageId: "montage-00000001",
+  photoCount: 1,
+  music: null,
+  hasPoster: true,
 };
 
 const montageDraft: MontageDraft = {
@@ -267,17 +275,13 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo, photoWithoutQa], skippedTotal: 1 } },
   "photos.setRejected": {
     payload: { avatarId: "avatar-0001", photoId: "photo-0003", rejected: true },
-    result: { photo: { ...photoWithoutQa, rejected: true } },
+    result: { photo: { ...photoWithoutQa, rejected: true, eligible: false } },
   },
   "videos.render": { payload: { montageId: "montage-00000001" }, result: { jobId: "job-00000004", videoId: "video-00000002" } },
   "videos.cancel": { payload: { jobId: "job-00000004" }, result: { jobId: "job-00000004" } },
   "videos.list": { payload: { avatarId: "avatar-0001" }, result: { videos: [video] } },
   "videos.delete": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
   "videos.reveal": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
-  "settings.setExportPath": {
-    payload: { path: "/Users/alex/Studio/export" },
-    result: { settings, rootId: "root-00000001", resolvedVideos: 1 },
-  },
   "montages.create": {
     payload: { avatarId: "avatar-0001", photoIds: ["photo-0002"] },
     result: { montage: { montageId: "montage-00000001", name: "Монтаж 1", spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
@@ -295,6 +299,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
       unreadableTotal: 1,
       jobs: [job],
       librarySwitchGeneration: 2,
+      exportStatus: { status: "unavailable", reason: "missing" },
       notices: [notice],
     },
   },
@@ -396,7 +401,6 @@ describe("contract surface", () => {
         "videos.list",
         "videos.delete",
         "videos.reveal",
-        "settings.setExportPath",
         "montages.create",
         "engine.snapshot",
         "engine.events",
@@ -772,7 +776,7 @@ describe("results", () => {
 
   test("a snapshot restores a finished candidates job with its result", () => {
     const done = { ...job, status: "done", done: 4, result: eventCases["job.done"].result };
-    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [draft], unreadableAvatars: [], unreadableTotal: 0, jobs: [done], librarySwitchGeneration: 0, notices: [] };
+    const result = { bootId: BOOT, lastSeq: 7, settings, money, avatars: [], drafts: [draft], unreadableAvatars: [], unreadableTotal: 0, jobs: [done], librarySwitchGeneration: 0, exportStatus: { status: "ok" }, notices: [] };
     expect(parseMessage(okResponse("engine.snapshot", result)).ok).toBe(true);
   });
 
@@ -785,7 +789,7 @@ describe("results", () => {
       reconcileReasons: [],
       halt: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" },
     };
-    const result = { bootId: BOOT, lastSeq: 0, settings, money: unavailable, avatars: [], drafts: [], unreadableAvatars: [], unreadableTotal: 0, jobs: [], librarySwitchGeneration: 0, notices: [] };
+    const result = { bootId: BOOT, lastSeq: 0, settings, money: unavailable, avatars: [], drafts: [], unreadableAvatars: [], unreadableTotal: 0, jobs: [], librarySwitchGeneration: 0, exportStatus: { status: "ok" }, notices: [] };
     expect(parseMessage(okResponse("engine.snapshot", result)).ok).toBe(true);
   });
 
@@ -1151,12 +1155,6 @@ describe("Stage 3 payloads", () => {
     expect(send("photos.setRejected", { avatarId: "avatar-0001", photoId: "photo-0003" })).toBe(false);
     expect(send("photos.setRejected", { avatarId: "avatar-0001", photoId: "photo-0003", rejected: "yes" })).toBe(false);
   });
-
-  test("settings.setExportPath takes an absolute path", () => {
-    expect(send("settings.setExportPath", { path: "/Users/alex/Studio/export" })).toBe(true);
-    expect(send("settings.setExportPath", { path: "Studio/export" })).toBe(false);
-    expect(send("settings.setExportPath", { path: "/Users/alex/../export" })).toBe(false);
-  });
 });
 
 describe("montages.create", () => {
@@ -1238,6 +1236,18 @@ describe("Stage 3 results and events", () => {
     expect(parseMessage(event("job.done", { jobId: "job-00000004", result })).ok).toBe(true);
   });
 
+  test("an error response for videos.render can name the photos it cannot use", () => {
+    const msg = {
+      v: PROTOCOL_VERSION,
+      id: "msg-00000001",
+      kind: "response",
+      type: "videos.render",
+      ok: false,
+      error: { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["clips", 0, "cell"] }] },
+    };
+    expect(parseMessage(msg).ok).toBe(true);
+  });
+
   test("job.failed of a render can say the export folder is unusable, and why", () => {
     const failed = {
       kind: "render",
@@ -1275,8 +1285,11 @@ describe("Stage 3 results and events", () => {
       unreadableTotal: 0,
       jobs: [queued],
       librarySwitchGeneration: 0,
+      exportStatus: { status: "ok" },
       notices: [],
     };
     expect(parseMessage(okResponse("engine.snapshot", snapshot)).ok).toBe(true);
+    const { exportStatus: _e, ...without } = snapshot;
+    expect(parseMessage(okResponse("engine.snapshot", without)).ok).toBe(false);
   });
 });

@@ -40,7 +40,7 @@ const EXPECTED_CODES = [
 ];
 
 /** The two codes that must say more than their code: what is wrong with the montage, and why the folder is unusable. */
-const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "EXPORT_UNAVAILABLE"];
+const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE"];
 
 describe("ErrorCode", () => {
   test("is exactly the closed set of thirty-three codes", () => {
@@ -115,9 +115,40 @@ describe("EngineError for a montage that cannot be rendered", () => {
     expect(EngineError.safeParse({ code: "VALIDATION", issues: [issue] }).success).toBe(false);
   });
 
+  test("issues on any other code are refused, PHOTO_UNAVAILABLE aside", () => {
+    expect(EngineError.safeParse({ code: "NOT_FOUND", issues: [issue] }).success).toBe(false);
+  });
+
   test("the engine's own refusal for a part whose slice has not landed is an ordinary issue", () => {
     const notYet = { code: "not-yet-supported", path: ["layers", 0] };
     expect(EngineError.safeParse({ code: "MONTAGE_INVALID", issues: [notYet] }).success).toBe(true);
+  });
+});
+
+describe("EngineError for a photo a montage cannot use", () => {
+  const cell = { code: "photo-unavailable", path: ["clips", 1, "cells", 0] };
+
+  test("PHOTO_UNAVAILABLE says which cells: its issues name them", () => {
+    expect(EngineError.safeParse({ code: "PHOTO_UNAVAILABLE", issues: [cell, { ...cell, path: ["clips", 2, "cell"] }] }).success).toBe(true);
+  });
+
+  test("PHOTO_UNAVAILABLE without issues is refused", () => {
+    expect(EngineError.safeParse({ code: "PHOTO_UNAVAILABLE" }).success).toBe(false);
+  });
+
+  test("PHOTO_UNAVAILABLE carries only photo-unavailable issues", () => {
+    expect(EngineError.safeParse({ code: "PHOTO_UNAVAILABLE", issues: [{ code: "layer-too-short", path: ["layers", 0] }] }).success).toBe(false);
+  });
+
+  test("MONTAGE_INVALID may list a photo-unavailable issue too, next to the others", () => {
+    const issues = [cell, { code: "duration-too-short", path: ["clips"] }];
+    expect(EngineError.safeParse({ code: "MONTAGE_INVALID", issues }).success).toBe(true);
+  });
+
+  test("PHOTO_UNAVAILABLE's issue list is bounded like MONTAGE_INVALID's", () => {
+    const some = Array.from({ length: MAX_MONTAGE_ISSUES }, () => cell);
+    expect(EngineError.safeParse({ code: "PHOTO_UNAVAILABLE", issues: some }).success).toBe(true);
+    expect(EngineError.safeParse({ code: "PHOTO_UNAVAILABLE", issues: [...some, cell] }).success).toBe(false);
   });
 });
 

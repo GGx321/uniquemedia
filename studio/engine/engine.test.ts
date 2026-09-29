@@ -1981,7 +1981,6 @@ describe("Stage 3 commands before their tasks land", () => {
     ["videos.list", { avatarId: AVATAR }],
     ["videos.delete", { videoId: "video-00000001" }],
     ["photos.setRejected", { avatarId: AVATAR, photoId: "photo-0002", rejected: true }],
-    ["settings.setExportPath", { path: "/Users/alex/Studio/export" }],
     ["montages.create", { avatarId: AVATAR, photoIds: [] }],
   ];
 
@@ -2004,6 +2003,18 @@ describe("Stage 3 commands before their tasks land", () => {
     const { engine } = await startEngine();
     const response = await engine.handle(command("videos.reveal", { videoId: "video-00000001" }));
     expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+  });
+
+  test("settings.setExportPath is gone from the contract until task 3e.3 adds it with main's dialog: the renderer never supplies a path", async () => {
+    const { engine } = await startEngine();
+    const response = await engine.handle(command("settings.setExportPath", { path: "/Users/alex/Studio/export" }));
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+  });
+
+  test("the snapshot carries the export folder's status, stubbed as ok until task 3a.8a checks the folder", async () => {
+    const { engine } = await startEngine();
+    const snapshot = ok(await engine.handle(command("engine.snapshot")));
+    expect(snapshot.type === "engine.snapshot" ? snapshot.result.exportStatus : null).toEqual({ status: "ok" });
   });
 
   test("the engine still answers settings.get afterwards, with the export folder and render concurrency", async () => {

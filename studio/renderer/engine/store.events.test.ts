@@ -402,6 +402,10 @@ test("video.changed moves lastSeq on and changes nothing else: the video lists a
     createdAt: "2026-09-29T12:00:00.000Z",
     relPath: "Lena/2026-09-29_photo_001.mp4",
     fileState: "present",
+    montageId: null,
+    photoCount: 1,
+    music: null,
+    hasPoster: false,
   } as const;
   await h.emit({ type: "video.changed", payload: { change: "upserted", video } });
   await h.emit({ type: "video.changed", payload: { change: "removed", videoId: video.videoId, avatarId: video.avatarId } });

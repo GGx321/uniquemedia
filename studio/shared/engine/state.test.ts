@@ -6,7 +6,7 @@ import {
   Draft,
   EngineNotice,
   Estimate,
-  ExportPathResult,
+  ExportStatus,
   JobCancelled,
   JobFailed,
   JobProgress,
@@ -149,6 +149,8 @@ const photo = {
   used: false,
   usedIn: [] as string[],
   rejected: false,
+  reserved: false,
+  eligible: true,
 };
 
 const renderJob = {
@@ -528,8 +530,8 @@ describe("AvatarSummary", () => {
     expect(AvatarSummary.safeParse({ ...avatar, photoCount: 5, eligibleUnusedCount: 5 }).success).toBe(true);
   });
 
-  test("rejects more eligible unused photos than gallery photos: eligible photos are a subset of the gallery", () => {
-    expect(AvatarSummary.safeParse({ ...avatar, photoCount: 5, eligibleUnusedCount: 6 }).success).toBe(false);
+  test("a derived count never hides an avatar: an eligible count above the photo count still parses", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, photoCount: 5, eligibleUnusedCount: 6 }).success).toBe(true);
   });
 
   test("videos may outnumber photos: a video lists several", () => {
@@ -1113,8 +1115,8 @@ describe("PhotoSummary: usage and reject marks (Stage 3)", () => {
   });
 
   test("a rejected photo is unused or used: the mark is the owner's own", () => {
-    expect(PhotoSummary.safeParse({ ...photo, rejected: true }).success).toBe(true);
-    expect(PhotoSummary.safeParse({ ...photo, rejected: true, used: true, usedIn: ["video-00000001"] }).success).toBe(true);
+    expect(PhotoSummary.safeParse({ ...photo, rejected: true, eligible: false }).success).toBe(true);
+    expect(PhotoSummary.safeParse({ ...photo, rejected: true, eligible: false, used: true, usedIn: ["video-00000001"] }).success).toBe(true);
   });
 
   test("rejects used without a video that used it", () => {
@@ -1147,22 +1149,56 @@ describe("PhotoSummary: usage and reject marks (Stage 3)", () => {
   });
 });
 
-describe("ExportPathResult (settings.setExportPath)", () => {
-  const result = { settings, rootId: "root-00000001", resolvedVideos: 12 };
-
-  test("answers the new settings, the root's identity and how many records now resolve", () => {
-    expect(ExportPathResult.safeParse(result).success).toBe(true);
+describe("PhotoSummary: reserved and eligible (Stage 3)", () => {
+  test("carries the eligibility verdict and whether a queued render holds the photo", () => {
+    expect(PhotoSummary.safeParse({ ...photo, eligible: true, reserved: true }).success).toBe(true);
+    expect(PhotoSummary.safeParse({ ...photo, eligible: false, reserved: false }).success).toBe(true);
   });
 
-  test("accepts no record resolving", () => {
-    expect(ExportPathResult.safeParse({ ...result, resolvedVideos: 0 }).success).toBe(true);
+  test("rejects a summary without reserved or eligible: the renderer never re-derives them", () => {
+    const { reserved: _r, ...noReserved } = photo;
+    const { eligible: _e, ...noEligible } = photo;
+    expect(PhotoSummary.safeParse(noReserved).success).toBe(false);
+    expect(PhotoSummary.safeParse(noEligible).success).toBe(false);
   });
 
-  test("rejects a negative count", () => {
-    expect(ExportPathResult.safeParse({ ...result, resolvedVideos: -1 }).success).toBe(false);
+  test("rejects a rejected photo that is eligible: a reject mark is part of the one rule", () => {
+    expect(PhotoSummary.safeParse({ ...photo, rejected: true, eligible: true }).success).toBe(false);
+    expect(PhotoSummary.safeParse({ ...photo, rejected: true, eligible: false }).success).toBe(true);
   });
 
-  test("rejects a rootId that breaks the id pattern", () => {
-    expect(ExportPathResult.safeParse({ ...result, rootId: "../root" }).success).toBe(false);
+  test("a used photo may be eligible: used is not part of the eligibility rule", () => {
+    expect(PhotoSummary.safeParse({ ...photo, used: true, usedIn: ["video-00000001"], eligible: true }).success).toBe(true);
+  });
+
+  test("usedIn is bounded high enough to never fail a parse for a real library", () => {
+    const ids = Array.from({ length: 5_000 }, (_, i) => `video-${String(i).padStart(8, "0")}`);
+    expect(PhotoSummary.safeParse({ ...photo, used: true, usedIn: ids }).success).toBe(true);
+  });
+});
+
+describe("ExportStatus (the snapshot's view of the export folder)", () => {
+  test("ok carries nothing else", () => {
+    expect(ExportStatus.safeParse({ status: "ok" }).success).toBe(true);
+    expect(ExportStatus.safeParse({ status: "ok", reason: "missing" }).success).toBe(false);
+  });
+
+  test.each(["missing", "not-a-directory", "not-writable", "not-enough-space"])("unavailable says why: %s", (reason) => {
+    expect(ExportStatus.safeParse({ status: "unavailable", reason }).success).toBe(true);
+  });
+
+  test("unavailable without a reason, or with an unknown one, is refused", () => {
+    expect(ExportStatus.safeParse({ status: "unavailable" }).success).toBe(false);
+    expect(ExportStatus.safeParse({ status: "unavailable", reason: "on-fire" }).success).toBe(false);
+  });
+
+  test("an unknown status is refused", () => {
+    expect(ExportStatus.safeParse({ status: "unknown" }).success).toBe(false);
+  });
+});
+
+describe("Settings: the export folder is not a status", () => {
+  test("the settings carry the path, and no availability field", () => {
+    expect(Settings.safeParse({ ...settings, exportStatus: { status: "ok" } }).success).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 import { readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { EngineSettings } from "../engine/control";
 import { writeJsonAtomic } from "../engine/library/durableFs";
@@ -49,7 +49,9 @@ export function defaultSettings(userData: string, home: string = homedir()): Eng
     textModel: DEFAULT_TEXT_MODEL,
     concurrency: { network: DEFAULT_NETWORK_CONCURRENCY },
     imageAgeCheck: DEFAULT_IMAGE_AGE_CHECK,
-    exportPath: defaultExportPath(home),
+    // An empty HOME (or a relative one) would break the contract's absolute path and crash the startup:
+    // export next to the rest of the app's data instead.
+    exportPath: isAbsolute(home) ? defaultExportPath(home) : join(userData, "export"),
     renderConcurrency: DEFAULT_RENDER_CONCURRENCY,
   });
 }

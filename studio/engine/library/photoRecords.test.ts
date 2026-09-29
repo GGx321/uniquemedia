@@ -81,7 +81,24 @@ describe("photoSummaryFrom", () => {
       used: false,
       usedIn: [],
       rejected: false,
+      reserved: false,
+      eligible: true,
     });
+  });
+
+  test("an age-failed run photo is listed but not eligible: the one rule hides it from montages", () => {
+    const failed = runPhotoSidecar({ qa: { age: { adult: false, confidence: 0.9 } } });
+    expect(photoSummaryFrom(failed)).toMatchObject({ eligible: false, reserved: false });
+  });
+
+  test("a run photo with a low-confidence age verdict is not eligible either", () => {
+    const unsure = runPhotoSidecar({ qa: { age: { adult: true, confidence: 0.1 } } });
+    expect(photoSummaryFrom(unsure)?.eligible).toBe(false);
+  });
+
+  test("a run photo that passed the age threshold is eligible", () => {
+    const passed = runPhotoSidecar({ qa: { age: { adult: true, confidence: 0.99 } } });
+    expect(photoSummaryFrom(passed)?.eligible).toBe(true);
   });
 
   test("a legacy 2K run photo lists like any other, with no resolution in its summary (2K removed, 2026-09-29)", () => {
@@ -134,6 +151,8 @@ describe("finalizePhotoList", () => {
       used: false,
       usedIn: [],
       rejected: false,
+      reserved: false,
+      eligible: true,
     };
   }
 

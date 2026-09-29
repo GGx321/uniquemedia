@@ -33,6 +33,8 @@ function photo(n: number, patch: Partial<PhotoSummary> = {}): PhotoSummary {
     used: false,
     usedIn: [],
     rejected: false,
+    reserved: false,
+    eligible: true,
     ...patch,
   };
 }
@@ -48,6 +50,8 @@ function manyPhotos(n: number, avatarId: string, idPrefix: string, withFace: boo
     used: false,
     usedIn: [],
     rejected: false,
+    reserved: false,
+    eligible: true,
     ...(withFace && i === 0 ? { qa: { faceCos: 0.86 } } : {}),
   }));
 }

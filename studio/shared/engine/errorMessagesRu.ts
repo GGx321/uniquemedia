@@ -57,11 +57,13 @@ export const MONTAGE_ISSUE_MESSAGES_RU = {
   "too-many-text-layers": "Текстовых слоёв больше 10.",
   "too-many-sticker-layers": "Стикеров больше 10.",
   "cells-layout-mismatch": "Число фото в коллаже не совпадает с его раскладкой.",
+  "cell-empty": "В клипе есть пустая ячейка: добавьте фото или уберите клип.",
   "layer-too-short": "Слой короче 0,3 секунды.",
   "layer-outside-timeline": "Слой заканчивается после конца монтажа.",
   "duplicate-clip-id": "Два клипа с одним идентификатором.",
   "duplicate-layer-id": "Два слоя с одним идентификатором.",
   "photo-repeated": "Одно и то же фото стоит в монтаже больше одного раза.",
+  "photo-unavailable": "Это фото нельзя использовать в видео: оно не подходит или было отклонено.",
   "not-yet-supported": "Эта часть монтажа пока не поддерживается.",
 } as const satisfies Record<MontageIssueCode, string>;
 

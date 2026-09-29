@@ -688,7 +688,7 @@ export class MockEngine implements EngineBridge {
       run.settledMicros += expected;
       const qa = mockFaceQa(i);
       const at = new Date(Date.parse(createdAt) + (i + 1) * 60_000).toISOString();
-      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, createdAt: at, used: false, usedIn: [], rejected: false, ...(qa ? { qa } : {}) });
+      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, createdAt: at, used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}) });
     });
     this.photos.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     this.runs = [...this.runs, run];
@@ -1068,7 +1068,6 @@ export class MockEngine implements EngineBridge {
       case "videos.delete":
       case "videos.reveal":
       case "photos.setRejected":
-      case "settings.setExportPath":
       case "montages.create":
         // Stage 3, task 3a.1: the contract exists, the behaviour comes with its slices (mock parity: task 3d.1b).
         // Until then the mock refuses exactly as the real engine does for a command it does not implement yet.
@@ -1392,7 +1391,7 @@ export class MockEngine implements EngineBridge {
             planned.end = "done";
             const photoId = this.nextId("photo");
             const qa = mockFaceQa(slotIndex);
-            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, ...(qa ? { qa } : {}) });
+            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}) });
             run.photoIds.push(photoId);
             run.settledMicros += slot.expected;
             this.spend(slot.expected);
@@ -1620,6 +1619,7 @@ export class MockEngine implements EngineBridge {
       unreadableTotal: this.unreadableCount(),
       jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j))],
       librarySwitchGeneration: this.librarySwitchGeneration,
+      exportStatus: { status: "ok" },
       notices: [],
     };
   }

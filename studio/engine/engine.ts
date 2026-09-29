@@ -1346,6 +1346,8 @@ export class Engine {
       // Avatar and photo run jobs of this engine's life.
       jobs: this.#jobs.states(),
       librarySwitchGeneration: this.#librarySwitchGeneration,
+      // Task 3a.8a checks the export folder; until then it is reported usable.
+      exportStatus: { status: "ok" },
       notices: [...this.#notices],
     };
   }

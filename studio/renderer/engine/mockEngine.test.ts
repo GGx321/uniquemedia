@@ -744,7 +744,6 @@ test.each([
   ["videos.list", { avatarId: "avatar-0001" }],
   ["videos.delete", { videoId: "video-00000001" }],
   ["photos.setRejected", { avatarId: "avatar-0001", photoId: "photo-0002", rejected: true }],
-  ["settings.setExportPath", { path: "/Users/studio/Studio/export" }],
   ["montages.create", { avatarId: "avatar-0001", photoIds: [] }],
 ] as const)("%s answers the typed INTERNAL refusal the real engine gives, and the mock keeps working", async (type, payload) => {
   const { client } = makeMock();
@@ -766,11 +765,17 @@ test("the demo avatars have no videos, and every gallery photo is still eligible
   for (const avatar of avatars) expect(avatar).toMatchObject({ videoCount: 0, eligibleUnusedCount: avatar.photoCount });
 });
 
+test("the mock's snapshot reports the export folder as usable", async () => {
+  const { client } = makeMock();
+  const snapshot = await unwrap(client.request("engine.snapshot", {}));
+  expect(snapshot.exportStatus).toEqual({ status: "ok" });
+});
+
 test("the mock's run photos are unused and unmarked", async () => {
   const { client } = makeMock({ preset: "demo" });
   const { avatars } = await unwrap(client.request("avatars.list", {}));
   const mia = avatars.find((a) => a.name === "Mia");
   const { photos } = await unwrap(client.request("photos.list", { avatarId: mia?.avatarId ?? "" }));
   expect(photos.length).toBeGreaterThan(0);
-  for (const photo of photos) expect(photo).toMatchObject({ used: false, usedIn: [], rejected: false });
+  for (const photo of photos) expect(photo).toMatchObject({ used: false, usedIn: [], rejected: false, reserved: false, eligible: true });
 });

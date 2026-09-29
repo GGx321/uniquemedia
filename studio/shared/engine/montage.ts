@@ -37,11 +37,11 @@ export const MAX_LAYERS = MAX_TEXT_LAYERS + MAX_STICKER_LAYERS;
 /** A caption is 1 to 60 graphemes (the engine's caption rules add the charset and the age words). */
 export const MAX_CAPTION_GRAPHEMES = 60;
 /**
- * The longest caption in UTF-16 code units, checked before anything is
- * segmented. Sixty of the longest emoji sequences (a ZWJ family is 11 units)
- * still fit.
+ * The longest caption in UTF-16 code units: a cheap bound that runs before the
+ * text is segmented into graphemes. Sixty of the longest emoji sequences (a ZWJ
+ * family is 11 units, 660 in all) always fit under it.
  */
-export const MAX_CAPTION_UNITS = 700;
+export const MAX_CAPTION_UNITS = 1024;
 /** The furthest into an own video or track a trim or a start may point: 10 minutes, the longest own music. */
 export const MAX_SOURCE_OFFSET_MS = 600_000;
 /** An issue list is cut at this many entries, so an error that carries it stays small. */
@@ -70,11 +70,13 @@ export const PhotoRef = z.discriminatedUnion("source", [
 ]);
 
 /**
- * One photo in a clip. `focus` is null only from headless callers that leave
- * it to the engine; the editor resolves it when a photo is placed and always
- * stores it.
+ * One photo in a clip. `photo` is null for an empty cell: the owner may pick a
+ * collage layout first and drop photos later, so a draft can hold empty cells;
+ * a spec cannot (`cell-empty`). `focus` is null only from headless callers that
+ * leave it to the engine; the editor resolves it when a photo is placed and
+ * always stores it.
  */
-export const Cell = z.strictObject({ photo: PhotoRef, focus: Focus.nullable() });
+export const Cell = z.strictObject({ photo: PhotoRef.nullable(), focus: Focus.nullable() });
 
 export const CollageLayout = z.enum(["collage2", "collage3", "collage4"]);
 
@@ -119,26 +121,49 @@ export const TextStyle = z.enum(["none", "plaque", "outline"]);
 const graphemeCount = (text: string): number => [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text)].length;
 
 /**
- * On-video text, bounded by length only. The charset (printable ASCII, a few
- * typographic marks, the emoji the bundled font covers), the control
- * characters and the age words are the engine's caption rules (slice 3b).
+ * Text no renderer should ever be handed: control characters (C0, DEL and C1;
+ * resvg throws "non-XML character" on them, SP2) and the bidi overrides and
+ * isolates that make text read otherwise than it is stored.
+ */
+const UNSAFE_CHARS = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u;
+/** A surrogate half with no partner: not text at all. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * On-video text: 1 to 60 graphemes, at most `MAX_CAPTION_UNITS` code units,
+ * and free of control characters, bidi overrides and lone surrogates. That
+ * much is checked here, up front, because it is what could crash or mislead
+ * the rasteriser. The charset itself (printable ASCII, a few typographic
+ * marks, the emoji the bundled font covers) and the age words are the
+ * engine's caption rules (slice 3b).
  */
 export const Caption = z
   .string()
   .min(1)
   .max(MAX_CAPTION_UNITS)
+  .refine((text) => !UNSAFE_CHARS.test(text), "must not contain control or bidi override characters")
+  .refine((text) => !LONE_SURROGATE.test(text), "must be well-formed text")
   .refine((text) => graphemeCount(text) <= MAX_CAPTION_GRAPHEMES, `must be at most ${MAX_CAPTION_GRAPHEMES} characters`);
 
 const layerBase = { layerId: Id, startMs: TimelineMs, endMs: TimelineMs };
 const fraction = z.number().min(0).max(1);
 
-/** A text box anchored at its centre. */
+/** A colour as lowercase `#rrggbb`. */
+const HexColor = z.string().regex(/^#[0-9a-f]{6}$/, "must be #rrggbb in lowercase");
+
+/**
+ * A text box anchored at its centre. `color` is the TEXT colour in every
+ * style; the style decides the rest: «Плашка» keeps its white plaque,
+ * «Обводка» its black outline and «Без фона» its soft shadow. The editor's
+ * default is the style's own default text colour.
+ */
 export const TextLayer = z.strictObject({
   ...layerBase,
   kind: z.literal("text"),
   value: Caption,
   font: TextFont,
   style: TextStyle,
+  color: HexColor,
   x: fraction,
   y: fraction,
   scale: z.number().min(0.5).max(2),
@@ -201,10 +226,12 @@ type Shape = z.infer<typeof MontageShape>;
  * - `duration-too-short` / `duration-too-long`: a spec's clips add up to less than 4.0 s or more than 15.0 s;
  * - `too-many-text-layers` / `too-many-sticker-layers`: more than 10 of a kind;
  * - `cells-layout-mismatch`: a collage's cell count is not its layout's;
+ * - `cell-empty`: a spec's cell holds no photo (a draft may);
  * - `layer-too-short`: a layer is shorter than 300 ms (or ends before it starts);
  * - `layer-outside-timeline`: a spec's layer ends after its clips do;
  * - `duplicate-clip-id` / `duplicate-layer-id`: an id is used twice;
  * - `photo-repeated`: a scene photo appears more than once;
+ * - `photo-unavailable`: the engine's answer for a cell whose scene photo is not eligible (PHOTO_UNAVAILABLE carries these); never produced here;
  * - `not-yet-supported`: the engine's own answer for a part whose slice has not landed (N9); never produced here.
  */
 export const MONTAGE_ISSUE_CODES = [
@@ -214,11 +241,13 @@ export const MONTAGE_ISSUE_CODES = [
   "too-many-text-layers",
   "too-many-sticker-layers",
   "cells-layout-mismatch",
+  "cell-empty",
   "layer-too-short",
   "layer-outside-timeline",
   "duplicate-clip-id",
   "duplicate-layer-id",
   "photo-repeated",
+  "photo-unavailable",
   "not-yet-supported",
 ] as const;
 
@@ -249,7 +278,11 @@ export function montageIssues(montage: Shape, mode: MontageMode): MontageIssue[]
 
   const clipIds = new Set<string>();
   const scenePhotos = new Set<string>();
-  const scenePhoto = (cellPhoto: z.infer<typeof PhotoRef>, ...path: (string | number)[]) => {
+  const scenePhoto = (cellPhoto: z.infer<typeof PhotoRef> | null, ...path: (string | number)[]) => {
+    if (cellPhoto === null) {
+      if (mode === "spec") add("cell-empty", ...path);
+      return;
+    }
     if (cellPhoto.source !== "scene") return;
     if (scenePhotos.has(cellPhoto.photoId)) add("photo-repeated", ...path);
     scenePhotos.add(cellPhoto.photoId);

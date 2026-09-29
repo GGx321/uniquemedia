@@ -12,7 +12,7 @@ import {
   Draft,
   EngineNotice,
   Estimate,
-  ExportPathResult,
+  ExportStatus,
   ImageAgeCheck,
   JobState,
   MoneyStatus,
@@ -121,6 +121,8 @@ export const Snapshot = z.strictObject({
    * either case).
    */
   librarySwitchGeneration: Count,
+  /** Whether the export folder can take a video now; stubbed `ok` until task 3a.8a checks it. */
+  exportStatus: ExportStatus,
   /** Notices still pending, oldest first: a window opened after one was emitted still shows it. */
   notices: z
     .array(EngineNotice)
@@ -290,8 +292,6 @@ const ENGINE_SPECS = [
   // Deletes the file when the record resolves to it and it is present, then the record; the photos are freed.
   // With the file already gone, changed or in another root it deletes only the record («Удалить запись»).
   defineCommand("videos.delete", z.strictObject({ videoId: Id }), z.strictObject({ videoId: Id })),
-  // Points «Готовые видео» at a folder, reading or writing its root marker; answers the root's identity and how many records resolve.
-  defineCommand("settings.setExportPath", z.strictObject({ path: AbsolutePath }), ExportPathResult),
   // A new draft for an avatar from 0 to 20 of its scene photos (0: an empty draft, «Новый монтаж»), with the focus of
   // every placed photo resolved.
   defineCommand("montages.create", z.strictObject({ avatarId: Id, photoIds: MontagePhotoIds }), z.strictObject({ montage: Montage })),

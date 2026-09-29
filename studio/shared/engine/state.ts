@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
-import { EngineError } from "./errors";
+import { EngineError, ExportUnavailableReason } from "./errors";
 import { AbsolutePath, Count, Id, Micros, ModelId, SafeText } from "./primitives";
 import { RenderResult } from "./video";
 
@@ -77,13 +77,15 @@ export const Settings = z.strictObject({
 });
 
 /**
- * `settings.setExportPath`'s answer: the settings as they now stand, the
- * chosen folder's identity (`rootId`, from its `.studio-export.json` marker)
- * and how many video records resolve against it. Pointing at a moved folder
- * (the same `rootId`) makes every record resolve again; a different folder
- * leaves the old records `elsewhere`.
+ * Whether the «Готовые видео» folder can take a video right now, so the render
+ * button can say «Папка недоступна» before anything is queued (invariant 35).
+ * Derived by the engine and part of the snapshot, not of `Settings`: it is
+ * about the disk, not a choice.
  */
-export const ExportPathResult = z.strictObject({ settings: Settings, rootId: Id, resolvedVideos: Count });
+export const ExportStatus = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("ok") }),
+  z.strictObject({ status: z.literal("unavailable"), reason: ExportUnavailableReason }),
+]);
 
 // ---------- money ----------
 
@@ -324,12 +326,10 @@ export const AvatarSummary = z.strictObject({
   /**
    * Gallery photos a montage may still use: eligible (a generated scene photo
    * that passes the age threshold and is not rejected), in no video and in no
-   * queued or running render. A subset of `photoCount`.
+   * queued or running render. Normally at most `photoCount`; not enforced, so a
+   * derived count that drifts can never make an avatar vanish from the list.
    */
   eligibleUnusedCount: Count,
-}).refine((a) => a.eligibleUnusedCount <= a.photoCount, {
-  message: "eligible unused photos are a subset of the gallery photos",
-  path: ["eligibleUnusedCount"],
 });
 
 /**
@@ -394,7 +394,11 @@ const runJobRef = { kind: z.literal("run"), jobId: Id, runId: Id, avatarId: Id }
 /**
  * A render's identity (protocol 5): the video it makes, its avatar and the
  * montage draft it came from (null for a headless `videos.render {spec}`).
- * Its `done` and `total` count frames.
+ * `done` and `total` count FRAMES OF THE FINAL VIDEO: `total` is the spec's
+ * `Σ durationMs × 3 / 100` from the moment the job is queued, and `done` never
+ * exceeds it and never goes back. The runner folds its two passes into that one
+ * range (task 3a.6); the store takes `total` from the result's `durationMs` the
+ * same way when it never heard a progress.
  */
 const renderJobRef = { kind: z.literal("render"), jobId: Id, videoId: Id, avatarId: Id, montageId: Id.nullable() };
 const progressCounts = { done: Count, total: Count };
@@ -602,8 +606,8 @@ export const PhotoQaSummary = z.strictObject({
   age: z.strictObject({ adult: z.boolean(), confidence: z.number().min(0).max(1) }).optional(),
 });
 
-/** A photo can be in this many videos at most, a generous bound for the `usedIn` list. */
-export const MAX_PHOTO_USED_IN = 1000;
+/** A photo can be in this many videos at most, a bound far above any real library, for the `usedIn` list. */
+export const MAX_PHOTO_USED_IN = 10_000;
 
 export const PhotoSummary = z
   .strictObject({
@@ -619,17 +623,29 @@ export const PhotoSummary = z
     usedIn: z.array(Id).max(MAX_PHOTO_USED_IN).refine(unique, "a video must not be listed twice"),
     /** The owner's own «do not use» mark (rejected.jsonl); a mark is not a verdict of any gate. */
     rejected: z.boolean(),
+    /** A queued or running render holds this photo, so no second render takes it (S16). */
+    reserved: z.boolean(),
+    /**
+     * The verdict of the one eligibility rule: a generated scene photo that
+     * passes the age threshold and is not rejected. Used and reserved are not
+     * part of it. The renderer never derives this itself.
+     */
+    eligible: z.boolean(),
   })
   .refine((p) => p.used === p.usedIn.length > 0, {
     message: "used must be true exactly when a video lists the photo",
     path: ["used"],
+  })
+  .refine((p) => !(p.rejected && p.eligible), {
+    message: "a rejected photo is not eligible",
+    path: ["eligible"],
   });
 
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
 export type ImageAgeCheck = z.infer<typeof ImageAgeCheck>;
 export type Settings = z.infer<typeof Settings>;
 export type RenderConcurrency = z.infer<typeof RenderConcurrency>;
-export type ExportPathResult = z.infer<typeof ExportPathResult>;
+export type ExportStatus = z.infer<typeof ExportStatus>;
 export type ReconcileReason = z.infer<typeof ReconcileReason>;
 export type MoneyHalt = z.infer<typeof MoneyHalt>;
 export type LedgerUnavailable = z.infer<typeof LedgerUnavailable>;

@@ -37,6 +37,17 @@ test("the default export folder is named from the home folder it is given", () =
   expect(defaultSettings(userData, "/home/mia").exportPath).toBe(join("/home/mia", "Studio", "export"));
 });
 
+test("an unusable home folder (empty HOME, a relative path) falls back to an export folder under userData instead of crashing the startup", () => {
+  for (const home of ["", "relative/home"]) {
+    expect(defaultSettings(userData, home).exportPath).toBe(join(userData, "export"));
+  }
+});
+
+test("loading settings never throws when the home folder is unusable", async () => {
+  const loaded = await loadSettings(userData, "");
+  expect(loaded).toMatchObject({ source: "missing", settings: { exportPath: join(userData, "export") } });
+});
+
 test("an older file that predates the export folder and render concurrency loads them as the defaults, and the file is left untouched", async () => {
   const { exportPath: _e, renderConcurrency: _r, ...older } = defaultSettings(userData);
   await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...older }));

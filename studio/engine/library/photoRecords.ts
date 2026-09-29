@@ -1,4 +1,5 @@
 import { PhotoSummary, type PhotoQaSummary } from "../../shared/engine";
+import { passesAgeThreshold } from "../avatars/ageCheck";
 import type { PhotoQa, PhotoSidecar } from "./schemas";
 
 // T8b (the Photos screen): mapping the library's own photo sidecars into the
@@ -58,6 +59,10 @@ export function photoSummaryFrom(sidecar: PhotoSidecar): PhotoSummary | null {
     used: false,
     usedIn: [],
     rejected: false,
+    reserved: false,
+    // The one eligibility rule (task 3a.2) adds the reject mark and the avatar
+    // check; until then a run photo is eligible unless its age verdict fails.
+    eligible: passesAgeThreshold(sidecar.qa.age),
   });
   return parsed.success ? parsed.data : null;
 }

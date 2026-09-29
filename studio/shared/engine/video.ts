@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Id } from "./primitives";
+import { Count, Id } from "./primitives";
 
 // Rendered videos as the contract shows them (Stage 3 plan, "Outputs and
 // export"). The MP4 lives only in the export folder («Готовые видео»); the
@@ -17,21 +17,19 @@ export const MAX_LISTED_VIDEOS = 500;
  */
 export const VideoKindToken = z.string().regex(/^[a-z][a-z0-9]{0,15}$/, "must be 1-16 chars of a-z or 0-9, starting with a letter");
 
-const MAX_RELATIVE_PATH = 512;
-
 /**
- * A path inside the export folder, `/`-separated: `<SafeName>/<file>.mp4`.
- * Never absolute, never a drive, never a `..` or `.` segment, no empty
- * segment, no backslash, no NUL. The `video` media route checks it again
- * against the real folder (invariant 28); this only rejects the obviously wrong.
+ * A video's place inside the export folder, exactly as the engine names it:
+ * `<SafeName>/<YYYY-MM-DD>_<kind>_<NNN>.mp4`. An allow-list, not a deny-list:
+ * the folder is ASCII `[A-Za-z0-9_-]` (1-64 chars, never a Windows device
+ * name such as CON or COM1), the file a real date, a kind token and a counter
+ * of 3 to 6 digits. So no separator, dot segment, drive, stream (`:`), control
+ * character, trailing dot or space can be in it. The `video` media route checks
+ * the real path again (invariant 28).
  */
 export const RelativePath = z
   .string()
-  .min(1)
-  .max(MAX_RELATIVE_PATH)
-  .refine((p) => !p.includes("\0") && !p.includes("\\"), "must not contain a NUL byte or a backslash")
-  .refine((p) => !/^[A-Za-z]:/.test(p), "must not start with a drive")
-  .refine((p) => p.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."), "must be made of plain segments only");
+  .regex(/^[A-Za-z0-9_-]{1,64}\/\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])_[a-z][a-z0-9]{0,15}_\d{3,6}\.mp4$/, "must be <SafeName>/<date>_<kind>_<NNN>.mp4")
+  .refine((p) => !/^(?:con|prn|aux|nul|com\d|lpt\d)\//i.test(p), "the folder must not be a Windows device name");
 
 /**
  * Where a record's file stands, derived on read and never stored:
@@ -41,6 +39,9 @@ export const RelativePath = z
  * - `elsewhere`: the record's root is not the current export root («файл в другой папке»).
  */
 export const FileState = z.enum(["present", "missing", "changed", "elsewhere"]);
+
+/** What the tile says about the music: bounded text, never a URL. */
+const VideoMusic = z.strictObject({ title: z.string().min(1).max(120), artist: z.string().min(1).max(120) });
 
 /** A video record as `videos.list` and `video.changed` show it. */
 export const VideoSummary = z.strictObject({
@@ -52,6 +53,17 @@ export const VideoSummary = z.strictObject({
   createdAt: z.iso.datetime(),
   relPath: RelativePath,
   fileState: FileState,
+  /** The draft it was rendered from, for «Изменить»; null for a headless spec or a deleted draft. */
+  montageId: Id.nullable(),
+  /** How many photos the video shows. */
+  photoCount: Count,
+  /** The track baked in, as the tile shows it; null for a silent video. */
+  music: VideoMusic.nullable(),
+  /**
+   * A poster frame is kept with the record in the library, so the tile can show
+   * it even when the file is `missing`; served by `videoId`. False when none was made.
+   */
+  hasPoster: z.boolean(),
 });
 
 /**

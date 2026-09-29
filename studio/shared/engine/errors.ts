@@ -56,6 +56,7 @@ import { Count, SafeText } from "./primitives";
  * - MONTAGE_INVALID: the montage cannot be rendered (or is not yet supported): `issues` lists why.
  * - PHOTO_UNAVAILABLE: a scene photo in the spec is not an eligible one (a candidate, the master, an
  *   import, an age-failed or rejected photo, another avatar's, or a missing one); refused before ffmpeg starts.
+ *   `issues` names the cells (`photo-unavailable` at each path).
  * - EXPORT_UNAVAILABLE: the «Готовые видео» folder cannot take the video (invariant 35); `exportReason` says why.
  *   Refused before a job is queued, or fails the job when the folder vanishes mid-render.
  * - RENDER_FAILED: ffmpeg or the render pipeline failed; the stderr tail goes to `detail`.
@@ -106,9 +107,10 @@ export type ExportUnavailableReason = z.infer<typeof ExportUnavailableReason>;
 
 /**
  * An error as it travels between processes: a code plus optional diagnostics,
- * never user text. Two codes must say more than their name: MONTAGE_INVALID
- * carries the `issues` (a closed list of codes and paths, never values) and
- * EXPORT_UNAVAILABLE its `exportReason`; no other code carries either.
+ * never user text. Three codes must say more than their name: MONTAGE_INVALID
+ * carries the `issues` (a closed list of codes and paths, never values),
+ * PHOTO_UNAVAILABLE the same list with only `photo-unavailable` issues (which
+ * cells), and EXPORT_UNAVAILABLE its `exportReason`; no other code carries any.
  */
 export const EngineError = z
   .strictObject({
@@ -118,8 +120,12 @@ export const EngineError = z
     issues: z.array(MontageIssue).min(1).max(MAX_MONTAGE_ISSUES).optional(),
     exportReason: ExportUnavailableReason.optional(),
   })
-  .refine((e) => (e.code === "MONTAGE_INVALID") === (e.issues !== undefined), {
-    message: "issues must be present exactly on MONTAGE_INVALID",
+  .refine((e) => (e.code === "MONTAGE_INVALID" || e.code === "PHOTO_UNAVAILABLE") === (e.issues !== undefined), {
+    message: "issues must be present exactly on MONTAGE_INVALID and PHOTO_UNAVAILABLE",
+    path: ["issues"],
+  })
+  .refine((e) => e.code !== "PHOTO_UNAVAILABLE" || (e.issues ?? []).every((i) => i.code === "photo-unavailable"), {
+    message: "PHOTO_UNAVAILABLE lists photo-unavailable issues only",
     path: ["issues"],
   })
   .refine((e) => (e.code === "EXPORT_UNAVAILABLE") === (e.exportReason !== undefined), {

@@ -10,6 +10,10 @@ const video = {
   createdAt: "2026-09-29T12:00:00.000Z",
   relPath: "Mia/2026-09-29_collage3_001.mp4",
   fileState: "present",
+  montageId: "montage-00000001",
+  photoCount: 3,
+  music: { title: "Espresso", artist: "Sabrina Carpenter" },
+  hasPoster: true,
 };
 
 const renderResult = {
@@ -70,6 +74,38 @@ describe("VideoSummary", () => {
     expect(VideoSummary.safeParse({ ...video, videoId: "../video" }).success).toBe(false);
   });
 
+  test("a video from a headless spec has no montage and may have no music", () => {
+    expect(VideoSummary.safeParse({ ...video, montageId: null, music: null }).success).toBe(true);
+  });
+
+  test("the tile's extras are required: montageId, photoCount, music and hasPoster", () => {
+    for (const field of ["montageId", "photoCount", "music", "hasPoster"]) {
+      const rest = Object.fromEntries(Object.entries(video).filter(([key]) => key !== field));
+      expect(VideoSummary.safeParse(rest).success).toBe(false);
+    }
+  });
+
+  test("a poster flag survives a missing file: it is about the record, not the MP4", () => {
+    expect(VideoSummary.safeParse({ ...video, fileState: "missing", hasPoster: true }).success).toBe(true);
+  });
+
+  test("the music title and artist are bounded strings", () => {
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t".repeat(120), artist: "a".repeat(120) } }).success).toBe(true);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t".repeat(121), artist: "a" } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a".repeat(121) } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "", artist: "a" } }).success).toBe(false);
+  });
+
+  test("the music carries nothing else, so no track URL can ride along", () => {
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a", url: "https://x" } }).success).toBe(false);
+  });
+
+  test("photoCount is a count", () => {
+    expect(VideoSummary.safeParse({ ...video, photoCount: 0 }).success).toBe(true);
+    expect(VideoSummary.safeParse({ ...video, photoCount: -1 }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, photoCount: 1.5 }).success).toBe(false);
+  });
+
   test("the list bound is 500 records", () => {
     expect(MAX_LISTED_VIDEOS).toBe(500);
   });
@@ -86,24 +122,52 @@ describe("VideoKindToken", () => {
 });
 
 describe("RelativePath", () => {
-  test.each(["Mia/2026-09-29_photo_001.mp4", "avatar-0001/2026-09-29_mix_012.mp4", "a.mp4"])("accepts %s", (path) => {
+  test.each([
+    "Mia/2026-09-29_photo_001.mp4",
+    "avatar-0001/2026-09-29_mix_012.mp4",
+    "a_b-C/2026-01-01_collage3_1234.mp4",
+    "com10/2026-09-29_photo_001.mp4",
+  ])("accepts %s", (path) => {
     expect(RelativePath.safeParse(path).success).toBe(true);
   });
 
   test.each([
+    ["a single segment", "a.mp4"],
     ["an empty path", ""],
-    ["a leading slash", "/etc/passwd"],
-    ["a parent segment", "../outside.mp4"],
-    ["a parent segment in the middle", "Mia/../../outside.mp4"],
-    ["a current-directory segment", "Mia/./a.mp4"],
-    ["an empty segment", "Mia//a.mp4"],
-    ["a trailing slash", "Mia/"],
-    ["a backslash", "Mia\\a.mp4"],
-    ["a Windows drive", "C:/Users/a.mp4"],
-    ["a Windows drive without a slash", "C:a.mp4"],
-    ["a NUL byte", "Mia/a\u0000.mp4"],
-    ["a UNC path", "//server/share/a.mp4"],
-    ["a path over 512 chars", `${"a".repeat(513)}.mp4`],
+    ["an NTFS alternate data stream", "Mia/2026-09-29_photo_001.mp4:ads"],
+    ["a Windows device name as the folder", "CON/2026-09-29_photo_001.mp4"],
+    ["a lowercase device name", "nul/2026-09-29_photo_001.mp4"],
+    ["COM1", "COM1/2026-09-29_photo_001.mp4"],
+    ["LPT9", "lpt9/2026-09-29_photo_001.mp4"],
+    ["PRN", "Prn/2026-09-29_photo_001.mp4"],
+    ["AUX", "aux/2026-09-29_photo_001.mp4"],
+    ["a device name as the file", "Mia/NUL.mp4"],
+    ["a trailing dot on the folder", "Mia./2026-09-29_photo_001.mp4"],
+    ["a trailing space on the folder", "Mia /2026-09-29_photo_001.mp4"],
+    ["a parent segment", "../2026-09-29_photo_001.mp4"],
+    ["a parent segment with a space", "a/.. /b"],
+    ["dots only", "..."],
+    ["a parent segment in the middle", "Mia/../2026-09-29_photo_001.mp4"],
+    ["a trailing newline", "Mia/2026-09-29_photo_001.mp4\n"],
+    ["a NUL byte", "Mia/2026-09-29_photo_001.mp4\u0000"],
+    ["a control character", "Mi\u0007a/2026-09-29_photo_001.mp4"],
+    ["a full-width dot", "Mia/2026-09-29_photo_001\uFF0Emp4"],
+    ["a home shortcut", "~/2026-09-29_photo_001.mp4"],
+    ["a leading slash", "/Mia/2026-09-29_photo_001.mp4"],
+    ["a UNC path", "//server/share/2026-09-29_photo_001.mp4"],
+    ["a backslash", "Mia\\2026-09-29_photo_001.mp4"],
+    ["a Windows drive", "C:/Users/2026-09-29_photo_001.mp4"],
+    ["a third segment", "Mia/x/2026-09-29_photo_001.mp4"],
+    ["an uppercase kind", "Mia/2026-09-29_Photo_001.mp4"],
+    ["a kind that starts with a digit", "Mia/2026-09-29_3photo_001.mp4"],
+    ["a two-digit counter", "Mia/2026-09-29_photo_01.mp4"],
+    ["a seven-digit counter", "Mia/2026-09-29_photo_1234567.mp4"],
+    ["an impossible month", "Mia/2026-13-29_photo_001.mp4"],
+    ["an impossible day", "Mia/2026-09-32_photo_001.mp4"],
+    ["another extension", "Mia/2026-09-29_photo_001.mov"],
+    ["an uppercase extension", "Mia/2026-09-29_photo_001.MP4"],
+    ["a folder over 64 chars", `${"a".repeat(65)}/2026-09-29_photo_001.mp4`],
+    ["a non-ASCII folder", "Мия/2026-09-29_photo_001.mp4"],
   ])("rejects %s", (_label, path) => {
     expect(RelativePath.safeParse(path).success).toBe(false);
   });
