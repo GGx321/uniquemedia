@@ -7,6 +7,7 @@ import { NODE_COMMIT_FS, type CommitFs, type FileFacts } from "./commitFs";
 import { hashFile } from "./fileBytes";
 import type { VideoRecord } from "./record";
 import type { ExportRootRef } from "./recovery";
+import { RootMarkerCheck } from "./rootMarker";
 
 // Where a record's file stands (`FileState`, derived on read, never stored):
 //
@@ -14,7 +15,8 @@ import type { ExportRootRef } from "./recovery";
 //   missing   the root matches and there is no file (the owner deleted or moved it)
 //   changed   a different size or sha256, or the path no longer leads to a plain file of ours
 //             (a link where the folder or file was, a folder where the file was)
-//   elsewhere the record names another export root, or there is no usable root to look in
+//   elsewhere the record names another export root, or the root at that path does not hold that root's marker
+//             (an empty folder at the same path, an unplugged drive's mount point), or there is no usable root to look in
 //
 // COST. A listing may show hundreds of records, so the answer is bounded:
 //   1. one `lstat` per record: absent -> missing, wrong size -> changed;
@@ -49,7 +51,7 @@ export interface FileStateDeps {
 
 export type Verification = "cheap" | "full";
 
-interface Stamp {
+export interface Stamp {
   readonly size: number;
   readonly mtimeMs: number;
   readonly ino: number;
@@ -81,14 +83,23 @@ export class FileStateChecker {
   readonly #hash: (path: string) => Promise<string>;
   /** The last (size, mtime, inode, device) a file was found to match its record's sha256 at, per video. */
   readonly #verified = new Map<string, Stamp>();
+  readonly #markers: RootMarkerCheck;
 
   constructor(deps: FileStateDeps = {}) {
     this.#fs = deps.fs ?? NODE_COMMIT_FS;
     this.#hash = deps.hashFile ?? hashFile;
+    this.#markers = new RootMarkerCheck(this.#fs);
+  }
+
+  /** The (size, mtime, inode, device) of the file the last successful hash of this video was taken over: what a delete must find again right before it unlinks. */
+  verifiedStamp(videoId: string): Stamp | undefined {
+    return this.#verified.get(videoId);
   }
 
   async check(record: VideoRecord, root: ExportRootRef | null, options: { verify: Verification; budget?: HashBudget }): Promise<FileState> {
     if (root === null || record.file.rootId !== root.rootId) return "elsewhere";
+    // The id alone proves nothing: the marker at this path must hold it (an empty folder there is another root).
+    if (!(await this.#markers.matches(root.root, root.rootId))) return "elsewhere";
     const fs = this.#fs;
     const { folder, file } = recordFilePath(record, root);
 
@@ -114,7 +125,14 @@ export class FileStateChecker {
         budget.remaining -= facts.size;
       }
     }
-    if ((await this.#hash(file)) === record.file.sha256) {
+    const digest = await this.#hash(file);
+    // The file that was hashed must be the file that is there now: one replaced while it was read is `changed`.
+    const after = await lstatOrNull(fs, file);
+    if (after === null || after.isSymbolicLink || !after.isFile || !sameStamp(stamp, stampOf(after))) {
+      this.#verified.delete(record.id);
+      return "changed";
+    }
+    if (digest === record.file.sha256) {
       this.#verified.set(record.id, stamp);
       return "present";
     }

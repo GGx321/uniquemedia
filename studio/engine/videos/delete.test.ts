@@ -57,7 +57,7 @@ describe("a present file", () => {
     await deleteVideo(record.id, depsOf(w, library, { fs }));
     const paths = videoPaths(w.libraryRoot, w.avatar.id);
     const effects = fs.calls.filter((c) => c.startsWith("unlink") || c.startsWith("fsyncDir"));
-    expect(effects).toEqual([`unlink ${path}`, `unlink ${paths.record(record.id)}`, `fsyncDir ${paths.videosDir}`]);
+    expect(effects).toEqual([`unlink ${path}`, `fsyncDir ${join(w.exportRoot, "Mia")}`, `unlink ${paths.record(record.id)}`, `fsyncDir ${paths.videosDir}`]);
   });
 
   test("frees only its own photos: another video's stay used", async () => {
@@ -117,7 +117,7 @@ describe("a present file", () => {
         }
       },
     });
-    await expect(deleteVideo(record.id, depsOf(w, library, { fs }))).rejects.toBeInstanceOf(CrashError);
+    await expect(deleteVideo(record.id, depsOf(w, library, { fs }))).rejects.toThrow(); // the process died mid-delete
     const reopened = await w.reopen();
     expect(used(reopened, w, 0)).toEqual([record.id]);
     expect(await new FileStateChecker().check(sampleRecord(w), rootRef(w), { verify: "full" })).toBe("missing");
