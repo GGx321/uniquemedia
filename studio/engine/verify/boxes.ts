@@ -119,6 +119,8 @@ export interface SchemaNode {
   readonly containers: ReadonlyMap<string, { readonly prefix: number; readonly node: SchemaNode }>;
   /** The code for a type a strict node does not allow. */
   readonly unknownCode: VerifyReasonCode;
+  /** Types that may appear more than once in this parent; every other type may appear at most once. */
+  readonly repeatable: ReadonlySet<string>;
 }
 
 const set = (...types: string[]): ReadonlySet<string> => new Set(types);
@@ -127,8 +129,9 @@ const node = (
   strict: boolean,
   allowed: ReadonlySet<string>,
   containers: ReadonlyMap<string, { prefix: number; node: SchemaNode }> = new Map(),
-  unknownCode: VerifyReasonCode = "UNKNOWN_BOX"
-): SchemaNode => ({ strict, allowed, containers, unknownCode });
+  unknownCode: VerifyReasonCode = "UNKNOWN_BOX",
+  repeatable: ReadonlySet<string> = new Set()
+): SchemaNode => ({ strict, allowed, containers, unknownCode, repeatable });
 
 /** A visual sample entry's fixed part after its header is 78 bytes; a version-0 sound entry's is 28. */
 const VISUAL_ENTRY_PREFIX = 78;
@@ -146,15 +149,15 @@ const META = node(true, set("hdlr", "ilst"), new Map([["ilst", container(0, ILST
 const UDTA = node(true, set("meta"), new Map([["meta", container(META_PREFIX, META)]]));
 const AVC1 = node(true, set("avcC", "colr", "pasp", "btrt", "fiel", "clap"));
 const MP4A = node(true, set("esds", "btrt"));
-const STSD = node(true, set("avc1", "mp4a"), new Map([["avc1", container(VISUAL_ENTRY_PREFIX, AVC1)], ["mp4a", container(SOUND_ENTRY_PREFIX, MP4A)]]));
-const DREF = node(true, set("url "));
+const STSD = node(true, set("avc1", "mp4a"), new Map([["avc1", container(VISUAL_ENTRY_PREFIX, AVC1)], ["mp4a", container(SOUND_ENTRY_PREFIX, MP4A)]]), "UNKNOWN_BOX", set("avc1", "mp4a"));
+const DREF = node(true, set("url "), new Map(), "UNKNOWN_BOX", set("url "));
 const STBL = node(true, set("stsd", "stts", "stss", "ctts", "stsc", "stsz", "stco", "co64", "sgpd", "sbgp", "sdtp", "cslg", "stps"), new Map([["stsd", container(STSD_PREFIX, STSD)]]));
 const DINF = node(true, set("dref"), new Map([["dref", container(DREF_PREFIX, DREF)]]));
 const MINF = node(true, set("vmhd", "smhd", "dinf", "stbl"), new Map([["dinf", container(0, DINF)], ["stbl", container(0, STBL)]]));
 const MDIA = node(true, set("mdhd", "hdlr", "minf"), new Map([["minf", container(0, MINF)]]));
 const EDTS = node(true, set("elst"));
 const TRAK = node(true, set("tkhd", "edts", "mdia"), new Map([["edts", container(0, EDTS)], ["mdia", container(0, MDIA)]]));
-export const MOOV_SCHEMA = node(true, set("mvhd", "trak", "udta"), new Map([["trak", container(0, TRAK)], ["udta", container(0, UDTA)]]));
+export const MOOV_SCHEMA = node(true, set("mvhd", "trak", "udta"), new Map([["trak", container(0, TRAK)], ["udta", container(0, UDTA)]]), "UNKNOWN_BOX", set("trak"));
 
 /** The only boxes the file's top level may hold. */
 export const TOP_LEVEL_ALLOWED = set("ftyp", "moov", "free", "mdat");
@@ -180,6 +183,7 @@ export function walkNested(bytes: Uint8Array, from: number, to: number, parentPa
 
 function walkRegion(w: Walk, from: number, to: number, parentPath: string, schema: SchemaNode): Mp4Box[] {
   const boxes: Mp4Box[] = [];
+  const seen = new Set<string>();
   let at = from;
   while (at < to) {
     if (++w.count > MAX_NESTED_BOXES) {
@@ -210,6 +214,11 @@ function walkRegion(w: Walk, from: number, to: number, parentPath: string, schem
     } else if (!schema.allowed.has(header.type) && schema.strict) {
       w.findings.add(schema.unknownCode, `box ${quote(header.type)} is not allowed in '${parentPath}'`, path);
     }
+    // A second copy would carry its own fields past the pinned checks of the first (which are the only ones run).
+    if (seen.has(header.type) && !schema.repeatable.has(header.type)) {
+      w.findings.add("DUPLICATE_BOX", `box ${quote(header.type)} appears more than once in '${parentPath}'`, path);
+    }
+    seen.add(header.type);
     boxes.push({ type: header.type, path, start: at, body: at + header.headerLength, end, children });
     at = end;
   }
