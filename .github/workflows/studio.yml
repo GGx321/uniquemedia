@@ -123,7 +123,7 @@ jobs:
       # attempts — ONLY on a Bun crash with no failed test (a failed test,
       # a load error or a hang is never retried), and prints a ::warning::
       # on every retry.
-      - run: bun studio/scripts/realWorkerTests.ts --suite ./studio
+      - run: bun run test:studio:suite ./studio
         timeout-minutes: 35
       # T7c: the real face worker tests (real models, a worker terminated
       # mid-WASM) run alone: Bun itself segfaults ~2% of the time tearing down
@@ -300,11 +300,12 @@ jobs:
       - run: bunx tsc --noEmit -p studio/tsconfig.json
       # Same bounds as the build job's own step above, but the retry is narrower: the canary exists to catch
       # a `bun latest` regression, so only the known worker-teardown segfaults (at 0x18 and at
-      # 0xFFFFFFFFFFFFFFF8) are retried, and any other crash fails the job. Every retry, here and in the
-      # build job, is printed as a ::warning:: annotation so the crash rate stays visible.
-      - run: bun studio/scripts/realWorkerTests.ts --known-crashes-only --suite ./studio --randomize
+      # 0xFFFFFFFFFFFFFFF8) are retried, and any other crash fails the job. That holds for BOTH steps below (the
+      # `:canary` scripts pass --known-crashes-only). Every retry, here and in the build job, is printed as a
+      # ::warning:: annotation so the crash rate stays visible.
+      - run: bun run test:studio:suite:canary ./studio --randomize
         timeout-minutes: 35
-      # Same alone-and-retry step as the build job's (T7c).
+      # Same alone-and-retry step as the build job's (T7c), with the same narrowed retry.
       - name: Real face worker tests
-        run: bun run test:studio:real-worker
+        run: bun run test:studio:real-worker:canary
         timeout-minutes: 10
