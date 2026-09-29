@@ -160,6 +160,36 @@ describe("the deadline", () => {
   });
 });
 
+describe("an SVG over the byte cap", () => {
+  const LIMIT = 512 * 1024;
+
+  test("is refused with SVG_TOO_LARGE before anything is sent, and the worker is neither spawned nor killed", async () => {
+    const h = harness();
+    expect(await codeOf(h.gate.render(req("x".repeat(600 * 1024))))).toBe("SVG_TOO_LARGE");
+    expect(await codeOf(h.gate.measure(req("x".repeat(600 * 1024))))).toBe("SVG_TOO_LARGE");
+    expect(h.spawned()).toBe(0);
+  });
+
+  test("leaves a live worker alone", async () => {
+    const h = harness();
+    await h.gate.render(req("ok"));
+    expect(await codeOf(h.gate.render(req("x".repeat(LIMIT + 1))))).toBe("SVG_TOO_LARGE");
+    expect((await h.gate.render(req("ok"))).width).toBe(10);
+    expect(h.spawned()).toBe(1);
+  });
+
+  test("counts UTF-8 bytes, not characters: 300 000 two-byte letters are over the cap", async () => {
+    const h = harness();
+    expect(await codeOf(h.gate.render(req("Ё".repeat(300_000))))).toBe("SVG_TOO_LARGE");
+  });
+
+  test("admits an SVG of exactly the cap and refuses one byte more", async () => {
+    const h = harness();
+    expect((await h.gate.render(req("x".repeat(LIMIT)))).width).toBe(10);
+    expect(await codeOf(h.gate.render(req("x".repeat(LIMIT + 1))))).toBe("SVG_TOO_LARGE");
+  });
+});
+
 describe("cancellation", () => {
   test("aborting a running call terminates the worker and rejects with the reason", async () => {
     const h = harness();

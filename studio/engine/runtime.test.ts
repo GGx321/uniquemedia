@@ -46,8 +46,10 @@ const TEXT_WORKER_ENTRY = join(ENGINE_DIR, "text", "worker", "textWorker.ts");
  *
  * `@resvg/resvg-wasm` (3b.2, the text rasteriser) is the same kind of package: pure
  * JS glue over a `.wasm` that text/rasteriser.ts reads, hash-checks and compiles
- * itself (no `fetch`, no path of its own). It is a devDependency, so it is bundled
- * into the engine and its `.wasm` is copied to out-studio/engine/wasm at build time.
+ * itself (no `fetch`, no path of its own). It is a devDependency, so it is bundled,
+ * and only into `textWorker.js`: only the text worker's graph imports it (a test
+ * below and bundleChecks.ts's `textWorkerProblems` keep it out of `engine/main.js`).
+ * Its `.wasm` is copied to out-studio/engine/wasm at build time.
  */
 const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@jsquash/jpeg/decode.js", "@jsquash/png/decode.js", "@resvg/resvg-wasm"]);
 

@@ -31,8 +31,11 @@ describe("TextWorkerRequestSchema", () => {
     expect(TextWorkerRequestSchema.safeParse({ type: "layout", id: 1, svg: "x", font: "manrope" }).success).toBe(false);
   });
 
-  test("refuses an SVG longer than the byte cap could ever allow, and extra keys", () => {
-    expect(TextWorkerRequestSchema.safeParse({ type: "render", id: 0, svg: "x".repeat(DEFAULT_RASTER_LIMITS.maxSvgBytes + 1), font: "manrope" }).success).toBe(false);
+  test("lets an oversized SVG through as data, so the worker answers SVG_TOO_LARGE instead of dying on a parse failure", () => {
+    expect(TextWorkerRequestSchema.safeParse({ type: "render", id: 0, svg: "x".repeat(DEFAULT_RASTER_LIMITS.maxSvgBytes + 1), font: "manrope" }).success).toBe(true);
+  });
+
+  test("refuses extra keys", () => {
     expect(TextWorkerRequestSchema.safeParse({ type: "render", id: 0, svg: "x", font: "manrope", extra: 1 }).success).toBe(false);
   });
 });

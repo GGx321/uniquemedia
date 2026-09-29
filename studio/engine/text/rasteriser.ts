@@ -4,7 +4,7 @@ import { initWasm as resvgInitWasm, Resvg, type ResvgRenderOptions } from "@resv
 import { FontLoadError, loadTextFonts, TEXT_FONTS, type ReadBytes, type TextFontKey } from "./fonts";
 import { checkRasterWasmBytes, DEFAULT_RASTER_LIMITS, RASTER_WASM, RasterError, type Box, type RasterImage, type RasterLimits, type RasterRequest } from "./rasterTypes";
 
-export { checkRasterWasmBytes, DEFAULT_RASTER_LIMITS, RASTER_ERROR_CODES, RASTER_WASM, RasterError } from "./rasterTypes";
+export { checkRasterWasmBytes, DEFAULT_RASTER_LIMITS, RASTER_ERROR_CODES, RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "./rasterTypes";
 export type { Box, RasterErrorCode, RasterImage, RasterLimits, RasterRequest } from "./rasterTypes";
 
 /**
@@ -117,6 +117,8 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
   let pending: Promise<void> | null = null;
   let tail: Promise<unknown> = Promise.resolve();
   let broken = false;
+  /** What broke it (the trap, then the `free()` that failed after it), in order. Rides on every later BROKEN answer. */
+  const brokenBy: unknown[] = [];
 
   async function load(): Promise<Record<TextFontKey, Uint8Array>> {
     let bytes: Uint8Array;
@@ -155,15 +157,20 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
   }
 
   function brokenError(): RasterError {
-    return new RasterError("BROKEN", "an earlier wasm failure left resvg unusable; the worker must be replaced");
+    return new RasterError("BROKEN", `an earlier wasm failure left resvg unusable (${brokenBy.map(messageOf).join("; then ")}); the worker must be replaced`, { cause: brokenBy[0] });
+  }
+
+  function markBroken(cause: unknown): void {
+    brokenBy.push(cause);
+    broken = true;
   }
 
   /** Frees a resvg object. A `free()` that throws (it does after a trap) marks the instance broken and is otherwise ignored. */
   function release(object: { free(): void }): void {
     try {
       object.free();
-    } catch {
-      broken = true;
+    } catch (cause) {
+      markBroken(cause);
     }
   }
 
@@ -187,7 +194,7 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
         textRendering: 1,
       });
     } catch (cause) {
-      if (looksLikeTrap(cause)) broken = true;
+      if (looksLikeTrap(cause)) markBroken(cause);
       throw new RasterError("RENDER_FAILED", `resvg refused the SVG: ${messageOf(cause)}`, { cause });
     }
     try {
@@ -199,7 +206,7 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
       try {
         result = work(resvg);
       } catch (cause) {
-        broken = true;
+        markBroken(cause);
         throw new RasterError("RENDER_FAILED", `resvg failed: ${messageOf(cause)}`, { cause });
       }
       const elapsed = now() - started;

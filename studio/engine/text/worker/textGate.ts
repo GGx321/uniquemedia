@@ -1,6 +1,6 @@
 import type { Worker } from "node:worker_threads";
 import { timeoutSignal, untilAborted } from "../../money/timeoutSignal";
-import { RasterError, type Box, type RasterImage, type RasterRequest } from "../rasterTypes";
+import { DEFAULT_RASTER_LIMITS, RasterError, TEXT_RENDER_DEADLINE_MS, type Box, type RasterImage, type RasterRequest } from "../rasterTypes";
 import { TextWorkerResponseSchema, type TextWorkerRequest, type TextWorkerResponse } from "./protocol";
 
 // The engine side of the text worker, the face gate's design (face/worker/workerGate.ts) for the same reason:
@@ -27,11 +27,7 @@ import { TextWorkerResponseSchema, type TextWorkerRequest, type TextWorkerRespon
 /** Below main's own 30 s command deadline (`engineHost.ts`'s REQUEST_TIMEOUT_MS): a load must succeed or fail informatively before main gives up on it. */
 export const TEXT_WORKER_LOAD_TIMEOUT_MS = 10_000;
 
-/**
- * The wall for one call, from the moment it is on the worker. The template's worst case is a shadow caption (67-284
- * ms measured on a fast machine); 3 s leaves an order of magnitude for a slow one and is still far below main's 30 s.
- */
-export const TEXT_RENDER_DEADLINE_MS = 3_000;
+export { TEXT_RENDER_DEADLINE_MS };
 
 /** A terminate is milliseconds; this only bounds a worker that will not die (a wedged runtime), which the gate then refuses to live alongside. */
 export const TEXT_WORKER_KILL_TIMEOUT_MS = 5_000;
@@ -88,6 +84,13 @@ interface Waiter {
 }
 
 const NEVER_ABORTED = new AbortController().signal;
+
+/** Refuses an SVG over the byte cap before anything is sent: the worker would only refuse it too, and a request that big is never worth the message. */
+function checkSize(request: RasterRequest): void {
+  if (Buffer.byteLength(request.svg, "utf8") > DEFAULT_RASTER_LIMITS.maxSvgBytes) {
+    throw new RasterError("SVG_TOO_LARGE", `the SVG is over ${DEFAULT_RASTER_LIMITS.maxSvgBytes} bytes`);
+  }
+}
 
 const workerFailed = (message: string, cause?: unknown): RasterError => new RasterError("WORKER_FAILED", message, cause === undefined ? undefined : { cause });
 
@@ -373,6 +376,7 @@ export function createTextGate(options: TextGateOptions): TextGate {
     },
 
     async render(input, signal = NEVER_ABORTED) {
+      checkSize(input);
       const id = nextRequestId++;
       const message: TextWorkerRequest = { type: "render", id, svg: input.svg, font: input.font };
       return await inLane(signal, (entry) =>
@@ -381,6 +385,7 @@ export function createTextGate(options: TextGateOptions): TextGate {
     },
 
     async measure(input, signal = NEVER_ABORTED) {
+      checkSize(input);
       const id = nextRequestId++;
       const message: TextWorkerRequest = { type: "measure", id, svg: input.svg, font: input.font };
       return await inLane(signal, (entry) => request(entry, message, [], (r) => (r.type === "measured" && r.id === id ? { box: r.box } : undefined))).then((r) => r.box);

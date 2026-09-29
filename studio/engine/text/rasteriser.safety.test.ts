@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { createTextRasteriser, DEFAULT_RASTER_LIMITS, RASTER_WASM, RasterError, type RasterDeps, type ResvgLike } from "./rasteriser";
+import { createTextRasteriser, DEFAULT_RASTER_LIMITS, RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS, type RasterDeps, type ResvgLike } from "./rasteriser";
 useNativeGlobals();
 
 const FONT_DIR = join(import.meta.dir, "..", "..", "assets", "fonts");
@@ -90,6 +90,14 @@ describe("after a wasm trap", () => {
     expect(r.isBroken()).toBe(true);
   });
 
+  test("says why it is broken: the failing free()'s own message rides on every BROKEN answer", async () => {
+    const r = createTextRasteriser(deps({ newResvg: () => trappedResvg("render") }));
+    await failureOf(r.render(REQUEST));
+    const later = await failureOf(r.render(REQUEST));
+    expect(later instanceof Error && later.message).toContain("recursive use of an object detected");
+    expect(later instanceof Error && later.cause).toBeInstanceOf(Error);
+  });
+
   test("a clean parse error is not a trap: the rasteriser stays usable", async () => {
     const r = createTextRasteriser(deps());
     await failureOf(r.render({ svg: "<svg", font: "manrope" }));
@@ -100,6 +108,19 @@ describe("after a wasm trap", () => {
     const r = createTextRasteriser(deps({ newResvg: () => { throw new WebAssembly.RuntimeError("memory access out of bounds"); } }));
     await failureOf(r.render(REQUEST));
     expect(r.isBroken()).toBe(true);
+  });
+});
+
+describe("one real time limit", () => {
+  test("the in-worker tripwire is never tighter than the gate's wall, so the wall is the limit", () => {
+    expect(DEFAULT_RASTER_LIMITS.timeoutMs).toBeGreaterThanOrEqual(TEXT_RENDER_DEADLINE_MS);
+  });
+});
+
+describe("RasterError", () => {
+  test("does not prefix a message that already carries the prefix", () => {
+    expect(new RasterError("RENDER_FAILED", "text rasteriser: boom").message).toBe("text rasteriser: boom");
+    expect(new RasterError("RENDER_FAILED", "boom").message).toBe("text rasteriser: boom");
   });
 });
 

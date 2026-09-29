@@ -19,8 +19,11 @@ export type TextWorkerInit = z.infer<typeof TextWorkerInitSchema>;
 
 const RequestId = z.number().int().nonnegative();
 const Font = z.enum(TEXT_FONT_KEYS);
-/** UTF-16 units never exceed UTF-8 bytes, so this only rejects what the worker's own byte cap would reject too. */
-const Svg = z.string().max(DEFAULT_RASTER_LIMITS.maxSvgBytes);
+/**
+ * No length bound here on purpose: the gate refuses an oversized SVG before sending it, and the rasteriser inside
+ * the worker answers `SVG_TOO_LARGE` as a `failed` response. A zod bound would make the worker throw, and die.
+ */
+const Svg = z.string();
 
 /** Engine -> worker. `id` pairs an answer with its request; one is in flight at a time. */
 export const TextWorkerRequestSchema = z.discriminatedUnion("type", [

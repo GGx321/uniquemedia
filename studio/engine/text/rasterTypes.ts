@@ -14,6 +14,15 @@ export const RASTER_WASM = {
   bytes: 2_478_606,
 } as const;
 
+/**
+ * The wall for one text call, from the moment it is on the worker (textGate.ts terminates the worker past it).
+ * The template's worst legitimate case is a «Без фона» shadow caption at the largest size: 225-283 ms on the
+ * development machine. The node test `textGate.real.node-test.ts` measures that worst case on every runner
+ * (macOS and Windows CI) and fails if the wall is not at least 5x it, so this number is checked, not guessed.
+ * It is far below main's own 30 s command deadline.
+ */
+export const TEXT_RENDER_DEADLINE_MS = 3_000;
+
 export const RASTER_ERROR_CODES = [
   "WASM_UNAVAILABLE",
   "FONT_UNAVAILABLE",
@@ -30,11 +39,14 @@ export const RASTER_ERROR_CODES = [
 ] as const;
 export type RasterErrorCode = (typeof RASTER_ERROR_CODES)[number];
 
+const MESSAGE_PREFIX = "text rasteriser: ";
+
 export class RasterError extends Error {
   readonly code: RasterErrorCode;
 
   constructor(code: RasterErrorCode, message: string, options?: ErrorOptions) {
-    super(`text rasteriser: ${message}`, options);
+    // A message that crossed the worker wire already carries the prefix.
+    super(message.startsWith(MESSAGE_PREFIX) ? message : `${MESSAGE_PREFIX}${message}`, options);
     this.name = "RasterError";
     this.code = code;
   }
@@ -66,16 +78,18 @@ export interface RasterLimits {
  *   x 2, the largest `scale`) = 269 px, plus 2 x 0.3 em of padding = 67 px, about 336 px, plus stroke or shadow
  *   bleed. 600 px is 1.75x that.
  * - **SVG bytes:** a caption is at most 60 graphemes. 60 distinct emoji at the emoji font's 99th-percentile
- *   bitmap (5.1 KB, 6.8 KB as base64) come to about 410 KB. A caption made only of the font's largest bitmaps
- *   (up to 79 KB each) is refused rather than allowed to grow the bound.
+ *   bitmap (5 104 B, 6.8 KB as base64; the median is 2 573 B) come to about 410 KB. The largest bitmap is 7 777 B
+ *   (🎆): 60 of those come to about 622 KB and are refused rather than allowed to grow the bound (3b.4b's
+ *   `<defs><image>` + `<use>` dedupe makes a repeated emoji cost once).
  * - **Output:** an 8 MiB PNG is far above what a 1080x600 RGBA box encodes to.
- * - **Time:** 2 s is a tripwire inside the worker; the worker gate's own deadline is the wall (terminate).
+ * - **Time:** ONE limit, `TEXT_RENDER_DEADLINE_MS`, enforced by the worker gate with `terminate()`. The in-worker
+ *   tripwire is set to the same number, so it can never be the tighter, misleading limit.
  */
 export const DEFAULT_RASTER_LIMITS: Readonly<RasterLimits> = {
   maxSvgBytes: 512 * 1024,
   maxPixels: 1080 * 600,
   maxOutputBytes: 8 * 1024 * 1024,
-  timeoutMs: 2000,
+  timeoutMs: TEXT_RENDER_DEADLINE_MS,
 };
 
 export interface RasterRequest {
