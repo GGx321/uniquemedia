@@ -113,7 +113,9 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   }
 
   const capRoom = Math.max(0, plan.capMicros - committedMicros);
-  const worstMicros = Math.min(capRoom, worst);
+  // A chunk out of writer attempts can never be answered: a resume only closes its slots, for free, so it is priced at
+  // nothing (the owner is not asked to accept the open slots' worst case, and no month budget can refuse it).
+  const worstMicros = writerBlocked ? 0 : Math.min(capRoom, worst);
   const needed = (writerPending ? writerCeiling : 0) + (cheapestSlotAttempt ?? 0);
   return {
     estimate: { expectedMicros: Math.min(expected, worstMicros), worstMicros, prices: book.source, pricesAsOf: priced.asOf },

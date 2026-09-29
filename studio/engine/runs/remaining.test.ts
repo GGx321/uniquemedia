@@ -122,6 +122,15 @@ describe("remainingPlan's minToProgressMicros", () => {
     expect(plan.minToProgressMicros).toBeNull();
   });
 
+  // The resume only closes those slots: it costs nothing, so it must not ask the owner to accept the open slots' worst case.
+  test("a blocked writer chunk makes the resume free: its estimate is 0 worst and 0 expected, whatever the cap leaves", () => {
+    const run = runPlan(4);
+    const ids = run.writerChunks[0]?.attemptIds ?? [];
+    const settles = ids.map((id): SettleLine => ({ type: "settle", attemptId: id, costMicros: 1_000, estimated: false, at: AT }));
+    const plan = planFor(run, { reserves: ids.map((id) => reserve(id, "x-ai/grok-4.3", WRITER_WORST)), closes: settles });
+    expect(plan.estimate).toMatchObject({ worstMicros: 0, expectedMicros: 0 });
+  });
+
   test("the estimate is the one remainingEstimate answers", () => {
     const run = runPlan(4);
     expect(planFor(run, {}, 60_000).estimate).toEqual(estimateFor(run, {}, 60_000));

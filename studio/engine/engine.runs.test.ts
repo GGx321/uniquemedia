@@ -554,6 +554,41 @@ describe("runs.resume", () => {
     expect(committed).toBeLessThanOrEqual(cap);
   });
 
+  // A chunk out of writer attempts with its slots still open (a crash mid-writer): the writer can never answer, and the
+  // resume only closes the slots. It costs nothing, so it is priced at nothing and no month budget can refuse it.
+  test("a writer chunk out of attempts: the resume is free (estimate 0), even with no room left in the month, and closes every open slot with 0 POST and 0 new reserves", async () => {
+    const avatarId = await seedAvatar();
+    const received: string[] = [];
+    const net = runNetwork({ received, writer: () => ({ hang: true }) });
+    const first = await engineOver(net);
+    const { runId, jobId } = started(await first.engine.handle(startRun(avatarId, FOUR_WORST, 2)));
+    await until(() => net.writerCalls().length === 1, "the writer request");
+    ok(await first.engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(first.events, jobId);
+    // The chunk keeps only the id already used: it is out of writer attempts, its slots open.
+    const plan = planOf(runId);
+    const edited = { ...plan, writerChunks: plan.writerChunks.map((c) => ({ ...c, attemptIds: c.attemptIds.slice(0, 1) })) };
+    await writeFile(join(dir(), "library", "runs", runId, "plan.json"), JSON.stringify(edited, null, 2));
+
+    // The month has exactly what the abandoned writer reserve costs at its worst case: no room left after the reconcile.
+    let mono = 0;
+    const net2 = runNetwork({ received });
+    const second = await engineOver(net2, { bootId: "boot-0000-bbbb", clock: () => LATER, monotonic: () => mono, monthlyBudgetMicros: 37_500 });
+    mono += 10 * 60_000;
+    ok(await second.engine.handle(command("money.reconcile")));
+    const reserves = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
+    const before = reserves();
+
+    expect(await remainingWorst(second.engine, runId)).toMatchObject({ worstMicros: 0, expectedMicros: 0 });
+    const { jobId: resumeJob } = started(await second.engine.handle(command("runs.resume", { runId, acceptedWorstMicros: 0 })));
+    await jobEnd(second.events, resumeJob);
+
+    expect(net2.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(reserves()).toBe(before);
+    const list = ok(await second.engine.handle(command("runs.list")));
+    expect(list.type === "runs.list" ? list.result.runs.find((r) => r.runId === runId) : "not a list").toMatchObject({ open: 0, failed: 2, resumable: false, capExhausted: false });
+  });
+
   test("the resumed job counts the slots the run already finished, from its launch announcement on", async () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });
     const second = await restarted(received);
