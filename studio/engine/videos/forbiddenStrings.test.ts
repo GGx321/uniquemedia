@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildForbiddenStrings, collectForbiddenStrings, FORBIDDEN_STRING_MIN_LENGTH, photoMetadataStrings } from "./forbiddenStrings";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { buildForbiddenStrings, collectForbiddenStrings, FORBIDDEN_STRING_MIN_LENGTH, photoMetadataStrings } from "./forbiddenStrings";
 useNativeGlobals();
 
 // Task 3a.8b.1 (from the 3a.7 review): the verifier refuses a video that holds
