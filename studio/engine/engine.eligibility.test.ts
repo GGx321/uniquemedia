@@ -192,6 +192,28 @@ describe("photos.setRejected", () => {
     expect(byId(await listPhotos(engine, avatarId), photoIds[0] ?? "").eligible).toBe(false);
   });
 
+  test("is allowed while a job or command holds that avatar busy", async () => {
+    const { avatarId, photoIds } = await seedAvatar(1);
+    let holdFirst = false;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const slowOnce = async <T>(path: string, work: () => Promise<T>): Promise<T> => {
+      if (holdFirst && basename(path) === "library") {
+        holdFirst = false;
+        await gate;
+      }
+      return work();
+    };
+    const folderFs: FolderFs = { stat: (p) => slowOnce(p, () => NODE_FOLDER_FS.stat(p)), realpath: (p) => slowOnce(p, () => NODE_FOLDER_FS.realpath(p)) };
+    const { engine } = await startEngine(dir(), { deps: { folderFs } });
+    holdFirst = true;
+    const archiving = engine.handle(command("avatars.archive", { avatarId })); // claims the avatar busy, held at its live-library check
+    const photo = rejectedAnswer(await engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: true })));
+    expect(photo.rejected).toBe(true);
+    release();
+    ok(await archiving);
+  });
+
   test("announces the avatar only when the mark changed something", async () => {
     const { avatarId, photoIds } = await seedAvatar(1);
     const { engine, events } = await startEngine(dir());
@@ -249,10 +271,47 @@ describe("opening a library with unreadable records", () => {
     expect(lines).toHaveLength(3);
     expect(lines.some((l) => l.includes("rejected.jsonl") && l.includes("unreadable"))).toBe(true);
     expect(lines.some((l) => l.includes("videos/video-00000001.json") && l.includes("unreadable"))).toBe(true);
-    expect(lines.some((l) => l.includes("videos/video-00000002.json") && l.includes("too-new"))).toBe(true);
+    const newer = lines.find((l) => l.includes("videos/video-00000002.json") && l.includes("too-new"));
+    expect(newer).toContain("update the app");
+    expect(newer).not.toContain("repaired");
     for (const line of lines) {
       expect(line).not.toContain(dir());
       expect(line).not.toContain("SECRET-CONTENT");
     }
+  });
+
+  /** The warnings `startEngine` prints while opening the seeded library. */
+  async function warningsAtOpen(): Promise<string[]> {
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => void warnings.push(args.map(String).join(" "));
+    try {
+      await startEngine(dir());
+    } finally {
+      console.warn = original;
+    }
+    return warnings;
+  }
+
+  test("a file name with a newline or control characters cannot forge a log line", async () => {
+    const { avatarId } = await seedAvatar(1);
+    await mkdir(join(libraryRoot(), "avatars", avatarId, "videos"));
+    await writeFile(join(libraryRoot(), "avatars", avatarId, "videos", "video-00000001\nstudio engine: all is well\u001b[2J.json"), "{ nope");
+    const lines = (await warningsAtOpen()).filter((w) => w.includes(avatarId));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toMatch(/[\u0000-\u001f\u007f]/);
+  });
+
+  test("a record misfiled under one avatar that names another closes the other, and both are logged", async () => {
+    const mia = await seedAvatar(1);
+    const lena = await seedAvatar(1);
+    await mkdir(join(libraryRoot(), "avatars", mia.avatarId, "videos"));
+    await writeFile(
+      join(libraryRoot(), "avatars", mia.avatarId, "videos", "video-00000001.json"),
+      JSON.stringify({ schemaVersion: 1, id: "video-00000001", avatarId: lena.avatarId, spec: { clips: [{ kind: "photo", cell: { photo: { source: "scene", photoId: lena.photoIds[0] }, focus: null } }] } }),
+    );
+    const warnings = await warningsAtOpen();
+    expect(warnings.filter((w) => w.includes(mia.avatarId) && w.includes("videos/video-00000001.json"))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes(`avatar ${lena.avatarId}`) && w.includes(mia.avatarId))).toHaveLength(1);
   });
 });

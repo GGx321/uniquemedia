@@ -58,7 +58,7 @@ import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewrit
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
-import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library } from "./library";
+import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library, type LogIssue } from "./library";
 import type { ImageMediaType } from "./library/media";
 import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
@@ -244,6 +244,28 @@ export function engineErrorFrom(error: unknown): EngineError {
     }
   }
   return { code: "INTERNAL", detail: messageOf(error, "unexpected engine error") };
+}
+
+/** A file name as a log line may carry it: anything outside a plain path alphabet becomes `?`, so a name cannot forge a line or move the cursor. */
+function loggable(name: string): string {
+  return name.replace(/[^A-Za-z0-9._/-]/g, "?");
+}
+
+/**
+ * The open-time lines for records and logs that could not be read (one per
+ * issue, plus one for an avatar a misfiled record names): the avatar, the file
+ * relative to its folder and the reason class, never an absolute path or content.
+ */
+function logIssueLines(issues: readonly LogIssue[]): string[] {
+  const lines: string[] = [];
+  for (const issue of issues) {
+    const what = issue.reason === "too-new" ? "update the app to use it" : "its photos are held back until it is repaired";
+    lines.push(`studio engine: avatar ${issue.avatarId}: ${loggable(issue.file)} is ${issue.reason}; ${what}`);
+    if (issue.otherAvatarId !== undefined) {
+      lines.push(`studio engine: avatar ${issue.otherAvatarId}: a record filed under avatar ${issue.avatarId} names it; its photos are held back until that is repaired`);
+    }
+  }
+  return lines;
 }
 
 /** Why the ledger could not be opened: broken content, or a file that could not be read. */
@@ -683,13 +705,13 @@ export class Engine {
     }
   }
 
-  /** True while a job or paid command writes into the live library, or a pick/archive is running: a library switch must be refused. */
+  /** True while a job or paid command writes into the live library, a pick/archive is running, or a reject mark is being written: a library switch must be refused. */
   #busy(): boolean {
     return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
   }
 
   #inFlightRefusal(): EngineError {
-    return { code: "IN_FLIGHT", detail: "paid requests, or a pick or archive, are in flight; change the library folder when they end" };
+    return { code: "IN_FLIGHT", detail: "paid requests, a pick or archive, or a reject mark are in flight; change the library folder when they end" };
   }
 
   /**
@@ -2339,7 +2361,7 @@ export class Engine {
     }
     const opening = openLibrary(path, this.#deps.reservedPhotos === undefined ? {} : { reservedPhotos: this.#deps.reservedPhotos }).then((opened) => {
       // Fail-closed records and logs: said once per open, by avatar, relative file and reason class only (no absolute path, no content).
-      for (const issue of opened.report.logIssues) console.warn(`studio engine: avatar ${issue.avatarId}: ${issue.file} is ${issue.reason}; its photos are held back until it is repaired`);
+      for (const line of logIssueLines(opened.report.logIssues)) console.warn(line);
       return { library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) };
     });
     this.#opening.set(identity, opening);
