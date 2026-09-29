@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU } from "./errorMessagesRu";
-import { ERROR_CODES, EngineError, ErrorCode } from "./errors";
+import { ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU, MONTAGE_ISSUE_MESSAGES_RU } from "./errorMessagesRu";
+import { ERROR_CODES, EXPORT_UNAVAILABLE_REASONS, EngineError, ErrorCode } from "./errors";
+import { MAX_MONTAGE_ISSUES, MONTAGE_ISSUE_CODES } from "./montage";
 
 const EXPECTED_CODES = [
   "AUTH_INVALID",
@@ -31,10 +32,18 @@ const EXPECTED_CODES = [
   "AGE_GATE_UNAVAILABLE",
   "FACE_GATE_UNAVAILABLE",
   "MASTER_FACE_UNUSABLE",
+  "MONTAGE_INVALID",
+  "PHOTO_UNAVAILABLE",
+  "EXPORT_UNAVAILABLE",
+  "RENDER_FAILED",
+  "RENDER_VERIFY_FAILED",
 ];
 
+/** The two codes that must say more than their code: what is wrong with the montage, and why the folder is unusable. */
+const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "EXPORT_UNAVAILABLE"];
+
 describe("ErrorCode", () => {
-  test("is exactly the closed set of twenty-eight codes", () => {
+  test("is exactly the closed set of thirty-three codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });
@@ -45,7 +54,7 @@ describe("ErrorCode", () => {
 });
 
 describe("EngineError", () => {
-  test.each(EXPECTED_CODES)("accepts a bare %s error", (code) => {
+  test.each(EXPECTED_CODES.filter((c) => !CODES_WITH_A_REQUIRED_FIELD.includes(c)))("accepts a bare %s error", (code) => {
     expect(EngineError.safeParse({ code }).success).toBe(true);
   });
 
@@ -69,6 +78,69 @@ describe("EngineError", () => {
 
   test("rejects a fractional retry delay", () => {
     expect(EngineError.safeParse({ code: "RATE_LIMITED", retryAfterMs: 1.5 }).success).toBe(false);
+  });
+
+  test("accepts a render failure whose detail is the stderr tail", () => {
+    expect(EngineError.safeParse({ code: "RENDER_FAILED", detail: "Error while filtering: Invalid argument" }).success).toBe(true);
+  });
+});
+
+describe("EngineError for a montage that cannot be rendered", () => {
+  const issue = { code: "layer-too-short", path: ["layers", 0] };
+
+  test("MONTAGE_INVALID carries the issue list", () => {
+    expect(EngineError.safeParse({ code: "MONTAGE_INVALID", issues: [issue] }).success).toBe(true);
+  });
+
+  test("MONTAGE_INVALID without issues is refused: the owner could not be told what to fix", () => {
+    expect(EngineError.safeParse({ code: "MONTAGE_INVALID" }).success).toBe(false);
+  });
+
+  test("MONTAGE_INVALID with an empty issue list is refused", () => {
+    expect(EngineError.safeParse({ code: "MONTAGE_INVALID", issues: [] }).success).toBe(false);
+  });
+
+  test("the issue list is bounded", () => {
+    const some = Array.from({ length: MAX_MONTAGE_ISSUES }, () => issue);
+    const tooMany = [...some, issue];
+    expect(EngineError.safeParse({ code: "MONTAGE_INVALID", issues: some }).success).toBe(true);
+    expect(EngineError.safeParse({ code: "MONTAGE_INVALID", issues: tooMany }).success).toBe(false);
+  });
+
+  test("an issue outside the closed set is refused", () => {
+    expect(EngineError.safeParse({ code: "MONTAGE_INVALID", issues: [{ code: "looks-wrong", path: [] }] }).success).toBe(false);
+  });
+
+  test("issues on any other code are refused", () => {
+    expect(EngineError.safeParse({ code: "VALIDATION", issues: [issue] }).success).toBe(false);
+  });
+
+  test("the engine's own refusal for a part whose slice has not landed is an ordinary issue", () => {
+    const notYet = { code: "not-yet-supported", path: ["layers", 0] };
+    expect(EngineError.safeParse({ code: "MONTAGE_INVALID", issues: [notYet] }).success).toBe(true);
+  });
+});
+
+describe("EngineError for an unusable export folder", () => {
+  test.each([...EXPORT_UNAVAILABLE_REASONS])("EXPORT_UNAVAILABLE says why: %s", (exportReason) => {
+    expect(EngineError.safeParse({ code: "EXPORT_UNAVAILABLE", exportReason }).success).toBe(true);
+  });
+
+  test("the reasons are exactly: missing, not a directory, not writable, not enough space", () => {
+    const actual: string[] = [...EXPORT_UNAVAILABLE_REASONS].sort();
+    expect(actual).toEqual(["missing", "not-a-directory", "not-enough-space", "not-writable"]);
+  });
+
+  test("EXPORT_UNAVAILABLE without a reason is refused", () => {
+    expect(EngineError.safeParse({ code: "EXPORT_UNAVAILABLE" }).success).toBe(false);
+  });
+
+  test("an unknown reason is refused", () => {
+    expect(EngineError.safeParse({ code: "EXPORT_UNAVAILABLE", exportReason: "on-fire" }).success).toBe(false);
+  });
+
+  test("a reason on any other code is refused", () => {
+    expect(EngineError.safeParse({ code: "NOT_FOUND", exportReason: "missing" }).success).toBe(false);
   });
 });
 
@@ -108,5 +180,47 @@ describe("ERROR_MESSAGES_RU", () => {
 
   test("the AGE_GATE_UNAVAILABLE message says the build itself is at fault", () => {
     expect(ERROR_MESSAGES_RU.AGE_GATE_UNAVAILABLE).toMatch(/сборк/);
+  });
+});
+
+describe("MONTAGE_ISSUE_MESSAGES_RU", () => {
+  test("has a message for exactly the issue codes, no more, no less", () => {
+    const actual: string[] = Object.keys(MONTAGE_ISSUE_MESSAGES_RU).sort();
+    const expected: string[] = [...MONTAGE_ISSUE_CODES].sort();
+    expect(actual).toEqual(expected);
+  });
+
+  test.each([...MONTAGE_ISSUE_CODES])("the %s message is non-empty Russian text", (code) => {
+    const text = Object.entries(MONTAGE_ISSUE_MESSAGES_RU).find(([k]) => k === code)?.[1] ?? "";
+    expect(text).toMatch(/[А-Яа-яЁё]/);
+  });
+
+  test("messages are all distinct", () => {
+    const texts = Object.values(MONTAGE_ISSUE_MESSAGES_RU);
+    expect(new Set(texts).size).toBe(texts.length);
+  });
+});
+
+describe("EXPORT_UNAVAILABLE_REASONS_RU", () => {
+  test("has a message for exactly the reasons, no more, no less", () => {
+    const actual: string[] = Object.keys(EXPORT_UNAVAILABLE_REASONS_RU).sort();
+    const expected: string[] = [...EXPORT_UNAVAILABLE_REASONS].sort();
+    expect(actual).toEqual(expected);
+  });
+
+  test.each([...EXPORT_UNAVAILABLE_REASONS])("the %s message is non-empty Russian text", (reason) => {
+    const text = Object.entries(EXPORT_UNAVAILABLE_REASONS_RU).find(([k]) => k === reason)?.[1] ?? "";
+    expect(text).toMatch(/[А-Яа-яЁё]/);
+  });
+});
+
+describe("the Stage 3 error messages", () => {
+  test("EXPORT_UNAVAILABLE points to Settings and says nothing was spent", () => {
+    expect(ERROR_MESSAGES_RU.EXPORT_UNAVAILABLE).toContain("Настройках");
+    expect(ERROR_MESSAGES_RU.EXPORT_UNAVAILABLE).toMatch(/ничего не потрачено/);
+  });
+
+  test("PHOTO_UNAVAILABLE says only generated scene photos go into a video", () => {
+    expect(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE).toMatch(/сгенерированные сцены/);
   });
 });

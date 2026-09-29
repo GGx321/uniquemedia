@@ -1,4 +1,5 @@
-import type { ErrorCode } from "./errors";
+import type { ErrorCode, ExportUnavailableReason } from "./errors";
+import type { MontageIssueCode } from "./montage";
 
 /** Russian user-facing text for each error code. Codes never carry text themselves. */
 export const ERROR_MESSAGES_RU = {
@@ -40,4 +41,34 @@ export const ERROR_MESSAGES_RU = {
     "Проверка возраста на фото включена, но её модуль не подключён к движку — это дефект сборки приложения, перезапуск его не исправит. Выключите проверку в Настройках, чтобы продолжить; саму сборку нужно исправить. Ничего не потрачено.",
   FACE_GATE_UNAVAILABLE: "Проверка совпадения лица недоступна: запуск не может продолжаться без неё. Перезапустите Studio; если ошибка повторится, переустановите приложение. Ничего не потрачено.",
   MASTER_FACE_UNUSABLE: "На главном фото этого аватара не удалось найти лицо для проверки совпадения. Создайте нового аватара или импортируйте другое фото. Ничего не потрачено.",
+  MONTAGE_INVALID: "Монтаж не готов к рендеру: исправьте отмеченные проблемы.",
+  PHOTO_UNAVAILABLE:
+    "Это фото нельзя использовать в видео. В видео идут только сгенерированные сцены этого аватара: не отклонённые вами и прошедшие проверку возраста.",
+  EXPORT_UNAVAILABLE: "Папка «Готовые видео» недоступна. Проверьте её в Настройках: видео не сохранено, ничего не потрачено.",
+  RENDER_FAILED: "Не удалось собрать видео. Готовый файл не создан, ничего не потрачено. Попробуйте ещё раз.",
+  RENDER_VERIFY_FAILED: "Собранное видео не прошло проверку и не сохранено. Попробуйте ещё раз.",
 } as const satisfies Record<ErrorCode, string>;
+
+/** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
+export const MONTAGE_ISSUE_MESSAGES_RU = {
+  "no-clips": "В монтаже нет ни одного клипа.",
+  "duration-too-short": "Монтаж короче 4 секунд.",
+  "duration-too-long": "Монтаж длиннее 15 секунд.",
+  "too-many-text-layers": "Текстовых слоёв больше 10.",
+  "too-many-sticker-layers": "Стикеров больше 10.",
+  "cells-layout-mismatch": "Число фото в коллаже не совпадает с его раскладкой.",
+  "layer-too-short": "Слой короче 0,3 секунды.",
+  "layer-outside-timeline": "Слой заканчивается после конца монтажа.",
+  "duplicate-clip-id": "Два клипа с одним идентификатором.",
+  "duplicate-layer-id": "Два слоя с одним идентификатором.",
+  "photo-repeated": "Одно и то же фото стоит в монтаже больше одного раза.",
+  "not-yet-supported": "Эта часть монтажа пока не поддерживается.",
+} as const satisfies Record<MontageIssueCode, string>;
+
+/** Why the «Готовые видео» folder cannot be used, for the notice behind EXPORT_UNAVAILABLE. */
+export const EXPORT_UNAVAILABLE_REASONS_RU = {
+  missing: "Папка не найдена.",
+  "not-a-directory": "По этому пути лежит файл, а не папка.",
+  "not-writable": "В эту папку нельзя записывать.",
+  "not-enough-space": "В папке не хватает свободного места.",
+} as const satisfies Record<ExportUnavailableReason, string>;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_MONTAGE_ISSUES, MontageIssue } from "./montage";
 import { Count, SafeText } from "./primitives";
 
 /**
@@ -50,6 +51,15 @@ import { Count, SafeText } from "./primitives";
  *   only — a decode/library/ORT failure in `prepare()` is systemic instead, INTERNAL, never this
  *   code, since it does not mean the master itself is unusable). The job ends failed right there,
  *   before a single request is sent.
+ *
+ * Stage 3 (the montage renders; they never spend money):
+ * - MONTAGE_INVALID: the montage cannot be rendered (or is not yet supported): `issues` lists why.
+ * - PHOTO_UNAVAILABLE: a scene photo in the spec is not an eligible one (a candidate, the master, an
+ *   import, an age-failed or rejected photo, another avatar's, or a missing one); refused before ffmpeg starts.
+ * - EXPORT_UNAVAILABLE: the «Готовые видео» folder cannot take the video (invariant 35); `exportReason` says why.
+ *   Refused before a job is queued, or fails the job when the folder vanishes mid-render.
+ * - RENDER_FAILED: ffmpeg or the render pipeline failed; the stderr tail goes to `detail`.
+ * - RENDER_VERIFY_FAILED: the finished file did not pass the output verifier (metadata allowlist, frame count); it is not kept.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -80,16 +90,42 @@ export const ERROR_CODES = [
   "AGE_GATE_UNAVAILABLE",
   "FACE_GATE_UNAVAILABLE",
   "MASTER_FACE_UNUSABLE",
+  "MONTAGE_INVALID",
+  "PHOTO_UNAVAILABLE",
+  "EXPORT_UNAVAILABLE",
+  "RENDER_FAILED",
+  "RENDER_VERIFY_FAILED",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
 
-/** An error as it travels between processes: a code plus optional diagnostics, never user text. */
-export const EngineError = z.strictObject({
-  code: ErrorCode,
-  detail: SafeText.optional(),
-  retryAfterMs: Count.optional(),
-});
+/** Why the export folder cannot take a video (invariant 35): it is gone, it is a file, it is read-only, or it is full. */
+export const EXPORT_UNAVAILABLE_REASONS = ["missing", "not-a-directory", "not-writable", "not-enough-space"] as const;
+export const ExportUnavailableReason = z.enum(EXPORT_UNAVAILABLE_REASONS);
+export type ExportUnavailableReason = z.infer<typeof ExportUnavailableReason>;
+
+/**
+ * An error as it travels between processes: a code plus optional diagnostics,
+ * never user text. Two codes must say more than their name: MONTAGE_INVALID
+ * carries the `issues` (a closed list of codes and paths, never values) and
+ * EXPORT_UNAVAILABLE its `exportReason`; no other code carries either.
+ */
+export const EngineError = z
+  .strictObject({
+    code: ErrorCode,
+    detail: SafeText.optional(),
+    retryAfterMs: Count.optional(),
+    issues: z.array(MontageIssue).min(1).max(MAX_MONTAGE_ISSUES).optional(),
+    exportReason: ExportUnavailableReason.optional(),
+  })
+  .refine((e) => (e.code === "MONTAGE_INVALID") === (e.issues !== undefined), {
+    message: "issues must be present exactly on MONTAGE_INVALID",
+    path: ["issues"],
+  })
+  .refine((e) => (e.code === "EXPORT_UNAVAILABLE") === (e.exportReason !== undefined), {
+    message: "exportReason must be present exactly on EXPORT_UNAVAILABLE",
+    path: ["exportReason"],
+  });
 
 export type ErrorCode = z.infer<typeof ErrorCode>;
 export type EngineError = z.infer<typeof EngineError>;
