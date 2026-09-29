@@ -1067,11 +1067,21 @@ export class MockEngine implements EngineBridge {
       case "videos.list":
       case "videos.delete":
       case "videos.reveal":
-      case "photos.setRejected":
       case "montages.create":
         // Stage 3, task 3a.1: the contract exists, the behaviour comes with its slices (mock parity: task 3d.1b).
         // Until then the mock refuses exactly as the real engine does for a command it does not implement yet.
         return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
+      case "photos.setRejected": {
+        // The real engine's behaviour (task 3a.2): the owner's mark is set or cleared, an already-set one changes nothing, and the avatar's eligibleUnusedCount follows (the mock's photos are never used or reserved).
+        const { avatarId, photoId, rejected } = c.payload;
+        const photo = this.libraryOpen ? this.photos.find((p) => p.photoId === photoId && p.avatarId === avatarId) : undefined;
+        if (photo === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene photo ${photoId} of avatar ${avatarId} in the open library` });
+        if (photo.rejected === rejected) return this.ok(c, { photo });
+        const updated: PhotoSummary = { ...photo, rejected, eligible: !rejected };
+        this.photos = this.photos.map((p) => (p === photo ? updated : p));
+        this.shiftEligibleUnused(avatarId, rejected ? -1 : 1);
+        return this.ok(c, { photo: updated });
+      }
       case "engine.snapshot":
         return this.ok(c, this.snapshot());
       case "engine.events":
@@ -1252,6 +1262,15 @@ export class MockEngine implements EngineBridge {
     const avatar = this.avatars.find((a) => a.avatarId === avatarId);
     if (avatar === undefined) return;
     const updated = { ...avatar, photoCount: avatar.photoCount + 1, eligibleUnusedCount: avatar.eligibleUnusedCount + 1 };
+    this.avatars = this.avatars.map((a) => (a === avatar ? updated : a));
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: updated } });
+  }
+
+  /** The avatar's eligibleUnusedCount moves by `delta` (a photo rejected or restored) and avatar.changed announces it, like the real engine. */
+  private shiftEligibleUnused(avatarId: string, delta: number): void {
+    const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+    if (avatar === undefined) return;
+    const updated = { ...avatar, eligibleUnusedCount: Math.max(0, avatar.eligibleUnusedCount + delta) };
     this.avatars = this.avatars.map((a) => (a === avatar ? updated : a));
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: updated } });
   }

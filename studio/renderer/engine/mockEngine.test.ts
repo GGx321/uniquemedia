@@ -743,7 +743,6 @@ test.each([
   ["videos.cancel", { jobId: "job-00000004" }],
   ["videos.list", { avatarId: "avatar-0001" }],
   ["videos.delete", { videoId: "video-00000001" }],
-  ["photos.setRejected", { avatarId: "avatar-0001", photoId: "photo-0002", rejected: true }],
   ["montages.create", { avatarId: "avatar-0001", photoIds: [] }],
 ] as const)("%s answers the typed INTERNAL refusal the real engine gives, and the mock keeps working", async (type, payload) => {
   const { client } = makeMock();
@@ -778,4 +777,49 @@ test("the mock's run photos are unused and unmarked", async () => {
   const { photos } = await unwrap(client.request("photos.list", { avatarId: mia?.avatarId ?? "" }));
   expect(photos.length).toBeGreaterThan(0);
   for (const photo of photos) expect(photo).toMatchObject({ used: false, usedIn: [], rejected: false, reserved: false, eligible: true });
+});
+
+// Task 3a.2: photos.setRejected behaves like the real engine's (mock parity for the rest of Stage 3 is task 3d.1b).
+async function demoMia(client: ReturnType<typeof makeMock>["client"]) {
+  const { avatars } = await unwrap(client.request("avatars.list", {}));
+  const mia = avatars.find((a) => a.name === "Mia");
+  if (mia === undefined) throw new Error("the demo has no Mia");
+  const { photos } = await unwrap(client.request("photos.list", { avatarId: mia.avatarId }));
+  const [photo] = photos;
+  if (photo === undefined) throw new Error("the demo Mia has no photo");
+  return { mia, photo };
+}
+
+test("photos.setRejected marks a photo rejected and not eligible, and photos.list agrees", async () => {
+  const { client } = makeMock({ preset: "demo" });
+  const { mia, photo } = await demoMia(client);
+  const answer = await unwrap(client.request("photos.setRejected", { avatarId: mia.avatarId, photoId: photo.photoId, rejected: true }));
+  expect(answer.photo).toMatchObject({ photoId: photo.photoId, rejected: true, eligible: false });
+  const { photos } = await unwrap(client.request("photos.list", { avatarId: mia.avatarId }));
+  expect(photos.find((p) => p.photoId === photo.photoId)).toMatchObject({ rejected: true, eligible: false });
+});
+
+test("photos.setRejected lowers the avatar's eligibleUnusedCount by one and announces it, and a restore raises it back", async () => {
+  const { client, events } = makeMock({ preset: "demo" });
+  const { mia, photo } = await demoMia(client);
+  await unwrap(client.request("photos.setRejected", { avatarId: mia.avatarId, photoId: photo.photoId, rejected: true }));
+  await unwrap(client.request("photos.setRejected", { avatarId: mia.avatarId, photoId: photo.photoId, rejected: false }));
+  const counts = events.flatMap((e) => (e.type === "avatar.changed" ? [e.payload.avatar.eligibleUnusedCount] : []));
+  expect(counts).toEqual([mia.eligibleUnusedCount - 1, mia.eligibleUnusedCount]);
+  const { avatars } = await unwrap(client.request("avatars.list", {}));
+  expect(avatars.find((a) => a.avatarId === mia.avatarId)?.eligibleUnusedCount).toBe(mia.eligibleUnusedCount);
+});
+
+test("photos.setRejected marking a photo the way it already is changes nothing and announces nothing", async () => {
+  const { client, events } = makeMock({ preset: "demo" });
+  const { mia, photo } = await demoMia(client);
+  await unwrap(client.request("photos.setRejected", { avatarId: mia.avatarId, photoId: photo.photoId, rejected: false }));
+  expect(events.filter((e) => e.type === "avatar.changed")).toEqual([]);
+});
+
+test("photos.setRejected is NOT_FOUND for an unknown avatar and for a photo the avatar does not have", async () => {
+  const { client } = makeMock({ preset: "demo" });
+  const { mia, photo } = await demoMia(client);
+  expect(await client.request("photos.setRejected", { avatarId: "avatar-00000404", photoId: photo.photoId, rejected: true })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+  expect(await client.request("photos.setRejected", { avatarId: mia.avatarId, photoId: "photo-00000404", rejected: true })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
 });
