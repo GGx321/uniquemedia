@@ -5,7 +5,14 @@ import type { Rect } from "../../shared/montage";
 // builder reads no file and starts no process. The engine (3a.6) resolves the
 // photos, picks the paths, runs the argv arrays, and writes the concat list.
 
-/** A photo the engine has resolved: where it is and how large it decodes. `width` and `height` must be the decoded pixel size. */
+/**
+ * A photo the engine has resolved: where it is and how large it decodes.
+ * `width` and `height` must be the size ffmpeg DELIVERS, that is AFTER the
+ * EXIF orientation: ffmpeg's own autorotate turns a JPEG with Orientation 6
+ * from 720x1280 into 1280x720 before the graph sees it (measured on 6.0). A
+ * generated photo carries no orientation; an own upload (3f) must be reported
+ * in its oriented size, or have the tag removed on import.
+ */
 export interface PhotoSource {
   /** Absolute path. It goes to ffmpeg as `-i <path>`, never into a filter string. */
   readonly path: string;
