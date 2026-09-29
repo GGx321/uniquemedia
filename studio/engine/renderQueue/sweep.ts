@@ -21,6 +21,8 @@ export interface SweepDeps {
   readonly remove?: (path: string) => Promise<void>;
   /** Waits between two tries of a locked entry. */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** `sweepRenderTmp` only: whether the entry NAMED so in render-tmp belongs to a render that is running now (kept). It is asked right before each removal. */
+  readonly keep?: (name: string) => boolean;
 }
 
 /** Tries per locked entry, with a growing wait (100, 200, 300, 400 ms) between them. */
@@ -83,6 +85,7 @@ export async function sweepRenderTmp(dir: string, deps: SweepDeps = {}): Promise
 
   const entries = await listOrNothing(dir, result);
   for (const entry of entries ?? []) {
+    if (deps.keep?.(entry.name) === true) continue;
     const path = join(dir, entry.name);
     const failure = await removeTolerant(path, remove, sleep);
     if (failure === null) result.removed.push(path);

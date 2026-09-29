@@ -34,6 +34,18 @@ describe("sweepRenderTmp", () => {
     expect(result.skipped).toEqual([]);
   });
 
+  test("leaves the folder of a job that is running now (`keep`), so the sweep may run beside renders", async () => {
+    const root = join(tempDir(), "render-tmp");
+    mkdirSync(join(root, "job-00000001"), { recursive: true });
+    writeFileSync(join(root, "job-00000001", "clip-00.mkv"), "still being written");
+    mkdirSync(join(root, "job-00000002"));
+
+    const result = await sweepRenderTmp(root, { keep: (name) => name === "job-00000001" });
+
+    expect(readdirSync(root)).toEqual(["job-00000001"]);
+    expect(result.removed).toEqual([join(root, "job-00000002")]);
+  });
+
   test("does nothing, and does not throw, when the folder does not exist yet", async () => {
     const root = join(tempDir(), "render-tmp");
 
