@@ -29,12 +29,13 @@ export interface Fixture {
   readonly bytes: Uint8Array;
 }
 
-/** Renders the fixture into a fresh temp folder; the caller removes `dir`. */
-export async function renderFixture(prefix: string): Promise<Fixture> {
+/** Renders the fixture into a fresh temp folder; the caller removes `dir`. `preparePhoto` may alter the source photo first (to load it with metadata). */
+export async function renderFixture(prefix: string, preparePhoto?: (photoPath: string) => Promise<void>): Promise<Fixture> {
   if (totalFrames(CLIPS) !== FIXTURE_FRAMES) throw new Error("fixture clips no longer add up to FIXTURE_FRAMES");
   const dir = makeWorkDir(prefix);
   const photo = join(dir, "photo.jpg");
   copyFileSync(SOURCE, photo);
+  if (preparePhoto) await preparePhoto(photo);
   await runPass1(buildPass1({ seed: 3, clips: CLIPS, resolvePhoto: () => ({ path: photo, width: 720, height: 1280 }), clipDir: dir }));
   const path = join(dir, "final.mp4");
   await runPass2(buildPass2({ clips: CLIPS, clipDir: dir, output: path, overlays: [], audio: { kind: "silent" } }));

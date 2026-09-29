@@ -1,4 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
+import { forbiddenCode, UUID_PAYLOAD_HEAD_BYTES } from "./allowlist";
 import { VerifyIoError, type VerifyReason, type VerifyReasonCode } from "./types";
 
 // A bounded, defensive ISO-BMFF box walker for the output verifier. It never
@@ -97,13 +98,20 @@ export interface SchemaNode {
   readonly allowed: ReadonlySet<string>;
   /** Types the walker opens, and whether four bytes of version and flags precede their children. */
   readonly containers: ReadonlyMap<string, { readonly fullBox: boolean; readonly node: SchemaNode }>;
+  /** The code for a type a strict node does not allow. */
+  readonly unknownCode: VerifyReasonCode;
 }
 
 const set = (...types: string[]): ReadonlySet<string> => new Set(types);
-const node = (strict: boolean, allowed: ReadonlySet<string>, containers: ReadonlyMap<string, { fullBox: boolean; node: SchemaNode }> = new Map()): SchemaNode => ({ strict, allowed, containers });
+const node = (
+  strict: boolean,
+  allowed: ReadonlySet<string>,
+  containers: ReadonlyMap<string, { fullBox: boolean; node: SchemaNode }> = new Map(),
+  unknownCode: VerifyReasonCode = "UNKNOWN_BOX"
+): SchemaNode => ({ strict, allowed, containers, unknownCode });
 
 const DATA_ITEM = node(true, set("data"));
-const ILST = node(true, set("©too"), new Map([["©too", { fullBox: false, node: DATA_ITEM }]]));
+const ILST = node(true, set("©too"), new Map([["©too", { fullBox: false, node: DATA_ITEM }]]), "METADATA_KEY_NOT_ALLOWED");
 const META = node(true, set("hdlr", "ilst"), new Map([["ilst", { fullBox: false, node: ILST }]]));
 const UDTA = node(true, set("meta"), new Map([["meta", { fullBox: true, node: META }]]));
 const STBL = node(false, set("stsd", "stts", "stss", "ctts", "stsc", "stsz", "stco", "co64", "sgpd", "sbgp", "sdtp", "cslg", "stps"));
@@ -158,10 +166,13 @@ function walkRegion(w: Walk, from: number, to: number, parentPath: string, schem
     const end = at + header.size;
     const known = schema.containers.get(header.type);
     let children: Mp4Box[] = [];
-    if (known && !header.zeroSize) {
+    const forbidden = forbiddenCode(header.type, w.bytes.subarray(at + header.headerLength, Math.min(end, at + header.headerLength + UUID_PAYLOAD_HEAD_BYTES)));
+    if (forbidden) {
+      w.findings.add(forbidden, `box '${header.type}' at byte ${at} is never allowed`, path);
+    } else if (known && !header.zeroSize) {
       children = walkRegion(w, at + header.headerLength + (known.fullBox ? 4 : 0), end, path, known.node);
     } else if (!schema.allowed.has(header.type) && schema.strict) {
-      w.findings.add("UNKNOWN_BOX", `box '${header.type}' is not allowed in '${parentPath}'`, path);
+      w.findings.add(schema.unknownCode, `box '${header.type}' is not allowed in '${parentPath}'`, path);
     }
     boxes.push({ type: header.type, path, start: at, body: at + header.headerLength, end, children });
     at = end;
