@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,11 @@ import { createAgeGate } from "./ageGate";
 import { CANCELLED_GATE_TIMEOUT_MS, preflightMaster, reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+
+// Every test here writes a real library, journal and ledger. On a Windows runner, Defender or the indexer can
+// hold a fresh file for seconds, which renameWithRetry is built to wait out (about 3 s per rename); Bun's
+// default 5 s per test leaves no room for that. bunfig.toml's `timeout` is not applied by Bun, so the bound is set here.
+setDefaultTimeout(30_000);
 
 // T6: the photo run job — the writer phase, the prompts, then every slot's
 // attempts through the network pool, the provider route, the QA gates and
