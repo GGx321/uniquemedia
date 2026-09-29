@@ -4,7 +4,19 @@ import { chmod, link as fsLink, mkdir, mkdtemp, open as fsOpen, readdir, readFil
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { ExportStatus } from "../shared/engine";
-import { checkExportRoot, EXPORT_MARKER_FILE, ExportMarker, exportStatusOf, NODE_EXPORT_ROOT_FS, pathsOverlap, publishFileExclusive, type ExportRootFs, type PublishOps } from "./exportRoot";
+import {
+  checkExportRoot,
+  createFileExclusive,
+  EXPORT_MARKER_FILE,
+  ExportMarker,
+  exportStatusOf,
+  NODE_EXPORT_ROOT_FS,
+  pathsOverlap,
+  publishFileExclusive,
+  readSmallRegularFile,
+  type ExportRootFs,
+  type PublishOps,
+} from "./exportRoot";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -436,6 +448,39 @@ describe("publishFileExclusive", () => {
     expect(await readdir(exportPath)).toEqual([]);
   });
 
+  test.each(["EISDIR", "EPERM", "ENOTSUP", "EIO", "EACCES", "ENOSYS", "EXDEV"])("a link() failing with %s falls back to an exclusive create (exFAT reports EISDIR)", async (code) => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    await publishFileExclusive(target, "hello", { ...real, link: async () => Promise.reject(errno(code)) });
+    expect(await readFile(target, "utf8")).toBe("hello");
+    expect(await readdir(exportPath)).toEqual(["m.json"]);
+  });
+
+  test("a link() failing with EEXIST is a collision, not a reason to fall back", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    await writeFile(target, "mine");
+    let opens = 0;
+    const counting: PublishOps = { ...real, open: async (path, flags) => (opens++, fsOpen(path, flags)) };
+    await expect(publishFileExclusive(target, "theirs", counting)).rejects.toMatchObject({ code: "EEXIST" });
+    expect(opens).toBe(1);
+  });
+
+  test("when the fallback create then fails for a real reason, that reason is reported", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    const noSpace: PublishOps = {
+      ...real,
+      link: async () => Promise.reject(errno("EISDIR")),
+      open: async (path, flags) => {
+        if (path === target) throw errno("ENOSPC");
+        return fsOpen(path, flags);
+      },
+    };
+    await expect(publishFileExclusive(target, "hello", noSpace)).rejects.toMatchObject({ code: "ENOSPC" });
+    expect(await readdir(exportPath)).toEqual([]);
+  });
+
   test("on a volume without hard links it falls back to an exclusive create", async () => {
     await mkdir(exportPath);
     const target = join(exportPath, "m.json");
@@ -473,6 +518,76 @@ describe("publishFileExclusive", () => {
     };
     await expect(publishFileExclusive(target, "hello", broken)).rejects.toMatchObject({ code: "EIO" });
     expect(await readdir(exportPath)).toEqual([]);
+  });
+});
+
+describe("createFileExclusive", () => {
+  const real: PublishOps = { open: fsOpen, link: fsLink, unlink: fsUnlink };
+
+  test("a write that fails after the file was created removes the file (a probe is never left behind)", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "probe");
+    const failing: PublishOps = {
+      ...real,
+      open: async (path, flags) => Object.assign(await fsOpen(path, flags), { writeFile: async () => Promise.reject(errno("ENOSPC")) }),
+    };
+    await expect(createFileExclusive(target, "x", failing)).rejects.toMatchObject({ code: "ENOSPC" });
+    expect(await readdir(exportPath)).toEqual([]);
+  });
+
+  test("a sync that fails after the file was created removes the file", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "probe");
+    const failing: PublishOps = {
+      ...real,
+      open: async (path, flags) => Object.assign(await fsOpen(path, flags), { sync: async () => Promise.reject(errno("EIO")) }),
+    };
+    await expect(createFileExclusive(target, "x", failing)).rejects.toMatchObject({ code: "EIO" });
+    expect(await readdir(exportPath)).toEqual([]);
+  });
+
+  test("an existing file is reported as EEXIST and is not removed", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "probe");
+    await writeFile(target, "someone else's");
+    await expect(createFileExclusive(target, "x", real)).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(target, "utf8")).toBe("someone else's");
+  });
+});
+
+describe("readSmallRegularFile", () => {
+  test("reads a regular file", async () => {
+    await mkdir(exportPath);
+    await writeFile(join(exportPath, "m"), "hello");
+    expect(await readSmallRegularFile(join(exportPath, "m"), 100)).toBe("hello");
+  });
+
+  test("a file with a second hard link is refused (it could be another root's marker)", async () => {
+    await mkdir(exportPath);
+    await writeFile(join(dir, "theirs"), "hello");
+    await fsLink(join(dir, "theirs"), join(exportPath, "m"));
+    await expect(readSmallRegularFile(join(exportPath, "m"), 100)).rejects.toThrow();
+  });
+
+  test("a symlink is refused even where the platform has no O_NOFOLLOW (lstat first)", async () => {
+    await mkdir(exportPath);
+    await writeFile(join(dir, "theirs"), "hello");
+    await symlink(join(dir, "theirs"), join(exportPath, "m"));
+    await expect(readSmallRegularFile(join(exportPath, "m"), 100, 0)).rejects.toThrow();
+  });
+
+  test("a missing file still rejects with ENOENT, so an absent marker is told from a bad one", async () => {
+    await mkdir(exportPath);
+    await expect(readSmallRegularFile(join(exportPath, "nope"), 100, 0)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("a hard-linked marker", () => {
+  test("is an invalid marker, not another root's identity", async () => {
+    await mkdir(exportPath);
+    await writeFile(join(dir, "theirs.json"), JSON.stringify({ schemaVersion: 1, rootId: "another-root-1", createdAt: "2026-09-29T12:00:00.000Z" }));
+    await fsLink(join(dir, "theirs.json"), join(exportPath, EXPORT_MARKER_FILE));
+    expect(await check()).toEqual({ ok: false, reason: "invalid-marker" });
   });
 });
 

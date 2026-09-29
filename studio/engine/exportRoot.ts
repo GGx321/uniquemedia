@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, mkdir, open, realpath, rm, stat, statfs, unlink, type FileHandle } from "node:fs/promises";
+import { link, lstat, mkdir, open, realpath, rm, stat, statfs, unlink, type FileHandle } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { z } from "zod";
 import { ExportStatus, Id, type ExportUnavailableReason } from "../shared/engine";
@@ -13,7 +13,13 @@ import { hasErrorCode } from "./library/durableFs";
 
 /** The root's identity file: `<exportRoot>/.studio-export.json`. */
 export const EXPORT_MARKER_FILE = ".studio-export.json";
-/** A marker is two short fields; a bigger file is not ours. */
+const MARKER_LINK_RETRIES = 10;
+const MARKER_LINK_RETRY_MS = 10;
+/**
+ * A marker is a few short fields; a bigger file is not ours. The format constraint for every layout,
+ * present and future: plain UTF-8 JSON, no BOM, at most this many bytes. A layout that outgrows it
+ * would have to read its version before applying the cap, which is a change to this reader.
+ */
 const MAX_MARKER_BYTES = 4096;
 
 /** Version of the marker's own layout. A build that meets a higher one refuses it as `newer-marker` and never touches it. */
@@ -53,31 +59,8 @@ export const NODE_EXPORT_ROOT_FS: ExportRootFs = {
   mkdirp: async (path) => {
     await mkdir(path, { recursive: true });
   },
-  readSmallFile: async (path, maxBytes) => {
-    // O_NOFOLLOW: a symlinked marker would adopt another root's id. O_NONBLOCK: a FIFO swapped in
-    // must not block the open. The handle is checked, not the path, so nothing can change under us.
-    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-    try {
-      const info = await handle.stat();
-      if (!info.isFile()) throw new Error("not a regular file");
-      if (info.size > maxBytes) throw new Error("file is too large");
-      const buffer = Buffer.alloc(maxBytes + 1);
-      const { bytesRead } = await handle.read(buffer, 0, maxBytes + 1, 0);
-      if (bytesRead > maxBytes) throw new Error("file is too large");
-      return buffer.subarray(0, bytesRead).toString("utf8");
-    } finally {
-      await handle.close();
-    }
-  },
-  createExclusive: async (path, text) => {
-    const handle = await open(path, "wx");
-    try {
-      await handle.writeFile(text);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-  },
+  readSmallFile: (path, maxBytes) => readSmallRegularFile(path, maxBytes),
+  createExclusive: (path, text) => createFileExclusive(path, text),
   publishExclusive: (path, text) => publishFileExclusive(path, text),
   remove: (path) => rm(path),
   freeBytes: async (path) => {
@@ -100,9 +83,6 @@ export interface PublishOps {
 
 const NODE_PUBLISH_OPS: PublishOps = { open: (path, flags) => open(path, flags), link, unlink };
 
-/** `link()` is not supported here (exFAT, FAT, some network shares): the exclusive create takes over. */
-const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EACCES"]);
-
 async function writeAndSync(handle: FileHandle, text: string): Promise<void> {
   try {
     await handle.writeFile(text);
@@ -113,12 +93,52 @@ async function writeAndSync(handle: FileHandle, text: string): Promise<void> {
 }
 
 /**
+ * Creates a new file (`wx`) holding `text`, flushed. A file that was created and then could not be
+ * written or synced is removed, so a failed write never leaves an empty or partial file behind;
+ * EEXIST (somebody else's file) is reported and that file is left alone.
+ */
+export async function createFileExclusive(path: string, text: string, ops: PublishOps = NODE_PUBLISH_OPS): Promise<void> {
+  const handle = await ops.open(path, "wx");
+  try {
+    await writeAndSync(handle, text);
+  } catch (error) {
+    await ops.unlink(path).catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Reads a small regular file that nothing else links to:
+ * - a symlink is refused (`O_NOFOLLOW`; where the platform has none, as on Windows, an `lstat` first);
+ * - a FIFO or a device is refused without blocking (`O_NONBLOCK`, and the handle is checked, not the path);
+ * - more than one hard link is refused: a marker hard-linked from another root would adopt its id;
+ * - more than `maxBytes` is refused. ENOENT is passed through, so an absent file is told from a bad one.
+ */
+export async function readSmallRegularFile(path: string, maxBytes: number, noFollow: number = constants.O_NOFOLLOW ?? 0): Promise<string> {
+  if (noFollow === 0 && (await lstat(path)).isSymbolicLink()) throw new Error("a symlink is not a regular file");
+  const handle = await open(path, constants.O_RDONLY | noFollow | (constants.O_NONBLOCK ?? 0));
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error("not a regular file");
+    if (info.nlink > 1) throw Object.assign(new Error("file has more than one hard link"), { code: "EMLINK" });
+    if (info.size > maxBytes) throw new Error("file is too large");
+    const buffer = Buffer.alloc(maxBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes + 1, 0);
+    if (bytesRead > maxBytes) throw new Error("file is too large");
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * Publishes `text` at `path` atomically and exclusively: the bytes are written and
  * fsynced to a temp file next to it, which is then hard-linked to the final name
  * (`link()` fails with EEXIST rather than replace anything) and removed. A reader
  * sees no file or the whole file, and a crash or a full disk leaves no half-written
- * one behind. On a volume without hard links an exclusive create is used instead,
- * and it removes what it wrote if the write fails.
+ * one behind. When `link()` fails for any other reason (no hard links on exFAT and
+ * FAT, where Windows reports it as EISDIR; some shares) an exclusive create is used
+ * instead, and it reports the real permission or space error if there is one.
  */
 export async function publishFileExclusive(path: string, text: string, ops: PublishOps = NODE_PUBLISH_OPS): Promise<void> {
   const temp = `${path}.tmp-${randomUUID()}`;
@@ -132,16 +152,9 @@ export async function publishFileExclusive(path: string, text: string, ops: Publ
     await ops.link(temp, path);
   } catch (error) {
     await ops.unlink(temp).catch(() => undefined);
-    const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "";
-    if (!NO_HARD_LINKS.has(code)) throw error;
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") throw error;
     // The exclusive create says EEXIST for a file that is there, as `link()` would have.
-    const handle = await ops.open(path, "wx");
-    try {
-      await writeAndSync(handle, text);
-    } catch (writeError) {
-      await ops.unlink(path).catch(() => undefined);
-      throw writeError;
-    }
+    await createFileExclusive(path, text, ops);
     return;
   }
   await ops.unlink(temp).catch(() => undefined);
@@ -282,11 +295,19 @@ async function folderShape(fs: ExportRootFs, path: string, mayCreate: boolean): 
 type MarkerRead = { kind: "valid"; marker: ExportMarker } | { kind: "absent" } | { kind: "invalid" } | { kind: "newer" };
 
 async function readMarker(fs: ExportRootFs, root: string): Promise<MarkerRead> {
-  let text: string;
-  try {
-    text = await fs.readSmallFile(nodePath.join(root, EXPORT_MARKER_FILE), MAX_MARKER_BYTES);
-  } catch (error) {
-    return hasErrorCode(error, "ENOENT") ? { kind: "absent" } : { kind: "invalid" };
+  let text: string | null = null;
+  // A marker being published has two names for a moment (its temp file and its own): EMLINK is retried briefly, and a marker that keeps
+  // a second name (hard-linked from elsewhere) is invalid.
+  for (let attempt = 0; text === null; attempt++) {
+    try {
+      text = await fs.readSmallFile(nodePath.join(root, EXPORT_MARKER_FILE), MAX_MARKER_BYTES);
+    } catch (error) {
+      if (hasErrorCode(error, "EMLINK") && attempt < MARKER_LINK_RETRIES) {
+        await new Promise<void>((resolve) => setTimeout(resolve, MARKER_LINK_RETRY_MS));
+        continue;
+      }
+      return hasErrorCode(error, "ENOENT") ? { kind: "absent" } : { kind: "invalid" };
+    }
   }
   let raw: unknown;
   try {
