@@ -283,6 +283,14 @@ async function until(condition: () => boolean, what: string): Promise<void> {
   if (!condition()) throw new Error(`timed out waiting for ${what}`);
 }
 
+/**
+ * `end`, or "still running" after `ms`. The file's 30 s default timeout must not be what stops a test whose subject
+ * is a short time bound: a bound that stops working then shows here, in about a second, not as a slow pass.
+ */
+function endWithin(end: Promise<RunJobEnd>, ms: number): Promise<RunJobEnd | "still running"> {
+  return Promise.race([end, new Promise<"still running">((resolve) => setTimeout(() => resolve("still running"), ms))]);
+}
+
 /** Gate timeouts that fire only when the test says so: a test that must order events against a timeout does not race a clock. */
 function manualTimeouts() {
   const pending: { ms: number; fire: () => void }[] = [];
@@ -1013,10 +1021,11 @@ describe("prepare() (H1: a gate that cannot run for this avatar stops the job be
     };
     const { end } = start(run, { gates: [hungGate], referenceTimeoutMs: 50 });
 
-    const result = await end;
+    const result = await endWithin(end, 1_000);
     expect(result).toMatchObject({ status: "failed" });
-    if (result.status !== "failed") throw new Error("unreachable");
+    if (result === "still running" || result.status !== "failed") throw new Error("unreachable");
     expect(result.error.code).toBe("INTERNAL");
+    expect(result.error.detail).toContain("50 ms");
   });
 
   test("N9: a cancel during prepare() ends the job cancelled, with 0 POSTs", async () => {
@@ -1346,7 +1355,7 @@ describe("cancel", () => {
     const hung = gate("face", () => new Promise<QaVerdict>(() => {}), { timeoutMs: 30 });
     const { end } = start(run, { gates: [hung], signal: controller.signal, pool: new NetworkPool({ max: 1 }), generateImage: cancelAsFirstImageArrives(controller) });
 
-    expect(await end).toEqual({ status: "cancelled" });
+    expect(await endWithin(end, 1_000)).toEqual({ status: "cancelled" });
     expect(hung.inputs).toHaveLength(1);
     expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
   });
@@ -1365,8 +1374,7 @@ describe("cancel", () => {
       cancelledGateTimeoutMs: 50,
     });
 
-    const late = new Promise<"still running">((resolve) => setTimeout(() => resolve("still running"), 1_000));
-    expect(await Promise.race([end, late])).toEqual({ status: "cancelled" });
+    expect(await endWithin(end, 1_000)).toEqual({ status: "cancelled" });
     expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
   });
 
