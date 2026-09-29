@@ -1,5 +1,5 @@
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import * as nodePath from "node:path";
 import { isSafeName, RelativePath, VideoKindToken, type ExportUnavailableReason } from "../shared/engine";
 import { hasErrorCode } from "./library/durableFs";
 
@@ -134,6 +134,12 @@ export function exportFileName(date: string, kind: string, n: number): string {
 
 // ---------- the avatar's folder ----------
 
+/**
+ * The path flavour the folder rules run on: the platform's own unless a test plays another. Taking it as a
+ * dependency is what lets Windows' `\`, drive letters and UNC names be tested on any OS.
+ */
+export type PathFlavour = Pick<typeof nodePath.posix, "join" | "dirname" | "basename" | "normalize" | "sep">;
+
 /** The part of the filesystem the folder rules need; injected so tests can play links and other volumes. */
 export interface ExportFolderFs {
   /** NON-recursive: rejects with EEXIST when the entry exists and with ENOENT when the parent is gone. */
@@ -164,11 +170,18 @@ export class PreparedFolder {
   readonly name: string;
   readonly path: string;
   readonly #issued = true;
+  readonly #api: PathFlavour;
 
-  constructor(token: typeof ISSUE, name: string, path: string) {
+  constructor(token: typeof ISSUE, name: string, path: string, api: PathFlavour) {
     if (token !== ISSUE) throw new Error("a PreparedFolder comes from prepareExportFolder");
     this.name = name;
     this.path = path;
+    this.#api = api;
+  }
+
+  /** A file inside this folder, spelled the way the folder's own path is. */
+  fileIn(fileName: string): string {
+    return this.#api.join(this.path, fileName);
   }
 
   static isIssued(value: unknown): value is PreparedFolder {
@@ -195,6 +208,8 @@ export interface PrepareExportFolderOptions {
   avatarId: string;
   /** Windows and macOS volumes fold letter case. */
   caseInsensitive: boolean;
+  /** The path flavour; the platform's own unless a test plays another. */
+  path?: PathFlavour;
 }
 
 /**
@@ -218,16 +233,30 @@ export interface PrepareExportFolderOptions {
  */
 export async function prepareExportFolder(options: PrepareExportFolderOptions): Promise<PreparedFolder> {
   const { fs, root } = options;
+  const api = options.path ?? nodePath;
   if (!isSafeName(options.safeName)) throw new Error("the export folder name is not a SafeName");
   for (const candidate of [options.safeName, suffixedFolderName(options.safeName, options.avatarId)]) {
-    const opened = await tryOpenFolder(fs, root, candidate, options.caseInsensitive);
+    const opened = await tryOpenFolder(fs, api, root, candidate, options.caseInsensitive);
     if (opened !== null) return opened;
   }
   throw new ExportFolderError("not-writable", "the avatar's export folder is taken by something that is not a folder of ours");
 }
 
-async function tryOpenFolder(fs: ExportFolderFs, root: string, name: string, caseInsensitive: boolean): Promise<PreparedFolder | null> {
-  const path = join(root, name);
+/**
+ * A real path reduced to what identifies the place: Windows' extended-length prefix (`\\?\C:\x`, and
+ * `\\?\UNC\srv\share` for `\\srv\share`) is dropped, separators are normalised, a trailing one is trimmed
+ * (a drive root keeps its own), and letter case is folded on a case-insensitive volume.
+ */
+function placeOf(api: PathFlavour, path: string, caseInsensitive: boolean): string {
+  const unprefixed = api.sep === "\\" ? path.replace(/^\\\\[?.]\\UNC\\/i, "\\\\").replace(/^\\\\[?.]\\/, "") : path;
+  const normal = api.normalize(unprefixed);
+  const trimmed = normal.replace(/[\\/]+$/, "");
+  const place = trimmed === "" || /^[A-Za-z]:$/.test(trimmed) ? normal : trimmed;
+  return caseInsensitive ? place.toLowerCase() : place;
+}
+
+async function tryOpenFolder(fs: ExportFolderFs, api: PathFlavour, root: string, name: string, caseInsensitive: boolean): Promise<PreparedFolder | null> {
+  const path = api.join(root, name);
   try {
     await fs.mkdir(path);
   } catch (error) {
@@ -245,10 +274,9 @@ async function tryOpenFolder(fs: ExportFolderFs, root: string, name: string, cas
   } catch {
     return null;
   }
-  const fold = (text: string) => (caseInsensitive ? text.toLowerCase() : text);
-  const onDisk = basename(real);
-  if (fold(dirname(real)) !== fold(rootReal) || !isSafeName(onDisk)) return null;
-  return new PreparedFolder(ISSUE, onDisk, join(root, onDisk));
+  const onDisk = api.basename(real);
+  if (placeOf(api, api.dirname(real), caseInsensitive) !== placeOf(api, rootReal, caseInsensitive) || !isSafeName(onDisk)) return null;
+  return new PreparedFolder(ISSUE, onDisk, api.join(root, onDisk), api);
 }
 
 // ---------- claiming the file name ----------
@@ -304,7 +332,7 @@ export async function claimExportName(options: ClaimExportNameOptions): Promise<
   if (!RelativePath.safeParse(first).success) throw new Error("the export name is not a valid relative path");
   for (let n = options.startAt ?? 1; n <= MAX_COUNTER; n++) {
     const name = exportFileName(date, kind, n);
-    const absPath = join(folder.path, name);
+    const absPath = folder.fileIn(name);
     try {
       await fs.createExclusive(absPath);
     } catch (error) {
