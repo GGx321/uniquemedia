@@ -1642,6 +1642,7 @@ export class Engine {
     }
     // "Not enough room" answers a question about THIS render's size (`requiredBytes`), not about the folder: a 4 s spec may fit
     // where a 15 s one does not, so it is a refusal for that render and never the status every window shows.
+    if (!check.ok) console.warn(`studio engine: the export folder check refused it (${check.reason})`); // the reason only: a CI log or a support report can say which step
     if (requiredBytes === undefined || check.ok || check.reason !== "not-enough-space") this.#exportStatus = exportStatusOf(check);
     return check;
   }
