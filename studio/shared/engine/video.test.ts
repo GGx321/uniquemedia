@@ -89,6 +89,19 @@ describe("VideoSummary", () => {
     expect(VideoSummary.safeParse({ ...video, fileState: "missing", hasPoster: true }).success).toBe(true);
   });
 
+  test("a track with no artist is accepted: an own track's tags are dropped (3f.4), so the artist may be null", () => {
+    expect(VideoSummary.safeParse({ ...video, music: { title: "My track", artist: null } }).success).toBe(true);
+  });
+
+  test("a null title is still refused: the tile always has something to call the track", () => {
+    expect(VideoSummary.safeParse({ ...video, music: { title: null, artist: "a" } }).success).toBe(false);
+  });
+
+  test("an artist that is present is still 1 to 120 characters", () => {
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "" } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a".repeat(121) } }).success).toBe(false);
+  });
+
   test("the music title and artist are bounded strings", () => {
     expect(VideoSummary.safeParse({ ...video, music: { title: "t".repeat(120), artist: "a".repeat(120) } }).success).toBe(true);
     expect(VideoSummary.safeParse({ ...video, music: { title: "t".repeat(121), artist: "a" } }).success).toBe(false);

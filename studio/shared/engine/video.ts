@@ -40,8 +40,8 @@ export const RelativePath = z
  */
 export const FileState = z.enum(["present", "missing", "changed", "elsewhere"]);
 
-/** What the tile says about the music: bounded text, never a URL. */
-const VideoMusic = z.strictObject({ title: z.string().min(1).max(120), artist: z.string().min(1).max(120) });
+/** What the tile says about the music: bounded text, never a URL. An own track drops its tags (3f.4), so it has a title and no artist. */
+const VideoMusic = z.strictObject({ title: z.string().min(1).max(120), artist: z.string().min(1).max(120).nullable() });
 
 /** A video record as `videos.list` and `video.changed` show it. */
 export const VideoSummary = z.strictObject({
