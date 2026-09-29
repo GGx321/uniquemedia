@@ -32,6 +32,14 @@ export interface RenderRunInput {
   readonly signal: AbortSignal;
   /** Frames of the FINAL video done so far: monotonic, always below the total. A throw stops the job with that error. */
   readonly onProgress: (done: number) => void;
+  /**
+   * Called once, after pass 1 and right before pass 2 starts (never for a job cancelled before that). Pass 2
+   * writes `output` BY PATH for the whole render, minutes after the export folder was checked, so the caller
+   * uses this to look at the folder again and to create the output itself. A throw stops the job with that error:
+   * the job folder and the output are removed as on any failure, and no pass 2 runs. Errors that reach the UI
+   * should be a `RenderFailure` with a clean detail; a plain error is masked, not scrubbed of export paths.
+   */
+  readonly beforePass2?: () => void | Promise<void>;
 }
 
 export interface RenderRunDeps {
@@ -164,6 +172,8 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
 
     signal.throwIfAborted();
     await scrubFs(writeFile(join(clipDir, pass2.listFileName), pass2.listFileContents));
+    await input.beforePass2?.();
+    signal.throwIfAborted();
     await call(pass2, { cwd: pass2.cwd, onFrames: (frames) => report(fold.pass2(frames)) });
 
     succeeded = true;

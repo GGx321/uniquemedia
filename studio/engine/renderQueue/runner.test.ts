@@ -588,6 +588,48 @@ describe("runRenderJob: cancel", () => {
   });
 });
 
+describe("runRenderJob: beforePass2 (the export folder is re-checked right before the long write)", () => {
+  test("runs after pass 1 has finished and before pass 2 starts, once", async () => {
+    const order: string[] = [];
+    const r = rig({ beforePass2: () => void order.push("hook") });
+    const { deps } = depsWith((call, index) => {
+      order.push(`ffmpeg-${index}`);
+      goodFfmpeg(call);
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(order).toEqual(["ffmpeg-0", "ffmpeg-1", "hook", "ffmpeg-2"]);
+  });
+
+  test("a refusal from the hook stops the job before pass 2, removes the job folder and the output, and is the error the job ends with", async () => {
+    const refusal = new Error("the export folder is not what it was");
+    const r = rig({ beforePass2: () => Promise.reject(refusal) });
+    writeFileSync(r.output, "pre-created"); // what the hook's owner made before pass 2
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await expect(runRenderJob(r.input, deps)).rejects.toBe(refusal);
+
+    expect(calls).toHaveLength(2);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("is not called for a job cancelled between the passes", async () => {
+    const controller = new AbortController();
+    let called = false;
+    const r = rig({ signal: controller.signal, beforePass2: () => void (called = true) });
+    const { deps } = depsWith((call, index) => {
+      goodFfmpeg(call);
+      if (index === 1) controller.abort(new Error("cancelled between passes"));
+    });
+
+    await expect(runRenderJob(r.input, deps)).rejects.toThrow("cancelled between passes");
+
+    expect(called).toBe(false);
+  });
+});
+
 describe("runRenderJob: the timeout", () => {
   function recordingRun(clock: { now: number }, advance: number[]): { run: (o: RunFfmpegArgvOptions) => Promise<void>; timeouts: Array<number | undefined> } {
     const timeouts: Array<number | undefined> = [];

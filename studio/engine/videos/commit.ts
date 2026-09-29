@@ -74,11 +74,27 @@ export class VerifyRefusedError extends RenderFailure {
 }
 
 /** The export folder is not where (or what) it was, or a name no longer leads to the file we made. */
-class ContainmentError extends Error {
+export class ContainmentError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ContainmentError";
   }
+}
+
+/**
+ * The avatar's export folder is still a real folder (not a link) directly under the export root, at its own name.
+ * Returns its real path; throws `ContainmentError` otherwise. The commit runs it around every step that writes, and
+ * `createRenderExecute` runs it right before pass 2.
+ */
+export async function assertFolderContained(fs: Pick<CommitFs, "lstat" | "realpath">, folder: PreparedFolder, root: string, caseInsensitive: boolean): Promise<string> {
+  const info = await fs.lstat(folder.path);
+  if (info.isSymbolicLink || !info.isDirectory) throw new ContainmentError("the avatar's export folder is not a real folder any more");
+  const [realFolder, realRoot] = [await fs.realpath(folder.path), await fs.realpath(root)];
+  const inside = placeOf(nodePath, dirname(realFolder), caseInsensitive) === placeOf(nodePath, realRoot, caseInsensitive);
+  if (!inside || placeOf(nodePath, basename(realFolder), caseInsensitive) !== placeOf(nodePath, folder.name, caseInsensitive)) {
+    throw new ContainmentError("the avatar's export folder resolves outside the export root");
+  }
+  return realFolder;
 }
 
 /** The temp changed after it was verified. */
@@ -133,6 +149,13 @@ export interface CommitDeps {
   readonly log?: (line: string) => void;
   /** The claimed placeholder's path, as soon as it exists (informs the live tracker). */
   readonly onClaimed?: (placeholder: string) => void;
+  /**
+   * Runs inside the root lock, right before the name is claimed (the last point a cancel is honoured). A throw
+   * refuses the commit: nothing is claimed or written. `createRenderExecute` re-reads the root marker here, since
+   * a volume swapped in at the same path is not caught by containment alone (invariant 35). A `RenderFailure`
+   * from it is passed on as it is; any other error is told without its message.
+   */
+  readonly beforeClaim?: () => Promise<void>;
   /** The first number the claim tries; 1 in production (test seam for a full range). */
   readonly claimStartAt?: number;
 }
@@ -214,16 +237,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
   let rolledBack = false;
 
   /** The export folder is still a real folder directly under the root, at its own name. Returns its real path. */
-  const checkFolder = async (): Promise<string> => {
-    const info = await fs.lstat(folder.path);
-    if (info.isSymbolicLink || !info.isDirectory) throw new ContainmentError("the avatar's export folder is not a real folder any more");
-    const [realFolder, realRoot] = [await fs.realpath(folder.path), await fs.realpath(target.root)];
-    const inside = placeOf(nodePath, dirname(realFolder), target.caseInsensitive) === placeOf(nodePath, realRoot, target.caseInsensitive);
-    if (!inside || placeOf(nodePath, basename(realFolder), target.caseInsensitive) !== placeOf(nodePath, folder.name, target.caseInsensitive)) {
-      throw new ContainmentError("the avatar's export folder resolves outside the export root");
-    }
-    return realFolder;
-  };
+  const checkFolder = (): Promise<string> => assertFolderContained(fs, folder, target.root, target.caseInsensitive);
 
   /** Before the rename: the claimed name is still the empty plain file we made. */
   const checkPlaceholder = async (claimed: { path: string; identity: FileIdentity }): Promise<void> => {
@@ -338,6 +352,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
         // The LAST cancel point (after a wait for the lock, which recovery may hold). From the claim on, the commit runs to its record.
         signal?.throwIfAborted();
         try {
+          await inPhase("export", async () => deps.beforeClaim?.());
           // 3. Claim the name: an empty placeholder, exclusively. The folder is checked first.
           await inPhase("export", checkFolder);
           let identity: FileIdentity | null = null;

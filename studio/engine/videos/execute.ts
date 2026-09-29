@@ -1,19 +1,22 @@
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import type { z } from "zod";
 import type { RenderResult } from "../../shared/engine";
 import type { MontageShape } from "../../shared/engine/montage";
 import { totalFrames } from "../../shared/montage";
-import { ExportFolderError, formatExportDate, NODE_EXPORT_FOLDER_FS, prepareExportFolder, type ExportFolderFs } from "../exportName";
+import { ExportFolderError, formatExportDate, NODE_EXPORT_FOLDER_FS, prepareExportFolder, type ExportFolderFs, type PreparedFolder } from "../exportName";
 import type { Library } from "../library";
 import type { AudioSource, OverlayInput, PhotoResolver } from "../render";
 import { RenderFailure, type RenderContext } from "../renderQueue/queue";
 import { runRenderJob, type RenderRunDeps } from "../renderQueue/runner";
 import type { VerifiedFile, VerifyExpected } from "../verify";
-import { commitVideo, type CommitStep } from "./commit";
+import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import { collectForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
+import { readRootId } from "./rootMarker";
 
 // The `execute` a render job hands to `RenderQueue` (Stage 3 plan, 3a.8b): the
 // runner, then the commit. Each job prepares its own avatar folder in the export
@@ -25,11 +28,31 @@ import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
 // CANCEL: `context.signal` stops ffmpeg (the job ends `cancelled`, the runner has
 // removed its temp) and stops the commit until the name is claimed; from the claim
 // on the commit finishes and the job ends `done` (commit.ts, "done wins").
+//
+// THE EXPORT FOLDER IS LOOKED AT AGAIN (invariant 35). `videos.render` checked it minutes before pass 2 writes
+// the temp by path, so this function re-reads the root's marker (the id of the root that was checked must still
+// be the id at that path: a volume swapped in at the same path passes every containment check) at three points,
+// and checks the avatar folder's containment right before pass 2:
+//   1. when the job starts, before `prepareExportFolder` makes anything;
+//   2. right before pass 2 (with containment), where the job also CREATES its temp itself, exclusively and
+//      without following a link, so ffmpeg only ever truncates a file this job made a moment ago;
+//   3. inside the commit's root lock, right before the name is claimed (`CommitDeps.beforeClaim`).
+//
+// THE COMMIT HAS A DEADLINE (`commitDeadlineMs`). A hung fsync on a dropped network drive would otherwise hold a
+// queue slot for ever (20 stuck jobs, then RENDER_QUEUE_FULL until a restart). At the deadline the job FAILS
+// (EXPORT_UNAVAILABLE, not-writable) and the queue moves on. What was stuck before the claim is told to stop and
+// rolls back when it wakes; what was stuck after the claim cannot be undone, so it finishes LATE: the record lands,
+// the used index takes it and `onCommitted` announces it, although the job already reported `failed`. Until the
+// commit has really ended, the tracker keeps its job, temp and placeholder live, so recovery never takes a commit
+// that is still running for a crash's leftover.
 
 /** The frame count of a timeline: what the queue submission's `totalFrames` and the verifier's expectation both come from, so they cannot disagree. */
 export function totalFramesOf(clips: readonly { readonly durationMs: number }[]): number {
   return totalFrames(clips);
 }
+
+/** How long verify, claim, intent, rename, flush and record may take in all. Generous: it reads up to 64 MiB and flushes to a possibly slow drive. */
+export const COMMIT_DEADLINE_MS = 120_000;
 
 /** Everything one render needs, resolved by `videos.render` (3b.2) in its one synchronous step. */
 export interface RenderPlan {
@@ -70,34 +93,71 @@ export interface VideoRenderDeps {
   /** Test seams of the commit. */
   readonly hooks?: { reached?: (step: CommitStep) => void | Promise<void> };
   readonly claimStartAt?: number;
+  /**
+   * Called with the record once it is committed AND the used index has it, still inside the job (so before `job.done`),
+   * or late for a commit that outlived its deadline. A throw is logged and changes nothing: the record is the truth.
+   */
+  readonly onCommitted?: (record: VideoRecord) => void;
+  /** `COMMIT_DEADLINE_MS` unless a test says otherwise. */
+  readonly commitDeadlineMs?: number;
+  /** Creates the empty temp exclusively (no link followed); the real one unless a test plays a volume. */
+  readonly createTemp?: (path: string) => Promise<void>;
 }
 
 export { CommitTracker } from "./live";
+
+/** `O_CREAT | O_EXCL | O_NOFOLLOW`: fails with EEXIST for any existing name (a symlink included) and never follows a link. Windows has no `O_NOFOLLOW`; `O_EXCL` still refuses an existing name. */
+async function createTempExclusive(path: string): Promise<void> {
+  const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o666);
+  await handle.close();
+}
+
+function codeOf(error: unknown): string {
+  return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error";
+}
+
+/** The root's marker no longer holds the id that was checked: the folder is gone, was swapped, or cannot be read. */
+async function assertSameRoot(root: string, rootId: string): Promise<void> {
+  const marker = await readRootId(root);
+  if (marker.rootId === rootId) return;
+  if (marker.rootId === null && marker.code !== "ENOENT" && marker.code !== "ENOTDIR" && marker.code !== "invalid") {
+    throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: `the export folder's marker could not be read (${marker.code})` });
+  }
+  throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "missing", detail: "the export folder is not the one that was checked" });
+}
 
 export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) => (context: RenderContext) => Promise<RenderResult> {
   if (deps.renderTmpDir === "") throw new TypeError("createRenderExecute: renderTmpDir is required (no os.tmpdir fallback).");
   const fs = deps.fs ?? NODE_COMMIT_FS;
   const log = deps.log ?? (() => undefined);
   const runJob = deps.runJob ?? runRenderJob;
+  const createTemp = deps.createTemp ?? createTempExclusive;
+  const deadlineMs = deps.commitDeadlineMs ?? COMMIT_DEADLINE_MS;
 
   return (plan) => async (context) => {
     const { root, rootId } = plan.exportRoot;
+    // 1. The root is the one that was checked (before this job makes a folder in whatever is at that path now).
+    await assertSameRoot(root, rootId);
     const caseInsensitive = await deps.caseProbe.isCaseInsensitive(root);
-    let folder;
+    let folder: PreparedFolder;
     try {
       folder = await prepareExportFolder({ fs: deps.folderFs ?? NODE_EXPORT_FOLDER_FS, root, safeName: plan.safeName, avatarId: plan.avatarId, caseInsensitive });
     } catch (error) {
       if (error instanceof ExportFolderError) throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: error.reason, detail: error.message });
-      throw error;
+      // Anything else names the owner's export path in its message, which reaches the UI: only the code does.
+      log(`render ${plan.jobId}: the export folder could not be prepared (${codeOf(error)})`);
+      throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: `the export folder could not be prepared (${codeOf(error)})` });
     }
 
     // A folder this job just created is an entry in the root: make it durable before anything goes into it.
-    await fs.fsyncDir(root).catch((error: unknown) => log(`render ${plan.jobId}: the export folder could not be flushed (${error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error"})`));
+    await fs.fsyncDir(root).catch((error: unknown) => log(`render ${plan.jobId}: the export folder could not be flushed (${codeOf(error)})`));
 
     const temp = folder.fileIn(partNameOf(plan.jobId));
     deps.tracker.addJob(plan.jobId, plan.videoId);
     deps.tracker.addTemp(temp);
     let placeholder: string | null = null;
+    let commit: Promise<CommittedVideo> | null = null;
+    let commitEnded = false;
     try {
       let forbiddenStrings: string[];
       try {
@@ -119,12 +179,31 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           output: temp,
           signal: context.signal,
           onProgress: (done) => void context.progress(done),
+          // 2. Minutes have passed since the folder was made: look again, then make the temp ourselves.
+          beforePass2: async () => {
+            await assertSameRoot(root, rootId);
+            try {
+              await assertFolderContained(fs, folder, root, caseInsensitive);
+            } catch (error) {
+              if (error instanceof ContainmentError) throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder changed while the video was being rendered" });
+              log(`render ${plan.jobId}: the export folder could not be checked before pass 2 (${codeOf(error)})`);
+              throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: codeOf(error) === "ENOENT" ? "missing" : "not-writable", detail: `the export folder could not be checked (${codeOf(error)})` });
+            }
+            try {
+              await createTemp(temp);
+            } catch (error) {
+              log(`render ${plan.jobId}: the render's output file could not be created (${codeOf(error)})`);
+              throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: codeOf(error) === "ENOSPC" || codeOf(error) === "EDQUOT" ? "not-enough-space" : "not-writable", detail: `the render's output file could not be created (${codeOf(error)})` });
+            }
+          },
         },
         deps.runDeps,
       );
 
       const now = deps.now();
-      const committed = await commitVideo(
+      const stop = new AbortController();
+      const commitSignal = AbortSignal.any([context.signal, stop.signal]);
+      commit = commitVideo(
         { folder, root, rootId, caseInsensitive },
         {
           jobId: plan.jobId,
@@ -143,24 +222,57 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         {
           fs,
           libraryRoot: deps.library.root,
-          signal: context.signal,
+          signal: commitSignal,
           log,
           onClaimed: (path) => {
             placeholder = path;
             deps.tracker.addPlaceholder(path);
           },
+          // 3. The last look, inside the root lock, before the name is claimed.
+          beforeClaim: () => assertSameRoot(root, rootId),
           ...(deps.verify === undefined ? {} : { verify: deps.verify }),
           ...(deps.hooks === undefined ? {} : { hooks: deps.hooks }),
           ...(deps.claimStartAt === undefined ? {} : { claimStartAt: deps.claimStartAt }),
         },
-      );
+      )
+        .then(async (committed) => {
+          // The record is on disk; the used index follows it before the job ends and the reservation is released.
+          await indexCommittedRecord(deps.library, committed.record, log);
+          try {
+            deps.onCommitted?.(committed.record);
+          } catch (error) {
+            log(`render ${plan.jobId}: a listener of the committed video threw (${error instanceof Error ? error.name : "error"})`);
+          }
+          return committed;
+        })
+        .finally(() => {
+          commitEnded = true;
+        });
 
-      // The record is on disk; the used index follows it before the job ends and the reservation is released.
-      await indexCommittedRecord(deps.library, committed.record, log);
+      const committed = await withDeadline(commit, deadlineMs, () => {
+        const failure = new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "saving the video took too long: the export folder does not answer" });
+        log(`render ${plan.jobId}: the commit passed its deadline of ${deadlineMs} ms; the job is failed and the commit is asked to stop`);
+        stop.abort(failure);
+        return failure;
+      });
       return committed.result;
     } finally {
-      deps.tracker.release(temp, ...(placeholder === null ? [] : [placeholder]));
-      deps.tracker.releaseJob(plan.jobId);
+      const release = (): void => {
+        deps.tracker.release(temp, ...(placeholder === null ? [] : [placeholder]));
+        deps.tracker.releaseJob(plan.jobId);
+      };
+      if (commit === null || commitEnded) release();
+      // A commit that outlived its deadline is still running: it stays live for recovery until it really ends.
+      else void commit.then(release, release);
     }
   };
+}
+
+/** Resolves with `work`, or rejects with what `onDeadline` returns once `ms` have passed; `work` itself is never cancelled here. */
+function withDeadline<T>(work: Promise<T>, ms: number, onDeadline: () => Error): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(onDeadline()), ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
 }
