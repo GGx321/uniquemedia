@@ -154,8 +154,13 @@ describe("testTarget", () => {
     expect(() => testTarget(["--suite"])).toThrow(/usage/);
   });
 
-  test("--known-crashes-only without --suite is refused", () => {
-    expect(() => testTarget(["--known-crashes-only"])).toThrow(/usage/);
+  test("--known-crashes-only alone narrows the retry of the real-worker file too", () => {
+    expect(testTarget(["--known-crashes-only"])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: true });
+  });
+
+  test("--known-crashes-only among the bun test arguments after --suite is refused: it would be handed to bun, not read here", () => {
+    expect(() => testTarget(["--suite", "./studio", "--known-crashes-only"])).toThrow(/usage/);
+    expect(() => testTarget(["--known-crashes-only", "--suite", "./studio", "--known-crashes-only"])).toThrow(/usage/);
   });
 });
 
@@ -187,6 +192,13 @@ describe("runOnce", () => {
     const result = await runOnce({ command: [process.execPath, "-e", "console.log('hello'); process.exit(3)"], env: process.env, timeoutMs: 10_000, graceMs: 300, echo: false });
     expect(result).toMatchObject({ exitCode: 3, timedOut: false });
     expect(result.output).toContain("hello");
+  });
+
+  test("keeps stdout and stderr apart, so a partial stdout line cannot glue onto a `(fail)` line", async () => {
+    const script = "process.stdout.write('partial'); await new Promise((r) => setTimeout(r, 150)); process.stderr.write('(fail) a > b\\n'); process.exit(1)";
+    const result = await runOnce({ command: [process.execPath, "-e", script], env: process.env, timeoutMs: 10_000, graceMs: 300, echo: false });
+    expect(result.output).toMatch(/^\(fail\) a > b$/m);
+    expect(isBunCrashOnly(`${result.output}\n${CRASH}`)).toBe(false);
   });
 });
 
@@ -289,5 +301,22 @@ describe("runWithCrashRetry", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("attempt 1 of 3");
     expect(lines[1]).toContain("attempt 2 of 3");
+  });
+
+  test("by default the warning goes to stdout, where a GitHub annotation is read, not to stderr", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const log = console.log;
+    const warn = console.warn;
+    console.log = (...args: unknown[]) => void out.push(args.join(" "));
+    console.warn = (...args: unknown[]) => void err.push(args.join(" "));
+    try {
+      await runWithCrashRetry(playing([crash, ok]).attempt);
+    } finally {
+      console.log = log;
+      console.warn = warn;
+    }
+    expect(out.filter((l) => l.startsWith("::warning::"))).toHaveLength(1);
+    expect(err).toEqual([]);
   });
 });
