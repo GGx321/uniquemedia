@@ -33,6 +33,8 @@
  * (attempts x bound) plus slack, and a hang still ends in minutes.
  */
 export const REAL_WORKER_TEST_FILE = "studio/engine/face/worker/workerGate.real.test.ts";
+/** 3b.2: the text worker terminates a real wasm computation too, so its real-thread tests run here, apart from the main suite, for the same Bun crash. */
+export const TEXT_REAL_WORKER_TEST_FILE = "studio/engine/text/worker/textGate.real.test.ts";
 export const MAX_ATTEMPTS = 3;
 /** One attempt's bound. A suite that takes longer is hung, not slow (the main suite runs in a few minutes). */
 export const ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -94,7 +96,7 @@ const USAGE = "usage: realWorkerTests.ts [--known-crashes-only]   (the real-work
 export function testTarget(argv: readonly string[]): TestTarget {
   const knownCrashesOnly = argv[0] === "--known-crashes-only";
   const rest = knownCrashesOnly ? argv.slice(1) : argv;
-  if (rest.length === 0) return { testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly };
+  if (rest.length === 0) return { testArgs: [REAL_WORKER_TEST_FILE, TEXT_REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly };
   if (rest[0] !== "--suite" || rest.length < 2 || rest.includes("--known-crashes-only")) throw new Error(USAGE);
   return { testArgs: rest.slice(1), realWorker: false, knownCrashesOnly };
 }
