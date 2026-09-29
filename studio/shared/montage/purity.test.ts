@@ -17,7 +17,16 @@ const productionFiles = readdirSync(MONTAGE_DIR, { withFileTypes: true })
   .filter((e) => e.isFile() && /\.ts$/.test(e.name) && !/\.(test|testkit)\.ts$/.test(e.name))
   .map((e) => join(MONTAGE_DIR, e.name));
 
-const FORBIDDEN = /\b(?:process|Buffer|Bun|require|Date|performance|crypto|setTimeout|setInterval|fetch)\b|Math\.random|globalThis\s*\[/g;
+const FORBIDDEN =
+  /\b(?:process|Buffer|Bun|require|Date|performance|crypto|setTimeout|setInterval|fetch|Intl|eval)\b|Math\.(?:random|sin|cos|tan|asin|acos|atan2?|sinh|cosh|tanh|exp|expm1|log|log2|log10|log1p|pow|hypot|cbrt|sqrt)\b|\*\*|\.toLocale\w*|new\s+Function\b|globalThis\s*(?:\[|\.process)/g;
+
+/**
+ * A value import (or re-export) from the contract's montage module: anything
+ * that is not `import type`. The contract pulls in zod, so a value import would
+ * put zod into every bundle that uses this module. `import { type X }` counts:
+ * only a plain `import type` is guaranteed to be erased.
+ */
+const VALUE_IMPORT_FROM_CONTRACT = /\b(?:import|export)\s+(?!type\b)[^;]*?\bfrom\s*["']\.\.\/engine\/montage["']|\bimport\s*["']\.\.\/engine\/montage["']/;
 
 /** Import specifiers a montage production file may use: siblings, and the contract's montage module (types). */
 function allowedImport(specifier: string, fromFile: string): boolean {
@@ -39,9 +48,52 @@ describe("the purity checks themselves catch violations (negative controls)", ()
     ["Date", "export const a = Date.now();"],
     ["Math.random", "export const a = Math.random();"],
     ["crypto", "export const a = crypto.randomUUID();"],
+    ["Math.sin", "export const a = Math.sin(1);"],
+    ["Math.cos", "export const a = Math.cos(1);"],
+    ["Math.tan", "export const a = Math.tan(1);"],
+    ["Math.exp", "export const a = Math.exp(1);"],
+    ["Math.log", "export const a = Math.log(2);"],
+    ["Math.pow", "export const a = Math.pow(2, 3);"],
+    ["Math.atan2", "export const a = Math.atan2(1, 2);"],
+    ["Math.hypot", "export const a = Math.hypot(3, 4);"],
+    ["Math.cbrt", "export const a = Math.cbrt(8);"],
+    ["Math.sqrt", "export const a = Math.sqrt(4);"],
+    ["**", "export const a = 2 ** 3;"],
+    [".toLocaleString", "export const a = (1).toLocaleString();"],
+    [".toLocaleDateString", "export const a = new Object().toLocaleDateString();"],
+    ["Intl", 'export const a = new Intl.NumberFormat("en");'],
+    ["eval", 'export const a = eval("1");'],
+    ["new Function", 'export const a = new Function("return 1");'],
+    ["globalThis.process", "export const a = globalThis.process;"],
+    ["globalThis[", 'export const a = globalThis["proc" + "ess"];'],
   ])("flags %s", (name, code) => {
-    expect(forbiddenIn(code)).not.toEqual([]);
-    expect(name.length).toBeGreaterThan(0);
+    // The matched token must be the very thing named, not some other match.
+    expect(forbiddenIn(code).some((token) => token.includes(name.replace(/^\./, "")))).toBe(true);
+  });
+
+  test("leaves ordinary integer maths alone", () => {
+    expect(forbiddenIn("export const a = Math.floor(Math.min(3, Math.max(1, Math.round(2.5) * 2)) / 2) + Math.abs(-1) + Math.ceil(0.5);")).toEqual([]);
+  });
+
+  test.each([
+    'import { Focus } from "../engine/montage";',
+    'import { type Focus } from "../engine/montage";',
+    'import { Focus,\n  Clip } from "../engine/montage";',
+    'export { Focus } from "../engine/montage";',
+    'export * from "../engine/montage";',
+    'import "../engine/montage";',
+    'import * as m from "../engine/montage";',
+  ])("flags a value import from the contract: %s", (code) => {
+    expect(VALUE_IMPORT_FROM_CONTRACT.test(code)).toBe(true);
+  });
+
+  test.each([
+    'import type { Focus } from "../engine/montage";',
+    'import type { Focus,\n  Clip } from "../engine/montage";',
+    'export type { Focus } from "../engine/montage";',
+    'import { FPS } from "./constants";',
+  ])("accepts a type-only import: %s", (code) => {
+    expect(VALUE_IMPORT_FROM_CONTRACT.test(code)).toBe(false);
   });
 
   test("flags an import from node or a package, and one that leaves the folder", () => {
@@ -56,7 +108,7 @@ describe("the purity checks themselves catch violations (negative controls)", ()
 
 describe("studio/shared/montage is pure", () => {
   test("has production modules", () => {
-    expect(productionFiles.length).toBeGreaterThanOrEqual(8);
+    expect(productionFiles.length).toBeGreaterThanOrEqual(14);
   });
 
   test(
@@ -75,7 +127,11 @@ describe("studio/shared/montage is pure", () => {
       expect(foreign).toEqual([]);
     });
 
-    test("uses no process, Buffer, Bun, require, Date, timers, fetch, crypto or Math.random", () => {
+    test("imports the contract's montage module for types only (so zod never reaches a bundle through it)", () => {
+      expect(VALUE_IMPORT_FROM_CONTRACT.test(readFileSync(file, "utf8"))).toBe(false);
+    });
+
+    test("uses no I/O, clock, randomness, locale, eval, transcendental Math or ** (integer maths only)", () => {
       expect(forbiddenIn(readFileSync(file, "utf8"))).toEqual([]);
     });
   });
