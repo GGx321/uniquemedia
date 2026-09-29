@@ -7,6 +7,7 @@ import { EventMessage, ResponseMessage, type AvatarTraits, type EngineNotice } f
 import { manifestTraits } from "./avatars/records";
 import type { EngineInit } from "./control";
 import { deliver, Engine, engineErrorFrom, exitIfStartFails, resolveOpenRouterBaseUrl, type EngineDeps } from "./engine";
+import { NODE_EXPORT_ROOT_FS, type ExportRootFs } from "./exportRoot";
 import { openLibrary, type Library } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import type { ReserveHandle, ReserveResult } from "./money/budget";
@@ -2115,6 +2116,88 @@ describe("the export folder's status (task 3a.8a)", () => {
     const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
     expect(response).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "invalid-marker" } });
     expect(await Bun.file(join(dir, "export", MARKER)).text()).toBe("[]");
+  });
+
+  test("twenty renders attempted at once on a fresh default folder never see a half-written marker", async () => {
+    const { engine } = await startEngine({ defaultExportPath: join(dir, "export") });
+    await rm(join(dir, "export"), { recursive: true });
+    const responses = await Promise.all(Array.from({ length: 20 }, () => engine.handle(command("videos.render", { montageId: "montage-00000001" }))));
+    expect(responses.filter((r) => !r.ok && r.error.code === "EXPORT_UNAVAILABLE")).toEqual([]);
+    expect(await statusNow(engine)).toEqual({ status: "ok" });
+  });
+
+  test("a slow older check never overwrites the result of a newer one", async () => {
+    await mkdir(join(dir, "export"));
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reachedGate: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => {
+      reachedGate = resolve;
+    });
+    let calls = 0;
+    const exportRootFs: ExportRootFs = {
+      ...NODE_EXPORT_ROOT_FS,
+      stat: async (path) => {
+        const info = await NODE_EXPORT_ROOT_FS.stat(path).catch((error: unknown) => error);
+        if (++calls === 2) {
+          // The second stat is the first render attempt's: it holds still after having seen the folder.
+          reachedGate();
+          await gate;
+        }
+        if (info instanceof Error) throw info;
+        return info;
+      },
+    };
+    const { engine } = await startEngine({}, { exportRootFs });
+    const older = engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    await reached;
+    await rm(join(dir, "export"), { recursive: true });
+    const newer = engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    release();
+    await Promise.all([older, newer]);
+    expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "missing" });
+  });
+
+  test("a folder on a volume that never answers does not stop the engine from starting", async () => {
+    await mkdir(join(dir, "export"));
+    const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, stat: () => new Promise<never>(() => undefined) };
+    const errors = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: 30 });
+      expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "not-writable" });
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("a render attempt on a volume that never answers is refused in time instead of hanging", async () => {
+    await mkdir(join(dir, "export"));
+    const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, stat: () => new Promise<never>(() => undefined) };
+    const errors = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: 30 });
+      const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+      expect(response).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("a check that timed out does not block the next one once the volume answers", async () => {
+    await mkdir(join(dir, "export"));
+    let hang = true;
+    const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, stat: (path) => (hang ? new Promise<never>(() => undefined) : NODE_EXPORT_ROOT_FS.stat(path)) };
+    const errors = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: 30 });
+      hang = false;
+      await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+      expect(await statusNow(engine)).toEqual({ status: "ok" });
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   test("a check that fails in a way it cannot classify reads as not writable and does not crash the engine", async () => {

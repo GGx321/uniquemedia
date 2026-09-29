@@ -105,6 +105,8 @@ export interface EngineDeps {
   folderFs?: FolderFs;
   /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
   exportRootFs?: ExportRootFs;
+  /** Bounds each export folder check; EXPORT_CHECK_TIMEOUT_MS unless a test says otherwise. */
+  exportCheckTimeoutMs?: number;
   /** Whether the disk folds letter case (Windows, macOS); the platform's guess unless a test says otherwise. */
   caseInsensitiveDisk?: boolean;
   /**
@@ -313,6 +315,8 @@ export const PREFLIGHT_TIMEOUT_MS = 10_000;
 
 /** How long #liveLibrary's identity re-check (one stat, one realpath) may take before it is read as "cannot be identified right now" (review LOW 15). */
 export const LIVE_LIBRARY_IDENTITY_TIMEOUT_MS = 5_000;
+/** Bounds one export folder check (start, a settings update, a render attempt): a stale network share must not block any of them. */
+export const EXPORT_CHECK_TIMEOUT_MS = 5_000;
 
 /**
  * T6c review round 2, M4: how long each of import.stagePhoto's two
@@ -383,8 +387,9 @@ export class Engine {
   readonly #defaultExportPath: string | null;
   /** The export folder's status as of the last check (start, a settings update, a render attempt), for the snapshot. */
   #exportStatus: ExportStatus = { status: "ok" };
-  /** Counts export checks, so a slow older one cannot overwrite the result of a newer one. */
-  #exportCheckSeq = 0;
+  /** The export checks run one at a time in the order asked (a fresh folder's marker is written by one of them, never raced), so a slow older one cannot overwrite a newer one. */
+  #exportChain: Promise<unknown> = Promise.resolve();
+  readonly #exportCheckTimeoutMs: number;
   readonly #preflight: (signal: AbortSignal) => Promise<void>;
   readonly #preflightTimeoutMs: number;
   readonly #liveLibraryIdentityTimeoutMs: number;
@@ -486,6 +491,7 @@ export class Engine {
     this.#deps = deps;
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
+    this.#exportCheckTimeoutMs = deps.exportCheckTimeoutMs ?? EXPORT_CHECK_TIMEOUT_MS;
     this.#caseInsensitiveDisk = deps.caseInsensitiveDisk ?? process.platform !== "linux";
     this.#defaultExportPath = init.defaultExportPath ?? null;
     this.#preflight = deps.preflightDownscale ?? preflightDownscale;
@@ -1452,31 +1458,44 @@ export class Engine {
   /**
    * Checks the export folder against the current settings and keeps the result
    * as the snapshot's `exportStatus` (invariant 35). The default folder is
-   * created on first use; a folder the owner chose is not. A check that a newer
-   * one overtook leaves the status to the newer one. `requiredBytes` is the
-   * render's estimate, when there is one. A refusal is a result; a disk error
-   * the check cannot classify is logged and read as not writable.
+   * created on first use; a folder the owner chose is not. Checks are queued
+   * one behind another. `requiredBytes` is the render's estimate, when there is
+   * one. A refusal is a result; a disk error the check cannot classify, or a
+   * volume that does not answer within the timeout (a stale network share), is
+   * logged and read as not writable, so neither start nor a render can hang on it.
    */
-  async #refreshExportStatus(requiredBytes?: number): Promise<ExportRootCheck> {
-    const seq = ++this.#exportCheckSeq;
+  #refreshExportStatus(requiredBytes?: number): Promise<ExportRootCheck> {
+    const run = this.#exportChain.then(() => this.#checkExportOnce(requiredBytes));
+    this.#exportChain = run;
+    return run;
+  }
+
+  /** One bounded check; never rejects. */
+  async #checkExportOnce(requiredBytes: number | undefined): Promise<ExportRootCheck> {
     const exportPath = this.#settings.exportPath;
+    const timeout = timeoutSignal(this.#exportCheckTimeoutMs);
     let check: ExportRootCheck;
     try {
-      check = await checkExportRoot({
-        fs: this.#exportRootFs,
-        exportPath,
-        libraryPath: this.#settings.libraryPath,
-        mayCreate: exportPath === this.#defaultExportPath,
-        newId: this.#deps.newId,
-        now: () => new Date(this.#deps.clock()),
-        caseInsensitive: this.#caseInsensitiveDisk,
-        ...(requiredBytes === undefined ? {} : { requiredBytes }),
-      });
+      check = await untilAborted(
+        checkExportRoot({
+          fs: this.#exportRootFs,
+          exportPath,
+          libraryPath: this.#settings.libraryPath,
+          mayCreate: exportPath === this.#defaultExportPath,
+          newId: this.#deps.newId,
+          now: () => new Date(this.#deps.clock()),
+          caseInsensitive: this.#caseInsensitiveDisk,
+          ...(requiredBytes === undefined ? {} : { requiredBytes }),
+        }),
+        timeout.signal,
+      );
     } catch (error) {
       console.error(`studio engine: the export folder could not be checked (${errorKind(error)})`);
       check = { ok: false, reason: "not-writable" };
+    } finally {
+      timeout.clear();
     }
-    if (seq === this.#exportCheckSeq) this.#exportStatus = exportStatusOf(check);
+    this.#exportStatus = exportStatusOf(check);
     return check;
   }
 
