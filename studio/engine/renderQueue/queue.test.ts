@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { JobState, RenderResult } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import { JobRegistry } from "../jobs";
 import { RenderGraphError } from "../render";
-import { RenderFailure, RenderQueue, type RenderContext, type RenderQueueDeps, type RenderQueueEvent, type RenderSubmission } from "./queue";
+import { MAX_UNFINISHED_RENDERS, RenderFailure, RenderQueue, type RenderContext, type RenderQueueDeps, type RenderQueueEvent, type RenderSubmission } from "./queue";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -27,6 +27,17 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/** Keeps a test's expected `console.error` out of the run's output; the spy is what the test asserts on. */
+const consoleSpies: Array<{ mockRestore(): void }> = [];
+function silenceConsoleError() {
+  const spy = spyOn(console, "error").mockImplementation(() => {});
+  consoleSpies.push(spy);
+  return spy;
+}
+afterEach(() => {
+  for (const spy of consoleSpies.splice(0)) spy.mockRestore();
+});
 
 function resultOf(n: number, avatarId = AVATAR): RenderResult {
   return { kind: "render", videoId: `video-0000000${n}`, avatarId, bytes: 1000, durationMs: 4000, videoKind: "photo", relPath: "Mia/2026-09-29_photo_001.mp4" };
@@ -436,6 +447,7 @@ describe("RenderQueue: cancel", () => {
 
 describe("RenderQueue: review round 1", () => {
   test("a listener AND its error reporter that both throw do not stop the job from running or ending", async () => {
+    const consoleError = silenceConsoleError();
     const jobs = new JobRegistry();
     const queue = new RenderQueue({
       jobs,
@@ -458,9 +470,12 @@ describe("RenderQueue: review round 1", () => {
     expect(jobs.states()[0]).toMatchObject({ status: "done" });
     expect(queue.reservedPhotos(AVATAR).size).toBe(0);
     expect(queue.active()).toBe(0);
+    // The last resort is the console, and it is used: nothing is swallowed.
+    expect(consoleError).toHaveBeenCalled();
   });
 
   test("the queue keeps pumping when both throw at the end of a job", async () => {
+    const consoleError = silenceConsoleError();
     const jobs = new JobRegistry();
     const queue = new RenderQueue({
       jobs,
@@ -480,6 +495,28 @@ describe("RenderQueue: review round 1", () => {
     await tick();
 
     expect(statuses(jobs)).toEqual(["job-00000001:done", "job-00000002:running"]);
+    expect(consoleError).toHaveBeenCalled();
+  });
+
+  test("a listener that throws with no error reporter set is reported to the console, and the queue goes on", async () => {
+    const consoleError = silenceConsoleError();
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({
+      jobs,
+      size: () => 1,
+      onEvent: () => {
+        throw new Error("window closed");
+      },
+    });
+    const a = submission(1);
+
+    expect(() => queue.submit(a)).not.toThrow();
+    await a.gate.started.promise;
+    a.gate.finish.resolve(resultOf(1));
+    await queue.idle();
+
+    expect(jobs.states()[0]).toMatchObject({ status: "done" });
+    expect(consoleError.mock.calls.some((call) => call.some((arg) => arg instanceof Error && arg.message === "window closed"))).toBe(true);
   });
 
   test("cancel refuses a job that is not a render: a paid candidates job is left running", () => {
@@ -523,6 +560,34 @@ describe("RenderQueue: review round 1", () => {
     expect(statuses(jobs)).toEqual(["job-00000001:running", "job-00000002:running"]);
   });
 
+  test("poke drops a waiting job that ended behind the queue's back, releases its photos, and idle resolves once the running job ends", async () => {
+    let size = 1;
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({ jobs, size: () => size });
+    const [a, b] = [submission(1), submission(2)];
+    queue.submit(a);
+    queue.submit(b);
+    jobs.finishRender("job-00000002", { status: "cancelled" }); // not through the queue
+    expect(queue.reservedPhotos(AVATAR).has("photo-00000002")).toBe(true);
+    let idle = false;
+    void queue.idle().then(() => {
+      idle = true;
+    });
+
+    size = 2;
+    queue.poke();
+    await tick();
+
+    expect(queue.reservedPhotos(AVATAR).has("photo-00000002")).toBe(false); // released by poke, not held until job 1 ends
+    expect(statuses(jobs)).toEqual(["job-00000001:running", "job-00000002:cancelled"]);
+    expect(idle).toBe(false); // job 1 is still running
+
+    a.gate.finish.resolve(resultOf(1));
+    await queue.idle();
+    expect(idle).toBe(true);
+    expect(queue.active()).toBe(0);
+  });
+
   test("a queued job that ended behind the queue's back is dropped at its turn, and its photos are released", async () => {
     const jobs = new JobRegistry();
     const queue = new RenderQueue({ jobs, size: () => 1 });
@@ -553,5 +618,57 @@ describe("RenderQueue: renders in flight", () => {
     a.gate.finish.resolve(resultOf(1));
     await queue.idle();
     expect(queue.active()).toBe(0);
+  });
+});
+
+describe("RenderQueue: the length of the queue", () => {
+  // Job and photo ids for many jobs: `submission(n)` builds single-digit ones.
+  const nth = (n: number): RenderSubmission & { gate: Gate } => {
+    const pad = String(n).padStart(8, "0");
+    return { ...submission(1, { jobId: `job-${pad}`, photoIds: [`photo-${pad}`] }), ref: { videoId: `video-${pad}`, avatarId: AVATAR, montageId: null } };
+  };
+
+  test(`accepts ${MAX_UNFINISHED_RENDERS} unfinished jobs (running and queued together)`, () => {
+    const { queue } = setup();
+
+    const results = Array.from({ length: MAX_UNFINISHED_RENDERS }, (_, i) => queue.submit(nth(i + 1)));
+
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(queue.active()).toBe(MAX_UNFINISHED_RENDERS);
+  });
+
+  test(`refuses job ${MAX_UNFINISHED_RENDERS + 1} with the stable code QUEUE_FULL and registers and reserves nothing`, () => {
+    const { queue, jobs } = setup();
+    for (let i = 1; i <= MAX_UNFINISHED_RENDERS; i++) queue.submit(nth(i));
+    const extra = nth(MAX_UNFINISHED_RENDERS + 1);
+
+    const result = queue.submit(extra);
+
+    expect(result).toEqual({ ok: false, code: "QUEUE_FULL", limit: MAX_UNFINISHED_RENDERS });
+    expect(jobs.stateOf(extra.jobId)).toBeUndefined();
+    expect(queue.reservedPhotos(AVATAR).has(`photo-${String(MAX_UNFINISHED_RENDERS + 1).padStart(8, "0")}`)).toBe(false);
+    expect(queue.active()).toBe(MAX_UNFINISHED_RENDERS);
+  });
+
+  test("takes a new job again as soon as one ends", async () => {
+    const { queue } = setup();
+    const first = nth(1);
+    queue.submit(first);
+    for (let i = 2; i <= MAX_UNFINISHED_RENDERS; i++) queue.submit(nth(i));
+    expect(queue.submit(nth(MAX_UNFINISHED_RENDERS + 1))).toMatchObject({ ok: false, code: "QUEUE_FULL" });
+
+    first.gate.finish.resolve(resultOf(1));
+    await tick();
+
+    expect(queue.submit(nth(MAX_UNFINISHED_RENDERS + 1))).toEqual({ ok: true });
+  });
+
+  test("a cancelled queued job frees its place", () => {
+    const { queue } = setup();
+    for (let i = 1; i <= MAX_UNFINISHED_RENDERS; i++) queue.submit(nth(i));
+
+    queue.cancel(`job-${String(MAX_UNFINISHED_RENDERS).padStart(8, "0")}`);
+
+    expect(queue.submit(nth(MAX_UNFINISHED_RENDERS + 1))).toEqual({ ok: true });
   });
 });

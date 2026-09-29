@@ -45,11 +45,25 @@ export interface RenderSubmission {
   readonly execute: (context: RenderContext) => Promise<RenderResult>;
 }
 
+/**
+ * The most render jobs that may be unfinished (queued and running together).
+ *
+ * 20 because a render is a 4-15 s montage with a time limit of `max(90 s, 30 x
+ * its length)`, so 20 in a row is already hours of work behind one export
+ * folder, and each queued spec also holds its scene photos out of every other
+ * render (invariant 24). Nobody queues that many on purpose; a runaway loop or
+ * a stuck double-click handler does. Beyond it a request is refused up front
+ * rather than piled up without end (memory, reserved photos, orphaned work).
+ */
+export const MAX_UNFINISHED_RENDERS = 20;
+
 export type SubmitResult =
   /** Queued (or already started). */
   | { ok: true }
   /** Refused, nothing registered or reserved: these photos are held by another queued or running spec. */
-  | { ok: false; photoIds: string[] };
+  | { ok: false; photoIds: string[] }
+  /** Refused, nothing registered or reserved: `limit` render jobs are already queued or running. The command layer maps `code`. */
+  | { ok: false; code: "QUEUE_FULL"; limit: number };
 
 export interface ReleaseInfo {
   readonly jobId: string;
@@ -117,8 +131,8 @@ export class RenderQueue {
   readonly #deps: RenderQueueDeps;
   /** Every queued and running job, by id; a job leaves it, and gives its photos back, in one step. */
   readonly #held = new Map<string, Held>();
-  /** Ids waiting for a slot, first in, first out. */
-  #waiting: string[] = [];
+  /** Jobs waiting for a slot, first in, first out. They carry their own `Held`, so starting one needs no lookup that could miss. */
+  #waiting: Held[] = [];
   #running = 0;
   #idleWaiters: Array<() => void> = [];
 
@@ -129,17 +143,20 @@ export class RenderQueue {
   /**
    * Queues a job and reserves its photos in one step: the check and the
    * reservation cannot be separated by another submit. Starts it at once when a
-   * slot is free. Throws for a job id the registry already has.
+   * slot is free. Refuses (`QUEUE_FULL`) beyond `MAX_UNFINISHED_RENDERS` jobs
+   * queued or running. Throws for a job id the registry already has.
    */
   submit(submission: RenderSubmission): SubmitResult {
+    if (this.#held.size >= MAX_UNFINISHED_RENDERS) return { ok: false, code: "QUEUE_FULL", limit: MAX_UNFINISHED_RENDERS };
     const photos = new Set(submission.photoIds);
     const taken = this.#heldBy(submission.ref.avatarId);
     const conflicts = [...photos].filter((id) => taken.has(id));
     if (conflicts.length > 0) return { ok: false, photoIds: conflicts };
 
     const signal = this.#deps.jobs.queueRender(submission.jobId, submission.ref, submission.totalFrames);
-    this.#held.set(submission.jobId, { submission, photos, signal });
-    this.#waiting.push(submission.jobId);
+    const held: Held = { submission, photos, signal };
+    this.#held.set(submission.jobId, held);
+    this.#waiting.push(held);
     signal.addEventListener("abort", () => this.#onAbort(submission.jobId), { once: true });
     this.#pump();
     return { ok: true };
@@ -207,8 +224,8 @@ export class RenderQueue {
 
   /** A queued job the registry has just cancelled: out of the line, photos back. A running job's abort is its own `execute`'s business. */
   #onAbort(jobId: string): void {
-    if (!this.#waiting.includes(jobId)) return;
-    this.#waiting = this.#waiting.filter((id) => id !== jobId);
+    if (!this.#waiting.some((held) => held.submission.jobId === jobId)) return;
+    this.#waiting = this.#waiting.filter((held) => held.submission.jobId !== jobId);
     this.#held.delete(jobId);
     const state = this.#deps.jobs.stateOf(jobId);
     if (state !== undefined) this.#emit({ type: "ended", state });
@@ -218,8 +235,9 @@ export class RenderQueue {
   #pump(): void {
     const size = Math.max(1, Math.floor(this.#deps.size()));
     while (this.#running < size) {
-      const jobId = this.#waiting.shift();
-      if (jobId === undefined) return;
+      const held = this.#waiting.shift();
+      if (held === undefined) return;
+      const jobId = held.submission.jobId;
       if (!this.#deps.jobs.startRender(jobId)) {
         // Ended behind the queue's back: drop it, give its photos back.
         this.#held.delete(jobId);
@@ -229,21 +247,14 @@ export class RenderQueue {
       this.#running++;
       const state = this.#deps.jobs.stateOf(jobId);
       if (state !== undefined) this.#emit({ type: "started", state });
-      void this.#run(jobId);
+      void this.#run(held);
     }
   }
 
   /** Runs one job to its end. Never rejects: every way out is an ending. */
-  async #run(jobId: string): Promise<void> {
-    const held = this.#held.get(jobId);
-    if (held === undefined) {
-      // Not reachable today; if it ever is, the slot this run took must not leak.
-      this.#running--;
-      this.#pump();
-      this.#notifyIdle();
-      return;
-    }
+  async #run(held: Held): Promise<void> {
     const { submission, signal } = held;
+    const jobId = submission.jobId;
     let end: RenderJobEnd;
     let cause: unknown;
 
