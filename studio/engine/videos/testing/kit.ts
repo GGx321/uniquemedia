@@ -13,7 +13,7 @@ import { PNG_1X1, SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta, sequentialIds, 
 import type { AvatarManifest, PhotoSidecar } from "../../library/schemas";
 import { NODE_COMMIT_FS, type CommitFs } from "../commitFs";
 import { commitVideo, type CommitInput } from "../commit";
-import { partNameOf, videoPaths, type VideoRecord } from "../record";
+import { parseRecordSpec, partNameOf, videoPaths, type VideoRecord } from "../record";
 import type { VerifiedFile } from "../../verify";
 import type { z } from "zod";
 
@@ -141,7 +141,7 @@ export function sampleRecord(world: World, options: SampleRecordOptions = {}): V
       sha256: sha256Of(bytes),
       ...(options.mtimeMs === undefined ? {} : { mtimeMs: options.mtimeMs }),
     },
-    spec: specOf(world.avatar.id, photoIds),
+    spec: parseRecordSpec(specOf(world.avatar.id, photoIds)),
   };
 }
 
@@ -205,7 +205,8 @@ export function faultyFs(base: CommitFs = NODE_COMMIT_FS): FaultyFs {
     fsyncDir: async (p) => (enter("fsyncDir", [p]), (patch.fsyncDir ?? base.fsyncDir)(p)),
     rename: async (a, b) => (enter("rename", [a, b]), (patch.rename ?? base.rename)(a, b)),
     unlink: async (p) => (enter("unlink", [p]), (patch.unlink ?? base.unlink)(p)),
-    copyOver: async (a, b, expected) => (enter("copyOver", [a, b]), (patch.copyOver ?? base.copyOver)(a, b, expected)),
+    link: async (a, b) => (enter("link", [a, b]), (patch.link ?? base.link)(a, b)),
+    readdir: async (p) => (enter("readdir", [p]), (patch.readdir ?? base.readdir)(p)),
   };
 }
 

@@ -6,9 +6,10 @@
 export { commitVideo, VerifyRefusedError, type CommitDeps, type CommitInput, type CommittedVideo, type CommitStep, type CommitTarget } from "./commit";
 export { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 export { deleteVideo, VideoNotFoundError, VideoRecordUnreadableError, type DeleteOutcome, type DeleteVideoDeps } from "./delete";
-export { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
+export { createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 export { DEFAULT_HASH_BUDGET_BYTES, FileStateChecker, newHashBudget, recordFilePath, type HashBudget, type Verification } from "./fileState";
 export { buildForbiddenStrings, collectForbiddenStrings, ENGINE_SIGNATURE_STRINGS, FORBIDDEN_STRING_MIN_LENGTH, photoMetadataStrings } from "./forbiddenStrings";
+export { CommitTracker, type LiveCommits } from "./live";
 export { indexCommittedRecord, type IndexOutcome, type IndexPort } from "./indexRecord";
 export { partNameOf, PENDING_DIR, scenePhotoIds, videoPaths, VideoFileRef, VideoRecordSchema, type VideoPaths, type VideoRecord } from "./record";
 export { recoverVideos, type DropReason, type ExportRootRef, type RecoverDeps, type RecoverInput, type RecoveryReport } from "./recovery";

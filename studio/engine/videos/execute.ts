@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import type { z } from "zod";
 import type { RenderResult } from "../../shared/engine";
 import type { MontageShape } from "../../shared/engine/montage";
@@ -13,6 +12,7 @@ import { commitVideo, type CommitStep } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import { collectForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
+import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
 
 // The `execute` a render job hands to `RenderQueue` (Stage 3 plan, 3a.8b): the
@@ -29,39 +29,6 @@ import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
 /** The frame count of a timeline: what the queue submission's `totalFrames` and the verifier's expectation both come from, so they cannot disagree. */
 export function totalFramesOf(clips: readonly { readonly durationMs: number }[]): number {
   return totalFrames(clips);
-}
-
-/**
- * The renders running now, as absolute paths in `path.resolve` form: the recovery
- * that runs when a library opens must not take a live job's temp or its claimed
- * placeholder for a crash's leftovers.
- */
-export class CommitTracker {
-  readonly #temps = new Set<string>();
-  readonly #placeholders = new Set<string>();
-
-  tempPaths(): ReadonlySet<string> {
-    return new Set(this.#temps);
-  }
-
-  placeholderPaths(): ReadonlySet<string> {
-    return new Set(this.#placeholders);
-  }
-
-  addTemp(path: string): void {
-    this.#temps.add(resolve(path));
-  }
-
-  addPlaceholder(path: string): void {
-    this.#placeholders.add(resolve(path));
-  }
-
-  release(...paths: string[]): void {
-    for (const path of paths) {
-      this.#temps.delete(resolve(path));
-      this.#placeholders.delete(resolve(path));
-    }
-  }
 }
 
 /** Everything one render needs, resolved by `videos.render` (3b.2) in its one synchronous step. */
@@ -105,6 +72,8 @@ export interface VideoRenderDeps {
   readonly claimStartAt?: number;
 }
 
+export { CommitTracker } from "./live";
+
 export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) => (context: RenderContext) => Promise<RenderResult> {
   if (deps.renderTmpDir === "") throw new TypeError("createRenderExecute: renderTmpDir is required (no os.tmpdir fallback).");
   const fs = deps.fs ?? NODE_COMMIT_FS;
@@ -122,7 +91,11 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       throw error;
     }
 
+    // A folder this job just created is an entry in the root: make it durable before anything goes into it.
+    await fs.fsyncDir(root).catch((error: unknown) => log(`render ${plan.jobId}: the export folder could not be flushed (${error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error"})`));
+
     const temp = folder.fileIn(partNameOf(plan.jobId));
+    deps.tracker.addJob(plan.jobId, plan.videoId);
     deps.tracker.addTemp(temp);
     let placeholder: string | null = null;
     try {
@@ -187,6 +160,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       return committed.result;
     } finally {
       deps.tracker.release(temp, ...(placeholder === null ? [] : [placeholder]));
+      deps.tracker.releaseJob(plan.jobId);
     }
   };
 }

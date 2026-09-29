@@ -98,14 +98,14 @@ describe("commitIntent", () => {
     expect(await readdir(paths.pendingDir)).toEqual([]);
   });
 
-  test("flushes videos/ after the rename, so the record's entry is durable, and .pending/ so the intent's removal is", async () => {
+  test("links the record (the commit point), removes the intent, then flushes videos/ (the record's entry) and .pending/ (the intent's removal)", async () => {
     const w = world();
     const record = sampleRecord(w);
     await writeIntent(faultyFs(), w.libraryRoot, record);
     const fs = faultyFs();
     await commitIntent(fs, w.libraryRoot, w.avatar.id, record.id);
     const paths = videoPaths(w.libraryRoot, w.avatar.id);
-    expect(fs.calls.filter((c) => !c.startsWith("lstat"))).toEqual([`rename ${paths.intent(record.id)} -> ${paths.record(record.id)}`, `fsyncDir ${paths.videosDir}`, `fsyncDir ${paths.pendingDir}`]);
+    expect(fs.calls).toEqual([`link ${paths.intent(record.id)} -> ${paths.record(record.id)}`, `unlink ${paths.intent(record.id)}`, `fsyncDir ${paths.videosDir}`, `fsyncDir ${paths.pendingDir}`]);
   });
 
   test("never replaces a record that is already there: it is write-once, and the intent stays for recovery to judge", async () => {

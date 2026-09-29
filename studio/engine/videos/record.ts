@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { z } from "zod";
 import { Id, RelativePath, VideoKindToken } from "../../shared/engine";
-import { MontageShape, type Clip } from "../../shared/engine/montage";
 import { AVATARS_DIR, VIDEOS_DIR, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
+import { RecordSpecShape } from "../library/videoRecords";
 
 // The video record and its commit intent (Stage 3 plan, "Outputs and export"
 // and "Commit"). A record is `avatars/<avatarId>/videos/<videoId>.json`,
@@ -57,18 +57,33 @@ export const VideoRecordSchema = z.looseObject({
   montageId: Id.nullable(),
   music: RecordMusic.nullable(),
   file: VideoFileRef,
-  spec: MontageShape,
+  spec: RecordSpecShape,
 });
 export type VideoRecord = z.infer<typeof VideoRecordSchema>;
 
+/** A clip as far as "used" goes, structurally, so the contract's `Clip` and a record's loose clip both fit. */
+interface ClipLike {
+  readonly kind: string;
+  readonly cell?: CellLike;
+  readonly cells?: readonly CellLike[];
+}
+interface CellLike {
+  readonly photo: { readonly source: string; readonly photoId?: string } | null;
+}
+
 /** The scene photos a spec's clips show, each once, in order of appearance: what "used" counts. Own uploads never count. */
-export function scenePhotoIds(clips: readonly Clip[]): string[] {
+export function scenePhotoIds(clips: readonly ClipLike[]): string[] {
   const seen = new Set<string>();
   for (const clip of clips) {
-    const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
-    for (const cell of cells) if (cell.photo?.source === "scene") seen.add(cell.photo.photoId);
+    const cells = clip.kind === "photo" && clip.cell !== undefined ? [clip.cell] : clip.kind === "collage" ? (clip.cells ?? []) : [];
+    for (const cell of cells) if (cell.photo?.source === "scene" && cell.photo.photoId !== undefined) seen.add(cell.photo.photoId);
   }
   return [...seen];
+}
+
+/** A resolved spec as a record keeps it: validated loosely (a spec with an empty cell is a caller's bug and throws), and nothing in it dropped. */
+export function parseRecordSpec(spec: unknown): VideoRecord["spec"] {
+  return RecordSpecShape.parse(spec);
 }
 
 // ---------- where things live in a library ----------

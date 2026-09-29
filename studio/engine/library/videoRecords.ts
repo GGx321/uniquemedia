@@ -35,12 +35,19 @@ const ClipUse = z.discriminatedUnion("kind", [
   z.looseObject({ kind: z.literal("video") }),
 ]);
 
+/**
+ * The part of a record's `spec` that "used" depends on: the clips, by `kind`. Loose at every level, so a
+ * later build's extra field is kept and never makes a record (or a commit intent, which reuses this shape)
+ * unreadable. The writer (`videos/record.ts`) parses the resolved spec with it.
+ */
+export const RecordSpecShape = z.looseObject({ clips: z.array(ClipUse).min(1) });
+
 /** What the reader needs of a record; a record with no clip at all is not a rendered video. */
 const VideoRecordShape = z.looseObject({
   schemaVersion: z.literal(VIDEO_RECORD_SCHEMA_VERSION),
   id: LibraryIdSchema,
   avatarId: LibraryIdSchema,
-  spec: z.looseObject({ clips: z.array(ClipUse).min(1) }),
+  spec: RecordSpecShape,
 });
 
 /** One record, reduced to what the index needs. */

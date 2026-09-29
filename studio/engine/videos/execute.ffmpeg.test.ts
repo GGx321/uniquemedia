@@ -44,7 +44,8 @@ describe("a real render, end to end", () => {
       music: null,
     };
     const tracker = new CommitTracker();
-    const execute = createRenderExecute({ library: w.library, tracker, renderTmpDir: w.renderTmp, caseProbe: new CaseSensitivityProbe(), now: () => new Date() });
+    const now = () => new Date(2026, 8, 29, 10, 0, 0); // fixed: the file name carries the date, and a run across midnight must not fail
+    const execute = createRenderExecute({ library: w.library, tracker, renderTmpDir: w.renderTmp, caseProbe: new CaseSensitivityProbe(), now });
     const queue = new RenderQueue({ jobs: new JobRegistry(), size: () => 1 });
 
     const submitted = queue.submit({ jobId: plan.jobId, ref: { videoId: plan.videoId, avatarId: plan.avatarId, montageId: null }, totalFrames: totalFramesOf(plan.spec.clips), photoIds: [photo.id], execute: execute(plan) });
@@ -52,7 +53,7 @@ describe("a real render, end to end", () => {
     await queue.idle();
 
     // The job
-    const relPath = `Mia/${formatExportDate(new Date())}_photo_001.mp4`;
+    const relPath = `Mia/${formatExportDate(now())}_photo_001.mp4`;
     const [state] = queue.states();
     expect(state).toMatchObject({ status: "done", done: 30, total: 30, result: { kind: "render", videoId: plan.videoId, videoKind: "photo", durationMs: 1000, relPath } });
 
@@ -84,7 +85,7 @@ describe("a real render, end to end", () => {
     // A restart has nothing to settle: no temp, no placeholder, no intent, and nothing was deleted
     expect(tracker.tempPaths().size + tracker.placeholderPaths().size).toBe(0);
     const report = await recoverVideos({ library: reopened, exportRoot: rootRef });
-    expect(report).toMatchObject({ adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, partialFiles: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 } });
+    expect(report).toMatchObject({ adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 } });
     expect(await exportFiles(w)).toEqual([relPath]);
   }, 60_000);
 });

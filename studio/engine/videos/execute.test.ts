@@ -121,18 +121,18 @@ describe("a render job through the queue: runner, then commit", () => {
 
   test("writes the runner's temp beside the final file under .studio-part-<jobId>.mp4, and registers it as live while the job runs", async () => {
     const w = world();
-    const during: string[][] = [];
+    const during: boolean[] = [];
     const r = rig({
       runDeps: {
         run: async (opts) => {
-          if (opts.output.endsWith(partNameOf("job-00000001"))) during.push([...r.tracker.tempPaths()]);
+          if (opts.output.endsWith(partNameOf("job-00000001"))) during.push(r.tracker.hasTemp(join(w.exportRoot, "Mia", partNameOf("job-00000001"))));
           await writingRun(opts);
         },
       },
     });
     r.submit();
     await r.queue.idle();
-    expect(during).toEqual([[join(w.exportRoot, "Mia", partNameOf("job-00000001"))]]);
+    expect(during).toEqual([true]);
   });
 
   test("registers the claimed placeholder as live, and forgets both paths when the job is over", async () => {
@@ -140,7 +140,8 @@ describe("a render job through the queue: runner, then commit", () => {
       hooks: {
         reached: (step) => {
           if (step === "name-claimed") {
-            expect([...r.tracker.placeholderPaths()]).toEqual([join(r.w.exportRoot, FINAL)]);
+            expect(r.tracker.hasPlaceholder(join(r.w.exportRoot, FINAL))).toBe(true);
+            expect(r.tracker.placeholderPaths().size).toBe(1);
             expect(r.tracker.tempPaths().size).toBe(1);
           }
         },

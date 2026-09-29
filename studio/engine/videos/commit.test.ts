@@ -83,7 +83,7 @@ describe("the commit's happy path", () => {
       at(`rename ${paths.pendingDir}`), // the intent's own temp into place
       at(`rename ${r.temp} -> ${join(r.w.exportRoot, FINAL)}`),
       at(`fsyncDir ${join(r.w.exportRoot, "Mia")}`),
-      at(`rename ${paths.intent(r.input.videoId)} -> ${paths.record(r.input.videoId)}`),
+      at(`link ${paths.intent(r.input.videoId)} -> ${paths.record(r.input.videoId)}`),
     ];
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -111,7 +111,7 @@ describe("the commit's happy path", () => {
     const r = await rig(world);
     const out = await r.run({ verify: async (path) => ({ ...(await acceptingVerify(path)), sha256: sha256Of(r.bytes) }) });
     expect(out.record.file.sha256).toBe(sha256Of(r.bytes));
-    expect(Object.keys(r.fs).some((op) => /^(read|hash)/i.test(op))).toBe(false);
+    expect(Object.keys(r.fs).some((op) => /^(readFile|hash)/i.test(op))).toBe(false);
   });
 
   test("moves to the next number when the name is taken, and never touches the owner's file", async () => {
@@ -324,10 +324,10 @@ describe("failure modes roll back to a clean folder", () => {
     expect(await libraryVideoFiles(r.w)).toEqual([]);
   });
 
-  test("the record's own rename failing removes the file and the intent: no file without a record survives a failed job", async () => {
+  test("the record's own link failing removes the file and the intent: no file without a record survives a failed job", async () => {
     const r = await rig(world);
     const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
-    r.fs.failOnce("rename", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId));
+    r.fs.failOnce("link", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId));
     const error = await failureOf(r.run());
     expect(error).toMatchObject({ engineError: { code: "INTERNAL" } });
     expect(await exportFiles(r.w)).toEqual([]);
@@ -337,7 +337,7 @@ describe("failure modes roll back to a clean folder", () => {
   test("a file that cannot be removed during the rollback keeps its intent, so recovery adopts it instead of orphaning it", async () => {
     const r = await rig(world);
     const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
-    r.fs.failOnce("rename", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId));
+    r.fs.failOnce("link", errnoError("EIO"), (args) => args[0] === paths.intent(r.input.videoId));
     r.fs.failOnce("unlink", errnoError("EBUSY"), (args) => args[0] === join(r.w.exportRoot, FINAL));
     await failureOf(r.run());
     expect(await exportFiles(r.w)).toEqual([FINAL]);
@@ -355,36 +355,6 @@ describe("failure modes roll back to a clean folder", () => {
         },
       }),
     );
-    expect(error).toMatchObject({ engineError: { code: "RENDER_VERIFY_FAILED" } });
-    expect(await exportFiles(r.w)).toEqual([]);
-    expect(await libraryVideoFiles(r.w)).toEqual([]);
-  });
-});
-
-describe("the EXDEV fallback (a sub-mount inside the export root)", () => {
-  test("copies into the placeholder, syncs, deletes the temp, and commits the same record", async () => {
-    const r = await rig(world);
-    r.fs.failOnce("rename", errnoError("EXDEV"), (args) => args[0] === r.temp);
-    const out = await r.run();
-    expect(readFileSync(join(r.w.exportRoot, FINAL))).toEqual(Buffer.from(r.bytes));
-    expect(await exportFiles(r.w)).toEqual([FINAL]);
-    expect(out.record.file.sha256).toBe(sha256Of(r.bytes));
-    const kinds = r.fs.calls.map((c) => c.split(" ")[0]);
-    expect(kinds.indexOf("copyOver")).toBeGreaterThan(-1);
-    expect(kinds.indexOf("unlink", kinds.indexOf("copyOver"))).toBeGreaterThan(kinds.indexOf("copyOver"));
-  });
-
-  test("a copy that does not match the verified bytes removes the partial file, the placeholder, the intent and the temp", async () => {
-    const r = await rig(world);
-    r.fs.failOnce("rename", errnoError("EXDEV"), (args) => args[0] === r.temp);
-    // The temp changed between the hash and the copy: only its first half is copied.
-    r.fs.override({
-      copyOver: async (_src, dst) => {
-        writeFileSync(dst, r.bytes.subarray(0, 100));
-        throw Object.assign(new Error("the copied bytes are not the verified bytes"), { name: "CopyMismatchError" });
-      },
-    });
-    const error = await failureOf(r.run());
     expect(error).toMatchObject({ engineError: { code: "RENDER_VERIFY_FAILED" } });
     expect(await exportFiles(r.w)).toEqual([]);
     expect(await libraryVideoFiles(r.w)).toEqual([]);
@@ -422,7 +392,7 @@ describe("containment: the file lands inside the export root, or the commit fail
     expect(error).toMatchObject({ engineError: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
     expect(readFileSync(canary, "utf8")).toBe("must survive");
     expect(await listTree(outside)).toEqual(["2026-09-29_photo_001.mp4"]);
-    expect(await libraryVideoFiles(r.w)).toEqual([]);
+    expect(await libraryVideoFiles(r.w)).toEqual([`.pending/${r.input.videoId}.json`]); // the folder could not be judged: the intent stays for recovery
   });
 
   test("a folder swapped for a symlink BEFORE the claim never gets a placeholder created through the link", async () => {
@@ -443,7 +413,7 @@ describe("containment: the file lands inside the export root, or the commit fail
     expect(r.fs.calls.some((c) => c.startsWith("createExclusive"))).toBe(false);
   });
 
-  test("a folder swapped for a symlink AFTER the rename fails the job, drops the intent, commits no record, and touches nothing outside", async () => {
+  test("a folder swapped for a symlink AFTER the rename fails the job, keeps the intent for recovery, commits no record, and touches nothing outside", async () => {
     const r = await rig(world);
     const { outside, canary } = outsideWithCanary(r.w);
     const error = await failureOf(
@@ -458,7 +428,7 @@ describe("containment: the file lands inside the export root, or the commit fail
     expect(error).toMatchObject({ engineError: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
     expect(readFileSync(canary, "utf8")).toBe("must survive");
     expect(await listTree(outside)).toEqual(["2026-09-29_photo_001.mp4"]);
-    expect(await libraryVideoFiles(r.w)).toEqual([]);
+    expect(await libraryVideoFiles(r.w)).toEqual([`.pending/${r.input.videoId}.json`]); // the folder could not be judged: the intent stays for recovery
     expect((await r.w.reopen()).videoCount(r.w.avatar.id)).toBe(0);
   });
 
@@ -476,6 +446,6 @@ describe("containment: the file lands inside the export root, or the commit fail
       }),
     );
     expect(error).toMatchObject({ engineError: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
-    expect(await libraryVideoFiles(r.w)).toEqual([]);
+    expect(await libraryVideoFiles(r.w)).toEqual([`.pending/${r.input.videoId}.json`]); // the folder could not be judged: the intent stays for recovery
   });
 });

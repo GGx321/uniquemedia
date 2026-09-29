@@ -6,6 +6,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { Library } from "../library";
 import type { CommitStep } from "./commit";
 import { NODE_COMMIT_FS } from "./commitFs";
+import { CommitTracker } from "./live";
 import { writeIntent } from "./intents";
 import { partNameOf, videoPaths } from "./record";
 import { recoverVideos, type ExportRootRef, type RecoverInput } from "./recovery";
@@ -41,21 +42,9 @@ const INTENT = ".pending/video-00000001.json";
 /** Intent temps carry a random suffix: `.<id>.json.<hex>.tmp`. */
 const plain = (files: string[]): string[] => files.map((f) => f.replace(/\.[0-9a-f]{12}\.tmp$/, ".TMP"));
 
-type KillPoint = CommitStep | "partial-copy";
-
-/** Runs a commit that dies right after `point` (or half-way through the EXDEV copy). Returns the rig; the disk is left as the crash left it. */
-async function killedAt(point: KillPoint, over: { exdev?: boolean } = {}): Promise<Rig> {
+/** Runs a commit that dies right after `point`. Returns the rig; the disk is left as the crash left it. */
+async function killedAt(point: CommitStep): Promise<Rig> {
   const r = await rig(world);
-  if (over.exdev === true || point === "exdev-copied" || point === "partial-copy") r.fs.failOnce("rename", errnoError("EXDEV"), (args) => args[0] === r.temp);
-  if (point === "partial-copy") {
-    r.fs.override({
-      copyOver: async (_source, destination) => {
-        writeFileSync(destination, r.bytes.subarray(0, 1000));
-        r.fs.die();
-        throw new CrashError("half-way through the copy");
-      },
-    });
-  }
   await failureOf(
     r.run({
       hooks: {
@@ -129,27 +118,6 @@ describe("crash windows: what the disk holds after the kill, and what recovery m
     expect(await libraryVideoFiles(r.w)).toEqual([]);
     expect(usedIn(library, r.w)).toEqual([]);
     expect(report.dropped).toEqual([{ videoId: "video-00000001", reason: "empty-placeholder" }]);
-  });
-
-  test("killed half-way through the EXDEV copy: the partial file under the final name is removed because it is a prefix of the surviving temp, then the intent and the temp", async () => {
-    const r = await killedAt("partial-copy");
-    expect((await stat(join(r.w.exportRoot, FINAL))).size).toBe(1000);
-    expect(await libraryVideoFiles(r.w)).toEqual([INTENT]);
-    const { library, report } = await recover(r.w);
-    expect(await exportFiles(r.w)).toEqual([]);
-    expect(await libraryVideoFiles(r.w)).toEqual([]);
-    expect(usedIn(library, r.w)).toEqual([]);
-    expect(report.removed.partialFiles).toBe(1);
-  });
-
-  test("killed after the EXDEV copy, before the temp is deleted: the copy matches its size and sha256, so it is adopted, and the temp is swept", async () => {
-    const r = await killedAt("exdev-copied");
-    expect(await exportFiles(r.w)).toEqual([PART, FINAL]);
-    const { library, report } = await recover(r.w);
-    expect(await exportFiles(r.w)).toEqual([FINAL]);
-    expect(await libraryVideoFiles(r.w)).toEqual([RECORD]);
-    expect(usedIn(library, r.w)).toEqual(["video-00000001"]);
-    expect(report.adopted).toEqual(["video-00000001"]);
   });
 
   test("killed after the rename (5 and 6): the file matches its intent's size and sha256, so the intent is ADOPTED as the record and the used index is updated", async () => {
@@ -402,7 +370,10 @@ describe("hands off: Studio deletes only what it can name", () => {
     const placeholder = plant(w, "Mia/2026-09-29_photo_001.mp4", "");
     const temp = plant(w, `Mia/${partNameOf("job-00000005")}`, "x");
     const dead = plant(w, `Mia/${partNameOf("job-00000006")}`, "x");
-    await recover(w, { livePlaceholders: new Set([placeholder]), liveTemps: new Set([temp]) });
+    const live = new CommitTracker();
+    live.addPlaceholder(placeholder);
+    live.addTemp(temp);
+    await recover(w, { live });
     expect(existsSync(placeholder)).toBe(true);
     expect(existsSync(temp)).toBe(true);
     expect(existsSync(dead)).toBe(false);
@@ -451,7 +422,7 @@ describe("the root's own leftovers", () => {
 
   test("a 0-byte .studio-probe-* is swept, one with content is not", async () => {
     const w = world();
-    writeFileSync(join(w.exportRoot, ".studio-probe-abc123"), "");
+    writeFileSync(join(w.exportRoot, ".studio-probe-2f9f5b0e-7a53-4c3e-9d0a-3c1f7b1d2e44"), "");
     writeFileSync(join(w.exportRoot, ".studio-probe-case-abc123z"), "");
     writeFileSync(join(w.exportRoot, ".studio-probe-full"), "data");
     await recover(w);

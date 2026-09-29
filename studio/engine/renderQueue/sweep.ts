@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { isSafeName } from "../../shared/engine";
 
 // The leftovers of renders that a crash, a kill or a cancel could not clean:
 // job folders in `userData/render-tmp` and `.studio-part-*` temps in the
@@ -90,12 +91,17 @@ export async function sweepRenderTmp(dir: string, deps: SweepDeps = {}): Promise
   return result;
 }
 
-/** The temp a render writes on the export volume: `.studio-part-<jobId>.mp4`. */
-const PART_NAME = /^\.studio-part-[A-Za-z0-9_-]+\.mp4$/;
+/**
+ * The temp a render writes on the export volume: `.studio-part-<jobId>.mp4`, with the contract's `Id`
+ * (`[a-z0-9-]{8,64}`) as the job id. A name that only looks like it (`.studio-part-notes.mp4`) is the owner's.
+ */
+const PART_NAME = /^\.studio-part-[a-z0-9-]{8,64}\.mp4$/;
 
 export interface SweepPartsDeps extends SweepDeps {
   /** Absolute paths of temps that belong to renders still running: kept. */
   readonly except?: ReadonlySet<string>;
+  /** Whether a temp belongs to a render still running (compared however the caller compares places): kept. */
+  readonly keep?: (path: string) => boolean;
   /** Whether `path` is a real folder (not a symlink), asked right before going into it; `lstat` unless a test swaps the folder. */
   readonly isRealDirectory?: (path: string) => Promise<boolean>;
 }
@@ -110,8 +116,10 @@ async function lstatIsRealDirectory(path: string): Promise<boolean> {
 }
 
 /**
- * Removes the `.studio-part-*.mp4` temps of the export folder: in the root and
- * in each folder directly under it (`<root>/<SafeName>/`, where renders write).
+ * Removes the `.studio-part-<id>.mp4` temps of the export folder, ONLY inside the
+ * folders directly under it whose name is a `SafeName` (`<root>/<SafeName>/`, where
+ * renders write; pass 2 never writes in the root itself, so a file of that name in
+ * the root, or in a folder of the owner's own naming, is the owner's).
  * Only a regular file with that exact name shape goes: never a folder, never a
  * symlink, never a folder that is a symlink, never anything deeper. A root
  * that is gone (an unplugged drive) is nothing to do.
@@ -120,17 +128,18 @@ export async function sweepPartFiles(exportRoot: string, deps: SweepPartsDeps = 
   const remove = deps.remove ?? ((path: string) => rm(path, { force: true }));
   const sleep = deps.sleep ?? defaultSleep;
   const except = deps.except ?? new Set<string>();
+  const keep = deps.keep ?? (() => false);
   const result: SweepResult = { removed: [], skipped: [] };
 
-  /** Sweeps one folder; the names of the real folders in it (a symlink to one is not a folder here). */
-  const sweepFolder = async (folder: string): Promise<string[]> => {
+  /** Sweeps one folder (`removeTemps` false only lists it); the names of the real folders in it (a symlink to one is not a folder here). */
+  const sweepFolder = async (folder: string, removeTemps: boolean): Promise<string[]> => {
     const entries = await listOrNothing(folder, result);
     const folders: string[] = [];
     for (const entry of entries ?? []) {
       if (entry.isDirectory()) folders.push(entry.name);
-      if (!entry.isFile() || !PART_NAME.test(entry.name)) continue;
+      if (!removeTemps || !entry.isFile() || !PART_NAME.test(entry.name)) continue;
       const path = join(folder, entry.name);
-      if (except.has(path)) continue;
+      if (except.has(path) || keep(path)) continue;
       const failure = await removeTolerant(path, remove, sleep);
       if (failure === null) result.removed.push(path);
       else result.skipped.push({ path, code: failure });
@@ -138,12 +147,13 @@ export async function sweepPartFiles(exportRoot: string, deps: SweepPartsDeps = 
     return folders;
   };
 
-  const subfolders = await sweepFolder(exportRoot);
+  const subfolders = await sweepFolder(exportRoot, false);
   const isRealDirectory = deps.isRealDirectory ?? lstatIsRealDirectory;
   for (const name of subfolders) {
+    if (!isSafeName(name)) continue;
     const folder = join(exportRoot, name);
     // The listing is a moment old: check again that it is still a real folder, not a symlink put in its place.
-    if (await isRealDirectory(folder)) await sweepFolder(folder);
+    if (await isRealDirectory(folder)) await sweepFolder(folder, true);
   }
   return result;
 }

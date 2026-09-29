@@ -55,22 +55,42 @@ export async function writeIntent(fs: CommitFs, libraryRoot: string, record: Vid
   await fs.fsyncDir(paths.pendingDir);
 }
 
+export interface CommitIntentOptions {
+  /** Codes only. */
+  readonly log?: (line: string) => void;
+  /** Runs right after the record exists and before the intent is removed: a crash there leaves both. Test seam. */
+  readonly afterLink?: () => void | Promise<void>;
+}
+
+function codeOf(error: unknown): string {
+  return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error";
+}
+
 /**
- * Commits the record: renames the intent to `videos/<videoId>.json`, then flushes
- * `videos/` (the record's entry) and `.pending/` (the intent's removal). The
- * record is write-once: one that already exists is never replaced (EEXIST) and
- * the intent stays for recovery to judge. A missing intent rejects with ENOENT.
+ * Commits the record. THE COMMIT POINT IS `link(intent, record)`: it makes the record's name appear
+ * atomically and refuses (EEXIST) to replace one, so the record is write-once even against a race.
+ * A missing intent rejects with ENOENT. From the moment the link exists the video is committed, and
+ * nothing after it may undo that, so nothing after it throws:
+ * - the intent's own name is removed (a failure leaves intent and record side by side, which recovery
+ *   settles by dropping the intent);
+ * - `videos/` is flushed, once more if the first flush fails, and a flush that keeps failing is logged;
+ * - `.pending/` is flushed, and a failure is logged.
+ * The caller that must not roll back after this point is `commitVideo`.
  */
-export async function commitIntent(fs: CommitFs, libraryRoot: string, avatarId: string, videoId: string): Promise<void> {
+export async function commitIntent(fs: CommitFs, libraryRoot: string, avatarId: string, videoId: string, options: CommitIntentOptions = {}): Promise<void> {
   const paths = videoPaths(libraryRoot, avatarId);
-  const record = paths.record(videoId);
-  try {
-    await fs.lstat(record);
-    throw Object.assign(new Error("the video record already exists"), { code: "EEXIST" });
-  } catch (error) {
-    if (!hasErrorCode(error, "ENOENT")) throw error;
+  const log = options.log ?? (() => undefined);
+  await fs.link(paths.intent(videoId), paths.record(videoId));
+  await options.afterLink?.();
+  await fs.unlink(paths.intent(videoId)).catch((error: unknown) => log(`video ${videoId}: the intent could not be removed after its record was linked (${codeOf(error)})`));
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await fs.fsyncDir(paths.videosDir);
+      break;
+    } catch (error) {
+      log(`video ${videoId}: videos/ could not be flushed (${codeOf(error)}, attempt ${attempt})`);
+      if (attempt >= 2) break;
+    }
   }
-  await fs.rename(paths.intent(videoId), record);
-  await fs.fsyncDir(paths.videosDir);
-  await fs.fsyncDir(paths.pendingDir);
+  await fs.fsyncDir(paths.pendingDir).catch((error: unknown) => log(`video ${videoId}: .pending/ could not be flushed (${codeOf(error)})`));
 }

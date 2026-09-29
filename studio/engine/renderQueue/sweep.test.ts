@@ -182,7 +182,7 @@ describe("sweeps and symlinks (review round 1)", () => {
 describe("sweepPartFiles", () => {
   const PART = ".studio-part-job-00000001.mp4";
 
-  test("removes the .studio-part temps in the export root and in each folder of it, and nothing else", async () => {
+  test("removes the .studio-part temps inside <SafeName>/ folders, and nothing else: the root itself is not where renders write", async () => {
     const root = tempDir();
     mkdirSync(join(root, "Mia"));
     mkdirSync(join(root, "Mia", "deep"));
@@ -196,7 +196,8 @@ describe("sweepPartFiles", () => {
 
     const result = await sweepPartFiles(root);
 
-    expect(result.removed.sort()).toEqual([join(root, PART), join(root, "Mia", PART)].sort());
+    expect(result.removed).toEqual([join(root, "Mia", PART)]);
+    expect(existsSync(join(root, PART))).toBe(true);
     expect(readdirSync(join(root, "Mia")).sort()).toEqual([".studio-export.json", "2026-09-29_photo_001.mp4", "deep", "notes.studio-part-1.mp4"]);
     expect(existsSync(join(root, "Mia", "deep", PART))).toBe(true);
     expect(existsSync(join(root, ".studio-export.json"))).toBe(true);
@@ -247,7 +248,8 @@ describe("sweepPartFiles", () => {
   test("skips a locked temp, reports it, and still removes the others", async () => {
     const root = tempDir();
     mkdirSync(join(root, "Mia"));
-    const stuck = join(root, PART);
+    mkdirSync(join(root, "Ivy"));
+    const stuck = join(root, "Ivy", PART);
     const other = join(root, "Mia", PART);
     writeFileSync(stuck, "x");
     writeFileSync(other, "x");
