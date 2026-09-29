@@ -741,9 +741,8 @@ export class Library {
 
   /** Task 3a.8b's delete: the record is gone from disk, so its photos are freed. An unknown record changes nothing. */
   removeVideoRecordFromIndex(avatarId: string, videoId: string): void {
-    const records = this.#videosByAvatar.get(avatarId);
-    if (records === undefined || !records.some((r) => r.videoId === videoId)) return;
-    this.#videosByAvatar.set(avatarId, records.filter((r) => r.videoId !== videoId));
+    // The generation moves even when the index never knew the record: a reload that already read it must not bring it back.
+    this.#videosByAvatar.set(avatarId, (this.#videosByAvatar.get(avatarId) ?? []).filter((r) => r.videoId !== videoId));
     this.#videoGeneration.set(avatarId, (this.#videoGeneration.get(avatarId) ?? 0) + 1);
   }
 

@@ -17,9 +17,15 @@ import { LibraryIdSchema } from "./schemas";
 // shape their `kind` promises would read as "uses no photo" and free photos a
 // video really shows, so it is refused as a whole instead.
 
-/** A cell as far as "used" is concerned: a scene photo names its id, an own upload names nothing that counts. */
+/**
+ * A cell as far as "used" is concerned: a scene photo names its id, an own
+ * upload names nothing that counts. There is no empty cell: a record holds the
+ * RESOLVED spec, which passed spec validation (`cell-empty` is a spec rule), so
+ * a null photo can only come from a faulty writer or a hand edit, and would free
+ * a photo the video shows.
+ */
 const CellUse = z.looseObject({
-  photo: z.union([z.null(), z.looseObject({ source: z.literal("scene"), photoId: LibraryIdSchema }), z.looseObject({ source: z.literal("own") })]),
+  photo: z.union([z.looseObject({ source: z.literal("scene"), photoId: LibraryIdSchema }), z.looseObject({ source: z.literal("own") })]),
 });
 
 /** A clip by its `kind`: a photo clip has one cell, a collage 2 to 4, an own video none. An unknown kind fails. */
@@ -106,7 +112,9 @@ export async function readVideoRecords(avatarDir: string, avatarId: string, opti
       text = await readFile(path, "utf8");
     } catch (error) {
       if (hasErrorCode(error, "ENOENT")) continue;
-      throw error;
+      // Anything else (EACCES, EISDIR, a network volume's error) is this file's problem, never the library's: it must still open.
+      read.problems.push({ file, reason: "unreadable", detail: "could not be read" });
+      continue;
     }
     let value: unknown;
     try {
@@ -137,7 +145,7 @@ export async function readVideoRecords(avatarDir: string, avatarId: string, opti
     const photoIds = new Set<string>();
     for (const clip of record.spec.clips) {
       const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
-      for (const cell of cells) if (cell.photo?.source === "scene") photoIds.add(cell.photo.photoId);
+      for (const cell of cells) if (cell.photo.source === "scene") photoIds.add(cell.photo.photoId);
     }
     read.records.push({ videoId: record.id, photoIds: [...photoIds] });
   }

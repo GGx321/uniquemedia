@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openLibrary, type LibraryDeps } from "./library";
 import type { PhotoQa, PhotoSidecar } from "./schemas";
@@ -45,6 +45,8 @@ describe("a record whose clips do not have the shape their kind promises", () =>
     ["no clips at all", []],
     ["a collage with no cells", [{ kind: "collage", cells: [] }]],
     ["a collage with one cell", [{ kind: "collage", cells: [CELL(P)] }]],
+    ["a photo clip with an empty cell: a record holds the resolved spec, which has none", [{ kind: "photo", cell: { photo: null, focus: null } }]],
+    ["a collage with an empty cell", [{ kind: "collage", cells: [CELL(P), { photo: null, focus: null }] }]],
     ["a collage with five cells", [{ kind: "collage", cells: [1, 2, 3, 4, 5].map(() => CELL(P)) }]],
   ];
 
@@ -56,10 +58,10 @@ describe("a record whose clips do not have the shape their kind promises", () =>
     expect(() => reopened.eligibleUnusedPhotos(avatar.id)).toThrow(expect.objectContaining({ code: "log-needs-repair" }));
   });
 
-  test("an own video clip needs no cell, and a photo clip with an empty cell is fine", async () => {
+  test("an own video clip needs no cell", async () => {
     const { library, avatar } = await savedAvatar();
     const photo = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
-    const clips = [{ kind: "video", mediaId: "media-00000001" }, { kind: "photo", cell: { photo: null, focus: null } }, { kind: "photo", cell: CELL(photo.id) }];
+    const clips = [{ kind: "video", mediaId: "media-00000001" }, { kind: "photo", cell: { photo: { source: "own", mediaId: "media-00000002" }, focus: null } }, { kind: "photo", cell: CELL(photo.id) }];
     await writeRaw(avatar.id, "video-00000001.json", { schemaVersion: 1, id: "video-00000001", avatarId: avatar.id, spec: { clips } });
     const { library: reopened, report } = await openLibrary(root(), deps());
     expect(report.logIssues).toEqual([]);
@@ -295,5 +297,47 @@ describe("one per-photo check", () => {
     await appendFile(join(root(), "avatars", avatar.id, "rejected.jsonl"), "not json\n");
     const { library: reopened } = await openLibrary(root(), deps());
     expect(reopened.isEligible(avatar.id, photo.id)).toBe(false);
+  });
+});
+
+describe("round 2", () => {
+  test("removing a record the index never knew still stops a running reload from resurrecting it", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { library, avatar } = await savedAvatar({
+      testHooks: {
+        // Held before the SECOND record is read, so the first has already been read when it is deleted.
+        beforeReadVideoRecord: async (path) => {
+          if (path.endsWith("video-00000002.json")) await gate;
+        },
+      },
+    });
+    const a = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
+    const first = await writeVideoRecord(root(), "video-00000001", sceneSpec(avatar.id, [a.id]));
+    await writeVideoRecord(root(), "video-00000002", sceneSpec(avatar.id, [a.id]));
+    const reload = library.reloadVideoRecords(avatar.id);
+    await new Promise((r) => setTimeout(r, 20));
+    await rm(first);
+    library.removeVideoRecordFromIndex(avatar.id, "video-00000001"); // the index never knew it
+    release();
+    await reload;
+    expect(library.photoStates(avatar.id).get(a.id)?.usedIn).toEqual(["video-00000002"]);
+    expect(library.videoCount(avatar.id)).toBe(1);
+  });
+
+  test.skipIf(process.platform === "win32")("a record file that cannot be read is an unreadable problem, and the library still opens", async () => {
+    const { library, avatar } = await savedAvatar();
+    const photo = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
+    const path = await writeVideoRecord(root(), "video-00000001", sceneSpec(avatar.id, [photo.id]));
+    await chmod(path, 0o000);
+    try {
+      const { library: reopened, report } = await openLibrary(root(), deps());
+      expect(report.logIssues).toEqual([expect.objectContaining({ avatarId: avatar.id, file: "videos/video-00000001.json", reason: "unreadable" })]);
+      expect(() => reopened.eligibleUnusedPhotos(avatar.id)).toThrow(expect.objectContaining({ code: "log-needs-repair" }));
+      await reopened.reloadVideoRecords(avatar.id);
+      expect(reopened.eligibleUnusedCount(avatar.id)).toBe(0);
+    } finally {
+      await chmod(path, 0o600);
+    }
   });
 });
