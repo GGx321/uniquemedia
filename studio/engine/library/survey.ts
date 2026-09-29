@@ -34,6 +34,10 @@ export interface LogIssue {
   avatarId: string;
   file: string;
   detail: string;
+  /** `too-new`: a record from a newer Studio (update the app); `unreadable`: anything else that needs repair. */
+  reason: "unreadable" | "too-new";
+  /** A misfiled record names this other avatar, whose usage is then in doubt too. */
+  otherAvatarId?: string;
 }
 
 export interface PendingMove {
@@ -211,7 +215,7 @@ export async function surveyLibrary(root: string): Promise<Survey> {
       survey.rejectedPhotoIds.push(...replayRejected(rejected.entries));
     } catch (error) {
       if (!(error instanceof LibraryError && error.code === "corrupt-log")) throw error;
-      survey.logIssues.push({ avatarId: manifest.value.id, file: REJECTED_FILE, detail: error.message });
+      survey.logIssues.push({ avatarId: manifest.value.id, file: REJECTED_FILE, detail: error.message, reason: "unreadable" });
     }
     const videos = await readVideoRecords(path, manifest.value.id);
     for (const record of videos.records) survey.videoRecords.push({ avatarId: manifest.value.id, record });

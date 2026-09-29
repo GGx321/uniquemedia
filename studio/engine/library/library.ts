@@ -58,7 +58,7 @@ import {
   type PhotoSource,
 } from "./schemas";
 import { surveyLibrary, type LogIssue } from "./survey";
-import { readVideoRecords, type VideoRecordUse } from "./videoRecords";
+import { readVideoRecords, type VideoRecordProblem, type VideoRecordUse } from "./videoRecords";
 
 export type { QuarantineEntry, QuarantineReason } from "./quarantine";
 export type { LogIssue } from "./survey";
@@ -70,7 +70,11 @@ export interface LibraryDeps {
   renderThumbnail?: (input: string, output: string) => Promise<void>;
   /** Test seam: called after each temp file or temp folder is durable and
    *  before it is renamed into place. Throwing simulates a crash there. */
-  testHooks?: { beforeRename?: (finalPath: string) => void | Promise<void> };
+  testHooks?: {
+    beforeRename?: (finalPath: string) => void | Promise<void>;
+    /** Called before each video record file is read by `reloadVideoRecords`. */
+    beforeReadVideoRecord?: (path: string) => void | Promise<void>;
+  };
   /**
    * Downscales a face reference's raw bytes to the JPEG `ImageParams.references`
    * expects; defaults to `studio/node/downscale.ts`'s real one at
@@ -83,6 +87,11 @@ export interface LibraryDeps {
    * The photos of `avatarId` that queued or running renders hold (S16), asked
    * afresh on every use. The real render queue provides it in task 3a.6; until
    * then, and in a library opened without one, nothing is reserved.
+   *
+   * ORDER, for the queue and 3a.8b: a render lets go of its reservation only
+   * AFTER its record is in the used index (`addVideoRecordToIndex`), so there is
+   * never a moment when its photos are neither reserved nor used. A failed or
+   * cancelled render (no record) simply releases.
    */
   reservedPhotos?: (avatarId: string) => ReadonlySet<string>;
 }
@@ -180,7 +189,10 @@ export class Library {
   /** Each avatar's readable video records: what "used" is derived from. */
   readonly #videosByAvatar = new Map<string, VideoRecordUse[]>();
   /** Avatars with a file in videos/ that is not a usable record, with the reason: their usage cannot be trusted. */
-  readonly #brokenVideoRecords = new Map<string, string>();
+  readonly #videoProblems = new Map<string, VideoRecordProblem[]>();
+  /** Bumped by every incremental index change, so a reload that read the folder before it knows to read again. */
+  readonly #videoGeneration = new Map<string, number>();
+  readonly #beforeReadVideoRecord: ((path: string) => void | Promise<void>) | undefined;
   /** T6c (H2): sha256 of every imported photo's raw bytes the mandatory one-time age check has already refused. */
   #refusedImportHashes = new Set<string>();
 
@@ -190,6 +202,7 @@ export class Library {
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;
+    this.#beforeReadVideoRecord = deps.testHooks?.beforeReadVideoRecord;
     this.#reservedPhotos = deps.reservedPhotos ?? (() => new Set<string>());
     this.#renderThumbnail = deps.renderThumbnail ?? renderWebpThumbnail;
     this.#downscaleReference = deps.downscaleReference ?? ((bytes, signal) => downscaleToJpeg(bytes, { maxSide: REFERENCE_MAX_SIDE, signal }));
@@ -217,8 +230,12 @@ export class Library {
     for (const photoId of survey.rejectedPhotoIds) library.#rejected.add(photoId);
     for (const { avatarId, record } of survey.videoRecords) library.#videosByAvatar.set(avatarId, [...(library.#videosByAvatar.get(avatarId) ?? []), record]);
     for (const issue of survey.logIssues) {
-      const broken = issue.file === REJECTED_FILE ? library.#brokenRejectLogs : library.#brokenVideoRecords;
-      if (!broken.has(issue.avatarId)) broken.set(issue.avatarId, `${issue.file}: ${issue.detail}`);
+      if (issue.file === REJECTED_FILE) {
+        if (!library.#brokenRejectLogs.has(issue.avatarId)) library.#brokenRejectLogs.set(issue.avatarId, `${issue.file}: ${issue.detail}`);
+      } else {
+        const { avatarId, ...problem } = issue;
+        library.#videoProblems.set(avatarId, [...(library.#videoProblems.get(avatarId) ?? []), problem]);
+      }
     }
     library.#refusedImportHashes = await loadRefusedImports(root);
 
@@ -618,14 +635,56 @@ export class Library {
   }
 
   /**
+   * Whether ONE photo of this avatar may go into a video: the same rule as
+   * `photoStates`, for a caller that holds a photo id (a render's cells, a pick).
+   * False for a missing photo, another avatar's, and every photo the rule refuses.
+   * Used and reserved are other axes and play no part.
+   */
+  isEligible(avatarId: string, photoId: string): boolean {
+    const photo = this.#photos.get(photoId);
+    if (photo === undefined || photo.avatarId !== avatarId) return false;
+    if (this.#brokenRejectLogs.has(avatarId)) return false;
+    const masterPhotoId = this.#avatars.get(avatarId)?.masterPhotoId ?? null;
+    return isEligiblePhoto(photo, { masterPhotoId, rejected: this.#rejected.has(photoId) });
+  }
+
+  /** `isEligible`, throwing: `photo-not-found` for a missing photo or another avatar's, `photo-not-eligible` for one the rule refuses. */
+  assertEligible(avatarId: string, photoId: string): void {
+    const photo = this.#photos.get(photoId);
+    if (photo === undefined || photo.avatarId !== avatarId) throw new LibraryError("photo-not-found", `avatar ${avatarId} has no photo ${photoId}`);
+    if (!this.isEligible(avatarId, photoId)) throw new LibraryError("photo-not-eligible", `photo ${photoId} may not go into a video`);
+  }
+
+  /**
+   * Why the avatar's usage cannot be trusted, or null when it can: an unreadable
+   * rejected.jsonl or video record (`log-needs-repair`), or a record from a newer
+   * Studio (`library-too-new`, which wins: updating the app may fix the rest). A
+   * record misfiled under another avatar closes the avatar it names too.
+   */
+  #usageProblem(avatarId: string): LibraryError | null {
+    const found: VideoRecordProblem[] = [];
+    for (const [source, problems] of this.#videoProblems) {
+      for (const problem of problems) if (source === avatarId || problem.otherAvatarId === avatarId) found.push(problem);
+    }
+    const newer = found.find((p) => p.reason === "too-new");
+    if (newer !== undefined) return new LibraryError("library-too-new", `a video record of avatar ${avatarId} was written by a newer version of Studio (${newer.file}); update the app`);
+    const first = found[0];
+    if (first !== undefined) return new LibraryError("log-needs-repair", `the video records of avatar ${avatarId} need repair: ${first.file}: ${first.detail}`);
+    const marks = this.#brokenRejectLogs.get(avatarId);
+    if (marks !== undefined) return new LibraryError("log-needs-repair", `${REJECTED_FILE} of avatar ${avatarId} needs repair: ${marks}`);
+    return null;
+  }
+
+  /**
    * Eligible photos in no video record and in no queued or running render,
-   * oldest first; `category` keeps one scene category. Refuses with
-   * `log-needs-repair` while a file in the avatar's `videos/` cannot be read:
-   * the record may hold photos that would look free and get reused.
+   * oldest first; `category` keeps one scene category. Refuses while the
+   * avatar's usage cannot be trusted (`#usageProblem`: `log-needs-repair` or
+   * `library-too-new`): a record or a mark may hide in what cannot be read, and
+   * its photos would look free and get reused.
    */
   eligibleUnusedPhotos(avatarId: string, category?: string): PhotoSidecar[] {
-    const detail = this.#brokenVideoRecords.get(avatarId);
-    if (detail !== undefined) throw new LibraryError("log-needs-repair", `the video records of avatar ${avatarId} need repair: ${detail}`);
+    const problem = this.#usageProblem(avatarId);
+    if (problem !== null) throw problem;
     const states = this.photoStates(avatarId);
     return this.photosByAvatar(avatarId).filter((p) => {
       const state = states.get(p.id);
@@ -634,9 +693,9 @@ export class Library {
     });
   }
 
-  /** `eligibleUnusedPhotos().length` for a listing, where a refusal must not make the avatar vanish: 0 while its records cannot be trusted. */
+  /** `eligibleUnusedPhotos().length` for a listing, where a refusal must not make the avatar vanish: 0 while its usage cannot be trusted. */
   eligibleUnusedCount(avatarId: string): number {
-    return this.#brokenVideoRecords.has(avatarId) ? 0 : this.eligibleUnusedPhotos(avatarId).length;
+    return this.#usageProblem(avatarId) === null ? this.eligibleUnusedPhotos(avatarId).length : 0;
   }
 
   /** The avatar's video records, whatever state their files are in. */
@@ -645,41 +704,74 @@ export class Library {
   }
 
   /**
-   * Re-reads the avatar's `videos/` folder into the used index: after a record
-   * is added or deleted (task 3a.8b's commit and delete call this), and the
-   * way a test changes the records under an open library.
+   * Re-reads the avatar's `videos/` folder into the used index: after records
+   * are changed on disk by something other than this process's own commit, and
+   * the way a test changes them under an open library. One reload runs at a
+   * time per avatar; an incremental change made while it was reading makes it
+   * read again, so a stale read never overwrites a newer index. A file that
+   * vanishes mid-read is a delete, not corruption.
    */
   async reloadVideoRecords(avatarId: string): Promise<void> {
     if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
-    const { records, problems } = await readVideoRecords(this.#avatarDir(avatarId), avatarId);
-    this.#videosByAvatar.set(avatarId, records);
-    const first = problems[0];
-    if (first === undefined) this.#brokenVideoRecords.delete(avatarId);
-    else this.#brokenVideoRecords.set(avatarId, `${first.file}: ${first.detail}`);
+    await runExclusive(`videos:${avatarId}`, async () => {
+      for (;;) {
+        const generation = this.#videoGeneration.get(avatarId) ?? 0;
+        const read = await readVideoRecords(this.#avatarDir(avatarId), avatarId, { beforeRead: this.#beforeReadVideoRecord });
+        if ((this.#videoGeneration.get(avatarId) ?? 0) !== generation) continue;
+        this.#videosByAvatar.set(avatarId, read.records);
+        if (read.problems.length === 0) this.#videoProblems.delete(avatarId);
+        else this.#videoProblems.set(avatarId, read.problems);
+        return;
+      }
+    });
+  }
+
+  /**
+   * Task 3a.8b's commit: tells the used index about a record it has just made
+   * durable, so its photos are used at once, with no folder read. Adding a
+   * record twice keeps one. The render's reservation must end only after this
+   * (see `LibraryDeps.reservedPhotos`).
+   */
+  addVideoRecordToIndex(avatarId: string, record: VideoRecordUse): void {
+    if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+    const others = (this.#videosByAvatar.get(avatarId) ?? []).filter((r) => r.videoId !== record.videoId);
+    this.#videosByAvatar.set(avatarId, [...others, record].sort((a, b) => (a.videoId < b.videoId ? -1 : a.videoId > b.videoId ? 1 : 0)));
+    this.#videoGeneration.set(avatarId, (this.#videoGeneration.get(avatarId) ?? 0) + 1);
+  }
+
+  /** Task 3a.8b's delete: the record is gone from disk, so its photos are freed. An unknown record changes nothing. */
+  removeVideoRecordFromIndex(avatarId: string, videoId: string): void {
+    const records = this.#videosByAvatar.get(avatarId);
+    if (records === undefined || !records.some((r) => r.videoId === videoId)) return;
+    this.#videosByAvatar.set(avatarId, records.filter((r) => r.videoId !== videoId));
+    this.#videoGeneration.set(avatarId, (this.#videoGeneration.get(avatarId) ?? 0) + 1);
   }
 
   /**
    * The owner's own mark: "do not use this photo" (`rejected`) or its restore,
    * appended to the avatar's rejected.jsonl. Only a scene photo of this avatar
-   * can be marked: the master, a candidate and an import are never eligible, so
-   * a mark on them would mean nothing. Marking a photo the way it already is
-   * writes nothing.
+   * can be marked: the master (even one carrying a category), a candidate and an
+   * import are never eligible, so a mark on them would mean nothing. Resolves
+   * true when the mark changed, false when the photo already was that way
+   * (nothing is written then).
    */
-  async setRejected(avatarId: string, photoId: string, rejected: boolean): Promise<void> {
-    if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+  async setRejected(avatarId: string, photoId: string, rejected: boolean): Promise<boolean> {
+    const manifest = this.#avatars.get(avatarId);
+    if (manifest === undefined) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
     const photo = this.#photos.get(photoId);
-    if (!photo || photo.avatarId !== avatarId || !looksLikeRunPhoto(photo)) {
+    if (!photo || photo.avatarId !== avatarId || !looksLikeRunPhoto(photo) || photo.id === manifest.masterPhotoId) {
       throw new LibraryError("photo-not-found", `avatar ${avatarId} has no scene photo ${photoId}`);
     }
     const path = join(this.#avatarDir(avatarId), REJECTED_FILE);
-    await runExclusive(`rejected:${path}`, async () => {
+    return runExclusive(`rejected:${path}`, async () => {
       const detail = this.#brokenRejectLogs.get(avatarId);
       if (detail !== undefined) throw new LibraryError("log-needs-repair", `${REJECTED_FILE} of avatar ${avatarId} needs repair: ${detail}`);
-      if (this.#rejected.has(photoId) === rejected) return;
+      if (this.#rejected.has(photoId) === rejected) return false;
       const entry = RejectedEntrySchema.parse({ photoId, op: rejected ? "reject" : "restore", at: this.#now().toISOString() });
       await appendJsonLine(path, entry);
       if (rejected) this.#rejected.add(photoId);
       else this.#rejected.delete(photoId);
+      return true;
     });
   }
 

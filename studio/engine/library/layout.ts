@@ -27,6 +27,8 @@ export const LIBRARY_FILE_SCHEMA_VERSION = 1;
 export const MANIFEST_SCHEMA_VERSION = 2;
 export const SIDECAR_SCHEMA_VERSION = 1;
 export const REFUSED_IMPORTS_SCHEMA_VERSION = 1;
+/** A video record's `schemaVersion`: the writer (task 3a.8b) stamps it, the reader (videoRecords.ts) refuses a newer one with its own reason. */
+export const VIDEO_RECORD_SCHEMA_VERSION = 1;
 
 /**
  * A temp file left by a crash while one of the library root's own JSON

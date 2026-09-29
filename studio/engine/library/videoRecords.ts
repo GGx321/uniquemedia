@@ -1,8 +1,8 @@
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { hasErrorCode, readJsonFile } from "./durableFs";
-import { VIDEOS_DIR } from "./layout";
+import { hasErrorCode } from "./durableFs";
+import { VIDEOS_DIR, VIDEO_RECORD_SCHEMA_VERSION, isFromNewerVersion } from "./layout";
 import { LibraryIdSchema } from "./schemas";
 
 // The library's view of a video record (Stage 3 plan, "Library, storage and
@@ -12,25 +12,29 @@ import { LibraryIdSchema } from "./schemas";
 // exactly the scene photos it lists and nothing else. Every other field
 // (`file`, the resolved spec's layers and music, the encoder facts) is the
 // record's own business and may grow without this reader noticing.
+//
+// It is strict about the parts it reads: a record whose clips do not have the
+// shape their `kind` promises would read as "uses no photo" and free photos a
+// video really shows, so it is refused as a whole instead.
 
 /** A cell as far as "used" is concerned: a scene photo names its id, an own upload names nothing that counts. */
 const CellUse = z.looseObject({
   photo: z.union([z.null(), z.looseObject({ source: z.literal("scene"), photoId: LibraryIdSchema }), z.looseObject({ source: z.literal("own") })]),
 });
 
-/** A photo clip has one `cell`, a collage `cells`; a video clip has neither. */
-const ClipUse = z.looseObject({ cell: CellUse.optional(), cells: z.array(CellUse).optional() });
+/** A clip by its `kind`: a photo clip has one cell, a collage 2 to 4, an own video none. An unknown kind fails. */
+const ClipUse = z.discriminatedUnion("kind", [
+  z.looseObject({ kind: z.literal("photo"), cell: CellUse }),
+  z.looseObject({ kind: z.literal("collage"), cells: z.array(CellUse).min(2).max(4) }),
+  z.looseObject({ kind: z.literal("video") }),
+]);
 
-/**
- * What the reader needs of a record. A scene ref whose id does not fit is a
- * failure of the whole record, never a skipped cell: a record that cannot say
- * which photos it holds must not silently free them.
- */
+/** What the reader needs of a record; a record with no clip at all is not a rendered video. */
 const VideoRecordShape = z.looseObject({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(VIDEO_RECORD_SCHEMA_VERSION),
   id: LibraryIdSchema,
   avatarId: LibraryIdSchema,
-  spec: z.looseObject({ clips: z.array(ClipUse) }),
+  spec: z.looseObject({ clips: z.array(ClipUse).min(1) }),
 });
 
 /** One record, reduced to what the index needs. */
@@ -40,15 +44,30 @@ export interface VideoRecordUse {
   photoIds: string[];
 }
 
-/** A file in `videos/` that is not a usable record, with why. `file` is relative to the avatar folder. */
+/**
+ * A file in `videos/` that is not a usable record.
+ * - `unreadable`: broken, foreign or misfiled; needs repair.
+ * - `too-new`: written by a newer Studio; the fix is to update the app, not to repair.
+ * `file` is relative to the avatar folder. `otherAvatarId` is set when the record
+ * names another avatar than the folder it lies in: that avatar's photos may be in it,
+ * so that avatar's usage cannot be trusted either.
+ */
 export interface VideoRecordProblem {
   file: string;
+  reason: "unreadable" | "too-new";
   detail: string;
+  otherAvatarId?: string;
 }
 
 export interface VideoRecordsRead {
   records: VideoRecordUse[];
   problems: VideoRecordProblem[];
+}
+
+/** Test seam. */
+export interface ReadVideoRecordsOptions {
+  /** Called before each record file is read. */
+  beforeRead?: (path: string) => void | Promise<void>;
 }
 
 /** Whether `name` is a record's file name: `<id>.json`, not a dot file (pending intents, temp files, OS metadata). */
@@ -61,9 +80,11 @@ function isRecordFileName(name: string): boolean {
  * with no videos. Anything unreadable, foreign or misfiled is a problem, not a
  * throw: it must never stop a library from opening, but it must be seen (the
  * caller reports it and stops treating the avatar's usage as reliable).
- * `videos/.pending/` (commit intents) and dot files are not records.
+ * `videos/.pending/` (commit intents) and dot files are not records. A file
+ * that vanishes between the listing and the read was deleted meanwhile (a
+ * record's delete): it is gone, not corrupt.
  */
-export async function readVideoRecords(avatarDir: string, avatarId: string): Promise<VideoRecordsRead> {
+export async function readVideoRecords(avatarDir: string, avatarId: string, options: ReadVideoRecordsOptions = {}): Promise<VideoRecordsRead> {
   const read: VideoRecordsRead = { records: [], problems: [] };
   const dir = join(avatarDir, VIDEOS_DIR);
   let names: string[];
@@ -72,36 +93,51 @@ export async function readVideoRecords(avatarDir: string, avatarId: string): Pro
     names = entries.filter((e) => e.isFile() && isRecordFileName(e.name)).map((e) => e.name).sort();
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return read;
-    if (hasErrorCode(error, "ENOTDIR")) return { records: [], problems: [{ file: VIDEOS_DIR, detail: `${VIDEOS_DIR} is not a folder` }] };
+    if (hasErrorCode(error, "ENOTDIR")) return { records: [], problems: [{ file: VIDEOS_DIR, reason: "unreadable", detail: `${VIDEOS_DIR} is not a folder` }] };
     throw error;
   }
 
   for (const name of names) {
     const file = `${VIDEOS_DIR}/${name}`;
-    const raw = await readJsonFile(join(dir, name));
-    if (!raw.ok) {
-      read.problems.push({ file, detail: raw.detail });
+    const path = join(dir, name);
+    await options.beforeRead?.(path);
+    let text: string;
+    try {
+      text = await readFile(path, "utf8");
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) continue;
+      throw error;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      read.problems.push({ file, reason: "unreadable", detail: "is not valid JSON" });
       continue;
     }
-    const parsed = VideoRecordShape.safeParse(raw.value);
+    if (isFromNewerVersion(value, VIDEO_RECORD_SCHEMA_VERSION)) {
+      read.problems.push({ file, reason: "too-new", detail: "was written by a newer version of Studio" });
+      continue;
+    }
+    const parsed = VideoRecordShape.safeParse(value);
     if (!parsed.success) {
       const first = parsed.error.issues[0];
-      read.problems.push({ file, detail: `does not fit a video record at ${first?.path.join(".") ?? "the top"}: ${first?.message ?? "invalid"}` });
+      read.problems.push({ file, reason: "unreadable", detail: `does not fit a video record at ${first?.path.join(".") ?? "the top"}: ${first?.message ?? "invalid"}` });
       continue;
     }
     const record = parsed.data;
     if (`${record.id}.json` !== name) {
-      read.problems.push({ file, detail: `record id ${record.id} does not match its file name` });
+      read.problems.push({ file, reason: "unreadable", detail: `record id ${record.id} does not match its file name` });
       continue;
     }
     if (record.avatarId !== avatarId) {
-      read.problems.push({ file, detail: `record belongs to avatar ${record.avatarId}, not ${avatarId}` });
+      read.problems.push({ file, reason: "unreadable", detail: `record belongs to avatar ${record.avatarId}, not ${avatarId}`, otherAvatarId: record.avatarId });
       continue;
     }
     const photoIds = new Set<string>();
     for (const clip of record.spec.clips) {
-      for (const cell of clip.cell === undefined ? [] : [clip.cell]) if (cell.photo?.source === "scene") photoIds.add(cell.photo.photoId);
-      for (const cell of clip.cells ?? []) if (cell.photo?.source === "scene") photoIds.add(cell.photo.photoId);
+      const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
+      for (const cell of cells) if (cell.photo?.source === "scene") photoIds.add(cell.photo.photoId);
     }
     read.records.push({ videoId: record.id, photoIds: [...photoIds] });
   }
