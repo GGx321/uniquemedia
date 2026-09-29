@@ -11,7 +11,7 @@ import type { RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { partNameOf } from "./record";
-import { acceptingVerify, errnoError, exportFiles, fakeVideoBytes, FINAL, jpegWithArtist, libraryVideoFiles, listTree, specOf, useWorld, type World } from "./testing/kit";
+import { acceptingVerify, errnoError, exportFiles, fakeVideoBytes, faultyFs, FINAL, jpegWithArtist, libraryVideoFiles, listTree, specOf, useWorld, type World } from "./testing/kit";
 useNativeGlobals();
 
 // Task 3a.8b.1: the `execute` for RenderQueue: the runner, then the commit, each
@@ -366,6 +366,47 @@ describe("the used index throwing after the record is committed", () => {
     expect(used(w.library, w)).toEqual(["video-00000001"]);
     expect(r.logs.join("\n")).toContain("could not take the committed record");
     expect(await libraryVideoFiles(w)).toEqual(["video-00000001.json"]);
+  });
+});
+
+describe("the export folder's own entry is made durable", () => {
+  test("the root is flushed after the avatar's folder is prepared and before anything is written into it", async () => {
+    const fs = faultyFs();
+    const r = rig({ fs });
+    r.submit();
+    await r.queue.idle();
+    const calls = fs.calls;
+    const flushed = calls.indexOf(`fsyncDir ${r.w.exportRoot}`);
+    expect(flushed).toBeGreaterThanOrEqual(0);
+    expect(flushed).toBeLessThan(calls.findIndex((c) => c.startsWith("fsyncFile")));
+    expect(flushed).toBeLessThan(calls.findIndex((c) => c.startsWith("createExclusive")));
+  });
+
+  test("a root that cannot be flushed does not fail the job: it is logged with its code", async () => {
+    const fs = faultyFs();
+    fs.failOnce("fsyncDir", errnoError("EIO"), (args) => args[0] === world().exportRoot);
+    const r = rig({ fs });
+    r.submit();
+    await r.queue.idle();
+    expect(r.states()[0]?.status).toBe("done");
+    expect(r.logs.join("\n")).toContain("EIO");
+  });
+});
+
+describe("the tracker follows the job", () => {
+  test("the job's id is live while it runs and forgotten when it ends", async () => {
+    const seen: boolean[] = [];
+    const r = rig({
+      hooks: {
+        reached: (step) => {
+          if (step === "name-claimed") seen.push(r.tracker.hasJob("job-00000001"));
+        },
+      },
+    });
+    r.submit();
+    await r.queue.idle();
+    expect(seen).toEqual([true]);
+    expect(r.tracker.hasJob("job-00000001")).toBe(false);
   });
 });
 

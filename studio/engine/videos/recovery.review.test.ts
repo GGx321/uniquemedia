@@ -70,8 +70,11 @@ describe("recovery and a live commit exclude each other (per export root)", () =
     const tracker = new CommitTracker();
     const bytesA = fakeVideoBytes(4096, 11);
     const bytesB = fakeVideoBytes(5000, 22);
-    writeTemp(folder, "job-0000000a", bytesA);
-    writeTemp(folder, "job-0000000b", bytesB);
+    // As `createRenderExecute` does before it runs a job: the job's id and temp are live from the start.
+    for (const [job, video, bytes] of [["job-0000000a", "video-0000000a", bytesA], ["job-0000000b", "video-0000000b", bytesB]] as const) {
+      tracker.addJob(job, video);
+      tracker.addTemp(writeTemp(folder, job, bytes));
+    }
     const target = { folder, root: w.exportRoot, rootId: w.rootId, caseInsensitive: false };
     const input = (job: string, video: string): CommitInput => ({ jobId: job, videoId: video, avatarId: w.avatar.id, videoKind: "photo", date: "2026-09-29", createdAt: "2026-09-29T10:00:00.000Z", frames: 30, durationMs: 1000, montageId: null, music: null, spec: specOf(w.avatar.id, [w.photos[0]?.id ?? ""]), forbiddenStrings: [] });
     const deps = () => ({ fs: faultyFs(), libraryRoot: w.libraryRoot, verify: acceptingVerify, onClaimed: (p: string) => tracker.addPlaceholder(p) });
