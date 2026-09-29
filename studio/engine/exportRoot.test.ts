@@ -186,10 +186,25 @@ describe("what is not a usable folder", () => {
     expect(await readdir(exportPath)).toEqual([]);
   });
 
-  test.skipIf(process.getuid?.() === 0)("a real read-only folder is not writable", async () => {
+  // Mode bits mean nothing on a Windows directory (chmod only flips the read-only attribute, which does not
+  // stop a file being created inside it); the next test makes the folder unwritable the Windows way.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("a real read-only folder is not writable", async () => {
     await mkdir(exportPath);
     await chmod(exportPath, 0o555);
     expect(await check()).toEqual({ ok: false, reason: "not-writable" });
+  });
+
+  // An ACL that denies "Everyone" (S-1-1-0) the right to add files (WD) and subfolders (AD): what a locked
+  // share or a protected folder is on Windows. The probe must find out by trying to write.
+  test.skipIf(process.platform !== "win32")("a real folder whose ACL denies creating files is not writable", async () => {
+    await mkdir(exportPath);
+    const deny = spawnSync("icacls", [exportPath, "/deny", "*S-1-1-0:(WD,AD)"], { encoding: "utf8" });
+    expect(deny.status).toBe(0);
+    try {
+      expect(await check()).toEqual({ ok: false, reason: "not-writable" });
+    } finally {
+      spawnSync("icacls", [exportPath, "/remove:d", "*S-1-1-0"]);
+    }
   });
 
   test("a probe that is created but cannot be removed is not writable", async () => {
