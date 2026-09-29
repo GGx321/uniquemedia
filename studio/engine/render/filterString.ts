@@ -27,12 +27,37 @@ export function quoteExpression(expression: string): string {
   return `'${expression}'`;
 }
 
-/** Refuses a filter graph string with any character outside the strict set. */
+/**
+ * The filters the builder emits, and no others. Anything that can read a file
+ * (`movie`, `amovie`, `drawtext` with `textfile`, `lut3d`, `subtitles`, ...)
+ * is missing on purpose: a charset alone would let `movie=/etc/passwd` through.
+ */
+export const ALLOWED_FILTERS: ReadonlySet<string> = new Set([
+  "scale", "format", "setparams", "crop", "loop", "settb", "setpts", "zoompan", "fade", "color", "overlay", "setsar", "trim", "fps", "anullsrc", "apad", "atrim",
+]);
+
+const fail = (message: string): never => {
+  throw new RenderGraphError("UNSAFE_GRAPH", message);
+};
+
+/**
+ * Refuses a filter graph that is not the builder's kind: a character outside
+ * the strict set, a filter that is not on the allowlist, or a `/` anywhere but
+ * inside a quoted expression or in a `settb=1/N` time base.
+ */
 export function assertSafeFilterGraph(graph: string): void {
   if (!GRAPH.test(graph)) {
     const bad = [...graph].find((c) => !GRAPH.test(c));
-    throw new RenderGraphError("UNSAFE_GRAPH", `the filter graph holds a character outside the allowed set: ${JSON.stringify(bad ?? graph)}`);
+    fail(`the filter graph holds a character outside the allowed set: ${JSON.stringify(bad ?? graph)}`);
   }
+  // Quoted expressions may hold `,` and `/`; take them out, and the pad labels, before reading the structure.
+  const bare = graph.replace(/'[^']*'/g, "Q").replace(/\[[^\]]*\]/g, "");
+  for (const filter of bare.split(/[;,]/)) {
+    if (filter === "") continue;
+    const name = filter.split("=")[0] ?? "";
+    if (!ALLOWED_FILTERS.has(name)) fail(`the filter graph uses a filter the builder does not emit: ${JSON.stringify(name)}`);
+  }
+  if (bare.replace(/settb=1\/\d+/g, "").includes("/")) fail("the filter graph holds a `/` outside a quoted expression and a settb time base");
 }
 
 /** A path handed to ffmpeg must be absolute (so it can never read as an option, and never depends on `cwd`) and free of NUL. */

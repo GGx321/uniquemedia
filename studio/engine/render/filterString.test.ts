@@ -31,7 +31,7 @@ describe("assertSafeFilterGraph", () => {
   });
 
   test("accepts several chains joined by semicolons", () => {
-    expect(() => assertSafeFilterGraph(`${good};[v]null[w]`)).not.toThrow();
+    expect(() => assertSafeFilterGraph(`${good};[v]setsar=1[w]`)).not.toThrow();
   });
 
   test.each([
@@ -46,6 +46,39 @@ describe("assertSafeFilterGraph", () => {
     ["a curly brace", "[0:v]drawtext=text={x}[v]"],
   ])("refuses %s", (_name, graph) => {
     expect(() => assertSafeFilterGraph(graph)).toThrow(RenderGraphError);
+  });
+
+  test.each([
+    ["movie", "movie=/Users/alex/secret.png[v]"],
+    ["amovie", "amovie=/Users/alex/secret.wav[a]"],
+    ["drawtext", "[0:v]drawtext=textfile=/etc/passwd[v]"],
+    ["lut3d", "[0:v]lut3d=file=/tmp/x.cube[v]"],
+    ["subtitles", "[0:v]subtitles=/tmp/x.srt[v]"],
+    ["a filter name in another case", "[0:v]Scale=1:1[v]"],
+    ["a name that only starts like an allowed one", "[0:v]scalefile=1[v]"],
+    ["a filter hidden after an allowed one in the same chain", "[0:v]scale=1:1,movie=x[v]"],
+  ])("refuses %s, which is not a filter the builder emits", (_name, graph) => {
+    expect(() => assertSafeFilterGraph(graph)).toThrow(RenderGraphError);
+  });
+
+  test.each(["scale", "format", "setparams", "crop", "loop", "settb", "setpts", "zoompan", "fade", "color", "overlay", "setsar", "trim", "fps", "anullsrc", "apad", "atrim"])(
+    "accepts the filter %s, which the builder emits",
+    (name) => {
+      expect(() => assertSafeFilterGraph(`[0:v]${name}=1[v]`)).not.toThrow();
+    },
+  );
+
+  test("refuses a slash outside a quoted expression, where a path would sit", () => {
+    expect(() => assertSafeFilterGraph("[0:v]scale=w=/tmp/x[v]")).toThrow(RenderGraphError);
+    expect(() => assertSafeFilterGraph("[0:v]scale=1/2:1[v]")).toThrow(RenderGraphError);
+  });
+
+  test("accepts the time base 1/N and a slash inside a quoted expression", () => {
+    expect(() => assertSafeFilterGraph("[0:v]settb=1/30,zoompan=z='(1+on)/59000':d=1[v]")).not.toThrow();
+  });
+
+  test("refuses an allowed filter name inside quotes being used to smuggle a second filter", () => {
+    expect(() => assertSafeFilterGraph("[0:v]scale=w='1',movie=/x[v]")).toThrow(RenderGraphError);
   });
 
   test("refuses an empty graph", () => {
