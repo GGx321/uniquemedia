@@ -27,30 +27,48 @@ function isUpperLetter(ch: string | undefined): boolean {
 /**
  * Cyrillic to Latin before the ASCII reduction, so «Мия» becomes `Miya` and not
  * an opaque id. A capital gives a capital first letter (`Yolka`); a letter whose
- * neighbour is also a capital is a whole capitalised word (`МИЯ` → `MIYA`).
+ * neighbour is also a capital is a whole capitalised word (`МИЯ` → `MIYA`); a
+ * capital that writes nothing (`Ъ`, `Ь`) passes its capital on to the next
+ * letter that is written (`Ъя` → `Ya`).
  */
 function transliterate(raw: string): string {
   const chars = Array.from(raw);
-  return chars
-    .map((ch, i) => {
-      const lower = ch.toLowerCase();
-      const latin = CYRILLIC_TO_LATIN[lower];
-      if (latin === undefined) return ch;
-      if (ch === lower || latin === "") return latin;
-      return isUpperLetter(chars[i - 1]) || isUpperLetter(chars[i + 1]) ? latin.toUpperCase() : latin[0].toUpperCase() + latin.slice(1);
-    })
-    .join("");
+  let owedCapital = false;
+  let out = "";
+  chars.forEach((ch, i) => {
+    const lower = ch.toLowerCase();
+    const latin = CYRILLIC_TO_LATIN[lower];
+    if (latin === undefined) {
+      out += ch;
+      owedCapital = false;
+      return;
+    }
+    const upper = ch !== lower;
+    if (latin === "") {
+      owedCapital = owedCapital || upper;
+      return;
+    }
+    const wholeWord = upper && (isUpperLetter(chars[i - 1]) || isUpperLetter(chars[i + 1]));
+    const capital = upper || owedCapital;
+    out += wholeWord ? latin.toUpperCase() : capital ? latin[0].toUpperCase() + latin.slice(1) : latin;
+    owedCapital = false;
+  });
+  return out;
 }
 
 function trimSeparators(text: string): string {
   return text.replace(/^[_-]+|[_-]+$/g, "");
 }
 
+/** Decomposes letters and drops their marks (`ñ` → `n`, `ў` → `у`). */
+function stripMarks(text: string): string {
+  return text.normalize("NFKD").replace(/\p{M}+/gu, "");
+}
+
 function reduceToSafe(raw: string): string {
-  const ascii = transliterate(raw)
-    .normalize("NFKD")
-    .replace(/\p{M}+/gu, "")
-    .replace(/[^A-Za-z0-9_-]+/g, "_");
+  // NFC first, so a decomposed `Е` + diaeresis is the table's `Ё` and not an `Е`. A letter outside the
+  // table that loses its mark (`Ў` → `У`) is written a second time, now that its base is showing.
+  const ascii = transliterate(stripMarks(transliterate(raw.normalize("NFC")))).replace(/[^A-Za-z0-9_-]+/g, "_");
   return trimSeparators(trimSeparators(ascii).slice(0, 64));
 }
 
@@ -133,10 +151,29 @@ export const NODE_EXPORT_FOLDER_FS: ExportFolderFs = {
   realpath: (path) => realpath(path),
 };
 
-/** The avatar's folder, opened: its name exactly as the disk stores it, and where it is. */
-export interface PreparedFolder {
-  name: string;
-  path: string;
+/** Held only by this module: nothing outside can name it, so nothing outside can build a `PreparedFolder`. */
+const ISSUE = Symbol("prepared export folder");
+
+/**
+ * The avatar's folder, opened: its name exactly as the disk stores it, and where
+ * it is. Only `prepareExportFolder` makes one (a `#` field makes the class
+ * nominal, and the constructor wants a token nobody else holds), so a caller
+ * cannot hand-build a folder and skip the checks.
+ */
+export class PreparedFolder {
+  readonly name: string;
+  readonly path: string;
+  readonly #issued = true;
+
+  constructor(token: typeof ISSUE, name: string, path: string) {
+    if (token !== ISSUE) throw new Error("a PreparedFolder comes from prepareExportFolder");
+    this.name = name;
+    this.path = path;
+  }
+
+  static isIssued(value: unknown): value is PreparedFolder {
+    return typeof value === "object" && value !== null && #issued in value;
+  }
 }
 
 /** The export folder cannot take this folder; `reason` is the one the render is refused with (invariant 35). */
@@ -211,7 +248,7 @@ async function tryOpenFolder(fs: ExportFolderFs, root: string, name: string, cas
   const fold = (text: string) => (caseInsensitive ? text.toLowerCase() : text);
   const onDisk = basename(real);
   if (fold(dirname(real)) !== fold(rootReal) || !isSafeName(onDisk)) return null;
-  return { name: onDisk, path: join(root, onDisk) };
+  return new PreparedFolder(ISSUE, onDisk, join(root, onDisk));
 }
 
 // ---------- claiming the file name ----------
@@ -259,6 +296,7 @@ export interface ClaimExportNameOptions {
  */
 export async function claimExportName(options: ClaimExportNameOptions): Promise<ExportNameClaim> {
   const { fs, folder, date, kind } = options;
+  if (!PreparedFolder.isIssued(folder)) throw new Error("the export folder did not come from prepareExportFolder");
   if (!isSafeName(folder.name)) throw new Error("the export folder name is not a SafeName");
   if (!VideoKindToken.safeParse(kind).success) throw new Error("the export kind is not a kind token");
   // The first candidate is checked against the contract before any disk is touched.

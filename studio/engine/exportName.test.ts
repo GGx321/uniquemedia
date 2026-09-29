@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,6 +80,30 @@ describe("safeName", () => {
     ["Mia Мия", "Mia_Miya"],
   ])("transliterates the Cyrillic name %s to %s", (name, expected) => {
     expect(safeName(name, AVATAR)).toBe(expected);
+  });
+
+  test.each([
+    ["a decomposed Ё (Е and a diaeresis)", "Ёлка", "Yolka"],
+    ["a decomposed Й (И and a breve)", "Йога", "Yoga"],
+    ["a decomposed ё in lower case", "ёлка", "yolka"],
+    ["a decomposed Ї (І and a diaeresis)", "Їжак", "Yizhak"],
+  ])("transliterates %s the same as the composed letter", (_label, name, expected) => {
+    expect(safeName(name, AVATAR)).toBe(expected);
+  });
+
+  test("a precomposed Cyrillic letter outside the table keeps its base letter (Ў becomes U)", () => {
+    expect(safeName("Ўла", AVATAR)).toBe("Ula");
+    expect(safeName("Ўла".normalize("NFD"), AVATAR)).toBe("Ula");
+  });
+
+  test.each([
+    ["Ъя", "Ya"],
+    ["Ьва", "Va"],
+    ["ъя", "ya"],
+    ["ЪЯ", "YA"],
+  ])("capitalises the first letter that is actually written: %s → %s", (name, expected) => {
+    // A name must keep two letters to be used, so add a tail that changes nothing about the head.
+    expect(safeName(`${name}xy`, AVATAR).startsWith(expected)).toBe(true);
   });
 
   test("keeps an all-capitals Cyrillic name in capitals", () => {
@@ -274,24 +298,29 @@ function fakeFolderFs(entries: Record<string, FakeEntry>): ExportFolderFs & { ma
   };
 }
 
+/** The folder's two public fields, for comparing with a plain object. */
+function plain(folder: PreparedFolder): { name: string; path: string } {
+  return { name: folder.name, path: folder.path };
+}
+
 describe("prepareExportFolder with a fake disk", () => {
   const base = { root: "/export", safeName: "Mia", avatarId: AVATAR, caseInsensitive: false };
 
   test("creates a missing folder and returns its name and path", async () => {
     const fs = fakeFolderFs({ "/export": { kind: "dir" } });
-    expect(await prepareExportFolder({ fs, ...base })).toEqual({ name: "Mia", path: "/export/Mia" });
+    expect(plain(await prepareExportFolder({ fs, ...base }))).toEqual({ name: "Mia", path: "/export/Mia" });
     expect(fs.made).toEqual(["/export/Mia"]);
   });
 
   test("reuses a folder that is already there", async () => {
     const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "dir" } });
-    expect(await prepareExportFolder({ fs, ...base })).toEqual({ name: "Mia", path: "/export/Mia" });
+    expect(plain(await prepareExportFolder({ fs, ...base }))).toEqual({ name: "Mia", path: "/export/Mia" });
     expect(fs.made).toEqual([]);
   });
 
   test("a symlink in the folder's place is not written through: the suffixed folder is used", async () => {
     const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "link", real: "/elsewhere" }, "/elsewhere": { kind: "dir" } });
-    expect(await prepareExportFolder({ fs, ...base })).toEqual({ name: "Mia_avatar-0", path: "/export/Mia_avatar-0" });
+    expect(plain(await prepareExportFolder({ fs, ...base }))).toEqual({ name: "Mia_avatar-0", path: "/export/Mia_avatar-0" });
   });
 
   test("a junction reads as a symlink and is refused the same way", async () => {
@@ -325,7 +354,7 @@ describe("prepareExportFolder with a fake disk", () => {
 
   test("returns the name the disk stores, not the one asked for", async () => {
     const fs = fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "dir", real: "/export/mia" } });
-    expect(await prepareExportFolder({ fs, ...base, caseInsensitive: true })).toEqual({ name: "mia", path: "/export/mia" });
+    expect(plain(await prepareExportFolder({ fs, ...base, caseInsensitive: true }))).toEqual({ name: "mia", path: "/export/mia" });
   });
 
   test("an on-disk name that is not a SafeName is not used", async () => {
@@ -459,8 +488,12 @@ describe("claimExportName with a fake disk", () => {
     };
   }
 
-  const folder: PreparedFolder = { name: "Mia", path: join("/export", "Mia") };
-  const base = { folder, date: "2026-09-29", kind: "photo" };
+  // A folder can only come from prepareExportFolder: here, over the fake disk.
+  let base: { folder: PreparedFolder; date: string; kind: string };
+  beforeAll(async () => {
+    const folder = await prepareExportFolder({ fs: fakeFolderFs({ "/export": { kind: "dir" } }), root: "/export", safeName: "Mia", avatarId: AVATAR, caseInsensitive: false });
+    base = { folder, date: "2026-09-29", kind: "photo" };
+  });
 
   test("claims NNN 001 in an empty folder", async () => {
     const claim = await claimExportName({ fs: fakeFs([]), ...base });
@@ -468,7 +501,14 @@ describe("claimExportName with a fake disk", () => {
   });
 
   test("uses the folder name the disk stores in the relative path", async () => {
-    const claim = await claimExportName({ fs: fakeFs([]), ...base, folder: { name: "mia", path: join("/export", "mia") } });
+    const stored = await prepareExportFolder({
+      fs: fakeFolderFs({ "/export": { kind: "dir" }, "/export/Mia": { kind: "dir", real: "/export/mia" } }),
+      root: "/export",
+      safeName: "Mia",
+      avatarId: AVATAR,
+      caseInsensitive: true,
+    });
+    const claim = await claimExportName({ fs: fakeFs([]), ...base, folder: stored });
     expect(claim.relPath).toBe("mia/2026-09-29_photo_001.mp4");
   });
 
@@ -518,10 +558,10 @@ describe("claimExportName with a fake disk", () => {
     expect(calls).toBe(1);
   });
 
-  test("refuses an unsafe folder name before touching the disk", async () => {
+  test("refuses a folder that was built by hand instead of coming from prepareExportFolder", async () => {
     const fs = fakeFs([]);
-    await expect(claimExportName({ fs, ...base, folder: { name: "CON", path: "/export/CON" } })).rejects.toThrow();
-    await expect(claimExportName({ fs, ...base, folder: { name: "../x", path: "/x" } })).rejects.toThrow();
+    // @ts-expect-error a hand-built folder is not a PreparedFolder
+    await expect(claimExportName({ fs, ...base, folder: { name: "Mia", path: "/export/Mia" } })).rejects.toThrow();
     expect(fs.made).toEqual([]);
   });
 
