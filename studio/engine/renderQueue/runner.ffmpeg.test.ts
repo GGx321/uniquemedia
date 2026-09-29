@@ -95,7 +95,7 @@ describe("runRenderJob on real ffmpeg", () => {
     const controller = new AbortController();
     const reason = new Error("cancelled by the user");
     const { spawner, pids } = recordingSpawner();
-    const { input, jobDir } = rig([clip("a", 6000, "kenburns")], {
+    const { input, jobDir } = rig([clip("a", 2000, "kenburns")], {
       signal: controller.signal,
       onProgress: () => controller.abort(reason), // the first frames prove pass 1 is really running
     });
@@ -110,10 +110,10 @@ describe("runRenderJob on real ffmpeg", () => {
 
   test("a timeout kills ffmpeg, rejects with a timeout error of the whole budget, and leaves nothing", async () => {
     const { spawner, pids } = recordingSpawner();
-    const { input, jobDir } = rig([clip("a", 6000, "kenburns")]);
+    const { input, jobDir } = rig([clip("a", 2000, "kenburns")]);
 
-    // The job's own budget is at least 90 s; the wrapper makes one call's slice 400 ms.
-    const error = await runRenderJob(input, { run: withSpawner(spawner, { timeoutMs: 400 }) }).catch((e: unknown) => e);
+    // The job's own budget is at least 90 s; the wrapper makes one call's slice 250 ms.
+    const error = await runRenderJob(input, { run: withSpawner(spawner, { timeoutMs: 250 }) }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(FfmpegTimeoutError);
     expect(pids).toHaveLength(1);

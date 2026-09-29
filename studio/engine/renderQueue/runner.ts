@@ -17,6 +17,11 @@ export interface RenderRunInput {
   readonly tmpRoot: string;
   readonly seed: number;
   readonly clips: readonly Clip[];
+  /**
+   * Where each photo is and its STORED size (what the library's sidecar reports):
+   * the builder reads every photo with `-noautorotate`, so the size is the
+   * stored orientation, never an oriented one. The runner passes it on untouched.
+   */
   readonly resolvePhoto: PhotoResolver;
   readonly overlays: readonly OverlayInput[];
   readonly audio: AudioSource;

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { JobState, RenderResult } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import { JobRegistry } from "../jobs";
+import { RenderGraphError } from "../render";
 import { RenderFailure, RenderQueue, type RenderContext, type RenderQueueDeps, type RenderQueueEvent, type RenderSubmission } from "./queue";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -244,6 +245,24 @@ describe("RenderQueue: a job's life", () => {
 
     expect(jobs.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
   });
+
+  test.each(["PHOTO_UNRESOLVED", "BAD_OVERLAY", "UNSAFE_GRAPH", "VIDEO_CLIP_UNSUPPORTED", "CELL_EMPTY"] as const)(
+    "a graph the builder refused (%s) ends the job as RENDER_FAILED and names the builder's code",
+    async (code) => {
+      const { queue, jobs, events } = setup();
+      const a = submission(1);
+      queue.submit(a);
+      const cause = new RenderGraphError(code, "the photo scene:photo-1 was not resolved");
+
+      a.gate.finish.reject(cause);
+      await queue.idle();
+
+      const error = jobs.states()[0]?.error;
+      expect(jobs.states()[0]).toMatchObject({ status: "failed", error: { code: "RENDER_FAILED" } });
+      expect(error?.detail).toContain(code);
+      expect(events.find((e) => e.type === "ended")).toMatchObject({ cause });
+    },
+  );
 
   test("any other error is INTERNAL", async () => {
     const { queue, jobs } = setup();

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { fakeSpawner, outputOf, type SpawnCall } from "../../node/fakeFfmpeg.testkit";
+import { RenderGraphError } from "../render";
 import { renderTimeoutMs } from "./progress";
 import { runRenderJob, type RenderRunInput, type RenderRunDeps } from "./runner";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -269,6 +270,19 @@ describe("runRenderJob: the job folder and the output", () => {
     await expect(runRenderJob(r.input, deps)).resolves.toEqual({ totalFrames: 60 });
 
     expect(warnings).toEqual(["job folder"]);
+  });
+
+  test("a graph the builder refuses rejects with that refusal before anything is created or started, and is never retried", async () => {
+    const r = rig({ resolvePhoto: () => undefined });
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RenderGraphError);
+    expect(error).toMatchObject({ code: "PHOTO_UNRESOLVED" });
+    expect(calls).toHaveLength(0);
+    expect(existsSync(r.tmpRoot)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
   });
 
   test("refuses a job id that could leave the render-tmp folder", async () => {

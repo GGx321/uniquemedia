@@ -1,6 +1,7 @@
 import type { EngineError, JobProgress, JobState, RenderResult } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import type { JobRegistry, RenderJobEnd, RenderJobRef } from "../jobs";
+import { RenderGraphError } from "../render";
 
 // The render queue (task 3a.6): a pool of N over the engine's JobRegistry.
 // Jobs are queued, then run first in, first out as slots free; a queued or a
@@ -85,9 +86,19 @@ export interface RenderQueueDeps {
 const DETAIL_TAIL = 300;
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-/** Maps whatever a job threw to the contract's error set. */
+/**
+ * Maps whatever a job threw to the contract's error set, which is small and
+ * stable on purpose:
+ * - a `RenderFailure` keeps its own error (EXPORT_UNAVAILABLE, RENDER_VERIFY_FAILED, ...);
+ * - a timeout is TIMEOUT;
+ * - a graph the builder refused (`RenderGraphError`) and an ffmpeg that failed are RENDER_FAILED,
+ *   the builder's code or the exit code and the end of stderr in `detail`. A refusal is the spec's
+ *   fault or a wiring defect, and the same spec is refused the same way: nothing retries it;
+ * - anything else is INTERNAL.
+ */
 export function renderErrorFrom(error: unknown): EngineError {
   if (error instanceof RenderFailure) return error.engineError;
+  if (error instanceof RenderGraphError) return { code: "RENDER_FAILED", detail: `the render graph was refused (${error.code}): ${oneLine(error.message)}`.slice(0, 300) };
   if (error instanceof FfmpegTimeoutError) return { code: "TIMEOUT", detail: `the render ran past its time limit of ${Math.round(error.timeoutMs / 1000)} s` };
   if (error instanceof FfmpegError) {
     const tail = oneLine(error.stderrTail).slice(-DETAIL_TAIL);
