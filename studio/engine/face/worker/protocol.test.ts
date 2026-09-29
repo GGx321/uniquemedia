@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { EMBEDDING_LENGTH, FaceWorkerRequestSchema, FaceWorkerResponseSchema } from "./protocol";
+import { EMBEDDING_LENGTH, FaceWorkerRequestSchema, boundedMessage, FaceWorkerResponseSchema } from "./protocol";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -32,6 +32,35 @@ describe("an embedding is exactly EMBEDDING_LENGTH finite floats", () => {
     const bad = unit();
     bad[7] = Number.POSITIVE_INFINITY;
     expect(FaceWorkerRequestSchema.safeParse({ type: "check", id: 1, pose: "front", bytes: new ArrayBuffer(1), masterEmbedding: bad }).success).toBe(false);
+  });
+});
+
+describe("boundedMessage fits any error text into the wire bound", () => {
+  const LONG = `${"first issue: ".padEnd(100, "-")}${"x".repeat(5_000)}`;
+
+  test("leaves a short message untouched", () => {
+    expect(boundedMessage("no such file")).toBe("no such file");
+  });
+
+  test("leaves a message of exactly the bound untouched", () => {
+    const exact = "y".repeat(2_000);
+    expect(boundedMessage(exact)).toBe(exact);
+  });
+
+  test("cuts a message one character over the bound to the bound", () => {
+    expect(boundedMessage("y".repeat(2_001)).length).toBe(2_000);
+  });
+
+  test("keeps the beginning of a long message, where the cause is", () => {
+    expect(boundedMessage(LONG).startsWith("first issue: ")).toBe(true);
+  });
+
+  test("a long load-failed message becomes valid on the wire instead of a protocol violation", () => {
+    expect(FaceWorkerResponseSchema.safeParse({ type: "load-failed", message: boundedMessage(LONG) }).success).toBe(true);
+  });
+
+  test("a long failed message becomes valid on the wire instead of a protocol violation", () => {
+    expect(FaceWorkerResponseSchema.safeParse({ type: "failed", id: 1, code: "error", message: boundedMessage(LONG) }).success).toBe(true);
   });
 });
 

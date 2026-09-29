@@ -35,7 +35,12 @@ const Embedding = z.custom<Float32Array>(
 const MAX_MESSAGE_LENGTH = 2_000;
 const Message = z.string().max(MAX_MESSAGE_LENGTH);
 
-const RequestId = z.number().int().nonnegative();
+/** Fits `text` into the wire bound, keeping its beginning (where the cause is) and marking the cut; the sender's answer to a long (multi-issue zod) error, which would otherwise be a protocol violation that hides the real cause. */
+export function boundedMessage(text: string): string {
+  return text.length <= MAX_MESSAGE_LENGTH ? text : `${text.slice(0, MAX_MESSAGE_LENGTH - 1)}…`;
+}
+
+const RequestId =z.number().int().nonnegative();
 
 /** Engine -> worker. `id` pairs a response with its request (one is in flight at a time, but a stale answer must never be mistaken for the current one). */
 export const FaceWorkerRequestSchema = z.discriminatedUnion("type", [

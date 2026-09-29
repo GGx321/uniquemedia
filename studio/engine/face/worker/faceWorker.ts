@@ -4,7 +4,7 @@ import { createRealDecodeBackend } from "../../decode/realBackend";
 import { createWasmImageDecoder } from "../../decode/wasmDecode";
 import { createFaceGate, NoFaceInReferenceError, type FaceGate } from "../gate";
 import { FACE_MODELS, verifyModelBytes } from "../modelSource";
-import { FaceWorkerInitSchema, FaceWorkerRequestSchema, type FaceWorkerResponse } from "./protocol";
+import { boundedMessage, FaceWorkerInitSchema,FaceWorkerRequestSchema, type FaceWorkerResponse } from "./protocol";
 
 // T7c: the face worker thread — the engine's heavy face work (image decode,
 // YuNet detection, SFace embedding) moved off its event loop. It is a
@@ -25,7 +25,7 @@ function send(message: FaceWorkerResponse): void {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return boundedMessage(error instanceof Error ? error.message : String(error));
 }
 
 interface Loaded {
