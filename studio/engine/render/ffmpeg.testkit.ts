@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import ffprobeStatic from "ffprobe-static";
+import { z } from "zod";
 import { ffmpegPath } from "../../node/ffmpegBinary";
 
 // Test support for the real-ffmpeg suites: a runner, an ffprobe wrapper, and
@@ -28,43 +29,41 @@ export async function runFfmpegOk(argv: readonly string[], opts: { cwd?: string 
   return r;
 }
 
-export interface ProbedStream {
-  readonly codec_type?: string;
-  readonly codec_name?: string;
-  readonly profile?: string;
-  readonly width?: number;
-  readonly height?: number;
-  readonly pix_fmt?: string;
-  readonly r_frame_rate?: string;
-  readonly avg_frame_rate?: string;
-  readonly color_range?: string;
-  readonly color_space?: string;
-  readonly color_transfer?: string;
-  readonly color_primaries?: string;
-  readonly sample_rate?: string;
-  readonly channels?: number;
-  readonly nb_read_frames?: string;
-  readonly duration?: string;
-  readonly tags?: Record<string, string>;
-}
+const Tags = z.record(z.string(), z.string());
 
-export interface Probed {
-  readonly streams: ProbedStream[];
-  readonly format: { readonly format_name?: string; readonly duration?: string; readonly tags?: Record<string, string> };
-}
+const ProbedStreamSchema = z.looseObject({
+  codec_type: z.string().optional(),
+  codec_name: z.string().optional(),
+  profile: z.string().optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  pix_fmt: z.string().optional(),
+  r_frame_rate: z.string().optional(),
+  avg_frame_rate: z.string().optional(),
+  color_range: z.string().optional(),
+  color_space: z.string().optional(),
+  color_transfer: z.string().optional(),
+  color_primaries: z.string().optional(),
+  sample_rate: z.string().optional(),
+  channels: z.number().optional(),
+  nb_read_frames: z.string().optional(),
+  duration: z.string().optional(),
+  tags: Tags.optional(),
+});
 
-/** ffprobe (test-only, 4.4) as JSON, with the given `-show_entries`-style extra args. */
+const ProbedSchema = z.looseObject({
+  streams: z.array(ProbedStreamSchema).default([]),
+  format: z.looseObject({ format_name: z.string().optional(), duration: z.string().optional(), tags: Tags.optional() }).default({}),
+});
+
+export type ProbedStream = z.infer<typeof ProbedStreamSchema>;
+export type Probed = z.infer<typeof ProbedSchema>;
+
+/** ffprobe (test-only, 4.4) as JSON, parsed and checked, with the given `-show_entries`-style extra args. */
 export async function probeJson(path: string, extra: readonly string[]): Promise<Probed> {
   const r = await runBinary(ffprobeStatic.path, ["-v", "error", "-of", "json", ...extra, path]);
   if (r.code !== 0) throw new Error(`ffprobe exited ${r.code}: ${r.stderr}`);
-  const parsed: unknown = JSON.parse(new TextDecoder().decode(r.stdout));
-  if (typeof parsed !== "object" || parsed === null) throw new Error("ffprobe printed no object");
-  const streams: unknown = Reflect.get(parsed, "streams");
-  const format: unknown = Reflect.get(parsed, "format");
-  return {
-    streams: Array.isArray(streams) ? (streams as ProbedStream[]) : [],
-    format: typeof format === "object" && format !== null ? (format as Probed["format"]) : {},
-  };
+  return ProbedSchema.parse(JSON.parse(new TextDecoder().decode(r.stdout)));
 }
 
 /** Stream facts, container facts, and the decoded frame count of the first video stream. */

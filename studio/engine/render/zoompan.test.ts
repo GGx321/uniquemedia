@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { cellMotionGeometry, motionWindow, type Anchor, type Size } from "../../shared/montage";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { evaluateExpression } from "./exprEval.testkit";
 import { assertSafeFilterGraph } from "./filterString";
 import { MOVING_CASES, planWhere } from "./plans.testkit";
 import { zoompanFilter, type MovingMotionPlan } from "./zoompan";
+import { zoompanWindow, zoompanWindowUnsnapped } from "./zoompanModel.testkit";
 useNativeGlobals();
 
 // The zoompan expressions must give the window `motionWindow` gives, so the
@@ -24,25 +24,7 @@ function field(filter: string, key: string): string {
   return m[1];
 }
 
-const evaluate = evaluateExpression;
-
-interface Model {
-  readonly w: number;
-  readonly h: number;
-  readonly x: number;
-  readonly y: number;
-}
-
-function ffmpegWindow(filter: string, canvas: Size, on: number): Model {
-  const zoom = Math.min(10, Math.max(1, evaluate(field(filter, "z"), { on, iw: canvas.w, ih: canvas.h })));
-  const vars = { on, iw: canvas.w, ih: canvas.h };
-  return {
-    w: Math.trunc(canvas.w * (1 / zoom)),
-    h: Math.trunc(canvas.h * (1 / zoom)),
-    x: Math.trunc(evaluate(field(filter, "x"), vars)),
-    y: Math.trunc(evaluate(field(filter, "y"), vars)),
-  };
-}
+const ffmpegWindow = zoompanWindowUnsnapped;
 
 const CANVASES: readonly Size[] = [
   { w: 2880, h: 5120 }, // a photo cell at the cap
@@ -137,6 +119,23 @@ describe("zoompan expressions against motionWindow", () => {
             const want = motionWindow(plan, canvas, ANCHORS[1] ?? { uPermille: 500, vPermille: 500 }, on, frames);
             const got = ffmpegWindow(filter, canvas, on);
             worst = Math.max(worst, Math.abs(got.w - want.w), Math.abs(got.h - want.h));
+          }
+        }
+      }
+      expect(worst).toBeLessThanOrEqual(1);
+    });
+
+    test(`${name}: the window ffmpeg really shows, position snapped down to even, is within one canvas pixel of motionWindow`, () => {
+      let worst = 0;
+      for (const canvas of CANVASES) {
+        for (const anchor of ANCHORS) {
+          for (const frames of FRAME_COUNTS) {
+            const filter = zoompanFilter(plan, canvas, anchor, frames, { w: 1080, h: 1920 });
+            for (let on = 0; on < frames; on += Math.max(1, Math.floor(frames / 11))) {
+              const want = motionWindow(plan, canvas, anchor, on, frames);
+              const got = zoompanWindow(filter, canvas, on);
+              worst = Math.max(worst, Math.abs(got.x - want.x), Math.abs(got.y - want.y), Math.abs(got.w - want.w), Math.abs(got.h - want.h));
+            }
           }
         }
       }

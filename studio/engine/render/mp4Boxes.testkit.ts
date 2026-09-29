@@ -52,16 +52,22 @@ export interface BoxTimes {
   readonly modification: number;
 }
 
-/** The creation and modification time (seconds since 1904) of the first box at `path` (`moov/mvhd`, `moov/trak/tkhd`, `moov/trak/mdia/mdhd`). */
-export function readTimes(bytes: Uint8Array, boxes: readonly Box[], path: string): BoxTimes {
-  const box = boxes.find((b) => b.path === path);
-  if (!box) throw new Error(`no ${path} box`);
-  const body = box.start + 8;
-  const version = bytes[body] ?? 0;
-  if (version === 1) {
-    return { creation: u32(bytes, body + 4) * 0x100000000 + u32(bytes, body + 8), modification: u32(bytes, body + 12) * 0x100000000 + u32(bytes, body + 16) };
-  }
-  return { creation: u32(bytes, body + 4), modification: u32(bytes, body + 8) };
+/**
+ * The creation and modification time (seconds since 1904) of EVERY box at
+ * `path`, in file order: one `moov/mvhd`, and one `moov/trak/tkhd` and one
+ * `moov/trak/mdia/mdhd` per track (the audio track too).
+ */
+export function readTimes(bytes: Uint8Array, boxes: readonly Box[], path: string): BoxTimes[] {
+  const found = boxes.filter((b) => b.path === path);
+  if (found.length === 0) throw new Error(`no ${path} box`);
+  return found.map((box) => {
+    const body = box.start + 8;
+    const version = bytes[body] ?? 0;
+    if (version === 1) {
+      return { creation: u32(bytes, body + 4) * 0x100000000 + u32(bytes, body + 8), modification: u32(bytes, body + 12) * 0x100000000 + u32(bytes, body + 16) };
+    }
+    return { creation: u32(bytes, body + 4), modification: u32(bytes, body + 8) };
+  });
 }
 
 /** The distinct box types found at exactly `depth` levels below the root (0 = top level). */

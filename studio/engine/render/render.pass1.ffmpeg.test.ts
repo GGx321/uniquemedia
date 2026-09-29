@@ -10,7 +10,7 @@ useNativeGlobals();
 
 // REAL ffmpeg (the bundled build), pass 1 only: every clip kind renders to an
 // intermediate with exactly the frames the spec asks for. SLOW: it renders
-// nine 0.5 to 4 s clips at 1080x1920 (about 15 s in all).
+// nine 0.5 to 2 s clips (S14: clips of at most 2 s) at 1080x1920 (about 15 s in all).
 
 const FIXTURES = join(import.meta.dir, "../face/fixtures/images");
 const PHOTO_FILES = ["render-best-home-1.jpg", "render-median-travel-2.jpg", "render-worst-fitness-3.jpg", "master.jpg"].map((n) => join(FIXTURES, n));
@@ -36,14 +36,14 @@ const collage = (clipId: string, layout: "collage2" | "collage3" | "collage4", d
 const photo = (clipId: string, durationMs: number, motion: "kenburns" | "pan" | "static"): Clip => ({ clipId, durationMs, transitionIn: "cut", kind: "photo", cell: scene("p-1"), motion });
 
 const CASES: Array<{ name: string; clip: Clip; frames: number }> = [
-  { name: "photo, Ken Burns", clip: photo("photo-kb", 4000, "kenburns"), frames: 120 },
-  { name: "photo, pan", clip: photo("photo-pan", 4000, "pan"), frames: 120 },
-  { name: "photo, static", clip: photo("photo-static", 4000, "static"), frames: 120 },
-  { name: "collage 2, Ken Burns, staggered", clip: collage("c2", "collage2", 4000, "kenburns", true), frames: 120 },
-  { name: "collage 3, Ken Burns, staggered", clip: collage("c3", "collage3", 4000, "kenburns", true), frames: 120 },
-  { name: "collage 4, Ken Burns, staggered", clip: collage("c4", "collage4", 4000, "kenburns", true), frames: 120 },
-  { name: "collage 4, pan, not staggered", clip: collage("c4-pan", "collage4", 4000, "pan", false), frames: 120 },
-  { name: "collage 4, static, staggered", clip: collage("c4-static", "collage4", 4000, "static", true), frames: 120 },
+  { name: "photo, Ken Burns", clip: photo("photo-kb", 2000, "kenburns"), frames: 60 },
+  { name: "photo, pan", clip: photo("photo-pan", 2000, "pan"), frames: 60 },
+  { name: "photo, static", clip: photo("photo-static", 2000, "static"), frames: 60 },
+  { name: "collage 2, Ken Burns, staggered", clip: collage("c2", "collage2", 2000, "kenburns", true), frames: 60 },
+  { name: "collage 3, Ken Burns, staggered", clip: collage("c3", "collage3", 2000, "kenburns", true), frames: 60 },
+  { name: "collage 4, Ken Burns, staggered", clip: collage("c4", "collage4", 2000, "kenburns", true), frames: 60 },
+  { name: "collage 4, pan, not staggered", clip: collage("c4-pan", "collage4", 2000, "pan", false), frames: 60 },
+  { name: "collage 4, static, staggered", clip: collage("c4-static", "collage4", 2000, "static", true), frames: 60 },
   { name: "the shortest collage 4, 500 ms, staggered", clip: collage("c4-short", "collage4", 500, "kenburns", true), frames: 15 },
 ];
 

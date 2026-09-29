@@ -145,7 +145,7 @@ describe("pass 2 on real ffmpeg: the metadata allowlist (invariant 14)", () => {
   test("the container carries only the brand tags and the Lavf encoder", () => {
     const tags = container.format.tags ?? {};
     expect(Object.keys(tags).sort()).toEqual([...ALLOWED_CONTAINER].sort());
-    expect(tags.encoder).toMatch(/^Lavf/);
+    expect(tags.encoder).toMatch(/^Lavf\d+\.\d+\.\d+$/);
   });
 
   test("each stream carries only a handler name, an undefined language and a zero vendor id", () => {
@@ -189,9 +189,10 @@ describe("pass 2 on real ffmpeg: the metadata allowlist (invariant 14)", () => {
     expect(containsAscii(bytes, sentinel)).toBe(false);
   });
 
-  test("records no wall-clock time: the movie, track and media creation and modification times are all zero", () => {
-    for (const path of ["moov/mvhd", "moov/trak/tkhd", "moov/trak/mdia/mdhd"]) {
-      expect(readTimes(bytes, boxes, path)).toEqual({ creation: 0, modification: 0 });
-    }
+  test("records no wall-clock time: the movie's and BOTH tracks' creation and modification times are all zero", () => {
+    const zero = { creation: 0, modification: 0 };
+    expect(readTimes(bytes, boxes, "moov/mvhd")).toEqual([zero]);
+    expect(readTimes(bytes, boxes, "moov/trak/tkhd")).toEqual([zero, zero]);
+    expect(readTimes(bytes, boxes, "moov/trak/mdia/mdhd")).toEqual([zero, zero]);
   });
 });
