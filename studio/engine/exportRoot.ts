@@ -1,4 +1,6 @@
-import { mkdir, open, readFile, realpath, rm, stat, statfs } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { link, mkdir, open, realpath, rm, stat, statfs, unlink, type FileHandle } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { z } from "zod";
 import { ExportStatus, Id, type ExportUnavailableReason } from "../shared/engine";
@@ -14,7 +16,15 @@ export const EXPORT_MARKER_FILE = ".studio-export.json";
 /** A marker is two short fields; a bigger file is not ours. */
 const MAX_MARKER_BYTES = 4096;
 
-export const ExportMarker = z.strictObject({ rootId: Id, createdAt: z.iso.datetime() });
+/** Version of the marker's own layout. A build that meets a higher one refuses it as `newer-marker` and never touches it. */
+export const EXPORT_MARKER_VERSION = 1;
+
+/**
+ * Loose on purpose: a later build of the same version may add a field, and an
+ * older one must still read the root id. Unknown keys are ignored, and the file
+ * is never rewritten.
+ */
+export const ExportMarker = z.looseObject({ schemaVersion: z.literal(EXPORT_MARKER_VERSION), rootId: Id, createdAt: z.iso.datetime() });
 export type ExportMarker = z.infer<typeof ExportMarker>;
 
 export interface ExportRootFs {
@@ -25,8 +35,13 @@ export interface ExportRootFs {
   mkdirp(path: string): Promise<void>;
   /** Reads a regular file of at most `maxBytes`; rejects for anything else (a directory, a bigger file) and with ENOENT when absent. */
   readSmallFile(path: string, maxBytes: number): Promise<string>;
-  /** Writes a new file (`wx`) and flushes it; rejects with EEXIST when there is one. */
+  /** Writes a new file (`wx`) and flushes it; rejects with EEXIST when there is one. For the probe. */
   createExclusive(path: string, text: string): Promise<void>;
+  /**
+   * Makes a new file appear under its final name with all its bytes or not at all, and never over an
+   * existing file: EEXIST when there is one. For the marker, which a racing reader must never see half written.
+   */
+  publishExclusive(path: string, text: string): Promise<void>;
   remove(path: string): Promise<void>;
   /** Bytes an unprivileged writer can still use on the volume of `path`; null when unknown. */
   freeBytes(path: string): Promise<number | null>;
@@ -39,10 +54,20 @@ export const NODE_EXPORT_ROOT_FS: ExportRootFs = {
     await mkdir(path, { recursive: true });
   },
   readSmallFile: async (path, maxBytes) => {
-    const info = await stat(path);
-    if (!info.isFile()) throw new Error("not a regular file");
-    if (info.size > maxBytes) throw new Error("file is too large");
-    return readFile(path, "utf8");
+    // O_NOFOLLOW: a symlinked marker would adopt another root's id. O_NONBLOCK: a FIFO swapped in
+    // must not block the open. The handle is checked, not the path, so nothing can change under us.
+    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    try {
+      const info = await handle.stat();
+      if (!info.isFile()) throw new Error("not a regular file");
+      if (info.size > maxBytes) throw new Error("file is too large");
+      const buffer = Buffer.alloc(maxBytes + 1);
+      const { bytesRead } = await handle.read(buffer, 0, maxBytes + 1, 0);
+      if (bytesRead > maxBytes) throw new Error("file is too large");
+      return buffer.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      await handle.close();
+    }
   },
   createExclusive: async (path, text) => {
     const handle = await open(path, "wx");
@@ -53,6 +78,7 @@ export const NODE_EXPORT_ROOT_FS: ExportRootFs = {
       await handle.close();
     }
   },
+  publishExclusive: (path, text) => publishFileExclusive(path, text),
   remove: (path) => rm(path),
   freeBytes: async (path) => {
     try {
@@ -64,6 +90,62 @@ export const NODE_EXPORT_ROOT_FS: ExportRootFs = {
     }
   },
 };
+
+/** The calls `publishFileExclusive` makes, injectable so a test can play a volume without hard links or a full disk. */
+export interface PublishOps {
+  open(path: string, flags: string): Promise<FileHandle>;
+  link(existing: string, created: string): Promise<void>;
+  unlink(path: string): Promise<void>;
+}
+
+const NODE_PUBLISH_OPS: PublishOps = { open: (path, flags) => open(path, flags), link, unlink };
+
+/** `link()` is not supported here (exFAT, FAT, some network shares): the exclusive create takes over. */
+const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EACCES"]);
+
+async function writeAndSync(handle: FileHandle, text: string): Promise<void> {
+  try {
+    await handle.writeFile(text);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Publishes `text` at `path` atomically and exclusively: the bytes are written and
+ * fsynced to a temp file next to it, which is then hard-linked to the final name
+ * (`link()` fails with EEXIST rather than replace anything) and removed. A reader
+ * sees no file or the whole file, and a crash or a full disk leaves no half-written
+ * one behind. On a volume without hard links an exclusive create is used instead,
+ * and it removes what it wrote if the write fails.
+ */
+export async function publishFileExclusive(path: string, text: string, ops: PublishOps = NODE_PUBLISH_OPS): Promise<void> {
+  const temp = `${path}.tmp-${randomUUID()}`;
+  try {
+    await writeAndSync(await ops.open(temp, "wx"), text);
+  } catch (error) {
+    await ops.unlink(temp).catch(() => undefined);
+    throw error;
+  }
+  try {
+    await ops.link(temp, path);
+  } catch (error) {
+    await ops.unlink(temp).catch(() => undefined);
+    const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "";
+    if (!NO_HARD_LINKS.has(code)) throw error;
+    // The exclusive create says EEXIST for a file that is there, as `link()` would have.
+    const handle = await ops.open(path, "wx");
+    try {
+      await writeAndSync(handle, text);
+    } catch (writeError) {
+      await ops.unlink(path).catch(() => undefined);
+      throw writeError;
+    }
+    return;
+  }
+  await ops.unlink(temp).catch(() => undefined);
+}
 
 export type ExportRootCheck =
   | { ok: true; rootId: string; /** The folder as the settings name it. */ root: string }
@@ -159,11 +241,14 @@ export async function checkExportRoot(options: CheckExportRootOptions): Promise<
   if (shape !== "ok") return refuse(shape);
 
   const probe = nodePath.join(exportPath, `.studio-probe-${options.newId()}`);
+  // Only a probe this call created is removed: an EEXIST names somebody else's file.
+  let created = false;
   try {
     await fs.createExclusive(probe, "");
+    created = true;
     await fs.remove(probe);
   } catch {
-    await fs.remove(probe).catch(() => undefined);
+    if (created) await fs.remove(probe).catch(() => undefined);
     return refuse("not-writable");
   }
 
@@ -194,7 +279,7 @@ async function folderShape(fs: ExportRootFs, path: string, mayCreate: boolean): 
   }
 }
 
-type MarkerRead = { kind: "valid"; marker: ExportMarker } | { kind: "absent" } | { kind: "invalid" };
+type MarkerRead = { kind: "valid"; marker: ExportMarker } | { kind: "absent" } | { kind: "invalid" } | { kind: "newer" };
 
 async function readMarker(fs: ExportRootFs, root: string): Promise<MarkerRead> {
   let text: string;
@@ -209,6 +294,10 @@ async function readMarker(fs: ExportRootFs, root: string): Promise<MarkerRead> {
   } catch {
     return { kind: "invalid" };
   }
+  // A newer layout is judged by its version alone: it may have changed everything else.
+  if (typeof raw === "object" && raw !== null && "schemaVersion" in raw && typeof raw.schemaVersion === "number" && Number.isInteger(raw.schemaVersion) && raw.schemaVersion > EXPORT_MARKER_VERSION) {
+    return { kind: "newer" };
+  }
   const parsed = ExportMarker.safeParse(raw);
   return parsed.success ? { kind: "valid", marker: parsed.data } : { kind: "invalid" };
 }
@@ -218,18 +307,20 @@ async function readOrCreateMarker(
   fs: ExportRootFs,
   root: string,
   options: Pick<CheckExportRootOptions, "newId" | "now">,
-): Promise<{ ok: true; rootId: string } | { ok: false; reason: "invalid-marker" | "not-writable" }> {
+): Promise<{ ok: true; rootId: string } | { ok: false; reason: "invalid-marker" | "newer-marker" | "not-writable" }> {
   const first = await readMarker(fs, root);
   if (first.kind === "valid") return { ok: true, rootId: first.marker.rootId };
   if (first.kind === "invalid") return { ok: false, reason: "invalid-marker" };
-  const marker = ExportMarker.parse({ rootId: options.newId(), createdAt: options.now().toISOString() });
+  if (first.kind === "newer") return { ok: false, reason: "newer-marker" };
+  const marker = ExportMarker.parse({ schemaVersion: EXPORT_MARKER_VERSION, rootId: options.newId(), createdAt: options.now().toISOString() });
   try {
-    await fs.createExclusive(nodePath.join(root, EXPORT_MARKER_FILE), `${JSON.stringify(marker)}\n`);
+    await fs.publishExclusive(nodePath.join(root, EXPORT_MARKER_FILE), `${JSON.stringify(marker)}\n`);
     return { ok: true, rootId: marker.rootId };
   } catch (error) {
     if (!hasErrorCode(error, "EEXIST")) return { ok: false, reason: "not-writable" };
   }
   // Another check wrote it between our read and our write: theirs stands.
   const second = await readMarker(fs, root);
-  return second.kind === "valid" ? { ok: true, rootId: second.marker.rootId } : { ok: false, reason: "invalid-marker" };
+  if (second.kind === "valid") return { ok: true, rootId: second.marker.rootId };
+  return { ok: false, reason: second.kind === "newer" ? "newer-marker" : "invalid-marker" };
 }

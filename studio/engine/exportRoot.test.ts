@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, link as fsLink, mkdir, mkdtemp, open as fsOpen, readdir, readFile, realpath, rename, rm, stat, symlink, unlink as fsUnlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { ExportStatus } from "../shared/engine";
-import { checkExportRoot, EXPORT_MARKER_FILE, ExportMarker, exportStatusOf, NODE_EXPORT_ROOT_FS, pathsOverlap, type ExportRootFs } from "./exportRoot";
+import { checkExportRoot, EXPORT_MARKER_FILE, ExportMarker, exportStatusOf, NODE_EXPORT_ROOT_FS, pathsOverlap, publishFileExclusive, type ExportRootFs, type PublishOps } from "./exportRoot";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -64,7 +65,7 @@ describe("the export folder exists and is usable", () => {
   test("the marker holds the root id and the creation time, and nothing else", async () => {
     await mkdir(exportPath);
     await check({ newId: () => "fresh-root-id" });
-    expect(await marker()).toEqual({ rootId: "fresh-root-id", createdAt: "2026-09-29T12:00:00.000Z" });
+    expect(await marker()).toEqual({ schemaVersion: 1, rootId: "fresh-root-id", createdAt: "2026-09-29T12:00:00.000Z" });
   });
 
   test("the probe leaves nothing behind but the marker", async () => {
@@ -93,7 +94,7 @@ describe("the export folder exists and is usable", () => {
 
   test("an existing valid marker is adopted, not replaced", async () => {
     await mkdir(exportPath);
-    await writeFile(join(exportPath, EXPORT_MARKER_FILE), JSON.stringify({ rootId: "from-another-machine", createdAt: "2025-05-05T05:05:05.000Z" }));
+    await writeFile(join(exportPath, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: "from-another-machine", createdAt: "2025-05-05T05:05:05.000Z" }));
     const result = await check();
     expect(result).toEqual({ ok: true, rootId: "from-another-machine", root: exportPath });
   });
@@ -260,14 +261,55 @@ describe("the root marker", () => {
     ["an empty file", ""],
     ["a JSON array", "[]"],
     ["a JSON null", "null"],
-    ["a missing rootId", JSON.stringify({ createdAt: "2026-09-29T12:00:00.000Z" })],
-    ["a rootId that is not an id", JSON.stringify({ rootId: "../x", createdAt: "2026-09-29T12:00:00.000Z" })],
-    ["a createdAt that is not a time", JSON.stringify({ rootId: "root-00000009", createdAt: "yesterday" })],
-    ["an extra field", JSON.stringify({ rootId: "root-00000009", createdAt: "2026-09-29T12:00:00.000Z", path: "/x" })],
+    ["a missing rootId", JSON.stringify({ schemaVersion: 1, createdAt: "2026-09-29T12:00:00.000Z" })],
+    ["a rootId that is not an id", JSON.stringify({ schemaVersion: 1, rootId: "../x", createdAt: "2026-09-29T12:00:00.000Z" })],
+    ["a createdAt that is not a time", JSON.stringify({ schemaVersion: 1, rootId: "root-00000009", createdAt: "yesterday" })],
+    ["no schemaVersion", JSON.stringify({ rootId: "root-00000009", createdAt: "2026-09-29T12:00:00.000Z" })],
+    ["a schemaVersion of 0", JSON.stringify({ schemaVersion: 0, rootId: "root-00000009", createdAt: "2026-09-29T12:00:00.000Z" })],
+    ["a fractional schemaVersion", JSON.stringify({ schemaVersion: 1.5, rootId: "root-00000009", createdAt: "2026-09-29T12:00:00.000Z" })],
+    ["a schemaVersion that is a string", JSON.stringify({ schemaVersion: "1", rootId: "root-00000009", createdAt: "2026-09-29T12:00:00.000Z" })],
     ["binary junk", new Uint8Array([0, 255, 254, 1, 2])],
     ["a file far too large", "x".repeat(100_000)],
   ])("%s is an invalid marker", async (_label, content) => {
     await seed(content);
+    expect(await check()).toEqual({ ok: false, reason: "invalid-marker" });
+  });
+
+  test("a version 1 marker with a field this build does not know is still valid, and is not rewritten", async () => {
+    const text = JSON.stringify({ schemaVersion: 1, rootId: "root-00000009", createdAt: "2026-09-29T12:00:00.000Z", label: "future" });
+    await seed(text);
+    expect(await check()).toEqual({ ok: true, rootId: "root-00000009", root: exportPath });
+    expect(await readFile(join(exportPath, EXPORT_MARKER_FILE), "utf8")).toBe(text);
+  });
+
+  test("a marker of a newer schema version is refused as newer-marker, not as damaged", async () => {
+    await seed(JSON.stringify({ schemaVersion: 2, rootId: "root-00000009", createdAt: "2026-09-29T12:00:00.000Z", shards: [1] }));
+    expect(await check()).toEqual({ ok: false, reason: "newer-marker" });
+  });
+
+  test("a newer marker is judged by its version alone, whatever else it holds", async () => {
+    await seed(JSON.stringify({ schemaVersion: 7, somethingElse: true }));
+    expect(await check()).toEqual({ ok: false, reason: "newer-marker" });
+  });
+
+  test("a newer marker is left as it was", async () => {
+    const text = JSON.stringify({ schemaVersion: 2, rootId: "root-00000009" });
+    await seed(text);
+    await check();
+    expect(await readFile(join(exportPath, EXPORT_MARKER_FILE), "utf8")).toBe(text);
+  });
+
+  test("a marker that is a symlink to another root's marker is invalid, not adopted", async () => {
+    await mkdir(exportPath);
+    const other = join(dir, "other-marker.json");
+    await writeFile(other, JSON.stringify({ schemaVersion: 1, rootId: "another-root-1", createdAt: "2026-09-29T12:00:00.000Z" }));
+    await symlink(other, join(exportPath, EXPORT_MARKER_FILE));
+    expect(await check()).toEqual({ ok: false, reason: "invalid-marker" });
+  });
+
+  test.skipIf(process.platform === "win32")("a FIFO swapped in as the marker is invalid and the check does not block", async () => {
+    await mkdir(exportPath);
+    spawnSync("mkfifo", [join(exportPath, EXPORT_MARKER_FILE)]);
     expect(await check()).toEqual({ ok: false, reason: "invalid-marker" });
   });
 
@@ -291,16 +333,15 @@ describe("the root marker", () => {
   test("a marker written by a racing check is adopted", async () => {
     await mkdir(exportPath);
     let reads = 0;
-    const raced = JSON.stringify({ rootId: "the-winner", createdAt: "2026-09-29T11:59:59.000Z" });
+    const raced = JSON.stringify({ schemaVersion: 1, rootId: "the-winner", createdAt: "2026-09-29T11:59:59.000Z" });
     const fs = faulty({
       readSmallFile: async (path, max) => {
         reads++;
         if (reads === 1) throw errno("ENOENT");
         return raced.length <= max ? raced : "";
       },
-      createExclusive: async (path, text) => {
-        if (path.endsWith(EXPORT_MARKER_FILE)) throw errno("EEXIST");
-        return NODE_EXPORT_ROOT_FS.createExclusive(path, text);
+      publishExclusive: async () => {
+        throw errno("EEXIST");
       },
     });
     expect(await check({ fs })).toEqual({ ok: true, rootId: "the-winner", root: exportPath });
@@ -309,6 +350,128 @@ describe("the root marker", () => {
   test("a newId that is not a valid id throws instead of writing a marker the next read would reject", async () => {
     await mkdir(exportPath);
     await expect(check({ newId: () => "BAD ID" })).rejects.toThrow();
+    expect(await readdir(exportPath)).toEqual([]);
+  });
+});
+
+describe("the probe", () => {
+  test("a probe file this call did not create is not removed", async () => {
+    await mkdir(exportPath);
+    const removed: string[] = [];
+    const fs = faulty({
+      createExclusive: async () => Promise.reject(errno("EEXIST")),
+      remove: async (path) => {
+        removed.push(path);
+      },
+    });
+    expect(await check({ fs })).toEqual({ ok: false, reason: "not-writable" });
+    expect(removed).toEqual([]);
+  });
+
+  test("a probe this call created is removed even when a later step fails", async () => {
+    await mkdir(exportPath);
+    const removed: string[] = [];
+    const fs = faulty({
+      remove: async (path) => {
+        removed.push(path);
+        if (removed.length === 1) throw errno("EPERM");
+      },
+    });
+    await check({ fs });
+    expect(removed.length).toBe(2);
+  });
+});
+
+describe("concurrent checks on a fresh folder", () => {
+  test("thirty at once all succeed with one root id (nobody reads a half-written marker)", async () => {
+    await mkdir(exportPath);
+    const results = await Promise.all(Array.from({ length: 30 }, () => check()));
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(new Set(results.map((r) => (r.ok ? r.rootId : "")))).toHaveProperty("size", 1);
+  });
+
+  test("the marker on disk is the one every check reports", async () => {
+    await mkdir(exportPath);
+    const results = await Promise.all(Array.from({ length: 10 }, () => check()));
+    const onDisk = ExportMarker.parse(await marker()).rootId;
+    expect(results.every((r) => r.ok && r.rootId === onDisk)).toBe(true);
+  });
+});
+
+describe("publishFileExclusive", () => {
+  const real: PublishOps = { open: fsOpen, link: fsLink, unlink: fsUnlink };
+
+  test("publishes the whole content and leaves no temp file", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    await publishFileExclusive(target, "hello", real);
+    expect(await readFile(target, "utf8")).toBe("hello");
+    expect(await readdir(exportPath)).toEqual(["m.json"]);
+  });
+
+  test("rejects with EEXIST and leaves an existing file alone", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    await writeFile(target, "mine");
+    await expect(publishFileExclusive(target, "theirs", real)).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(target, "utf8")).toBe("mine");
+    expect(await readdir(exportPath)).toEqual(["m.json"]);
+  });
+
+  test("a write that fails leaves nothing under the final name", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    const failing: PublishOps = {
+      ...real,
+      open: async (path, flags) => {
+        const handle = await fsOpen(path, flags);
+        return Object.assign(handle, {
+          writeFile: async () => {
+            throw errno("ENOSPC");
+          },
+        });
+      },
+    };
+    await expect(publishFileExclusive(target, "hello", failing)).rejects.toMatchObject({ code: "ENOSPC" });
+    expect(await readdir(exportPath)).toEqual([]);
+  });
+
+  test("on a volume without hard links it falls back to an exclusive create", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    const noLinks: PublishOps = { ...real, link: async () => Promise.reject(errno("EPERM")) };
+    await publishFileExclusive(target, "hello", noLinks);
+    expect(await readFile(target, "utf8")).toBe("hello");
+    expect(await readdir(exportPath)).toEqual(["m.json"]);
+  });
+
+  test("the fallback still refuses to overwrite", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    await writeFile(target, "mine");
+    const noLinks: PublishOps = { ...real, link: async () => Promise.reject(errno("ENOTSUP")) };
+    await expect(publishFileExclusive(target, "theirs", noLinks)).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(target, "utf8")).toBe("mine");
+  });
+
+  test("a failed fallback write removes the half-written file", async () => {
+    await mkdir(exportPath);
+    const target = join(exportPath, "m.json");
+    const broken: PublishOps = {
+      link: async () => Promise.reject(errno("EPERM")),
+      unlink: fsUnlink,
+      open: async (path, flags) => {
+        const handle = await fsOpen(path, flags);
+        // Only the final file's write fails: the temp file was written fine and hard links are what is missing.
+        if (path !== target) return handle;
+        return Object.assign(handle, {
+          writeFile: async () => {
+            throw errno("EIO");
+          },
+        });
+      },
+    };
+    await expect(publishFileExclusive(target, "hello", broken)).rejects.toMatchObject({ code: "EIO" });
     expect(await readdir(exportPath)).toEqual([]);
   });
 });
