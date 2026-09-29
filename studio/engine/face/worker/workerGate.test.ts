@@ -488,3 +488,75 @@ describe("terminate() that does not finish", () => {
     await running;
   });
 });
+
+describe("a kill that fails is treated like a kill that times out", () => {
+  /** Collects every unhandled rejection for the duration of one test. */
+  function watchUnhandled(): { seen: unknown[]; stop: () => void } {
+    const seen: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      seen.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    return { seen, stop: () => process.off("unhandledRejection", onUnhandled) };
+  }
+  const rejectTerminate = (worker: Worker): void => {
+    worker.terminate = () => Promise.reject(new Error("terminate refused"));
+  };
+
+  test("a terminate() that rejects breaks the gate: no second worker, and no unhandled rejection", async () => {
+    const unhandled = watchUnhandled();
+    try {
+      const h = harness({ tamper: rejectTerminate });
+      const controller = new AbortController();
+      const running = h.gate.check(checkInput(Behaviour.hang), controller.signal).catch(() => {});
+      await Bun.sleep(50);
+      controller.abort(new Error("cancelled"));
+      await running;
+      await expect(h.gate.check(checkInput(), live())).rejects.toThrow(/could not be terminated/);
+      expect(h.spawned()).toBe(1); // never a second worker next to one that would not die
+      await Bun.sleep(20); // a leaked rejection surfaces on a later tick
+      expect(unhandled.seen).toEqual([]);
+    } finally {
+      unhandled.stop();
+    }
+  });
+
+  test("a terminate() that rejects on an idle worker's kill breaks the gate without an unhandled rejection", async () => {
+    const unhandled = watchUnhandled();
+    try {
+      const h = harness({ tamper: rejectTerminate });
+      await h.gate.check(checkInput(), live());
+      h.workers[0]?.emit("messageerror", new Error("could not deserialize")); // idle: killed under the lane
+      await Bun.sleep(50);
+      await expect(h.gate.check(checkInput(), live())).rejects.toThrow(/could not be terminated/);
+      expect(h.spawned()).toBe(1);
+      expect(unhandled.seen).toEqual([]);
+    } finally {
+      unhandled.stop();
+    }
+  });
+
+  test("dispose() while an idle worker's kill is queued behind another kill leaves no unhandled rejection", async () => {
+    const unhandled = watchUnhandled();
+    try {
+      const h = harness({
+        tamper: (worker) => {
+          const real = worker.terminate.bind(worker);
+          worker.terminate = async () => {
+            await Bun.sleep(100);
+            return real();
+          };
+        },
+      });
+      await h.gate.check(checkInput(), live());
+      h.workers[0]?.emit("messageerror", new Error("first")); // takes the lane, terminate takes ~100 ms
+      h.workers[0]?.emit("messageerror", new Error("second")); // its lane request queues behind the first
+      await Bun.sleep(10);
+      await h.gate.dispose(); // rejects the queued lane request
+      await Bun.sleep(20);
+      expect(unhandled.seen).toEqual([]);
+    } finally {
+      unhandled.stop();
+    }
+  });
+});

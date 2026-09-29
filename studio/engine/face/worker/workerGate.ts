@@ -146,6 +146,11 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
     });
   }
 
+  /** A background kill's lane request is rejected only when dispose() emptied the queue; dispose() kills the live worker itself, so there is nothing left to do but say so. */
+  function laneRequestRejected(error: unknown): void {
+    console.warn(`studio engine: a background face worker kill gave up its place in the lane (${error instanceof Error ? error.message : "unknown error"})`);
+  }
+
   // ---- idle recycling -----------------------------------------------------
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -162,14 +167,16 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
     idleTimer = setTimeout(() => {
       idleTimer = null;
       if (busy || live === null) return;
-      void acquire(NEVER_ABORTED).then(async (release) => {
-        try {
-          if (live !== null) await kill(live);
-        } finally {
-          release();
-          scheduleIdleRecycle();
-        }
-      });
+      acquire(NEVER_ABORTED)
+        .then(async (release) => {
+          try {
+            if (live !== null) await kill(live);
+          } finally {
+            release();
+            scheduleIdleRecycle();
+          }
+        })
+        .catch(laneRequestRejected);
     }, after);
     idleTimer.unref?.();
   }
@@ -234,8 +241,9 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
   /**
    * Terminates `entry` and returns once it has really exited. Idempotent, and
    * never rejects: a terminate that does not finish within `killTimeoutMs`
-   * (a wedged runtime) is logged and makes the gate BROKEN — every later call
-   * fails rather than spawn a worker beside one that may still be running.
+   * (a wedged runtime), or that fails outright, is logged and makes the gate
+   * BROKEN — every later call fails rather than spawn a worker beside one
+   * that may still be running.
    */
   function kill(entry: Live): Promise<void> {
     if (live === entry) live = null;
@@ -245,12 +253,13 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
         // `terminate()` on one never settles (Node's resolves), and there is
         // nothing left to stop anyway.
         if (entry.dead) return;
-        const bound = timeoutSignal(options.killTimeoutMs ?? FACE_WORKER_KILL_TIMEOUT_MS);
+        const killTimeoutMs = options.killTimeoutMs ?? FACE_WORKER_KILL_TIMEOUT_MS;
+        const bound = timeoutSignal(killTimeoutMs);
         try {
           await untilAborted(entry.worker.terminate().then(() => entry.gone), bound.signal);
         } catch (error) {
-          if (!bound.signal.aborted) throw error;
-          broken = new Error(`the face worker could not be terminated within ${options.killTimeoutMs ?? FACE_WORKER_KILL_TIMEOUT_MS} ms; the face gate is broken until the engine restarts`);
+          const why = bound.signal.aborted ? `within ${killTimeoutMs} ms` : `(${error instanceof Error ? error.message : "unknown error"})`;
+          broken = new Error(`the face worker could not be terminated ${why}; the face gate is broken until the engine restarts`);
           console.error(`studio engine: ${broken.message}`);
         } finally {
           bound.clear();
@@ -258,21 +267,23 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
       })();
       entry.killing = killing;
       pendingKills.add(killing);
-      void killing.finally(() => pendingKills.delete(killing));
+      void killing.finally(() => pendingKills.delete(killing)).catch(() => {}); // `killing` never rejects; the catch keeps that from ever surfacing as unhandled
     }
     return entry.killing;
   }
 
   /** Kills an idle `entry` while holding the lane, so a check arriving meanwhile waits for it to be gone before a new worker starts. */
   function killUnderLane(entry: Live): void {
-    void acquire(NEVER_ABORTED).then(async (release) => {
-      try {
-        await kill(entry);
-      } finally {
-        release();
-        scheduleIdleRecycle();
-      }
-    });
+    acquire(NEVER_ABORTED)
+      .then(async (release) => {
+        try {
+          await kill(entry);
+        } finally {
+          release();
+          scheduleIdleRecycle();
+        }
+      })
+      .catch(laneRequestRejected);
   }
 
   /** The live worker, spawning and loading a fresh one when there is none. The load is bounded (`loadTimeoutMs`) and abortable; a failed load leaves no worker behind. */
