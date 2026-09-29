@@ -2,6 +2,25 @@
 
 File: `docs/studio/2026-09-30-stage-3-design-reconciliation.md`.
 
+## Owner decisions (2026-09-30)
+
+The six questions of section 5 are settled. Everything below them that reads "until he
+answers" now follows these answers.
+
+**His answers:**
+- **Q1, one photo → one video (no reuse):** as built. Used photos stay visible in the bin,
+  dimmed («в видео»), and cannot be added. After «Готово», «Рендер» is disabled with an
+  explanation. Deleting the video frees its photos.
+- **Q2, «Плашка»: the artboard's model.** `color` paints the plaque, and the text is
+  #111111 or #ffffff by contrast (3b.4b; the plan's Text row).
+- **Q6, «Удалить запись» for an `elsewhere` video:** allowed, behind an explicit
+  confirmation, «Файл останется в прежней папке, а фото снова станут свободными» (3e.2).
+
+**Defaults he accepted:**
+- **Q3:** no scale slider for cells or own video in Stage 3.
+- **Q4:** no «Проверить» for the RapidAPI key; a check costs 1 of the 30 requests.
+- **Q5:** own stickers are GIF/APNG only; no still PNG.
+
 Status: **provisional**, built against the designer's LOCAL artboards (the owner's decision of
 2026-09-30: he reviews the artboards only when Stage 3 is complete). The 3d.0 row says "after the
 owner reviews"; the newer decision wins. Everything here is adjusted after his review.
@@ -687,9 +706,11 @@ first.
 
 ## 5. Open questions for the owner
 
+**All six were answered on 2026-09-30** (the owner's answers and the accepted defaults are summarised at the top of this document). The text below is kept as the record of what was asked.
+
 Only product decisions. Each has a recommended default that the UI tasks build until he answers.
 
-**Q1. Can one scene photo appear in more than one video?**
+**Q1. Can one scene photo appear in more than one video?** — **ANSWERED (the owner, 2026-09-30): no reuse.** One photo, one video; the default below stands.
 The artboards assume yes (a second render of the same draft, «уже 2 видео из этого черновика»,
 «Рендер» again after «Готово», used photos addable). The engine refuses a used or reserved photo,
 so a photo lives in at most one video; that is what keeps Stage 4's "unused" pool honest.
@@ -700,7 +721,7 @@ video opens its draft, and a re-render needs new photos or the old video deleted
 owner says yes, the engine drops the used check from `videos.render` (reserved stays), and the
 artboards stand.
 
-**Q2. What does the colour choose for «Плашка»?**
+**Q2. What does the colour choose for «Плашка»?** — **ANSWERED (the owner, 2026-09-30): the artboard's model.** `color` paints the plaque; the text is black or white by contrast.
 Artboard: the plaque's colour, with the text switching to #111111 or #ffffff for contrast; a dark
 text colour also flips the outline or shadow to light. Plan: the text colour, with the plaque
 always white and the outline always black. **Recommended default: the artboard's model** (it is
@@ -708,21 +729,21 @@ Instagram's own text tool, and it cannot produce white-on-white or black-on-blac
 one `color` field and its default (#ffffff plaque → #111111 text looks the same as the plan's
 default); only the field's meaning for «Плашка» changes, before 3b.4b builds the styles.
 
-**Q3. A zoom slider for collage cells and own video («Масштаб 1.00–2.00×»)?**
+**Q3. A zoom slider for collage cells and own video («Масштаб 1.00–2.00×»)?** — **ANSWERED (default accepted, 2026-09-30): not in Stage 3.**
 **Recommended default: not in Stage 3.** Keep dragging the crop by the face point. A 2× zoom on a
 1K scene photo leaves about half its pixels for a 1080-wide frame, and the `zp4` canvas cap
 interacts with it. It can come later as an optional `zoom` with a default of 1.0.
 
-**Q4. «Проверить» for the RapidAPI key.**
+**Q4. «Проверить» for the RapidAPI key.** — **ANSWERED (default accepted, 2026-09-30): no «Проверить».**
 Every flashapi request counts toward the 30 per 31 days, so a check is not free.
 **Recommended default: no «Проверить».** The key's state comes from the last refresh (a 401 shows
 «ключ отклонён»); «Заменить» and «Удалить» stay.
 
-**Q5. Still PNG own stickers (a logo)?**
+**Q5. Still PNG own stickers (a logo)?** — **ANSWERED (default accepted, 2026-09-30): GIF / APNG only.**
 The mock's «mia-mono.png» reads as a still. The plan allows GIF and APNG only; the pipeline could
 overlay a still. **Recommended default: GIF / APNG only in Stage 3.**
 
-**Q6. «Удалить запись» for a video in another folder (`elsewhere`).**
+**Q6. «Удалить запись» for a video in another folder (`elsewhere`).** — **ANSWERED (the owner, 2026-09-30): allowed, with the confirmation below.**
 3a.8b.2 lets «Удалить запись» drop the record in any state, which frees the photos while the MP4
 still lives in the old folder. **Recommended default: allow it, with the confirmation «Файл
 останется в прежней папке, а фото снова станут свободными».**
