@@ -6,7 +6,7 @@ import type { Clip } from "../../shared/engine/montage";
 import { totalFrames } from "../../shared/montage";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { frameTimesMs, probeJson, probeVideo, type Probed, type ProbedStream } from "./ffmpeg.testkit";
-import { containsAscii, readTimes, typesAt, walkBoxes, type Box } from "./mp4Boxes.testkit";
+import { containsAscii, readTimes, sampleEntryVendors, typesAt, walkBoxes, type Box } from "./mp4Boxes.testkit";
 import { buildPass1 } from "./pass1";
 import { buildPass2 } from "./pass2";
 import { makeWorkDir, readBytes, removeDir, runPass1, runPass2 } from "./render.testkit";
@@ -148,14 +148,19 @@ describe("pass 2 on real ffmpeg: the metadata allowlist (invariant 14)", () => {
     expect(tags.encoder).toMatch(/^Lavf\d+\.\d+\.\d+$/);
   });
 
-  test("each stream carries only a handler name, an undefined language and a zero vendor id", () => {
+  test("each stream carries a handler name and an undefined language, and a vendor id only if it is zero", () => {
     const [v, a] = container.streams;
     expect(v?.tags?.handler_name).toBe("VideoHandler");
     expect(a?.tags?.handler_name).toBe("SoundHandler");
     for (const s of container.streams) {
       expect(s.tags?.language).toBe("und");
-      expect(s.tags?.vendor_id).toBe("[0][0][0][0]");
+      // macOS 6.0 prints the zero vendor; the Windows 6.1.1 build prints none. The box is checked below.
+      expect([undefined, "[0][0][0][0]"]).toContain(s.tags?.vendor_id);
     }
+  });
+
+  test("the vendor field of every sample entry, read from the box, is zero (the allowlist's vendor_id=[0][0][0][0])", () => {
+    expect(sampleEntryVendors(bytes, boxes)).toEqual(["\\0\\0\\0\\0", "\\0\\0\\0\\0"]);
   });
 
   test("the video stream's encoder tag is the x264 signature and the audio stream has none", () => {
@@ -163,7 +168,9 @@ describe("pass 2 on real ffmpeg: the metadata allowlist (invariant 14)", () => {
     expect(v?.tags?.encoder).toMatch(/^Lavc\d+\.\d+\.\d+ libx264$/);
     expect(a?.tags?.encoder).toBeUndefined();
     const allKeys = container.streams.flatMap((s) => Object.keys(s.tags ?? {}));
-    expect(new Set(allKeys)).toEqual(new Set(["language", "handler_name", "vendor_id", "encoder"]));
+    const allowed = new Set(["language", "handler_name", "vendor_id", "encoder"]);
+    expect(allKeys.filter((k) => !allowed.has(k))).toEqual([]);
+    expect(new Set(allKeys).has("handler_name")).toBe(true);
   });
 
   test("the file's top level is ftyp, moov, free, mdat and nothing else", () => {

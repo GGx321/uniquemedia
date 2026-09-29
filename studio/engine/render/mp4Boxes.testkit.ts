@@ -87,3 +87,19 @@ export function containsAscii(bytes: Uint8Array, needle: string): boolean {
   }
   return false;
 }
+
+/**
+ * The vendor field of the first sample entry of every `stsd` (the video's
+ * `avc1`, the audio's `mp4a`), as four characters with a zero byte written
+ * `\0`. ffprobe shows it as the `vendor_id` tag, but only some builds print
+ * a zero vendor, so the box is read directly.
+ */
+export function sampleEntryVendors(bytes: Uint8Array, boxes: readonly Box[]): string[] {
+  return boxes
+    .filter((b) => b.path.endsWith("/stsd"))
+    .map((stsd) => {
+      const entry = stsd.start + 8 + 8; // box header, then version/flags and the entry count
+      const at = entry + 20; // size, type, reserved(6), data reference(2), version(2), revision(2)
+      return [0, 1, 2, 3].map((i) => (bytes[at + i] === 0 ? "\\0" : String.fromCharCode(bytes[at + i] ?? 0))).join("");
+    });
+}

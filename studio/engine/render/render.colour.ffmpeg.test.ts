@@ -92,6 +92,17 @@ function maxDeviation(planes: ReturnType<typeof splitYuv420>, patches: ReadonlyA
   return { Y, Cb, Cr };
 }
 
+/** The patches whose Y, Cb or Cr is more than `over` code values off, for the log (which patch drifts on a build). */
+function driftingPatches(planes: ReturnType<typeof splitYuv420>, patches: ReadonlyArray<{ x: number; y: number; rgb: RGB }>, over: number): string[] {
+  return patches.flatMap((p) => {
+    const [ey, ecb, ecr] = expectedBt709Limited(p.rgb);
+    const dy = meanAround(planes.y, 1080, p.x, p.y, 10) - ey;
+    const dcb = meanAround(planes.u, 540, p.x / 2, p.y / 2, 4) - ecb;
+    const dcr = meanAround(planes.v, 540, p.x / 2, p.y / 2, 4) - ecr;
+    return Math.max(Math.abs(dy), Math.abs(dcb), Math.abs(dcr)) > over ? [`rgb(${p.rgb.join(",")}) at ${Math.round(p.x)},${Math.round(p.y)}: dY ${dy.toFixed(2)} dCb ${dcb.toFixed(2)} dCr ${dcr.toFixed(2)}`] : [];
+  });
+}
+
 const PHOTO_PATCHES: ReadonlyArray<{ x: number; y: number; rgb: RGB }> = [
   ...CHART_GRID.map((rgb, i) => ({ x: ((i % 4) + 0.5) * 270, y: (Math.floor(i / 4) + 0.5) * 240, rgb })),
   { x: 270, y: 1460, rgb: CHART_BLOCK_L },
@@ -122,6 +133,7 @@ async function renderAndMeasure(name: string, trap: { photo?: boolean; sticker?:
 
   const [frame] = await extractFrames(output, [0], "yuv420p", { w: 1080, h: 1920 });
   const planes = splitYuv420(frame ?? new Uint8Array(), 1080, 1920);
+  if (name === "explicit") console.log(`colour, explicit chain, photo patches over 1.2 codes:\n  ${driftingPatches(planes, PHOTO_PATCHES, 1.2).join("\n  ")}`);
   return { photo: maxDeviation(planes, PHOTO_PATCHES), opaque: maxDeviation(planes, OPAQUE_PATCHES), alpha: maxDeviation(planes, ALPHA_PATCHES) };
 }
 
