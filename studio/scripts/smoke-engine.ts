@@ -68,6 +68,7 @@ import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
+import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
 import { looksLikeAStackTrace } from "./stackTrace";
@@ -97,13 +98,6 @@ interface Target {
   /** What `@electron/fuses read --app` takes: the .app bundle on macOS, Studio.exe on Windows. */
   app: string | null;
   asar: string | null;
-}
-
-async function electronBinary(): Promise<string> {
-  const mod: unknown = await import("electron");
-  const path = typeof mod === "string" ? mod : typeof mod === "object" && mod !== null && "default" in mod ? mod.default : null;
-  if (typeof path !== "string") throw new Error("could not locate the Electron binary");
-  return path;
 }
 
 async function resolveTarget(): Promise<Target> {

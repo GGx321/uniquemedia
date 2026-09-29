@@ -19,6 +19,7 @@
     "models:face": "bun run studio/scripts/faceModelCache.ts",
     "test:studio:real-worker": "bun studio/scripts/realWorkerTests.ts",
     "test:studio:real-worker:canary": "bun studio/scripts/realWorkerTests.ts --known-crashes-only",
+    "test:studio:electron-node": "bun studio/scripts/electronNodeTests.ts",
     "test:studio:suite": "bun studio/scripts/realWorkerTests.ts --suite",
     "test:studio:suite:canary": "bun studio/scripts/realWorkerTests.ts --known-crashes-only --suite",
     "build:studio": "electron-vite build -c electron.studio.vite.config.ts && bun run studio/scripts/prepareFaceAssets.ts && bun run studio/scripts/prepareTextAssets.ts",

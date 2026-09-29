@@ -133,6 +133,15 @@ jobs:
       - name: Real face worker tests
         run: bun run test:studio:real-worker
         timeout-minutes: 10
+      # 3b.2: the text worker's real-thread tests run under ELECTRON'S NODE, the product's own runtime
+      # (studio/scripts/electronNodeTests.ts: bun bundles them, the Electron binary runs them as plain Node). Not
+      # under Bun: there `worker.terminate()` does not interrupt running wasm, so the deadline test would measure
+      # Bun (2015 ms on CI against 202 ms in Electron's Node), and terminating wasm workers crashes Bun. There is
+      # no Bun crash to retry here, so no retry: any failure is real. The step also prints the worst legitimate
+      # shadow caption on this runner, which the test holds to at most a fifth of the deadline.
+      - name: Real text worker tests (Electron's Node)
+        run: bun run test:studio:electron-node
+        timeout-minutes: 10
       - if: env.PACKAGE == 'true'
         run: bun run build:studio
       # Studio's version comes from studio/version.json via the config's `extends`.
@@ -308,4 +317,8 @@ jobs:
       # Same alone-and-retry step as the build job's (T7c), with the same narrowed retry.
       - name: Real face worker tests
         run: bun run test:studio:real-worker:canary
+        timeout-minutes: 10
+      # The text worker's Electron-Node tests: the canary's `bun latest` is only the bundler here.
+      - name: Real text worker tests (Electron's Node)
+        run: bun run test:studio:electron-node
         timeout-minutes: 10

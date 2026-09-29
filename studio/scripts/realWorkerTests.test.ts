@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { childEnv, isBunCrashOnly, MAX_ATTEMPTS, REAL_WORKER_TEST_FILE, runOnce, runWithCrashRetry, TEXT_REAL_WORKER_TEST_FILE, testTarget, WORKER_TEARDOWN_CRASHES } from "./realWorkerTests";
+import { childEnv, isBunCrashOnly, MAX_ATTEMPTS, REAL_WORKER_TEST_FILE, runOnce, runWithCrashRetry, testTarget, WORKER_TEARDOWN_CRASHES } from "./realWorkerTests";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -134,7 +134,7 @@ describe("isBunCrashOnly with a set of known crash signatures", () => {
 
 describe("testTarget", () => {
   test("with no arguments runs the real-worker file with the real-worker tests on", () => {
-    expect(testTarget([])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE, TEXT_REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: false });
+    expect(testTarget([])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: false });
   });
 
   test("--suite runs exactly the bun test arguments after it, real-worker tests off, any crash retried", () => {
@@ -155,7 +155,7 @@ describe("testTarget", () => {
   });
 
   test("--known-crashes-only alone narrows the retry of the real-worker file too", () => {
-    expect(testTarget(["--known-crashes-only"])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE, TEXT_REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: true });
+    expect(testTarget(["--known-crashes-only"])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: true });
   });
 
   test("--known-crashes-only among the bun test arguments after --suite is refused: it would be handed to bun, not read here", () => {
