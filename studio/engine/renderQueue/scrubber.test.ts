@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { scrubber, scrubStderrTail } from "./scrubber";
+import { maskHome, scrubber, scrubStderrTail } from "./scrubber";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -97,6 +97,66 @@ describe("scrubber: where a path ends", () => {
   });
 });
 
+describe("scrubber: the user's home", () => {
+  const HOME = "/Users/Mia Secret";
+
+  test("anything under the home becomes ~/..., whatever it is", () => {
+    const scrub = scrubber("/tmp/render-tmp", "/a/Studio", [], HOME);
+    expect(scrub("spawn /Users/Mia Secret/AppData/Programs/studio/ffmpeg ENOENT")).toBe("spawn ~/AppData/Programs/studio/ffmpeg ENOENT");
+  });
+
+  test("the specific labels win over the home: a photo, the export folder and the temp root keep theirs", () => {
+    const scrub = scrubber(`${HOME}/tmp`, `${HOME}/Reels`, [{ path: `${HOME}/Pictures/a.jpg`, label: "<photo>" }], HOME);
+    expect(scrub(`${HOME}/Pictures/a.jpg ${HOME}/Reels/x.mp4 ${HOME}/tmp/job-1/c.mkv ${HOME}/Other/y`)).toBe("<photo> <export>/x.mp4 <tmp>/job-1/c.mkv ~/Other/y");
+  });
+
+  test("a Windows home is masked in any spelling and case", () => {
+    const scrub = scrubber("C:\\t", "C:\\e", [], "C:\\Users\\Mia");
+    expect(scrub("open c:/users/MIA/AppData/x.exe.")).toBe("open ~/AppData/x.exe.");
+  });
+
+  test("maskHome masks a raw message with the home it is given", () => {
+    expect(maskHome("ENOENT: open '/Users/Mia Secret/Reels/x.mp4'", HOME)).toBe("ENOENT: open '~/Reels/x.mp4'");
+  });
+
+  test("a home that is only a root masks nothing", () => {
+    expect(maskHome("open /etc/hosts", "/")).toBe("open /etc/hosts");
+  });
+});
+
+describe("scrubber: characters that are regex syntax", () => {
+  const path = "/Users/mia/Photos (1)/[old] a+b/$x.{2}/a|b^c*d?.jpg";
+  const scrub = scrubber("/tmp/render-tmp", "/a/Studio", [{ path, label: "<photo>" }], "/nowhere");
+
+  test("a path made of them is masked as a whole", () => {
+    expect(scrub(`Error opening ${path}: no`)).toBe("Error opening <photo>: no");
+  });
+
+  test("they are literal: a dot is not any character, a plus is not a repeat, a bracket is not a class", () => {
+    const one = scrubber("/tmp/render-tmp", "/a/b.c", [{ path: "/p/x+y/[z]/f.jpg", label: "<photo>" }], "/nowhere");
+    expect(one("/a/bXc/f /p/xxy/z/f.jpg /p/x+y/[z]/f.jpgg")).toBe("/a/bXc/f /p/xxy/z/f.jpg <dir>/f.jpgg");
+    expect(one("/a/b.c/f /p/x+y/[z]/f.jpg")).toBe("<export>/f <photo>");
+  });
+});
+
+describe("scrubber: Unicode forms and speed", () => {
+  test("a path whose segments are in different Unicode forms is masked (the text is normalised before matching)", () => {
+    const scrub = scrubber("/tmp/t", "/e", [{ path: "/Users/мой/Й/кот.jpg", label: "<photo>" }], "/nowhere");
+    const mixed = "/Users/" + "мой".normalize("NFD") + "/" + "Й".normalize("NFC") + "/" + "кот".normalize("NFD") + ".jpg";
+    expect(scrub(`open ${mixed}.`)).toBe("open <photo>.");
+  });
+
+  test("a long run of separators with many registered inputs is scrubbed in linear time", () => {
+    const inputs = Array.from({ length: 200 }, (_, i) => ({ path: `/Users/mia/Pictures/album-${i}/photo-${i}.jpg`, label: "<photo>" }));
+    const scrub = scrubber("/tmp/render-tmp", "/a/Studio", inputs, "/Users/mia");
+    for (const line of [`${"/".repeat(2000)} x`, `C:${"\\".repeat(1000)}`, `${"/a".repeat(1000)}`]) {
+      const started = performance.now();
+      scrub(line);
+      expect(performance.now() - started).toBeLessThan(100);
+    }
+  });
+});
+
 describe("scrubber: only the path part is rewritten", () => {
   const scrub = scrubber(TMP, EXPORT);
 
@@ -153,7 +213,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-const BASES = ["Mia", "Мия", "Фото", "Мои Фотографии", "O'Brien", "my pics", "Ёлка", "Йод и Ёж", 'say "hi"', "a b  c", "日本語"];
+const BASES = ["Photos (1)", "[old] a+b", "$x.{2}", "Mia", "Мия", "Фото", "Мои Фотографии", "O'Brien", "my pics", "Ёлка", "Йод и Ёж", 'say "hi"', "a b  c", "日本語"];
 const TAG_LETTERS = "QXZJKW";
 
 interface Sample {

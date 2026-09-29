@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { STDERR_ERROR_TAIL } from "../../node/runFfmpeg";
 
@@ -60,7 +61,9 @@ interface Spelling {
 
 const WIN_SEP = "[\\\\/]+";
 const PREFIX = "(?:[\\\\/]{2}\\?[\\\\/])?";
-const UNC_LEAD = "(?:[\\\\/]{2}\\?[\\\\/]UNC[\\\\/]|[\\\\/]{2})";
+// A lead starts only at the beginning of a run of separators. Without the look-behind every position in a
+// run is a start, and scanning a long run against many paths is quadratic.
+const UNC_LEAD = "(?<![\\\\/])(?:[\\\\/]{2}\\?[\\\\/]UNC[\\\\/]|[\\\\/]{2})";
 
 function spellingOf(path: string): Spelling | undefined {
   const windows = isWindowsShaped(path);
@@ -73,8 +76,8 @@ function spellingOf(path: string): Spelling | undefined {
   if (windows) {
     if (drive) lead = PREFIX;
     else if (/^[\\/]{2}/.test(path)) lead = UNC_LEAD;
-    else if (/^[\\/]/.test(path)) lead = "[\\\\/]+";
-  } else if (path.startsWith("/")) lead = "/+";
+    else if (/^[\\/]/.test(path)) lead = "(?<![\\\\/])[\\\\/]+";
+  } else if (path.startsWith("/")) lead = "(?<!/)/+";
   const source = lead + segments.map(escape).join(windows ? WIN_SEP : "/+");
   return { windows, source, weight: segments.reduce((sum, segment) => sum + segment.length, 0) };
 }
@@ -109,10 +112,20 @@ const FILE_END = "(?=$|\\s|[\\\\/:;,)\\]}\"'<>|]|\\.(?:\\s|$))";
 const BELOW = "((?:[\\\\/]+[^\\\\/\\s\"'<>|:*?]+)*)";
 
 /**
- * Builds the function that masks `tmpRoot`, `exportDir` and every input path,
- * and the folder of every input, in text that may reach the UI.
+ * Masks only the user's home folder (`~`), for a raw message that does not go through a job's scrubber:
+ * the last net under any `detail` built from an error's text.
  */
-export function scrubber(tmpRoot: string, exportDir: string, inputs: readonly ScrubInput[] = []): (text: string) => string {
+export function maskHome(text: string, home: string = homedir()): string {
+  return scrubber("", "", [], home)(text);
+}
+
+/**
+ * Builds the function that masks `tmpRoot`, `exportDir` and every input path,
+ * the folder of every input, and last of all the user's `home` (`~`), in text
+ * that may reach the UI. The home is the shortest target, so the specific
+ * labels win where they apply and anything else under it reads `~/...`.
+ */
+export function scrubber(tmpRoot: string, exportDir: string, inputs: readonly ScrubInput[] = [], home: string = homedir()): (text: string) => string {
   const targets: Target[] = [
     { path: tmpRoot, label: "<tmp>", kind: "dir" },
     { path: exportDir, label: "<export>", kind: "dir" },
@@ -120,6 +133,7 @@ export function scrubber(tmpRoot: string, exportDir: string, inputs: readonly Sc
       { path: input.path, label: input.label, kind: "file" },
       { path: dirnameOf(input.path), label: "<dir>", kind: "dir" },
     ]),
+    { path: home, label: "~", kind: "dir" },
   ];
 
   interface Alternative {
@@ -144,8 +158,9 @@ export function scrubber(tmpRoot: string, exportDir: string, inputs: readonly Sc
   alternatives.sort((a, b) => b.weight - a.weight);
   const pattern = new RegExp(alternatives.map((a) => `(?:${a.source})`).join("|"), "giu");
 
+  // The text is put in NFC first: a path whose segments are in different Unicode forms matches no single spelling.
   return (text) =>
-    text.replace(pattern, (...args: unknown[]) => {
+    text.normalize("NFC").replace(pattern, (...args: unknown[]) => {
       for (let i = 0; i < alternatives.length; i++) {
         const below = args[2 + i * 2];
         if (args[1 + i * 2] === undefined) continue;
