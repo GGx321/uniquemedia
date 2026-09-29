@@ -287,7 +287,7 @@ async function until(condition: () => boolean, what: string): Promise<void> {
  * `end`, or "still running" after `ms`. The file's 30 s default timeout must not be what stops a test whose subject
  * is a short time bound: a bound that stops working then shows here, in about a second, not as a slow pass.
  */
-function endWithin(end: Promise<RunJobEnd>, ms: number): Promise<RunJobEnd | "still running"> {
+function endWithin<T>(end: Promise<T>, ms: number): Promise<T | "still running"> {
   return Promise.race([end, new Promise<"still running">((resolve) => setTimeout(() => resolve("still running"), ms))]);
 }
 
@@ -884,7 +884,7 @@ describe("preflightMaster (runs.start looks at the master before it plans anythi
   });
 
   test("bounded like the job's own prepare: a prepare() that never answers ends INTERNAL after the reference timeout", async () => {
-    const result = await look([face(() => new Promise<void>(() => undefined))], { referenceTimeoutMs: 40 });
+    const result = await endWithin(look([face(() => new Promise<void>(() => undefined))], { referenceTimeoutMs: 40 }), 1_000);
 
     expect(result).toMatchObject({ ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: expect.stringContaining("took longer than 40 ms") } } });
   });
