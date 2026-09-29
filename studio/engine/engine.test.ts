@@ -2059,6 +2059,35 @@ describe("the export folder's status (task 3a.8a)", () => {
     expect(await readdir(inside)).toEqual([]);
   });
 
+  describe("case folding is asked of the export folder's own volume (task 3a.8b.1)", () => {
+    /** A disk where every path is a folder and the marker is valid, so only the overlap rule can refuse. */
+    const identityFs: ExportRootFs = {
+      stat: async () => ({ isDirectory: () => true }),
+      realpath: async (path) => path,
+      mkdirp: async () => undefined,
+      readSmallFile: async () => JSON.stringify({ schemaVersion: 1, rootId: "root-00000001", createdAt: "2026-09-29T10:00:00.000Z" }),
+      createExclusive: async () => undefined,
+      publishExclusive: async () => undefined,
+      remove: async () => undefined,
+      freeBytes: async () => null,
+    };
+    const differsOnlyInCase = () => ({ ...init().settings, exportPath: join(dir, "LIBRARY", "out") });
+
+    test("on a volume that folds case, a folder in another letter case inside the library still overlaps it", async () => {
+      const probed: string[] = [];
+      const caseProbe = { isCaseInsensitive: async (root: string) => (probed.push(root), true) };
+      const { engine } = await startEngine({ settings: differsOnlyInCase() }, { exportRootFs: identityFs, caseProbe });
+      expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "overlaps-library" });
+      expect(probed).toEqual([join(dir, "LIBRARY", "out")]);
+    });
+
+    test("on a case-sensitive volume the same two spellings are two folders, whatever the platform is", async () => {
+      const caseProbe = { isCaseInsensitive: async () => false };
+      const { engine } = await startEngine({ settings: differsOnlyInCase() }, { exportRootFs: identityFs, caseProbe });
+      expect(await statusNow(engine)).toEqual({ status: "ok" });
+    });
+  });
+
   test("an invalid marker makes the status invalid-marker and is left as it was", async () => {
     await mkdir(join(dir, "export"));
     await writeFile(join(dir, "export", MARKER), "{broken");

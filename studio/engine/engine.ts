@@ -57,6 +57,7 @@ import {
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
 import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
+import { CaseSensitivityProbe } from "./exportCase";
 import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
@@ -111,8 +112,11 @@ export interface EngineDeps {
   exportRootFs?: ExportRootFs;
   /** Bounds each export folder check; EXPORT_CHECK_TIMEOUT_MS unless a test says otherwise. */
   exportCheckTimeoutMs?: number;
-  /** Whether the disk folds letter case (Windows, macOS); the platform's guess unless a test says otherwise. */
-  caseInsensitiveDisk?: boolean;
+  /**
+   * Whether the export folder's VOLUME folds letter case, asked per folder (3a.8b.1): a probe file and its case-flipped
+   * name, not the platform's guess (APFS can be case-sensitive). The real probe unless a test plays a volume.
+   */
+  caseProbe?: { isCaseInsensitive(root: string): Promise<boolean> };
   /**
    * The scene photos of `avatarId` that queued or running renders hold (S16),
    * asked afresh each time; the library keeps them out of `eligibleUnusedPhotos`
@@ -386,7 +390,7 @@ export class Engine {
   #librarySmallWrites = 0;
   readonly #folderFs: FolderFs;
   readonly #exportRootFs: ExportRootFs;
-  readonly #caseInsensitiveDisk: boolean;
+  readonly #caseProbe: { isCaseInsensitive(root: string): Promise<boolean> };
   /** `init.defaultExportPath`: the one export folder that is created on first use. */
   readonly #defaultExportPath: string | null;
   /** The export folder's status as of the last check (start, a settings update, a render attempt), for the snapshot. */
@@ -503,7 +507,7 @@ export class Engine {
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
     this.#exportCheckTimeoutMs = deps.exportCheckTimeoutMs ?? EXPORT_CHECK_TIMEOUT_MS;
-    this.#caseInsensitiveDisk = deps.caseInsensitiveDisk ?? process.platform !== "linux";
+    this.#caseProbe = deps.caseProbe ?? new CaseSensitivityProbe();
     this.#defaultExportPath = init.defaultExportPath ?? null;
     this.#preflight = deps.preflightDownscale ?? preflightDownscale;
     this.#downscaleImportPhoto = deps.downscaleImportPhoto ?? ((bytes, maxSide, signal) => downscaleToJpeg(bytes, { maxSide, signal }));
@@ -1515,16 +1519,19 @@ export class Engine {
     let check: ExportRootCheck;
     try {
       check = await untilAborted(
-        checkExportRoot({
-          fs: this.#exportRootFs,
-          exportPath,
-          libraryPath: this.#settings.libraryPath,
-          mayCreate: exportPath === this.#defaultExportPath,
-          newId: this.#deps.newId,
-          now: () => new Date(this.#deps.clock()),
-          caseInsensitive: this.#caseInsensitiveDisk,
-          ...(requiredBytes === undefined ? {} : { requiredBytes }),
-        }),
+        // The probe is inside the bounded call too: a disk that hangs on it must not outlast the timeout.
+        this.#caseProbe.isCaseInsensitive(exportPath).then((caseInsensitive) =>
+          checkExportRoot({
+            fs: this.#exportRootFs,
+            exportPath,
+            libraryPath: this.#settings.libraryPath,
+            mayCreate: exportPath === this.#defaultExportPath,
+            newId: this.#deps.newId,
+            now: () => new Date(this.#deps.clock()),
+            caseInsensitive,
+            ...(requiredBytes === undefined ? {} : { requiredBytes }),
+          }),
+        ),
         timeout.signal,
       );
     } catch (error) {
