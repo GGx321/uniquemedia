@@ -1,0 +1,100 @@
+import { describe, expect, test } from "bun:test";
+import { FRAME_W } from "./constants";
+import { mulberry32, randInt } from "./random.testkit";
+import { progressSegments, SEGMENT_GAP, SEGMENT_HEIGHT, SEGMENT_MARGIN, SEGMENT_TOP, segmentFillWidth } from "./segments";
+import { clipRanges } from "./timeline";
+
+const clipsOf = (durations: number[]) => durations.map((durationMs, i) => ({ clipId: `clip-seg-${i}`, durationMs }));
+
+describe("progressSegments (preview-only: never rendered)", () => {
+  test("uses a 24 px margin, a 24 px top inset, 6 px bars and 6 px gaps", () => {
+    expect([SEGMENT_MARGIN, SEGMENT_TOP, SEGMENT_HEIGHT, SEGMENT_GAP]).toEqual([24, 24, 6, 6]);
+  });
+
+  test("no clips, no segments", () => {
+    expect(progressSegments([])).toEqual([]);
+  });
+
+  test("one clip is one bar across the whole width inside the margins", () => {
+    expect(progressSegments(clipsOf([8000]))).toEqual([{ clipId: "clip-seg-0", rect: { x: 24, y: 24, w: 1032, h: 6 }, startFrame: 0, endFrame: 240 }]);
+  });
+
+  test("two equal clips share the width minus the gap: 513 px each, the second starting after the gap", () => {
+    const [a, b] = progressSegments(clipsOf([4000, 4000]));
+    expect(a?.rect).toEqual({ x: 24, y: 24, w: 513, h: 6 });
+    expect(b?.rect).toEqual({ x: 543, y: 24, w: 513, h: 6 });
+  });
+
+  test("segment frame ranges are the clip ranges", () => {
+    const clips = clipsOf([1000, 2500, 500]);
+    const segments = progressSegments(clips);
+    expect(segments.map((s) => [s.clipId, s.startFrame, s.endFrame])).toEqual(clipRanges(clips).map((r) => [r.clipId, r.startFrame, r.endFrame]));
+  });
+
+  test("random timelines: inside the frame, ordered, exactly one gap apart, widths add up, each within 1 px of its share, none empty", () => {
+    const rand = mulberry32(81);
+    for (let run = 0; run < 500; run++) {
+      const count = randInt(rand, 1, 20);
+      const durations = Array.from({ length: count }, () => (rand() < 0.3 ? 500 : randInt(rand, 5, 150) * 100));
+      const clips = clipsOf(durations);
+      const segments = progressSegments(clips);
+      const ranges = clipRanges(clips);
+      const total = ranges[ranges.length - 1]?.endFrame ?? 1;
+      const avail = FRAME_W - 2 * SEGMENT_MARGIN - SEGMENT_GAP * (count - 1);
+      expect(segments).toHaveLength(count);
+      expect(segments.reduce((s, seg) => s + seg.rect.w, 0)).toBe(avail);
+      segments.forEach((seg, i) => {
+        expect(seg.rect.w).toBeGreaterThanOrEqual(1);
+        expect(seg.rect.x).toBeGreaterThanOrEqual(SEGMENT_MARGIN);
+        expect(seg.rect.x + seg.rect.w).toBeLessThanOrEqual(FRAME_W - SEGMENT_MARGIN);
+        expect([seg.rect.y, seg.rect.h]).toEqual([SEGMENT_TOP, SEGMENT_HEIGHT]);
+        const range = ranges[i];
+        expect(Math.abs(seg.rect.w - (avail * (range?.frames ?? 0)) / total)).toBeLessThan(1);
+        const previous = segments[i - 1];
+        if (previous) expect(seg.rect.x - (previous.rect.x + previous.rect.w)).toBe(SEGMENT_GAP);
+      });
+      const last = segments[count - 1];
+      expect((last?.rect.x ?? 0) + (last?.rect.w ?? 0)).toBe(FRAME_W - SEGMENT_MARGIN);
+    }
+  });
+
+  test("a 500 ms clip beside nineteen 15.0 s clips still gets a visible bar", () => {
+    const segments = progressSegments(clipsOf([500, ...Array.from({ length: 19 }, () => 15_000)]));
+    expect(segments[0]?.rect.w).toBeGreaterThanOrEqual(1);
+  });
+
+  test("refuses a duration that is not a multiple of 100 ms", () => {
+    expect(() => progressSegments(clipsOf([1050]))).toThrow(RangeError);
+  });
+});
+
+describe("segmentFillWidth", () => {
+  const [segment] = progressSegments(clipsOf([4000]));
+  if (!segment) throw new Error("test setup");
+
+  test("is 0 before and on the clip's first frame and the full width from its end frame on", () => {
+    expect(segmentFillWidth(segment, 0)).toBe(0);
+    expect(segmentFillWidth(segment, segment.endFrame)).toBe(segment.rect.w);
+    expect(segmentFillWidth(segment, 9999)).toBe(segment.rect.w);
+  });
+
+  test("grows monotonically and never passes the bar", () => {
+    let previous = -1;
+    for (let f = 0; f <= segment.endFrame; f++) {
+      const w = segmentFillWidth(segment, f);
+      expect(w).toBeGreaterThanOrEqual(previous);
+      expect(w).toBeLessThanOrEqual(segment.rect.w);
+      previous = w;
+    }
+  });
+
+  test("is half the bar at the clip's midpoint", () => {
+    expect(segmentFillWidth(segment, 60)).toBe(516);
+  });
+
+  test("is 0 for a frame before the clip", () => {
+    const [, second] = progressSegments(clipsOf([4000, 4000]));
+    if (!second) throw new Error("test setup");
+    expect(segmentFillWidth(second, 10)).toBe(0);
+  });
+});
