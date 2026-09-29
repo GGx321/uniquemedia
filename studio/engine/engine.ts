@@ -56,6 +56,7 @@ import {
 } from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
 import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
+import { EngineFailure } from "./engineFailure";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { CaseSensitivityProbe } from "./exportCase";
 import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
@@ -243,16 +244,6 @@ export function exitIfStartFails(ready: Promise<unknown>, exit: (code: number) =
     log(`studio engine: the engine could not start (${errorKind(error)})`);
     exit(1);
   });
-}
-
-/** Carries a ready-made EngineError out of a handler, so `handle` answers with it unchanged. */
-class EngineFailure extends Error {
-  readonly error: EngineError;
-
-  constructor(error: EngineError) {
-    super(error.detail ?? error.code);
-    this.error = error;
-  }
 }
 
 /** Maps a thrown error to the T0 error set; money codes keep their own code. */
