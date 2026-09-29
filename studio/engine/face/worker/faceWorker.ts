@@ -72,6 +72,9 @@ async function main(): Promise<void> {
         if (request.type === "check") {
           const verdict = await gate.check({ pose: request.pose, image, masterEmbedding: request.masterEmbedding });
           send({ type: "checked", id: request.id, verdict });
+        } else if (request.type === "detect") {
+          const detection = await gate.detectFace(image);
+          send({ type: "detected", id: request.id, ...detection });
         } else {
           const embedding = await gate.embed(image);
           send({ type: "embedded", id: request.id, embedding });

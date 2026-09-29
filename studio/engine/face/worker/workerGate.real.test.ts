@@ -137,6 +137,33 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("the real face worker
     await expect(gate.embed(flat, live())).rejects.toBeInstanceOf(NoFaceInReferenceError);
   }, 30_000);
 
+  test("detect finds the fixture master's face and reports the source size", async () => {
+    const gate = sharedRealFaceGate();
+    const detection = await gate.detect(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live());
+    expect([detection.width, detection.height]).toEqual([864, 1152]);
+    // Measured with YuNet on this fixture: the box centre is at (0.503, 0.488) of the image.
+    const face = detection.face;
+    expect(face).not.toBeNull();
+    expect(((face?.x ?? 0) + (face?.width ?? 0) / 2) / 864).toBeCloseTo(0.503, 1);
+    expect(((face?.y ?? 0) + (face?.height ?? 0) / 2) / 1152).toBeCloseTo(0.488, 1);
+  }, 30_000);
+
+  test("detect reports the box in SOURCE pixels for a 2K image that was normalised down before detection", async () => {
+    const gate = sharedRealFaceGate();
+    const detection = await gate.detect(twoKJpeg(), live());
+    expect([detection.width, detection.height]).toEqual([1536, 2752]);
+    // The master letterboxed into 1536x2752: 1536x2048 of picture, 352 px of grey above and below.
+    const face = detection.face;
+    expect(face).not.toBeNull();
+    expect(((face?.x ?? 0) + (face?.width ?? 0) / 2) / 1536).toBeCloseTo(0.503, 1);
+    expect(((face?.y ?? 0) + (face?.height ?? 0) / 2) / 2752).toBeCloseTo((352 + 0.488 * 2048) / 2752, 1);
+  }, 60_000);
+
+  test("detect answers a null face, not an error, for an image with nothing to detect", async () => {
+    const gate = sharedRealFaceGate();
+    expect((await gate.detect(flatGreyJpeg(), live())).face).toBeNull();
+  }, 30_000);
+
   test("an undecodable candidate rejects check with an ordinary Error and leaves the worker alive (systemic, never a retry verdict)", async () => {
     const gate = sharedRealFaceGate();
     const masterEmbedding = await masterEmbeddingVia(gate);

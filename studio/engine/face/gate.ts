@@ -2,6 +2,8 @@ import { aggregateSimilarity } from "./calibration";
 import type { FaceGateConfig } from "./config";
 import type { FacePose } from "./config";
 import { defaultFaceGateConfig } from "./config";
+import { largestFaceInSource } from "./largestFace";
+import type { FaceBox } from "./largestFace";
 import { NoFaceInReferenceError } from "./noFaceError";
 import { normalizeForFacePipeline } from "./normalize";
 import { toBgrImage } from "./pixels";
@@ -37,6 +39,12 @@ export interface FaceGate {
   check(input: FaceGateInput): Promise<FaceVerdict>;
   /** The reference image's SFace embedding, for the caller to cache (the master, or a gallery frame). Throws `NoFaceInReferenceError` if it finds no face. */
   embed(image: FaceGateImage): Promise<Float32Array>;
+  /**
+   * S8 (focus): YuNet only, on the same normalised copy `check`/`embed` use.
+   * The largest face's box in SOURCE pixels, or `face: null`; no embedding,
+   * never an error for a missing face.
+   */
+  detectFace(image: FaceGateImage): Promise<{ width: number; height: number; face: FaceBox | null }>;
   /** Releases the onnxruntime-web sessions. */
   dispose(): Promise<void>;
 }
@@ -168,6 +176,11 @@ export async function createFaceGate(
       const face = largestByArea(faces);
       if (face === undefined) throw new NoFaceInReferenceError();
       return feature(recognizer, alignCrop(bgr, face));
+    },
+    async detectFace(image: FaceGateImage): Promise<{ width: number; height: number; face: FaceBox | null }> {
+      const bgr = toBgrImage(normalizeForFacePipeline(image));
+      const rows = await detect(detector, bgr);
+      return { width: image.width, height: image.height, face: largestFaceInSource(rows, bgr, image) };
     },
     async dispose(): Promise<void> {
       await detector.session.release();

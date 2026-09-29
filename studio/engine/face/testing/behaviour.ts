@@ -16,4 +16,8 @@ export const Behaviour = {
   slow: 6,
   /** Answers, then sends an unsolicited message ~20 ms later (while the worker is idle). */
   chatty: 7,
+  /** A detect finds no face (`detected` with `face: null`); other requests behave as `ok`. */
+  noDetection: 8,
+  /** Answers a detect with a `checked` verdict: the right id, the wrong kind. */
+  wrongKind: 9,
 } as const;

@@ -256,6 +256,60 @@ describe("the lane: one computation at a time, FIFO, cancellable while queued", 
   });
 });
 
+describe("detect (S8): the largest face's box, no embedding", () => {
+  test("returns the box and the source size the worker reported", async () => {
+    const { gate } = harness();
+    expect(await gate.detect(script(Behaviour.ok), live())).toEqual({ width: 100, height: 200, face: { x: 10, y: 20, width: 30, height: 40 } });
+  });
+
+  test("returns a null face when the worker found none (an ordinary answer, not an error)", async () => {
+    const { gate } = harness();
+    expect(await gate.detect(script(Behaviour.noDetection), live())).toEqual({ width: 100, height: 200, face: null });
+  });
+
+  test("an ordinary failure rejects with its message and leaves the worker alive", async () => {
+    const h = harness();
+    await expect(h.gate.detect(script(Behaviour.fail), live())).rejects.toThrow("scripted failure");
+    await h.gate.detect(script(Behaviour.ok), live());
+    expect(h.spawned()).toBe(1);
+  });
+
+  test("aborting a detect that never returns terminates the worker within a bounded time", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const outcome = h.gate.detect(script(Behaviour.hang), controller.signal).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : "not an error"),
+    );
+    await Bun.sleep(50);
+    const abortedAt = performance.now();
+    controller.abort(new Error("gave up"));
+    expect(await outcome).toBe("gave up");
+    expect(performance.now() - abortedAt).toBeLessThan(PROMPTLY_MS);
+    expect(h.alive()).toBe(0);
+  });
+
+  test("shares the one lane with check and embed: never two computations at once", async () => {
+    const h = harness();
+    await Promise.all([h.gate.detect(script(Behaviour.slow), live()), h.gate.check(checkInput(Behaviour.slow), live()), h.gate.embed(script(Behaviour.slow), live())]);
+    expect(h.maxInFlight()).toBe(1);
+  });
+
+  test("the caller's bytes are still intact afterwards", async () => {
+    const { gate } = harness();
+    const bytes = Buffer.alloc(10_000, 7);
+    bytes[0] = Behaviour.ok;
+    await gate.detect(bytes, live());
+    expect(bytes.byteLength).toBe(10_000);
+    expect(bytes[9_999]).toBe(7);
+  });
+
+  test("a worker that answers a detect with a check verdict is a protocol violation, not a face", async () => {
+    const { gate } = harness();
+    await expect(gate.detect(script(Behaviour.wrongKind), live())).rejects.toThrow(/unexpected/);
+  });
+});
+
 describe("failure classification: a dead or lying worker is systemic, and the next check starts fresh", () => {
   test("a worker that crashes mid-check rejects the check with an Error", async () => {
     const { gate } = harness();

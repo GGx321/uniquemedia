@@ -1,6 +1,7 @@
 import type { Worker } from "node:worker_threads";
 import { timeoutSignal, untilAborted } from "../../money/timeoutSignal";
 import type { FacePose } from "../config";
+import type { FaceBox } from "../largestFace";
 import { NoFaceInReferenceError } from "../noFaceError";
 import type { FaceVerdict } from "../verdict";
 import { FaceWorkerRequestSchema, FaceWorkerResponseSchema, type FaceWorkerRequest, type FaceWorkerResponse } from "./protocol";
@@ -60,6 +61,13 @@ export interface WorkerFaceGateOptions {
   killTimeoutMs?: number;
 }
 
+/** What `detect` answers: the decoded source's size and its largest face (or none), both in source pixels. */
+export interface FaceDetection {
+  width: number;
+  height: number;
+  face: FaceBox | null;
+}
+
 export interface WorkerFaceGate {
   /** Spawns the worker and waits for it to load (the engine's preflight); a no-op when one is already live. Aborting `signal` terminates a load in progress. */
   start(signal?: AbortSignal): Promise<void>;
@@ -67,6 +75,14 @@ export interface WorkerFaceGate {
   check(input: { pose: FacePose; bytes: Uint8Array; masterEmbedding: Float32Array }, signal: AbortSignal): Promise<FaceVerdict>;
   /** The reference image's SFace embedding. Rejects with `NoFaceInReferenceError` when the worker finds no face. */
   embed(bytes: Uint8Array, signal: AbortSignal): Promise<Float32Array>;
+  /**
+   * S8 (focus): decodes `bytes`, normalises, runs YuNet only, and returns the
+   * largest face's box in SOURCE-image pixels (`face: null` when there is none —
+   * an answer, not an error) with the source's size. No pose, no embedding.
+   * Same lane, bounds, cancellation and validation as `check`/`embed`; a failure
+   * to decode rejects with an ordinary Error (the worker stays alive).
+   */
+  detect(bytes: Uint8Array, signal: AbortSignal): Promise<FaceDetection>;
   /** Terminates the worker for good; a computation in flight fails, and every later call rejects. */
   dispose(): Promise<void>;
   /** True once a worker could not be terminated: every later call fails with it until the engine restarts. Lets the engine refuse a run for free instead of finding out after the first paid image. */
@@ -394,6 +410,15 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
       const copy = copyForTransfer(bytes);
       const message = FaceWorkerRequestSchema.parse({ type: "embed", id, bytes: copy });
       return await inLane(signal, (entry) => request(entry, message, [copy], (r) => (r.type === "embedded" && r.id === id ? r.embedding : undefined)));
+    },
+
+    async detect(bytes, signal) {
+      const id = nextRequestId++;
+      const copy = copyForTransfer(bytes);
+      const message = FaceWorkerRequestSchema.parse({ type: "detect", id, bytes: copy });
+      return await inLane(signal, (entry) =>
+        request(entry, message, [copy], (r) => (r.type === "detected" && r.id === id ? { width: r.width, height: r.height, face: r.face } : undefined)),
+      );
     },
 
     async dispose(): Promise<void> {

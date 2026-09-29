@@ -78,3 +78,42 @@ describe("message strings are bounded", () => {
     expect(FaceWorkerResponseSchema.safeParse({ type: "failed", id: 1, code: "error", message: "x".repeat(1_000_000) }).success).toBe(false);
   });
 });
+
+describe("detect (S8: the focus point of a placed photo)", () => {
+  const face = { x: 10, y: 20, width: 30, height: 40 };
+  const detected = (over: Record<string, unknown> = {}) => ({ type: "detected", id: 1, width: 100, height: 200, face, ...over });
+
+  test("accepts a detect request carrying only bytes", () => {
+    expect(FaceWorkerRequestSchema.safeParse({ type: "detect", id: 1, bytes: new ArrayBuffer(1) }).success).toBe(true);
+  });
+
+  test("rejects a detect request with an extra field (no embedding is ever sent for it)", () => {
+    expect(FaceWorkerRequestSchema.safeParse({ type: "detect", id: 1, bytes: new ArrayBuffer(1), masterEmbedding: unit() }).success).toBe(false);
+  });
+
+  test("rejects a detect request whose bytes are not an ArrayBuffer", () => {
+    expect(FaceWorkerRequestSchema.safeParse({ type: "detect", id: 1, bytes: "abc" }).success).toBe(false);
+  });
+
+  test("accepts a detected response with a face and one without", () => {
+    expect(FaceWorkerResponseSchema.safeParse(detected()).success).toBe(true);
+    expect(FaceWorkerResponseSchema.safeParse(detected({ face: null })).success).toBe(true);
+  });
+
+  test.each([0, -1, 1.5, Number.NaN])("rejects an image width of %p", (width) => {
+    expect(FaceWorkerResponseSchema.safeParse(detected({ width })).success).toBe(false);
+  });
+
+  test.each([Number.NaN, Number.POSITIVE_INFINITY])("rejects a face box holding %p", (bad) => {
+    expect(FaceWorkerResponseSchema.safeParse(detected({ face: { ...face, x: bad } })).success).toBe(false);
+  });
+
+  test("rejects a face box of zero or negative size", () => {
+    expect(FaceWorkerResponseSchema.safeParse(detected({ face: { ...face, width: 0 } })).success).toBe(false);
+    expect(FaceWorkerResponseSchema.safeParse(detected({ face: { ...face, height: -4 } })).success).toBe(false);
+  });
+
+  test("rejects a face box with an unknown field", () => {
+    expect(FaceWorkerResponseSchema.safeParse(detected({ face: { ...face, score: 0.9 } })).success).toBe(false);
+  });
+});

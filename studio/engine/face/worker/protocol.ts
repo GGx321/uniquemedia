@@ -46,6 +46,8 @@ const RequestId =z.number().int().nonnegative();
 export const FaceWorkerRequestSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("check"), id: RequestId, pose: FacePoseSchema, bytes: Bytes, masterEmbedding: Embedding }),
   z.strictObject({ type: z.literal("embed"), id: RequestId, bytes: Bytes }),
+  /** S8: where the largest prominent face is, for the focus point of a placed photo. Detection only: no pose, no embedding. */
+  z.strictObject({ type: z.literal("detect"), id: RequestId, bytes: Bytes }),
 ]);
 export type FaceWorkerRequest = z.infer<typeof FaceWorkerRequestSchema>;
 
@@ -60,12 +62,17 @@ export const FaceVerdictSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("unexpected-face"), faces, headRatio: finite }),
 ]) satisfies z.ZodType<FaceVerdict>;
 
+/** A face box in SOURCE-image pixels (the worker scales it back from the normalised image it detected on). It may reach past the image edge a little: YuNet boxes do. */
+const FaceBoxSchema = z.strictObject({ x: finite, y: finite, width: finite.positive(), height: finite.positive() });
+
 /** Worker -> engine. `failed.code` tells the one expected failure (a reference with no face) apart from everything else, which is systemic. */
 export const FaceWorkerResponseSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ready") }),
   z.strictObject({ type: z.literal("load-failed"), message: Message }),
   z.strictObject({ type: z.literal("checked"), id: RequestId, verdict: FaceVerdictSchema }),
   z.strictObject({ type: z.literal("embedded"), id: RequestId, embedding: Embedding }),
+  /** `width`/`height` are the decoded source image's, so the engine can turn the box into fractions without a second decode. */
+  z.strictObject({ type: z.literal("detected"), id: RequestId, width: z.number().int().positive(), height: z.number().int().positive(), face: FaceBoxSchema.nullable() }),
   z.strictObject({ type: z.literal("failed"), id: RequestId, code: z.enum(["no-face-in-reference", "error"]), message: Message }),
 ]);
 export type FaceWorkerResponse = z.infer<typeof FaceWorkerResponseSchema>;

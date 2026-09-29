@@ -56,6 +56,13 @@ port.on("message", (raw: unknown) => {
       send({ type: "failed", id: request.id, code: "error", message: "scripted failure" });
     } else if (behaviour === Behaviour.noFace) {
       send({ type: "failed", id: request.id, code: "no-face-in-reference", message: "scripted: no face" });
+    } else if (request.type === "detect") {
+      if (behaviour === Behaviour.wrongKind) {
+        send({ type: "checked", id: request.id, verdict: { kind: "no-face", faces: 0 } });
+      } else {
+        const face = behaviour === Behaviour.noDetection ? null : { x: 10, y: 20, width: 30, height: 40 };
+        send({ type: "detected", id: request.id, width: 100, height: 200, face });
+      }
     } else if (request.type === "check") {
       send({ type: "checked", id: request.id, verdict: { kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 } });
     } else {
