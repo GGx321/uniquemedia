@@ -69,6 +69,7 @@ import { ffmpegPath } from "../node/ffmpegBinary";
 import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { failureDetail } from "./failureDetail";
+import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
 import { looksLikeAStackTrace } from "./stackTrace";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -442,6 +443,11 @@ function checkPackage(target: Target): void {
   // T7c: the face worker thread is its own built entry, loaded by file URL
   // from inside the asar (never unpacked, for the same integrity reason).
   check("app.asar contains the face worker entry, and it is not unpacked", entries.includes("/out-studio/engine/faceWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "faceWorker.js")));
+  // 3b.2, the text rasteriser: resvg's .wasm, the six fonts and their OFL texts stay inside the asar too (never
+  // unpacked, for the same integrity reason). That they load from there under the fuses, in the real
+  // utilityProcess, is checked by `checkTextRasteriser` on what the engine prints at start-up.
+  const textAssetProblems = textAssetPackageProblems(entries);
+  check("app.asar contains resvg's wasm, the bundled fonts and their licences", textAssetProblems.length === 0, textAssetProblems);
   const fuses = spawnSync("bunx", ["@electron/fuses", "read", "--app", target.app], { encoding: "utf8" }).stdout;
   const wrong = Object.entries(EXPECTED_FUSES).filter(([fuse, state]) => !new RegExp(`${fuse} is ${state}`).test(fuses));
   check("the Electron fuses are set (runAsNode, NODE_OPTIONS, --inspect off; asar-only with integrity; cookie encryption)", wrong.length === 0, { wrong, fuses });
@@ -540,6 +546,18 @@ function checkFaceWorker(where: string, engine: string, worker: string | null, f
   check(`${where}: the face worker entry is built, loaded by file URL, a worker thread, Electron-free, and every chunk it imports is present`, problems.length === 0, problems);
 }
 
+/**
+ * 3b.2: the engine loads the text rasteriser at start-up, draws a Cyrillic string in each of the five fonts and
+ * logs the fingerprint of the result (engine/text/load.ts). Waits for that line in the app's captured output and
+ * checks it against the pinned fingerprint, the same constant on macOS and Windows. In a package this proves the
+ * wasm and the fonts load from inside app.asar under the fuses, in the real utilityProcess.
+ */
+async function checkTextRasteriser(where: string, output: () => string): Promise<void> {
+  const ready = await waitFor("the text rasteriser's ready line", async () => (textRasteriserOutputProblems(output()).length === 0 ? true : null), 30_000).catch(() => false);
+  const problems = textRasteriserOutputProblems(output());
+  check(`${where}: the engine loads resvg-wasm and the fonts and its Cyrillic self-test draws the pinned fingerprint`, ready === true && problems.length === 0, problems);
+}
+
 async function productionCheck(target: Target): Promise<void> {
   await checkRuntimeInterruptsBusyWorker();
   if (target.asar === null) {
@@ -552,6 +570,12 @@ async function productionCheck(target: Target): Promise<void> {
       await rendererBundleText(target),
       await rendererCssText(target),
     );
+    const builtTextAssets = [
+      ...(await readdir(join(ROOT, "out-studio", "engine", "fonts")).catch(() => [])).map((f) => `/out-studio/engine/fonts/${f}`),
+      ...(await readdir(join(ROOT, "out-studio", "engine", "wasm")).catch(() => [])).map((f) => `/out-studio/engine/wasm/${f}`),
+    ];
+    const builtTextProblems = textAssetPackageProblems(builtTextAssets);
+    check("the production build holds resvg's wasm, the bundled fonts and their licences", builtTextProblems.length === 0, builtTextProblems);
     const workerPath = join(ROOT, "out-studio", "engine", "faceWorker.js");
     checkFaceWorker(
       "the production build",
@@ -591,6 +615,7 @@ async function productionCheck(target: Target): Promise<void> {
     const mainPid = child.pid ?? -1;
     const engine = await waitFor("the engine process", async () => enginePid(mainPid), 20_000).catch(() => null);
     check("the production app launches and starts its engine utilityProcess", engine !== null && child.exitCode === null);
+    await checkTextRasteriser("the production app", () => output);
     let listening = false;
     for (let i = 0; i < 10 && !listening; i++) {
       listening = await fetch(`http://127.0.0.1:${port}/json/version`).then(() => true, () => false);
@@ -1673,6 +1698,7 @@ async function main(): Promise<void> {
     const snapshot = await req(cdp, "engine.snapshot");
     const bootId = field(snapshot, "result", "bootId");
     check("engine.snapshot answers from the engine", field(snapshot, "ok") === true && typeof bootId === "string", snapshot);
+    await checkTextRasteriser(target.asar === null ? "the E2E build" : "the E2E package", running.output);
     check("the snapshot carries the settings from settings.json", field(snapshot, "result", "settings", "libraryPath") === libraryRoot, snapshot);
 
     const money = await req(cdp, "money.status");
