@@ -35,7 +35,7 @@ const collage = (clipId: string, layout: "collage2" | "collage3" | "collage4", d
 });
 const photo = (clipId: string, durationMs: number, motion: "kenburns" | "pan" | "static"): Clip => ({ clipId, durationMs, transitionIn: "cut", kind: "photo", cell: scene("p-1"), motion });
 
-const CASES: ReadonlyArray<{ name: string; clip: Clip; frames: number }> = [
+const CASES: Array<{ name: string; clip: Clip; frames: number }> = [
   { name: "photo, Ken Burns", clip: photo("photo-kb", 4000, "kenburns"), frames: 120 },
   { name: "photo, pan", clip: photo("photo-pan", 4000, "pan"), frames: 120 },
   { name: "photo, static", clip: photo("photo-static", 4000, "static"), frames: 120 },

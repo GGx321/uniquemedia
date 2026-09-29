@@ -18,7 +18,10 @@ useNativeGlobals();
 // (invariant 14). SLOW: about 10 s.
 
 const SOURCE = join(import.meta.dir, "../face/fixtures/images/render-best-home-1.jpg");
-const SENTINELS = ["SENTINEL-ARTIST", "SENTINEL-COPYRIGHT", "SENTINEL-XMP"];
+const SENTINEL_ARTIST = "SENTINEL-ARTIST"; // EXIF
+const SENTINEL_COPYRIGHT = "SENTINEL-COPYRIGHT"; // EXIF
+const SENTINEL_XMP = "SENTINEL-XMP"; // XMP
+const SENTINELS = [SENTINEL_ARTIST, SENTINEL_COPYRIGHT, SENTINEL_XMP];
 
 const scene = (id: string) => ({ photo: { source: "scene" as const, photoId: id }, focus: { x: 0.5, y: 0.38 } });
 const CLIPS: Clip[] = [
@@ -42,7 +45,7 @@ beforeAll(async () => {
   dir = makeWorkDir("pass2");
   const photo = join(dir, "laden.jpg");
   copyFileSync(SOURCE, photo);
-  await exiftool.write(photo, { Artist: SENTINELS[0], Copyright: SENTINELS[1], "XMP-dc:Creator": SENTINELS[2] }, { writeArgs: ["-overwrite_original"] });
+  await exiftool.write(photo, { Artist: SENTINEL_ARTIST, Copyright: SENTINEL_COPYRIGHT, Creator: SENTINEL_XMP }, { writeArgs: ["-overwrite_original"] });
 
   sourceBytes = readBytes(photo);
   await runPass1(buildPass1({ seed: 3, clips: CLIPS, resolvePhoto: () => ({ path: photo, width: 720, height: 1280 }), clipDir: dir }));
