@@ -50,7 +50,7 @@ const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@j
  * edit) — held to the same rules below.
  */
 const ALLOWED_ROOTS = [
-  ...["engine", "node", join("shared", "engine")].map((d) => join(STUDIO_DIR, d)),
+  ...["engine", "node", join("shared", "engine"), join("shared", "montage")].map((d) => join(STUDIO_DIR, d)),
   ...[join("src", "core"), join("src", "node")].map((d) => join(STUDIO_DIR, "..", d)),
 ];
 
@@ -215,4 +215,20 @@ test("the walk from the face worker entry reaches its gate, decoder and protocol
 
 test("every module reachable from the face worker entry uses only node:* APIs and never reads the environment", () => {
   expect(walkFromEntry(WORKER_ENTRY).problems).toEqual([]);
+});
+
+// S8: the focus resolver is not wired into main.ts yet (slice 3d does that), so
+// the walk from the engine entry cannot see it. It runs in the engine, so it is
+// held to the same rules on its own, including the pure montage geometry it uses
+// for the fallback point (`shared/montage` is an allowed root for that reason).
+const FOCUS_ENTRY = join(ENGINE_DIR, "focus", "focusResolver.ts");
+
+test("the walk from the focus resolver reaches its cache and the montage geometry", () => {
+  const { files } = walkFromEntry(FOCUS_ENTRY);
+  expect(files).toContain(join("engine", "focus", "focusCache.ts"));
+  expect(files).toContain(join("shared", "montage", "crop.ts"));
+});
+
+test("every module reachable from the focus resolver uses only node:* APIs and never reads the environment", () => {
+  expect(walkFromEntry(FOCUS_ENTRY).problems).toEqual([]);
 });
