@@ -1,9 +1,9 @@
 import { readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import * as nodePath from "node:path";
-import { join } from "node:path";
 import { z } from "zod";
 import { EngineSettings } from "../engine/control";
+import type { PathFlavour } from "../engine/pathFlavour";
 import { AbsolutePath } from "../shared/engine";
 import { writeJsonAtomic } from "../engine/library/durableFs";
 
@@ -35,8 +35,6 @@ export function defaultExportPath(home: string, api: PathFlavour = nodePath): st
   return api.join(home, "Studio", "export");
 }
 
-/** The path flavour the defaults are spelled in: the platform's own unless a test plays another. */
-type PathFlavour = Pick<typeof nodePath.posix, "join">;
 
 /** On disk: the non-secret settings plus a version, strict so a stray field (a key) is refused. */
 const SettingsFile = EngineSettings.extend({ schemaVersion: z.literal(1) });
@@ -55,9 +53,10 @@ export function defaultSettings(userData: string, home: string = homedir(), api:
     concurrency: { network: DEFAULT_NETWORK_CONCURRENCY },
     imageAgeCheck: DEFAULT_IMAGE_AGE_CHECK,
     // An empty HOME, a relative one, or (on Windows) a rooted path with no drive would break the contract's
-    // absolute path and crash the startup: the contract judges the path that is actually built, so the two
-    // cannot disagree, and the export goes next to the rest of the app's data instead.
-    exportPath: [defaultExportPath(home, api), api.join(userData, "export")].find((path) => AbsolutePath.safeParse(path).success),
+    // absolute path and crash the startup. The platform's own rule AND the contract judge the path that is
+    // actually built (the contract alone accepts `C:\x` on POSIX, where it is relative to the working directory),
+    // and the export goes next to the rest of the app's data when either refuses.
+    exportPath: [defaultExportPath(home, api), api.join(userData, "export")].find((path) => api.isAbsolute(path) && AbsolutePath.safeParse(path).success),
     renderConcurrency: DEFAULT_RENDER_CONCURRENCY,
   });
 }
@@ -84,7 +83,7 @@ function withMissingKeysBackfilled(raw: unknown, defaults: EngineSettings): unkn
 
 /** Reads `userData/settings.json`, Zod-validated. Never throws for a missing or invalid file. */
 export async function loadSettings(userData: string, home: string = homedir()): Promise<LoadedSettings> {
-  const path = join(userData, SETTINGS_FILE);
+  const path = nodePath.join(userData, SETTINGS_FILE);
   let text: string;
   try {
     text = await readFile(path, "utf8");
@@ -114,7 +113,7 @@ export async function loadSettings(userData: string, home: string = homedir()): 
 /** Validates and writes `userData/settings.json` atomically (temp + fsync + rename). */
 export async function saveSettings(userData: string, settings: EngineSettings): Promise<void> {
   const file = SettingsFile.parse({ schemaVersion: 1, ...settings });
-  await writeJsonAtomic(join(userData, SETTINGS_FILE), file);
+  await writeJsonAtomic(nodePath.join(userData, SETTINGS_FILE), file);
 }
 
 /** `2026-09-24T11:22:33.456Z` → `20260924T112233Z`, safe in a file name on every platform. */
@@ -149,7 +148,7 @@ export class SettingsStore {
     let notice: string | null = null;
     if (loaded.source === "invalid") {
       const aside = `${SETTINGS_FILE}.corrupt-${stamp(now())}`;
-      await rename(join(userData, SETTINGS_FILE), join(userData, aside));
+      await rename(nodePath.join(userData, SETTINGS_FILE), nodePath.join(userData, aside));
       notice = `${loaded.problem}; it was moved to ${aside} and the defaults are in use`;
     }
     await saveSettings(userData, loaded.settings);

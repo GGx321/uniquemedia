@@ -54,6 +54,11 @@ describe("the default export folder in each platform's own path spelling", () =>
     expect(settings.exportPath).toBe("C:\\Users\\mia\\AppData\\Roaming\\Studio\\export");
   });
 
+  test("a Windows-style home on POSIX is a relative path there: the export folder falls back to userData, never a path relative to the working directory", () => {
+    const settings = defaultSettings("/Users/mia/Library/Application Support/Studio", "C:\\Users\\mia", posix);
+    expect(settings.exportPath).toBe("/Users/mia/Library/Application Support/Studio/export");
+  });
+
   test("a POSIX home gives a slash path under it", () => {
     expect(defaultSettings("/Users/mia/Library/Application Support/Studio", "/Users/mia", posix).exportPath).toBe("/Users/mia/Studio/export");
   });
