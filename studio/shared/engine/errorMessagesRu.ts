@@ -73,4 +73,6 @@ export const EXPORT_UNAVAILABLE_REASONS_RU = {
   "not-a-directory": "По этому пути лежит файл, а не папка.",
   "not-writable": "В эту папку нельзя записывать.",
   "not-enough-space": "В папке не хватает свободного места.",
+  "overlaps-library": "Папка «Готовые видео» не может быть внутри папки библиотеки или содержать её.",
+  "invalid-marker": "Служебный файл .studio-export.json в этой папке повреждён. Выберите другую папку или удалите этот файл сами.",
 } as const satisfies Record<ExportUnavailableReason, string>;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { FileState, MAX_LISTED_VIDEOS, RelativePath, RenderResult, VideoKindToken, VideoSummary } from "./video";
+import { FileState, isSafeName, isWindowsDeviceName, MAX_LISTED_VIDEOS, RelativePath, RenderResult, VideoKindToken, VideoSummary } from "./video";
 
 const video = {
   videoId: "video-00000001",
@@ -183,6 +183,30 @@ describe("RelativePath", () => {
     ["a non-ASCII folder", "Мия/2026-09-29_photo_001.mp4"],
   ])("rejects %s", (_label, path) => {
     expect(RelativePath.safeParse(path).success).toBe(false);
+  });
+});
+
+describe("SafeName, the folder part of a RelativePath", () => {
+  test.each(["Mia", "a_b-C", "avatar-0001", "com10", "A".repeat(64)])("accepts %s", (name) => {
+    expect(isSafeName(name)).toBe(true);
+  });
+
+  test.each(["", "A".repeat(65), "Мия", "a b", "a.b", "Mia.", "..", "CON", "nul", "Com1", "LPT9", "a/b", "a\\b", "a\n"])("rejects %p", (name) => {
+    expect(isSafeName(name)).toBe(false);
+  });
+
+  test.each(["CON", "prn", "Aux", "NUL", "com0", "COM9", "lpt1"])("%s is a Windows device name", (name) => {
+    expect(isWindowsDeviceName(name)).toBe(true);
+  });
+
+  test.each(["com10", "console", "Mia", "lpt", "nully"])("%s is not a Windows device name", (name) => {
+    expect(isWindowsDeviceName(name)).toBe(false);
+  });
+
+  test("agrees with RelativePath on every folder, so a SafeName always parses", () => {
+    for (const name of ["Mia", "CON", "com10", "a.b", "", "A".repeat(65), "x-y_z"]) {
+      expect(RelativePath.safeParse(`${name}/2026-09-29_photo_001.mp4`).success).toBe(isSafeName(name));
+    }
   });
 });
 

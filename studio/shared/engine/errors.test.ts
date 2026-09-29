@@ -157,9 +157,9 @@ describe("EngineError for an unusable export folder", () => {
     expect(EngineError.safeParse({ code: "EXPORT_UNAVAILABLE", exportReason }).success).toBe(true);
   });
 
-  test("the reasons are exactly: missing, not a directory, not writable, not enough space", () => {
+  test("the reasons are exactly: missing, not a directory, not writable, not enough space, overlaps the library, invalid marker", () => {
     const actual: string[] = [...EXPORT_UNAVAILABLE_REASONS].sort();
-    expect(actual).toEqual(["missing", "not-a-directory", "not-enough-space", "not-writable"]);
+    expect(actual).toEqual(["invalid-marker", "missing", "not-a-directory", "not-enough-space", "not-writable", "overlaps-library"]);
   });
 
   test("EXPORT_UNAVAILABLE without a reason is refused", () => {

@@ -17,6 +17,25 @@ export const MAX_LISTED_VIDEOS = 500;
  */
 export const VideoKindToken = z.string().regex(/^[a-z][a-z0-9]{0,15}$/, "must be 1-16 chars of a-z or 0-9, starting with a letter");
 
+/** The folder part of a video's path: ASCII `[A-Za-z0-9_-]`, 1-64 chars. The one definition; `RelativePath` is built from it. */
+const SAFE_NAME_SOURCE = "[A-Za-z0-9_-]{1,64}";
+const SAFE_NAME_PATTERN = new RegExp(`^${SAFE_NAME_SOURCE}$`);
+const RELATIVE_PATH_PATTERN = new RegExp(`^${SAFE_NAME_SOURCE}/\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])_[a-z][a-z0-9]{0,15}_\\d{3,6}\\.mp4$`);
+
+/** A Windows reserved device name (any case): CON, PRN, AUX, NUL, COM0-9, LPT0-9. Windows treats them as devices in every folder. */
+export function isWindowsDeviceName(name: string): boolean {
+  return /^(?:con|prn|aux|nul|com\d|lpt\d)$/i.test(name);
+}
+
+/**
+ * Whether `name` may be the folder of a `RelativePath`. The exact predicate
+ * `RelativePath` applies to its first segment, exported so the engine's
+ * `SafeName` builder can never produce a name that the contract then refuses.
+ */
+export function isSafeName(name: string): boolean {
+  return SAFE_NAME_PATTERN.test(name) && !isWindowsDeviceName(name);
+}
+
 /**
  * A video's place inside the export folder, exactly as the engine names it:
  * `<SafeName>/<YYYY-MM-DD>_<kind>_<NNN>.mp4`. An allow-list, not a deny-list:
@@ -28,8 +47,8 @@ export const VideoKindToken = z.string().regex(/^[a-z][a-z0-9]{0,15}$/, "must be
  */
 export const RelativePath = z
   .string()
-  .regex(/^[A-Za-z0-9_-]{1,64}\/\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])_[a-z][a-z0-9]{0,15}_\d{3,6}\.mp4$/, "must be <SafeName>/<date>_<kind>_<NNN>.mp4")
-  .refine((p) => !/^(?:con|prn|aux|nul|com\d|lpt\d)\//i.test(p), "the folder must not be a Windows device name");
+  .regex(RELATIVE_PATH_PATTERN, "must be <SafeName>/<date>_<kind>_<NNN>.mp4")
+  .refine((p) => !isWindowsDeviceName(p.slice(0, p.indexOf("/"))), "the folder must not be a Windows device name");
 
 /**
  * Where a record's file stands, derived on read and never stored:

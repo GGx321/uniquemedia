@@ -100,8 +100,13 @@ export const ERROR_CODES = [
 
 export const ErrorCode = z.enum(ERROR_CODES);
 
-/** Why the export folder cannot take a video (invariant 35): it is gone, it is a file, it is read-only, or it is full. */
-export const EXPORT_UNAVAILABLE_REASONS = ["missing", "not-a-directory", "not-writable", "not-enough-space"] as const;
+/**
+ * Why the export folder cannot take a video (invariant 35): it is gone, it is a
+ * file, it is read-only, it is full, it overlaps the library folder (the export
+ * must never sit inside the library or contain it), or its root marker
+ * `.studio-export.json` is unreadable or invalid (never silently replaced).
+ */
+export const EXPORT_UNAVAILABLE_REASONS = ["missing", "not-a-directory", "not-writable", "not-enough-space", "overlaps-library", "invalid-marker"] as const;
 export const ExportUnavailableReason = z.enum(EXPORT_UNAVAILABLE_REASONS);
 export type ExportUnavailableReason = z.infer<typeof ExportUnavailableReason>;
 
