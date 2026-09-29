@@ -275,6 +275,20 @@ describe("errors from the export folder's own steps carry no path", () => {
   });
 });
 
+describe("the case probe of the export volume", () => {
+  test("a probe that throws fails the job with the errno code only, before any folder is made", async () => {
+    const r = rig({ caseProbe: { isCaseInsensitive: () => Promise.reject(Object.assign(new Error("EIO: i/o error, open '/Volumes/Reels/.studio-probe-case-x'"), { code: "EIO" })) } });
+
+    r.submit();
+    await r.queue.idle();
+
+    const state = r.states()[0];
+    expect(state).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
+    expect(JSON.stringify(state)).not.toContain("/Volumes/Reels");
+    expect(existsSync(join(r.w.exportRoot, "Mia"))).toBe(false);
+  });
+});
+
 describe("the commit has its own deadline", () => {
   const hangAt = (step: string, release: Promise<void>): NonNullable<VideoRenderDeps["hooks"]> => ({
     reached: async (reached) => {

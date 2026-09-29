@@ -138,7 +138,14 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     const { root, rootId } = plan.exportRoot;
     // 1. The root is the one that was checked (before this job makes a folder in whatever is at that path now).
     await assertSameRoot(root, rootId);
-    const caseInsensitive = await deps.caseProbe.isCaseInsensitive(root);
+    let caseInsensitive: boolean;
+    try {
+      caseInsensitive = await deps.caseProbe.isCaseInsensitive(root);
+    } catch (error) {
+      // The probe writes a file in the owner's export folder; its error names that path, which reaches the UI: only the code does.
+      log(`render ${plan.jobId}: the export folder's case rule could not be probed (${codeOf(error)})`);
+      throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: `the export folder could not be probed (${codeOf(error)})` });
+    }
     let folder: PreparedFolder;
     try {
       folder = await prepareExportFolder({ fs: deps.folderFs ?? NODE_EXPORT_FOLDER_FS, root, safeName: plan.safeName, avatarId: plan.avatarId, caseInsensitive });
