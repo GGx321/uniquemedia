@@ -151,6 +151,8 @@ export class RenderQueue {
    * (a finished one stays as it ended), false for an unknown one.
    */
   cancel(jobId: string): boolean {
+    // Only a render: another kind of job (a paid candidates job) is not this queue's to stop.
+    if (this.#deps.jobs.stateOf(jobId)?.kind !== "render") return false;
     return this.#deps.jobs.cancel(jobId);
   }
 
@@ -189,8 +191,18 @@ export class RenderQueue {
       this.#deps.onEvent?.(event);
     } catch (error) {
       // A broken listener (a closed window) must not stop the queue; it is reported, not hidden.
-      (this.#deps.onListenerError ?? ((e: unknown) => console.error("studio render queue: an event listener threw", e)))(error);
+      // And a broken reporter must not either: the last resort is the console.
+      try {
+        (this.#deps.onListenerError ?? ((e: unknown) => console.error("studio render queue: an event listener threw", e)))(error);
+      } catch (reporterError) {
+        console.error("studio render queue: an event listener threw, and so did its error reporter", error, reporterError);
+      }
     }
+  }
+
+  /** Re-checks the pool's size and starts waiting jobs that now fit (a settings change raised it). */
+  poke(): void {
+    this.#pump();
   }
 
   /** A queued job the registry has just cancelled: out of the line, photos back. A running job's abort is its own `execute`'s business. */
@@ -209,7 +221,9 @@ export class RenderQueue {
       const jobId = this.#waiting.shift();
       if (jobId === undefined) return;
       if (!this.#deps.jobs.startRender(jobId)) {
+        // Ended behind the queue's back: drop it, give its photos back.
         this.#held.delete(jobId);
+        this.#notifyIdle();
         continue;
       }
       this.#running++;
@@ -222,7 +236,13 @@ export class RenderQueue {
   /** Runs one job to its end. Never rejects: every way out is an ending. */
   async #run(jobId: string): Promise<void> {
     const held = this.#held.get(jobId);
-    if (held === undefined) return;
+    if (held === undefined) {
+      // Not reachable today; if it ever is, the slot this run took must not leak.
+      this.#running--;
+      this.#pump();
+      this.#notifyIdle();
+      return;
+    }
     const { submission, signal } = held;
     let end: RenderJobEnd;
     let cause: unknown;

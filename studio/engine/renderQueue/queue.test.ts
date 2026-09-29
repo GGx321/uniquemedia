@@ -434,6 +434,111 @@ describe("RenderQueue: cancel", () => {
   });
 });
 
+describe("RenderQueue: review round 1", () => {
+  test("a listener AND its error reporter that both throw do not stop the job from running or ending", async () => {
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({
+      jobs,
+      size: () => 1,
+      onEvent: () => {
+        throw new Error("window closed");
+      },
+      onListenerError: () => {
+        throw new Error("the log is closed too");
+      },
+    });
+    const a = submission(1);
+
+    expect(() => queue.submit(a)).not.toThrow();
+    const ctx = await a.gate.started.promise; // execute did start
+    ctx.progress(10);
+    a.gate.finish.resolve(resultOf(1));
+    await queue.idle();
+
+    expect(jobs.states()[0]).toMatchObject({ status: "done" });
+    expect(queue.reservedPhotos(AVATAR).size).toBe(0);
+    expect(queue.active()).toBe(0);
+  });
+
+  test("the queue keeps pumping when both throw at the end of a job", async () => {
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({
+      jobs,
+      size: () => 1,
+      onEvent: () => {
+        throw new Error("window closed");
+      },
+      onListenerError: () => {
+        throw new Error("the log is closed too");
+      },
+    });
+    const [a, b] = [submission(1), submission(2)];
+    queue.submit(a);
+    queue.submit(b);
+
+    a.gate.finish.resolve(resultOf(1));
+    await tick();
+
+    expect(statuses(jobs)).toEqual(["job-00000001:done", "job-00000002:running"]);
+  });
+
+  test("cancel refuses a job that is not a render: a paid candidates job is left running", () => {
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({ jobs, size: () => 1 });
+    const signal = jobs.startCandidates("job-00000009", "draft-00000001", 4);
+
+    expect(queue.cancel("job-00000009")).toBe(false);
+
+    expect(signal.aborted).toBe(false);
+    expect(jobs.states()).toMatchObject([{ kind: "avatar.candidates", status: "running" }]);
+  });
+
+  test("the ended event of a cancelled queued job is not lost when the registry keeps only one finished job", async () => {
+    const jobs = new JobRegistry({ keepFinished: 1 });
+    const events: RenderQueueEvent[] = [];
+    const queue = new RenderQueue({ jobs, size: () => 1, onEvent: (e) => events.push(e) });
+    queue.submit(submission(1)); // running
+    queue.submit(submission(2)); // queued: older in the registry than the jobs below
+    for (const n of [3, 4]) {
+      jobs.queueRender(`job-0000000${n}`, { videoId: `video-0000000${n}`, avatarId: AVATAR, montageId: null }, 120);
+      jobs.finishRender(`job-0000000${n}`, { status: "cancelled" });
+    }
+
+    queue.cancel("job-00000002");
+
+    expect(events.filter((e) => e.type === "ended").map((e) => `${e.state.jobId}:${e.state.status}`)).toEqual(["job-00000002:cancelled"]);
+  });
+
+  test("poke starts waiting jobs when the pool has grown, without waiting for one to finish", () => {
+    let size = 1;
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({ jobs, size: () => size });
+    queue.submit(submission(1));
+    queue.submit(submission(2));
+    size = 2;
+    expect(statuses(jobs)).toEqual(["job-00000001:running", "job-00000002:queued"]);
+
+    queue.poke();
+
+    expect(statuses(jobs)).toEqual(["job-00000001:running", "job-00000002:running"]);
+  });
+
+  test("a queued job that ended behind the queue's back is dropped at its turn, and its photos are released", async () => {
+    const jobs = new JobRegistry();
+    const queue = new RenderQueue({ jobs, size: () => 1 });
+    const [a, b] = [submission(1), submission(2)];
+    queue.submit(a);
+    queue.submit(b);
+    jobs.finishRender("job-00000002", { status: "cancelled" }); // not through the queue
+
+    a.gate.finish.resolve(resultOf(1));
+    await queue.idle();
+
+    expect(queue.reservedPhotos(AVATAR).size).toBe(0);
+    expect(queue.active()).toBe(0);
+  });
+});
+
 describe("RenderQueue: renders in flight", () => {
   test("counts queued and running jobs, not finished ones", async () => {
     const { queue } = setup();
