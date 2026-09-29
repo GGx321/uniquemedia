@@ -63,8 +63,9 @@ import { Count, SafeText } from "./primitives";
  * - RENDER_VERIFY_FAILED: the finished file did not pass the output verifier (metadata allowlist, frame count); it is not kept.
  * - RENDER_QUEUE_FULL: `videos.render` was refused up front because the render queue already holds its most (queued and
  *   running together); `detail` carries the limit. Nothing was reserved or written; retry once some renders end.
- * - LIBRARY_TOO_NEW: a video record (or the usage it feeds) was written by a newer Studio, so `videos.render`,
- *   `videos.list` and `videos.delete` refuse rather than guess; the owner updates the app.
+ * - LIBRARY_TOO_NEW: a video record was written by a newer Studio. What follows is per record and per avatar:
+ *   `videos.render` refuses for an avatar that has such a record (its usage cannot be trusted), `videos.delete` refuses
+ *   that record, and `videos.list` leaves it out. The owner updates the app.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
