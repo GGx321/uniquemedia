@@ -68,10 +68,10 @@ describe("the other statuses", () => {
     expect(missing).toEqual([]);
   });
 
-  test("every minimally-qualified sequence has a bitmap, the same one as its fully-qualified form", () => {
+  test("every minimally-qualified and unqualified sequence has a bitmap, the same glyph as its fully-qualified form", () => {
     const byName = new Map(fullyQualified.map((e) => [e.name, e]));
     const wrong = entries
-      .filter((e) => e.status === "minimally-qualified")
+      .filter((e) => e.status === "minimally-qualified" || e.status === "unqualified")
       .filter((e) => {
         const full = byName.get(e.name);
         return full === undefined || font.glyphId(e.codePoints) !== font.glyphId(full.codePoints);
@@ -94,3 +94,38 @@ describe("the other statuses", () => {
     });
   });
 });
+
+describe("near-emoji that are not emoji", () => {
+  const strip = (points: readonly number[]) => keyOf(points.filter((p) => p !== 0xfe0f));
+
+  test("a sequence made by damaging an emoji-test.txt entry has a glyph only if it is another entry", () => {
+    const known = new Set(entries.map((e) => strip(e.codePoints)));
+    const accepted: string[] = [];
+    let mutants = 0;
+    for (const e of entries.filter((entry) => entry.status === "fully-qualified" && entry.codePoints.length >= 2)) {
+      const points = e.codePoints;
+      const damaged = [
+        [...points, 0x200d, 0x1f600],
+        [...points.slice(0, -1), 0x1f600],
+        points.slice(1),
+        [0x1f600, ...points],
+        [...points.slice(0, 1), 0x200d, ...points.slice(1)],
+      ];
+      for (const mutant of damaged) {
+        mutants++;
+        // The lone, single-code-point leftovers are ordinary cmap coverage, not a claim about a sequence.
+        if (mutant.filter((p) => p !== 0xfe0f).length < 2) continue;
+        if (font.has(mutant) && !known.has(strip(mutant))) accepted.push(keyOf(mutant));
+      }
+    }
+    expect(mutants).toBe(13_800);
+    expect(accepted).toEqual([]);
+  });
+
+  test("the stage-2 fallback: a black flag followed by the tag terminator alone is drawn as the black flag glyph HarfBuzz gives it", () => {
+    // Accepted deliberately: HarfBuzz shapes it to the same single glyph (1481), so refusing it would make the reader
+    // stricter than the shaper for a sequence that is drawn as a real emoji bitmap anyway.
+    expect([font.glyphId([0x1f3f4, 0xe007f]), font.has([0x1f3f4, 0xe007f])]).toEqual([1481, true]);
+  });
+});
+

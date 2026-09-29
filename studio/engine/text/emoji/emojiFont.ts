@@ -9,6 +9,11 @@
  *   shortcut for this font.
  * - `CBLC` index formats 1 and 3 with `CBDT` image format 17 (small metrics + PNG) give the bitmap.
  *
+ * Contextual lookups (GSUB types 5 and 6) and single or multiple substitutions are skipped, so this reader is
+ * STRICTER than HarfBuzz: it may refuse a sequence HarfBuzz would draw, and no sequence tried (every emoji-test.txt
+ * entry and ~14 000 damaged ones in the property tests, ~23 000 more in review) is drawn here but not by HarfBuzz. One deliberate agreement: a
+ * black flag followed by the tag terminator alone shapes to glyph 1481 in both, and is accepted.
+ *
  * It parses the bundled, sha256-pinned font, never user bytes, but it never trusts a byte either. Everything is
  * read and validated ONCE, in `openEmojiFont`, through a reader that checks every offset against its table, and
  * every count is capped, so a truncated or mutated file throws an `EmojiFontError` there, never a `RangeError`
@@ -77,6 +82,8 @@ const MAX_LIGATURES = 100_000;
 /** Coverage entries read plus ligature sets read, over the whole GSUB: what the real font needs is a few thousand. */
 const MAX_GSUB_WORK = 1_000_000;
 const VS16 = 0xfe0f;
+/** "IHDR" as a big-endian u32. */
+const IHDR_TAG = 0x49484452;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /** A window on the file whose every read is checked against the window, so no read can leave its table. */
@@ -186,9 +193,10 @@ function readCmap(cmap: Region, numGlyphs: number): GlyphLookup {
     let high = groups - 1;
     while (low <= high) {
       const mid = (low + high) >> 1;
-      if (codePoint < starts[mid]!) high = mid - 1;
-      else if (codePoint > ends[mid]!) low = mid + 1;
-      else return firsts[mid]! + (codePoint - starts[mid]!);
+      const start = starts[mid] ?? 0;
+      if (codePoint < start) high = mid - 1;
+      else if (codePoint > (ends[mid] ?? 0)) low = mid + 1;
+      else return (firsts[mid] ?? 0) + (codePoint - start);
     }
     return 0;
   };
@@ -317,6 +325,7 @@ interface Strike {
 
 /** The strike with the largest ppem: its index subtables, every glyph's slot checked to lie inside CBDT. */
 function readStrike(cblc: Region, cbdt: Region, numGlyphs: number): Strike {
+  if (cblc.u32(0) !== 0x00030000) throw new EmojiFontError("UNSUPPORTED", "CBLC: not version 3.0");
   const strikes = cblc.u32(4);
   if (strikes < 1) throw new EmojiFontError("UNSUPPORTED", "CBLC: no bitmap strike");
   if (strikes > MAX_STRIKES) throw new EmojiFontError("TOO_LARGE", `CBLC: ${strikes} strikes`);
@@ -373,7 +382,7 @@ function checkBitmaps(cbdt: Region, strike: Strike): Map<number, EmojiBitmapReco
     if (pngLength !== slot.length - 9) throw bad("CBDT", "a glyph's data length disagrees with the index");
     const png = slot.offset + 9;
     for (let i = 0; i < PNG_SIGNATURE.length; i++) if (cbdt.u8(png + i) !== PNG_SIGNATURE[i]) throw bad("CBDT", "a glyph's data is not a PNG");
-    if (pngLength < 33 || cbdt.u32(png + 16) !== width || cbdt.u32(png + 20) !== height) throw bad("CBDT", "a PNG's size disagrees with its metrics");
+    if (pngLength < 33 || cbdt.u32(png + 8) !== 13 || cbdt.u32(png + 12) !== IHDR_TAG || cbdt.u32(png + 16) !== width || cbdt.u32(png + 20) !== height) throw bad("CBDT", "a PNG's first chunk is not a 13-byte IHDR of the size its metrics state");
     records.set(glyph, { png, pngLength, width, height, bearingX: cbdt.i8(slot.offset + 2), bearingY: cbdt.i8(slot.offset + 3), advance: cbdt.u8(slot.offset + 4) });
   }
   return records;
@@ -438,9 +447,12 @@ export function openEmojiFont(input: Uint8Array): EmojiFont {
     for (const stage of stages) {
       const out: number[] = [];
       for (let i = 0; i < glyphs.length; ) {
-        const hit = stage.get(glyphs[i]!)?.find((ligature) => ligature.rest.every((glyph, j) => glyphs[i + 1 + j] === glyph));
-        if (hit === undefined) out.push(glyphs[i++]!);
-        else {
+        const current = glyphs[i] ?? 0;
+        const hit = stage.get(current)?.find((ligature) => ligature.rest.every((glyph, j) => glyphs[i + 1 + j] === glyph));
+        if (hit === undefined) {
+          out.push(current);
+          i++;
+        } else {
           out.push(hit.glyph);
           i += 1 + hit.rest.length;
         }

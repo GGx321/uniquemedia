@@ -20,8 +20,8 @@ describe("the strike", () => {
     expect([font.ppem, font.ascender, font.descender]).toEqual([109, 101, -27]);
   });
 
-  test("counts the glyphs that carry a bitmap", () => {
-    expect(font.bitmapCount).toBeGreaterThan(3700);
+  test("counts exactly the glyphs that carry a bitmap", () => {
+    expect(font.bitmapCount).toBe(3985);
   });
 });
 

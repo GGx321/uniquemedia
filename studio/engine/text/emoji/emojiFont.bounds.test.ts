@@ -278,6 +278,18 @@ describe("CBLC and CBDT", () => {
     expect(outcome((bytes, view) => view.setUint32(firstIndexSubtable(bytes) + 4, 0x7fffffff))).toBe("BAD_TABLE");
   });
 
+  test("a CBLC of an unknown version is unsupported", () => {
+    expect(outcome((bytes, view) => view.setUint32(tableAt(bytes, "CBLC"), 0x00020000))).toBe("UNSUPPORTED");
+  });
+
+  test("a PNG whose first chunk is not a 13-byte IHDR is refused (length)", () => {
+    expect(outcome((bytes, view) => view.setUint32(tableAt(bytes, "CBDT") + 1_557_285 + 9 + 8, 12))).toBe("BAD_TABLE");
+  });
+
+  test("a PNG whose first chunk is not a 13-byte IHDR is refused (type)", () => {
+    expect(outcome((bytes) => bytes.set([0x58], tableAt(bytes, "CBDT") + 1_557_285 + 9 + 12))).toBe("BAD_TABLE");
+  });
+
   test("a CBDT of an unknown version is unsupported", () => {
     expect(outcome((bytes, view) => view.setUint16(tableAt(bytes, "CBDT"), 9))).toBe("UNSUPPORTED");
   });
