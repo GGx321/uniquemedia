@@ -1,4 +1,5 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { FileState, VideoSummary } from "../../shared/engine";
 import { hasErrorCode } from "../library/durableFs";
 import { isFromNewerVersion, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
@@ -64,6 +65,18 @@ export async function readVideoRecordFiles(libraryRoot: string, avatarId: string
   }
   names.sort();
   const truncated = names.length > maxFiles;
+  if (truncated) {
+    // More names than one listing reads: keep the NEWEST (a record is written once, so its file's age is its age), not the first names of a random alphabet.
+    const aged: Array<{ name: string; at: number }> = [];
+    for (const name of names) {
+      try {
+        aged.push({ name, at: (await lstat(join(videosDir, name))).mtimeMs });
+      } catch {
+        aged.push({ name, at: 0 }); // unreadable or gone: the oldest
+      }
+    }
+    names = aged.sort((a, b) => b.at - a.at || (a.name < b.name ? -1 : 1)).map((entry) => entry.name);
+  }
   const records: VideoRecord[] = [];
   let skipped = 0;
   for (const name of names.slice(0, maxFiles)) {

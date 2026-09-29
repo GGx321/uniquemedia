@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { VideoSummary } from "../../shared/engine";
 import { NODE_COMMIT_FS } from "./commitFs";
@@ -70,15 +70,21 @@ describe("readVideoRecordFiles", () => {
     expect(read.skipped).toBe(0);
   });
 
-  test("reads at most MAX_RECORD_FILES_READ files and says it stopped", async () => {
+  test("reads at most MAX_RECORD_FILES_READ files and says it stopped: and the ones it reads are the NEWEST, not the first names", async () => {
     const w = world();
     const dir = videoPaths(w.libraryRoot, w.avatar.id).videosDir;
     mkdirSync(dir, { recursive: true });
-    for (let i = 0; i < 5; i++) writeFileSync(`${dir}/video-${String(i).padStart(8, "0")}.json`, JSON.stringify(sampleRecord(w, { videoId: `video-${String(i).padStart(8, "0")}` })));
+    // ids ascend while the files' ages descend: the newest are video-...0 to 2, the oldest the last two
+    for (let i = 0; i < 5; i++) {
+      const id = `video-${String(4 - i).padStart(8, "0")}`;
+      const path = `${dir}/${id}.json`;
+      writeFileSync(path, JSON.stringify(sampleRecord(w, { videoId: id })));
+      utimesSync(path, new Date(2026, 8, 20 + i), new Date(2026, 8, 20 + i)); // i = 0 is the oldest
+    }
 
     const read = await readVideoRecordFiles(w.libraryRoot, w.avatar.id, { maxFiles: 3 });
 
-    expect(read.records).toHaveLength(3);
+    expect(read.records.map((r) => r.id).sort()).toEqual(["video-00000000", "video-00000001", "video-00000002"]);
     expect(read.truncated).toBe(true);
     expect(MAX_RECORD_FILES_READ).toBeGreaterThan(500); // more than the contract lists, so the newest of a full listing are all considered
   });
