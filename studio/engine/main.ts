@@ -18,6 +18,9 @@ import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
 import { createPdqGate } from "./runs/pdqGate";
 import { productionGateOrder } from "./runs/productionGates";
+import { TEXT_ASSET_DIRS } from "./text/assetLayout";
+import { loadTextRasteriser } from "./text/load";
+import { RASTER_WASM } from "./text/rasteriser";
 
 const parentPort = process.parentPort;
 if (!parentPort) throw new Error("the studio engine must run as an Electron utilityProcess");
@@ -43,6 +46,11 @@ const ORT_DIST = join(NODE_MODULES_DIR, "onnxruntime-web", "dist");
 // `import()`, which rejects a plain Windows OS path — file:// URLs (decode/
 // wasmPaths.ts) survive on every platform.
 const WASM_PATHS = ortWasmPathsFrom(ORT_DIST);
+// 3b.2, the text rasteriser: resvg's .wasm and the bundled fonts, copied next to this file at build time
+// (scripts/prepareTextAssets.ts), so they sit inside app.asar under the integrity fuse and resolve the same
+// way the face models do.
+const TEXT_FONT_DIR = join(ENGINE_DIR, TEXT_ASSET_DIRS.fonts);
+const TEXT_WASM_PATH = join(ENGINE_DIR, TEXT_ASSET_DIRS.wasm, RASTER_WASM.file);
 // T7c: the face worker thread's built entry (electron.studio.vite.config.ts:
 // engine/faceWorker), a sibling of this file — resolved the same way, so it
 // loads from inside app.asar on macOS and Windows alike (a file URL, never a
@@ -157,7 +165,12 @@ parentPort.once("message", (event) => {
     // through `QaInput` itself — see runs/qa.ts's own header.
     const pdqGate = createPdqGate();
     const ageGate = createAgeGate();
+    // 3b.2: the text rasteriser loads alongside the face gate, so it adds nothing to the start-up time. It
+    // logs its own ready line (with the self-test fingerprint the packaged smoke checks) or its own error,
+    // and never throws; 3b.4b hands the loaded rasteriser to the Engine, nothing calls it before then.
+    const textLoad = loadTextRasteriser({ wasmPath: TEXT_WASM_PATH, fontDir: TEXT_FONT_DIR });
     const loaded = await loadFaceGate();
+    await textLoad;
     const qaGates = productionGateOrder({ pdq: pdqGate, face: "error" in loaded ? null : createFaceQaGate({ faceGate: loaded.faceGate }), age: ageGate });
 
     const ready = Engine.start(init.data, {

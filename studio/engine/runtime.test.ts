@@ -41,8 +41,13 @@ const WORKER_ENTRY = join(ENGINE_DIR, "face", "worker", "faceWorker.ts");
  * (the packaged app's actual runtime) never auto-appends it the way bun's
  * own resolver — and CommonJS `require()` — do; this was caught by the E2E
  * smoke against a real build, not by `bun test`.
+ *
+ * `@resvg/resvg-wasm` (3b.2, the text rasteriser) is the same kind of package: pure
+ * JS glue over a `.wasm` that text/rasteriser.ts reads, hash-checks and compiles
+ * itself (no `fetch`, no path of its own). It is a devDependency, so it is bundled
+ * into the engine and its `.wasm` is copied to out-studio/engine/wasm at build time.
  */
-const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@jsquash/jpeg/decode.js", "@jsquash/png/decode.js"]);
+const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@jsquash/jpeg/decode.js", "@jsquash/png/decode.js", "@resvg/resvg-wasm"]);
 
 /**
  * Where engine code may live: its own tree, studio/node, the pure contract,
