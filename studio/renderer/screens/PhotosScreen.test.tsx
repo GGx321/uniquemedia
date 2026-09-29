@@ -71,6 +71,11 @@ function goButton(): HTMLElement {
   return button;
 }
 
+/** The generation card: its hint is pinned here, since a resume row can briefly say the same words until runs.list refreshes. */
+function generateCard(): HTMLElement {
+  return screen.getByRole("region", { name: "Генерация фото" });
+}
+
 function expectedText(): string {
   return document.querySelector(".photos-cost-total")?.textContent ?? "";
 }
@@ -237,7 +242,7 @@ test("start sends exactly the request and the worst case the button showed", asy
   expect(callsOf(engine, "runs.start").map((c) => c.payload)).toEqual([{ ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }]);
   // The engine refuses a second run of this avatar while one runs: the button waits and says why.
   expect(isDisabled(goButton())).toBe(true);
-  expect(screen.getByText("Дождитесь конца текущего запуска.")).toBeDefined();
+  expect(within(generateCard()).getByText("Дождитесь конца текущего запуска.")).toBeDefined();
   // The sidebar queue knows the run's size from the start, before its first progress event.
   expect(within(screen.getByRole("region", { name: "Очередь" })).getByText("0 / 20")).toBeDefined();
 });
@@ -534,7 +539,7 @@ test("a second run started by another window after this one saw the first finish
   // The second run must show as running, not the first (already finished) one.
   await screen.findByText("Рисуем фото: 1 из 20");
   expect(isDisabled(goButton())).toBe(true);
-  expect(screen.getByText("Дождитесь конца текущего запуска.")).toBeDefined();
+  expect(within(generateCard()).getByText("Дождитесь конца текущего запуска.")).toBeDefined();
   expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(false);
 });
 
@@ -824,8 +829,7 @@ test("a resume in flight locks the generate card too, until it answers (L5)", as
   await screen.findByText("Рисуем фото: 8 из 12");
   // The card unlocks from the shared flag, but stays blocked for the usual reason (a run is now active).
   expect(isDisabled(goButton())).toBe(true);
-  // The run is announced at launch now, so the resume row (until runs.list refreshes) and the card both say it.
-  expect(screen.getAllByText("Дождитесь конца текущего запуска.").length).toBeGreaterThan(0);
+  expect(within(generateCard()).getByText("Дождитесь конца текущего запуска.")).toBeDefined();
 });
 
 test("the generate card in flight locks every resume row too, until it answers (L5)", async () => {
