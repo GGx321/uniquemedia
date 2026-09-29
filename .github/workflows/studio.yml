@@ -111,9 +111,19 @@ jobs:
       # Bounded so a future hang (like the Windows one an unref'd
       # AbortSignal.timeout() timer caused here — fixed by timeoutSignal.ts's
       # ref'd replacement) fails in minutes, not by holding a runner for
-      # hours until GitHub's own job-level limit kicks in.
-      - run: bun test ./studio
-        timeout-minutes: 10
+      # hours until GitHub's own job-level limit kicks in: each attempt is
+      # killed after 10 minutes by the script itself (a hang is never
+      # retried), and this step's limit is the three attempts it may take
+      # plus slack.
+      #
+      # Run through studio/scripts/realWorkerTests.ts: Bun itself segfaults
+      # while tearing down a terminated WASM worker (right after
+      # workerGate.test.ts's interruption test, on macOS), which takes the
+      # whole suite down with no failed test. The script retries — at most 3
+      # attempts — ONLY on that crash with no failed test; a real failure
+      # fails the step at once.
+      - run: bun studio/scripts/realWorkerTests.ts ./studio
+        timeout-minutes: 35
       # T7c: the real face worker tests (real models, a worker terminated
       # mid-WASM) run alone: Bun itself segfaults ~2% of the time tearing down
       # such a worker, so the file skips itself in the run above and this step
@@ -287,9 +297,9 @@ jobs:
       - name: Fetch face gate models
         run: bun run models:face
       - run: bunx tsc --noEmit -p studio/tsconfig.json
-      # Same bound as the build job's own step above, for the same reason.
-      - run: bun test ./studio --randomize
-        timeout-minutes: 10
+      # Same crash-only retry and bounds as the build job's own step above, for the same reasons.
+      - run: bun studio/scripts/realWorkerTests.ts ./studio --randomize
+        timeout-minutes: 35
       # Same alone-and-retry step as the build job's (T7c).
       - name: Real face worker tests
         run: bun run test:studio:real-worker
