@@ -40,14 +40,19 @@ export const ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000;
 const ANSI = /\u001b\[[0-9;]*m/g;
 
 /** Any crash of Bun itself. */
-export const ANY_BUN_CRASH: readonly RegExp[] = [/Bun has crashed/, /Segmentation fault/, /^panic:/m];
+export const ANY_BUN_CRASH: readonly RegExp[] = [/Bun has crashed/, /Segmentation fault/, /^panic:/m, /^mprotect failed: \d+\s*$/m];
 
 /**
  * The one crash that is known and understood: the segfault while a terminated WASM worker is torn down, at
  * address 0x18 (the real-worker file) or 0xFFFFFFFFFFFFFFF8 (right after workerGate.test.ts's interruption
  * test). A crash anywhere else is news, and the canary exists to report it.
  */
-export const WORKER_TEARDOWN_CRASHES: readonly RegExp[] = [/Segmentation fault at address 0x18\b/i, /Segmentation fault at address 0xFFFFFFFFFFFFFFF8\b/i];
+export const WORKER_TEARDOWN_CRASHES: readonly RegExp[] = [
+  /Segmentation fault at address 0x18\b/i,
+  /Segmentation fault at address 0xFFFFFFFFFFFFFFF8\b/i,
+  // Windows: the same teardown dies with `mprotect failed: 487` (VirtualProtect, ERROR_INVALID_ADDRESS), exit code 3, no panic line.
+  /^mprotect failed: 487\s*$/m,
+];
 
 /**
  * True when `output` shows Bun crashing itself (one of `signatures`, any crash by default) and not a single

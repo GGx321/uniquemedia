@@ -114,6 +114,25 @@ describe("isBunCrashOnly with a set of known crash signatures", () => {
     expect(isBunCrashOnly(AT_HIGH, WORKER_TEARDOWN_CRASHES)).toBe(true);
   });
 
+  // Windows: Bun dies tearing down a terminated wasm worker with "mprotect failed: 487" (ERROR_INVALID_ADDRESS from
+  // VirtualProtect) and exit code 3, no panic line at all. The CI run of 2026-09-29 failed on it with no retry.
+  test("the worker-teardown set accepts Windows' mprotect failure, which prints no panic line", () => {
+    expect(isBunCrashOnly("(pass) a real test\nmprotect failed: 487\n", WORKER_TEARDOWN_CRASHES)).toBe(true);
+    expect(isBunCrashOnly("mprotect failed: 487\r\n", WORKER_TEARDOWN_CRASHES)).toBe(true);
+  });
+
+  test("any-crash mode counts the mprotect failure as a crash too", () => {
+    expect(isBunCrashOnly("mprotect failed: 487")).toBe(true);
+  });
+
+  test("an mprotect failure after a failed test is still a failure", () => {
+    expect(isBunCrashOnly("(fail) a > b\nmprotect failed: 487", WORKER_TEARDOWN_CRASHES)).toBe(false);
+  });
+
+  test("a line that merely mentions mprotect is not the crash", () => {
+    expect(isBunCrashOnly("we said mprotect failed: 487 in a log message", WORKER_TEARDOWN_CRASHES)).toBe(false);
+  });
+
   test("the worker-teardown set refuses any other crash", () => {
     expect(isBunCrashOnly(OTHER, WORKER_TEARDOWN_CRASHES)).toBe(false);
     expect(isBunCrashOnly("panic: index out of bounds", WORKER_TEARDOWN_CRASHES)).toBe(false);
