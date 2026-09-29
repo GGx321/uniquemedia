@@ -7,7 +7,9 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { CaseSensitivityProbe, NODE_CASE_PROBE_FS } from "../exportCase";
 import { verifyAndHashMp4 } from "../verify";
 import { VerifyIoError } from "../verify";
+import { EXPORT_MARKER_FILE } from "../exportRoot";
 import { hashFile } from "./fileBytes";
+import { readRootId } from "./rootMarker";
 import { collectForbiddenStrings, photoMetadataStrings } from "./forbiddenStrings";
 import { VideoRecordSchema } from "./record";
 import { recoverVideos } from "./recovery";
@@ -89,6 +91,52 @@ describe("files are opened without following a symlink", () => {
       writeFileSync(join(dir, "real.mp4"), fakeVideoBytes(100));
       symlinkSync(join(dir, "real.mp4"), join(dir, "link.mp4"));
       await expect(verifyAndHashMp4(join(dir, "link.mp4"), { frames: 30 })).rejects.toBeInstanceOf(VerifyIoError);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Where the platform has no O_NOFOLLOW (Windows) a plain open FOLLOWS a symlink; `noFollow: 0` plays that
+// platform here, so the lstat + same-inode guard is what these tests hold to.
+describe("files are opened without following a symlink, on a platform with no O_NOFOLLOW", () => {
+  test("hashFile refuses a symlink", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "studio-nofollow-"));
+    try {
+      writeFileSync(join(dir, "real"), "bytes");
+      symlinkSync(join(dir, "real"), join(dir, "link"));
+      await expect(hashFile(join(dir, "link"), { noFollow: 0 })).rejects.toMatchObject({ code: "ELOOP" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the verifier refuses a symlink to a file before it reads anything", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "studio-nofollow-"));
+    try {
+      writeFileSync(join(dir, "real.mp4"), fakeVideoBytes(100));
+      symlinkSync(join(dir, "real.mp4"), join(dir, "link.mp4"));
+      await expect(verifyAndHashMp4(join(dir, "link.mp4"), { frames: 30 }, { open: { noFollow: 0 } })).rejects.toBeInstanceOf(VerifyIoError);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the verifier still calls a folder not_a_file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "studio-nofollow-"));
+    try {
+      await expect(verifyAndHashMp4(dir, { frames: 30 }, { open: { noFollow: 0 } })).rejects.toMatchObject({ kind: "not_a_file" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a marker that is a symlink is not read, even when a second hard link is allowed for healing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "studio-nofollow-"));
+    try {
+      writeFileSync(join(dir, "theirs.json"), JSON.stringify({ schemaVersion: 1, rootId: "another-root-1", createdAt: "2026-09-29T12:00:00.000Z" }));
+      symlinkSync(join(dir, "theirs.json"), join(dir, EXPORT_MARKER_FILE));
+      expect(await readRootId(dir, { allowLinked: true, open: { noFollow: 0 } })).toEqual({ rootId: null, code: "ELOOP" });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

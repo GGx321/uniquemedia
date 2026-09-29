@@ -1,3 +1,5 @@
+import type { OpenRegularOptions } from "../library/openRegular";
+
 // The output verifier's public types (plan slice 3a.7). Reasons are stable
 // codes: callers (the commit in 3a.8b, the packaged smoke in 3a.9) branch on
 // `code`, and `message` is for the log only.
@@ -72,6 +74,8 @@ export interface VerifyExpected {
 export interface VerifyOptions {
   /** Refuse (as `FILE_TOO_LARGE`) a file above this many bytes. Defaults to `MAX_OUTPUT_BYTES`. */
   readonly maxBytes?: number;
+  /** How the file is opened (which no-follow flag the platform has); a test passes `{ noFollow: 0 }` to play Windows. */
+  readonly open?: OpenRegularOptions;
 }
 
 /**

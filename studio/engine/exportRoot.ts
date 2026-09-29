@@ -5,6 +5,7 @@ import * as nodePath from "node:path";
 import { z } from "zod";
 import { ExportStatus, Id, type ExportUnavailableReason } from "../shared/engine";
 import { hasErrorCode } from "./library/durableFs";
+import { openRegularNoFollow, type OpenRegularOptions } from "./library/openRegular";
 
 // The export folder «Готовые видео» (Stage 3 plan, "Outputs and export" and
 // invariant 35): the check made BEFORE a render is queued, and the root marker
@@ -109,14 +110,13 @@ export async function createFileExclusive(path: string, text: string, ops: Publi
 
 /**
  * Reads a small regular file that nothing else links to:
- * - a symlink is refused (`O_NOFOLLOW`; where the platform has none, as on Windows, an `lstat` first);
- * - a FIFO or a device is refused without blocking (`O_NONBLOCK`, and the handle is checked, not the path);
+ * - a symlink or a junction is refused, on every platform (`openRegularNoFollow`: an `lstat`, `O_NOFOLLOW` where there is one, and the handle must be the same file);
+ * - a FIFO or a device is refused without blocking (`O_NONBLOCK` where there is one, and the handle is checked, not the path);
  * - more than one hard link is refused: a marker hard-linked from another root would adopt its id;
  * - more than `maxBytes` is refused. ENOENT is passed through, so an absent file is told from a bad one.
  */
-export async function readSmallRegularFile(path: string, maxBytes: number, noFollow: number = constants.O_NOFOLLOW ?? 0): Promise<string> {
-  if (noFollow === 0 && (await lstat(path)).isSymbolicLink()) throw new Error("a symlink is not a regular file");
-  const handle = await open(path, constants.O_RDONLY | noFollow | (constants.O_NONBLOCK ?? 0));
+export async function readSmallRegularFile(path: string, maxBytes: number, open: OpenRegularOptions = {}): Promise<string> {
+  const handle = await openRegularNoFollow(path, open);
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw new Error("not a regular file");

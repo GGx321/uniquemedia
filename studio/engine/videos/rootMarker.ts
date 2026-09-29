@@ -1,8 +1,7 @@
-import { constants } from "node:fs";
-import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { EXPORT_MARKER_FILE, ExportMarker, readSmallRegularFile } from "../exportRoot";
 import { hasErrorCode } from "../library/durableFs";
+import { openRegularNoFollow, type OpenRegularOptions } from "../library/openRegular";
 import { NODE_COMMIT_FS, type CommitFs, type FileFacts } from "./commitFs";
 
 // A record names its file by the export root's IDENTITY (`rootId`), and the identity lives in the
@@ -16,8 +15,8 @@ const MAX_MARKER_BYTES = 4096;
 const stampOf = (facts: FileFacts): string => `${facts.dev}:${facts.ino}:${facts.size}:${facts.mtimeMs}`;
 
 /** The same read as `readSmallRegularFile`, but a marker that has a second link is read too: only for healing an interrupted publish. */
-async function readLinkedMarker(path: string): Promise<string> {
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+async function readLinkedMarker(path: string, open: OpenRegularOptions): Promise<string> {
+  const handle = await openRegularNoFollow(path, open);
   try {
     const info = await handle.stat();
     if (!info.isFile() || info.size > MAX_MARKER_BYTES) throw new Error("not a small regular file");
@@ -34,11 +33,11 @@ async function readLinkedMarker(path: string): Promise<string> {
  * A marker with a second hard link is refused (it could be another root's marker linked in) unless `allowLinked` says the caller has
  * found the interrupted publish's own `.tmp-*` sibling on the same inode.
  */
-export async function readRootId(root: string, options: { allowLinked?: boolean } = {}): Promise<{ rootId: string } | { rootId: null; code: string }> {
+export async function readRootId(root: string, options: { allowLinked?: boolean; open?: OpenRegularOptions } = {}): Promise<{ rootId: string } | { rootId: null; code: string }> {
   let text: string;
   try {
     const path = join(root, EXPORT_MARKER_FILE);
-    text = options.allowLinked === true ? await readLinkedMarker(path) : await readSmallRegularFile(path, MAX_MARKER_BYTES);
+    text = options.allowLinked === true ? await readLinkedMarker(path, options.open ?? {}) : await readSmallRegularFile(path, MAX_MARKER_BYTES, options.open);
   } catch (error) {
     return { rootId: null, code: error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "unreadable" };
   }

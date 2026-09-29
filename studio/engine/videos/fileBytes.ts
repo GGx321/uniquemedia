@@ -1,37 +1,19 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
+import { NotARegularFileError, openRegularNoFollow, type OpenRegularOptions } from "../library/openRegular";
 
 // Reading a file's bytes for a comparison (recovery, fileState, delete). Reads
-// only: nothing here writes, and none of it follows a link it was not given: the
-// file is opened with O_NOFOLLOW (a symlink is ELOOP) and O_NONBLOCK (a FIFO does not
-// hang the open), and the OPEN HANDLE must be a regular file. Where the platform has
-// neither flag (Windows) the handle check still refuses a folder or device.
+// only: nothing here writes, and none of it follows a link it was not given. The
+// open is `openRegularNoFollow`: lstat, open (O_NOFOLLOW where there is one), and the
+// OPEN HANDLE must be the same regular file, so it holds on Windows too, which has no
+// O_NOFOLLOW.
+
+export { NotARegularFileError };
 
 const READ_CHUNK = 1024 * 1024;
 
-export class NotARegularFileError extends Error {
-  readonly code = "ENOTREG";
-  constructor() {
-    super("not a regular file");
-    this.name = "NotARegularFileError";
-  }
-}
-
-async function openRegular(path: string): Promise<FileHandle> {
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-  try {
-    if (!(await handle.stat()).isFile()) throw new NotARegularFileError();
-    return handle;
-  } catch (error) {
-    await handle.close();
-    throw error;
-  }
-}
-
 /** sha256 of a file, read in chunks. Rejects if the file changes size while it is read. */
-export async function hashFile(path: string): Promise<string> {
-  const handle = await openRegular(path);
+export async function hashFile(path: string, open: OpenRegularOptions = {}): Promise<string> {
+  const handle = await openRegularNoFollow(path, open);
   try {
     const before = await handle.stat();
     const hash = createHash("sha256");

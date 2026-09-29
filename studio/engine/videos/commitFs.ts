@@ -1,5 +1,6 @@
-import { lstat, link as fsLink, mkdir, open, readdir, realpath, unlink as fsUnlink } from "node:fs/promises";
+import { lstat, link as fsLink, mkdir, readdir, realpath, unlink as fsUnlink } from "node:fs/promises";
 import { fsyncDir, fsyncFile, writeFileDurable } from "../library/durableFs";
+import { createExclusiveNoFollow } from "../library/openRegular";
 import { renameWithRetry } from "../library/renameRetry";
 
 // Every disk call the video commit and its recovery make, behind one small
@@ -72,15 +73,9 @@ export const NODE_COMMIT_FS: CommitFs = {
   mkdir: async (path) => {
     await mkdir(path);
   },
-  createExclusive: async (path) => {
-    const handle = await open(path, "wx");
-    try {
-      const info = await handle.stat({ bigint: true });
-      return { dev: String(info.dev), ino: String(info.ino) };
-    } finally {
-      await handle.close();
-    }
-  },
+  // Not a bare `open(path, "wx")`: on Windows that follows a dangling symlink and creates its target,
+  // and answers a folder with EPERM. See `createExclusiveNoFollow`.
+  createExclusive: (path) => createExclusiveNoFollow(path),
   writeNew: (path, text) => writeFileDurable(path, text),
   fsyncFile: (path) => fsyncFile(path),
   fsyncDir: (path) => fsyncDir(path),

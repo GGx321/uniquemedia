@@ -591,12 +591,12 @@ describe("readSmallRegularFile", () => {
     await mkdir(exportPath);
     await writeFile(join(dir, "theirs"), "hello");
     await symlink(join(dir, "theirs"), join(exportPath, "m"));
-    await expect(readSmallRegularFile(join(exportPath, "m"), 100, 0)).rejects.toThrow();
+    await expect(readSmallRegularFile(join(exportPath, "m"), 100, { noFollow: 0 })).rejects.toThrow();
   });
 
   test("a missing file still rejects with ENOENT, so an absent marker is told from a bad one", async () => {
     await mkdir(exportPath);
-    await expect(readSmallRegularFile(join(exportPath, "nope"), 100, 0)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readSmallRegularFile(join(exportPath, "nope"), 100, { noFollow: 0 })).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
