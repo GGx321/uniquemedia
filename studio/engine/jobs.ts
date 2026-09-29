@@ -1,4 +1,4 @@
-import type { EngineError, FailedCandidateSlot, JobProgress, JobState } from "../shared/engine";
+import type { EngineError, FailedCandidateSlot, JobProgress, JobState, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
 // The engine's jobs as `Snapshot.jobs` lists them. In memory only: avatar
@@ -10,6 +10,19 @@ export type CandidatesJobEnd =
   | { status: "done"; photoIds: string[]; failedSlots: FailedCandidateSlot[] }
   | { status: "failed"; error: EngineError }
   | { status: "cancelled" };
+
+/** How a render job ends; `done` carries what the render made. */
+export type RenderJobEnd =
+  | { status: "done"; result: RenderResult }
+  | { status: "failed"; error: EngineError }
+  | { status: "cancelled" };
+
+/** A render's identity: the video it makes, its avatar and the draft it came from (null for a headless spec). */
+export interface RenderJobRef {
+  readonly videoId: string;
+  readonly avatarId: string;
+  readonly montageId: string | null;
+}
 
 interface Entry {
   state: JobState;
@@ -38,17 +51,46 @@ export class JobRegistry {
     return this.#start({ kind: "run", jobId, runId: run.runId, avatarId: run.avatarId, status: "running", done: run.done, total: run.total });
   }
 
-  /** Records how many slots are done; the `job.progress` payload (with the job's kind, avatar and run), or null for a job that is not running. */
-  progress(jobId: string, done: number): JobProgress | null {
+  /**
+   * Registers a render job as queued, from the moment its request is accepted;
+   * its signal fires on `cancel`. `total` counts frames of the FINAL video
+   * (`Σ durationMs × 3 / 100`), and `done` counts the same frames.
+   */
+  queueRender(jobId: string, ref: RenderJobRef, total: number): AbortSignal {
+    return this.#start({ kind: "render", jobId, videoId: ref.videoId, avatarId: ref.avatarId, montageId: ref.montageId, status: "queued", done: 0, total });
+  }
+
+  /** Moves a queued render to running; false for any other job or state (a cancelled one stays cancelled). */
+  startRender(jobId: string): boolean {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.kind !== "render" || entry.state.status !== "queued") return false;
+    entry.state = { ...entry.state, status: "running" };
+    return true;
+  }
+
+  /** How many render jobs are queued or running: what a library switch must wait for. */
+  activeRenders(): number {
+    let n = 0;
+    for (const { state } of this.#jobs.values()) {
+      if (state.kind === "render" && (state.status === "queued" || state.status === "running")) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Records how many slots are done; the `job.progress` payload (with the job's kind, avatar and run), or null for a job that is not running.
+   * A render's `done` is clamped: it never goes back and never exceeds `total`.
+   */
+  progress(jobId: string, reported: number): JobProgress | null {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined || entry.state.status !== "running") return null;
+    const done = entry.state.kind === "render" ? Math.min(entry.state.total, Math.max(entry.state.done, reported)) : reported;
     entry.state = { ...entry.state, done };
     const { total } = entry.state;
     switch (entry.state.kind) {
       case "run":
         return { kind: "run", jobId, runId: entry.state.runId, avatarId: entry.state.avatarId, done, total };
       case "render":
-        // Nothing registers a render job before task 3a.6 (the render queue); its identity is already part of the contract.
         return { kind: "render", jobId, videoId: entry.state.videoId, avatarId: entry.state.avatarId, montageId: entry.state.montageId, done, total };
       case "avatar.candidates":
         return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
@@ -100,6 +142,28 @@ export class JobRegistry {
     return entry.state;
   }
 
+  /** Ends a queued or running render job; its final state, or null for any other job or one that already ended. */
+  finishRender(jobId: string, end: RenderJobEnd): JobState | null {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.kind !== "render") return null;
+    if (entry.state.status !== "queued" && entry.state.status !== "running") return null;
+    const { kind, videoId, avatarId, montageId, done, total } = entry.state;
+    const common = { kind, jobId, videoId, avatarId, montageId, total };
+    switch (end.status) {
+      case "done":
+        entry.state = { ...common, status: "done", done: total, result: end.result };
+        break;
+      case "failed":
+        entry.state = { ...common, status: "failed", done, error: end.error };
+        break;
+      case "cancelled":
+        entry.state = { ...common, status: "cancelled", done };
+        break;
+    }
+    this.#dropOldFinished();
+    return entry.state;
+  }
+
   /** The running job of `runId`, if one is running. */
   runningJobOf(runId: string): string | null {
     for (const entry of this.#jobs.values()) {
@@ -108,11 +172,16 @@ export class JobRegistry {
     return null;
   }
 
-  /** Asks a running job to stop; true for a known job (a finished one stays as it ended), false for an unknown one. */
+  /**
+   * Asks a job to stop; true for a known job (a finished one stays as it ended), false for an unknown one.
+   * A running job ends when its owner sees the signal. A queued job has no owner running yet, so it ends
+   * as cancelled right here, and only then does its signal fire (a listener sees the final state).
+   */
   cancel(jobId: string): boolean {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined) return false;
-    if (entry.state.status === "running") entry.controller.abort();
+    if (entry.state.status === "queued") this.finishRender(jobId, { status: "cancelled" });
+    if (entry.state.status === "running" || entry.state.status === "cancelled") entry.controller.abort();
     return true;
   }
 
@@ -128,7 +197,7 @@ export class JobRegistry {
   }
 
   #dropOldFinished(): void {
-    const finished = [...this.#jobs.values()].filter((entry) => entry.state.status !== "running");
+    const finished = [...this.#jobs.values()].filter((entry) => entry.state.status !== "running" && entry.state.status !== "queued");
     for (const entry of finished.slice(0, Math.max(0, finished.length - this.#keepFinished))) this.#jobs.delete(entry.state.jobId);
   }
 }
