@@ -268,7 +268,7 @@ function loggable(name: string): string {
  * issue, plus one for an avatar a misfiled record names): the avatar, the file
  * relative to its folder and the reason class, never an absolute path or content.
  */
-function logIssueLines(issues: readonly LogIssue[]): string[] {
+export function logIssueLines(issues: readonly LogIssue[]): string[] {
   const lines: string[] = [];
   for (const issue of issues) {
     const what = issue.reason === "too-new" ? "update the app to use it" : "its photos are held back until it is repaired";

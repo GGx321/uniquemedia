@@ -3,6 +3,7 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { AvatarSummary, PhotoSummary } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
+import { logIssueLines } from "./engine";
 import { NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
@@ -293,13 +294,23 @@ describe("opening a library with unreadable records", () => {
     return warnings;
   }
 
-  test("a file name with a newline or control characters cannot forge a log line", async () => {
+  // Windows forbids these characters in a file name, so this scenario cannot be created on a Windows disk;
+  // the next test injects the same hostile name through the log-line builder and runs everywhere.
+  test.skipIf(process.platform === "win32")("a file name with a newline or control characters cannot forge a log line", async () => {
     const { avatarId } = await seedAvatar(1);
     await mkdir(join(libraryRoot(), "avatars", avatarId, "videos"));
     await writeFile(join(libraryRoot(), "avatars", avatarId, "videos", "video-00000001\nstudio engine: all is well\u001b[2J.json"), "{ nope");
     const lines = (await warningsAtOpen()).filter((w) => w.includes(avatarId));
     expect(lines).toHaveLength(1);
     expect(lines[0]).not.toMatch(/[\u0000-\u001f\u007f]/);
+  });
+
+  test("a hostile file name handed straight to the log-line builder cannot forge a line or move the cursor", () => {
+    const hostile = "video-00000001\nstudio engine: all is well\u001b[2J\r\u007f\u0000.json";
+    const lines = logIssueLines([{ avatarId: "elig18-0001", file: `videos/${hostile}`, detail: "bad", reason: "unreadable", otherAvatarId: "elig18-0002" }]);
+    expect(lines).toHaveLength(2);
+    for (const line of lines) expect(line).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(lines[0]).toContain("videos/video-00000001?studio?engine??");
   });
 
   test("a record misfiled under one avatar that names another closes the other, and both are logged", async () => {
