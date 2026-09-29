@@ -611,12 +611,12 @@ export class Engine {
     return this.#apiKey;
   }
 
-  /** The library of the saved settings, if it is open. */
   /** The render queue. Task 3a.8b's `videos.render` submits to it; the engine's tests do until then. */
   get renders(): RenderQueue {
     return this.#renders;
   }
 
+  /** The library of the saved settings, if it is open. */
   get library(): Library | null {
     return this.#live?.library ?? null;
   }
@@ -907,7 +907,8 @@ export class Engine {
       }
       case "avatars.cancel": {
         const { jobId } = command.payload;
-        if (!this.#jobs.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no job ${jobId} in this engine` });
+        // A render is not an avatar's job: it is stopped through the render queue, and here it is as good as unknown.
+        if (this.#jobs.stateOf(jobId)?.kind === "render" || !this.#jobs.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no job ${jobId} in this engine` });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { jobId } };
       }
       case "avatars.pick":
@@ -2386,6 +2387,8 @@ export class Engine {
     const previous = this.#settings;
     this.#pendingLibraryPath = next.libraryPath;
     this.#settings = { ...next, libraryPath: previous.libraryPath };
+    // A larger render pool takes waiting jobs now, not when one happens to finish.
+    this.#renders.poke();
     const staged = this.#staged;
     this.#staged = new Map();
     // Before any await, like every field but the library: a run's next request already waits on the new ceiling.

@@ -7,7 +7,7 @@ import { manifestTraits } from "./avatars/records";
 import type { RenderContext, RenderSubmission } from "./renderQueue/queue";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
-import { command, engineSettings, GOOD, ok, startEngine, TRAITS, useEngineDir } from "./testing/engineHarness";
+import { command, engineSettings, failed, GOOD, ok, startEngine, TRAITS, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -112,6 +112,31 @@ describe("the engine hands ffmpeg its environment", () => {
     await startEngine(dir());
 
     expect(configuredFfmpegEnv()).toEqual({ PATH: "/before" });
+  });
+});
+
+describe("the engine's render queue, review round 1", () => {
+  test("avatars.cancel does not stop a render: it answers NOT_FOUND, as for an unknown id, and the render goes on", async () => {
+    const { avatarId } = await seedAvatar(0);
+    const { engine } = await startEngine(dir(), { init: { settings: engineSettings(dir(), { renderConcurrency: 1 }) } });
+    engine.renders.submit(job(1, avatarId));
+
+    const answer = failed(await engine.handle(command("avatars.cancel", { jobId: "job-00000001" })));
+
+    expect(answer.error.code).toBe("NOT_FOUND");
+    expect(engine.renders.states().map((j) => j.status)).toEqual(["running"]);
+  });
+
+  test("raising the render concurrency in the settings starts the waiting jobs at once", async () => {
+    const { avatarId } = await seedAvatar(0);
+    const { engine } = await startEngine(dir(), { init: { settings: engineSettings(dir(), { renderConcurrency: 1 }) } });
+    engine.renders.submit(job(1, avatarId));
+    engine.renders.submit(job(2, avatarId));
+    expect(engine.renders.states().map((j) => j.status)).toEqual(["running", "queued"]);
+
+    await engine.applyControl({ kind: "control", type: "settings.update", settings: engineSettings(dir(), { renderConcurrency: 2 }) });
+
+    expect(engine.renders.states().map((j) => j.status)).toEqual(["running", "running"]);
   });
 });
 
