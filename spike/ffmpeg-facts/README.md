@@ -77,13 +77,27 @@ Smokes (each timed; a failure fails the run):
   `h264_videotoolbox` 125 ms.
 - Missing required items: none.
 
-### Windows x64 (CI)
+### Windows x64 (CI run 36512693978, 2026-09-29)
 
-Pending: run `studio-ffmpeg-facts` and fill in.
+- `-version`: `ffmpeg version 6.1.1-essentials_build-www.gyan.dev`.
+- Licence: GPL v3, **not** nonfree, so it is redistributable under the GPL's terms (source offer,
+  licence text). The macOS 6.0 build is nonfree and says it is not legally redistributable.
+- Hwaccels: `cuda`, `dxva2`, `qsv`, `d3d11va`.
+- Missing required items: none. Filters, demuxers and decoders: all present.
+- Encoders: `libx264`, `aac`, `png`, `ffv1`, `libx264rgb`, plus hardware `h264_nvenc`,
+  `h264_qsv`, `h264_amf`, `h264_mf`; `h264_videotoolbox` absent (expected).
+- Smokes: all pass. Main graph 197 ms, concat copy 32 ms, tagged PQ `zscale`+`tonemap` to
+  BT.709 35 ms, `colorspace` 23 ms, geometry chain 30 ms, audio chain 33 ms, PNG with alpha
+  24 ms, APNG encode 63 ms, APNG demux+decode 21 ms. (The CI macOS run: main graph 188 ms.)
+- Differences from macOS: version 6.1.1 vs 6.0; GPL v3 vs GPL + nonfree; hardware encoders
+  differ as listed. No difference in the filters, demuxers or decoders Stage 3 requires.
 
-- `-version`: _pending_
-- Licence, nonfree/GPL: _pending_
-- Hwaccels: _pending_
-- Missing required items: _pending_
-- Smoke timings and failures: _pending_
-- Differences from macOS (filters, decoders, encoders, `-buildconf`): _pending_
+### Consequences for the Stage 3 plan
+
+- Every filter, demuxer, decoder and encoder the plan requires exists on both platforms.
+- The four findings above (`zscale` needs tagged input, `overlay` `eof_action=endall`,
+  AAC concat priming, licence) go into the plan.
+- Licence: fine for the owner's personal use. Before any public distribution of an installer,
+  the macOS binary must be replaced by a redistributable (non-nonfree) build, and both
+  installers need the GPL obligations met (tracked with the third-party notices backlog item).
+- Stage 4 performance work can consider the Windows hardware encoders next to VideoToolbox.
