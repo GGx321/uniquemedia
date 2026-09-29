@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { open, readdir, readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { dirname, join } from "node:path";
 import { isSafeName } from "../../shared/engine";
@@ -9,6 +8,7 @@ import { hasErrorCode, isTempName } from "../library/durableFs";
 import { isFromNewerVersion, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
 import type { Library } from "../library";
 import { sweepPartFiles } from "../renderQueue/sweep";
+import { hashFile, isPrefixOf } from "./fileBytes";
 import { commitIntent } from "./intents";
 import { NODE_COMMIT_FS, type CommitFs, type FileFacts } from "./commitFs";
 import { partNameOf, scenePhotoIds, videoPaths, VideoRecordSchema } from "./record";
@@ -82,7 +82,6 @@ const PLACEHOLDER_NAME = /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])_[a-z]
 const MARKER_TEMP_NAME = /^\.studio-export\.json\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROBE_NAME = /^\.studio-probe-/;
 const MAX_INTENT_BYTES = 1024 * 1024;
-const READ_CHUNK = 1024 * 1024;
 
 function codeOf(error: unknown): string {
   return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "UNKNOWN";
@@ -94,41 +93,6 @@ async function lstatOrNull(fs: CommitFs, path: string): Promise<FileFacts | null
   } catch (error) {
     if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return null;
     throw error;
-  }
-}
-
-/** sha256 of a file, read in chunks. */
-async function hashFile(path: string): Promise<string> {
-  const handle = await open(path, "r");
-  try {
-    const hash = createHash("sha256");
-    const buffer = Buffer.alloc(READ_CHUNK);
-    for (let at = 0; ; ) {
-      const { bytesRead } = await handle.read(buffer, 0, READ_CHUNK, at);
-      if (bytesRead === 0) return hash.digest("hex");
-      hash.update(buffer.subarray(0, bytesRead));
-      at += bytesRead;
-    }
-  } finally {
-    await handle.close();
-  }
-}
-
-/** Whether the first `length` bytes of `short` are the first `length` bytes of `long`. */
-async function isPrefixOf(short: string, long: string, length: number): Promise<boolean> {
-  const [a, b] = [await open(short, "r"), await open(long, "r")];
-  try {
-    const [bufA, bufB] = [Buffer.alloc(READ_CHUNK), Buffer.alloc(READ_CHUNK)];
-    for (let at = 0; at < length; ) {
-      const want = Math.min(READ_CHUNK, length - at);
-      const [readA, readB] = [await a.read(bufA, 0, want, at), await b.read(bufB, 0, want, at)];
-      if (readA.bytesRead !== want || readB.bytesRead !== want || !bufA.subarray(0, want).equals(bufB.subarray(0, want))) return false;
-      at += want;
-    }
-    return true;
-  } finally {
-    await a.close();
-    await b.close();
   }
 }
 
