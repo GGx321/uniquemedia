@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_TOTAL_MS, MIN_TOTAL_MS, MontageSpec, type Clip } from "../engine/montage";
-import { clipCellRects, FRAME_H, FRAME_W, cellMotionGeometry, cellReveal, clipMotionPlan, clipRanges, estimateBytes, layerRange, motionWindow, msToFrames, totalFrames } from "./index";
+import { clipCellRects, FRAME_H, FRAME_W, cellMotionGeometry, cellReveal, clipMotionPlan, clipRanges, estimateBytes, layerRange, motionWindow, msToFrames, progressSegments, stickerBox, totalFrames } from "./index";
 import { mulberry32, randInt } from "./random.testkit";
 import { randomSpec } from "./specGen.testkit";
 
@@ -177,6 +177,26 @@ describe("random specs: cells, crops and motion", () => {
       }
     }
     expect(directionsChanged).toBeGreaterThan(20);
+  });
+});
+
+describe("random specs: layers and the preview", () => {
+  test("every sticker's box lies inside the frame with even offsets, and the preview segments follow the clips", () => {
+    const rand = mulberry32(1010);
+    for (let i = 0; i < RUNS; i++) {
+      const spec = randomSpec(rand);
+      for (const layer of spec.layers) {
+        if (layer.kind !== "sticker") continue;
+        const box = stickerBox(layer);
+        expect(box.x % 2).toBe(0);
+        expect(box.y % 2).toBe(0);
+        expect(box.x + box.w).toBeLessThanOrEqual(FRAME_W);
+        expect(box.y + box.h).toBeLessThanOrEqual(FRAME_H);
+      }
+      const segments = progressSegments(spec.clips);
+      expect(segments.map((s) => s.clipId)).toEqual(spec.clips.map((c) => c.clipId));
+      expect(segments[segments.length - 1]?.endFrame).toBe(totalFrames(spec.clips));
+    }
   });
 });
 

@@ -155,6 +155,45 @@ describe("clipMotionPlan", () => {
   });
 });
 
+describe("motionPlan goldens (recorded from the first implementation; pin the hash, so stored specs re-render the same way)", () => {
+  const GOLDEN: [number, string, string, string][] = [
+    [0, "clip-aaaa-0001", "out", "right"],
+    [0, "clip-aaaa-0002", "in", "down"],
+    [0, "clip-aaaa-0003", "in", "left"],
+    [0, "clip-aaaa-0004", "out", "down"],
+    [0, "clip-aaaa-0005", "in", "right"],
+    [1, "clip-aaaa-0001", "out", "left"],
+    [1, "clip-aaaa-0002", "out", "down"],
+    [1, "clip-aaaa-0003", "in", "left"],
+    [1, "clip-aaaa-0004", "out", "up"],
+    [1, "clip-aaaa-0005", "in", "down"],
+    [42, "clip-001", "out", "down"],
+    [42, "clip-002", "out", "down"],
+    [42, "clip-003", "out", "right"],
+    [42, "clip-004", "in", "up"],
+    [42, "clip-005", "in", "right"],
+    [4294967295, "clip-001", "in", "right"],
+    [4294967295, "clip-002", "out", "right"],
+    [4294967295, "clip-003", "out", "up"],
+    [123456789, "0123456789abcdef", "out", "left"],
+    [123456789, "fedcba9876543210", "in", "up"],
+    [2147483648, "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "out", "left"],
+    [2147483648, "00000000", "in", "left"],
+    [2147483648, "zzzzzzzz", "in", "down"],
+    [305419896, "clip-0000-0000-0000-000000000001", "out", "right"],
+    [305419896, "clip-0000-0000-0000-000000000002", "in", "left"],
+  ];
+
+  test.each(GOLDEN)("seed %i, clip %s: Ken Burns %s, pan %s", (seed, id, kenBurns, panDirection) => {
+    const k = motionPlan(seed, id, "kenburns");
+    const p = motionPlan(seed, id, "pan");
+    const kbDirection: string | null = k.kind === "kenburns" ? k.direction : null;
+    expect(kbDirection).toBe(kenBurns);
+    const panWay: string | null = p.kind === "pan" ? p.direction : null;
+    expect(panWay).toBe(panDirection);
+  });
+});
+
 describe("motionCanvas (zp4: 4x the crop, capped at 2880x5120)", () => {
   test("a full-frame 720x1280 photo gets exactly the 2880x5120 cap", () => {
     expect(motionCanvas({ w: 720, h: 1280 })).toEqual({ w: 2880, h: 5120 });
