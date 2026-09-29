@@ -1216,8 +1216,9 @@ export class Engine {
       this.#assertFaceGate();
       const { state, estimate, priced, budget } = await this.#remaining(library, plan);
       Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
-      Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
-      const done = state.slots.filter((s) => s.end !== null).length;
+      // A free resume (nothing left it could send: it only closes slots) spends nothing, so a month already over budget cannot refuse it.
+      if (estimate.worstMicros > 0) Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
+      const done =state.slots.filter((s) => s.end !== null).length;
       const jobId = this.#deps.newId();
       this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, done);
       launched = true;

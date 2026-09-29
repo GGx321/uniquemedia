@@ -557,6 +557,15 @@ describe("runs.resume", () => {
   // A chunk out of writer attempts with its slots still open (a crash mid-writer): the writer can never answer, and the
   // resume only closes the slots. It costs nothing, so it is priced at nothing and no month budget can refuse it.
   test("a writer chunk out of attempts: the resume is free (estimate 0), even with no room left in the month, and closes every open slot with 0 POST and 0 new reserves", async () => {
+    await freeCloseWithMonthlyBudget(37_500);
+  });
+
+  test("a writer chunk out of attempts: the free resume is not refused BUDGET_EXCEEDED when the month is already OVER its budget", async () => {
+    await freeCloseWithMonthlyBudget(10_000);
+  });
+
+  /** The month's budget is `monthlyBudgetMicros`; the abandoned writer reserve alone commits 37_500 of it. */
+  async function freeCloseWithMonthlyBudget(monthlyBudgetMicros: number): Promise<void> {
     const avatarId = await seedAvatar();
     const received: string[] = [];
     const net = runNetwork({ received, writer: () => ({ hang: true }) });
@@ -573,7 +582,7 @@ describe("runs.resume", () => {
     // The month has exactly what the abandoned writer reserve costs at its worst case: no room left after the reconcile.
     let mono = 0;
     const net2 = runNetwork({ received });
-    const second = await engineOver(net2, { bootId: "boot-0000-bbbb", clock: () => LATER, monotonic: () => mono, monthlyBudgetMicros: 37_500 });
+    const second = await engineOver(net2, { bootId: "boot-0000-bbbb", clock: () => LATER, monotonic: () => mono, monthlyBudgetMicros });
     mono += 10 * 60_000;
     ok(await second.engine.handle(command("money.reconcile")));
     const reserves = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
@@ -587,7 +596,7 @@ describe("runs.resume", () => {
     expect(reserves()).toBe(before);
     const list = ok(await second.engine.handle(command("runs.list")));
     expect(list.type === "runs.list" ? list.result.runs.find((r) => r.runId === runId) : "not a list").toMatchObject({ open: 0, failed: 2, resumable: false, capExhausted: false });
-  });
+  }
 
   test("the resumed job counts the slots the run already finished, from its launch announcement on", async () => {
     const { runId, received } = await interrupted({ hangFrom: 3 });

@@ -1048,7 +1048,8 @@ export class MockEngine implements EngineBridge {
           this.gateRefusal(run.ageCheck) ??
           (run.slots.every((s) => s.end !== null) ? { code: "VALIDATION" as const, detail: "every slot of this run already ended" } : null) ??
           (this.capExhausted(run) ? this.capEndedError(run) : null) ??
-          this.priceGate(c.payload.acceptedWorstMicros, this.resumePrice(run).worstMicros);
+          // A free resume (worst 0) spends nothing: the accepted price still counts, a month already over budget does not.
+          this.priceGate(c.payload.acceptedWorstMicros, this.resumePrice(run).worstMicros, { freeIsAlwaysFine: true });
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
       }
@@ -1087,8 +1088,9 @@ export class MockEngine implements EngineBridge {
   }
 
   /** The price checks: after the command's target is found valid, `worstMicros` is this command's own worst case. */
-  private priceGate(acceptedWorstMicros: number, worstMicros: number): EngineError | null {
+  private priceGate(acceptedWorstMicros: number, worstMicros: number, options: { freeIsAlwaysFine?: boolean } = {}): EngineError | null {
     if (acceptedWorstMicros < worstMicros) return { code: "PRICE_CHANGED" };
+    if (options.freeIsAlwaysFine === true && worstMicros === 0) return null;
     const committed = this.spentMicros + this.unsettledMicros() + worstMicros;
     if (committed > this.settings.monthlyBudgetMicros) return { code: "BUDGET_EXCEEDED" };
     return null;
