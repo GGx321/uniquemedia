@@ -842,7 +842,7 @@ describe("videos.render has its own deadline, under main's 30 s", () => {
     const seen: number[] = [];
     const r = serviceRig(w, {
       deps: {
-        commandDeadlineMs: 500,
+        commandDeadlineMs: 800,
         commandMarginMs: 60,
         checkExport: slowCheck(150, w),
         focus: () => ({
@@ -862,12 +862,38 @@ describe("videos.render has its own deadline, under main's 30 s", () => {
 
     const { jobId } = await r.service.render({ spec: specFor(w) });
 
-    expect(Date.now() - started).toBeLessThan(500);
+    expect(Date.now() - started).toBeLessThan(800);
     expect(seen).toEqual([1]);
-    expect(cutAfter).toBeGreaterThan(50);
-    expect(cutAfter).toBeLessThan(300); // 500 - 150 (the check) - 60 (the margin), and some scheduling
+    expect(cutAfter).toBeGreaterThan(400);
+    expect(cutAfter).toBeLessThan(700); // 800 - 150 (the check) - 60 (the margin) = 590, and a little scheduling
     expect(r.jobs.stateOf(jobId)).toBeDefined(); // it went on with the stand-in point
     await r.queue.idle();
+  });
+
+  test("the focus resolver is given what is left as ITS budget, so the cells it already judged are kept and only the rest use the stand-in point (counted in the log)", async () => {
+    const w = world();
+    const budgets: Array<number | undefined> = [];
+    const r = serviceRig(w, {
+      deps: {
+        commandDeadlineMs: 1_000,
+        commandMarginMs: 100,
+        focus: () => ({
+          fillMissingFocus: async (spec, _signal, options) => {
+            budgets.push(options?.budgetMs);
+            const filled = await fillingFocus().fillMissingFocus(spec);
+            return { spec: filled.spec, unresolved: [{ clipId: "clip-00000001", cellIndex: 0 }] };
+          },
+        }),
+      },
+    });
+
+    await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    expect(budgets).toHaveLength(1);
+    expect(budgets[0]).toBeGreaterThan(500);
+    expect(budgets[0]).toBeLessThanOrEqual(900);
+    expect(r.logs.join("\n")).toContain("1 photo(s) could not be judged");
   });
 
   test("when the deadline is gone before there is anything left to spend on focus, it refuses and queues nothing", async () => {

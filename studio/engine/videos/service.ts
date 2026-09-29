@@ -62,7 +62,7 @@ export interface VideoServiceDeps {
   /** A FRESH check of the export folder (its marker read now, never a snapshot). With `requiredBytes` it also wants twice that free. Never rejects. */
   readonly checkExport: (requiredBytes?: number) => Promise<ExportRootCheck>;
   readonly caseProbe: { isCaseInsensitive(root: string): Promise<boolean> };
-  /** The focus resolver of `library`; `fillMissingFocus` takes a signal that ends it early. */
+  /** The focus resolver of `library`; `fillMissingFocus` takes a budget for the call (cells judged by then are kept) and a signal that ends it early. */
   readonly focus: (library: Library) => Pick<FocusResolver, "fillMissingFocus">;
   /** `userData/render-tmp`; a render is refused without it (no `os.tmpdir` fallback). */
   readonly renderTmpDir: string | undefined;
@@ -96,6 +96,8 @@ export const RENDER_COMMAND_DEADLINE_MS = 25_000;
 export const RENDER_COMMAND_MARGIN_MS = 2_000;
 /** One record's file check in a listing; a disk that does not answer reads `elsewhere`. */
 export const RECORD_CHECK_TIMEOUT_MS = 5_000;
+/** How long after the focus budget the abort net waits. */
+const FOCUS_NET_SLACK_MS = 25;
 /** Reading the used index again on demand before a render or a list. */
 const STALE_RELOAD_BOUND_MS = 5_000;
 
@@ -282,9 +284,11 @@ export class VideoService {
     const focusMs = time.remaining() - time.marginMs;
     if (focusMs <= 0) throw outOfTime();
     const spent = new AbortController();
-    const timer = setTimeout(() => spent.abort(new Error("the focus budget of this render is spent")), focusMs);
+    // The resolver gets what is left as its own budget: it stops starting cells when that runs low and keeps every cell it
+    // has judged. The abort is only the net under a resolver that does not keep to it (a little later, so it never wins).
+    const timer = setTimeout(() => spent.abort(new Error("the focus budget of this render is spent")), focusMs + FOCUS_NET_SLACK_MS);
     try {
-      const result = await deps.focus(library).fillMissingFocus(spec, spent.signal);
+      const result = await deps.focus(library).fillMissingFocus(spec, spent.signal, { budgetMs: focusMs });
       filled = result.spec;
       if (result.unresolved.length > 0) deps.log(`videos.render: ${result.unresolved.length} photo(s) could not be judged for their focus; the stand-in point is used`);
     } catch (error) {
