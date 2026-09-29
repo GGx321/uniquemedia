@@ -317,7 +317,7 @@ for (const { name: flavour, api, top } of FLAVOURS) {
   describe(`prepareExportFolder with a fake disk (${flavour} paths)`, () => {
     const at = (...parts: string[]) => api.join(top, ...parts);
     const root = at("export");
-    const base = { root, safeName: "Mia", avatarId: AVATAR, caseInsensitive: false, path: api };
+    const base = { root, safeName: "Mia", avatarId: AVATAR, caseInsensitive: false, api };
     const dir = { kind: "dir" } as const;
 
     test("creates a missing folder and returns its name and path", async () => {
@@ -405,9 +405,48 @@ for (const { name: flavour, api, top } of FLAVOURS) {
   });
 }
 
+describe("prepareExportFolder on POSIX keeps a backslash as a name character", () => {
+  test("a root whose name ends in a backslash is not the folder without it", async () => {
+    // "/exp\" and "/exp" are two different directories on POSIX; a real path under the second is not inside the first.
+    const fs = fakeFolderFs(posix, {
+      "/exp\\": { kind: "dir", real: "/exp\\" },
+      "/exp\\/Mia": { kind: "dir", real: "/exp/Mia" },
+    });
+    const folder = await prepareExportFolder({ fs, root: "/exp\\", safeName: "Mia", avatarId: AVATAR, caseInsensitive: false, api: posix });
+    expect(folder.name).toBe("Mia_avatar-0");
+  });
+});
+
+describe("PreparedFolder.fileIn", () => {
+  async function folderIn(api: typeof posix, top: string) {
+    const root = api.join(top, "export");
+    const fs = fakeFolderFs(api, { [root]: { kind: "dir" } });
+    return prepareExportFolder({ fs, root, safeName: "Mia", avatarId: AVATAR, caseInsensitive: false, api });
+  }
+
+  test("joins a plain file name onto the folder's path", async () => {
+    expect((await folderIn(win32, "C:\\")).fileIn("a.mp4")).toBe("C:\\export\\Mia\\a.mp4");
+    expect((await folderIn(posix, "/")).fileIn("a.mp4")).toBe("/export/Mia/a.mp4");
+  });
+
+  test.each(["", ".", "..", "a/b", "../x", "/abs"])("refuses %p on both flavours", async (name) => {
+    expect((await folderIn(posix, "/")).fileIn.bind(await folderIn(posix, "/"), name)).toThrow();
+    expect((await folderIn(win32, "C:\\")).fileIn.bind(await folderIn(win32, "C:\\"), name)).toThrow();
+  });
+
+  test.each(["a\\b", "..\\x", "C:x", "\\\\srv\\share"])("refuses %p on Windows, where the backslash and the drive separate paths", async (name) => {
+    const folder = await folderIn(win32, "C:\\");
+    expect(() => folder.fileIn(name)).toThrow();
+  });
+
+  test("accepts a backslash in a name on POSIX, where it is an ordinary character", async () => {
+    expect((await folderIn(posix, "/")).fileIn("a\\b")).toBe("/export/Mia/a\\b");
+  });
+});
+
 describe("prepareExportFolder with Windows path spellings", () => {
   const dir = { kind: "dir" } as const;
-  const base = { safeName: "Mia", avatarId: AVATAR, caseInsensitive: true, path: win32 };
+  const base = { safeName: "Mia", avatarId: AVATAR, caseInsensitive: true, api: win32 };
 
   test("a drive letter and a folder that differ from the root only in case are contained (C:\\a against c:\\A\\b)", async () => {
     const fs = fakeFolderFs(win32, {
@@ -581,7 +620,7 @@ for (const { name: flavour, api, top } of FLAVOURS) {
         safeName: "Mia",
         avatarId: AVATAR,
         caseInsensitive: false,
-        path: api,
+        api,
       });
       base = { folder, date: "2026-09-29", kind: "photo" };
     });
@@ -598,7 +637,7 @@ for (const { name: flavour, api, top } of FLAVOURS) {
         safeName: "Mia",
         avatarId: AVATAR,
         caseInsensitive: true,
-        path: api,
+        api,
       });
       const claim = await claimExportName({ fs: fakeFs([]), ...base, folder: stored });
       expect(claim.relPath).toBe("mia/2026-09-29_photo_001.mp4");

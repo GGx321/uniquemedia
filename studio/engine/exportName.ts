@@ -1,5 +1,6 @@
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import * as nodePath from "node:path";
+import type { PathFlavour } from "./pathFlavour";
 import { isSafeName, RelativePath, VideoKindToken, type ExportUnavailableReason } from "../shared/engine";
 import { hasErrorCode } from "./library/durableFs";
 
@@ -134,12 +135,6 @@ export function exportFileName(date: string, kind: string, n: number): string {
 
 // ---------- the avatar's folder ----------
 
-/**
- * The path flavour the folder rules run on: the platform's own unless a test plays another. Taking it as a
- * dependency is what lets Windows' `\`, drive letters and UNC names be tested on any OS.
- */
-export type PathFlavour = Pick<typeof nodePath.posix, "join" | "dirname" | "basename" | "normalize" | "sep">;
-
 /** The part of the filesystem the folder rules need; injected so tests can play links and other volumes. */
 export interface ExportFolderFs {
   /** NON-recursive: rejects with EEXIST when the entry exists and with ENOENT when the parent is gone. */
@@ -179,8 +174,15 @@ export class PreparedFolder {
     this.#api = api;
   }
 
-  /** A file inside this folder, spelled the way the folder's own path is. */
+  /**
+   * A file inside this folder, spelled the way the folder's own path is. The name must be one plain name:
+   * not empty, not `.` or `..`, and not a path (`basename` of it, in the folder's flavour, is itself), so a
+   * name cannot walk out of the folder or name a drive.
+   */
   fileIn(fileName: string): string {
+    if (fileName === "" || fileName === "." || fileName === ".." || fileName.includes("/") || this.#api.basename(fileName) !== fileName) {
+      throw new Error("a file name inside the export folder must be one plain name");
+    }
     return this.#api.join(this.path, fileName);
   }
 
@@ -209,7 +211,7 @@ export interface PrepareExportFolderOptions {
   /** Windows and macOS volumes fold letter case. */
   caseInsensitive: boolean;
   /** The path flavour; the platform's own unless a test plays another. */
-  path?: PathFlavour;
+  api?: PathFlavour;
 }
 
 /**
@@ -233,7 +235,7 @@ export interface PrepareExportFolderOptions {
  */
 export async function prepareExportFolder(options: PrepareExportFolderOptions): Promise<PreparedFolder> {
   const { fs, root } = options;
-  const api = options.path ?? nodePath;
+  const api = options.api ?? nodePath;
   if (!isSafeName(options.safeName)) throw new Error("the export folder name is not a SafeName");
   for (const candidate of [options.safeName, suffixedFolderName(options.safeName, options.avatarId)]) {
     const opened = await tryOpenFolder(fs, api, root, candidate, options.caseInsensitive);
@@ -250,7 +252,8 @@ export async function prepareExportFolder(options: PrepareExportFolderOptions): 
 function placeOf(api: PathFlavour, path: string, caseInsensitive: boolean): string {
   const unprefixed = api.sep === "\\" ? path.replace(/^\\\\[?.]\\UNC\\/i, "\\\\").replace(/^\\\\[?.]\\/, "") : path;
   const normal = api.normalize(unprefixed);
-  const trimmed = normal.replace(/[\\/]+$/, "");
+  // A backslash separates paths only on Windows; on POSIX it is a legal name character and stays.
+  const trimmed = normal.replace(api.sep === "\\" ? /[\\/]+$/ : /\/+$/, "");
   const place = trimmed === "" || /^[A-Za-z]:$/.test(trimmed) ? normal : trimmed;
   return caseInsensitive ? place.toLowerCase() : place;
 }
