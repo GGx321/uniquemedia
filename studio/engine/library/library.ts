@@ -33,6 +33,7 @@ import {
   REFUSED_IMPORTS_FILE,
   RUNS_DIR,
   THUMBS_DIR,
+  VIDEOS_DIR,
   REJECTED_FILE,
   isFromNewerVersion,
   LIBRARY_FILE_SCHEMA_VERSION,
@@ -765,6 +766,18 @@ export class Library {
     const others = (this.#videosByAvatar.get(avatarId) ?? []).filter((r) => r.videoId !== record.videoId);
     this.#videosByAvatar.set(avatarId, [...others, record].sort((a, b) => (a.videoId < b.videoId ? -1 : a.videoId > b.videoId ? 1 : 0)));
     this.#videoGeneration.set(avatarId, (this.#videoGeneration.get(avatarId) ?? 0) + 1);
+  }
+
+  /**
+   * Task 3a.8b.1: a video's record is committed on disk but the in-memory index could not take it and
+   * could not be rebuilt either. The avatar's usage can no longer be trusted: its photos might look
+   * free while a video shows them, so it closes like any other unreadable record
+   * (`eligibleUnusedPhotos` throws `log-needs-repair`, the count is 0) until a reload or the next open
+   * reads the record from disk, which clears it. Never throws.
+   */
+  flagVideoIndexStale(avatarId: string, videoId: string): void {
+    const problem: VideoRecordProblem = { file: `${VIDEOS_DIR}/${videoId}.json`, reason: "unreadable", detail: "is committed on disk but is not in the used index" };
+    this.#videoProblems.set(avatarId, [...(this.#videoProblems.get(avatarId) ?? []), problem]);
   }
 
   /** Task 3a.8b's delete: the record is gone from disk, so its photos are freed. An unknown record changes nothing. */
