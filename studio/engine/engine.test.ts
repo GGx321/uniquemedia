@@ -2185,6 +2185,37 @@ describe("the export folder's status (task 3a.8a)", () => {
     }
   });
 
+  test("ten render attempts queued behind a volume that never answers share one check instead of ten hung calls", async () => {
+    await mkdir(join(dir, "export"));
+    let stats = 0;
+    const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, stat: () => (stats++, new Promise<never>(() => undefined)) };
+    const errors = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: 40 });
+      const before = stats;
+      const started = Date.now();
+      const responses = await Promise.all(Array.from({ length: 10 }, () => engine.handle(command("videos.render", { montageId: "montage-00000001" }))));
+      expect(responses.every((r) => !r.ok && r.error.code === "EXPORT_UNAVAILABLE")).toBe(true);
+      expect(stats - before).toBe(1);
+      expect(Date.now() - started).toBeLessThan(40 * 4);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("a settings change is not answered by a check that was queued for the old settings", async () => {
+    await mkdir(join(dir, "export"));
+    await mkdir(join(dir, "better"));
+    const { engine } = await startEngine();
+    const before = engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, exportPath: join(dir, "better") } });
+    await before;
+    await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    expect(await statusNow(engine)).toEqual({ status: "ok" });
+    const marker = await Bun.file(join(dir, "better", MARKER)).exists();
+    expect(marker).toBe(true);
+  });
+
   test("a check that timed out does not block the next one once the volume answers", async () => {
     await mkdir(join(dir, "export"));
     let hang = true;

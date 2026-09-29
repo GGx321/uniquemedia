@@ -389,6 +389,8 @@ export class Engine {
   #exportStatus: ExportStatus = { status: "ok" };
   /** The export checks run one at a time in the order asked (a fresh folder's marker is written by one of them, never raced), so a slow older one cannot overwrite a newer one. */
   #exportChain: Promise<unknown> = Promise.resolve();
+  /** The latest queued check that has not started yet and carries no size estimate; later callers without one join it. */
+  #queuedExport: Promise<ExportRootCheck> | null = null;
   readonly #exportCheckTimeoutMs: number;
   readonly #preflight: (signal: AbortSignal) => Promise<void>;
   readonly #preflightTimeoutMs: number;
@@ -1465,8 +1467,16 @@ export class Engine {
    * logged and read as not writable, so neither start nor a render can hang on it.
    */
   #refreshExportStatus(requiredBytes?: number): Promise<ExportRootCheck> {
-    const run = this.#exportChain.then(() => this.#checkExportOnce(requiredBytes));
-    this.#exportChain = run;
+    // A check still waiting its turn reads the settings only when it starts, so a caller with no size
+    // estimate can share it: N attempts on a mute volume cost one timeout and one hung call, not N.
+    if (requiredBytes === undefined && this.#queuedExport !== null) return this.#queuedExport;
+    const run: Promise<ExportRootCheck> = this.#exportChain.then(() => {
+      if (this.#queuedExport === run) this.#queuedExport = null;
+      return this.#checkExportOnce(requiredBytes);
+    });
+    // Whatever `run` does, the chain goes on: one failure must not wedge every later check.
+    this.#exportChain = run.catch(() => undefined);
+    if (requiredBytes === undefined) this.#queuedExport = run;
     return run;
   }
 
