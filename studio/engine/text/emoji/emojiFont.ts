@@ -74,6 +74,8 @@ const MAX_CMAP_GROUPS = 100_000;
 const MAX_LOOKUPS = 512;
 const MAX_LOOKUP_SUBTABLES = 256;
 const MAX_LIGATURES = 100_000;
+/** Coverage entries read plus ligature sets read, over the whole GSUB: what the real font needs is a few thousand. */
+const MAX_GSUB_WORK = 1_000_000;
 const VS16 = 0xfe0f;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -192,6 +194,17 @@ function readCmap(cmap: Region, numGlyphs: number): GlyphLookup {
   };
 }
 
+/** What one GSUB read may cost in all, however many lookups and subtables point at the same structures. */
+interface Budget {
+  ligatures: number;
+  work: number;
+}
+
+function charge(budget: Budget, work: number): void {
+  budget.work += work;
+  if (budget.work > MAX_GSUB_WORK) throw new EmojiFontError("TOO_LARGE", "GSUB: more work than any emoji font needs");
+}
+
 /** One ligature: the glyphs after the first, and the glyph they become. */
 interface Ligature {
   rest: readonly number[];
@@ -201,10 +214,12 @@ interface Ligature {
 type LigatureStage = Map<number, Ligature[]>;
 
 /** The glyphs a coverage table names, each mapped to its coverage index. Ascending, so the total is bounded by `numGlyphs`. */
-function readCoverage(gsub: Region, at: number, numGlyphs: number): Map<number, number> {
+function readCoverage(gsub: Region, at: number, numGlyphs: number, budget: Budget): Map<number, number> {
   const coverage = new Map<number, number>();
   const format = gsub.u16(at);
   const count = gsub.u16(at + 2);
+  // A range can name 65 535 glyphs in 6 bytes, so ranges are charged by the glyphs they name, before the loop runs.
+  if (format === 1) charge(budget, count);
   if (format === 1) {
     let previous = -1;
     for (let i = 0; i < count; i++) {
@@ -221,18 +236,20 @@ function readCoverage(gsub: Region, at: number, numGlyphs: number): Map<number, 
       const index = gsub.u16(at + 8 + 6 * i);
       if (end < start || start <= previous || end >= numGlyphs) throw bad("GSUB", "coverage ranges are not ascending and disjoint");
       previous = end;
+      charge(budget, end - start + 1);
       for (let glyph = start; glyph <= end; glyph++) coverage.set(glyph, index + glyph - start);
     }
   } else throw bad("GSUB", `coverage format ${format}`);
   return coverage;
 }
 
-function readLigatureSubtable(gsub: Region, at: number, numGlyphs: number, stage: LigatureStage, budget: { ligatures: number }): void {
+function readLigatureSubtable(gsub: Region, at: number, numGlyphs: number, stage: LigatureStage, budget: Budget): void {
   if (gsub.u16(at) !== 1) throw bad("GSUB", "a ligature substitution that is not format 1");
-  const coverage = readCoverage(gsub, at + gsub.u16(at + 2), numGlyphs);
+  const coverage = readCoverage(gsub, at + gsub.u16(at + 2), numGlyphs, budget);
   const sets = gsub.u16(at + 4);
   for (const [first, index] of coverage) {
     if (index >= sets) throw bad("GSUB", "a covered glyph has no ligature set");
+    charge(budget, 1);
     const set = at + gsub.u16(at + 6 + 2 * index);
     const count = gsub.u16(set);
     budget.ligatures += count;
@@ -262,7 +279,7 @@ function readLigatureStages(gsub: Region, numGlyphs: number): LigatureStage[] {
   const lookups = gsub.u16(lookupList);
   if (lookups > MAX_LOOKUPS) throw new EmojiFontError("TOO_LARGE", `GSUB: ${lookups} lookups`);
   const stages: LigatureStage[] = [];
-  const budget = { ligatures: 0 };
+  const budget: Budget = { ligatures: 0, work: 0 };
   for (let l = 0; l < lookups; l++) {
     const lookup = lookupList + gsub.u16(lookupList + 2 + 2 * l);
     const type = gsub.u16(lookup);

@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { EmojiFontError, type EmojiFontErrorCode, openEmojiFont } from "./emojiFont";
+import { craftedGsubFont } from "./craftedFont.testkit";
 import { loadPinnedEmojiFont } from "./emojiFont.testkit";
 useNativeGlobals();
 
@@ -187,6 +188,58 @@ function highestCmapGlyph(bytes: Uint8Array): number {
   }
   return highest;
 }
+
+describe("GSUB work is bounded overall", () => {
+  const base = { lookups: 1, subtables: 1, coverageGlyphs: 1, ligatures: 0, components: 2 };
+  const crafted = (spec: Partial<typeof base>) => outcome(() => craftedGsubFont({ ...base, ...spec }));
+
+  test("a crafted GSUB that fits every per-structure cap but is read 512 x 256 times is refused, and fast", () => {
+    // 131 072 references to ONE 65 535-glyph coverage with empty ligature sets: no ligature is ever counted.
+    const started = performance.now();
+    expect(crafted({ lookups: 512, subtables: 256, coverageGlyphs: 65535 })).toBe("TOO_LARGE");
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  test("a few dozen reads of a big coverage are already refused", () => {
+    expect(crafted({ lookups: 2, subtables: 16, coverageGlyphs: 65535 })).toBe("TOO_LARGE");
+  });
+
+  test("the same reads of a small coverage are within budget (the font then fails later, for want of CBDT)", () => {
+    expect(crafted({ lookups: 2, subtables: 16, coverageGlyphs: 100 })).toBe("NOT_A_FONT");
+  });
+
+  test("257 subtables in one lookup are refused", () => {
+    expect(crafted({ subtables: 257 })).toBe("TOO_LARGE");
+  });
+
+  test("256 subtables in one lookup are within the cap", () => {
+    expect(crafted({ subtables: 256 })).toBe("NOT_A_FONT");
+  });
+
+  test("513 lookups are refused", () => {
+    expect(crafted({ lookups: 513 })).toBe("TOO_LARGE");
+  });
+
+  test("more than 100 000 ligatures in all are refused", () => {
+    expect(crafted({ coverageGlyphs: 2, ligatures: 60_000 })).toBe("TOO_LARGE");
+  });
+
+  test("100 000 ligatures exactly are within the cap", () => {
+    expect(crafted({ coverageGlyphs: 2, ligatures: 50_000 })).toBe("NOT_A_FONT");
+  });
+
+  test("a ligature of 33 components is refused", () => {
+    expect(crafted({ ligatures: 1, components: 33 })).toBe("BAD_TABLE");
+  });
+
+  test("a ligature of 32 components is within the cap", () => {
+    expect(crafted({ ligatures: 1, components: 32 })).toBe("NOT_A_FONT");
+  });
+
+  test("a ligature of no components is refused", () => {
+    expect(crafted({ ligatures: 1, components: 0 })).toBe("BAD_TABLE");
+  });
+});
 
 describe("CBLC and CBDT", () => {
   test("no strike is unsupported", () => {
