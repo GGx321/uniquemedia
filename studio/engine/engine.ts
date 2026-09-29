@@ -86,6 +86,7 @@ import { plan as planScenes } from "./scenes";
 import { configureFfmpegEnv } from "../node/ffmpegEnv";
 import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
+import { maskHome } from "./renderQueue/scrubber";
 import { sweepRenderTmp } from "./renderQueue/sweep";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
@@ -187,8 +188,14 @@ function seedOf(runId: string): number {
   return Number.parseInt(createHash("sha256").update(runId).digest("hex").slice(0, 8), 16);
 }
 
+/**
+ * A message as an error's `detail`: the user's home folder is masked as `~` (an fs error names the owner's library
+ * path, and `detail` reaches the renderer), then the text is cut to `MAX_DETAIL`. Masked first, so a path split by the
+ * cut cannot escape.
+ */
 function detailOf(message: string): string {
-  return message.length <= MAX_DETAIL ? message : `${message.slice(0, MAX_DETAIL - 1)}…`;
+  const masked = maskHome(message);
+  return masked.length <= MAX_DETAIL ? masked : `${masked.slice(0, MAX_DETAIL - 1)}…`;
 }
 
 function messageOf(error: unknown, fallback: string): string {
