@@ -30,6 +30,13 @@ export const EngineInit = z.strictObject({
    * folder the user chose is never created, it may be an unmounted volume.
    */
   defaultLibraryPath: AbsolutePath,
+  /**
+   * The folder the default settings name for «Готовые видео» (`~/Studio/export`,
+   * or `userData/export` when the home folder is unusable). The engine creates it
+   * on first use when the settings name it; a folder the owner chose must already
+   * exist. Absent, no export folder is ever created.
+   */
+  defaultExportPath: AbsolutePath.optional(),
   /** `userData/raw`: where the body of a paid answer that could not be used is kept, redacted. */
   rawDir: AbsolutePath,
   settings: EngineSettings,

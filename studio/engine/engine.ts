@@ -17,6 +17,7 @@ import {
   type EngineCommandMessage,
   type EngineError,
   type EngineNotice,
+  type ExportStatus,
   type Estimate,
   type EventMessage,
   type ImageAgeCheck,
@@ -56,6 +57,7 @@ import {
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
 import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
+import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
 import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library, type LogIssue } from "./library";
@@ -101,6 +103,10 @@ export interface EngineDeps {
   fetch: OpenRouterFetch;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
+  /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
+  exportRootFs?: ExportRootFs;
+  /** Whether the disk folds letter case (Windows, macOS); the platform's guess unless a test says otherwise. */
+  caseInsensitiveDisk?: boolean;
   /**
    * The scene photos of `avatarId` that queued or running renders hold (S16),
    * asked afresh each time; the library keeps them out of `eligibleUnusedPhotos`
@@ -371,6 +377,14 @@ export class Engine {
   /** Free writes into the live library that are running (a reject mark): a library switch waits for them like for a paid write, but they do not block an avatar's job. */
   #librarySmallWrites = 0;
   readonly #folderFs: FolderFs;
+  readonly #exportRootFs: ExportRootFs;
+  readonly #caseInsensitiveDisk: boolean;
+  /** `init.defaultExportPath`: the one export folder that is created on first use. */
+  readonly #defaultExportPath: string | null;
+  /** The export folder's status as of the last check (start, a settings update, a render attempt), for the snapshot. */
+  #exportStatus: ExportStatus = { status: "ok" };
+  /** Counts export checks, so a slow older one cannot overwrite the result of a newer one. */
+  #exportCheckSeq = 0;
   readonly #preflight: (signal: AbortSignal) => Promise<void>;
   readonly #preflightTimeoutMs: number;
   readonly #liveLibraryIdentityTimeoutMs: number;
@@ -471,6 +485,9 @@ export class Engine {
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
+    this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
+    this.#caseInsensitiveDisk = deps.caseInsensitiveDisk ?? process.platform !== "linux";
+    this.#defaultExportPath = init.defaultExportPath ?? null;
     this.#preflight = deps.preflightDownscale ?? preflightDownscale;
     this.#downscaleImportPhoto = deps.downscaleImportPhoto ?? ((bytes, maxSide, signal) => downscaleToJpeg(bytes, { maxSide, signal }));
     this.#importDownscaleTimeoutMs = deps.importDownscaleTimeoutMs ?? IMPORT_DOWNSCALE_TIMEOUT_MS;
@@ -532,6 +549,7 @@ export class Engine {
       });
     }
     engine.#live = await engine.#openOrNull(init.settings.libraryPath);
+    await engine.#refreshExportStatus();
     for (const notice of init.notices) engine.#addNotice(notice);
     return engine;
   }
@@ -970,6 +988,13 @@ export class Engine {
       }
       case "photos.setRejected":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#setRejected(command.payload) };
+      case "videos.render": {
+        // Invariant 35: refused up front, free, before anything else about the render is looked at.
+        const check = await this.#refreshExportStatus();
+        if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
+        // The queue, the montage checks and the size estimate arrive with the render tasks (3a.6 to 3a.8b).
+        return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
+      }
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -1418,10 +1443,41 @@ export class Engine {
       // Avatar and photo run jobs of this engine's life.
       jobs: this.#jobs.states(),
       librarySwitchGeneration: this.#librarySwitchGeneration,
-      // Task 3a.8a checks the export folder; until then it is reported usable.
-      exportStatus: { status: "ok" },
+      // As of the last check: start, a settings update, or a render attempt (`#refreshExportStatus`).
+      exportStatus: this.#exportStatus,
       notices: [...this.#notices],
     };
+  }
+
+  /**
+   * Checks the export folder against the current settings and keeps the result
+   * as the snapshot's `exportStatus` (invariant 35). The default folder is
+   * created on first use; a folder the owner chose is not. A check that a newer
+   * one overtook leaves the status to the newer one. `requiredBytes` is the
+   * render's estimate, when there is one. A refusal is a result; a disk error
+   * the check cannot classify is logged and read as not writable.
+   */
+  async #refreshExportStatus(requiredBytes?: number): Promise<ExportRootCheck> {
+    const seq = ++this.#exportCheckSeq;
+    const exportPath = this.#settings.exportPath;
+    let check: ExportRootCheck;
+    try {
+      check = await checkExportRoot({
+        fs: this.#exportRootFs,
+        exportPath,
+        libraryPath: this.#settings.libraryPath,
+        mayCreate: exportPath === this.#defaultExportPath,
+        newId: this.#deps.newId,
+        now: () => new Date(this.#deps.clock()),
+        caseInsensitive: this.#caseInsensitiveDisk,
+        ...(requiredBytes === undefined ? {} : { requiredBytes }),
+      });
+    } catch (error) {
+      console.error(`studio engine: the export folder could not be checked (${errorKind(error)})`);
+      check = { ok: false, reason: "not-writable" };
+    }
+    if (seq === this.#exportCheckSeq) this.#exportStatus = exportStatusOf(check);
+    return check;
   }
 
   /**
@@ -2341,6 +2397,8 @@ export class Engine {
       this.#settings = { ...this.#settings, libraryPath: next.libraryPath };
     }
     if (previous.imageAgeCheck !== this.#settings.imageAgeCheck) this.#rebroadcastDraftEstimates();
+    // The export folder or the library it must stay out of may have changed.
+    await this.#refreshExportStatus();
     this.#emitSettings();
     return refusal;
   }

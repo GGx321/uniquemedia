@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { COMMAND_DEADLINE_MS, HostCall, MAX_IMPORT_PHOTO_BYTES } from "./control";
+import { COMMAND_DEADLINE_MS, EngineInit, HostCall, MAX_IMPORT_PHOTO_BYTES } from "./control";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -34,5 +34,31 @@ describe("COMMAND_DEADLINE_MS['runs.start'] covers the worst awaited path", () =
 
   test("runs.resume does no preflight: it keeps the estimate's deadline", () => {
     expect(COMMAND_DEADLINE_MS["runs.resume"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
+  });
+});
+
+describe("EngineInit.defaultExportPath", () => {
+  const settings = {
+    monthlyBudgetMicros: 10_000_000,
+    libraryPath: "/data/library",
+    imageModel: "x-ai/grok-imagine-image-2.0",
+    textModel: "x-ai/grok-4.3",
+    concurrency: { network: 6 },
+    imageAgeCheck: "off",
+    exportPath: "/home/a/Studio/export",
+    renderConcurrency: "auto",
+  };
+  const base = { kind: "control", type: "init", ledgerPath: "/data/ledger.jsonl", defaultLibraryPath: "/data/library", rawDir: "/data/raw", settings, encryptionAvailable: true, notices: [] };
+
+  test("is optional: an init without it is still valid", () => {
+    expect(EngineInit.safeParse(base).success).toBe(true);
+  });
+
+  test("accepts an absolute path", () => {
+    expect(EngineInit.safeParse({ ...base, defaultExportPath: "/home/a/Studio/export" }).success).toBe(true);
+  });
+
+  test.each(["", "Studio/export", "../export"])("refuses %p, which is not absolute", (defaultExportPath) => {
+    expect(EngineInit.safeParse({ ...base, defaultExportPath }).success).toBe(false);
   });
 });

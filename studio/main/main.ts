@@ -25,7 +25,7 @@ import { handleMediaRequest, MEDIA_SCHEME } from "./mediaProtocol";
 import { HostNotices } from "./notices";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { handleSettingsCommand, reconcileLibraryPath } from "./settingsFlow";
-import { defaultLibraryPath, SettingsStore } from "./settingsStore";
+import { defaultLibraryPath, defaultSettings, SettingsStore } from "./settingsStore";
 
 // A production build keeps no debugging door open, however it is launched:
 // DevTools are off (see createWindow), --inspect is disabled by a fuse, and
@@ -193,6 +193,7 @@ async function startStudio(): Promise<void> {
       type: "init",
       ledgerPath: join(userData, "ledger.jsonl"),
       defaultLibraryPath: defaultLibraryPath(userData),
+      defaultExportPath: defaultSettings(userData).exportPath,
       rawDir: join(userData, RAW_DIR),
       settings: settings.current,
       encryptionAvailable: keys.status().encryptionAvailable,

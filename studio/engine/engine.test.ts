@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1984,6 +1984,8 @@ describe("Stage 3 commands before their tasks land", () => {
   ];
 
   test.each(unbuilt)("%s answers a typed refusal instead of throwing", async (type, payload) => {
+    // A render is checked against the export folder first (task 3a.8a); give it a usable one.
+    await mkdir(join(dir, "export"));
     const { engine } = await startEngine();
     const response = await engine.handle(command(type, payload));
     expect(ResponseMessage.safeParse(response).success).toBe(true);
@@ -1992,6 +1994,7 @@ describe("Stage 3 commands before their tasks land", () => {
   });
 
   test("videos.render with a spec is refused the same way, and refuses nothing else", async () => {
+    await mkdir(join(dir, "export"));
     const { engine } = await startEngine();
     const spec = { schemaVersion: 1, avatarId: AVATAR, clips: [], layers: [], music: null, seed: 1 };
     const response = await engine.handle(command("videos.render", { spec }));
@@ -2010,16 +2013,130 @@ describe("Stage 3 commands before their tasks land", () => {
     expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
   });
 
-  test("the snapshot carries the export folder's status, stubbed as ok until task 3a.8a checks the folder", async () => {
-    const { engine } = await startEngine();
-    const snapshot = ok(await engine.handle(command("engine.snapshot")));
-    expect(snapshot.type === "engine.snapshot" ? snapshot.result.exportStatus : null).toEqual({ status: "ok" });
-  });
-
   test("the engine still answers settings.get afterwards, with the export folder and render concurrency", async () => {
     const { engine } = await startEngine();
     await engine.handle(command("videos.list", { avatarId: AVATAR }));
     const settings = ok(await engine.handle(command("settings.get")));
     expect(settings.type === "settings.get" ? settings.result : null).toMatchObject({ exportPath: join(dir, "export"), renderConcurrency: "auto" });
+  });
+});
+
+describe("the export folder's status (task 3a.8a)", () => {
+  const MARKER = ".studio-export.json";
+
+  function exportStatus(response: ResponseMessage): unknown {
+    const done = ok(response);
+    return done.type === "engine.snapshot" ? done.result.exportStatus : null;
+  }
+
+  async function statusNow(engine: Engine): Promise<unknown> {
+    return exportStatus(await engine.handle(command("engine.snapshot")));
+  }
+
+  test("the default folder is created on first start, with its marker, and the status is ok", async () => {
+    const { engine } = await startEngine({ defaultExportPath: join(dir, "export") });
+    expect(await statusNow(engine)).toEqual({ status: "ok" });
+    expect(await readdir(join(dir, "export"))).toEqual([MARKER]);
+  });
+
+  test("a folder the owner chose is not created: the status says missing", async () => {
+    const { engine } = await startEngine({ defaultExportPath: join(dir, "elsewhere", "export") });
+    expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "missing" });
+    expect(existsSync(join(dir, "export"))).toBe(false);
+  });
+
+  test("without a default named by main, no folder is created", async () => {
+    const { engine } = await startEngine();
+    expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "missing" });
+  });
+
+  test("a folder inside the library is unavailable because it overlaps it, and nothing is written there", async () => {
+    const inside = join(dir, "library", "out");
+    await mkdir(inside);
+    const { engine } = await startEngine({ settings: { ...init().settings, exportPath: inside }, defaultExportPath: inside });
+    expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "overlaps-library" });
+    expect(await readdir(inside)).toEqual([]);
+  });
+
+  test("an invalid marker makes the status invalid-marker and is left as it was", async () => {
+    await mkdir(join(dir, "export"));
+    await writeFile(join(dir, "export", MARKER), "{broken");
+    const { engine } = await startEngine();
+    expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "invalid-marker" });
+    expect(await Bun.file(join(dir, "export", MARKER)).text()).toBe("{broken");
+  });
+
+  test("a settings update that names another folder refreshes the status", async () => {
+    const { engine } = await startEngine();
+    expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "missing" });
+    await mkdir(join(dir, "better"));
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, exportPath: join(dir, "better") } });
+    expect(await statusNow(engine)).toEqual({ status: "ok" });
+  });
+
+  test("a settings update that moves the export folder into the library is refused by the status", async () => {
+    await mkdir(join(dir, "export"));
+    const { engine } = await startEngine();
+    expect(await statusNow(engine)).toEqual({ status: "ok" });
+    await mkdir(join(dir, "library", "out"));
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, exportPath: join(dir, "library", "out") } });
+    expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "overlaps-library" });
+  });
+
+  test("videos.render is refused up front with EXPORT_UNAVAILABLE and the reason when the folder is gone", async () => {
+    const { engine, posted } = await startEngine();
+    const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    expect(response).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(posted.some((m) => JSON.stringify(m).includes("job.progress"))).toBe(false);
+  });
+
+  test("a render attempt re-checks the folder: a status that went stale is refreshed", async () => {
+    await mkdir(join(dir, "export"));
+    const { engine } = await startEngine();
+    expect(await statusNow(engine)).toEqual({ status: "ok" });
+    await rm(join(dir, "export"), { recursive: true });
+    expect(await statusNow(engine)).toEqual({ status: "ok" });
+    await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "missing" });
+  });
+
+  test("with a usable folder a render attempt gets past the export check", async () => {
+    await mkdir(join(dir, "export"));
+    const { engine } = await startEngine();
+    const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    expect(response).not.toMatchObject({ error: { code: "EXPORT_UNAVAILABLE" } });
+  });
+
+  test("an invalid marker refuses a render and the marker is not replaced", async () => {
+    await mkdir(join(dir, "export"));
+    await writeFile(join(dir, "export", MARKER), "[]");
+    const { engine } = await startEngine();
+    const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    expect(response).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "invalid-marker" } });
+    expect(await Bun.file(join(dir, "export", MARKER)).text()).toBe("[]");
+  });
+
+  test("a check that fails in a way it cannot classify reads as not writable and does not crash the engine", async () => {
+    await mkdir(join(dir, "export"));
+    const errors = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      // An id the marker schema refuses is a programming error inside the check.
+      const { engine } = await startEngine({}, { newId: () => "BAD ID" });
+      expect(await statusNow(engine)).toEqual({ status: "unavailable", reason: "not-writable" });
+      expect(errors).toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("a folder that disappears is noticed on the next attempt and reads ok again once it is back", async () => {
+    await mkdir(join(dir, "export"));
+    const { engine } = await startEngine();
+    await rm(join(dir, "export"), { recursive: true });
+    await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    await mkdir(join(dir, "export"));
+    await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
+    expect(await statusNow(engine)).toEqual({ status: "ok" });
   });
 });
