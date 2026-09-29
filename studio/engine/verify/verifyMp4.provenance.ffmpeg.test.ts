@@ -139,8 +139,9 @@ describe("C2PA and JUMBF", () => {
 
   test("the source photo really carries the JUMBF segment, so the clean render below means something", () => {
     const text = new TextDecoder("latin1").decode(new Uint8Array(readFileSync(`${c2paSource.dir}/photo.jpg`)));
-    expect(text).toContain(C2PA_SENTINEL);
-    expect(text).toContain("jumb");
+    // Booleans, never the text: a failing toContain would print the whole file into the log.
+    expect({ needle: C2PA_SENTINEL, present: text.includes(C2PA_SENTINEL) }).toEqual({ needle: C2PA_SENTINEL, present: true });
+    expect({ needle: "jumb", present: text.includes("jumb") }).toEqual({ needle: "jumb", present: true });
   });
 
   test("a render of a photo carrying C2PA JUMBF passes, with its manifest label forbidden", async () => {

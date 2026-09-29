@@ -28,6 +28,29 @@ afterAll(() => {
 });
 
 const EXPECTED = { frames: FIXTURE_FRAMES };
+
+/**
+ * The `Lavf<v>` and `Lavc<v> libx264` versions this build's ffmpeg really wrote into the fixture (6.0 on macOS,
+ * 6.1.1 on Windows, whatever the Linux build is), as short strings: never the whole file's text, which a failing
+ * assertion would print in full.
+ */
+function writtenVersions(bytes: Uint8Array): { lavf: string; lavc: string } {
+  const text = new TextDecoder("latin1").decode(bytes);
+  const lavf = /Lavf(\d+\.\d+\.\d+)/.exec(text)?.[1];
+  const lavc = /Lavc(\d+\.\d+\.\d+) libx264/.exec(text)?.[1];
+  if (lavf === undefined || lavc === undefined) throw new Error("the fixture carries no Lavf or no Lavc libx264 version string");
+  return { lavf, lavc };
+}
+
+/** A version that differs from the one written, so a substitution changes something on every build. */
+const differentFrom = (version: string): string => (version === "60.3.100" ? "60.16.100" : "60.3.100");
+
+let written: { lavf: string; lavc: string };
+let other: { lavf: string; lavc: string };
+beforeAll(() => {
+  written = writtenVersions(fx.bytes);
+  other = { lavf: differentFrom(written.lavf), lavc: differentFrom(written.lavc) };
+});
 const codesOf = (r: VerifyResult): VerifyReasonCode[] => (r.ok ? [] : r.reasons.map((x) => x.code));
 const run = (name: string, bytes: Uint8Array) => verifyRenderedMp4(writeCopy(fx, name, bytes), EXPECTED);
 const ascii = (s: string): Uint8Array => Uint8Array.from(s, (c) => c.charCodeAt(0));
@@ -58,10 +81,11 @@ describe("the clean render", () => {
     expect(await verifyRenderedMp4(fx.path, EXPECTED)).toEqual({ ok: true });
   });
 
-  test("really carries ffmpeg 6.0's version strings, so the 6.1.1 cases below change something", () => {
-    const text = new TextDecoder("latin1").decode(fx.bytes);
-    expect(text).toMatch(/Lavf60\.3\.100/);
-    expect(text).toMatch(/Lavc60\.3\.100 libx264/);
+  test("carries a Lavf and a Lavc libx264 version, and the substitutions below use a different one, so they change something", () => {
+    expect(written.lavf).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(written.lavc).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(other.lavf).not.toBe(written.lavf);
+    expect(other.lavc).not.toBe(written.lavc);
   });
 });
 
@@ -146,16 +170,16 @@ describe("the metadata keys and values", () => {
     expect(codesOf(await run("enc-bad.mp4", withEncoder(fx.bytes, value)))).toContain("METADATA_VALUE_NOT_ALLOWED");
   });
 
-  test("accepts a 6.1.1-style container encoder tag, Lavf60.16.100", async () => {
-    expect(await run("enc-611.mp4", withEncoder(fx.bytes, "Lavf60.16.100"))).toEqual({ ok: true });
+  test("accepts another build's container encoder tag (Lavf<a different version>)", async () => {
+    expect(await run("enc-611.mp4", withEncoder(fx.bytes, `Lavf${other.lavf}`))).toEqual({ ok: true });
   });
 
-  test("accepts a 6.1.1-style video compressor name, Lavc60.16.100 libx264", async () => {
-    expect(await run("comp-611.mp4", withCompressor(fx.bytes, "Lavc60.16.100 libx264"))).toEqual({ ok: true });
+  test("accepts another build's video compressor name (Lavc<a different version> libx264)", async () => {
+    expect(await run("comp-611.mp4", withCompressor(fx.bytes, `Lavc${other.lavc} libx264`))).toEqual({ ok: true });
   });
 
   test("accepts both 6.1.1-style strings together", async () => {
-    expect(await run("both-611.mp4", withCompressor(withEncoder(fx.bytes, "Lavf60.16.100"), "Lavc60.16.100 libx264"))).toEqual({ ok: true });
+    expect(await run("both-611.mp4", withCompressor(withEncoder(fx.bytes, `Lavf${other.lavf}`), `Lavc${other.lavc} libx264`))).toEqual({ ok: true });
   });
 
   test.each(["Adobe Media Encoder", "Lavc60.3.100 libx265", "Lavc60.3.100 libx264 x", "Lavc libx264"])("refuses the video compressor name %j", async (name) => {
@@ -220,7 +244,8 @@ describe("source-photo metadata strings", () => {
   test("the source photo really carried the sentinels, so their absence below means something", async () => {
     const photoBytes = readBytes(`${laden.dir}/photo.jpg`);
     const text = new TextDecoder("latin1").decode(photoBytes);
-    for (const s of SENTINELS) expect(text).toContain(s);
+    // A boolean, never the text: a failing toContain would print the whole file into the log.
+    for (const s of SENTINELS) expect({ sentinel: s, present: text.includes(s) }).toEqual({ sentinel: s, present: true });
   });
 
   test("a render of a photo laden with EXIF and XMP passes with those strings forbidden", async () => {
