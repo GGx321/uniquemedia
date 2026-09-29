@@ -67,7 +67,7 @@ import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems } from "./bundleChecks";
-import { DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
+import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { failureDetail } from "./failureDetail";
 import { looksLikeAStackTrace } from "./stackTrace";
 
@@ -886,7 +886,7 @@ async function runAvatarScenario(target: Target): Promise<void> {
     check(
       "avatar scenario: every authenticated request to the mock carried exactly Bearer <the fake key>",
       authenticated.length === 1 + 4 + 0 + 2 && authenticated.every((r) => r.authorization === `Bearer ${SMOKE_KEY}`),
-      authenticated.map((r) => ({ path: r.path, authorization: r.authorization })),
+      authenticated.map((r) => ({ path: r.path, auth: authorizationLabel(r, SMOKE_KEY) })),
     );
 
     // 13. A cheap plumbing check that the toggle itself works end to end

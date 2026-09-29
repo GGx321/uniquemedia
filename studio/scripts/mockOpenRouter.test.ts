@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { markerMatch, requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
+import { authorizationLabel, markerMatch, requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
 import { failureDetail } from "./failureDetail";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -136,6 +136,11 @@ describe("failureDetail", () => {
     expect(text).toContain("avatar_descriptor");
   });
 
+  test("drops those keys in any letter case", () => {
+    const text = failureDetail({ Authorization: "Bearer sk-secret", HEADERS: { a: "b" }, Body: "private", BodyText: "private", path: "/x" });
+    expect(text).toBe('{"path":"/x"}');
+  });
+
   test("truncates a long string and the whole text", () => {
     expect(failureDetail({ why: "x".repeat(5_000) }).length).toBeLessThanOrEqual(600);
     expect(failureDetail(["y".repeat(300)])).toContain("…");
@@ -144,5 +149,17 @@ describe("failureDetail", () => {
   test("leaves plain values alone", () => {
     expect(failureDetail({ a: 1, b: ["two"] })).toBe('{"a":1,"b":["two"]}');
     expect(failureDetail(undefined)).toBe("");
+  });
+});
+
+// The smoke's "exactly Bearer <the fake key>" check must say what went wrong without ever printing a header value.
+describe("authorizationLabel", () => {
+  const base = { method: "POST", path: "/api/v1/images", body: null, schemaName: null, url: "", headers: {}, bodyText: "" };
+
+  test("none, expected, or other: never the value", () => {
+    expect(authorizationLabel({ ...base, authorization: null }, "sk-fake")).toBe("none");
+    expect(authorizationLabel({ ...base, authorization: "Bearer sk-fake" }, "sk-fake")).toBe("expected");
+    expect(authorizationLabel({ ...base, authorization: "Bearer sk-real-secret" }, "sk-fake")).toBe("other");
+    expect(authorizationLabel({ ...base, authorization: "sk-fake" }, "sk-fake")).toBe("other");
   });
 });

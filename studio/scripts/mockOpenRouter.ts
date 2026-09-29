@@ -216,6 +216,12 @@ export function requestCarries(request: MockRequest, words: readonly string[]): 
   return markerMatch(request, words) !== null;
 }
 
+/** What a check may say about a request's Authorization header: none sent, exactly `Bearer <expectedKey>`, or something else. Never the value. */
+export function authorizationLabel(request: MockRequest, expectedKey: string): "none" | "expected" | "other" {
+  if (request.authorization === null) return "none";
+  return request.authorization === `Bearer ${expectedKey}` ? "expected" : "other";
+}
+
 /** The first of `words` (lower-cased, like the request) found in the request, and where: its URL, its headers or its body. Null when none. */
 export function markerMatch(request: MockRequest, words: readonly string[]): { word: string; in: "url" | "headers" | "body" } | null {
   const parts = [
