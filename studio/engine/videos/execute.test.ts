@@ -419,7 +419,7 @@ describe("construction", () => {
   test("a job id or a safe name that is not safe is refused before any disk is touched", async () => {
     const r = rig();
     const execute = createRenderExecute({ library: r.w.library, tracker: r.tracker, renderTmpDir: r.w.renderTmp, caseProbe: { isCaseInsensitive: async () => false }, now: () => new Date() });
-    await expect(execute(planOf(r.w, { safeName: "../evil" }))({ signal: new AbortController().signal, progress: () => null })).rejects.toThrow();
+    await expect(execute(planOf(r.w, { safeName: "../evil" }))({ signal: new AbortController().signal, progress: () => null, saving: () => undefined })).rejects.toThrow();
     expect(await listTree(r.w.exportRoot)).toEqual([".studio-export.json"]);
     expect(existsSync(join(r.w.dir, "evil"))).toBe(false);
     expect((await readdir(r.w.renderTmp)).length).toBe(0);

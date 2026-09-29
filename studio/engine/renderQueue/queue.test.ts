@@ -325,6 +325,23 @@ describe("RenderQueue: a job's life", () => {
   });
 });
 
+describe("RenderQueue: the saving phase", () => {
+  test("context.saving() marks the running job saving and announces it as a progress event; the finished job carries no mark", async () => {
+    const { queue, jobs, events } = setup();
+    const a = submission(1);
+    queue.submit(a);
+    const ctx = await a.gate.started.promise;
+
+    ctx.saving();
+
+    expect(jobs.states()[0]).toMatchObject({ status: "running", saving: true });
+    expect(events.at(-1)).toMatchObject({ type: "progress", progress: { jobId: "job-00000001", saving: true } });
+    a.gate.finish.resolve(resultOf(1));
+    await queue.idle();
+    expect(jobs.states()[0]).not.toHaveProperty("saving");
+  });
+});
+
 describe("RenderQueue: cancel", () => {
   test("a queued job is cancelled at once, never runs, and the running one is not disturbed", async () => {
     const { queue, jobs, events } = setup();

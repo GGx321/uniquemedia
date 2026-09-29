@@ -35,6 +35,11 @@ export interface RenderContext {
    * or null when the job is not running any more.
    */
   progress(done: number): JobProgress | null;
+  /**
+   * The commit has passed its point of no return (the video's name is claimed): a cancel is ignored from here and the job
+   * is in its «сохранение» phase. The job's state says so, and a progress event announces it, so the window can disable Cancel.
+   */
+  saving(): void;
 }
 
 export interface RenderSubmission {
@@ -283,6 +288,10 @@ export class RenderQueue {
           const progress = this.#deps.jobs.progress(jobId, done);
           if (progress !== null) this.#emit({ type: "progress", progress });
           return progress;
+        },
+        saving: () => {
+          const progress = this.#deps.jobs.markSaving(jobId);
+          if (progress !== null) this.#emit({ type: "progress", progress });
         },
       });
       end = { status: "done", result };

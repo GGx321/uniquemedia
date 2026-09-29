@@ -9,6 +9,7 @@ import { JobRegistry } from "../jobs";
 import { RenderQueue } from "../renderQueue/queue";
 import { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 import { partNameOf, type VideoRecord } from "./record";
+import { NODE_COMMIT_FS } from "./commitFs";
 import { acceptingVerify, exportFiles, fakeVideoBytes, FINAL, libraryVideoFiles, MARKER, specOf, useWorld, type World } from "./testing/kit";
 useNativeGlobals();
 
@@ -275,6 +276,79 @@ describe("errors from the export folder's own steps carry no path", () => {
   });
 });
 
+describe("the steps before pass 2 are bounded and give way to a cancel", () => {
+  const never = <T,>(): Promise<T> => new Promise<T>(() => undefined);
+
+  test.each([
+    ["making the avatar's export folder", () => ({ folderFs: { mkdir: () => never<void>(), lstat: () => never<never>(), realpath: () => never<string>() } })],
+    ["the case probe", () => ({ caseProbe: { isCaseInsensitive: () => never<boolean>() } })],
+  ])("%s that never answers fails the job (EXPORT_UNAVAILABLE not-writable) at the step deadline, and frees the slot", async (_what, over) => {
+    const r = rig({ stepDeadlineMs: 40, ...over() });
+
+    r.submit();
+    const started = Date.now();
+    await r.queue.idle();
+
+    expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(r.queue.reservedPhotos(r.w.avatar.id).size).toBe(0);
+  });
+
+  test("a flush of the root that never answers fails the job too", async () => {
+    const r = rig({ stepDeadlineMs: 40, fs: { ...NODE_COMMIT_FS, fsyncDir: () => never<void>() } });
+
+    r.submit();
+    await r.queue.idle();
+
+    expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
+  });
+
+  test("the temp's creation right before pass 2 that never answers fails the job before ffmpeg writes anything", async () => {
+    let pass2 = false;
+    let n = 0;
+    const r = rig({
+      stepDeadlineMs: 40,
+      createTemp: () => never<void>(),
+      runDeps: {
+        run: async (opts) => {
+          if (++n === 2) pass2 = true;
+          await writingRun(opts);
+        },
+      },
+    });
+
+    r.submit();
+    await r.queue.idle();
+
+    expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
+    expect(pass2).toBe(false);
+    expect(await exportFiles(r.w)).toEqual([]);
+  });
+
+  test("a cancel while the export folder is being made ends the job cancelled at once, not at the deadline", async () => {
+    const r = rig({ stepDeadlineMs: 60_000, folderFs: { mkdir: () => never<void>(), lstat: () => never<never>(), realpath: () => never<string>() } });
+
+    r.submit();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    r.queue.cancel(JOB);
+    await r.queue.idle();
+
+    expect(r.states()[0]?.status).toBe("cancelled");
+  });
+
+  test("a cancel while the temp is being created ends the job cancelled", async () => {
+    const r = rig({ stepDeadlineMs: 60_000, createTemp: () => never<void>() });
+
+    r.submit();
+    await until(() => r.states()[0]?.status === "running" && r.tracker.hasJob(JOB));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    r.queue.cancel(JOB);
+    await r.queue.idle();
+
+    expect(r.states()[0]?.status).toBe("cancelled");
+  });
+});
+
 describe("the case probe of the export volume", () => {
   test("a probe that throws fails the job with the errno code only, before any folder is made", async () => {
     const r = rig({ caseProbe: { isCaseInsensitive: () => Promise.reject(Object.assign(new Error("EIO: i/o error, open '/Volumes/Reels/.studio-probe-case-x'"), { code: "EIO" })) } });
@@ -319,7 +393,25 @@ describe("the commit has its own deadline", () => {
     expect(r.committed).toEqual([]);
   });
 
-  test("a commit stuck AFTER the claim cannot be undone, so it finishes late: the job says failed, and the record still lands and is announced", async () => {
+  test("after the pre-claim deadline the photos are free again: the reservation is released and nothing marks them used", async () => {
+    let wake: () => void = () => undefined;
+    const release = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    const r = rig({ commitDeadlineMs: 30, hooks: hangAt("temp-synced", release) });
+
+    r.submit();
+    await r.queue.idle();
+
+    const photo = r.w.photos[0]?.id ?? "";
+    expect(r.queue.reservedPhotos(r.w.avatar.id).has(photo)).toBe(false);
+    expect(r.w.library.photoStates(r.w.avatar.id).get(photo)?.usedIn).toEqual([]);
+    wake();
+    await until(() => !r.tracker.hasJob(JOB));
+    expect(r.w.library.photoStates(r.w.avatar.id).get(photo)?.usedIn).toEqual([]); // the woken commit never claims: it was told to stop
+  });
+
+  test("a commit stuck AFTER the claim is never failed and never released: the job stays running in its saving phase, the photos stay reserved, and the record lands", async () => {
     let wake: () => void = () => undefined;
     const release = new Promise<void>((resolve) => {
       wake = resolve;
@@ -327,15 +419,38 @@ describe("the commit has its own deadline", () => {
     const r = rig({ commitDeadlineMs: 30, hooks: hangAt("name-claimed", release) });
 
     r.submit();
-    await r.queue.idle();
-    expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE" } });
+    await new Promise((resolve) => setTimeout(resolve, 200)); // six deadlines later
+
+    const photo = r.w.photos[0]?.id ?? "";
+    expect(r.states()[0]).toMatchObject({ status: "running", saving: true });
+    expect(r.queue.active()).toBe(1); // what a library switch and a shutdown wait for
+    expect(r.queue.reservedPhotos(r.w.avatar.id).has(photo)).toBe(true);
+    expect(r.tracker.hasJob(JOB)).toBe(true);
 
     wake();
-    await until(() => !r.tracker.hasJob(JOB));
+    await r.queue.idle();
 
+    expect(r.states()[0]).toMatchObject({ status: "done", result: { relPath: FINAL } });
     expect(await exportFiles(r.w)).toEqual([FINAL]);
     expect(r.committed.map((record) => record.id)).toEqual(["video-00000001"]);
-    expect(r.w.library.photoStates(r.w.avatar.id).get(r.w.photos[0]?.id ?? "")?.usedIn).toEqual(["video-00000001"]);
+    expect(r.w.library.photoStates(r.w.avatar.id).get(photo)?.usedIn).toEqual(["video-00000001"]);
+    expect(r.queue.reservedPhotos(r.w.avatar.id).size).toBe(0);
+  });
+
+  test("a cancel during that stall is ignored: the job still ends done", async () => {
+    let wake: () => void = () => undefined;
+    const release = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    const r = rig({ commitDeadlineMs: 30, hooks: hangAt("name-claimed", release) });
+
+    r.submit();
+    await until(() => r.states().some((state) => "saving" in state && state.saving === true));
+    r.queue.cancel(JOB);
+    wake();
+    await r.queue.idle();
+
+    expect(r.states()[0]?.status).toBe("done");
   });
 
   test("a commit inside its deadline is not disturbed", async () => {

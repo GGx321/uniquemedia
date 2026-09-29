@@ -33,6 +33,30 @@ describe("JobRegistry, render jobs", () => {
     expect(jobs.startRender("job-00000404")).toBe(false);
   });
 
+  test("a running render can be marked saving (past the commit's point of no return): its state and every later progress say so, and the end drops it", () => {
+    const jobs = new JobRegistry();
+    jobs.queueRender("job-00000001", REF, 120);
+    expect(jobs.markSaving("job-00000001")).toBeNull(); // queued: nothing to mark
+    jobs.startRender("job-00000001");
+
+    const marked = jobs.markSaving("job-00000001");
+
+    expect(marked).toEqual({ kind: "render", jobId: "job-00000001", ...REF, done: 0, total: 120, saving: true });
+    expect(jobs.states()).toMatchObject([{ status: "running", saving: true }]);
+    expect(jobs.progress("job-00000001", 119)).toMatchObject({ done: 119, saving: true });
+    valid(jobs.states());
+    jobs.finishRender("job-00000001", { status: "done", result: RESULT });
+    expect(jobs.states()[0]).not.toHaveProperty("saving");
+  });
+
+  test("markSaving is null for a job that is not a running render", () => {
+    const jobs = new JobRegistry();
+    jobs.startCandidates("job-00000009", "avatar-00000001", 3);
+
+    expect(jobs.markSaving("job-00000009")).toBeNull();
+    expect(jobs.markSaving("job-00000404")).toBeNull();
+  });
+
   test("progress of a running render gives the event's payload with the video, avatar and draft", () => {
     const jobs = new JobRegistry();
     jobs.queueRender("job-00000001", REF, 120);

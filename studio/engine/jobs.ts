@@ -83,6 +83,19 @@ export class JobRegistry {
   }
 
   /**
+   * Marks a RUNNING render as saving: its commit has passed the point of no return (a cancel is ignored from here). The
+   * mark is in its state (so a snapshot shows it) and in every later progress; the job's end drops it. The progress
+   * payload to announce, or null for any other job or state.
+   */
+  markSaving(jobId: string): JobProgress | null {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.kind !== "render" || entry.state.status !== "running") return null;
+    entry.state = { ...entry.state, saving: true };
+    const { videoId, avatarId, montageId, done, total } = entry.state;
+    return { kind: "render", jobId, videoId, avatarId, montageId, done, total, saving: true };
+  }
+
+  /**
    * Records how many slots are done; the `job.progress` payload (with the job's kind, avatar and run), or null for a job that is not running.
    * A render's `done` is clamped: it never goes back and never exceeds `total`.
    */
@@ -98,7 +111,7 @@ export class JobRegistry {
       case "run":
         return { kind: "run", jobId, runId: entry.state.runId, avatarId: entry.state.avatarId, done, total };
       case "render":
-        return { kind: "render", jobId, videoId: entry.state.videoId, avatarId: entry.state.avatarId, montageId: entry.state.montageId, done, total };
+        return { kind: "render", jobId, videoId: entry.state.videoId, avatarId: entry.state.avatarId, montageId: entry.state.montageId, done, total, ...(entry.state.saving === true ? { saving: true } : {}) };
       case "avatar.candidates":
         return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
     }

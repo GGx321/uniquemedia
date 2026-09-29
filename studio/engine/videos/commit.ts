@@ -156,6 +156,13 @@ export interface CommitDeps {
    * from it is passed on as it is; any other error is told without its message.
    */
   readonly beforeClaim?: () => Promise<void>;
+  /**
+   * Called synchronously, right after the LAST cancel check and right before the name is claimed: the point of no return.
+   * From here a cancel (and the caller's deadline) no longer applies, the commit runs to its record, and the job is in its
+   * «сохранение» phase. Nothing awaits between this call and the claim's start, so a caller that stops the commit at a
+   * deadline and one that sees this call can never both be right.
+   */
+  readonly onSaving?: () => void;
   /** The first number the claim tries; 1 in production (test seam for a full range). */
   readonly claimStartAt?: number;
 }
@@ -355,6 +362,9 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
           await inPhase("export", async () => deps.beforeClaim?.());
           // 3. Claim the name: an empty placeholder, exclusively. The folder is checked first.
           await inPhase("export", checkFolder);
+          // The point of no return: the last look at a cancel, and the call that says "saving", with nothing awaited between.
+          signal?.throwIfAborted();
+          deps.onSaving?.();
           let identity: FileIdentity | null = null;
           const claim = await inPhase("export", async () => {
             try {

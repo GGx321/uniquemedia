@@ -20,7 +20,6 @@ import type {
   Draft,
   EngineNotice,
   Estimate,
-  JobState,
   MoneyStatus,
   PhotoSummary,
   RunRequest,
@@ -28,6 +27,7 @@ import type {
   Settings,
   UnreadableAvatar,
 } from "./state";
+import { JobState } from "./state";
 import { PROTOCOL_VERSION } from ".";
 
 // ---------- fixtures ----------
@@ -1274,6 +1274,16 @@ describe("Stage 3 results and events", () => {
     for (const extra of [{ cause: { spawnargs: ["-i", "/Users/owner/photo.jpg"] } }, { spawnargs: ["-i", "/Users/owner/photo.jpg"] }, { path: "/Users/owner/photo.jpg" }]) {
       expect(parseMessage(event(type, { ...(payload as object), ...extra })).ok).toBe(false);
     }
+  });
+
+  // The «сохранение» phase: past the commit's point of no return a cancel is ignored, so the window disables Cancel.
+  test("a render's job.progress and its snapshot state can say it is saving; another kind of job cannot", () => {
+    expect(parseMessage(event("job.progress", { ...renderRef, done: 119, total: 120, saving: true })).ok).toBe(true);
+    expect(parseMessage(event("job.progress", { ...renderRef, done: 119, total: 120, saving: "yes" })).ok).toBe(false);
+    expect(parseMessage(event("job.progress", { kind: "run", jobId: "job-00000004", runId: "run-00000001", avatarId: "avatar-0001", done: 1, total: 4, saving: true })).ok).toBe(false);
+    const snapshotJob = { ...renderRef, status: "running", done: 119, total: 120, saving: true };
+    expect(JobState.safeParse(snapshotJob).success).toBe(true);
+    expect(JobState.safeParse({ ...snapshotJob, kind: "avatar.candidates", videoId: undefined, montageId: undefined }).success).toBe(false);
   });
 
   test("the error inside job.failed is strict too: no `cause` next to its code", () => {

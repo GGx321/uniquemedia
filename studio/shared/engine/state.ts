@@ -402,12 +402,18 @@ const runJobRef = { kind: z.literal("run"), jobId: Id, runId: Id, avatarId: Id }
  */
 const renderJobRef = { kind: z.literal("render"), jobId: Id, videoId: Id, avatarId: Id, montageId: Id.nullable() };
 const progressCounts = { done: Count, total: Count };
+/**
+ * The «сохранение» phase of a render: the commit has passed its point of no return (the video's name is claimed),
+ * so a cancel is IGNORED from here and the job ends `done` (or `failed` if saving then fails). Absent (or false)
+ * before that. The window disables Cancel once it sees `true`. Set by the engine, never derived from the frame count.
+ */
+const renderSaving = { saving: z.boolean().optional() };
 
 export const JobProgress = z
   .discriminatedUnion("kind", [
     z.strictObject({ ...candidatesJobRef, ...progressCounts }),
     z.strictObject({ ...runJobRef, ...progressCounts }),
-    z.strictObject({ ...renderJobRef, ...progressCounts }),
+    z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params);
 
@@ -507,6 +513,7 @@ export const JobState = z
       avatarId: Id,
       /** The draft it was rendered from; null for a headless spec. */
       montageId: Id.nullable(),
+      ...renderSaving,
       ...jobCommon,
       result: RenderResult.optional(),
     }),
