@@ -209,6 +209,7 @@ function start(
     clientOverrides?: Partial<OpenRouterClientOptions>;
     cancelledGateTimeoutMs?: number;
     referenceTimeoutMs?: number;
+    gateTimeout?: RunJobDeps["gateTimeout"];
   } = {},
 ): Harness {
   const net = opts.net ?? network();
@@ -240,6 +241,7 @@ function start(
       onSlot: (p) => progress.push(p),
       ...(opts.cancelledGateTimeoutMs === undefined ? {} : { cancelledGateTimeoutMs: opts.cancelledGateTimeoutMs }),
       ...(opts.referenceTimeoutMs === undefined ? {} : { referenceTimeoutMs: opts.referenceTimeoutMs }),
+      ...(opts.gateTimeout === undefined ? {} : { gateTimeout: opts.gateTimeout }),
     },
     { plan: run, jobId: opts.jobId ?? JOB_ID, descriptor: DESCRIPTOR, signal: opts.signal ?? new AbortController().signal },
   );
@@ -274,6 +276,33 @@ function scopeCommitted(of: Ledger = ledger): number {
 async function until(condition: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 1000 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 2));
   if (!condition()) throw new Error(`timed out waiting for ${what}`);
+}
+
+/** Gate timeouts that fire only when the test says so: a test that must order events against a timeout does not race a clock. */
+function manualTimeouts() {
+  const pending: { ms: number; fire: () => void }[] = [];
+  const make: NonNullable<RunJobDeps["gateTimeout"]> = (ms) => {
+    const controller = new AbortController();
+    const entry = { ms, fire: () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")) };
+    pending.push(entry);
+    return {
+      signal: controller.signal,
+      clear: () => {
+        const at = pending.indexOf(entry);
+        if (at >= 0) pending.splice(at, 1);
+      },
+    };
+  };
+  return { pending, make };
+}
+
+/** Waits until the run's journal holds an attempt with this outcome. */
+async function journalHas(outcome: string): Promise<void> {
+  for (let i = 0; i < 1000; i++) {
+    if ((await journal()).some((e) => e.type === "attempt" && e.outcome === outcome)) return;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error(`timed out waiting for an attempt journaled ${outcome}`);
 }
 
 function slotOf(run: RunPlan, slotIndex: number): PlanSlot {
@@ -739,14 +768,25 @@ describe("QA gates", () => {
   test("a gate that outlives its timeout is read as broken: the run stops, nothing more is sent, and the image in flight then is dropped", async () => {
     const run = await newRun(3);
     const hung = gate("face", () => new Promise<QaVerdict>(() => {}), { timeoutMs: 30 });
-    // Slot 2's image is still on its way when slot 1's gate times out; slot 3 waits for the network slot.
+    // No wall clock decides the order of events: the gate's timeout is fired by hand once slot 2's image is on its
+    // way, and slot 2's answer is held until the run has stopped. Slot 3 waits for the network slot.
+    const timeouts = manualTimeouts();
+    let answerSlot2: () => void = () => {};
+    const slot2Answer = new Promise<void>((resolve) => (answerSlot2 = resolve));
     const net = network({
       image: async (_call, n) => {
-        if (n > 1) await new Promise((resolve) => setTimeout(resolve, 150));
+        if (n > 1) await slot2Answer;
         return imageReply();
       },
     });
-    const { end } = start(run, { net, gates: [hung], pool: new NetworkPool({ max: 1 }) });
+    const { end } = start(run, { net, gates: [hung], pool: new NetworkPool({ max: 1 }), gateTimeout: timeouts.make });
+
+    await until(() => net.imageCalls().length === 2 && timeouts.pending.length === 1, "slot 2's image on its way and the gate's timeout armed");
+    expect(timeouts.pending[0]?.ms).toBe(30);
+    timeouts.pending[0]?.fire();
+    // The run stops (halt set) before the failed attempt is journaled, so once that line exists slot 2's image can only arrive late.
+    await journalHas("failed");
+    answerSlot2();
 
     const result = await end;
     expect(result).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });

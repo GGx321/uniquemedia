@@ -7,7 +7,7 @@ import { imageSize, isAnimatedImage, sniffImageMediaType, type LibraryReference 
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
-import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
+import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeoutSignal";
 import { truncate } from "../openrouter/transport";
 import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
 import { assembleRun } from "../scenes";
@@ -95,6 +95,8 @@ export interface RunJobDeps {
   referenceTimeoutMs?: number;
   /** CANCELLED_GATE_TIMEOUT_MS unless a test says otherwise. */
   cancelledGateTimeoutMs?: number;
+  /** How a gate's timeout is armed: `timeoutSignal` unless a test needs to fire it by hand instead of racing a clock. */
+  gateTimeout?: (ms: number) => TimeoutSignal;
 }
 
 export interface RunJob {
@@ -458,7 +460,7 @@ class GateDropped extends Error {}
 async function checkFree(ctx: Context, gate: QaGate, input: Omit<QaInput, "signal">, afterCancel: boolean): Promise<QaVerdict> {
   const { deps, job } = ctx;
   const ms = afterCancel ? Math.min(gate.timeoutMs ?? QA_GATE_TIMEOUT_MS, deps.cancelledGateTimeoutMs ?? CANCELLED_GATE_TIMEOUT_MS) : (gate.timeoutMs ?? QA_GATE_TIMEOUT_MS);
-  const timeout = timeoutSignal(ms);
+  const timeout = (deps.gateTimeout ?? timeoutSignal)(ms);
   const signal = afterCancel ? timeout.signal : AbortSignal.any([job.signal, timeout.signal]);
   try {
     return await untilAborted(
@@ -523,7 +525,7 @@ async function checkPaid(ctx: Context, gate: QaGate, input: Omit<QaInput, "signa
     throw new GateDropped();
   }
   const ms = gate.timeoutMs ?? QA_GATE_TIMEOUT_MS;
-  const timeout = timeoutSignal(ms);
+  const timeout = (deps.gateTimeout ?? timeoutSignal)(ms);
   const signal = AbortSignal.any([job.signal, timeout.signal]);
   // Freed on the abort too: a gate that ignores its abort must not hold a network slot (review round 3, L-c).
   signal.addEventListener("abort", release, { once: true });
