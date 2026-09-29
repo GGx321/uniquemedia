@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { CaseSensitivityProbe, NODE_CASE_PROBE_FS, type CaseProbeFs } from "./exportCase";
 useNativeGlobals();
@@ -57,7 +57,9 @@ describe("CaseSensitivityProbe", () => {
     const fs = volume(false);
     await new CaseSensitivityProbe(fs, ids()).isCaseInsensitive("/export");
     expect(fs.created).toHaveLength(1);
-    expect(fs.created[0]).toMatch(/^\/export\/\.studio-probe-case-[a-z0-9]+$/);
+    // The probe resolves the root as the platform does (`D:\export` on Windows), so the folder is compared as a path, not as text.
+    expect(dirname(fs.created[0] ?? "")).toBe(resolve("/export"));
+    expect(basename(fs.created[0] ?? "")).toMatch(/^\.studio-probe-case-[a-z0-9]+$/);
     expect(fs.removed).toEqual(fs.created);
     expect(fs.names.size).toBe(0);
   });
@@ -133,6 +135,13 @@ describe("the real disk", () => {
     rmSync(join(dir, "oracle-file"));
     expect(await new CaseSensitivityProbe(NODE_CASE_PROBE_FS).isCaseInsensitive(dir)).toBe(oracle);
     expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("says a default NTFS folder is case-insensitive (Windows only)", async () => {
+    if (process.platform !== "win32") return;
+    const dir = mkdtempSync(join(tmpdir(), "studio-case-"));
+    dirs.push(dir);
+    expect(await new CaseSensitivityProbe(NODE_CASE_PROBE_FS).isCaseInsensitive(dir)).toBe(true);
   });
 
   test("a folder that is not there leaves its parent untouched and answers cautiously", async () => {
