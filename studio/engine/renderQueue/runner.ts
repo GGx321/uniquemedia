@@ -55,7 +55,7 @@ export interface RenderRunOutcome {
 const partName = (jobId: string): string => `.studio-part-${jobId}.mp4`;
 
 /** Replaces the user's folders in text that may reach the UI: the temp root and the export folder. */
-function scrubber(tmpRoot: string, exportDir: string): (text: string) => string {
+export function scrubber(tmpRoot: string, exportDir: string): (text: string) => string {
   const pairs: Array<[string, string]> = [
     [tmpRoot, "<tmp>"],
     [exportDir, "<export>"],
@@ -65,9 +65,9 @@ function scrubber(tmpRoot: string, exportDir: string): (text: string) => string 
     for (const [dir, label] of pairs) {
       // Both spellings of the separator: ffmpeg prints a Windows path either way.
       out = out.replaceAll(dir, label).replaceAll(dir.replaceAll("\\", "/"), label);
-      out = out.replaceAll(`${label}\\`, `${label}/`);
     }
-    return out;
+    // The rest of a scrubbed path (`<tmp>\job-1\clip.mkv`) keeps its own backslashes otherwise: read with slashes all the way down.
+    return out.replace(/<(?:tmp|export)>[^\s"'<>|]*/g, (path) => path.replaceAll("\\", "/"));
   };
 }
 

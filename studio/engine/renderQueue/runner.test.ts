@@ -7,7 +7,7 @@ import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptio
 import { fakeSpawner, outputOf, type SpawnCall } from "../../node/fakeFfmpeg.testkit";
 import { RenderGraphError } from "../render";
 import { renderTimeoutMs } from "./progress";
-import { runRenderJob, type RenderRunInput, type RenderRunDeps } from "./runner";
+import { runRenderJob, scrubber, type RenderRunInput, type RenderRunDeps } from "./runner";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -480,5 +480,29 @@ describe("runRenderJob: the timeout", () => {
     if (!(error instanceof FfmpegTimeoutError)) throw error;
     expect(error.timeoutMs).toBe(90_000);
     expect(error.stderrTail).toBe("last words");
+  });
+});
+
+describe("scrubber", () => {
+  const scrub = scrubber("C:\\Users\\mia\\AppData\\Local\\Temp\\render-tmp", "D:\\Videos\\Reels");
+
+  test("a Windows temp path printed with backslashes reads with slashes all the way down", () => {
+    expect(scrub("Error opening C:\\Users\\mia\\AppData\\Local\\Temp\\render-tmp\\job-00000001\\clip-00.mkv: no")).toBe("Error opening <tmp>/job-00000001/clip-00.mkv: no");
+  });
+
+  test("the same path printed with forward slashes reads the same", () => {
+    expect(scrub("Error opening C:/Users/mia/AppData/Local/Temp/render-tmp/job-00000001/clip-00.mkv")).toBe("Error opening <tmp>/job-00000001/clip-00.mkv");
+  });
+
+  test("the export folder is scrubbed the same way, and its file name keeps its dots", () => {
+    expect(scrub("Cannot write D:\\Videos\\Reels\\.studio-part-job-00000001.mp4\n")).toBe("Cannot write <export>/.studio-part-job-00000001.mp4\n");
+  });
+
+  test("a backslash after the scrubbed path is left alone (only the path's own separators change)", () => {
+    expect(scrub("C:\\Users\\mia\\AppData\\Local\\Temp\\render-tmp\\a.mkv and a\\b")).toBe("<tmp>/a.mkv and a\\b");
+  });
+
+  test("text that names neither folder is unchanged", () => {
+    expect(scrub("Invalid data found when processing input\\n")).toBe("Invalid data found when processing input\\n");
   });
 });
