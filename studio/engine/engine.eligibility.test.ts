@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { AvatarSummary, PhotoSummary } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
+import { NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { sceneSpec, writeVideoRecord } from "./library/testing/videoRecords";
@@ -189,5 +190,69 @@ describe("photos.setRejected", () => {
     expect(refusal.code).toBe("INTERNAL");
     expect(refusal.detail).toContain("rejected.jsonl");
     expect(byId(await listPhotos(engine, avatarId), photoIds[0] ?? "").eligible).toBe(false);
+  });
+
+  test("announces the avatar only when the mark changed something", async () => {
+    const { avatarId, photoIds } = await seedAvatar(1);
+    const { engine, events } = await startEngine(dir());
+    const mark = (rejected: boolean) => engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected }));
+    ok(await mark(false));
+    ok(await mark(true));
+    ok(await mark(true));
+    expect(events().filter((e) => e.type === "avatar.changed")).toHaveLength(1);
+  });
+
+  test("blocks a library switch while it is in flight, like the other writes", async () => {
+    const { avatarId, photoIds } = await seedAvatar(1);
+    let hold: Promise<void> | null = null;
+    // Only the live library's own re-check is slowed: that is what a write waits on before it writes.
+    const slow = async <T>(path: string, work: () => Promise<T>): Promise<T> => {
+      if (hold !== null && basename(path) === "library") await hold;
+      return work();
+    };
+    const folderFs: FolderFs = { stat: (p) => slow(p, () => NODE_FOLDER_FS.stat(p)), realpath: (p) => slow(p, () => NODE_FOLDER_FS.realpath(p)) };
+    const { engine, posted } = await startEngine(dir(), { deps: { folderFs } });
+    let release: () => void = () => {};
+    hold = new Promise<void>((resolve) => (release = resolve));
+
+    const marking = engine.handle(command("photos.setRejected", { avatarId, photoId: photoIds[0] ?? "", rejected: true }));
+    const other = join(dir(), "other-library");
+    await mkdir(other);
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-00000001", path: other });
+    const replies = () => posted.flatMap((m) => (typeof m === "object" && m !== null && "kind" in m && m.kind === "control" ? [m] : []));
+    expect(replies()).toMatchObject([{ callId: "call-00000001", error: { code: "IN_FLIGHT" } }]);
+
+    release();
+    ok(await marking);
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-00000002", path: other });
+    expect(replies().at(-1)).toMatchObject({ callId: "call-00000002" });
+    expect(replies().at(-1)).not.toHaveProperty("error");
+  });
+});
+
+describe("opening a library with unreadable records", () => {
+  test("logs each problem once, with the avatar, the relative file and the reason class, and no path or content", async () => {
+    const { avatarId } = await seedAvatar(1);
+    await writeFile(join(libraryRoot(), "avatars", avatarId, "rejected.jsonl"), "SECRET-CONTENT\n");
+    await mkdir(join(libraryRoot(), "avatars", avatarId, "videos"));
+    await writeFile(join(libraryRoot(), "avatars", avatarId, "videos", "video-00000001.json"), "SECRET-CONTENT");
+    await writeFile(join(libraryRoot(), "avatars", avatarId, "videos", "video-00000002.json"), JSON.stringify({ schemaVersion: 2 }));
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => void warnings.push(args.map(String).join(" "));
+    try {
+      await startEngine(dir());
+    } finally {
+      console.warn = original;
+    }
+    const lines = warnings.filter((w) => w.includes(avatarId));
+    expect(lines).toHaveLength(3);
+    expect(lines.some((l) => l.includes("rejected.jsonl") && l.includes("unreadable"))).toBe(true);
+    expect(lines.some((l) => l.includes("videos/video-00000001.json") && l.includes("unreadable"))).toBe(true);
+    expect(lines.some((l) => l.includes("videos/video-00000002.json") && l.includes("too-new"))).toBe(true);
+    for (const line of lines) {
+      expect(line).not.toContain(dir());
+      expect(line).not.toContain("SECRET-CONTENT");
+    }
   });
 });

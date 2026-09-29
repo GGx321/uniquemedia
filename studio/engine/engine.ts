@@ -346,6 +346,8 @@ interface OpenedLibrary {
  */
 export class Engine {
   readonly #deps: EngineDeps;
+  /** Free writes into the live library that are running (a reject mark): a library switch waits for them like for a paid write, but they do not block an avatar's job. */
+  #librarySmallWrites = 0;
   readonly #folderFs: FolderFs;
   readonly #preflight: (signal: AbortSignal) => Promise<void>;
   readonly #preflightTimeoutMs: number;
@@ -683,7 +685,7 @@ export class Engine {
 
   /** True while a job or paid command writes into the live library, or a pick/archive is running: a library switch must be refused. */
   #busy(): boolean {
-    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
+    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
   }
 
   #inFlightRefusal(): EngineError {
@@ -958,16 +960,21 @@ export class Engine {
    */
   async #setRejected(payload: CommandPayload<"photos.setRejected">): Promise<{ photo: PhotoSummary }> {
     const { avatarId, photoId, rejected } = payload;
-    const library = await this.#liveLibrary();
+    // Counted before the first await, so a library switch cannot slip in while the write is being verified or done.
+    this.#librarySmallWrites++;
+    let library: Library;
     try {
-      await library.setRejected(avatarId, photoId, rejected);
+      library = await this.#liveLibrary();
+      const changed = await library.setRejected(avatarId, photoId, rejected);
+      if (changed) this.#announceAvatarOrLog(library, avatarId);
     } catch (error) {
       if (error instanceof LibraryError && (error.code === "avatar-not-found" || error.code === "photo-not-found")) {
         throw new EngineFailure({ code: "NOT_FOUND", detail: `no scene photo ${photoId} of avatar ${avatarId} in the open library` });
       }
       throw error;
+    } finally {
+      this.#librarySmallWrites--;
     }
-    this.#announceAvatarOrLog(library, avatarId);
     const photo = this.#photoSummaries(library, avatarId).photos.find((p) => p.photoId === photoId);
     if (photo === undefined) throw new EngineFailure({ code: "INTERNAL", detail: `photo ${photoId} was marked but does not fit the contract` });
     return { photo };
@@ -2330,7 +2337,11 @@ export class Engine {
       const opened = await pending;
       return { library: opened.library, identity, unreadable: opened.unreadable };
     }
-    const opening = openLibrary(path, this.#deps.reservedPhotos === undefined ? {} : { reservedPhotos: this.#deps.reservedPhotos }).then((opened) => ({ library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) }));
+    const opening = openLibrary(path, this.#deps.reservedPhotos === undefined ? {} : { reservedPhotos: this.#deps.reservedPhotos }).then((opened) => {
+      // Fail-closed records and logs: said once per open, by avatar, relative file and reason class only (no absolute path, no content).
+      for (const issue of opened.report.logIssues) console.warn(`studio engine: avatar ${issue.avatarId}: ${issue.file} is ${issue.reason}; its photos are held back until it is repaired`);
+      return { library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) };
+    });
     this.#opening.set(identity, opening);
     try {
       const opened = await opening;
