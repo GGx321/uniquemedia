@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ESTIMATE_AUDIO_KBPS, ESTIMATE_VIDEO_KBPS, estimateBytes, MAX_VIDEO_KBPS } from "./estimate";
+import { CONTAINER_ALLOWANCE_BYTES, ESTIMATE_AUDIO_KBPS, ESTIMATE_VIDEO_KBPS, estimateBytes, estimateBytesUpper, MAX_VIDEO_KBPS } from "./estimate";
 import { mulberry32, randInt } from "./random.testkit";
 
 const bytesAt = (kbps: number, ms: number): number => (kbps * ms) / 8;
@@ -50,5 +50,33 @@ describe("estimateBytes", () => {
 
   test("refuses a duration that is not a multiple of 100 ms", () => {
     expect(() => estimateBytes([{ durationMs: 1050 }])).toThrow(RangeError);
+  });
+});
+
+describe("estimateBytesUpper (the bound for the disk check)", () => {
+  test("no clips is 0 bytes", () => {
+    expect(estimateBytesUpper([])).toBe(0);
+  });
+
+  test("is the encoder's cap for the whole length (3500k video + 192k audio) plus a 64 KiB container allowance: 15.0 s is 6,988,036 bytes", () => {
+    expect(CONTAINER_ALLOWANCE_BYTES).toBe(65_536);
+    expect(estimateBytesUpper([{ durationMs: 15_000 }])).toBe(6_922_500 + 65_536);
+  });
+
+  test("is never below the typical estimate and is a whole number, for every valid total", () => {
+    for (let ms = 500; ms <= 15_000; ms += 100) {
+      const clips = [{ durationMs: ms }];
+      expect(Number.isInteger(estimateBytesUpper(clips))).toBe(true);
+      expect(estimateBytesUpper(clips)).toBeGreaterThan(estimateBytes(clips));
+    }
+  });
+
+  test("never falls below what the cap allows over the length, over random timelines", () => {
+    const rand = mulberry32(62);
+    for (let run = 0; run < 200; run++) {
+      const clips = Array.from({ length: randInt(rand, 1, 20) }, () => ({ durationMs: randInt(rand, 5, 40) * 100 }));
+      const totalMs = clips.reduce((s, c) => s + c.durationMs, 0);
+      expect(estimateBytesUpper(clips)).toBeGreaterThanOrEqual(bytesAt(MAX_VIDEO_KBPS + ESTIMATE_AUDIO_KBPS, totalMs) + CONTAINER_ALLOWANCE_BYTES);
+    }
   });
 });

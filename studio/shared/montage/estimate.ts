@@ -14,6 +14,21 @@ export const ESTIMATE_AUDIO_KBPS = 192;
 /** The encoder's `-maxrate`: no render averages above this. */
 export const MAX_VIDEO_KBPS = 3500;
 
+/** A fixed allowance for the MP4's own boxes (`moov`, `+faststart`, free space): 64 KiB. */
+export const CONTAINER_ALLOWANCE_BYTES = 65_536;
+
+/**
+ * An upper bound for the finished MP4, for the disk check (invariant 35): the
+ * encoder's own cap over the whole length (3500 kbit/s video plus the audio)
+ * plus the container allowance. No render averages above it. `ceil` of exact
+ * integer maths; 0 for no clips.
+ */
+export function estimateBytesUpper(clips: readonly { readonly durationMs: number }[]): number {
+  const frames = totalFrames(clips);
+  if (frames === 0) return 0;
+  return Math.ceil((frames * (MAX_VIDEO_KBPS + ESTIMATE_AUDIO_KBPS) * 1000) / 8 / FPS) + CONTAINER_ALLOWANCE_BYTES;
+}
+
 /**
  * The expected size of the finished MP4 in bytes. Exact integer maths per
  * frame: (3300 + 192) kbit/s = 436,500 bytes/s = 14,550 bytes per frame at
