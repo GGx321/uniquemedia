@@ -6,13 +6,25 @@ import { crc32 } from "./crc32";
 // gate for the built-in set (the generator's self-check) and for own stickers
 // (3b.6, 3f.5).
 //
-// What it promises: a well-formed chunk structure, the caps, and a whole-frame
-// delay grid, in a conservative subset that ffmpeg (the render) and Chrome's
-// ImageDecoder (the preview) read the same way: only letter chunk types, no
-// unknown critical chunk, a PLTE for palette images, no empty IDAT. What it
-// does not promise: that the compressed pixel data inflates. That is only
-// found by decoding, so an import (3f.5) must also decode the file once, with
-// ffmpeg `-xerror`, and count the frames.
+// What it promises: STRUCTURE only. Bounded chunks, correct CRCs, a valid
+// chunk and sequence order, frame regions inside the canvas, delays on the
+// 30 fps grid, and the caps (bytes, side, loop length). It also refuses a few
+// shapes decoders handle inconsistently: non-letter chunk types, unknown
+// critical chunks, a palette image without PLTE, an empty IDAT.
+//
+// What it does NOT promise:
+// - that the compressed pixel data inflates (only a decode finds that);
+// - that ffmpeg (the render) and Chrome's ImageDecoder (the preview) decode an
+//   accepted file to the same pixels. Measured, they differ on gAMA (1.0: 128
+//   vs 188), on iCCP (a ROMM profile: (200,60,60) vs (255,0,74)) and on an
+//   out-of-range palette index (black vs green).
+//
+// So, outside this file:
+// - the preview must use `ImageDecoder` with `colorSpaceConversion: "none"`;
+// - an imported own sticker (3f.5) is canonicalised: one ffmpeg `-xerror`
+//   decode, counting the frames, then a re-encode with our RGBA writer
+//   (studio/scripts/stickers/apngWriter.ts), which writes none of those
+//   chunks. The built-in set is already in that form.
 
 export const STICKER_FPS = 30;
 
