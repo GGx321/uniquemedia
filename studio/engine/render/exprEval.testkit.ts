@@ -44,11 +44,16 @@ export function evaluateExpression(source: string, vars: Vars): number {
     if (name === "") return fail("unexpected character");
     if (peek() === "(") {
       pos++;
-      const arg = sum();
-      if (peek() !== ")") fail("expected ) after the argument");
+      const args = [sum()];
+      while (peek() === ",") {
+        pos++;
+        args.push(sum());
+      }
+      if (peek() !== ")") fail("expected ) after the arguments");
       pos++;
-      if (name === "floor") return Math.floor(arg);
-      return fail(`unsupported function ${name}`);
+      const [a] = args;
+      if (name === "floor" && args.length === 1 && a !== undefined) return Math.floor(a);
+      return fail(`unsupported function ${name} with ${args.length} arguments`);
     }
     const value = vars[name];
     if (value === undefined) return fail(`unknown name ${name}`);

@@ -1,5 +1,5 @@
 import { FPS, FRAME_H, FRAME_W, msToFrames } from "../../shared/montage";
-import { assertAbsolutePath, assertSafeFilterGraph, quoteExpression } from "./filterString";
+import { assertAbsolutePath, assertSafeFilterGraph } from "./filterString";
 import { clipFileName, CONCAT_LIST_NAME } from "./names";
 import {
   CONTAINER_ARGS,
@@ -28,6 +28,11 @@ import { RenderGraphError, type AudioSource, type OverlayInput, type Pass2Input,
 // silent source exists in 3a and it needs no input.
 
 const HEAD_ARGS: readonly string[] = ["-hide_banner", "-nostdin", "-y"];
+/**
+ * The most frames of an animated overlay's loop the graph caches: the plan's 10 s cap at 30 fps. The cache
+ * holds only the frames the file really has.
+ */
+export const ANIMATED_LOOP_MAX_FRAMES = 300;
 /** 48 kHz: 48 samples per millisecond. */
 const AUDIO_SAMPLES_PER_MS = 48;
 
@@ -55,26 +60,63 @@ function validateOverlay(o: OverlayInput, index: number, total: number): void {
 }
 
 /**
- * The input flags of an overlay. Every overlay is longer than the timeline
- * (`-t total+1`, looped), so that `eof_action=endall` ends the output when the
- * MAIN input ends, on the exact frame (SP1, SP3).
+ * The input flags of an overlay. A still is looped and made longer than the
+ * timeline (`-t total+1`), so that `eof_action=endall` ends the output when
+ * the MAIN input ends, on the exact frame (SP1, SP3).
+ *
+ * An animated overlay takes NO flags: the file is read once and its frames
+ * are looped in the graph (`overlayPrepare`). `-stream_loop -1` and
+ * `-ignore_loop` were measured, and both fail on APNG and GIF: the demuxer's
+ * duration is one frame short, so each loop restarts a frame early and eats a
+ * frame of the animation, and a file with a finite loop count ends the overlay
+ * (and with `endall`, the whole output).
  */
 function overlayInputArgs(o: OverlayInput, longSeconds: number): string[] {
-  const loop = o.animated ? ["-stream_loop", "-1"] : ["-loop", "1", "-framerate", String(FPS)];
-  return [...loop, "-t", String(longSeconds), "-i", o.path];
+  if (o.animated) return ["-i", o.path];
+  return ["-loop", "1", "-framerate", String(FPS), "-t", String(longSeconds), "-i", o.path];
 }
 
 /**
- * The chain that turns overlay input `inputIndex` into the RGBA-converted
- * stream `[s<k>]`: shifted to its start frame (an animated one is resampled to
- * 30 fps first, so its loop starts on the layer's first frame), optionally
- * resized, then converted to BT.709 limited range explicitly.
+ * The chain that turns overlay input `inputIndex` into the stream `[s<k>]`,
+ * shifted to its start frame and converted to BT.709 limited range with alpha
+ * (explicitly, never left to the auto scaler), optionally resized to its box.
+ *
+ * A still is shifted first and converted per frame. An animated one is
+ * resampled to 30 fps, converted once, looped forever from a cache of its own
+ * frames (the small yuva420p ones, at most `ANIMATED_LOOP_MAX_FRAMES`), and
+ * then numbered from its layer's first frame, so the loop starts there and
+ * every loop is the file's frames in order.
  */
-function overlayPrepare(o: OverlayInput, inputIndex: number, k: number): string {
-  const resample = o.animated ? `fps=${FPS},` : "";
+function overlayPrepare(o: OverlayInput, inputIndex: number, k: number, totalFrames: number): string {
   const resize = o.resize ? `scale=${o.box.w}:${o.box.h}:flags=lanczos,` : "";
-  return `[${inputIndex}:v]${resample}settb=1/${FPS},setpts=N+${o.startFrame},format=rgba,${resize}${OVERLAY_COLOUR_CHAIN}[s${k}]`;
+  const cut = spansTimeline(o, totalFrames) ? "" : `trim=end_frame=${o.endFrame - o.startFrame},`;
+  const shift = `settb=1/${FPS},setpts=N+${o.startFrame}`;
+  if (o.animated) {
+    return `[${inputIndex}:v]fps=${FPS},format=rgba,${resize}${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=${ANIMATED_LOOP_MAX_FRAMES},${cut}${shift}[s${k}]`;
+  }
+  return `[${inputIndex}:v]${cut}${shift},format=rgba,${resize}${OVERLAY_COLOUR_CHAIN}[s${k}]`;
 }
+
+/** A layer that covers every frame of the montage. */
+const spansTimeline = (o: OverlayInput, totalFrames: number): boolean => o.startFrame === 0 && o.endFrame === totalFrames;
+
+/**
+ * What `overlay` does when its overlay input ends (or, for one that spans the
+ * timeline, never does).
+ *
+ * - A layer that SPANS the timeline is not cut: its input is longer than the
+ *   timeline, and `endall` ends the output with the main input, on the exact
+ *   frame (SP1: 450 frames for 15 s).
+ * - A WINDOWED layer is cut to its own frames (`trim`) and the output goes on
+ *   with the main input when it ends: `pass`. The layer's window is the
+ *   overlay stream's own extent, so nothing depends on `overlay`'s `enable`
+ *   timeline, which was measured to drop the last frame (with `n`, the last
+ *   frame of the stream; with `t`, the last frame of the window).
+ *
+ * `endall` on a windowed layer would end the whole output at its end, so it is
+ * only for the spanning case.
+ */
+const overlayEofAction = (o: OverlayInput, totalFrames: number): string => (spansTimeline(o, totalFrames) ? "endall" : "pass");
 
 /** The audio chain, built to exactly `samples` samples. Only silence exists in 3a; music (3c) adds a variant and its input. */
 function audioChain(source: AudioSource, samples: number): string {
@@ -112,9 +154,8 @@ export function buildPass2(input: Pass2Input): Pass2Job {
   filters.push(`[0:v]${FRAME_TAGS}[${last < 0 ? "v" : "b0"}]`);
   input.overlays.forEach((o, k) => {
     const out = k === last ? "v" : `b${k + 1}`;
-    filters.push(overlayPrepare(o, k + 1, k));
-    const enable = quoteExpression(`between(n,${o.startFrame},${o.endFrame - 1})`);
-    filters.push(`[b${k}][s${k}]overlay=x=${o.box.x}:y=${o.box.y}:eof_action=endall:format=yuv420:enable=${enable}[${out}]`);
+    filters.push(overlayPrepare(o, k + 1, k, totalFrames));
+    filters.push(`[b${k}][s${k}]overlay=x=${o.box.x}:y=${o.box.y}:eof_action=${overlayEofAction(o, totalFrames)}:format=yuv420[${out}]`);
   });
   filters.push(audioChain(input.audio, audioSamples));
   const graph = filters.join(";");

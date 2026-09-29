@@ -4,7 +4,7 @@ import { mulberry32, randInt } from "../../shared/montage/random.testkit";
 import { randomSpec } from "../../shared/montage/specGen.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { assertSafeFilterGraph } from "./filterString";
-import { buildPass2 } from "./pass2";
+import { ANIMATED_LOOP_MAX_FRAMES, buildPass2 } from "./pass2";
 import { COLOUR_TAG_ARGS, CONTAINER_ARGS, FILTER_THREAD_ARGS, FINAL_AUDIO_ARGS, FINAL_VIDEO_ARGS, FRAME_TAGS, METADATA_ARGS, OVERLAY_COLOUR_CHAIN } from "./profile";
 import { RenderGraphError, type OverlayInput, type Pass2Input } from "./types";
 useNativeGlobals();
@@ -152,9 +152,15 @@ describe("buildPass2: overlays", () => {
     expect(optionsBeforeInput(job.argv, 1)).toEqual(["-loop", "1", "-framerate", "30", "-t", "9"]);
   });
 
-  test("loops an animated overlay by stream_loop and gives it the same over-long length", () => {
+  test("gives an animated overlay no input flags: the file is read once and looped inside the graph", () => {
     const job = build({ overlays: [still({ path: "/work/overlays/sticker.apng", animated: true })] });
-    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-stream_loop", "-1", "-t", "9"]);
+    expect(optionsBeforeInput(job.argv, 1)).toEqual([]);
+  });
+
+  test("never uses -stream_loop or -ignore_loop, whose loop timestamps are one frame short for APNG and GIF", () => {
+    const argv = build({ overlays: [still({ animated: true }), still()] }).argv;
+    expect(argv).not.toContain("-stream_loop");
+    expect(argv).not.toContain("-ignore_loop");
   });
 
   test("keeps overlay inputs in z-order after the list", () => {
@@ -170,19 +176,28 @@ describe("buildPass2: overlays", () => {
     expect(graph.split("out_color_matrix=bt709").length - 1).toBe(1);
   });
 
-  test("shifts the overlay to its start frame with settb and an integer setpts", () => {
-    const graph = graphOf(build({ overlays: [still({ startFrame: 30 })] }).argv);
-    expect(graph).toContain("[1:v]settb=1/30,setpts=N+30,format=rgba,");
+  test("cuts a windowed overlay to its length, then shifts it to its start frame with settb and an integer setpts", () => {
+    const graph = graphOf(build({ overlays: [still({ startFrame: 30, endFrame: 90 })] }).argv);
+    expect(graph).toContain("[1:v]trim=end_frame=60,settb=1/30,setpts=N+30,format=rgba,");
   });
 
-  test("resamples an animated overlay to 30 fps before shifting it, so its loop phase starts on the layer's first frame", () => {
-    const graph = graphOf(build({ overlays: [still({ animated: true, startFrame: 30 })] }).argv);
-    expect(graph).toContain("[1:v]fps=30,settb=1/30,setpts=N+30,format=rgba,");
+  test("resamples an animated overlay to 30 fps, converts it, loops its frames forever, cuts it to the layer's length and only then shifts it to its start frame, so its loop starts on the layer's first frame", () => {
+    const graph = graphOf(build({ overlays: [still({ animated: true, startFrame: 30, endFrame: 90 })] }).argv);
+    expect(graph).toContain(`[1:v]fps=30,format=rgba,${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=${ANIMATED_LOOP_MAX_FRAMES},trim=end_frame=60,settb=1/30,setpts=N+30[s0]`);
   });
 
-  test("overlays at the box's top-left, ending with the main input and visible for exactly [start, end)", () => {
+  test("caches at most a 10 s loop at 30 fps: 300 frames", () => {
+    expect(ANIMATED_LOOP_MAX_FRAMES).toBe(300);
+  });
+
+  test("converts an animated overlay before it caches its loop, so the cache holds the small yuva420p frames", () => {
+    const graph = graphOf(build({ overlays: [still({ animated: true })] }).argv);
+    expect(graph.indexOf("format=yuva420p")).toBeLessThan(graph.indexOf("loop=loop=-1"));
+  });
+
+  test("overlays a windowed layer at the box's top-left and lets the main input carry on when the layer ends", () => {
     const graph = graphOf(build({ overlays: [still({ box: { x: 100, y: 300, w: 880, h: 200 }, startFrame: 30, endFrame: 90 })] }).argv);
-    expect(graph).toContain("[b0][s0]overlay=x=100:y=300:eof_action=endall:format=yuv420:enable='between(n,30,89)'[v]");
+    expect(graph).toContain("[b0][s0]overlay=x=100:y=300:eof_action=pass:format=yuv420[v]");
   });
 
   test("does not scale a text PNG, which is already the size of its box", () => {
@@ -192,6 +207,26 @@ describe("buildPass2: overlays", () => {
   test("scales a sticker to its box before the colour conversion", () => {
     const graph = graphOf(build({ overlays: [still({ resize: true, box: { x: 10, y: 20, w: 216, h: 216 } })] }).argv);
     expect(graph).toContain(`format=rgba,scale=216:216:flags=lanczos,${OVERLAY_COLOUR_CHAIN}`);
+  });
+
+  test("cuts every windowed overlay to exactly end - start frames and starts it at its start frame, for 300 random windows", () => {
+    const rand = mulberry32(5);
+    for (let i = 0; i < 300; i++) {
+      const total = 3 * randInt(rand, 5, 150); // whole tenths of a second
+      const start = randInt(rand, 0, total - 1);
+      const end = randInt(rand, start + 1, total);
+      if (start === 0 && end === total) continue; // the whole timeline is the other case
+      const job = build({ clips: [{ clipId: "a", durationMs: (total / 3) * 100 }], overlays: [still({ startFrame: start, endFrame: end, box: { x: 0, y: 0, w: 10, h: 10 } })] });
+      const graph = graphOf(job.argv);
+      expect(graph).toContain(`trim=end_frame=${end - start},settb=1/30,setpts=N+${start},`);
+      expect(graph).toContain("eof_action=pass");
+    }
+  });
+
+  test("uses no timeline enable at all: with n or with t, ffmpeg drops the last frame of the window or of the stream", () => {
+    for (const [startFrame, endFrame] of [[30, 90], [0, 240], [60, 240]] as const) {
+      expect(graphOf(build({ overlays: [still({ startFrame, endFrame })] }).argv)).not.toContain("enable");
+    }
   });
 
   test("chains overlays in z-order, each on the result of the last, the last one labelled v", () => {
@@ -205,9 +240,24 @@ describe("buildPass2: overlays", () => {
     expect(graph).toContain("[v];anullsrc");
   });
 
-  test("a layer that spans the whole timeline is visible on every frame", () => {
-    const graph = graphOf(build({ overlays: [still({ startFrame: 0, endFrame: 240 })] }).argv);
-    expect(graph).toContain("enable='between(n,0,239)'");
+  test("a layer that spans the whole timeline is not cut: it is longer than the timeline and ends the output with the main input (SP1)", () => {
+    const job = build({ overlays: [still({ startFrame: 0, endFrame: 240 })] });
+    const graph = graphOf(job.argv);
+    expect(graph).toContain("eof_action=endall");
+    expect(graph).not.toContain("trim=end_frame");
+    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-loop", "1", "-framerate", "30", "-t", "9"]);
+  });
+
+  test("an animated layer that spans the whole timeline is looped without end and not cut", () => {
+    const graph = graphOf(build({ overlays: [still({ animated: true, startFrame: 0, endFrame: 240 })] }).argv);
+    expect(graph).toContain(`loop=loop=-1:size=${ANIMATED_LOOP_MAX_FRAMES},settb=1/30,setpts=N+0[s0]`);
+    expect(graph).toContain("eof_action=endall");
+  });
+
+  test("a layer that runs to the last frame but starts later is cut and lets the main input carry on, never ends with it", () => {
+    const graph = graphOf(build({ overlays: [still({ startFrame: 60, endFrame: 240 })] }).argv);
+    expect(graph).toContain("trim=end_frame=180,");
+    expect(graph).toContain("eof_action=pass");
   });
 
   test("still asks for no -t after the inputs and no -shortest with overlays present", () => {
