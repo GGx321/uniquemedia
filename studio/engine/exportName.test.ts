@@ -442,6 +442,39 @@ describe("PreparedFolder.fileIn", () => {
   test("accepts a backslash in a name on POSIX, where it is an ordinary character", async () => {
     expect((await folderIn(posix, "/")).fileIn("a\\b")).toBe("/export/Mia/a\\b");
   });
+
+  test.each([
+    "a.",
+    "a ",
+    "a:b",
+    "a\u0001b",
+    "a\u001fb",
+    'a"b',
+    "a<b",
+    "a>b",
+    "a|b",
+    "a?b",
+    "a*b",
+    "CON",
+    "con.mp4",
+    "Nul.tar.gz",
+    "COM1",
+    "lpt9.txt",
+    "aux .mp4",
+  ])("refuses %p on Windows, where Windows would rename it, read it as a stream or open a device", async (name) => {
+    const folder = await folderIn(win32, "C:\\");
+    expect(() => folder.fileIn(name)).toThrow();
+  });
+
+  test.each(["2026-09-29_photo_001.mp4", "a b.mp4", "console.mp4", "com10.mp4", "a.b.mp4"])("accepts %p on Windows", async (name) => {
+    const folder = await folderIn(win32, "C:\\");
+    expect(folder.fileIn(name)).toBe(`C:\\export\\Mia\\${name}`);
+  });
+
+  test.each(["a.", "a ", "a:b", "CON", "con.mp4", "a\u0001b"])("keeps %p legal on POSIX", async (name) => {
+    const folder = await folderIn(posix, "/");
+    expect(folder.fileIn(name)).toBe(`/export/Mia/${name}`);
+  });
 });
 
 describe("prepareExportFolder with Windows path spellings", () => {

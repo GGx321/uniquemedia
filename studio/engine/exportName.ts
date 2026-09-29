@@ -1,7 +1,7 @@
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import * as nodePath from "node:path";
 import type { PathFlavour } from "./pathFlavour";
-import { isSafeName, RelativePath, VideoKindToken, type ExportUnavailableReason } from "../shared/engine";
+import { isSafeName, isWindowsDeviceName, RelativePath, VideoKindToken, type ExportUnavailableReason } from "../shared/engine";
 import { hasErrorCode } from "./library/durableFs";
 
 // How a rendered video is named inside the export folder (Stage 3 plan,
@@ -152,6 +152,16 @@ export const NODE_EXPORT_FOLDER_FS: ExportFolderFs = {
   realpath: (path) => realpath(path),
 };
 
+/**
+ * Whether Windows would keep `name` as written: no trailing dot or space (it strips them), none of `<>:"|?*`
+ * or a control character (`:` opens an alternate data stream), and not a reserved device name, which Windows
+ * also reads through an extension (`con.mp4` is the console).
+ */
+function isPlainWindowsFileName(name: string): boolean {
+  if (/[<>:"|?*\u0000-\u001f]/.test(name) || /[. ]$/.test(name)) return false;
+  return !isWindowsDeviceName(name.split(".")[0]?.trimEnd() ?? "");
+}
+
 /** Held only by this module: nothing outside can name it, so nothing outside can build a `PreparedFolder`. */
 const ISSUE = Symbol("prepared export folder");
 
@@ -182,6 +192,9 @@ export class PreparedFolder {
   fileIn(fileName: string): string {
     if (fileName === "" || fileName === "." || fileName === ".." || fileName.includes("/") || this.#api.basename(fileName) !== fileName) {
       throw new Error("a file name inside the export folder must be one plain name");
+    }
+    if (this.#api.sep === "\\" && !isPlainWindowsFileName(fileName)) {
+      throw new Error("a file name inside the export folder must be a name Windows keeps as written");
     }
     return this.#api.join(this.path, fileName);
   }
