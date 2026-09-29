@@ -11,7 +11,7 @@ useNativeGlobals();
 // used index could not take it. DECISION: the record on disk is the truth, so the
 // job still ends `done` (this function never throws); the index heals from the
 // disk at once (`reloadVideoRecords`), and if even that fails the avatar is
-// closed (fail-closed, `log-needs-repair`) until a reload or the next open reads
+// closed (fail-closed, `index-stale`) until a reload or the next open reads
 // the record. What must never happen is the third state: the photos of a video
 // that exists looking free, so that a second video could reuse them.
 
@@ -57,12 +57,12 @@ describe("indexCommittedRecord", () => {
     expect(logs.join("\n")).toContain(record.id);
   });
 
-  test("when the reload fails too, the avatar is closed: its photos are not offered as free, and its usage reads log-needs-repair", async () => {
+  test("when the reload fails too, the avatar is closed: its photos are not offered as free, and its usage reads index-stale", async () => {
     const w = world();
     const record = await committedRecord(w);
     const outcome = await indexCommittedRecord(port(w.library, { addVideoRecordToIndex: throws, reloadVideoRecords: () => Promise.reject(new Error("disk")) }), record, () => undefined);
     expect(outcome).toBe("flagged");
-    expect(() => w.library.eligibleUnusedPhotos(w.avatar.id)).toThrow(expect.objectContaining({ code: "log-needs-repair" }));
+    expect(() => w.library.eligibleUnusedPhotos(w.avatar.id)).toThrow(expect.objectContaining({ code: "index-stale" }));
     expect(w.library.eligibleUnusedCount(w.avatar.id)).toBe(0);
   });
 

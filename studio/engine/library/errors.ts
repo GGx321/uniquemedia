@@ -15,6 +15,7 @@ export type LibraryErrorCode =
   | "invalid-run-plan"
   | "corrupt-log"
   | "log-needs-repair"
+  | "index-stale"
   | "reference-corrupt";
 
 export class LibraryError extends Error {

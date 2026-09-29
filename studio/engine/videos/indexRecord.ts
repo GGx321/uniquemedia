@@ -13,7 +13,8 @@ import { scenePhotoIds, type VideoRecord } from "./record";
 //   1. add the record to the index (in memory, the normal way);
 //   2. if that throws, rebuild the avatar's index from the disk at once;
 //   3. if that fails too, close the avatar (`flagVideoIndexStale`): its usage reads
-//      `log-needs-repair` until a reload or the next open reads the record.
+//      `index-stale` (no record is broken, nothing may be "repaired") until a reload or
+//      the next open reads the record.
 // Each failure is logged by kind only (never a path). The one thing that must not
 // happen is a video on disk whose photos are offered as free.
 

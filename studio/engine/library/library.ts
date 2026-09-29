@@ -33,7 +33,6 @@ import {
   REFUSED_IMPORTS_FILE,
   RUNS_DIR,
   THUMBS_DIR,
-  VIDEOS_DIR,
   REJECTED_FILE,
   isFromNewerVersion,
   LIBRARY_FILE_SCHEMA_VERSION,
@@ -192,6 +191,8 @@ export class Library {
   readonly #videosByAvatar = new Map<string, VideoRecordUse[]>();
   /** Avatars with a file in videos/ that is not a usable record, with the reason: their usage cannot be trusted. */
   readonly #videoProblems = new Map<string, VideoRecordProblem[]>();
+  /** Avatars whose used index missed a video that IS committed on disk (the commit's index update and its reload both failed), with those videos. */
+  readonly #videoIndexStale = new Map<string, Set<string>>();
   /** Bumped by every incremental index change, so a reload that read the folder before it knows to read again. */
   readonly #videoGeneration = new Map<string, number>();
   readonly #beforeReadVideoRecord: ((path: string) => void | Promise<void>) | undefined;
@@ -697,6 +698,8 @@ export class Library {
     }
     const newer = found.find((p) => p.reason === "too-new");
     if (newer !== undefined) return new LibraryError("library-too-new", `a video record of avatar ${avatarId} was written by a newer version of Studio (${newer.file}); update the app`);
+    const stale = this.#videoIndexStale.get(avatarId);
+    if (stale !== undefined && stale.size > 0) return new LibraryError("index-stale", `the used index of avatar ${avatarId} is behind its committed videos (${[...stale].sort().join(", ")}); it is rebuilt when the records are read again`);
     const first = found[0];
     if (first !== undefined) return new LibraryError("log-needs-repair", `the video records of avatar ${avatarId} need repair: ${first.file}: ${first.detail}`);
     const marks = this.#brokenRejectLogs.get(avatarId);
@@ -748,6 +751,7 @@ export class Library {
         const read = await readVideoRecords(this.#avatarDir(avatarId), avatarId, { beforeRead: this.#beforeReadVideoRecord });
         if ((this.#videoGeneration.get(avatarId) ?? 0) !== generation) continue;
         this.#videosByAvatar.set(avatarId, read.records);
+        this.#videoIndexStale.delete(avatarId); // the disk has just been read: the index is in step again
         if (read.problems.length === 0) this.#videoProblems.delete(avatarId);
         else this.#videoProblems.set(avatarId, read.problems);
         return;
@@ -772,12 +776,17 @@ export class Library {
    * Task 3a.8b.1: a video's record is committed on disk but the in-memory index could not take it and
    * could not be rebuilt either. The avatar's usage can no longer be trusted: its photos might look
    * free while a video shows them, so it closes like any other unreadable record
-   * (`eligibleUnusedPhotos` throws `log-needs-repair`, the count is 0) until a reload or the next open
-   * reads the record from disk, which clears it. Never throws.
+   * (`eligibleUnusedPhotos` throws `index-stale`, the count is 0) until a reload or the next open
+   * reads the record from disk, which clears it. It has a reason of its own (not `log-needs-repair`):
+   * no record is broken, so nothing may be quarantined or "repaired" because of it. Never throws.
    */
   flagVideoIndexStale(avatarId: string, videoId: string): void {
-    const problem: VideoRecordProblem = { file: `${VIDEOS_DIR}/${videoId}.json`, reason: "unreadable", detail: "is committed on disk but is not in the used index" };
-    this.#videoProblems.set(avatarId, [...(this.#videoProblems.get(avatarId) ?? []), problem]);
+    this.#videoIndexStale.set(avatarId, new Set([...(this.#videoIndexStale.get(avatarId) ?? []), videoId]));
+  }
+
+  /** The committed videos the used index of `avatarId` is known to have missed (empty when it is in step). Not a broken record: nothing on disk needs repair, the index only needs to read it. */
+  videoIndexStale(avatarId: string): string[] {
+    return [...(this.#videoIndexStale.get(avatarId) ?? [])].sort();
   }
 
   /** Task 3a.8b's delete: the record is gone from disk, so its photos are freed. An unknown record changes nothing. */

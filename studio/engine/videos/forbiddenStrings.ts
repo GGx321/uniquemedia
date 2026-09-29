@@ -45,22 +45,30 @@ function isEngineText(lower: string): boolean {
 }
 
 /**
- * Turns candidate texts into the list for `verifyRenderedMp4`: trimmed, at least
- * 8 characters, at least 4 distinct characters, no control character, none of the
- * engine's own text (in any letter case, whole or in part), cut to 256 characters,
+ * The one rule for a candidate: trimmed, at least 8 characters, at least 4 distinct characters, no control
+ * character, none of the engine's own text (in any letter case, whole or in part), cut to 256 characters.
+ * Null when it is not a usable forbidden string. Applied where the text is READ, so a hostile photo cannot make
+ * the reader build millions of strings only for the builder to throw them away.
+ */
+export function forbiddenCandidate(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed.length < FORBIDDEN_STRING_MIN_LENGTH || CONTROL_CHARACTER.test(trimmed)) return null;
+  const chars = Array.from(trimmed);
+  if (chars.length < FORBIDDEN_STRING_MIN_LENGTH || new Set(chars).size < MIN_DISTINCT_CHARS) return null;
+  if (isEngineText(trimmed.toLowerCase())) return null;
+  return chars.length > MAX_STRING_CHARS ? chars.slice(0, MAX_STRING_CHARS).join("") : trimmed;
+}
+
+/**
+ * Turns candidate texts into the list for `verifyRenderedMp4`: each through `forbiddenCandidate`,
  * deduplicated in first-seen order, and at most 32.
  */
 export function buildForbiddenStrings(candidates: Iterable<string>): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const candidate of candidates) {
-    const trimmed = candidate.trim();
-    if (CONTROL_CHARACTER.test(trimmed)) continue;
-    const chars = Array.from(trimmed);
-    if (chars.length < FORBIDDEN_STRING_MIN_LENGTH || new Set(chars).size < MIN_DISTINCT_CHARS) continue;
-    if (isEngineText(trimmed.toLowerCase())) continue;
-    const text = chars.length > MAX_STRING_CHARS ? chars.slice(0, MAX_STRING_CHARS).join("") : trimmed;
-    if (seen.has(text)) continue;
+    const text = forbiddenCandidate(candidate);
+    if (text === null || seen.has(text)) continue;
     seen.add(text);
     out.push(text);
     if (out.length === MAX_STRINGS) break;
@@ -74,14 +82,44 @@ const u16 = (b: Uint8Array, at: number, le: boolean): number | undefined => (at 
 const u32 = (b: Uint8Array, at: number, le: boolean): number | undefined => (at >= 0 && at + 4 <= b.length ? new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(at, le) : undefined);
 const ascii = (b: Uint8Array, at: number, length: number): string => (at >= 0 && at + length <= b.length ? Buffer.from(b.buffer, b.byteOffset + at, length).toString("latin1") : "");
 
-/** A text field's bytes as the strings a video could carry them as: UTF-8 and Latin-1 (the same for ASCII), split at NUL. */
-function textVariants(field: Uint8Array): string[] {
-  const out: string[] = [];
-  for (const encoding of ["utf8", "latin1"] as const) {
-    const text = Buffer.from(field.buffer, field.byteOffset, field.byteLength).toString(encoding);
-    for (const piece of text.split("\u0000")) if (piece !== "" && !piece.includes("�")) out.push(piece);
+/** At most this many usable candidates are taken from all the photos of one render, and this many text fields read. */
+const MAX_CANDIDATES = 4096;
+const MAX_FIELDS = 4096;
+
+/** Collects usable candidates, each once, and says when it has had enough. Nothing reads on after `full`. */
+class Collector {
+  readonly out: string[] = [];
+  readonly #seen = new Set<string>();
+  readonly #fields = new Set<string>();
+  #fieldReads = 0;
+
+  get full(): boolean {
+    return this.out.length >= MAX_CANDIDATES || this.#fieldReads >= MAX_FIELDS;
   }
-  return [...new Set(out)];
+
+  /** A field (`source` names the segment or chunk, `at`/`length` the place in it) is read once, however many entries point at it. */
+  firstRead(source: number, at: number, length: number): boolean {
+    const key = `${source}:${at}:${length}`;
+    if (this.#fields.has(key)) return false;
+    this.#fields.add(key);
+    this.#fieldReads++;
+    return true;
+  }
+
+  /** A text field's bytes as the strings a video could carry them as: UTF-8 and Latin-1 (the same for ASCII), split at NUL. */
+  addField(field: Uint8Array): void {
+    for (const encoding of ["utf8", "latin1"] as const) {
+      const text = Buffer.from(field.buffer, field.byteOffset, field.byteLength).toString(encoding);
+      for (const piece of text.split("\u0000")) {
+        if (this.full) return;
+        if (piece.includes("\uFFFD")) continue;
+        const candidate = forbiddenCandidate(piece);
+        if (candidate === null || this.#seen.has(candidate)) continue;
+        this.#seen.add(candidate);
+        this.out.push(candidate);
+      }
+    }
+  }
 }
 
 /** EXIF IFD0 tags whose text a photographer or an editor typed: ImageDescription, Software, Artist, Copyright. */
@@ -91,48 +129,43 @@ const MAX_FIELD_BYTES = 4096;
 const MAX_JPEG_SEGMENTS = 64;
 const MAX_PNG_CHUNKS = 1000;
 
-function exifStrings(tiff: Uint8Array): string[] {
+function readExif(tiff: Uint8Array, source: number, collector: Collector): void {
   const order = ascii(tiff, 0, 2);
-  if (order !== "II" && order !== "MM") return [];
+  if (order !== "II" && order !== "MM") return;
   const le = order === "II";
-  if (u16(tiff, 2, le) !== 42) return [];
+  if (u16(tiff, 2, le) !== 42) return;
   const ifd = u32(tiff, 4, le);
   const count = ifd === undefined ? undefined : u16(tiff, ifd, le);
-  if (ifd === undefined || count === undefined) return [];
-  const out: string[] = [];
-  for (let i = 0; i < Math.min(count, MAX_IFD_ENTRIES); i++) {
+  if (ifd === undefined || count === undefined) return;
+  for (let i = 0; i < Math.min(count, MAX_IFD_ENTRIES) && !collector.full; i++) {
     const entry = ifd + 2 + i * 12;
     const tag = u16(tiff, entry, le);
     const type = u16(tiff, entry + 2, le);
     const length = u32(tiff, entry + 4, le);
     if (tag === undefined || type !== 2 || length === undefined || !EXIF_TEXT_TAGS.has(tag) || length > MAX_FIELD_BYTES) continue;
     const at = length <= 4 ? entry + 8 : u32(tiff, entry + 8, le);
-    if (at === undefined || at + length > tiff.length) continue;
-    out.push(...textVariants(tiff.subarray(at, at + length)));
+    if (at === undefined || at + length > tiff.length || !collector.firstRead(source, at, length)) continue;
+    collector.addField(tiff.subarray(at, at + length));
   }
-  return out;
 }
 
-function jpegStrings(bytes: Uint8Array): string[] {
-  const out: string[] = [];
+function readJpeg(bytes: Uint8Array, collector: Collector): void {
   let at = 2;
-  for (let segments = 0; segments < MAX_JPEG_SEGMENTS && bytes[at] === 0xff; segments++) {
+  for (let segments = 0; segments < MAX_JPEG_SEGMENTS && bytes[at] === 0xff && !collector.full; segments++) {
     const marker = bytes[at + 1];
     if (marker === undefined || marker === 0xda || marker === 0xd9) break;
     const length = u16(bytes, at + 2, false);
     if (length === undefined || length < 2) break;
-    if (marker === 0xe1 && ascii(bytes, at + 4, 6) === "Exif\u0000\u0000") out.push(...exifStrings(bytes.subarray(at + 10, at + 2 + length)));
+    if (marker === 0xe1 && ascii(bytes, at + 4, 6) === "Exif\u0000\u0000") readExif(bytes.subarray(at + 10, at + 2 + length), segments, collector);
     at += 2 + length;
   }
-  return out;
 }
 
 const PNG_TEXT_KEYWORDS = new Set(["Author", "Copyright", "Description", "Comment"]);
 
-function pngStrings(bytes: Uint8Array): string[] {
-  const out: string[] = [];
+function readPng(bytes: Uint8Array, collector: Collector): void {
   let at = 8;
-  for (let chunks = 0; chunks < MAX_PNG_CHUNKS; chunks++) {
+  for (let chunks = 0; chunks < MAX_PNG_CHUNKS && !collector.full; chunks++) {
     const length = u32(bytes, at, false);
     if (length === undefined || at + 12 + length > bytes.length) break;
     const type = ascii(bytes, at + 4, 4);
@@ -142,31 +175,35 @@ function pngStrings(bytes: Uint8Array): string[] {
       const nul = body.indexOf(0);
       const keyword = nul < 0 ? "" : ascii(body, 0, nul);
       if (PNG_TEXT_KEYWORDS.has(keyword)) {
-        if (type === "tEXt") out.push(...textVariants(body.subarray(nul + 1)));
+        if (type === "tEXt") collector.addField(body.subarray(nul + 1));
         // iTXt: flag, method, language tag, translated keyword, then the text; only an uncompressed one is read.
         else if (body[nul + 1] === 0) {
           const langEnd = body.indexOf(0, nul + 3);
           const translatedEnd = langEnd < 0 ? -1 : body.indexOf(0, langEnd + 1);
-          if (translatedEnd >= 0) out.push(...textVariants(body.subarray(translatedEnd + 1)));
+          if (translatedEnd >= 0) collector.addField(body.subarray(translatedEnd + 1));
         }
       }
     }
     at += 12 + length;
   }
-  return out;
+}
+
+function readPhoto(bytes: Uint8Array, collector: Collector): void {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) readJpeg(bytes, collector);
+  else if (ascii(bytes, 0, 8) === "\u0089PNG\r\n\u001a\n") readPng(bytes, collector);
 }
 
 /**
- * The text a photo's own bytes carry that a video must not repeat: a JPEG's EXIF
- * (ImageDescription, Software, Artist, Copyright) or a PNG's text chunks (Author,
- * Copyright, Description, Comment). Every read is bounds-checked, so bytes of no
- * known kind, or a damaged header, give an empty list rather than an error. XMP
- * text is not read here: the verifier refuses any XMP packet, whatever it says.
+ * The USABLE text a photo's own bytes carry that a video must not repeat (each candidate passed `forbiddenCandidate`,
+ * each once): a JPEG's EXIF (ImageDescription, Software, Artist, Copyright) or a PNG's text chunks (Author, Copyright,
+ * Description, Comment). Every read is bounds-checked, so bytes of no known kind, or a damaged header, give an empty
+ * list rather than an error. It is BOUNDED against a hostile photo: a field many entries point at is read once, and
+ * at most 4096 fields and 4096 candidates are taken. XMP text is not read here: the verifier refuses any XMP packet.
  */
 export function photoMetadataStrings(bytes: Uint8Array): string[] {
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) return jpegStrings(bytes);
-  if (ascii(bytes, 0, 8) === "\u0089PNG\r\n\u001a\n") return pngStrings(bytes);
-  return [];
+  const collector = new Collector();
+  readPhoto(bytes, collector);
+  return collector.out;
 }
 
 /**
@@ -175,8 +212,11 @@ export function photoMetadataStrings(bytes: Uint8Array): string[] {
  * (`Library.readPhotoVerified`); a photo that cannot be read rejects, because its
  * text would otherwise go unchecked.
  */
-export async function collectForbiddenStrings(readPhoto: (photoId: string) => Promise<Uint8Array>, photoIds: readonly string[]): Promise<string[]> {
-  const found: string[] = [];
-  for (const photoId of photoIds) found.push(...photoMetadataStrings(await readPhoto(photoId)));
-  return buildForbiddenStrings(found);
+export async function collectForbiddenStrings(readPhoto_: (photoId: string) => Promise<Uint8Array>, photoIds: readonly string[]): Promise<string[]> {
+  const collector = new Collector();
+  for (const photoId of photoIds) {
+    if (collector.full) break;
+    readPhoto(await readPhoto_(photoId), collector);
+  }
+  return buildForbiddenStrings(collector.out);
 }

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { BUILTIN_MARKERS, forbiddenCode, UUID_PAYLOAD_HEAD_BYTES } from "./allowlist";
 import { Findings, MOOV_MAX_BYTES, MOOV_SCHEMA, readAt, TOP_LEVEL_ALLOWED, walkNested, walkTopLevel, type TopBox } from "./boxes";
@@ -18,7 +19,8 @@ import { MAX_OUTPUT_BYTES, MIN_FORBIDDEN_STRING_BYTES, VerifyIoError, type Verif
 /** Opens the file, so that the size and the reads all come from one handle (nothing can swap the file between them). */
 async function openFile(path: string): Promise<FileHandle> {
   try {
-    return await open(path, "r");
+    // O_NOFOLLOW: a symlink swapped in for the temp is refused (ELOOP), not followed; O_NONBLOCK: a FIFO cannot hang the open (the handle is checked to be a regular file next).
+    return await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   } catch (cause) {
     const code = cause instanceof Error ? Reflect.get(cause, "code") : undefined;
     throw new VerifyIoError(code === "ENOENT" ? "not_found" : "read_failed", path, { cause });
