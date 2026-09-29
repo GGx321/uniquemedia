@@ -36,6 +36,11 @@ export function latin1Bytes(text: string): Uint8Array {
   return Uint8Array.from(Buffer.from(text, "latin1"));
 }
 
+/** Every character outside printable ASCII as `\xNN` (or `\uNNNN` above 255), so nothing from a file can steer a terminal or a log. */
+export function escapeControl(text: string): string {
+  return text.replace(/[^\x20-\x7e]/g, (c) => (c.charCodeAt(0) > 255 ? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}` : `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`));
+}
+
 /** How much of a file value a message may quote. */
 export const QUOTE_MAX_CHARS = 32;
 
@@ -45,6 +50,6 @@ export const QUOTE_MAX_CHARS = 32;
  * the true length when it was cut. Never the whole value.
  */
 export function quote(value: string): string {
-  const shown = value.slice(0, QUOTE_MAX_CHARS).replace(/[^\x20-\x7e]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
+  const shown = escapeControl(value.slice(0, QUOTE_MAX_CHARS));
   return value.length > QUOTE_MAX_CHARS ? `"${shown}"... (${value.length} chars)` : `"${shown}"`;
 }

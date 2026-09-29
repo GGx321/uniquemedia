@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { forbiddenCode, UUID_PAYLOAD_HEAD_BYTES } from "./allowlist";
-import { latin1, quote } from "./reader";
+import { escapeControl, latin1, quote } from "./reader";
 import { VerifyIoError, type VerifyReason, type VerifyReasonCode } from "./types";
 
 // A bounded, defensive ISO-BMFF box walker for the output verifier. It never
@@ -46,8 +46,8 @@ export class Findings {
   readonly list: VerifyReason[] = [];
 
   constructor(masks: readonly string[] = []) {
-    // A mask is matched as written and as the Latin-1 reading of its UTF-8 bytes (what `latin1()` shows for non-ASCII text).
-    this.masks = masks.flatMap((m) => (m === "" ? [] : [m, Buffer.from(m, "utf8").toString("latin1")]));
+    // A mask is matched as written and as the Latin-1 reading of its UTF-8, UTF-16LE and UTF-16BE bytes (what `latin1()` shows of a value stored in those forms).
+    this.masks = masks.flatMap((m) => (m === "" ? [] : [m, ...[Buffer.from(m, "utf8"), Buffer.from(m, "utf16le"), Buffer.from(m, "utf16le").swap16()].map((b) => b.toString("latin1"))]));
   }
 
   private mask(text: string): string {
@@ -60,11 +60,11 @@ export class Findings {
   }
 
   add(code: VerifyReasonCode, rawMessage: string, path?: string): void {
-    const message = this.mask(rawMessage);
+    const message = escapeControl(this.mask(rawMessage));
     const key = `${code}\u0000${path ?? ""}\u0000${message}`;
     if (this.seen.has(key)) return;
     this.seen.add(key);
-    this.list.push(path === undefined ? { code, message } : { code, message, path });
+    this.list.push(path === undefined ? { code, message } : { code, message, path: escapeControl(path) });
   }
 }
 

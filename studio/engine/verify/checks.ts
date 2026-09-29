@@ -26,7 +26,7 @@ function sizeIs(findings: Findings, box: Mp4Box, ...sizes: number[]): boolean {
 
 /** Pins `bytes[box.start + from, box.start + to)` to zero. */
 function zeroed(findings: Findings, bytes: Uint8Array, box: Mp4Box, from: number, to: number, what: string): void {
-  if (bytes.subarray(box.start + from, box.start + to).some((b) => b !== 0)) notCanonical(findings, box, `${what} is not zero`);
+  if (bytes.subarray(box.start + from, box.start + to).some((b) => b !== 0)) notCanonical(findings, box, `${what} must be zero`);
 }
 
 /** Pins the bytes at `box.start + from` to `expected`. */

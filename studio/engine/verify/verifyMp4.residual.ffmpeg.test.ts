@@ -71,6 +71,45 @@ describe("a second copy of a container or a table is DUPLICATE_BOX", () => {
   });
 });
 
+describe("messages are safe to log", () => {
+  const SENTINEL = "SENTINEL-ARTIST";
+  const withHandlerName = (name: Uint8Array): Uint8Array => {
+    const hdlr = locate(fx.bytes, "moov/trak/mdia/hdlr");
+    return spliceInside(fx.bytes, hdlr, hdlr.start + 32, 13, concat(name, new Uint8Array(1)));
+  };
+  /** Every message and path of a result, joined. */
+  const everything = (r: VerifyResult): string => (r.ok ? "" : r.reasons.map((x) => `${x.message}\n${x.path ?? ""}`).join("\n"));
+
+  test.each([["UTF-16LE", (s: string) => Uint8Array.from(Buffer.from(s, "utf16le"))], ["UTF-16BE", (s: string) => Uint8Array.from(Buffer.from(s, "utf16le").swap16())]] as const)("a caller string stored as %s in a handler name is masked", async (_name, encode) => {
+    const r = await run("mask-utf16.mp4", withHandlerName(encode(SENTINEL)), { ...EXPECTED, forbiddenStrings: [SENTINEL] });
+    expect(codesOf(r)).toContain("METADATA_VALUE_NOT_ALLOWED");
+    expect(everything(r)).toContain("[caller string]");
+    expect(everything(r)).not.toMatch(/S(\\x00|\u0000)?E(\\x00|\u0000)?N/);
+  });
+
+  test("a box type of control characters is escaped in messages and paths, at the top level and inside moov", async () => {
+    const type = "\u0007\u001b[3";
+    for (const bytes of [concat(fx.bytes, makeBox(type)), appendChild(fx.bytes, "moov", makeBox(type))]) {
+      const r = await run("control-type.mp4", bytes);
+      expect(codesOf(r)).toContain("UNKNOWN_BOX");
+      expect(everything(r).replace(/\n/g, "")).toMatch(/^[\x20-\x7e]*$/);
+      expect(everything(r)).toContain("\\x1b");
+    }
+  });
+
+  test("a non-ASCII box type (a copyright sign) is escaped too", async () => {
+    const r = await run("latin-type.mp4", concat(fx.bytes, makeBox("©abc")));
+    expect(everything(r).replace(/\n/g, "")).toMatch(/^[\x20-\x7e]*$/);
+  });
+
+  test("a reserved-field reason reads 'must be zero', not 'is not zero'", async () => {
+    const hdlr = locate(fx.bytes, "moov/trak/mdia/hdlr");
+    const r = await run("grammar.mp4", patched(fx.bytes, (b) => b.set(ascii("JaneDoe12345"), hdlr.start + 20)));
+    expect(everything(r)).toContain("the reserved bytes must be zero");
+    expect(everything(r)).not.toContain("bytes is not zero");
+  });
+});
+
 describe("sample-table types the engine never writes are refused, and the two it writes are pinned", () => {
   test.each(["sdtp", "cslg", "stps", "co64"])("a %s box with text fragments in the video stbl is UNKNOWN_BOX", async (type) => {
     const box = makeBox(type, concat(new Uint8Array(4), FRAGMENTS));
