@@ -41,8 +41,10 @@ export interface RemainingPlan {
    * writer runs first) plus the cheapest next attempt of an open slot (a
    * slot next on the Seedream fallback costs that; every attempt carries its
    * age check when the run has them). Null when nothing is left to send, or
-   * when a writer chunk has no attempts left (it cannot be answered, whatever
-   * the cap): a resume then only closes slots and costs nothing. A run whose cap room is
+   * when the first unwritten writer chunk has no attempts left (it cannot be
+   * answered, whatever the cap): a resume then only closes slots and costs
+   * nothing. (A blocked chunk after a writable one leaves the writable ones to
+   * be paid for, and no image.) A run whose cap room is
    * below it can never spend again — only be refused (RUN_CAP_EXCEEDED) — so
    * `runs.list` reports it ended rather than resumable forever.
    */
@@ -70,7 +72,29 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   let worst = 0;
   let expected = 0;
   let cheapestSlotAttempt: number | null = null;
-  for (const slot of state.slots) {
+
+  // The writer phase runs first, chunk by chunk in order, and the first chunk out of attempts ends it: no later chunk is
+  // asked, no image is requested. So the chunks BEFORE the blocked one are still paid for (a crash left them writable).
+  const writer = { ...WRITER_CALL, model: plan.models.text };
+  const writerCeiling = book.chatWorstCase({ model: writer.model, maxTokens: writer.maxTokens, inputTokens: writer.inputTokens, images: writer.images });
+  let unwrittenSlots = 0;
+  let writerPending = false;
+  let writerBlocked = false;
+  for (const chunk of plan.writerChunks) {
+    if (state.writerDone.has(chunk.chunk)) continue;
+    const answered = chunk.attemptIds.filter((id) => attemptPaid(ledger, id)).length;
+    const unused = chunk.attemptIds.filter((id) => ledger.reserveOf(id) === undefined).length;
+    const attempts = Math.min(Math.max(0, writer.maxAttempts - answered), unused);
+    if (attempts <= 0) {
+      writerBlocked = true;
+      break;
+    }
+    worst += attempts * writerCeiling;
+    writerPending = true;
+    unwrittenSlots += chunk.slotIndexes.length;
+  }
+
+  for (const slot of writerBlocked ? [] : state.slots) {
     if (slot.end !== null || slot.fallbackUsed) continue; // a used fallback: the slot closes on resume without an attempt
     // Its paid attempts left (invariant 7), never more than its unused ids.
     const unused = slot.attemptIds.filter((id) => !slot.consumed.has(id)).length;
@@ -88,21 +112,6 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
     cheapestSlotAttempt = Math.min(cheapestSlotAttempt ?? Infinity, imageWorst(book, primary) + ageWorst);
   }
 
-  const writer = { ...WRITER_CALL, model: plan.models.text };
-  const writerCeiling = book.chatWorstCase({ model: writer.model, maxTokens: writer.maxTokens, inputTokens: writer.inputTokens, images: writer.images });
-  let unwrittenSlots = 0;
-  let writerPending = false;
-  let writerBlocked = false;
-  for (const chunk of plan.writerChunks) {
-    if (state.writerDone.has(chunk.chunk)) continue;
-    const answered = chunk.attemptIds.filter((id) => attemptPaid(ledger, id)).length;
-    const unused = chunk.attemptIds.filter((id) => ledger.reserveOf(id) === undefined).length;
-    const attempts = Math.min(Math.max(0, writer.maxAttempts - answered), unused);
-    worst += attempts * writerCeiling;
-    if (attempts > 0) writerPending = true;
-    else writerBlocked = true;
-    unwrittenSlots += chunk.slotIndexes.length;
-  }
   if (unwrittenSlots > 0) {
     expected += book.chatCost({
       model: writer.model,
@@ -113,14 +122,15 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   }
 
   const capRoom = Math.max(0, plan.capMicros - committedMicros);
-  // A chunk out of writer attempts can never be answered: a resume only closes its slots, for free, so it is priced at
-  // nothing (the owner is not asked to accept the open slots' worst case, and no month budget can refuse it).
-  const worstMicros = writerBlocked ? 0 : Math.min(capRoom, worst);
+  // When the FIRST unwritten chunk is out of writer attempts nothing is asked at all: a resume only closes the slots,
+  // for free, so `worst` is 0 (the owner is not asked to accept the open slots' worst case, and no month budget can
+  // refuse it). A blocked chunk further on leaves the chunks before it to be paid for, and no image after them.
+  const worstMicros = Math.min(capRoom, worst);
   const needed = (writerPending ? writerCeiling : 0) + (cheapestSlotAttempt ?? 0);
   return {
     estimate: { expectedMicros: Math.min(expected, worstMicros), worstMicros, prices: book.source, pricesAsOf: priced.asOf },
-    // A chunk out of writer attempts can never be answered, so its slots are not held back by the cap: nothing the cap
-    // could fund gets them going, and a resume can only close them (after a crash, say). Not «cap exhausted».
-    minToProgressMicros: needed === 0 || writerBlocked ? null : needed,
+    // A first chunk out of writer attempts can never be answered, so its slots are not held back by the cap: nothing the
+    // cap could fund gets them going, and a resume can only close them (after a crash, say). Not «cap exhausted».
+    minToProgressMicros: needed === 0 ? null : needed,
   };
 }

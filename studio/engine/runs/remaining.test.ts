@@ -131,6 +131,35 @@ describe("remainingPlan's minToProgressMicros", () => {
     expect(plan.estimate).toMatchObject({ worstMicros: 0, expectedMicros: 0 });
   });
 
+  // The writer phase asks chunks in order and the first one that cannot be written ends it: a writable chunk BEFORE the
+  // blocked one is still paid for, so the resume is not free, and no image is ever asked for after that end.
+  describe("with two writer chunks (26 slots: 25 + 1)", () => {
+    const settledChunk = (run: RunPlan, chunkIndex: number) => {
+      const ids = run.writerChunks[chunkIndex]?.attemptIds ?? [];
+      return { reserves: ids.map((id) => reserve(id, "x-ai/grok-4.3", WRITER_WORST)), closes: ids.map((id): SettleLine => ({ type: "settle", attemptId: id, costMicros: 1_000, estimated: false, at: AT })) };
+    };
+
+    test("a writable first chunk before a blocked second one is priced at the first chunk's writer attempts, not at 0", () => {
+      const run = runPlan(26);
+      expect(run.writerChunks.length).toBe(2);
+      const plan = planFor(run, settledChunk(run, 1));
+      expect(plan.estimate.worstMicros).toBe(2 * WRITER_WORST);
+      expect(plan.estimate.expectedMicros).toBeGreaterThan(0);
+    });
+
+    test("that resume needs the writer's ceiling to progress, and no image attempt (the phase ends at the blocked chunk)", () => {
+      const run = runPlan(26);
+      expect(planFor(run, settledChunk(run, 1)).minToProgressMicros).toBe(WRITER_WORST);
+    });
+
+    test("a blocked first chunk keeps the resume free even though a later chunk is writable (it is never asked)", () => {
+      const run = runPlan(26);
+      const plan = planFor(run, settledChunk(run, 0));
+      expect(plan.estimate).toMatchObject({ worstMicros: 0, expectedMicros: 0 });
+      expect(plan.minToProgressMicros).toBeNull();
+    });
+  });
+
   test("the estimate is the one remainingEstimate answers", () => {
     const run = runPlan(4);
     expect(planFor(run, {}, 60_000).estimate).toEqual(estimateFor(run, {}, 60_000));
