@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { rename, rm } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import type { Readable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { parseProgressFraction } from "../../src/node/ffmpegProgress";
 import { allowlistedEnv } from "./childEnv";
 import { ffmpegPath } from "./ffmpegBinary";
@@ -317,8 +318,10 @@ function supervise(run: Supervised): Promise<void> {
       fn();
     };
 
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_ROLLING_LIMIT);
+    // A character split across two chunks must not turn into U+FFFD: the scrubber could no longer recognise a path holding it.
+    const stderrDecoder = new StringDecoder("utf8");
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      stderrTail = (stderrTail + (typeof chunk === "string" ? chunk : stderrDecoder.write(chunk))).slice(-STDERR_ROLLING_LIMIT);
     });
 
     child.stdout?.on("data", (chunk: Buffer) => {

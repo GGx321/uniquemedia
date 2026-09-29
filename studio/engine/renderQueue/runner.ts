@@ -7,9 +7,6 @@ import { buildPass1, buildPass2, type AudioSource, type OverlayInput, type Photo
 import { ProgressFold, renderTimeoutMs } from "./progress";
 import { scrubber, scrubStderrTail, type ScrubInput } from "./scrubber";
 
-// The scrubber lives in its own module; it stays importable from here.
-export { scrubber };
-
 // The runner of ONE render job (task 3a.6): pass 1 once per visual clip into
 // the job's own folder, then pass 2 into the temp output it is given, one
 // ffmpeg at a time. It owns the job folder and the temp output's cleanup; it
@@ -48,6 +45,8 @@ export interface RenderRunDeps {
   readonly removeFile?: (path: string) => Promise<void>;
   /** Where a cleanup that failed is reported (`what` names it); the render's own outcome is unchanged. */
   readonly warn?: (what: "job folder" | "unfinished output", error: unknown) => void;
+  /** The user's home folder, masked as `~` in errors; `os.homedir()` unless a test fakes it. */
+  readonly home?: string;
 }
 
 export interface RenderRunOutcome {
@@ -100,19 +99,37 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   const budgetMs = renderTimeoutMs(totalFrames);
   const deadline = now() + budgetMs;
 
-  const scrub = scrubber(input.tmpRoot, dirname(input.output), scrubInputs);
+  const scrub = scrubber(input.tmpRoot, dirname(input.output), scrubInputs, deps.home);
 
+  /** What the caller's own progress listener threw: it stops the job as it is, never wrapped (it is the caller's error, not a path-bearing one). */
+  let listenerError: unknown;
   const report = (done: number | null): void => {
     // Nothing is reported once the job is cancelled, even if ffmpeg had already exited 0.
-    if (done !== null && !signal.aborted) input.onProgress(done);
+    if (done === null || signal.aborted) return;
+    try {
+      input.onProgress(done);
+    } catch (error) {
+      listenerError = error;
+      throw error;
+    }
   };
 
-  /** A file-system error of the job's own folders names them in its message, and that message reaches the UI: it says <tmp> instead. The original stays as `cause`, for the log. */
+  /**
+   * A plain error (a file-system error, a spawn error for the ffmpeg binary) names paths in its message, and that
+   * message reaches the UI. This copy says <tmp>, ~ ... instead and keeps the errno `code`; the RAW error stays as
+   * `cause`, for the log only.
+   */
+  const scrubbedCopy = (error: Error): Error => {
+    const copy = new Error(scrub(error.message), { cause: error });
+    if ("code" in error && typeof error.code === "string") Object.assign(copy, { code: error.code });
+    return copy;
+  };
+
   const scrubFs = async (work: Promise<unknown>): Promise<void> => {
     try {
       await work;
     } catch (error) {
-      if (error instanceof Error) throw new Error(scrub(error.message), { cause: error });
+      if (error instanceof Error) throw scrubbedCopy(error);
       throw error;
     }
   };
@@ -126,8 +143,10 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
       await run({ argv: job.argv, output: job.output, signal, timeoutMs: remaining, onFrames: options.onFrames, ...(options.cwd === undefined ? {} : { cwd: options.cwd }) });
     } catch (error) {
       // The tail may name the user's folders and files; what reaches the job's error says <tmp>, <export>, <photo>... instead.
-      if (error instanceof FfmpegTimeoutError) throw new FfmpegTimeoutError(budgetMs, scrubStderrTail(scrub, error.stderrTail));
-      if (error instanceof FfmpegError) throw new FfmpegError(scrub(error.message), error.exitCode, scrubStderrTail(scrub, error.stderrTail));
+      if (error instanceof FfmpegTimeoutError) throw Object.assign(new FfmpegTimeoutError(budgetMs, scrubStderrTail(scrub, error.stderrTail)), { cause: error });
+      if (error instanceof FfmpegError) throw Object.assign(new FfmpegError(scrub(error.message), error.exitCode, scrubStderrTail(scrub, error.stderrTail)), { cause: error });
+      // Anything else that is not the cancel itself (whose reason must come out as it is) is a plain error: a spawn error names the binary's path.
+      if (error instanceof Error && !signal.aborted && error !== listenerError) throw scrubbedCopy(error);
       throw error;
     }
   };

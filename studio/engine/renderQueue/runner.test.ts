@@ -7,7 +7,9 @@ import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptio
 import { fakeSpawner, outputOf, type SpawnCall } from "../../node/fakeFfmpeg.testkit";
 import { RenderGraphError } from "../render";
 import { renderTimeoutMs } from "./progress";
-import { runRenderJob, scrubber, type RenderRunInput, type RenderRunDeps } from "./runner";
+import { runRenderJob, type RenderRunInput, type RenderRunDeps } from "./runner";
+import { scrubber } from "./scrubber";
+import { __setFfmpegPathOverrideForTests } from "../../node/ffmpegBinary";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -427,16 +429,72 @@ describe("runRenderJob: the user's input paths stay out of the error", () => {
 });
 
 describe("runRenderJob: a file-system error names no user folder either", () => {
-  test("a job folder that cannot be made fails with the temp root masked as <tmp>", async () => {
+  test("a job folder that cannot be made fails with the temp root masked as <tmp>, keeping its errno code", async () => {
     const r = rig();
     writeFileSync(r.tmpRoot, "a file where the temp root should be");
-    const { deps } = depsWith(goodFfmpeg);
+    const warnings: string[] = [];
+    const { deps } = depsWith(goodFfmpeg, { warn: (what) => warnings.push(what) });
 
     const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
 
     if (!(error instanceof Error)) throw new Error("expected the job to fail");
     expect(error.message).not.toContain(r.tmpRoot);
     expect(error.message).toContain("<tmp>");
+    expect("code" in error && error.code).toBe("ENOTDIR");
+    expect(error.cause).toBeInstanceOf(Error); // the raw error, for the log
+  });
+});
+
+describe("runRenderJob: what else may name the user's folders", () => {
+  const FAKE_HOME_NAME = "Mia Secret";
+
+  afterEach(() => __setFfmpegPathOverrideForTests(undefined));
+
+  test("a spawn error for the ffmpeg binary under the user's home reaches the job with the home masked as ~", async () => {
+    const r = rig();
+    const home = join(dirname(r.tmpRoot), FAKE_HOME_NAME);
+    __setFfmpegPathOverrideForTests(join(home, "AppData", "Programs", "studio", "ffmpeg"));
+    const run = (opts: RunFfmpegArgvOptions): Promise<void> => runFfmpegArgv({ ...opts, env: {} });
+
+    const error = await runRenderJob(r.input, { run, home }).catch((e: unknown) => e);
+
+    if (!(error instanceof Error)) throw new Error("expected the job to fail");
+    expect(error.message).not.toContain(FAKE_HOME_NAME);
+    expect(error.message).toContain("~/AppData/Programs/studio/ffmpeg");
+    expect(error.cause).toBeInstanceOf(Error);
+    expect(error.cause instanceof Error && error.cause.message).toContain(FAKE_HOME_NAME);
+  });
+
+  test("a cancel is not wrapped: the abort reason itself comes out", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled");
+    const r = rig({ signal: controller.signal });
+    const { deps } = depsWith((call) => {
+      controller.abort(reason);
+      call.child.exit(null, "SIGKILL");
+    });
+
+    await expect(runRenderJob(r.input, deps)).rejects.toBe(reason);
+  });
+
+  test("a multi-byte character split across two stderr chunks does not hide a Cyrillic path from the scrubber", async () => {
+    const r = rig();
+    const path = join(dirname(r.tmpRoot), "Мия", "Фото", "photo-a.jpg");
+    const input = { ...r.input, resolvePhoto: () => ({ path, width: 720, height: 1280 }) };
+    const bytes = Buffer.from(`Error opening input file ${path}: No such file\n`);
+    const cut = bytes.indexOf(Buffer.from("М")) + 1; // inside the two bytes of "М"
+    const { deps } = depsWith((call) => {
+      call.child.complain(bytes.subarray(0, cut));
+      setTimeout(() => {
+        call.child.complain(bytes.subarray(cut));
+        call.child.exit(1);
+      }, 5);
+    });
+
+    const error = await runRenderJob(input, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof FfmpegError)) throw error;
+    expect(error.stderrTail).toBe("Error opening input file <photo>: No such file\n");
   });
 });
 

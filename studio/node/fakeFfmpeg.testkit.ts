@@ -37,8 +37,8 @@ export class FakeFfmpegChild extends EventEmitter implements FfmpegChild {
     this.stdout.write(progressReport(frame, end));
   }
 
-  /** Prints raw text to stderr. */
-  complain(text: string): void {
+  /** Prints raw text (or raw bytes, which may split a character) to stderr. */
+  complain(text: string | Uint8Array): void {
     this.stderr.write(text);
   }
 
