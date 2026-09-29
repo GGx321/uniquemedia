@@ -245,6 +245,16 @@ export function writeTemp(folder: PreparedFolder, jobId: string, bytes: Uint8Arr
   return path;
 }
 
+/** A JPEG (as far as sniffing goes) whose EXIF Artist is `artist`: the shape of a source photo with an author in its metadata. */
+export function jpegWithArtist(artist: string): Uint8Array {
+  const text = [...Buffer.from(artist, "latin1"), 0];
+  const entry = [0x3b, 0x01, 2, 0, text.length, 0, 0, 0, 26, 0, 0, 0]; // tag 0x013B (Artist), ASCII, the text at offset 26
+  const tiff = [0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, ...entry, 0, 0, 0, 0, ...text];
+  const payload = [...Buffer.from("Exif\0\0", "latin1"), ...tiff];
+  const length = payload.length + 2;
+  return Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, length >> 8, length & 255, ...payload, 0xff, 0xda, 0, 2, 0xff, 0xd9]);
+}
+
 /** A verifier that accepts the file and hashes what it reads (so a later recovery can check the same sha). */
 export const acceptingVerify = async (path: string): Promise<VerifiedFile> => {
   const bytes = readFileSync(path);
