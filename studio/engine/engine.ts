@@ -183,7 +183,10 @@ export interface EngineDeps {
    */
   faceGate?: FocusFaceGate | null;
   /** Test seams of the video pipeline: the focus resolver, ffmpeg and the commit's steps, recovery, the stale-index retry. */
-  videos?: Partial<Pick<VideoServiceDeps, "fs" | "focus" | "renderOverrides" | "recover" | "staleRetryDelaysMs">>;
+  videos?: Partial<Pick<VideoServiceDeps, "fs" | "focus" | "renderOverrides" | "recover" | "staleRetryDelaysMs">> & {
+    /** How long `videos.render` may spend on the focus of its photos; `RENDER_FOCUS_BUDGET_MS` unless a test says otherwise. */
+    focusBudgetMs?: number;
+  };
 }
 
 /** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
@@ -1125,7 +1128,7 @@ export class Engine {
   #focusOf(library: Library): Pick<FocusResolver, "fillMissingFocus"> {
     let resolver = this.#focusResolvers.get(library);
     if (resolver === undefined) {
-      resolver = createFocusResolver({ library, faceGate: this.#deps.faceGate ?? null, fillBudgetMs: RENDER_FOCUS_BUDGET_MS });
+      resolver = createFocusResolver({ library, faceGate: this.#deps.faceGate ?? null, fillBudgetMs: this.#deps.videos?.focusBudgetMs ?? RENDER_FOCUS_BUDGET_MS });
       this.#focusResolvers.set(library, resolver);
     }
     return resolver;

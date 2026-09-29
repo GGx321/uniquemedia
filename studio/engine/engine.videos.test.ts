@@ -270,6 +270,25 @@ describe("a crash and a restart: the recovery the library opening starts settles
   }, REAL_RENDER_TIMEOUT_MS);
 });
 
+describe("the focus of the photos is filled under the render's own budget", () => {
+  test("a face detector that never answers costs the render the budget, not the command's whole deadline: the render goes on with the stand-in point", async () => {
+    await mkdir(exportDir());
+    const { avatarId, photoIds } = await seedAvatar();
+    const hangingGate = { detect: () => new Promise<never>(() => undefined), isBroken: () => false };
+    const { engine } = await start({
+      init: { settings: settingsOf() },
+      deps: { faceGate: hangingGate, videos: { focusBudgetMs: 150, renderOverrides: { runDeps: { run: () => new Promise<void>(() => undefined) } } } },
+    });
+    const started = Date.now();
+
+    const { jobId } = await render(engine, specOf(avatarId, photoIds.slice(0, 2)));
+
+    expect(Date.now() - started).toBeLessThan(5_000); // the budget was 150 ms, the detector's own timeout is 20 s
+    expect(engine.renders.states().map((s) => s.jobId)).toEqual([jobId]);
+    await engine.shutdown(50);
+  });
+});
+
 describe("stopping the engine", () => {
   test("a shutdown call from main cancels the renders, answers, and refuses any render after it", async () => {
     await mkdir(exportDir());
