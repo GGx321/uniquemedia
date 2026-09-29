@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { TEXT_FONT_KEYS, TEXT_FONTS, type TextFontKey } from "./fonts";
-import type { RasterImage, RasterRequest } from "./rasteriser";
+import type { RasterImage, RasterRequest } from "./rasterTypes";
 
 /**
  * The rasteriser's known-answer test (plan 3b.2): a fixed Cyrillic-and-Latin

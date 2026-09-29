@@ -64,6 +64,12 @@ export default defineConfig(({ command }) => ({
           // built at all; bundleChecks.ts and the production smoke fail the
           // build checks when it is missing.
           "engine/faceWorker": at("studio/engine/face/worker/faceWorker.ts"),
+          // 3b.2: the text worker thread (resvg-wasm and the fonts) the engine spawns by file URL
+          // (studio/engine/main.ts's TEXT_WORKER_URL). resvg-wasm is a devDependency, so its JS glue is
+          // bundled into this entry only, never into engine/main.js (bundleChecks.ts's textWorkerProblems
+          // fails the build checks when it leaks there); its .wasm is copied next to the engine by
+          // studio/scripts/prepareTextAssets.ts.
+          "engine/textWorker": at("studio/engine/text/worker/textWorker.ts"),
         },
       },
       // Never bundled: each locates its binary relative to its own package

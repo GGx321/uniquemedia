@@ -5,9 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { EMOJI_FONT, TEXT_FONT_KEYS, TEXT_FONTS } from "../engine/text/fonts";
-import { loadTextRasteriser } from "../engine/text/load";
-import { RASTER_WASM } from "../engine/text/rasteriser";
-import { SELF_TEST_FINGERPRINT } from "../engine/text/selfTest";
+import { createTextRasteriser, RASTER_WASM } from "../engine/text/rasteriser";
+import { assertTextSelfTest, SELF_TEST_FINGERPRINT } from "../engine/text/selfTest";
 import { prepareTextAssets, textAssetOutPaths } from "./prepareTextAssets";
 useNativeGlobals();
 
@@ -46,8 +45,9 @@ describe("prepareTextAssets", () => {
   test("what it copies loads and passes the self-test, as the packaged engine will run it", async () => {
     const root = await tempDir();
     const paths = await prepareTextAssets(ROOT, { outRoot: root });
-    const loaded = await loadTextRasteriser({ wasmPath: paths.wasmPath, fontDir: paths.fontDir, log: { info: () => {}, error: () => {} } });
-    expect("error" in loaded ? loaded.error : loaded.fingerprint).toBe(SELF_TEST_FINGERPRINT);
+    // In-process here; the worker thread that loads the same layout is exercised by text/worker/textGate.real.test.ts.
+    const rasteriser = createTextRasteriser({ wasmPath: paths.wasmPath, fontDir: paths.fontDir });
+    expect(await assertTextSelfTest(rasteriser)).toBe(SELF_TEST_FINGERPRINT);
   });
 
   test("refuses a wasm that is not the pinned one and copies nothing", async () => {

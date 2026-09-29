@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems, relativeImportsOf } from "./bundleChecks";
+import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems, relativeImportsOf, textWorkerProblems } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -239,5 +239,34 @@ describe("faceWorkerProblems", () => {
   test("fails when the worker imports electron (the engine must stay Electron-free)", () => {
     const problems = faceWorkerProblems(ENGINE_WITH_WORKER, `${WORKER}\nimport { app } from "electron";`, ALL_PRESENT);
     expect(problems).toContain("faceWorker.js imports electron");
+  });
+});
+
+describe("textWorkerProblems", () => {
+  const ENGINE = 'const url = new URL("./textWorker.js", import.meta.url);';
+  const PRESENT = (path: string): boolean => ["engine/textWorker.js", "shared-Abc123.js"].includes(path);
+  const TEXT_WORKER = `import { parentPort, workerData } from "node:worker_threads";\nimport { z } from "../shared-Abc123.js";`;
+
+  test("passes a build whose engine spawns the text worker by file URL and whose worker is a worker thread with its chunks present", () => {
+    expect(textWorkerProblems(ENGINE, TEXT_WORKER, PRESENT)).toEqual([]);
+  });
+
+  test("fails when the text worker entry was not built", () => {
+    expect(textWorkerProblems(ENGINE, null, PRESENT)).toContain("out-studio/engine/textWorker.js is missing");
+  });
+
+  test("fails when the engine no longer spawns it by that file URL", () => {
+    expect(textWorkerProblems("spawn();", TEXT_WORKER, PRESENT)).toContain('the engine does not resolve "./textWorker.js" against its own import.meta.url');
+  });
+
+  test("fails when the entry is not a worker thread, imports electron, or misses a chunk", () => {
+    expect(textWorkerProblems(ENGINE, "console.log(1);", PRESENT)).toContain("textWorker.js does not use worker_threads' parentPort/workerData");
+    expect(textWorkerProblems(ENGINE, `${TEXT_WORKER}\nimport { app } from "electron";`, PRESENT)).toContain("textWorker.js imports electron");
+    expect(textWorkerProblems(ENGINE, TEXT_WORKER, (path) => path !== "shared-Abc123.js")).toEqual(["textWorker.js imports ../shared-Abc123.js, which is not in the build"]);
+  });
+
+  test("fails when the engine bundle carries resvg's glue, which belongs in the worker only", () => {
+    const problems = textWorkerProblems(`${ENGINE}\nconst e = "Already initialized. The \`initWasm()\` function can be used only once.";`, TEXT_WORKER, PRESENT);
+    expect(problems).toContain("the engine bundle contains resvg-wasm; it must load only inside the text worker");
   });
 });

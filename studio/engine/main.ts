@@ -20,7 +20,9 @@ import { createPdqGate } from "./runs/pdqGate";
 import { productionGateOrder } from "./runs/productionGates";
 import { TEXT_ASSET_DIRS } from "./text/assetLayout";
 import { loadTextRasteriser } from "./text/load";
-import { RASTER_WASM } from "./text/rasteriser";
+import { RASTER_WASM } from "./text/rasterTypes";
+import { createTextWorkerSpawner } from "./text/worker/spawn";
+import { TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textGate";
 
 const parentPort = process.parentPort;
 if (!parentPort) throw new Error("the studio engine must run as an Electron utilityProcess");
@@ -48,9 +50,30 @@ const ORT_DIST = join(NODE_MODULES_DIR, "onnxruntime-web", "dist");
 const WASM_PATHS = ortWasmPathsFrom(ORT_DIST);
 // 3b.2, the text rasteriser: resvg's .wasm and the bundled fonts, copied next to this file at build time
 // (scripts/prepareTextAssets.ts), so they sit inside app.asar under the integrity fuse and resolve the same
-// way the face models do.
+// way the face models do. resvg itself runs in a worker thread, textWorker.js (electron.studio.vite.config.ts),
+// a sibling of this file loaded by file URL like the face worker; it is handed the two paths and resolves none.
 const TEXT_FONT_DIR = join(ENGINE_DIR, TEXT_ASSET_DIRS.fonts);
 const TEXT_WASM_PATH = join(ENGINE_DIR, TEXT_ASSET_DIRS.wasm, RASTER_WASM.file);
+const TEXT_WORKER_URL = new URL("./textWorker.js", import.meta.url);
+
+/** How long the start-up waits for the text worker's verdict before starting without it (it takes well under a second). */
+const TEXT_LOAD_START_WAIT_MS = 2_000;
+
+/**
+ * `work`'s result, or null when it is not done within `ms`: the caller starts without it and the work carries on
+ * (and logs its own outcome). Anything `work` itself throws is passed on.
+ */
+async function withinStartWait<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  const wait = timeoutSignal(ms);
+  try {
+    return await untilAborted(work, wait.signal);
+  } catch (error) {
+    if (wait.signal.aborted) return null;
+    throw error;
+  } finally {
+    wait.clear();
+  }
+}
 // T7c: the face worker thread's built entry (electron.studio.vite.config.ts:
 // engine/faceWorker), a sibling of this file — resolved the same way, so it
 // loads from inside app.asar on macOS and Windows alike (a file URL, never a
@@ -165,12 +188,17 @@ parentPort.once("message", (event) => {
     // through `QaInput` itself — see runs/qa.ts's own header.
     const pdqGate = createPdqGate();
     const ageGate = createAgeGate();
-    // 3b.2: the text rasteriser loads alongside the face gate, so it adds nothing to the start-up time. It
-    // logs its own ready line (with the self-test fingerprint the packaged smoke checks) or its own error,
-    // and never throws; 3b.4b hands the loaded rasteriser to the Engine, nothing calls it before then.
-    const textLoad = loadTextRasteriser({ wasmPath: TEXT_WASM_PATH, fontDir: TEXT_FONT_DIR });
+    // 3b.2: the text worker loads alongside the face gate, so it adds nothing to the start-up time, and the start
+    // waits for it at most TEXT_LOAD_START_WAIT_MS (never on the critical path if it hangs). It logs its own ready
+    // line (with the self-test fingerprint the packaged smoke checks) or its own error and never throws. The gate it
+    // returns lives on after a failed load, so a later call retries; 3b.4b hands it to the Engine, and nothing calls
+    // it before then.
+    const textLoad = loadTextRasteriser({
+      spawnWorker: createTextWorkerSpawner(TEXT_WORKER_URL, { wasmPath: TEXT_WASM_PATH, fontDir: TEXT_FONT_DIR }),
+      gateOptions: { idleRecycleMs: TEXT_WORKER_IDLE_RECYCLE_MS },
+    });
     const loaded = await loadFaceGate();
-    await textLoad;
+    const text = await withinStartWait(textLoad, TEXT_LOAD_START_WAIT_MS);
     const qaGates = productionGateOrder({ pdq: pdqGate, face: "error" in loaded ? null : createFaceQaGate({ faceGate: loaded.faceGate }), age: ageGate });
 
     const ready = Engine.start(init.data, {
@@ -183,6 +211,7 @@ parentPort.once("message", (event) => {
       fetch: (url, init) => fetch(url, init),
       qaGates,
       ...("error" in loaded ? { faceGateLoadError: loaded.error } : {}),
+      ...(text !== null && "error" in text ? { textLoadError: text.error } : {}),
     });
 
     // A failed start ends the process, so main restarts it and tells the windows.

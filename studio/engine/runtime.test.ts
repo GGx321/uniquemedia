@@ -21,6 +21,8 @@ const ENTRY = join(ENGINE_DIR, "main.ts");
  * utilityProcess and holds the same rules (no `electron`, no environment).
  */
 const WORKER_ENTRY = join(ENGINE_DIR, "face", "worker", "faceWorker.ts");
+/** 3b.2: the text worker thread, likewise reached by URL only (main.ts's TEXT_WORKER_URL), holding the same rules. */
+const TEXT_WORKER_ENTRY = join(ENGINE_DIR, "text", "worker", "textWorker.ts");
 
 /**
  * Bare packages the engine may bundle: the contract's validator, the ffmpeg
@@ -220,6 +222,20 @@ test("the walk from the face worker entry reaches its gate, decoder and protocol
 
 test("every module reachable from the face worker entry uses only node:* APIs and never reads the environment", () => {
   expect(walkFromEntry(WORKER_ENTRY).problems).toEqual([]);
+});
+
+test("the walk from the text worker entry reaches its rasteriser, fonts and protocol, and only there does resvg come in", () => {
+  const { files } = walkFromEntry(TEXT_WORKER_ENTRY);
+  expect(files).toContain(join("engine", "text", "rasteriser.ts"));
+  expect(files).toContain(join("engine", "text", "fonts.ts"));
+  expect(files).toContain(join("engine", "text", "worker", "protocol.ts"));
+  // The engine's own graph holds the gate and the shared types, never the rasteriser that imports resvg.
+  expect(walkFromEntry().files).not.toContain(join("engine", "text", "rasteriser.ts"));
+  expect(walkFromEntry().files).toContain(join("engine", "text", "worker", "textGate.ts"));
+});
+
+test("every module reachable from the text worker entry uses only node:* APIs and never reads the environment", () => {
+  expect(walkFromEntry(TEXT_WORKER_ENTRY).problems).toEqual([]);
 });
 
 // S8: the focus resolver is not wired into main.ts yet (slice 3d does that), so

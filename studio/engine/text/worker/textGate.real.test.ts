@@ -3,7 +3,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { RASTER_WASM, RasterError } from "../rasterTypes";
-import { SELF_TEST_HASHES, selfTestSvg } from "../selfTest";
+import { loadTextRasteriser } from "../load";
+import { SELF_TEST_FINGERPRINT, SELF_TEST_HASHES, selfTestSvg } from "../selfTest";
 import { createTextWorkerSpawner } from "./spawn";
 import { createTextGate, type TextGate } from "./textGate";
 useNativeGlobals();
@@ -107,5 +108,13 @@ describe.skipIf(!RUN_REAL_WORKER_TESTS)("the real worker", () => {
     // The render itself blocks a worker for hundreds of ms; this thread's own timer must not notice.
     expect(took).toBeGreaterThan(100);
     expect(worstGap).toBeLessThan(Math.max(100, took / 3));
+  });
+
+  test("the loader starts it, and the self-test through the worker gives the pinned fingerprint", async () => {
+    const infos: string[] = [];
+    const loaded = await loadTextRasteriser({ spawnWorker: createTextWorkerSpawner(WORKER, INIT), log: { info: (m) => infos.push(m), error: () => {} } });
+    gates.push(loaded.gate);
+    expect("fingerprint" in loaded && loaded.fingerprint).toBe(SELF_TEST_FINGERPRINT);
+    console.log(infos.join("\n"));
   });
 });

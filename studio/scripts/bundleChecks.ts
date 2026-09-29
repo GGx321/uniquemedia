@@ -166,18 +166,35 @@ export function relativeImportsOf(source: string): string[] {
  * directory or a packaged asar alike).
  */
 export function faceWorkerProblems(engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): string[] {
+  return workerEntryProblems("faceWorker", engineMain, worker, fileExists);
+}
+
+/**
+ * 3b.2: the same checks for the text worker entry (`out-studio/engine/textWorker.js`), plus one that keeps resvg
+ * where it belongs: its glue carries a distinctive message, and the engine bundle must not contain it, or the
+ * wasm could run on the engine's own thread again.
+ */
+export function textWorkerProblems(engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): string[] {
+  const problems = workerEntryProblems("textWorker", engineMain, worker, fileExists);
+  if (engineMain.includes("Already initialized. The `initWasm()` function can be used only once.")) {
+    problems.push("the engine bundle contains resvg-wasm; it must load only inside the text worker");
+  }
+  return problems;
+}
+
+function workerEntryProblems(name: string, engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): string[] {
   const problems: string[] = [];
-  if (!/new URL\(\s*["']\.\/faceWorker\.js["']\s*,\s*import\.meta\.url\s*\)/.test(engineMain)) {
-    problems.push('the engine does not resolve "./faceWorker.js" against its own import.meta.url');
+  if (!new RegExp(`new URL\\(\\s*["']\\./${name}\\.js["']\\s*,\\s*import\\.meta\\.url\\s*\\)`).test(engineMain)) {
+    problems.push(`the engine does not resolve "./${name}.js" against its own import.meta.url`);
   }
   if (worker === null || worker.trim().length === 0) {
-    problems.push("out-studio/engine/faceWorker.js is missing");
+    problems.push(`out-studio/engine/${name}.js is missing`);
     return problems;
   }
-  if (!worker.includes("parentPort") || !worker.includes("workerData")) problems.push("faceWorker.js does not use worker_threads' parentPort/workerData");
-  if (/(?:\bfrom\s*|\bimport\s*\(?\s*)["']electron["']/.test(worker)) problems.push("faceWorker.js imports electron");
+  if (!worker.includes("parentPort") || !worker.includes("workerData")) problems.push(`${name}.js does not use worker_threads' parentPort/workerData`);
+  if (/(?:\bfrom\s*|\bimport\s*\(?\s*)["']electron["']/.test(worker)) problems.push(`${name}.js imports electron`);
   for (const specifier of relativeImportsOf(worker)) {
-    if (!fileExists(posix.normalize(posix.join("engine", specifier)))) problems.push(`faceWorker.js imports ${specifier}, which is not in the build`);
+    if (!fileExists(posix.normalize(posix.join("engine", specifier)))) problems.push(`${name}.js imports ${specifier}, which is not in the build`);
   }
   return problems;
 }

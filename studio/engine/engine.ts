@@ -166,6 +166,12 @@ export interface EngineDeps {
    * message either way (errorMessagesRu.ts).
    */
   faceGateLoadError?: string;
+  /**
+   * 3b.2: why the text worker could not be loaded, when `main.ts` said so within its start-up wait, for the text
+   * commands of 3b.4b to put into their `RENDER_FAILED` detail as `faceGateLoadError` does for the face gate.
+   * Nothing reads it yet.
+   */
+  textLoadError?: string;
 }
 
 /** Local work in flight at once: the cores but one for the engine's own event loop, at most 4, at least 1. */

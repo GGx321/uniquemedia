@@ -1,11 +1,9 @@
 // Pure checks behind the text rasteriser part of smoke-engine.ts (plan 3b.2), kept apart so they are tested.
 import { TEXT_ASSET_DIRS } from "../engine/text/assetLayout";
 import { EMOJI_FONT, TEXT_FONTS } from "../engine/text/fonts";
-import { TEXT_RASTERISER_READY_PREFIX } from "../engine/text/load";
+import { TEXT_RASTERISER_LOAD_FAILURE, TEXT_RASTERISER_READY_PREFIX } from "../engine/text/load";
 import { RASTER_WASM } from "../engine/text/rasteriser";
 import { SELF_TEST_FINGERPRINT } from "../engine/text/selfTest";
-
-const LOAD_FAILURE = "the text rasteriser could not be loaded";
 
 /**
  * Problems with what the engine printed about the rasteriser. The ready line carries the fingerprint of the
@@ -24,7 +22,7 @@ export function textRasteriserOutputProblems(output: string): string[] {
     const fingerprint = last.slice(TEXT_RASTERISER_READY_PREFIX.length).trim();
     if (fingerprint !== SELF_TEST_FINGERPRINT) problems.push(`the text self-test fingerprint is ${fingerprint}, expected ${SELF_TEST_FINGERPRINT}`);
   }
-  for (const line of lines) if (line.includes(LOAD_FAILURE)) problems.push(line.trim());
+  for (const line of lines) if (line.includes(TEXT_RASTERISER_LOAD_FAILURE)) problems.push(line.trim());
   return problems;
 }
 
