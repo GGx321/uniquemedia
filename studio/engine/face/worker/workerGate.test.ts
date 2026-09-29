@@ -506,6 +506,39 @@ describe("terminate() that does not finish", () => {
   });
 });
 
+describe("isBroken", () => {
+  test("is false for a fresh gate and after a healthy check and abort", async () => {
+    const h = harness();
+    expect(h.gate.isBroken()).toBe(false);
+    const controller = new AbortController();
+    const running = h.gate.check(checkInput(Behaviour.hang), controller.signal).catch(() => {});
+    await Bun.sleep(50);
+    controller.abort(new Error("cancelled"));
+    await running;
+    expect(h.gate.isBroken()).toBe(false);
+  });
+
+  test("is true once a terminate() never finishes", async () => {
+    const h = harness({ killTimeoutMs: 60, tamper: (worker) => void (worker.terminate = () => new Promise<number>(() => {})) });
+    const controller = new AbortController();
+    const running = h.gate.check(checkInput(Behaviour.hang), controller.signal).catch(() => {});
+    await Bun.sleep(50);
+    controller.abort(new Error("cancelled"));
+    await running;
+    expect(h.gate.isBroken()).toBe(true);
+  });
+
+  test("is true once a terminate() rejects", async () => {
+    const h = harness({ tamper: (worker) => void (worker.terminate = () => Promise.reject(new Error("terminate refused"))) });
+    const controller = new AbortController();
+    const running = h.gate.check(checkInput(Behaviour.hang), controller.signal).catch(() => {});
+    await Bun.sleep(50);
+    controller.abort(new Error("cancelled"));
+    await running;
+    expect(h.gate.isBroken()).toBe(true);
+  });
+});
+
 describe("a kill that fails is treated like a kill that times out", () => {
   /** Collects every unhandled rejection for the duration of one test. */
   function watchUnhandled(): { seen: unknown[]; stop: () => void } {

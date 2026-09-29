@@ -1007,9 +1007,15 @@ export class Engine {
    * photos no identity check has ever seen.
    */
   #assertFaceGate(): void {
-    if (!this.#qaGates.some((gate) => gate.name === FACE_GATE_NAME)) {
+    const face = this.#qaGates.find((gate) => gate.name === FACE_GATE_NAME);
+    if (face === undefined) {
       const base = "no face gate is wired into photo runs; restart Studio, or reinstall it if this persists";
       throw new EngineFailure({ code: "FACE_GATE_UNAVAILABLE", detail: this.#faceGateLoadError === undefined ? base : `${base} (${this.#faceGateLoadError})` });
+    }
+    // A gate that broke after startup (its worker could not be terminated) fails every check: refuse the run free,
+    // not after a wave of images was paid for (a cached master embedding would let `prepare()` pass).
+    if (face.available?.() === false) {
+      throw new EngineFailure({ code: "FACE_GATE_UNAVAILABLE", detail: "the face gate broke (its worker could not be stopped) and stays unusable until Studio restarts; restart Studio" });
     }
   }
 

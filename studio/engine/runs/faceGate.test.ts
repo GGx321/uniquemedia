@@ -98,9 +98,30 @@ function fakeFaceGate(overrides: Partial<FaceQaGateDeps["faceGate"]> = {}): Face
   return {
     embed: async () => MASTER_EMBEDDING,
     check: async () => ({ kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 }),
+    isBroken: () => false,
     ...overrides,
   };
 }
+
+describe("a broken worker gate", () => {
+  test("is reported as unavailable by the QA gate, and a healthy one as available", () => {
+    let broken = false;
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ isBroken: () => broken }) });
+    expect(gate.available?.()).toBe(true);
+    broken = true;
+    expect(gate.available?.()).toBe(false);
+  });
+
+  test("refuses prepare() even when the master's embedding is already cached, and asks the worker for nothing", async () => {
+    let broken = false;
+    let embedCalls = 0;
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ isBroken: () => broken, embed: async () => (embedCalls++, MASTER_EMBEDDING) }) });
+    await gate.prepare?.(prepareInput()); // caches the embedding
+    broken = true;
+    await expect(gate.prepare?.(prepareInput())).rejects.toThrow(/broken/);
+    expect(embedCalls).toBe(1);
+  });
+});
 
 describe("createFaceQaGate", () => {
   test("name is 'face' and it is free", () => {

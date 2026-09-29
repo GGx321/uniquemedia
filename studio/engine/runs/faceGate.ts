@@ -73,7 +73,7 @@ export interface FaceQaGateDeps {
    * are used — `start()`/`dispose()` are the wiring's own concern (main.ts),
    * not this adapter's.
    */
-  faceGate: Pick<WorkerFaceGate, "check" | "embed">;
+  faceGate: Pick<WorkerFaceGate, "check" | "embed" | "isBroken">;
   /**
    * Re-review N11: how long a master-embedding computation may stay cached
    * without settling before it is evicted — and, T7c, the bound of the
@@ -209,7 +209,13 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
     name: FACE_GATE_NAME,
     paid: false,
 
+    available: () => !deps.faceGate.isBroken(),
+
     async prepare(input: QaPrepareInput): Promise<void> {
+      // A broken worker gate fails every check, so a master whose embedding is already cached must not pass here and
+      // then pay for a wave of images before the first check fails. The engine refuses earlier, for free
+      // (`available()`, FACE_GATE_UNAVAILABLE); this is the same rule for a gate that breaks between that check and here.
+      if (deps.faceGate.isBroken()) throw new Error("the face gate is broken (its worker could not be terminated); it stays broken until Studio restarts");
       // Propagates uncaught on failure (see this file's own header).
       // runJob.ts's prepareGates() classifies it, not this gate: only
       // NoFaceInReferenceError (a real, detectable "no face on the master")

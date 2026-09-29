@@ -69,6 +69,8 @@ export interface WorkerFaceGate {
   embed(bytes: Uint8Array, signal: AbortSignal): Promise<Float32Array>;
   /** Terminates the worker for good; a computation in flight fails, and every later call rejects. */
   dispose(): Promise<void>;
+  /** True once a worker could not be terminated: every later call fails with it until the engine restarts. Lets the engine refuse a run for free instead of finding out after the first paid image. */
+  isBroken(): boolean;
 }
 
 /** A worker's answer to one request: a value, or a failure the worker itself reported (it stays alive after those). */
@@ -374,6 +376,8 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
   }
 
   return {
+    isBroken: () => broken !== null,
+
     async start(signal: AbortSignal = NEVER_ABORTED): Promise<void> {
       await inLane(signal, async () => ({ ok: true, value: undefined }));
     },

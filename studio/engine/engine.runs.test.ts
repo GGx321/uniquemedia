@@ -925,6 +925,57 @@ describe("a run with no face gate wired", () => {
   });
 });
 
+// A worker that could not be terminated leaves the face gate broken until the engine restarts: every check would fail.
+// A master whose embedding is already cached used to pass prepare() and pay for a wave of images before the first check failed.
+describe("a run once the face gate is broken", () => {
+  test("a new run for an avatar whose master embedding is cached is refused FACE_GATE_UNAVAILABLE at start: 0 POST, 0 reserves, no run folder", async () => {
+    const avatarId = await seedAvatar();
+    let broken = false;
+    const face = createFaceQaGate({
+      faceGate: { isBroken: () => broken, embed: async () => new Float32Array([1, 0, 0]), check: async () => ({ kind: "match", similarity: 0.9, faces: 1, headRatio: 0.3 }) },
+    });
+    const net = runNetwork();
+    const { engine, events } = await engineOver(net, { qaGates: [face] });
+    const first = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+    await jobEnd(events, first.jobId); // the master's embedding is now cached
+    const posts = net.calls.filter((c) => c.method === "POST").length;
+    const reserves = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
+    const reservesBefore = reserves();
+    const runsBefore = readdirSync(join(dir(), "library", "runs"));
+
+    broken = true;
+    const refused = failed(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+
+    expect(refused.error.code).toBe("FACE_GATE_UNAVAILABLE");
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(posts);
+    expect(reserves()).toBe(reservesBefore);
+    expect(readdirSync(join(dir(), "library", "runs"))).toEqual(runsBefore);
+  });
+
+  test("a resume is refused FACE_GATE_UNAVAILABLE too: 0 POST and no new reserve", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork({ image: () => ({ hang: true }) });
+    const first = await engineOver(net, {});
+    const { runId, jobId } = started(await first.engine.handle(startRun(avatarId)));
+    await until(() => net.imageCalls().length === 4, "every slot's first request");
+    ok(await first.engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(first.events, jobId);
+
+    let mono = 0;
+    const net2 = runNetwork();
+    const brokenFace: QaGate = { name: "face", paid: false, available: () => false, check: async () => ({ verdict: "pass" }) };
+    const second = await engineOver(net2, { qaGates: [brokenFace], bootId: "boot-0000-dddd", clock: () => NOW + 10 * 60_000, monotonic: () => mono });
+    mono += 10 * 60_000;
+    ok(await second.engine.handle(command("money.reconcile")));
+    const reserves = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
+    const before = reserves();
+
+    expect(failed(await second.engine.handle(resumeAnyway(runId))).error.code).toBe("FACE_GATE_UNAVAILABLE");
+    expect(net2.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(reserves()).toBe(before);
+  });
+});
+
 // ---------- T7a: a wired age gate is never called (and never reserved for) while the toggle is off ----------
 
 describe("a run with the image age check off, even with a fake age gate wired", () => {
@@ -996,6 +1047,7 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
     let faceChecks = 0;
     const face = createFaceQaGate({
       faceGate: {
+        isBroken: () => false,
         embed: async () => new Float32Array([1, 0, 0]),
         // This slot's first attempt mismatches (retried); its second matches. The network's default
         // handler returns the exact same image bytes for both — a real near-duplicate by content —
@@ -1035,6 +1087,7 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
     });
     const face = createFaceQaGate({
       faceGate: {
+        isBroken: () => false,
         embed: async () => {
           embedCalls++;
           return new Float32Array([1, 0, 0]);
@@ -1076,6 +1129,7 @@ describe("a run with the real createFaceQaGate wired, alongside the real pdq gat
     const order: string[] = [];
     const face = createFaceQaGate({
       faceGate: {
+        isBroken: () => false,
         embed: async () => new Float32Array([1, 0, 0]),
         check: async () => {
           order.push("face");
@@ -1164,6 +1218,7 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
     const real = sharedRealFaceGate();
     const seenMasterBytes: Uint8Array[] = [];
     const observing = {
+      isBroken: () => real.isBroken(),
       check: real.check,
       embed: (b: Uint8Array, signal: AbortSignal) => {
         if (b.byteLength === bytes.byteLength) seenMasterBytes.push(b);

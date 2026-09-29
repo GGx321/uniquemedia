@@ -199,6 +199,14 @@ export interface QaGate {
    * nothing to prepare (pdq, the age gate) simply never implements it.
    */
   prepare?(input: QaPrepareInput): Promise<void>;
+  /**
+   * False once the gate can no longer run at all (the face worker could not be
+   * terminated and the gate is broken until the engine restarts). The engine
+   * refuses a run that needs it free of charge, before a run exists, rather
+   * than let it pay for images the gate then cannot check. Optional: a gate
+   * that cannot break this way never implements it (read as available).
+   */
+  available?(): boolean;
   check(input: QaInput): Promise<QaVerdict>;
   /**
    * Releases a provisional claim this gate made for one attempt (T7a's pdq
