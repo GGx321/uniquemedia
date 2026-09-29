@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { scanForNeedles, type Needle } from "./scan";
+useNativeGlobals();
 
 // The streaming string scan: a needle must be found wherever it falls
 // relative to the chunk boundaries, and only where it is whole.

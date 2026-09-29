@@ -120,6 +120,23 @@ export function patched(bytes: Uint8Array, edit: (copy: Uint8Array) => void): Ui
   return copy;
 }
 
+/** The offset of the first occurrence of `text` (Latin-1) at or after `from`; throws when there is none. */
+export function findAscii(bytes: Uint8Array, text: string, from = 0): number {
+  const at = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).indexOf(Buffer.from(text, "latin1"), from);
+  if (at < 0) throw new Error(`no ${JSON.stringify(text)} in the file`);
+  return at;
+}
+
+/** A 1 s clip that is not the engine's: 320x240 H.264 with mono 44.1 kHz AAC, faststart. */
+export async function makeForeign(path: string): Promise<void> {
+  await runFfmpegOk([
+    "-hide_banner", "-y", "-nostdin",
+    "-f", "lavfi", "-i", "testsrc=size=320x240:rate=30:duration=1",
+    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+    "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", path,
+  ]);
+}
+
 /** Remuxes `input` to `output` with the real ffmpeg, copying the streams; `extra` are output args. */
 export async function remux(input: string, output: string, extra: readonly string[]): Promise<void> {
   await runFfmpegOk(["-hide_banner", "-y", "-nostdin", "-i", input, ...extra, output]);

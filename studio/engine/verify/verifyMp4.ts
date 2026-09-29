@@ -1,8 +1,10 @@
 import { open, stat, type FileHandle } from "node:fs/promises";
 import { BUILTIN_MARKERS, forbiddenCode, UUID_PAYLOAD_HEAD_BYTES } from "./allowlist";
 import { checkFtyp, checkMoov } from "./checks";
+import { checkEngineLayout } from "./engineLayout";
 import { Findings, MOOV_MAX_BYTES, MOOV_SCHEMA, readAt, TOP_LEVEL_ALLOWED, walkNested, walkTopLevel, type TopBox } from "./boxes";
 import { scanForNeedles, type Needle } from "./scan";
+import { checkStructure } from "./structure";
 import { MAX_OUTPUT_BYTES, MIN_FORBIDDEN_STRING_BYTES, VerifyIoError, type VerifyExpected, type VerifyOptions, type VerifyResult } from "./types";
 
 // The output verifier (plan slice 3a.7): walks the boxes of a finished MP4 and
@@ -35,13 +37,20 @@ const FREE_MAX_SCAN_BYTES = 64 * 1024;
 /** The real `ftyp` is 32 bytes. */
 const FTYP_MAX_BYTES = 1024;
 
+const CALLER_LABEL = "caller-string-";
+
+/** Names a hit for the log; the caller's own string is never echoed back. */
+function describeNeedle(label: string): string {
+  return label.startsWith(CALLER_LABEL) ? `caller string #${label.slice(CALLER_LABEL.length)}` : `photo-metadata marker '${label}'`;
+}
+
 /** A caller mistake, not a property of the file: refused before the file is opened. */
 function assertUsable(expected: VerifyExpected): Needle[] {
   if (!Number.isSafeInteger(expected.frames) || expected.frames < 1) throw new RangeError(`expected.frames must be a positive whole number, got ${expected.frames}`);
   return (expected.forbiddenStrings ?? []).map((text, i) => {
     const bytes = new TextEncoder().encode(text);
     if (bytes.length < MIN_FORBIDDEN_STRING_BYTES) throw new RangeError(`forbidden string #${i} is under ${MIN_FORBIDDEN_STRING_BYTES} bytes`);
-    return { label: `caller-string-${i}`, bytes };
+    return { label: `${CALLER_LABEL}${i}`, bytes };
   });
 }
 
@@ -60,9 +69,13 @@ export async function verifyRenderedMp4(path: string, expected: VerifyExpected, 
     const top = await walkTopLevel(handle, path, size, findings);
     await checkTopLevel(handle, path, top, findings);
     const ftyp = top.find((b) => b.type === "ftyp");
+    let ftypBytes: Uint8Array | undefined;
     if (ftyp) {
       if (ftyp.end - ftyp.start > FTYP_MAX_BYTES) findings.add("FTYP_BRAND_NOT_ALLOWED", `ftyp is ${ftyp.end - ftyp.start} bytes, over the ${FTYP_MAX_BYTES}-byte cap`, "ftyp");
-      else checkFtyp(await readAt(handle, path, ftyp.start, ftyp.end - ftyp.start), ftyp.body - ftyp.start, findings);
+      else {
+        ftypBytes = await readAt(handle, path, ftyp.start, ftyp.end - ftyp.start);
+        checkFtyp(ftypBytes, ftyp.body - ftyp.start, findings);
+      }
     }
     const moov = top.find((b) => b.type === "moov");
     if (moov) {
@@ -72,10 +85,12 @@ export async function verifyRenderedMp4(path: string, expected: VerifyExpected, 
         const bytes = await readAt(handle, path, moov.start, moov.end - moov.start);
         const children = walkNested(bytes, moov.body - moov.start, bytes.length, "moov", MOOV_SCHEMA, findings);
         checkMoov(bytes, children, findings);
+        checkStructure(bytes, children, expected.frames, findings);
+        if (ftypBytes && findings.list.length === 0) checkEngineLayout(ftypBytes, bytes, findings);
       }
     }
     const hits = await scanForNeedles(handle, path, size, [...BUILTIN_MARKERS, ...callerNeedles]);
-    for (const hit of hits) findings.add("SOURCE_METADATA_STRING", `${hit.label.startsWith("caller-string") ? `caller string #${hit.label.slice("caller-string-".length)}` : `photo-metadata marker '${hit.label}'`} found at byte ${hit.offset}`);
+    for (const hit of hits) findings.add("SOURCE_METADATA_STRING", `${describeNeedle(hit.label)} found at byte ${hit.offset}`);
   } finally {
     await handle.close();
   }
@@ -93,6 +108,9 @@ async function checkTopLevel(handle: FileHandle, path: string, top: readonly Top
     if (count > 1) findings.add("DUPLICATE_BOX", `the file has ${count} '${type}' boxes`, type);
   }
   if (top.some((b) => b.type === "ftyp") && top[0]?.type !== "ftyp") findings.add("FTYP_NOT_FIRST", "ftyp is not the first box", "ftyp");
+  const moovAt = top.find((b) => b.type === "moov")?.start;
+  const mdatAt = top.find((b) => b.type === "mdat")?.start;
+  if (moovAt !== undefined && mdatAt !== undefined && moovAt > mdatAt) findings.add("NOT_FASTSTART", "moov comes after mdat, so the file cannot start playing before it is fully read", "moov");
   for (const b of top) {
     const head = b.type === "uuid" ? await readAt(handle, path, b.body, Math.min(UUID_PAYLOAD_HEAD_BYTES, b.end - b.body)) : new Uint8Array(0);
     const forbidden = forbiddenCode(b.type, head);

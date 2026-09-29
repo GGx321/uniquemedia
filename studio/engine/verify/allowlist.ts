@@ -25,14 +25,20 @@ const FORBIDDEN_BOXES: ReadonlyMap<string, VerifyReasonCode> = new Map([
 
 /** The XMP packet's UUID, BE7ACFCB-97A9-42E8-9C71-999491E3AFAC, as it starts a `uuid` box's payload. */
 const XMP_UUID = Uint8Array.from([0xbe, 0x7a, 0xcf, 0xcb, 0x97, 0xa9, 0x42, 0xe8, 0x9c, 0x71, 0x99, 0x94, 0x91, 0xe3, 0xaf, 0xac]);
-export const UUID_PAYLOAD_HEAD_BYTES = XMP_UUID.length;
+export const UUID_PAYLOAD_HEAD_BYTES = 16;
+
+/** The UUID of a C2PA manifest store in a `uuid` box, D8FEC3D6-1B0E-483C-9297-5828877EC481. */
+const C2PA_UUID = Uint8Array.from([0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81]);
+
+const startsWith = (head: Uint8Array, id: Uint8Array): boolean => head.length >= id.length && id.every((b, i) => head[i] === b);
 
 /** The reason for a box that may never appear, or undefined when the type is not on the list. `payloadHead` is the first 16 bytes after the header. */
 export function forbiddenCode(type: string, payloadHead: Uint8Array): VerifyReasonCode | undefined {
   const code = FORBIDDEN_BOXES.get(type);
   if (code !== "UUID_BOX") return code;
-  const isXmp = payloadHead.length >= XMP_UUID.length && XMP_UUID.every((b, i) => payloadHead[i] === b);
-  return isXmp ? "XMP_BOX" : "UUID_BOX";
+  if (startsWith(payloadHead, XMP_UUID)) return "XMP_BOX";
+  if (startsWith(payloadHead, C2PA_UUID)) return "PROVENANCE_BOX";
+  return "UUID_BOX";
 }
 
 /** `ftyp`: what `-f mp4` writes (major `isom`; `isom`, `iso2`, `avc1`, `mp41` compatible). The minor version is not pinned. */

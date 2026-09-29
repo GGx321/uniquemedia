@@ -1,12 +1,12 @@
 import { ALLOWED_COMPATIBLE_BRANDS, ALLOWED_MAJOR_BRAND, COMPRESSOR_NAME, ENCODER_TAG, HANDLER_NAMES, LANGUAGE_UND, META_HANDLER_TYPE } from "./allowlist";
-import { decodeHeader, type Findings, type Mp4Box } from "./boxes";
+import type { Findings, Mp4Box } from "./boxes";
 import { latin1, u16, u32, u64, u8 } from "./reader";
 
 // The checks that read inside `moov`: the metadata allowlist (invariant 14)
 // for what the box walk cannot see, the box types alone. All of them work on
 // the moov buffer and report by code; none throws.
 
-const kids = (box: Mp4Box, type: string): Mp4Box[] => box.children.filter((c) => c.type === type);
+export const kids = (box: Mp4Box, type: string): Mp4Box[] => box.children.filter((c) => c.type === type);
 const unreadable = (findings: Findings, box: Mp4Box, what: string): void =>
   findings.add("STRUCTURE_UNRECOGNISED", `${box.type} is too short or has a layout this verifier does not know: ${what}`, box.path);
 
@@ -31,7 +31,7 @@ interface Handler {
 }
 
 /** `hdlr`: version and flags, pre_defined, handler type, 12 reserved bytes, then a NUL-terminated name. */
-function readHandler(bytes: Uint8Array, box: Mp4Box, findings: Findings): Handler | undefined {
+export function readHandler(bytes: Uint8Array, box: Mp4Box, findings: Findings): Handler | undefined {
   if (box.end - box.body < 24) {
     unreadable(findings, box, "no room for a handler type");
     return undefined;
@@ -62,31 +62,23 @@ function checkMedia(bytes: Uint8Array, mdia: Mp4Box, findings: Findings): string
 /**
  * The first sample entry of a track's `stsd`: the vendor field must be zeros
  * (an iPhone's, and ffmpeg's MP4 muxer's), and a video entry's compressor
- * name must be x264's. `stsd` is a full box with an entry count before the
- * entries.
+ * name must be x264's.
  */
-function checkSampleEntry(bytes: Uint8Array, stsd: Mp4Box, findings: Findings): Mp4Box | undefined {
-  const from = stsd.body + 8;
-  const header = decodeHeader(bytes.subarray(from, Math.min(from + 16, stsd.end)), stsd.end - from);
-  if (header.kind !== "box") {
-    unreadable(findings, stsd, "the first sample entry is not a box");
-    return undefined;
-  }
-  const entry: Mp4Box = { type: header.type, path: `${stsd.path}/${header.type}`, start: from, body: from + header.headerLength, end: from + header.size, children: [] };
+function checkSampleEntry(bytes: Uint8Array, stsd: Mp4Box, findings: Findings): void {
+  const entry = stsd.children[0];
+  if (!entry) return unreadable(findings, stsd, "there is no sample entry");
   const vendor = bytes.subarray(entry.start + 20, entry.start + 24);
   if (vendor.length === 4 && vendor.some((b) => b !== 0)) {
     findings.add("METADATA_VALUE_NOT_ALLOWED", `${entry.type} vendor is ${JSON.stringify(latin1(bytes, entry.start + 20, entry.start + 24))}, expected four zero bytes`, entry.path);
   }
-  if (entry.type === "avc1") {
-    const at = entry.start + 50;
-    const length = u8(bytes, at);
-    if (length === undefined || length > 31 || at + 32 > entry.end) return void unreadable(findings, entry, "no room for a compressor name");
-    const name = latin1(bytes, at + 1, at + 1 + length);
-    if (!COMPRESSOR_NAME.test(name)) {
-      findings.add("METADATA_VALUE_NOT_ALLOWED", `the video compressor name is ${JSON.stringify(name)}, expected Lavc<version> libx264`, entry.path);
-    }
+  if (entry.type !== "avc1") return;
+  const at = entry.start + 50;
+  const length = u8(bytes, at);
+  if (length === undefined || length > 31 || at + 32 > entry.end) return unreadable(findings, entry, "no room for a compressor name");
+  const name = latin1(bytes, at + 1, at + 1 + length);
+  if (!COMPRESSOR_NAME.test(name)) {
+    findings.add("METADATA_VALUE_NOT_ALLOWED", `the video compressor name is ${JSON.stringify(name)}, expected Lavc<version> libx264`, entry.path);
   }
-  return entry;
 }
 
 function checkTrack(bytes: Uint8Array, trak: Mp4Box, findings: Findings): void {

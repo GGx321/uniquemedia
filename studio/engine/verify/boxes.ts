@@ -86,41 +86,54 @@ export function decodeHeader(head: Uint8Array, available: number): Header {
 // ---------------------------------------------------------------------------
 
 /**
- * Where a box may appear and what it may hold. `strict` nodes are the places
- * metadata can live or that a file with extra content would extend: a type
- * not in `allowed` there is refused. The sample tables and the sample entries
- * are not strict: they hold no free-form content, and the way ffmpeg versions
- * differ (`sdtp`, `cslg`, `btrt`, `pasp`) is exactly there. Forbidden types
- * are refused at every level either way.
+ * Where a box may appear and what it may hold. A `strict` node is refused any
+ * type not in `allowed`: that is every place metadata can live or a file with
+ * extra content would grow, and it includes the sample entries, where a note
+ * can hide as easily as anywhere. Only the sample-table and `dinf` levels are
+ * tolerant of a type they do not know: they hold numbers, not content, and
+ * ffmpeg versions differ there (`sdtp`, `cslg`). Forbidden types are refused at
+ * every level either way.
  */
 export interface SchemaNode {
   readonly strict: boolean;
   readonly allowed: ReadonlySet<string>;
-  /** Types the walker opens, and whether four bytes of version and flags precede their children. */
-  readonly containers: ReadonlyMap<string, { readonly fullBox: boolean; readonly node: SchemaNode }>;
+  /** Types the walker opens, and how many payload bytes (version and flags, an entry count, fixed fields) precede their children. */
+  readonly containers: ReadonlyMap<string, { readonly prefix: number; readonly node: SchemaNode }>;
   /** The code for a type a strict node does not allow. */
   readonly unknownCode: VerifyReasonCode;
 }
 
 const set = (...types: string[]): ReadonlySet<string> => new Set(types);
+const container = (prefix: number, child: SchemaNode): { prefix: number; node: SchemaNode } => ({ prefix, node: child });
 const node = (
   strict: boolean,
   allowed: ReadonlySet<string>,
-  containers: ReadonlyMap<string, { fullBox: boolean; node: SchemaNode }> = new Map(),
+  containers: ReadonlyMap<string, { prefix: number; node: SchemaNode }> = new Map(),
   unknownCode: VerifyReasonCode = "UNKNOWN_BOX"
 ): SchemaNode => ({ strict, allowed, containers, unknownCode });
 
+/** A visual sample entry's fixed part after its header is 78 bytes; a version-0 sound entry's is 28. */
+const VISUAL_ENTRY_PREFIX = 78;
+const SOUND_ENTRY_PREFIX = 28;
+/** `stsd` is a full box (4) followed by an entry count (4). */
+const STSD_PREFIX = 8;
+/** `meta` is a full box: four bytes of version and flags. */
+const META_PREFIX = 4;
+
 const DATA_ITEM = node(true, set("data"));
-const ILST = node(true, set("©too"), new Map([["©too", { fullBox: false, node: DATA_ITEM }]]), "METADATA_KEY_NOT_ALLOWED");
-const META = node(true, set("hdlr", "ilst"), new Map([["ilst", { fullBox: false, node: ILST }]]));
-const UDTA = node(true, set("meta"), new Map([["meta", { fullBox: true, node: META }]]));
-const STBL = node(false, set("stsd", "stts", "stss", "ctts", "stsc", "stsz", "stco", "co64", "sgpd", "sbgp", "sdtp", "cslg", "stps"));
+const ILST = node(true, set("\u00a9too"), new Map([["\u00a9too", container(0, DATA_ITEM)]]), "METADATA_KEY_NOT_ALLOWED");
+const META = node(true, set("hdlr", "ilst"), new Map([["ilst", container(0, ILST)]]));
+const UDTA = node(true, set("meta"), new Map([["meta", container(META_PREFIX, META)]]));
+const AVC1 = node(true, set("avcC", "colr", "pasp", "btrt", "fiel", "clap"));
+const MP4A = node(true, set("esds", "btrt"));
+const STSD = node(true, set("avc1", "mp4a"), new Map([["avc1", container(VISUAL_ENTRY_PREFIX, AVC1)], ["mp4a", container(SOUND_ENTRY_PREFIX, MP4A)]]));
+const STBL = node(false, set("stsd", "stts", "stss", "ctts", "stsc", "stsz", "stco", "co64", "sgpd", "sbgp", "sdtp", "cslg", "stps"), new Map([["stsd", container(STSD_PREFIX, STSD)]]));
 const DINF = node(false, set("dref"));
-const MINF = node(true, set("vmhd", "smhd", "dinf", "stbl"), new Map([["dinf", { fullBox: false, node: DINF }], ["stbl", { fullBox: false, node: STBL }]]));
-const MDIA = node(true, set("mdhd", "hdlr", "minf"), new Map([["minf", { fullBox: false, node: MINF }]]));
+const MINF = node(true, set("vmhd", "smhd", "dinf", "stbl"), new Map([["dinf", container(0, DINF)], ["stbl", container(0, STBL)]]));
+const MDIA = node(true, set("mdhd", "hdlr", "minf"), new Map([["minf", container(0, MINF)]]));
 const EDTS = node(true, set("elst"));
-const TRAK = node(true, set("tkhd", "edts", "mdia"), new Map([["edts", { fullBox: false, node: EDTS }], ["mdia", { fullBox: false, node: MDIA }]]));
-export const MOOV_SCHEMA = node(true, set("mvhd", "trak", "udta"), new Map([["trak", { fullBox: false, node: TRAK }], ["udta", { fullBox: false, node: UDTA }]]));
+const TRAK = node(true, set("tkhd", "edts", "mdia"), new Map([["edts", container(0, EDTS)], ["mdia", container(0, MDIA)]]));
+export const MOOV_SCHEMA = node(true, set("mvhd", "trak", "udta"), new Map([["trak", container(0, TRAK)], ["udta", container(0, UDTA)]]));
 
 /** The only boxes the file's top level may hold. */
 export const TOP_LEVEL_ALLOWED = set("ftyp", "moov", "free", "mdat");
@@ -170,7 +183,9 @@ function walkRegion(w: Walk, from: number, to: number, parentPath: string, schem
     if (forbidden) {
       w.findings.add(forbidden, `box '${header.type}' at byte ${at} is never allowed`, path);
     } else if (known && !header.zeroSize) {
-      children = walkRegion(w, at + header.headerLength + (known.fullBox ? 4 : 0), end, path, known.node);
+      const childrenFrom = at + header.headerLength + known.prefix;
+      if (childrenFrom > end) w.findings.add("STRUCTURE_UNRECOGNISED", `box '${header.type}' at byte ${at} is too short for its own fixed fields`, path);
+      else children = walkRegion(w, childrenFrom, end, path, known.node);
     } else if (!schema.allowed.has(header.type) && schema.strict) {
       w.findings.add(schema.unknownCode, `box '${header.type}' is not allowed in '${parentPath}'`, path);
     }
