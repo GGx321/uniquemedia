@@ -120,9 +120,10 @@ jobs:
       # while tearing down a terminated WASM worker (right after
       # workerGate.test.ts's interruption test, on macOS), which takes the
       # whole suite down with no failed test. The script retries — at most 3
-      # attempts — ONLY on that crash with no failed test; a real failure
-      # fails the step at once.
-      - run: bun studio/scripts/realWorkerTests.ts ./studio
+      # attempts — ONLY on a Bun crash with no failed test (a failed test,
+      # a load error or a hang is never retried), and prints a ::warning::
+      # on every retry.
+      - run: bun studio/scripts/realWorkerTests.ts --suite ./studio
         timeout-minutes: 35
       # T7c: the real face worker tests (real models, a worker terminated
       # mid-WASM) run alone: Bun itself segfaults ~2% of the time tearing down
@@ -297,8 +298,11 @@ jobs:
       - name: Fetch face gate models
         run: bun run models:face
       - run: bunx tsc --noEmit -p studio/tsconfig.json
-      # Same crash-only retry and bounds as the build job's own step above, for the same reasons.
-      - run: bun studio/scripts/realWorkerTests.ts ./studio --randomize
+      # Same bounds as the build job's own step above, but the retry is narrower: the canary exists to catch
+      # a `bun latest` regression, so only the known worker-teardown segfaults (at 0x18 and at
+      # 0xFFFFFFFFFFFFFFF8) are retried, and any other crash fails the job. Every retry, here and in the
+      # build job, is printed as a ::warning:: annotation so the crash rate stays visible.
+      - run: bun studio/scripts/realWorkerTests.ts --known-crashes-only --suite ./studio --randomize
         timeout-minutes: 35
       # Same alone-and-retry step as the build job's (T7c).
       - name: Real face worker tests
