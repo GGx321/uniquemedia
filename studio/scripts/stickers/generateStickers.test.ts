@@ -88,8 +88,8 @@ describe("the committed set", () => {
     });
   }
 
-  test("catalog.json equals a fresh catalog, byte for byte", () => {
-    expect(readFileSync(join(STICKER_ASSET_DIR, "catalog.json"), "utf8")).toBe(catalogJson(buildCatalog(fresh)));
+  test("catalog.json equals a fresh catalog (line endings normalised as a second guard beside .gitattributes)", () => {
+    expect(readFileSync(join(STICKER_ASSET_DIR, "catalog.json"), "utf8").replaceAll("\r\n", "\n")).toBe(catalogJson(buildCatalog(fresh)));
   });
 
   test("catalog.json's sha256 and byte size match the files on disk", () => {

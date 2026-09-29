@@ -1,0 +1,4 @@
+# The generated sticker set is compared byte for byte with a fresh generation,
+# so Git must never rewrite its line endings (Git for Windows would turn
+# catalog.json into CRLF on checkout).
+studio/assets/stickers/** -text
