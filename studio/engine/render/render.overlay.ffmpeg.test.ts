@@ -17,7 +17,7 @@ useNativeGlobals();
 // The photo is flat grey (limited-range luma 126), the overlays are white
 // (235) or black (16), so "is the overlay here" is one luma mean.
 
-const TOTAL = 90; // a 3 s clip
+const TOTAL = 90; // two 1.5 s clips (S14: clips of at most 2 s), joined at frame 45
 const GREY = 126;
 const WHITE = 235;
 const BLACK = 16;
@@ -36,7 +36,7 @@ const RESIZED = { x: 600, y: 600, w: 216, h: 216 }; // frames [0, 90), 50x50 sou
 const STILL_TAIL = { x: 100, y: 1000, w: 200, h: 200 }; // frames [60, 90): runs to the last frame
 
 const centre = (b: { x: number; y: number; w: number; h: number }) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
-const clip: Clip = { clipId: "flat", durationMs: 3000, transitionIn: "cut", kind: "photo", cell: { photo: { source: "scene", photoId: "flat" }, focus: null }, motion: "static" };
+const clip: Clip = { clipId: "flat", durationMs: 1500, transitionIn: "cut", kind: "photo", cell: { photo: { source: "scene", photoId: "flat" }, focus: null }, motion: "static" };
 
 beforeAll(async () => {
   dir = makeWorkDir("overlay");
@@ -49,7 +49,7 @@ beforeAll(async () => {
   await makeSolid(small, "white", 50, 50, "png-rgba");
   await makeBlinkApng(blink, 200);
 
-  await runPass1(buildPass1({ seed: 1, clips: [clip], resolvePhoto: () => ({ path: flat, width: 720, height: 1280 }), clipDir: dir }));
+  await runPass1(buildPass1({ seed: 1, clips: [clip, { ...clip, clipId: "flat-2" }], resolvePhoto: () => ({ path: flat, width: 720, height: 1280 }), clipDir: dir }));
   const overlays: OverlayInput[] = [
     { path: white, format: "png", box: STILL_WINDOWED, resize: false, startFrame: 30, endFrame: 60 },
     { path: blink, format: "apng", box: BLINK, resize: false, startFrame: 30, endFrame: 60 },
@@ -58,7 +58,7 @@ beforeAll(async () => {
     { path: white, format: "png", box: STILL_TAIL, resize: false, startFrame: 60, endFrame: TOTAL },
   ];
   output = join(dir, "final.mp4");
-  await runPass2(buildPass2({ clips: [clip], clipDir: dir, output, overlays, audio: { kind: "silent" } }));
+  await runPass2(buildPass2({ clips: [clip, { ...clip, clipId: "flat-2" }], clipDir: dir, output, overlays, audio: { kind: "silent" } }));
 
   frameCount = await videoFrames(output);
   const frames = await extractFrames(output, SAMPLE_AT, "yuv420p", { w: 1080, h: 1920 });
