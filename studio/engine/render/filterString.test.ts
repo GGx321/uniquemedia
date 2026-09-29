@@ -77,6 +77,21 @@ describe("assertSafeFilterGraph", () => {
     expect(() => assertSafeFilterGraph("[0:v]settb=1/30,zoompan=z='(1+on)/59000':d=1[v]")).not.toThrow();
   });
 
+  test.each([
+    ["a quoted key that starts with a slash (ffmpeg reads the value as a file)", "[0:v]zoompan='/z'='f'[v]"],
+    ["a quoted key and value in one string", "[0:v]zoompan='/z=f'[v]"],
+    ["a quoted value that starts with a slash", "[0:v]zoompan=z='/etc/passwd'[v]"],
+    ["a quote after a colon, which makes it a key", "[0:v]zoompan=z='1':'x'='2'[v]"],
+    ["a quote right after the filter name's comma", "[0:v]scale=w=1,'h'=2[v]"],
+    ["a quoted value holding a double slash", "[0:v]zoompan=z='a//b'[v]"],
+  ])("refuses %s", (_name, graph) => {
+    expect(() => assertSafeFilterGraph(graph)).toThrow(RenderGraphError);
+  });
+
+  test("accepts a quoted value right after an equals sign, the only place a quote belongs", () => {
+    expect(() => assertSafeFilterGraph("[0:v]zoompan=z='(1+on)/59':x='iw/2'[v]")).not.toThrow();
+  });
+
   test("refuses an allowed filter name inside quotes being used to smuggle a second filter", () => {
     expect(() => assertSafeFilterGraph("[0:v]scale=w='1',movie=/x[v]")).toThrow(RenderGraphError);
   });

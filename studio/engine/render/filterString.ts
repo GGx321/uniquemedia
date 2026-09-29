@@ -50,6 +50,13 @@ export function assertSafeFilterGraph(graph: string): void {
     const bad = [...graph].find((c) => !GRAPH.test(c));
     fail(`the filter graph holds a character outside the allowed set: ${JSON.stringify(bad ?? graph)}`);
   }
+  // A quote opens an option VALUE and nothing else: it must follow `=` directly (never a key, where ffmpeg
+  // would read the value as a file: `zoompan='/z'='f'`), and its body must be a plain expression.
+  for (const m of graph.matchAll(/(.?)'([^']*)'/g)) {
+    const [, before = "", body = ""] = m;
+    if (before !== "=") fail("a quote in the filter graph must follow `=`: a quoted string is an option value, never a key");
+    if (!EXPRESSION.test(body) || body.startsWith("/") || body.includes("//")) fail(`a quoted expression holds more than names, numbers, operators and commas: ${JSON.stringify(body)}`);
+  }
   // Quoted expressions may hold `,` and `/`; take them out, and the pad labels, before reading the structure.
   const bare = graph.replace(/'[^']*'/g, "Q").replace(/\[[^\]]*\]/g, "");
   for (const filter of bare.split(/[;,]/)) {
