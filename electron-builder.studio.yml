@@ -14,6 +14,12 @@ afterPack: ./scripts/sign-adhoc.cjs
 files:
   - out-studio/**/*
   - package.json
+  # The generated built-in stickers (3b.5): 10 APNGs and catalog.json, ~7 MB,
+  # already compressed. They stay inside the integrity-checked asar, where
+  # Electron's fs reads them; how ffmpeg gets a real file path (a per-job copy
+  # or asarUnpack) is 3b.6's decision, not made here.
+  - studio/assets/stickers/*.apng
+  - studio/assets/stickers/catalog.json
   # ffprobe-static (every platform's binary, ~335 MB unpacked) and exiftool are
   # `dependencies` for the uniquifier's sake; nothing in studio/ uses them yet.
   # Drop the exclusions (and restore their asarUnpack entries, as in
