@@ -14,6 +14,25 @@ useNativeGlobals();
 
 const ARGV = ["-hide_banner", "-nostdin", "-y", "-i", "in.png", "-c:v", "libx264", "/out/clip.mkv"];
 const OUT = "/out/clip.mkv";
+/** A scripted child settles at once. The suite's default is 60 s for real ffmpeg runs; a broken guard here must fail in seconds, not hang. */
+const FAST_MS = 3000;
+/**
+ * What a run that should be refused or killed settled with: its rejection, the string "resolved", or "hung" once
+ * `ms` pass. Used instead of `expect(promise).rejects` for a run a broken guard would leave pending for ever:
+ * Bun waits on `.rejects` without letting the per-test timeout fire, so the suite would hang for the 60 s default
+ * (and worse), not fail.
+ */
+async function outcomeOf(run: Promise<void>, ms = 1000): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<string>((resolve) => {
+    timer = setTimeout(() => resolve("hung"), ms);
+  });
+  try {
+    return await Promise.race([run.then(() => "resolved", (error: unknown) => error), hung]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5));
 
 const dirs: string[] = [];
@@ -345,9 +364,12 @@ describe("runFfmpegArgv: review round 1", () => {
   test("refuses an argv that does not end with the output it was told, before any child starts", async () => {
     const { spawner, calls } = fakeSpawner(() => {});
 
-    await expect(runFfmpegArgv({ argv: ARGV, output: "/elsewhere/other.mkv", spawner, env: {} })).rejects.toThrow(TypeError);
-    expect(calls).toHaveLength(0);
-  });
+    const outcome = await outcomeOf(runFfmpegArgv({ argv: ARGV, output: "/elsewhere/other.mkv", spawner, env: {} }));
+
+    expect(outcome).toBeInstanceOf(TypeError);
+    // The count, not the array: a failing diff of the scripted children (streams, sockets) would spin for minutes.
+    expect(calls.length).toBe(0);
+  }, FAST_MS);
 
   test("a timeout that fires after ffmpeg exited 0, before close, does not turn the success into a timeout", async () => {
     const { spawner, calls } = fakeSpawner((c) => {
@@ -363,16 +385,16 @@ describe("runFfmpegArgv: review round 1", () => {
     const broken = new Error("EPIPE: stdout broke");
     const { spawner, calls } = fakeSpawner((c) => c.child.stdout.emit("error", broken));
 
-    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} })).rejects.toBe(broken);
+    expect(await outcomeOf(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} }))).toBe(broken);
     expect(calls[0]?.child.killedWith).toEqual(["SIGKILL"]);
-  });
+  }, FAST_MS);
 
   test("a stream error on stderr does the same", async () => {
     const broken = new Error("EPIPE: stderr broke");
     const { spawner } = fakeSpawner((c) => c.child.stderr.emit("error", broken));
 
-    await expect(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} })).rejects.toBe(broken);
-  });
+    expect(await outcomeOf(runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} }))).toBe(broken);
+  }, FAST_MS);
 
   test("adds the missing filter cap when the builder wrote only one of the two", async () => {
     const { spawner, calls } = fakeSpawner((c) => succeed(c.child));

@@ -315,21 +315,31 @@ describe("runRenderJob: the job folder and the output", () => {
 
   test("reports no progress after the cancel, even when ffmpeg exited 0 in the same tick as the abort", async () => {
     const controller = new AbortController();
-    const late: number[] = [];
-    const r = rig({
-      signal: controller.signal,
-      onProgress: (n) => {
-        if (controller.signal.aborted) late.push(n);
-      },
-    });
+    const seen: number[] = [];
+    const r = rig({ signal: controller.signal, onProgress: (n) => seen.push(n) });
+    // The process exits 0 WITHOUT its last progress report, and the cancel lands in the same tick: the only
+    // report left is the runner's own "this clip is done" one, and its guard is what keeps it out.
     const { deps } = depsWith((call) => {
-      goodFfmpeg(call);
+      writeFileSync(outputOf(call.args), "data");
+      call.child.exit(0);
       controller.abort(new Error("cancelled"));
     });
 
     await expect(runRenderJob(r.input, deps)).rejects.toThrow("cancelled");
 
-    expect(late).toEqual([]);
+    expect(seen).toEqual([]);
+  });
+
+  test("the same exit without a cancel does report the clip as done (so the test above is not vacuous)", async () => {
+    const r = rig();
+    const { deps } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "data");
+      call.child.exit(0);
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(r.progress[0]).toBe(10); // one of two 30-frame clips of 60: 35% of 30
   });
 
   test("keeps the user's folders out of the stderr tail: the temp root becomes <tmp>, the export folder <export>", async () => {
