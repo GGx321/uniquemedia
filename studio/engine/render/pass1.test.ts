@@ -9,6 +9,7 @@ import {
   FRAME_H,
   FRAME_W,
   msToFrames,
+  MIN_CLIP_MS,
   type Size,
 } from "../../shared/montage";
 import { mulberry32, randInt } from "../../shared/montage/random.testkit";
@@ -66,6 +67,15 @@ function graphOf(argv: readonly string[]): string {
 
 function inputsOf(argv: readonly string[]): string[] {
   return argv.flatMap((a, i) => (a === "-i" ? [argv[i + 1] ?? ""] : []));
+}
+
+/** The flags between the previous input (or the thread caps) and input `n`'s `-i`. */
+function optionsBeforeInput(argv: readonly string[], n: number): string[] {
+  const ins = argv.flatMap((a, i) => (a === "-i" ? [i] : []));
+  const end = ins[n];
+  if (end === undefined) throw new Error(`no input ${n}`);
+  const from = n === 0 ? argv.indexOf("-filter_complex_threads") + 2 : (ins[n - 1] ?? 0) + 2;
+  return argv.slice(from, end);
 }
 
 function first<T>(items: readonly T[]): T {
@@ -138,6 +148,16 @@ describe("buildPass1: argv", () => {
     expect(inputsOf(job.argv)).toEqual(["/work/photos/photo-a.jpg"]);
   });
 
+  test("before every photo input: only the file protocol, the still-image demuxer with no pattern matching, and the stored orientation (invariant 15)", () => {
+    const jobs = build([photoClip("a", 2000, "kenburns"), collageClip("b", "collage4", 2000, "static", true)]);
+    for (const j of jobs) {
+      const n = inputsOf(j.argv).length;
+      for (let i = 0; i < n; i++) {
+        expect(optionsBeforeInput(j.argv, i)).toEqual(["-protocol_whitelist", "file", "-f", "image2", "-pattern_type", "none", "-noautorotate"]);
+      }
+    }
+  });
+
   test("never ends the output by frames, time or shortest (invariant 20)", () => {
     const jobs = build([photoClip("a", 2000, "kenburns"), collageClip("b", "collage4", 500, "pan", true), photoClip("c", 1000, "static")]);
     for (const j of jobs) {
@@ -204,13 +224,16 @@ describe("buildPass1: a photo clip", () => {
   });
 
   test("a large own photo is scaled to the capped canvas, never to 4x its own size", () => {
-    sizes.set("photo-big", { w: 4000, h: 6000 });
     const clip: Clip = { clipId: "big", durationMs: 1000, transitionIn: "cut", kind: "photo", cell: scene("photo-big", { x: 0.5, y: 0.4 }), motion: "kenburns" };
     const g = cellMotionGeometry({ w: FRAME_W, h: FRAME_H }, { w: 4000, h: 6000 }, { x: 0.5, y: 0.4 });
-    const graph = graphOf(first(build([clip])).argv);
-    expect(g.canvas.w).toBeLessThanOrEqual(2880);
-    expect(graph).toContain(`scale=${g.canvas.w}:${g.canvas.h}:flags=lanczos`);
-    sizes.delete("photo-big");
+    sizes.set("photo-big", { w: 4000, h: 6000 });
+    try {
+      const graph = graphOf(first(build([clip])).argv);
+      expect(g.canvas.w).toBeLessThanOrEqual(2880);
+      expect(graph).toContain(`scale=${g.canvas.w}:${g.canvas.h}:flags=lanczos`);
+    } finally {
+      sizes.delete("photo-big");
+    }
   });
 });
 
@@ -317,11 +340,24 @@ describe("buildPass1: refusals", () => {
 
   test("refuses a photo whose size is not whole positive pixels", () => {
     const bad: PhotoResolver = () => ({ path: "/work/a.jpg", width: 0, height: 1280 });
-    expect(() => build([photoClip("a", 2000, "static")], bad)).toThrow(RangeError);
+    expect(() => build([photoClip("a", 2000, "static")], bad)).toThrow(expect.objectContaining({ code: "BAD_PHOTO_SIZE" }));
   });
 
-  test("refuses a duration that is not a whole number of frames, rather than rounding it", () => {
-    expect(() => build([photoClip("a", 2050, "static")])).toThrow(RangeError);
+  test("refuses a duration that is not a whole number of frames as BAD_DURATION, rather than rounding it or leaking a RangeError", () => {
+    expect(() => build([photoClip("a", 2050, "static")])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
+  });
+
+  test.each([0, 100, MIN_CLIP_MS - 100])("refuses a clip of %d ms, below the 500 ms minimum (a zero would loop for ever)", (ms) => {
+    expect(() => build([photoClip("a", ms, "static")])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
+    expect(() => build([collageClip("a", "collage2", ms, "kenburns", true)])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
+  });
+
+  test("accepts a clip of exactly the minimum, 500 ms", () => {
+    expect(first(build([photoClip("a", MIN_CLIP_MS, "static")])).frames).toBe(15);
+  });
+
+  test("refuses a negative, fractional or NaN duration as BAD_DURATION", () => {
+    for (const ms of [-500, 500.5, Number.NaN]) expect(() => build([photoClip("a", ms, "static")])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
   });
 });
 

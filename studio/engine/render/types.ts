@@ -6,12 +6,13 @@ import type { Rect } from "../../shared/montage";
 // photos, picks the paths, runs the argv arrays, and writes the concat list.
 
 /**
- * A photo the engine has resolved: where it is and how large it decodes.
- * `width` and `height` must be the size ffmpeg DELIVERS, that is AFTER the
- * EXIF orientation: ffmpeg's own autorotate turns a JPEG with Orientation 6
- * from 720x1280 into 1280x720 before the graph sees it (measured on 6.0). A
- * generated photo carries no orientation; an own upload (3f) must be reported
- * in its oriented size, or have the tag removed on import.
+ * A photo the engine has resolved: where it is and how large it is STORED.
+ * `width` and `height` are the stored pixel size, which is what the library
+ * sidecar and the face detector's focus are in (both ignore EXIF orientation).
+ * The graph reads the file with `-noautorotate`, so ffmpeg delivers exactly
+ * that stored size and orientation, on 6.0 and 6.1.1 alike. An own upload
+ * (3f) with an EXIF orientation is therefore drawn as stored, unless the
+ * importer bakes the rotation into the pixels.
  */
 export interface PhotoSource {
   /** Absolute path. It goes to ffmpeg as `-i <path>`, never into a filter string. */
@@ -32,7 +33,9 @@ export type RenderGraphErrorCode =
   | "PATH_NOT_ABSOLUTE"
   | "UNSAFE_GRAPH"
   | "NO_CLIPS"
-  | "BAD_OVERLAY";
+  | "BAD_OVERLAY"
+  | "BAD_DURATION"
+  | "BAD_PHOTO_SIZE";
 
 /** A refusal to build: the spec or the injected inputs cannot produce a valid graph. */
 export class RenderGraphError extends Error {
@@ -74,8 +77,12 @@ export interface Pass1Job {
 export interface OverlayInput {
   /** Absolute path of a PNG, APNG or GIF. */
   readonly path: string;
-  /** An animated asset loops from the layer's first frame; a still is just held. */
-  readonly animated: boolean;
+  /**
+   * What the file is, which names its demuxer: a still `png`, or an animation
+   * (`apng`, `gif`). An animation loops from the layer's first frame; a still
+   * is just held.
+   */
+  readonly format: "png" | "apng" | "gif";
   /** Where and how large, from the geometry module (`stickerBox`, `textBox`). Even numbers. */
   readonly box: Rect;
   /** Scale the asset to `box` (stickers). A text PNG is already the size of its box. */

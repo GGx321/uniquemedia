@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { msToFrames, totalFrames } from "../../shared/montage";
+import { MIN_CLIP_MS, msToFrames, totalFrames } from "../../shared/montage";
 import { mulberry32, randInt } from "../../shared/montage/random.testkit";
 import { randomSpec } from "../../shared/montage/specGen.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -20,7 +20,7 @@ const CLIPS = [
 
 const still = (over: Partial<OverlayInput> = {}): OverlayInput => ({
   path: "/work/overlays/text-1.png",
-  animated: false,
+  format: "png",
   box: { x: 100, y: 300, w: 880, h: 200 },
   resize: false,
   startFrame: 30,
@@ -146,19 +146,39 @@ describe("buildPass2: the silent audio (invariant 20)", () => {
 });
 
 describe("buildPass2: overlays", () => {
-  test("adds one looped still input per overlay, longer than the timeline by one second", () => {
+  test("adds one input per overlay, read as a single PNG frame by the still-image demuxer with no pattern matching", () => {
     const job = build({ overlays: [still()] });
     expect(inputsOf(job.argv)).toEqual(["list.txt", "/work/overlays/text-1.png"]);
-    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-loop", "1", "-framerate", "30", "-t", "9"]);
+    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-protocol_whitelist", "file", "-f", "image2", "-pattern_type", "none"]);
   });
 
-  test("gives an animated overlay no input flags: the file is read once and looped inside the graph", () => {
-    const job = build({ overlays: [still({ path: "/work/overlays/sticker.apng", animated: true })] });
-    expect(optionsBeforeInput(job.argv, 1)).toEqual([]);
+  test("names the demuxer of an animation: apng for an APNG, gif for a GIF", () => {
+    const job = build({ overlays: [still({ path: "/o/a.png", format: "apng" }), still({ path: "/o/b.gif", format: "gif" })] });
+    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-protocol_whitelist", "file", "-f", "apng"]);
+    expect(optionsBeforeInput(job.argv, 2)).toEqual(["-protocol_whitelist", "file", "-f", "gif"]);
+  });
+
+  test("puts -protocol_whitelist file before EVERY input, the concat list, the stills and the animations (invariant 15)", () => {
+    const argv = build({ overlays: [still(), still({ format: "apng" }), still({ format: "gif" })] }).argv;
+    for (let i = 0; i < inputsOf(argv).length; i++) {
+      const options = optionsBeforeInput(argv, i);
+      expect(options.slice(options.indexOf("-protocol_whitelist"), options.indexOf("-protocol_whitelist") + 2)).toEqual(["-protocol_whitelist", "file"]);
+    }
+  });
+
+  test("never autorotates nor loops a still with -loop: it is converted once and looped in the graph", () => {
+    const argv = build({ overlays: [still()] }).argv;
+    expect(argv).not.toContain("-loop");
+    expect(argv).not.toContain("-framerate");
+  });
+
+  test("reads an animated overlay once: no -stream_loop, no -t, the loop is in the graph", () => {
+    const job = build({ overlays: [still({ path: "/work/overlays/sticker.apng", format: "apng" })] });
+    expect(optionsBeforeInput(job.argv, 1)).not.toContain("-t");
   });
 
   test("never uses -stream_loop or -ignore_loop, whose loop timestamps are one frame short for APNG and GIF", () => {
-    const argv = build({ overlays: [still({ animated: true }), still()] }).argv;
+    const argv = build({ overlays: [still({ format: "apng" }), still()] }).argv;
     expect(argv).not.toContain("-stream_loop");
     expect(argv).not.toContain("-ignore_loop");
   });
@@ -170,19 +190,25 @@ describe("buildPass2: overlays", () => {
 
   test("converts each overlay with the explicit BT.709 chain, never the auto scaler", () => {
     const graph = graphOf(build({ overlays: [still()] }).argv);
-    expect(graph).toContain(`${OVERLAY_COLOUR_CHAIN}[s0]`);
+    expect(graph).toContain(OVERLAY_COLOUR_CHAIN);
     // no bare `format=yuva420p` left for the auto scaler to fill in
     expect(graph.split("format=yuva420p").length - 1).toBe(1);
     expect(graph.split("out_color_matrix=bt709").length - 1).toBe(1);
   });
 
+  test("converts a still ONCE and repeats the converted frame with loop, instead of converting every frame", () => {
+    const graph = graphOf(build({ overlays: [still()] }).argv);
+    expect(graph.indexOf(OVERLAY_COLOUR_CHAIN)).toBeLessThan(graph.indexOf("loop=loop=-1:size=1"));
+    expect(graph.indexOf("loop=loop=-1:size=1")).toBeLessThan(graph.indexOf("setpts=N+"));
+  });
+
   test("cuts a windowed overlay to its length, then shifts it to its start frame with settb and an integer setpts", () => {
     const graph = graphOf(build({ overlays: [still({ startFrame: 30, endFrame: 90 })] }).argv);
-    expect(graph).toContain("[1:v]trim=end_frame=60,settb=1/30,setpts=N+30,format=rgba,");
+    expect(graph).toContain(`[1:v]format=rgba,${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=1,trim=end_frame=60,settb=1/30,setpts=N+30[s0]`);
   });
 
   test("resamples an animated overlay to 30 fps, converts it, loops its frames forever, cuts it to the layer's length and only then shifts it to its start frame, so its loop starts on the layer's first frame", () => {
-    const graph = graphOf(build({ overlays: [still({ animated: true, startFrame: 30, endFrame: 90 })] }).argv);
+    const graph = graphOf(build({ overlays: [still({ format: "apng", startFrame: 30, endFrame: 90 })] }).argv);
     expect(graph).toContain(`[1:v]fps=30,format=rgba,${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=${ANIMATED_LOOP_MAX_FRAMES},trim=end_frame=60,settb=1/30,setpts=N+30[s0]`);
   });
 
@@ -191,7 +217,7 @@ describe("buildPass2: overlays", () => {
   });
 
   test("converts an animated overlay before it caches its loop, so the cache holds the small yuva420p frames", () => {
-    const graph = graphOf(build({ overlays: [still({ animated: true })] }).argv);
+    const graph = graphOf(build({ overlays: [still({ format: "apng" })] }).argv);
     expect(graph.indexOf("format=yuva420p")).toBeLessThan(graph.indexOf("loop=loop=-1"));
   });
 
@@ -218,7 +244,7 @@ describe("buildPass2: overlays", () => {
       if (start === 0 && end === total) continue; // the whole timeline is the other case
       const job = build({ clips: [{ clipId: "a", durationMs: (total / 3) * 100 }], overlays: [still({ startFrame: start, endFrame: end, box: { x: 0, y: 0, w: 10, h: 10 } })] });
       const graph = graphOf(job.argv);
-      expect(graph).toContain(`trim=end_frame=${end - start},settb=1/30,setpts=N+${start},`);
+      expect(graph).toContain(`trim=end_frame=${end - start},settb=1/30,setpts=N+${start}[s0]`);
       expect(graph).toContain("eof_action=pass");
     }
   });
@@ -245,11 +271,11 @@ describe("buildPass2: overlays", () => {
     const graph = graphOf(job.argv);
     expect(graph).toContain("eof_action=endall");
     expect(graph).not.toContain("trim=end_frame");
-    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-loop", "1", "-framerate", "30", "-t", "9"]);
+    expect(graph).toContain("loop=loop=-1:size=1,settb=1/30,setpts=N+0[s0]");
   });
 
   test("an animated layer that spans the whole timeline is looped without end and not cut", () => {
-    const graph = graphOf(build({ overlays: [still({ animated: true, startFrame: 0, endFrame: 240 })] }).argv);
+    const graph = graphOf(build({ overlays: [still({ format: "apng", startFrame: 0, endFrame: 240 })] }).argv);
     expect(graph).toContain(`loop=loop=-1:size=${ANIMATED_LOOP_MAX_FRAMES},settb=1/30,setpts=N+0[s0]`);
     expect(graph).toContain("eof_action=endall");
   });
@@ -261,7 +287,7 @@ describe("buildPass2: overlays", () => {
   });
 
   test("still asks for no -t after the inputs and no -shortest with overlays present", () => {
-    const argv = build({ overlays: [still(), still({ animated: true })] }).argv;
+    const argv = build({ overlays: [still(), still({ format: "apng" })] }).argv;
     const afterInputs = argv.slice(argv.indexOf("-filter_complex"));
     expect(afterInputs).not.toContain("-t");
     expect(afterInputs).not.toContain("-shortest");
@@ -298,8 +324,16 @@ describe("buildPass2: refusals", () => {
     expect(() => build({ clipDir: "render-tmp/job-1" })).toThrow(expect.objectContaining({ code: "PATH_NOT_ABSOLUTE" }));
   });
 
-  test("refuses a duration that is not a whole number of frames, rather than rounding it", () => {
-    expect(() => build({ clips: [{ clipId: "a", durationMs: 2050 }] })).toThrow(RangeError);
+  test("refuses a duration that is not a whole number of frames as BAD_DURATION, rather than rounding it or leaking a RangeError", () => {
+    expect(() => build({ clips: [{ clipId: "a", durationMs: 2050 }] })).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
+  });
+
+  test.each([0, 100, MIN_CLIP_MS - 100])("refuses a clip of %d ms, below the 500 ms minimum", (ms) => {
+    expect(() => build({ clips: [{ clipId: "a", durationMs: ms }] })).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
+  });
+
+  test("accepts a clip of exactly the minimum, 500 ms", () => {
+    expect(build({ clips: [{ clipId: "a", durationMs: MIN_CLIP_MS }] }).totalFrames).toBe(15);
   });
 
   test("names the code of a refusal", () => {
@@ -325,7 +359,7 @@ describe("buildPass2: invariant 16, no text or path in -filter_complex", () => {
         const end = randInt(rand, start + 1, total);
         return {
           path: `${NASTY[k % NASTY.length]}.${k}.png`,
-          animated: rand() < 0.5,
+          format: rand() < 0.5 ? "png" : rand() < 0.5 ? "apng" : "gif",
           box: { x: 2 * randInt(rand, 0, 200), y: 2 * randInt(rand, 0, 400), w: 2 * randInt(rand, 1, 200), h: 2 * randInt(rand, 1, 200) },
           resize: rand() < 0.5,
           startFrame: start,

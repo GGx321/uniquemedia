@@ -1,5 +1,7 @@
-import { FPS, FRAME_H, FRAME_W, msToFrames } from "../../shared/montage";
+import { FRAME_H, FRAME_W } from "../../shared/montage";
+import { clipFrames } from "./durations";
 import { assertAbsolutePath, assertSafeFilterGraph } from "./filterString";
+import { FPS } from "../../shared/montage";
 import { clipFileName, CONCAT_LIST_NAME } from "./names";
 import {
   CONTAINER_ARGS,
@@ -60,20 +62,19 @@ function validateOverlay(o: OverlayInput, index: number, total: number): void {
 }
 
 /**
- * The input flags of an overlay. A still is looped and made longer than the
- * timeline (`-t total+1`), so that `eof_action=endall` ends the output when
- * the MAIN input ends, on the exact frame (SP1, SP3).
- *
- * An animated overlay takes NO flags: the file is read once and its frames
- * are looped in the graph (`overlayPrepare`). `-stream_loop -1` and
+ * The input flags of an overlay (invariant 15): only the file protocol, and
+ * the demuxer named outright: the still-image one with no pattern matching for
+ * a PNG, `apng` or `gif` for an animation. Nothing else: a still is one frame
+ * that the graph converts once and repeats; an animation is read once and its
+ * frames are looped in the graph (`overlayPrepare`). `-stream_loop -1` and
  * `-ignore_loop` were measured, and both fail on APNG and GIF: the demuxer's
  * duration is one frame short, so each loop restarts a frame early and eats a
  * frame of the animation, and a file with a finite loop count ends the overlay
  * (and with `endall`, the whole output).
  */
-function overlayInputArgs(o: OverlayInput, longSeconds: number): string[] {
-  if (o.animated) return ["-i", o.path];
-  return ["-loop", "1", "-framerate", String(FPS), "-t", String(longSeconds), "-i", o.path];
+function overlayInputArgs(o: OverlayInput): string[] {
+  const demuxer = o.format === "png" ? ["-f", "image2", "-pattern_type", "none"] : ["-f", o.format];
+  return ["-protocol_whitelist", "file", ...demuxer, "-i", o.path];
 }
 
 /**
@@ -81,20 +82,22 @@ function overlayInputArgs(o: OverlayInput, longSeconds: number): string[] {
  * shifted to its start frame and converted to BT.709 limited range with alpha
  * (explicitly, never left to the auto scaler), optionally resized to its box.
  *
- * A still is shifted first and converted per frame. An animated one is
- * resampled to 30 fps, converted once, looped forever from a cache of its own
- * frames (the small yuva420p ones, at most `ANIMATED_LOOP_MAX_FRAMES`), and
- * then numbered from its layer's first frame, so the loop starts there and
- * every loop is the file's frames in order.
+ * A still is converted once and its one frame repeated forever. An animated
+ * one is resampled to 30 fps, converted once, and looped forever from a cache
+ * of its own frames (the small yuva420p ones, at most
+ * `ANIMATED_LOOP_MAX_FRAMES`). Either is then cut to the layer's length and
+ * numbered from the layer's first frame, so the loop starts there and every
+ * loop is the file's frames in order.
  */
 function overlayPrepare(o: OverlayInput, inputIndex: number, k: number, totalFrames: number): string {
   const resize = o.resize ? `scale=${o.box.w}:${o.box.h}:flags=lanczos,` : "";
   const cut = spansTimeline(o, totalFrames) ? "" : `trim=end_frame=${o.endFrame - o.startFrame},`;
   const shift = `settb=1/${FPS},setpts=N+${o.startFrame}`;
-  if (o.animated) {
+  if (o.format !== "png") {
     return `[${inputIndex}:v]fps=${FPS},format=rgba,${resize}${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=${ANIMATED_LOOP_MAX_FRAMES},${cut}${shift}[s${k}]`;
   }
-  return `[${inputIndex}:v]${cut}${shift},format=rgba,${resize}${OVERLAY_COLOUR_CHAIN}[s${k}]`;
+  // A still is converted ONCE, and the converted frame is repeated.
+  return `[${inputIndex}:v]format=rgba,${resize}${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=1,${cut}${shift}[s${k}]`;
 }
 
 /** A layer that covers every frame of the montage. */
@@ -140,14 +143,11 @@ export function buildPass2(input: Pass2Input): Pass2Job {
   let totalFrames = 0;
   let totalMs = 0;
   for (const clip of input.clips) {
-    totalFrames += msToFrames(clip.durationMs);
+    totalFrames += clipFrames(clip.durationMs);
     totalMs += clip.durationMs;
   }
   const audioSamples = totalMs * AUDIO_SAMPLES_PER_MS;
   input.overlays.forEach((o, i) => validateOverlay(o, i, totalFrames));
-
-  // Every overlay input outlasts the timeline by one second; a decimal of whole tenths is exact.
-  const longSeconds = totalMs / 1000 + 1;
 
   const filters: string[] = [];
   const last = input.overlays.length - 1;
@@ -166,7 +166,7 @@ export function buildPass2(input: Pass2Input): Pass2Job {
     ...HEAD_ARGS,
     ...FILTER_THREAD_ARGS,
     "-f", "concat", "-protocol_whitelist", "file", "-i", CONCAT_LIST_NAME,
-    ...input.overlays.flatMap((o) => overlayInputArgs(o, longSeconds)),
+    ...input.overlays.flatMap((o) => overlayInputArgs(o)),
     "-filter_complex", graph,
     "-map", "[v]", "-map", "[a]",
     ...FINAL_VIDEO_ARGS,

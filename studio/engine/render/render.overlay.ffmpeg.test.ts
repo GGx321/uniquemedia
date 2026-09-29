@@ -51,11 +51,11 @@ beforeAll(async () => {
 
   await runPass1(buildPass1({ seed: 1, clips: [clip], resolvePhoto: () => ({ path: flat, width: 720, height: 1280 }), clipDir: dir }));
   const overlays: OverlayInput[] = [
-    { path: white, animated: false, box: STILL_WINDOWED, resize: false, startFrame: 30, endFrame: 60 },
-    { path: blink, animated: true, box: BLINK, resize: false, startFrame: 30, endFrame: 60 },
-    { path: white, animated: false, box: STILL_WHOLE, resize: false, startFrame: 0, endFrame: TOTAL },
-    { path: small, animated: false, box: RESIZED, resize: true, startFrame: 0, endFrame: TOTAL },
-    { path: white, animated: false, box: STILL_TAIL, resize: false, startFrame: 60, endFrame: TOTAL },
+    { path: white, format: "png", box: STILL_WINDOWED, resize: false, startFrame: 30, endFrame: 60 },
+    { path: blink, format: "apng", box: BLINK, resize: false, startFrame: 30, endFrame: 60 },
+    { path: white, format: "png", box: STILL_WHOLE, resize: false, startFrame: 0, endFrame: TOTAL },
+    { path: small, format: "png", box: RESIZED, resize: true, startFrame: 0, endFrame: TOTAL },
+    { path: white, format: "png", box: STILL_TAIL, resize: false, startFrame: 60, endFrame: TOTAL },
   ];
   output = join(dir, "final.mp4");
   await runPass2(buildPass2({ clips: [clip], clipDir: dir, output, overlays, audio: { kind: "silent" } }));

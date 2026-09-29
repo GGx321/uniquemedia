@@ -115,7 +115,7 @@ async function renderAndMeasure(name: string, trap: { photo?: boolean; sticker?:
     clips: [chartClip],
     clipDir: work,
     output,
-    overlays: [{ path: sticker, animated: false, box: { x: STICKER_AT.x, y: STICKER_AT.y, w: STICKER_W, h: STICKER_H }, resize: false, startFrame: 0, endFrame: 30 }],
+    overlays: [{ path: sticker, format: "png", box: { x: STICKER_AT.x, y: STICKER_AT.y, w: STICKER_W, h: STICKER_H }, resize: false, startFrame: 0, endFrame: 30 }],
     audio: { kind: "silent" },
   });
   await runPass2({ ...pass2, argv: trap.sticker ? tamperGraph(pass2.argv, OVERLAY_COLOUR_CHAIN, "format=yuva420p") : pass2.argv });

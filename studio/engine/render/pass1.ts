@@ -8,11 +8,11 @@ import {
   FPS,
   FRAME_H,
   FRAME_W,
-  msToFrames,
   type MotionPlan,
   type Rect,
 } from "../../shared/montage";
 import { assertAbsolutePath, assertSafeFilterGraph } from "./filterString";
+import { clipFrames } from "./durations";
 import { clipFileName } from "./names";
 import { FILTER_THREAD_ARGS, FRAME_TAGS, INTERMEDIATE_VIDEO_ARGS, PHOTO_COLOUR_CHAIN } from "./profile";
 import { RenderGraphError, type Pass1Input, type Pass1Job, type PhotoResolver, type PhotoSource } from "./types";
@@ -38,6 +38,16 @@ import { zoompanFilter } from "./zoompan";
 
 const HEAD_ARGS: readonly string[] = ["-hide_banner", "-nostdin", "-y"];
 
+/**
+ * In front of every photo `-i` (invariant 15): only the file protocol; the
+ * still-image demuxer named outright, with no pattern matching, so a name
+ * with `%` or `*` in it is a file and never a sequence or a glob; and the
+ * STORED orientation (`-noautorotate`), because the library's sizes and the
+ * detector's focus are in stored pixels and ffmpeg's autorotate would rotate
+ * them under the crop (6.0 and 6.1.1 alike).
+ */
+export const PHOTO_INPUT_ARGS: readonly string[] = ["-protocol_whitelist", "file", "-f", "image2", "-pattern_type", "none", "-noautorotate"];
+
 function refKey(ref: NonNullable<Cell["photo"]>): string {
   return ref.source === "scene" ? `scene:${ref.photoId}` : `own:${ref.mediaId}`;
 }
@@ -47,6 +57,9 @@ function resolveCell(cell: Cell, resolvePhoto: PhotoResolver): PhotoSource {
   const source = resolvePhoto(cell.photo);
   if (source === undefined) throw new RenderGraphError("PHOTO_UNRESOLVED", `the photo ${refKey(cell.photo)} was not resolved`);
   assertAbsolutePath(source.path, "the photo path");
+  for (const side of [source.width, source.height]) {
+    if (!Number.isSafeInteger(side) || side < 1) throw new RenderGraphError("BAD_PHOTO_SIZE", `the photo ${refKey(cell.photo)} must have a whole positive size, got ${source.width}x${source.height}`);
+  }
   return source;
 }
 
@@ -65,7 +78,7 @@ function cellChain(inputIndex: number, outLabel: string, source: PhotoSource, ce
 }
 
 function buildClipGraph(clip: Clip & { kind: "photo" | "collage" }, seed: number, sources: readonly PhotoSource[]): string {
-  const frames = msToFrames(clip.durationMs);
+  const frames = clipFrames(clip.durationMs);
   const plan = clipMotionPlan(seed, clip);
   const rects = clipCellRects(clip);
   const cells = clip.kind === "photo" ? [clip.cell] : clip.cells;
@@ -118,6 +131,7 @@ export function buildPass1(input: Pass1Input): Pass1Job[] {
     if (clip.kind === "video") {
       throw new RenderGraphError("VIDEO_CLIP_UNSUPPORTED", "an own video clip is not supported yet (slice 3f)");
     }
+    clipFrames(clip.durationMs);
     const cells = clip.kind === "photo" ? [clip.cell] : clip.cells;
     const sources = cells.map((cell) => resolveCell(cell, input.resolvePhoto));
     const graph = buildClipGraph(clip, input.seed, sources);
@@ -128,12 +142,12 @@ export function buildPass1(input: Pass1Input): Pass1Job[] {
     const argv = [
       ...HEAD_ARGS,
       ...FILTER_THREAD_ARGS,
-      ...sources.flatMap((s) => ["-i", s.path]),
+      ...sources.flatMap((s) => [...PHOTO_INPUT_ARGS, "-i", s.path]),
       "-filter_complex", graph,
       "-map", "[v]",
       ...INTERMEDIATE_VIDEO_ARGS,
       output,
     ];
-    return { index, clipId: clip.clipId, frames: msToFrames(clip.durationMs), fileName, output, argv };
+    return { index, clipId: clip.clipId, frames: clipFrames(clip.durationMs), fileName, output, argv };
   });
 }
