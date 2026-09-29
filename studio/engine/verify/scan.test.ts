@@ -67,4 +67,19 @@ describe("scanForNeedles", () => {
   test("finds a needle whose bytes include NUL", async () => {
     expect(await scan("ab\u0000\u0000cd", [needle("a", "b\u0000\u0000c")], 3)).toEqual([{ label: "a", offset: 1 }]);
   });
+
+  test("hands every byte of the scanned range to onChunk exactly once, in order, so a hash can ride along the same pass", async () => {
+    const content = "0123456789abcdefghijklmnopqrstuvwxyz";
+    const path = join(dir, "hashed.bin");
+    writeFileSync(path, content, "latin1");
+    const handle = await open(path, "r");
+    const seen: string[] = [];
+    try {
+      await scanForNeedles(handle, path, content.length, [needle("a", "NOPE-NOT-THERE")], 8, (chunk) => seen.push(Buffer.from(chunk).toString("latin1")));
+    } finally {
+      await handle.close();
+    }
+    expect(seen.join("")).toBe(content);
+    expect(seen).toHaveLength(5); // 8 + 8 + 8 + 8 + 4: no window is read twice
+  });
 });

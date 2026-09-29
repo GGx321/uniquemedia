@@ -22,14 +22,27 @@ const DEFAULT_CHUNK_BYTES = 1024 * 1024;
  * file. The last `longest - 1` bytes of each window are carried into the
  * next, so a needle is found wherever a chunk boundary falls; a needle the
  * file ends in the middle of is not a hit.
+ *
+ * `onChunk` sees each chunk once, in file order: a caller that needs a digest of
+ * the same bytes (the commit's sha256) hashes inside this pass instead of reading
+ * the file again. The scan stops early once every needle is found, so a caller
+ * must not assume it saw the whole file unless the chunks add up to `size`.
  */
-export async function scanForNeedles(handle: FileHandle, path: string, size: number, needles: readonly Needle[], chunkBytes = DEFAULT_CHUNK_BYTES): Promise<ScanHit[]> {
+export async function scanForNeedles(
+  handle: FileHandle,
+  path: string,
+  size: number,
+  needles: readonly Needle[],
+  chunkBytes = DEFAULT_CHUNK_BYTES,
+  onChunk?: (chunk: Uint8Array) => void,
+): Promise<ScanHit[]> {
   const usable = needles.filter((n) => n.bytes.length > 0);
   const keep = Math.max(0, ...usable.map((n) => n.bytes.length)) - 1;
   const hits = new Map<string, number>();
   let carry: Buffer = Buffer.alloc(0);
   for (let position = 0; position < size && hits.size < usable.length; position += chunkBytes) {
     const chunk = await readAt(handle, path, position, Math.min(chunkBytes, size - position));
+    onChunk?.(chunk);
     const window = Buffer.concat([carry, chunk]);
     const windowStart = position - carry.length;
     for (const n of usable) {

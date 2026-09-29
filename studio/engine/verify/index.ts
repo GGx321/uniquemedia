@@ -14,4 +14,4 @@ export {
   type VerifyReasonCode,
   type VerifyResult,
 } from "./types";
-export { verifyRenderedMp4 } from "./verifyMp4";
+export { verifyAndHashMp4, verifyRenderedMp4, type VerifiedFile } from "./verifyMp4";

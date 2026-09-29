@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { BUILTIN_MARKERS, forbiddenCode, UUID_PAYLOAD_HEAD_BYTES } from "./allowlist";
 import { Findings, MOOV_MAX_BYTES, MOOV_SCHEMA, readAt, TOP_LEVEL_ALLOWED, walkNested, walkTopLevel, type TopBox } from "./boxes";
@@ -72,7 +73,22 @@ function assertUsable(expected: VerifyExpected, options: VerifyOptions): { needl
   return { needles: callerNeedles(expected.forbiddenStrings ?? []), maxBytes };
 }
 
-export async function verifyRenderedMp4(path: string, expected: VerifyExpected, options: VerifyOptions = {}): Promise<VerifyResult> {
+/** What `verifyAndHashMp4` found: the verdict, and the digest of the bytes it judged. */
+export interface VerifiedFile {
+  readonly result: VerifyResult;
+  /** sha256 (lowercase hex) of the whole file as read by the verification itself; null when the file was refused before, or without, a complete read. */
+  readonly sha256: string | null;
+  /** The size the handle reported: the length of the bytes that were verified. */
+  readonly bytes: number;
+}
+
+/**
+ * `verifyRenderedMp4`, and the file's sha256 taken from the SAME sequential read
+ * of the whole file (the content scan): one pass, so there is no moment between
+ * "verified" and "hashed" in which the file could be swapped. The digest is null
+ * when the file was refused as too large (never read) or the scan stopped early.
+ */
+export async function verifyAndHashMp4(path: string, expected: VerifyExpected, options: VerifyOptions = {}): Promise<VerifiedFile> {
   const { needles, maxBytes } = assertUsable(expected, options);
   const findings = new Findings(expected.forbiddenStrings ?? []);
   const handle = await openFile(path);
@@ -80,16 +96,26 @@ export async function verifyRenderedMp4(path: string, expected: VerifyExpected, 
     const size = await regularFileSize(handle, path);
     if (size > maxBytes) {
       findings.add("FILE_TOO_LARGE", `${size} bytes is over the ${maxBytes}-byte cap`);
-      return { ok: false, reasons: findings.list };
+      return { result: { ok: false, reasons: findings.list }, sha256: null, bytes: size };
     }
-    await verifyOpenFile(handle, path, size, expected, needles, findings);
+    const hash = createHash("sha256");
+    let hashed = 0;
+    await verifyOpenFile(handle, path, size, expected, needles, findings, (chunk) => {
+      hash.update(chunk);
+      hashed += chunk.length;
+    });
+    const result: VerifyResult = findings.list.length === 0 ? { ok: true } : { ok: false, reasons: findings.list };
+    return { result, sha256: hashed === size ? hash.digest("hex") : null, bytes: size };
   } finally {
     await handle.close();
   }
-  return findings.list.length === 0 ? { ok: true } : { ok: false, reasons: findings.list };
 }
 
-async function verifyOpenFile(handle: FileHandle, path: string, size: number, expected: VerifyExpected, needles: readonly Needle[], findings: Findings): Promise<void> {
+export async function verifyRenderedMp4(path: string, expected: VerifyExpected, options: VerifyOptions = {}): Promise<VerifyResult> {
+  return (await verifyAndHashMp4(path, expected, options)).result;
+}
+
+async function verifyOpenFile(handle: FileHandle, path: string, size: number, expected: VerifyExpected, needles: readonly Needle[], findings: Findings, onChunk: (chunk: Uint8Array) => void): Promise<void> {
   const top = await walkTopLevel(handle, path, size, findings);
   await checkTopLevel(handle, path, top, findings);
   const ftyp = top.find((b) => b.type === "ftyp");
@@ -115,7 +141,7 @@ async function verifyOpenFile(handle: FileHandle, path: string, size: number, ex
       if (ftypBytes && findings.list.length === 0) checkEngineLayout(ftypBytes, bytes, findings);
     }
   }
-  const hits = await scanForNeedles(handle, path, size, [...BUILTIN_MARKERS, ...needles]);
+  const hits = await scanForNeedles(handle, path, size, [...BUILTIN_MARKERS, ...needles], undefined, onChunk);
   for (const hit of hits) findings.add("SOURCE_METADATA_STRING", `${describeNeedle(hit.label)} found at byte ${hit.offset}`);
 }
 
