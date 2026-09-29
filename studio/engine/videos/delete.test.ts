@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { Library } from "../library";
 import { NODE_COMMIT_FS } from "./commitFs";
-import { deleteVideo, VideoNotFoundError, VideoRecordUnreadableError, type DeleteVideoDeps } from "./delete";
+import { deleteVideo, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError, type DeleteVideoDeps } from "./delete";
 import { FileStateChecker } from "./fileState";
 import { writeIntent, commitIntent } from "./intents";
 import { videoPaths, type VideoRecord } from "./record";
@@ -136,22 +136,49 @@ describe("only the record goes", () => {
     expect(used(library, w, 0)).toEqual([]);
   });
 
-  test("elsewhere: the file lives in another export root, which Studio never touches", async () => {
+  test("elsewhere, «Удалить запись»: the file lives in another export root, which Studio never touches", async () => {
     const w = world();
     const { record, path, library } = await committed(w, { rootId: "root-99999999" });
-    const out = await deleteVideo(record.id, depsOf(w, library));
+    const out = await deleteVideo(record.id, depsOf(w, library, { mode: "record" }));
     expect(out).toMatchObject({ fileDeleted: false, fileState: "elsewhere" });
     expect(existsSync(path)).toBe(true); // a same-named file in THIS root, not the record's: untouched
     expect(await libraryVideoFiles(w)).toEqual([]);
   });
 
-  test("elsewhere: with no usable export folder the file is not touched either", async () => {
+  test("elsewhere, «Удалить запись»: with no usable export folder the file is not touched either", async () => {
     const w = world();
     const { record, path, library } = await committed(w);
-    const out = await deleteVideo(record.id, depsOf(w, library, { exportRoot: null }));
+    const out = await deleteVideo(record.id, depsOf(w, library, { exportRoot: null, mode: "record" }));
     expect(out).toMatchObject({ fileDeleted: false, fileState: "elsewhere" });
     expect(existsSync(path)).toBe(true);
     expect(await libraryVideoFiles(w)).toEqual([]);
+  });
+
+  test("«Удалить запись» NEVER deletes the file, even one that is present and untouched: the record goes, the photos are freed, the state says what the file was", async () => {
+    const w = world();
+    const { record, path, library } = await committed(w);
+    const out = await deleteVideo(record.id, depsOf(w, library, { mode: "record" }));
+    expect(out).toMatchObject({ fileDeleted: false, fileState: "present" });
+    expect(readFileSync(path)).toEqual(Buffer.from(fakeVideoBytes(2048)));
+    expect(await libraryVideoFiles(w)).toEqual([]);
+    expect(used(library, w, 0)).toEqual([]);
+  });
+
+  test("«Удалить» with the record's file in another root refuses, and removes nothing: the record and the used marks stay", async () => {
+    const w = world();
+    const { record, path, library } = await committed(w, { rootId: "root-99999999" });
+    await expect(deleteVideo(record.id, depsOf(w, library, { mode: "video" }))).rejects.toBeInstanceOf(VideoFileUnreachableError);
+    expect(existsSync(path)).toBe(true);
+    expect(await libraryVideoFiles(w)).toEqual([`${record.id}.json`]);
+    expect(used(library, w, 0)).toEqual([record.id]);
+  });
+
+  test("«Удалить» with no usable export folder refuses too, and removes nothing", async () => {
+    const w = world();
+    const { record, path, library } = await committed(w);
+    await expect(deleteVideo(record.id, depsOf(w, library, { exportRoot: null, mode: "video" }))).rejects.toBeInstanceOf(VideoFileUnreachableError);
+    expect(existsSync(path)).toBe(true);
+    expect(await libraryVideoFiles(w)).toEqual([`${record.id}.json`]);
   });
 
   test("changed by content (same size): the file is NEVER deleted, it is not provably ours any more; the record goes and the photos are freed", async () => {

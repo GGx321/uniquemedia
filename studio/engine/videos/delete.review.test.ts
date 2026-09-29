@@ -42,11 +42,11 @@ describe("the root is judged by its marker", () => {
     expect(await new FileStateChecker().check(record, rootRef(w), { verify: "cheap" })).toBe("elsewhere");
   });
 
-  test("delete never touches a file under a root whose marker is not the record's, and still removes the record", async () => {
+  test("«Удалить запись» never touches a file under a root whose marker is not the record's, and still removes the record", async () => {
     const w = world();
     const { record, path, library } = await committed(w);
     writeFileSync(join(w.exportRoot, ".studio-export.json"), JSON.stringify({ schemaVersion: 1, rootId: "root-99999999", createdAt: "2026-09-29T10:00:00.000Z" }));
-    const out = await deleteVideo(record.id, depsOf(w, library));
+    const out = await deleteVideo(record.id, depsOf(w, library, { mode: "record" }));
     expect(out).toMatchObject({ fileDeleted: false, fileState: "elsewhere" });
     expect(existsSync(path)).toBe(true);
     expect(await libraryVideoFiles(w)).toEqual([]);

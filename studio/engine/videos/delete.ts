@@ -71,7 +71,23 @@ export class VideoRecordUnreadableError extends Error {
   }
 }
 
+/** «Удалить» was asked, but the record's file cannot be reached (another export root, or none usable): nothing is removed, because the record alone would orphan the file. */
+export class VideoFileUnreachableError extends Error {
+  constructor(readonly videoId: string) {
+    super("the video's file is not in the current export folder");
+    this.name = "VideoFileUnreachableError";
+  }
+}
+
 export interface DeleteVideoDeps {
+  /**
+   * The OWNER'S intent, never a guess from a state just looked at:
+   * - `video` (default, «Удалить»): the file when its full check finds it `present`, then the record. A file already `missing`
+   *   or `changed` goes with only the record; one that cannot be reached (`elsewhere`) refuses (`VideoFileUnreachableError`) and
+   *   removes nothing, so a sleeping network drive cannot turn it into a record-only delete that orphans the file.
+   * - `record` («Удалить запись»): ONLY the record, never the file, whatever state it is in.
+   */
+  readonly mode?: "video" | "record";
   readonly library: Pick<Library, "root" | "listAvatars" | "removeVideoRecordFromIndex">;
   /** The current export root; null when the last check refused it (then only the record can go). */
   readonly exportRoot: ExportRootRef | null;
@@ -132,9 +148,18 @@ export async function deleteVideo(videoId: string, deps: DeleteVideoDeps): Promi
     if (found === null) throw new VideoNotFoundError(videoId);
     const record = await readRecord(found.paths, found.avatarId, videoId);
 
-    let fileState = await deps.checker.check(record, deps.exportRoot, { verify: "full" });
+    const recordOnly = deps.mode === "record";
+    // «Удалить запись» only reports what the file is (a cheap look; a disk that cannot be looked at reads `elsewhere`); «Удалить» judges it in full.
+    let fileState: FileState;
+    if (recordOnly) {
+      fileState = await deps.checker.check(record, deps.exportRoot, { verify: "cheap" }).catch(() => "elsewhere" as const);
+    } else {
+      fileState = await deps.checker.check(record, deps.exportRoot, { verify: "full" });
+      // The file cannot be reached: the record alone would orphan it. Nothing has been removed yet.
+      if (fileState === "elsewhere") throw new VideoFileUnreachableError(videoId);
+    }
     let fileDeleted = false;
-    if (fileState === "present" && deps.exportRoot !== null) {
+    if (!recordOnly && fileState === "present" && deps.exportRoot !== null) {
       const file = recordFilePath(record, deps.exportRoot).file;
       // The file that was hashed, once more, right before it goes.
       const stamp = deps.checker.verifiedStamp(record.id);
