@@ -309,6 +309,10 @@ describe("buildPass2: overlays", () => {
   test("refuses a relative overlay path", () => {
     expect(() => build({ overlays: [still({ path: "overlays/a.png" })] })).toThrow(expect.objectContaining({ code: "PATH_NOT_ABSOLUTE" }));
   });
+
+  test("the refusal names what was wrong, not the path (the message reaches the UI)", () => {
+    expect(() => build({ overlays: [still({ path: "Mia Secret/overlays/a.png" })] })).toThrow(expect.objectContaining({ message: expect.not.stringContaining("Mia Secret") }));
+  });
 });
 
 describe("buildPass2: refusals", () => {

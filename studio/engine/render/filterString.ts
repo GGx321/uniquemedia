@@ -70,6 +70,6 @@ export function assertSafeFilterGraph(graph: string): void {
 /** A path handed to ffmpeg must be absolute (so it can never read as an option, and never depends on `cwd`) and free of NUL. */
 export function assertAbsolutePath(path: string, what: string): void {
   if (path === "" || path.includes("\0") || path.startsWith("-") || !isAbsolute(path)) {
-    throw new RenderGraphError("PATH_NOT_ABSOLUTE", `${what} must be an absolute path, got ${JSON.stringify(path)}`);
+    throw new RenderGraphError("PATH_NOT_ABSOLUTE", `${what} must be an absolute path`);
   }
 }
