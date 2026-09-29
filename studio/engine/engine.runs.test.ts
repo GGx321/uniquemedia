@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
@@ -27,6 +27,12 @@ import type { Engine, EngineDeps } from "./engine";
 import { command, engineSettings, failed, GOOD, jobEnd, MODERATION, NOW, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
+
+// Every test here runs a real engine over a real library and ledger. On a Windows runner Defender can hold a fresh
+// file for seconds (renameWithRetry waits up to about 3 s), and Bun's default 5 s per test left no room: "a start that
+// passes prepares the gates twice" timed out at 5000 ms in CI (390 ms when the runner was quiet). No test in this file
+// asserts a short time bound, so nothing here relies on the default. (bunfig.toml's `timeout` is not applied by Bun.)
+setDefaultTimeout(30_000);
 
 // T6: the photo run commands — runs.estimate, runs.start, runs.cancel,
 // runs.estimateResume, runs.resume and runs.list — against a real engine over
