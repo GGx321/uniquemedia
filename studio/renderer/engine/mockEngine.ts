@@ -142,6 +142,19 @@ const START_OF_TIME = Date.UTC(2026, 8, 24, 10, 0, 0);
  */
 export const MOCK_RENDER_STEPS = 4;
 
+/**
+ * The `done` of the mock's progress step `step` (1 to `MOCK_RENDER_STEPS`) of a render of `total` frames, by the engine's own rule
+ * (`ProgressFold`): pass 1 takes the first 35% of the range, pass 2 the rest, and the last frame (`total - 1` at most) belongs to
+ * the job's end. So the bar of a mock render («Рендер · P %») climbs and stops where the engine's does, and the saving phase
+ * keeps the last value.
+ */
+export function mockRenderDone(step: number, total: number): number {
+  const pass1End = Math.floor((total * 35) / 100);
+  if (step <= 1) return Math.min(total - 1, pass1End);
+  const made = Math.floor((total * (step - 1)) / (MOCK_RENDER_STEPS - 1));
+  return Math.min(total - 1, pass1End + Math.floor((made * (total - pass1End)) / total));
+}
+
 /** How many finished renders the snapshot keeps listing: the real registry's `KEEP_FINISHED`. */
 const MOCK_KEEP_FINISHED_RENDERS = 50;
 
@@ -1657,7 +1670,7 @@ export class MockEngine implements EngineBridge {
             return;
           }
           if (step <= MOCK_RENDER_STEPS) {
-            job.done = Math.floor((job.total * step) / (MOCK_RENDER_STEPS + 1));
+            job.done = mockRenderDone(step, job.total);
             this.emitRenderProgress(job);
             advance(step + 1);
           } else if (step === MOCK_RENDER_STEPS + 1) {

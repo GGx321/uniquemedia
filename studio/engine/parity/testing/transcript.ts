@@ -1,4 +1,5 @@
 import type { EngineError, EventMessage } from "../../../shared/engine";
+import { ProgressInvariants } from "./progress";
 
 // The parity harness's record of a scenario (Stage 3, 3d.1b): what was asked, what was answered and every event, in the order
 // it happened, written as plain lines. The SAME scenario runs against the mock and against the real engine, each writes its
@@ -158,6 +159,7 @@ export class Transcript {
   readonly #lines: string[] = [];
   readonly #rig: Recorded;
   readonly norm: Normalizer;
+  readonly #progress = new ProgressInvariants();
   #seen: number;
 
   constructor(rig: Recorded, norm: Normalizer) {
@@ -171,6 +173,8 @@ export class Transcript {
   #drain(): void {
     const all = this.#rig.events();
     for (const event of all.slice(this.#seen)) {
+      // The transcript leaves a render's `done` out; the rules its numbers must satisfy are checked here, on both engines.
+      if (event.type === "job.progress" && event.payload.kind === "render") this.#progress.check(event.payload);
       const line = eventLine(event, this.norm);
       if (line !== null) this.#lines.push(line);
     }

@@ -63,7 +63,10 @@ describe("videos.render", () => {
     const progress = sent.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "render" ? [e.payload] : []));
     const dones = progress.map((p) => p.done);
     expect(dones).toEqual([...dones].sort((a, b) => a - b));
-    expect(Math.max(...dones)).toBeLessThan(TWO_PHOTO_FRAMES);
+    // The engine's rule (ProgressFold): pass 1 takes the first 35% of the range, pass 2 the rest, and the last frame belongs to the job's end.
+    expect(dones[0]).toBe(Math.floor((TWO_PHOTO_FRAMES * 35) / 100));
+    expect(Math.max(...dones)).toBe(TWO_PHOTO_FRAMES - 1);
+    expect(progress.at(-1)).toMatchObject({ saving: true, done: TWO_PHOTO_FRAMES - 1 });
     expect(progress.map((p) => p.saving === true)).toEqual([...Array.from({ length: MOCK_RENDER_STEPS }, () => false), true]);
     expect(eventsOfJob(sent, jobId).at(-1)?.type).toBe("job.done");
   });
