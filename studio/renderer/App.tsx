@@ -7,6 +7,8 @@ import { NavigationProvider, type Route, type SectionId, sectionOf } from "./nav
 import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
+import { DraftsScreen } from "./screens/DraftsScreen";
+import { EditorScreen } from "./screens/EditorScreen";
 import { PhotosScreen } from "./screens/PhotosScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
@@ -80,14 +82,17 @@ function routeFor(id: SectionId, lastPhotos: string | null): Route {
       return { name: "avatars" };
     case "photo":
       return { name: "photos", avatarId: lastPhotos };
+    case "montage":
+      return { name: "montages" };
     case "settings":
       return { name: "settings" };
-    default:
+    case "autopilot":
       return { name: "section", id };
   }
 }
 
-function Screen({ route }: { route: Route }) {
+/** `lastPhotos`: the avatar the Photos screen showed last, for the drafts screen's «Открыть фото …». */
+function Screen({ route, lastPhotos }: { route: Route; lastPhotos: string | null }) {
   switch (route.name) {
     case "avatars":
       return <AvatarsScreen saved={route.saved} />;
@@ -99,6 +104,10 @@ function Screen({ route }: { route: Route }) {
       return <SettingsScreen focus={route.focus} />;
     case "photos":
       return <PhotosScreen avatarId={route.avatarId} />;
+    case "montages":
+      return <DraftsScreen lastAvatarId={lastPhotos} />;
+    case "editor":
+      return <EditorScreen montageId={route.montageId} created={route.created ?? false} />;
     case "section": {
       const label = SECTIONS.find((s) => s.id === route.id)?.label ?? "";
       return (
@@ -117,6 +126,8 @@ function screenKey(route: Route): string {
       return `avatarNew:${route.draftId ?? "new"}`;
     case "photos":
       return `photos:${route.avatarId ?? "last"}`;
+    case "editor":
+      return `editor:${route.montageId}`;
     case "section":
       return route.id;
     default:
@@ -261,7 +272,7 @@ export function App({ client }: { client: EngineClient }) {
 
           <main className="content">
             <EngineNoticesBar />
-            <Screen key={screenKey(route)} route={route} />
+            <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
           </main>
         </div>
       </NavigationProvider>

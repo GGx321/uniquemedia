@@ -1,0 +1,1258 @@
+/* Stage 3's montage screens (3d.2): the drafts screen (EditorEmpty.dc.html) and the editor shell (Editor.dc.html,
+   EditorNew.dc.html). Sizes and colours are the artboards' own, through theme.css's tokens; the components the
+   «Монтаж · этап 3» section of the sheet names (.mt, .th, .tadd, .trk, .ctag, .btn-d) keep its class names. */
+
+/* ── shared ── */
+
+/* The sheet's danger button (AvatarVideos: «Удалить»). */
+.btn-d {
+  border-color: var(--danger-35);
+  background: var(--danger-08);
+  color: var(--danger);
+}
+
+.btn-d:hover:not(:disabled) {
+  background: rgba(255, 138, 155, 0.14);
+  color: var(--danger);
+}
+
+/* A clip as a still (ClipPoster): cells at the render's own geometry, the gutters black. */
+.clip-poster {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.clip-poster-cell {
+  position: absolute;
+}
+
+.clip-poster-cell .portrait-silhouette {
+  height: 70%;
+}
+
+.clip-poster-own {
+  position: absolute;
+  inset: 0;
+  background: var(--photo-dim);
+}
+
+.clip-poster-empty {
+  position: absolute;
+  inset: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 6px;
+  color: var(--faint);
+  font-size: 11px;
+  text-align: center;
+}
+
+/* ── Photos: «Монтаж из выбранных» ── */
+
+.photos-montage {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.photos-montage-why {
+  max-width: 200px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.photo-pick:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.photo-tile-refused {
+  border-color: var(--warn);
+}
+
+.photo-refused {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  color: var(--warn);
+}
+
+/* ── the drafts screen (EditorEmpty) ── */
+
+.drafts-page .page-sub {
+  margin-top: 8px;
+}
+
+.drafts-new {
+  position: relative;
+}
+
+.drafts-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.drafts-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drafts-menu button:hover {
+  background: var(--panel-3);
+  color: var(--text);
+}
+
+.drafts-hint {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 22px 24px;
+}
+
+.drafts-sketch {
+  position: relative;
+  width: 312px;
+  height: 184px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--sidebar);
+}
+
+.drafts-sketch-frame {
+  position: absolute;
+  top: 14px;
+  left: 20px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: 58% minmax(0, 1fr);
+  gap: 3px;
+  width: 58px;
+  height: 100px;
+  padding: 5px;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 8px;
+}
+
+.drafts-sketch-frame div {
+  border-radius: 4px;
+  background: #16161e;
+}
+
+.drafts-sketch-frame div:first-child {
+  grid-column: span 2;
+}
+
+.drafts-sketch-lines {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  left: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.drafts-sketch-lines div {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--sidebar-border);
+}
+
+.drafts-sketch-lines div:nth-child(1) {
+  width: 70%;
+}
+
+.drafts-sketch-lines div:nth-child(2) {
+  width: 46%;
+}
+
+.drafts-sketch-lines div:nth-child(3) {
+  width: 58%;
+}
+
+.drafts-sketch-tracks {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.drafts-sketch-track {
+  position: relative;
+  height: 10px;
+  border-radius: 4px;
+  background: var(--inset);
+}
+
+.drafts-sketch-text {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 8%;
+  width: 40%;
+  border: 1px solid var(--warn-35);
+  border-radius: 3px;
+  background: rgba(244, 185, 87, 0.16);
+}
+
+.drafts-sketch-clips {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  border: 1.5px dashed var(--accent-ring);
+  border-radius: 5px;
+  background: rgba(255, 122, 89, 0.06);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.drafts-sketch-playhead {
+  position: absolute;
+  top: 118px;
+  bottom: 10px;
+  left: 38%;
+  width: 2px;
+  background: var(--accent);
+}
+
+.drafts-sketch-playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.drafts-hint-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.drafts-hint-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drafts-hint-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.drafts-hint-text .muted {
+  max-width: 640px;
+}
+
+.drafts-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.drafts-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drafts-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--sidebar-border);
+}
+
+.drafts-steps .drafts-step-line {
+  width: 28px;
+  height: 1px;
+  background: var(--border-strong);
+}
+
+.drafts-step-now {
+  color: var(--accent-text);
+}
+
+.drafts-step-now .drafts-step-num {
+  background: var(--accent-18);
+}
+
+.drafts-hint-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.drafts-hint-rule {
+  margin-left: 6px;
+  font-size: 11.5px;
+}
+
+.drafts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.drafts-list-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+}
+
+.drafts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.draft-card {
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+}
+
+.draft-card-warn {
+  border-color: var(--warn-45);
+}
+
+.draft-poster {
+  width: 72px;
+  height: 128px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: #000;
+}
+
+.draft-poster-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px dashed var(--dashed);
+  background: transparent;
+  color: var(--faint);
+}
+
+.draft-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.draft-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.draft-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.draft-name {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draft-when {
+  font-size: 10.5px;
+}
+
+.ibtn.draft-delete {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.draft-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.draft-tag-music {
+  gap: 4px;
+}
+
+.draft-render {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.draft-render-row {
+  display: flex;
+  justify-content: space-between;
+  color: var(--link);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.draft-render-row .mono {
+  font-size: 10.5px;
+  font-weight: 400;
+}
+
+.draft-note {
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.draft-note-ok {
+  color: var(--ok);
+}
+
+.draft-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.draft-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.draft-confirm .draft-actions {
+  margin-top: 0;
+}
+
+.draft-card-loading .skeleton-line + .skeleton-line {
+  width: 45%;
+}
+
+.drafts-new-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 154px;
+  padding: 16px;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.drafts-new-tile:hover {
+  border-color: var(--accent-ring);
+  background: rgba(255, 122, 89, 0.04);
+}
+
+.drafts-new-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+/* ── the editor (Editor, EditorNew) ── */
+
+/* Edge to edge: the editor fills the content pane like the artboard, with no page padding. */
+.content:has(> .editor) {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ed-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  flex-shrink: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.ed-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.ed-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The draft's name is the screen's h1, at the header's size. */
+.ed-head .screen-title {
+  overflow: hidden;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-overflow: ellipsis;
+}
+
+.ed-rename {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.ed-rename:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text-2);
+}
+
+.ed-rename:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ed-title-input {
+  width: 240px;
+  height: 26px;
+}
+
+.ed-saved {
+  font-size: 10.5px;
+}
+
+.ed-retry,
+.ed-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ed-retry:hover,
+.ed-link:hover {
+  color: var(--accent-text);
+}
+
+.ed-history {
+  display: flex;
+  gap: 6px;
+  margin-left: 10px;
+}
+
+.ed-head-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+/* In a narrow window the output line gives way first (it is repeated under the timeline); the reason never does. */
+.ed-output {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ed-head-end > .btn {
+  flex-shrink: 0;
+}
+
+.ed-render-why {
+  display: -webkit-box;
+  width: 170px;
+  flex-shrink: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.3;
+  text-align: right;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.ed-render-busy {
+  min-width: 138px;
+  cursor: progress;
+}
+
+.ed-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px 0;
+}
+
+.ed-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* media (SLOT 3d.3a / 3d.5) */
+
+.ed-media {
+  display: flex;
+  width: 280px;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 12px 14px;
+  overflow: hidden;
+  border-right: 1px solid var(--sidebar-border);
+}
+
+.ed-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mt:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.mt-on,
+.mt-on:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.mt:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ed-media-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.ed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* CF15: the draft's avatar is fixed for its life, so its chip is a label, not a dropdown. */
+.ed-chip-fixed {
+  cursor: default;
+}
+
+.ed-bin {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ed-bin-tile {
+  height: 138px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--photo-queued);
+}
+
+.ed-bin-tile-in {
+  border-color: var(--accent);
+}
+
+.ed-bin-tile .portrait-silhouette {
+  height: 70%;
+}
+
+.ed-bin-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(9, 9, 12, 0.5);
+}
+
+.ed-bin-used {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  height: 20px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.ed-bin-slot {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 10.5px;
+}
+
+.ed-bin-empty {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* preview (SLOT 3d.4) */
+
+.ed-preview {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  background: var(--sidebar);
+}
+
+/* 306 × 544 as drawn; a lower window keeps 9:16 and shrinks the frame instead of cutting it. */
+.ed-frame {
+  position: relative;
+  height: min(544px, 100%);
+  aspect-ratio: 9 / 16;
+  overflow: hidden;
+  border-radius: 20px;
+  background: #000;
+  box-shadow:
+    0 0 0 1px var(--seg-on),
+    0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.ed-frame-empty {
+  position: absolute;
+  inset: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.ed-frame-empty-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.ed-frame-empty-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ed-frame-empty-text {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* properties (SLOT 3d.5) */
+
+.ed-props {
+  display: flex;
+  width: 300px;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  padding: 14px;
+  overflow-y: auto;
+  border-left: 1px solid var(--sidebar-border);
+}
+
+.ed-props-head {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-height: 32px;
+}
+
+.ed-props-sub {
+  font-size: 10.5px;
+}
+
+.ed-props-text {
+  margin: -6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.ed-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: -6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ed-compose-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--inset);
+}
+
+.ed-compose-item svg {
+  flex-shrink: 0;
+}
+
+.ed-compose-clip svg {
+  color: var(--link);
+}
+
+.ed-compose-text svg {
+  color: var(--warn);
+}
+
+.ed-compose-sticker svg {
+  color: var(--info);
+}
+
+.ed-compose-music svg {
+  color: var(--ok);
+}
+
+.ed-compose-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ed-compose-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ed-compose-body .faint {
+  font-size: 11.5px;
+}
+
+/* timeline (SLOT 3d.3a / 3d.3b) */
+
+.ed-timeline {
+  display: flex;
+  height: 256px;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 16px 12px;
+  border-top: 1px solid var(--sidebar-border);
+  background: var(--sidebar);
+}
+
+.ed-tl-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.ed-tl-clock {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.ed-tl-sep {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+.ed-tl-body {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  min-height: 0;
+}
+
+.ed-tl-heads {
+  display: flex;
+  width: 116px;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ed-tl-ruler-gap {
+  height: 18px;
+}
+
+.th {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.th svg {
+  flex-shrink: 0;
+}
+
+.th .mono {
+  font-weight: 400;
+}
+
+.ed-th-text {
+  height: 56px;
+}
+
+.ed-th-sticker {
+  height: 26px;
+}
+
+.ed-th-clips {
+  height: 44px;
+  color: var(--text);
+}
+
+.ed-th-music {
+  height: 30px;
+}
+
+.tadd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tadd:hover:not(:disabled) {
+  background: var(--panel-3);
+  color: var(--text);
+}
+
+.tadd:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ed-tl-lanes {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ed-ruler {
+  position: relative;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.ed-tick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 3px;
+  background: var(--dashed);
+}
+
+.ed-tick-major {
+  height: 6px;
+}
+
+.ed-tick-label {
+  position: absolute;
+  top: -1px;
+  padding: 0 3px;
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.ed-tick-label-after {
+  color: #4a4a5a;
+}
+
+.trk {
+  position: relative;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: var(--inset);
+}
+
+.ed-lane-text,
+.ed-lane-sticker {
+  height: 26px;
+}
+
+.ed-lane-clips {
+  height: 44px;
+}
+
+.ed-clips {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ed-clip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 122, 89, 0.45);
+  border-radius: 6px;
+}
+
+.ed-clip-flagged {
+  border: 1.5px solid var(--warn);
+}
+
+.ctag {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(9, 9, 12, 0.72);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.ed-ctag-top {
+  top: 4px;
+  left: 5px;
+}
+
+.ed-ctag-bottom {
+  bottom: 4px;
+  left: 5px;
+}
+
+.ed-lane-drop {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1.5px dashed var(--accent-ring);
+  border-radius: 7px;
+  background: rgba(255, 122, 89, 0.06);
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ed-lane-music-add {
+  position: absolute;
+  inset: 2px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1.5px dashed rgba(79, 224, 176, 0.45);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ok);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ed-lane-music-add:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ed-tl-after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  border-left: 1px dashed var(--dashed);
+  background: repeating-linear-gradient(135deg, rgba(9, 9, 12, 0.55) 0 6px, rgba(9, 9, 12, 0.25) 6px 12px);
+  pointer-events: none;
+}
+
+.ed-playhead {
+  position: absolute;
+  top: 2px;
+  bottom: -4px;
+  left: 0;
+  z-index: 5;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.ed-playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* the problem and loading states */
+
+.ed-problem {
+  max-width: 720px;
+}
+
+.editor-loading .ed-media,
+.editor-loading .ed-props {
+  background: transparent;
+}

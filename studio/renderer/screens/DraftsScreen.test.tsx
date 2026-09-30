@@ -1,0 +1,163 @@
+import { describe, expect, test } from "bun:test";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { ERROR_MESSAGES_RU } from "../../shared/engine";
+import { freePhotos, PHOTO_IDS } from "../engine/mockEngine.testkit";
+import { callsOf, flush, runAll } from "../testing";
+import { asAnotherWindow, makeDraft, MIA, openDrafts, SOFIA, studio } from "./montage/screenKit";
+
+// 3d.2: the drafts screen (EditorEmpty.dc.html), where the sidebar's «Монтаж» leads.
+
+const cards = (): HTMLElement[] => screen.queryAllByRole("article");
+const card = (name: string): HTMLElement => {
+  const found = cards().find((c) => within(c).queryByRole("heading", { level: 3, name }) !== null);
+  if (found === undefined) throw new Error(`no draft card «${name}»`);
+  return found;
+};
+
+describe("the list", () => {
+  test("«Монтаж» opens the drafts: the how-to card on top, then every draft, newest first", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [PHOTO_IDS[0] ?? "", PHOTO_IDS[1] ?? ""]);
+    await makeDraft(client, MIA.avatarId, []);
+    await openDrafts();
+
+    expect(await screen.findByText(`2 черновика`)).toBeDefined();
+    expect(screen.getByRole("heading", { level: 2, name: "Фото для нового ролика ещё не выбраны" })).toBeDefined();
+    expect(screen.getByRole("list", { name: "Как начать" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Открыть фото Mia" })).toBeDefined();
+    expect(screen.getByText("2 · сохраняются сами")).toBeDefined();
+
+    const [newest, older] = cards();
+    expect(within(newest ?? document.body).getByText("нет кадров")).toBeDefined();
+    expect(within(older ?? document.body).getByText(`8.0 с · 1 кадр · без текста`)).toBeDefined();
+    expect(within(older ?? document.body).getByRole("heading", { level: 3, name: "Mia · без названия" })).toBeDefined();
+  });
+
+  test("no drafts yet: the how-to card and the «Новый ролик» tile, which leads to the photos", async () => {
+    await studio();
+    await openDrafts();
+    expect(await screen.findByText(`0 черновиков`)).toBeDefined();
+    expect(cards()).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /Новый ролик/ }));
+    await screen.findByRole("heading", { level: 1, name: "Mia" });
+  });
+
+  test("«Открыть» opens the draft in the editor", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [PHOTO_IDS[0] ?? ""]);
+    await openDrafts();
+    fireEvent.click(within(card("Mia · без названия")).getByRole("button", { name: "Открыть" }));
+    await screen.findByRole("heading", { level: 1, name: "Mia · без названия" });
+    expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
+  });
+
+  test("the avatar segment shows one avatar's drafts", async () => {
+    const photos = [...freePhotos(3), ...freePhotos(2, SOFIA)];
+    const { client } = await studio({ avatars: [MIA, SOFIA], photos });
+    await makeDraft(client, MIA.avatarId, []);
+    await makeDraft(client, SOFIA.avatarId, []);
+    await openDrafts();
+    expect(cards()).toHaveLength(2);
+
+    const segment = screen.getByRole("group", { name: "Аватар" });
+    fireEvent.click(within(segment).getByRole("button", { name: "Sofia" }));
+    expect(cards()).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 3, name: "Sofia · без названия" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Открыть фото Sofia" })).toBeDefined();
+  });
+
+  test("a failed list is shown with a retry", async () => {
+    const { engine } = await studio();
+    engine.failNext("montages.list", { code: "LIBRARY_UNAVAILABLE" });
+    await openDrafts();
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+    await waitFor(() => expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).toBeNull());
+    expect(await screen.findByText(`0 черновиков`)).toBeDefined();
+  });
+
+  test("the list follows drafts made and deleted elsewhere", async () => {
+    const { client } = await studio();
+    await openDrafts();
+    const made = await makeDraft(client, MIA.avatarId, []);
+    await waitFor(() => expect(cards()).toHaveLength(1));
+    await asAnotherWindow(() => client.request("montages.delete", { montageId: made.montageId }));
+    await waitFor(() => expect(cards()).toHaveLength(0));
+  });
+});
+
+describe("what a card says about its render", () => {
+  test("a rejected photo is named in amber: the render is not possible until it is replaced", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [PHOTO_IDS[0] ?? "", PHOTO_IDS[1] ?? "", PHOTO_IDS[2] ?? "", PHOTO_IDS[3] ?? "", PHOTO_IDS[4] ?? ""]);
+    await asAnotherWindow(() => client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: PHOTO_IDS[1] ?? "", rejected: true }));
+    await openDrafts();
+    const note = await screen.findByText("Кадр 2: фото отклонено — замените его, иначе рендер недоступен");
+    expect(note.closest("article")?.className).toContain("draft-card-warn");
+  });
+
+  test("a running render shows its progress; once done, the card counts the video", async () => {
+    const { client, scheduler } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [PHOTO_IDS[0] ?? ""]);
+    await openDrafts();
+    await asAnotherWindow(() => client.request("videos.render", { montageId: made.montageId }));
+    expect(await screen.findByRole("progressbar", { name: "Рендер: Mia · без названия" })).toBeDefined();
+    expect(screen.getByText(/1\sрендер идёт/)).toBeDefined();
+
+    runAll(scheduler);
+    await flush();
+    await screen.findByText(`✓ уже 1 видео из этого черновика`);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+});
+
+describe("delete", () => {
+  test("a draft is deleted only after its confirmation", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, []);
+    await openDrafts();
+    fireEvent.click(screen.getByRole("button", { name: "Удалить черновик Mia · без названия" }));
+    expect(callsOf(engine, "montages.delete")).toHaveLength(0);
+    const confirm = screen.getByRole("alert");
+    expect(confirm.textContent).toContain("Удалить черновик?");
+
+    fireEvent.click(within(confirm).getByRole("button", { name: "Отмена" }));
+    expect(cards()).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Удалить черновик Mia · без названия" }));
+    fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "Удалить" }));
+    await waitFor(() => expect(cards()).toHaveLength(0));
+    expect(callsOf(engine, "montages.delete")).toHaveLength(1);
+  });
+});
+
+describe("«Пустой ролик»", () => {
+  test("with one avatar it makes an empty draft for it and opens it (EditorNew)", async () => {
+    const { engine } = await studio();
+    await openDrafts();
+    fireEvent.click(screen.getByRole("button", { name: "Пустой ролик" }));
+    await screen.findByRole("heading", { level: 1, name: "Mia · без названия" });
+    expect(callsOf(engine, "montages.create").at(-1)?.payload).toEqual({ avatarId: MIA.avatarId, photoIds: [] });
+    expect(screen.getByText("черновик · создан только что")).toBeDefined();
+    expect(screen.getByText("Ролик пока пуст")).toBeDefined();
+  });
+
+  test("under «Все» with several avatars it asks which one", async () => {
+    const { engine } = await studio({ avatars: [MIA, SOFIA], photos: freePhotos(2) });
+    await openDrafts();
+    fireEvent.click(screen.getByRole("button", { name: "Пустой ролик" }));
+    const menu = screen.getByRole("menu", { name: "Для какого аватара" });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Sofia" }));
+    await screen.findByRole("heading", { level: 1, name: "Sofia · без названия" });
+    expect(callsOf(engine, "montages.create").at(-1)?.payload).toEqual({ avatarId: SOFIA.avatarId, photoIds: [] });
+  });
+
+  test("with no avatar at all it is disabled, and says why", async () => {
+    await studio({ avatars: [], photos: [] });
+    await openDrafts();
+    const button = screen.getByRole("button", { name: "Пустой ролик" });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(button.getAttribute("title")).toBe("Сначала нужен аватар");
+    expect(screen.queryByRole("button", { name: /Открыть фото/ })).toBeNull();
+  });
+});

@@ -10,7 +10,11 @@ export type Route =
   | { name: "settings"; focus?: SettingsFocus }
   /** T8b: an avatar's photos; null opens the one shown last, else the first active avatar. */
   | { name: "photos"; avatarId: string | null }
-  | { name: "section"; id: "montage" | "autopilot" };
+  /** 3d.2: the drafts screen (the sidebar's «Монтаж», EditorEmpty). */
+  | { name: "montages" }
+  /** 3d.2: one draft in the editor. `created`: opened right after `montages.create`, so the header says «создан только что». */
+  | { name: "editor"; montageId: string; created?: boolean }
+  | { name: "section"; id: "autopilot" };
 
 export type SettingsFocus = "key" | "money";
 
@@ -36,6 +40,9 @@ export function sectionOf(route: Route): SectionId {
       return "settings";
     case "photos":
       return "photo";
+    case "montages":
+    case "editor":
+      return "montage";
     case "section":
       return route.id;
   }

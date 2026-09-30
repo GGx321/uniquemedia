@@ -6,6 +6,7 @@ import { pickEngineClient } from "./engine/select";
 import "./fonts.css";
 import "./theme.css";
 import "./ui.css";
+import "./montage.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root is missing from studio/renderer/index.html");
