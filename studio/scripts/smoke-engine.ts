@@ -88,6 +88,11 @@ import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
+import { musicLists } from "../engine/music/fixtures";
+import { parseFlashapiList } from "../engine/music/listSchema";
+import { EXCERPTS, excerptOf } from "../engine/music/testing/storeKit";
+import { startMockCdn, withExcerptDurations } from "./mockCdn";
+import { startMockFlashapi } from "./mockFlashapi";
 import { faceWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { electronBinary } from "./electronBinary";
@@ -391,11 +396,11 @@ async function launch(target: Target, userData: string, extraArgs: string[] = []
  * attempt says so clearly instead of surfacing only the last try's bare
  * timeout.
  */
-async function launchWithRetry(target: Target, userData: string, attempts = 3): Promise<Running> {
+async function launchWithRetry(target: Target, userData: string, attempts = 3, extraArgs: string[] = []): Promise<Running> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      return await launch(target, userData);
+      return await launch(target, userData, extraArgs);
     } catch (error) {
       lastError = error;
       if (attempt < attempts) await Bun.sleep(1_000 * attempt);
@@ -1315,6 +1320,168 @@ async function runImportScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- music: list -> downloads -> music.list -> playback, end to end (3c.4) ----------
+
+const SMOKE_MUSIC_KEY = "smoke-music-key-not-real-7q3z";
+
+/**
+ * The track store in the real Electron build, against the mock flashapi and the mock CDN. The tests of 3c.3 and 3c.4 use
+ * Bun's `fetch` and `http`; production uses Electron's Node, so this is the run that proves the HTTP path there (the
+ * engine's loopback transport is `node:http`; the pinned-address `node:https` one can only meet the real CDN, which this
+ * smoke never contacts). One list of 30 goes through the whole pipeline; two tracks are spoiled on purpose (a redirect
+ * to another allowed host and an HTML page served as audio), so the run also shows that a refused track does not poison
+ * the list. Nothing here spends flashapi quota: the key is fake and the server is on loopback.
+ */
+async function runMusicScenario(target: Target): Promise<void> {
+  const listFile = JSON.parse(await readFile(musicLists.kyiv.file, "utf8")) as { response: unknown };
+  const parsed = parseFlashapiList(listFile.response);
+  if (!parsed.ok) throw new Error("the Kyiv fixture does not parse");
+  const SPOILED = [3, 4];
+  const flashapi = startMockFlashapi({ key: SMOKE_MUSIC_KEY, transformResponse: withExcerptDurations });
+  const cdn = startMockCdn({});
+  cdn.override(cdn.downloadPath(3), { status: 302, headers: { location: "https://scontent-fra3-2.cdninstagram.com/elsewhere.m4a" } });
+  cdn.override(cdn.downloadPath(4), { body: "<html>not audio</html>", headers: { "content-type": "audio/mp4" } });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-music-"));
+  const userData = join(tmp, "userData");
+  await mkdir(userData, { recursive: true });
+  const args = [`--studio-flashapi-base-url=${flashapi.url}`, `--studio-music-cdn-base-url=${cdn.url}`];
+  const kept = parsed.tracks.filter((_track, index) => !SPOILED.includes(index));
+  let running = await launch(target, userData, args);
+  try {
+    const statuses: { url: string; status: number; mimeType: string; contentRange: string | null }[] = [];
+    running.cdp.on((method, params) => {
+      if (method !== "Network.responseReceived") return;
+      const url = field(params, "response", "url");
+      if (typeof url !== "string" || !url.startsWith("studio-media://track/")) return;
+      const headers = field(params, "response", "headers");
+      const range = typeof headers === "object" && headers !== null ? Object.entries(headers).find(([k]) => k.toLowerCase() === "content-range")?.[1] : undefined;
+      statuses.push({ url, status: Number(field(params, "response", "status")), mimeType: String(field(params, "response", "mimeType")), contentRange: typeof range === "string" ? range : null });
+    });
+    await running.cdp.send("Network.enable");
+
+    const keySet = await req(running.cdp, "settings.setMusicKey", { key: SMOKE_MUSIC_KEY });
+    check("music scenario: settings.setMusicKey stores the fake key", field(keySet, "ok") === true, keySet);
+    const empty = await req(running.cdp, "music.list");
+    check("music scenario: music.list is empty before any refresh", field(empty, "ok") === true && JSON.stringify(field(empty, "result", "tracks")) === "[]", empty);
+
+    // 1. The refresh: answers at once, runs in the background, ends idle.
+    const started = await req(running.cdp, "music.refresh", { confirm: true });
+    check("music scenario: music.refresh answers at once with the refresh running", field(started, "ok") === true && field(started, "result", "status", "refresh", "state") === "running", started);
+    const ended = await waitFor(
+      "the music refresh to end",
+      async () => {
+        const status = await req(running.cdp, "music.status");
+        const state = field(status, "result", "refresh", "state");
+        return state === "idle" || state === "failed" ? status : null;
+      },
+      120_000,
+      500,
+    );
+    check("music scenario: the refresh ends idle", field(ended, "result", "refresh", "state") === "idle", ended);
+    check("music scenario: the status counts the tracks that were stored, and the bytes", field(ended, "result", "trackCount") === kept.length && Number(field(ended, "result", "bytesOnDisk")) > 0 && typeof field(ended, "result", "listFetchedAt") === "string", ended);
+    check("music scenario: one request was counted", field(ended, "result", "sentLast31d") === 1, ended);
+
+    // 2. music.list: the tracks that passed, none of the two spoiled ones.
+    const listed = await req(running.cdp, "music.list");
+    const tracks = Array.isArray(field(listed, "result", "tracks")) ? (field(listed, "result", "tracks") as unknown[]) : [];
+    check("music scenario: music.list holds every track that was stored and none of the refused two", tracks.length === kept.length && SPOILED.every((i) => !tracks.some((t) => field(t, "trackId") === parsed.tracks[i]?.trackId)), tracks.length);
+    check("music scenario: music.list keeps explicit per track", tracks.filter((t) => field(t, "explicit") === true).length === kept.filter((t) => t.explicit).length, tracks.length);
+    const ascending = tracks.every((t) => {
+      const highlights = field(t, "highlights");
+      if (!Array.isArray(highlights)) return false;
+      const rest = highlights.filter((h) => field(h, "likelyDefault") === false).map((h) => Number(field(h, "ms")));
+      const flagged = highlights.filter((h) => field(h, "likelyDefault") === true);
+      return rest.every((ms, i) => i === 0 || ms > (rest[i - 1] ?? 0)) && (flagged.length === 0 || (flagged.length === 1 && field(highlights.at(-1), "ms") === 1500));
+    });
+    check("music scenario: highlights are ascending, a 1500 flagged and last", ascending, tracks.slice(0, 3));
+    check("music scenario: music.list answers no URL, path or hash", !/https?:|oh=|oe=|\.m4a|[0-9a-f]{64}|userData/.test(JSON.stringify(tracks)), tracks.slice(0, 1));
+
+    // 3. What is on disk: the stored files are the excerpts byte for byte, and nothing partial or signed is left.
+    const musicDir = join(userData, "music");
+    const trackFiles = (await readdir(join(musicDir, "tracks"))).sort();
+    check("music scenario: a verified .m4a on disk for each stored track, no temp file", trackFiles.length === kept.length && trackFiles.every((name) => /^[a-z0-9-]+\.m4a$/.test(name)), trackFiles.slice(0, 3));
+    const firstKept = kept[0];
+    const firstIndex = parsed.tracks.findIndex((t) => t.trackId === firstKept?.trackId);
+    const onDisk = await readFile(join(musicDir, "tracks", `${firstKept?.trackId}.m4a`));
+    check("music scenario: a stored track is the served excerpt, byte for byte", Buffer.from(excerptOf(firstIndex)).equals(onDisk));
+    check("music scenario: a cover on disk for each stored track, none for the refused two", (await readdir(join(musicDir, "covers"))).length === kept.length);
+    check("music scenario: a waveform on disk for each stored track", (await readdir(join(musicDir, "peaks"))).length === kept.length);
+    const record = await readFile(join(musicDir, "lists", "current.json"), "utf8");
+    check("music scenario: the list record keeps no signed URL, no dash manifest and no host name once the downloads are done", !/https?:|oh=|oe=|_nc_|dash|manifest|cdninstagram|fbcdn/i.test(record), record.slice(0, 300));
+    check("music scenario: the record is complete and says which two were refused", JSON.parse(record).complete === true && JSON.stringify(JSON.parse(record).tracks.filter((t: { audio: { state: string } }) => t.audio.state === "failed").map((t: { audio: { reason: string } }) => t.audio.reason).sort()) === JSON.stringify(["probe:bad-box", "redirect"].sort()), record.slice(0, 200));
+
+    // 4. Playback: the renderer's audio element loads a stored track through studio-media://track with Range.
+    const playId = String(firstKept?.trackId);
+    const played = await running.cdp.evaluate(`(async () => {
+      const once = (el, ok, bad) => new Promise((r) => { el.addEventListener(ok, () => r(true), { once: true }); el.addEventListener(bad, () => r(false), { once: true }); setTimeout(() => r(false), 15000); });
+      const a = document.createElement("audio");
+      a.muted = true; a.preload = "auto"; a.src = "studio-media://track/${playId}";
+      const meta = await once(a, "loadedmetadata", "error");
+      const duration = a.duration;
+      const missing = document.createElement("audio");
+      missing.src = "studio-media://track/9999999999999999";
+      const missingFailed = !(await once(missing, "loadedmetadata", "error"));
+      const load = (src) => new Promise((r) => { const i = new Image(); i.onload = () => r({ loaded: true, width: i.naturalWidth }); i.onerror = () => r({ loaded: false }); i.src = src; });
+      return { meta, duration, missingFailed, cover: await load("studio-media://cover/${playId}"), noCover: await load("studio-media://cover/9999999999999999") };
+    })()`);
+    check("music scenario: a stored track loads its metadata through studio-media://track, at the excerpt's length", field(played, "meta") === true && Math.abs(Number(field(played, "duration")) - (EXCERPTS[firstIndex % EXCERPTS.length]?.durationMs ?? 0) / 1000) < 0.3, played);
+    await Bun.sleep(300);
+    check(
+      "music scenario: the track is served as audio/mp4, and Range gets a 206 with a Content-Range",
+      statuses.some((s) => s.url.endsWith(playId) && (s.status === 200 || s.status === 206) && s.mimeType === "audio/mp4") &&
+        statuses.some((s) => s.status === 206 && s.contentRange !== null && /^bytes \d+-\d+\/\d+$/.test(s.contentRange)),
+      statuses,
+    );
+    check("music scenario: a track that is not stored does not load (404)", field(played, "missingFailed") === true && statuses.some((s) => s.url.endsWith("9999999999999999") && s.status === 404), [played, statuses]);
+    check("music scenario: the cover loads through studio-media://cover, and an unknown one does not", field(played, "cover", "loaded") === true && field(played, "noCover", "loaded") === false, played);
+
+    // 5. The waveform.
+    const peaks = await req(running.cdp, "music.peaks", { track: { source: "trending", trackId: playId }, startMs: 0, durationMs: 8000, bars: 72 });
+    const bars = field(peaks, "result", "peaks");
+    check("music scenario: music.peaks answers 72 integers from 0 to 1000", Array.isArray(bars) && bars.length === 72 && bars.every((v) => Number.isInteger(v) && v >= 0 && v <= 1000) && Math.max(...(bars as number[])) > 0, peaks);
+    const noPeaks = await req(running.cdp, "music.peaks", { track: { source: "trending", trackId: "9999999999999999" }, startMs: 0, durationMs: 1000, bars: 16 });
+    check("music scenario: music.peaks of a track that is not stored is NOT_FOUND", field(noPeaks, "ok") === false && field(noPeaks, "error", "code") === "NOT_FOUND", noPeaks);
+
+    // 6. What the servers saw: one list request with the key in its header only, and no key or credential at the CDN.
+    check("music scenario: exactly one list request left, and it carried the fake key in its header", flashapi.requests.length === 1 && flashapi.requests[0]?.headers["x-rapidapi-key"] === SMOKE_MUSIC_KEY && !flashapi.requests[0]?.url.includes(SMOKE_MUSIC_KEY), flashapi.requests.length);
+    check("music scenario: the CDN was asked for 30 tracks and the 28 covers of the ones that passed, and nothing else", cdn.requests.length === 30 + kept.length && cdn.unexpected.length === 0 && flashapi.unexpected.length === 0, { asked: cdn.requests.length, unexpected: cdn.unexpected });
+    check(
+      "music scenario: no request to the CDN carried the key, a cookie or an authorization",
+      cdn.requests.every((r) => !("x-rapidapi-key" in r.headers) && !("cookie" in r.headers) && !("authorization" in r.headers) && !JSON.stringify(r).includes(SMOKE_MUSIC_KEY)),
+    );
+    check("music scenario: the redirect was not followed: its track was asked for once, and nothing was asked for at the redirect's target", cdn.requests.filter((r) => r.path === cdn.downloadPath(3)).length === 1 && cdn.requests.every((r) => !r.path.includes("elsewhere")));
+    check("music scenario: a refused track's cover was never requested", SPOILED.every((i) => !cdn.requests.some((r) => r.path === cdn.coverPath(i))));
+
+    // 7. The key and the signed URLs stay out of everything the app wrote or printed.
+    const leaks: string[] = [];
+    for (const name of await readdir(userData, { recursive: true })) {
+      const path = join(userData, name);
+      if (name === "secrets.bin" || !existsSync(path)) continue;
+      try {
+        const text = (await readFile(path)).toString("latin1");
+        if (text.includes(SMOKE_MUSIC_KEY) || /\boh=[0-9A-Za-z_]{8,}/.test(text)) leaks.push(name);
+      } catch {
+        // A directory.
+      }
+    }
+    check("music scenario: nothing under userData holds the music key or a signed URL (secrets.bin aside)", leaks.length === 0, leaks);
+    check("music scenario: nothing the app printed holds the music key or a signed URL", !running.output().includes(SMOKE_MUSIC_KEY) && !/\boh=[0-9A-Za-z_]{8,}/.test(running.output()), running.output().slice(-400));
+
+    // 8. A restart: the list, the tracks and the count are back with no request.
+    await quit(running);
+    running = await launchWithRetry(target, userData, 3, args);
+    const again = await req(running.cdp, "music.list");
+    check("music scenario: after a restart music.list holds the same tracks", Array.isArray(field(again, "result", "tracks")) && (field(again, "result", "tracks") as unknown[]).length === kept.length, again);
+    const againStatus = await req(running.cdp, "music.status");
+    check("music scenario: after a restart the status has the count and the list time, idle, with no new request", field(againStatus, "result", "trackCount") === kept.length && field(againStatus, "result", "refresh", "state") === "idle" && flashapi.requests.length === 1 && cdn.requests.length === 30 + kept.length, againStatus);
+  } finally {
+    await quit(running);
+    await flashapi.stop();
+    await cdn.stop();
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  }
+}
+
 // ---------- photo run: kill -9 + resume end-to-end scenario (slice 2b, T6) ----------
 
 /** A run's slot the plan committed to, once launched: enough for `req(cdp, "runs.*", ...)` payloads below. */
@@ -2228,6 +2395,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // `--only music` runs the track store's scenario alone, for working on it; the full run is the one that counts.
+  if (argValue("--only") === "music") {
+    await runMusicScenario(target);
+    finish();
+    return;
+  }
+
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-"));
   const userData = join(tmp, "userData");
   const libraryRoot = join(tmp, "library");
@@ -2627,6 +2801,7 @@ async function main(): Promise<void> {
 
   await runAvatarScenario(target);
   await runImportScenario(target);
+  await runMusicScenario(target);
   await runPhotoRunKillResumeScenario(target);
   await runPackagedRenderScenario(target);
   finish();
