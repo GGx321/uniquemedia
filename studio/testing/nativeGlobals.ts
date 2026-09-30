@@ -1,5 +1,5 @@
 import { afterAll, beforeAll } from "bun:test";
-import { nativeAbortController, nativeAbortSignal } from "../../nativeGlobals";
+import { nativeAbortController, nativeAbortSignal, nativeHeaders, nativeRequest, nativeResponse } from "../../nativeGlobals";
 
 // The root testSetup.ts registers happy-dom globally for the whole repo (it
 // is shared with the uniquifier, which may depend on that), replacing
@@ -57,5 +57,28 @@ export function useNativeGlobals(): void {
   afterAll(() => {
     globalThis.AbortController = happyDomAbortController;
     globalThis.AbortSignal = happyDomAbortSignal;
+  });
+}
+
+/**
+ * Like `useNativeGlobals`, for a file that builds `Response` objects the way Electron's `protocol.handle` receives them
+ * (studio/main/mediaProtocol.ts): happy-dom replaces `Response`, `Request` and `Headers` too, and its `Response`
+ * is not the class the product runs on (body streaming, `Content-Length`, status handling all differ). Call it once
+ * at the top level of the test file, next to `useNativeGlobals()`; the happy-dom classes are restored after the last test.
+ */
+export function useNativeWebClasses(): void {
+  const swapped = { response: globalThis.Response, request: globalThis.Request, headers: globalThis.Headers };
+  beforeAll(() => {
+    swapped.response = globalThis.Response;
+    swapped.request = globalThis.Request;
+    swapped.headers = globalThis.Headers;
+    globalThis.Response = nativeResponse;
+    globalThis.Request = nativeRequest;
+    globalThis.Headers = nativeHeaders;
+  });
+  afterAll(() => {
+    globalThis.Response = swapped.response;
+    globalThis.Request = swapped.request;
+    globalThis.Headers = swapped.headers;
   });
 }
