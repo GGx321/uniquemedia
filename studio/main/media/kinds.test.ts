@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { KINDS } from "./kinds";
+useNativeGlobals();
 
 const bytes = (...values: (number | string)[]): Uint8Array =>
   Uint8Array.from(values.flatMap((v) => (typeof v === "string" ? [...v].map((c) => c.charCodeAt(0)) : [v])));

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { decideRange } from "./range";
+useNativeGlobals();
 
 const SIZE = 1000;
 const partial = (start: number, end: number) => ({ kind: "partial" as const, start, end });

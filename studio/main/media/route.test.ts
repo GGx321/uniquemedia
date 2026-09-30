@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { parseMediaRoute } from "./route";
+useNativeGlobals();
 
 const A = "avatar-0001";
 const B = "second-0002";
