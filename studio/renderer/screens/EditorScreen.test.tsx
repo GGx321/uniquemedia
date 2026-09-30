@@ -98,6 +98,64 @@ describe("the header", () => {
   });
 });
 
+/** An unsaved edit: another window saves the clip at 5 s, and ⌘Z brings this window's 8 s back (not yet sent). */
+async function unsavedEdit(client: Parameters<typeof makeDraft>[0], made: Montage): Promise<void> {
+  await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: withFirstClip(made, 5_000), name: null }));
+  await screen.findByText(/5\.0 с · ≈ 2\.2 МБ/);
+  fireEvent.keyDown(window, { key: "z", metaKey: true });
+  await screen.findByText(/8\.0 с · ≈ 3\.5 МБ/);
+  expect(within(header()).getByText("черновик · сохраняется…")).toBeDefined();
+}
+
+describe("leaving never drops an edit (the review's HIGH 1)", () => {
+  test("«Черновики» with a save the engine refuses stays on the draft; leaving without it is the owner's choice", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Черновики" }));
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
+    expect(screen.queryByRole("heading", { level: 2, name: "Черновики" })).toBeNull();
+    expect(within(header()).getByText(/черновик · не сохранён/)).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Уйти без сохранения" }));
+    await screen.findByRole("heading", { level: 2, name: "Черновики" });
+  });
+
+  test("the sidebar asks the editor first: a refused save keeps the window on the draft", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    engine.failNext("montages.save", { code: "INTERNAL", detail: "the draft could not be saved (EIO)" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+    await screen.findByText(ERROR_MESSAGES_RU.INTERNAL);
+    expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Монтаж" }).getAttribute("aria-current")).toBe("page");
+
+    // Saved on the second try: the way out goes on to where the owner was going.
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить и перейти" }));
+    await screen.findByRole("heading", { level: 1, name: "Аватары" });
+    expect(callsOf(engine, "montages.save").at(-1)?.payload.spec.clips[0]?.durationMs).toBe(8_000);
+  });
+
+  test("the sidebar with an edit on its way saves it first, then goes", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    const before = callsOf(engine, "montages.save").length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
+    await screen.findByRole("heading", { level: 1, name: "Настройки" });
+    expect(callsOf(engine, "montages.save").length).toBe(before + 1);
+  });
+});
+
 describe("undo, redo and the saves of another window", () => {
   test("a save from elsewhere is taken; ⌘Z brings this window's version back and saves it, ⇧⌘Z redoes", async () => {
     const { client, engine } = await studio();

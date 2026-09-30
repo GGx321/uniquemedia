@@ -4,7 +4,7 @@ import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
 import { isActiveJob, type EngineView } from "../engine/store";
 import { NBSP } from "../lib/format";
-import { useNavigate } from "../navigation";
+import { type Route, useLeaveGuard, useNavigate } from "../navigation";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, PlayIcon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
@@ -43,6 +43,7 @@ function EditorHeader({
   fresh,
   block,
   busy,
+  leaving,
   onBack,
   onDrafts,
   onRender,
@@ -53,6 +54,8 @@ function EditorHeader({
   fresh: boolean;
   block: RenderBlock | null;
   busy: { label: string } | null;
+  /** The way out is waiting for the unsaved edit to be saved. */
+  leaving: boolean;
   onBack: () => void;
   onDrafts: () => void;
   onRender: () => void;
@@ -79,8 +82,8 @@ function EditorHeader({
 
   return (
     <header className="ed-head">
-      <button type="button" className="ibtn" aria-label="Назад к фото" onClick={onBack}>
-        <Icon name="back" size={16} strokeWidth={2.2} />
+      <button type="button" className="ibtn" aria-label="Назад к фото" aria-busy={leaving} disabled={leaving} onClick={onBack}>
+        {leaving ? <Spin /> : <Icon name="back" size={16} strokeWidth={2.2} />}
       </button>
       <div className="ed-title">
         {renaming ? (
@@ -127,8 +130,8 @@ function EditorHeader({
       </div>
       <div className="ed-head-end">
         <span className="mono muted ed-output">{outputLabel(state.spec)}</span>
-        <button type="button" className="btn" onClick={onDrafts}>
-          <Icon name="list" size={15} />
+        <button type="button" className="btn" aria-busy={leaving} disabled={leaving} onClick={onDrafts}>
+          {leaving ? <Spin /> : <Icon name="list" size={15} />}
           Черновики
         </button>
         {/* SLOT 3d.6: the queue position, the saving phase, Cancel, done («Готово · Открыть в папке») and failed states. */}
@@ -193,6 +196,26 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
   /** The render this window just queued, until the store knows how it ended: no second submit in between. */
   const [submittedJob, setSubmittedJob] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<EngineError | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  /** Where the owner was going when the save before leaving was refused: the edit stays, and so does the window. */
+  const [blockedLeave, setBlockedLeave] = useState<Route | null>(null);
+
+  // Every way out (the header's buttons, the sidebar, a link in a notice) saves the unsaved edit FIRST, and stays
+  // if the engine refuses it: the edit is never dropped behind the owner's back (the 3d.2 review's HIGH 1).
+  // Leaving without it is the owner's own choice (`force`). A deleted draft has nothing left to save.
+  useLeaveGuard(async (to) => {
+    setLeaving(true);
+    const flushed = await session.flush();
+    if (!mounted.current) return true;
+    setLeaving(false);
+    if (flushed.ok || session.state.save.kind === "gone") return true;
+    setBlockedLeave(to);
+    return false;
+  });
+  const saved = state.save.kind === "saved";
+  useEffect(() => {
+    if (saved) setBlockedLeave(null);
+  }, [saved]);
 
   // The store's montage.changed, in seq order: echoes of this window's saves change nothing, a save from
   // elsewhere is taken while nothing here is unsaved, a delete ends the session.
@@ -304,11 +327,6 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
       ? null
       : { label: activeJob.status === "queued" ? "В очереди" : `Рендер · ${activeJob.total > 0 ? Math.floor((activeJob.done / activeJob.total) * 100) : 0}${NBSP}%` };
 
-  async function leave(to: Parameters<typeof navigate>[0]): Promise<void> {
-    await session.flush();
-    if (mounted.current) navigate(to);
-  }
-
   async function submitRender(): Promise<void> {
     setSubmitting(true);
     setRenderError(null);
@@ -339,8 +357,9 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
         fresh={created && state.saved.updatedAt === initial.updatedAt}
         block={gone ? null : block}
         busy={busy}
-        onBack={() => void leave({ name: "photos", avatarId })}
-        onDrafts={() => void leave({ name: "montages" })}
+        leaving={leaving}
+        onBack={() => navigate({ name: "photos", avatarId })}
+        onDrafts={() => navigate({ name: "montages" })}
         onRender={() => void submitRender()}
       />
       {(gone || state.save.kind === "failed" || renderError !== null) && (
@@ -361,9 +380,21 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
             <ErrorNotice
               error={state.save.error}
               actions={
-                <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                  Сохранить ещё раз
-                </button>
+                blockedLeave === null ? (
+                  <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                    Сохранить ещё раз
+                  </button>
+                ) : (
+                  <>
+                    {/* The guard saves again on the way out: saved, the window goes where the owner was going. */}
+                    <button type="button" className="btn btn-s" onClick={() => navigate(blockedLeave)}>
+                      Сохранить и перейти
+                    </button>
+                    <button type="button" className="btn btn-s btn-d" onClick={() => navigate(blockedLeave, { force: true })}>
+                      Уйти без сохранения
+                    </button>
+                  </>
+                )
               }
             />
           ) : (

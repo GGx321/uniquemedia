@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 
 export type SectionId = "avatars" | "photo" | "montage" | "autopilot" | "settings";
 
@@ -18,16 +18,85 @@ export type Route =
 
 export type SettingsFocus = "key" | "money";
 
-export type Navigate = (route: Route) => void;
+export interface NavigateOptions {
+  /** Skips the leave guard: the owner chose to leave without saving. */
+  readonly force?: boolean;
+}
 
-const NavigationContext = createContext<Navigate | null>(null);
+export type Navigate = (route: Route, options?: NavigateOptions) => void;
+
+/** Asked before the window leaves a screen with unsaved work; true lets it go. */
+export type LeaveGuard = (to: Route) => Promise<boolean>;
+
+export interface Navigation {
+  readonly navigate: Navigate;
+  /** Guards every way out of the screen (its own buttons and the sidebar alike); returns the function that removes it. */
+  readonly guard: (leave: LeaveGuard) => () => void;
+}
+
+/**
+ * Navigation with one leave guard at a time (3d.2 review, HIGH 1: the editor's unsaved edit must survive every way
+ * out). Without a guard a navigation goes at once. With one, the guard is asked and the window goes only if it
+ * agrees; clicks while it is still deciding change where the window will go, not the question, so a slow save is
+ * waited for once. `force` skips it.
+ */
+export function createNavigation(go: (route: Route) => void): Navigation {
+  let current: LeaveGuard | null = null;
+  let asking: { target: Route } | null = null;
+  return {
+    navigate(route, options) {
+      if (current === null || options?.force === true) {
+        asking = null;
+        go(route);
+        return;
+      }
+      if (asking !== null) {
+        asking.target = route;
+        return;
+      }
+      const ask = { target: route };
+      asking = ask;
+      void current(route).then(
+        (ok) => {
+          if (asking !== ask) return;
+          asking = null;
+          if (ok) go(ask.target);
+        },
+        () => {
+          // A guard that throws keeps the window where it is: its screen says why.
+          if (asking === ask) asking = null;
+        },
+      );
+    },
+    guard(leave) {
+      current = leave;
+      return () => {
+        if (current === leave) current = null;
+      };
+    },
+  };
+}
+
+const NavigationContext = createContext<Navigation | null>(null);
 
 export const NavigationProvider = NavigationContext.Provider;
 
+function useNavigation(): Navigation {
+  const navigation = useContext(NavigationContext);
+  if (!navigation) throw new Error("useNavigate must be used inside <NavigationProvider>");
+  return navigation;
+}
+
 export function useNavigate(): Navigate {
-  const navigate = useContext(NavigationContext);
-  if (!navigate) throw new Error("useNavigate must be used inside <NavigationProvider>");
-  return navigate;
+  return useNavigation().navigate;
+}
+
+/** Guards every way out of the calling screen while it is mounted; the newest `guard` is the one asked. */
+export function useLeaveGuard(guard: LeaveGuard): void {
+  const { guard: register } = useNavigation();
+  const latest = useRef(guard);
+  latest.current = guard;
+  useEffect(() => register((to) => latest.current(to)), [register]);
 }
 
 export function sectionOf(route: Route): SectionId {

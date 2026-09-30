@@ -3,7 +3,7 @@ import type { EngineClient } from "./engine/client";
 import { EngineProvider, useEngineView } from "./engine/react";
 import { isActiveJob } from "./engine/store";
 import { readStudioVersion } from "./engine/windowStudio";
-import { NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
+import { createNavigation, NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
 import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
@@ -195,6 +195,9 @@ function SidebarStatus() {
 
 export function App({ client }: { client: EngineClient }) {
   const [route, setRoute] = useState<Route>({ name: "avatars" });
+  // Every way to another screen, the sidebar included, goes through the leave guard of the screen on show (3d.2
+  // review: the montage editor's unsaved edit).
+  const [navigation] = useState(() => createNavigation(setRoute));
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
   const lastPhotos = useRef<string | null>(null);
@@ -216,7 +219,7 @@ export function App({ client }: { client: EngineClient }) {
 
   return (
     <EngineProvider client={client}>
-      <NavigationProvider value={setRoute}>
+      <NavigationProvider value={navigation}>
         <div className="shell">
           <aside className="sidebar">
             <div className="logo">
@@ -238,7 +241,7 @@ export function App({ client }: { client: EngineClient }) {
                     type="button"
                     className={isActive ? "nav-item active" : "nav-item"}
                     aria-current={isActive ? "page" : undefined}
-                    onClick={() => setRoute(routeFor(s.id, lastPhotos.current))}
+                    onClick={() => navigation.navigate(routeFor(s.id, lastPhotos.current))}
                   >
                     <svg
                       className="nav-icon"
