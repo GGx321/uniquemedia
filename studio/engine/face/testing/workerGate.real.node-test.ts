@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, beforeEach, describe, test } from "node:test";
@@ -14,6 +14,7 @@ import { openLibrary } from "../../library/library";
 import { SAMPLE_AVATAR, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/sampleData";
 import { createFaceGate } from "../gate";
 import { NoFaceInReferenceError } from "../noFaceError";
+import { tempDirFor } from "../../../testing/tempDir";
 import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, sharedRealFaceGate, twelveMegapixelJpeg, twoKJpeg } from "./realWorker";
 import { faceModelPaths } from "../../../scripts/faceModelCache";
 import { MASTER } from "../fixtures/expected";
@@ -55,18 +56,6 @@ function ownGate(overrides: Parameters<typeof realWorkerInit>[0]): WorkerFaceGat
   const gate = createWorkerFaceGate({ spawnWorker: realWorkerSpawner(overrides) });
   gates.push(gate);
   return gate;
-}
-
-/** A fresh temp dir per test, removed after it (the `node:test` twin of the bun helper). */
-function useTempDir(prefix: string): () => string {
-  let dir = "";
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), prefix));
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-  return () => dir;
 }
 
 const live = (): AbortSignal => new AbortController().signal;
@@ -248,7 +237,7 @@ describe("focus resolution on the real face fixtures", () => {
   afterEach(async () => {
     await Promise.all(resolvers.splice(0).map((r) => r.flush()));
   });
-  const libraryRoot = useTempDir("studio-focus-real-");
+  const libraryRoot = tempDirFor({ beforeEach, afterEach }, "studio-focus-real-");
 
   /** Points measured with YuNet on the committed fixtures: the centre of the largest face box, as fractions of the image. */
   const MEASURED = {

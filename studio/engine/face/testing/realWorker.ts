@@ -18,12 +18,27 @@ import { createFaceWorkerSpawner } from "../worker/spawn";
 // bundle of a `*.node-test.ts` (studio/scripts/electronNodeTests.ts, Electron's
 // Node) this file sits in a temp directory, so the runner's STUDIO_ROOT says
 // where the repo is and the built worker (`faceWorker.js`) is next to the bundle.
+// Which of the two it is comes from the module itself (a `.ts` source, or the
+// bundle's `.mjs`), never from whether STUDIO_ROOT happens to be in the
+// environment: a stray STUDIO_ROOT must not move a `bun test` run, and a bundle
+// without one must fail at once instead of looking for the repo in a temp folder.
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const BUNDLED_ROOT = process.env.STUDIO_ROOT === undefined || process.env.STUDIO_ROOT === "" ? undefined : process.env.STUDIO_ROOT;
-export const REPO_ROOT = BUNDLED_ROOT ?? join(HERE, "..", "..", "..", "..");
+/** Where the repo and the worker entry are, for the module at `moduleUrl` and the runner's `studioRoot`. */
+export function locateRealWorker(moduleUrl: string, studioRoot: string | undefined): { repoRoot: string; workerUrl: URL } {
+  const bundled = !/\.[cm]?tsx?$/.test(new URL(moduleUrl).pathname);
+  if (bundled) {
+    if (studioRoot === undefined || studioRoot === "") {
+      throw new Error("testing/realWorker was bundled but STUDIO_ROOT is not set: run the suite through studio/scripts/electronNodeTests.ts");
+    }
+    return { repoRoot: studioRoot, workerUrl: new URL("./faceWorker.js", moduleUrl) };
+  }
+  return { repoRoot: join(dirname(fileURLToPath(moduleUrl)), "..", "..", "..", ".."), workerUrl: new URL("../worker/faceWorker.ts", moduleUrl) };
+}
+
+const LOCATION = locateRealWorker(import.meta.url, process.env.STUDIO_ROOT);
+export const REPO_ROOT = LOCATION.repoRoot;
 export const FIXTURE_IMAGE_DIR = join(REPO_ROOT, "studio", "engine", "face", "fixtures", "images");
-export const FACE_WORKER_SOURCE = BUNDLED_ROOT === undefined ? new URL("../worker/faceWorker.ts", import.meta.url) : new URL("./faceWorker.js", import.meta.url);
+export const FACE_WORKER_SOURCE = LOCATION.workerUrl;
 
 const MODEL_PATHS = faceModelPaths(REPO_ROOT);
 export const MODELS_PRESENT = existsSync(MODEL_PATHS.yunet) && existsSync(MODEL_PATHS.sface);
