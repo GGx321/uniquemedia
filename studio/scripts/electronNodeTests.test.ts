@@ -89,7 +89,7 @@ describe("nodeTestSummaryProblem: `electron --test` exits 0 for runs that tested
 
   test("every registered suite states a positive minimum", () => {
     for (const suite of NODE_TEST_SUITES) expect(suite.minTests).toBeGreaterThan(0);
-    expect(Object.fromEntries(NODE_TEST_SUITES.map((suite) => [suite.name, suite.minTests]))).toEqual({ "text worker": 10, "face worker": 18 });
+    expect(Object.fromEntries(NODE_TEST_SUITES.map((suite) => [suite.name, suite.minTests]))).toEqual({ "text worker": 10, "face worker": 18, "caption rules": 64 });
   });
 
   test("refuses fewer passes than tests (a cancelled test)", () => {
