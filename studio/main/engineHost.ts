@@ -103,6 +103,8 @@ interface Pending {
 export interface CallResult {
   error: EngineError | null;
   stage?: EngineReply["stage"];
+  /** Set only by `export.choose`'s own successful reply: the folder's identity and how many records resolve in it or stay elsewhere. */
+  exportFolder?: EngineReply["exportFolder"];
 }
 
 interface PendingCall {
@@ -241,6 +243,17 @@ export class EngineHost<Transfer> {
   stageImportPhoto(bytes: Extract<HostCall, { type: "import.stagePhoto" }>["bytes"]): Promise<CallResult> {
     const callId = (this.#deps.newId ?? randomUUID)();
     return this.#call(callId, { kind: "control", type: "import.stagePhoto", callId, bytes });
+  }
+
+  /**
+   * 3e.3: asks the engine what the folder the owner picked is (`export.choose`): the identity in its marker (written when it has
+   * none) and how many video records resolve in it. The engine adopts nothing; main saves the path and sends `settings.update`
+   * only when `error` is null. Refused with EXPORT_UNAVAILABLE (`exportReason`), IN_FLIGHT, or INTERNAL when the engine did not
+   * answer in time or is not running.
+   */
+  chooseExport(path: string): Promise<CallResult> {
+    const callId = (this.#deps.newId ?? randomUUID)();
+    return this.#call(callId, { kind: "control", type: "export.choose", callId, path });
   }
 
   #call(callId: string, call: HostCall, boundMs?: number): Promise<CallResult> {
@@ -403,7 +416,7 @@ export class EngineHost<Transfer> {
     if (kind === "control") {
       const reply = EngineReply.safeParse(data);
       const entry = reply.success ? this.#calls.get(reply.data.callId) : undefined;
-      if (reply.success && entry !== undefined) this.#settleCall(entry, { error: reply.data.error ?? null, stage: reply.data.stage });
+      if (reply.success && entry !== undefined) this.#settleCall(entry, { error: reply.data.error ?? null, stage: reply.data.stage, exportFolder: reply.data.exportFolder });
       else console.warn("studio: dropped an engine reply no call is waiting for");
       return;
     }

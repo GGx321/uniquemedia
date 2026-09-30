@@ -96,8 +96,11 @@ async function nextSettings(command: SettingsCommand, deps: SettingsFlowDeps): P
   }
 }
 
+/** What `reportedSettings` needs: a subset of `SettingsFlowDeps`, so the export folder's flow can answer in the same way. */
+export type ReportedSettingsDeps = Pick<SettingsFlowDeps, "settings" | "keyStatus" | "musicKeyStatus" | "newId"> & { engine: Pick<SettingsFlowDeps["engine"], "request"> };
+
 /** The settings as the engine reports them (with its `rejected` flag), else main's own view. */
-async function reportedSettings(deps: SettingsFlowDeps): Promise<Settings> {
+export async function reportedSettings(deps: ReportedSettingsDeps): Promise<Settings> {
   const response = await deps.engine.request({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "command", type: "settings.get", payload: {} });
   if (response.ok && response.type === "settings.get") return response.result;
   return { apiKey: deps.keyStatus(), musicKey: deps.musicKeyStatus(), ...deps.settings.current };

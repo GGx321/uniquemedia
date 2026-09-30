@@ -7,6 +7,7 @@ import {
   type ResponseMessage,
 } from "../shared/engine";
 import { posix, win32 } from "node:path";
+import { isExportFolderCommand, type ExportFolderCommand } from "./exportFolderFlow";
 import { fileUrlToPathOn } from "./fileUrl";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
@@ -89,6 +90,11 @@ export interface RequestRoutes {
    * this command's own payload.
    */
   importPhoto(command: ImportPhotoCommand): Promise<ResponseMessage>;
+  /**
+   * 3e.3: the export folder's dialog and its display form. Main opens its own folder dialog, asks the engine about the pick
+   * and saves the path itself; the window never names a folder.
+   */
+  exportFolder(command: ExportFolderCommand): Promise<ResponseMessage>;
   /** Everything else, forwarded to the engine. */
   engine(command: EngineCommandMessage): Promise<ResponseMessage>;
 }
@@ -103,6 +109,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
     if (message.type === "settings.setApiKey" || message.type === "settings.clearApiKey") return routes.mainOnly(message);
     if (message.type === "settings.setMusicKey" || message.type === "settings.clearMusicKey") return routes.musicKey(message);
     if (message.type === "avatars.pickImportPhoto") return routes.importPhoto(message);
+    if (isExportFolderCommand(message)) return routes.exportFolder(message);
     return errorResponseFor(message, { code: "INTERNAL", detail: `${message.type} has no handler in main` });
   }
   if (isSettingsCommand(message)) return routes.settings(message);

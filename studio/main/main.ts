@@ -21,6 +21,7 @@ import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { installProcessGuards } from "../engine/processGuards";
 import { engineEnv } from "./engineEnv";
+import { handleExportFolderCommand } from "./exportFolderFlow";
 import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
@@ -324,6 +325,17 @@ async function startStudio(): Promise<void> {
         handleImportPhotoCommand(command, {
           pickImportFile: () => pickImportFile(BrowserWindow.fromWebContents(event.sender)),
           engine: { stageImportPhoto: (bytes) => engine.stageImportPhoto(bytes) },
+        }),
+      exportFolder: (command) =>
+        handleExportFolderCommand(command, {
+          settings,
+          engine,
+          pickFolder: (defaultPath) => pickFolder(BrowserWindow.fromWebContents(event.sender), defaultPath),
+          keyStatus: () => keys.status(),
+          musicKeyStatus: () => musicKeyStatusOf(musicKeys.status()),
+          newId: randomUUID,
+          home: () => app.getPath("home"),
+          platform: process.platform,
         }),
       engine: (command) => engine.request(command),
     }),

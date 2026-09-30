@@ -106,6 +106,9 @@ async function wired() {
     importPhoto: async () => {
       throw new Error("not used");
     },
+    exportFolder: async () => {
+      throw new Error("not used");
+    },
     engine: (c) => engine.handle(c),
   };
   const ask = async (type: string, payload: unknown = {}) => {

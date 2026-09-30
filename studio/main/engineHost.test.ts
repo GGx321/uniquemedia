@@ -754,3 +754,49 @@ describe("calls to the engine (import.stagePhoto)", () => {
     expect(await pending).toBeNull();
   });
 });
+
+// 3e.3: the owner's pick of the export folder is put to the engine, which answers what the folder is (its identity and how
+// many video records resolve in it) or why it cannot be the export folder.
+describe("calls to the engine (export.choose)", () => {
+  test("posts the picked path with an id and resolves with the engine's folder", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.chooseExport("/Volumes/Reels");
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    expect(call).toMatchObject({ kind: "control", type: "export.choose", path: "/Volumes/Reels" });
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 1 } });
+
+    expect(await pending).toEqual({ error: null, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 1 } });
+  });
+
+  test("a refusal (EXPORT_UNAVAILABLE with its reason) is passed on, with no folder", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.chooseExport("/Volumes/Reels");
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
+
+    expect(await pending).toEqual({ error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" }, exportFolder: undefined });
+  });
+
+  test("no reply within 30 s is INTERNAL, with no folder", async () => {
+    const { host, timers } = setup();
+    await host.start();
+    const pending = host.chooseExport("/Volumes/Reels");
+    await timers.advance(30_000);
+    expect(await pending).toEqual({ error: { code: "INTERNAL", detail: "the engine did not answer within 30 s" }, exportFolder: undefined });
+  });
+
+  test("an engine that is gone answers INTERNAL", async () => {
+    const { host, children, endBackoff } = setup();
+    await host.start();
+    children[0]?.crash(1);
+    await endBackoff();
+    children[1]?.crash(1);
+    expect(await host.chooseExport("/Volumes/Reels")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
+  });
+});

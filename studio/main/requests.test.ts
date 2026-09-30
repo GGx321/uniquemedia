@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ResponseMessage, type EngineCommandMessage } from "../shared/engine";
+import type { ExportFolderCommand } from "./exportFolderFlow";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
@@ -27,6 +28,7 @@ function routesSpy() {
   const musicKey: MusicKeyCommand[] = [];
   const settings: SettingsCommand[] = [];
   const importPhoto: ImportPhotoCommand[] = [];
+  const exportFolder: ExportFolderCommand[] = [];
   const engine: EngineCommandMessage[] = [];
   const routes: RequestRoutes = {
     mainOnly: async (command) => {
@@ -45,12 +47,16 @@ function routesSpy() {
       importPhoto.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
     },
+    exportFolder: async (command) => {
+      exportFolder.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
+    },
     engine: async (command) => {
       engine.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, musicKey, settings, importPhoto, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -248,6 +254,27 @@ describe("handleRendererRequest", () => {
     expect(engine).toEqual([]);
   });
 
+  test.each(["settings.setExportPath", "settings.exportDisplay"] as const)("%s is main's alone: it reaches the export folder route and is never forwarded to the engine", async (type) => {
+    const { routes, mainOnly, settings, importPhoto, exportFolder, engine } = routesSpy();
+    await handleRendererRequest(command(type), APP_FRAME, PACKAGED, routes);
+    expect(exportFolder.map((c) => c.type)).toEqual([type]);
+    expect([mainOnly, settings, importPhoto, engine]).toEqual([[], [], [], []]);
+  });
+
+  test("settings.setExportPath carrying a path is refused by the contract before any route runs: the window never names the folder", async () => {
+    const { routes, exportFolder, engine } = routesSpy();
+    const response = await handleRendererRequest(command("settings.setExportPath", { path: "/Volumes/Reels" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect([exportFolder, engine]).toEqual([[], []]);
+  });
+
+  test("export.check is an engine command: forwarded as parsed", async () => {
+    const { routes, exportFolder, engine } = routesSpy();
+    await handleRendererRequest(command("export.check"), APP_FRAME, PACKAGED, routes);
+    expect(engine.map((c) => c.type)).toEqual(["export.check"]);
+    expect(exportFolder).toEqual([]);
+  });
+
   test("videos.reveal is main's alone: until its handler lands (task 3e) it answers a typed refusal and is never forwarded to the engine", async () => {
     const { routes, mainOnly, settings, importPhoto, engine } = routesSpy();
     const response = await handleRendererRequest(command("videos.reveal", { videoId: "video-00000001" }), APP_FRAME, PACKAGED, routes);
@@ -332,6 +359,9 @@ describe("handleRendererRequest", () => {
         throw new Error("unreachable");
       },
       importPhoto: async () => {
+        throw new Error("unreachable");
+      },
+      exportFolder: async () => {
         throw new Error("unreachable");
       },
       engine: async () => {
