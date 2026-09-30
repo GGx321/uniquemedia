@@ -61,7 +61,7 @@ describe("videos.render: the answer", () => {
     await r.queue.idle();
   });
 
-  test("a montageId is NOT_FOUND until drafts exist (3d.1a), and touches nothing", async () => {
+  test("a montageId with no draft store wired is NOT_FOUND, and touches nothing (service.montage.test.ts has the drafts)", async () => {
     const w = world();
     const r = serviceRig(w);
 

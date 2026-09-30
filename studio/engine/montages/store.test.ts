@@ -246,6 +246,35 @@ describe("DraftStore.find", () => {
   });
 });
 
+describe("DraftStore.exists", () => {
+  test("is true for a draft, and for a damaged file (something is there), and false for nothing", async () => {
+    const { library, avatarIds } = await openWithAvatars();
+    const [avatarId = ""] = avatarIds;
+    const store = storeOf();
+    await store.write(library, montageOf(avatarId, "montage-0001"));
+    await writeRaw(library, avatarId, "montage-0002.json", "{ torn");
+
+    expect(await store.exists(library, avatarId, "montage-0001")).toBe(true);
+    expect(await store.exists(library, avatarId, "montage-0002")).toBe(true);
+    expect(await store.exists(library, avatarId, "montage-0003")).toBe(false);
+  });
+
+  test("is false for an avatar with no montages folder", async () => {
+    const { library, avatarIds } = await openWithAvatars();
+    const [avatarId = ""] = avatarIds;
+
+    expect(await storeOf().exists(library, avatarId, "montage-0001")).toBe(false);
+  });
+
+  test("does not read the file: an oversized one still counts as there", async () => {
+    const { library, avatarIds } = await openWithAvatars();
+    const [avatarId = ""] = avatarIds;
+    await writeRaw(library, avatarId, "montage-0001.json", " ".repeat(MAX_DRAFT_BYTES + 1));
+
+    expect(await storeOf().exists(library, avatarId, "montage-0001")).toBe(true);
+  });
+});
+
 describe("DraftStore.list", () => {
   test("lists an avatar's drafts newest first, ties broken by id", async () => {
     const { library, avatarIds } = await openWithAvatars();

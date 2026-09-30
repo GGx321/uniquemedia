@@ -1,4 +1,4 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { lstat, mkdir, readdir } from "node:fs/promises";
 import { basename } from "node:path";
 import { z } from "zod";
 import { Id } from "../../shared/engine/primitives";
@@ -149,9 +149,15 @@ export class DraftStore {
     return null;
   }
 
-  /** Whether a draft file is there for this avatar and id (a damaged one included: something is there). */
+  /** Whether something is at this draft's place (a damaged file included): one `lstat`, no read, so it is cheap enough to ask for every video of a listing. */
   async exists(library: Library, avatarId: string, montageId: string): Promise<boolean> {
-    return (await this.read(library, avatarId, montageId)).kind !== "missing";
+    try {
+      await lstat(library.montageFilePath(avatarId, montageId));
+      return true;
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) return false;
+      throw error;
+    }
   }
 
   /**

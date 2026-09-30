@@ -101,6 +101,11 @@ export interface VideoRenderDeps {
    * or late for a commit that outlived its deadline. A throw is logged and changes nothing: the record is the truth.
    */
   readonly onCommitted?: (record: VideoRecord) => void;
+  /**
+   * Whether the draft this render started from was deleted since (asked when the record is written, so a delete during the
+   * render is seen): the record then lists `montageId: null`. Absent: never.
+   */
+  readonly draftRemoved?: (montageId: string) => boolean;
   /** `COMMIT_DEADLINE_MS` unless a test says otherwise. */
   readonly commitDeadlineMs?: number;
   /** `EXPORT_STEP_DEADLINE_MS` unless a test says otherwise. */
@@ -290,7 +295,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           createdAt: now.toISOString(),
           frames: totalFramesOf(plan.spec.clips),
           durationMs: plan.spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0),
-          montageId: plan.montageId,
+          montageId: plan.montageId !== null && deps.draftRemoved?.(plan.montageId) === true ? null : plan.montageId,
           music: plan.music,
           spec: plan.spec,
           forbiddenStrings,

@@ -13,6 +13,7 @@ import { hasErrorCode } from "../library/durableFs";
 import type { PhotoSource } from "../render";
 import type { RenderQueue, RenderQueueEvent } from "../renderQueue/queue";
 import { sweepRenderTmp } from "../renderQueue/sweep";
+import type { DraftStore } from "../montages/store";
 import type { CommitFs } from "./commitFs";
 import { deleteVideo, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
 import { createRenderExecute, totalFramesOf, type RenderPlan, type SettleInput, type VideoRenderDeps } from "./execute";
@@ -61,6 +62,11 @@ export interface VideoServiceDeps {
   readonly openLibrary: () => Library | null;
   /** A FRESH check of the export folder (its marker read now, never a snapshot). With `requiredBytes` it also wants twice that free. Never rejects. */
   readonly checkExport: (requiredBytes?: number) => Promise<ExportRootCheck>;
+  /**
+   * The montage drafts: `videos.render {montageId}` reads its spec from here, a video's record stops naming a draft that was
+   * deleted, and so does `videos.list`. Absent: a `montageId` is NOT_FOUND, as before drafts existed.
+   */
+  readonly drafts?: Pick<DraftStore, "find" | "exists" | "wasRemoved">;
   readonly caseProbe: { isCaseInsensitive(root: string): Promise<boolean> };
   /** The focus resolver of `library`; `fillMissingFocus` takes a budget for the call (cells judged by then are kept) and a signal that ends it early. */
   readonly focus: (library: Library) => Pick<FocusResolver, "fillMissingFocus">;
@@ -162,6 +168,13 @@ export function notYetSupportedIssues(spec: Pick<MontageDraft, "clips" | "layers
   return issues;
 }
 
+/** What a render starts from: a headless spec, or a saved draft's spec with the draft's id and the library it was read from. */
+interface RenderSource {
+  readonly montageId: string | null;
+  readonly spec: MontageDraft;
+  readonly library: Library | null;
+}
+
 interface SceneCell {
   readonly photoId: string;
   readonly path: (string | number)[];
@@ -247,8 +260,11 @@ export class VideoService {
     const marginMs = this.#deps.commandMarginMs ?? RENDER_COMMAND_MARGIN_MS;
     const remaining = (): number => budgetMs - (performance.now() - entered);
     if (this.#closing) throw new EngineFailure({ code: "INTERNAL", detail: "the engine is shutting down" });
-    if ("montageId" in payload) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${payload.montageId}: drafts are not available yet` });
-    const { spec } = payload;
+    // A saved draft is read first: its spec is what everything after judges, and a draft that is gone or unreadable
+    // refuses before the export folder or anything else is looked at. The job keeps THIS copy: a save or a delete after
+    // it does not reach the render.
+    const source: RenderSource = "montageId" in payload ? await this.#loadDraft(payload.montageId) : { montageId: null, spec: payload.spec, library: null };
+    const { spec } = source;
     const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
@@ -262,12 +278,32 @@ export class VideoService {
       () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time" }),
     );
     if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
-    return this.#deps.withLibrary((library) => this.#render(library, spec, renderTmpDir, check, { remaining, marginMs }));
+    return this.#deps.withLibrary((library) => {
+      // The draft was read from the library that was open then; a render is queued in the one that is open now.
+      if (source.library !== null && source.library !== library) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${source.montageId} in the open library` });
+      return this.#render(library, spec, source.montageId, renderTmpDir, check, { remaining, marginMs });
+    });
+  }
+
+  /** A saved draft's spec, with the library it was read from. NOT_FOUND for a draft that is not there, INTERNAL for one that cannot be read (its detail names no path). */
+  async #loadDraft(montageId: string): Promise<RenderSource> {
+    const drafts = this.#deps.drafts;
+    if (drafts === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}: drafts are not available` });
+    const library = this.#deps.openLibrary();
+    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    const found = await drafts.find(library, montageId);
+    if (found === null || found.read.kind === "missing") throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
+    if (found.read.kind === "unreadable") {
+      this.#deps.log(`videos.render: a montage draft could not be used (${found.read.reason})`);
+      throw new EngineFailure({ code: "INTERNAL", detail: `the montage draft cannot be read (${found.read.reason})` });
+    }
+    return { montageId, spec: found.read.montage.spec, library };
   }
 
   async #render(
     library: Library,
     spec: MontageDraft,
+    montageId: string | null,
     renderTmpDir: string,
     check: Extract<ExportRootCheck, { ok: true }>,
     time: { remaining(): number; marginMs: number },
@@ -331,7 +367,7 @@ export class VideoService {
       resolvePhoto: (ref) => (ref.source === "scene" ? sources.get(ref.photoId) : undefined),
       overlays: [],
       audio: { kind: "silent" },
-      montageId: null,
+      montageId,
       videoKind: videoKindOf(filled.clips),
       music: null,
     };
@@ -343,12 +379,13 @@ export class VideoService {
       now: deps.now,
       log: deps.log,
       onCommitted: (record) => this.#committed(record),
+      ...(deps.drafts === undefined ? {} : { draftRemoved: (id: string) => deps.drafts?.wasRemoved(id) === true }),
       // A commit that fails and leaves its intent is settled inside the job, before it ends (the reservation still held).
       settleLeftover: (input, signal) => this.#settleLeftover(library, input, signal),
       ...deps.renderOverrides,
     });
     // ONE number of frames: the queue's total, and the verifier's expectation (execute), come from the same function.
-    const result = deps.queue.submit({ jobId, ref: { videoId, avatarId: spec.avatarId, montageId: null }, totalFrames: totalFramesOf(filled.clips), photoIds: scenePhotoIds(filled.clips), execute: execute(plan) });
+    const result = deps.queue.submit({ jobId, ref: { videoId, avatarId: spec.avatarId, montageId }, totalFrames: totalFramesOf(filled.clips), photoIds: scenePhotoIds(filled.clips), execute: execute(plan) });
     if (!result.ok) {
       if (result.code === "QUEUE_FULL") throw new EngineFailure({ code: "RENDER_QUEUE_FULL", detail: `the render queue is full: ${result.limit} renders are already queued or running` });
       const held = new Set(result.photoIds);
@@ -427,6 +464,7 @@ export class VideoService {
     const budget = newHashBudget();
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
+    const drafts = new Map<string, boolean>();
     for (const record of read.records.slice(0, MAX_LISTED_VIDEOS)) {
       let state: FileState;
       try {
@@ -436,9 +474,31 @@ export class VideoService {
         this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
         state = "elsewhere";
       }
-      summaries.push(videoSummaryOf(record, state));
+      summaries.push(videoSummaryOf(await this.#withLiveDraft(library, record, drafts), state));
     }
     return summaries;
+  }
+
+  /**
+   * `record` as the windows should see it: a record is write-once and keeps the id of the draft it came from, but a draft
+   * that was deleted since is no draft to open («Изменить»), so it reads `montageId: null`. One look per draft per call
+   * (`known`); a disk that cannot be looked at leaves the id as written, since the draft is not known to be gone.
+   */
+  async #withLiveDraft(library: Library, record: VideoRecord, known: Map<string, boolean>): Promise<VideoRecord> {
+    const drafts = this.#deps.drafts;
+    const montageId = record.montageId;
+    if (drafts === undefined || montageId === null) return record;
+    let live = known.get(montageId);
+    if (live === undefined) {
+      try {
+        live = !drafts.wasRemoved(montageId) && (await drafts.exists(library, record.avatarId, montageId));
+      } catch (error) {
+        this.#deps.log(`videos.list: a montage draft could not be looked at (${kindOf(error)})`);
+        live = true;
+      }
+      known.set(montageId, live);
+    }
+    return live ? record : { ...record, montageId: null };
   }
 
   // ---------- videos.delete ----------
@@ -692,7 +752,7 @@ export class VideoService {
       }
       // Recovery has just verified the file's size and sha256: it is present.
       if (record !== null) {
-        this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "upserted", video: videoSummaryOf(record, "present") } });
+        this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "upserted", video: videoSummaryOf(await this.#withLiveDraft(library, record, new Map()), "present") } });
         return record.avatarId;
       }
     }
