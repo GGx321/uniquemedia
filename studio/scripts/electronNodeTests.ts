@@ -10,7 +10,11 @@
  * Each suite is a `*.node-test.ts` written against `node:test` and `node:assert`. This script bundles it, and
  * every worker entry it spawns, with `bun build --target=node` into a temp directory, then runs
  *   ELECTRON_RUN_AS_NODE=1 <electron binary> --test <bundle>
- * with `STUDIO_ROOT` (the repo) in the environment. Exit code: the run's own. No retries.
+ * with `STUDIO_ROOT` (the repo) in the environment. No retries. The run fails when Electron's exit code is not 0, and
+ * also when its summary does not show a real run: `electron --test` exits 0 with zero tests, and with every test
+ * behind `describe.skip`, so the summary (`ℹ tests N`, `ℹ pass N`, `ℹ skipped N`, `ℹ todo N`) is read from the
+ * output, which is copied through as it arrives. Zero tests, a file that registered none, any skipped or todo test or
+ * suite, a pass count below the test count, or no summary at all is a failure.
  *
  *   bun run test:studio:electron-node
  *
@@ -29,6 +33,34 @@ export interface NodeTestSuite {
   entry: string;
   /** Worker bundles the test spawns next to itself: output file name -> repo-relative source. */
   workers: Readonly<Record<string, string>>;
+}
+
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+/**
+ * Why the output of a `node --test` run does not show a run that tested something, or undefined when it does.
+ * Reads the reporter's summary lines (`ℹ tests 10`); an output with no `tests` line is a problem too, so a change of
+ * reporter or of format fails loudly instead of passing quietly.
+ */
+export function nodeTestSummaryProblem(output: string): string | undefined {
+  const plain = output.replace(ANSI, "");
+  const count = (name: string): number | undefined => {
+    const match = new RegExp(`^ℹ ${name} (\\d+)\\s*$`, "m").exec(plain);
+    return match?.[1] === undefined ? undefined : Number(match[1]);
+  };
+  // A file that registers no test of its own is counted by node as ONE passing test named after the file (`tests 1`).
+  if (/^[✔✖﹣]\s+\S+\.(?:mjs|cjs|js)\s+\(/m.test(plain)) return "a test file registered no tests: node counted the file itself as the one test";
+  // A skipped or todo suite is not always in the counts (`describe.skip` reports `tests 0`, `skipped 0`), but it always marks its line.
+  if (/ # (?:SKIP|TODO)\b/.test(plain)) return "a test or suite is marked SKIP or TODO: every test must run";
+  const tests = count("tests");
+  if (tests === undefined) return "the output has no `ℹ tests N` summary, so nothing shows that a test ran";
+  if (tests === 0) return "the run reported 0 tests";
+  const skipped = count("skipped") ?? 0;
+  const todo = count("todo") ?? 0;
+  if (skipped > 0 || todo > 0) return `the run skipped ${skipped} and left ${todo} as todo: every test must run`;
+  const passed = count("pass");
+  if (passed !== tests) return `${passed ?? "no"} tests passed of ${tests}`;
+  return undefined;
 }
 
 export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
@@ -75,9 +107,19 @@ export async function buildSuite(root: string, suite: NodeTestSuite, outDir: str
   return testBundle;
 }
 
-function runElectronNode(electron: string, testBundle: string, env: Record<string, string>): Promise<number> {
+function runElectronNode(electron: string, testBundle: string, env: Record<string, string>): Promise<{ code: number; output: string }> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(electron, electronNodeArgs(testBundle), { env, stdio: "inherit" });
+    const child = spawn(electron, electronNodeArgs(testBundle), { env, stdio: ["ignore", "pipe", "pipe"] });
+    // Copied through as it arrives, and kept: the summary is read from it.
+    let output = "";
+    child.stdout.on("data", (d: Buffer) => {
+      output += String(d);
+      process.stdout.write(d);
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      output += String(d);
+      process.stderr.write(d);
+    });
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`the suite ran past ${SUITE_TIMEOUT_MS} ms and was killed`));
@@ -86,9 +128,10 @@ function runElectronNode(electron: string, testBundle: string, env: Record<strin
       clearTimeout(timer);
       reject(error);
     });
-    child.on("exit", (code, signal) => {
+    // `close`, not `exit`: the output is complete once the pipes have closed.
+    child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolveRun(code ?? (signal === null ? 1 : 128));
+      resolveRun({ code: code ?? (signal === null ? 1 : 128), output });
     });
   });
 }
@@ -102,10 +145,16 @@ if (import.meta.main) {
     try {
       console.log(`\n== ${suite.name} (Electron's Node) ==`);
       const testBundle = await buildSuite(root, suite, out);
-      const code = await runElectronNode(electron, testBundle, electronNodeEnv(process.env, root));
+      const { code, output } = await runElectronNode(electron, testBundle, electronNodeEnv(process.env, root));
       if (code !== 0) {
         console.error(`${suite.name}: exit code ${code}`);
         failed = true;
+      } else {
+        const problem = nodeTestSummaryProblem(output);
+        if (problem !== undefined) {
+          console.error(`${suite.name}: exit code 0, but ${problem}`);
+          failed = true;
+        }
       }
     } finally {
       await rm(out, { recursive: true, force: true });
