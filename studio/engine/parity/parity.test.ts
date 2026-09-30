@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { useEngineDir } from "../testing/engineHarness";
-import { GOLDEN } from "./golden";
-import { play } from "./play";
-import { mockRig, realRig } from "./rigs";
-import { SCENARIOS } from "./scenarios";
-import { INTENTIONAL_DIFFERENCES, MASKED } from "./transcript";
+import { GOLDEN } from "./testing/golden";
+import { play } from "./testing/play";
+import { mockRig, realRig } from "./testing/rigs";
+import { SCENARIOS } from "./testing/scenarios";
+import { INTENTIONAL_DIFFERENCES, MASKED } from "./testing/transcript";
 useNativeGlobals();
 
 // Mock parity (Stage 3, 3d.1b): the same story played against the mock engine and against the real one, and the two

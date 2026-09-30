@@ -1,4 +1,4 @@
-import type { EngineError, EventMessage } from "../../shared/engine";
+import type { EngineError, EventMessage } from "../../../shared/engine";
 
 // The parity harness's record of a scenario (Stage 3, 3d.1b): what was asked, what was answered and every event, in the order
 // it happened, written as plain lines. The SAME scenario runs against the mock and against the real engine, each writes its

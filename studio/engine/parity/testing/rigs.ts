@@ -1,16 +1,16 @@
 import { mkdir, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { CommandMessage, EventMessage, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
-import { FfmpegError, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
-import { MockEngine } from "../../renderer/engine/mockEngine";
-import { MIA, NORA, scenePhoto, SOFIA } from "../../renderer/engine/mockEngine.testkit";
-import { ManualScheduler } from "../../renderer/engine/scheduler";
-import { manifestTraits } from "../avatars/records";
-import { openLibrary } from "../library";
-import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../library/testing/helpers";
-import { command, engineSettings, GOOD, startEngine, TRAITS, until } from "../testing/engineHarness";
-import { acceptingVerify } from "../videos/testing/kit";
-import { writingRun } from "../videos/testing/serviceKit";
+import { CommandMessage, EventMessage, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
+import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg";
+import { MockEngine } from "../../../renderer/engine/mockEngine";
+import { MIA, NORA, scenePhoto, SOFIA } from "../../../renderer/engine/mockEngine.testkit";
+import { ManualScheduler } from "../../../renderer/engine/scheduler";
+import { manifestTraits } from "../../avatars/records";
+import { openLibrary } from "../../library";
+import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
+import { command, engineSettings, GOOD, startEngine, TRAITS, until } from "../../testing/engineHarness";
+import { acceptingVerify } from "../../videos/testing/kit";
+import { writingRun } from "../../videos/testing/serviceKit";
 import type { Answer, Recorded } from "./transcript";
 
 // The two engines the parity suite runs a scenario against (Stage 3, 3d.1b), behind ONE interface: the mock on a manual clock,
