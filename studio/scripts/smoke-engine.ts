@@ -14,7 +14,7 @@
  *   packaged) load;
  * - main refuses a command that breaks the contract;
  * - the `videos.*` commands are wired in the engine: refusals only (an empty list, NOT_FOUND, the N9 "not yet
- *   supported" answer), nothing rendered or written (a real render, kill and restart is the packaged E2E, 3a.9);
+ *   supported" answer), nothing rendered or written (the real renders are the render scenario below);
  * - settings.setApiKey stores only ciphertext and hands the key to the engine;
  * - settings.setBudget is persisted by main and reaches the engine;
  * - the live library's folder picked again with another letter case (main's
@@ -31,7 +31,15 @@
  * - a corrupt settings.json is moved aside and reported as a pending notice in
  *   the snapshot; after an app restart the key is decrypted and sent again;
  *   clearApiKey removes it;
- * - packaged: the engine entry lives inside app.asar, not unpacked; the fuses are set.
+ * - packaged: the engine entry lives inside app.asar, not unpacked; the fuses are set;
+ * - the render scenario (plan 3a.9 and 3e.1, `runPackagedRenderScenario`): six real renders by `videos.render {spec}` with no
+ *   window work (five pairwise 4 s specs and a mixed 15 s timeline, renderSmokeSpecs.ts) into a test export root, each file
+ *   checked by the engine's verifier again, by ffprobe and by a box reader (invariants 14 and 20); the engine killed ALONE (Windows
+ *   without /T) in the middle of a render (nothing is left: no file, record or used mark) and, through the E2E-only commit hold
+ *   (studio/engine/videos/e2eCommitHold.ts), between the rename and the record (the restart adopts the video with its record and
+ *   used mark); a render with the export root removed refused as EXPORT_UNAVAILABLE before a job starts; a committed video played
+ *   and seeked through studio-media://video with Range, and a missing or elsewhere record answering 404. It prints `FACT` lines
+ *   (the box tree, metadata, time and memory per render) that the plan's 3a.9 notes are written from. `--only render` runs it alone.
  *
  * Every debug door (remote debugging, DevTools, the test switches) is a
  * build-time constant: a `build:studio` output has none, however it is
@@ -60,14 +68,19 @@
 import { extractFile, listPackage } from "@electron/asar";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import { FACE_MODELS } from "../engine/face/modelSource";
 import { openLibrary } from "../engine/library";
+import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library/testing/sampleData";
 import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
+import { probeVideo } from "../engine/render/ffmpeg.testkit";
+import { PEAK_RSS_BYTES } from "../engine/renderQueue/pool";
+import { verifyRenderedMp4 } from "../engine/verify";
+import { commitHoldPaths } from "../engine/videos/e2eCommitHold";
 import { EXPORT_MARKER_FILE } from "../engine/exportRoot";
 import { videoPaths } from "../engine/videos/record";
 import { Ledger } from "../engine/money/ledger";
@@ -81,6 +94,10 @@ import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
 import { looksLikeAStackTrace } from "./stackTrace";
+import { boxTree, formatBoxTree, mp4Facts } from "./mp4Facts";
+import { startFfmpegSampler } from "./processSampler";
+import { renderedFileProblems } from "./renderSmokeChecks";
+import { MIXED_SPEC, PAIRWISE_SPECS, SMOKE_PHOTOS_NEEDED, smokeSpec, type SmokeSpecPlan } from "./renderSmokeSpecs";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const SMOKE_KEY = "sk-or-v1-smoke-test-not-real-7q3z";
@@ -1709,6 +1726,381 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
 
 // ---------- main ----------
 
+// ---------- packaged render end-to-end scenario (plan 3a.9: headless E2E; 3e.1: playback) ----------
+
+const RENDER_ROOT_ID = "smoke-render-root-0001";
+/** A different length, so the marker's cheap `lstat` check sees the change even within one timestamp tick. */
+const OTHER_ROOT_ID = "smoke-other-root-00000002";
+/** The contract's own scene categories: a photo outside them is not listed in the gallery. */
+const SCENE_CATEGORIES = ["home", "travel", "shoot", "glam", "fit"] as const;
+const MIB = 1024 * 1024;
+/** The longest a clean render may take on any runner: generous, it only ends a hang. */
+const RENDER_WAIT_MS = 180_000;
+
+/** A line for the plan's notes, read from the CI log: what this OS measured. */
+function fact(what: string, value: unknown): void {
+  console.log(`FACT  ${what}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
+}
+
+/** The engine only (a utilityProcess, a child of the app): never its ffmpeg children with it, which is the point. Windows without `/T`. */
+function killEngineOnly(pid: number): void {
+  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(pid), "/F"]);
+  else process.kill(pid, "SIGKILL");
+}
+
+/** A real 720x1280 JPEG, different for every `n` (colour and noise): a scene photo for the render to read. Noisy on purpose, since the noisiest outputs are the largest. */
+async function renderScenePhoto(n: number, dir: string): Promise<Uint8Array> {
+  // Photo 0 is the repo's own committed JPEG, the same bytes on every machine: the first render's output is then the one that can be
+  // compared between a Mac and a Windows runner (a determinism probe, recorded as information and never a gate; N13).
+  if (n === 0) return new Uint8Array(await readFile(join(ROOT, "studio/engine/face/fixtures/images/render-best-home-1.jpg")));
+  const out = join(dir, `scene-${n}.jpg`);
+  const proc = Bun.spawn(
+    [ffmpegPath(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `testsrc2=size=720x1280:rate=1,noise=alls=40:allf=t:all_seed=${n + 1},hue=h=${(n * 37) % 360}`, "-frames:v", "1", "-q:v", "3", out],
+    { stdout: "ignore", stderr: "pipe" },
+  );
+  const [stderr, code] = await Promise.all([Bun.readableStreamToText(proc.stderr), proc.exited]);
+  if (code !== 0) throw new Error(`smoke test could not draw a scene photo: ${stderr}`);
+  return new Uint8Array(await readFile(out));
+}
+
+interface SceneWorld {
+  readonly avatarId: string;
+  readonly photoIds: readonly string[];
+}
+
+/** An active avatar with a master and `SMOKE_PHOTOS_NEEDED` scene photos (each its own picture, eligible for a video). */
+async function seedSceneLibrary(libraryRoot: string, scratch: string): Promise<SceneWorld> {
+  const { library } = await openLibrary(libraryRoot);
+  const avatar = await library.createAvatar({ ...SAMPLE_AVATAR, name: "Mia" });
+  const master = await library.addPhoto(avatar.id, PNG, samplePhotoMeta());
+  await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  const photoIds: string[] = [];
+  for (let n = 0; n < SMOKE_PHOTOS_NEEDED; n += 4) {
+    const batch = await Promise.all(Array.from({ length: Math.min(4, SMOKE_PHOTOS_NEEDED - n) }, (_, i) => renderScenePhoto(n + i, scratch)));
+    for (const [i, bytes] of batch.entries()) {
+      const category = SCENE_CATEGORIES[(n + i) % SCENE_CATEGORIES.length] ?? "home";
+      const photo = await library.addPhoto(avatar.id, bytes, samplePhotoMeta({ mediaType: "image/jpeg", width: 720, height: 1280, source: { ...SAMPLE_SOURCE, category, attemptId: `smoke-render-attempt-${n + i}` } }));
+      photoIds.push(photo.id);
+    }
+  }
+  return { avatarId: avatar.id, photoIds };
+}
+
+interface SmokeRender {
+  readonly plan: SmokeSpecPlan;
+  readonly photoIds: readonly string[];
+  readonly jobId: string;
+  readonly videoId: string;
+  /** From the command's answer to the job's end, as this script saw it. */
+  readonly ms: number;
+  readonly relPath: string;
+  readonly bytes: number;
+  readonly videoKind: string;
+}
+
+const specFrames = (plan: SmokeSpecPlan): number => plan.clips.reduce((sum, clip) => sum + (clip.durationMs * 3) / 100, 0);
+const specMs = (plan: SmokeSpecPlan): number => plan.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
+
+/** The state of the renders and the photos after a restart, read through the engine's own commands. */
+async function photoFacts(cdp: Cdp, avatarId: string, photoIds: readonly string[]): Promise<{ used: boolean[]; reserved: boolean[]; usedIn: string[][] }> {
+  const listed = await req(cdp, "photos.list", { avatarId });
+  const photos = field(listed, "result", "photos");
+  const byId = new Map<string, unknown>();
+  if (Array.isArray(photos)) for (const p of photos) byId.set(String(field(p, "photoId")), p);
+  const each = (name: string): unknown[] => photoIds.map((id) => field(byId.get(id), name));
+  return { used: each("used").map((v) => v === true), reserved: each("reserved").map((v) => v === true), usedIn: each("usedIn").map((v) => (Array.isArray(v) ? v.map(String) : [])) };
+}
+
+async function listVideos(cdp: Cdp, avatarId: string): Promise<{ videoId: string; relPath: string; fileState: string; bytes: number }[]> {
+  const answer = await req(cdp, "videos.list", { avatarId });
+  const videos = field(answer, "result", "videos");
+  if (!Array.isArray(videos)) return [];
+  return videos.map((v: unknown) => ({ videoId: String(field(v, "videoId")), relPath: String(field(v, "relPath")), fileState: String(field(v, "fileState")), bytes: Number(field(v, "bytes")) }));
+}
+
+async function namesIn(dir: string): Promise<string[]> {
+  return readdir(dir).catch(() => []);
+}
+
+/** A disk call that Windows may refuse for a moment (the engine or Defender had the file open): retried a few times, never hidden after that. */
+async function retrying<T>(call: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String(error.code) : "";
+      if (attempt >= 8 || !["EBUSY", "EPERM", "EACCES"].includes(code)) throw error;
+      await Bun.sleep(150 * attempt);
+    }
+  }
+}
+
+/** The avatar's export folder's final-name videos (a file that is not a `.studio-part-` temp). */
+const finalVideos = (names: readonly string[]): string[] => names.filter((name) => name.endsWith(".mp4") && !name.startsWith(".studio-part-"));
+
+async function runPackagedRenderScenario(target: Target): Promise<void> {
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-render-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "library");
+  const exportRoot = join(tmp, "export");
+  const scratch = join(tmp, "scratch");
+  for (const dir of [userData, libraryRoot, exportRoot, scratch]) await mkdir(dir, { recursive: true });
+  await writeFile(join(exportRoot, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: RENDER_ROOT_ID, createdAt: new Date().toISOString() }));
+  const world = await seedSceneLibrary(libraryRoot, scratch);
+  const { avatarId } = world;
+  // Two at once, so the clean renders after the first kill can share the pool; the measured ones are submitted one at a time.
+  await saveSettings(userData, { ...defaultSettings(userData), libraryPath: libraryRoot, exportPath: exportRoot, renderConcurrency: 2 });
+
+  // One scene photo per cell: spec 0..4 are the pairwise ones, then the mixed timeline.
+  let next = 0;
+  const take = (plan: SmokeSpecPlan): string[] => world.photoIds.slice(next, (next += plan.photoCount));
+  const photosOf = new Map<SmokeSpecPlan, string[]>([...PAIRWISE_SPECS, MIXED_SPEC].map((plan) => [plan, take(plan)]));
+  const photosFor = (plan: SmokeSpecPlan): string[] => photosOf.get(plan) ?? [];
+  const [kenBurns, pan, collage2, collage3, collage4] = PAIRWISE_SPECS;
+  if (kenBurns === undefined || pan === undefined || collage2 === undefined || collage3 === undefined || collage4 === undefined) throw new Error("the pairwise specs changed shape");
+
+  const sampler = startFfmpegSampler();
+  const renders: SmokeRender[] = [];
+  let running = await launch(target, userData);
+  sampler.follow(running.child.pid ?? -1);
+  try {
+    let cdp = running.cdp;
+    const responses: { url: string; status: number; contentRange: string | null }[] = [];
+    const listen = (c: Cdp): void => {
+      c.on((method, params) => {
+        if (method !== "Network.responseReceived") return;
+        const url = field(params, "response", "url");
+        if (typeof url !== "string" || !url.startsWith("studio-media://video/")) return;
+        const headers = field(params, "response", "headers");
+        const range = typeof headers === "object" && headers !== null ? Object.entries(headers).find(([k]) => k.toLowerCase() === "content-range")?.[1] : undefined;
+        responses.push({ url, status: Number(field(params, "response", "status")), contentRange: typeof range === "string" ? range : null });
+      });
+    };
+    listen(cdp);
+    await cdp.send("Network.enable");
+
+    const snapshot = await req(cdp, "engine.snapshot");
+    check("render scenario: the engine starts over the scene library and the test export root", field(snapshot, "ok") === true && field(snapshot, "result", "settings", "exportPath") === exportRoot, snapshot);
+    fact("platform", `${process.platform} ${process.arch}, Bun ${Bun.version}`);
+
+    const submit = async (plan: SmokeSpecPlan): Promise<{ jobId: string; videoId: string; answerMs: number; startedAt: number }> => {
+      const startedAt = Date.now();
+      const answer = await req(cdp, "videos.render", { spec: smokeSpec(plan, avatarId, photosFor(plan)) });
+      const answerMs = Date.now() - startedAt;
+      const jobId = field(answer, "result", "jobId");
+      const videoId = field(answer, "result", "videoId");
+      if (field(answer, "ok") !== true || typeof jobId !== "string" || typeof videoId !== "string") throw new Error(`videos.render refused ${plan.name}: ${failureDetail(answer)}`);
+      return { jobId, videoId, answerMs, startedAt };
+    };
+    const finished = async (plan: SmokeSpecPlan, started: { jobId: string; videoId: string; startedAt: number }): Promise<SmokeRender> => {
+      const end = await waitFor(`the render of ${plan.name} to end`, () => endEventOf(cdp, started.jobId), RENDER_WAIT_MS, 100);
+      const endedAt = Date.now();
+      const result = field(end, "payload", "result");
+      check(`render scenario: ${plan.name} ends as job.done with a committed video`, field(end, "type") === "job.done" && field(result, "kind") === "render" && field(result, "videoId") === started.videoId, end);
+      return { plan, photoIds: photosFor(plan), jobId: started.jobId, videoId: started.videoId, ms: endedAt - started.startedAt, relPath: String(field(result, "relPath")), bytes: Number(field(result, "bytes")), videoKind: String(field(result, "videoKind")) };
+    };
+    let lastTree = "";
+    const examine = async (render: SmokeRender): Promise<void> => {
+      const path = join(exportRoot, render.relPath);
+      const bytes = new Uint8Array(await readFile(path));
+      const frames = specFrames(render.plan);
+      const verified = await verifyRenderedMp4(path, { frames });
+      check(`render scenario: the engine's own verifier accepts ${render.plan.name} when run again on the committed file (the Windows 6.1.1 gate)`, verified.ok, verified);
+      const probe = await probeVideo(path);
+      const facts = mp4Facts(bytes);
+      const problems = renderedFileProblems({ frames, durationMs: specMs(render.plan) }, { probe, facts });
+      check(`render scenario: ffprobe and the box reader find exactly what the engine writes in ${render.plan.name} (invariants 14 and 20)`, problems.length === 0, problems);
+      const used = await photoFacts(cdp, avatarId, render.photoIds);
+      check(`render scenario: every photo of ${render.plan.name} carries the used mark of its video and is no longer reserved`, used.usedIn.every((ids) => ids.length === 1 && ids[0] === render.videoId) && !used.reserved.some(Boolean), used);
+      check(`render scenario: ${render.plan.name} is named <date>_${render.videoKind}_<NNN>.mp4 in the avatar's own folder`, new RegExp(`^Mia/\\d{4}-\\d{2}-\\d{2}_${render.videoKind}_\\d{3}\\.mp4$`).test(render.relPath), render.relPath);
+      if (render.plan === PAIRWISE_SPECS[0]) fact(`sha256 of ${render.plan.name} (rendered from the committed fixture photo, for the macOS-against-Windows determinism comparison)`, createHash("sha256").update(bytes).digest("hex"));
+      const tree = formatBoxTree(boxTree(bytes));
+      fact(`box tree of ${render.plan.name}`, tree === lastTree ? "identical to the previous file's" : tree);
+      lastTree = tree;
+      fact(`metadata of ${render.plan.name}`, { size: bytes.length, brands: facts.brands, times: facts.times, tool: facts.tool, compressor: facts.compressor, formatTags: probe.format.tags, streamTags: probe.streams.map((s) => s.tags), audioMinusVideoMs: Math.round((Number(probe.streams.find((s) => s.codec_type === "audio")?.duration) - Number(probe.streams.find((s) => s.codec_type === "video")?.duration)) * 1000) });
+    };
+    const measured = async (plan: SmokeSpecPlan): Promise<void> => {
+      const started = await submit(plan);
+      const render = await finished(plan, started);
+      renders.push(render);
+      const peak = sampler.tracker.between(started.startedAt, started.startedAt + render.ms);
+      fact(`render of ${plan.name} (${render.videoKind})`, { seconds: Math.round(render.ms / 100) / 10, answerMs: started.answerMs, peakSingleFfmpegMiB: Math.round(peak.peakSingleBytes / MIB), peakAllFfmpegMiB: Math.round(peak.peakConcurrentBytes / MIB), samples: peak.samples, bytes: render.bytes });
+      check(`render scenario: ${plan.name} stays under the pool's peakRSS (${PEAK_RSS_BYTES / MIB} MiB)`, peak.samples > 0 && peak.peakConcurrentBytes <= PEAK_RSS_BYTES, peak);
+      await examine(render);
+    };
+
+    // 1. An export root that is gone: refused before any job starts, nothing reserved.
+    await retrying(() => rename(exportRoot, `${exportRoot}-away`));
+    const refused = await req(cdp, "videos.render", { spec: smokeSpec(kenBurns, avatarId, photosFor(kenBurns)) });
+    await retrying(() => rename(`${exportRoot}-away`, exportRoot));
+    check("render scenario: a render with the export root removed is EXPORT_UNAVAILABLE (missing)", field(refused, "ok") === false && field(refused, "error", "code") === "EXPORT_UNAVAILABLE" && field(refused, "error", "exportReason") === "missing", refused);
+    const afterRefusal = await req(cdp, "engine.snapshot");
+    const afterRefusalPhotos = await photoFacts(cdp, avatarId, photosFor(kenBurns));
+    check("render scenario: the refusal started no job and reserved no photo", Array.isArray(field(afterRefusal, "result", "jobs")) && !JSON.stringify(field(afterRefusal, "result", "jobs")).includes('"render"') && !afterRefusalPhotos.reserved.some(Boolean), { afterRefusal, afterRefusalPhotos });
+
+    // 2. Clean renders, one at a time so each one's memory and time are its own: a photo, a collage, and the 15 s mixed timeline.
+    await measured(kenBurns);
+    await measured(collage2);
+    await measured(MIXED_SPEC);
+
+    // 3. Kill ONLY the engine in the middle of a render (Windows without /T). After the restart nothing of it is left: no file under a final
+    // name, no record, no used mark, and no ffmpeg of its own.
+    const victim = await submit(collage4);
+    await waitFor(
+      "the victim render to be mid-flight with an ffmpeg running",
+      async () => {
+        const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "job.progress" && e.payload.jobId === ${JSON.stringify(victim.jobId)} && e.payload.done > 0).length`);
+        return Number(events) > 0 && sampler.latestPids().length > 0 ? true : null;
+      },
+      60_000,
+      50,
+    );
+    const ffmpegsAtKill = sampler.latestPids();
+    const engineBefore = await req(cdp, "engine.snapshot");
+    const bootBefore = field(engineBefore, "result", "bootId");
+    const mainPid = running.child.pid ?? -1;
+    const engineToKill = enginePid(mainPid);
+    check("render scenario: the engine process is found to kill", engineToKill !== null, { mainPid });
+    if (engineToKill !== null) killEngineOnly(engineToKill);
+    const killedAt = Date.now();
+    await waitFor("a snapshot from the restarted engine", async () => {
+      const s = await req(cdp, "engine.snapshot");
+      return field(s, "ok") === true && field(s, "result", "bootId") !== bootBefore ? s : null;
+    });
+    await Bun.sleep(250);
+    fact("ffmpeg 250 ms after its engine was killed on its own", ffmpegsAtKill.some((pid) => pidAlive(pid)) ? "still running (it outlives the engine, for a while)" : "already gone");
+    const survivorsGone = await waitFor("the killed engine's ffmpeg to be gone", async () => (ffmpegsAtKill.some((pid) => pidAlive(pid)) ? null : true), 15_000, 100).then(
+      () => true,
+      () => false,
+    );
+    fact("ffmpeg after the engine was killed on its own", survivorsGone ? `gone within ${Date.now() - killedAt} ms` : `STILL RUNNING after ${Date.now() - killedAt} ms: ${ffmpegsAtKill.filter((pid) => pidAlive(pid)).join(", ")}`);
+    check("render scenario: an ffmpeg was running when the engine was killed (so the next check means something)", ffmpegsAtKill.length > 0, ffmpegsAtKill);
+    check("render scenario: the killed engine's ffmpeg does not run on for good: it is gone within 15 s", survivorsGone, ffmpegsAtKill.filter((pid) => pidAlive(pid)));
+    for (const pid of ffmpegsAtKill) if (pidAlive(pid)) hardKill(pid); // defensive: a survivor must not write into the next steps
+
+    const mia = join(exportRoot, "Mia");
+    // A temp file the killed ffmpeg still had open is one the restarted engine's sweep may have to skip (Windows: EBUSY, retried, then left
+    // for the next start), so what is left NOW is recorded, and the next start is what must have cleared it (checked after the relaunch below).
+    await waitFor("the restarted engine's sweep to clear the killed render's temp files", async () => ((await namesIn(mia)).some((n) => n.startsWith(".studio-part-")) ? null : true), 8_000, 200).catch(() => undefined);
+    const afterKill = await namesIn(mia);
+    fact("temp files left in the export folder after the restart that followed the mid-render kill", afterKill.filter((n) => n.startsWith(".studio-part-")));
+    check("render scenario: after the mid-render kill there is no file under a final name for the killed render", finalVideos(afterKill).every((n) => renders.some((r) => r.relPath === `Mia/${n}`)), afterKill);
+    const listedAfterKill = await listVideos(cdp, avatarId);
+    check("render scenario: after the mid-render kill there is no record of it", listedAfterKill.length === renders.length && !listedAfterKill.some((v) => v.videoId === victim.videoId), listedAfterKill);
+    const victimPhotos = await photoFacts(cdp, avatarId, photosFor(collage4));
+    check("render scenario: after the mid-render kill its photos are not used and not reserved", !victimPhotos.used.some(Boolean) && !victimPhotos.reserved.some(Boolean), victimPhotos);
+    check("render scenario: after the mid-render kill there is no commit intent left", (await namesIn(videoPaths(libraryRoot, avatarId).pendingDir)).length === 0, await namesIn(videoPaths(libraryRoot, avatarId).pendingDir));
+    fact("render-tmp folders left after the restart that followed the mid-render kill", await namesIn(join(userData, "render-tmp")));
+
+    // 4. The photos are free again, so the same spec renders now, next to another one (the pool takes two).
+    const again = await submit(collage4);
+    const second = await submit(pan);
+    const [collage4Render, panRender] = [await finished(collage4, again), await finished(pan, second)];
+    renders.push(collage4Render, panRender);
+    const together = sampler.tracker.between(Math.min(again.startedAt, second.startedAt), Date.now());
+    fact("two renders at once (collage4-pan and photo-pan)", { peakSingleFfmpegMiB: Math.round(together.peakSingleBytes / MIB), peakAllFfmpegMiB: Math.round(together.peakConcurrentBytes / MIB), samples: together.samples });
+    await examine(collage4Render);
+    await examine(panRender);
+
+    // 5. Playback and record resolution (3e.1, invariant 28): a committed video plays and seeks through studio-media://video with Range, from the
+    // export root through its record; a `missing` or an `elsewhere` record answers 404 and never plays.
+    const listed = await listVideos(cdp, avatarId);
+    check("render scenario: videos.list shows every committed video as present, each at the path the job reported", listed.length === renders.length && renders.every((r) => listed.some((v) => v.videoId === r.videoId && v.relPath === r.relPath && v.fileState === "present" && v.bytes === r.bytes)), listed);
+    const mixed = renders.find((r) => r.plan === MIXED_SPEC);
+    const first = renders.find((r) => r.plan === kenBurns);
+    const third = renders.find((r) => r.plan === pan);
+    if (mixed === undefined || first === undefined || third === undefined) throw new Error("the clean renders are missing");
+    const urlOf = (r: SmokeRender): string => `studio-media://video/${avatarId}/${r.videoId}`;
+    const play = (r: SmokeRender, seekTo: number): Promise<unknown> =>
+      cdp.evaluate(`(async () => {
+        const once = (el, ok, bad) => new Promise((res) => { el.addEventListener(ok, () => res(true), { once: true }); el.addEventListener(bad, () => res(false), { once: true }); setTimeout(() => res(false), 20000); });
+        const v = document.createElement("video");
+        v.muted = true; v.preload = "auto"; v.src = "${urlOf(r)}";
+        const meta = await once(v, "loadedmetadata", "error");
+        const duration = v.duration;
+        let seeked = false, at = 0;
+        if (meta) { v.currentTime = ${seekTo}; seeked = await once(v, "seeked", "error"); at = v.currentTime; }
+        return { meta, duration, seeked, at, size: [v.videoWidth, v.videoHeight] };
+      })()`);
+    const mixedBytes = (await stat(join(exportRoot, mixed.relPath))).size;
+    const played = await play(mixed, 12);
+    check("render scenario: the committed 15 s video plays through studio-media://video in the packaged app (Electron's H.264/AAC)", field(played, "meta") === true && Math.abs(Number(field(played, "duration")) - 15) < 0.3 && JSON.stringify(field(played, "size")) === "[1080,1920]", played);
+    check("render scenario: the committed video seeks to 12 s", field(played, "seeked") === true && Math.abs(Number(field(played, "at")) - 12) < 0.3, played);
+    check("render scenario: the player was served by Range: a 206 whose Content-Range total is the file's size", responses.some((r) => r.url === urlOf(mixed) && r.status === 206 && r.contentRange?.endsWith(`/${mixedBytes}`) === true), responses.filter((r) => r.url === urlOf(mixed)));
+
+    // A `missing` record: its file is gone from a root that is still the record's.
+    const firstPath = join(exportRoot, first.relPath);
+    await retrying(() => rename(firstPath, `${firstPath}.away`));
+    const missingList = await listVideos(cdp, avatarId);
+    const missingPlayed = await play(first, 1);
+    await retrying(() => rename(`${firstPath}.away`, firstPath));
+    check("render scenario: videos.list reads the record of a removed file as missing", missingList.find((v) => v.videoId === first.videoId)?.fileState === "missing" && missingList.filter((v) => v.fileState === "present").length === renders.length - 1, missingList);
+    check("render scenario: a missing record answers 404 and never plays", field(missingPlayed, "meta") === false && responses.some((r) => r.url === urlOf(first) && r.status === 404) && !responses.some((r) => r.url === urlOf(first) && r.status < 400), { missingPlayed, responses: responses.filter((r) => r.url === urlOf(first)) });
+
+    // An `elsewhere` record: the export folder now holds another root (the marker names another id).
+    const markerPath = join(exportRoot, EXPORT_MARKER_FILE);
+    const markerText = await readFile(markerPath, "utf8");
+    await retrying(() => writeFile(markerPath, markerText.replace(RENDER_ROOT_ID, OTHER_ROOT_ID)));
+    const elsewhereList = await listVideos(cdp, avatarId);
+    const elsewherePlayed = await play(third, 1);
+    await retrying(() => writeFile(markerPath, markerText));
+    check("render scenario: videos.list reads every record as elsewhere once the export folder is another root", elsewhereList.length === renders.length && elsewhereList.every((v) => v.fileState === "elsewhere"), elsewhereList);
+    check("render scenario: an elsewhere record answers 404 and never plays", field(elsewherePlayed, "meta") === false && responses.some((r) => r.url === urlOf(third) && r.status === 404) && !responses.some((r) => r.url === urlOf(third) && r.status < 400), { elsewherePlayed, responses: responses.filter((r) => r.url === urlOf(third)) });
+    const restored = await listVideos(cdp, avatarId);
+    check("render scenario: with the file and the marker back every record is present again", restored.length === renders.length && restored.every((v) => v.fileState === "present"), restored);
+
+    // 6. A fresh app (the engine host restarts a crashed engine once per run): kill ONLY the engine between the rename and the record, where the
+    // restart must ADOPT the video with its record and its used mark. The hold is a test hook of the E2E build, armed by a file in userData.
+    await quit(running);
+    running = await launch(target, userData);
+    sampler.follow(running.child.pid ?? -1);
+    cdp = running.cdp;
+    listen(cdp);
+    await cdp.send("Network.enable");
+    await waitFor("the next start to sweep what the killed render left", async () => ((await namesIn(mia)).some((n) => n.startsWith(".studio-part-")) || (await namesIn(join(userData, "render-tmp"))).includes(victim.jobId) ? null : true), 20_000, 200).catch(() => undefined);
+    check("render scenario: the next start has swept the killed render's temp file and render-tmp folder", !(await namesIn(mia)).some((n) => n.startsWith(".studio-part-")) && !(await namesIn(join(userData, "render-tmp"))).includes(victim.jobId), { mia: await namesIn(mia), renderTmp: await namesIn(join(userData, "render-tmp")) });
+    await writeFile(commitHoldPaths(userData).armed, "");
+    const adoptedSubmit = await submit(collage3);
+    await waitFor("the commit to be held after the rename", async () => (existsSync(commitHoldPaths(userData).held) ? true : null), RENDER_WAIT_MS, 50);
+    const heldNames = finalVideos(await namesIn(mia));
+    const claimed = heldNames.find((n) => !renders.some((r) => r.relPath === `Mia/${n}`));
+    check("render scenario: held after the rename: the video is under its final name", claimed !== undefined && /_collage3_\d{3}\.mp4$/.test(claimed), heldNames);
+    const paths = videoPaths(libraryRoot, avatarId);
+    check("render scenario: held after the rename: its record does not exist yet and its intent does", !existsSync(paths.record(adoptedSubmit.videoId)) && existsSync(paths.intent(adoptedSubmit.videoId)), await namesIn(paths.videosDir));
+    const heldBoot = field(await req(cdp, "engine.snapshot"), "result", "bootId");
+    const heldEngine = enginePid(running.child.pid ?? -1);
+    check("render scenario: the engine process is found to kill (held)", heldEngine !== null);
+    if (heldEngine !== null) killEngineOnly(heldEngine);
+    await waitFor("a snapshot from the restarted engine (held commit)", async () => {
+      const s = await req(cdp, "engine.snapshot");
+      return field(s, "ok") === true && field(s, "result", "bootId") !== heldBoot ? s : null;
+    });
+    const adopted = await waitFor("the restarted engine to adopt the held video", async () => (await listVideos(cdp, avatarId)).find((v) => v.videoId === adoptedSubmit.videoId) ?? null, 60_000, 200).catch(() => null);
+    check("render scenario: after the kill between the rename and the record the video is ADOPTED with its record, present, at the name it was renamed to", adopted !== null && adopted.fileState === "present" && adopted.relPath === `Mia/${claimed ?? ""}`, adopted);
+    const adoptedPhotos = await photoFacts(cdp, avatarId, photosFor(collage3));
+    check("render scenario: the adopted video's photos carry its used mark", adoptedPhotos.usedIn.every((ids) => ids.length === 1 && ids[0] === adoptedSubmit.videoId) && adoptedPhotos.used.every(Boolean), adoptedPhotos);
+    check("render scenario: after the adoption no intent is left and the hold was used up", (await namesIn(paths.pendingDir)).length === 0 && !existsSync(commitHoldPaths(userData).armed) && existsSync(commitHoldPaths(userData).held), await namesIn(paths.pendingDir));
+    if (adopted !== null) {
+      const render: SmokeRender = { plan: collage3, photoIds: photosFor(collage3), jobId: adoptedSubmit.jobId, videoId: adoptedSubmit.videoId, ms: 0, relPath: adopted.relPath, bytes: adopted.bytes, videoKind: "collage3" };
+      renders.push(render);
+      await examine(render);
+    }
+
+    // 7. Everything that was rendered is still there, and nothing else is.
+    const finalList = await listVideos(cdp, avatarId);
+    check("render scenario: at the end every committed video is present, six of them", finalList.length === 6 && finalList.every((v) => v.fileState === "present"), finalList);
+    const endNames = await namesIn(mia);
+    check("render scenario: the avatar's export folder holds exactly those videos and no temp file", endNames.length === 6 && finalVideos(endNames).length === 6, endNames);
+    fact("renders", renders.map((r) => ({ name: r.plan.name, seconds: Math.round(r.ms / 100) / 10, bytes: r.bytes })));
+    fact("largest output", Math.max(...renders.map((r) => r.bytes)));
+  } finally {
+    sampler.stop();
+    await quit(running);
+    if (keep) console.log(`\nkept ${tmp}`);
+    else await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  }
+}
+
 function finish(): void {
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
@@ -1720,6 +2112,13 @@ async function main(): Promise<void> {
   console.log(`Studio engine smoke test — ${production ? "production check, " : ""}${target.label}\n`);
   if (production) {
     await productionCheck(target);
+    finish();
+    return;
+  }
+
+  // `--only render` runs the packaged render scenario alone (a shorter loop while working on it); CI runs everything.
+  if (argValue("--only") === "render") {
+    await runPackagedRenderScenario(target);
     finish();
     return;
   }
@@ -2124,6 +2523,7 @@ async function main(): Promise<void> {
   await runAvatarScenario(target);
   await runImportScenario(target);
   await runPhotoRunKillResumeScenario(target);
+  await runPackagedRenderScenario(target);
   finish();
 }
 
