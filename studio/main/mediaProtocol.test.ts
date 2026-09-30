@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { videoPaths } from "../engine/videos/record";
-import { fakeVideoBytes, sampleRecord, useWorld, type World } from "../engine/videos/testing/kit";
+import { recordFor, useMediaWorld, type MediaWorld } from "./media/testing";
+import { fakeVideoBytes } from "../engine/videos/testing/kit";
 import { useNativeGlobals, useNativeWebClasses } from "../testing/nativeGlobals";
 import { CHUNK_BYTES } from "./media/respond";
 import { createStickerLookup } from "./media/stickers";
@@ -23,8 +24,8 @@ const PNG = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAA
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100, 1)]);
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from("ftypisom"), Buffer.from(fakeVideoBytes(CHUNK_BYTES * 2 + 1000, 5))]);
 
-const world = useWorld();
-let w: World;
+const world = useMediaWorld();
+let w: MediaWorld;
 let outside = "";
 let userData = "";
 beforeEach(async () => {
@@ -34,7 +35,7 @@ beforeEach(async () => {
   await mkdir(join(userData, "music", "tracks"), { recursive: true });
   await mkdir(join(userData, "render-tmp", "text"), { recursive: true });
   await mkdir(join(w.libraryRoot, "avatars", AVATAR, "photos"), { recursive: true });
-  await mkdir(videoPaths(w.libraryRoot, w.avatar.id).videosDir, { recursive: true });
+  await mkdir(videoPaths(w.libraryRoot, w.avatarId).videosDir, { recursive: true });
 });
 afterEach(() => rm(outside, { recursive: true, force: true }));
 
@@ -54,14 +55,14 @@ const get = (url: string, extra: Partial<MediaRequest> & { range?: string } = {}
 
 /** A committed video of `MP4` at the export root, with its record. */
 async function commitVideo(): Promise<string> {
-  const record = sampleRecord(w, { videoId: VIDEO, relPath: "Mia/2026-09-29_photo_001.mp4", bytes: MP4 });
-  await writeFile(videoPaths(w.libraryRoot, w.avatar.id).record(VIDEO), JSON.stringify(record));
+  const record = recordFor(w, { videoId: VIDEO, relPath: "Mia/2026-09-29_photo_001.mp4", bytes: MP4 });
+  await writeFile(videoPaths(w.libraryRoot, w.avatarId).record(VIDEO), JSON.stringify(record));
   await mkdir(join(w.exportRoot, "Mia"), { recursive: true });
   const file = join(w.exportRoot, "Mia", "2026-09-29_photo_001.mp4");
   await writeFile(file, MP4);
   return file;
 }
-const videoUrl = (): string => `studio-media://video/${w.avatar.id}/${VIDEO}`;
+const videoUrl = (): string => `studio-media://video/${w.avatarId}/${VIDEO}`;
 
 describe("photo: the route Stage 1 shipped stays as it was", () => {
   beforeEach(() => writeFile(join(w.libraryRoot, "avatars", AVATAR, "photos", `${PHOTO}.png`), PNG));
@@ -112,7 +113,7 @@ describe("photo: the route Stage 1 shipped stays as it was", () => {
 describe("every route answers over the wire shape the renderer sees", () => {
   test("video, poster, track, cover, sticker, text and media each serve their file with the right type", async () => {
     await commitVideo();
-    const videos = videoPaths(w.libraryRoot, w.avatar.id).videosDir;
+    const videos = videoPaths(w.libraryRoot, w.avatarId).videosDir;
     await writeFile(join(videos, `${VIDEO}.poster.jpg`), JPEG);
     await writeFile(join(userData, "music", "tracks", `${TRACK}.m4a`), MP4);
     await mkdir(join(userData, "music", "covers"), { recursive: true });
@@ -122,7 +123,7 @@ describe("every route answers over the wire shape the renderer sees", () => {
     await writeFile(join(w.libraryRoot, "media", "media-000001.gif"), Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(20)]));
     const cases: [string, string][] = [
       [videoUrl(), "video/mp4"],
-      [`studio-media://poster/${w.avatar.id}/${VIDEO}`, "image/jpeg"],
+      [`studio-media://poster/${w.avatarId}/${VIDEO}`, "image/jpeg"],
       [`studio-media://track/${TRACK}`, "audio/mp4"],
       [`studio-media://cover/${TRACK}`, "image/jpeg"],
       ["studio-media://sticker/heart-pulse", "image/apng"],
@@ -303,7 +304,7 @@ describe("every refusal looks the same", () => {
         return join(userData, "render-tmp", "text");
       },
     });
-    for (const url of [`studio-media://video/${w.avatar.id}/..%2f..%2fetc`, `studio-media://track/${TRACK}/x`, `studio-media://track/%2e%2e`, "studio-media://video/x/y"]) {
+    for (const url of [`studio-media://video/${w.avatarId}/..%2f..%2fetc`, `studio-media://track/${TRACK}/x`, `studio-media://track/%2e%2e`, "studio-media://video/x/y"]) {
       expect((await handleMediaRequest({ url, method: "GET" }, counting)).status).toBe(404);
     }
     expect(touched).toBe(0);

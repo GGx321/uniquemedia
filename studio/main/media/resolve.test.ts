@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { videoPaths } from "../../engine/videos/record";
-import { fakeVideoBytes, sampleRecord, useWorld, type World } from "../../engine/videos/testing/kit";
+import { recordFor, useMediaWorld, type MediaWorld } from "./testing";
+import { fakeVideoBytes } from "../../engine/videos/testing/kit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { ByteSource } from "./diskSource";
 import { resolveMedia, type MediaDeps } from "./resolve";
@@ -37,8 +38,8 @@ const caseInsensitive = await (async () => {
   }
 })();
 
-const world = useWorld();
-let w: World;
+const world = useMediaWorld();
+let w: MediaWorld;
 let musicRoot = "";
 let textRoot = "";
 let outside = "";
@@ -54,7 +55,7 @@ beforeEach(async () => {
   await mkdir(join(musicRoot, "covers"), { recursive: true });
   await mkdir(textRoot, { recursive: true });
   await mkdir(join(w.libraryRoot, "media"), { recursive: true });
-  await mkdir(videoPaths(w.libraryRoot, w.avatar.id).videosDir, { recursive: true });
+  await mkdir(videoPaths(w.libraryRoot, w.avatarId).videosDir, { recursive: true });
 });
 afterEach(() => rm(outside, { recursive: true, force: true }));
 
@@ -77,15 +78,15 @@ async function get(route: MediaRoute, overrides: Partial<MediaDeps> = {}): Promi
   return { type: served.contentType, bytes: Buffer.from(await served.source.read(0, served.source.size)) };
 }
 
-const photo = (photoId: string): MediaRoute => ({ route: "photo", avatarId: w.avatar.id, photoId });
-const video = (videoId = VIDEO_ID, avatarId = w.avatar.id): MediaRoute => ({ route: "video", avatarId, videoId });
-const poster = (videoId = VIDEO_ID): MediaRoute => ({ route: "poster", avatarId: w.avatar.id, videoId });
+const photo = (photoId: string): MediaRoute => ({ route: "photo", avatarId: w.avatarId, photoId });
+const video = (videoId = VIDEO_ID, avatarId = w.avatarId): MediaRoute => ({ route: "video", avatarId, videoId });
+const poster = (videoId = VIDEO_ID): MediaRoute => ({ route: "poster", avatarId: w.avatarId, videoId });
 
 const put = async (path: string, bytes: Buffer | string): Promise<void> => {
   await mkdir(join(path, ".."), { recursive: true });
   await writeFile(path, bytes);
 };
-const photosDir = (): string => join(w.libraryRoot, "avatars", w.avatar.id, "photos");
+const photosDir = (): string => join(w.libraryRoot, "avatars", w.avatarId, "photos");
 
 async function tryLink(target: string, path: string, type?: "dir" | "file" | "junction"): Promise<boolean> {
   try {
@@ -141,7 +142,7 @@ describe("photo/<avatarId>/<photoId>", () => {
 });
 
 describe("poster/<avatarId>/<videoId>", () => {
-  const posterPath = (ext: string, id = VIDEO_ID): string => join(videoPaths(w.libraryRoot, w.avatar.id).videosDir, `${id}.poster.${ext}`);
+  const posterPath = (ext: string, id = VIDEO_ID): string => join(videoPaths(w.libraryRoot, w.avatarId).videosDir, `${id}.poster.${ext}`);
 
   test("serves the poster kept next to the record", async () => {
     await put(posterPath("webp"), WEBP);
@@ -161,7 +162,7 @@ describe("poster/<avatarId>/<videoId>", () => {
   });
 
   test("the record itself is not a poster: only <videoId>.poster.<image ext> is looked at", async () => {
-    await put(join(videoPaths(w.libraryRoot, w.avatar.id).videosDir, `${VIDEO_ID}.json`), PNG);
+    await put(join(videoPaths(w.libraryRoot, w.avatarId).videosDir, `${VIDEO_ID}.json`), PNG);
     expect(await get(poster())).toBeNull();
   });
 
@@ -182,8 +183,8 @@ describe("poster/<avatarId>/<videoId>", () => {
 
 describe("video/<avatarId>/<videoId>", () => {
   const writeRecord = async (patch: Record<string, unknown> = {}, file?: Record<string, unknown>): Promise<string> => {
-    const record = sampleRecord(w, { videoId: VIDEO_ID, relPath: REL, bytes: fakeVideoBytes(MP4.length) });
-    const path = videoPaths(w.libraryRoot, w.avatar.id).record(VIDEO_ID);
+    const record = recordFor(w, { videoId: VIDEO_ID, relPath: REL, bytes: fakeVideoBytes(MP4.length) });
+    const path = videoPaths(w.libraryRoot, w.avatarId).record(VIDEO_ID);
     await writeFile(path, JSON.stringify({ ...record, ...patch, file: { ...record.file, ...file } }));
     return path;
   };
