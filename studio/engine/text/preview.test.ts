@@ -234,6 +234,37 @@ describe("the files it keeps", () => {
     expect((await readdir(dir)).length).toBeLessThanOrEqual(8);
   });
 
+  test("writes that finish out of order do not move a layer's newest backwards: the true newest is never evicted", async () => {
+    const dir = await scratch();
+    const { gate, calls } = scriptedGate();
+    const releases: (() => void)[] = [];
+    let writes = 0;
+    const svc = createTextPreviewService({
+      gate,
+      dir: () => dir,
+      newId,
+      log: () => {},
+      maxFiles: 1,
+      writeFile: async (path, bytes) => {
+        writes += 1;
+        // The first write of the layer (the older preview) waits until the newer one is on disk.
+        if (writes === 1) await new Promise<void>((resolve) => releases.push(resolve));
+        await Bun.write(path, bytes);
+      },
+    });
+    const older = svc.preview(layer({ layerId: "layer-00000001", value: "older" }));
+    await tick();
+    calls[0]?.settle(captioned());
+    await tick();
+    const newer = svc.preview(layer({ layerId: "layer-00000001", value: "newer" }));
+    await tick();
+    calls[1]?.settle(captioned());
+    const newerId = (await newer).previewId;
+    releases[0]?.();
+    await older;
+    expect(await readdir(dir)).toEqual([`${newerId}.png`]);
+  });
+
   test("clears what a previous run left in the folder before it writes its first", async () => {
     const dir = await scratch();
     await Bun.write(join(dir, "old-preview-1.png"), PNG);

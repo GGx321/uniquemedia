@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import { join } from "node:path";
 import { CAPTION_FINGERPRINT, CAPTION_FINGERPRINT_LAYERS, CAPTION_LAYER_HASHES, fingerprintOf, hashOf } from "../caption/fingerprint";
+import { openEmojiFont } from "../emoji/emojiFont";
+import { loadEmojiFont } from "../fonts";
 import { RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "../rasterTypes";
 import { createTextWorkerSpawner } from "./spawn";
 import { createTextGate, type TextGate } from "./textGate";
@@ -118,16 +120,31 @@ describe("captions through the real worker under Electron's Node", () => {
   });
 
   test("the deadline is at least 5x the worst legitimate \u00ABБез фона\u00BB caption's median and 3x its second-slowest of 7 on this runner, for text and for emoji", async () => {
-    // The worst the real template can emit: two lines of the widest text at the largest scale, with the shadow filter over the whole box,
-    // and the same with 60 distinct emoji (the most bitmaps to decode, embed and blur), the widest legal caption of pictures.
-    const emoji = Array.from({ length: 60 }, (_, i) => String.fromCodePoint(0x1f600 + i)).join("");
+    // The worst the real template can emit, at its largest size (a caption that SHRINKS is not the worst: `fontSize >= 108` is asserted):
+    // two lines of the widest text at scale 2 with the shadow filter over the whole box, and the same with two lines of the 7 largest
+    // emoji bitmaps (the most to decode, embed and blur).
+    const font = openEmojiFont(await loadEmojiFont(INIT.fontDir));
+    const sizes: { sequence: string; bytes: number }[] = [];
+    for (let cp = 0x1f300; cp <= 0x1faff; cp++) {
+      const sequence = String.fromCodePoint(cp);
+      const bitmap = font.bitmap(sequence);
+      if (bitmap !== null) sizes.push({ sequence, bytes: bitmap.png.byteLength });
+    }
+    const largest = sizes
+      .sort((a, b) => b.bytes - a.bytes)
+      .slice(0, 7)
+      .map((entry) => entry.sequence)
+      .join("");
+    assert.equal([...largest].length, 7);
     const cases = [
-      { name: "text", request: { ...base, style: "none", value: `${"W".repeat(15)} ${"W".repeat(15)}\n${"W".repeat(15)} ${"W".repeat(10)}`, font: "ptmono", scale: 2 } as const },
-      { name: "emoji", request: { ...base, style: "none", value: emoji, font: "manrope", scale: 2 } as const },
+      { name: "text", request: { ...base, style: "none", value: `${"W".repeat(13)}\n${"W".repeat(13)}`, font: "ptmono", scale: 2 } as const },
+      { name: "emoji", request: { ...base, style: "none", value: `${largest}\n${largest}`, font: "manrope", scale: 2 } as const },
     ];
     for (const { name, request } of cases) {
       const { gate: g } = gate({ renderTimeoutMs: 60_000 });
-      await g.caption(request); // warm
+      const first = await g.caption(request); // warm
+      assert.ok(first.layout.fontSize >= 108, `${name}: the caption shrank to ${first.layout.fontSize} px, so it is not the worst case`);
+      assert.equal(first.layout.lines.length, 2);
       const times: number[] = [];
       for (let i = 0; i < 7; i++) {
         const started = performance.now();
@@ -137,7 +154,9 @@ describe("captions through the real worker under Electron's Node", () => {
       times.sort((a, b) => a - b);
       const median = times[3] ?? Number.NaN;
       const secondSlowest = times[5] ?? Number.NaN;
-      console.log(`worst template shadow caption (${name}) on ${process.platform}: median ${median.toFixed(0)} ms, second-slowest of 7 ${secondSlowest.toFixed(0)} ms; deadline ${TEXT_RENDER_DEADLINE_MS} ms`);
+      console.log(
+        `worst template shadow caption (${name}, ${first.width}x${first.height} at ${first.layout.fontSize} px) on ${process.platform}: median ${median.toFixed(0)} ms, second-slowest of 7 ${secondSlowest.toFixed(0)} ms; deadline ${TEXT_RENDER_DEADLINE_MS} ms`,
+      );
       assert.ok(median * 5 <= TEXT_RENDER_DEADLINE_MS, `${name}: median ${Math.round(median)} ms: the deadline is under 5x that`);
       assert.ok(secondSlowest * 3 <= TEXT_RENDER_DEADLINE_MS, `${name}: second-slowest ${Math.round(secondSlowest)} ms: the deadline is under 3x that`);
     }

@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, writeFile as writeFileToDisk } from "node:fs/promises";
 import { join } from "node:path";
 import type { TextLayer } from "../../shared/engine/montage";
 import { EngineFailure } from "../engineFailure";
@@ -41,6 +41,8 @@ export interface TextPreviewDeps {
   loadError?: () => string | undefined;
   /** At most this many previews stay on disk; 64 when absent. */
   maxFiles?: number;
+  /** The disk write, injectable so a test can make two writes finish out of order; `fs.writeFile` when absent. */
+  writeFile?: (path: string, bytes: Uint8Array) => Promise<void>;
 }
 
 export interface TextPreviewResult {
@@ -71,6 +73,10 @@ export class TextPreviewService {
   readonly #written: { id: string; layerId: string }[] = [];
   /** Each layer's newest preview: what its window is showing now, so it is the last to go. */
   readonly #newest = new Map<string, string>();
+  /** The sequence number of each layer's newest preview: a preview asked for earlier never becomes the newest after a later one. */
+  readonly #newestSeq = new Map<string, number>();
+  /** Counts every preview asked for, in the order the asking happened. */
+  #asked = 0;
   #cleared: Promise<void> | null = null;
 
   constructor(deps: TextPreviewDeps) {
@@ -81,6 +87,7 @@ export class TextPreviewService {
     const dir = this.#deps.dir();
     if (dir === null) throw new EngineFailure({ code: "RENDER_FAILED", detail: "the engine has no folder for text previews" });
 
+    const seq = ++this.#asked;
     const entry: Pending = { controller: new AbortController(), started: false };
     const older = this.#pending.get(layer.layerId);
     if (older !== undefined && !older.started) older.controller.abort(SUPERSEDED);
@@ -96,7 +103,7 @@ export class TextPreviewService {
         },
       );
       const previewId = this.#deps.newId();
-      await this.#write(dir, layer.layerId, previewId, image.png);
+      await this.#write(dir, layer.layerId, seq, previewId, image.png);
       return { previewId, width: image.width, height: image.height };
     } catch (error) {
       throw this.#answer(error);
@@ -105,20 +112,25 @@ export class TextPreviewService {
     }
   }
 
-  async #write(dir: string, layerId: string, previewId: string, png: Uint8Array): Promise<void> {
+  async #write(dir: string, layerId: string, seq: number, previewId: string, png: Uint8Array): Promise<void> {
     try {
       await mkdir(dir, { recursive: true });
       this.#cleared ??= this.#clear(dir);
       await this.#cleared;
       const temp = join(dir, `.${previewId}.tmp`);
-      await writeFile(temp, png);
+      await (this.#deps.writeFile ?? writeFileToDisk)(temp, png);
       await rename(temp, join(dir, `${previewId}.png`));
     } catch (error) {
       this.#deps.log(`a text preview could not be written (${kindOf(error)})`);
       throw new EngineFailure({ code: "RENDER_FAILED", detail: "the text preview could not be written to disk" });
     }
     this.#written.push({ id: previewId, layerId });
-    this.#newest.set(layerId, previewId);
+    // Writes can finish out of order (a slow disk, a preview of the same layer asked for later that finished first): only a later
+    // request moves the layer's newest forward, so an old one landing last is evictable and the true newest is never evicted.
+    if (seq > (this.#newestSeq.get(layerId) ?? 0)) {
+      this.#newest.set(layerId, previewId);
+      this.#newestSeq.set(layerId, seq);
+    }
     await this.#evict(dir);
   }
 
@@ -132,7 +144,10 @@ export class TextPreviewService {
     const remove = async (at: number): Promise<void> => {
       const [gone] = this.#written.splice(at, 1);
       if (gone === undefined) return;
-      if (this.#newest.get(gone.layerId) === gone.id) this.#newest.delete(gone.layerId);
+      if (this.#newest.get(gone.layerId) === gone.id) {
+        this.#newest.delete(gone.layerId);
+        this.#newestSeq.delete(gone.layerId);
+      }
       await rm(join(dir, `${gone.id}.png`), { force: true }).catch(() => undefined);
     };
     while (this.#written.length > soft) {

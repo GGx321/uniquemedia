@@ -52,7 +52,8 @@ const PIECES = [
   "a",
   "W",
   " ",
-  " ",
+  "\n",
+  "\r\n",
 ];
 
 function random(seed: number): () => number {
@@ -60,11 +61,16 @@ function random(seed: number): () => number {
   return () => (state = (state * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
 }
 
-/** Up to `limit` characters made of the pieces, never empty or blank. */
+/** Up to `limit` characters made of the pieces, at most one line break (a caption has at most two lines), never empty or blank. */
 function caption(next: () => number, limit: number): string {
   let text = "";
+  let breaks = 0;
   while (text.length < 1 + Math.floor(next() * limit)) {
-    const piece = PIECES[Math.floor(next() * PIECES.length)] ?? "a";
+    let piece = PIECES[Math.floor(next() * PIECES.length)] ?? "a";
+    if (piece === "\n" || piece === "\r\n") {
+      if (breaks > 0) piece = " ";
+      else breaks++;
+    }
     if (text.length + piece.length > limit) break;
     text += piece;
   }

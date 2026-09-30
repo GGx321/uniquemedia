@@ -7,6 +7,7 @@ import { TextWorkerResponseSchema } from "../worker/protocol";
 import { TEXT_FONT_KEYS, type TextFontKey } from "../fonts";
 import { createTextRasteriser, RASTER_WASM, type TextRasteriser } from "../rasteriser";
 import { decodePng, type Rgba } from "./png.testkit";
+import { measureSvg } from "./template";
 import { createCaptionRenderer, type CaptionRequest } from "./renderer";
 useNativeGlobals();
 
@@ -94,17 +95,18 @@ describe("no ink reaches the box's edge", () => {
     expect(clipped).toEqual([]);
   }, 120_000);
 
-  test("a caption whose ends do not stick out is no wider than before: the box is not padded for nothing", async () => {
+  test("a caption whose ends do not stick out is exactly the advance plus the style's own padding: the box is not padded for nothing", async () => {
     const plain = await renderer().render(request({ value: "hello", font: "manrope", style: "outline" }));
     const size = plain.layout.fontSize;
-    expect(plain.width).toBeLessThanOrEqual(Math.ceil(plain.layout.width) + 1);
-    expect(plain.width).toBeLessThan(400 + 0.6 * size);
+    const at100 = (run: string): number => rasteriser.measure({ svg: measureSvg("manrope", run), font: "manrope" })?.width ?? Number.NaN;
+    const advance = ((at100("hello") - at100("")) * size) / 100;
+    expect(plain.width).toBe(Math.ceil(advance + 2 * 0.25 * size));
   });
 });
 
 describe("the worst legal caption", () => {
   test("41 kiss emoji (41 graphemes, 615 UTF-16 units) are drawn, and the answer the worker would send is inside the protocol", async () => {
-    const value = "\u{1F469}\u{1F3FD}\u200D\u2764\uFE0F\u200D\u{1F48B}\u200D\u{1F468}\u{1F3FB}".repeat(41);
+    const value = "\u{1F469}\u{1F3FD}‍❤️‍\u{1F48B}‍\u{1F468}\u{1F3FB}".repeat(41);
     const image = await renderer().render(request({ value, style: "none", font: "manrope", scale: 2 }));
     const wire = { type: "captioned", id: 1, width: image.width, height: image.height, png: image.png.slice().buffer, layout: image.layout, workerMs: 1 };
     expect(TextWorkerResponseSchema.safeParse(wire).success).toBe(true);

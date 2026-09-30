@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { captionIssue } from "../captionRules";
 import { openEmojiFont, type EmojiFont } from "../emoji/emojiFont";
-import { loadPinnedEmojiFont } from "../emoji/emojiFont.testkit";
+import { loadEmojiTest, loadPinnedEmojiFont } from "../emoji/emojiFont.testkit";
+import { segmentCaption } from "../emoji/segment";
 import { TEXT_FONT_KEYS, type TextFontKey } from "../fonts";
 import { createTextRasteriser, RASTER_WASM, RasterError, type TextRasteriser } from "../rasteriser";
 import { layoutCaption } from "./layout";
@@ -190,20 +191,21 @@ describe("emoji", () => {
     expect(Buffer.byteLength(svg.svg)).toBeLessThan(Buffer.byteLength(inlined) / 2);
   });
 
-  test("sixty distinct emoji of the largest bitmaps in the font are DRAWN: they fit under the SVG cap, and the layout stays in its bounds", async () => {
+  test("sixty distinct emoji of the largest bitmaps in the whole emoji-test list are DRAWN: they fit under the SVG cap, and the layout stays in its bounds", async () => {
     const sizes: { sequence: string; bytes: number }[] = [];
-    for (let cp = 0x1f300; cp <= 0x1faff; cp++) {
-      const sequence = String.fromCodePoint(cp);
-      if (!captionRulesAccept(sequence)) continue;
+    for (const entry of await loadEmojiTest()) {
+      if (entry.status !== "fully-qualified") continue;
+      const sequence = String.fromCodePoint(...entry.codePoints);
       const bitmap = emoji.bitmap(sequence);
-      if (bitmap !== null) sizes.push({ sequence, bytes: bitmap.png.byteLength });
+      if (bitmap !== null && captionRulesAccept(sequence)) sizes.push({ sequence, bytes: bitmap.png.byteLength });
     }
+    expect(sizes.length).toBeGreaterThan(3000);
     const value = sizes
       .sort((a, b) => b.bytes - a.bytes)
       .slice(0, 60)
       .map((entry) => entry.sequence)
       .join("");
-    expect([...value]).toHaveLength(60);
+    expect(segmentCaption(value)).toHaveLength(60);
     const image = await renderer().render(request({ value, style: "outline" }));
     expect(image.layout.lines).toEqual([value]);
     expect(image.width).toBeLessThanOrEqual(1080);
