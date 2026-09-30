@@ -1,27 +1,18 @@
 /**
  * Runs `bun test` with a bounded retry for one known cause: Bun itself crashing.
  *
- *   bun run test:studio:real-worker                      the real-worker file, alone (T7c)
- *   bun run test:studio:suite ./studio [--randomize]     the main suite, same retry
- *   bun run test:studio:real-worker:canary               the same file, known crashes only
+ *   bun run test:studio:suite ./studio [--randomize]     the main suite, sharded, with the retry
  *   bun run test:studio:suite:canary ./studio --randomize   the suite, known crashes only
  *
- * With no mode argument it runs `workerGate.real.test.ts` — the tests that spin up
- * the REAL face worker (real models, ORT with its own threads) and terminate
- * it. After `--suite` the arguments are handed to `bun test` as they are.
- * `--known-crashes-only`, first, narrows the retry to the worker-teardown
- * segfaults (the canary). Any other argument is a usage error.
+ * After `--suite` the arguments are handed to `bun test` as they are. `--known-crashes-only`, first, narrows the
+ * retry to the worker-teardown segfaults (the canary). Any other argument is a usage error.
  *
- * Why a crash is retried at all: Bun segfaults ("Segmentation fault at address
- * 0x18" or 0xFFFFFFFFFFFFFFF8, exit 133) while tearing down a worker that runs
- * WASM — measured ~2% of runs of the real-worker file alone, ~11% of full
- * `bun test ./studio` suites while that file was part of them. It also
- * happens right after `workerGate.test.ts`'s interruption test terminates its
- * worker, in the main suite: a crash in Bun's teardown, not in any assertion.
- * Node/Electron are not affected (the worker gate's own stress and the
- * packaged smoke run clean). The real-worker file skips itself unless
- * STUDIO_REAL_WORKER_TESTS=1, which only the no-argument mode sets, so it
- * never runs inside the main suite.
+ * Why a crash is retried at all: Bun segfaults ("Segmentation fault at address 0x18" or 0xFFFFFFFFFFFFFFF8, exit
+ * 133) while tearing down a worker that runs WASM, in about one of nine full `bun test ./studio` suites while the
+ * real face worker tests were part of them, and right after `workerGate.test.ts`'s interruption test terminates
+ * its worker: a crash in Bun's teardown, not in any assertion. Node/Electron are not affected. The tests that
+ * really terminate a worker running WASM (the face worker's, the text worker's) no longer run under Bun at all:
+ * they are `*.node-test.ts` files run under Electron's Node by electronNodeTests.ts, so nothing there is retried.
  *
  * The retry (at most 3 attempts) fires ONLY when the output shows the Bun
  * crash and no failure (no `(fail)` line, no red cross, no `N fail` or `N error`
@@ -46,7 +37,6 @@
 import { existsSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
-export const REAL_WORKER_TEST_FILE = "studio/engine/face/worker/workerGate.real.test.ts";
 export const MAX_ATTEMPTS = 3;
 /**
  * One attempt's bound for a suite shard. Measured: the whole suite takes 7.5 to over 10 minutes on Windows CI
@@ -54,8 +44,6 @@ export const MAX_ATTEMPTS = 3;
  * seen. Raise the `--shards=` count in package.json before raising this: a shard past it is treated as hung and fails at once.
  */
 export const ATTEMPT_TIMEOUT_MS = 15 * 60 * 1000;
-/** The real-worker file alone takes seconds (7 to 10 s on CI): a bound of three minutes is a hang. */
-export const REAL_WORKER_ATTEMPT_TIMEOUT_MS = 3 * 60 * 1000;
 
 const ANSI = /\u001b\[[0-9;]*m/g;
 
@@ -64,7 +52,7 @@ export const ANY_BUN_CRASH: readonly RegExp[] = [/Bun has crashed/, /Segmentatio
 
 /**
  * The one crash that is known and understood: the segfault while a terminated WASM worker is torn down, at
- * address 0x18 (the real-worker file) or 0xFFFFFFFFFFFFFFF8 (right after workerGate.test.ts's interruption
+ * address 0x18 (the former real-worker file) or 0xFFFFFFFFFFFFFFF8 (right after workerGate.test.ts's interruption
  * test). A crash anywhere else is news, and the canary exists to report it.
  */
 export const WORKER_TEARDOWN_CRASHES: readonly RegExp[] = [
@@ -91,33 +79,27 @@ export function isBunCrashOnly(output: string, signatures: readonly RegExp[] = A
   return crashed && !failed;
 }
 
-/** The child's environment: colour off (FORCE_COLOR dropped), so a failure prints as the literal `(fail)` this file's detector reads, and the real-worker tests on only when asked (the default). */
-export function childEnv(
-  parent: Readonly<Record<string, string | undefined>>,
-  options: { realWorker: boolean } = { realWorker: true },
-): Record<string, string | undefined> {
-  const { FORCE_COLOR: _color, STUDIO_REAL_WORKER_TESTS: _gate, ...rest } = parent;
-  return options.realWorker ? { ...rest, NO_COLOR: "1", STUDIO_REAL_WORKER_TESTS: "1" } : { ...rest, NO_COLOR: "1" };
+/** The child's environment: colour off (FORCE_COLOR dropped), so a failure prints as the literal `(fail)` this file's detector reads. */
+export function childEnv(parent: Readonly<Record<string, string | undefined>>): Record<string, string | undefined> {
+  const { FORCE_COLOR: _color, ...rest } = parent;
+  return { ...rest, NO_COLOR: "1" };
 }
 
 export interface TestTarget {
   testArgs: string[];
-  /** Run with STUDIO_REAL_WORKER_TESTS=1 (the real-worker file's own mode). */
-  realWorker: boolean;
   /** Retry only the known worker-teardown crashes (the canary), not any Bun crash. */
   knownCrashesOnly: boolean;
   /** Split the suite's test files into this many `bun test` processes; 1 hands `testArgs` to one process as they are. */
   shards: number;
 }
 
-const USAGE =
-  "usage: realWorkerTests.ts [--known-crashes-only]   (the real-worker file)  |  realWorkerTests.ts [--known-crashes-only] [--shards=N] --suite <bun test arguments...>";
+const USAGE = "usage: realWorkerTests.ts [--known-crashes-only] [--shards=N] --suite <bun test arguments...>";
 
 /**
- * What to hand to `bun test`. No mode argument: the real-worker file. `--suite <args...>`: exactly those `bun test`
- * arguments (the main suite). `--known-crashes-only` comes first, in either mode, and narrows the retry. Anything
- * else is a usage error, so an extra flag never quietly turns one mode into the other, and a
- * `--known-crashes-only` after `--suite` (which bun would receive, not this script) is refused too.
+ * What to hand to `bun test`: `--suite <args...>`, exactly those `bun test` arguments (the main suite).
+ * `--known-crashes-only` and `--shards=N` come first, in either order, and narrow the retry and split the suite.
+ * Anything else is a usage error, and so is a `--known-crashes-only` or `--shards` after `--suite` (which bun
+ * would receive, not this script).
  */
 export function testTarget(argv: readonly string[]): TestTarget {
   let rest = argv;
@@ -136,9 +118,8 @@ export function testTarget(argv: readonly string[]): TestTarget {
     } else break;
     rest = rest.slice(1);
   }
-  if (rest.length === 0 && !shardsGiven) return { testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly, shards: 1 };
   if (rest[0] !== "--suite" || rest.length < 2 || rest.includes("--known-crashes-only") || rest.some((a) => a.startsWith("--shards"))) throw new Error(USAGE);
-  return { testArgs: rest.slice(1), realWorker: false, knownCrashesOnly, shards };
+  return { testArgs: rest.slice(1), knownCrashesOnly, shards };
 }
 
 /** The file names `bun test` picks up on its own: `*.test.*`, `*_test.*`, `*.spec.*`, `*_spec.*` in a JS or TS extension. */
@@ -276,8 +257,8 @@ if (import.meta.main) {
     const run = () =>
       runOnce({
         command: [process.execPath, "--no-env-file", "test", ...args],
-        env: childEnv(process.env, { realWorker: target.realWorker }),
-        timeoutMs: target.realWorker ? REAL_WORKER_ATTEMPT_TIMEOUT_MS : ATTEMPT_TIMEOUT_MS,
+        env: childEnv(process.env),
+        timeoutMs: ATTEMPT_TIMEOUT_MS,
         graceMs: 2_000,
         echo: true,
       });

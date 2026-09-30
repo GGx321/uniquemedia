@@ -129,21 +129,15 @@ jobs:
       # on every retry.
       - run: bun run test:studio:suite ./studio
         timeout-minutes: 150
-      # T7c: the real face worker tests (real models, a worker terminated
-      # mid-WASM) run alone: Bun itself segfaults ~2% of the time tearing down
-      # such a worker, so the file skips itself in the run above and this step
-      # retries — at most 3 attempts — ONLY on that Bun crash with no failed
-      # test (studio/scripts/realWorkerTests.ts); a real failure fails at once.
-      - name: Real face worker tests
-        run: bun run test:studio:real-worker
-        timeout-minutes: 10
-      # 3b.2: the text worker's real-thread tests run under ELECTRON'S NODE, the product's own runtime
-      # (studio/scripts/electronNodeTests.ts: bun bundles them, the Electron binary runs them as plain Node). Not
-      # under Bun: there `worker.terminate()` does not interrupt running wasm, so the deadline test would measure
-      # Bun (2015 ms on CI against 202 ms in Electron's Node), and terminating wasm workers crashes Bun. There is
-      # no Bun crash to retry here, so no retry: any failure is real. The step also prints the worst legitimate
-      # shadow caption on this runner, which the test holds to at most a fifth of the deadline.
-      - name: Real text worker tests (Electron's Node)
+      # The real workers' tests (the face worker's, the text worker's) run under ELECTRON'S NODE, the product's own
+      # runtime (studio/scripts/electronNodeTests.ts: bun bundles them, the Electron binary runs them as plain Node).
+      # Not under Bun: there `worker.terminate()` does not interrupt running wasm (the text deadline test would
+      # measure Bun: 2015 ms on CI against 202 ms in Electron's Node), and terminating a wasm worker segfaults Bun in
+      # a few percent of runs (`Segmentation fault at address 0x3C`; `mprotect failed: 487` on Windows). There is no
+      # Bun crash to retry here, so no retry: any failure is real. The face tests need the models fetched above, and
+      # a run without them fails, it never skips. The step also prints the worst legitimate shadow caption on this
+      # runner, which the text test holds to at most a fifth of the deadline.
+      - name: Real worker tests (Electron's Node)
         run: bun run test:studio:electron-node
         timeout-minutes: 10
       - if: env.PACKAGE == 'true'
@@ -318,11 +312,7 @@ jobs:
       # ::warning:: annotation so the crash rate stays visible.
       - run: bun run test:studio:suite:canary ./studio --randomize
         timeout-minutes: 150
-      # Same alone-and-retry step as the build job's (T7c), with the same narrowed retry.
-      - name: Real face worker tests
-        run: bun run test:studio:real-worker:canary
-        timeout-minutes: 10
-      # The text worker's Electron-Node tests: the canary's `bun latest` is only the bundler here.
-      - name: Real text worker tests (Electron's Node)
+      # The real workers' Electron-Node tests (face and text): the canary's `bun latest` is only the bundler here.
+      - name: Real worker tests (Electron's Node)
         run: bun run test:studio:electron-node
         timeout-minutes: 10

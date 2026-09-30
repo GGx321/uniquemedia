@@ -8,8 +8,6 @@ import {
   isBunCrashOnly,
   listTestFiles,
   MAX_ATTEMPTS,
-  REAL_WORKER_ATTEMPT_TIMEOUT_MS,
-  REAL_WORKER_TEST_FILE,
   runOnce,
   runWithCrashRetry,
   shardedTestArgs,
@@ -20,11 +18,10 @@ import {
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
-// T7c: the real-worker test file runs alone (studio/scripts/realWorkerTests.ts)
-// because Bun itself segfaults in roughly 2% of runs while it tears down a
-// worker running WASM. The runner retries ONLY on that crash signature, and
-// never when a test actually failed — a real failure must never be retried
-// into a pass.
+// The suite runs through studio/scripts/realWorkerTests.ts because Bun itself
+// segfaults in a few percent of runs while it tears down a worker running WASM.
+// The runner retries ONLY on that crash signature, and never when a test
+// actually failed — a real failure must never be retried into a pass.
 
 const CRASH = [
   "bun test v1.3.12",
@@ -87,16 +84,8 @@ describe("childEnv", () => {
     expect("FORCE_COLOR" in env).toBe(false);
   });
 
-  test("keeps the rest of the environment and enables the real-worker tests", () => {
+  test("keeps the rest of the environment", () => {
     const env = childEnv({ PATH: "/usr/bin" });
-    expect(env.PATH).toBe("/usr/bin");
-    expect(env.STUDIO_REAL_WORKER_TESTS).toBe("1");
-  });
-
-  test("for the main suite leaves the real-worker tests off, even when the parent had them on, so the gated file keeps skipping itself", () => {
-    const env = childEnv({ PATH: "/usr/bin", STUDIO_REAL_WORKER_TESTS: "1" }, { realWorker: false });
-    expect("STUDIO_REAL_WORKER_TESTS" in env).toBe(false);
-    expect(env.NO_COLOR).toBe("1");
     expect(env.PATH).toBe("/usr/bin");
   });
 });
@@ -169,16 +158,16 @@ describe("isBunCrashOnly with a set of known crash signatures", () => {
 });
 
 describe("testTarget", () => {
-  test("with no arguments runs the real-worker file with the real-worker tests on", () => {
-    expect(testTarget([])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: false, shards: 1 });
+  test("with no arguments is refused: the real face worker tests are no longer a bun run (electronNodeTests.ts runs them)", () => {
+    expect(() => testTarget([])).toThrow(/usage/);
   });
 
-  test("--suite runs exactly the bun test arguments after it, real-worker tests off, any crash retried", () => {
-    expect(testTarget(["--suite", "./studio", "--randomize"])).toEqual({ testArgs: ["./studio", "--randomize"], realWorker: false, knownCrashesOnly: false, shards: 1 });
+  test("--suite runs exactly the bun test arguments after it, any crash retried", () => {
+    expect(testTarget(["--suite", "./studio", "--randomize"])).toEqual({ testArgs: ["./studio", "--randomize"], knownCrashesOnly: false, shards: 1 });
   });
 
   test("--known-crashes-only before --suite narrows the retry to the worker-teardown crashes", () => {
-    expect(testTarget(["--known-crashes-only", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], realWorker: false, knownCrashesOnly: true, shards: 1 });
+    expect(testTarget(["--known-crashes-only", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], knownCrashesOnly: true, shards: 1 });
   });
 
   test("an argument that is not a mode is refused, not silently turned into a different run", () => {
@@ -190,8 +179,8 @@ describe("testTarget", () => {
     expect(() => testTarget(["--suite"])).toThrow(/usage/);
   });
 
-  test("--known-crashes-only alone narrows the retry of the real-worker file too", () => {
-    expect(testTarget(["--known-crashes-only"])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: true, shards: 1 });
+  test("--known-crashes-only without --suite is refused", () => {
+    expect(() => testTarget(["--known-crashes-only"])).toThrow(/usage/);
   });
 
   test("--known-crashes-only among the bun test arguments after --suite is refused: it would be handed to bun, not read here", () => {
@@ -202,9 +191,9 @@ describe("testTarget", () => {
 
 describe("testTarget with --shards", () => {
   test("--shards=N before --suite splits the suite, in either order with --known-crashes-only", () => {
-    expect(testTarget(["--shards=3", "--suite", "./studio", "--randomize"])).toEqual({ testArgs: ["./studio", "--randomize"], realWorker: false, knownCrashesOnly: false, shards: 3 });
-    expect(testTarget(["--known-crashes-only", "--shards=3", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], realWorker: false, knownCrashesOnly: true, shards: 3 });
-    expect(testTarget(["--shards=3", "--known-crashes-only", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], realWorker: false, knownCrashesOnly: true, shards: 3 });
+    expect(testTarget(["--shards=3", "--suite", "./studio", "--randomize"])).toEqual({ testArgs: ["./studio", "--randomize"], knownCrashesOnly: false, shards: 3 });
+    expect(testTarget(["--known-crashes-only", "--shards=3", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], knownCrashesOnly: true, shards: 3 });
+    expect(testTarget(["--shards=3", "--known-crashes-only", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], knownCrashesOnly: true, shards: 3 });
   });
 
   test("a shard count that is not a whole number from 1 to 99 is refused", () => {
@@ -213,7 +202,7 @@ describe("testTarget with --shards", () => {
     }
   });
 
-  test("--shards without --suite is refused: the real-worker file is one file", () => {
+  test("--shards without --suite is refused", () => {
     expect(() => testTarget(["--shards=3"])).toThrow(/usage/);
   });
 
@@ -307,10 +296,9 @@ describe("the bounds", () => {
 
   // Windows CI takes 7.5 to over 10 minutes for the whole suite. One of three shards is a third of that, and a shard
   // that takes more than the bound is hung. A hang must still end: the bound is finite and the step's limit covers every retry.
-  test("a shard's bound is finite and at least twice a third of the slowest whole suite seen on Windows (10 minutes), and the real-worker file's is short", () => {
+  test("a shard's bound is finite and at least twice a third of the slowest whole suite seen on Windows (10 minutes)", () => {
     expect(ATTEMPT_TIMEOUT_MS).toBeGreaterThanOrEqual((2 * 10 * 60 * 1000) / 3);
     expect(ATTEMPT_TIMEOUT_MS).toBeLessThanOrEqual(30 * 60 * 1000);
-    expect(REAL_WORKER_ATTEMPT_TIMEOUT_MS).toBeLessThan(ATTEMPT_TIMEOUT_MS);
   });
 
   test("each workflow step that runs the sharded suite has a timeout-minutes above shards x attempts x bound, and every suite script shards", async () => {
