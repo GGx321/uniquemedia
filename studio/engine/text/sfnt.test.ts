@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { TEXT_FONTS } from "./fonts";
-import { cmapCoverage } from "./sfnt";
+import { cmapCoverage, verticalMetrics } from "./sfnt";
 useNativeGlobals();
 
 const FONT_DIR = join(import.meta.dir, "..", "..", "assets", "fonts");
@@ -193,5 +193,51 @@ describe("cmapCoverage on damaged real fonts", () => {
     const started = performance.now();
     for (let cp = 0; cp < 0x30000; cp++) has(cp);
     expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe("verticalMetrics", () => {
+  // Read straight from each font's head and hhea tables with struct unpacking that shares no code with the reader.
+  const EXPECTED = {
+    manrope: { unitsPerEm: 2000, ascender: 2132, descender: -600 },
+    playfair: { unitsPerEm: 1000, ascender: 1082, descender: -251 },
+    oswald: { unitsPerEm: 1000, ascender: 1193, descender: -289 },
+    ptmono: { unitsPerEm: 1000, ascender: 885, descender: -235 },
+    caveat: { unitsPerEm: 1000, ascender: 960, descender: -300 },
+  } as const;
+
+  /** Runs `change` on a copy of the font with the offset of the named table's record. */
+  function withTable(file: string, tag: string, change: (view: DataView, record: number) => void): Uint8Array {
+    const font = real(file).slice();
+    const view = new DataView(font.buffer, font.byteOffset, font.byteLength);
+    for (let i = 0; i < view.getUint16(4); i++) {
+      const record = 12 + 16 * i;
+      if (String.fromCharCode(...font.subarray(record, record + 4)) === tag) change(view, record);
+    }
+    return font;
+  }
+
+  test.each(Object.entries(EXPECTED))("%s reports its hhea ascender and descender and its units per em", (key, expected) => {
+    expect(verticalMetrics(real(TEXT_FONTS[key as keyof typeof TEXT_FONTS].file))).toEqual(expected);
+  });
+
+  test("refuses a font with no hhea table", () => {
+    const font = withTable(TEXT_FONTS.manrope.file, "hhea", (view, record) => view.setUint8(record, 0x58));
+    expect(() => verticalMetrics(font)).toThrow(/sfnt: no hhea/);
+  });
+
+  test("refuses a font whose hhea runs past the end of the file", () => {
+    const font = withTable(TEXT_FONTS.manrope.file, "hhea", (view, record) => view.setUint32(record + 8, view.byteLength - 3));
+    expect(() => verticalMetrics(font)).toThrow(/sfnt: /);
+  });
+
+  test("refuses a font that states zero units per em", () => {
+    const font = withTable(TEXT_FONTS.manrope.file, "head", (view, record) => view.setUint16(view.getUint32(record + 8) + 18, 0));
+    expect(() => verticalMetrics(font)).toThrow(/sfnt: units per em/);
+  });
+
+  test("refuses a font whose descender is above its baseline", () => {
+    const font = withTable(TEXT_FONTS.manrope.file, "hhea", (view, record) => view.setInt16(view.getUint32(record + 8) + 6, 300));
+    expect(() => verticalMetrics(font)).toThrow(/sfnt: /);
   });
 });

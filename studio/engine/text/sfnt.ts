@@ -1,7 +1,8 @@
 /**
  * A minimal sfnt reader: the `cmap` (does this font have a glyph for a code point, invariant 22: the text
  * fonts cover the allowed charset, so no caption draws tofu) and the few facts the manifest promises about a
- * font (`fontInfo`). No shaping and no metrics: widths come from resvg's own `getBBox()` (plan, Text row).
+ * font (`fontInfo`), and the `hhea` line metrics (`verticalMetrics`). No shaping and no widths: widths come from
+ * resvg's own `getBBox()` (plan, Text row).
  *
  * It parses the bundled, sha256-pinned fonts, never user bytes, but it still never trusts an offset:
  * everything a lookup will read is bounds-checked once, at construction, so a truncated or mutated file
@@ -194,4 +195,30 @@ export function fontInfo(bytes: Uint8Array): FontInfo {
     else families.add(text);
   }
   return { families: [...families], fullName, weightClass: view.getUint16(os2 + 4), variable: table("fvar") !== null };
+}
+
+export interface VerticalMetrics {
+  unitsPerEm: number;
+  /** `hhea.ascender`, above the baseline (positive), in font units. */
+  ascender: number;
+  /** `hhea.descender`, below the baseline (negative), in font units. */
+  descender: number;
+}
+
+/**
+ * The font's `hhea` line metrics and `head.unitsPerEm`: where the caption layout puts a line's baseline. It is one
+ * consistent choice, not what any shaper does, because the layout places every run itself.
+ */
+export function verticalMetrics(bytes: Uint8Array): VerticalMetrics {
+  const { view, table } = directoryOf(bytes);
+  const head = table("head");
+  const hhea = table("hhea");
+  if (head === null || head + 20 > view.byteLength) throw new SfntError("no head table");
+  if (hhea === null || hhea + 10 > view.byteLength) throw new SfntError("no hhea table");
+  const unitsPerEm = view.getUint16(head + 18);
+  const ascender = view.getInt16(hhea + 4);
+  const descender = view.getInt16(hhea + 6);
+  if (unitsPerEm < 16 || unitsPerEm > 16384) throw new SfntError(`units per em ${unitsPerEm} is out of range`);
+  if (ascender <= 0 || descender >= 0) throw new SfntError(`hhea ascender ${ascender} and descender ${descender} are not above and below the baseline`);
+  return { unitsPerEm, ascender, descender };
 }

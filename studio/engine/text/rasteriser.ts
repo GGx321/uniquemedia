@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { initWasm as resvgInitWasm, Resvg, type ResvgRenderOptions } from "@resvg/resvg-wasm";
 import { FontLoadError, loadTextFonts, TEXT_FONTS, type ReadBytes, type TextFontKey } from "./fonts";
+import { verticalMetrics as readVerticalMetrics, type VerticalMetrics } from "./sfnt";
 import { checkRasterWasmBytes, DEFAULT_RASTER_LIMITS, RASTER_WASM, RasterError, type Box, type RasterImage, type RasterLimits, type RasterRequest } from "./rasterTypes";
 
 export { checkRasterWasmBytes, DEFAULT_RASTER_LIMITS, RASTER_ERROR_CODES, RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "./rasterTypes";
@@ -69,6 +70,8 @@ export interface TextRasteriser {
    * Throws a `RasterError`.
    */
   measure(request: RasterRequest): Box | null;
+  /** The font's `hhea` line metrics (where the caption layout puts a baseline), read once at load. Synchronous; requires `init()` first. Throws a `RasterError`. */
+  verticalMetrics(font: TextFontKey): VerticalMetrics;
   /** True after a wasm trap or a failed `free()`: every later call answers `BROKEN` and the owner must replace this rasteriser. */
   isBroken(): boolean;
 }
@@ -114,6 +117,7 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
   const newResvg = deps.newResvg ?? ((svg: string, options: ResvgRenderOptions): ResvgLike => new Resvg(svg, options));
 
   let fonts: Record<TextFontKey, Uint8Array> | null = null;
+  let metrics: Record<TextFontKey, VerticalMetrics> | null = null;
   let pending: Promise<void> | null = null;
   let tail: Promise<unknown> = Promise.resolve();
   let broken = false;
@@ -141,11 +145,25 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
     }
   }
 
+  /** The metrics of every font, read at load: a font that has none fails the load, the way a corrupt one does. */
+  function metricsOf(loaded: Record<TextFontKey, Uint8Array>): Record<TextFontKey, VerticalMetrics> {
+    const out = {} as Record<TextFontKey, VerticalMetrics>;
+    for (const key of Object.keys(loaded) as TextFontKey[]) {
+      try {
+        out[key] = readVerticalMetrics(loaded[key]);
+      } catch (cause) {
+        throw new RasterError("FONT_UNAVAILABLE", `${TEXT_FONTS[key].file} has no usable line metrics: ${messageOf(cause)}`, { cause });
+      }
+    }
+    return out;
+  }
+
   function init(): Promise<void> {
     if (broken) return Promise.reject(brokenError());
     if (fonts !== null) return Promise.resolve();
     pending ??= load().then(
       (loaded) => {
+        metrics = metricsOf(loaded);
         fonts = loaded;
       },
       (error: unknown) => {
@@ -234,6 +252,14 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
     init,
 
     isBroken: () => broken,
+
+    verticalMetrics(font) {
+      if (broken) throw brokenError();
+      if (metrics === null) throw new RasterError("NOT_INITIALISED", "init() has not completed");
+      const found = metrics[font];
+      if (found === undefined) throw new RasterError("FONT_UNAVAILABLE", `no font ${String(font)}`);
+      return found;
+    },
 
     async render(request) {
       await init();
