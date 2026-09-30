@@ -8,9 +8,12 @@ import {
   isBunCrashOnly,
   listTestFiles,
   MAX_ATTEMPTS,
+  commandLineLength,
   runOnce,
+  runShards,
   runWithCrashRetry,
   shardedTestArgs,
+  WINDOWS_COMMAND_LINE_LIMIT,
   shardFiles,
   testTarget,
   WORKER_TEARDOWN_CRASHES,
@@ -301,6 +304,16 @@ describe("sharding the suite", () => {
     ]);
   });
 
+  test("shardedTestArgs refuses a shard whose command line would pass Windows' limit, naming the shard", async () => {
+    const long = "x".repeat(200);
+    const files = Array.from({ length: 400 }, (_, i) => `studio/${long}/f${String(i).padStart(3, "0")}.test.ts`);
+    const root = await tree(files);
+    await expect(shardedTestArgs(["./studio"], 2, root)).rejects.toThrow(/shard 1 of 2 .*over Windows' limit/);
+    // The same files in enough shards fit.
+    const plan = await shardedTestArgs(["./studio"], 8, root);
+    for (const args of plan) expect(commandLineLength(args)).toBeLessThanOrEqual(WINDOWS_COMMAND_LINE_LIMIT);
+  });
+
   test("shardedTestArgs refuses a flag value in its own argument: it would be read as a missing path", async () => {
     const root = await tree(["studio/a.test.ts"]);
     await expect(shardedTestArgs(["./studio", "--timeout", "90000"], 2, root)).rejects.toThrow(/no such test path/);
@@ -351,6 +364,69 @@ describe("the workflow's concurrency rule", () => {
   });
 });
 
+describe("runShards", () => {
+  const PLAN = [
+    ["--randomize", "./a.test.ts", "./d.test.ts"],
+    ["--randomize", "./b.test.ts"],
+    ["--randomize", "./c.test.ts"],
+  ];
+  const pass = { code: 0, hung: false };
+
+  /** A shard runner that plays these outcomes in order and records which shards it ran. */
+  function playing(outcomes: { code: number; hung: boolean }[]) {
+    const ran: string[] = [];
+    return {
+      ran,
+      runShard: async (_args: readonly string[], label: string) => {
+        ran.push(label);
+        return outcomes[ran.length - 1] ?? pass;
+      },
+    };
+  }
+
+  test("runs every shard and returns 0 when all pass", async () => {
+    const run = playing([pass, pass, pass]);
+    expect(await runShards(PLAN, run.runShard, () => undefined)).toBe(0);
+    expect(run.ran).toEqual(["shard 1 of 3", "shard 2 of 3", "shard 3 of 3"]);
+  });
+
+  test("an ordinary failure runs the remaining shards, returns the first failing shard's code, and lists the failing shard's files", async () => {
+    const lines: string[] = [];
+    const run = playing([pass, { code: 1, hung: false }, { code: 133, hung: false }]);
+    expect(await runShards(PLAN, run.runShard, (line) => lines.push(line))).toBe(1);
+    expect(run.ran).toHaveLength(3);
+    const at = lines.findIndex((l) => l.startsWith("::error::") && l.includes("shard 2 of 3 failed"));
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(lines[at + 1]).toContain("./b.test.ts");
+    expect(lines.filter((l) => l.includes("./a.test.ts"))).toHaveLength(0);
+  });
+
+  test("a shard that timed out skips the remaining shards, with an ::error::, and fails the run", async () => {
+    const lines: string[] = [];
+    const run = playing([{ code: 1, hung: true }, pass, pass]);
+    expect(await runShards(PLAN, run.runShard, (line) => lines.push(line))).toBe(1);
+    expect(run.ran).toEqual(["shard 1 of 3"]);
+    expect(lines.some((l) => l.startsWith("::error::") && l.includes("remaining 2 shards will not run"))).toBe(true);
+    expect(lines.filter((l) => l.includes("./a.test.ts") || l.includes("./d.test.ts"))).toHaveLength(2);
+  });
+
+  test("a timeout in the last shard has nothing left to skip", async () => {
+    const lines: string[] = [];
+    const run = playing([pass, pass, { code: 1, hung: true }]);
+    expect(await runShards(PLAN, run.runShard, (line) => lines.push(line))).toBe(1);
+    expect(run.ran).toHaveLength(3);
+    expect(lines.some((l) => l.includes("will not run"))).toBe(false);
+  });
+
+  test("a single run has no shard banner, and is labelled `the run`", async () => {
+    const lines: string[] = [];
+    const run = playing([{ code: 2, hung: false }]);
+    expect(await runShards([["./studio"]], run.runShard, (line) => lines.push(line))).toBe(2);
+    expect(run.ran).toEqual(["the run"]);
+    expect(lines.some((l) => l.includes("=="))).toBe(false);
+  });
+});
+
 describe("runOnce", () => {
   const HUNG = [process.execPath, "-e", "setInterval(() => {}, 1e6)"];
 
@@ -397,6 +473,13 @@ describe("retry warnings", () => {
     await runWithCrashRetry(async () => (n++ < 2 ? crash : { exitCode: 0, output: "" }), { warn: (line) => lines.push(line) });
     expect(lines.filter((l) => l.startsWith("::warning::"))).toHaveLength(2);
     expect(lines[0]).toContain("attempt 1 of 3");
+  });
+
+  test("the warning names the shard when the run has a label", async () => {
+    const lines: string[] = [];
+    let n = 0;
+    await runWithCrashRetry(async () => (n++ < 1 ? { exitCode: 133, output: `${CRASH}\n` } : { exitCode: 0, output: "" }), { warn: (line) => lines.push(line), label: "shard 2 of 3" });
+    expect(lines[0]).toContain("shard 2 of 3: Bun crashed");
   });
 
   test("a retry limited to known crashes does not retry an unknown one", async () => {

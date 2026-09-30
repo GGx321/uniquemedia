@@ -31,7 +31,9 @@
  * so round-robin spreads them), each group is its own `bun test` process with its own bound and its own
  * crash retry, and a retry reruns one shard. Shards run one after another, never in parallel (the suite has
  * timing-sensitive tests). Every shard runs even after one has failed, so a red run shows all its failures;
- * the exit code is the first failing shard's. In this mode the arguments after `--suite` are flags, written as
+ * the exit code is the first failing shard's, and the failing shard's test files are printed under an `::error::`.
+ * A shard that TIMES OUT is different: a hung Bun means the runner is wedged, so the remaining shards are skipped
+ * (with an `::error::`) instead of each waiting out its own bound. In this mode the arguments after `--suite` are flags, written as
  * `--flag=value` (a value in its own argument would be read as a path), and paths to test directories or files.
  */
 import { existsSync, statSync } from "node:fs";
@@ -167,12 +169,31 @@ export function shardFiles(files: readonly string[], count: number): string[][] 
   return groups;
 }
 
-/** The `bun test` argument lists of a run: the arguments as they are for one shard, otherwise one list per group of files (the flags, then its files). */
+/** What Windows' CreateProcess accepts for one command line, in characters. */
+export const WINDOWS_COMMAND_LINE_LIMIT = 32_767;
+
+/** An upper estimate of a shard's command line: every argument possibly quoted and spaced, plus room for the executable path and `--no-env-file test`. */
+export function commandLineLength(args: readonly string[]): number {
+  return args.reduce((sum, arg) => sum + arg.length + 3, 600);
+}
+
+/**
+ * The `bun test` argument lists of a run: the arguments as they are for one shard, otherwise one list per group of
+ * files (the flags, then its files). Every file is on the command line, so a shard whose line would pass Windows'
+ * limit throws here, in the plan, and not as a spawn error on the Windows runner after the other shards ran.
+ */
 export async function shardedTestArgs(testArgs: readonly string[], shards: number, cwd: string): Promise<string[][]> {
   if (shards <= 1) return [[...testArgs]];
   const flags = testArgs.filter((arg) => arg.startsWith("-"));
   const paths = testArgs.filter((arg) => !arg.startsWith("-"));
-  return shardFiles(await listTestFiles(paths, cwd), shards).map((group) => [...flags, ...group]);
+  const plan = shardFiles(await listTestFiles(paths, cwd), shards).map((group) => [...flags, ...group]);
+  for (const [index, args] of plan.entries()) {
+    const length = commandLineLength(args);
+    if (length > WINDOWS_COMMAND_LINE_LIMIT) {
+      throw new Error(`realWorkerTests: shard ${index + 1} of ${plan.length} would need a command line of about ${length} characters, over Windows' limit of ${WINDOWS_COMMAND_LINE_LIMIT}: raise --shards`);
+    }
+  }
+  return plan;
 }
 
 export interface AttemptResult {
@@ -185,11 +206,12 @@ export interface AttemptResult {
 /**
  * Runs `attempt` until it passes, fails for real, or has crashed `maxAttempts` times. Returns the exit code
  * for the process: 0 for a pass, otherwise the failing attempt's own (never 0 for a failure). Every retry is
- * announced through `warn` as a GitHub `::warning::` annotation, so the crash rate stays visible in the run.
+ * announced through `warn` as a GitHub `::warning::` annotation, so the crash rate stays visible in the run; a
+ * `label` (`shard 2 of 3`) says which shard crashed.
  */
 export async function runWithCrashRetry(
   attempt: () => Promise<AttemptResult>,
-  options: { maxAttempts?: number; warn?: (line: string) => void; signatures?: readonly RegExp[] } = {},
+  options: { maxAttempts?: number; warn?: (line: string) => void; signatures?: readonly RegExp[]; label?: string } = {},
 ): Promise<number> {
   const maxAttempts = options.maxAttempts ?? MAX_ATTEMPTS;
   // stdout, where the runner reads a workflow command (a `::warning::` written to stderr is easy to lose).
@@ -199,7 +221,7 @@ export async function runWithCrashRetry(
     if (result.exitCode === 0 && result.timedOut !== true) return 0;
     const retry = n < maxAttempts && result.timedOut !== true && isBunCrashOnly(result.output, options.signatures);
     if (!retry) return result.exitCode === 0 ? 1 : result.exitCode;
-    warn(`::warning::realWorkerTests: Bun crashed with no failed test: attempt ${n} of ${maxAttempts}, retrying`);
+    warn(`::warning::realWorkerTests: ${options.label === undefined ? "" : `${options.label}: `}Bun crashed with no failed test: attempt ${n} of ${maxAttempts}, retrying`);
   }
 }
 
@@ -253,6 +275,43 @@ export async function runOnce(options: RunOnceOptions): Promise<AttemptResult> {
   }
 }
 
+export interface ShardOutcome {
+  /** The shard's exit code: 0 for a pass. */
+  code: number;
+  /** An attempt of the shard was killed for running past its bound. */
+  hung: boolean;
+}
+
+/**
+ * Runs the shards one after another and returns the process exit code: the first failing shard's, or 0. An ordinary
+ * failure does not stop the others (a red run shows all its failures) but names the failing shard's test files. A
+ * shard that hung stops the run: Bun is wedged on this runner, and every later shard would wait out its own bound.
+ */
+export async function runShards(
+  plan: readonly (readonly string[])[],
+  runShard: (args: readonly string[], label: string) => Promise<ShardOutcome>,
+  log: (line: string) => void = (line) => console.log(line),
+): Promise<number> {
+  let exitCode = 0;
+  for (const [index, args] of plan.entries()) {
+    const label = plan.length > 1 ? `shard ${index + 1} of ${plan.length}` : "the run";
+    const files = args.filter((arg) => !arg.startsWith("-"));
+    if (plan.length > 1) log(`\n== ${label}: ${files.length} test files ==`);
+    const { code, hung } = await runShard(args, label);
+    if (code !== 0) {
+      if (exitCode === 0) exitCode = code;
+      log(`::error::realWorkerTests: ${label} failed with exit code ${code}; its test files:`);
+      for (const file of files) log(`  ${file}`);
+    }
+    const remaining = plan.length - index - 1;
+    if (hung && remaining > 0) {
+      log(`::error::realWorkerTests: ${label} timed out: Bun is hung on this runner, so the remaining ${remaining} shard${remaining === 1 ? "" : "s"} will not run`);
+      break;
+    }
+  }
+  return exitCode;
+}
+
 if (import.meta.main) {
   let target: TestTarget;
   let plan: string[][];
@@ -263,19 +322,22 @@ if (import.meta.main) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(2);
   }
-  let exitCode = 0;
-  for (const [index, args] of plan.entries()) {
-    if (plan.length > 1) console.log(`\n== shard ${index + 1} of ${plan.length}: ${args.filter((a) => !a.startsWith("-")).length} test files ==`);
-    const run = () =>
-      runOnce({
+  const { knownCrashesOnly } = target;
+  const exitCode = await runShards(plan, async (args, label) => {
+    let hung = false;
+    const attempt = async (): Promise<AttemptResult> => {
+      const result = await runOnce({
         command: [process.execPath, "--no-env-file", "test", ...args],
         env: childEnv(process.env),
         timeoutMs: ATTEMPT_TIMEOUT_MS,
         graceMs: 2_000,
         echo: true,
       });
-    const code = await runWithCrashRetry(run, target.knownCrashesOnly ? { signatures: WORKER_TEARDOWN_CRASHES } : {});
-    if (code !== 0 && exitCode === 0) exitCode = code;
-  }
+      if (result.timedOut === true) hung = true;
+      return result;
+    };
+    const code = await runWithCrashRetry(attempt, knownCrashesOnly ? { label, signatures: WORKER_TEARDOWN_CRASHES } : { label });
+    return { code, hung };
+  });
   process.exit(exitCode);
 }
