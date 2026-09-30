@@ -1,6 +1,4 @@
 [test]
 # Integration tests invoke real FFmpeg binaries; allow up to 60 s per test.
-# NOTE: Bun 1.3.12 does not apply this key (a slow test still times out at 5000 ms); the studio suite runner passes
-# an explicit --timeout (studio/scripts/realWorkerTests.ts), and a plain `bun test` of a slow file needs --timeout too.
 timeout = 60000
 preload = ["./testSetup.ts"]
