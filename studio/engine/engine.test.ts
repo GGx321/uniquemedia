@@ -479,7 +479,13 @@ describe("OpenRouter base URL (invariant 13)", () => {
 
   test("only an E2E build accepts the override", () => {
     expect(resolveOpenRouterBaseUrl("http://127.0.0.1:9999/api/v1", true)).toBe("http://127.0.0.1:9999/api/v1");
-    expect(resolveOpenRouterBaseUrl(undefined, true)).toBe(DEFAULT);
+  });
+
+  test("an E2E build with no mock asked for never reaches OpenRouter: the base goes to a loopback port nothing listens on", () => {
+    const base = resolveOpenRouterBaseUrl(undefined, true);
+    expect(base).toBe("http://127.0.0.1:1/api/v1");
+    expect(base).not.toContain("openrouter.ai");
+    expect(new URL(base).hostname).toBe("127.0.0.1"); // and the client accepts it (a loopback override), so the request is refused at connect, not by policy
   });
 
   test("the engine under test (not an E2E build) keeps OpenRouter even when init asks for another URL", async () => {

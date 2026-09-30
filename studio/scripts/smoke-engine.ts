@@ -44,9 +44,9 @@
  * stack trace.
  *
  * Usage (macOS; on Windows point --app at release-studio/win-unpacked or its
- * Studio.exe, and release-studio/e2e/win-unpacked for an E2E package):
+ * Studio.exe, and release-studio/e2e/win-unpacked (its Studio E2E.exe) for an E2E package):
  *   bun run build:studio:e2e && bun studio/scripts/smoke-engine.ts
- *   bun run dist:studio:mac:e2e && bun studio/scripts/smoke-engine.ts --app release-studio/e2e/mac-arm64/Studio.app
+ *   bun run dist:studio:mac:e2e && bun studio/scripts/smoke-engine.ts --app "release-studio/e2e/mac-arm64/Studio E2E.app"
  *   bun run build:studio && bun studio/scripts/smoke-engine.ts --production
  *   bun run dist:studio:mac && bun studio/scripts/smoke-engine.ts --production --app release-studio/mac-arm64/Studio.app
  *
@@ -122,7 +122,8 @@ async function resolveTarget(): Promise<Target> {
   }
   const app = resolve(appArg);
   if (process.platform === "win32") {
-    const exe = app.toLowerCase().endsWith(".exe") ? app : join(app, "Studio.exe");
+    // The E2E package has its own name (`Studio E2E.exe`, see dist:studio:win:e2e), the production one `Studio.exe`.
+    const exe = app.toLowerCase().endsWith(".exe") ? app : existsSync(join(app, "Studio E2E.exe")) ? join(app, "Studio E2E.exe") : join(app, "Studio.exe");
     return { label: `packaged ${exe}`, executable: exe, args: [], app: exe, asar: join(dirname(exe), "resources", "app.asar") };
   }
   if (app.endsWith(".app")) {
@@ -429,6 +430,16 @@ function checkPackage(target: Target): void {
   if (target.asar === null || target.app === null) return;
   const entries = listPackage(target.asar, { isPack: false }).map((p) => p.replaceAll("\\", "/"));
   check("app.asar contains out-studio/engine/main.js", entries.includes("/out-studio/engine/main.js"));
+  // Electron names the userData folder (and the safeStorage key) after package.json's productName or name. The E2E package,
+  // built with the shortened money timings, must never share them with an installed Studio: it has its own name, and the
+  // production package keeps Studio's.
+  const packaged: unknown = JSON.parse(asarText(target, "package.json"));
+  const packagedName = production ? "uniquemedia-studio" : "uniquemedia-studio-e2e";
+  check(
+    `the ${production ? "production" : "E2E"} package's app name is ${packagedName}${production ? "" : ", not Studio's: its userData is its own"}`,
+    field(packaged, "name") === packagedName && (production ? field(packaged, "productName") === undefined : field(packaged, "productName") === "Studio E2E"),
+    { name: field(packaged, "name"), productName: field(packaged, "productName") },
+  );
   check("the engine is not unpacked from the asar", !existsSync(join(`${target.asar}.unpacked`, "out-studio")));
   // T7b, the face gate: neither the models nor onnxruntime-web's WASM
   // runtime are asarUnpack'd (electron-builder.studio.yml) — both must stay

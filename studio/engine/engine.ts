@@ -252,21 +252,32 @@ function messageOf(error: unknown, fallback: string): string {
 }
 
 /**
+ * Where an E2E build points a client whose mock was not asked for: a loopback port nothing listens on, so a request is refused
+ * at once. An E2E build has shortened money timings (a 15 s request timeout, a 5 s reconcile wait: money/budget.ts) and must
+ * never spend the owner's real key on the real API, which is what falling back to the real base would do (someone builds the
+ * E2E package and opens it). Fail closed: no mock, no traffic.
+ */
+export const E2E_UNROUTABLE_ORIGIN = "http://127.0.0.1:1";
+
+/**
  * The OpenRouter API base the client (T3) must use: the real one, unless this
- * is an E2E build and main asked for a mock (invariant 13). `e2e` is the
- * build flag; it is a parameter so both branches can be tested.
+ * is an E2E build (invariant 13): then the mock main asked for, and with none asked for a base that goes nowhere
+ * (`E2E_UNROUTABLE_ORIGIN`), never the real one. `e2e` is the build flag; it is a parameter so both branches can be tested.
  */
 export function resolveOpenRouterBaseUrl(requested: string | undefined, e2e: boolean): string {
-  return e2e && requested !== undefined ? requested : OPENROUTER_API_BASE;
+  if (!e2e) return OPENROUTER_API_BASE;
+  return requested ?? `${E2E_UNROUTABLE_ORIGIN}/api/v1`;
 }
 
 /**
- * The flashapi base the music client must use: the real one, unless this is an E2E build and main asked for a mock
- * (the same rule as OpenRouter's, invariant 13). A production build has `STUDIO_E2E` false, so the override is inert
- * there whatever main sends. `e2e` is a parameter so both branches can be tested.
+ * The flashapi base the music client must use: the real one, unless this is an E2E build (the same rule as OpenRouter's,
+ * invariant 13): then the mock main asked for, and with none asked for a base that goes nowhere (`E2E_UNROUTABLE_ORIGIN`),
+ * never the real one. A production build has `STUDIO_E2E` false, so the override is inert there whatever main sends.
+ * `e2e` is a parameter so both branches can be tested.
  */
 export function resolveMusicBaseUrl(requested: string | undefined, e2e: boolean): string {
-  return e2e && requested !== undefined ? requested : FLASHAPI_BASE;
+  if (!e2e) return FLASHAPI_BASE;
+  return requested ?? E2E_UNROUTABLE_ORIGIN;
 }
 
 /**

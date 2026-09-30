@@ -242,8 +242,14 @@ describe("resolveMusicBaseUrl", () => {
     expect(resolveMusicBaseUrl(undefined, false)).toBe(FLASHAPI_BASE);
   });
 
-  test("an E2E build takes the requested mock, and the real base when none is asked for", () => {
+  test("an E2E build takes the requested mock", () => {
     expect(resolveMusicBaseUrl("http://127.0.0.1:9999", true)).toBe("http://127.0.0.1:9999");
-    expect(resolveMusicBaseUrl(undefined, true)).toBe(FLASHAPI_BASE);
+  });
+
+  test("an E2E build with no mock asked for never reaches flashapi: the base goes to a loopback port nothing listens on", () => {
+    const base = resolveMusicBaseUrl(undefined, true);
+    expect(base).toBe("http://127.0.0.1:1");
+    expect(base).not.toBe(FLASHAPI_BASE);
+    expect(new URL(base).hostname).toBe("127.0.0.1");
   });
 });

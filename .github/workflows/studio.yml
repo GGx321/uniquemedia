@@ -226,7 +226,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            app=$(ls -d release-studio/e2e/mac*/Studio.app | head -n 1)
+            app=$(ls -d release-studio/e2e/mac*/*.app | head -n 1)
           else
             app=release-studio/e2e/win-unpacked
           fi

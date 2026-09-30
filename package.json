@@ -24,9 +24,9 @@
     "build:studio:e2e": "STUDIO_E2E=1 electron-vite build -c electron.studio.vite.config.ts && bun run studio/scripts/prepareFaceAssets.ts && bun run studio/scripts/prepareTextAssets.ts",
     "dist:studio": "bun run build:studio && electron-builder --config electron-builder.studio.yml",
     "dist:studio:mac": "bun run build:studio && electron-builder --config electron-builder.studio.yml --mac",
-    "dist:studio:mac:e2e": "bun run build:studio:e2e && electron-builder --config electron-builder.studio.yml --mac dir -c.directories.output=release-studio/e2e",
+    "dist:studio:mac:e2e": "bun run build:studio:e2e && electron-builder --config electron-builder.studio.yml --mac dir -c.directories.output=release-studio/e2e -c.appId=com.uniquemedia.studio.e2e -c.productName=\"Studio E2E\" -c.extraMetadata.name=uniquemedia-studio-e2e -c.extraMetadata.productName=\"Studio E2E\"",
     "dist:studio:win": "bun run build:studio && electron-builder --config electron-builder.studio.yml --win",
-    "dist:studio:win:e2e": "bun run build:studio:e2e && electron-builder --config electron-builder.studio.yml --win dir -c.directories.output=release-studio/e2e"
+    "dist:studio:win:e2e": "bun run build:studio:e2e && electron-builder --config electron-builder.studio.yml --win dir -c.directories.output=release-studio/e2e -c.appId=com.uniquemedia.studio.e2e -c.productName=\"Studio E2E\" -c.extraMetadata.name=uniquemedia-studio-e2e -c.extraMetadata.productName=\"Studio E2E\""
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",
