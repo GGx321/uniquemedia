@@ -68,7 +68,16 @@ const ALLOWED_ROOTS = [
  * port, exiting, and the platform (read by T2's ledger). Everything else —
  * `env` above all — is out, however it is spelled.
  */
-const ALLOWED_PROCESS_MEMBERS = new Set(["parentPort", "exit", "platform", "on"]);
+const ALLOWED_PROCESS_MEMBERS = new Set(["parentPort", "exit", "platform"]);
+
+/**
+ * `process.on(...)` as a whole statement, its result thrown away. `on` returns `process` itself, so any use of the result
+ * (`process.on(..).env`, `const p = process.on(..)`, an arrow that returns it) would be a way round the rule above.
+ */
+function isDiscardedProcessOnCall(access: ts.PropertyAccessExpression): boolean {
+  const call = access.parent;
+  return access.name.text === "on" && ts.isCallExpression(call) && call.expression === access && ts.isExpressionStatement(call.parent);
+}
 
 interface ModuleScan {
   imports: string[];
@@ -105,8 +114,11 @@ function scan(source: string): ModuleScan {
     } else if (ts.isIdentifier(node)) {
       const parent = node.parent;
       const allowedProcess =
-        parent !== undefined && ts.isPropertyAccessExpression(parent) && parent.expression === node && ALLOWED_PROCESS_MEMBERS.has(parent.name.text);
-      if (node.text === "process" && !allowedProcess) problems.push(`${at(node)}: process (only .parentPort, .exit, .platform, .on)`);
+        parent !== undefined &&
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === node &&
+        (ALLOWED_PROCESS_MEMBERS.has(parent.name.text) || isDiscardedProcessOnCall(parent));
+      if (node.text === "process" && !allowedProcess) problems.push(`${at(node)}: process (only .parentPort, .exit, .platform, and process.on(...) as a statement)`);
       if (node.text === "Bun") problems.push(`${at(node)}: Bun`);
       if (node.text === "require") problems.push(`${at(node)}: require`);
     } else if (ts.isStringLiteralLike(node) && node.text === "process" && !isModuleSpecifier(node)) {
@@ -194,10 +206,23 @@ describe("the checker itself catches every way to reach the environment", () => 
       "export const port = process.parentPort;",
       "export const platform = process.platform;",
       "export function stop(): never { return process.exit(1); }",
-      'export const listen = () => process.on("unhandledRejection", () => undefined);',
+      'export function listen(): void { process.on("unhandledRejection", () => undefined); }',
     ].join("\n");
     expect(problemsIn(source)).toEqual([]);
   });
+
+  // `process.on` returns `process`: only a call whose result is thrown away is allowed.
+  for (const [name, source] of [
+    ["the env read off process.on's result", 'export const key = process.on("x", () => undefined).env.OPENROUTER_API_KEY;'],
+    ["the env read off a variable holding process.on's result", 'const p = process.on("x", () => undefined);\nexport const key = p.env;'],
+    ["an arrow that returns process.on's result", 'export const listen = () => process.on("x", () => undefined);'],
+    ["process.on chained", 'process.on("x", () => undefined).on("y", () => undefined);'],
+    ["process.on taken as a value", "export const on = process.on;"],
+  ] as const) {
+    test(`flags ${name}`, () => {
+      expect(problemsIn(source)).not.toEqual([]);
+    });
+  }
 });
 
 test("the walk reaches the engine's dispatcher, the control schema, money and the contract", () => {

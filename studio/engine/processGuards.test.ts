@@ -3,18 +3,22 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describeError, installProcessGuards } from "./processGuards";
+import { expectNoKeyFragment } from "../testing/keyLeaks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
-const SECRET = "/Users/owner/library/photo.jpg sk-or-v1-not-a-real-key";
+// A key shaped like no real one, so a scan for its fragments cannot match anything else.
+const KEY = "Zq7-fake-key-M4xk-91Bd-NotReal";
+const SECRET = `/Users/owner/library/photo.jpg ${KEY}`;
 
-function rig(role: "engine" | "main", log?: (line: string) => void) {
+function rig(role: "engine" | "main", log?: (line: string) => void, onRejection?: () => void) {
   const target = new EventEmitter();
   const on = (event: "unhandledRejection" | "uncaughtException", listener: (error: unknown) => void): unknown => target.on(event, listener);
   const lines: string[] = [];
   const exits: number[] = [];
   const write = log ?? ((line: string) => void lines.push(line));
-  installProcessGuards(role === "engine" ? { on, role, log: write, exit: (code) => void exits.push(code) } : { on, role, log: write });
+  const base = { on, log: write, ...(onRejection === undefined ? {} : { onRejection }) };
+  installProcessGuards(role === "engine" ? { ...base, role, exit: (code) => void exits.push(code) } : { ...base, role });
   return { target, lines, exits };
 }
 
@@ -78,12 +82,48 @@ describe("the engine's policy", () => {
     target.emit("uncaughtException", new Error(SECRET));
     target.emit("unhandledRejection", SECRET);
     for (const line of lines) {
+      expectNoKeyFragment(line, KEY);
       expect(line).not.toContain("Users");
-      expect(line).not.toContain("sk-or");
       expect(line).not.toContain("photo.jpg");
       expect(line).not.toContain(" at ");
     }
     expect(lines).toHaveLength(3);
+  });
+});
+
+describe("telling the windows (the engine's rejection notice)", () => {
+  test("a swallowed rejection calls onRejection once, after its log line, with no argument: nothing of the error can travel", () => {
+    const order: string[] = [];
+    const calls: unknown[][] = [];
+    const { target } = rig("engine", (line) => order.push(line), (...args: unknown[]) => {
+      order.push("notice");
+      calls.push(args);
+    });
+    target.emit("unhandledRejection", new Error(SECRET));
+    expect(order).toEqual(["studio engine: an unhandled promise rejection (Error); the engine keeps running", "notice"]);
+    expect(calls).toEqual([[]]);
+  });
+
+  test("an uncaught exception does not call it: the engine exits and main's restart notice speaks", () => {
+    let told = 0;
+    const { target, exits } = rig("engine", undefined, () => void told++);
+    target.emit("uncaughtException", new Error(SECRET));
+    expect(told).toBe(0);
+    expect(exits).toEqual([1]);
+  });
+
+  test("a throwing onRejection is swallowed: the rejection stays handled", () => {
+    const { target, lines } = rig("engine", undefined, () => {
+      throw new Error("the notice broke");
+    });
+    expect(() => target.emit("unhandledRejection", new Error("boom"))).not.toThrow();
+    expect(lines).toHaveLength(1);
+  });
+
+  test("without onRejection nothing else happens", () => {
+    const { target, lines } = rig("main");
+    target.emit("unhandledRejection", new Error("boom"));
+    expect(lines).toHaveLength(1);
   });
 });
 
@@ -121,7 +161,7 @@ describe("in a real process", () => {
     expect(code).toBe(0);
     expect(stdout).toContain("still running");
     expect(stderr).toContain("studio engine: an unhandled promise rejection (Error); the engine keeps running");
-    expect(stderr).not.toContain("sk-or");
+    expectNoKeyFragment(stderr, KEY);
     expect(stderr).not.toContain("photo.jpg");
   });
 
@@ -131,7 +171,7 @@ describe("in a real process", () => {
     expect(code).toBe(1);
     expect(stdout).not.toContain("still running");
     expect(stderr).toContain("studio engine: an uncaught exception (TypeError (ERR_SOMETHING)); the engine exits so main restarts it");
-    expect(stderr).not.toContain("sk-or");
+    expectNoKeyFragment(stderr, KEY);
     expect(stderr).not.toContain("photo.jpg");
     expect(performance.now() - started).toBeLessThan(2_900);
   }, 30_000);
@@ -140,13 +180,15 @@ describe("in a real process", () => {
 describe("both entries install the guards", () => {
   const read = (path: string): string => readFileSync(join(import.meta.dirname, "..", path), "utf8");
 
-  test("the engine's entry installs them as the engine, with process.exit as its exit", () => {
-    expect(read("engine/main.ts")).toMatch(/installProcessGuards\(\{ on: \(event, listener\) => process\.on\(event, listener\), role: "engine", log: console\.error, exit: \(code\) => process\.exit\(code\) \}\);/);
+  test("the engine's entry installs them as the engine, with process.exit as its exit and the notice wired to the engine", () => {
+    const source = read("engine/main.ts");
+    expect(source).toMatch(/installProcessGuards\(\{ on: \(event, listener\) => \{ process\.on\(event, listener\); \}, role: "engine", log: console\.error, exit: \(code\) => process\.exit\(code\), onRejection: \(\) => guardNotice\.notify\(\) \}\);/);
+    expect(source).toContain("guardNotice.notify = () => engine.noteUnhandledRejection();");
   });
 
   test("main's entry installs them as main, with no exit", () => {
     const source = read("main/main.ts");
-    expect(source).toMatch(/installProcessGuards\(\{ on: \(event, listener\) => process\.on\(event, listener\), role: "main", log: console\.error \}\);/);
+    expect(source).toMatch(/installProcessGuards\(\{ on: \(event, listener\) => \{ process\.on\(event, listener\); \}, role: "main", log: console\.error \}\);/);
     expect(source).not.toMatch(/role: "main"[^)]*exit/);
   });
 });

@@ -5,6 +5,7 @@ import { Notice } from "./Notice";
 const NOTICE_TITLE: Record<NoticeCode, string> = {
   "engine-restarted": "Движок перезапускался",
   "settings-reset": "Настройки сброшены",
+  "engine-internal-error": "Внутренняя ошибка движка",
 };
 
 // engine-restarted says only what happened: whether open reserves need a
@@ -15,6 +16,7 @@ const NOTICE_TITLE: Record<NoticeCode, string> = {
 const NOTICE_TEXT: Record<NoticeCode, string> = {
   "engine-restarted": "Движок перезапускался: работа, которая шла в момент сбоя, могла быть потеряна.",
   "settings-reset": "Файл настроек не удалось прочитать, поэтому используются значения по умолчанию. Проверьте ключ и папку библиотеки в Настройках.",
+  "engine-internal-error": "Движок перехватил непредвиденную ошибку и продолжил работу. Если что-то работает не так, перезапустите Studio.",
 };
 
 /**

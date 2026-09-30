@@ -4,7 +4,9 @@
 // uncaught exception in the middle of a render.
 //
 //   unhandledRejection   logged by kind (and Node's error code), the process keeps running: a promise nobody awaited is a
-//                        bug worth a log line, not worth the engine's in-memory state or a running render.
+//                        bug worth a log line, not worth the engine's in-memory state or a running render. The engine also
+//                        raises an `engine-internal-error` notice (a count, no text) so the windows are not left in the dark;
+//                        money stays protected by the ledger's own halt, whatever the rejected work was.
 //   uncaughtException    in the ENGINE: logged, then the process exits with 1. Its state is unknown after an exception
 //                        thrown outside every handler, and main already restarts a crashed engine once (engineHost.ts),
 //                        tells the windows, and fails every waiting command. In MAIN: logged and ignored, so no dialog
@@ -20,6 +22,8 @@ interface ProcessGuardBase {
   on: (event: "unhandledRejection" | "uncaughtException", listener: (error: unknown) => void) => unknown;
   /** One line per event; it cannot fail the handler (a throwing log is swallowed). */
   log: (line: string) => void;
+  /** Called after a swallowed rejection is logged, so the windows can be told (a code and a count, never the error). A throw is swallowed like the log's. */
+  onRejection?: () => void;
 }
 
 /** The engine ends its own process on an uncaught exception; main never does, so it is given no way to. */
@@ -46,6 +50,11 @@ export function installProcessGuards(options: ProcessGuardOptions): void {
   };
   options.on("unhandledRejection", (reason) => {
     say(`studio ${options.role}: an unhandled promise rejection (${describeError(reason)}); the ${options.role} keeps running`);
+    try {
+      options.onRejection?.();
+    } catch {
+      // Telling the windows must not turn a handled rejection into another error.
+    }
   });
   options.on("uncaughtException", (error) => {
     if (options.role === "engine") {

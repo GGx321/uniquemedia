@@ -2908,6 +2908,31 @@ export class Engine {
     });
   }
 
+  /** At most one `engine.notice` per this long for swallowed rejections; the pending notice's count still moves on every one. */
+  static readonly #INTERNAL_NOTICE_EVERY_MS = 5_000;
+  #internalNoticeEmittedAt: number | null = null;
+
+  /**
+   * A promise rejection nobody handled was logged and swallowed (processGuards.ts) and the engine goes on: the windows are told,
+   * with a code and a count only (a notice never carries the error's text). One pending notice of this code, replaced and counted
+   * like main's; a burst emits one event per `#INTERNAL_NOTICE_EVERY_MS` so it cannot flood the event log.
+   */
+  noteUnhandledRejection(): void {
+    const earlier = this.#notices.findIndex((n) => n.code === "engine-internal-error");
+    const notice: EngineNotice = {
+      noticeId: this.#deps.newId(),
+      code: "engine-internal-error",
+      at: new Date(this.#deps.clock()).toISOString(),
+      count: (earlier === -1 ? 0 : (this.#notices[earlier]?.count ?? 0)) + 1,
+    };
+    if (earlier === -1) this.#notices.push(notice);
+    else this.#notices[earlier] = notice;
+    const now = this.#deps.monotonic();
+    if (this.#internalNoticeEmittedAt !== null && now - this.#internalNoticeEmittedAt < Engine.#INTERNAL_NOTICE_EVERY_MS) return;
+    this.#internalNoticeEmittedAt = now;
+    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice } });
+  }
+
   #addNotice(notice: EngineNotice): void {
     if (this.#notices.some((n) => n.noticeId === notice.noticeId)) return;
     this.#notices.push(notice);

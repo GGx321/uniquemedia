@@ -1,0 +1,72 @@
+import { describe, expect, test } from "bun:test";
+import { command, ok, startEngine, useEngineDir } from "./testing/engineHarness";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
+
+// A promise rejection nobody handled is logged and swallowed (processGuards.ts) and the engine goes on: the windows are
+// told through an `engine.notice` of code `engine-internal-error`, with a count and no text.
+
+const dir = useEngineDir("studio-engine-notices-");
+
+function noticesOf(events: () => Array<{ type: string; payload: unknown }>): unknown[] {
+  return events().flatMap((event) => (event.type === "engine.notice" && typeof event.payload === "object" && event.payload !== null && "notice" in event.payload ? [event.payload.notice] : []));
+}
+
+describe("noteUnhandledRejection", () => {
+  test("emits one engine.notice with the code and a count of 1, and no text", async () => {
+    const { engine, events } = await startEngine(dir());
+
+    engine.noteUnhandledRejection();
+
+    const [notice, ...rest] = noticesOf(events);
+    expect(rest).toEqual([]);
+    expect(notice).toEqual({ noticeId: expect.any(String), code: "engine-internal-error", at: expect.any(String), count: 1 });
+    expect(Object.keys(notice ?? {}).sort()).toEqual(["at", "code", "count", "noticeId"]); // no `detail`: nothing of the error travels
+  });
+
+  test("the notice is pending in the snapshot, so a window opened later still sees it", async () => {
+    const { engine } = await startEngine(dir());
+    engine.noteUnhandledRejection();
+
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { notices: [{ code: "engine-internal-error", count: 1 }] } });
+  });
+
+  test("a burst within five seconds is one event, and the pending notice counts every rejection, once", async () => {
+    const { engine, events } = await startEngine(dir());
+
+    for (let n = 0; n < 5; n++) engine.noteUnhandledRejection();
+
+    expect(noticesOf(events)).toHaveLength(1);
+    const snapshot = ok(await engine.handle(command("engine.snapshot")));
+    expect(snapshot).toMatchObject({ result: { notices: [{ code: "engine-internal-error", count: 5 }] } });
+  });
+
+  test("five seconds on, the next rejection is announced again, with the running count and a fresh id", async () => {
+    let mono = 0;
+    const { engine, events } = await startEngine(dir(), { deps: { monotonic: () => mono } });
+
+    engine.noteUnhandledRejection();
+    mono = 4_999;
+    engine.noteUnhandledRejection(); // still inside the window: counted, not announced
+    mono = 5_000;
+    engine.noteUnhandledRejection();
+
+    const notices = noticesOf(events);
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toMatchObject({ count: 1 });
+    expect(notices[1]).toMatchObject({ count: 3 });
+    expect(new Set(notices.map((n) => (typeof n === "object" && n !== null && "noticeId" in n ? n.noticeId : null))).size).toBe(2);
+  });
+
+  test("it sits beside main's notices: one pending entry per code", async () => {
+    const restart = { noticeId: "notice-0002", code: "engine-restarted" as const, detail: "the engine exited unexpectedly (code 9)", at: "2026-09-24T11:59:00.000Z", count: 1 };
+    const { engine } = await startEngine(dir(), { init: { notices: [restart] } });
+
+    engine.noteUnhandledRejection();
+    engine.noteUnhandledRejection();
+
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({
+      result: { notices: [restart, { code: "engine-internal-error", count: 2 }] },
+    });
+  });
+});

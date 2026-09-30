@@ -269,13 +269,14 @@ export const ReconcileResult = z.discriminatedUnion("status", [
 /**
  * Something the windows must be told that is not an error of any command:
  * - `engine-restarted`: the engine crashed and was restarted (work in flight was lost);
- * - `settings-reset`: settings.json could not be read and the defaults are in use.
+ * - `settings-reset`: settings.json could not be read and the defaults are in use;
+ * - `engine-internal-error`: a promise rejection nobody handled was swallowed and the engine went on (no text, only the count).
  * Pending notices are part of the snapshot, so a window opened later still
  * shows them. A notice that happens again replaces the earlier one of its
  * kind: `count` says how often it happened this session, and the id, the
  * time and `detail` (diagnostics, never user text) are the latest one's.
  */
-export const NoticeCode = z.enum(["engine-restarted", "settings-reset"]);
+export const NoticeCode = z.enum(["engine-restarted", "settings-reset", "engine-internal-error"]);
 
 export const EngineNotice = z.strictObject({
   noticeId: Id,

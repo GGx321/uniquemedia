@@ -33,7 +33,7 @@ import { handleSettingsCommand, reconcileLibraryPath } from "./settingsFlow";
 import { defaultLibraryPath, defaultSettings, SettingsStore } from "./settingsStore";
 
 // An error nobody caught is logged by kind and main goes on: no dialog, and a render or the engine are not taken down with it.
-installProcessGuards({ on: (event, listener) => process.on(event, listener), role: "main", log: console.error });
+installProcessGuards({ on: (event, listener) => { process.on(event, listener); }, role: "main", log: console.error });
 
 // A production build keeps no debugging door open, however it is launched:
 // DevTools are off (see createWindow), --inspect is disabled by a fuse, and
