@@ -71,6 +71,57 @@ describe("the header", () => {
     await waitFor(() => expect(within(header()).getByText(/^черновик · сохранён \d\d:\d\d$/)).toBeDefined());
   });
 
+  test("a name the draft cannot take is refused with the reason, and the field stays open", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    const field = screen.getByRole("textbox", { name: "Название черновика" });
+    fireEvent.change(field, { target: { value: "кафе\tи город" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    expect(screen.getByText("В названии не может быть служебных символов (табуляции и других) — уберите их.")).toBeDefined();
+    expect(screen.getByRole("textbox", { name: "Название черновика" }).getAttribute("aria-invalid")).toBe("true");
+    expect(callsOf(engine, "montages.save")).toHaveLength(0);
+  });
+
+  test("Enter while a word is still being composed (an input method) does not rename yet", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    const field = screen.getByRole("textbox", { name: "Название черновика" });
+    fireEvent.change(field, { target: { value: "утро" } });
+    fireEvent.keyDown(field, { key: "Enter", isComposing: true });
+    expect(screen.getByRole("textbox", { name: "Название черновика" })).toBeDefined();
+    expect(callsOf(engine, "montages.save")).toHaveLength(0);
+  });
+
+  test("the late echo of an older save of this window changes nothing on screen", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    // The first rename's event is held back; the second one's event makes the store catch up, so the first echo
+    // arrives late, after both answers.
+    engine.setDelivery(false);
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "первое" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    await screen.findByRole("heading", { level: 1, name: "Mia · «первое»" });
+    await waitFor(() => expect(within(header()).getByText(/^черновик · сохранён/)).toBeDefined());
+    engine.setDelivery(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "второе" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    await waitFor(() => expect(callsOf(engine, "engine.events").length).toBeGreaterThan(0));
+    await flush();
+    await flush();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Mia · «второе»" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
+  });
+
   test("the echo of this window's own save is not an undo step", async () => {
     const { client } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1]);

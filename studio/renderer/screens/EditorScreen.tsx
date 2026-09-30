@@ -75,8 +75,11 @@ function EditorHeader({
     () => session.state,
   );
   const [renaming, setRenaming] = useState(false);
+  /** Why the typed name was refused; the field stays open with it. */
+  const [nameError, setNameError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const whyId = useId();
+  const nameErrorId = useId();
   const gone = state.save.kind === "gone";
 
   useEffect(() => {
@@ -85,8 +88,18 @@ function EditorHeader({
 
   function commitName(): void {
     const value = input.current?.value ?? "";
+    // The only name the contract refuses that the field lets through: one with a control character (a pasted tab).
+    if (!session.rename(value)) {
+      setNameError("В названии не может быть служебных символов (табуляции и других) — уберите их.");
+      return;
+    }
+    setNameError(null);
     setRenaming(false);
-    session.rename(value);
+  }
+
+  function cancelRename(): void {
+    setNameError(null);
+    setRenaming(false);
   }
 
   return (
@@ -96,19 +109,29 @@ function EditorHeader({
       </button>
       <div className="ed-title">
         {renaming ? (
-          <input
-            ref={input}
-            className="in in-s ed-title-input"
-            aria-label="Название черновика"
-            defaultValue={state.name ?? ""}
-            placeholder="без названия"
-            maxLength={80}
-            onBlur={commitName}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitName();
-              if (e.key === "Escape") setRenaming(false);
-            }}
-          />
+          <span className="ed-title-edit">
+            <input
+              ref={input}
+              className="in in-s ed-title-input"
+              aria-label="Название черновика"
+              aria-invalid={nameError !== null}
+              aria-describedby={nameError !== null ? nameErrorId : undefined}
+              defaultValue={state.name ?? ""}
+              placeholder="без названия"
+              maxLength={80}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                // Enter that ends an input method's composition belongs to the composition, not to the rename.
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) commitName();
+                if (e.key === "Escape") cancelRename();
+              }}
+            />
+            {nameError !== null && (
+              <span id={nameErrorId} className="ed-title-error" role="alert">
+                {nameError}
+              </span>
+            )}
+          </span>
         ) : (
           <span className="ed-title-row">
             <ScreenTitle>{draftTitle(title.avatar, state.name)}</ScreenTitle>
@@ -329,8 +352,10 @@ function DraftEditor({
   // refetches are what clear it (the 3d.1a review note for 3d.2).
   // Each answer is also the draft as the engine holds it now: it goes through the same echo / adopt / keep rules as
   // a montage.changed, so a save this window missed (a resync gap, a hidden window) is picked up here.
+  const gone = state.save.kind === "gone";
+  const savedAt = state.saved.updatedAt;
   useEffect(() => {
-    if (state.save.kind === "gone") return;
+    if (gone) return;
     let alive = true;
     const after = renderKey;
     void client.request("montages.get", { montageId }).then((reply) => {
@@ -343,8 +368,9 @@ function DraftEditor({
     return () => {
       alive = false;
     };
-    // `state.saved` moves on each acknowledged save; `avatar` on each avatar.changed.
-  }, [client, session, montageId, avatarId, state.saved, avatar, focusTick, renderKey, state.save.kind === "gone"]);
+    // `savedAt` moves when the engine's state of the draft does (not when the same state is heard again, which would
+    // read it again in a loop); `avatar` on each avatar.changed.
+  }, [client, session, montageId, avatarId, savedAt, avatar, focusTick, renderKey, gone]);
 
   // The avatar's photos: the bin, and why the engine refuses a photo.
   useEffect(() => {
@@ -423,7 +449,6 @@ function DraftEditor({
     }
   }
 
-  const gone = state.save.kind === "gone";
   return (
     <div className="editor">
       <EditorHeader
