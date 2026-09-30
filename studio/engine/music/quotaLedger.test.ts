@@ -433,24 +433,40 @@ describe("summarize", () => {
   });
 });
 
+// Review 3c.4 (open question): a clock that steps back between the service's read and the ledger's own read must not make
+// the write throw and DROP a floor or a 401. An `at` after the ledger's clock is written as the clock reads.
 describe("an explicit `at` is for lines the service held, and is never in the future", () => {
-  test("recordResult refuses an `at` after the ledger's clock and writes nothing", async () => {
-    await expect(ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "ok", at: NOW + 1 })).rejects.toBeInstanceOf(TypeError);
-    await expect(readFile(path, "utf8")).rejects.toBeDefined();
+  test("recordResult with an `at` after the ledger's clock writes the line dated as the clock reads", async () => {
+    await ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "http-error", status: 429, remaining: 0, at: NOW + 1 });
+    expect(JSON.parse((await fileLines())[0] ?? "")).toMatchObject({ kind: "result", at: NOW, remaining: 0 });
   });
 
-  test("recordKeyChange refuses an `at` after the ledger's clock and writes nothing", async () => {
-    await expect(ledger().recordKeyChange(LAST4, NOW + 1)).rejects.toBeInstanceOf(TypeError);
-    await expect(readFile(path, "utf8")).rejects.toBeDefined();
+  test("recordKeyChange with an `at` after the ledger's clock is dated as the clock reads too", async () => {
+    await ledger().recordKeyChange(LAST4, NOW + 1);
+    expect(JSON.parse((await fileLines())[0] ?? "")).toMatchObject({ kind: "key", at: NOW });
   });
 
-  test("an `at` equal to now is written", async () => {
+  test("an `at` equal to now, or before it, is written as given", async () => {
     await ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "ok", at: NOW });
-    expect(JSON.parse((await fileLines())[0] ?? "")).toMatchObject({ kind: "result", at: NOW });
+    await ledger().recordResult({ id: "refresh-0002", key: LAST4, outcome: "ok", at: NOW - HOUR_MS });
+    const lines = (await fileLines()).map((l) => JSON.parse(l) as { at: number });
+    expect(lines.map((l) => l.at)).toEqual([NOW, NOW - HOUR_MS]);
   });
 
-  test("a held floor cannot be pushed into the future by a later `at`: a floor only ever counts from a moment that has passed", async () => {
-    await expect(ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "http-error", status: 429, remaining: 0, at: NOW + 30 * DAY })).rejects.toBeInstanceOf(TypeError);
+  test("a held floor cannot be pushed into the future by a later `at`: it counts from now at the latest", async () => {
+    await ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "http-error", status: 429, remaining: 0, at: NOW + 30 * DAY });
+    const summary = await ledger().summary();
+    expect(summary.refusal).toBe("floor");
+    expect(summary.nextFreeAt).toBe(NOW + QUOTA_WINDOW_MS);
+  });
+
+  test("the line is not dropped when the clock steps back between two reads of it", async () => {
+    // The service read NOW; by the time the ledger reads its own clock, it says an hour earlier.
+    const stepped = new QuotaLedger(path, { clock: () => NOW - HOUR_MS });
+    await stepped.recordResult({ id: "refresh-0001", key: LAST4, outcome: "rejected", status: 401, at: NOW });
+    const lines = (await fileLines()).map((l) => JSON.parse(l) as { kind: string; outcome: string; at: number });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ kind: "result", outcome: "rejected", at: NOW - HOUR_MS });
   });
 });
 

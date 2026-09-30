@@ -198,8 +198,13 @@ export class QuotaLedger {
     }
   }
 
-  #assertNotFuture(at: number | undefined): void {
-    if (at !== undefined && at > this.#clock()) throw new TypeError("the quota log takes a held line's own time, never one after now");
+  /**
+   * A held line's own time, never after the ledger's clock: a floor only counts from a moment that has passed, and a
+   * clock that stepped back between the caller's read and this one must not make the write throw and lose the line.
+   */
+  #clampAt(at: number | undefined): number {
+    const now = this.#clock();
+    return at === undefined ? now : Math.min(at, now);
   }
 
   #exclusive<T>(task: () => Promise<T>): Promise<T> {
@@ -239,19 +244,18 @@ export class QuotaLedger {
 
   /**
    * What came back for `id`: its outcome, status and the server's own figures. Never a body. `at` is for a line the
-   * service held and writes later (the moment the answer came); it is never after the ledger's own clock, so no caller
+   * service held and writes later (the moment the answer came); it is clamped to the ledger's own clock, so no caller
    * can date a floor into the future.
    */
   async recordResult(input: { id: string; key: string; outcome: QuotaOutcome; status?: number; remaining?: number | null; limit?: number | null; serverAt?: number; at?: number }): Promise<void> {
     assertKeyTag(input.key);
-    this.#assertNotFuture(input.at);
     return await this.#exclusive(() =>
       this.#append({
         v: 1,
         kind: "result",
         id: input.id,
         // A held line (see the service) keeps the moment its answer came, so the floor's 31 days count from then.
-        at: input.at ?? this.#clock(),
+        at: this.#clampAt(input.at),
         key: input.key,
         outcome: input.outcome,
         ...(input.status === undefined ? {} : { status: input.status }),
@@ -265,7 +269,6 @@ export class QuotaLedger {
   /** The owner stored (`last4`) or cleared (null) the key: an older 401 no longer applies to it. */
   async recordKeyChange(key: string | null, at?: number): Promise<void> {
     assertKeyTag(key);
-    this.#assertNotFuture(at);
-    return await this.#exclusive(() => this.#append({ v: 1, kind: "key", at: at ?? this.#clock(), key }));
+    return await this.#exclusive(() => this.#append({ v: 1, kind: "key", at: this.#clampAt(at), key }));
   }
 }
