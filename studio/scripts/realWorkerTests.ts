@@ -30,12 +30,32 @@
  * never retried into a pass. Each retry prints a `::warning::` annotation. An attempt
  * that runs past its own time bound is killed and fails at once too: a hang is
  * not a crash. Each attempt has that bound, so the step's `timeout-minutes` is
- * (attempts x bound) plus slack, and a hang still ends in minutes.
+ * (shards x attempts x bound) plus slack, and a hang still ends in minutes.
+ *
+ * Why the main suite is sharded (`--shards=N`, before `--suite`): the per-attempt bound exists to kill a HUNG
+ * Bun, not a slow legitimate run, and the suite on Windows grows with every stage (7.5, 7.6, 9.9 and over 10
+ * minutes in four consecutive CI runs; the last one was killed by a 10-minute bound). One bound for the whole
+ * suite would have to grow with it, and one Bun crash would rerun all of it. So the test files are found, sorted
+ * and dealt round-robin into N groups (the heavy real-ffmpeg files sit next to each other in the sort order,
+ * so round-robin spreads them), each group is its own `bun test` process with its own bound and its own
+ * crash retry, and a retry reruns one shard. Shards run one after another, never in parallel (the suite has
+ * timing-sensitive tests). Every shard runs even after one has failed, so a red run shows all its failures;
+ * the exit code is the first failing shard's. In this mode the arguments after `--suite` are flags, written as
+ * `--flag=value` (a value in its own argument would be read as a path), and paths to test directories or files.
  */
+import { existsSync, statSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
+
 export const REAL_WORKER_TEST_FILE = "studio/engine/face/worker/workerGate.real.test.ts";
 export const MAX_ATTEMPTS = 3;
-/** One attempt's bound. A suite that takes longer is hung, not slow (the main suite runs in a few minutes). */
-export const ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000;
+/**
+ * One attempt's bound for a suite shard. Measured: the whole suite takes 7.5 to over 10 minutes on Windows CI
+ * (the slowest runner), so a third of it is 2.5 to 4 minutes and this bound is about four times the slowest shard
+ * seen. Raise the `--shards=` count in package.json before raising this: a shard past it is treated as hung and fails at once.
+ */
+export const ATTEMPT_TIMEOUT_MS = 15 * 60 * 1000;
+/** The real-worker file alone takes seconds (7 to 10 s on CI): a bound of three minutes is a hang. */
+export const REAL_WORKER_ATTEMPT_TIMEOUT_MS = 3 * 60 * 1000;
 
 const ANSI = /\u001b\[[0-9;]*m/g;
 
@@ -86,9 +106,12 @@ export interface TestTarget {
   realWorker: boolean;
   /** Retry only the known worker-teardown crashes (the canary), not any Bun crash. */
   knownCrashesOnly: boolean;
+  /** Split the suite's test files into this many `bun test` processes; 1 hands `testArgs` to one process as they are. */
+  shards: number;
 }
 
-const USAGE = "usage: realWorkerTests.ts [--known-crashes-only]   (the real-worker file)  |  realWorkerTests.ts [--known-crashes-only] --suite <bun test arguments...>";
+const USAGE =
+  "usage: realWorkerTests.ts [--known-crashes-only]   (the real-worker file)  |  realWorkerTests.ts [--known-crashes-only] [--shards=N] --suite <bun test arguments...>";
 
 /**
  * What to hand to `bun test`. No mode argument: the real-worker file. `--suite <args...>`: exactly those `bun test`
@@ -97,11 +120,66 @@ const USAGE = "usage: realWorkerTests.ts [--known-crashes-only]   (the real-work
  * `--known-crashes-only` after `--suite` (which bun would receive, not this script) is refused too.
  */
 export function testTarget(argv: readonly string[]): TestTarget {
-  const knownCrashesOnly = argv[0] === "--known-crashes-only";
-  const rest = knownCrashesOnly ? argv.slice(1) : argv;
-  if (rest.length === 0) return { testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly };
-  if (rest[0] !== "--suite" || rest.length < 2 || rest.includes("--known-crashes-only")) throw new Error(USAGE);
-  return { testArgs: rest.slice(1), realWorker: false, knownCrashesOnly };
+  let rest = argv;
+  let knownCrashesOnly = false;
+  let shards = 1;
+  let shardsGiven = false;
+  // Our own options come first, in either order, each at most once.
+  for (;;) {
+    const head = rest[0];
+    if (head === "--known-crashes-only" && !knownCrashesOnly) knownCrashesOnly = true;
+    else if (head !== undefined && /^--shards=/.test(head) && !shardsGiven) {
+      const count = /^--shards=([1-9]\d?)$/.exec(head)?.[1];
+      if (count === undefined) throw new Error(`${USAGE}\n--shards takes a whole number from 1 to 99`);
+      shards = Number(count);
+      shardsGiven = true;
+    } else break;
+    rest = rest.slice(1);
+  }
+  if (rest.length === 0 && !shardsGiven) return { testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly, shards: 1 };
+  if (rest[0] !== "--suite" || rest.length < 2 || rest.includes("--known-crashes-only") || rest.some((a) => a.startsWith("--shards"))) throw new Error(USAGE);
+  return { testArgs: rest.slice(1), realWorker: false, knownCrashesOnly, shards };
+}
+
+/** The file names `bun test` picks up on its own: `*.test.*`, `*_test.*`, `*.spec.*`, `*_spec.*` in a JS or TS extension. */
+const TEST_FILE_GLOB = "**/*{.test,_test,.spec,_spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}";
+
+/**
+ * The test files `bun test` would run for these paths (directories, searched without node_modules, or files),
+ * sorted, as `./`-prefixed forward-slash paths that `bun test` reads as paths, not name filters. A path that
+ * does not exist, or a set of paths with no test file at all, throws: sharding must never quietly run nothing.
+ */
+export async function listTestFiles(paths: readonly string[], cwd: string): Promise<string[]> {
+  const found = new Set<string>();
+  for (const path of paths) {
+    const absolute = resolve(cwd, path);
+    if (!existsSync(absolute)) throw new Error(`realWorkerTests: no such test path: ${path}`);
+    if (statSync(absolute).isFile()) {
+      found.add(relative(cwd, absolute));
+      continue;
+    }
+    for await (const file of new Bun.Glob(TEST_FILE_GLOB).scan({ cwd: absolute, onlyFiles: true })) {
+      if (file.split(/[\\/]/).includes("node_modules")) continue;
+      found.add(relative(cwd, join(absolute, file)));
+    }
+  }
+  if (found.size === 0) throw new Error(`realWorkerTests: no test files under ${paths.join(" ")}`);
+  return [...found].map((file) => `./${file.split(sep).join("/")}`).sort();
+}
+
+/** Deals `files` round-robin into `count` groups, none empty (there are never more groups than files). */
+export function shardFiles(files: readonly string[], count: number): string[][] {
+  const groups: string[][] = Array.from({ length: Math.min(count, files.length) }, () => []);
+  files.forEach((file, index) => groups[index % groups.length]?.push(file));
+  return groups;
+}
+
+/** The `bun test` argument lists of a run: the arguments as they are for one shard, otherwise one list per group of files (the flags, then its files). */
+export async function shardedTestArgs(testArgs: readonly string[], shards: number, cwd: string): Promise<string[][]> {
+  if (shards <= 1) return [[...testArgs]];
+  const flags = testArgs.filter((arg) => arg.startsWith("-"));
+  const paths = testArgs.filter((arg) => !arg.startsWith("-"));
+  return shardFiles(await listTestFiles(paths, cwd), shards).map((group) => [...flags, ...group]);
 }
 
 export interface AttemptResult {
@@ -184,19 +262,27 @@ export async function runOnce(options: RunOnceOptions): Promise<AttemptResult> {
 
 if (import.meta.main) {
   let target: TestTarget;
+  let plan: string[][];
   try {
     target = testTarget(process.argv.slice(2));
+    plan = await shardedTestArgs(target.testArgs, target.shards, process.cwd());
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(2);
   }
-  const run = () =>
-    runOnce({
-      command: [process.execPath, "--no-env-file", "test", ...target.testArgs],
-      env: childEnv(process.env, { realWorker: target.realWorker }),
-      timeoutMs: ATTEMPT_TIMEOUT_MS,
-      graceMs: 2_000,
-      echo: true,
-    });
-  process.exit(await runWithCrashRetry(run, target.knownCrashesOnly ? { signatures: WORKER_TEARDOWN_CRASHES } : {}));
+  let exitCode = 0;
+  for (const [index, args] of plan.entries()) {
+    if (plan.length > 1) console.log(`\n== shard ${index + 1} of ${plan.length}: ${args.filter((a) => !a.startsWith("-")).length} test files ==`);
+    const run = () =>
+      runOnce({
+        command: [process.execPath, "--no-env-file", "test", ...args],
+        env: childEnv(process.env, { realWorker: target.realWorker }),
+        timeoutMs: target.realWorker ? REAL_WORKER_ATTEMPT_TIMEOUT_MS : ATTEMPT_TIMEOUT_MS,
+        graceMs: 2_000,
+        echo: true,
+      });
+    const code = await runWithCrashRetry(run, target.knownCrashesOnly ? { signatures: WORKER_TEARDOWN_CRASHES } : {});
+    if (code !== 0 && exitCode === 0) exitCode = code;
+  }
+  process.exit(exitCode);
 }

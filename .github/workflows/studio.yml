@@ -112,9 +112,13 @@ jobs:
       # AbortSignal.timeout() timer caused here — fixed by timeoutSignal.ts's
       # ref'd replacement) fails in minutes, not by holding a runner for
       # hours until GitHub's own job-level limit kicks in: each attempt is
-      # killed after 10 minutes by the script itself (a hang is never
-      # retried), and this step's limit is the three attempts it may take
-      # plus slack.
+      # killed after 15 minutes by the script itself (a hang is never
+      # retried), and this step's limit is the bound of every attempt it may
+      # take (3 shards x 3 attempts x 15 minutes) plus slack. The suite runs
+      # as 3 shards, each its own bun process with its own bound and retry
+      # (see realWorkerTests.ts): Windows needs 7.5 to 10+ minutes for all of
+      # it, and it grows, so one bound for the whole suite would have to keep
+      # growing too.
       #
       # Run through studio/scripts/realWorkerTests.ts: Bun itself segfaults
       # while tearing down a terminated WASM worker (right after
@@ -124,7 +128,7 @@ jobs:
       # a load error or a hang is never retried), and prints a ::warning::
       # on every retry.
       - run: bun run test:studio:suite ./studio
-        timeout-minutes: 35
+        timeout-minutes: 150
       # T7c: the real face worker tests (real models, a worker terminated
       # mid-WASM) run alone: Bun itself segfaults ~2% of the time tearing down
       # such a worker, so the file skips itself in the run above and this step
@@ -313,7 +317,7 @@ jobs:
       # `:canary` scripts pass --known-crashes-only). Every retry, here and in the build job, is printed as a
       # ::warning:: annotation so the crash rate stays visible.
       - run: bun run test:studio:suite:canary ./studio --randomize
-        timeout-minutes: 35
+        timeout-minutes: 150
       # Same alone-and-retry step as the build job's (T7c), with the same narrowed retry.
       - name: Real face worker tests
         run: bun run test:studio:real-worker:canary

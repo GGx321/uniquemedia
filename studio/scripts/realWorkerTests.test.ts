@@ -1,5 +1,22 @@
-import { describe, expect, test } from "bun:test";
-import { childEnv, isBunCrashOnly, MAX_ATTEMPTS, REAL_WORKER_TEST_FILE, runOnce, runWithCrashRetry, testTarget, WORKER_TEARDOWN_CRASHES } from "./realWorkerTests";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  ATTEMPT_TIMEOUT_MS,
+  childEnv,
+  isBunCrashOnly,
+  listTestFiles,
+  MAX_ATTEMPTS,
+  REAL_WORKER_ATTEMPT_TIMEOUT_MS,
+  REAL_WORKER_TEST_FILE,
+  runOnce,
+  runWithCrashRetry,
+  shardedTestArgs,
+  shardFiles,
+  testTarget,
+  WORKER_TEARDOWN_CRASHES,
+} from "./realWorkerTests";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -153,15 +170,15 @@ describe("isBunCrashOnly with a set of known crash signatures", () => {
 
 describe("testTarget", () => {
   test("with no arguments runs the real-worker file with the real-worker tests on", () => {
-    expect(testTarget([])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: false });
+    expect(testTarget([])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: false, shards: 1 });
   });
 
   test("--suite runs exactly the bun test arguments after it, real-worker tests off, any crash retried", () => {
-    expect(testTarget(["--suite", "./studio", "--randomize"])).toEqual({ testArgs: ["./studio", "--randomize"], realWorker: false, knownCrashesOnly: false });
+    expect(testTarget(["--suite", "./studio", "--randomize"])).toEqual({ testArgs: ["./studio", "--randomize"], realWorker: false, knownCrashesOnly: false, shards: 1 });
   });
 
   test("--known-crashes-only before --suite narrows the retry to the worker-teardown crashes", () => {
-    expect(testTarget(["--known-crashes-only", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], realWorker: false, knownCrashesOnly: true });
+    expect(testTarget(["--known-crashes-only", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], realWorker: false, knownCrashesOnly: true, shards: 1 });
   });
 
   test("an argument that is not a mode is refused, not silently turned into a different run", () => {
@@ -174,12 +191,139 @@ describe("testTarget", () => {
   });
 
   test("--known-crashes-only alone narrows the retry of the real-worker file too", () => {
-    expect(testTarget(["--known-crashes-only"])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: true });
+    expect(testTarget(["--known-crashes-only"])).toEqual({ testArgs: [REAL_WORKER_TEST_FILE], realWorker: true, knownCrashesOnly: true, shards: 1 });
   });
 
   test("--known-crashes-only among the bun test arguments after --suite is refused: it would be handed to bun, not read here", () => {
     expect(() => testTarget(["--suite", "./studio", "--known-crashes-only"])).toThrow(/usage/);
     expect(() => testTarget(["--known-crashes-only", "--suite", "./studio", "--known-crashes-only"])).toThrow(/usage/);
+  });
+});
+
+describe("testTarget with --shards", () => {
+  test("--shards=N before --suite splits the suite, in either order with --known-crashes-only", () => {
+    expect(testTarget(["--shards=3", "--suite", "./studio", "--randomize"])).toEqual({ testArgs: ["./studio", "--randomize"], realWorker: false, knownCrashesOnly: false, shards: 3 });
+    expect(testTarget(["--known-crashes-only", "--shards=3", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], realWorker: false, knownCrashesOnly: true, shards: 3 });
+    expect(testTarget(["--shards=3", "--known-crashes-only", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], realWorker: false, knownCrashesOnly: true, shards: 3 });
+  });
+
+  test("a shard count that is not a whole number from 1 to 99 is refused", () => {
+    for (const bad of ["--shards=0", "--shards=", "--shards=x", "--shards=-1", "--shards=2.5", "--shards=100", "--shards"]) {
+      expect(() => testTarget([bad, "--suite", "./studio"])).toThrow(/usage/);
+    }
+  });
+
+  test("--shards without --suite is refused: the real-worker file is one file", () => {
+    expect(() => testTarget(["--shards=3"])).toThrow(/usage/);
+  });
+
+  test("a second --shards, or one after --suite (bun would receive it), is refused", () => {
+    expect(() => testTarget(["--shards=2", "--shards=3", "--suite", "./studio"])).toThrow(/usage/);
+    expect(() => testTarget(["--suite", "./studio", "--shards=3"])).toThrow(/usage/);
+  });
+});
+
+describe("sharding the suite", () => {
+  const scratch: string[] = [];
+  afterEach(async () => {
+    for (const dir of scratch.splice(0)) await rm(dir, { recursive: true, force: true });
+  });
+
+  async function tree(files: readonly string[]): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "studio-shards-"));
+    scratch.push(root);
+    for (const file of files) {
+      await mkdir(join(root, file, ".."), { recursive: true });
+      await writeFile(join(root, file), "");
+    }
+    return root;
+  }
+
+  test("listTestFiles finds what bun test would run, sorted, as ./ paths, and not node_modules or node-test files", async () => {
+    const root = await tree([
+      "studio/b/two.test.ts",
+      "studio/a/one.test.tsx",
+      "studio/a/one.spec.ts",
+      "studio/a/snake_test.ts",
+      "studio/a/snake_spec.js",
+      "studio/a/helper.ts",
+      "studio/a/x.real.node-test.ts",
+      "studio/a/notatest.ts",
+      "studio/node_modules/dep/dep.test.ts",
+    ]);
+    expect(await listTestFiles(["studio"], root)).toEqual([
+      "./studio/a/one.spec.ts",
+      "./studio/a/one.test.tsx",
+      "./studio/a/snake_spec.js",
+      "./studio/a/snake_test.ts",
+      "./studio/b/two.test.ts",
+    ]);
+  });
+
+  test("listTestFiles takes a file path as it is, and joins paths without repeating a file", async () => {
+    const root = await tree(["studio/a/one.test.ts", "studio/b/two.test.ts"]);
+    expect(await listTestFiles(["studio/a", "studio/a/one.test.ts", "studio/b"], root)).toEqual(["./studio/a/one.test.ts", "./studio/b/two.test.ts"]);
+  });
+
+  test("listTestFiles refuses a missing path and a tree with no test files, so sharding never quietly runs nothing", async () => {
+    const root = await tree(["studio/a/helper.ts"]);
+    await expect(listTestFiles(["nope"], root)).rejects.toThrow(/no such test path/);
+    await expect(listTestFiles(["studio"], root)).rejects.toThrow(/no test files/);
+  });
+
+  test("shardFiles puts every file in exactly one group, spreads neighbours apart, and leaves no group empty", () => {
+    const files = Array.from({ length: 10 }, (_, i) => `f${i}`);
+    const groups = shardFiles(files, 3);
+    expect(groups).toEqual([
+      ["f0", "f3", "f6", "f9"],
+      ["f1", "f4", "f7"],
+      ["f2", "f5", "f8"],
+    ]);
+    expect(groups.flat().sort()).toEqual([...files].sort());
+    expect(shardFiles(["a", "b"], 5)).toEqual([["a"], ["b"]]);
+  });
+
+  test("shardedTestArgs with one shard hands the arguments over unchanged, with no file search", async () => {
+    expect(await shardedTestArgs(["./studio", "--randomize"], 1, "/nowhere")).toEqual([["./studio", "--randomize"]]);
+  });
+
+  test("shardedTestArgs gives every shard the flags and its own files, and together the shards cover the suite", async () => {
+    const root = await tree(["studio/a.test.ts", "studio/b.test.ts", "studio/c.test.ts", "studio/d.test.ts"]);
+    const plan = await shardedTestArgs(["./studio", "--randomize", "--timeout=90000"], 2, root);
+    expect(plan).toEqual([
+      ["--randomize", "--timeout=90000", "./studio/a.test.ts", "./studio/c.test.ts"],
+      ["--randomize", "--timeout=90000", "./studio/b.test.ts", "./studio/d.test.ts"],
+    ]);
+  });
+
+  test("shardedTestArgs refuses a flag value in its own argument: it would be read as a missing path", async () => {
+    const root = await tree(["studio/a.test.ts"]);
+    await expect(shardedTestArgs(["./studio", "--timeout", "90000"], 2, root)).rejects.toThrow(/no such test path/);
+  });
+});
+
+describe("the bounds", () => {
+  const ROOT = join(import.meta.dir, "..", "..");
+
+  // Windows CI takes 7.5 to over 10 minutes for the whole suite. One of three shards is a third of that, and a shard
+  // that takes more than the bound is hung. A hang must still end: the bound is finite and the step's limit covers every retry.
+  test("a shard's bound is finite and at least twice a third of the slowest whole suite seen on Windows (10 minutes), and the real-worker file's is short", () => {
+    expect(ATTEMPT_TIMEOUT_MS).toBeGreaterThanOrEqual((2 * 10 * 60 * 1000) / 3);
+    expect(ATTEMPT_TIMEOUT_MS).toBeLessThanOrEqual(30 * 60 * 1000);
+    expect(REAL_WORKER_ATTEMPT_TIMEOUT_MS).toBeLessThan(ATTEMPT_TIMEOUT_MS);
+  });
+
+  test("each workflow step that runs the sharded suite has a timeout-minutes above shards x attempts x bound, and every suite script shards", async () => {
+    const pkg: unknown = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
+    const scripts = (pkg as { scripts: Record<string, string> }).scripts;
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    for (const name of ["test:studio:suite", "test:studio:suite:canary"]) {
+      const shards = Number(/--shards=(\d+)/.exec(scripts[name] ?? "")?.[1]);
+      expect(shards).toBeGreaterThan(1);
+      const step = new RegExp(`run: bun run ${name} .*\\n\\s+timeout-minutes: (\\d+)`).exec(workflow);
+      expect(step).not.toBeNull();
+      expect(Number(step?.[1])).toBeGreaterThan((shards * MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
+    }
   });
 });
 
