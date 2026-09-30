@@ -171,18 +171,67 @@ describe("a preview", () => {
 });
 
 describe("the files it keeps", () => {
-  test("holds at most maxFiles previews, dropping the oldest", async () => {
+  test("holds at most maxFiles previews of one layer, dropping the oldest", async () => {
     const dir = await scratch();
     const { gate, calls } = scriptedGate();
     const svc = service(gate, dir, { maxFiles: 3 });
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) {
-      const pending = svc.preview(layer({ layerId: `layer-0000000${i}` }));
+      const pending = svc.preview(layer({ layerId: "layer-00000001" }));
       await tick();
       calls[i]?.settle(captioned());
       ids.push((await pending).previewId);
     }
     expect((await readdir(dir)).sort()).toEqual(ids.slice(2).map((id) => `${id}.png`).sort());
+  });
+
+  /** Draws one preview of `layerId` and returns its id. */
+  async function draw(svc: ReturnType<typeof service>, calls: Call[], layerId: string): Promise<string> {
+    const index = calls.length;
+    const pending = svc.preview(layer({ layerId }));
+    await tick();
+    calls[index]?.settle(captioned());
+    return (await pending).previewId;
+  }
+
+  test("never evicts the newest preview of a layer: dragging one layer's size does not take the others' pictures away", async () => {
+    const dir = await scratch();
+    const { gate, calls } = scriptedGate();
+    const svc = service(gate, dir, { maxFiles: 4 });
+    const others = [await draw(svc, calls, "layer-0000000b"), await draw(svc, calls, "layer-0000000c"), await draw(svc, calls, "layer-0000000d")];
+    let latest = "";
+    for (let i = 0; i < 12; i++) latest = await draw(svc, calls, "layer-0000000a");
+    const kept = (await readdir(dir)).sort();
+    expect(kept).toContain(`${latest}.png`);
+    for (const id of others) expect(kept).toContain(`${id}.png`);
+    expect(kept.length).toBeLessThanOrEqual(4);
+  });
+
+  test("evicts the oldest preview that is not a layer's newest first", async () => {
+    const dir = await scratch();
+    const { gate, calls } = scriptedGate();
+    const svc = service(gate, dir, { maxFiles: 3 });
+    const a = [] as string[];
+    for (let i = 0; i < 5; i++) a.push(await draw(svc, calls, "layer-0000000a"));
+    const b = await draw(svc, calls, "layer-0000000b");
+    expect((await readdir(dir)).sort()).toEqual([`${a[3]}.png`, `${a[4]}.png`, `${b}.png`].sort());
+  });
+
+  test("keeps every layer's newest even when there are more layers than maxFiles", async () => {
+    const dir = await scratch();
+    const { gate, calls } = scriptedGate();
+    const svc = service(gate, dir, { maxFiles: 3 });
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) ids.push(await draw(svc, calls, `layer-0000000${i}`));
+    expect((await readdir(dir)).sort()).toEqual(ids.map((id) => `${id}.png`).sort());
+  });
+
+  test("still bounds the folder when a caller invents layers without end: at four times maxFiles the oldest go, newest or not", async () => {
+    const dir = await scratch();
+    const { gate, calls } = scriptedGate();
+    const svc = service(gate, dir, { maxFiles: 2 });
+    for (let i = 0; i < 20; i++) await draw(svc, calls, `layer-${String(i).padStart(8, "0")}`);
+    expect((await readdir(dir)).length).toBeLessThanOrEqual(8);
   });
 
   test("clears what a previous run left in the folder before it writes its first", async () => {

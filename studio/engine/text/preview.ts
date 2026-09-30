@@ -14,7 +14,8 @@ import type { TextGate } from "./worker/textGate";
  *   already being drawn is never cancelled: cancelling a running call terminates the worker, and a sequence of edits
  *   would keep killing it. It finishes and is answered. Different layers never cancel each other.
  * - **Files.** Written to a temp name and renamed, so the media route never serves half a PNG. At most `maxFiles` are kept,
- *   the oldest go first, and the first write of a run clears what an earlier run left.
+ *   the oldest go first, except that a layer's newest preview (what its window shows) goes last, and the first write of a run
+ *   clears what an earlier run left.
  * - **Errors.** A caption rule the worker names is `TEXT_INVALID` with the rule. Everything else that goes wrong is
  *   `RENDER_FAILED` (a timeout, the wall or the worker's own, adds a hint to shrink the caption or change the style; it is
  *   never retried here) or, for something unforeseen, `INTERNAL` with no message: a message may carry a path.
@@ -66,8 +67,10 @@ function detailOf(text: string): string {
 export class TextPreviewService {
   readonly #deps: TextPreviewDeps;
   readonly #pending = new Map<string, Pending>();
-  /** The previews this run wrote, oldest first. */
-  readonly #written: string[] = [];
+  /** The previews this run wrote, oldest first, with the layer each is of. */
+  readonly #written: { id: string; layerId: string }[] = [];
+  /** Each layer's newest preview: what its window is showing now, so it is the last to go. */
+  readonly #newest = new Map<string, string>();
   #cleared: Promise<void> | null = null;
 
   constructor(deps: TextPreviewDeps) {
@@ -93,7 +96,7 @@ export class TextPreviewService {
         },
       );
       const previewId = this.#deps.newId();
-      await this.#write(dir, previewId, image.png);
+      await this.#write(dir, layer.layerId, previewId, image.png);
       return { previewId, width: image.width, height: image.height };
     } catch (error) {
       throw this.#answer(error);
@@ -102,7 +105,7 @@ export class TextPreviewService {
     }
   }
 
-  async #write(dir: string, previewId: string, png: Uint8Array): Promise<void> {
+  async #write(dir: string, layerId: string, previewId: string, png: Uint8Array): Promise<void> {
     try {
       await mkdir(dir, { recursive: true });
       this.#cleared ??= this.#clear(dir);
@@ -114,11 +117,30 @@ export class TextPreviewService {
       this.#deps.log(`a text preview could not be written (${kindOf(error)})`);
       throw new EngineFailure({ code: "RENDER_FAILED", detail: "the text preview could not be written to disk" });
     }
-    this.#written.push(previewId);
-    while (this.#written.length > (this.#deps.maxFiles ?? DEFAULT_MAX_FILES)) {
-      const oldest = this.#written.shift();
-      if (oldest !== undefined) await rm(join(dir, `${oldest}.png`), { force: true }).catch(() => undefined);
+    this.#written.push({ id: previewId, layerId });
+    this.#newest.set(layerId, previewId);
+    await this.#evict(dir);
+  }
+
+  /**
+   * Over `maxFiles`, the oldest preview that is not a layer's newest goes first: dragging one layer's size makes a preview per
+   * frame, and must not take the pictures of the other layers away (their `<img>` would 404 on a remount). When only newest
+   * ones are left the folder stays over the soft bound, up to four times it; past that a caller is inventing layers, and the oldest go.
+   */
+  async #evict(dir: string): Promise<void> {
+    const soft = this.#deps.maxFiles ?? DEFAULT_MAX_FILES;
+    const remove = async (at: number): Promise<void> => {
+      const [gone] = this.#written.splice(at, 1);
+      if (gone === undefined) return;
+      if (this.#newest.get(gone.layerId) === gone.id) this.#newest.delete(gone.layerId);
+      await rm(join(dir, `${gone.id}.png`), { force: true }).catch(() => undefined);
+    };
+    while (this.#written.length > soft) {
+      const at = this.#written.findIndex((entry) => this.#newest.get(entry.layerId) !== entry.id);
+      if (at < 0) break;
+      await remove(at);
     }
+    while (this.#written.length > 4 * soft) await remove(0);
   }
 
   /** What an earlier run left in the folder belongs to no window any more. A failure to clear is logged, never fatal. */
