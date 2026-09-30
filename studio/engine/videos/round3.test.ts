@@ -206,6 +206,9 @@ describe("sweeps stay inside the root recovery checked", () => {
     const report = await recoverVideos(
       { library: w.library, exportRoot: { root: link, rootId: w.rootId, caseInsensitive: false } },
       {
+        // The decoy's probe is brand new: without this the fresh-scratch gate (60 s) would keep it alive by itself and the
+        // assertion below would prove nothing about WHICH folder is swept.
+        scratchMinAgeMs: 0,
         hooks: {
           locked: () => {
             unlinkSync(link);
