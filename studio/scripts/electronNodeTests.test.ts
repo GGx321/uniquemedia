@@ -76,6 +76,22 @@ describe("nodeTestSummaryProblem: `electron --test` exits 0 for runs that tested
     expect(nodeTestSummaryProblem(SUMMARY_TAIL({ tests: 2, suites: 0, pass: 1, todo: 1 }))).toMatch(/left 1 as todo/);
   });
 
+  test("refuses a run with fewer tests than the suite's minimum, and accepts the minimum and more", () => {
+    expect(nodeTestSummaryProblem(SUMMARY_TAIL({ tests: 9, suites: 1, pass: 9 }), 10)).toMatch(/9 tests, fewer than the 10/);
+    expect(nodeTestSummaryProblem(SUMMARY_TAIL({ tests: 10, suites: 1, pass: 10 }), 10)).toBeUndefined();
+    expect(nodeTestSummaryProblem(SUMMARY_TAIL({ tests: 12, suites: 1, pass: 12 }), 10)).toBeUndefined();
+  });
+
+  test("checks the minimum against the LAST `ℹ tests`", () => {
+    const logged = "ℹ tests 99";
+    expect(nodeTestSummaryProblem(`${logged}\n${SUMMARY_TAIL({ tests: 3, suites: 1, pass: 3 })}`, 10)).toMatch(/3 tests, fewer than the 10/);
+  });
+
+  test("every registered suite states a positive minimum", () => {
+    for (const suite of NODE_TEST_SUITES) expect(suite.minTests).toBeGreaterThan(0);
+    expect(Object.fromEntries(NODE_TEST_SUITES.map((suite) => [suite.name, suite.minTests]))).toEqual({ "text worker": 10, "face worker": 18 });
+  });
+
   test("refuses fewer passes than tests (a cancelled test)", () => {
     expect(nodeTestSummaryProblem(SUMMARY_TAIL({ tests: 3, suites: 0, pass: 2 }))).toMatch(/2 tests passed of 3/);
   });
@@ -152,7 +168,7 @@ describe("buildSuite", () => {
     const src = await mkdtemp(join(tmpdir(), "studio-node-entry-"));
     scratch.push(src);
     await Bun.write(join(src, "x.node-test.mts"), "export const answer: number = 42;\n");
-    const bundle = await buildSuite(ROOT, { name: "x", entry: join(src, "x.node-test.mts"), workers: {} }, out);
+    const bundle = await buildSuite(ROOT, { name: "x", entry: join(src, "x.node-test.mts"), minTests: 1, workers: {} }, out);
     expect(bundle).toBe(join(out, "x.node-test.mjs"));
     expect(existsSync(bundle)).toBe(true);
   });
@@ -160,6 +176,6 @@ describe("buildSuite", () => {
   test("fails loudly when an entry does not exist", async () => {
     const out = await mkdtemp(join(tmpdir(), "studio-node-tests-"));
     scratch.push(out);
-    await expect(buildSuite(ROOT, { name: "x", entry: "studio/nope.node-test.ts", workers: {} }, out)).rejects.toThrow();
+    await expect(buildSuite(ROOT, { name: "x", entry: "studio/nope.node-test.ts", minTests: 1, workers: {} }, out)).rejects.toThrow();
   });
 });

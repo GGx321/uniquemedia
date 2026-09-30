@@ -32,6 +32,8 @@ export interface NodeTestSuite {
   name: string;
   /** Repo-relative path of the `*.node-test.ts` entry. */
   entry: string;
+  /** How many tests the suite has today: a run that reports fewer lost tests (a deleted or unregistered one) and fails. Raise it with the suite. */
+  minTests: number;
   /** Worker bundles the test spawns next to itself: output file name -> repo-relative source. */
   workers: Readonly<Record<string, string>>;
 }
@@ -43,7 +45,7 @@ const ANSI = /\u001b\[[0-9;]*m/g;
  * Reads the reporter's summary lines (`ℹ tests 10`); an output with no `tests` line is a problem too, so a change of
  * reporter or of format fails loudly instead of passing quietly.
  */
-export function nodeTestSummaryProblem(output: string): string | undefined {
+export function nodeTestSummaryProblem(output: string, minTests = 1): string | undefined {
   const plain = output.replace(ANSI, "");
   // The LAST such line: the reporter prints the run's summary at the very end, and a test that logs a line shaped like one must not be read instead.
   const count = (name: string): number | undefined => {
@@ -58,6 +60,7 @@ export function nodeTestSummaryProblem(output: string): string | undefined {
   const tests = count("tests");
   if (tests === undefined) return "the output has no `ℹ tests N` summary, so nothing shows that a test ran";
   if (tests === 0) return "the run reported 0 tests";
+  if (tests < minTests) return `the run reported ${tests} tests, fewer than the ${minTests} the suite has: a test was lost`;
   const skipped = count("skipped") ?? 0;
   const todo = count("todo") ?? 0;
   if (skipped > 0 || todo > 0) return `the run skipped ${skipped} and left ${todo} as todo: every test must run`;
@@ -70,11 +73,13 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
   {
     name: "text worker",
     entry: "studio/engine/text/worker/textGate.real.node-test.ts",
+    minTests: 10,
     workers: { "textWorker.js": "studio/engine/text/worker/textWorker.ts" },
   },
   {
     name: "face worker",
     entry: "studio/engine/face/testing/workerGate.real.node-test.ts",
+    minTests: 18,
     workers: { "faceWorker.js": "studio/engine/face/worker/faceWorker.ts" },
   },
 ];
@@ -161,7 +166,7 @@ if (import.meta.main) {
         console.error(`${suite.name}: exit code ${code}`);
         failed = true;
       } else {
-        const problem = nodeTestSummaryProblem(output);
+        const problem = nodeTestSummaryProblem(output, suite.minTests);
         if (problem !== undefined) {
           console.error(`${suite.name}: exit code 0, but ${problem}`);
           failed = true;
