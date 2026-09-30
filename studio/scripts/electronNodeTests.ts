@@ -82,6 +82,12 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
     minTests: 18,
     workers: { "faceWorker.js": "studio/engine/face/worker/faceWorker.ts" },
   },
+  {
+    name: "caption rules",
+    entry: "studio/engine/text/captionRules.node-test.ts",
+    minTests: 64,
+    workers: {},
+  },
 ];
 
 /** One suite's bound; a run that takes longer is hung, not slow (the suite takes a few seconds). */
