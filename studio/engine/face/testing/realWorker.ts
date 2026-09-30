@@ -12,13 +12,18 @@ import { createWorkerFaceGate, type WorkerFaceGate } from "../worker/workerGate"
 import { createFaceWorkerSpawner } from "../worker/spawn";
 
 // Test support for anything that runs the REAL face worker (real models, real
-// codecs) under bun: the worker's source entry, the cached models, and a few
-// real images of the sizes the reviewers measured.
+// codecs): the worker's entry, the cached models, and a few real images of the
+// sizes the reviewers measured. It serves two runners. Under `bun test` the
+// paths come from this file's own place and the worker is the .ts source. As a
+// bundle of a `*.node-test.ts` (studio/scripts/electronNodeTests.ts, Electron's
+// Node) this file sits in a temp directory, so the runner's STUDIO_ROOT says
+// where the repo is and the built worker (`faceWorker.js`) is next to the bundle.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const REPO_ROOT = join(HERE, "..", "..", "..", "..");
-export const FIXTURE_IMAGE_DIR = join(HERE, "..", "fixtures", "images");
-export const FACE_WORKER_SOURCE = new URL("../worker/faceWorker.ts", import.meta.url);
+const BUNDLED_ROOT = process.env.STUDIO_ROOT === undefined || process.env.STUDIO_ROOT === "" ? undefined : process.env.STUDIO_ROOT;
+export const REPO_ROOT = BUNDLED_ROOT ?? join(HERE, "..", "..", "..", "..");
+export const FIXTURE_IMAGE_DIR = join(REPO_ROOT, "studio", "engine", "face", "fixtures", "images");
+export const FACE_WORKER_SOURCE = BUNDLED_ROOT === undefined ? new URL("../worker/faceWorker.ts", import.meta.url) : new URL("./faceWorker.js", import.meta.url);
 
 const MODEL_PATHS = faceModelPaths(REPO_ROOT);
 export const MODELS_PRESENT = existsSync(MODEL_PATHS.yunet) && existsSync(MODEL_PATHS.sface);

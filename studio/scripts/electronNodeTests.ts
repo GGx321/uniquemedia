@@ -18,8 +18,8 @@
  *
  *   bun run test:studio:electron-node
  *
- * The face worker's real tests (`workerGate.real.test.ts`) stay on Bun's retry runner (realWorkerTests.ts): they
- * need the face models, onnxruntime-web and a library, and porting them is a job of its own.
+ * The face worker's real tests (`workerGate.real.node-test.ts`) run here too: they need the face models (CI fetches
+ * them; a run without them fails, it never skips), onnxruntime-web and a library folder, all of which work under Node.
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -68,6 +68,11 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
     name: "text worker",
     entry: "studio/engine/text/worker/textGate.real.node-test.ts",
     workers: { "textWorker.js": "studio/engine/text/worker/textWorker.ts" },
+  },
+  {
+    name: "face worker",
+    entry: "studio/engine/face/worker/workerGate.real.node-test.ts",
+    workers: { "faceWorker.js": "studio/engine/face/worker/faceWorker.ts" },
   },
 ];
 

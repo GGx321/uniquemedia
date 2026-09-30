@@ -13,7 +13,7 @@ useNativeGlobals();
 // any inference — so termination, respawn, the FIFO lane, crash and
 // protocol-violation handling are pinned in milliseconds and without models.
 // The real worker (models, decode, event-loop, parity) is pinned by
-// workerGate.real.test.ts and parity.test.ts.
+// workerGate.real.node-test.ts and parity.test.ts.
 
 const SCRIPT = fileURLToPath(new URL("../testing/scriptedFaceWorker.ts", import.meta.url));
 const EMBEDDING = new Float32Array(EMBEDDING_LENGTH);

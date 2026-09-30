@@ -1,23 +1,23 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { after, afterEach, beforeEach, describe, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { ffmpegPath } from "../../../node/ffmpegBinary";
-import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { createRealDecodeBackend } from "../../decode/realBackend";
 import { createWasmImageDecoder } from "../../decode/wasmDecode";
 import { createFocusResolver } from "../../focus/focusResolver";
 import { openLibrary } from "../../library/library";
-import { SAMPLE_AVATAR, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../../library/testing/helpers";
+import { SAMPLE_AVATAR, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/sampleData";
 import { createFaceGate } from "../gate";
 import { NoFaceInReferenceError } from "../noFaceError";
 import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, sharedRealFaceGate, twelveMegapixelJpeg, twoKJpeg } from "../testing/realWorker";
 import { faceModelPaths } from "../../../scripts/faceModelCache";
 import { MASTER } from "../fixtures/expected";
 import { createWorkerFaceGate, type WorkerFaceGate } from "./workerGate";
-useNativeGlobals();
 
 // T7c: the REAL face worker — real models, real codecs — behind
 // createWorkerFaceGate. workerGate.test.ts pins the lifecycle against a
@@ -26,16 +26,24 @@ useNativeGlobals();
 // computation really is interruptible, and that load failures name their
 // cause. (Byte-exact parity through the worker: parity.test.ts.)
 
-// These tests terminate a real worker running WASM, which makes Bun itself
-// segfault in ~2% of runs (a Bun bug; see studio/scripts/realWorkerTests.ts).
-// So they run only when that script sets the flag — alone, in their own CI
-// step, with a retry for that crash and nothing else — and are skipped in the
-// main `bun test ./studio` run, which stays deterministic.
-const RUN_REAL_WORKER_TESTS = process.env.STUDIO_REAL_WORKER_TESTS === "1";
+// These tests terminate a real worker running WASM, so they run under ELECTRON'S NODE, the product's own runtime, and
+// not under Bun, where that teardown segfaults the runtime in a few percent of runs (`Segmentation fault at address
+// 0x3C`, `mprotect failed: 487` on Windows) with no failed test. This file is bundled by
+// studio/scripts/electronNodeTests.ts (`bun build --target=node`) and run as `ELECTRON_RUN_AS_NODE=1 <electron> --test
+// <bundle>`, with the built worker next to it; the runner sets STUDIO_ROOT. It is named `.node-test.ts` so `bun test`
+// never loads it. The runner fails a run with a skipped test, so nothing here skips itself.
+
 const IS_CI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 
-test.skipIf(!RUN_REAL_WORKER_TESTS || !IS_CI)("CI guard: the face models must be present when the real-worker step runs, never silently skipped", () => {
-  expect(MODELS_PRESENT).toBe(true);
+// The models are never committed. In CI a step fetches them (`bun run models:face`), and a run without them must fail
+// here, not go green over tests that could not load. Locally the same message tells what to run.
+test("the face models must be present, never silently skipped", () => {
+  assert.equal(MODELS_PRESENT, true, `the face models are missing${IS_CI ? " in CI" : ""}: run \`bun run models:face\``);
+});
+
+// The shared gate is never disposed by a test; `node --test` keeps the process alive while its worker runs.
+after(async () => {
+  await sharedRealFaceGate().dispose();
 });
 
 const gates: WorkerFaceGate[] = [];
@@ -47,6 +55,18 @@ function ownGate(overrides: Parameters<typeof realWorkerInit>[0]): WorkerFaceGat
   const gate = createWorkerFaceGate({ spawnWorker: realWorkerSpawner(overrides) });
   gates.push(gate);
   return gate;
+}
+
+/** A fresh temp dir per test, removed after it (the `node:test` twin of the bun helper). */
+function useTempDir(prefix: string): () => string {
+  let dir = "";
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), prefix));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  return () => dir;
 }
 
 const live = (): AbortSignal => new AbortController().signal;
@@ -75,16 +95,21 @@ async function masterEmbeddingVia(gate: WorkerFaceGate): Promise<Float32Array> {
   return gate.embed(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live());
 }
 
-describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("the real face worker", () => {
-  test("a 2K check leaves the engine's event loop free: the largest timer gap stays well under what the same check blocks in-thread", async () => {
+describe("the real face worker", () => {
+  test("a 2K check leaves the engine's event loop free: the largest timer gap stays well under what the same check blocks in-thread", { timeout: 60_000 }, async () => {
     const image = twoKJpeg();
 
     // Control: the same decode + inference on THIS thread, as before T7c.
     const decode = createWasmImageDecoder(await createRealDecodeBackend(join(REPO_ROOT, "node_modules")));
-    const inThread = await createFaceGate({
-      yunet: new Uint8Array(await readFile(faceModelPaths(REPO_ROOT).yunet)),
-      sface: new Uint8Array(await readFile(faceModelPaths(REPO_ROOT).sface)),
-    });
+    // The wasm paths are given, as the worker's own are: a bundled test has no node_modules next to it to find them by.
+    const inThread = await createFaceGate(
+      {
+        yunet: new Uint8Array(await readFile(faceModelPaths(REPO_ROOT).yunet)),
+        sface: new Uint8Array(await readFile(faceModelPaths(REPO_ROOT).sface)),
+      },
+      undefined,
+      realWorkerInit().wasmPaths,
+    );
     let control: { maxGapMs: number; durationMs: number };
     try {
       const masterEmbedding = await inThread.embed(await decode(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live()));
@@ -101,13 +126,13 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("the real face worker
     const worker = await timerGapDuring(() => gate.check({ pose: "front", bytes: image, masterEmbedding }, live()));
 
     // The control must actually block (else this test measures nothing) ...
-    expect(control.maxGapMs).toBeGreaterThan(40);
+    assert.ok(control.maxGapMs > 40, `the control blocked the loop for only ${control.maxGapMs} ms`);
     // ... and the worker path must not: a fraction of it. (Relative only: an absolute millisecond bound is flaky on 3-4 vCPU runners and under Windows' 15.6 ms timer.)
-    expect(worker.maxGapMs).toBeLessThan(control.maxGapMs / 2);
-    expect(worker.durationMs).toBeGreaterThan(worker.maxGapMs * 2);
-  }, 60_000);
+    assert.ok(worker.maxGapMs < control.maxGapMs / 2, `worker gap ${worker.maxGapMs} ms against control gap ${control.maxGapMs} ms`);
+    assert.ok(worker.durationMs > worker.maxGapMs * 2, `duration ${worker.durationMs} ms against gap ${worker.maxGapMs} ms`);
+  });
 
-  test("cancelling a real 2K check mid-flight terminates the worker promptly, and the next check succeeds on a respawned worker", async () => {
+  test("cancelling a real 2K check mid-flight terminates the worker promptly, and the next check succeeds on a respawned worker", { timeout: 60_000 }, async () => {
     const image = twoKJpeg();
     const gate = sharedRealFaceGate();
     await gate.start();
@@ -118,57 +143,58 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("the real face worker
       () => "finished",
       (error: unknown) => (error instanceof Error ? error.message : "not an error"),
     );
-    await Bun.sleep(5); // inside decode or inference already
+    await sleep(5); // inside decode or inference already
     const abortedAt = performance.now();
     controller.abort(new Error("cancelled by the job"));
-    expect(await running).toBe("cancelled by the job");
-    expect(performance.now() - abortedAt).toBeLessThan(1_000);
+    assert.equal(await running, "cancelled by the job");
+    const tookMs = performance.now() - abortedAt;
+    assert.ok(tookMs < 1_000, `the abort took ${tookMs} ms to settle`);
 
     const verdict = await gate.check({ pose: "front", bytes: image, masterEmbedding }, live());
-    expect(["match", "mismatch", "no-face"]).toContain(verdict.kind);
-  }, 60_000);
+    assert.ok(["match", "mismatch", "no-face"].includes(verdict.kind), `unexpected verdict ${verdict.kind}`);
+  });
 
-  test("a 12 MP master embeds through the worker (normalization runs inside it)", async () => {
+  test("a 12 MP master embeds through the worker (normalization runs inside it)", { timeout: 60_000 }, async () => {
     const gate = sharedRealFaceGate();
     const embedding = await gate.embed(twelveMegapixelJpeg(), live());
-    expect(embedding.length).toBe(128);
-  }, 60_000);
+    assert.equal(embedding.length, 128);
+  });
 
-  test("a reference with no face rejects embed with NoFaceInReferenceError", async () => {
+  test("a reference with no face rejects embed with NoFaceInReferenceError", { timeout: 30_000 }, async () => {
     const gate = sharedRealFaceGate();
     const flat = flatGreyJpeg(); // a valid JPEG with nothing to detect
-    await expect(gate.embed(flat, live())).rejects.toBeInstanceOf(NoFaceInReferenceError);
-  }, 30_000);
+    await assert.rejects(gate.embed(flat, live()), NoFaceInReferenceError);
+  });
 
-  test("detect finds the fixture master's face and reports the source size", async () => {
+  test("detect finds the fixture master's face and reports the source size", { timeout: 30_000 }, async () => {
     const gate = sharedRealFaceGate();
     const detection = await gate.detect(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live());
-    expect([detection.width, detection.height]).toEqual([864, 1152]);
+    assert.deepEqual([detection.width, detection.height], [864, 1152]);
     // Measured with YuNet on this fixture: the box centre is at (0.503, 0.488) of the image.
     const face = detection.face;
-    expect(face).not.toBeNull();
-    expect(((face?.x ?? 0) + (face?.width ?? 0) / 2) / 864).toBeCloseTo(0.503, 1);
-    expect(((face?.y ?? 0) + (face?.height ?? 0) / 2) / 1152).toBeCloseTo(0.488, 1);
-  }, 30_000);
+    assert.notEqual(face, null);
+    assert.ok(Math.abs(((face?.x ?? 0) + (face?.width ?? 0) / 2) / 864 - 0.503) < 0.05); // Bun's toBeCloseTo(_, 1): within 0.05
+    assert.ok(Math.abs(((face?.y ?? 0) + (face?.height ?? 0) / 2) / 1152 - 0.488) < 0.05);
+  });
 
-  test("detect reports the box in SOURCE pixels for a 2K image that was normalised down before detection", async () => {
+  test("detect reports the box in SOURCE pixels for a 2K image that was normalised down before detection", { timeout: 60_000 }, async () => {
     const gate = sharedRealFaceGate();
     const detection = await gate.detect(twoKJpeg(), live());
-    expect([detection.width, detection.height]).toEqual([1536, 2752]);
+    assert.deepEqual([detection.width, detection.height], [1536, 2752]);
     // The master letterboxed into 1536x2752: 1536x2048 of picture, 352 px of grey above and below.
     const face = detection.face;
-    expect(face).not.toBeNull();
+    assert.notEqual(face, null);
     // Measured error in x: 0.014 (a different scale is a different detection). A box left in normalised pixels would miss by far more.
-    expect(Math.abs(((face?.x ?? 0) + (face?.width ?? 0) / 2) / 1536 - 0.503)).toBeLessThan(0.02);
-    expect(Math.abs(((face?.y ?? 0) + (face?.height ?? 0) / 2) / 2752 - (352 + 0.488 * 2048) / 2752)).toBeLessThan(0.02);
-  }, 60_000);
+    assert.ok(Math.abs(((face?.x ?? 0) + (face?.width ?? 0) / 2) / 1536 - 0.503) < 0.02);
+    assert.ok(Math.abs(((face?.y ?? 0) + (face?.height ?? 0) / 2) / 2752 - (352 + 0.488 * 2048) / 2752) < 0.02);
+  });
 
-  test("detect answers a null face, not an error, for an image with nothing to detect", async () => {
+  test("detect answers a null face, not an error, for an image with nothing to detect", { timeout: 30_000 }, async () => {
     const gate = sharedRealFaceGate();
-    expect((await gate.detect(flatGreyJpeg(), live())).face).toBeNull();
-  }, 30_000);
+    assert.equal((await gate.detect(flatGreyJpeg(), live())).face, null);
+  });
 
-  test("an undecodable candidate rejects check with an ordinary Error and leaves the worker alive (systemic, never a retry verdict)", async () => {
+  test("an undecodable candidate rejects check with an ordinary Error and leaves the worker alive (systemic, never a retry verdict)", { timeout: 30_000 }, async () => {
     const gate = sharedRealFaceGate();
     const masterEmbedding = await masterEmbeddingVia(gate);
     const notAnImage = Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8);
@@ -176,32 +202,32 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("the real face worker
       () => undefined,
       (e: unknown) => e,
     );
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toMatch(/unsupported image format/);
-    expect((await gate.check({ pose: "front", bytes: new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), masterEmbedding }, live())).kind).toBe("match");
-  }, 30_000);
+    assert.ok(error instanceof Error, "an ordinary Error was expected");
+    assert.match(error.message, /unsupported image format/);
+    assert.equal((await gate.check({ pose: "front", bytes: new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), masterEmbedding }, live())).kind, "match");
+  });
 });
 
-describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("start-up failures of the real worker name their cause", () => {
-  test("a model file that does not exist rejects start() and leaves no worker behind", async () => {
+describe("start-up failures of the real worker name their cause", () => {
+  test("a model file that does not exist rejects start() and leaves no worker behind", { timeout: 30_000 }, async () => {
     const gate = ownGate({ models: { yunetPath: join(tmpdir(), "no-such-yunet.onnx"), sfacePath: realWorkerInit().models.sfacePath } });
-    await expect(gate.start()).rejects.toThrow(/no-such-yunet\.onnx/);
-  }, 30_000);
+    await assert.rejects(gate.start(), /no-such-yunet\.onnx/);
+  });
 
-  test("model bytes that do not match the pinned sha256 are refused, naming the hash mismatch", async () => {
+  test("model bytes that do not match the pinned sha256 are refused, naming the hash mismatch", { timeout: 30_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), "face-worker-"));
     try {
       const tampered = join(dir, "face_detection_yunet_2023mar.onnx");
       writeFileSync(tampered, Uint8Array.of(1, 2, 3));
       const gate = ownGate({ models: { yunetPath: tampered, sfacePath: realWorkerInit().models.sfacePath } });
-      await expect(gate.start()).rejects.toThrow(/hash mismatch/);
+      await assert.rejects(gate.start(), /hash mismatch/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 30_000);
+  });
 
   test("a workerData the worker cannot parse is refused up front, by the engine, with the validation message", () => {
-    expect(() => realWorkerSpawner({ nodeModulesDir: "" })).toThrow(/nodeModulesDir/);
+    assert.throws(() => realWorkerSpawner({ nodeModulesDir: "" }), /nodeModulesDir/);
   });
 });
 
@@ -209,7 +235,7 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("start-up failures of
 // library folder. focusResolver.test.ts pins the caching, fallback and bounds
 // against a scripted gate; this pins that the point it derives really lands on
 // the face.
-describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("focus resolution on the real face fixtures", () => {
+describe("focus resolution on the real face fixtures", () => {
   const libraryRoot = useTempDir("studio-focus-real-");
 
   /** Points measured with YuNet on the committed fixtures: the centre of the largest face box, as fractions of the image. */
@@ -232,23 +258,25 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("focus resolution on 
 
   const fixtureJpeg = async (file: string) => new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, file)));
 
-  test.each(Object.entries(MEASURED))("centres the focus on the face in %s", async (file, expected) => {
-    const size = file === MASTER.file ? { width: 864, height: 1152 } : { width: 720, height: 1280 };
-    const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(file), ...size }]);
-    const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
-    const { focus, resolved } = await focusFor(avatarId, photoIds[0] ?? "");
-    expect(resolved).toBe(true);
-    expect(Math.abs(focus.x - expected.x)).toBeLessThan(0.005);
-    expect(Math.abs(focus.y - expected.y)).toBeLessThan(0.005);
-  }, 30_000);
+  for (const [file, expected] of Object.entries(MEASURED)) {
+    test(`centres the focus on the face in ${file}`, { timeout: 30_000 }, async () => {
+      const size = file === MASTER.file ? { width: 864, height: 1152 } : { width: 720, height: 1280 };
+      const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(file), ...size }]);
+      const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
+      const { focus, resolved } = await focusFor(avatarId, photoIds[0] ?? "");
+      assert.equal(resolved, true);
+      assert.ok(Math.abs(focus.x - expected.x) < 0.005, `x ${focus.x} against ${expected.x}`);
+      assert.ok(Math.abs(focus.y - expected.y) < 0.005, `y ${focus.y} against ${expected.y}`);
+    });
+  }
 
-  test("gives the (0.5, 0.38) fallback for an image with no face, and it is not an error", async () => {
+  test("gives the (0.5, 0.38) fallback for an image with no face, and it is not an error", { timeout: 30_000 }, async () => {
     const { library, avatarId, photoIds } = await libraryWith([{ bytes: flatGreyJpeg(), width: 640, height: 640 }]);
     const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
-    expect(await focusFor(avatarId, photoIds[0] ?? "")).toEqual({ focus: { x: 0.5, y: 0.38 }, resolved: true }); // judged: there is really no face
-  }, 30_000);
+    assert.deepEqual(await focusFor(avatarId, photoIds[0] ?? ""), { focus: { x: 0.5, y: 0.38 }, resolved: true }); // judged: there is really no face
+  });
 
-  test("a restarted resolver answers from the saved file: the second one never reaches the detector", async () => {
+  test("a restarted resolver answers from the saved file: the second one never reaches the detector", { timeout: 30_000 }, async () => {
     const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(MASTER.file), width: 864, height: 1152 }]);
     const real = sharedRealFaceGate();
     const firstResolver = createFocusResolver({ library, faceGate: real });
@@ -262,11 +290,11 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("focus resolution on 
         return real.detect(bytes, signal);
       },
     };
-    expect(await createFocusResolver({ library, faceGate: counting }).focusFor(avatarId, photoIds[0] ?? "")).toEqual(first);
-    expect(detections).toBe(0);
-  }, 30_000);
+    assert.deepEqual(await createFocusResolver({ library, faceGate: counting }).focusFor(avatarId, photoIds[0] ?? ""), first);
+    assert.equal(detections, 0);
+  });
 
-  test("fillMissingFocus fills a headless spec's null cells from the real detector and leaves a set focus alone", async () => {
+  test("fillMissingFocus fills a headless spec's null cells from the real detector and leaves a set focus alone", { timeout: 30_000 }, async () => {
     const { library, avatarId, photoIds } = await libraryWith([
       { bytes: await fixtureJpeg(MASTER.file), width: 864, height: 1152 },
       { bytes: await fixtureJpeg("render-best-home-1.jpg"), width: 720, height: 1280 },
@@ -287,11 +315,11 @@ describe.skipIf(!MODELS_PRESENT || !RUN_REAL_WORKER_TESTS)("focus resolution on 
     });
     const [first, second] = filled.clips;
     const firstFocus = first?.kind === "photo" ? first.cell.focus : null;
-    expect(unresolved).toEqual([]);
-    expect(Math.abs((firstFocus?.x ?? 9) - 0.503)).toBeLessThan(0.005);
-    expect(Math.abs((firstFocus?.y ?? 9) - 0.488)).toBeLessThan(0.005);
-    expect(second?.kind === "photo" ? second.cell.focus : null).toEqual({ x: 0.1, y: 0.9 });
-  }, 30_000);
+    assert.deepEqual(unresolved, []);
+    assert.ok(Math.abs((firstFocus?.x ?? 9) - 0.503) < 0.005);
+    assert.ok(Math.abs((firstFocus?.y ?? 9) - 0.488) < 0.005);
+    assert.deepEqual(second?.kind === "photo" ? second.cell.focus : null, { x: 0.1, y: 0.9 });
+  });
 });
 
 function flatGreyJpeg(): Uint8Array {

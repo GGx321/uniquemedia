@@ -13,7 +13,7 @@ import { createFocusResolver, type FocusFaceGate, type FocusLibrary } from "./fo
 useNativeGlobals();
 
 // S8: the focus point of a placed photo. The face gate is a scripted fake here
-// (the real YuNet on the real fixtures is pinned in workerGate.real.test.ts);
+// (the real YuNet on the real fixtures is pinned in workerGate.real.node-test.ts);
 // the library is a real one on a temp folder, so the cache file lives where it
 // really would and the library's own survey sees it.
 
