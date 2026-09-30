@@ -2,6 +2,7 @@ import { lstat } from "node:fs/promises";
 import type { FileState, VideoSummary, CommandPayload, EngineError, UnsequencedEvent } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS, PROTOCOL_VERSION } from "../../shared/engine";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
+import { notYetSupportedIssues } from "../montages/notYetSupported";
 import { estimateBytesUpper } from "../../shared/montage";
 import { resolveFocus } from "../../shared/montage/crop";
 import { EngineFailure } from "../engineFailure";
@@ -143,29 +144,6 @@ export function videoKindOf(clips: readonly { readonly kind: string; readonly la
   const layouts = new Set(clips.map((clip) => (clip.kind === "collage" ? clip.layout : undefined)));
   const [only] = [...layouts];
   return layouts.size === 1 && only !== undefined ? only : "mix";
-}
-
-/**
- * N9: the parts of a montage whose slice has not landed. A spec that uses one is REFUSED with `not-yet-supported` at
- * that spot, never rendered without it: own media (video clips, own photos, own stickers, own tracks) until 3f, layers
- * until 3b, music until 3c. Each slice lifts its own line here.
- */
-export function notYetSupportedIssues(spec: Pick<MontageDraft, "clips" | "layers" | "music">): MontageIssue[] {
-  const issues: MontageIssue[] = [];
-  const add = (...path: (string | number)[]): void => void issues.push({ code: "not-yet-supported", path });
-  spec.clips.forEach((clip, i) => {
-    if (clip.kind === "video") add("clips", i);
-    else if (clip.kind === "photo") {
-      if (clip.cell.photo?.source === "own") add("clips", i, "cell");
-    } else {
-      clip.cells.forEach((cell, j) => {
-        if (cell.photo?.source === "own") add("clips", i, "cells", j);
-      });
-    }
-  });
-  spec.layers.forEach((_layer, i) => add("layers", i));
-  if (spec.music !== null) add("music");
-  return issues;
 }
 
 /** What a render starts from: a headless spec, or a saved draft's spec with the draft's id and the library it was read from. */

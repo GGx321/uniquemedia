@@ -2,9 +2,11 @@ import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue
 import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { Library } from "../library";
 import { photoAvailability, type Availability } from "./availability";
+import { notYetSupportedIssues } from "./notYetSupported";
 
 // The engine's verdict on a draft (`montages.get`, `montages.list`): the structural issues a render would raise
-// (`montageIssues(spec, "spec")`, the same function `videos.render` uses) plus the REFERENTIAL ones, which need the
+// (`montageIssues(spec, "spec")`, the same function `videos.render` uses), what a render refuses for a part whose slice
+// has not landed (`not-yet-supported`, N9), plus the REFERENTIAL ones, which need the
 // library. So the window's Render reason and its cell highlights are the engine's own answer.
 //
 // Referential checks, by the issue code the contract reserves for them (K7), and where each stands:
@@ -57,10 +59,10 @@ export function referentialIssues(spec: MontageDraft, availability: Availability
 }
 
 /**
- * Every issue of `spec` as the engine sees it now, the structural ones first, cut at `MAX_MONTAGE_ISSUES`. `availability`
+ * Every issue of `spec` as the engine sees it now: what a render would refuse first (structure, then N9), then the referential ones, cut at `MAX_MONTAGE_ISSUES`. `availability`
  * is the avatar's photo state (`photoAvailability`); a caller judging many drafts of one avatar asks it once.
  */
 export function draftIssues(library: Library, spec: MontageDraft, log: (line: string) => void, availability?: Availability): MontageIssue[] {
   const known = availability ?? photoAvailability(library, spec.avatarId, log);
-  return [...montageIssues(spec, "spec"), ...referentialIssues(spec, known)].slice(0, MAX_MONTAGE_ISSUES);
+  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known)].slice(0, MAX_MONTAGE_ISSUES);
 }

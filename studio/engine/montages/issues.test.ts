@@ -5,6 +5,7 @@ import { PNG_1X1, SAMPLE_SOURCE, samplePhotoMeta } from "../library/testing/help
 import { openLibrary } from "../library";
 import { useWorld, type World } from "../videos/testing/kit";
 import { draftIssues } from "./issues";
+import { notYetSupportedIssues } from "./notYetSupported";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -121,24 +122,70 @@ describe("draftIssues: a scene photo that cannot be used", () => {
     expect(issuesOf(w, spec).map((i) => i.code)).toEqual(["cell-empty"]);
   });
 
-  test("an own upload is not judged here: the media store comes with slice 3f", () => {
+  test("an own upload is not judged for its media here (the store comes with slice 3f): only the render's own not-yet-supported", () => {
     const w = world();
     const own = { ...photoClip(1, "x"), cell: { photo: { source: "own" as const, mediaId: "media-0000001" }, focus: null } };
 
-    expect(issuesOf(w, draftOf(w, { clips: [own] }))).toEqual([]);
+    expect(issuesOf(w, draftOf(w, { clips: [own] }))).toEqual([{ code: "not-yet-supported", path: ["clips", 0, "cell"] }]);
   });
 
-  test("when the avatar's usage cannot be trusted, the photos are still judged by the eligibility rule, and the log says so", async () => {
+  test("when the avatar's usage cannot be trusted every photo is unavailable, as a render would refuse them, and the log says so", async () => {
     logs.length = 0;
     const w = world();
-    await w.library.setRejected(w.avatar.id, photoId(w, 0), true);
     w.library.flagVideoIndexStale(w.avatar.id, "video-0000001");
 
     const issues = issuesOf(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0)), photoClip(2, photoId(w, 1))] }));
 
-    expect(issues).toEqual([{ code: "photo-unavailable", path: ["clips", 0, "cell"] }]);
+    expect(issues).toEqual([
+      { code: "photo-unavailable", path: ["clips", 0, "cell"] },
+      { code: "photo-unavailable", path: ["clips", 1, "cell"] },
+    ]);
     expect(logs.join("\n")).toMatch(/usage/);
     expect(logs.join("\n")).not.toContain(w.dir);
+  });
+
+  test("a video record from a newer Studio closes the photos the same way", async () => {
+    const w = world();
+    await writeVideoRecord(w.libraryRoot, "video-0000001", sceneSpec(w.avatar.id, [photoId(w, 2)]), { schemaVersion: 2 });
+    await w.library.reloadVideoRecords(w.avatar.id);
+
+    const issues = issuesOf(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))] }));
+
+    expect(issues).toEqual([{ code: "photo-unavailable", path: ["clips", 0, "cell"] }]);
+  });
+});
+
+describe("draftIssues: what a render refuses for a part whose slice has not landed", () => {
+  const text = { layerId: "layer-001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "hi", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+
+  test("a layer is not-yet-supported, like videos.render says", () => {
+    const w = world();
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text] });
+
+    expect(issuesOf(w, spec)).toEqual([{ code: "not-yet-supported", path: ["layers", 0] }]);
+  });
+
+  test("music, an own video clip and an own photo are too", () => {
+    const w = world();
+    const own = { ...photoClip(2, "x"), cell: { photo: { source: "own" as const, mediaId: "media-0000001" }, focus: null } };
+    const video = { clipId: "clip-003", kind: "video" as const, mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), own, video], music: { source: "trending", trackId: "track-0000001", startMs: 0 } });
+
+    expect(issuesOf(w, spec).map((i) => [i.code, i.path])).toEqual([
+      ["not-yet-supported", ["clips", 1, "cell"]],
+      ["not-yet-supported", ["clips", 2]],
+      ["not-yet-supported", ["music"]],
+    ]);
+  });
+
+  test("for the same spec, get's issues cover everything a render would refuse for its structure", () => {
+    const w = world();
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0), 1_000)], layers: [text] });
+    const renderRefuses = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec)];
+
+    const issues = issuesOf(w, spec);
+
+    for (const refusal of renderRefuses) expect(issues).toContainEqual(refusal);
   });
 });
 
@@ -149,14 +196,14 @@ describe("draftIssues: a built-in sticker that is gone", () => {
     const w = world();
     const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [sticker(1, "heart-pulse"), sticker(2, "no-such-sticker")] });
 
-    expect(issuesOf(w, spec)).toEqual([{ code: "sticker-unavailable", path: ["layers", 1, "sticker"] }]);
+    expect(issuesOf(w, spec).filter((i) => i.code === "sticker-unavailable")).toEqual([{ code: "sticker-unavailable", path: ["layers", 1, "sticker"] }]);
   });
 
   test("an own sticker is not judged here: 3f.5 brings the store", () => {
     const w = world();
     const own = { ...sticker(1, "x"), sticker: { source: "own" as const, mediaId: "media-0000001" } };
 
-    expect(issuesOf(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [own] }))).toEqual([]);
+    expect(issuesOf(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [own] })).filter((i) => i.code !== "not-yet-supported")).toEqual([]);
   });
 });
 
