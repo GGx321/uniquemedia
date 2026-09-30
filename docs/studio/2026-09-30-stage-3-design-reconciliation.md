@@ -538,7 +538,7 @@ Drafts and photos:
 Text:
 - The caption preview pending (the engine PNG is debounced).
 - Caption issues other than the charset (K19): an emoji the font lacks, a text-style emoji
-  (VS15), a youth word, a youth emoji, an age number, over 60 characters, over 2 lines, © ® ™
+  (VS15), over 60 characters, over 2 lines, © ® ™
   (refused, owner 2026-09-30).
 - A rasteriser timeout (`RENDER_FAILED`, «уменьшите размер или смените стиль»).
 
@@ -615,7 +615,7 @@ first.
 
 | K | Change | Blocks |
 | --- | --- | --- |
-| K19 | Error code `TEXT_INVALID` with a required `captionIssue` (on `TEXT_INVALID` only, like `exportReason`): `charset \| emoji-missing \| emoji-text-style \| youth-word \| youth-emoji \| age-number \| too-long \| too-many-lines`. `CAPTION_ISSUES_RU` holds the texts; `charset` names © ® ™ explicitly. | 3d.5, 3d.6 |
+| K19 | Error code `TEXT_INVALID` with a required `captionIssue` (on `TEXT_INVALID` only, like `exportReason`): `charset \| emoji-missing \| emoji-text-style \| too-long \| too-many-lines`. `CAPTION_ISSUES_RU` holds the texts; `charset` names © ® ™ explicitly. | 3d.5, 3d.6 |
 | K20 | `montages.textPreview {avatarId, layer: TextLayer}` → `{previewId, width, height}` (raster px at the 1080 scale, for `textBox`). `avatarId` because the number rule reads the avatar's age. `TEXT_INVALID` (K19); a rasteriser timeout is `RENDER_FAILED`. | 3d.4, 3d.5 |
 | K21 | A shared constant `TEXT_BASE_PX` in `studio/shared/montage/` (the rendered size at `scale` = 1), so «Размер» shows `round(scale × TEXT_BASE_PX)`. | 3d.5 |
 | K22 | **Removal:** drop `stickers.list` from the plan. The renderer imports `STICKER_MANIFEST` / `STICKER_CATEGORIES` (pure, shared); own stickers come from `media.list`. | 3d.5 (unblocks) |
