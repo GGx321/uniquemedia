@@ -7,9 +7,11 @@ export type { MediaDeps } from "./media/resolve";
 
 /**
  * The scheme's privileges, registered before `ready` (main.ts). `standard` + `secure` give it an origin and a secure
- * context (the sticker preview's `ImageDecoder` needs one), `supportFetchAPI` lets `fetch` and `<img>` load it, and
- * `stream` lets `<video>` and `<audio>` play from it with Range. Nothing else: no `bypassCSP` (the renderer's CSP
- * names the scheme in `img-src` and `media-src` and nowhere else), no `corsEnabled`, no `codeCache`.
+ * context, `supportFetchAPI` lets the scheme be used with the Fetch API, and `stream` lets `<video>` and `<audio>` play
+ * from it with Range. Nothing else: no `bypassCSP` (the renderer's CSP names the scheme in `img-src` and `media-src` and
+ * nowhere else), no `corsEnabled`, no `codeCache`. Consequence to know: the renderer's own `fetch("studio-media://...")`
+ * is refused by its CSP (`connect-src` falls back to `default-src 'self'`) and has no CORS grant, so elements (`<img>`,
+ * `<video>`, `<audio>`) load from it and script does not read the bytes; 3d.4's `ImageDecoder` needs its own decision.
  */
 export const MEDIA_SCHEME_PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true, stream: true } as const;
 

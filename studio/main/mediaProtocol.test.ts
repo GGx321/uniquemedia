@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { videoPaths } from "../engine/videos/record";
-import { recordFor, useMediaWorld, type MediaWorld } from "./media/testing";
+import { canSymlink, countingFs, recordFor, useMediaWorld, type MediaWorld } from "./media/testing";
 import { fakeVideoBytes } from "../engine/videos/testing/kit";
 import { useNativeGlobals, useNativeWebClasses } from "../testing/nativeGlobals";
 import { CHUNK_BYTES } from "./media/respond";
@@ -83,14 +83,9 @@ describe("photo: the route Stage 1 shipped stays as it was", () => {
     }
   });
 
-  test("a symlink out of the library is a 404", async () => {
+  test.skipIf(!canSymlink)("a symlink out of the library is a 404", async () => {
     await writeFile(join(outside, "secret.png"), PNG);
-    try {
-      await symlink(join(outside, "secret.png"), join(w.libraryRoot, "avatars", AVATAR, "photos", "photo-00002.png"));
-    } catch (error) {
-      if (process.platform === "win32" && error instanceof Error && Reflect.get(error, "code") === "EPERM") return;
-      throw error;
-    }
+    await symlink(join(outside, "secret.png"), join(w.libraryRoot, "avatars", AVATAR, "photos", "photo-00002.png"));
     expect((await get(`studio-media://photo/${AVATAR}/photo-00002`)).status).toBe(404);
   });
 
@@ -193,12 +188,18 @@ describe("video: Range and streaming", () => {
 describe("video: the renderer goes away, and the file is deleted while it plays", () => {
   test("cancelling the response stops the reading and leaves nothing open", async () => {
     await commitVideo();
-    const response = await get(videoUrl());
+    const counted = countingFs();
+    const response = await get(videoUrl(), {}, { fs: counted });
     const reader = response.body?.getReader();
     expect((await reader?.read())?.value?.length).toBe(CHUNK_BYTES);
     await reader?.cancel();
-    // Nothing more to observe from outside but this: the file can be replaced and removed at once.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    const openedAtCancel = counted.opened;
+    // Every handle that was opened is closed, and cancelling started no read after it.
+    expect(counted.opened).toBeGreaterThan(0);
+    expect(counted.closed).toBe(counted.opened);
     await rm(join(w.exportRoot, "Mia", "2026-09-29_photo_001.mp4"));
+    expect(counted.opened).toBe(openedAtCancel);
   });
 
   test("an aborted request ends the stream with an error", async () => {
@@ -232,12 +233,17 @@ describe("video: the renderer goes away, and the file is deleted while it plays"
 
   test("a stalled reader holds nothing: the file can be deleted while the renderer has stopped asking", async () => {
     const file = await commitVideo();
-    const response = await get(videoUrl());
+    const counted = countingFs();
+    const response = await get(videoUrl(), {}, { fs: counted });
     const reader = response.body?.getReader();
     await reader?.read();
     await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    // The renderer has stopped asking, the stream is open, and no handle of ours is: this is what a Windows delete needs.
+    expect(counted.opened).toBeGreaterThan(0);
+    expect(counted.closed).toBe(counted.opened);
     await unlink(file);
     await reader?.cancel();
+    expect(counted.closed).toBe(counted.opened);
   });
 });
 
@@ -259,12 +265,8 @@ describe("every refusal looks the same", () => {
     const photos = join(w.libraryRoot, "avatars", AVATAR, "photos");
     await writeFile(join(photos, "photo-0000bad1.png"), "<html></html>");
     await writeFile(join(outside, "secret.png"), PNG);
-    let linked = true;
-    try {
-      await symlink(join(outside, "secret.png"), join(photos, "photo-0000bad2.png"));
-    } catch {
-      linked = false;
-    }
+    const linked = canSymlink;
+    if (linked) await symlink(join(outside, "secret.png"), join(photos, "photo-0000bad2.png"));
     const urls = [
       `studio-media://photo/${AVATAR}/photo-0000none`,
       `studio-media://photo/${AVATAR}/photo-0000bad1`,

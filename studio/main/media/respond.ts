@@ -1,9 +1,13 @@
 import type { ByteSource } from "./diskSource";
 import { decideRange } from "./range";
 
-/** One read from disk is at most this many bytes, and the body pulls only when the renderer asks: memory per request is one chunk. */
+/** One read from disk is at most this many bytes, and the body pulls only when the renderer asks: memory per request is one chunk, however big the file or the answer. */
 export const CHUNK_BYTES = 256 * 1024;
-/** One answer never carries more than this many bytes. A longer range is answered short, which RFC 9110 allows; `Content-Range` says how short, and the player asks again for the rest. */
+/**
+ * A 206 never carries more than this many bytes: a longer range is answered short, which RFC 9110 allows, `Content-Range`
+ * says how short, and the player asks again for the rest. It does NOT bound a 200 (no `Range` header): that streams the
+ * whole file, a chunk at a time, so memory stays bounded but the request may be long.
+ */
 export const MAX_RANGE_BYTES = 32 * 1024 * 1024;
 
 export interface RespondOptions {

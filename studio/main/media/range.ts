@@ -15,9 +15,12 @@ const SINGLE_RANGE = /^bytes=(\d{0,15})-(\d{0,15})$/;
  * - no header: the whole file;
  * - one `bytes` range, `a-b`, `a-` or `-n`: those bytes, `b` clamped to the last byte, `-n` longer than the file all of it;
  * - everything else is `unsatisfiable`, which the handler answers with 416: a start at or past EOF, `-0`, an end before
- *   the start, any range on an empty file, a malformed header, another unit, and several ranges. RFC 9110 would let a
- *   server ignore a malformed header or answer a multipart body; this protocol does neither, so a request that does not
- *   mean exactly one range of bytes never reads anything.
+ *   the start, any range on an empty file, a malformed header, another unit, and several ranges.
+ *
+ * DELIBERATE departures from RFC 9110 section 14.2, which says a server MUST ignore a Range header in a unit it does not
+ * understand (and MAY ignore a malformed one or answer several ranges in a multipart body): here all of those are 416.
+ * The only client is our own renderer's media elements, which send one `bytes` range; anything else is not a player, and
+ * answering it with nothing is safer than streaming a whole file to a request that meant something we did not parse.
  */
 export function decideRange(header: string | null, size: number): RangeDecision {
   if (header === null) return { kind: "whole" };

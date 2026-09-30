@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { videoPaths } from "../../engine/videos/record";
-import { recordFor, useMediaWorld, type MediaWorld } from "./testing";
+import { canSymlink, recordFor, useMediaWorld, type MediaWorld } from "./testing";
 import { fakeVideoBytes } from "../../engine/videos/testing/kit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { ByteSource } from "./diskSource";
@@ -88,16 +88,6 @@ const put = async (path: string, bytes: Buffer | string): Promise<void> => {
 };
 const photosDir = (): string => join(w.libraryRoot, "avatars", w.avatarId, "photos");
 
-async function tryLink(target: string, path: string, type?: "dir" | "file" | "junction"): Promise<boolean> {
-  try {
-    await symlink(target, path, type);
-    return true;
-  } catch (error) {
-    if (process.platform === "win32" && error instanceof Error && Reflect.get(error, "code") === "EPERM") return false;
-    throw error;
-  }
-}
-
 describe("photo/<avatarId>/<photoId>", () => {
   test("serves the library photo with its image type", async () => {
     await put(join(photosDir(), "photo-0000a001.png"), PNG);
@@ -124,11 +114,11 @@ describe("photo/<avatarId>/<photoId>", () => {
     expect(await get(photo("photo-0000a001"), { libraryRoot: () => join(w.dir, "nope") })).toBeNull();
   });
 
-  test("a symlink out of the library, and one to another photo inside it, are not served", async () => {
+  test.skipIf(!canSymlink)("a symlink out of the library, and one to another photo inside it, are not served", async () => {
     await put(join(outside, "secret.png"), PNG);
     await put(join(photosDir(), "photo-0000d000.png"), PNG);
-    if (!(await tryLink(join(outside, "secret.png"), join(photosDir(), "photo-0000d001.png"), "file"))) return;
-    await tryLink(join(photosDir(), "photo-0000d000.png"), join(photosDir(), "photo-0000d002.png"), "file");
+    await symlink(join(outside, "secret.png"), join(photosDir(), "photo-0000d001.png"), "file");
+    await symlink(join(photosDir(), "photo-0000d000.png"), join(photosDir(), "photo-0000d002.png"), "file");
     expect(await get(photo("photo-0000d001"))).toBeNull();
     expect(await get(photo("photo-0000d002"))).toBeNull();
   });
@@ -136,7 +126,7 @@ describe("photo/<avatarId>/<photoId>", () => {
   test("the photos folder replaced by a link out of the library is not followed", async () => {
     await put(join(outside, "photo-0000e001.png"), PNG);
     await mkdir(join(w.libraryRoot, "avatars", "avatar-linked"), { recursive: true });
-    if (!(await tryLink(outside, join(w.libraryRoot, "avatars", "avatar-linked", "photos"), "junction"))) return;
+    await symlink(outside, join(w.libraryRoot, "avatars", "avatar-linked", "photos"), "junction");
     expect(await get({ route: "photo", avatarId: "avatar-linked", photoId: "photo-0000e001" })).toBeNull();
   });
 });
@@ -166,12 +156,12 @@ describe("poster/<avatarId>/<videoId>", () => {
     expect(await get(poster())).toBeNull();
   });
 
-  test("a poster that is not the image its extension claims, or is a link, is not served", async () => {
+  test.skipIf(!canSymlink)("a poster that is not the image its extension claims, or is a link, is not served", async () => {
     await put(posterPath("png"), "<svg onload=alert(1)/>");
     expect(await get(poster())).toBeNull();
     await rm(posterPath("png"));
     await put(join(outside, "secret.png"), PNG);
-    if (!(await tryLink(join(outside, "secret.png"), posterPath("png"), "file"))) return;
+    await symlink(join(outside, "secret.png"), posterPath("png"), "file");
     expect(await get(poster())).toBeNull();
   });
 
@@ -289,18 +279,18 @@ describe("video/<avatarId>/<videoId>", () => {
     });
   }
 
-  test("a symlink in place of the video file, to a file outside the export folder", async () => {
+  test.skipIf(!canSymlink)("a symlink in place of the video file, to a file outside the export folder", async () => {
     await writeRecord();
     await put(join(outside, "secret.mp4"), MP4);
     await mkdir(join(w.exportRoot, AVATAR_NAME_DIR), { recursive: true });
-    if (!(await tryLink(join(outside, "secret.mp4"), filePath(), "file"))) return;
+    await symlink(join(outside, "secret.mp4"), filePath(), "file");
     expect(await get(video())).toBeNull();
   });
 
   test("a link in place of the video's folder, to a folder outside the export folder", async () => {
     await writeRecord();
     await put(join(outside, "2026-09-29_photo_001.mp4"), MP4);
-    if (!(await tryLink(outside, join(w.exportRoot, AVATAR_NAME_DIR), "junction"))) return;
+    await symlink(outside, join(w.exportRoot, AVATAR_NAME_DIR), "junction");
     expect(await get(video())).toBeNull();
   });
 
@@ -316,12 +306,12 @@ describe("video/<avatarId>/<videoId>", () => {
     expect(await get(video())).toBeNull();
   });
 
-  test("a record that is a link out of the library is not read", async () => {
+  test.skipIf(!canSymlink)("a record that is a link out of the library is not read", async () => {
     await putVideo();
     const path = await writeRecord();
     await put(join(outside, "record.json"), await Bun.file(path).text());
     await rm(path);
-    if (!(await tryLink(join(outside, "record.json"), path, "file"))) return;
+    await symlink(join(outside, "record.json"), path, "file");
     expect(await get(video())).toBeNull();
   });
 
@@ -390,9 +380,9 @@ describe("track/<trackId> and cover/<trackId>", () => {
     expect(await get({ route: "cover", trackId: "track-999999" }, { musicRoot: () => join(w.dir, "nope") })).toBeNull();
   });
 
-  test("a symlink in place of a track", async () => {
+  test.skipIf(!canSymlink)("a symlink in place of a track", async () => {
     await put(join(outside, "secret.m4a"), MP4);
-    if (!(await tryLink(join(outside, "secret.m4a"), join(musicRoot, "tracks", `${TRACK}.m4a`), "file"))) return;
+    await symlink(join(outside, "secret.m4a"), join(musicRoot, "tracks", `${TRACK}.m4a`), "file");
     expect(await get({ route: "track", trackId: TRACK })).toBeNull();
   });
 });
@@ -469,9 +459,9 @@ describe("media/<mediaId>", () => {
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
   });
 
-  test("a symlink in place of an upload is not served", async () => {
+  test.skipIf(!canSymlink)("a symlink in place of an upload is not served", async () => {
     await put(join(outside, "secret.png"), PNG);
-    if (!(await tryLink(join(outside, "secret.png"), mediaFile("png"), "file"))) return;
+    await symlink(join(outside, "secret.png"), mediaFile("png"), "file");
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
   });
 

@@ -11,13 +11,22 @@ import { NODE_OPEN_OPS, openRegularNoFollow, type OpenRegularOps } from "../../e
 //   2. the file is opened with the no-follow helper (an lstat, `O_NOFOLLOW` where there is one, and the OPENED
 //      file must be the one the lstat saw);
 //   3. the opened file is compared with what the name leads to NOW: its real path must lie inside the real root and
-//      be the same file (device, inode). A folder swapped for a link between steps 1 and 2 opens a file elsewhere,
-//      and this is what catches it: that file is never the one at the real path inside the root;
+//      be the same file (device, inode, size, times). A folder swapped for a link between steps 1 and 2 opens a file
+//      elsewhere, and this catches it in the ordinary case: that file is not the one at the real path inside the root;
 //   4. its size must be within the route's limit and not zero, and its first bytes must be what the route serves.
 //
+// RESIDUAL RISK, stated plainly. Step 3 is a check of the name AFTER the open, not of the handle's own path: Node has no
+// `openat` and no `F_GETPATH`, so there is no way to ask where an open handle really is. A writer who can change the
+// export or library folder and who swaps a folder to a link, back, and to a link again around the two lookups can make
+// step 3 see an inside path while the handle is an outside file. That needs write access to the app's own folders
+// (the renderer has none; it can only send ids), and the file must then start like the route's kind (step 4). It is
+// accepted, not solved. Step 1 and the per-read identity check below are what keep it from being a routine swap.
+//
 // After that no handle is kept. A stream is many reads, and each one opens the file again, checks it is still THE
-// file of step 3 (device, inode, size, mtime), reads its slice and closes. So:
-//   - a file replaced after the check is an error on the next read, never other bytes;
+// file of step 3 (device, inode, size, mtime, ctime), reads its slice and closes. So:
+//   - a file REPLACED (renamed over, or deleted and recreated) after the check is an error on the next read, never
+//     other bytes: that is guaranteed. A rewrite in place that keeps the size and puts mtime back is caught by ctime,
+//     which a program cannot set, except by changing the system clock;
 //   - nothing of ours holds a served file between two reads. On Windows an open handle keeps a deleted file's name
 //     until it closes and makes some operations on it fail; a paused video or a stalled renderer must not be able
 //     to hold `videos.delete` off, and here it cannot: at most one short read is ever in flight.
@@ -55,10 +64,11 @@ interface Identity {
   readonly ino: bigint;
   readonly size: bigint;
   readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
 }
 
-const identityOf = (stats: BigIntStats): Identity => ({ dev: stats.dev, ino: stats.ino, size: stats.size, mtimeNs: stats.mtimeNs });
-const sameIdentity = (a: Identity, b: Identity): boolean => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs;
+const identityOf = (stats: BigIntStats): Identity => ({ dev: stats.dev, ino: stats.ino, size: stats.size, mtimeNs: stats.mtimeNs, ctimeNs: stats.ctimeNs });
+const sameIdentity = (a: Identity, b: Identity): boolean => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 
 function isInside(realRoot: string, realPath: string): boolean {
   const rel = relative(realRoot, realPath);
@@ -118,6 +128,8 @@ async function open_(target: DiskTarget, ops: MediaFsOps): Promise<ByteSource | 
       }
       const again = await openRegularNoFollow(path, { ops: ops.open });
       try {
+        // `openRegularNoFollow` fstats the handle too but does not hand that back, so the identity is read once more here:
+        // one syscall per 256 KiB chunk, for a comparison against the file that was CHECKED, not just the one lstat saw.
         if (!sameIdentity(identityOf(await again.stat({ bigint: true })), served)) throw new Error("the file changed after it was checked");
         const buffer = new Uint8Array(length);
         let filled = 0;

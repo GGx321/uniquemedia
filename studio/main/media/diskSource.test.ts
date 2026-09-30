@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { link, lstat, mkdir, mkdtemp, open, realpath, rename, rm, symlink, truncate, unlink, writeFile, appendFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rename, utimes, rm, symlink, truncate, unlink, writeFile, appendFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OpenRegularOps } from "../../engine/library/openRegular";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { openDiskSource, type DiskTarget, type MediaFsOps } from "./diskSource";
+import { openDiskSource, type DiskTarget } from "./diskSource";
+import { canSymlink, countingFs } from "./testing";
 useNativeGlobals();
 
 // The disk source is the one place a served file is opened. Its promises, each pinned below:
@@ -31,50 +31,7 @@ afterEach(async () => {
 
 const target = (overrides: Partial<DiskTarget> = {}): DiskTarget => ({ root, segments: ["dir", "file.bin"], maxBytes: 1024 * 1024, sniff, ...overrides });
 
-/** Real disk calls, with hooks that let a test act between two of them, and counters of handles opened and closed. */
-function ops(hooks: { afterLstat?: (path: string) => Promise<void>; beforeRealpath?: (path: string) => Promise<void> } = {}): MediaFsOps & { opened: number; closed: number } {
-  const state = { opened: 0, closed: 0 };
-  const open_: OpenRegularOps = {
-    lstat: async (path) => {
-      const stats = await lstat(path, { bigint: true });
-      await hooks.afterLstat?.(path);
-      return stats;
-    },
-    open: async (path, flags) => {
-      const handle = await open(path, flags);
-      state.opened++;
-      const close = handle.close.bind(handle);
-      handle.close = async () => {
-        state.closed++;
-        return close();
-      };
-      return handle;
-    },
-  };
-  return {
-    open: open_,
-    realpath: async (path) => {
-      await hooks.beforeRealpath?.(path);
-      return realpath(path);
-    },
-    get opened() {
-      return state.opened;
-    },
-    get closed() {
-      return state.closed;
-    },
-  };
-}
-
-async function tryLink(to: string, path: string, type?: "dir" | "file" | "junction"): Promise<boolean> {
-  try {
-    await symlink(to, path, type);
-    return true;
-  } catch (error) {
-    if (process.platform === "win32" && error instanceof Error && Reflect.get(error, "code") === "EPERM") return false;
-    throw error;
-  }
-}
+const ops = countingFs;
 
 const write = (name: string, data: Buffer | string): Promise<void> => writeFile(join(root, "dir", name), data);
 
@@ -92,7 +49,7 @@ describe("openDiskSource: what it serves", () => {
   test("a root that is itself a link to a real folder is fine: the owner may point Studio at one", async () => {
     await write("file.bin", body(10));
     const linkedRoot = join(outside, "linked-root");
-    if (!(await tryLink(root, linkedRoot, "junction"))) return;
+    await symlink(root, linkedRoot, "junction");
     expect((await openDiskSource(target({ root: linkedRoot })))?.size).toBe(body(10).length);
   });
 });
@@ -136,32 +93,32 @@ describe("openDiskSource: what it refuses (null, never a throw)", () => {
     expect(await openDiskSource(target({ segments: ["flat", "file.bin"] }))).toBeNull();
   });
 
-  test("a symlink at the served path, to a file outside the root", async () => {
+  test.skipIf(!canSymlink)("a symlink at the served path, to a file outside the root", async () => {
     await writeFile(join(outside, "secret.bin"), body(10));
-    if (!(await tryLink(join(outside, "secret.bin"), join(root, "dir", "file.bin"), "file"))) return;
+    await symlink(join(outside, "secret.bin"), join(root, "dir", "file.bin"), "file");
     expect(await openDiskSource(target())).toBeNull();
   });
 
-  test("a symlink at the served path, to another file inside the root: no link is followed at all", async () => {
+  test.skipIf(!canSymlink)("a symlink at the served path, to another file inside the root: no link is followed at all", async () => {
     await write("other.bin", body(10));
-    if (!(await tryLink(join(root, "dir", "other.bin"), join(root, "dir", "file.bin"), "file"))) return;
+    await symlink(join(root, "dir", "other.bin"), join(root, "dir", "file.bin"), "file");
     expect(await openDiskSource(target())).toBeNull();
   });
 
-  test("a dangling symlink at the served path", async () => {
-    if (!(await tryLink(join(outside, "gone.bin"), join(root, "dir", "file.bin"), "file"))) return;
+  test.skipIf(!canSymlink)("a dangling symlink at the served path", async () => {
+    await symlink(join(outside, "gone.bin"), join(root, "dir", "file.bin"), "file");
     expect(await openDiskSource(target())).toBeNull();
   });
 
   test("a folder on the way that is a link to a folder outside the root", async () => {
     await writeFile(join(outside, "file.bin"), body(10));
-    if (!(await tryLink(outside, join(root, "linked"), "junction"))) return;
+    await symlink(outside, join(root, "linked"), "junction");
     expect(await openDiskSource(target({ segments: ["linked", "file.bin"] }))).toBeNull();
   });
 
   test("a folder on the way that is a link to another folder inside the root", async () => {
     await write("file.bin", body(10));
-    if (!(await tryLink(join(root, "dir"), join(root, "alias"), "junction"))) return;
+    await symlink(join(root, "dir"), join(root, "alias"), "junction");
     expect(await openDiskSource(target({ segments: ["alias", "file.bin"] }))).toBeNull();
   });
 
@@ -204,6 +161,54 @@ describe("openDiskSource: what it refuses (null, never a throw)", () => {
     expect(swapping.closed).toBe(swapping.opened);
   });
 
+  // The two checks after the open, each alone, on every platform. They cannot use a renamed folder (Windows will not
+  // rename a folder with a file open inside it); they retarget a JUNCTION that is the root itself instead, between the
+  // open and the real-path look. A junction needs no privilege, and on macOS and Linux it is a symlink to a folder.
+  const retarget = async (linkPath: string, to: string): Promise<void> => {
+    await rm(linkPath, { recursive: false, force: true });
+    await symlink(to, linkPath, "junction");
+  };
+
+  test("the real-path check alone: the root's link moved to a folder outside, where a hard link to the very same file lives", async () => {
+    await write("file.bin", body(10));
+    await mkdir(join(outside, "dir"));
+    await link(join(root, "dir", "file.bin"), join(outside, "dir", "file.bin"));
+    const via = join(outside, "via");
+    await symlink(root, via, "junction");
+    let moved = false;
+    const swapping = ops({
+      beforeRealpath: async (path) => {
+        if (moved || !path.endsWith("file.bin")) return;
+        moved = true;
+        await retarget(via, outside);
+      },
+    });
+    // Same inode, size and times either way: only "is the real path inside the real root" can say no.
+    expect(await openDiskSource(target({ root: via }), swapping)).toBeNull();
+    expect(moved).toBe(true);
+    expect(swapping.closed).toBe(swapping.opened);
+  });
+
+  test("the identity check alone: the root's link moved inside the root to another file of the same name and size", async () => {
+    await write("file.bin", body(10));
+    await mkdir(join(root, "alt", "dir"), { recursive: true });
+    await writeFile(join(root, "alt", "dir", "file.bin"), body(10));
+    const via = join(outside, "via");
+    await symlink(root, via, "junction");
+    let moved = false;
+    const swapping = ops({
+      beforeRealpath: async (path) => {
+        if (moved || !path.endsWith("file.bin")) return;
+        moved = true;
+        await retarget(via, join(root, "alt"));
+      },
+    });
+    // The real path is inside the real root, so only "is this the file that was opened" can say no.
+    expect(await openDiskSource(target({ root: via }), swapping)).toBeNull();
+    expect(moved).toBe(true);
+    expect(swapping.closed).toBe(swapping.opened);
+  });
+
   test("every handle it opened is closed after a refusal", async () => {
     await write("file.bin", "<html></html>");
     const counted = ops();
@@ -229,6 +234,20 @@ describe("openDiskSource: reads", () => {
     const source = await openDiskSource(target());
     await write("swap.bin", body(1000));
     await rename(join(root, "dir", "swap.bin"), join(root, "dir", "file.bin"));
+    await expect(source?.read(0, 10)).rejects.toThrow();
+  });
+
+  test("a rewrite in place with the same size and the modification time put back is still an error: ctime cannot be put back", async () => {
+    await write("file.bin", body(1000));
+    const path = join(root, "dir", "file.bin");
+    // A whole-millisecond time, so that `utimes` (which takes a Date) can put back exactly what the file had.
+    const fixed = new Date(Date.now() - 60_000);
+    fixed.setMilliseconds(0);
+    await utimes(path, fixed, fixed);
+    const source = await openDiskSource(target());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(path, Buffer.concat([HEAD, Buffer.alloc(1000, 0x62)]));
+    await utimes(path, fixed, fixed);
     await expect(source?.read(0, 10)).rejects.toThrow();
   });
 

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { KINDS } from "./kinds";
 import { createStickerLookup } from "./stickers";
+import { canSymlink } from "./testing";
 useNativeGlobals();
 
 // The built-in stickers are read whole (each is at most 5 MB, and inside app.asar a handle cannot be opened the way
@@ -107,15 +108,10 @@ describe("createStickerLookup", () => {
     });
   }
 
-  test("a symlink where the sticker file should be is refused", async () => {
+  test.skipIf(!canSymlink)("a symlink where the sticker file should be is refused", async () => {
     const bytes = apng(1);
     await writeFile(join(dir, "real.apng"), bytes);
-    try {
-      await symlink(join(dir, "real.apng"), join(dir, "heart-pulse.apng"));
-    } catch (error) {
-      if (process.platform === "win32" && error instanceof Error && Reflect.get(error, "code") === "EPERM") return;
-      throw error;
-    }
+    await symlink(join(dir, "real.apng"), join(dir, "heart-pulse.apng"));
     await writeCatalog([entryFor("heart-pulse", bytes)]);
     expect(await createStickerLookup(dir)("heart-pulse")).toBeNull();
   });

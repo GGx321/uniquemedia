@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach } from "bun:test";
 import { EXPORT_MARKER_FILE } from "../../engine/exportRoot";
+import type { OpenRegularOps } from "../../engine/library/openRegular";
 import { parseRecordSpec, type VideoRecord } from "../../engine/videos/record";
 import { specOf } from "../../engine/videos/testing/kit";
 import { RelativePath } from "../../shared/engine";
+import type { MediaFsOps } from "./diskSource";
 
 // Test-only: the smallest world the media route tests need, made of plain folders. `useWorld()` (the video kit) opens a
 // real library and adds photos with fsyncs, which on a Windows runner can pass the 5 s a hook is given; nothing under
@@ -76,3 +78,59 @@ export function recordFor(world: MediaWorld, options: RecordOptions): VideoRecor
     spec: parseRecordSpec(specOf(world.avatarId, ["photo-00000001"])),
   };
 }
+
+/**
+ * The real disk calls of the media protocol with two things added: hooks that let a test act between two of them, and
+ * counters of file handles opened and closed (`opened === closed` is "nothing leaked"; between reads it is "nothing held").
+ */
+export function countingFs(hooks: { afterLstat?: (path: string) => Promise<void>; beforeRealpath?: (path: string) => Promise<void> } = {}): MediaFsOps & { readonly opened: number; readonly closed: number } {
+  const state = { opened: 0, closed: 0 };
+  const ops: OpenRegularOps = {
+    lstat: async (path) => {
+      const stats = await lstat(path, { bigint: true });
+      await hooks.afterLstat?.(path);
+      return stats;
+    },
+    open: async (path, flags) => {
+      const handle = await open(path, flags);
+      state.opened++;
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        state.closed++;
+        return close();
+      };
+      return handle;
+    },
+  };
+  return {
+    open: ops,
+    realpath: async (path) => {
+      await hooks.beforeRealpath?.(path);
+      return realpath(path);
+    },
+    get opened() {
+      return state.opened;
+    },
+    get closed() {
+      return state.closed;
+    },
+  };
+}
+
+/**
+ * Whether this user may create a file symlink here: always on macOS and Linux, on Windows only with Developer Mode or
+ * an elevated shell. Decided once; a test that needs one says `test.skipIf(!canSymlink)`, so a runner that cannot
+ * shows the test as skipped instead of passing it without checking anything. (Junctions need no privilege.)
+ */
+export const canSymlink: boolean = await (async () => {
+  const probe = await mkdtemp(join(tmpdir(), "studio-canlink-"));
+  try {
+    await writeFile(join(probe, "target"), "x");
+    await symlink(join(probe, "target"), join(probe, "link"), "file");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rm(probe, { recursive: true, force: true });
+  }
+})();
