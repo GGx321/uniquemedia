@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { COLLAGE_CELL_COUNT, MontageSpec } from "../shared/engine";
 import { videoKindOf } from "../engine/videos/service";
 import { MIXED_SPEC, PAIRWISE_SPECS, SMOKE_PHOTOS_NEEDED, smokeSpec, type SmokeSpecPlan } from "./renderSmokeSpecs";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // The packaged E2E's render specs (plan 3a.9): five pairwise 4 s specs that between them cover every clip kind Studio can
 // render today, every collage size and every motion, and one mixed 15 s timeline. They are data only; the smoke feeds them

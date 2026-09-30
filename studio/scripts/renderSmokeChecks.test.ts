@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { Probed } from "../engine/render/ffmpeg.testkit";
 import type { Mp4Facts } from "./mp4Facts";
 import { renderedFileProblems, type RenderedFileEvidence } from "./renderSmokeChecks";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // What the packaged E2E asks of every file the packaged app renders (invariants 14 and 20), as a pure function of what ffprobe
 // and the box reader found, so each rule can be shown to fire here, on synthetic evidence, and not only to pass on a real file.

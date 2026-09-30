@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { boxTree, formatBoxTree, mp4Facts } from "./mp4Facts";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // What the packaged E2E records about each rendered file on each OS (plan 3a.9): the full box tree, including the children of
 // the sample entries and the `stbl` set, the `ftyp` brands, the creation and modification times, the `©too` string and the

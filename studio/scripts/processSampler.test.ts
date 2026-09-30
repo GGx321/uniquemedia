@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isFfmpegCommand, ownedRows, parsePosixPs, parseWindowsSamples, PeakTracker, type ProcSample } from "./processSampler";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // The packaged E2E measures how much memory each render's ffmpeg takes (plan 3a.9, SP1's open item on Windows). These are
 // the pure parts: reading `ps` and the Windows sampler's lines, keeping only the ffmpegs that belong to the app under test
