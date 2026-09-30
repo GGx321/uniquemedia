@@ -17,8 +17,9 @@ export const RASTER_WASM = {
 /**
  * The wall for one text call, from the moment it is on the worker (textGate.ts terminates the worker past it).
  * The template's worst legitimate case is a «Без фона» shadow caption at the largest size: 225-283 ms on the
- * development machine. The node test `textGate.real.node-test.ts` measures that worst case on every runner
- * (macOS and Windows CI) and fails if the wall is not at least 5x it, so this number is checked, not guessed.
+ * development machine. The node test `textGate.real.node-test.ts` times that worst case on every runner (macOS and
+ * Windows CI) and fails if the wall is under 5x its median or under 3x the slowest of 7 renders, so this number is
+ * checked, not guessed.
  * It is far below main's own 30 s command deadline.
  */
 export const TEXT_RENDER_DEADLINE_MS = 3_000;
