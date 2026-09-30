@@ -1,7 +1,8 @@
 import type { Worker } from "node:worker_threads";
 import { timeoutSignal, untilAborted } from "../../money/timeoutSignal";
+import type { CaptionImage, CaptionRequest } from "../caption/types";
 import { DEFAULT_RASTER_LIMITS, RasterError, TEXT_RENDER_DEADLINE_MS, type Box, type RasterImage, type RasterRequest } from "../rasterTypes";
-import { TextWorkerResponseSchema, type TextWorkerRequest, type TextWorkerResponse } from "./protocol";
+import { boundedMessage, TextWorkerRequestSchema, TextWorkerResponseSchema, type TextWorkerRequest, type TextWorkerResponse } from "./protocol";
 
 // The engine side of the text worker, the face gate's design (face/worker/workerGate.ts) for the same reason:
 // resvg is synchronous wasm, so neither a deadline nor a cancel can stop it from the thread it runs on. The
@@ -50,6 +51,18 @@ export interface GateImage extends RasterImage {
   workerMs: number;
 }
 
+/** A captioned layer: the picture, its resolved layout, and the time the worker itself spent. */
+export interface GateCaption extends CaptionImage {
+  workerMs: number;
+}
+
+export interface CaptionCallOptions {
+  /** Aborting while the call is QUEUED costs nothing; aborting once it is running terminates the worker (a running resvg call cannot be interrupted). */
+  signal?: AbortSignal;
+  /** Called once, when the call gets the lane and is about to run: from then on a cancel would kill the worker, so a caller that only wants to drop stale queued work stops cancelling here. Not called for a call cancelled before that. */
+  onStart?: () => void;
+}
+
 export interface TextGate {
   /** Spawns the worker and waits for it to load; a no-op when one is live. Aborting `signal` terminates a load in progress. */
   start(signal?: AbortSignal): Promise<void>;
@@ -57,6 +70,13 @@ export interface TextGate {
   render(request: RasterRequest, signal?: AbortSignal): Promise<GateImage>;
   /** resvg's own `getBBox()` in the worker, or null when nothing is drawn. */
   measure(request: RasterRequest, signal?: AbortSignal): Promise<Box | null>;
+  /**
+   * A text layer to a picture, in the worker: the caption rules, the layout, the fixed template and resvg. Rejects with a
+   * `RasterError`: `CAPTION_INVALID` (carrying the rule) for a caption that breaks one, `RENDER_TIMEOUT` past the deadline,
+   * `RENDER_FAILED` for anything resvg or the template refuses. A request the worker's protocol would refuse is
+   * `RENDER_FAILED` here, before anything is sent.
+   */
+  caption(request: CaptionRequest, options?: CaptionCallOptions): Promise<GateCaption>;
   /** Terminates the worker for good; a call in flight fails, and every later call rejects. */
   dispose(): Promise<void>;
   /** True once a worker could not be terminated: every later call fails with it until the engine restarts. */
@@ -301,7 +321,7 @@ export function createTextGate(options: TextGateOptions): TextGate {
    * Runs `body` on the live worker, alone (the lane), under the deadline. Abort, the deadline, or any failure that
    * is not the worker's own clean report terminates the worker before this settles; a `fatal` report does too.
    */
-  async function inLane<T>(signal: AbortSignal, body: (entry: Live) => Promise<Outcome<T>>): Promise<T> {
+  async function inLane<T>(signal: AbortSignal, body: (entry: Live) => Promise<Outcome<T>>, onStart?: () => void): Promise<T> {
     if (disposed) throw workerFailed("the text gate is disposed");
     if (broken !== null) throw broken;
     cancelIdleTimer();
@@ -315,6 +335,7 @@ export function createTextGate(options: TextGateOptions): TextGate {
     try {
       signal.throwIfAborted();
       if (disposed) throw workerFailed("the text gate is disposed");
+      onStart?.();
       const entry = await liveWorker(signal);
       const deadline = timeoutSignal(renderTimeoutMs);
       let outcome: Outcome<T>;
@@ -358,7 +379,8 @@ export function createTextGate(options: TextGateOptions): TextGate {
         if (!parsed.success) return reject(workerFailed("the text worker answered with something outside the protocol"));
         const response = parsed.data;
         if (response.type === "failed" && response.id === message.id) {
-          return resolve({ ok: false, error: new RasterError(response.code, response.message), fatal: response.fatal });
+          const options = response.captionIssue === undefined ? undefined : { captionIssue: response.captionIssue };
+          return resolve({ ok: false, error: new RasterError(response.code, response.message, options), fatal: response.fatal });
         }
         const value = pick(response);
         if (value === undefined) return reject(workerFailed(`the text worker sent an unexpected ${response.type} response`));
@@ -389,6 +411,22 @@ export function createTextGate(options: TextGateOptions): TextGate {
       const id = nextRequestId++;
       const message: TextWorkerRequest = { type: "measure", id, svg: input.svg, font: input.font };
       return await inLane(signal, (entry) => request(entry, message, [], (r) => (r.type === "measured" && r.id === id ? { box: r.box } : undefined))).then((r) => r.box);
+    },
+
+    async caption(input, options = {}) {
+      const message: TextWorkerRequest = { type: "caption", id: nextRequestId, value: input.value, font: input.font, style: input.style, color: input.color, scale: input.scale };
+      // The worker parses what it is sent and DIES on a message outside its protocol, so a bad request never gets there.
+      const checked = TextWorkerRequestSchema.safeParse(message);
+      if (!checked.success) throw new RasterError("RENDER_FAILED", boundedMessage(`the caption request is invalid: ${checked.error.message}`));
+      const id = nextRequestId++;
+      return await inLane(
+        options.signal ?? NEVER_ABORTED,
+        (entry) =>
+          request(entry, message, [], (r) =>
+            r.type === "captioned" && r.id === id ? { png: new Uint8Array(r.png), width: r.width, height: r.height, layout: r.layout, workerMs: r.workerMs } : undefined,
+          ),
+        options.onStart,
+      );
     },
 
     async dispose(): Promise<void> {

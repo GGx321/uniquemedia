@@ -1,9 +1,12 @@
 import { performance } from "node:perf_hooks";
 import { parentPort, workerData } from "node:worker_threads";
+import { createCaptionRenderer, type CaptionRenderer } from "../caption/renderer";
+import { openEmojiFont } from "../emoji/emojiFont";
+import { loadEmojiFont } from "../fonts";
 import { createTextRasteriser, RasterError, type TextRasteriser } from "../rasteriser";
 import { boundedMessage, TextWorkerInitSchema, TextWorkerRequestSchema, type TextWorkerResponse } from "./protocol";
 
-// The text worker thread: resvg-wasm, the five fonts and (from 3b.4b) the caption layout live here, off the
+// The text worker thread: resvg-wasm, the five fonts, the emoji reader and (from 3b.4b) the caption layout live here, off the
 // engine's event loop. It is a separate BUILT ENTRY (electron.studio.vite.config.ts: engine/textWorker), loaded by
 // file URL from inside app.asar, and, like everything under studio/engine, Electron-free (runtime.test.ts walks
 // this entry too). It handles ONE request at a time and is killed from outside (`worker.terminate()`,
@@ -23,10 +26,13 @@ function messageOf(error: unknown): string {
 
 async function main(): Promise<void> {
   let rasteriser: TextRasteriser;
+  let captions: CaptionRenderer;
   try {
     const init = TextWorkerInitSchema.parse(workerData);
     rasteriser = createTextRasteriser({ wasmPath: init.wasmPath, fontDir: init.fontDir });
     await rasteriser.init();
+    // The emoji reader opens here, on bytes this worker read and owns (sha256-checked by the loader).
+    captions = createCaptionRenderer({ rasteriser, emoji: openEmojiFont(await loadEmojiFont(init.fontDir)) });
   } catch (error) {
     send({ type: "load-failed", message: messageOf(error) });
     return;
@@ -46,13 +52,25 @@ async function main(): Promise<void> {
           const image = await rasteriser.render({ svg: request.svg, font: request.font });
           const png = image.png.slice().buffer;
           send({ type: "rendered", id: request.id, width: image.width, height: image.height, png, workerMs: performance.now() - started }, [png]);
-        } else {
+        } else if (request.type === "measure") {
           const box = rasteriser.measure({ svg: request.svg, font: request.font });
           send({ type: "measured", id: request.id, box, workerMs: performance.now() - started });
+        } else {
+          const image = await captions.render({ value: request.value, font: request.font, style: request.style, color: request.color, scale: request.scale });
+          const png = image.png.slice().buffer;
+          send({ type: "captioned", id: request.id, width: image.width, height: image.height, png, layout: image.layout, workerMs: performance.now() - started }, [png]);
         }
       } catch (error) {
         const code = error instanceof RasterError ? error.code : "RENDER_FAILED";
-        send({ type: "failed", id: request.id, code, message: messageOf(error), fatal: rasteriser.isBroken() || !(error instanceof RasterError) });
+        const captionIssue = error instanceof RasterError ? error.captionIssue : undefined;
+        send({
+          type: "failed",
+          id: request.id,
+          code,
+          message: messageOf(error),
+          fatal: rasteriser.isBroken() || !(error instanceof RasterError),
+          ...(captionIssue === undefined ? {} : { captionIssue }),
+        });
       }
     })();
   });

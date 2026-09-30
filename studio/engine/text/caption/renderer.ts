@@ -1,4 +1,3 @@
-import type { TextStyle } from "../../../shared/engine/montage";
 import { captionIssue } from "../captionRules";
 import type { EmojiFont } from "../emoji/emojiFont";
 import type { TextFontKey } from "../fonts";
@@ -6,6 +5,7 @@ import type { TextRasteriser } from "../rasteriser";
 import { RasterError } from "../rasterTypes";
 import { CaptionLayoutError, layoutCaption } from "./layout";
 import { buildCaptionSvg, CaptionTemplateError, measureSvg } from "./template";
+import type { CaptionImage, CaptionRequest } from "./types";
 
 /**
  * A caption from its layer to a PNG (plan 3b.4b): the caption rules, the layout, the fixed SVG template and resvg, in
@@ -17,30 +17,7 @@ import { buildCaptionSvg, CaptionTemplateError, measureSvg } from "./template";
  * and each emoji bitmap's base64 and aspect (per glyph id).
  */
 
-export interface CaptionRequest {
-  value: string;
-  font: TextFontKey;
-  style: TextStyle;
-  /** Lowercase `#rrggbb`; what it paints depends on the style. */
-  color: string;
-  /** 0.5 to 2. */
-  scale: number;
-}
-
-/** What is stored as the layer's resolved layout: the size the text was drawn at and what each line says, and the box. */
-export interface ResolvedCaptionLayout {
-  fontSize: number;
-  lines: string[];
-  width: number;
-  height: number;
-}
-
-export interface CaptionImage {
-  png: Uint8Array;
-  width: number;
-  height: number;
-  layout: ResolvedCaptionLayout;
-}
+export type { CaptionImage, CaptionRequest, ResolvedCaptionLayout } from "./types";
 
 export interface CaptionRenderer {
   /** Rejects with a `RasterError`; a caption rule broken is `CAPTION_INVALID` with the rule. */
