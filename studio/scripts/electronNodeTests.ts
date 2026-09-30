@@ -7,10 +7,11 @@
  * 2015 ms on CI, against 202 ms under Electron's Node), and terminating a worker that runs wasm crashes Bun in
  * a few percent of runs. Electron's Node has neither problem, so there is nothing to retry here.
  *
- * Each suite is a `*.node-test.ts` written against `node:test` and `node:assert`. This script bundles it, and
- * every worker entry it spawns, with `bun build --target=node` into a temp directory, then runs
- *   ELECTRON_RUN_AS_NODE=1 <electron binary> --test <bundle>
- * with `STUDIO_ROOT` (the repo) in the environment. No retries. The run fails when Electron's exit code is not 0, and
+ * Each suite is a `*.node-test.ts` (or `.mts`, `.tsx`) written against `node:test` and `node:assert`. This script
+ * bundles it, and every worker entry it spawns, with `bun build --target=node` into a temp directory, then runs
+ *   ELECTRON_RUN_AS_NODE=1 <electron binary> --test --test-reporter=spec <bundle>
+ * with `STUDIO_ROOT` (the repo) in the environment. The reporter is named, not left to node's default, because the
+ * summary check below reads the spec reporter's lines. No retries. The run fails when Electron's exit code is not 0, and
  * also when its summary does not show a real run: `electron --test` exits 0 with zero tests, and with every test
  * behind `describe.skip`, so the summary (`ℹ tests N`, `ℹ pass N`, `ℹ skipped N`, `ℹ todo N`) is read from the
  * output, which is copied through as it arrives. Zero tests, a file that registered none, any skipped or todo test or
@@ -24,7 +25,7 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, parse, resolve } from "node:path";
 import { electronBinary } from "./electronBinary";
 
 export interface NodeTestSuite {
@@ -44,12 +45,14 @@ const ANSI = /\u001b\[[0-9;]*m/g;
  */
 export function nodeTestSummaryProblem(output: string): string | undefined {
   const plain = output.replace(ANSI, "");
+  // The LAST such line: the reporter prints the run's summary at the very end, and a test that logs a line shaped like one must not be read instead.
   const count = (name: string): number | undefined => {
-    const match = new RegExp(`^ℹ ${name} (\\d+)\\s*$`, "m").exec(plain);
-    return match?.[1] === undefined ? undefined : Number(match[1]);
+    const matches = [...plain.matchAll(new RegExp(`^ℹ ${name} (\\d+)\\s*$`, "gm"))];
+    const last = matches.at(-1)?.[1];
+    return last === undefined ? undefined : Number(last);
   };
-  // A file that registers no test of its own is counted by node as ONE passing test named after the file (`tests 1`).
-  if (/^[✔✖﹣]\s+\S+\.(?:mjs|cjs|js)\s+\(/m.test(plain)) return "a test file registered no tests: node counted the file itself as the one test";
+  // A file that registers no test of its own is counted by node as ONE passing test named after the file (`tests 1`), whose path may hold spaces.
+  if (/^[✔✖﹣]\s+[^\n]*\.(?:mjs|cjs|js)\s+\(\d/m.test(plain)) return "a test file registered no tests: node counted the file itself as the one test";
   // A skipped or todo suite is not always in the counts (`describe.skip` reports `tests 0`, `skipped 0`), but it always marks its line.
   if (/ # (?:SKIP|TODO)\b/.test(plain)) return "a test or suite is marked SKIP or TODO: every test must run";
   const tests = count("tests");
@@ -89,7 +92,7 @@ export function electronNodeEnv(parent: Readonly<Record<string, string | undefin
 }
 
 export function electronNodeArgs(bundle: string): string[] {
-  return ["--test", bundle];
+  return ["--test", "--test-reporter=spec", bundle];
 }
 
 /** `bun build <source> --target=node`, as a child process: the same command a person would run, and it behaves the same under `bun test`. */
@@ -107,7 +110,7 @@ function bundle(root: string, source: string, outDir: string, outName: string): 
 
 /** Bundles a suite's test and its workers into `outDir`; returns the test bundle's path. Throws when any bundle fails. */
 export async function buildSuite(root: string, suite: NodeTestSuite, outDir: string): Promise<string> {
-  const testBundle = await bundle(root, suite.entry, outDir, `${basename(suite.entry, ".ts")}.mjs`);
+  const testBundle = await bundle(root, suite.entry, outDir, `${parse(suite.entry).name}.mjs`);
   for (const [outName, source] of Object.entries(suite.workers)) await bundle(root, source, outDir, outName);
   return testBundle;
 }
@@ -115,14 +118,17 @@ export async function buildSuite(root: string, suite: NodeTestSuite, outDir: str
 function runElectronNode(electron: string, testBundle: string, env: Record<string, string>): Promise<{ code: number; output: string }> {
   return new Promise((resolveRun, reject) => {
     const child = spawn(electron, electronNodeArgs(testBundle), { env, stdio: ["ignore", "pipe", "pipe"] });
-    // Copied through as it arrives, and kept: the summary is read from it.
+    // Copied through as it arrives, and kept: the summary is read from it. Decoded per stream, so a multi-byte
+    // character (the reporter's `✔`, `ℹ`) split across two chunks is not turned into replacement characters.
     let output = "";
-    child.stdout.on("data", (d: Buffer) => {
-      output += String(d);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d: string) => {
+      output += d;
       process.stdout.write(d);
     });
-    child.stderr.on("data", (d: Buffer) => {
-      output += String(d);
+    child.stderr.on("data", (d: string) => {
+      output += d;
       process.stderr.write(d);
     });
     const timer = setTimeout(() => {

@@ -23,14 +23,14 @@ describe("the registered suites", () => {
   });
 
   test("keep their entries out of `bun test`, which would load node:test files and crash on the real workers", () => {
-    for (const suite of NODE_TEST_SUITES) expect(suite.entry).toMatch(/\.node-test\.ts$/);
+    for (const suite of NODE_TEST_SUITES) expect(suite.entry).toMatch(/\.node-test\.(?:ts|mts|tsx)$/);
   });
 });
 
 describe("every *.node-test.ts file is registered", () => {
   test("the suites are exactly the node-test files under studio/, so a new one cannot sit there unrun", async () => {
     const onDisk: string[] = [];
-    for await (const file of new Bun.Glob("studio/**/*.node-test.ts").scan({ cwd: ROOT, onlyFiles: true })) {
+    for await (const file of new Bun.Glob("studio/**/*.node-test.{ts,mts,tsx}").scan({ cwd: ROOT, onlyFiles: true })) {
       if (!file.split(/[\\/]/).includes("node_modules")) onDisk.push(file.split("\\").join("/"));
     }
     expect(onDisk.sort()).toEqual(NODE_TEST_SUITES.map((suite) => suite.entry).sort());
@@ -85,6 +85,25 @@ describe("nodeTestSummaryProblem: `electron --test` exits 0 for runs that tested
     expect(nodeTestSummaryProblem("")).toMatch(/no `ℹ tests N` summary/);
   });
 
+  test("reads the LAST summary: a test that logs a line shaped like one cannot stand in for the run's", () => {
+    const logged = ["ℹ tests 9", "ℹ pass 9", "ℹ skipped 0", "ℹ todo 0"].join("\n");
+    expect(nodeTestSummaryProblem(`${logged}\n${REAL_RUN}`)).toBeUndefined();
+    // A fake all-green line first, the real (failing) summary last: the real one decides.
+    expect(nodeTestSummaryProblem(`${logged}\n${SUMMARY_TAIL({ tests: 3, suites: 0, pass: 2 })}`)).toMatch(/2 tests passed of 3/);
+    expect(nodeTestSummaryProblem(`${logged}\n${SUMMARY_TAIL({ tests: 0, suites: 0, pass: 0 })}`)).toMatch(/0 tests/);
+  });
+
+  test("refuses a file that registers no test even when its path holds spaces", () => {
+    const spaced = ["✔ /Users/some one/My Projects/tmp dir/none.mjs (89.3ms)", SUMMARY_TAIL({ tests: 1, suites: 0, pass: 1 })].join("\n");
+    expect(nodeTestSummaryProblem(spaced)).toMatch(/registered no tests/);
+    const windows = ["✔ C:\\Users\\some one\\AppData\\Local\\Temp\\none.mjs (89.3ms)", SUMMARY_TAIL({ tests: 1, suites: 0, pass: 1 })].join("\n");
+    expect(nodeTestSummaryProblem(windows)).toMatch(/registered no tests/);
+  });
+
+  test("does not take a nested test whose title merely ends in a file name for a file with no tests", () => {
+    expect(nodeTestSummaryProblem(REAL_RUN.replace("draws the string", "loads app.js"))).toBeUndefined();
+  });
+
   test("does not take a test named 'tests 5' inside the output for the summary", () => {
     expect(nodeTestSummaryProblem("  ✔ ℹ tests 5 is a test name (1ms)")).toMatch(/no `ℹ tests N` summary/);
   });
@@ -109,8 +128,8 @@ describe("electronNodeEnv", () => {
 });
 
 describe("electronNodeArgs", () => {
-  test("runs node's own test runner on the bundle", () => {
-    expect(electronNodeArgs("/out/x.mjs")).toEqual(["--test", "/out/x.mjs"]);
+  test("runs node's own test runner on the bundle, with the spec reporter the summary check reads named explicitly", () => {
+    expect(electronNodeArgs("/out/x.mjs")).toEqual(["--test", "--test-reporter=spec", "/out/x.mjs"]);
   });
 });
 
@@ -125,6 +144,17 @@ describe("buildSuite", () => {
     const files = await readdir(out);
     for (const worker of Object.keys(suite.workers)) expect(files).toContain(worker);
     for (const file of files) expect(await readFile(join(out, file), "utf8")).not.toMatch(/from\s*["']bun:/);
+  });
+
+  test("names the bundle after the entry for a .mts or .tsx entry too", async () => {
+    const out = await mkdtemp(join(tmpdir(), "studio-node-tests-"));
+    scratch.push(out);
+    const src = await mkdtemp(join(tmpdir(), "studio-node-entry-"));
+    scratch.push(src);
+    await Bun.write(join(src, "x.node-test.mts"), "export const answer: number = 42;\n");
+    const bundle = await buildSuite(ROOT, { name: "x", entry: join(src, "x.node-test.mts"), workers: {} }, out);
+    expect(bundle).toBe(join(out, "x.node-test.mjs"));
+    expect(existsSync(bundle)).toBe(true);
   });
 
   test("fails loudly when an entry does not exist", async () => {
