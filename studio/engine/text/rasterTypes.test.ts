@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { RASTER_ERROR_CODES, RasterError } from "./rasterTypes";
+useNativeGlobals();
 
 describe("RasterError", () => {
   test("names a caption rule when it is built with one", () => {

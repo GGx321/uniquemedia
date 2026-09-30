@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { TEXT_BASE_PX } from "../../../shared/montage";
+import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { CaptionLayoutError, EMOJI_HEIGHT_EM, layoutCaption, TEXT_FIT_WIDTH, type CaptionLayout, type LayoutInput } from "./layout";
+useNativeGlobals();
 
 // The layout is pure: the measuring is a function handed in. These tests use a fake one, a fixed 60 units per character
 // at the 100 px reference (0.6 em, like a wide monospace), so every expected width is arithmetic a reader can redo.

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { FRAME_W } from "../../../shared/montage";
+import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { TEXT_FONT_KEYS, TEXT_FONTS } from "../fonts";
 import { layoutCaption, type CaptionLayout } from "./layout";
 import { buildCaptionSvg, CaptionTemplateError, EMOJI_BASELINE, escapeXml, inkFor, measureSvg, type TemplateInput } from "./template";
+useNativeGlobals();
 
 // The template is the ONLY place caption text meets markup (invariant 17): these tests read the SVG it builds as text,
 // the way a hostile caption would try to abuse it. Rendering it is caption.render.test.ts's job.
