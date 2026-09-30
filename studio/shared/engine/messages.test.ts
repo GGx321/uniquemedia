@@ -22,6 +22,7 @@ import type {
   Estimate,
   MoneyStatus,
   MusicKeyStatus,
+  MusicStatus,
   PhotoSummary,
   RunRequest,
   RunSummary,
@@ -40,6 +41,17 @@ const keyStatus: ApiKeyStatus = { stored: true, last4: "3f2a", encryptionAvailab
 
 const MUSIC_KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
 const musicKeyStatus: MusicKeyStatus = { stored: true, last4: "0000", rejected: false };
+
+const musicStatus: MusicStatus = {
+  listFetchedAt: "2026-09-27T20:42:44.190Z",
+  trackCount: 30,
+  bytesOnDisk: 0,
+  sentLast31d: 2,
+  limit: 30,
+  serverRemaining: 28,
+  nextFreeAt: "2026-10-28T20:42:44.190Z",
+  refresh: { state: "idle" },
+};
 
 const settings: Settings = {
   apiKey: keyStatus,
@@ -289,6 +301,8 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "videos.list": { payload: { avatarId: "avatar-0001" }, result: { videos: [video] } },
   "videos.delete": { payload: { videoId: "video-00000001", mode: "video" }, result: { videoId: "video-00000001", fileDeleted: true, fileState: "present" } },
   "videos.reveal": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
+  "music.status": { payload: {}, result: musicStatus },
+  "music.refresh": { payload: { confirm: true }, result: { status: { ...musicStatus, refresh: { state: "running", done: 0, total: 1 } } } },
   "montages.create": {
     payload: { avatarId: "avatar-0001", photoIds: ["photo-0002"] },
     result: { montage: { montageId: "montage-00000001", name: null, spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
@@ -352,6 +366,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "video.changed": { change: "upserted", video },
   "montage.changed": { change: "upserted", montage: { montageId: "montage-00000001", name: null, spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
   "export.status": { exportStatus: { status: "unavailable", reason: "missing" } },
+  "music.changed": { status: { ...musicStatus, refresh: { state: "running", done: 1, total: 31 } } },
 };
 
 // ---------- helpers ----------
@@ -433,6 +448,8 @@ describe("contract surface", () => {
         "videos.list",
         "videos.delete",
         "videos.reveal",
+        "music.status",
+        "music.refresh",
         "montages.create",
         "montages.get",
         "montages.list",
@@ -463,6 +480,7 @@ describe("contract surface", () => {
         "video.changed",
         "montage.changed",
         "export.status",
+        "music.changed",
       ].sort(),
     );
   });

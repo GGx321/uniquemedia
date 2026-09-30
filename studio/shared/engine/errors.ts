@@ -69,6 +69,16 @@ import { Count, SafeText } from "./primitives";
  * - LIBRARY_TOO_NEW: a video record was written by a newer Studio. What follows is per record and per avatar:
  *   `videos.render` refuses for an avatar that has such a record (its usage cannot be trusted), `videos.delete` refuses
  *   that record, and `videos.list` leaves it out. The owner updates the app.
+ *
+ * Stage 3 music (the flashapi list; a request costs one of 30 per 31 days):
+ * - MUSIC_KEY_MISSING: no RapidAPI key is stored, so nothing is sent and no quota is spent.
+ * - MUSIC_KEY_REJECTED: flashapi answered 401 to this key (now or on an earlier refresh, remembered across restarts), or
+ *   the stored key is already known to be rejected: nothing is sent until the key is replaced.
+ * - MUSIC_QUOTA_EXHAUSTED: the local count reached the limit within the last 31 days, or the server's last answer said 0
+ *   requests remained; nothing is sent (`MusicStatus.nextFreeAt` says when the next request may leave).
+ * - MUSIC_UNAVAILABLE: the request was made or could not be made, and no usable list came of it (network, timeout,
+ *   an HTTP error other than 401, an answer that is too large or has no usable track, or the quota log cannot be
+ *   written so nothing was sent). `detail` says which, redacted of the key.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -107,6 +117,10 @@ export const ERROR_CODES = [
   "RENDER_QUEUE_FULL",
   "LIBRARY_TOO_NEW",
   "TEXT_INVALID",
+  "MUSIC_KEY_MISSING",
+  "MUSIC_KEY_REJECTED",
+  "MUSIC_QUOTA_EXHAUSTED",
+  "MUSIC_UNAVAILABLE",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);

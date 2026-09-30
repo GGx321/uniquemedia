@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { expectNoKeyFragment } from "../../testing/keyLeaks";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey, redactSecrets, SafeText } from "./primitives";
 
+/** An obviously fake key in the shape RapidAPI's public docs show: 10 chars, `msh`, 12, `p1`, 6, `jsn`, 12 (48 chars). */
+const RAPIDAPI_SHAPED = `k3m9x2p7q1${"msh"}a1b2c3d4e5f6${"p1"}z9y8x7${"jsn"}q4w5e6r7t8y9`;
+
 describe("Id", () => {
   test.each(["abcdefgh", "a1b2c3d4-e5f6", "0".repeat(64), crypto.randomUUID()])(
     "accepts lowercase alphanumerics and dashes: %s",
@@ -175,11 +178,21 @@ describe("redactSecrets", () => {
     ["another provider's key", "used sk-ant-api03-AbCdEfGh_1234567890", "used [redacted]"],
     ["a bearer token", "header Authorization: Bearer abc.def-123 sent", "header Authorization: Bearer [redacted] sent"],
     ["a lowercase bearer token", "bearer xyz789", "bearer [redacted]"],
+    ["a RapidAPI-shaped key (public docs: ten chars, msh, chars, p1, chars, jsn, chars)", `sent ${RAPIDAPI_SHAPED} to the host`, "sent [redacted] to the host"],
+    ["an x-rapidapi-key header line", "request headers x-rapidapi-key: whatever-value-here, accept: json", "request headers x-rapidapi-key: [redacted], accept: json"],
+    ["an x-rapidapi-key header as JSON", 'headers {"X-RapidAPI-Key":"abc-DEF-123"} end', 'headers {"X-RapidAPI-Key":"[redacted]"} end'],
   ])("removes %s", (_label, input, expected) => {
     expect(redactSecrets(input)).toBe(expected);
   });
 
-  test.each(["desk-organizer-with-drawers", "task-sk-short", "provider returned 503"])(
+  test.each([
+    "desk-organizer-with-drawers",
+    "task-sk-short",
+    "provider returned 503",
+    "the x-rapidapi-key header is missing",
+    "msh and p1 and jsn are just letters here",
+    "abcdefghij-msh-abcdefghijkl-p1-abcdef-jsn-abcdefghijkl",
+  ])(
     "leaves ordinary text %p alone",
     (text) => {
       expect(redactSecrets(text)).toBe(text);

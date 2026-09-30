@@ -721,6 +721,10 @@ export class EngineStore {
       case "export.status":
         this.update({ exportStatus: event.payload.exportStatus, lastSeq });
         return;
+      case "music.changed":
+        // The music status is read on demand (music.status) until the Settings card of 3c.6; the event only has to keep the seq moving.
+        this.update({ lastSeq });
+        return;
       default: {
         // A new event type without a branch above is a compile error here, not a silent gap in `lastSeq`.
         const unhandled: never = event;

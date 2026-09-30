@@ -40,13 +40,17 @@ const EXPECTED_CODES = [
   "RENDER_QUEUE_FULL",
   "LIBRARY_TOO_NEW",
   "TEXT_INVALID",
+  "MUSIC_KEY_MISSING",
+  "MUSIC_KEY_REJECTED",
+  "MUSIC_QUOTA_EXHAUSTED",
+  "MUSIC_UNAVAILABLE",
 ];
 
 /** The codes that must say more than their code: what is wrong with the montage, which cells, why the folder is unusable, which caption rule broke. */
 const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE", "TEXT_INVALID"];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of thirty-six codes", () => {
+  test("is exactly the closed set of forty codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });

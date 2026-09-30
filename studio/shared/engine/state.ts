@@ -671,8 +671,44 @@ export const PhotoSummary = z
     path: ["eligible"],
   });
 
+/** The flashapi quota: 30 requests per rolling 31 days (invariant 30). Shared so the engine and the renderer agree on the number. */
+export const MUSIC_QUOTA_LIMIT = 30;
+export const MUSIC_QUOTA_WINDOW_DAYS = 31;
+
+/**
+ * The music list's refresh (K24, K25): idle, running with its progress (the list request is step one; 3c.4's downloads
+ * are the rest), or failed with the error (the list stays as it was).
+ */
+export const MusicRefreshState = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.literal("idle") }),
+  z.strictObject({ state: z.literal("running"), done: Count, total: Count }).refine((r) => r.done <= r.total, {
+    message: "done cannot pass total",
+    path: ["done"],
+  }),
+  z.strictObject({ state: z.literal("failed"), error: EngineError }),
+]);
+
+/**
+ * Everything the «Музыка» card and the tab know about the list and the quota (K24). The quota lives here and nowhere
+ * else (`Settings.musicKey` keeps the key's state only). `sentLast31d` counts what the local log holds for the last 31
+ * days, a request that left and got no answer included; `serverRemaining` is flashapi's own count from its last answer
+ * within that window. `nextFreeAt` is when a refused refresh may leave (the oldest send leaving the window, or the
+ * server's zero lifting), else when the oldest send leaves the window; null with nothing in the window.
+ */
+export const MusicStatus = z.strictObject({
+  listFetchedAt: IsoDateTime.nullable(),
+  trackCount: Count,
+  bytesOnDisk: Count,
+  sentLast31d: Count.max(MUSIC_QUOTA_LIMIT),
+  limit: z.literal(MUSIC_QUOTA_LIMIT),
+  serverRemaining: Count.nullable(),
+  nextFreeAt: IsoDateTime.nullable(),
+  refresh: MusicRefreshState,
+});
+
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
 export type MusicKeyStatus = z.infer<typeof MusicKeyStatus>;
+export type MusicStatus = z.infer<typeof MusicStatus>;
 export type ImageAgeCheck = z.infer<typeof ImageAgeCheck>;
 export type Settings = z.infer<typeof Settings>;
 export type RenderConcurrency = z.infer<typeof RenderConcurrency>;

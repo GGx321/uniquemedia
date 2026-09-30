@@ -1090,6 +1090,8 @@ export class MockEngine implements EngineBridge {
       case "videos.list":
       case "videos.delete":
       case "videos.reveal":
+      case "music.status":
+      case "music.refresh":
       case "montages.create":
       case "montages.get":
       case "montages.list":

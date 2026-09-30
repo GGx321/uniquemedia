@@ -60,6 +60,12 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   [/\b(Bearer)\s+\S+/gi, "$1 [redacted]"],
   [/sk-or-\S*/gi, "[redacted]"],
   [/(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}/g, "[redacted]"],
+  // A backstop for the RapidAPI key (the flashapi client redacts the exact key itself). The shape is the one RapidAPI's
+  // public docs show: ten chars, `msh`, twelve, `p1`, six, `jsn`, twelve. The counts are loose on purpose (a slightly
+  // different key is still caught), and the run must be alone, so ordinary words and hyphenated text are left alone.
+  [/(?<![A-Za-z0-9])[A-Za-z0-9]{8,14}msh[A-Za-z0-9]{8,20}p1[A-Za-z0-9]{4,10}jsn[A-Za-z0-9]{8,20}(?![A-Za-z0-9])/g, "[redacted]"],
+  // The header that carries it, in a header dump or a JSON echo of one: whatever follows the name goes.
+  [/(x-rapidapi-key["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi, "$1[redacted]"],
 ];
 
 /** Replaces anything that looks like an API key or a bearer token with `[redacted]`. */

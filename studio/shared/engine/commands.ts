@@ -17,6 +17,7 @@ import {
   JobState,
   MoneyStatus,
   MusicKeyStatus,
+  MusicStatus,
   NetworkConcurrency,
   PhotoSummary,
   ReconcileResult,
@@ -328,6 +329,14 @@ const ENGINE_SPECS = [
     z.strictObject({ videoId: Id, mode: z.enum(["video", "record"]) }),
     z.strictObject({ videoId: Id, fileDeleted: z.boolean(), fileState: FileState }),
   ),
+  // Stage 3 music (3c.3, K24, K25). The status is free and never touches the network. A refresh costs one of the 30
+  // requests per 31 days, so it needs `confirm: true` and is manual only. It answers AT ONCE with the status (refresh
+  // `running`), because it outlives main's command deadline; `music.changed` then carries its progress and its end.
+  // Refusals cost nothing: MUSIC_KEY_MISSING, MUSIC_KEY_REJECTED, MUSIC_QUOTA_EXHAUSTED, IN_FLIGHT (one at a time) and
+  // MUSIC_UNAVAILABLE (nothing could be sent, e.g. the quota log cannot be written). A request that left and failed
+  // shows as `refresh: failed` with the error instead, and stays counted.
+  defineCommand("music.status", Empty, MusicStatus),
+  defineCommand("music.refresh", z.strictObject({ confirm: z.literal(true) }), z.strictObject({ status: MusicStatus })),
   // A new draft for an avatar from 0 to 20 of its scene photos (0: an empty draft, «Новый монтаж»), with the focus of
   // every placed photo resolved and no name (`name: null`, the window says «без названия»). Refused, and nothing is stored, with
   //   PHOTO_UNAVAILABLE (issues `photo-unavailable` at `["photoIds", i]`) a photo that is not eligible, or is already in a video,
