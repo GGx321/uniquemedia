@@ -24,7 +24,7 @@ import { unlinkWithRetry } from "../library/unlinkRetry";
 // A draft is the owner's work in progress. It takes no part in "used" (only a rendered video's record does), so nothing
 // here talks to the used index, and a draft may name photos that are gone or rejected.
 //
-// Serialising is the CALLER'S job, through `exclusive`: one queue per draft, in arrival order, so two saves of one
+// Serialising is the CALLER'S job, through `exclusive`: one queue per draft, entered in arrival order, so two saves of one
 // draft never interleave and the last one asked is the last one written. Reads are not queued (an atomic replace
 // makes them safe).
 
@@ -87,9 +87,13 @@ export class DraftStore {
     this.#deps = deps;
   }
 
-  /** Runs `task` after every earlier task on the same draft (of the same library) has settled, whether it succeeded or failed. */
-  exclusive<T>(library: Library, montageId: string, task: () => Promise<T>): Promise<T> {
-    return runExclusive(`montage:${library.root}:${montageId}`, task);
+  /**
+   * Runs `task` after every earlier task on the same draft has settled, whether it succeeded or failed. The queue is entered
+   * SYNCHRONOUSLY, before any await, so the order of the calls is the order of the tasks: a caller that queues before it looks
+   * up the library (which awaits) keeps its place. Ids are unique across the library, so the id alone is the key.
+   */
+  exclusive<T>(montageId: string, task: () => Promise<T>): Promise<T> {
+    return runExclusive(`montage:${montageId}`, task);
   }
 
   /** One draft's file, read as described above. Both ids become path segments, so a bad one throws (`invalid-id`) before any path exists. */

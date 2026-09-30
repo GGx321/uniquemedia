@@ -407,14 +407,13 @@ describe("DraftStore.remove", () => {
 
 describe("DraftStore.exclusive", () => {
   test("tasks on one draft run one after another, in the order they were asked", async () => {
-    const { library } = await openWithAvatars();
     const store = storeOf();
     const order: string[] = [];
-    const slow = store.exclusive(library, "montage-0001", async () => {
+    const slow = store.exclusive("montage-0001", async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       order.push("first");
     });
-    const fast = store.exclusive(library, "montage-0001", async () => {
+    const fast = store.exclusive("montage-0001", async () => {
       order.push("second");
     });
 
@@ -424,14 +423,13 @@ describe("DraftStore.exclusive", () => {
   });
 
   test("tasks on different drafts do not wait for each other", async () => {
-    const { library } = await openWithAvatars();
     const store = storeOf();
     const order: string[] = [];
-    const slow = store.exclusive(library, "montage-0001", async () => {
+    const slow = store.exclusive("montage-0001", async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
       order.push("slow");
     });
-    const fast = store.exclusive(library, "montage-0002", async () => {
+    const fast = store.exclusive("montage-0002", async () => {
       order.push("fast");
     });
 
@@ -440,13 +438,27 @@ describe("DraftStore.exclusive", () => {
     expect(order).toEqual(["fast", "slow"]);
   });
 
-  test("a task that fails does not block the ones behind it", async () => {
-    const { library } = await openWithAvatars();
+  test("the queue is entered at once, before any await: the order of the calls is the order of the tasks", async () => {
     const store = storeOf();
-    const failing = store.exclusive(library, "montage-0001", async () => {
+    const order: number[] = [];
+    const calls = Array.from({ length: 10 }, (_, n) =>
+      store.exclusive("montage-0001", async () => {
+        await new Promise((resolve) => setTimeout(resolve, (10 - n) * 2)); // the earlier the call, the slower the task
+        order.push(n);
+      }),
+    );
+
+    await Promise.all(calls);
+
+    expect(order).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  test("a task that fails does not block the ones behind it", async () => {
+    const store = storeOf();
+    const failing = store.exclusive("montage-0001", async () => {
       throw new Error("boom");
     });
-    const after = store.exclusive(library, "montage-0001", async () => "fine");
+    const after = store.exclusive("montage-0001", async () => "fine");
 
     await expect(failing).rejects.toThrow("boom");
     expect(await after).toBe("fine");
