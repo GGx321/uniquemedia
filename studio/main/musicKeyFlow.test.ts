@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -486,6 +486,55 @@ describe.skipIf(process.platform === "win32")("a FIFO or another special file at
   });
 });
 
+describe.skipIf(process.platform === "win32")("a symlink at the key file's path", () => {
+  /** Stores `key` through `store`, moves the blob out of the way and links the key file's name to it. */
+  async function linkedTo(store: KeyStore, path: string, key: string): Promise<void> {
+    await store.set(key, () => {});
+    const target = join(userData, "elsewhere.bin");
+    await rename(path, target);
+    await symlink(target, path);
+  }
+
+  test("the music store follows a link to a regular file and reads the key", async () => {
+    await linkedTo(await open(), musicPath(), MUSIC);
+    const keys = await open();
+    expect(keys.status()).toMatchObject({ stored: true, last4: "0000" });
+    expect(await keys.read()).toBe(MUSIC);
+  });
+
+  test("the OpenRouter store follows a link to a regular file, as it always did", async () => {
+    const path = join(userData, SECRETS_FILE);
+    const key = "sk-or-v1-0123456789abcdef-wxyz";
+    await linkedTo(await KeyStore.open(safe, path), path, key);
+    const keys = await KeyStore.open(safe, path);
+    expect(keys.status()).toMatchObject({ stored: true, last4: "wxyz" });
+    expect(await keys.read()).toBe(key);
+  });
+
+  test("a link to a FIFO is refused without blocking: the music key reads as absent, the OpenRouter store refuses to open", async () => {
+    const fifo = join(userData, "pipe");
+    makeFifo(fifo);
+    await symlink(fifo, musicPath());
+    await symlink(fifo, join(userData, SECRETS_FILE));
+    const output = captureConsole();
+    try {
+      const music = await orHung(open());
+      expect(music).not.toBe("hung");
+      if (music !== "hung") expect(music.status().stored).toBe(false);
+      const outcome = await orHung(KeyStore.open(safe, join(userData, SECRETS_FILE)).then(() => "opened", () => "refused"));
+      expect(outcome).toBe("refused");
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("a dangling link reads as no key for the music store", async () => {
+    await symlink(join(userData, "nowhere.bin"), musicPath());
+    const keys = await open();
+    expect(keys.status().stored).toBe(false);
+  });
+});
+
 // ---------- one command's answer is its own ----------
 
 describe("the answer to a command is the state it produced", () => {
@@ -514,15 +563,29 @@ describe("the answer to a command is the state it produced", () => {
 
   test("a clear that a queued set follows still answers no key", async () => {
     const keys = await open();
-    await keys.set(MUSIC, () => {});
-    let clears = 0;
-    const slowClear = keys.clear(() => void ++clears);
-    const [clearAnswer, setAnswer] = await Promise.all([
-      slowClear.then(() => handleMusicKeyCommand(clearMusicKey, { keys, engine: engineSpy() })),
+    await handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine: engineSpy() });
+    // The clear's own answer reaches its caller late, after the set behind it has landed: a handler that read the
+    // store's status when it answers (instead of taking the state the clear produced) would say "stored".
+    const lateClear = new Proxy(keys, {
+      get(target, property) {
+        if (property === "clear") {
+          return (cleared: () => void) =>
+            target.clear(cleared).then(async (status) => {
+              await Bun.sleep(80);
+              return status;
+            });
+        }
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const [cleared, set] = await Promise.all([
+      handleMusicKeyCommand(clearMusicKey, { keys: lateClear, engine: engineSpy() }),
       handleMusicKeyCommand(setMusicKey(ROTATED), { keys, engine: engineSpy() }),
     ]);
-    expect(clearAnswer).toMatchObject({ ok: true, result: { stored: false } });
-    expect(setAnswer).toMatchObject({ ok: true, result: { stored: true, last4: "9999" } });
+    expect(cleared).toMatchObject({ ok: true, result: { stored: false, last4: null } });
+    expect(set).toMatchObject({ ok: true, result: { stored: true, last4: "9999" } });
+    expect(musicKeyStatusOf(keys.status())).toMatchObject({ stored: true, last4: "9999" });
   });
 });
 

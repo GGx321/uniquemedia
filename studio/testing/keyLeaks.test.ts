@@ -74,6 +74,31 @@ describe("captureConsole", () => {
     expect(cleanAfter(() => console.error(Object.assign(new Error("boom"), { key: KEY })))).toBe(false);
   });
 
+  test("catches the key printed as base64 or hex text, at every alignment inside a longer string", () => {
+    const base64 = Buffer.from(KEY).toString("base64");
+    expect(cleanAfter(() => console.warn(base64))).toBe(false);
+    expect(cleanAfter(() => console.warn(Buffer.from(`k=${KEY}`).toString("base64")))).toBe(false);
+    expect(cleanAfter(() => console.warn(Buffer.from(`ke=${KEY}`).toString("base64")))).toBe(false);
+    expect(cleanAfter(() => console.warn(Buffer.from(`key=${KEY}`).toString("base64")))).toBe(false);
+    expect(cleanAfter(() => console.warn(Buffer.from(KEY).toString("hex")))).toBe(false);
+    expect(cleanAfter(() => console.warn(Buffer.from(KEY).toString("base64url")))).toBe(false);
+  });
+
+  test("catches an ArrayBuffer holding the key", () => {
+    const bytes = new Uint8Array(Buffer.from(KEY));
+    expect(cleanAfter(() => console.log(bytes.buffer))).toBe(false);
+  });
+
+  test("catches an object that prints as the key through its own toString", () => {
+    const sneaky = { toString: () => KEY };
+    expect(cleanAfter(() => console.log("%s", sneaky))).toBe(false);
+    expect(cleanAfter(() => console.log(`${sneaky}`))).toBe(false);
+  });
+
+  test("does not flag a base64 of unrelated bytes", () => {
+    expect(cleanAfter(() => console.log(Buffer.from("engine started, nothing to see here").toString("base64")))).toBe(true);
+  });
+
   test.each(["log", "info", "warn", "error", "debug", "trace", "dir", "table"] as const)("captures console.%s", (level) => {
     expect(cleanAfter(() => console[level](KEY))).toBe(false);
   });

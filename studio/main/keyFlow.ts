@@ -1,4 +1,5 @@
-import { lstat, open, readFile, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   ApiKey,
@@ -40,14 +41,27 @@ function rulesOf(options: KeyStoreOptions): KeyRules {
   return { accepts: options.accepts ?? ((key) => ApiKey.safeParse(key).success), label: options.label ?? "API key", unreadable: options.unreadable ?? "throw" };
 }
 
+/**
+ * Reads the key file through ONE handle: opened with O_NONBLOCK (so a FIFO cannot hang the open), then `fstat`ed on that
+ * handle and required to be a regular file, then read from it. A symlink to a regular file is followed (the OpenRouter
+ * key's behaviour from before), a FIFO or a device is refused, and there is no `lstat` to `readFile` gap in which the
+ * name could be swapped for something else. Windows has no O_NONBLOCK and no FIFOs, so the flag is 0 there.
+ */
+async function readRegularFile(path: string): Promise<Buffer> {
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  try {
+    if (!(await handle.stat()).isFile()) throw Object.assign(new Error("the key file is not a regular file"), { code: "ENOTFILE" });
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Decrypts the stored blob; null when there is none or it cannot be read back as a key. */
 async function decryptFile(safe: SafeStorageLike, path: string, rules: KeyRules): Promise<string | null> {
   let blob: Buffer;
   try {
-    // Only a regular file is read: opening a FIFO for reading blocks until a writer shows up, which would hang main's
-    // start or the engine's launch. A symlink counts as not regular (lstat), for the same reason.
-    if (!(await lstat(path)).isFile()) throw Object.assign(new Error("the key file is not a regular file"), { code: "ENOTFILE" });
-    blob = await readFile(path);
+    blob = await readRegularFile(path);
   } catch (error) {
     if (isMissing(error)) return null;
     if (rules.unreadable === "throw") throw error;

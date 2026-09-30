@@ -270,6 +270,26 @@ describe("handleRendererRequest", () => {
     expect(mainOnly).toEqual([]);
   });
 
+  test.each([
+    ["holding a space", "Zq7-vKt9 Wm2x-Lp4s-0000"],
+    ["holding a control character", "Zq7-vKt9\u0007Wm2x-Lp4s-0000"],
+    ["not a string", 12345678],
+  ])("an OpenRouter key %s is refused without a fragment of it in the answer or in the logs", async (_label, key) => {
+    const { routes, mainOnly } = routesSpy();
+    const output = captureConsole();
+    try {
+      const response = await handleRendererRequest(command("settings.setApiKey", { key }), APP_FRAME, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+      if (typeof key === "string") {
+        expectNoKeyFragment(JSON.stringify(response), key);
+        expectNoKeyFragment(output.text(), key);
+      }
+      expect(mainOnly).toEqual([]);
+    } finally {
+      output.restore();
+    }
+  });
+
   test("settings changes are answered by main, which owns settings.json, and never forwarded", async () => {
     const { routes, settings, engine } = routesSpy();
     await handleRendererRequest(command("settings.setBudget", { monthlyBudgetMicros: 5_000_000 }), APP_FRAME, PACKAGED, routes);

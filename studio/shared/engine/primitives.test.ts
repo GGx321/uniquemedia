@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { expectNoKeyFragment } from "../../testing/keyLeaks";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey, redactSecrets, SafeText } from "./primitives";
 
 describe("Id", () => {
@@ -154,8 +155,16 @@ describe("MusicKey", () => {
   });
 
   test("a rejection never echoes the key", () => {
-    const result = MusicKey.safeParse("Zq7-vKt9 Wm2x-Lp4s-0000");
-    expect(JSON.stringify(result)).not.toContain("key-0000");
+    const key = "Zq7-vKt9 Wm2x-Lp4s-0000";
+    expectNoKeyFragment(JSON.stringify(MusicKey.safeParse(key)), key);
+  });
+});
+
+describe("ApiKey", () => {
+  test("a rejection never echoes the key", () => {
+    const key = "Zq7-vKt9 Wm2x-Lp4s-0000";
+    expect(ApiKey.safeParse(key).success).toBe(false);
+    expectNoKeyFragment(JSON.stringify(ApiKey.safeParse(key)), key);
   });
 });
 

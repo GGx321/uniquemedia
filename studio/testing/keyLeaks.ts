@@ -21,9 +21,33 @@ export function keyFragments(key: string, minLen = 6): string[] {
   return [...windows];
 }
 
-/** Fails when any `minLen`-char window of `key` appears in `text` (case-sensitive). */
+/**
+ * The text a fragment turns into when something prints its bytes as hex (either case) or base64 (standard and URL
+ * alphabets). Base64 depends on where the fragment sits in the printed bytes, so it is rendered at all three
+ * alignments, and the characters that also hold bits of the unknown neighbours (the first ones at an offset, the last
+ * partial one) are cut off, leaving the part any placement must contain. The raw windows of a key hold `-`, which
+ * neither form has, so only these forms can see an encoded key.
+ */
+export function encodedTextForms(fragment: string): string[] {
+  const bytes = Buffer.from(fragment, "utf8");
+  const forms = [bytes.toString("hex"), bytes.toString("hex").toUpperCase()];
+  for (const pad of [0, 1, 2]) {
+    const padded = Buffer.concat([Buffer.alloc(pad), bytes]);
+    for (const encoding of ["base64", "base64url"] as const) {
+      const text = padded.toString(encoding).replace(/=+$/, "");
+      const lead = pad === 0 ? 0 : pad + 1;
+      const partialTail = padded.length % 3 === 0 ? 0 : 1;
+      forms.push(text.slice(lead, text.length - partialTail));
+    }
+  }
+  return forms;
+}
+
+/** Fails when any `minLen`-char window of `key` appears in `text` (case-sensitive), raw or as hex or base64 text. */
 export function expectNoKeyFragment(text: string, key: string, minLen = 6): void {
-  expect(keyFragments(key, minLen).filter((fragment) => text.includes(fragment))).toEqual([]);
+  const fragments = keyFragments(key, minLen);
+  expect(fragments.filter((fragment) => text.includes(fragment))).toEqual([]);
+  expect(fragments.filter((fragment) => encodedTextForms(fragment).some((form) => text.includes(form)))).toEqual([]);
 }
 
 /** The key's fragments as bytes in the forms a file or a stream could hold them: UTF-8, UTF-16 (both orders), base64 and hex. */
@@ -46,8 +70,8 @@ function renderValue(value: unknown, depth: number, seen: Set<unknown>): string[
   if (seen.has(value) || depth > MAX_DEPTH) return [];
   seen.add(value);
   const parts: string[] = [];
-  if (ArrayBuffer.isView(value)) {
-    const bytes = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) {
+    const bytes = ArrayBuffer.isView(value) ? Buffer.from(value.buffer, value.byteOffset, value.byteLength) : Buffer.from(value);
     parts.push(bytes.toString("utf8"), bytes.toString("utf16le"), bytes.toString("latin1"), bytes.toString("hex"), bytes.toString("base64"));
     return parts;
   }
