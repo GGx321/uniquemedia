@@ -1,19 +1,20 @@
 import { useEffect, useId, useState } from "react";
-import { MAX_LISTED_PHOTOS, type AvatarSummary, type EngineError, type RunSummary } from "../../shared/engine";
+import { MAX_CLIPS, MAX_LISTED_PHOTOS, type AvatarSummary, type EngineError, type RunSummary } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { countOf, groupNumber, NBSP } from "../lib/format";
 import { useNavigate } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
 import { EngineOffline } from "../ui/EngineOffline";
-import { Icon } from "../ui/Icon";
+import { Icon, Spin } from "../ui/Icon";
+import { ErrorNotice } from "../ui/Notice";
 import { Portrait } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { Gallery, type GalleryList, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import { DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { ScenesColumn } from "./photos/ScenesColumn";
-import { PHOTO_FORMS } from "./photos/shared";
+import { PHOTO_FORMS, useMounted } from "./photos/shared";
 
 /**
  * The avatar asked for; else — none asked, or the one remembered is gone
@@ -69,8 +70,15 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
    * progress, say).
    */
   const [knownAtOpen] = useState<ReadonlySet<string>>(() => new Set(view.jobs.map((j) => j.jobId)));
-  /** Photos picked for a montage (stage 3): drawn as the mockup draws them, not sent anywhere yet. */
+  /** Photos picked for a montage, in the order they were picked: «Монтаж из выбранных» places them in that order. */
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<EngineError | null>(null);
+  /** The picked photos `montages.create` refused (`PHOTO_UNAVAILABLE` at `["photoIds", i]`, K11). */
+  const [refused, setRefused] = useState<ReadonlySet<string>>(new Set());
+  const mounted = useMounted();
+  const navigate = useNavigate();
+  const whyId = useId();
   /**
    * A paid runs.start or runs.resume is in flight for this avatar, from the
    * generate card or any resume row (L5): locks the others until it
@@ -139,7 +147,39 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
       else next.add(photoId);
       return next;
     });
+    setRefused(new Set());
+    setCreateError(null);
   }
+
+  /** «Монтаж из выбранных · N»: a draft of the picked photos in the order picked (`defaultSpec` in the engine), then the editor. */
+  async function createMontage(): Promise<void> {
+    const photoIds = [...picked];
+    setCreating(true);
+    setCreateError(null);
+    setRefused(new Set());
+    // Up to ~30 s: the engine judges every photo's face focus before it answers.
+    const reply = await client.request("montages.create", { avatarId, photoIds });
+    if (!mounted.current) return;
+    setCreating(false);
+    if (reply.ok) {
+      navigate({ name: "editor", montageId: reply.result.montage.montageId, created: true });
+      return;
+    }
+    setCreateError(reply.error);
+    const marked = (reply.error.issues ?? []).flatMap((issue) => {
+      const [root, i] = issue.path;
+      const photoId = root === "photoIds" && typeof i === "number" ? photoIds[i] : undefined;
+      return photoId === undefined ? [] : [photoId];
+    });
+    setRefused(new Set(marked));
+  }
+
+  const montageWhy =
+    avatar.status !== "active"
+      ? "Аватар в архиве — новые ролики для него не создаются"
+      : picked.size > MAX_CLIPS
+        ? `Не больше ${MAX_CLIPS} фото в одном ролике — снимите лишние`
+        : null;
 
   // The active job's own runId, straight off its events (or the start/resume reply): cancel never waits on runs.list.
   const activeRunId = runActive && runJob !== null ? runJob.runId : null;
@@ -172,14 +212,30 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
             Видео
           </button>
         </div>
-        <button type="button" className="btn btn-p photos-montage" disabled title="Монтаж — скоро">
-          <Icon name="film" size={16} />
-          Монтаж из выбранных · {picked.size}
-        </button>
+        <div className="photos-montage">
+          {montageWhy !== null && (
+            <span id={whyId} className="faint photos-montage-why">
+              {montageWhy}
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn btn-p"
+            aria-busy={creating}
+            aria-describedby={montageWhy !== null ? whyId : undefined}
+            disabled={creating || !ready || picked.size === 0 || montageWhy !== null}
+            title={picked.size === 0 ? "Отметьте фото для ролика" : undefined}
+            onClick={() => void createMontage()}
+          >
+            {creating ? <Spin /> : <Icon name="film" size={16} />}
+            Монтаж из выбранных · {picked.size}
+          </button>
+        </div>
       </header>
 
       <div id={panelId} className="photos-panel" role="tabpanel" aria-labelledby={tabId}>
         {view.phase === "offline" ? <EngineOffline view={view} /> : <AccountBanner view={view} />}
+        {createError !== null && <ErrorNotice error={createError} />}
 
         <GenerateCard
           avatar={avatar}
@@ -207,7 +263,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
             blockedReason={paidBlockedReason(view) ?? (avatar.status !== "active" ? "Аватар в архиве — новые фото для него не создаются." : null)}
             onResumed={launched}
           />
-          <Gallery gallery={gallery} error={galleryError} pending={pending} picked={picked} onToggle={togglePick} onRetry={() => setGalleryRetry((n) => n + 1)} />
+          <Gallery gallery={gallery} error={galleryError} pending={pending} picked={picked} refused={refused} onToggle={togglePick} onRetry={() => setGalleryRetry((n) => n + 1)} />
         </div>
       </div>
     </div>

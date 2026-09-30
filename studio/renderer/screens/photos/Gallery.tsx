@@ -26,19 +26,43 @@ function faceLabel(faceCos: number): string {
   return `лицо ${faceCos.toFixed(2)}`;
 }
 
-function PhotoTile({ photo, position, picked, onToggle }: { photo: PhotoSummary; position: number; picked: boolean; onToggle: (photoId: string) => void }) {
+/**
+ * Why a photo cannot be picked for a montage, or null when it can: one photo goes into one video (the owner's Q1),
+ * so a photo already in a video or held by a render in flight is not offered, nor a rejected or ineligible one.
+ */
+export function montagePickRefusal(photo: PhotoSummary): string | null {
+  if (photo.rejected) return "Фото отклонено — в монтаж не попадает";
+  if (photo.used || photo.usedIn.length > 0) return "Фото уже в видео: одно фото — одно видео";
+  if (photo.reserved) return "Фото сейчас в рендере";
+  if (!photo.eligible) return "Это фото не подходит для видео";
+  return null;
+}
+
+function PhotoTile({ photo, position, picked, refused, onToggle }: { photo: PhotoSummary; position: number; picked: boolean; refused: boolean; onToggle: (photoId: string) => void }) {
   const label = CATEGORY_LABEL[photo.category];
   const faceCos = photo.qa?.faceCos;
   // Compared on the same rounded value the badge displays (L2): a raw score
   // just under the line that rounds up to the line itself (0.549 shows
   // «0.55») must read the same as the line, never as low.
   const low = faceCos !== undefined && Number(faceCos.toFixed(2)) < FACE_GATE_THRESHOLD;
+  // A photo picked before it became unusable can still be unpicked.
+  const why = montagePickRefusal(photo);
+  const classes = ["ph", "photo-tile", picked ? "photo-tile-on" : "", refused ? "photo-tile-refused" : ""].filter(Boolean).join(" ");
   return (
-    <div className={picked ? "ph photo-tile photo-tile-on" : "ph photo-tile"}>
+    <div className={classes}>
       <Portrait avatarId={photo.avatarId} photoId={photo.photoId} label={`Фото ${position}: ${label}`} />
-      <button type="button" className="photo-pick" aria-pressed={picked} aria-label={`Выбрать для монтажа: фото ${position}, ${label}`} onClick={() => onToggle(photo.photoId)}>
+      <button
+        type="button"
+        className="photo-pick"
+        aria-pressed={picked}
+        aria-label={`Выбрать для монтажа: фото ${position}, ${label}${why === null ? "" : ` · ${why}`}`}
+        title={why ?? undefined}
+        disabled={why !== null && !picked}
+        onClick={() => onToggle(photo.photoId)}
+      >
         {picked && <Icon name="check" size={16} strokeWidth={3} />}
       </button>
+      {refused && <span className="pill photo-refused">недоступно</span>}
       <div className="photo-badges">
         {faceCos !== undefined ? (
           <span className={low ? "pill mono photo-badge photo-face photo-face-low" : "pill mono photo-badge photo-face"}>{faceLabel(faceCos)}</span>
@@ -80,6 +104,8 @@ interface GalleryProps {
   error: EngineError | null;
   pending: PendingSlots | null;
   picked: ReadonlySet<string>;
+  /** Photos `montages.create` just refused (`PHOTO_UNAVAILABLE` at `["photoIds", i]`, K11): marked on their tiles. */
+  refused?: ReadonlySet<string>;
   onToggle: (photoId: string) => void;
   onRetry: () => void;
 }
@@ -91,7 +117,7 @@ interface GalleryProps {
  * «Неиспользованные» and «Отклонённые» need usage and rejection data the
  * contract does not carry yet, so only «Все» works.
  */
-export function Gallery({ gallery, error, pending, picked, onToggle, onRetry }: GalleryProps) {
+export function Gallery({ gallery, error, pending, picked, refused, onToggle, onRetry }: GalleryProps) {
   const titleId = useId(); // L12: was the hardcoded "gallery-title"
   const loading = gallery === null && error === null;
   const photos = gallery?.photos ?? [];
@@ -146,7 +172,7 @@ export function Gallery({ gallery, error, pending, picked, onToggle, onRetry }: 
           <div className="photos-grid">
             {pending && <PendingTiles pending={pending} />}
             {photos.map((photo, i) => (
-              <PhotoTile key={photo.photoId} photo={photo} position={i + 1} picked={picked.has(photo.photoId)} onToggle={onToggle} />
+              <PhotoTile key={photo.photoId} photo={photo} position={i + 1} picked={picked.has(photo.photoId)} refused={refused?.has(photo.photoId) ?? false} onToggle={onToggle} />
             ))}
             {skipped > 0 && (
               <div className="ph photo-tile photo-tile-skipped" role="note" aria-label="Показаны не все фото">

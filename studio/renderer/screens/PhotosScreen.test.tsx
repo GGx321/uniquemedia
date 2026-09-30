@@ -1055,7 +1055,7 @@ test("the low-score badge styling compares on the same rounded value it displays
   }
 });
 
-test("photos picked for a montage are marked and counted; the montage itself is still to come", async () => {
+test("photos picked for a montage are marked and counted; nothing picked, nothing to make", async () => {
   await openPhotos({ photos: [photo(1, { qa: { faceCos: 0.8 } }), photo(2)] });
   const pick = await screen.findAllByRole("button", { name: /Выбрать для монтажа/ });
   const montage = screen.getByRole("button", { name: /Монтаж из выбранных/ });
