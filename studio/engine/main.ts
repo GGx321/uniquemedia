@@ -31,7 +31,7 @@ if (!parentPort) throw new Error("the studio engine must run as an Electron util
 // An error nobody caught: a rejection is logged and the engine goes on, an exception ends the process (main restarts it).
 // The engine does not exist yet when the guards go in; the notice is wired once it does (a rejection before that is only logged).
 const guardNotice: { notify: () => void } = { notify: () => undefined };
-installProcessGuards({ on: (event, listener) => { process.on(event, listener); }, role: "engine", log: console.error, exit: (code) => process.exit(code), onRejection: () => guardNotice.notify() });
+installProcessGuards({ on: (event, listener) => { process.on(event, (error) => listener(error)); }, role: "engine", log: console.error, exit: (code) => process.exit(code), onRejection: () => guardNotice.notify() });
 
 // T7b: the face gate's models and onnxruntime-web's WASM runtime, resolved
 // relative to THIS bundled file's own runtime location — never via

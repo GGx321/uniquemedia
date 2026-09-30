@@ -4,7 +4,7 @@ import { installProcessGuards } from "../processGuards";
 
 const SECRET = "/Users/owner/library/photo.jpg Zq7-fake-key-M4xk-91Bd-NotReal";
 
-installProcessGuards({ on: (event, listener) => { process.on(event, listener); }, role: "engine", log: console.error, exit: (code) => process.exit(code) });
+installProcessGuards({ on: (event, listener) => { process.on(event, (error) => listener(error)); }, role: "engine", log: console.error, exit: (code) => process.exit(code) });
 
 const mode = process.argv[2];
 if (mode === "reject") {

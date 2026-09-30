@@ -182,13 +182,13 @@ describe("both entries install the guards", () => {
 
   test("the engine's entry installs them as the engine, with process.exit as its exit and the notice wired to the engine", () => {
     const source = read("engine/main.ts");
-    expect(source).toMatch(/installProcessGuards\(\{ on: \(event, listener\) => \{ process\.on\(event, listener\); \}, role: "engine", log: console\.error, exit: \(code\) => process\.exit\(code\), onRejection: \(\) => guardNotice\.notify\(\) \}\);/);
+    expect(source).toMatch(/installProcessGuards\(\{ on: \(event, listener\) => \{ process\.on\(event, \(error\) => listener\(error\)\); \}, role: "engine", log: console\.error, exit: \(code\) => process\.exit\(code\), onRejection: \(\) => guardNotice\.notify\(\) \}\);/);
     expect(source).toContain("guardNotice.notify = () => engine.noteUnhandledRejection();");
   });
 
   test("main's entry installs them as main, with no exit", () => {
     const source = read("main/main.ts");
-    expect(source).toMatch(/installProcessGuards\(\{ on: \(event, listener\) => \{ process\.on\(event, listener\); \}, role: "main", log: console\.error \}\);/);
+    expect(source).toMatch(/installProcessGuards\(\{ on: \(event, listener\) => \{ process\.on\(event, \(error\) => listener\(error\)\); \}, role: "main", log: console\.error \}\);/);
     expect(source).not.toMatch(/role: "main"[^)]*exit/);
   });
 });

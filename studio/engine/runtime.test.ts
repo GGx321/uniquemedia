@@ -66,18 +66,28 @@ const ALLOWED_ROOTS = [
 /**
  * The only members of `process` engine code may touch: the utilityProcess
  * port, exiting, and the platform (read by T2's ledger). Everything else —
- * `env` above all — is out, however it is spelled.
+ * `env` above all — is out, in every spelling this scan knows. It reads syntax by NAME, so it is a tripwire for the ordinary and the
+ * obvious bypasses (the alias, `eval`, `Function`, `.constructor(..)`, `node:vm`/`node:module`, computed `globalThis[..]`, a `function`
+ * listener's `this`), not a sandbox: a determined author can still build the name at run time from parts it cannot see.
  */
 const ALLOWED_PROCESS_MEMBERS = new Set(["parentPort", "exit", "platform"]);
 
 /**
- * `process.on(...)` as a whole statement, its result thrown away. `on` returns `process` itself, so any use of the result
- * (`process.on(..).env`, `const p = process.on(..)`, an arrow that returns it) would be a way round the rule above.
+ * `process.on(event, (x) => ...)` as a whole statement: its result thrown away, its listener an ARROW function. `on` returns
+ * `process` itself, so any use of the result (`process.on(..).env`, `const p = process.on(..)`, an arrow that returns it)
+ * would be a way round the rule above; and a `function` listener is called with `this === process`, so `this.env` would be
+ * one too. An arrow has no `this` of its own.
  */
 function isDiscardedProcessOnCall(access: ts.PropertyAccessExpression): boolean {
   const call = access.parent;
-  return access.name.text === "on" && ts.isCallExpression(call) && call.expression === access && ts.isExpressionStatement(call.parent);
+  if (access.name.text !== "on" || !ts.isCallExpression(call) || call.expression !== access || !ts.isExpressionStatement(call.parent)) return false;
+  const listener = call.arguments[1];
+  return listener !== undefined && ts.isArrowFunction(listener);
 }
+
+/** Other ways to reach `process` or the global scope without naming it: code from a string, the Function constructor, computed global access. */
+const DYNAMIC_CODE_IDENTIFIERS = new Set(["eval", "Function"]);
+const FORBIDDEN_NODE_MODULES = new Set(["node:vm", "node:module", "vm", "module"]);
 
 interface ModuleScan {
   imports: string[];
@@ -119,8 +129,13 @@ function scan(source: string): ModuleScan {
         parent.expression === node &&
         (ALLOWED_PROCESS_MEMBERS.has(parent.name.text) || isDiscardedProcessOnCall(parent));
       if (node.text === "process" && !allowedProcess) problems.push(`${at(node)}: process (only .parentPort, .exit, .platform, and process.on(...) as a statement)`);
+      if (DYNAMIC_CODE_IDENTIFIERS.has(node.text)) problems.push(`${at(node)}: ${node.text} (code from a string reaches everything)`);
       if (node.text === "Bun") problems.push(`${at(node)}: Bun`);
       if (node.text === "require") problems.push(`${at(node)}: require`);
+    } else if (ts.isPropertyAccessExpression(node) && node.name.text === "constructor" && ts.isCallExpression(node.parent) && node.parent.expression === node) {
+      problems.push(`${at(node)}: .constructor(...) call (the Function constructor by another road)`);
+    } else if (ts.isElementAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "globalThis") {
+      problems.push(`${at(node)}: globalThis[...] (computed global access)`);
     } else if (ts.isStringLiteralLike(node) && node.text === "process" && !isModuleSpecifier(node)) {
       problems.push(`${at(node)}: "process" as a string`);
     } else if (ts.isMetaProperty(node) && node.parent !== undefined && ts.isPropertyAccessExpression(node.parent) && node.parent.name.text === "dir") {
@@ -132,7 +147,7 @@ function scan(source: string): ModuleScan {
 
   for (const specifier of imports) {
     const allowed =
-      (specifier.startsWith("node:") && specifier !== "node:process") ||
+      (specifier.startsWith("node:") && specifier !== "node:process" && !FORBIDDEN_NODE_MODULES.has(specifier)) ||
       specifier.startsWith("./") ||
       specifier.startsWith("../") ||
       ALLOWED_PACKAGES.has(specifier);
@@ -190,6 +205,12 @@ describe("the checker itself catches every way to reach the environment", () => 
     ["require", 'export const a = require("node:process");'],
     ["Bun", "export const a = Bun.env;"],
     ["import.meta.dir", "export const a = import.meta.dir;"],
+    ["eval", 'export const a = eval("process.env");'],
+    ["the Function constructor", 'export const a = new Function("return process.env")();'],
+    ["a .constructor call", 'export const a = (() => undefined).constructor("return process.env")();'],
+    ["node:vm", 'import { runInThisContext } from "node:vm";\nexport const a = runInThisContext("process.env");'],
+    ["node:module", 'import { createRequire } from "node:module";\nexport const a = createRequire(import.meta.url);'],
+    ["computed globalThis access", 'const name = "proc" + "ess";\nexport const a = globalThis[name];'],
     ["an electron import", 'import { app } from "electron";\nexport const a = app;'],
   ];
   for (const [name, source] of mutants) {
@@ -206,7 +227,7 @@ describe("the checker itself catches every way to reach the environment", () => 
       "export const port = process.parentPort;",
       "export const platform = process.platform;",
       "export function stop(): never { return process.exit(1); }",
-      'export function listen(): void { process.on("unhandledRejection", () => undefined); }',
+      'export function listen(): void { process.on("unhandledRejection", (error) => void error); }',
     ].join("\n");
     expect(problemsIn(source)).toEqual([]);
   });
@@ -218,6 +239,8 @@ describe("the checker itself catches every way to reach the environment", () => 
     ["an arrow that returns process.on's result", 'export const listen = () => process.on("x", () => undefined);'],
     ["process.on chained", 'process.on("x", () => undefined).on("y", () => undefined);'],
     ["process.on taken as a value", "export const on = process.on;"],
+    ["a function listener, which is called with this === process", 'process.on("x", function () { return this.env; });'],
+    ["a listener that is not written out as an arrow", 'const listener = () => undefined;\nprocess.on("x", listener);'],
   ] as const) {
     test(`flags ${name}`, () => {
       expect(problemsIn(source)).not.toEqual([]);
