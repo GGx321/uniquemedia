@@ -47,6 +47,25 @@ export interface MusicListSink {
   peaks(trackId: string, startMs: number, durationMs: number, bars: number): Promise<number[] | null>;
 }
 
+/**
+ * An error a sink wrote to be SHOWN: its message names no path, URL or key. Anything else a sink throws (a filesystem
+ * error carries the userData path in its text) is shown by its code or its kind alone (review F5).
+ */
+export class SinkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SinkError";
+  }
+}
+
+/** What a sink's failure may say in the status, the events and the log: its own message, else a code, else a kind. Never a path. */
+function sinkErrorText(error: unknown): string {
+  if (error instanceof SinkError) return error.message;
+  const code: unknown = typeof error === "object" && error !== null ? Reflect.get(error, "code") : undefined;
+  if (typeof code === "string" && /^[A-Z0-9_]{2,40}$/.test(code)) return `error ${code}`;
+  return error instanceof Error ? error.name : "unknown error";
+}
+
 /** The 3c.3 sink: the last parsed list, in memory only. */
 export class MemoryListSink implements MusicListSink {
   readonly persistent = false;
@@ -478,7 +497,7 @@ export class MusicService {
         try {
           await this.#sink.accept({ fetchedAt: this.#deps.clock(), tracks: list.tracks }, (done, total) => this.#progress(done, total), job.signal);
         } catch (error) {
-          failure = fail("MUSIC_UNAVAILABLE", redact(`the list could not be stored (${error instanceof Error ? error.message : "unknown error"})`));
+          failure = fail("MUSIC_UNAVAILABLE", redact(`the list could not be stored (${sinkErrorText(error)})`));
         }
       }
     } finally {
@@ -515,7 +534,7 @@ export class MusicService {
       try {
         await resume((done, total) => this.#progress(done, total), controller.signal);
       } catch (error) {
-        failure = fail("MUSIC_UNAVAILABLE", `the downloads could not be finished (${error instanceof Error ? error.message : "unknown error"})`);
+        failure = fail("MUSIC_UNAVAILABLE", `the downloads could not be finished (${sinkErrorText(error)})`);
       } finally {
         this.#refresh = failure === null ? { state: "idle" } : { state: "failed", error: failure.error };
         this.#abort = null;

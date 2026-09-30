@@ -10,7 +10,7 @@ import { nativeFetch, useNativeHttp } from "../../testing/nativeHttp";
 import { type FlashapiFetch } from "./client";
 import { musicLists } from "./fixtures";
 import { QUOTA_LIMIT, QUOTA_WINDOW_MS, type QuotaLine } from "./quotaLedger";
-import { MemoryListSink, MusicService, type FetchedList, type MusicListSink } from "./service";
+import { MemoryListSink, MusicService, SinkError, type FetchedList, type MusicListSink } from "./service";
 import { runExclusive } from "../library/keyedMutex";
 import { hangingBody } from "./testing/hangingBody";
 import { PersistingTestSink } from "./testing/testSink";
@@ -1340,5 +1340,48 @@ describe("resuming downloads left over from a stopped refresh", () => {
     await h.service.stop();
     await h.service.resumePending();
     expect(state.calls).toBe(0);
+  });
+});
+
+// Review 3c.4 F5: an fs error's text carries the userData path; the status, the renderer and the log get its code only.
+describe("what a failing sink may say in the status", () => {
+  const fsError = () => Object.assign(new Error("ENOSPC: no space left on device, open '/Users/alex/Library/Application Support/Studio/music/lists/.current.json.ab12.tmp'"), { code: "ENOSPC", path: "/Users/alex/Library/Application Support/Studio/music" });
+  const failing = (error: () => unknown): MusicListSink => ({ persistent: true, ...NO_CATALOGUE, accept: () => Promise.reject(error()), summary: () => ({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 }) });
+
+  test("an fs error is shown by its code, with no path", async () => {
+    const h = harness({ sink: failing(fsError) });
+    await h.service.refresh();
+    await h.service.settled();
+    const text = JSON.stringify((await h.service.status()).refresh);
+    expect(text).toContain("ENOSPC");
+    expect(text).not.toMatch(/Users|Library|userData|\.tmp|current\.json/);
+    expect(JSON.stringify(h.events)).not.toMatch(/Users|Library|current\.json/);
+    expect(h.logs.join("\n")).not.toMatch(/Users|Library|current\.json/);
+  });
+
+  test("a sink's own error keeps its message: it was written to be shown", async () => {
+    const h = harness({ sink: failing(() => new SinkError("none of the 3 tracks could be stored (status-403 x3)")) });
+    await h.service.refresh();
+    await h.service.settled();
+    expect(JSON.stringify((await h.service.status()).refresh)).toContain("status-403 x3");
+  });
+
+  test("any other error is shown by its kind alone, never its text", async () => {
+    const h = harness({ sink: failing(() => new TypeError("cannot read /Users/alex/x")) });
+    await h.service.refresh();
+    await h.service.settled();
+    const text = JSON.stringify((await h.service.status()).refresh);
+    expect(text).toContain("TypeError");
+    expect(text).not.toContain("/Users/alex");
+  });
+
+  test("the same for a resume that fails", async () => {
+    const sink: MusicListSink = { ...failing(fsError), pendingCount: () => 1, resume: () => Promise.reject(fsError()) };
+    const h = harness({ sink });
+    await h.service.resumePending();
+    await h.service.settled();
+    const text = JSON.stringify((await h.service.status()).refresh);
+    expect(text).toContain("ENOSPC");
+    expect(text).not.toMatch(/Users|Library|current\.json/);
   });
 });
