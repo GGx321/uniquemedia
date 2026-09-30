@@ -147,8 +147,13 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
       else next.add(photoId);
       return next;
     });
-    setRefused(new Set());
-    setCreateError(null);
+    // Only this photo's mark goes: the others the engine refused stay marked until they are dealt with.
+    setRefused((current) => {
+      if (!current.has(photoId)) return current;
+      const next = new Set(current);
+      next.delete(photoId);
+      return next;
+    });
   }
 
   /** «Монтаж из выбранных · N»: a draft of the picked photos in the order picked (`defaultSpec` in the engine), then the editor. */
@@ -172,14 +177,18 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
       return photoId === undefined ? [] : [photoId];
     });
     setRefused(new Set(marked));
+    // The gallery as the engine sees it now: the refused tiles show why (in a video, in a render) and are not pickable.
+    if (reply.error.code === "PHOTO_UNAVAILABLE") setGalleryRetry((n) => n + 1);
   }
 
   const montageWhy =
     avatar.status !== "active"
       ? "Аватар в архиве — новые ролики для него не создаются"
-      : picked.size > MAX_CLIPS
-        ? `Не больше ${MAX_CLIPS} фото в одном ролике — снимите лишние`
-        : null;
+      : picked.size === 0
+        ? "Отметьте фото, чтобы собрать ролик"
+        : picked.size > MAX_CLIPS
+          ? `Не больше ${MAX_CLIPS} фото в одном ролике — снимите лишние`
+          : null;
 
   // The active job's own runId, straight off its events (or the start/resume reply): cancel never waits on runs.list.
   const activeRunId = runActive && runJob !== null ? runJob.runId : null;
@@ -223,8 +232,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
             className="btn btn-p"
             aria-busy={creating}
             aria-describedby={montageWhy !== null ? whyId : undefined}
-            disabled={creating || !ready || picked.size === 0 || montageWhy !== null}
-            title={picked.size === 0 ? "Отметьте фото для ролика" : undefined}
+            disabled={creating || !ready || montageWhy !== null}
             onClick={() => void createMontage()}
           >
             {creating ? <Spin /> : <Icon name="film" size={16} />}

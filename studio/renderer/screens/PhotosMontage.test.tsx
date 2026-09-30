@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU } from "../../shared/engine";
 import { freePhotos, scenePhoto } from "../engine/mockEngine.testkit";
-import { callsOf, openSection } from "../testing";
-import { MIA, studio } from "./montage/screenKit";
+import { callsOf, flush, openSection, runAll } from "../testing";
+import { asAnotherWindow, makeDraft, MIA, studio } from "./montage/screenKit";
 
 // 3d.2: the Photos screen's «Монтаж из выбранных · N» → `montages.create` (`defaultSpec` in the engine) → the editor.
 // Disabled at 0 and above 20 with the reason; one photo → one video (the owner's Q1); PHOTO_UNAVAILABLE marks tiles (K11).
@@ -30,7 +30,7 @@ describe("from the Photos screen", () => {
     const gallery = freePhotos(6).map((p) => p.photoId).reverse();
     expect(callsOf(engine, "montages.create").at(-1)?.payload).toEqual({ avatarId: MIA.avatarId, photoIds: [gallery[1], gallery[0]] });
     expect(within(header()).getByText("черновик · создан только что")).toBeDefined();
-    expect(within(header()).getByText("1080×1920 · 30 fps · 8.0 с · ≈ 3.5 МБ")).toBeDefined();
+    expect(document.querySelector(".ed-output")?.textContent?.replace(/\s/g, " ")).toBe("1080×1920 · 30 fps · 8.0 с · ≈ 3.5 МБ");
   });
 
   test("it is disabled with nothing picked, and above 20 photos with the reason next to it", async () => {
@@ -49,6 +49,47 @@ describe("from the Photos screen", () => {
     await openSection("Фото");
     const used = await screen.findByRole("button", { name: /Фото уже в видео/ });
     expect(used.hasAttribute("disabled")).toBe(true);
+  });
+
+  test("with nothing picked, why the button waits is on screen", async () => {
+    await studio({ photos: freePhotos(2) });
+    await openSection("Фото");
+    const montage = screen.getByRole("button", { name: /Монтаж из выбранных/ });
+    const why = screen.getByText("Отметьте фото, чтобы собрать ролик");
+    expect(why.id).toBe(montage.getAttribute("aria-describedby") ?? "");
+  });
+
+  test("a photo already in a video is marked like the editor's bin: dimmed, with how many videos hold it", async () => {
+    await studio({ photos: [scenePhoto(1), scenePhoto(2, { used: true, usedIn: ["video-0000001"] })] });
+    await openSection("Фото");
+    const pick = await screen.findByRole("button", { name: /Фото уже в видео/ });
+    const tile = pick.closest(".photo-tile");
+    expect(tile?.classList.contains("photo-tile-used")).toBe(true);
+    expect(within(tile instanceof HTMLElement ? tile : document.body).getByText("в 1 видео")).toBeDefined();
+  });
+
+  test("after a refusal the gallery is read again (the tile says why), and unpicking another photo keeps the mark", async () => {
+    const { client, engine, scheduler } = await studio({ photos: freePhotos(3) });
+    await openSection("Фото");
+    const picks = await screen.findAllByRole("button", { name: /Выбрать для монтажа/ });
+    fireEvent.click(picks[0] ?? document.body);
+    fireEvent.click(picks[1] ?? document.body);
+    // Meanwhile another window puts the second picked photo into a video.
+    const gallery = freePhotos(3).map((p) => p.photoId).reverse();
+    const other = await makeDraft(client, MIA.avatarId, [gallery[1] ?? ""]);
+    await asAnotherWindow(() => client.request("videos.render", { montageId: other.montageId }));
+    runAll(scheduler);
+    await flush();
+    const reads = callsOf(engine, "photos.list").length;
+
+    fireEvent.click(screen.getByRole("button", { name: /Монтаж из выбранных/ }));
+    await screen.findByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE);
+    await waitFor(() => expect(callsOf(engine, "photos.list").length).toBeGreaterThan(reads));
+    const refusedTile = (await screen.findByText("в 1 видео")).closest(".photo-tile");
+    expect(refusedTile?.classList.contains("photo-tile-refused")).toBe(true);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Выбрать для монтажа/ })[0] ?? document.body);
+    expect(document.querySelectorAll(".photo-tile-refused")).toHaveLength(1);
   });
 
   test("a photo the engine refuses is marked on its tile, and the refusal is said", async () => {

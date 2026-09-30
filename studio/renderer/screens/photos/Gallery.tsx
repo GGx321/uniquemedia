@@ -47,10 +47,14 @@ function PhotoTile({ photo, position, picked, refused, onToggle }: { photo: Phot
   const low = faceCos !== undefined && Number(faceCos.toFixed(2)) < FACE_GATE_THRESHOLD;
   // A photo picked before it became unusable can still be unpicked.
   const why = montagePickRefusal(photo);
-  const classes = ["ph", "photo-tile", picked ? "photo-tile-on" : "", refused ? "photo-tile-refused" : ""].filter(Boolean).join(" ");
+  // One photo, one video (Q1): a photo a video or a render holds is dimmed with how it is held, as in the editor's bin.
+  const inVideos = photo.usedIn.length;
+  const held = inVideos > 0 ? `в ${inVideos} видео` : photo.used ? "в видео" : photo.reserved ? "в рендере" : null;
+  const classes = ["ph", "photo-tile", picked ? "photo-tile-on" : "", refused ? "photo-tile-refused" : "", held !== null ? "photo-tile-used" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes}>
       <Portrait avatarId={photo.avatarId} photoId={photo.photoId} label={`Фото ${position}: ${label}`} />
+      {held !== null && <span className="photo-held-dim" aria-hidden="true" />}
       <button
         type="button"
         className="photo-pick"
@@ -69,6 +73,7 @@ function PhotoTile({ photo, position, picked, refused, onToggle }: { photo: Phot
         ) : (
           <span className="pill mono photo-badge photo-face-none">лицо не проверялось</span>
         )}
+        {held !== null && <span className="pill mono photo-badge photo-held">{held}</span>}
       </div>
       <span className="pill photo-label">{label}</span>
     </div>
