@@ -35,6 +35,7 @@
  * `--flag=value` (a value in its own argument would be read as a path), and paths to test directories or files.
  */
 import { existsSync, statSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 
 export const MAX_ATTEMPTS = 3;
@@ -122,12 +123,26 @@ export function testTarget(argv: readonly string[]): TestTarget {
   return { testArgs: rest.slice(1), knownCrashesOnly, shards };
 }
 
-/** The file names `bun test` picks up on its own: `*.test.*`, `*_test.*`, `*.spec.*`, `*_spec.*` in a JS or TS extension. */
-const TEST_FILE_GLOB = "**/*{.test,_test,.spec,_spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}";
+/** The file names `bun test` picks up on its own: `*.test.*`, `*_test.*`, `*.spec.*`, `*_spec.*` in a JS or TS extension, whatever the case. */
+const TEST_FILE_NAME = /[._](test|spec)\.[cm]?[jt]sx?$/i;
+
+/** Every test file under `dir`, as absolute paths. Like `bun test`, it reads dot-files, and skips dot-directories and node_modules. */
+async function testFilesUnder(dir: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      found.push(...(await testFilesUnder(join(dir, entry.name))));
+    } else if (TEST_FILE_NAME.test(entry.name)) {
+      found.push(join(dir, entry.name));
+    }
+  }
+  return found;
+}
 
 /**
- * The test files `bun test` would run for these paths (directories, searched without node_modules, or files),
- * sorted, as `./`-prefixed forward-slash paths that `bun test` reads as paths, not name filters. A path that
+ * The test files `bun test` would run for these paths (directories, searched without node_modules and dot-directories,
+ * or files), sorted, as `./`-prefixed forward-slash paths that `bun test` reads as paths, not name filters. A path that
  * does not exist, or a set of paths with no test file at all, throws: sharding must never quietly run nothing.
  */
 export async function listTestFiles(paths: readonly string[], cwd: string): Promise<string[]> {
@@ -139,10 +154,7 @@ export async function listTestFiles(paths: readonly string[], cwd: string): Prom
       found.add(relative(cwd, absolute));
       continue;
     }
-    for await (const file of new Bun.Glob(TEST_FILE_GLOB).scan({ cwd: absolute, onlyFiles: true })) {
-      if (file.split(/[\\/]/).includes("node_modules")) continue;
-      found.add(relative(cwd, join(absolute, file)));
-    }
+    for (const file of await testFilesUnder(absolute)) found.add(relative(cwd, file));
   }
   if (found.size === 0) throw new Error(`realWorkerTests: no test files under ${paths.join(" ")}`);
   return [...found].map((file) => `./${file.split(sep).join("/")}`).sort();

@@ -249,6 +249,22 @@ describe("sharding the suite", () => {
     ]);
   });
 
+  test("listTestFiles reads dot-files, skips dot-directories and nested node_modules, and matches the name in any case", async () => {
+    const root = await tree([
+      "studio/.hidden.test.ts",
+      "studio/.cache/inside.test.ts",
+      "studio/a/.git/x.spec.ts",
+      "studio/a/node_modules/dep/y.test.ts",
+      "studio/a/Upper.TEST.TS",
+      "studio/a/mod.test.mts",
+      "studio/a/common.spec.cjs",
+      "studio/a/test.ts",
+      "studio/a/attest.ts",
+      "studio/a/contest.tsx",
+    ]);
+    expect(await listTestFiles(["studio"], root)).toEqual(["./studio/.hidden.test.ts", "./studio/a/Upper.TEST.TS", "./studio/a/common.spec.cjs", "./studio/a/mod.test.mts"]);
+  });
+
   test("listTestFiles takes a file path as it is, and joins paths without repeating a file", async () => {
     const root = await tree(["studio/a/one.test.ts", "studio/b/two.test.ts"]);
     expect(await listTestFiles(["studio/a", "studio/a/one.test.ts", "studio/b"], root)).toEqual(["./studio/a/one.test.ts", "./studio/b/two.test.ts"]);
