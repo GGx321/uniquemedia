@@ -2038,7 +2038,21 @@ async function main(): Promise<void> {
     const enginePidBeforeClose = enginePid(mainPid);
     await cdp.evaluate("window.close(), true").catch(() => undefined);
     cdp.close();
-    await waitFor("the window to close", async () => ((await pageCount(running.port)) === 0 ? true : null), 10_000);
+    await waitFor(
+      "the window to close",
+      async () => {
+        try {
+          return (await pageCount(running.port)) === 0 ? true : null;
+        } catch (error) {
+          // Off macOS the app quits with its last window, and it can be gone before the DevTools port is asked for the last time:
+          // a refused connection then IS the window having closed (the quit itself is checked below). On macOS the app stays,
+          // so a failed connection is retried until the deadline.
+          if (process.platform !== "darwin") return true;
+          throw error;
+        }
+      },
+      10_000,
+    );
 
     if (process.platform === "darwin") {
       check("closing the last window keeps the app and the same engine running (macOS)",
