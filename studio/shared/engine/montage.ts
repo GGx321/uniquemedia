@@ -380,6 +380,9 @@ export type MontageListItem = z.infer<typeof MontageListItem>;
 
 export type Clip = z.infer<typeof Clip>;
 export type Layer = z.infer<typeof Layer>;
+export type TextLayer = z.infer<typeof TextLayer>;
+export type TextStyle = z.infer<typeof TextStyle>;
+export type TextFont = z.infer<typeof TextFont>;
 export type Cell = z.infer<typeof Cell>;
 export type Focus = z.infer<typeof Focus>;
 export type Motion = z.infer<typeof Motion>;
