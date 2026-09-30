@@ -15,6 +15,8 @@ import { Id } from "../../shared/engine";
 export const MAX_LISTED_TRACKS = 100;
 const MAX_HIGHLIGHTS = 64;
 const MAX_TITLE_CHARS = 120;
+/** `song_monetization_info` and `licensed_music_subtype` are short labels (`REVSHARE`); a long one is not one. */
+const MAX_OPEN_CHARS = 64;
 const MAX_URL_CHARS = 4096;
 const MAX_TRACK_MS = 24 * 3600 * 1000;
 /** Bounds what is reported about the response, so a hostile one cannot fill a log. */
@@ -114,12 +116,12 @@ function httpsUrl(raw: string | undefined): string | null {
   }
 }
 
-/** Control characters and bidi overrides out, trimmed, at most 120 code points (never half a surrogate pair). */
-function cleanText(raw: string | undefined): string | null {
+/** Control characters and bidi overrides out, trimmed, at most `max` code points (never half a surrogate pair). */
+function cleanText(raw: string | undefined, max: number = MAX_TITLE_CHARS): string | null {
   if (raw === undefined) return null;
   const cleaned = raw.replace(/[\p{Cc}‪-‮⁦-⁩]/gu, "").trim();
   if (cleaned === "") return null;
-  return Array.from(cleaned).slice(0, MAX_TITLE_CHARS).join("");
+  return Array.from(cleaned).slice(0, max).join("");
 }
 
 function highlights(raw: readonly unknown[] | undefined): number[] {
@@ -209,8 +211,11 @@ export function parseFlashapiList(body: unknown): ListParse {
       continue;
     }
     const fields = read.data;
-    if (fields.song_monetization_info !== undefined) monetization.add(fields.song_monetization_info);
-    if (fields.licensed_music_subtype !== undefined) subtypes.add(fields.licensed_music_subtype);
+    // Open strings, but cleaned like the title: a track record keeps no control character and nothing long.
+    const monetizationValue = cleanText(fields.song_monetization_info, MAX_OPEN_CHARS);
+    const subtypeValue = cleanText(fields.licensed_music_subtype, MAX_OPEN_CHARS);
+    if (monetizationValue !== null) monetization.add(monetizationValue);
+    if (subtypeValue !== null) subtypes.add(subtypeValue);
     if (fields.is_explicit === true) explicitCount++;
 
     const rawId = normaliseId(fields.id);
@@ -254,8 +259,8 @@ export function parseFlashapiList(body: unknown): ListParse {
       highlightsMs: highlights(fields.highlight_start_times_in_ms),
       downloadUrl,
       coverUrl: httpsUrl(fields.cover_artwork_uri),
-      monetization: fields.song_monetization_info ?? null,
-      licensedSubtype: fields.licensed_music_subtype ?? null,
+      monetization: monetizationValue,
+      licensedSubtype: subtypeValue,
     });
   }
 

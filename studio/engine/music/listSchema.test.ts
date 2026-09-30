@@ -255,6 +255,36 @@ describe("every other field is optional, and a wrongly typed one reads as absent
     expect(parsed(body(item(good({ is_explicit: true })))).tracks[0]?.explicit).toBe(true);
   });
 
+  test.each([
+    ["control characters", "REV\u0000SH\u0007ARE\n", "REVSHARE"],
+    ["a bidi override and isolate", "RE‮VSHA⁦RE", "REVSHARE"],
+    ["surrounding whitespace", "  REVSHARE  ", "REVSHARE"],
+  ])("song_monetization_info and licensed_music_subtype lose %s, as the title does", (_label, raw, clean) => {
+    const list = parsed(body(item(good({ song_monetization_info: raw, licensed_music_subtype: raw }))));
+    expect(list.tracks[0]).toMatchObject({ monetization: clean, licensedSubtype: clean });
+  });
+
+  test("song_monetization_info and licensed_music_subtype are cut at 64 characters, never half a surrogate pair", () => {
+    const long = `${"a".repeat(63)}😀${"b".repeat(100)}`;
+    const list = parsed(body(item(good({ song_monetization_info: long, licensed_music_subtype: "x".repeat(500) }))));
+    const [track] = list.tracks;
+    expect(Array.from(track?.monetization ?? "")).toHaveLength(64);
+    expect(track?.monetization?.endsWith("😀")).toBe(true);
+    expect(Array.from(track?.licensedSubtype ?? "")).toHaveLength(64);
+  });
+
+  test.each(["", "   ", "\u0000\u0001", "‮"])("an open string that is empty after cleaning (%j) is absent, not an empty string", (raw) => {
+    const list = parsed(body(item(good({ song_monetization_info: raw, licensed_music_subtype: raw }))));
+    expect(list.tracks[0]).toMatchObject({ monetization: null, licensedSubtype: null });
+  });
+
+  test("a hostile value cannot reach a track record: nothing in it is a control character", () => {
+    const list = parsed(fixture("frankfurt").response);
+    for (const track of list.tracks) {
+      expect(`${track.monetization ?? ""}${track.licensedSubtype ?? ""}`).not.toMatch(/[\p{Cc}‪-‮⁦-⁩]/u);
+    }
+  });
+
   test("song_monetization_info and licensed_music_subtype are open strings, never enums", () => {
     const list = parsed(body(item(good({ song_monetization_info: "SOMETHING_NEW_2027", licensed_music_subtype: "WHATEVER" }))));
     expect(list.tracks[0]).toMatchObject({ monetization: "SOMETHING_NEW_2027", licensedSubtype: "WHATEVER" });
