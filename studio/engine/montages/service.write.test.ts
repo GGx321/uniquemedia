@@ -313,3 +313,144 @@ describe("montages.save: several saves of one draft at once", () => {
     expect(stored.kind === "ok" ? stored.montage.name : null).toBe("fast");
   });
 });
+
+describe("montages.delete", () => {
+  test("removes the draft, announces its removal with its avatar, and answers its id", async () => {
+    const w = world();
+    const r = montageRig(w);
+    await r.store.write(w.library, draft(w.avatar.id, ID));
+
+    const answer = await r.service.delete(ID);
+
+    expect(answer).toEqual({ montageId: ID });
+    expect(await filesOf(w)).toEqual([]);
+    expect(r.stamped().map((e) => [e.type, e.payload])).toEqual([["montage.changed", { change: "removed", montageId: ID, avatarId: w.avatar.id }]]);
+  });
+
+  test("a draft that does not exist, or is already deleted, is NOT_FOUND and announces nothing", async () => {
+    const w = world();
+    const r = montageRig(w);
+    await r.store.write(w.library, draft(w.avatar.id, ID));
+    await r.service.delete(ID);
+    r.events.length = 0;
+
+    expect((await failureOf(r.service.delete(ID))).code).toBe("NOT_FOUND");
+    expect((await failureOf(r.service.delete("montage-0000009"))).code).toBe("NOT_FOUND");
+    expect(r.events).toEqual([]);
+  });
+
+  test("a damaged draft can still be deleted: the owner can always clear it", async () => {
+    const w = world();
+    const r = montageRig(w);
+    await mkdir(w.library.montagesDir(w.avatar.id), { recursive: true });
+    await writeFile(w.library.montageFilePath(w.avatar.id, ID), "{ torn");
+
+    expect(await r.service.delete(ID)).toEqual({ montageId: ID });
+    expect(await filesOf(w)).toEqual([]);
+    expect(r.stamped().map((e) => e.payload)).toEqual([{ change: "removed", montageId: ID, avatarId: w.avatar.id }]);
+  });
+
+  test("the store remembers the draft as removed, for a render that is still holding its id", async () => {
+    const w = world();
+    const r = montageRig(w);
+    await r.store.write(w.library, draft(w.avatar.id, ID));
+
+    await r.service.delete(ID);
+
+    expect(r.store.wasRemoved(ID)).toBe(true);
+  });
+
+  test("two deletes at once: one removes it, the other finds it gone", async () => {
+    const w = world();
+    const r = montageRig(w);
+    await r.store.write(w.library, draft(w.avatar.id, ID));
+
+    const outcomes = await Promise.allSettled([r.service.delete(ID), r.service.delete(ID)]);
+
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    const rejected = outcomes.flatMap((o) => (o.status === "rejected" && o.reason instanceof EngineFailure ? [o.reason.error.code] : []));
+    expect(rejected).toEqual(["NOT_FOUND"]);
+    expect(r.events).toHaveLength(1);
+  });
+
+  test("the videos rendered from the draft stay: their records are the owner's videos, not the draft's", async () => {
+    const w = world();
+    const r = montageRig(w);
+    const [a = ""] = worldPhotoIds(w);
+    await r.store.write(w.library, draft(w.avatar.id, ID, [a]));
+    await writeVideoRecord(w.libraryRoot, "video-0000001", sceneSpec(w.avatar.id, [a]), { montageId: ID });
+    await w.library.reloadVideoRecords(w.avatar.id);
+
+    await r.service.delete(ID);
+
+    expect(w.library.videoCount(w.avatar.id)).toBe(1);
+  });
+
+  test("a disk that will not delete is INTERNAL by code alone, and nothing is announced", async () => {
+    const w = world();
+    const r = montageRig(w);
+    // a folder named like the draft, with something in it: a plain unlink cannot remove it
+    const asFolder = w.library.montageFilePath(w.avatar.id, ID);
+    await mkdir(join(asFolder, "inside"), { recursive: true });
+
+    const started = performance.now();
+
+    const error = await failureOf(r.service.delete(ID));
+
+    expect(error.code).toBe("INTERNAL");
+    expect(error.detail ?? "").toMatch(/not a file/);
+    expect(error.detail ?? "").not.toContain(w.libraryRoot);
+    expect(performance.now() - started).toBeLessThan(500); // no lock-retry on a folder
+    expect(r.events).toEqual([]);
+  });
+
+  test("with no library open it says so", async () => {
+    const w = world();
+    const r = montageRig(w, { library: null });
+
+    expect((await failureOf(r.service.delete(ID))).code).toBe("LIBRARY_UNAVAILABLE");
+  });
+});
+
+describe("montages.save racing montages.delete", () => {
+  test("a save asked before a delete is applied, then the delete removes it", async () => {
+    const w = world();
+    const stored = draft(w.avatar.id, ID);
+    const r = montageRig(w, { store: { beforeRename: () => sleep(30) } });
+    await r.store.write(w.library, stored);
+
+    const [saved, deleted] = await Promise.all([r.service.save({ montageId: ID, spec: withSeed(stored, 5), name: "late" }), r.service.delete(ID)]);
+
+    expect(saved.montage.name).toBe("late");
+    expect(deleted).toEqual({ montageId: ID });
+    expect(await filesOf(w)).toEqual([]);
+    expect(r.stamped().map((e) => (e.type === "montage.changed" ? e.payload.change : e.type))).toEqual(["upserted", "removed"]);
+  });
+
+  test("a save asked after a delete is NOT_FOUND and never brings the draft back", async () => {
+    const w = world();
+    const stored = draft(w.avatar.id, ID);
+    const r = montageRig(w);
+    await r.store.write(w.library, stored);
+
+    const outcomes = await Promise.allSettled([r.service.delete(ID), r.service.save({ montageId: ID, spec: withSeed(stored, 5), name: "ghost" }), r.service.save({ montageId: ID, spec: withSeed(stored, 6), name: "ghost 2" })]);
+
+    expect(outcomes[0]?.status).toBe("fulfilled");
+    const refusals = outcomes.slice(1).map((o) => (o.status === "rejected" && o.reason instanceof EngineFailure ? o.reason.error.code : "not refused"));
+    expect(refusals).toEqual(["NOT_FOUND", "NOT_FOUND"]);
+    expect(await filesOf(w)).toEqual([]);
+    expect(r.stamped().map((e) => (e.type === "montage.changed" ? e.payload.change : e.type))).toEqual(["removed"]);
+  });
+
+  test("a delete between two saves leaves the draft gone: the second save does not resurrect it", async () => {
+    const w = world();
+    const stored = draft(w.avatar.id, ID);
+    const r = montageRig(w, { store: { beforeRename: () => sleep(15) } });
+    await r.store.write(w.library, stored);
+
+    const outcomes = await Promise.allSettled([r.service.save({ montageId: ID, spec: withSeed(stored, 1), name: "one" }), r.service.delete(ID), r.service.save({ montageId: ID, spec: withSeed(stored, 2), name: "two" })]);
+
+    expect(outcomes.map((o) => o.status)).toEqual(["fulfilled", "fulfilled", "rejected"]);
+    expect(await filesOf(w)).toEqual([]);
+  });
+});
