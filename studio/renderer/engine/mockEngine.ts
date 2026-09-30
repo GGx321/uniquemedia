@@ -294,6 +294,8 @@ interface MockVideo {
   montageId: string | null;
   /** What a check of its file finds, when the test says so; null = present (or `elsewhere` while the export folder is unusable). */
   fileState: FileState | null;
+  /** The export folder it was made in (`exportGeneration` then). */
+  generation: number;
 }
 
 /** A render on the mock's queue: `queued` until a pool slot frees, then `running` through its progress and its saving phase. */
@@ -507,8 +509,10 @@ export class MockEngine implements EngineBridge {
   private exportFreeBytes: number | null = null;
   private renderQueueLimit = MOCK_MAX_UNFINISHED_RENDERS;
   /** Files in the export folder (their `relPath`): «Удалить запись» leaves the file, so its name stays taken. */
-  private readonly exportFiles = new Set<string>();
-  private nextRenderFailure: EngineError | null = null;
+  private exportFiles = new Set<string>();
+  /** Bumped when the owner points the export folder somewhere else: the videos made before are then in another folder. */
+  private exportGeneration = 0;
+  private nextRenderFailure: { error: EngineError; at: "encode" | "saving" } | null = null;
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -777,9 +781,19 @@ export class MockEngine implements EngineBridge {
     this.videos = this.videos.map((v) => (v.summary.videoId === videoId ? { ...v, fileState: state } : v));
   }
 
-  /** The next render that reaches its saving step fails with `error` instead of committing: no video, and its photos leave the reservation. */
-  failNextRender(error: EngineError): void {
-    this.nextRenderFailure = error;
+  /**
+   * The next render fails with `error`: no video, and its photos leave the reservation. `encode` (the default) is ffmpeg failing at the
+   * job's first step, before any progress or saving phase; `saving` is the commit failing after the point of no return (the window
+   * has seen the saving step).
+   */
+  failNextRender(error: EngineError, at: "encode" | "saving" = "encode"): void {
+    this.nextRenderFailure = { error, at };
+  }
+
+  /** The owner chose another export folder: every video made so far is in the old one (`elsewhere`), and the new folder is empty. */
+  moveExportFolder(): void {
+    this.exportGeneration += 1;
+    this.exportFiles = new Set();
   }
 
   /** Undoes `removeMaster`. */
@@ -1526,7 +1540,7 @@ export class MockEngine implements EngineBridge {
 
   /** Where a video's file stands, as the check that just ran found it: a folder that cannot be looked in reads `elsewhere`. */
   private fileStateOf(video: MockVideo): FileState {
-    if (this.exportReported.status === "unavailable") return "elsewhere";
+    if (this.exportReported.status === "unavailable" || video.generation !== this.exportGeneration) return "elsewhere";
     return video.fileState ?? "present";
   }
 
@@ -1635,6 +1649,13 @@ export class MockEngine implements EngineBridge {
     const advance = (step: number): void => {
       job.timers.push(
         this.scheduler.schedule(this.stepMs, () => {
+          // An encode failure stops the job at its first step, before it reports anything.
+          if (step === 1 && this.nextRenderFailure?.at === "encode") {
+            const { error } = this.nextRenderFailure;
+            this.nextRenderFailure = null;
+            this.endRender(job, "failed", error);
+            return;
+          }
           if (step <= MOCK_RENDER_STEPS) {
             job.done = Math.floor((job.total * step) / (MOCK_RENDER_STEPS + 1));
             this.emitRenderProgress(job);
@@ -1655,9 +1676,9 @@ export class MockEngine implements EngineBridge {
   /** The commit: the record lands (and the window is told, before the job ends), then the job ends `done`. A scripted failure ends it `failed` instead. */
   private commitRender(job: MockRenderJob): void {
     const failure = this.nextRenderFailure;
-    if (failure !== null) {
+    if (failure?.at === "saving") {
       this.nextRenderFailure = null;
-      this.endRender(job, "failed", failure);
+      this.endRender(job, "failed", failure.error);
       return;
     }
     const { spec } = job;
@@ -1682,7 +1703,7 @@ export class MockEngine implements EngineBridge {
       music: null,
       hasPoster: false,
     };
-    this.videos.push({ summary, photoIds: job.photoIds, montageId, fileState: null });
+    this.videos.push({ summary, photoIds: job.photoIds, montageId, fileState: null, generation: this.exportGeneration });
     this.adjustAvatar(job.avatarId, { videoCount: 1 });
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "upserted", video: summary } });
     this.announceAvatar(job.avatarId);

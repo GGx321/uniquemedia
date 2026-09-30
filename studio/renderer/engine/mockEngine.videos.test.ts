@@ -236,7 +236,7 @@ describe("videos.render", () => {
     expect(videos[0]).toMatchObject({ montageId: null });
   });
 
-  test("fails the job when a failure is scripted: no video, and the photos leave the reservation", async () => {
+  test("fails the job at its first step when an encode failure is scripted: no saving phase, no video, and the photos leave the reservation", async () => {
     const mock = makeMock();
     const draft = await draftOf(mock, [P1, P2]);
     const { jobId, videoId } = await renderDraft(mock, draft.montageId);
@@ -246,11 +246,40 @@ describe("videos.render", () => {
     mock.scheduler.runAll();
 
     const sent = eventsAfter(mock, mark);
-    expect(typesOf(sent).slice(-2)).toEqual(["job.failed", "avatar.changed"]);
-    expect(sent.at(-2)?.payload).toEqual({ kind: "render", jobId, videoId, avatarId: MIA.avatarId, montageId: draft.montageId, error: { code: "RENDER_FAILED", detail: "ffmpeg exited with code 1" } });
-    expect(typesOf(sent)).not.toContain("video.changed");
+    expect(typesOf(sent)).toEqual(["job.failed", "avatar.changed"]);
+    expect(sent[0]?.payload).toEqual({ kind: "render", jobId, videoId, avatarId: MIA.avatarId, montageId: draft.montageId, error: { code: "RENDER_FAILED", detail: "ffmpeg exited with code 1" } });
     expect(await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }))).toEqual({ videos: [] });
     expect((await unwrap(mock.client.request("avatars.list", {}))).avatars[0]?.eligibleUnusedCount).toBe(6);
+  });
+
+  test("fails the job in its saving phase when a saving failure is scripted: the window saw the saving step, and no video lands", async () => {
+    const mock = makeMock();
+    await renderDraft(mock, (await draftOf(mock, [P1, P2])).montageId);
+    mock.engine.failNextRender({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" }, "saving");
+    const mark = mock.events.length;
+
+    mock.scheduler.runAll();
+
+    const sent = eventsAfter(mock, mark);
+    expect(typesOf(sent).slice(-3)).toEqual(["job.progress", "job.failed", "avatar.changed"]);
+    expect(sent.at(-3)?.payload).toMatchObject({ saving: true });
+    expect(typesOf(sent)).not.toContain("video.changed");
+  });
+});
+
+describe("a moved export folder", () => {
+  test("leaves the videos already made in the old folder: their files read elsewhere; new renders start a new count in the new folder", async () => {
+    const mock = makeMock();
+    const old = await renderDraft(mock, (await draftOf(mock, [P1, P2])).montageId);
+    mock.scheduler.runAll();
+
+    mock.engine.moveExportFolder();
+    const fresh = await renderDraft(mock, (await draftOf(mock, [P3, P4])).montageId);
+    mock.scheduler.runAll();
+
+    const { videos } = await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }));
+    expect(Object.fromEntries(videos.map((v) => [v.videoId, v.fileState]))).toEqual({ [old.videoId]: "elsewhere", [fresh.videoId]: "present" });
+    expect(videos.find((v) => v.videoId === fresh.videoId)?.relPath).toMatch(/_collage2_001\.mp4$/);
   });
 });
 
