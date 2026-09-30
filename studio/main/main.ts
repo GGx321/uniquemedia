@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   MessageChannelMain,
   protocol,
   safeStorage,
@@ -28,6 +29,7 @@ import { handleMusicKeyCommand, musicKeyStatusOf, openMusicKeyStore } from "./mu
 import { createStickerLookup } from "./media/stickers";
 import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES } from "./mediaProtocol";
 import { HostNotices } from "./notices";
+import { appMenuTemplate } from "./appMenu";
 import { createQuitFlow, WINDOW_FLUSH_WAIT_MS } from "./quitFlow";
 import { createWindowFlush } from "./windowFlush";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
@@ -334,6 +336,11 @@ async function startStudio(): Promise<void> {
   });
 
   await engine.start();
+  // The built app has no Reload (appMenu.ts): a page holding a close while it saves cannot tell a reload from it.
+  if (!STUDIO_DEV) {
+    const template = appMenuTemplate(process.platform);
+    Menu.setApplicationMenu(template === null ? null : Menu.buildFromTemplate(template));
+  }
   createWindow();
 }
 
