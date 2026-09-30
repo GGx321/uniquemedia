@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url";
 import type { EventMessage } from "../shared/engine";
 import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
+import { installProcessGuards } from "../engine/processGuards";
 import { engineEnv } from "./engineEnv";
 import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
@@ -30,6 +31,9 @@ import { createQuitFlow } from "./quitFlow";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { handleSettingsCommand, reconcileLibraryPath } from "./settingsFlow";
 import { defaultLibraryPath, defaultSettings, SettingsStore } from "./settingsStore";
+
+// An error nobody caught is logged by kind and main goes on: no dialog, and a render or the engine are not taken down with it.
+installProcessGuards({ on: (event, listener) => process.on(event, listener), role: "main", log: console.error });
 
 // A production build keeps no debugging door open, however it is launched:
 // DevTools are off (see createWindow), --inspect is disabled by a fuse, and

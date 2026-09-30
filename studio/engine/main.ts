@@ -11,6 +11,7 @@ import { EngineInit } from "./control";
 import { ortWasmPathsFrom } from "./decode/wasmPaths";
 import { deliver, Engine, exitIfStartFails } from "./engine";
 import { defaultFaceGateConfig } from "./face/config";
+import { installProcessGuards } from "./processGuards";
 import { createFaceWorkerSpawner } from "./face/worker/spawn";
 import { createWorkerFaceGate, type WorkerFaceGate } from "./face/worker/workerGate";
 import { timeoutSignal, untilAborted } from "./money/timeoutSignal";
@@ -26,6 +27,9 @@ import { createTextGate, TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textG
 
 const parentPort = process.parentPort;
 if (!parentPort) throw new Error("the studio engine must run as an Electron utilityProcess");
+
+// An error nobody caught: a rejection is logged and the engine goes on, an exception ends the process (main restarts it).
+installProcessGuards({ on: (event, listener) => process.on(event, listener), role: "engine", log: console.error, exit: (code) => process.exit(code) });
 
 // T7b: the face gate's models and onnxruntime-web's WASM runtime, resolved
 // relative to THIS bundled file's own runtime location — never via

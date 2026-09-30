@@ -68,7 +68,7 @@ const ALLOWED_ROOTS = [
  * port, exiting, and the platform (read by T2's ledger). Everything else —
  * `env` above all — is out, however it is spelled.
  */
-const ALLOWED_PROCESS_MEMBERS = new Set(["parentPort", "exit", "platform"]);
+const ALLOWED_PROCESS_MEMBERS = new Set(["parentPort", "exit", "platform", "on"]);
 
 interface ModuleScan {
   imports: string[];
@@ -106,7 +106,7 @@ function scan(source: string): ModuleScan {
       const parent = node.parent;
       const allowedProcess =
         parent !== undefined && ts.isPropertyAccessExpression(parent) && parent.expression === node && ALLOWED_PROCESS_MEMBERS.has(parent.name.text);
-      if (node.text === "process" && !allowedProcess) problems.push(`${at(node)}: process (only .parentPort, .exit, .platform)`);
+      if (node.text === "process" && !allowedProcess) problems.push(`${at(node)}: process (only .parentPort, .exit, .platform, .on)`);
       if (node.text === "Bun") problems.push(`${at(node)}: Bun`);
       if (node.text === "require") problems.push(`${at(node)}: require`);
     } else if (ts.isStringLiteralLike(node) && node.text === "process" && !isModuleSpecifier(node)) {
@@ -186,7 +186,7 @@ describe("the checker itself catches every way to reach the environment", () => 
     });
   }
 
-  test("allows process.parentPort, process.exit and process.platform, and ignores comments and strings", () => {
+  test("allows process.parentPort, process.exit, process.platform and process.on, and ignores comments and strings", () => {
     const source = [
       "// process.env is never read here",
       "/* const { env } = process; */",
@@ -194,6 +194,7 @@ describe("the checker itself catches every way to reach the environment", () => 
       "export const port = process.parentPort;",
       "export const platform = process.platform;",
       "export function stop(): never { return process.exit(1); }",
+      'export const listen = () => process.on("unhandledRejection", () => undefined);',
     ].join("\n");
     expect(problemsIn(source)).toEqual([]);
   });
