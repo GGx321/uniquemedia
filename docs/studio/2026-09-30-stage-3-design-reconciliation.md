@@ -759,6 +759,43 @@ still lives in the old folder. **Recommended default: allow it, with the confirm
 - **`export.status`** is emitted when the status changes; the start's own check is the baseline (the snapshot carries it). It follows checks only (start, settings update, a render attempt); a re-check on window focus or on a timer is for 3e.3 / 3d.6.
 - **Left for later:** own-media / caption / track issue codes (3b.3, 3c.4, 3f.*); a proper message for a newer-schema draft (3d.2); 3d.6 must tolerate `NOT_FOUND` for the draft of a job whose draft was deleted (the engine remembers deleted drafts for its own life only).
 
+## 5c. Mock vs engine: don't design around (3d.1b)
+
+The dev mock (`studio/renderer/engine/mockEngine.ts`) now answers the montage and video commands like the engine, and the parity suite
+(`studio/engine/parity`) runs one set of scenarios against both and pins every command, answer and event in order. What is
+NOT the same, on purpose (the list lives in `INTENTIONAL_DIFFERENCES`, `parity/testing/transcript.ts`). 3d.2 and 3d.6 must not
+depend on any of it:
+
+- **Progress steps.** The engine steps by ffmpeg's frames over two passes; the mock makes 4 steps 700 ms apart. Both obey the same
+  rules (checked on every progress event): starts at `done 0` (announced once when queued and once more when it runs), never goes
+  back, stays below `total` while running (`total - 1` at most), the saving phase keeps the last value. Draw «Рендер · P %» from
+  `done / total`; never expect a number of steps, a step size or a time.
+- **Timing.** The mock's render takes about 4 s and a running render's cancel ends after 50 ms. The engine's take as long as ffmpeg.
+  Never wait for a duration; wait for the event (`job.done`, `job.cancelled`, `job.failed`).
+- **Render pool.** «auto» is one render at a time in the mock (a second one is visibly queued); the engine picks by cores and memory.
+  Show «В очереди · после N» from the snapshot's job order, never from an assumed pool of one.
+- **Bursts of saves.** Saves of one draft sent together are applied in order and the last wins, on both, and each `montage.changed`
+  comes before its own answer. How the echoes of a burst interleave with the answers of other commands differs (the engine writes a
+  file per save): ignore the echo of your own save by its content or `updatedAt`, not by its position in the event stream.
+- **Ids, times, sizes, seeds.** The mock counts its ids, uses its own clock, estimates a video's `bytes` from the montage and counts
+  the draft seed. Treat all of them as opaque; the `relPath` date is the mock clock's.
+- **Face focus.** The mock judges a photo only when its `qa.faceCos` is set (focus `{0.5, 0.35}`), else `null`; the engine detects a
+  face. Both may answer `null`: the preview draws `FOCUS_FALLBACK` then.
+- **Folder names.** ASCII only in the mock (no Cyrillic transliteration): an avatar named in Cyrillic gets its id as the folder.
+- **What the mock does not model.** A torn or newer-schema draft file, a stale used index (every photo of the avatar refused), a record
+  from a newer Studio (`LIBRARY_TOO_NEW`), a closed library beyond `LIBRARY_UNAVAILABLE`, own media, captions, music and stickers
+  (their parts answer `not-yet-supported` as in the engine until their slices land). Do not build a UI state that can only be reached
+  through one of these and call it tested on the mock.
+- **Test controls are the mock's alone** (`failNextRender`, `setExportDisk`, `moveExportFolder`, `setRenderQueueLimit`, ...). They are
+  forbidden in every production bundle (`FORBIDDEN_DEBUG_MARKERS`): a renderer test may use them, renderer code never.
+
+What IS the same, and safe to design on: the shapes and codes of every answer, the order of refusals, `PHOTO_UNAVAILABLE` issues at
+`["photoIds", i]` and at the cell paths, the events of a render (`job.progress`, `video.changed`, `avatar.changed`, `job.done`,
+`avatar.changed`) in that order, `montageId: null` for a deleted draft (in the record and in `videos.list`; a job's own events keep the
+id it was queued with), the export status moving only when a check finds a change (a render attempt, a listing, a delete) and
+`not-enough-space` refusing one render without touching the status, the snapshot's job list (queued, running, finished; the latest 50
+finished kept; the saving mark dropped at the job's end), and the photo grid's newest-first order.
+
 ## 6. Per-task UI checklists
 
 What each of the next UI tasks must implement from the artboards. «Скоро» means disabled with
