@@ -34,8 +34,8 @@ export type EmojiFontErrorCode =
 
 export class EmojiFontError extends Error {
   readonly code: EmojiFontErrorCode;
-  constructor(code: EmojiFontErrorCode, why: string) {
-    super(`emoji font: ${why}`);
+  constructor(code: EmojiFontErrorCode, why: string, options?: ErrorOptions) {
+    super(`emoji font: ${why}`, options);
     this.name = "EmojiFontError";
     this.code = code;
   }
@@ -79,7 +79,7 @@ const MAX_CMAP_GROUPS = 100_000;
 const MAX_LOOKUPS = 512;
 const MAX_LOOKUP_SUBTABLES = 256;
 const MAX_LIGATURES = 100_000;
-/** Coverage entries read plus ligature sets read, over the whole GSUB: what the real font needs is a few thousand. */
+/** Coverage entries read plus ligature sets read, over the whole GSUB. The real font needs 472, so 200 000 leaves room and still refuses a crafted one. */
 const MAX_GSUB_WORK = 200_000;
 const VS16 = 0xfe0f;
 /** "IHDR" as a big-endian u32. */
@@ -420,11 +420,13 @@ function codePointsOf(sequence: string | readonly number[]): number[] | null {
 
 /** A detached or otherwise unreadable buffer makes `slice` throw a TypeError; the reader's only error is its own. */
 function copyOf(input: Uint8Array): Uint8Array {
+  // `new Uint8Array(arrayBuffer)` would quietly read a raw ArrayBuffer (what a worker message carries) as a font.
+  if (Object.prototype.toString.call(input) !== "[object Uint8Array]") throw new EmojiFontError("NOT_A_FONT", "the input is not a Uint8Array");
   try {
     // Not `input.slice()`: on a Node Buffer (what readFile returns) that is a view, not a copy.
     return new Uint8Array(input);
-  } catch {
-    throw new EmojiFontError("NOT_A_FONT", "the input buffer is detached or unreadable");
+  } catch (cause) {
+    throw new EmojiFontError("NOT_A_FONT", "the input buffer is detached or unreadable", { cause });
   }
 }
 

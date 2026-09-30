@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
-import { EMOJI_FONT_BYTES, keyOf, loadEmojiTest, loadHarfBuzzGlyphs, loadPinnedEmojiFont, parseEmojiTest } from "./emojiFont.testkit";
+import { EMOJI_FONT } from "../fonts";
+import { keyOf, loadEmojiTest, loadHarfBuzzGlyphs, loadPinnedEmojiFont, parseEmojiTest } from "./emojiFont.testkit";
 useNativeGlobals();
 
 describe("the emoji test fixtures", () => {
@@ -26,7 +27,7 @@ describe("the emoji test fixtures", () => {
 
   test("the pinned font is 10 673 480 bytes and each call gets its own copy", async () => {
     const a = await loadPinnedEmojiFont();
-    expect(a.byteLength).toBe(EMOJI_FONT_BYTES);
+    expect(a.byteLength).toBe(EMOJI_FONT.bytes);
     a[0] = 0xff;
     expect((await loadPinnedEmojiFont())[0]).toBe(0);
   });

@@ -28,11 +28,15 @@ function outcome(change: (bytes: Uint8Array, view: DataView) => Uint8Array | voi
   const copy = pristine.slice();
   const changed = change(copy, new DataView(copy.buffer)) ?? copy;
   const started = performance.now();
+  const took = (): void => {
+    if (performance.now() - started > 2000) throw new Error("opening or refusing took too long");
+  };
   try {
     openEmojiFont(changed);
+    took();
     return "OPENED";
   } catch (error) {
-    if (performance.now() - started > 2000) throw new Error("refusing took too long");
+    took();
     return error instanceof EmojiFontError ? error.code : "OTHER";
   }
 }
@@ -206,6 +210,16 @@ describe("GSUB work is bounded overall", () => {
 
   test("the same reads of a small coverage are within budget (the font then fails later, for want of CBDT)", () => {
     expect(crafted({ lookups: 2, subtables: 16, coverageGlyphs: 100 })).toBe("NOT_A_FONT");
+  });
+
+  // One read of a 65 535-glyph coverage costs 131 070 (65 535 coverage glyphs + 65 535 ligature sets). The cap is
+  // 200 000, so one read is within it and two are not; a cap of 1 000 000 would let the second through.
+  test("one read of a 65 535-glyph coverage (131 070 work) is within the work cap", () => {
+    expect(crafted({ lookups: 1, subtables: 1, coverageGlyphs: 65535 })).toBe("NOT_A_FONT");
+  });
+
+  test("two reads of a 65 535-glyph coverage (262 140 work) are over the work cap", () => {
+    expect(crafted({ lookups: 1, subtables: 2, coverageGlyphs: 65535 })).toBe("TOO_LARGE");
   });
 
   test("257 subtables in one lookup are refused", () => {

@@ -11,8 +11,6 @@ import { loadEmojiFont } from "../fonts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FONTS_DIR = join(HERE, "..", "..", "..", "assets", "fonts");
 
-export const EMOJI_FONT_BYTES = 10_673_480;
-
 let pending: Promise<Uint8Array> | null = null;
 
 /** The committed Noto Color Emoji v2.051 bytes. A fresh copy each call, so a test may mutate it. */

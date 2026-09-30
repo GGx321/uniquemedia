@@ -204,6 +204,25 @@ describe("opening", () => {
     expect(() => openEmojiFont(bytes)).toThrow(expect.objectContaining({ name: "EmojiFontError", code: "NOT_A_FONT" }));
   });
 
+  test("keeps the underlying error as the cause of a detached-buffer refusal", async () => {
+    const bytes = await loadPinnedEmojiFont();
+    structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+    let caught: unknown;
+    try {
+      openEmojiFont(bytes);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(EmojiFontError);
+    expect((caught as EmojiFontError).cause).toBeInstanceOf(Error);
+  });
+
+  test("refuses an ArrayBuffer (what a worker message carries) with a typed error", async () => {
+    const bytes = await loadPinnedEmojiFont();
+    // @ts-expect-error a raw ArrayBuffer is not a Uint8Array; the reader must not read it as one
+    expect(() => openEmojiFont(bytes.buffer)).toThrow(expect.objectContaining({ name: "EmojiFontError", code: "NOT_A_FONT" }));
+  });
+
   test("keeps its own copy when the input is a Node Buffer, whose slice() is a view", async () => {
     const buffer = Buffer.from(await loadPinnedEmojiFont());
     const opened = openEmojiFont(buffer);
