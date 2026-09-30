@@ -1,4 +1,4 @@
-import type { MontageDraft, MontageIssue } from "../../shared/engine/montage";
+import type { MontageDraft, MontageIssue } from "../engine/montage";
 
 /**
  * N9: the parts of a montage whose slice has not landed. A spec that uses one is REFUSED with `not-yet-supported` at

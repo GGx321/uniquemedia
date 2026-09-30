@@ -2,7 +2,7 @@ import { lstat } from "node:fs/promises";
 import type { FileState, VideoSummary, CommandPayload, EngineError, UnsequencedEvent } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS, PROTOCOL_VERSION } from "../../shared/engine";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
-import { notYetSupportedIssues } from "../montages/notYetSupported";
+import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 import { estimateBytesUpper } from "../../shared/montage";
 import { resolveFocus } from "../../shared/montage/crop";
 import { EngineFailure } from "../engineFailure";

@@ -9,6 +9,7 @@ export * from "./defaultSpec";
 export * from "./estimate";
 export * from "./layers";
 export * from "./motion";
+export * from "./notYetSupported";
 export * from "./safeZones";
 export * from "./segments";
 export * from "./split";

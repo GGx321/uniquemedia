@@ -5,7 +5,7 @@ import { PNG_1X1, SAMPLE_SOURCE, samplePhotoMeta } from "../library/testing/help
 import { openLibrary } from "../library";
 import { useWorld, type World } from "../videos/testing/kit";
 import { draftIssues } from "./issues";
-import { notYetSupportedIssues } from "./notYetSupported";
+import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
