@@ -124,7 +124,7 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
   /** What broke it (the trap, then the `free()` that failed after it), in order. Rides on every later BROKEN answer. */
   const brokenBy: unknown[] = [];
 
-  async function load(): Promise<Record<TextFontKey, Uint8Array>> {
+  async function load(): Promise<{ fonts: Record<TextFontKey, Uint8Array>; metrics: Record<TextFontKey, VerticalMetrics> }> {
     let bytes: Uint8Array;
     try {
       bytes = await read(deps.wasmPath);
@@ -137,12 +137,15 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
     } catch (cause) {
       throw new RasterError("WASM_UNAVAILABLE", `resvg-wasm would not initialise: ${messageOf(cause)}`, { cause });
     }
+    let loaded: Record<TextFontKey, Uint8Array>;
     try {
-      return await loadTextFonts(deps.fontDir, read);
+      loaded = await loadTextFonts(deps.fontDir, read);
     } catch (cause) {
       if (cause instanceof FontLoadError) throw new RasterError("FONT_UNAVAILABLE", cause.message, { cause });
       throw cause;
     }
+    // Inside the load, so a font without usable metrics fails it like a corrupt one does, and, like any failed load, is not remembered.
+    return { fonts: loaded, metrics: metricsOf(loaded) };
   }
 
   /** The metrics of every font, read at load: a font that has none fails the load, the way a corrupt one does. */
@@ -163,8 +166,8 @@ export function createTextRasteriser(deps: RasterDeps): TextRasteriser {
     if (fonts !== null) return Promise.resolve();
     pending ??= load().then(
       (loaded) => {
-        metrics = metricsOf(loaded);
-        fonts = loaded;
+        metrics = loaded.metrics;
+        fonts = loaded.fonts;
       },
       (error: unknown) => {
         pending = null;

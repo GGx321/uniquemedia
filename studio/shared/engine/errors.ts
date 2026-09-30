@@ -60,6 +60,9 @@ import { Count, SafeText } from "./primitives";
  * - EXPORT_UNAVAILABLE: the «Готовые видео» folder cannot take the video (invariant 35); `exportReason` says why.
  *   Refused before a job is queued, or fails the job when the folder vanishes mid-render.
  * - RENDER_FAILED: ffmpeg or the render pipeline failed; the stderr tail goes to `detail`.
+ *   `montages.textPreview` uses it too, for a text render that ran out of time (`detail` ends with the hint to shrink the caption
+ *   or change the style; the window shows that hint itself, since this code's fixed message speaks of a video) or that resvg, the
+ *   template or the text worker failed. The engine never retries it.
  * - RENDER_VERIFY_FAILED: the finished file did not pass the output verifier (metadata allowlist, frame count); it is not kept.
  * - RENDER_QUEUE_FULL: `videos.render` was refused up front because the render queue already holds its most (queued and
  *   running together); `detail` carries the limit. Nothing was reserved or written; retry once some renders end.

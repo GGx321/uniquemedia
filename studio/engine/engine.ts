@@ -198,8 +198,9 @@ export interface EngineDeps {
    * The text worker's gate (3b.2), owned by the engine from 3b.4b: `montages.textPreview` draws through it. The gate is
    * created synchronously by `engine/main.ts` and is live before its worker has loaded (it spawns one on the first call, and
    * after a failed load the next call retries), so it is handed over even when the start-up did not wait for the load.
-   * `loadError` reads the CURRENT reason the worker could not load, if it could not, for the `RENDER_FAILED` detail as
-   * `faceGateLoadError` does for the face gate; it is read when a command fails, never at start.
+   * `loadError` reads how the LOAD ended, if it ended in an error, and is read only when a command fails because the worker
+   * itself failed (`WORKER_FAILED`), for the `RENDER_FAILED` detail as `faceGateLoadError` does for the face gate. It is not cleared
+   * when a later call succeeds (the gate retries), so it says why the load failed, never that the worker is down now.
    * Absent (a test, a build without the text runtime): every text command answers `RENDER_FAILED`.
    */
   text?: { gate: PreviewGate; loadError?: () => string | undefined };
