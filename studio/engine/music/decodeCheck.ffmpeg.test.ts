@@ -8,6 +8,9 @@ import type { FfmpegChild, FfmpegSpawner } from "../../node/runFfmpeg";
 import { configureFfmpegEnv } from "../../node/ffmpegEnv";
 import { decodeAudio, DecodeError, PEAK_STEP_MS } from "./decodeCheck";
 import { musicTracks } from "./fixtures";
+import { probeMp4Audio } from "./mp4aProbe";
+import { spawnSync } from "node:child_process";
+import { ffmpegPath } from "../../node/ffmpegBinary";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -88,6 +91,18 @@ describe("audio that is not what the list claimed", () => {
   test("an MP3 renamed .m4a is not decoded: the mov demuxer is forced, so the extension and the content cannot pick another one", async () => {
     const path = await tempFile(new TextEncoder().encode("ID3\u0004\u0000\u0000\u0000\u0000\u0000\u0000".padEnd(2048, "ÿ")));
     expect((await failureOf(decodeAudio({ path, expectedMs: 8_000, signal: signal() }))).kind).toBe("exit");
+  });
+
+  // Re-review 6: not only the arguments. A real MP3 muxed into an mp4 (the mov muxer stores it under an `mp4a` entry with
+  // objectTypeIndication 0x6b) is what `-c:a aac` refuses: ffmpeg exits with no samples instead of decoding it.
+  test("a real MP3 inside an mp4a entry is not decoded: the walker refuses it, and the AAC-only decoder exits with no output on its own", async () => {
+    dir = await mkdtemp(join(tmpdir(), "studio-decode-"));
+    const path = join(dir, "mp3.m4a");
+    const made = spawnSync(ffmpegPath(), ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "libmp3lame", "-f", "mp4", path]);
+    expect(made.status).toBe(0);
+    const probe = probeMp4Audio(new Uint8Array(await readFile(path)));
+    expect(probe.ok).toBe(false);
+    expect((await failureOf(decodeAudio({ path, expectedMs: 2_000, signal: signal() }))).kind).toBe("exit");
   });
 
   test("a truncated file does not pass for the whole track", async () => {
