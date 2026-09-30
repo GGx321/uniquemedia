@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Invariant 29, statically: the flashapi client takes the key and the base URL as parameters and never reads either
 // from anywhere, and the key has one road out (a header). These read the sources, so a later change that reaches for

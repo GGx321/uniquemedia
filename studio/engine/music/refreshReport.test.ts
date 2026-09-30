@@ -5,6 +5,8 @@ import { musicLists } from "./fixtures";
 import { parseFlashapiList } from "./listSchema";
 import { buildRefreshReport } from "./refreshReport";
 import type { FlashapiResponseInfo } from "./client";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // The first real refresh logs (plan, Quota row): every header NAME with values only for the rate-limit ones, the
 // status, the item count, page_info, the dropped items, unknown keys, the distinct open-string values, the explicit

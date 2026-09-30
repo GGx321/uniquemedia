@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { expectNoKeyFragment } from "../../testing/keyLeaks";
 import { REDACTED, redactKnown } from "./redactKnown";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Every text the flashapi client derives from a response or an error goes through `redactKnown(text, key)` before it
 // reaches a log, a quota line or a SafeText. Only fake keys here.

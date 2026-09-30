@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fragmentForms, expectNoKeyFragment } from "../../testing/keyLeaks";
 import { QUOTA_LIMIT, QUOTA_WINDOW_MS, QuotaLedger, QuotaLogError, summarize, type QuotaLine } from "./quotaLedger";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Invariant 30: a `send` line is on disk before the request leaves; a 31-day window; the limit of 30; the server's
 // `remaining = 0` floor; a torn last line and a crash between `send` and `result` are survived.

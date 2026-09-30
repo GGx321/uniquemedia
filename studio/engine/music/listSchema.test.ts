@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { musicLists } from "./fixtures";
 import { MAX_LISTED_TRACKS, parseFlashapiList, type ListParse } from "./listSchema";
 import { signedUrlExpiresAtMs } from "./signedUrl";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // SP5's lenient schema: only `track.id` is required; every other field is optional and a wrongly typed one reads as
 // absent; unknown keys are ignored; URLs must be https; the open string fields are never enums; a track with no
