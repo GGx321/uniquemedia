@@ -6,6 +6,7 @@ import {
   type EngineError,
   type EngineNotice,
   type EventMessage,
+  type ExportStatus,
   type JobResult,
   type JobState,
   type MoneyStatus,
@@ -46,6 +47,8 @@ export interface EngineView {
   readonly lastSeq: number;
   readonly settings: Settings | null;
   readonly money: MoneyStatus | null;
+  /** The export folder's status: from the snapshot, then `export.status`; null before the first snapshot. */
+  readonly exportStatus: ExportStatus | null;
   readonly avatars: readonly AvatarSummary[];
   readonly drafts: readonly Draft[];
   /** Avatar records the engine could not read into the lists (from the snapshot and avatars.list); UI shows their count via `.length`. */
@@ -87,6 +90,7 @@ const INITIAL: EngineView = {
   lastSeq: 0,
   settings: null,
   money: null,
+  exportStatus: null,
   avatars: [],
   drafts: [],
   unreadableAvatars: [],
@@ -597,6 +601,7 @@ export class EngineStore {
       lastSeq: s.lastSeq,
       settings: s.settings,
       money: s.money,
+      exportStatus: s.exportStatus,
       avatars: s.avatars,
       drafts: s.drafts,
       unreadableAvatars: s.unreadableAvatars,
@@ -709,6 +714,18 @@ export class EngineStore {
         // Video records are listed on demand (videos.list, the Photos «Видео» tab); the event only has to keep the seq moving.
         this.update({ lastSeq });
         return;
+      case "montage.changed":
+        // Drafts are listed on demand (montages.list); the event only has to keep the seq moving.
+        this.update({ lastSeq });
+        return;
+      case "export.status":
+        this.update({ exportStatus: event.payload.exportStatus, lastSeq });
+        return;
+      default: {
+        // A new event type without a branch above is a compile error here, not a silent gap in `lastSeq`.
+        const unhandled: never = event;
+        throw new Error(`unhandled engine event ${JSON.stringify(unhandled)}`);
+      }
     }
   }
 

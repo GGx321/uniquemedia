@@ -9,6 +9,7 @@ import {
   type CommandMessage,
   type Draft,
   type EngineNotice,
+  type Montage,
   type Snapshot,
   type UnsequencedEvent,
 } from "../../shared/engine";
@@ -411,5 +412,45 @@ test("video.changed moves lastSeq on and changes nothing else: the video lists a
   await h.emit({ type: "video.changed", payload: { change: "removed", videoId: video.videoId, avatarId: video.avatarId } });
   expect(h.store.getView()).toEqual({ ...before, lastSeq: before.lastSeq + 2 });
   expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+const STORED_DRAFT: Montage = {
+  montageId: "montage-0000001",
+  name: null,
+  spec: { schemaVersion: 1, avatarId: "avatar-draft-0001", clips: [], layers: [], music: null, seed: 1 },
+  updatedAt: "2026-09-30T10:00:00.000Z",
+};
+
+test("montage.changed moves lastSeq on and changes nothing else: drafts are listed on demand", async () => {
+  const h = await host();
+  const before = h.store.getView();
+  await h.emit({ type: "montage.changed", payload: { change: "upserted", montage: STORED_DRAFT } });
+  await h.emit({ type: "montage.changed", payload: { change: "removed", montageId: STORED_DRAFT.montageId, avatarId: STORED_DRAFT.spec.avatarId } });
+  expect(h.store.getView()).toEqual({ ...before, lastSeq: before.lastSeq + 2 });
+  expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("export.status moves lastSeq on and keeps the live status: the next event is not a gap", async () => {
+  const h = await host({ exportStatus: { status: "ok" } });
+  expect(h.store.getView().exportStatus).toEqual({ status: "ok" });
+  await h.emit({ type: "export.status", payload: { exportStatus: { status: "unavailable", reason: "missing" } } });
+  expect(h.store.getView().exportStatus).toEqual({ status: "unavailable", reason: "missing" });
+  await h.emit({ type: "engine.notice", payload: { notice: RESET } });
+  expect(h.store.getView().lastSeq).toBe(2);
+  expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("four export.status changes, each followed by another event, never resync and never break the stream", async () => {
+  const h = await host();
+  for (let i = 0; i < 4; i++) {
+    await h.emit({ type: "export.status", payload: { exportStatus: i % 2 === 0 ? { status: "unavailable", reason: "missing" } : { status: "ok" } } });
+    await h.emit({ type: "engine.notice", payload: { notice: { ...RESET, noticeId: `notice-000${i + 1}` } } });
+  }
+  expect(h.snapshots()).toBe(1);
+  expect(h.store.getView().phase).toBe("ready");
+  expect(h.store.getView().lastSeq).toBe(8);
   h.stop();
 });
