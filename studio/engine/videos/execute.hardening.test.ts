@@ -10,7 +10,7 @@ import { RenderQueue } from "../renderQueue/queue";
 import { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 import { partNameOf, type VideoRecord } from "./record";
 import { NODE_COMMIT_FS } from "./commitFs";
-import { acceptingVerify, exportFiles, fakeVideoBytes, FINAL, libraryVideoFiles, MARKER, specOf, useWorld, type World } from "./testing/kit";
+import { acceptingVerify, exportFiles, fakeVideoBytes, FINAL, libraryVideoFiles, MARKER, specOf, useWorld, watchUnhandledRejections, type World } from "./testing/kit";
 useNativeGlobals();
 
 // 3a.8b.2: what `createRenderExecute` does about the export folder BETWEEN its checks. The up-front check
@@ -391,6 +391,25 @@ describe("the commit has its own deadline", () => {
     expect(await exportFiles(r.w)).toEqual([]);
     expect(await libraryVideoFiles(r.w)).toEqual([]);
     expect(r.committed).toEqual([]);
+  });
+
+  test("a commit that outlives its pre-claim deadline and then fails on its own leaves no unhandled rejection", async () => {
+    const unhandled = watchUnhandledRejections();
+    let wake: () => void = () => undefined;
+    const release = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    const r = rig({ commitDeadlineMs: 30, hooks: hangAt("temp-synced", release) });
+    try {
+      r.submit();
+      await r.queue.idle();
+      expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE" } });
+      await rm(r.w.exportRoot, { recursive: true, force: true }); // what the woken commit finds is a folder that is gone: it fails by itself
+    } finally {
+      wake();
+      await until(() => !r.tracker.hasJob(JOB));
+    }
+    expect(await unhandled.settle()).toEqual([]);
   });
 
   test("after the pre-claim deadline the photos are free again: the reservation is released and nothing marks them used", async () => {
