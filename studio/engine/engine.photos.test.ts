@@ -39,6 +39,8 @@ function runPhotoMeta(runId: string, slot: number, extra: Parameters<typeof samp
 }
 
 /** A saved avatar (active by default), with `count` run photos already stored, oldest first. */
+const SEED_CHUNK = 50;
+
 async function seedAvatar(opts: { count?: number; status?: "active" | "draft" | "archived"; runId?: string } = {}): Promise<{ avatarId: string; photoIds: string[] }> {
   const count = opts.count ?? 0;
   const runId = opts.runId ?? "run-00000001";
@@ -48,10 +50,13 @@ async function seedAvatar(opts: { count?: number; status?: "active" | "draft" | 
     const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
     await library.updateAvatar(avatar.id, { status: opts.status ?? "active", masterPhotoId: master.id });
   }
+  // Chunks of photos are added at once: on Windows every add costs tens of milliseconds of file-system latency (the
+  // boundary test's 501 of them, one after another, outlasted its 30 s). `addPhoto` takes its id and its `createdAt`
+  // before its first await, so the order of the calls is still the order of the ids and of the timestamps.
   const photoIds: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const photo = await library.addPhoto(avatar.id, PNG_1X1, runPhotoMeta(runId, i + 1));
-    photoIds.push(photo.id);
+  for (let from = 0; from < count; from += SEED_CHUNK) {
+    const chunk = Array.from({ length: Math.min(SEED_CHUNK, count - from) }, (_unused, k) => library.addPhoto(avatar.id, PNG_1X1, runPhotoMeta(runId, from + k + 1)));
+    for (const photo of await Promise.all(chunk)) photoIds.push(photo.id);
   }
   return { avatarId: avatar.id, photoIds };
 }

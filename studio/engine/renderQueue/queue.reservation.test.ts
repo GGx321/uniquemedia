@@ -230,7 +230,12 @@ describe("RenderQueue: the release point (moved by 3a.8b)", () => {
 describe("RenderQueue as the library's reserved-photos provider (invariant 24, backlog 4)", () => {
   const root = useTempDir("studio-queue-");
 
-  async function libraryWithPhotos(queueRef: { current: RenderQueue | undefined }) {
+  // The library's setup is many small writes (on Windows each may stall on Defender): its own bound, not the runner's default,
+  // and the folder outlives it (`track`) so a slow setup never finds the folder gone.
+  const SETUP_TIMEOUT_MS = 30_000;
+  const libraryWithPhotos = (queueRef: { current: RenderQueue | undefined }) => root.track(buildLibraryWithPhotos(queueRef));
+
+  async function buildLibraryWithPhotos(queueRef: { current: RenderQueue | undefined }) {
     const { library } = await openLibrary(root(), {
       now: steppingClock(),
       newId: sequentialIds(),
@@ -239,10 +244,8 @@ describe("RenderQueue as the library's reserved-photos provider (invariant 24, b
     const avatar = await library.createAvatar({ ...SAMPLE_AVATAR, name: "Mia" });
     const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
     await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
-    const photos = [];
-    for (const category of ["home", "travel", "fitness", "food"]) {
-      photos.push(await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category } })));
-    }
+    // At once: `addPhoto` takes its id and time before its first await, so the call order stays the order of the photos.
+    const photos = await Promise.all(["home", "travel", "fitness", "food"].map((category) => library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category } }))));
     return { library, avatar, photos };
   }
 
@@ -264,7 +267,7 @@ describe("RenderQueue as the library's reserved-photos provider (invariant 24, b
     expect(queue.submit(spec(3, [p3, p4], avatar.id))).toEqual({ ok: false, code: "PHOTOS_RESERVED", photoIds: [p3] });
     expect(queue.submit(spec(4, [p4], avatar.id))).toEqual({ ok: true });
     expect(freeIds(library, avatar.id)).toEqual([]);
-  });
+  }, SETUP_TIMEOUT_MS);
 
   test("a cancelled job releases its photos: they are offered again", async () => {
     const ref: { current: RenderQueue | undefined } = { current: undefined };
@@ -279,7 +282,7 @@ describe("RenderQueue as the library's reserved-photos provider (invariant 24, b
     queue.cancel("job-00000002");
 
     expect(freeIds(library, avatar.id)).toEqual([ids[1] ?? "", ids[2] ?? "", ids[3] ?? ""]);
-  });
+  }, SETUP_TIMEOUT_MS);
 
   test("a finished job holds its photos until its record is in the index, so they are never neither reserved nor used", async () => {
     const ref: { current: RenderQueue | undefined } = { current: undefined };
@@ -310,7 +313,7 @@ describe("RenderQueue as the library's reserved-photos provider (invariant 24, b
       { reserved: true, used: true, free: false }, // record indexed, still reserved
       { reserved: false, used: true, free: false }, // released: used, never free
     ]);
-  });
+  }, SETUP_TIMEOUT_MS);
 
   test("a failed job releases its photos and they are free again", async () => {
     const ref: { current: RenderQueue | undefined } = { current: undefined };
@@ -326,5 +329,5 @@ describe("RenderQueue as the library's reserved-photos provider (invariant 24, b
     await queue.idle();
 
     expect(freeIds(library, avatar.id)).toContain(id);
-  });
+  }, SETUP_TIMEOUT_MS);
 });

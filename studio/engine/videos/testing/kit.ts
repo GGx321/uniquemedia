@@ -51,7 +51,10 @@ export interface World {
 export function useWorld(): () => World {
   let world: World | undefined;
   let dir = "";
-  beforeEach(async () => {
+  // The setup writes files for a while (on Windows every write may stall on Defender); a test that times out in it must
+  // not have its folder removed under the setup's feet (ENOENT after teardown), so the cleanup waits for it.
+  let setup: Promise<void> = Promise.resolve();
+  const build = async (): Promise<void> => {
     dir = await mkdtemp(join(tmpdir(), "studio-videos-"));
     const libraryRoot = join(dir, "library");
     const exportRoot = join(dir, "export");
@@ -64,8 +67,8 @@ export function useWorld(): () => World {
     const avatar = await library.createAvatar({ ...SAMPLE_AVATAR, name: "Mia" });
     const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta());
     const active = await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
-    const photos: PhotoSidecar[] = [];
-    for (const category of ["home", "travel", "gym"]) photos.push(await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category } })));
+    // At once: `addPhoto` takes its id and time before its first await, so the call order stays the order of the photos.
+    const photos: PhotoSidecar[] = await Promise.all(["home", "travel", "gym"].map((category) => library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category } }))));
     const check = await checkExportRoot({ fs: NODE_EXPORT_ROOT_FS, exportPath: exportRoot, libraryPath: libraryRoot, mayCreate: true, newId: randomUUID, now: () => new Date(), caseInsensitive: false });
     if (!check.ok) throw new Error(`test export root is unusable: ${check.reason}`);
     world = {
@@ -79,10 +82,15 @@ export function useWorld(): () => World {
       rootId: check.rootId,
       reopen: async () => (await openLibrary(libraryRoot, deps())).library,
     };
+  };
+  beforeEach(async () => {
+    setup = build();
+    await setup;
   });
   afterEach(async () => {
     world = undefined;
-    await rm(dir, { recursive: true, force: true });
+    await setup.catch(() => undefined);
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   return () => {
     if (world === undefined) throw new Error("the world exists only inside a test");

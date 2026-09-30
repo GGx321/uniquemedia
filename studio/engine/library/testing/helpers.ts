@@ -1,22 +1,14 @@
 import { afterEach, beforeEach, expect } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readdir } from "node:fs/promises";
+import { tempDirFor, type TempDir } from "../../../testing/tempDir";
 import { LibraryError, type LibraryErrorCode } from "../errors";
 
 export * from "./sampleData";
 
-/** A fresh temp dir per test, removed after it. Returns a getter because the
- *  path only exists once `beforeEach` has run. */
-export function useTempDir(prefix = "studio-lib-"): () => string {
-  let dir = "";
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), prefix));
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-  return () => dir;
+/** A fresh temp dir per test, removed after it (`tempDirFor`, bun:test's hooks). Returns a getter because the
+ *  path only exists once `beforeEach` has run; `.track(work)` makes the cleanup wait for a setup still writing. */
+export function useTempDir(prefix = "studio-lib-"): TempDir {
+  return tempDirFor({ beforeEach, afterEach }, prefix);
 }
 
 export async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
