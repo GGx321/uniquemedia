@@ -508,6 +508,29 @@ describe("«Рендер»", () => {
     expect(made.montageId).toMatch(/^montage-/);
   });
 
+  test("when the draft cannot be read after a render ends, the reason shows with «Проверить ещё раз», not an endless «Рендер…»", async () => {
+    const { client, engine, scheduler } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1, P2, PHOTO_IDS[2] ?? "", PHOTO_IDS[3] ?? "", PHOTO_IDS[4] ?? ""]);
+    await openEditor();
+    fireEvent.click(renderButton());
+    await screen.findByRole("button", { name: /Рендер · \d+\s%|В очереди/ });
+    for (let i = 0; i < 8; i++) engine.failNext("montages.get", { code: "LIBRARY_UNAVAILABLE" });
+
+    runAll(scheduler);
+    await flush();
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    expect(screen.queryByRole("button", { name: "Рендер…" })).toBeNull();
+    expect(screen.getByText("Черновик не удалось проверить после рендера")).toBeDefined();
+    expect(renderButton().hasAttribute("disabled")).toBe(true);
+
+    // The library is back (the refusals queued for this test are used up), and «Проверить ещё раз» reads the draft again.
+    await asAnotherWindow(async () => {
+      for (let i = 0; i < 8; i++) if ((await client.request("montages.get", { montageId: made.montageId })).ok) break;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Проверить ещё раз" }));
+    await screen.findByText("Фото уже в видео из этого черновика — замените их или удалите то видео");
+  });
+
   test("a save made elsewhere while this window heard nothing is picked up when the window comes back", async () => {
     const { client, engine } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1]);

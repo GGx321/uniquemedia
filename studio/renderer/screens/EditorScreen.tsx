@@ -244,6 +244,8 @@ function DraftEditor({
   const [verdict, setVerdict] = useState<EngineVerdict & { after: string }>(() => ({ spec: initial.spec, issues: initialIssues, after: renderKey }));
   const [photos, setPhotos] = useState<readonly PhotoSummary[] | null>(null);
   const [videos, setVideos] = useState<readonly VideoSummary[] | null>(null);
+  /** Why the last re-read of the draft failed (cleared by the next one that answers). */
+  const [verdictError, setVerdictError] = useState<EngineError | null>(null);
   const [focusTick, setFocusTick] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   /** The render this window just queued, until the store knows how it ended: no second submit in between. */
@@ -373,7 +375,9 @@ function DraftEditor({
       if (reply.ok) {
         session.receive({ change: "upserted", montage: reply.result.montage });
         setVerdict({ spec: reply.result.montage.spec, issues: reply.result.issues, after });
+        setVerdictError(null);
       } else if (reply.error.code === "NOT_FOUND") session.receive({ change: "removed", montageId, avatarId });
+      else setVerdictError(reply.error);
     });
     return () => {
       alive = false;
@@ -426,13 +430,15 @@ function DraftEditor({
   // A render of this draft that just ended moved its photos (one photo, one video): until a verdict read after that
   // end answers, the old one cannot be trusted, so «Рендер» stays busy instead of flashing ready.
   const verdictBehind = renderJob !== null && !isActiveJob(renderJob) && verdict.after !== renderKey;
+  // ...unless that read failed: then the button is blocked with the reason, and «Повторить» reads it again.
+  const verdictFailed = verdictBehind && verdictError !== null;
   // The answer may come before the job's first event (only the events and the snapshot promise it): until the store
   // has heard of the submitted job, the button stays busy.
   const submittedUnheard = submittedJob !== null && !view.jobs.some((j) => j.jobId === submittedJob);
   useEffect(() => {
     if (submittedJob !== null && !submittedUnheard) setSubmittedJob(null);
   }, [submittedJob, submittedUnheard]);
-  const busy = submitting || submittedUnheard || verdictBehind
+  const busy = submitting || submittedUnheard || (verdictBehind && !verdictFailed)
     ? { label: "Рендер…" }
     : activeJob === null
       ? null
@@ -465,7 +471,7 @@ function DraftEditor({
         session={session}
         title={{ avatar: avatar?.name ?? null }}
         fresh={created && state.saved.updatedAt === initial.updatedAt && renderJob === null}
-        block={gone ? null : block}
+        block={gone ? null : verdictFailed ? { text: "Черновик не удалось проверить после рендера", settings: false } : block}
         busy={busy}
         leaving={leaving}
         onBack={() => navigate({ name: "photos", avatarId })}
@@ -485,6 +491,18 @@ function DraftEditor({
           >
             {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
           </Notice>
+        </div>
+      )}
+      {verdictFailed && verdictError !== null && (
+        <div className="ed-notices">
+          <ErrorNotice
+            error={verdictError}
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setFocusTick((n) => n + 1)}>
+                Проверить ещё раз
+              </button>
+            }
+          />
         </div>
       )}
       {(gone || state.save.kind === "failed" || renderError !== null) && (
