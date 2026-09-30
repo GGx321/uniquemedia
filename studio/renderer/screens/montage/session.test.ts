@@ -171,6 +171,30 @@ describe("montage.changed", () => {
   });
 });
 
+describe("the engine's clock (3d.2 re-review, HIGH)", () => {
+  test("editing a draft stamped a day ahead of the engine's clock saves once, and the flush every way out waits for answers", async () => {
+    let sends = 0;
+    let clockMs = Date.UTC(2026, 8, 30, 10, 0, 0, 0);
+    const session = new DraftSession({
+      montage: montageOf(version(0), null, "2026-10-01T10:00:00.000Z"),
+      scheduler: new ManualScheduler(),
+      send: async (montageId, content) => {
+        sends += 1;
+        clockMs += 5;
+        return { ok: true, result: { montage: { montageId, name: content.name, spec: content.spec, updatedAt: new Date(clockMs).toISOString() } } };
+      },
+    });
+    session.edit(version(1));
+    let settled = false;
+    void session.flush().then(() => (settled = true));
+    for (let i = 0; i < 20_000 && !settled; i++) await Promise.resolve();
+
+    expect(settled).toBe(true);
+    expect(sends).toBe(1);
+    expect(session.state.save.kind).toBe("saved");
+  });
+});
+
 describe("the state React reads", () => {
   test("the state object changes exactly when something changed, and listeners hear each change", async () => {
     const { scheduler, saves, session } = rig();

@@ -68,6 +68,8 @@ export class DraftAutosave {
   /** The newest content in the window. */
   #latest: DraftContent;
   #inflight: DraftContent | null = null;
+  /** A save from elsewhere noted while this window's save was out (cleared when a save is sent). */
+  #keptDuringFlight: Montage | null = null;
   #error: EngineError | null = null;
   #gone: EngineError | null = null;
   #closed = false;
@@ -178,8 +180,9 @@ export class DraftAutosave {
   adoptRemote(montage: Montage): boolean {
     if (montage.montageId !== this.#montageId || this.#gone !== null || this.#closed) return false;
     if (this.#inflight !== null || this.#dirty()) return false;
-    // A save older than what the engine already answered is stale news, not the draft as it stands.
-    if (montage.updatedAt < this.#acked.updatedAt) return false;
+    // No `updatedAt` comparison here or anywhere in this file: the engine stamps it from a wall clock that can go
+    // back (an NTP step, a library written by a machine with a fast clock). Order comes from the store (events in seq
+    // order) and from the editor dropping a re-read that a newer one overtook.
     this.#acked = montage;
     this.#latest = contentOf(montage);
     this.#error = null;
@@ -188,20 +191,17 @@ export class DraftAutosave {
   }
 
   /**
-   * A save from elsewhere that this window did not adopt (an edit here is unsaved or in flight): it is still what
-   * the engine holds now, so "unsaved" is measured against it. An edit back to the content this window loaded is
-   * then a real change and is sent, and this window's own save follows it and wins.
+   * A save from elsewhere that this window did not adopt (an edit here is unsaved or in flight): it is what the
+   * engine holds now, so "unsaved" is measured against it. An edit back to the content this window loaded is then a
+   * real change and is sent, and this window's own save follows it and wins. Noted while this window's own save is
+   * out, nobody can tell which of the two the engine applied last, so that save goes out ONCE more after its answer.
    */
   noteKept(montage: Montage): void {
     if (montage.montageId !== this.#montageId || this.#gone !== null) return;
-    this.#noteEngine(montage);
+    this.#acked = montage;
+    if (this.#inflight !== null) this.#keptDuringFlight = montage;
     this.#emit();
     if (this.#dirty() && this.#inflight === null && !this.#timerRunning()) this.#arm();
-  }
-
-  /** The engine's newest known state: an answer or event older than the one already known does not replace it. */
-  #noteEngine(montage: Montage): void {
-    if (montage.updatedAt >= this.#acked.updatedAt) this.#acked = montage;
   }
 
   #timerRunning(): boolean {
@@ -249,6 +249,7 @@ export class DraftAutosave {
     this.#inflight = content;
     this.#error = null;
     this.#sent = [...this.#sent, content].slice(-ECHO_MEMORY);
+    this.#keptDuringFlight = null;
     this.#cancelTimers();
     this.#emit();
 
@@ -268,9 +269,13 @@ export class DraftAutosave {
       this.#settle({ ok: false, error: reply.error });
       return;
     }
-    // A save from elsewhere applied after this one (its event came first) stays the engine's state: then this
-    // window's content is unsaved again and goes out once more, so the owner's version still wins.
-    this.#noteEngine(reply.result.montage);
+    // The answer to this window's own save is always taken, whatever its stamp says. Only a save from elsewhere
+    // noted while this one was out can still be the engine's state (it may have been applied after this one): then
+    // this window's content counts as unsaved again and goes out ONE more time, so the owner's version wins.
+    this.#acked = reply.result.montage;
+    const kept = this.#keptDuringFlight;
+    this.#keptDuringFlight = null;
+    if (kept !== null) this.#acked = kept;
     this.#emit();
     if (!this.#dirty()) {
       this.#settle({ ok: true, montage: this.#acked });

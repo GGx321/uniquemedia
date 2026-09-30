@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ManualScheduler } from "../../engine/scheduler";
-import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS, DraftAutosave, type DraftContent } from "./autosave";
+import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS, DraftAutosave, type DraftContent, type SendSave } from "./autosave";
 import { manualSaves, montageOf, settle, version } from "./testkit";
 
 // The editor's autosave (3d.2): serialised in the renderer, one `montages.save` in flight, the latest content wins,
@@ -241,6 +241,64 @@ describe("failures", () => {
     await settle();
     expect(saves.calls).toHaveLength(1);
     expect(autosave.state.kind).toBe("gone");
+  });
+});
+
+describe("the engine's clock is not this window's business (3d.2 re-review, HIGH)", () => {
+  /** A `montages.save` stamped by a wall clock that starts at `startMs` and moves 5 ms per save. */
+  function clockedSaves(startMs: number) {
+    let clockMs = startMs;
+    let sends = 0;
+    const send: SendSave = async (montageId, sent) => {
+      sends += 1;
+      clockMs += 5;
+      return { ok: true, result: { montage: { montageId, name: sent.name, spec: sent.spec, updatedAt: new Date(clockMs).toISOString() } } };
+    };
+    return { send, sends: () => sends };
+  }
+
+  async function settleUpTo(done: () => boolean, rounds: number): Promise<void> {
+    for (let i = 0; i < rounds && !done(); i++) await Promise.resolve();
+  }
+
+  test("an answer stamped before the draft it saves (the clock stepped back 1 s) is taken: one save, and the flush answers", async () => {
+    const clock = clockedSaves(Date.UTC(2026, 8, 30, 9, 59, 59, 0));
+    const autosave = new DraftAutosave({ montage: montageOf(version(0)), scheduler: new ManualScheduler(), send: clock.send });
+    autosave.set(content(1));
+    let flushed: unknown = null;
+    void autosave.flush().then((r) => (flushed = r));
+    await settleUpTo(() => flushed !== null, 2_000);
+
+    expect(clock.sends()).toBe(1);
+    expect(flushed).toMatchObject({ ok: true });
+    expect(autosave.state.kind).toBe("saved");
+  });
+
+  test("a draft stamped a day ahead (saved on a machine whose clock ran ahead) saves once, not forever", async () => {
+    const clock = clockedSaves(Date.UTC(2026, 8, 30, 10, 0, 0, 0));
+    const autosave = new DraftAutosave({ montage: montageOf(version(0), null, "2026-10-01T10:00:00.000Z"), scheduler: new ManualScheduler(), send: clock.send });
+    autosave.set(content(1));
+    let flushed: unknown = null;
+    void autosave.flush().then((r) => (flushed = r));
+    await settleUpTo(() => flushed !== null, 20_000);
+
+    expect(clock.sends()).toBe(1);
+    expect(flushed).toMatchObject({ ok: true });
+  });
+
+  test("a save from elsewhere noted while this window's save is out is re-sent over ONCE, whatever the stamps say", async () => {
+    const { scheduler, saves, autosave } = rig();
+    autosave.set(content(1));
+    scheduler.next();
+    // Stamped EARLIER than this window's answer will be: still, which of the two the engine applied last is unknown.
+    autosave.noteKept(montageOf(version(7), null, "2026-01-01T00:00:00.000Z"));
+    saves.ok();
+    await settle();
+    expect(saves.sent()).toEqual([content(1), content(1)]);
+    saves.ok();
+    await settle();
+    expect(saves.sent()).toHaveLength(2);
+    expect(autosave.state.kind).toBe("saved");
   });
 });
 

@@ -122,6 +122,35 @@ describe("the header", () => {
     expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
   });
 
+  test("a late echo of this window's older version is not taken as a change from elsewhere: no undo steps appear", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    // Another window saves 5 s: taken, one undo step back to 8 s.
+    await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: withFirstClip(made, 5_000), name: null }));
+    await screen.findByText("5.0 с · ≈ 2.2 МБ");
+    const saves = callsOf(engine, "montages.save").length;
+
+    // ⌘Z saves 8 s while events are held: its echo will come late.
+    engine.setDelivery(false);
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    await waitFor(() => expect(callsOf(engine, "montages.save").length).toBe(saves + 1), { timeout: AUTOSAVE_DEBOUNCE_MS * 4 });
+    await waitFor(() => expect(within(header()).getByText(/^черновик · сохранён/)).toBeDefined());
+    engine.setDelivery(true);
+
+    // ⇧⌘Z saves 5 s again; its echo reveals the gap, and the held 8 s echo arrives after it.
+    fireEvent.keyDown(window, { key: "z", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(callsOf(engine, "montages.save").length).toBe(saves + 2), { timeout: AUTOSAVE_DEBOUNCE_MS * 4 });
+    await waitFor(() => expect(callsOf(engine, "engine.events").length).toBeGreaterThan(0));
+    for (let i = 0; i < 4; i++) await flush();
+
+    // The history is this window's own: 8 s → 5 s, one step back and no more.
+    expect(screen.getByText("5.0 с · ≈ 2.2 МБ")).toBeDefined();
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    await screen.findByText("8.0 с · ≈ 3.5 МБ");
+    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
+  });
+
   test("the echo of this window's own save is not an undo step", async () => {
     const { client } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1]);
