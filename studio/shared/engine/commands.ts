@@ -3,7 +3,7 @@ import { AvatarName, AvatarTraits } from "./avatar";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
-import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef } from "./montage";
+import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
@@ -375,6 +375,21 @@ const ENGINE_SPECS = [
   // active, or an own upload (no such store yet); PHOTO_UNAVAILABLE (issue at `["photo"]`) for a scene photo that is not an
   // eligible photo of this avatar.
   defineCommand("montages.focus", z.strictObject({ avatarId: Id, photo: PhotoRef }), z.strictObject({ focus: Focus.nullable() })),
+  // The engine's own picture of one text layer, for the editor's preview: the caption rules, the layout, the fixed template and
+  // the rasteriser (the very ones a render uses), drawn at the 1080 scale. The PNG is written to
+  // `userData/render-tmp/text/<previewId>.png` and served at `studio-media://text/<previewId>`; `width` and `height` are its
+  // pixels, which `textBox` places. `avatarId` is accepted for the contract's sake (K20) and is not read: the caption rules are
+  // technical only. The layer's timing and place are not used. Only the layer's own drawing fields are.
+  //   TEXT_INVALID              the caption breaks a caption rule: `captionIssue` says which. The text has to change.
+  //   RENDER_FAILED             the rasteriser timed out (`detail` says to shrink the caption or change the style: it is never
+  //                             retried by the engine), or resvg, the template or the text worker failed.
+  //   TEXT_PREVIEW_SUPERSEDED   this preview was still waiting its turn when a newer one of the same layer arrived, and was dropped.
+  //                             A preview already being drawn is never cancelled.
+  defineCommand(
+    "montages.textPreview",
+    z.strictObject({ avatarId: Id, layer: TextLayer }),
+    z.strictObject({ previewId: Id, width: z.number().int().positive(), height: z.number().int().positive() }),
+  ),
   // engine
   defineCommand("engine.snapshot", Empty, Snapshot),
   defineCommand("engine.events", z.strictObject({ afterSeq: Count, bootId: Id }), EventsSince),

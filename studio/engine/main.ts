@@ -22,7 +22,7 @@ import { TEXT_ASSET_DIRS } from "./text/assetLayout";
 import { loadTextRasteriser } from "./text/load";
 import { RASTER_WASM } from "./text/rasterTypes";
 import { createTextWorkerSpawner } from "./text/worker/spawn";
-import { TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textGate";
+import { createTextGate, TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textGate";
 
 const parentPort = process.parentPort;
 if (!parentPort) throw new Error("the studio engine must run as an Electron utilityProcess");
@@ -191,14 +191,21 @@ parentPort.once("message", (event) => {
     // 3b.2: the text worker loads alongside the face gate, so it adds nothing to the start-up time, and the start
     // waits for it at most TEXT_LOAD_START_WAIT_MS (never on the critical path if it hangs). It logs its own ready
     // line (with the self-test fingerprint the packaged smoke checks) or its own error and never throws. The gate it
-    // returns lives on after a failed load, so a later call retries; 3b.4b hands it to the Engine, and nothing calls
-    // it before then.
-    const textLoad = loadTextRasteriser({
+    // returns lives on after a failed load, so a later call retries.
+    // 3b.4b: the gate is created HERE, synchronously, and handed to the Engine (which owns it from then on) and to the
+    // loader, so the Engine has its gate even when the start did not wait for the load. What the Engine reads of the
+    // load is its CURRENT outcome, not what the start-up wait happened to see.
+    const textGate = createTextGate({
       spawnWorker: createTextWorkerSpawner(TEXT_WORKER_URL, { wasmPath: TEXT_WASM_PATH, fontDir: TEXT_FONT_DIR }),
-      gateOptions: { idleRecycleMs: TEXT_WORKER_IDLE_RECYCLE_MS },
+      idleRecycleMs: TEXT_WORKER_IDLE_RECYCLE_MS,
+    });
+    let textLoadError: string | undefined;
+    const textLoad = loadTextRasteriser({ gate: textGate }).then((outcome) => {
+      textLoadError = "error" in outcome ? outcome.error : undefined;
+      return outcome;
     });
     const loaded = await loadFaceGate();
-    const text = await withinStartWait(textLoad, TEXT_LOAD_START_WAIT_MS);
+    await withinStartWait(textLoad, TEXT_LOAD_START_WAIT_MS);
     const qaGates = productionGateOrder({ pdq: pdqGate, face: "error" in loaded ? null : createFaceQaGate({ faceGate: loaded.faceGate }), age: ageGate });
 
     const ready = Engine.start(init.data, {
@@ -212,7 +219,7 @@ parentPort.once("message", (event) => {
       qaGates,
       // The same worker gate serves the render's focus points (`videos.render`, S8); without it every photo takes the stand-in point.
       ...("error" in loaded ? { faceGateLoadError: loaded.error } : { faceGate: loaded.faceGate }),
-      ...(text !== null && "error" in text ? { textLoadError: text.error } : {}),
+      text: { gate: textGate, loadError: () => textLoadError },
     });
 
     // A failed start ends the process, so main restarts it and tells the windows.

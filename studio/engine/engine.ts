@@ -97,9 +97,16 @@ import { MontageService, type MontageServiceDeps } from "./montages/service";
 import { DraftStore, type DraftStoreDeps } from "./montages/store";
 import { FLASHAPI_BASE, type FlashapiFetch } from "./music/client";
 import { MusicService, type MusicListSink } from "./music/service";
+import { createTextPreviewService, TEXT_PREVIEW_DIR, type PreviewGate, type TextPreviewService } from "./text/preview";
+import { RasterError } from "./text/rasterTypes";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
+
+/** What an engine without a text runtime draws text through: a refusal, so `montages.textPreview` says so instead of pretending. */
+const NO_TEXT_GATE: PreviewGate = {
+  caption: () => Promise.reject(new RasterError("WORKER_FAILED", "no text worker is wired into this engine")),
+};
 
 /** `detail` travels as T0 `SafeText`, which allows at most 500 chars. */
 const MAX_DETAIL = 500;
@@ -188,11 +195,14 @@ export interface EngineDeps {
    */
   faceGateLoadError?: string;
   /**
-   * 3b.2: why the text worker could not be loaded, when `main.ts` said so within its start-up wait, for the text
-   * commands of 3b.4b to put into their `RENDER_FAILED` detail as `faceGateLoadError` does for the face gate.
-   * Nothing reads it yet.
+   * The text worker's gate (3b.2), owned by the engine from 3b.4b: `montages.textPreview` draws through it. The gate is
+   * created synchronously by `engine/main.ts` and is live before its worker has loaded (it spawns one on the first call, and
+   * after a failed load the next call retries), so it is handed over even when the start-up did not wait for the load.
+   * `loadError` reads the CURRENT reason the worker could not load, if it could not, for the `RENDER_FAILED` detail as
+   * `faceGateLoadError` does for the face gate; it is read when a command fails, never at start.
+   * Absent (a test, a build without the text runtime): every text command answers `RENDER_FAILED`.
    */
-  textLoadError?: string;
+  text?: { gate: PreviewGate; loadError?: () => string | undefined };
   /**
    * The face worker's gate as the focus resolver uses it (`videos.render` fills every missing focus point, S8). Absent
    * or null: every cell takes the stand-in point, and the render goes on (a focus never blocks a render).
@@ -549,6 +559,7 @@ export class Engine {
   readonly #drafts: DraftStore;
   /** The draft commands: `montages.create`, `get`, `list`, `save`, `delete` and `focus`. */
   readonly #montages: MontageService;
+  readonly #textPreview: TextPreviewService;
   /** The video commands, the queue's events as `job.*` and `video.changed`, recovery and the stop (3a.8b.2). */
   readonly #videos: VideoService;
   /** The renders' commits in flight: shared by every render's `execute` and by recovery, so recovery never touches a live commit. */
@@ -616,6 +627,13 @@ export class Engine {
       ...(deps.videos?.renderOverrides === undefined ? {} : { renderOverrides: deps.videos.renderOverrides }),
       ...(deps.videos?.recover === undefined ? {} : { recover: deps.videos.recover }),
       ...(deps.videos?.staleRetryDelaysMs === undefined ? {} : { staleRetryDelaysMs: deps.videos.staleRetryDelaysMs }),
+    });
+    this.#textPreview = createTextPreviewService({
+      gate: deps.text?.gate ?? NO_TEXT_GATE,
+      dir: () => (init.renderTmpDir === undefined ? null : join(init.renderTmpDir, TEXT_PREVIEW_DIR)),
+      newId: deps.newId,
+      log: (line) => console.warn(`studio engine: ${line}`),
+      ...(deps.text?.loadError === undefined ? {} : { loadError: deps.text.loadError }),
     });
     this.#montages = new MontageService({
       store: this.#drafts,
@@ -1247,6 +1265,8 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.delete(command.payload.montageId) };
       case "montages.focus":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.focus(command.payload) };
+      case "montages.textPreview":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#textPreview.preview(command.payload.layer) };
       case "music.status":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#music.status() };
       case "music.refresh": {

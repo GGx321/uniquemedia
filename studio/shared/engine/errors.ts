@@ -66,6 +66,9 @@ import { Count, SafeText } from "./primitives";
  * - TEXT_INVALID: a caption breaks the caption rules (3b.3), so nothing is drawn: `captionIssue` says which rule, the
  *   first that fails in `CAPTION_ISSUES` order. Never retried; the text has to change. A rasteriser timeout is
  *   RENDER_FAILED, not this.
+ * - TEXT_PREVIEW_SUPERSEDED: a `montages.textPreview` that was still waiting its turn was dropped because a newer preview of the
+ *   same layer arrived. Nothing was drawn and nothing is wrong; the window already asked for the newer one and ignores this.
+ *   A preview that is already being drawn is never cancelled: it is answered.
  * - LIBRARY_TOO_NEW: a video record was written by a newer Studio. What follows is per record and per avatar:
  *   `videos.render` refuses for an avatar that has such a record (its usage cannot be trusted), `videos.delete` refuses
  *   that record, and `videos.list` leaves it out. The owner updates the app.
@@ -117,6 +120,7 @@ export const ERROR_CODES = [
   "RENDER_QUEUE_FULL",
   "LIBRARY_TOO_NEW",
   "TEXT_INVALID",
+  "TEXT_PREVIEW_SUPERSEDED",
   "MUSIC_KEY_MISSING",
   "MUSIC_KEY_REJECTED",
   "MUSIC_QUOTA_EXHAUSTED",

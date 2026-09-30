@@ -40,6 +40,7 @@ const EXPECTED_CODES = [
   "RENDER_QUEUE_FULL",
   "LIBRARY_TOO_NEW",
   "TEXT_INVALID",
+  "TEXT_PREVIEW_SUPERSEDED",
   "MUSIC_KEY_MISSING",
   "MUSIC_KEY_REJECTED",
   "MUSIC_QUOTA_EXHAUSTED",
@@ -50,7 +51,7 @@ const EXPECTED_CODES = [
 const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE", "TEXT_INVALID"];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of forty codes", () => {
+  test("is exactly the closed set of forty-one codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });

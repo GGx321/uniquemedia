@@ -37,8 +37,13 @@ export interface TextTimings {
 export type TextRuntimeLoad = { gate: TextGate; fingerprint: string; timings: TextTimings } | { gate: TextGate; error: string };
 
 export interface TextRuntimeConfig {
-  /** Starts one worker thread; the engine entry supplies the real one (worker/spawn.ts). */
-  spawnWorker: () => Worker;
+  /**
+   * The gate to load through, when the caller made it (the engine entry does, synchronously, so the Engine holds its gate
+   * even while the load is still running). Without one the loader builds its own from `spawnWorker` and `gateOptions`.
+   */
+  gate?: TextGate;
+  /** Starts one worker thread; the engine entry supplies the real one (worker/spawn.ts). Required unless `gate` is given. */
+  spawnWorker?: () => Worker;
   gateOptions?: Omit<TextGateOptions, "spawnWorker">;
   /** Bounds the whole load, self-test included. Default 10 s: it takes well under a second. */
   timeoutMs?: number;
@@ -84,7 +89,8 @@ export async function loadTextRasteriser(config: TextRuntimeConfig): Promise<Tex
   const log = config.log ?? consoleLog;
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const selfTest = config.selfTest ?? assertTextSelfTest;
-  const gate = createTextGate({ ...config.gateOptions, spawnWorker: config.spawnWorker });
+  const gate = config.gate ?? (config.spawnWorker === undefined ? undefined : createTextGate({ ...config.gateOptions, spawnWorker: config.spawnWorker }));
+  if (gate === undefined) throw new TypeError("loadTextRasteriser needs a gate or a spawnWorker");
   const timeout = timeoutSignal(timeoutMs);
   try {
     const started = performance.now();

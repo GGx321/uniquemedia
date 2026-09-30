@@ -14,6 +14,7 @@ import { hasErrorCode } from "../library/durableFs";
 import type { PhotoSource } from "../render";
 import type { RenderQueue, RenderQueueEvent } from "../renderQueue/queue";
 import { sweepRenderTmp } from "../renderQueue/sweep";
+import { TEXT_PREVIEW_DIR } from "../text/preview";
 import type { DraftStore } from "../montages/store";
 import type { CommitFs } from "./commitFs";
 import { deleteVideo, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
@@ -699,7 +700,8 @@ export class VideoService {
   async #sweepRenderTmp(): Promise<void> {
     const dir = this.#deps.renderTmpDir;
     if (dir === undefined) return;
-    const swept = await sweepRenderTmp(dir, { keep: (name) => this.#deps.tracker.hasJob(name) });
+    // The text folder belongs to the text previews (they clear it themselves), so a preview written just after start is never swept.
+    const swept = await sweepRenderTmp(dir, { keep: (name) => name === TEXT_PREVIEW_DIR || this.#deps.tracker.hasJob(name) });
     for (const { code } of swept.skipped) this.#deps.log(`a leftover in render-tmp could not be removed (${code}); the next start tries again`);
   }
 

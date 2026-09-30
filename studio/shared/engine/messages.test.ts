@@ -328,6 +328,13 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     payload: { avatarId: "avatar-0001", photo: { source: "scene", photoId: "photo-0002" } },
     result: { focus: { x: 0.5, y: 0.31 } },
   },
+  "montages.textPreview": {
+    payload: {
+      avatarId: "avatar-0001",
+      layer: { kind: "text", layerId: "layer-00000001", startMs: 0, endMs: 3000, value: "sunday reset", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.195, scale: 1 },
+    },
+    result: { previewId: "preview-00000001", width: 640, height: 130 },
+  },
   "engine.snapshot": {
     payload: {},
     result: {
@@ -456,6 +463,7 @@ describe("contract surface", () => {
         "montages.save",
         "montages.delete",
         "montages.focus",
+        "montages.textPreview",
         "engine.snapshot",
         "engine.events",
       ].sort(),
@@ -1375,6 +1383,32 @@ describe("montages.get, list, save, delete, focus", () => {
   test("focus refuses a bare photo id: the source says which store it is from", () => {
     expect(send("montages.focus", { avatarId: "avatar-0001", photo: "photo-0002" })).toBe(false);
     expect(send("montages.focus", { photo: { source: "scene", photoId: "photo-0002" } })).toBe(false);
+  });
+
+  const textLayer = { kind: "text", layerId: "layer-00000001", startMs: 0, endMs: 3000, value: "sunday reset", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.195, scale: 1 };
+
+  test("textPreview takes an avatar and a whole text layer, and answers an id and the raster size", () => {
+    expect(send("montages.textPreview", { avatarId: "avatar-0001", layer: textLayer })).toBe(true);
+    expect(answer("montages.textPreview", { previewId: "preview-00000001", width: 640, height: 130 })).toBe(true);
+  });
+
+  test("textPreview refuses a sticker layer, a caption over the contract's limits and a colour that is not lowercase #rrggbb", () => {
+    expect(send("montages.textPreview", { avatarId: "avatar-0001", layer: { ...textLayer, kind: "sticker" } })).toBe(false);
+    expect(send("montages.textPreview", { avatarId: "avatar-0001", layer: { ...textLayer, value: "x".repeat(61) } })).toBe(false);
+    expect(send("montages.textPreview", { avatarId: "avatar-0001", layer: { ...textLayer, color: "#FFFFFF" } })).toBe(false);
+    expect(send("montages.textPreview", { avatarId: "avatar-0001", layer: { ...textLayer, scale: 2.5 } })).toBe(false);
+  });
+
+  test("textPreview needs the avatar and the layer", () => {
+    expect(send("montages.textPreview", { layer: textLayer })).toBe(false);
+    expect(send("montages.textPreview", { avatarId: "avatar-0001" })).toBe(false);
+  });
+
+  test("textPreview answers a whole positive raster size and an id, nothing else", () => {
+    expect(answer("montages.textPreview", { previewId: "preview-00000001", width: 0, height: 130 })).toBe(false);
+    expect(answer("montages.textPreview", { previewId: "preview-00000001", width: 640.5, height: 130 })).toBe(false);
+    expect(answer("montages.textPreview", { previewId: "../etc", width: 640, height: 130 })).toBe(false);
+    expect(answer("montages.textPreview", { previewId: "preview-00000001", width: 640, height: 130, path: "/tmp/x.png" })).toBe(false);
   });
 
   test("create answers a draft with no name", () => {
