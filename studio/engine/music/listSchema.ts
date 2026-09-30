@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Id } from "../../shared/engine";
+import { Id, MAX_LISTED_TRACKS } from "../../shared/engine";
 
 // SP5's lenient reading of the flashapi trending list. The API is a third party's and changes without notice, so:
 // - only `track.id` is required, as a string or a number, normalised to a string that fits `Id`;
@@ -12,7 +12,7 @@ import { Id } from "../../shared/engine";
 // the manifest is never stored, and `is_trending_in_clips` is false everywhere and never a filter.
 
 /** A montage names one track; the list keeps at most this many (`music.list` is bounded the same way, K23). */
-export const MAX_LISTED_TRACKS = 100;
+export { MAX_LISTED_TRACKS };
 const MAX_HIGHLIGHTS = 64;
 const MAX_TITLE_CHARS = 120;
 /** `song_monetization_info` and `licensed_music_subtype` are short labels (`REVSHARE`); a long one is not one. */

@@ -1320,8 +1320,10 @@ export class MockEngine implements EngineBridge {
       case "music.status":
       case "music.refresh":
       case "montages.textPreview":
+      case "music.list":
+      case "music.peaks":
         // Text preview parity comes with the window's text tab (3d.5): the mock refuses it as the engine does for a command it lacks.
-        // Music parity comes with its engine (3c.4); the mock, like main and the engine for `videos.reveal`, has no handler yet.
+        // Music parity comes with its engine (3c.4, mock parity 3d.1b); the mock, like main and the engine for `videos.reveal`, has no handler yet.
         // Main handles `videos.reveal` itself (it opens the OS file manager); no engine does.
         return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
       case "montages.create":

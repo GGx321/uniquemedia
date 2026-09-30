@@ -16,7 +16,11 @@ import {
   ImageAgeCheck,
   JobState,
   MoneyStatus,
+  MAX_PEAK_BARS,
+  MIN_PEAK_BARS,
   MusicKeyStatus,
+  MusicListResult,
+  MusicPeaksResult,
   MusicStatus,
   NetworkConcurrency,
   PhotoSummary,
@@ -58,6 +62,21 @@ export type ExportPathPicked = z.infer<typeof ExportPathPicked>;
 export const DisplayPath = z.string().min(1).max(4096);
 
 const Empty = z.strictObject({});
+
+/** A window of a track is at most a day: far past any track, and it bounds the work a request can ask for. */
+const MAX_PEAK_WINDOW_MS = 24 * 3600 * 1000;
+
+/** `music.peaks`' request (K26): a trending track by id, or (from 3f) an own one by media id. */
+export const MusicPeaksRequest = z.strictObject({
+  track: z.discriminatedUnion("source", [
+    z.strictObject({ source: z.literal("trending"), trackId: Id }),
+    z.strictObject({ source: z.literal("own"), mediaId: Id }),
+  ]),
+  startMs: Count.max(MAX_PEAK_WINDOW_MS),
+  durationMs: Count.min(1).max(MAX_PEAK_WINDOW_MS),
+  bars: z.number().int().min(MIN_PEAK_BARS).max(MAX_PEAK_BARS),
+});
+export type MusicPeaksRequest = z.infer<typeof MusicPeaksRequest>;
 
 /** runs.list answers at most this many runs, newest first. */
 export const MAX_LISTED_RUNS = 100;
@@ -362,6 +381,13 @@ const ENGINE_SPECS = [
   // shows as `refresh: failed` with the error instead, and stays counted.
   defineCommand("music.status", Empty, MusicStatus),
   defineCommand("music.refresh", z.strictObject({ confirm: z.literal(true) }), z.strictObject({ status: MusicStatus })),
+  // Stage 3 track store (3c.4, K23, K26). `music.list` is free and reads what is on disk: the tracks of the current list
+  // whose audio is stored, at most 100, each with its highlights ascending (the likely default last). `music.peaks` is
+  // the waveform of a window of one track: `bars` integers from 0 to 1000, read from the envelope kept at download time
+  // (no decode, no network). Both refuse nothing that costs: NOT_FOUND for a track that is not stored (and, until 3f, for
+  // an own track), VALIDATION for a payload that breaks the contract.
+  defineCommand("music.list", Empty, MusicListResult),
+  defineCommand("music.peaks", MusicPeaksRequest, MusicPeaksResult),
   // A new draft for an avatar from 0 to 20 of its scene photos (0: an empty draft, «Новый монтаж»), with the focus of
   // every placed photo resolved and no name (`name: null`, the window says «без названия»). Refused, and nothing is stored, with
   //   PHOTO_UNAVAILABLE (issues `photo-unavailable` at `["photoIds", i]`) a photo that is not eligible, or is already in a video,

@@ -707,6 +707,50 @@ export const MusicStatus = z.strictObject({
   refresh: MusicRefreshState,
 });
 
+/** `music.list` answers at most this many tracks (K23); the list schema and the store keep the same bound. */
+export const MAX_LISTED_TRACKS = 100;
+/** A track offers at most this many highlights as quick picks (K23). */
+export const MAX_TRACK_HIGHLIGHTS = 8;
+/** The waveform's bars: one command serves the timeline block (72) and the highlight picker (68), K26. */
+export const MIN_PEAK_BARS = 16;
+export const MAX_PEAK_BARS = 256;
+
+/** A quick pick for the start of a track; `likelyDefault` marks the `1500` that is probably a "start of the track" default, shown last (K23). */
+export const TrackHighlight = z.strictObject({ ms: Count, likelyDefault: z.boolean() });
+
+/**
+ * One trending track as the editor lists it (K23). Never a URL, a path or a hash: the audio and the cover are asked for
+ * by id through `studio-media://track/<trackId>` and `studio-media://cover/<trackId>`. `highlights` are ascending, with
+ * the likely default (at most one) last, because they arrive unsorted from the API and "first" must not mean "earliest".
+ */
+export const TrackSummary = z
+  .strictObject({
+    trackId: Id,
+    title: z.string().min(1).max(120),
+    artist: z.string().min(1).max(120).nullable(),
+    durationMs: Count,
+    explicit: z.boolean(),
+    highlights: z.array(TrackHighlight).max(MAX_TRACK_HIGHLIGHTS),
+    hasCover: z.boolean(),
+  })
+  .superRefine((track, ctx) => {
+    const fail = (message: string): void => ctx.addIssue({ code: "custom", message, path: ["highlights"] });
+    const defaults = track.highlights.filter((highlight) => highlight.likelyDefault);
+    if (defaults.length > 1) return fail("at most one highlight is the likely default");
+    const rest = track.highlights.filter((highlight) => !highlight.likelyDefault);
+    if (defaults.length === 1 && track.highlights.at(-1)?.likelyDefault !== true) fail("the likely default comes last");
+    for (let i = 1; i < rest.length; i++) if ((rest[i]?.ms ?? 0) <= (rest[i - 1]?.ms ?? 0)) return fail("highlights are ascending");
+  });
+
+export const MusicListResult = z.strictObject({ tracks: z.array(TrackSummary).max(MAX_LISTED_TRACKS) });
+
+/** `music.peaks`' answer: one integer from 0 to 1000 per requested bar (K26). */
+export const MusicPeaksResult = z.strictObject({ peaks: z.array(z.number().int().min(0).max(1000)).min(MIN_PEAK_BARS).max(MAX_PEAK_BARS) });
+
+export type TrackSummary = z.infer<typeof TrackSummary>;
+export type MusicListResult = z.infer<typeof MusicListResult>;
+export type MusicPeaksResult = z.infer<typeof MusicPeaksResult>;
+
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
 export type MusicKeyStatus = z.infer<typeof MusicKeyStatus>;
 export type MusicStatus = z.infer<typeof MusicStatus>;

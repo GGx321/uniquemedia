@@ -306,6 +306,16 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "export.check": { payload: {}, result: { exportStatus: { status: "unavailable", reason: "missing" } } },
   "music.status": { payload: {}, result: musicStatus },
   "music.refresh": { payload: { confirm: true }, result: { status: { ...musicStatus, refresh: { state: "running", done: 0, total: 1 } } } },
+  "music.list": {
+    payload: {},
+    result: {
+      tracks: [{ trackId: "4199287736976977", title: "Espresso", artist: "Sabrina Carpenter", durationMs: 175_000, explicit: false, highlights: [{ ms: 42_000, likelyDefault: false }, { ms: 1_500, likelyDefault: true }], hasCover: true }],
+    },
+  },
+  "music.peaks": {
+    payload: { track: { source: "trending", trackId: "4199287736976977" }, startMs: 0, durationMs: 15_000, bars: 16 },
+    result: { peaks: Array.from({ length: 16 }, (_, i) => i * 60) },
+  },
   "montages.create": {
     payload: { avatarId: "avatar-0001", photoIds: ["photo-0002"] },
     result: { montage: { montageId: "montage-00000001", name: null, spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
@@ -462,6 +472,8 @@ describe("contract surface", () => {
         "videos.reveal",
         "music.status",
         "music.refresh",
+        "music.list",
+        "music.peaks",
         "montages.create",
         "montages.get",
         "montages.list",
