@@ -12,7 +12,7 @@ import { Icon, PlayIcon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { MediaPanel, PreviewSlot, PropertiesSlot, TimelineSlot } from "./montage/EditorSlots";
-import { draftTitle, outputLabel, saveLabel } from "./montage/labels";
+import { draftTitle, outputLabel, outputParts, saveLabel } from "./montage/labels";
 import { photoProblems, renderBlock, type EngineVerdict, type RenderBlock, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
 import { DraftSession } from "./montage/session";
@@ -138,7 +138,10 @@ function EditorHeader({
         </button>
       </div>
       <div className="ed-head-end">
-        <span className="mono muted ed-output">{outputLabel(state.spec)}</span>
+        <span className="mono muted ed-output" title={outputLabel(state.spec)}>
+          <span className="ed-output-format">{outputParts(state.spec).format} · </span>
+          <span className="ed-output-length">{outputParts(state.spec).length}</span>
+        </span>
         <button type="button" className="btn" aria-busy={leaving} disabled={leaving} onClick={onDrafts}>
           {leaving ? <Spin /> : <Icon name="list" size={15} />}
           Черновики

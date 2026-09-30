@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Montage } from "../../../shared/engine";
 import { NBSP } from "../../lib/format";
-import { clockLabel, draftMeta, draftName, draftTitle, outputLabel, saveLabel, whenLabel } from "./labels";
+import { clockLabel, draftMeta, draftName, draftTitle, outputLabel, outputParts, saveLabel, whenLabel } from "./labels";
 import { draftSpec, montageOf, photoClip } from "./testkit";
 
 // The words the drafts screen and the editor header show (EditorEmpty, Editor, EditorNew artboards).
@@ -48,6 +48,12 @@ describe("the output line of the editor header", () => {
 
   test("an empty draft has no size, only its zero length", () => {
     expect(outputLabel(draftSpec(0))).toBe(nb("1080×1920 · 30 fps · 0 с"));
+  });
+
+  test("its two parts: the format, the same for every draft (the first to go in a narrow window), and the draft's own length and size", () => {
+    const spec = draftSpec([photoClip(0, "photo-mia-0001", 4_800), photoClip(1, "photo-mia-0002", 4_800)]);
+    expect(outputParts(spec)).toEqual({ format: nb("1080×1920 · 30 fps"), length: nb("9.6 с · ≈ 4.2 МБ") });
+    expect(outputParts(draftSpec(0))).toEqual({ format: nb("1080×1920 · 30 fps"), length: nb("0 с") });
   });
 });
 

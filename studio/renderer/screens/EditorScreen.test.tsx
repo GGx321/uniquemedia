@@ -23,6 +23,8 @@ async function openEditor(): Promise<void> {
 }
 
 const renderButton = (): HTMLElement => screen.getByRole("button", { name: "Рендер" });
+/** The header's output line as read, both of its parts. */
+const outputText = (): string | undefined => document.querySelector(".ed-output")?.textContent?.replace(/\s/g, " ");
 const header = (): HTMLElement => {
   const found = document.querySelector<HTMLElement>(".ed-head");
   if (found === null) throw new Error("no editor header");
@@ -44,7 +46,7 @@ describe("the empty draft (EditorNew)", () => {
 
     expect(renderButton().hasAttribute("disabled")).toBe(true);
     expect(screen.getByText("Добавьте хотя бы один кадр").id).toBe(renderButton().getAttribute("aria-describedby") ?? "");
-    expect(within(header()).getByText("1080×1920 · 30 fps · 0 с")).toBeDefined();
+    expect(outputText()).toBe("1080×1920 · 30 fps · 0 с");
     expect(screen.getByText("Ролик пока пуст")).toBeDefined();
     expect(screen.getByRole("button", { name: /Перетащите фото или видео сюда/ })).toBeDefined();
     expect(screen.getByRole("button", { name: /Добавить музыку/ }).hasAttribute("disabled")).toBe(true);
@@ -297,17 +299,17 @@ describe("undo, redo and the saves of another window", () => {
     expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
 
     await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: withFirstClip(made, 5_000), name: null }));
-    await screen.findByText("1080×1920 · 30 fps · 5.0 с · ≈ 2.2 МБ");
+    await screen.findByText("5.0 с · ≈ 2.2 МБ");
     expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(false);
     const before = callsOf(engine, "montages.save").length;
 
     fireEvent.keyDown(window, { key: "z", metaKey: true });
-    await screen.findByText("1080×1920 · 30 fps · 8.0 с · ≈ 3.5 МБ");
+    await screen.findByText("8.0 с · ≈ 3.5 МБ");
     await waitFor(() => expect(callsOf(engine, "montages.save").length).toBe(before + 1), { timeout: AUTOSAVE_DEBOUNCE_MS * 4 });
     expect(callsOf(engine, "montages.save").at(-1)?.payload.spec.clips[0]?.durationMs).toBe(8_000);
 
     fireEvent.keyDown(window, { key: "z", metaKey: true, shiftKey: true });
-    await screen.findByText("1080×1920 · 30 fps · 5.0 с · ≈ 2.2 МБ");
+    await screen.findByText("5.0 с · ≈ 2.2 МБ");
   });
 
   test("⌘Z in the name field is the field's own undo, not the draft's", async () => {
@@ -315,11 +317,11 @@ describe("undo, redo and the saves of another window", () => {
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
     await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: withFirstClip(made, 5_000), name: null }));
-    await screen.findByText("1080×1920 · 30 fps · 5.0 с · ≈ 2.2 МБ");
+    await screen.findByText("5.0 с · ≈ 2.2 МБ");
     fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "z", metaKey: true });
     await flush();
-    expect(screen.getByText("1080×1920 · 30 fps · 5.0 с · ≈ 2.2 МБ")).toBeDefined();
+    expect(screen.getByText("5.0 с · ≈ 2.2 МБ")).toBeDefined();
   });
 
   test("a draft deleted elsewhere: the editor says so and saves nothing more", async () => {
@@ -340,7 +342,7 @@ describe("«Рендер»", () => {
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
     await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: withFirstClip(made, 5_000), name: null }));
-    await screen.findByText("1080×1920 · 30 fps · 5.0 с · ≈ 2.2 МБ");
+    await screen.findByText("5.0 с · ≈ 2.2 МБ");
     fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
 
     // Within the quiet spell: nothing is saved yet.

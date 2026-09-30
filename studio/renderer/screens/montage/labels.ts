@@ -39,11 +39,20 @@ export function sizeLabel(bytes: number): string {
   return `≈${NBSP}${(bytes / 1_000_000).toFixed(1)}${NBSP}МБ`;
 }
 
+/**
+ * The output line in two parts: the format, the same for every draft (a narrow window hides it first), and the
+ * draft's own length and expected size (never hidden).
+ */
+export function outputParts(spec: MontageDraft): { format: string; length: string } {
+  const format = `${FRAME_W}×${FRAME_H} · ${FPS}${NBSP}fps`;
+  if (spec.clips.length === 0) return { format, length: `0${NBSP}с` };
+  return { format, length: `${secondsLabel(totalMs(spec))} · ${sizeLabel(estimateBytes(spec.clips))}` };
+}
+
 /** The editor header's output line: «1080×1920 · 30 fps · 9.6 с · ≈ 4.2 МБ», or «… · 0 с» for an empty draft. */
 export function outputLabel(spec: MontageDraft): string {
-  const head = `${FRAME_W}×${FRAME_H} · ${FPS}${NBSP}fps`;
-  if (spec.clips.length === 0) return `${head} · 0${NBSP}с`;
-  return `${head} · ${secondsLabel(totalMs(spec))} · ${sizeLabel(estimateBytes(spec.clips))}`;
+  const { format, length } = outputParts(spec);
+  return `${format} · ${length}`;
 }
 
 /** The timeline's clock: «00:04.1». */
