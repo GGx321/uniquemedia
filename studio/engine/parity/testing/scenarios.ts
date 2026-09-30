@@ -1,4 +1,5 @@
-import type { Control, World } from "./rigs";
+import { estimateBytesUpper } from "../../../shared/montage";
+import type { Control, RigOptions, World } from "./rigs";
 import type { Answer, Transcript } from "./transcript";
 
 // The scenarios of the parity suite (Stage 3, 3d.1b). Each is one story told through the engine's own commands; the suite
@@ -7,6 +8,8 @@ import type { Answer, Transcript } from "./transcript";
 
 export interface Scenario {
   readonly name: string;
+  /** What the rig is started with, when the scenario needs more than the default. */
+  readonly rig?: RigOptions;
   run(t: Transcript, world: World, control: Control): Promise<void>;
 }
 
@@ -363,4 +366,144 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.call("montages.focus", { avatarId: w.avatarId, photo: scene(photo(w, 1)) });
     },
   },
+  {
+    name: "engine.snapshot: what a window resyncs from, while queued, saving, done, cancelled and failed",
+    async run(t, w, control) {
+      const snapshot = () => t.call("engine.snapshot", {});
+      const [a, b, c, d, e, f] = [await draft(t, w, [photo(w, 1), photo(w, 2)]), await draft(t, w, [photo(w, 3), photo(w, 4)]), await draft(t, w, [photo(w, 5), photo(w, 6)]), await draft(t, w, [photo(w, 7), photo(w, 8)]), await draft(t, w, [photo(w, 9), photo(w, 10)]), await draft(t, w, [photo(w, 11), photo(w, 12)])];
+      t.note("one running, one queued");
+      await t.call("videos.render", { montageId: a });
+      await t.call("videos.render", { montageId: b });
+      await snapshot();
+      t.note("the first is saving");
+      await t.advance("saving");
+      await snapshot();
+      t.note("both done");
+      await t.settle();
+      await snapshot();
+      t.note("one cancelled while queued, one while running");
+      const running = renderedOf(await t.call("videos.render", { montageId: c }));
+      const queued = renderedOf(await t.call("videos.render", { montageId: d }));
+      await t.call("videos.cancel", { jobId: queued.jobId });
+      await t.call("videos.cancel", { jobId: running.jobId });
+      await t.settle();
+      await snapshot();
+      t.note("one failed");
+      control.failNextRender();
+      await t.call("videos.render", { montageId: e });
+      await t.advance("progress");
+      await t.settle();
+      await snapshot();
+      t.note("a draft deleted during its render: the job keeps the draft it came from, the video keeps none");
+      await t.call("videos.render", { montageId: f });
+      await t.call("montages.delete", { montageId: f });
+      await t.settle();
+      await snapshot();
+      await t.call("videos.list", { avatarId: w.avatarId });
+      t.note("the folder is away: the next check moves the status");
+      await control.exportFolder("away");
+      await snapshot();
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await snapshot();
+    },
+  },
+  {
+    name: "engine.snapshot: the latest 50 finished renders are kept, the running one too",
+    async run(t, w) {
+      const [first, second] = [await draft(t, w, [photo(w, 1)]), await draft(t, w, [photo(w, 2)])];
+      await t.call("videos.render", { montageId: first });
+      await t.quiet(async () => {
+        for (let n = 0; n < 55; n++) {
+          const queued = renderedOf(await t.call("videos.render", { montageId: second }));
+          await t.call("videos.cancel", { jobId: queued.jobId });
+        }
+      });
+      await t.call("engine.snapshot", {});
+    },
+  },
+  {
+    name: "export folder: why a render is refused, and what every window is told",
+    async run(t, w, control) {
+      const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1), photo(w, 2)] });
+      const [first, second] = [montageIdOf(created), await draft(t, w, [photo(w, 3), photo(w, 4)])];
+      const upper = upperBytesOf(created);
+      t.note("not enough room is refused for this render only: twice the size, less one byte");
+      control.freeSpace(2 * upper - 1);
+      await t.call("videos.render", { montageId: first });
+      await t.call("engine.snapshot", {});
+      t.note("twice the size exactly is enough");
+      control.freeSpace(2 * upper);
+      await t.call("videos.render", { montageId: first });
+      await t.settle();
+      control.freeSpace(null);
+      t.note("the volume takes no write: refused, and every window is told");
+      control.exportWritable(false);
+      await t.call("videos.render", { montageId: second });
+      await t.call("engine.snapshot", {});
+      control.exportWritable(true);
+      await t.call("videos.list", { avatarId: w.avatarId });
+      t.note("a file where the folder should be");
+      await control.exportFolder("file");
+      await t.call("videos.render", { montageId: second });
+      await control.exportFolder("back");
+      await t.call("videos.render", { montageId: second });
+      await t.settle();
+      await t.call("engine.snapshot", {});
+    },
+  },
+  {
+    name: "an editor's autosave burst: saves sent together answer in order, each echo before its answer, the latest wins",
+    async run(t, w) {
+      const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1)] });
+      const montageId = montageIdOf(created);
+      const spec = specOf(created);
+      const save = (name: string) => ({ type: "montages.save", payload: { montageId, spec, name } });
+      await t.burst([save("auto 1"), save("auto 2"), save("auto 3")]);
+      await t.call("montages.get", { montageId });
+      t.note("saves around a delete: the save after it finds nothing");
+      await t.burst([save("auto 4"), { type: "montages.delete", payload: { montageId } }, save("auto 5")]);
+      await t.call("montages.list", { avatarId: w.avatarId });
+      t.note("a render sent right behind a save renders what that save stored");
+      const target = montageIdOf(await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 2), photo(w, 3)] }));
+      const other = specOf(await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 4)] }));
+      await t.burst([{ type: "montages.save", payload: { montageId: target, spec: other, name: "one photo" } }, { type: "videos.render", payload: { montageId: target } }]);
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await t.call("photos.list", { avatarId: w.avatarId });
+    },
+  },
+  {
+    name: "a render whose commit fails in the saving phase ends failed: the saving step was seen, no video lands",
+    async run(t, w, control) {
+      const montageId = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      await t.call("videos.render", { montageId });
+      control.failNextRender("saving");
+      await t.advance("saving");
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await t.call("photos.list", { avatarId: w.avatarId });
+    },
+  },
+  {
+    name: "two renders at once: both run, the third waits, and a slot freed by a cancel starts it",
+    rig: { renderConcurrency: 2 },
+    async run(t, w) {
+      const ids = [await draft(t, w, [photo(w, 1), photo(w, 2)]), await draft(t, w, [photo(w, 3), photo(w, 4)]), await draft(t, w, [photo(w, 5), photo(w, 6)])];
+      const jobs: string[] = [];
+      for (const montageId of ids) jobs.push(renderedOf(await t.call("videos.render", { montageId })).jobId);
+      await t.call("engine.snapshot", {});
+      for (const jobId of jobs) {
+        await t.call("videos.cancel", { jobId });
+        await t.advance("end");
+        await t.call("engine.snapshot", {});
+      }
+    },
+  },
 ];
+
+/** `estimateBytesUpper` of the clips of the draft a `montages.create` answered: what a render of it asks the export folder to have twice over. */
+function upperBytesOf(answer: Answer): number {
+  const clips = objectAt(montageOf(answer), "spec").clips;
+  if (!Array.isArray(clips)) throw new Error("expected clips");
+  return estimateBytesUpper(clips.map((clip: unknown) => ({ durationMs: Number(objectAt({ clip }, "clip").durationMs) })));
+}

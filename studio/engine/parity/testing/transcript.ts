@@ -39,6 +39,10 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "file names: the date in a video's `relPath` is masked (the mock's clock against the engine's), and the mock's folder name is ASCII only (no Cyrillic transliteration)",
   "VALIDATION: the engine and the renderer's client both refuse a payload that breaks the contract, in different words: the code is compared, not the detail",
   "events the suite is not about (settings.changed, money.changed, ...) are not written",
+  "render pool: «auto» is ONE render at a time in the mock (the engine picks by cores and memory), so a second render is visibly queued; scenarios set the pool explicitly",
+  "the mock's clock: a render makes 4 progress steps 700 ms apart, then the saving phase, then commits one step later; a running render's cancel ends after 50 ms. The engine's times follow its work: no scenario waits for either, and the numbers of steps are checked by rule (progress.ts)",
+  "bursts: commands sent together are answered in the order sent by both, and each echo comes before its answer; how the echoes of one burst interleave with the answers of others is not compared (the engine writes a file per save, the mock answers at once)",
+  "the mock keeps the drafts, the videos and the last 50 finished renders in memory: a restart keeps the first two and drops the renders, like the engine's; nothing else of the disk is modelled (no torn draft files, no stale used index, no record from a newer Studio, no closed library): those refusals are the engine's own unit tests' business",
 ];
 
 const ID_KINDS: Readonly<Record<string, string>> = {
@@ -121,6 +125,53 @@ export function eventLine(event: EventMessage, norm: Normalizer): string | null 
   return `event ${event.type} ${compact(norm.value(event.payload))}`;
 }
 
+/** A list of `photo#N` aliases as their numbers, each run of neighbours (22, 21, 20 or 3, 4, 5) as `first..last`. */
+function orderOf(aliases: readonly unknown[]): string {
+  const numbers = aliases.map((alias) => Number(String(alias).split("#")[1]));
+  const parts: string[] = [];
+  for (let i = 0; i < numbers.length; ) {
+    let j = i;
+    const step = numbers[i + 1] === undefined ? 0 : (numbers[i + 1] ?? 0) - (numbers[i] ?? 0);
+    while (Math.abs(step) === 1 && numbers[j + 1] === (numbers[j] ?? 0) + step) j++;
+    parts.push(j > i ? `${numbers[i]}..${numbers[j]}` : String(numbers[i]));
+    i = j + 1;
+  }
+  return parts.join(",");
+}
+
+/** The kind of a job's `done` in a snapshot: not the number (the engine's steps differ from the mock's), where it stands. */
+function doneKind(done: unknown, total: unknown): string {
+  if (done === 0) return "zero";
+  return done === total ? "total" : "mid";
+}
+
+/**
+ * What a window resyncs from (`engine.snapshot`): the jobs it lists in order, the export folder's status as the last check left
+ * it, and each avatar's counts. A long list of jobs is written as the count of each status, its first and its last.
+ */
+function snapshotLine(result: Record<string, unknown>, norm: Normalizer): string {
+  const jobs = (Array.isArray(result.jobs) ? result.jobs : []).map((job) => objectOf(job));
+  const one = (job: Record<string, unknown>): unknown =>
+    norm.value({
+      kind: job.kind,
+      jobId: job.jobId,
+      videoId: job.videoId,
+      avatarId: job.avatarId,
+      montageId: job.montageId,
+      status: job.status,
+      total: job.total,
+      done: doneKind(job.done, job.total),
+      ...(job.saving === true ? { saving: true } : {}),
+      ...(job.error === undefined ? {} : { error: job.error }),
+      ...(job.result === undefined ? {} : { result: { videoId: objectOf(job.result).videoId, relPath: objectOf(job.result).relPath } }),
+    });
+  const byStatus: Record<string, number> = {};
+  for (const job of jobs) byStatus[String(job.status)] = (byStatus[String(job.status)] ?? 0) + 1;
+  const shown = jobs.length <= 8 ? { jobs: jobs.map(one) } : { jobs: jobs.length, byStatus, first: one(jobs[0] ?? {}), last: one(jobs.at(-1) ?? {}) };
+  const avatars = (Array.isArray(result.avatars) ? result.avatars : []).map((a) => norm.value(avatarLine(a)));
+  return `< ok snapshot ${compact({ ...shown, exportStatus: result.exportStatus, avatars })}`;
+}
+
 /** An answer as a line. */
 export function answerLine(type: string, answer: Answer, norm: Normalizer): string {
   if (!answer.ok) {
@@ -137,8 +188,11 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
       .filter((p) => p.used === true || p.reserved === true || p.rejected === true || p.eligible === false)
       .map((p) => compact(norm.value({ photoId: p.photoId, used: p.used, usedIn: p.usedIn, reserved: p.reserved, rejected: p.rejected, eligible: p.eligible })))
       .sort();
-    return [`< ok photos ${compact({ count: listed.length, free: listed.length - held.length, skippedTotal: answer.result.skippedTotal })}`, ...held.map((s) => `  ${s}`)].join("\n");
+    // The order of the whole list is what the photo grid shows: written as the seeded photos' numbers, runs as `22..1`.
+    const order = orderOf(listed.map((photo) => norm.value(objectOf(photo).photoId, "photoId")));
+    return [`< ok photos ${compact({ count: listed.length, free: listed.length - held.length, skippedTotal: answer.result.skippedTotal, order })}`, ...held.map((s) => `  ${s}`)].join("\n");
   }
+  if (type === "engine.snapshot") return snapshotLine(answer.result, norm);
   if (type === "photos.setRejected") {
     // The fixtures' own run, date and QA verdicts differ by construction: what is compared is the photo's state.
     const p = objectOf(answer.result.photo);
@@ -151,7 +205,7 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
 export interface Recorded {
   send(type: string, payload: unknown): Promise<Answer>;
   events(): EventMessage[];
-  advance(step: "progress" | "saving"): Promise<void>;
+  advance(step: "progress" | "saving" | "end"): Promise<void>;
   settle(): Promise<void>;
 }
 
@@ -191,7 +245,41 @@ export class Transcript {
     return answer;
   }
 
-  async advance(step: "progress" | "saving"): Promise<void> {
+  /**
+   * Sends commands WITHOUT awaiting one before the next (an editor's autosave bursts): the commands in the order sent, the events
+   * they caused in the order they came, each answer in the order sent, and the order the answers ARRIVED in. Between the events and
+   * the answers of different commands the engine and the mock interleave differently (the engine writes a file per save; the mock
+   * answers at once), so that interleaving is not written; what is checked, on both, is that an answer never arrives before the
+   * `montage.changed` of every command up to it that succeeded (an echo comes first).
+   */
+  async burst(calls: readonly { type: string; payload: unknown }[]): Promise<Answer[]> {
+    this.#drain();
+    calls.forEach((call, i) => this.#lines.push(`> [${i}] ${call.type} ${compact(this.norm.value(call.payload))}`));
+    const arrival: number[] = [];
+    const seenAtArrival: number[] = [];
+    const before = this.#rig.events().length;
+    const echoes = (): number => this.#rig.events().slice(before).filter((e) => e.type === "montage.changed").length;
+    const answers = await Promise.all(
+      calls.map(async (call, i) => {
+        const answer = await this.#rig.send(call.type, call.payload);
+        arrival.push(i);
+        seenAtArrival[i] = echoes();
+        return answer;
+      }),
+    );
+    this.#drain();
+    let succeeded = 0;
+    answers.forEach((answer, i) => {
+      // Only the commands that change a draft send a `montage.changed`.
+      if (answer.ok && /^montages\.(create|save|delete)$/.test(calls[i]?.type ?? "")) succeeded++;
+      if ((seenAtArrival[i] ?? 0) < succeeded) throw new Error(`the answer of command [${i}] arrived before the montage.changed of a command up to it`);
+      this.#lines.push(`< [${i}] ${answerLine(calls[i]?.type ?? "", answer, this.norm).slice(2)}`);
+    });
+    this.#lines.push(`~ answers arrived in order ${arrival.join(",")}`);
+    return answers;
+  }
+
+  async advance(step: "progress" | "saving" | "end"): Promise<void> {
     this.#drain();
     await this.#rig.advance(step);
     this.#lines.push(`~ advance ${step}`);

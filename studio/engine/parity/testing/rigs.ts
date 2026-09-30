@@ -1,4 +1,4 @@
-import { mkdir, rename } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CommandMessage, EventMessage, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg";
@@ -6,8 +6,10 @@ import { MockEngine } from "../../../renderer/engine/mockEngine";
 import { MIA, NORA, scenePhoto, SOFIA } from "../../../renderer/engine/mockEngine.testkit";
 import { ManualScheduler } from "../../../renderer/engine/scheduler";
 import { manifestTraits } from "../../avatars/records";
+import { NODE_EXPORT_ROOT_FS, type ExportRootFs } from "../../exportRoot";
 import { openLibrary } from "../../library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
+import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, startEngine, TRAITS, until } from "../../testing/engineHarness";
 import { acceptingVerify } from "../../videos/testing/kit";
 import { writingRun } from "../../videos/testing/serviceKit";
@@ -15,12 +17,14 @@ import type { Answer, Recorded } from "./transcript";
 
 // The two engines the parity suite runs a scenario against (Stage 3, 3d.1b), behind ONE interface: the mock on a manual clock,
 // and the real engine over a real library and export folder in a temp dir, with fakes only where the outside world is: ffmpeg
-// (a fake `run` the rig holds still or lets go) and the focus resolver (no face models in a test).
+// (a fake `run` the rig holds still or lets go), the focus resolver (no face models in a test) and the export folder's volume
+// (its free space and whether it takes a write, through the engine's own `ExportRootFs` seam).
 //
 // Both start from the same world: an active avatar with `MAIN_PHOTOS` free scene photos (every odd one has a face score), a
 // second active avatar with two, and an archived one. Time moves only when the scenario says so:
 //   `advance("progress")`  the running render reports some progress and stays running;
 //   `advance("saving")`    the running render is past its point of no return and not yet ended;
+//   `advance("end")`       the next render to end (cancelled, failed or done) has ended, and what its end started has started;
 //   `settle()`             everything queued or running runs to its end.
 
 export const MAIN_PHOTOS = 22;
@@ -39,10 +43,20 @@ export interface World {
 
 /** What only a rig can do to the outside world. */
 export interface Control {
-  /** The next render's ffmpeg fails (it exits with code 1). */
-  failNextRender(): void;
-  /** The export folder is unplugged (`away`), plugged back (`back`), or the owner chose another one (`elsewhere`). */
-  exportFolder(state: "away" | "back" | "elsewhere"): Promise<void>;
+  /** The next render fails: `encode` (the default) is its ffmpeg exiting with code 1; `saving` is the commit failing (`not-writable`) after the point of no return. */
+  failNextRender(at?: "encode" | "saving"): void;
+  /** The export folder is unplugged (`away`), replaced by a file (`file`), plugged back (`back`, from either), or the owner chose another one (`elsewhere`). */
+  exportFolder(state: "away" | "file" | "back" | "elsewhere"): Promise<void>;
+  /** The volume can (`true`) or cannot (`false`) take a file in the export folder: the probe the engine writes there is refused. */
+  exportWritable(writable: boolean): void;
+  /** Free bytes the volume reports for the export folder; `null` is the disk's own answer. */
+  freeSpace(bytes: number | null): void;
+}
+
+/** What a scenario may ask of a rig before it starts. */
+export interface RigOptions {
+  /** How many renders run at once; 1 unless a scenario needs a wider pool. */
+  readonly renderConcurrency?: number;
 }
 
 export interface ParityRig extends Recorded {
@@ -56,6 +70,9 @@ export interface ParityRig extends Recorded {
 /** The text both engines give a failed ffmpeg: the real one builds it from the error below, the mock is told it. */
 export const FFMPEG_FAILURE_DETAIL = "ffmpeg failed: boom";
 
+/** What a commit that cannot write says, in the engine and in the mock. */
+const SAVING_FAILURE = { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } as const;
+
 function recordOf(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("expected an object result");
   return Object.fromEntries(Object.entries(value));
@@ -67,9 +84,12 @@ function answerOf(response: ResponseMessage): Answer {
 
 const scored = (ids: readonly string[]): ReadonlySet<string> => new Set(ids.filter((_id, i) => i % 2 === 0));
 
+const isEnd = (e: EventMessage): boolean => e.type === "job.failed" || e.type === "job.cancelled" || e.type === "job.done";
+const isSavingOrEnd = (e: EventMessage): boolean => (e.type === "job.progress" && e.payload.kind === "render" && e.payload.saving === true) || isEnd(e);
+
 // ---------- the mock ----------
 
-export function mockRig(): ParityRig {
+export function mockRig(options: RigOptions = {}): ParityRig {
   const scheduler = new ManualScheduler();
   const photos: PhotoSummary[] = [
     ...Array.from({ length: MAIN_PHOTOS }, (_, i) => scenePhoto(i + 1)),
@@ -80,7 +100,7 @@ export function mockRig(): ParityRig {
     { ...SOFIA, photoCount: OTHER_PHOTOS, eligibleUnusedCount: OTHER_PHOTOS },
     { ...NORA, photoCount: 0, eligibleUnusedCount: 0 },
   ];
-  const engine = new MockEngine({ scheduler, avatars, photos, renderConcurrency: 1 });
+  const engine = new MockEngine({ scheduler, avatars, photos, renderConcurrency: options.renderConcurrency ?? 1 });
   const events: EventMessage[] = [];
   engine.subscribe((raw) => events.push(EventMessage.parse(raw)));
   let messages = 0;
@@ -93,7 +113,10 @@ export function mockRig(): ParityRig {
     archivedAvatarId: NORA.avatarId,
     scored: scored(photoIds),
   };
-  const savingSeen = (from: number): boolean => events.slice(from).some((e) => (e.type === "job.progress" && e.payload.kind === "render" && e.payload.saving === true) || e.type === "job.failed" || e.type === "job.cancelled" || e.type === "job.done");
+  /** Runs the mock's clock until an event of `wanted` came after `from`. */
+  const runUntil = (from: number, wanted: (e: EventMessage) => boolean): void => {
+    for (let i = 0; i < 200 && !events.slice(from).some(wanted); i++) scheduler.next();
+  };
 
   return {
     name: "mock",
@@ -108,18 +131,22 @@ export function mockRig(): ParityRig {
     async advance(step) {
       const from = events.length;
       if (step === "progress") scheduler.next();
-      else for (let i = 0; i < 50 && !savingSeen(from); i++) scheduler.next();
+      else runUntil(from, step === "saving" ? isSavingOrEnd : isEnd);
     },
     async settle() {
       scheduler.runAll();
     },
     control: {
-      failNextRender: () => engine.failNextRender({ code: "RENDER_FAILED", detail: FFMPEG_FAILURE_DETAIL }),
+      failNextRender: (at = "encode") =>
+        at === "encode" ? engine.failNextRender({ code: "RENDER_FAILED", detail: FFMPEG_FAILURE_DETAIL }) : engine.failNextRender({ ...SAVING_FAILURE }, "saving"),
       exportFolder: async (state) => {
         if (state === "away") engine.setExportDisk({ status: "unavailable", reason: "missing" });
+        else if (state === "file") engine.setExportDisk({ status: "unavailable", reason: "not-a-directory" });
         else if (state === "back") engine.setExportDisk({ status: "ok" });
         else engine.moveExportFolder();
       },
+      exportWritable: (writable) => engine.setExportDisk(writable ? { status: "ok" } : { status: "unavailable", reason: "not-writable" }),
+      freeSpace: (bytes) => engine.setExportFreeBytes(bytes),
     },
     async stop() {
       scheduler.runAll();
@@ -185,7 +212,7 @@ async function seedAvatar(library: Awaited<ReturnType<typeof openLibrary>>["libr
 }
 
 /** The real engine over a library and an export folder in `dir` (a fresh temp dir per scenario). */
-export async function realRig(dir: string): Promise<ParityRig> {
+export async function realRig(dir: string, options: RigOptions = {}): Promise<ParityRig> {
   const exportDir = join(dir, "export");
   await mkdir(exportDir);
   const { library } = await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds("par") });
@@ -197,22 +224,35 @@ export async function realRig(dir: string): Promise<ParityRig> {
 
   const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds) };
   const gate = new Gate();
-  let failArmed = false;
+  let failArmed: "encode" | "saving" | null = null;
   // The ffmpeg that is not there: it reports progress once the gate lets it, and writes its output once the gate lets it finish.
   const run = async (opts: RunFfmpegArgvOptions): Promise<void> => {
     await gate.wait(1, opts.signal);
-    if (failArmed) {
-      failArmed = false;
+    if (failArmed === "encode") {
+      failArmed = null;
       throw new FfmpegError("ffmpeg failed", 1, "boom");
     }
     opts.onFrames?.(1_000_000);
     await gate.wait(2, opts.signal);
     await writingRun(opts);
   };
-  const settings = (patch: Parameters<typeof engineSettings>[1] = {}) => engineSettings(dir, { renderConcurrency: 1, ...patch });
+  // The export folder's volume, through the engine's own seam: what it says is free, and whether it takes the probe file.
+  let free: number | null = null;
+  let writable = true;
+  const exportRootFs: ExportRootFs = {
+    ...NODE_EXPORT_ROOT_FS,
+    freeBytes: async (path) => free ?? NODE_EXPORT_ROOT_FS.freeBytes(path),
+    createExclusive: async (path, text) => {
+      if (!writable) throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      await NODE_EXPORT_ROOT_FS.createExclusive(path, text);
+    },
+  };
+  const concurrency = options.renderConcurrency ?? 1;
+  const settings = (patch: Parameters<typeof engineSettings>[1] = {}) => engineSettings(dir, { renderConcurrency: concurrency, ...patch });
   const { engine, events } = await startEngine(dir, {
     init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings() },
     deps: {
+      exportRootFs,
       // No face models in a test: the resolver judges the scored photos and none of the rest, as the mock does.
       montages: {
         focus: () => ({
@@ -223,8 +263,17 @@ export async function realRig(dir: string): Promise<ParityRig> {
         renderOverrides: {
           verify: acceptingVerify,
           runDeps: { run },
-          // The commit stops at its claim, past the saving announcement, until the gate is open.
-          hooks: { reached: async (step) => (step === "name-claimed" ? gate.wait(3) : undefined) },
+          // The commit stops at its claim, past the saving announcement, until the gate is open; a commit that cannot write fails there.
+          hooks: {
+            reached: async (step) => {
+              if (step !== "name-claimed") return;
+              await gate.wait(3);
+              if (failArmed === "saving") {
+                failArmed = null;
+                throw new RenderFailure({ ...SAVING_FAILURE });
+              }
+            },
+          },
         },
       },
     },
@@ -240,7 +289,6 @@ export async function realRig(dir: string): Promise<ParityRig> {
     await engine.settled();
     gate.reset();
   };
-  const isEndOrSaving = (e: EventMessage): boolean => (e.type === "job.progress" && e.payload.kind === "render" && e.payload.saving === true) || e.type === "job.failed" || e.type === "job.cancelled" || e.type === "job.done";
 
   return {
     name: "real",
@@ -254,24 +302,39 @@ export async function realRig(dir: string): Promise<ParityRig> {
       if (step === "progress") {
         gate.set(1);
         await until(() => events().length > from, "the render's progress", 10_000);
-      } else {
+      } else if (step === "saving") {
         gate.set(2);
-        await until(() => events().slice(from).some(isEndOrSaving), "the render's saving phase", 10_000);
+        await until(() => events().slice(from).some(isSavingOrEnd), "the render's saving phase", 10_000);
+      } else {
+        await until(() => events().slice(from).some(isEnd), "the end of a render", 10_000);
       }
     },
     settle,
     control: {
-      failNextRender: () => {
-        failArmed = true;
+      failNextRender: (at = "encode") => {
+        failArmed = at;
       },
       exportFolder: async (state) => {
-        if (state === "away") await rename(exportDir, `${exportDir}-away`);
-        else if (state === "back") await rename(`${exportDir}-away`, exportDir);
-        else {
+        const away = `${exportDir}-away`;
+        if (state === "away") await rename(exportDir, away);
+        else if (state === "file") {
+          await rename(exportDir, away);
+          await writeFile(exportDir, "not a folder");
+        } else if (state === "back") {
+          // Whatever stands in the folder's place (the file of `file`) goes, and the folder that was moved away comes back.
+          await rm(exportDir, { force: true });
+          await rename(away, exportDir);
+        } else {
           const other = join(dir, "export-other");
           await mkdir(other);
           await engine.applyControl({ kind: "control", type: "settings.update", settings: settings({ exportPath: other }) });
         }
+      },
+      exportWritable: (canWrite) => {
+        writable = canWrite;
+      },
+      freeSpace: (bytes) => {
+        free = bytes;
       },
     },
     stop: settle,

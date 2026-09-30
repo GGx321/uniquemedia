@@ -650,6 +650,8 @@ describe("the snapshot and a restart", () => {
 
     const [job] = await renderJobsOf(mock);
     expect(job).toMatchObject({ jobId, status: "done", done: TWO_PHOTO_FRAMES, total: TWO_PHOTO_FRAMES, result: { kind: "render", videoId } });
+    // The saving mark is the running job's: the job's end drops it, as the engine's registry does.
+    expect(job).not.toHaveProperty("saving");
   });
 
   test("a restart drops the renders that were queued or running and frees their photos; the videos and the drafts stay", async () => {

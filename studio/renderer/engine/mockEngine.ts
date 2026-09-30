@@ -1811,7 +1811,7 @@ export class MockEngine implements EngineBridge {
       status: j.status,
       done: j.done,
       total: j.total,
-      ...(j.saving ? { saving: true } : {}),
+      ...(j.saving && j.status === "running" ? { saving: true } : {}),
       ...(j.status === "failed" && j.error !== null ? { error: j.error } : {}),
       ...(j.status === "done" && j.result !== null ? { result: j.result } : {}),
     };

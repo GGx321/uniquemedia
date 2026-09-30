@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { useEngineDir } from "../testing/engineHarness";
 import { GOLDEN } from "./testing/golden";
+import { goldenSource } from "./testing/goldenFile";
 import { play } from "./testing/play";
 import { mockRig, realRig } from "./testing/rigs";
 import { SCENARIOS } from "./testing/scenarios";
@@ -12,20 +14,29 @@ useNativeGlobals();
 // transcripts (every command, every answer, every event, in order) must be equal line for line. `golden.ts` holds the
 // transcript each scenario is bound to, so a change that moves BOTH engines the same way is still seen. What differs on
 // purpose is in transcript.ts (`MASKED`, `INTENTIONAL_DIFFERENCES`) and nowhere else.
+//
+// PARITY_WRITE_GOLDEN=1 rewrites golden.ts from the transcripts (after requiring the two engines to agree): see golden.ts.
 
 const dir = useEngineDir("studio-parity-");
 const REAL_TIMEOUT_MS = 60_000;
+const WRITE_GOLDEN = process.env.PARITY_WRITE_GOLDEN === "1";
+const written: Record<string, string[]> = {};
+
+afterAll(() => {
+  if (WRITE_GOLDEN) writeFileSync(new URL("./testing/golden.ts", import.meta.url), goldenSource(written));
+});
 
 describe("mock and engine agree", () => {
   for (const scenario of SCENARIOS) {
     test(
       scenario.name,
       async () => {
-        const mock = await play(mockRig(), scenario);
-        const real = await play(await realRig(dir()), scenario);
+        const mock = await play(mockRig(scenario.rig), scenario);
+        const real = await play(await realRig(dir(), scenario.rig), scenario);
 
         expect(real).toEqual(mock);
-        expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
+        if (WRITE_GOLDEN) written[scenario.name] = mock;
+        else expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
       },
       REAL_TIMEOUT_MS,
     );
@@ -34,6 +45,7 @@ describe("mock and engine agree", () => {
 
 describe("the suite itself", () => {
   test("every scenario has a golden transcript and every golden transcript a scenario", () => {
+    if (WRITE_GOLDEN) return;
     expect(Object.keys(GOLDEN).sort()).toEqual(SCENARIOS.map((s) => s.name).sort());
   });
 
