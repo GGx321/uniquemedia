@@ -418,26 +418,46 @@ describe("dispose", () => {
   });
 });
 
+/**
+ * Settles when `worker` has exited. The harness's own `exit` listener (which counts `alive` down) was registered at spawn, before
+ * this one, so `alive()` is already down when this resolves (a worker that is gone already has `threadId` -1). Waiting for the event, not for a fixed time, is what keeps these
+ * tests off the clock: a terminate takes a few milliseconds on a quiet machine and far longer on a loaded one (a 150 ms sleep
+ * failed on a macOS runner with `alive` still 1). 20 s only names a worker that never went.
+ */
+async function exited(worker: Worker | undefined): Promise<void> {
+  if (worker === undefined) throw new Error("the harness spawned no worker");
+  if (worker.threadId === -1) return; // already gone: its `exit` has fired
+  let giveUp: ReturnType<typeof setTimeout> | undefined;
+  const never = new Promise<never>((_resolve, reject) => {
+    giveUp = setTimeout(() => reject(new Error("the worker was not terminated")), 20_000);
+  });
+  try {
+    await Promise.race([new Promise<void>((resolve) => worker.once("exit", () => resolve())), never]);
+  } finally {
+    clearTimeout(giveUp);
+  }
+}
+
 describe("idle recycling: an idle worker's memory is given back", () => {
   test("a worker left idle for idleRecycleMs is terminated", async () => {
     const h = harness({ idleRecycleMs: 40 });
     await h.gate.check(checkInput(), live());
     expect(h.alive()).toBe(1);
-    await Bun.sleep(150);
+    await exited(h.workers[0]);
     expect(h.alive()).toBe(0);
   });
 
   test("the next check after a recycle respawns a worker and succeeds, with no overlap between the two workers", async () => {
     const h = harness({ idleRecycleMs: 40 });
     await h.gate.check(checkInput(), live());
-    await Bun.sleep(150);
+    await exited(h.workers[0]);
     expect((await h.gate.check(checkInput(), live())).kind).toBe("match");
     expect(h.spawned()).toBe(2);
     expect(h.aliveAtSpawn).toEqual([0, 0]);
   });
 
   test("a check inside the idle window keeps the same worker", async () => {
-    const h = harness({ idleRecycleMs: 200 });
+    const h = harness({ idleRecycleMs: 2_000 });
     await h.gate.check(checkInput(), live());
     await Bun.sleep(50);
     await h.gate.check(checkInput(), live());
