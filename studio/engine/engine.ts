@@ -93,6 +93,8 @@ import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./f
 import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
+import { MontageService, type MontageServiceDeps } from "./montages/service";
+import { DraftStore, type DraftStoreDeps } from "./montages/store";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -188,6 +190,8 @@ export interface EngineDeps {
     /** How long `videos.render` may spend on the focus of its photos; `RENDER_FOCUS_BUDGET_MS` unless a test says otherwise. */
     focusBudgetMs?: number;
   };
+  /** Test seams of the montage drafts: the focus resolver, the budget, the seed of a new draft, the draft write's crash point. */
+  montages?: Partial<Pick<MontageServiceDeps, "focus" | "focusBudgetMs" | "randomSeed" | "commandDeadlineMs" | "commandMarginMs">> & Partial<Pick<DraftStoreDeps, "beforeRename">>;
 }
 
 /** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
@@ -419,6 +423,8 @@ export class Engine {
   readonly #defaultExportPath: string | null;
   /** The export folder's status as of the last check (start, a settings update, a render attempt), for the snapshot. */
   #exportStatus: ExportStatus = { status: "ok" };
+  /** Whether the start's own check has set the status: it is the baseline, so it is not announced (a window learns it from the snapshot). */
+  #exportStatusKnown = false;
   /** The export checks run one at a time in the order asked (a fresh folder's marker is written by one of them, never raced), so a slow older one cannot overwrite a newer one. */
   #exportChain: Promise<unknown> = Promise.resolve();
   /** The latest queued check that has not started yet, with the size estimate it carries (or none); a later caller asking for exactly the same joins it. */
@@ -515,6 +521,10 @@ export class Engine {
    * `videos.render` submits to it through `#videos`.
    */
   readonly #renders: RenderQueue;
+  /** The montage draft files (3d.1a), shared by the draft commands and the video service (a render reads its draft here). */
+  readonly #drafts: DraftStore;
+  /** The draft commands: `montages.create`, `get`, `list`, `save`, `delete` and `focus`. */
+  readonly #montages: MontageService;
   /** The video commands, the queue's events as `job.*` and `video.changed`, recovery and the stop (3a.8b.2). */
   readonly #videos: VideoService;
   /** The renders' commits in flight: shared by every render's `execute` and by recovery, so recovery never touches a live commit. */
@@ -558,7 +568,12 @@ export class Engine {
       onEvent: (event) => this.#videos.onQueueEvent(event),
       onListenerError: (error) => this.#videos.onListenerError(error),
     });
+    this.#drafts = new DraftStore({
+      log: (line) => console.warn(`studio engine: ${line}`),
+      ...(deps.montages?.beforeRename === undefined ? {} : { beforeRename: deps.montages.beforeRename }),
+    });
     this.#videos = new VideoService({
+      drafts: this.#drafts,
       queue: this.#renders,
       tracker: this.#commits,
       checker: new FileStateChecker(),
@@ -577,6 +592,20 @@ export class Engine {
       ...(deps.videos?.renderOverrides === undefined ? {} : { renderOverrides: deps.videos.renderOverrides }),
       ...(deps.videos?.recover === undefined ? {} : { recover: deps.videos.recover }),
       ...(deps.videos?.staleRetryDelaysMs === undefined ? {} : { staleRetryDelaysMs: deps.videos.staleRetryDelaysMs }),
+    });
+    this.#montages = new MontageService({
+      store: this.#drafts,
+      withLibrary: (work) => this.#withLiveLibrary(work),
+      openLibrary: () => this.library,
+      focus: deps.montages?.focus ?? ((library) => this.#focusOf(library)),
+      newId: deps.newId,
+      now: () => new Date(deps.clock()),
+      emit: (event) => this.#emit(event),
+      log: (line) => console.warn(`studio engine: ${line}`),
+      ...(deps.montages?.focusBudgetMs === undefined ? {} : { focusBudgetMs: deps.montages.focusBudgetMs }),
+      ...(deps.montages?.randomSeed === undefined ? {} : { randomSeed: deps.montages.randomSeed }),
+      ...(deps.montages?.commandDeadlineMs === undefined ? {} : { commandDeadlineMs: deps.montages.commandDeadlineMs }),
+      ...(deps.montages?.commandMarginMs === undefined ? {} : { commandMarginMs: deps.montages.commandMarginMs }),
     });
     this.#pendingLibraryPath = init.settings.libraryPath;
     this.#encryptionAvailable = init.encryptionAvailable;
@@ -1137,6 +1166,18 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { videos: await this.#videos.list(command.payload.avatarId) } };
       case "videos.delete":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.delete(command.payload.videoId, command.payload.mode) };
+      case "montages.create":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.create(command.payload) };
+      case "montages.get":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.get(command.payload.montageId) };
+      case "montages.list":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.list(command.payload.avatarId) };
+      case "montages.save":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.save(command.payload) };
+      case "montages.delete":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.delete(command.payload.montageId) };
+      case "montages.focus":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.focus(command.payload) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -1158,7 +1199,7 @@ export class Engine {
   }
 
   /** The focus resolver of a library, kept for its life (it holds the in-flight computations and the cache), with a fill budget that fits main's command deadline. */
-  #focusOf(library: Library): Pick<FocusResolver, "fillMissingFocus"> {
+  #focusOf(library: Library): Pick<FocusResolver, "fillMissingFocus" | "focusFor"> {
     let resolver = this.#focusResolvers.get(library);
     if (resolver === undefined) {
       resolver = createFocusResolver({ library, faceGate: this.#deps.faceGate ?? null, fillBudgetMs: this.#deps.videos?.focusBudgetMs ?? RENDER_FOCUS_BUDGET_MS });
@@ -1675,8 +1716,23 @@ export class Engine {
     // "Not enough room" answers a question about THIS render's size (`requiredBytes`), not about the folder: a 4 s spec may fit
     // where a 15 s one does not, so it is a refusal for that render and never the status every window shows.
     if (!check.ok) console.warn(`studio engine: the export folder check refused it (${check.reason})`); // the reason only: a CI log or a support report can say which step
-    if (requiredBytes === undefined || check.ok || check.reason !== "not-enough-space") this.#exportStatus = exportStatusOf(check);
+    if (requiredBytes === undefined || check.ok || check.reason !== "not-enough-space") this.#setExportStatus(exportStatusOf(check));
     return check;
+  }
+
+  /**
+   * Keeps the folder's status and, when it CHANGED, tells the windows (`export.status`): the Render button follows the disk
+   * live, without a window asking again. A check that finds the same status says nothing, and so does the first one of an
+   * engine's life: it is the baseline the snapshot carries (a window of an earlier engine resyncs on the new `bootId`).
+   */
+  #setExportStatus(next: ExportStatus): void {
+    const before = this.#exportStatus;
+    const known = this.#exportStatusKnown;
+    this.#exportStatus = next;
+    this.#exportStatusKnown = true;
+    const same = before.status === next.status && (before.status === "ok" || (next.status === "unavailable" && before.reason === next.reason));
+    if (!known || same) return;
+    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "export.status", payload: { exportStatus: next } });
   }
 
   /**

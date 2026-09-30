@@ -1986,23 +1986,90 @@ const RENDER_ATTEMPT = {
   clips: [{ clipId: "clip-00000001", kind: "photo", cell: { photo: { source: "scene", photoId: "photo-00000001" }, focus: null }, motion: "static", durationMs: 4000, transitionIn: "cut" }],
 };
 
-// The montage commands come with 3d.1a; until then `montages.create` answers a typed refusal (like any command the
-// engine does not implement yet) and the engine stays usable: nothing crashes, nothing is stored, nothing is spent.
-// The `videos.*` commands are real since 3a.8b.2 (engine.videos.test.ts).
-describe("Stage 3 commands before their tasks land", () => {
-  const AVATAR = "avatar-0001";
-  const unbuilt: [string, unknown][] = [["montages.create", { avatarId: AVATAR, photoIds: [] }]];
+describe("export.status events (task 3d.1a, K9)", () => {
+  const statuses = (events: () => EventMessage[]) => events().flatMap((e) => (e.type === "export.status" ? [e.payload.exportStatus] : []));
 
-  test.each(unbuilt)("%s answers a typed refusal instead of throwing", async (type, payload) => {
+  test("the start's own check is the baseline, whatever it finds: the snapshot says it, no event does", async () => {
     await mkdir(join(dir, "export"));
-    const { engine } = await startEngine();
-    const response = await engine.handle(command(type, payload));
-    expect(ResponseMessage.safeParse(response).success).toBe(true);
-    expect(response).toMatchObject({ ok: false, type, error: { code: "INTERNAL" } });
-    expect(response.ok ? "" : response.error.detail).toContain("not implemented yet");
+    const usable = await startEngine();
+    await rm(join(dir, "export"), { recursive: true });
+    const unusable = await startEngine();
+
+    expect(statuses(usable.events)).toEqual([]);
+    expect(statuses(unusable.events)).toEqual([]);
+    expect(unusable.events()).toEqual([]);
   });
 
-  test("videos.render with a montageId is NOT_FOUND until drafts exist (3d.1a)", async () => {
+  test("a folder that vanishes is announced by the attempt that finds it, once, however many attempts follow", async () => {
+    await mkdir(join(dir, "export"));
+    const { engine, events } = await startEngine();
+    await rm(join(dir, "export"), { recursive: true });
+
+    for (let i = 0; i < 3; i++) await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
+
+    expect(statuses(events)).toEqual([{ status: "unavailable", reason: "missing" }]);
+  });
+
+  test("a folder that comes back is announced too", async () => {
+    const { engine, events } = await startEngine();
+    await mkdir(join(dir, "better"));
+
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, exportPath: join(dir, "better") } });
+
+    expect(statuses(events)).toEqual([{ status: "ok" }]);
+  });
+
+  test("a change from one reason to another is a change", async () => {
+    await mkdir(join(dir, "export"));
+    await writeFile(join(dir, "export", ".studio-export.json"), "{broken");
+    const { engine, events } = await startEngine();
+    await rm(join(dir, "export"), { recursive: true });
+
+    await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
+
+    expect(statuses(events)).toEqual([{ status: "unavailable", reason: "missing" }]);
+  });
+
+  test("checks that find the same status announce nothing", async () => {
+    await mkdir(join(dir, "export"));
+    const { engine, events } = await startEngine();
+
+    for (let i = 0; i < 3; i++) await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
+    await engine.handle(command("engine.snapshot"));
+
+    expect(statuses(events)).toEqual([]);
+  });
+
+  test("too little room for ONE render is that render's refusal: it is not a change of the folder's status", async () => {
+    await mkdir(join(dir, "export"));
+    const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, freeBytes: async () => 1 };
+    const { engine, events } = await startEngine({}, { exportRootFs });
+
+    const response = await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
+
+    expect(response).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-enough-space" } });
+    expect(statuses(events)).toEqual([]);
+  });
+
+  test("the event carries the status and nothing else, and is in the event log a window catches up from", async () => {
+    const { engine, events } = await startEngine();
+    await mkdir(join(dir, "better"));
+    await engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, exportPath: join(dir, "better") } });
+
+    const [event] = events().filter((e) => e.type === "export.status");
+    const since = ok(await engine.handle(command("engine.events", { afterSeq: 0, bootId: BOOT_ID })));
+
+    expect(event?.payload).toEqual({ exportStatus: { status: "ok" } });
+    expect(since.type === "engine.events" && !since.result.gap ? since.result.events.some((e) => e.type === "export.status") : false).toBe(true);
+  });
+});
+
+// The montage commands are real since 3d.1a (engine.montages.test.ts). The `videos.*` commands are real since 3a.8b.2
+// (engine.videos.test.ts). What is left here is what the engine still refuses by name.
+describe("Stage 3 commands", () => {
+  const AVATAR = "avatar-0001";
+
+  test("videos.render with a montageId no draft has is NOT_FOUND", async () => {
     await mkdir(join(dir, "export"));
     const { engine } = await startEngine();
     const response = await engine.handle(command("videos.render", { montageId: "montage-00000001" }));
