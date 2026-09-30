@@ -102,6 +102,10 @@ export interface M4aOptions {
   drefFlags?: number[];
   /** Extra `trak` boxes appended after the first (each given as its handler type). */
   extraTracks?: string[];
+  /** Extra boxes inside `moov`, after the tracks. */
+  moovExtra?: Uint8Array[];
+  /** Extra boxes at the top level, after `mdat`. */
+  topExtra?: Uint8Array[];
   /** Extra bytes after `moov`, as `mdat` payload. */
   mdat?: Uint8Array;
 }
@@ -148,5 +152,5 @@ export function buildM4a(options: M4aOptions = {}): Uint8Array {
   };
   const extra = (options.extraTracks ?? []).map((handler) => track({ ...full, handler }));
   const ftyp = options.noFtyp === true ? new Uint8Array(0) : box("ftyp", concat(ascii("isom"), u32(512), ascii("isom"), ascii("iso2"), ascii("mp41")));
-  return concat(ftyp, box("moov", concat(track(full), ...extra)), box("mdat", options.mdat ?? new Uint8Array(16)));
+  return concat(ftyp, box("moov", concat(track(full), ...extra, ...(options.moovExtra ?? []))), box("mdat", options.mdat ?? new Uint8Array(16)), ...(options.topExtra ?? []));
 }

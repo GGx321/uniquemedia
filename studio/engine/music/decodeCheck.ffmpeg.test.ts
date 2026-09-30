@@ -203,6 +203,17 @@ describe("how ffmpeg is started", () => {
     expect(args.indexOf("-f")).toBeLessThan(args.indexOf("-i"));
   });
 
+  // Review 3c.4 F1/F2. `-c:a aac` (before -i) makes the decoder for the stream AAC and nothing else: a stream that is not
+  // AAC (an MP3 the walker never looked at) exits with no output instead of being decoded. `-max_alloc` caps what one
+  // allocation may take, so a container that claims a gigabyte fails at 64 MiB instead of costing the machine.
+  test("forces the AAC decoder and caps allocations, both before the input", async () => {
+    const { args } = await seen();
+    expect(args.slice(args.indexOf("-c:a"), args.indexOf("-c:a") + 2)).toEqual(["-c:a", "aac"]);
+    expect(args[args.indexOf("-max_alloc") + 1]).toBe("67108864");
+    expect(args.indexOf("-c:a")).toBeLessThan(args.indexOf("-i"));
+    expect(args.indexOf("-max_alloc")).toBeLessThan(args.indexOf("-i"));
+  });
+
   test("reads no stdin, only the first audio stream, no video, no subtitles, no data", async () => {
     const { args } = await seen();
     expect(args).toContain("-nostdin");

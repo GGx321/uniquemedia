@@ -411,7 +411,7 @@ describe("a track is stored only after the walker and the decode", () => {
     const tracks = listTracks(1);
     h.cdn.serve(tracks[0]?.downloadUrl ?? "", { bytes: buildM4a({ extraTracks: ["vide"] }) });
     await refresh(h, tracks).catch(() => undefined);
-    expect((await readRecord()).tracks[0]?.audio).toEqual({ state: "failed", reason: "probe:has-video" });
+    expect((await readRecord()).tracks[0]?.audio).toEqual({ state: "failed", reason: "probe:several-tracks" });
   });
 
   test("a track over 25 MB is refused by its size: nothing is written", async () => {

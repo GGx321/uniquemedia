@@ -105,11 +105,11 @@ describe("a stream that is not AAC in an audio track", () => {
   });
 
   test("an audio track with a video track beside it", () => {
-    expect(refusalOf(buildM4a({ extraTracks: ["vide"] }))).toBe("has-video");
+    expect(refusalOf(buildM4a({ extraTracks: ["vide"] }))).toBe("several-tracks");
   });
 
   test("two audio tracks", () => {
-    expect(refusalOf(buildM4a({ extraTracks: ["soun"] }))).toBe("several-audio-tracks");
+    expect(refusalOf(buildM4a({ extraTracks: ["soun"] }))).toBe("several-tracks");
   });
 
   test("an mp4a entry with no esds (nothing says what it is)", () => {
@@ -130,6 +130,55 @@ describe("a stream that is not AAC in an audio track", () => {
 
   test.each([1000, 200000])("a sample rate of %i Hz", (sampleRate) => {
     expect(refusalOf(buildM4a({ sampleRate }))).toBe("unsupported-format");
+  });
+});
+
+// Review 3c.4 F1: the walker used to refuse only handler `vide`. What decodes must be exactly what was walked, so the
+// file is ONE track and its handler is `soun`: a video hidden behind another handler name, or a second track that
+// `-map 0:a:0` would pick instead of the checked one, never passes.
+describe("exactly one track, and it is sound", () => {
+  test.each(["pict", "auxv", "xyzw", "meta", "text", "vide", "\u0000\u0000\u0000\u0000"])("a lone track with the handler %j is refused", (handler) => {
+    expect(probeMp4Audio(buildM4a({ handler })).ok).toBe(false);
+  });
+
+  test.each(["pict", "auxv", "xyzw", "soun", "vide"])("a sound track with a second track (%j) beside it is refused: the decode would pick by position, not by what was checked", (other) => {
+    expect(refusalOf(buildM4a({ extraTracks: [other] }))).toBe("several-tracks");
+  });
+
+  test("the same when the unchecked track comes first", () => {
+    const one = buildM4a({ handler: "xyzw", extraTracks: ["soun"] });
+    expect(probeMp4Audio(one).ok).toBe(false);
+  });
+
+  test("the four real HE-AAC files are one sound track each", () => {
+    for (const fixture of Object.values(musicTracks)) expect(probeMp4Audio(bytesOf(fixture.file)).ok).toBe(true);
+  });
+});
+
+// Review 3c.4 F2: `moov/cmov` is a compressed moov that ffmpeg inflates (a 1.1 MB file claiming 1 GiB cost 1.09 GB of
+// memory, and a video track can hide inside it). Boxes are an allowlist at the two levels a file can add them.
+describe("only the boxes an audio file has", () => {
+  const refused = (bytes: Uint8Array): string => refusalOf(bytes);
+
+  test.each(["cmov", "mvex", "meta", "uuid", "pssh", "trax"])("a %j inside moov is refused", (type) => {
+    expect(refused(buildM4a({ moovExtra: [box(type, new Uint8Array(8))] }))).toBe("box-not-allowed");
+  });
+
+  test.each(["mvhd", "udta", "free", "skip", "iods"])("a %j inside moov is allowed", (type) => {
+    expect(probeMp4Audio(buildM4a({ moovExtra: [box(type, new Uint8Array(8))] })).ok).toBe(true);
+  });
+
+  test.each(["moof", "mfra", "sidx", "meta", "uuid", "styp", "emsg", "pdin", "cmov"])("a top-level %j is refused", (type) => {
+    expect(refused(buildM4a({ topExtra: [box(type, new Uint8Array(8))] }))).toBe("box-not-allowed");
+  });
+
+  test.each(["free", "skip", "wide"])("a top-level %j is allowed", (type) => {
+    expect(probeMp4Audio(buildM4a({ topExtra: [box(type, new Uint8Array(8))] })).ok).toBe(true);
+  });
+
+  test("a compressed moov (a cmov that holds the real one) is refused as a whole, whatever it claims to hold", () => {
+    const bomb = concat(box("ftyp", new Uint8Array(8)), box("moov", box("cmov", concat(box("dcom", new TextEncoder().encode("zlib")), box("cmvd", new Uint8Array(64))))));
+    expect(refused(bomb)).toBe("box-not-allowed");
   });
 });
 

@@ -25,6 +25,8 @@ const SAMPLES_PER_BUCKET = (SAMPLE_RATE * PEAK_STEP_MS) / 1000;
 /** No track is longer than ten minutes; the decode is never asked for more than a quarter hour. */
 const MAX_DECODE_SECONDS = 900;
 export const DECODE_TIMEOUT_MS = 30_000;
+/** One allocation may take at most this much: 64 MiB is far above what a real track needs and far below a container bomb. */
+const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
 
 export type DecodeFailureKind = "spawn" | "exit" | "timeout" | "aborted" | "too-long" | "no-audio" | "duration-mismatch";
 
@@ -79,10 +81,15 @@ export function decodeAudio(options: DecodeOptions): Promise<DecodeResult> {
     "error",
     "-threads",
     "1",
+    "-max_alloc",
+    String(MAX_ALLOC_BYTES),
     "-protocol_whitelist",
     "file",
     "-f",
     "mov",
+    // The AAC decoder for the stream, and no other: a stream that is not AAC ends with no output.
+    "-c:a",
+    "aac",
     "-t",
     String(seconds),
     "-i",

@@ -19,6 +19,9 @@ const MAX_SAMPLE_RATE = 96000;
 /** AAC-LC, SBR (HE-AAC) and SBR+PS (HE-AACv2): what the render's decode and resample step is built for (3c.5). */
 const ACCEPTED_OBJECT_TYPES: ReadonlySet<number> = new Set([2, 5, 29]);
 const MPEG4_AUDIO = 0x40;
+/** The boxes an audio-only file has at its top level and inside `moov` (3c.4 review F2). Anything else is refused. */
+const TOP_LEVEL_BOXES: ReadonlySet<string> = new Set(["ftyp", "moov", "mdat", "free", "skip", "wide"]);
+const MOOV_BOXES: ReadonlySet<string> = new Set(["mvhd", "trak", "udta", "free", "skip", "iods"]);
 
 export type ProbeRefusal =
   | "bad-box"
@@ -29,8 +32,8 @@ export type ProbeRefusal =
   | "too-many-boxes"
   | "too-many-tracks"
   | "no-audio-track"
-  | "several-audio-tracks"
-  | "has-video"
+  | "several-tracks"
+  | "box-not-allowed"
   | "not-mp4a"
   | "esds-unreadable"
   | "not-aac"
@@ -214,6 +217,9 @@ function walk(bytes: Uint8Array): Mp4AudioInfo {
     if (++boxes > MAX_TOP_LEVEL_BOXES) throw new Refusal("too-many-boxes");
     const box = readBox(bytes, view, at, bytes.byteLength, true);
     if (boxes === 1 && box.type !== "ftyp") throw new Refusal("no-ftyp");
+    // An allowlist: a fragment (`moof`, `sidx`), a `meta` with items, a `uuid` and the like are not what an audio file
+    // holds, and each is a place a demuxer does more than this walker looked at.
+    if (!TOP_LEVEL_BOXES.has(box.type)) throw new Refusal("box-not-allowed");
     if (box.type === "moov") {
       if (moov !== null) throw new Refusal("several-moov");
       moov = box;
@@ -223,17 +229,20 @@ function walk(bytes: Uint8Array): Mp4AudioInfo {
   if (moov === null) throw new Refusal("no-moov");
   if (moov.end - moov.body > MOOV_MAX_BYTES) throw new Refusal("moov-too-large");
 
-  const tracks: TrackFacts[] = [];
-  const traks = childrenOf(bytes, view, moov.body, moov.end, budget).filter((child) => child.type === "trak");
+  const inMoov = childrenOf(bytes, view, moov.body, moov.end, budget);
+  // `cmov` (a compressed moov that ffmpeg inflates: a 1 MB file can claim a gigabyte, and a video track can hide in it)
+  // and `mvex` (fragments) are refused here, with anything else a moov does not carry.
+  if (inMoov.some((child) => !MOOV_BOXES.has(child.type))) throw new Refusal("box-not-allowed");
+  const traks = inMoov.filter((child) => child.type === "trak");
   // Counted before any is read: a file of a hundred tracks is refused for that, not for what the first one lacks.
   if (traks.length > MAX_TRACKS) throw new Refusal("too-many-tracks");
-  for (const trak of traks) tracks.push(readTrack(bytes, view, trak, budget));
-  const audio = tracks.filter((track) => track.handler === "soun");
-  if (audio.length === 0) throw new Refusal("no-audio-track");
-  if (tracks.some((track) => track.handler === "vide")) throw new Refusal("has-video");
-  if (audio.length > 1) throw new Refusal("several-audio-tracks");
-  const only = audio[0];
-  if (only === undefined || only.entryType !== "mp4a" || only.audio === null) throw new Refusal("not-mp4a");
+  if (traks.length === 0) throw new Refusal("no-audio-track");
+  // Exactly ONE track, so what is decoded is what was walked: with two, `-map 0:a:0` may pick a track this walker never
+  // looked at (an MP3 under `mp4a` behind another handler name), and a video can wear a handler that is not `vide`.
+  if (traks.length > 1) throw new Refusal("several-tracks");
+  const only = readTrack(bytes, view, traks[0] as BoxRef, budget);
+  if (only.handler !== "soun") throw new Refusal("no-audio-track");
+  if (only.entryType !== "mp4a" || only.audio === null) throw new Refusal("not-mp4a");
   const { channels, sampleRate, oti, audioObjectType } = only.audio;
   if (oti !== MPEG4_AUDIO) throw new Refusal("not-aac");
   if (!ACCEPTED_OBJECT_TYPES.has(audioObjectType)) throw new Refusal("unsupported-profile");
