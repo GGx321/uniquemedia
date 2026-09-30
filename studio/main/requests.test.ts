@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ResponseMessage, type EngineCommandMessage } from "../shared/engine";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
+import type { MusicKeyCommand } from "./musicKeyFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -18,9 +19,11 @@ const PACKAGED: TrustedRenderer = { fileUrl: FILE_URL };
 const DEV: TrustedRenderer = { devServerUrl: "http://localhost:5173/", fileUrl: FILE_URL };
 const APP_FRAME: SenderFrame = { url: FILE_URL, isTopFrame: true, isAppWindow: true };
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
+const MUSIC_KEY = "test-rapidapi-key-0000";
 
 function routesSpy() {
   const mainOnly: KeyCommand[] = [];
+  const musicKey: MusicKeyCommand[] = [];
   const settings: SettingsCommand[] = [];
   const importPhoto: ImportPhotoCommand[] = [];
   const engine: EngineCommandMessage[] = [];
@@ -28,6 +31,10 @@ function routesSpy() {
     mainOnly: async (command) => {
       mainOnly.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { stored: false, last4: null, encryptionAvailable: true, rejected: false } };
+    },
+    musicKey: async (command) => {
+      musicKey.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { stored: false, last4: null, rejected: false } };
     },
     settings: async (command) => {
       settings.push(command);
@@ -42,7 +49,7 @@ function routesSpy() {
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, settings, importPhoto, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -186,6 +193,47 @@ describe("handleRendererRequest", () => {
     expect(engine).toEqual([]);
   });
 
+  test("the music key commands are handled by main's music key route and never forwarded", async () => {
+    const { routes, mainOnly, musicKey, engine } = routesSpy();
+    await handleRendererRequest(command("settings.setMusicKey", { key: MUSIC_KEY }), APP_FRAME, PACKAGED, routes);
+    await handleRendererRequest(command("settings.clearMusicKey", {}, "cmd-00000002"), APP_FRAME, PACKAGED, routes);
+    expect(musicKey.map((c) => c.type)).toEqual(["settings.setMusicKey", "settings.clearMusicKey"]);
+    expect(mainOnly).toEqual([]);
+    expect(engine).toEqual([]);
+  });
+
+  test("the music key reaches its route trimmed, as parsed", async () => {
+    const { routes, musicKey } = routesSpy();
+    await handleRendererRequest(command("settings.setMusicKey", { key: `  ${MUSIC_KEY}\n` }), APP_FRAME, PACKAGED, routes);
+    expect(musicKey[0]?.payload).toEqual({ key: MUSIC_KEY });
+  });
+
+  test.each([
+    ["holding a space", "test-rapidapi key-0000"],
+    ["holding a control character", "test-rapidapi\u0007key-0000"],
+    ["too short", "abc"],
+    ["not a string", 12345678],
+  ])("a music key %s is refused with VALIDATION before any route runs, and is not echoed", async (_label, key) => {
+    const { routes, mainOnly, musicKey, engine } = routesSpy();
+    const response = await handleRendererRequest(command("settings.setMusicKey", { key }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(JSON.stringify(response)).not.toContain("rapidapi");
+    expect([mainOnly, musicKey, engine]).toEqual([[], [], []]);
+  });
+
+  test("a music key route that throws becomes INTERNAL without the error's text", async () => {
+    const { routes } = routesSpy();
+    const throwing: RequestRoutes = {
+      ...routes,
+      musicKey: async () => {
+        throw new Error(`disk full while writing ${MUSIC_KEY}`);
+      },
+    };
+    const response = await handleRendererRequest(command("settings.setMusicKey", { key: MUSIC_KEY }), APP_FRAME, PACKAGED, throwing);
+    expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    expect(JSON.stringify(response)).not.toContain(MUSIC_KEY);
+  });
+
   test("avatars.pickImportPhoto is handled by main and never forwarded to the engine", async () => {
     const { routes, importPhoto, engine } = routesSpy();
     await handleRendererRequest(command("avatars.pickImportPhoto", {}), APP_FRAME, PACKAGED, routes);
@@ -249,6 +297,9 @@ describe("handleRendererRequest", () => {
     const routes: RequestRoutes = {
       mainOnly: async () => {
         throw new Error(`disk full while writing ${KEY}`);
+      },
+      musicKey: async () => {
+        throw new Error("unreachable");
       },
       settings: async () => {
         throw new Error("unreachable");

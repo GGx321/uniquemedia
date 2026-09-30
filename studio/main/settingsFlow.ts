@@ -6,6 +6,7 @@ import {
   type CommandMessage,
   type EngineCommandMessage,
   type EngineError,
+  type MusicKeyStatus,
   type ResponseMessage,
   type Settings,
 } from "../shared/engine";
@@ -47,6 +48,8 @@ export interface SettingsFlowDeps {
   pickFolder(defaultPath: string): Promise<string | null>;
   /** Main's view of the key, for an answer when the engine cannot give its own. */
   keyStatus(): ApiKeyStatus;
+  /** Main's view of the RapidAPI key, for the same fallback. */
+  musicKeyStatus(): MusicKeyStatus;
   newId(): string;
 }
 
@@ -97,7 +100,7 @@ async function nextSettings(command: SettingsCommand, deps: SettingsFlowDeps): P
 async function reportedSettings(deps: SettingsFlowDeps): Promise<Settings> {
   const response = await deps.engine.request({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "command", type: "settings.get", payload: {} });
   if (response.ok && response.type === "settings.get") return response.result;
-  return { apiKey: deps.keyStatus(), ...deps.settings.current };
+  return { apiKey: deps.keyStatus(), musicKey: deps.musicKeyStatus(), ...deps.settings.current };
 }
 
 /**

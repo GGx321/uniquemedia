@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, redactSecrets, SafeText } from "./primitives";
+import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey, redactSecrets, SafeText } from "./primitives";
 
 describe("Id", () => {
   test.each(["abcdefgh", "a1b2c3d4-e5f6", "0".repeat(64), crypto.randomUUID()])(
@@ -113,6 +113,43 @@ describe("ApiKey", () => {
     ["over 256 chars", "a".repeat(257)],
   ])("rejects a key that is %s", (_label, key) => {
     expect(ApiKey.safeParse(key).success).toBe(false);
+  });
+});
+
+describe("MusicKey", () => {
+  const FAKE = "test-rapidapi-key-0000";
+
+  test("accepts a RapidAPI-shaped key", () => {
+    expect(MusicKey.safeParse(`${"0a".repeat(25)}p1jsn`).success).toBe(true);
+  });
+
+  test("trims the whitespace around a pasted key", () => {
+    expect(MusicKey.parse(`  ${FAKE}\n`)).toBe(FAKE);
+  });
+
+  test.each([
+    ["empty", ""],
+    ["only whitespace", "   \t "],
+    ["shorter than 8 chars", "abc1234"],
+    ["whitespace inside", "test-rapidapi key-0000"],
+    ["a tab inside", "test-rapidapi\tkey-0000"],
+    ["a newline inside", "test-rapidapi\nkey-0000"],
+    ["a NUL byte", "test-rapidapi\0key-0000"],
+    ["an escape character", "test-rapidapi\u001bkey-0000"],
+    ["non-ASCII", "test-rapidapi-ключ-0000"],
+    ["over 256 chars", "a".repeat(257)],
+  ])("rejects a key that is %s", (_label, key) => {
+    expect(MusicKey.safeParse(key).success).toBe(false);
+  });
+
+  test("accepts exactly 256 chars and exactly 8 chars", () => {
+    expect(MusicKey.safeParse("a".repeat(256)).success).toBe(true);
+    expect(MusicKey.safeParse("a".repeat(8)).success).toBe(true);
+  });
+
+  test("a rejection never echoes the key", () => {
+    const result = MusicKey.safeParse("test-rapidapi key-0000");
+    expect(JSON.stringify(result)).not.toContain("key-0000");
   });
 });
 

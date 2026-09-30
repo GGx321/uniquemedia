@@ -1,6 +1,7 @@
 import {
   AvatarDescriptor,
   type ApiKeyStatus,
+  type MusicKeyStatus,
   type AvatarStatus,
   type AvatarSummary,
   type AvatarTraits,
@@ -147,6 +148,7 @@ export interface MockEngineOptions {
   /** Time between a candidate job's progress steps. */
   stepMs?: number;
   apiKey?: ApiKeyStatus;
+  musicKey?: MusicKeyStatus;
   eventCapacity?: number;
   avatars?: AvatarSummary[];
   drafts?: Draft[];
@@ -424,6 +426,7 @@ export class MockEngine implements EngineBridge {
     this.encryptionAvailable = apiKey.encryptionAvailable;
     this.settings = {
       apiKey,
+      musicKey: options.musicKey ?? { stored: false, last4: null, rejected: false },
       monthlyBudgetMicros: options.money?.monthlyBudgetMicros ?? 10_000_000,
       libraryPath: "/Users/studio/Studio/library",
       imageModel: "x-ai/grok-imagine-image-2.0",
@@ -522,6 +525,13 @@ export class MockEngine implements EngineBridge {
     for (const job of this.runJobs.filter((j) => j.status === "queued" || j.status === "running")) {
       this.failRunJob(job, { code: "AUTH_INVALID" });
     }
+  }
+
+  /** The mock's flashapi answered 401: the music key is marked rejected until it is replaced or cleared. */
+  rejectMusicKey(): void {
+    if (!this.settings.musicKey.stored) return;
+    this.settings = { ...this.settings, musicKey: { ...this.settings.musicKey, rejected: true } };
+    this.emitSettingsChanged();
   }
 
   setEncryptionAvailable(available: boolean): void {
@@ -779,6 +789,19 @@ export class MockEngine implements EngineBridge {
         this.settings = { ...this.settings, apiKey };
         this.emitSettingsChanged();
         return this.ok(c, apiKey);
+      }
+      case "settings.setMusicKey": {
+        if (!this.encryptionAvailable) return this.fail(c, { code: "ENCRYPTION_UNAVAILABLE" });
+        const musicKey: MusicKeyStatus = { stored: true, last4: c.payload.key.slice(-4), rejected: false };
+        this.settings = { ...this.settings, musicKey };
+        this.emitSettingsChanged();
+        return this.ok(c, musicKey);
+      }
+      case "settings.clearMusicKey": {
+        const musicKey: MusicKeyStatus = { stored: false, last4: null, rejected: false };
+        this.settings = { ...this.settings, musicKey };
+        this.emitSettingsChanged();
+        return this.ok(c, musicKey);
       }
       case "settings.setBudget":
         this.settings = { ...this.settings, monthlyBudgetMicros: c.payload.monthlyBudgetMicros };

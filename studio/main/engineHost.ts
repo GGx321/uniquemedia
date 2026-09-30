@@ -78,6 +78,8 @@ export interface EngineHostDeps<Transfer> {
   init(): Promise<EngineInit>;
   /** The decrypted key, handed over after every (re)start; null when none is stored. */
   apiKey(): Promise<string | null>;
+  /** The decrypted RapidAPI (music) key, handed over the same way after the OpenRouter key; null when none is stored. */
+  musicKey(): Promise<string | null>;
   onEvent(event: EventMessage): void;
   /** Surfaces an unexpected exit; `restarting` is false once the host gave up. */
   onExit(error: EngineError, restarting: boolean): void;
@@ -299,6 +301,7 @@ export class EngineHost<Transfer> {
     try {
       const init = await this.#deps.init();
       const key = await this.#deps.apiKey();
+      const musicKey = await this.#deps.musicKey();
       if (this.#phase !== "starting") return; // stopped meanwhile
       const started = this.#deps.fork();
       child = started;
@@ -308,6 +311,7 @@ export class EngineHost<Transfer> {
       local.start();
       started.postMessage(init, [remote]);
       if (key !== null) local.postMessage({ kind: "control", type: "apiKey.set", key } satisfies HostControl);
+      if (musicKey !== null) local.postMessage({ kind: "control", type: "musicKey.set", key: musicKey } satisfies HostControl);
       port = local;
     } catch (error) {
       child?.kill();

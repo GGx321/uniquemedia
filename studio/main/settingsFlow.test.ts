@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CommandMessage, ResponseMessage, type ApiKeyStatus, type EngineCommandMessage } from "../shared/engine";
+import { CommandMessage, ResponseMessage, type ApiKeyStatus, type EngineCommandMessage, type MusicKeyStatus } from "../shared/engine";
 import type { HostControl } from "../engine/control";
 import { handleSettingsCommand, isSettingsCommand, reconcileLibraryPath, type LibraryReconcileDeps, type SettingsCommand, type SettingsFlowDeps } from "./settingsFlow";
 import { loadSettings, SettingsStore } from "./settingsStore";
@@ -11,6 +11,7 @@ import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 const KEY_STATUS: ApiKeyStatus = { stored: true, last4: "wxyz", encryptionAvailable: true, rejected: false };
+const MUSIC_STATUS: MusicKeyStatus = { stored: true, last4: "0000", rejected: false };
 
 let userData = "";
 beforeEach(async () => {
@@ -52,7 +53,7 @@ async function harness(
       request: async (command) => {
         engineRequests.push(command);
         if (options.engineDown) return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "the engine is not running" } };
-        return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: { ...KEY_STATUS, rejected: true }, ...engineSettings } };
+        return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: { ...KEY_STATUS, rejected: true }, musicKey: { ...MUSIC_STATUS, rejected: true }, ...engineSettings } };
       },
       openLibrary: async (path) => {
         if (options.engineDown) return { code: "INTERNAL", detail: "the engine is not running" };
@@ -72,6 +73,7 @@ async function harness(
       return options.pick === undefined ? join(userData, "picked") : options.pick;
     },
     keyStatus: () => KEY_STATUS,
+    musicKeyStatus: () => MUSIC_STATUS,
     newId: () => `internal-${String(++n).padStart(4, "0")}`,
   };
   return { deps, store, sent, engineRequests, picks, opened, confirmed };
@@ -125,10 +127,10 @@ describe("settings.setBudget / setModels / setConcurrency", () => {
     expect(h.store.current).toMatchObject({ imageModel: "bytedance/seedream-5-pro", textModel: "x-ai/grok-5", concurrency: { network: 3 }, monthlyBudgetMicros: 10_000_000 });
   });
 
-  test("with the engine down the answer is built from main's own settings and key status", async () => {
+  test("with the engine down the answer is built from main's own settings and key statuses", async () => {
     const h = await harness({ engineDown: true });
     const response = await handleSettingsCommand(command("settings.setConcurrency", { network: 2 }), h.deps);
-    expect(response).toMatchObject({ ok: true, result: { apiKey: KEY_STATUS, concurrency: { network: 2 } } });
+    expect(response).toMatchObject({ ok: true, result: { apiKey: KEY_STATUS, musicKey: MUSIC_STATUS, concurrency: { network: 2 } } });
     expect(ResponseMessage.safeParse(response).success).toBe(true);
   });
 
@@ -299,7 +301,7 @@ describe("reconcileLibraryPath", () => {
     const deps: LibraryReconcileDeps = {
       settings: store,
       engine: {
-        request: async (c) => ({ v: PROTOCOL_VERSION, id: c.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: KEY_STATUS, ...store.current, libraryPath: enginePath } }),
+        request: async (c) => ({ v: PROTOCOL_VERSION, id: c.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: KEY_STATUS, musicKey: MUSIC_STATUS, ...store.current, libraryPath: enginePath } }),
       },
       newId: () => `internal-${String(++n).padStart(4, "0")}`,
     };

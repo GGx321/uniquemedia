@@ -29,8 +29,18 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+/** What a store treats as a key, and what it calls one in its log line; the OpenRouter key's are the defaults. */
+interface KeyRules {
+  accepts: (key: string) => boolean;
+  label: string;
+}
+
+function rulesOf(options: KeyStoreOptions): KeyRules {
+  return { accepts: options.accepts ?? ((key) => ApiKey.safeParse(key).success), label: options.label ?? "API key" };
+}
+
 /** Decrypts the stored blob; null when there is none or it cannot be read back as a key. */
-async function decryptFile(safe: SafeStorageLike, path: string): Promise<string | null> {
+async function decryptFile(safe: SafeStorageLike, path: string, rules: KeyRules): Promise<string | null> {
   let blob: Buffer;
   try {
     blob = await readFile(path);
@@ -41,10 +51,10 @@ async function decryptFile(safe: SafeStorageLike, path: string): Promise<string 
   if (!safe.isEncryptionAvailable()) return null;
   try {
     const key = safe.decryptString(blob);
-    return ApiKey.safeParse(key).success ? key : null;
+    return rules.accepts(key) ? key : null;
   } catch {
     // E.g. the keychain entry changed. The blob stays; storing a new key replaces it.
-    console.warn("studio: the stored API key could not be decrypted");
+    console.warn(`studio: the stored ${rules.label} could not be decrypted`);
     return null;
   }
 }
@@ -69,6 +79,13 @@ async function writeSecretAtomic(path: string, data: Uint8Array): Promise<void> 
 }
 
 export interface KeyStoreOptions {
+  /**
+   * What counts as a stored key, for a store of another key than OpenRouter's (the RapidAPI key's). A blob that
+   * decrypts to anything else reads as no key. Defaults to `ApiKey`.
+   */
+  accepts?: (key: string) => boolean;
+  /** How the key is named in the log line for a blob that cannot be decrypted. Defaults to "API key". */
+  label?: string;
   /** Test seam: runs inside the lock right before the blob is written. */
   beforeWrite?: () => Promise<void>;
 }
@@ -84,6 +101,7 @@ export class KeyStore {
   readonly #safe: SafeStorageLike;
   readonly #path: string;
   readonly #options: KeyStoreOptions;
+  readonly #rules: KeyRules;
   #last4: string | null;
   #tail: Promise<unknown> = Promise.resolve();
 
@@ -92,10 +110,11 @@ export class KeyStore {
     this.#path = path;
     this.#last4 = last4;
     this.#options = options;
+    this.#rules = rulesOf(options);
   }
 
   static async open(safe: SafeStorageLike, path: string, options: KeyStoreOptions = {}): Promise<KeyStore> {
-    const key = await decryptFile(safe, path);
+    const key = await decryptFile(safe, path, rulesOf(options));
     return new KeyStore(safe, path, key === null ? null : key.slice(-4), options);
   }
 
@@ -148,7 +167,7 @@ export class KeyStore {
 
   /** The plaintext for the engine on every (re)start; null when none is stored or it cannot be decrypted. */
   read(): Promise<string | null> {
-    return decryptFile(this.#safe, this.#path);
+    return decryptFile(this.#safe, this.#path, this.#rules);
   }
 }
 

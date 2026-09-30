@@ -22,6 +22,7 @@ import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
+import { handleMusicKeyCommand, musicKeyStatusOf, openMusicKeyStore } from "./musicKeyFlow";
 import { handleMediaRequest, MEDIA_SCHEME } from "./mediaProtocol";
 import { HostNotices } from "./notices";
 import { createQuitFlow } from "./quitFlow";
@@ -175,6 +176,8 @@ async function startStudio(): Promise<void> {
   const { store: settings, notice } = await SettingsStore.open(userData);
   if (notice !== null) console.warn(`studio: ${notice}`);
   const keys = await KeyStore.open(safeStorageAdapter, join(userData, SECRETS_FILE));
+  // The RapidAPI key: the same store class over its own file (S20). It reaches the engine only over its MessagePort.
+  const musicKeys = await openMusicKeyStore(safeStorageAdapter, userData);
 
   // Main's notices travel in every engine init (see HostNotices), never as events of main's own.
   const notices = new HostNotices({ newId: randomUUID, clock: Date.now });
@@ -213,6 +216,7 @@ async function startStudio(): Promise<void> {
       notices: [...notices.all],
     }),
     apiKey: () => keys.read(),
+    musicKey: () => musicKeys.read(),
     onEvent: (event) => {
       broadcast(event);
       // The engine is the source of truth about the live library: a confirm
@@ -242,12 +246,14 @@ async function startStudio(): Promise<void> {
   ipcMain.handle(CH.request, (event, raw: unknown) =>
     handleRendererRequest(raw, senderFrameOf(event), TRUSTED, {
       mainOnly: (command) => handleKeyCommand(command, { keys, engine }),
+      musicKey: (command) => handleMusicKeyCommand(command, { keys: musicKeys, engine }),
       settings: (command) =>
         handleSettingsCommand(command, {
           settings,
           engine,
           pickFolder: (defaultPath) => pickFolder(BrowserWindow.fromWebContents(event.sender), defaultPath),
           keyStatus: () => keys.status(),
+          musicKeyStatus: () => musicKeyStatusOf(musicKeys),
           newId: randomUUID,
         }),
       importPhoto: (command) =>

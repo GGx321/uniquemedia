@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, Settings, type EngineCommandMessage } from "../shared/engine";
+import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MusicKey, Settings, type EngineCommandMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
 import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
@@ -16,7 +16,7 @@ import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
  * without the API key status, which main (stored, last4) and the engine
  * (rejected) derive at run time.
  */
-export const EngineSettings = Settings.omit({ apiKey: true });
+export const EngineSettings = Settings.omit({ apiKey: true, musicKey: true });
 export type EngineSettings = z.infer<typeof EngineSettings>;
 
 /** The first message, sent through `parentPort` together with the engine's MessagePort. */
@@ -72,6 +72,12 @@ export const HostControl = z.discriminatedUnion("type", [
   /** A key the user stored (or main decrypted on engine start); replaces any previous one. */
   z.strictObject({ kind: z.literal("control"), type: z.literal("apiKey.set"), key: ApiKey }),
   z.strictObject({ kind: z.literal("control"), type: z.literal("apiKey.clear") }),
+  /**
+   * The RapidAPI (music) key: the same hand-over as the OpenRouter key's (main decrypts it on every (re)start and on
+   * a set), kept in the engine's memory for the flashapi client. Independent of `apiKey.*`.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("musicKey.set"), key: MusicKey }),
+  z.strictObject({ kind: z.literal("control"), type: z.literal("musicKey.clear") }),
   /**
    * Settings main has just persisted (and re-sent with init after a restart).
    * They are the truth: a library folder is taken only once it appears here.

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CommandMessage, type ApiKeyStatus, type EngineCommandMessage, type EventMessage, type ResponseMessage } from "../shared/engine";
+import { CommandMessage, type ApiKeyStatus, type EngineCommandMessage, type MusicKeyStatus, type EventMessage, type ResponseMessage } from "../shared/engine";
 import { isControlMessage } from "../engine/control";
 import { Engine } from "../engine/engine";
 import { openLibrary } from "../engine/library";
@@ -22,6 +22,7 @@ useNativeGlobals();
 // engine answers only after main gave up.
 
 const KEY_STATUS: ApiKeyStatus = { stored: false, last4: null, encryptionAvailable: true, rejected: false };
+const MUSIC_STATUS: MusicKeyStatus = { stored: false, last4: null, rejected: false };
 
 let dir = "";
 beforeEach(async () => {
@@ -138,6 +139,7 @@ test("a library.open main gave up on after its deadline leaves both main and the
     channel: () => ({ local: port, remote: "remote-port" }),
     init: async () => ({ kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), defaultLibraryPath: join(userData, "library"), rawDir: join(userData, "raw"), settings: settings.current, encryptionAvailable: true, notices: [] }),
     apiKey: async () => null,
+    musicKey: async () => null,
     onEvent: () => {},
     onExit: () => {},
     timers,
@@ -148,6 +150,7 @@ test("a library.open main gave up on after its deadline leaves both main and the
     engine: host,
     pickFolder: async () => join(dir, "picked"),
     keyStatus: () => KEY_STATUS,
+    musicKeyStatus: () => MUSIC_STATUS,
     newId: () => `internal-${String(++n).padStart(6, "0")}`,
   };
 
@@ -226,6 +229,7 @@ test("a library.confirm main gave up on still switches the engine; main reconcil
     channel: () => ({ local: port, remote: "remote-port" }),
     init: async () => ({ kind: "control", type: "init", ledgerPath: join(userData, "ledger.jsonl"), defaultLibraryPath: join(userData, "library"), rawDir: join(userData, "raw"), settings: settings.current, encryptionAvailable: true, notices: [] }),
     apiKey: async () => null,
+    musicKey: async () => null,
     onEvent: (e) => {
       events.push(e);
       // Exactly what main.ts's own onEvent does.
@@ -235,7 +239,7 @@ test("a library.confirm main gave up on still switches the engine; main reconcil
     timers,
   });
   await host.start();
-  const deps: SettingsFlowDeps = { settings, engine: host, pickFolder: async () => join(dir, "picked"), keyStatus: () => KEY_STATUS, newId };
+  const deps: SettingsFlowDeps = { settings, engine: host, pickFolder: async () => join(dir, "picked"), keyStatus: () => KEY_STATUS, musicKeyStatus: () => MUSIC_STATUS, newId };
 
   port.holdCalls = true;
   const answering = handleSettingsCommand(settingsCommand("settings.setLibraryPath", { path: join(dir, "picked") }, "cmd-pick-0001"), deps);

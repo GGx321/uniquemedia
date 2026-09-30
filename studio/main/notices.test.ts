@@ -95,6 +95,9 @@ async function harness() {
         mainOnly: async () => {
           throw new Error("not used");
         },
+        musicKey: async () => {
+          throw new Error("not used");
+        },
         settings: async () => {
           throw new Error("not used");
         },

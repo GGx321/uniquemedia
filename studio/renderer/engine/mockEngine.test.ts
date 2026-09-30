@@ -151,6 +151,47 @@ test("the API key never comes back, only its last four characters", async () => 
   expect(JSON.stringify(await unwrap(client.request("engine.snapshot", {})))).not.toContain("secret");
 });
 
+test("the music key starts empty, is set and cleared like the API key, and never comes back", async () => {
+  const { client, events } = makeMock();
+  expect((await unwrap(client.request("settings.get", {}))).musicKey).toEqual({ stored: false, last4: null, rejected: false });
+
+  const status = await unwrap(client.request("settings.setMusicKey", { key: "test-rapidapi-key-0000" }));
+  expect(status).toEqual({ stored: true, last4: "0000", rejected: false });
+  expect((await unwrap(client.request("settings.get", {}))).musicKey).toEqual(status);
+  expect(JSON.stringify(await unwrap(client.request("engine.snapshot", {})))).not.toContain("rapidapi");
+
+  const cleared = await unwrap(client.request("settings.clearMusicKey", {}));
+  expect(cleared).toEqual({ stored: false, last4: null, rejected: false });
+  expect(events.filter((e) => e.type === "settings.changed")).toHaveLength(2);
+});
+
+test("a music key the mock's flashapi rejected reads as rejected until it is replaced, and leaves the API key alone", async () => {
+  const { engine, client } = makeMock();
+  await unwrap(client.request("settings.setMusicKey", { key: "test-rapidapi-key-0000" }));
+  engine.rejectMusicKey();
+  const rejected = await unwrap(client.request("settings.get", {}));
+  expect(rejected.musicKey).toEqual({ stored: true, last4: "0000", rejected: true });
+  expect(rejected.apiKey.rejected).toBe(false);
+
+  await unwrap(client.request("settings.setMusicKey", { key: "test-rapidapi-key-9999" }));
+  expect((await unwrap(client.request("settings.get", {}))).musicKey).toEqual({ stored: true, last4: "9999", rejected: false });
+});
+
+test("setting the music key with encryption unavailable answers ENCRYPTION_UNAVAILABLE and stores nothing", async () => {
+  const { engine, client } = makeMock();
+  engine.setEncryptionAvailable(false);
+  const reply = await client.request("settings.setMusicKey", { key: "test-rapidapi-key-0000" });
+  expect(reply).toMatchObject({ ok: false, error: { code: "ENCRYPTION_UNAVAILABLE" } });
+  expect((await unwrap(client.request("settings.get", {}))).musicKey.stored).toBe(false);
+});
+
+test("the API key's commands leave the music key alone", async () => {
+  const { client } = makeMock();
+  await unwrap(client.request("settings.setMusicKey", { key: "test-rapidapi-key-0000" }));
+  await unwrap(client.request("settings.clearApiKey", {}));
+  expect((await unwrap(client.request("settings.get", {}))).musicKey).toEqual({ stored: true, last4: "0000", rejected: false });
+});
+
 test("a restart starts a new bootId and flags open reserves for a reconcile", async () => {
   const { engine, client, events } = makeMock();
   const { draft } = await unwrap(client.request("avatars.createDraft", { traits: DEFAULT_TRAITS, acceptedWorstMicros: 223_000 }));

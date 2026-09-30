@@ -37,6 +37,28 @@ export const ApiKeyStatus = z
     path: ["rejected"],
   });
 
+/**
+ * What the renderer may know about the RapidAPI (music) key (K24): whether one
+ * is stored, its last four chars, and whether flashapi rejected it (401).
+ * Never the key, and never the quota, which has its own source (`MusicStatus`).
+ * No `encryptionAvailable`: a set with no encryption answers ENCRYPTION_UNAVAILABLE
+ * and the OpenRouter key's status already says whether the OS can encrypt.
+ */
+export const MusicKeyStatus = z
+  .strictObject({
+    stored: z.boolean(),
+    last4: z.string().regex(/^[\x21-\x7e]{4}$/, "must be four visible chars").nullable(),
+    rejected: z.boolean(),
+  })
+  .refine((s) => s.stored === (s.last4 !== null), {
+    message: "last4 must be present exactly when a key is stored",
+    path: ["last4"],
+  })
+  .refine((s) => s.stored || !s.rejected, {
+    message: "only a stored key can be rejected",
+    path: ["rejected"],
+  });
+
 /** Parallel network requests; the queue shrinks it on 429. */
 export const NetworkConcurrency = z.number().int().min(1).max(16);
 
@@ -60,6 +82,7 @@ export const RenderConcurrency = z.union([z.literal("auto"), z.number().int().mi
 
 export const Settings = z.strictObject({
   apiKey: ApiKeyStatus,
+  musicKey: MusicKeyStatus,
   monthlyBudgetMicros: Micros,
   libraryPath: AbsolutePath,
   imageModel: ModelId,
@@ -649,6 +672,7 @@ export const PhotoSummary = z
   });
 
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
+export type MusicKeyStatus = z.infer<typeof MusicKeyStatus>;
 export type ImageAgeCheck = z.infer<typeof ImageAgeCheck>;
 export type Settings = z.infer<typeof Settings>;
 export type RenderConcurrency = z.infer<typeof RenderConcurrency>;

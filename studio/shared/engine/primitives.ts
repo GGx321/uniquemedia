@@ -41,6 +41,20 @@ export const ApiKey = z
   .max(256)
   .regex(/^[\x21-\x7e]+$/, "must be printable ASCII without spaces");
 
+/**
+ * The RapidAPI key as typed or pasted: trimmed, then 8 to 256 printable ASCII
+ * chars with no whitespace or control character inside (the trim runs first, so
+ * a pasted trailing newline is fine). Eight is the floor because the status
+ * shows the last four; the key's own format is RapidAPI's to change, so nothing
+ * finer is checked.
+ */
+export const MusicKey = z
+  .string()
+  .trim()
+  .min(8)
+  .max(256)
+  .regex(/^[\x21-\x7e]+$/, "must be printable ASCII without spaces");
+
 const SECRET_PATTERNS: [RegExp, string][] = [
   [/\b(Bearer)\s+\S+/gi, "$1 [redacted]"],
   [/sk-or-\S*/gi, "[redacted]"],

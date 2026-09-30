@@ -21,6 +21,7 @@ import type {
   EngineNotice,
   Estimate,
   MoneyStatus,
+  MusicKeyStatus,
   PhotoSummary,
   RunRequest,
   RunSummary,
@@ -37,8 +38,12 @@ const API_KEY = `sk-or-v1-${"0a".repeat(32)}`;
 
 const keyStatus: ApiKeyStatus = { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
 
+const MUSIC_KEY = "test-rapidapi-key-0000";
+const musicKeyStatus: MusicKeyStatus = { stored: true, last4: "0000", rejected: false };
+
 const settings: Settings = {
   apiKey: keyStatus,
+  musicKey: musicKeyStatus,
   monthlyBudgetMicros: 10_000_000,
   libraryPath: "/Users/alex/Studio/library",
   imageModel: "x-ai/grok-imagine-image-2.0",
@@ -221,6 +226,8 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     payload: {},
     result: { stored: false, last4: null, encryptionAvailable: true, rejected: false },
   },
+  "settings.setMusicKey": { payload: { key: MUSIC_KEY }, result: musicKeyStatus },
+  "settings.clearMusicKey": { payload: {}, result: { stored: false, last4: null, rejected: false } },
   "settings.setBudget": { payload: { monthlyBudgetMicros: 10_000_000 }, result: settings },
   "settings.setLibraryPath": { payload: { path: "/Users/alex/Studio/library" }, result: settings },
   "settings.setModels": {
@@ -368,6 +375,8 @@ describe("contract surface", () => {
         "settings.get",
         "settings.setApiKey",
         "settings.clearApiKey",
+        "settings.setMusicKey",
+        "settings.clearMusicKey",
         "settings.setBudget",
         "settings.setLibraryPath",
         "settings.setModels",
@@ -440,9 +449,16 @@ describe("contract surface", () => {
     expect(covered).toEqual(all);
   });
 
-  test("only the API key commands, the import photo dialog and «show in folder» are handled by main alone", () => {
+  test("only the key commands, the import photo dialog and «show in folder» are handled by main alone", () => {
     const actual: string[] = [...MAIN_ONLY_COMMANDS].sort();
-    expect(actual).toEqual(["avatars.pickImportPhoto", "settings.clearApiKey", "settings.setApiKey", "videos.reveal"]);
+    expect(actual).toEqual([
+      "avatars.pickImportPhoto",
+      "settings.clearApiKey",
+      "settings.clearMusicKey",
+      "settings.setApiKey",
+      "settings.setMusicKey",
+      "videos.reveal",
+    ]);
   });
 
   test("the protocol is at version 5: render jobs, video records and the Stage 3 fields", () => {
@@ -667,6 +683,16 @@ describe("results", () => {
 
   test("a settings.get response cannot smuggle the key inside apiKey", () => {
     const result = { ...settings, apiKey: { ...keyStatus, key: API_KEY } };
+    expect(parseMessage(okResponse("settings.get", result)).ok).toBe(false);
+  });
+
+  test("a settings.setMusicKey response cannot contain the key", () => {
+    const result = { ...musicKeyStatus, key: MUSIC_KEY };
+    expect(reasonOf(okResponse("settings.setMusicKey", result))).toContain("key");
+  });
+
+  test("a settings.get response cannot smuggle the key inside musicKey", () => {
+    const result = { ...settings, musicKey: { ...musicKeyStatus, key: MUSIC_KEY } };
     expect(parseMessage(okResponse("settings.get", result)).ok).toBe(false);
   });
 
@@ -933,6 +959,12 @@ describe("rejection reasons", () => {
     expect(reason).not.toContain("secret");
   });
 
+  test("never echo a submitted music key", () => {
+    const reason = reasonOf(command("settings.setMusicKey", { key: "test-rapidapi secret-0000" }));
+    expect(reason).toContain("payload.key");
+    expect(reason).not.toContain("secret");
+  });
+
   test("strip a field name that looks like a key", () => {
     const reason = reasonOf(command("settings.get", { "sk-or-v1-deadbeefcafebabe": 1 }));
     expect(reason).not.toContain("deadbeefcafebabe");
@@ -1071,6 +1103,17 @@ describe("parseEngineCommand", () => {
     const payload = type === "settings.setApiKey" ? { key: API_KEY } : {};
     const r = parseEngineCommand(command(type, payload));
     expect(r.ok ? "" : r.reason).toContain("type");
+  });
+
+  test.each(["settings.setMusicKey", "settings.clearMusicKey"])("rejects the main-only command %s", (type) => {
+    const payload = type === "settings.setMusicKey" ? { key: MUSIC_KEY } : {};
+    const r = parseEngineCommand(command(type, payload));
+    expect(r.ok ? "" : r.reason).toContain("type");
+  });
+
+  test("never echoes a music key sent to the engine by mistake", () => {
+    const r = parseEngineCommand(command("settings.setMusicKey", { key: MUSIC_KEY }));
+    expect(JSON.stringify(r)).not.toContain(MUSIC_KEY);
   });
 
   test("never echoes a key sent to the engine by mistake", () => {

@@ -10,6 +10,7 @@ import { posix, win32 } from "node:path";
 import { fileUrlToPathOn } from "./fileUrl";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
+import type { MusicKeyCommand } from "./musicKeyFlow";
 import { isSettingsCommand, type SettingsCommand } from "./settingsFlow";
 
 /** What main knows about the frame an IPC message came from (from `event.senderFrame`). */
@@ -76,6 +77,8 @@ export function isTrustedSender(frame: SenderFrame, trusted: TrustedRenderer, pl
 export interface RequestRoutes {
   /** The key commands, answered by main itself and never forwarded. */
   mainOnly(command: KeyCommand): Promise<ResponseMessage>;
+  /** The RapidAPI (music) key commands (K27), answered by main itself and never forwarded. */
+  musicKey(command: MusicKeyCommand): Promise<ResponseMessage>;
   /** Settings changes: main owns settings.json and tells the engine afterwards. */
   settings(command: SettingsCommand): Promise<ResponseMessage>;
   /**
@@ -98,6 +101,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
 
   if (MAIN_ONLY_COMMANDS.includes(message.type)) {
     if (message.type === "settings.setApiKey" || message.type === "settings.clearApiKey") return routes.mainOnly(message);
+    if (message.type === "settings.setMusicKey" || message.type === "settings.clearMusicKey") return routes.musicKey(message);
     if (message.type === "avatars.pickImportPhoto") return routes.importPhoto(message);
     return errorResponseFor(message, { code: "INTERNAL", detail: `${message.type} has no handler in main` });
   }

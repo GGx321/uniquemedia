@@ -4,7 +4,7 @@ import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
 import { MAX_CLIPS, Montage, MontageShape } from "./montage";
-import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId } from "./primitives";
+import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
   ApiKeyStatus,
@@ -16,6 +16,7 @@ import {
   ImageAgeCheck,
   JobState,
   MoneyStatus,
+  MusicKeyStatus,
   NetworkConcurrency,
   PhotoSummary,
   ReconcileResult,
@@ -155,6 +156,10 @@ const AcceptedWorst = { acceptedWorstMicros: Micros };
 const MAIN_ONLY_SPECS = [
   defineCommand("settings.setApiKey", z.strictObject({ key: ApiKey }), ApiKeyStatus),
   defineCommand("settings.clearApiKey", Empty, ApiKeyStatus),
+  // Stage 3 (3c.2, K27): the RapidAPI key, in its own KeyStore. The renderer can set and clear it and never read it
+  // back; there is no check command (Q4), since a check would spend one of the 30 requests.
+  defineCommand("settings.setMusicKey", z.strictObject({ key: MusicKey }), MusicKeyStatus),
+  defineCommand("settings.clearMusicKey", Empty, MusicKeyStatus),
   // T6c (import an existing avatar): the renderer asks main to open its own
   // native file dialog and read the picked photo (design constraint 1) — an
   // empty payload, exactly like settings.setLibraryPath's dialog is never

@@ -11,6 +11,7 @@ import {
   parseEngineCommand,
   PROTOCOL_VERSION,
   type ApiKeyStatus,
+  type MusicKeyStatus,
   type AvatarSummary,
   type CommandPayload,
   type Draft,
@@ -468,6 +469,10 @@ export class Engine {
   readonly #opening = new Map<string, Promise<{ library: Library; unreadable: UnreadableAvatar[] }>>();
   /** Set by a 401 with the current key; a new key clears it. */
   #keyRejected = false;
+  /** The RapidAPI key, in memory only (invariant 29); main hands it over on every start and on a set. */
+  #musicKey: string | null = null;
+  /** Set by a 401 with the current music key (3c.3's client); a new key clears it. */
+  #musicKeyRejected = false;
   /** Main's notices, oldest first; pending for this engine's life. */
   readonly #notices: EngineNotice[] = [];
   /** Avatar records already reported as not fitting the contract, so each is logged once. */
@@ -663,6 +668,22 @@ export class Engine {
     if (this.#apiKey === null || this.#apiKey !== rejectedKey || this.#keyRejected) return;
     this.#keyRejected = true;
     this.#emitSettings();
+  }
+
+  /**
+   * For the flashapi client (3c.3) on a 401 with `rejectedKey`, the key that request carried: the music key is
+   * marked rejected until it is replaced or cleared, and `settings.changed` is emitted once. Like
+   * `markKeyRejected`, a 401 for a key the user has replaced meanwhile changes nothing.
+   */
+  markMusicKeyRejected(rejectedKey: string): void {
+    if (this.#musicKey === null || this.#musicKey !== rejectedKey || this.#musicKeyRejected) return;
+    this.#musicKeyRejected = true;
+    this.#emitSettings();
+  }
+
+  /** The RapidAPI key the flashapi client will use; never sent anywhere but flashapi. */
+  get musicKey(): string | null {
+    return this.#musicKey;
   }
 
   /** The OpenRouter API base for the client: always the real one outside an E2E build. */
@@ -863,6 +884,16 @@ export class Engine {
       case "apiKey.clear":
         this.#apiKey = null;
         this.#keyRejected = false;
+        this.#emitSettings();
+        return;
+      case "musicKey.set":
+        this.#musicKey = control.key;
+        this.#musicKeyRejected = false;
+        this.#emitSettings();
+        return;
+      case "musicKey.clear":
+        this.#musicKey = null;
+        this.#musicKeyRejected = false;
         this.#emitSettings();
         return;
       case "settings.update": {
@@ -2446,6 +2477,11 @@ export class Engine {
     return money.budget;
   }
 
+  #musicKeyStatus(): MusicKeyStatus {
+    const key = this.#musicKey;
+    return { stored: key !== null, last4: key === null ? null : key.slice(-4), rejected: key !== null && this.#musicKeyRejected };
+  }
+
   #apiKeyStatus(): ApiKeyStatus {
     const key = this.#apiKey;
     return {
@@ -2615,7 +2651,7 @@ export class Engine {
   }
 
   #currentSettings(): Settings {
-    return { apiKey: this.#apiKeyStatus(), ...this.#settings };
+    return { apiKey: this.#apiKeyStatus(), musicKey: this.#musicKeyStatus(), ...this.#settings };
   }
 
   #moneyStatus(): MoneyStatus {

@@ -11,6 +11,7 @@ import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
+const MUSIC_KEY = "test-rapidapi-key-0000";
 
 const INIT: EngineInit = {
   kind: "control",
@@ -111,7 +112,7 @@ class FakeTimers {
   }
 }
 
-function setup(options: { key?: () => string | null; fork?: () => FakeChild; init?: () => Promise<EngineInit> } = {}) {
+function setup(options: { key?: () => string | null; musicKey?: () => string | null; fork?: () => FakeChild; init?: () => Promise<EngineInit> } = {}) {
   const children: FakeChild[] = [];
   const ports: FakePort[] = [];
   const events: EventMessage[] = [];
@@ -130,6 +131,7 @@ function setup(options: { key?: () => string | null; fork?: () => FakeChild; ini
     },
     init: options.init ?? (async () => INIT),
     apiKey: async () => (options.key ? options.key() : null),
+    musicKey: async () => (options.musicKey ? options.musicKey() : null),
     onEvent: (event) => events.push(event),
     onExit: (error, restarting) => exits.push({ error, restarting }),
     timers,
@@ -153,6 +155,7 @@ function settingsResponse(id: string, last4: string | null = null): ResponseMess
     ok: true,
     result: {
       apiKey: { stored: last4 !== null, last4, encryptionAvailable: true, rejected: false },
+      musicKey: { stored: false, last4: null, rejected: false },
       ...INIT.settings,
     },
   };
@@ -166,6 +169,22 @@ describe("startup", () => {
     expect(children[0]?.posted).toEqual([{ message: INIT, transfer: ["remote-port-1"] }]);
     expect(ports[0]?.started).toBe(true);
     expect(ports[0]?.posted).toEqual([{ kind: "control", type: "apiKey.set", key: KEY }]);
+  });
+
+  test("sends the music key over the port after the OpenRouter key, and never with init", async () => {
+    const { host, children, ports } = setup({ key: () => KEY, musicKey: () => MUSIC_KEY });
+    await host.start();
+    expect(ports[0]?.posted).toEqual([
+      { kind: "control", type: "apiKey.set", key: KEY },
+      { kind: "control", type: "musicKey.set", key: MUSIC_KEY },
+    ]);
+    expect(JSON.stringify(children[0]?.posted)).not.toContain(MUSIC_KEY);
+  });
+
+  test("a music key alone is sent without any OpenRouter key", async () => {
+    const { host, ports } = setup({ musicKey: () => MUSIC_KEY });
+    await host.start();
+    expect(ports[0]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC_KEY }]);
   });
 
   test("without a stored key nothing but init is sent, and the key never travels with init", async () => {
@@ -295,6 +314,16 @@ describe("restart policy", () => {
     expect(ports[1]?.posted).toEqual([{ kind: "control", type: "apiKey.set", key: "sk-or-v1-rotated-key-9876" }]);
   });
 
+  test("the music key is re-sent to the restarted engine, and the current one, not the one it had", async () => {
+    let musicKey: string | null = MUSIC_KEY;
+    const { host, children, ports, endBackoff } = setup({ musicKey: () => musicKey });
+    await host.start();
+    children[0]?.crash(9);
+    musicKey = "test-rapidapi-key-9999";
+    await endBackoff();
+    expect(ports[1]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: "test-rapidapi-key-9999" }]);
+  });
+
   test("commands sent during the backoff go to the restarted engine", async () => {
     const { host, children, ports, endBackoff } = setup();
     await host.start();
@@ -366,6 +395,39 @@ describe("key control messages", () => {
     host.send({ kind: "control", type: "apiKey.clear" });
     await endBackoff();
     expect(ports[1]?.posted).toEqual([{ kind: "control", type: "apiKey.clear" }]);
+  });
+
+  test("a music key set during a restart is read from the store and queued after it, so the new engine gets it once at least", async () => {
+    let musicKey: string | null = null;
+    const { host, children, ports, endBackoff } = setup({ musicKey: () => musicKey });
+    await host.start();
+    children[0]?.crash(1);
+    musicKey = MUSIC_KEY;
+    host.send({ kind: "control", type: "musicKey.set", key: MUSIC_KEY });
+    await endBackoff();
+    expect(ports[1]?.posted.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: MUSIC_KEY });
+  });
+
+  test("a music key cleared during a restart is not brought back by the new engine", async () => {
+    let musicKey: string | null = MUSIC_KEY;
+    const { host, children, ports, endBackoff } = setup({ musicKey: () => musicKey });
+    await host.start();
+    children[0]?.crash(1);
+    musicKey = null;
+    host.send({ kind: "control", type: "musicKey.clear" });
+    await endBackoff();
+    expect(ports[1]?.posted).toEqual([{ kind: "control", type: "musicKey.clear" }]);
+  });
+
+  test("music key controls go straight to a running engine", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    host.send({ kind: "control", type: "musicKey.set", key: MUSIC_KEY });
+    host.send({ kind: "control", type: "musicKey.clear" });
+    expect(ports[0]?.posted).toEqual([
+      { kind: "control", type: "musicKey.set", key: MUSIC_KEY },
+      { kind: "control", type: "musicKey.clear" },
+    ]);
   });
 
   test("are dropped once the engine is gone for good", async () => {

@@ -12,6 +12,7 @@ import {
   JobProgress,
   JobState,
   MoneyStatus,
+  MusicKeyStatus,
   PhotoSummary,
   ReconcileResult,
   RunRequest,
@@ -22,8 +23,11 @@ import {
 
 const keyStatus = { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
 
+const musicKeyStatus = { stored: true, last4: "0000", rejected: false };
+
 const settings = {
   apiKey: keyStatus,
+  musicKey: musicKeyStatus,
   monthlyBudgetMicros: 10_000_000,
   libraryPath: "/Users/alex/Studio/library",
   imageModel: "x-ai/grok-imagine-image-2.0",
@@ -215,9 +219,60 @@ describe("ApiKeyStatus", () => {
   });
 });
 
+describe("MusicKeyStatus", () => {
+  test("accepts a stored key described only by its last four chars", () => {
+    expect(MusicKeyStatus.safeParse(musicKeyStatus).success).toBe(true);
+  });
+
+  test("accepts no stored key with a null last4", () => {
+    expect(MusicKeyStatus.safeParse({ stored: false, last4: null, rejected: false }).success).toBe(true);
+  });
+
+  test("accepts a stored key that flashapi rejected with 401", () => {
+    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, rejected: true }).success).toBe(true);
+  });
+
+  test("rejects a rejected flag without a stored key", () => {
+    expect(MusicKeyStatus.safeParse({ stored: false, last4: null, rejected: true }).success).toBe(false);
+  });
+
+  test("rejects a stored key without last4", () => {
+    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, last4: null }).success).toBe(false);
+  });
+
+  test("rejects last4 when no key is stored", () => {
+    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, stored: false }).success).toBe(false);
+  });
+
+  test.each(["000", "00000", "00 0"])("rejects last4 %p that is not four visible chars", (last4) => {
+    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, last4 }).success).toBe(false);
+  });
+
+  test("rejects a status that carries the key itself", () => {
+    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, key: "test-rapidapi-key-0000" }).success).toBe(false);
+  });
+
+  test("rejects a status with the quota in it: K24 keeps the quota in MusicStatus", () => {
+    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, sentLast31d: 3 }).success).toBe(false);
+  });
+
+  test("has no encryptionAvailable: that one lives on the OpenRouter key's status", () => {
+    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, encryptionAvailable: true }).success).toBe(false);
+  });
+});
+
 describe("Settings", () => {
   test("accepts the defaults", () => {
     expect(Settings.safeParse(settings).success).toBe(true);
+  });
+
+  test("rejects settings without the music key status", () => {
+    const { musicKey: _m, ...without } = settings;
+    expect(Settings.safeParse(without).success).toBe(false);
+  });
+
+  test("rejects a music key status that smuggles the key", () => {
+    expect(Settings.safeParse({ ...settings, musicKey: { ...musicKeyStatus, key: "test-rapidapi-key-0000" } }).success).toBe(false);
   });
 
   test("rejects a float budget", () => {
