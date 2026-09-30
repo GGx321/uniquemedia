@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "bun:test";
@@ -11,7 +10,7 @@ import { ffmpegPath } from "../node/ffmpegBinary";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { servedPoolImagePng } from "./distinctPattern";
 import { faceModelPaths } from "./faceModelCache";
-import { FACE_FIXTURE_PATH, facePoolImagePng } from "./facePool";
+import { describeFfmpegRun, FACE_FIXTURE_PATH, facePoolImagePngBounded, runFfmpegBounded } from "./facePool";
 useNativeGlobals();
 
 // T7a (merging soon): an always-on PDQ near-duplicate gate on photo runs,
@@ -35,10 +34,12 @@ const POOL_SIZE = 48;
 const MIN_HAMMING_DISTANCE = 40;
 const HASH_SIZE = 64;
 /**
- * One decode is tens of milliseconds; the bound only has to fit a heavily loaded Windows runner. A decode once failed
- * there with no message; it first read as a 30 s timeout, but the log shows ffmpeg failing about 22 ms after it
- * started, so the cause is unknown (a spawn error or a crash, not a timeout). The diagnostics in `decodeServedGray64`
- * name it if it happens again.
+ * One decode is tens of milliseconds; the bound only has to fit a heavily loaded Windows runner. On that runner
+ * ffmpeg calls made through `spawnSync(..., { timeout })` failed twice with no message: a decode about 22 ms after
+ * it started, and a face pool composite that ended ETIMEDOUT with SIGTERM about 16 ms into a 30 s bound. A timeout
+ * that fires after milliseconds is not a slow run, so the cause is unknown, and the native `spawnSync` timeout is
+ * the suspect. These helpers run ffmpeg through `runFfmpegBounded` (our own timer, never the native one), and a
+ * failure reports the exit code, signal, spawn error and elapsed time.
  */
 const DECODE_TIMEOUT_MS = 120_000;
 
@@ -47,34 +48,59 @@ const DECODE_TIMEOUT_MS = 120_000;
  * `scale=64:64:flags=area,format=gray`, raw 8-bit grayscale out — the same
  * `ffmpegPath()` every other studio test and the engine itself uses
  * (studio/node/ffmpegBinary.ts), never a stand-in. A missing or broken
- * ffmpeg fails this test loudly (spawnSync's own non-zero status, thrown
- * below), never a silent skip: the whole point of this test is proving the
- * real pipeline, and a skip would prove nothing at all.
+ * ffmpeg fails this test loudly (the non-zero run, thrown below), never a
+ * silent skip: the whole point of this test is proving the real pipeline,
+ * and a skip would prove nothing at all.
  */
-function decodeServedGray64(png: Uint8Array): Uint8Array {
-  const result = spawnSync(
-    ffmpegPath(),
+async function decodeServedGray64(png: Uint8Array): Promise<Uint8Array> {
+  const run = await runFfmpegBounded(
     ["-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0", "-vf", "scale=64:64:flags=area,format=gray", "-f", "rawvideo", "-frames:v", "1", "pipe:1"],
-    { input: Buffer.from(png), timeout: DECODE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+    png,
+    DECODE_TIMEOUT_MS,
   );
-  if (result.status !== 0) {
-    // An empty stderr with a null status is a spawn that never ran to its end (timeout, ENOBUFS, a spawn error, a signal): say which.
-    const code = result.error !== undefined && "code" in result.error ? String(result.error.code) : "none";
-    const how = `error ${code}${result.error === undefined ? "" : ` (${result.error.message})`}, status ${String(result.status)}, signal ${String(result.signal)}`;
-    throw new Error(`ffmpeg (${ffmpegPath()}) could not decode a pool image the way the PDQ gate will: ${how}; stderr: ${result.stderr?.toString() ?? ""}`);
+  if (run.code !== 0) {
+    throw new Error(`ffmpeg (${ffmpegPath()}) could not decode a pool image the way the PDQ gate will: ${describeFfmpegRun(run)}`);
   }
-  const gray = new Uint8Array(result.stdout);
+  const gray = new Uint8Array(run.stdout);
   if (gray.length !== HASH_SIZE * HASH_SIZE) {
     throw new Error(`expected a ${HASH_SIZE}x${HASH_SIZE} raw grayscale frame (${HASH_SIZE * HASH_SIZE} bytes), got ${gray.length}`);
   }
   return gray;
 }
 
+/** The PDQ hashes of these served images, decoded one at a time (in sequence: the run must not add load of its own to a slow runner). */
+async function hashesOf(pngs: readonly Uint8Array[]): Promise<Uint8Array[]> {
+  const hashes: Uint8Array[] = [];
+  for (const png of pngs) hashes.push(computePdqHash(await decodeServedGray64(png)));
+  return hashes;
+}
+
+describe("runFfmpegBounded", () => {
+  test("kills a run that outlasts its own bound and reports it as timed out, with the elapsed time", async () => {
+    const run = await runFfmpegBounded(["-hide_banner", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=30", "-f", "null", "-"], new Uint8Array(), 400);
+    expect(run.timedOut).toBe(true);
+    expect(run.code).not.toBe(0);
+    expect(run.elapsedMs).toBeGreaterThanOrEqual(350);
+    expect(run.elapsedMs).toBeLessThan(10_000);
+    expect(describeFfmpegRun(run)).toContain("timed out after");
+  });
+
+  test("reports a failed run's exit code and stderr, and a good run's output", async () => {
+    const bad = await runFfmpegBounded(["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-f", "null", "-"], Uint8Array.of(1, 2, 3, 4), 30_000);
+    expect(bad.timedOut).toBe(false);
+    expect(bad.code).not.toBe(0);
+    expect(bad.stderr.length).toBeGreaterThan(0);
+    const good = await runFfmpegBounded(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=8x8", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"], new Uint8Array(), 30_000);
+    expect(good.code).toBe(0);
+    expect(good.stdout.length).toBe(64);
+  });
+});
+
 describe("the served pool is PDQ-distinct through the real gate pipeline", () => {
   // In a hook, not the describe body: a decode that fails there is a named failure, not a load error that hides which test it belongs to.
   let hashes: Uint8Array[] = [];
-  beforeAll(() => {
-    hashes = Array.from({ length: POOL_SIZE }, (_, index) => computePdqHash(decodeServedGray64(servedPoolImagePng(index))));
+  beforeAll(async () => {
+    hashes = await hashesOf(Array.from({ length: POOL_SIZE }, (_, index) => servedPoolImagePng(index)));
   }, 300_000);
 
   test("every hash is PDQ's own 32 bytes (256 bits)", () => {
@@ -113,12 +139,13 @@ describe("the composited (face + PDQ-distinct background) pool the E2E smoke's f
   // In a hook, not the describe body: an ffmpeg call there runs at collection time, and its failure is an "Unhandled
   // error between tests" that names no test and prints no `(fail)` line.
   let composites: Uint8Array[] = [];
-  beforeAll(() => {
-    composites = Array.from({ length: COMPOSITE_COUNT }, (_, i) => facePoolImagePng(i));
+  beforeAll(async () => {
+    composites = [];
+    for (let i = 0; i < COMPOSITE_COUNT; i++) composites.push(await facePoolImagePngBounded(i));
   }, 300_000);
 
-  test(`every pair of ${COMPOSITE_COUNT} composited images is > ${MIN_HAMMING_DISTANCE} bits apart, decoded through the real gate pipeline`, () => {
-    const hashes = composites.map((png) => computePdqHash(decodeServedGray64(png)));
+  test(`every pair of ${COMPOSITE_COUNT} composited images is > ${MIN_HAMMING_DISTANCE} bits apart, decoded through the real gate pipeline`, async () => {
+    const hashes = await hashesOf(composites);
     const tooClose: { i: number; j: number; distance: number }[] = [];
     for (let i = 0; i < hashes.length; i++) {
       for (let j = i + 1; j < hashes.length; j++) {

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { MASTER } from "../engine/face/fixtures/expected";
 import { ffmpegPath } from "../node/ffmpegBinary";
@@ -42,6 +42,80 @@ function spawnFailure(result: ReturnType<typeof spawnSync>): string {
   return `error ${code}${error}, status ${String(result.status)}, signal ${String(result.signal)}; stderr: ${result.stderr?.toString() ?? ""}`;
 }
 
+export interface FfmpegRun {
+  stdout: Buffer;
+  stderr: string;
+  /** The exit code, or null when the process was killed or never ran. */
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** The spawn error's code (`ENOENT`, `EPIPE`, ...), when there was one. */
+  errorCode: string | undefined;
+  timedOut: boolean;
+  elapsedMs: number;
+}
+
+/**
+ * Runs ffmpeg with `input` on its stdin, bounded by our OWN timer: past `timeoutMs` the child is killed and the run
+ * says so. Used by the tests, instead of `spawnSync(..., { timeout })`, whose native timeout ended a face pool
+ * composite with ETIMEDOUT about 16 ms into a 30 s bound on Windows CI. Never rejects: the caller reads `code`,
+ * `signal`, `errorCode`, `timedOut` and `elapsedMs` and reports them (`describeFfmpegRun`).
+ */
+export function runFfmpegBounded(args: readonly string[], input: Uint8Array, timeoutMs: number): Promise<FfmpegRun> {
+  return new Promise((resolve) => {
+    const started = performance.now();
+    const child = spawn(ffmpegPath(), [...args], { stdio: ["pipe", "pipe", "pipe"] });
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    let timedOut = false;
+    let errorCode: string | undefined;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout.on("data", (d: Buffer) => out.push(d));
+    child.stderr.on("data", (d: Buffer) => err.push(d));
+    // An ffmpeg that stops reading early closes stdin under us (EPIPE): that is a fact about the run, not a crash of this helper.
+    child.stdin.on("error", (e: NodeJS.ErrnoException) => {
+      errorCode ??= e.code ?? e.message;
+    });
+    child.on("error", (e: NodeJS.ErrnoException) => {
+      errorCode ??= e.code ?? e.message;
+    });
+    // `close`, not `exit`: the output is complete once the pipes have closed.
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString(), code, signal, errorCode, timedOut, elapsedMs: performance.now() - started });
+    });
+    child.stdin.end(Buffer.from(input));
+  });
+}
+
+/** One line for a failed run: what happened and how long it took, so a failure names its own cause. */
+export function describeFfmpegRun(run: FfmpegRun): string {
+  return `${run.timedOut ? "timed out" : "ended"} after ${Math.round(run.elapsedMs)} ms, exit code ${String(run.code)}, signal ${String(run.signal)}, error ${run.errorCode ?? "none"}; stderr: ${run.stderr}`;
+}
+
+function compositeArgs(faceImagePath: string, format: "png" | "jpeg"): string[] {
+  return [
+    "-hide_banner",
+    "-loglevel", "error",
+    "-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0",
+    "-i", faceImagePath,
+    "-filter_complex", `[1:v]scale=${FACE_PATCH_WIDTH}:${FACE_PATCH_HEIGHT}[face];[0:v][face]overlay=${FACE_PATCH_X}:${FACE_PATCH_Y}`,
+    "-frames:v", "1",
+    "-f", "image2pipe", "-c:v", format === "jpeg" ? "mjpeg" : "png",
+    ...(format === "jpeg" ? ["-q:v", "3"] : []),
+    "pipe:1",
+  ];
+}
+
+/** `facePoolImagePng` for the tests: the same composite, run through `runFfmpegBounded`, so a failure carries its code, signal and elapsed time. */
+export async function facePoolImagePngBounded(index: number, faceImagePath: string = FACE_FIXTURE_PATH, format: "png" | "jpeg" = "png", timeoutMs = 60_000): Promise<Uint8Array> {
+  const run = await runFfmpegBounded(compositeArgs(faceImagePath, format), servedPoolImagePng(index), timeoutMs);
+  if (run.code !== 0) throw new Error(`ffmpeg (${ffmpegPath()}) could not composite a face pool image (index ${index}): ${describeFfmpegRun(run)}`);
+  return new Uint8Array(run.stdout);
+}
+
 /**
  * Composites `faceImagePath` (a real image file on disk — this runs only in
  * the harness/test process, never in the engine, so a plain ffmpeg file
@@ -54,17 +128,7 @@ function spawnFailure(result: ReturnType<typeof spawnSync>): string {
  */
 export function facePoolImagePng(index: number, faceImagePath: string = FACE_FIXTURE_PATH, format: "png" | "jpeg" = "png"): Uint8Array {
   const background = servedPoolImagePng(index);
-  const args = [
-    "-hide_banner",
-    "-loglevel", "error",
-    "-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0",
-    "-i", faceImagePath,
-    "-filter_complex", `[1:v]scale=${FACE_PATCH_WIDTH}:${FACE_PATCH_HEIGHT}[face];[0:v][face]overlay=${FACE_PATCH_X}:${FACE_PATCH_Y}`,
-    "-frames:v", "1",
-    "-f", "image2pipe", "-c:v", format === "jpeg" ? "mjpeg" : "png",
-    ...(format === "jpeg" ? ["-q:v", "3"] : []),
-    "pipe:1",
-  ];
+  const args = compositeArgs(faceImagePath, format);
   const result = spawnSync(ffmpegPath(), args, { input: Buffer.from(background), maxBuffer: 32 * 1024 * 1024, timeout: 30_000 });
   if (result.status !== 0) {
     throw new Error(`ffmpeg (${ffmpegPath()}) could not composite a face pool image (index ${index}): ${spawnFailure(result)}`);
