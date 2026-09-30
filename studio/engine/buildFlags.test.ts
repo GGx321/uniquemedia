@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import studioViteConfig from "../../electron.studio.vite.config";
-import { productionEngineProblems, productionMainProblems } from "../scripts/bundleChecks";
+import { productionEngineProblems, productionMainProblems, productionMoneyTimingProblems } from "../scripts/bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -49,6 +49,28 @@ afterAll(async () => {
 // With --outDir, electron-vite puts the main-process build (both entries) under <outDir>/main.
 const engineOf = (dir: string) => readFile(join(dir, "main", "engine", "main.js"), "utf8");
 const mainOf = (dir: string) => readFile(join(dir, "main", "main", "main.js"), "utf8");
+
+/** The shared chunks of a build: every `.js` beside the entries' folders (`<outDir>/main/*.js`), where the money core lands. */
+async function chunksOf(dir: string): Promise<string> {
+  const folder = join(dir, "main");
+  const names = (await readdir(folder)).filter((name) => name.endsWith(".js"));
+  return (await Promise.all(names.map((name) => readFile(join(folder, name), "utf8")))).join("\n");
+}
+
+// The money timings the E2E smoke shortens (money/budget.ts, money/reconcile.ts) are checked here, on every push, and not only
+// when the packaging steps run: a positive control (the E2E build must be caught by the same check) beside the real one.
+describe("the E2E build's shortened money timings", () => {
+  test("a normal build carries the real 120 s reconcile wait and 180 s request timeout", async () => {
+    expect(productionMoneyTimingProblems(await chunksOf(normalDir))).toEqual([]);
+  });
+
+  test("an E2E build carries the short ones, and the production check catches it (so the check can see them at all)", async () => {
+    const chunks = await chunksOf(e2eDir);
+    expect(chunks).toMatch(/^var RECONCILE_QUIET_MS = 5e3;$/m);
+    expect(chunks).toMatch(/^var REQUEST_TIMEOUT_MS = 15e3;$/m);
+    expect(productionMoneyTimingProblems(chunks)).toEqual(["RECONCILE_QUIET_MS is not the production 120 s (or was not found)", "REQUEST_TIMEOUT_MS is not the production 180 s (or was not found)"]);
+  });
+});
 
 describe("the E2E build flag", () => {
   test("an E2E build lets the engine take the override and main read it (so the greps below can see it)", async () => {

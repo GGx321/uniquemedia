@@ -10,6 +10,12 @@ export { isAttemptId };
  * The client's request timeout (T3): an open reserve's request may have run this long after its `at`.
  * An E2E build (never a shipped one: the flag is a build-time constant) shrinks it, and RECONCILE_QUIET_MS with it, so
  * the packaged smoke does not wait out minutes of real time for a reconcile (the mock answers in well under a second).
+ *
+ * An E2E build must never be pointed at the real OpenRouter: with the request timeout at 15 s and the quiet period at 5 s,
+ * the reconcile rule that protects the owner's money (a request that ran long is waited out before the ledger is trusted
+ * again) is a fraction of what production keeps. It is a throwaway build made only by `build:studio:e2e` for the smoke and
+ * its mock, never uploaded or published (studio.yml), and `build:studio` pins STUDIO_E2E=0, so a stray variable or `.env`
+ * line cannot turn a local production build into one.
  */
 export const REQUEST_TIMEOUT_MS = STUDIO_E2E ? 15_000 : 180_000;
 

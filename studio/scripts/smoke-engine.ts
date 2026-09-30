@@ -776,7 +776,7 @@ async function runAvatarScenario(target: Target): Promise<void> {
     // 0. A baseline reconcile before any paid call (M2 of the whole-slice
     // review): the ledger is empty, so Budget.quiet() is already infinite
     // (no activity to wait out) and this returns at once — no need for the
-    // 120 s wait. Without this marker, the reconcile after the scenario
+    // reconcile wait (2 minutes in production, 5 s in this E2E build). Without this marker, the reconcile after the scenario
     // below would always land in reconcileLedger's "no baseline" branch
     // (studio/engine/money/reconcile.ts), where `mismatch` is always null:
     // /credits would never actually be compared against the ledger.

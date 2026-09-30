@@ -52,3 +52,8 @@ test("money production code imports only node:*, zod, sibling modules and the bu
 
   expect(violations).toEqual([]);
 });
+
+test("the build flags module the money code may import has no imports of its own", () => {
+  const source = readFileSync(join(DIR, "..", "buildFlags.ts"), "utf8");
+  expect(importsOf(source)).toEqual([]);
+});

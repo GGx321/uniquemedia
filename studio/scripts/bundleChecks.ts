@@ -121,8 +121,18 @@ export function productionMainProblems(main: string): string[] {
  */
 export function productionMoneyTimingProblems(chunks: string): string[] {
   const problems: string[] = [];
-  if (!/\bRECONCILE_QUIET_MS = (12e4|120000)\b/.test(chunks)) problems.push("RECONCILE_QUIET_MS is not the production 120 s (or was not found)");
-  if (!/\bREQUEST_TIMEOUT_MS = (18e4|180000)\b/.test(chunks)) problems.push("REQUEST_TIMEOUT_MS is not the production 180 s (or was not found)");
+  // Anchored to the declaration itself (the bundler prints `var NAME = <number>;` at column 0), and there must be exactly one:
+  // a mention in a comment or a string, or a second declaration, must not be able to satisfy the check.
+  const check = (name: string, minified: string, plain: string, label: string): void => {
+    const declarations = chunks.match(new RegExp(`^var ${name} = .*$`, "gm")) ?? [];
+    if (declarations.length !== 1) {
+      problems.push(`${name} is declared ${declarations.length} times in the shared chunks (exactly one expected)`);
+      return;
+    }
+    if (declarations[0] !== `var ${name} = ${minified};` && declarations[0] !== `var ${name} = ${plain};`) problems.push(`${name} is not the production ${label} (or was not found)`);
+  };
+  check("RECONCILE_QUIET_MS", "12e4", "120000", "120 s");
+  check("REQUEST_TIMEOUT_MS", "18e4", "180000", "180 s");
   return problems;
 }
 

@@ -124,8 +124,21 @@ describe("productionMoneyTimingProblems: an E2E build's shortened money timings 
   });
 
   test("flags a constant that cannot be found at all", () => {
-    expect(productionMoneyTimingProblems("")).toHaveLength(2);
-    expect(productionMoneyTimingProblems("var OTHER_QUIET_MS = 12e4;\nvar OTHER_TIMEOUT_MS = 18e4;")).toHaveLength(2);
+    const missing = ["RECONCILE_QUIET_MS is declared 0 times in the shared chunks (exactly one expected)", "REQUEST_TIMEOUT_MS is declared 0 times in the shared chunks (exactly one expected)"];
+    expect(productionMoneyTimingProblems("")).toEqual(missing);
+    expect(productionMoneyTimingProblems("var OTHER_QUIET_MS = 12e4;\nvar OTHER_TIMEOUT_MS = 18e4;")).toEqual(missing);
+  });
+
+  test("a mention in a comment or a string does not stand in for the declaration", () => {
+    const mention = '// var RECONCILE_QUIET_MS = 12e4;\nconst text = "var REQUEST_TIMEOUT_MS = 18e4;";\n  var RECONCILE_QUIET_MS = 12e4;\n';
+    expect(productionMoneyTimingProblems(mention + "var RECONCILE_QUIET_MS = 5e3;\nvar REQUEST_TIMEOUT_MS = 15e3;")).toEqual([
+      "RECONCILE_QUIET_MS is not the production 120 s (or was not found)",
+      "REQUEST_TIMEOUT_MS is not the production 180 s (or was not found)",
+    ]);
+  });
+
+  test("two declarations of one constant are flagged, whichever is the real one", () => {
+    expect(productionMoneyTimingProblems(`${PRODUCTION}\nvar RECONCILE_QUIET_MS = 5e3;`)).toEqual(["RECONCILE_QUIET_MS is declared 2 times in the shared chunks (exactly one expected)"]);
   });
 });
 
