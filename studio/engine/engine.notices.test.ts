@@ -31,12 +31,12 @@ describe("noteUnhandledRejection", () => {
     expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { notices: [{ code: "engine-internal-error", count: 1 }] } });
   });
 
-  test("a burst within five seconds is one event, and the pending notice counts every rejection, once", async () => {
+  test("a burst within the window is one event at once, and the pending notice counts every rejection, once", async () => {
     const { engine, events } = await startEngine(dir());
 
     for (let n = 0; n < 5; n++) engine.noteUnhandledRejection();
 
-    expect(noticesOf(events)).toHaveLength(1);
+    expect(noticesOf(events)).toHaveLength(1); // the rest wait for the window's end (see the trailing-edge test)
     const snapshot = ok(await engine.handle(command("engine.snapshot")));
     expect(snapshot).toMatchObject({ result: { notices: [{ code: "engine-internal-error", count: 5 }] } });
   });
@@ -56,6 +56,31 @@ describe("noteUnhandledRejection", () => {
     expect(notices[0]).toMatchObject({ count: 1 });
     expect(notices[1]).toMatchObject({ count: 3 });
     expect(new Set(notices.map((n) => (typeof n === "object" && n !== null && "noticeId" in n ? n.noticeId : null))).size).toBe(2);
+  });
+
+  test("what a burst held back is announced when the window ends: the windows end up with the real count, and it is announced once", async () => {
+    // a real clock, so the monotonic reading moves with the timer that fires at the window's end
+    const { engine, events } = await startEngine(dir(), { deps: { monotonic: () => performance.now(), internalNoticeWindowMs: 40 } });
+
+    for (let n = 0; n < 5; n++) engine.noteUnhandledRejection();
+    expect(noticesOf(events)).toHaveLength(1);
+    expect(noticesOf(events)[0]).toMatchObject({ count: 1 });
+
+    const deadline = performance.now() + 10_000; // only names a timer that never fires
+    while (noticesOf(events).length < 2 && performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const notices = noticesOf(events);
+    expect(notices).toHaveLength(2);
+    expect(notices[1]).toMatchObject({ code: "engine-internal-error", count: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 100)); // and nothing more follows: one trailing announcement, not a chain
+    expect(noticesOf(events)).toHaveLength(2);
+  });
+
+  test("a single rejection schedules no trailing announcement", async () => {
+    const { engine, events } = await startEngine(dir(), { deps: { monotonic: () => performance.now(), internalNoticeWindowMs: 20 } });
+    engine.noteUnhandledRejection();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(noticesOf(events)).toHaveLength(1);
   });
 
   test("it sits beside main's notices: one pending entry per code", async () => {

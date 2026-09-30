@@ -22,6 +22,10 @@ export interface HostNoticesDeps {
  * The list is bounded: a notice that happens again replaces the earlier one
  * of its kind (a crash more than five minutes after the last one is restarted
  * again, without end), so there is at most one entry per notice code.
+ *
+ * `engine-internal-error` is deliberately NOT kept here: the engine raises it itself for a rejection it swallowed (engine.ts,
+ * noteUnhandledRejection) and holds it for its own life; after a restart the swallowed rejections belonged to an engine
+ * that is gone, and the restart is announced by its own `engine-restarted` notice.
  */
 export class HostNotices {
   readonly #deps: HostNoticesDeps;

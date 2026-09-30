@@ -119,6 +119,8 @@ export interface EngineDeps {
   /** Monotonic ms, for the Budget's reconcile wait. */
   monotonic: () => number;
   newId: () => string;
+  /** Test knob: the window within which swallowed-rejection notices are coalesced; `INTERNAL_NOTICE_WINDOW_MS` (5 s) when absent. */
+  internalNoticeWindowMs?: number;
   /** Every response, every sequenced event and every reply to main leaves through here (the MessagePort). */
   post: (message: ResponseMessage | EventMessage | EngineReply) => void;
   /** The fetch every OpenRouter request goes through: the runtime's own in the utilityProcess, a fake in tests. */
@@ -2920,13 +2922,20 @@ export class Engine {
   }
 
   /** At most one `engine.notice` per this long for swallowed rejections; the pending notice's count still moves on every one. */
-  static readonly #INTERNAL_NOTICE_EVERY_MS = 5_000;
+  static readonly #INTERNAL_NOTICE_WINDOW_MS = 5_000;
   #internalNoticeEmittedAt: number | null = null;
+  #internalNoticeEmittedId: string | null = null;
+  /** The trailing edge of a window in which notices were held back: one timer, so the windows end up seeing the real count. */
+  #internalNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * A promise rejection nobody handled was logged and swallowed (processGuards.ts) and the engine goes on: the windows are told,
    * with a code and a count only (a notice never carries the error's text). One pending notice of this code, replaced and counted
-   * like main's; a burst emits one event per `#INTERNAL_NOTICE_EVERY_MS` so it cannot flood the event log.
+   * like main's; a burst emits one event per window so it cannot flood the event log, and the last one of a burst is announced
+   * when the window ends (one unref'd timer), so what the windows show is the real count, not the count at the burst's start.
+   *
+   * These notices are NOT part of main's `HostNotices` and so do not survive an engine restart: a restart is itself announced
+   * (`engine-restarted`), and the swallowed rejections belonged to the engine that is gone.
    */
   noteUnhandledRejection(): void {
     const earlier = this.#notices.findIndex((n) => n.code === "engine-internal-error");
@@ -2938,9 +2947,24 @@ export class Engine {
     };
     if (earlier === -1) this.#notices.push(notice);
     else this.#notices[earlier] = notice;
+    const window = this.#deps.internalNoticeWindowMs ?? Engine.#INTERNAL_NOTICE_WINDOW_MS;
     const now = this.#deps.monotonic();
-    if (this.#internalNoticeEmittedAt !== null && now - this.#internalNoticeEmittedAt < Engine.#INTERNAL_NOTICE_EVERY_MS) return;
+    if (this.#internalNoticeEmittedAt !== null && now - this.#internalNoticeEmittedAt < window) {
+      if (this.#internalNoticeTimer === null) {
+        this.#internalNoticeTimer = setTimeout(() => {
+          this.#internalNoticeTimer = null;
+          const pending = this.#notices.find((n) => n.code === "engine-internal-error");
+          if (pending === undefined || pending.noticeId === this.#internalNoticeEmittedId) return; // already announced by a later call
+          this.#internalNoticeEmittedId = pending.noticeId;
+          this.#internalNoticeEmittedAt = this.#deps.monotonic();
+          this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice: pending } });
+        }, Math.max(0, window - (now - this.#internalNoticeEmittedAt)));
+        this.#internalNoticeTimer.unref();
+      }
+      return;
+    }
     this.#internalNoticeEmittedAt = now;
+    this.#internalNoticeEmittedId = notice.noticeId;
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice } });
   }
 
