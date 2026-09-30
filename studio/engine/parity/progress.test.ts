@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { ProgressInvariants, type RenderProgress } from "./testing/progress";
+useNativeGlobals();
 
 // The parity transcript does not write a render's `done` (the engine steps by ffmpeg's frames, the mock by a clock), so what
 // the numbers must satisfy is checked here instead, for every render progress either engine sends: the bar the window draws
