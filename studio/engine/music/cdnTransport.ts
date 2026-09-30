@@ -124,7 +124,15 @@ export interface HttpsTransportOptions {
   request?: (options: RequestOptions, callback: (res: IncomingMessage) => void) => ClientRequest;
 }
 
-const REQUEST_HEADERS = { accept: "*/*", "accept-encoding": "identity" } as const;
+/**
+ * The one User-Agent every download sends. Node's `https.request` sends none, where the fetch the SP0 spike used sent its
+ * runtime's; a CDN that wants one would answer 403 to every track (review F4). This is a plain product token with a
+ * compatibility mark, the form a media client commonly uses: it says what asks (Studio, fetching media) and nothing about
+ * the machine, the OS or a runtime version. Never per-user, never built from the environment.
+ */
+export const CDN_USER_AGENT = "Mozilla/5.0 (compatible; Studio media fetch)";
+
+const REQUEST_HEADERS = { accept: "*/*", "accept-encoding": "identity", "user-agent": CDN_USER_AGENT } as const;
 
 /** The transport a production build uses. See the header for what it guarantees. */
 export function createHttpsTransport(options: HttpsTransportOptions = {}): CdnTransport {

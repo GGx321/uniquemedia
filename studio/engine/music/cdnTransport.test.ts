@@ -5,7 +5,7 @@ import type { RequestOptions } from "node:https";
 import { Readable } from "node:stream";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { useNativeHttp } from "../../testing/nativeHttp";
-import { CdnBlockedError, checkedLookup, createHttpsTransport, createLoopbackCdnTransport, type Resolver } from "./cdnTransport";
+import { CDN_USER_AGENT, CdnBlockedError, checkedLookup, createHttpsTransport, createLoopbackCdnTransport, type Resolver } from "./cdnTransport";
 useNativeGlobals();
 useNativeHttp();
 
@@ -158,6 +158,16 @@ describe("the HTTPS transport", () => {
     expect((sent[0]?.options.headers as Record<string, string>)["accept-encoding"]).toBe("identity");
   });
 
+  // Review F4: Node's https.request sends no User-Agent, unlike the fetch the spike used; a CDN that wants one answered 403.
+  test("sends one fixed, neutral User-Agent, that names no version of a runtime, an OS or a user", async () => {
+    const { request, sent } = fakeRequest({ status: 200, headers: {}, chunks: [] });
+    await createHttpsTransport({ request, resolve: resolving("157.240.22.35") })({ url: CDN_URL, signal: signal() });
+    const agent = (sent[0]?.options.headers as Record<string, string>)["user-agent"];
+    expect(agent).toBe(CDN_USER_AGENT);
+    expect(CDN_USER_AGENT).toMatch(/^[\x20-\x7e]{8,80}$/);
+    expect(CDN_USER_AGENT).not.toMatch(/Electron|Node|Bun|Chrome|Windows|Macintosh|Linux|AppleWebKit|x86|arm/);
+  });
+
   test("hands back the status, the headers by lowercase name (the first of a repeated one) and the body's bytes", async () => {
     const { request } = fakeRequest({ status: 200, headers: { "Content-Length": "5", "set-cookie": ["a=1", "b=2"] }, chunks: [Uint8Array.from([1, 2, 3]), Uint8Array.from([4, 5])] });
     const response = await createHttpsTransport({ request, resolve: resolving("157.240.22.35") })({ url: CDN_URL, signal: signal() });
@@ -243,6 +253,21 @@ describe("the loopback transport of the E2E build", () => {
     expect(response.status).toBe(200);
     expect(response.headers["content-type"]).toBe("audio/mp4");
     expect(got).toEqual([9, 8, 7]);
+  });
+
+  test("sends the same User-Agent as the real transport, so the E2E run sees what production sends", async () => {
+    let seen = "";
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        seen = req.headers.get("user-agent") ?? "";
+        return new Response("x");
+      },
+    });
+    const response = await createLoopbackCdnTransport(`http://127.0.0.1:${server.port}`)({ url: CDN_URL, signal: signal() });
+    for await (const part of response.body) void part;
+    expect(seen).toBe(CDN_USER_AGENT);
   });
 
   test("still refuses a URL the source rule refuses, so the E2E run exercises the allowlist too", async () => {
