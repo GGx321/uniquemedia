@@ -67,7 +67,7 @@ export interface VideoServiceDeps {
    * The montage drafts: `videos.render {montageId}` reads its spec from here, a video's record stops naming a draft that was
    * deleted, and so does `videos.list`. Absent: a `montageId` is NOT_FOUND, as before drafts existed.
    */
-  readonly drafts?: Pick<DraftStore, "find" | "exists" | "wasRemoved">;
+  readonly drafts?: Pick<DraftStore, "find" | "exists" | "wasRemoved" | "exclusive">;
   readonly caseProbe: { isCaseInsensitive(root: string): Promise<boolean> };
   /** The focus resolver of `library`; `fillMissingFocus` takes a budget for the call (cells judged by then are kept) and a signal that ends it early. */
   readonly focus: (library: Library) => Pick<FocusResolver, "fillMissingFocus">;
@@ -263,19 +263,26 @@ export class VideoService {
     });
   }
 
-  /** A saved draft's spec, with the library it was read from. NOT_FOUND for a draft that is not there, INTERNAL for one that cannot be read (its detail names no path). */
-  async #loadDraft(montageId: string): Promise<RenderSource> {
+  /**
+   * A saved draft's spec, with the library it was read from. NOT_FOUND for a draft that is not there, INTERNAL for one that
+   * cannot be read (its detail names no path). The read runs in the DRAFT'S OWN queue (`exclusive`), entered synchronously
+   * when the command arrives: a save asked before this render is applied first, so the render never reads an older draft
+   * and reserves photos the owner has just replaced. Only the read is queued; the job keeps that copy.
+   */
+  #loadDraft(montageId: string): Promise<RenderSource> {
     const drafts = this.#deps.drafts;
-    if (drafts === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}: drafts are not available` });
-    const library = this.#deps.openLibrary();
-    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
-    const found = await drafts.find(library, montageId);
-    if (found === null || found.read.kind === "missing") throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
-    if (found.read.kind === "unreadable") {
-      this.#deps.log(`videos.render: a montage draft could not be used (${found.read.reason})`);
-      throw new EngineFailure({ code: "INTERNAL", detail: `the montage draft cannot be read (${found.read.reason})` });
-    }
-    return { montageId, spec: found.read.montage.spec, library };
+    if (drafts === undefined) return Promise.reject(new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}: drafts are not available` }));
+    return drafts.exclusive(montageId, async () => {
+      const library = this.#deps.openLibrary();
+      if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+      const found = await drafts.find(library, montageId);
+      if (found === null || found.read.kind === "missing") throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
+      if (found.read.kind === "unreadable") {
+        this.#deps.log(`videos.render: a montage draft could not be used (${found.read.reason})`);
+        throw new EngineFailure({ code: "INTERNAL", detail: `the montage draft cannot be read (${found.read.reason})` });
+      }
+      return { montageId, spec: found.read.montage.spec, library };
+    });
   }
 
   async #render(

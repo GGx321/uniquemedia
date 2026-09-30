@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { EngineFailure } from "../engineFailure";
 import type { EngineError } from "../../shared/engine";
 import { Montage, type MontageDraft } from "../../shared/engine/montage";
+import { montageRig } from "../montages/testing/rig";
 import { DraftStore } from "../montages/store";
 import { readVideoRecordFile } from "./listing";
 import { acceptingVerify, specOf, useWorld, type World } from "./testing/kit";
@@ -161,6 +162,40 @@ describe("videos.render of a saved draft", () => {
     const r = serviceRig(w);
 
     expect((await failureOf(r.service.render({ montageId: "montage-0000001" }))).code).toBe("NOT_FOUND");
+  });
+});
+
+describe("videos.render and montages.save on one draft", () => {
+  test("a render asked right after a save, without waiting for it, renders the saved draft and reserves the photo the owner chose", async () => {
+    const w = world();
+    const m = montageRig(w);
+    await m.store.write(w.library, montageOf("montage-0000001", specFor(w, 0, 111)));
+    const r = serviceRig(w, { deps: { drafts: m.store } });
+
+    const saving = m.service.save({ montageId: "montage-0000001", spec: specFor(w, 1, 222), name: null });
+    const { videoId } = await r.service.render({ montageId: "montage-0000001" });
+    await saving;
+    await r.queue.idle();
+
+    const record = await readVideoRecordFile(w.libraryRoot, w.avatar.id, videoId);
+    expect(record?.spec.seed).toBe(222);
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 1))?.usedIn).toEqual([videoId]);
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.usedIn).toEqual([]);
+  });
+
+  test("a save asked right after a render does not reach it: the job keeps what the render read", async () => {
+    const w = world();
+    const m = montageRig(w);
+    await m.store.write(w.library, montageOf("montage-0000001", specFor(w, 0, 111)));
+    const r = serviceRig(w, { deps: { drafts: m.store } });
+
+    const rendering = r.service.render({ montageId: "montage-0000001" });
+    const saving = m.service.save({ montageId: "montage-0000001", spec: specFor(w, 1, 222), name: null });
+    const { videoId } = await rendering;
+    await saving;
+    await r.queue.idle();
+
+    expect((await readVideoRecordFile(w.libraryRoot, w.avatar.id, videoId))?.spec.seed).toBe(111);
   });
 });
 
