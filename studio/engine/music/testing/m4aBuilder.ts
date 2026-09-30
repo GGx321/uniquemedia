@@ -102,6 +102,8 @@ export interface M4aOptions {
   drefFlags?: number[];
   /** Extra `trak` boxes appended after the first (each given as its handler type). */
   extraTracks?: string[];
+  /** Repeat one box of the first track inside its parent (`mdia`, `hdlr`, `mdhd`, `minf`, `dinf`, `dref`, `stbl`, `stsd`, `esds`). */
+  dupBox?: string;
   /** Extra boxes inside `moov`, after the tracks. */
   moovExtra?: Uint8Array[];
   /** Extra boxes at the top level, after `mdat`. */
@@ -112,7 +114,8 @@ export interface M4aOptions {
 
 const SAMPLE_RATE_INDEX: Readonly<Record<number, number>> = { 96000: 0, 88200: 1, 64000: 2, 48000: 3, 44100: 4, 32000: 5, 24000: 6, 22050: 7, 16000: 8, 12000: 9, 11025: 10, 8000: 11 };
 
-function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | "aot" | "channels" | "sampleRate" | "timescale" | "duration" | "drefFlags">> & Pick<M4aOptions, "noEsds">): Uint8Array {
+function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | "aot" | "channels" | "sampleRate" | "timescale" | "duration" | "drefFlags">> & Pick<M4aOptions, "noEsds" | "dupBox">): Uint8Array {
+  const twice = (type: string, one: Uint8Array): Uint8Array => (options.dupBox === type ? concat(one, one) : one);
   const freqIndex = SAMPLE_RATE_INDEX[options.sampleRate] ?? 4;
   const asc = audioSpecificConfig(options.aot, freqIndex, options.channels);
   const decoderConfig = descriptor(0x04, concat(u8(options.oti, 0x15, 0, 0, 0), u32(0), u32(0), descriptor(0x05, asc)));
@@ -126,14 +129,14 @@ function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | 
     u16(0),
     u16(0),
     u32((options.sampleRate & 0xffff) * 65536),
-    options.noEsds === true ? new Uint8Array(0) : esds,
+    options.noEsds === true ? new Uint8Array(0) : twice("esds", esds),
   );
-  const stsd = fullBox("stsd", 0, concat(u32(1), box(options.entry, entryBody)));
-  const dref = fullBox("dref", 0, concat(u32(options.drefFlags.length), ...options.drefFlags.map((flags) => fullBox("url ", flags))));
-  const minf = box("minf", concat(box("dinf", dref), box("stbl", stsd)));
-  const mdhd = fullBox("mdhd", 0, concat(u32(0), u32(0), u32(options.timescale), u32(options.duration), u16(0x55c4), u16(0)));
-  const hdlr = fullBox("hdlr", 0, concat(u32(0), ascii(options.handler), new Uint8Array(12), u8(0)));
-  return box("trak", box("mdia", concat(mdhd, hdlr, minf)));
+  const stsd = twice("stsd", fullBox("stsd", 0, concat(u32(1), box(options.entry, entryBody))));
+  const dref = twice("dref", fullBox("dref", 0, concat(u32(options.drefFlags.length), ...options.drefFlags.map((flags) => fullBox("url ", flags)))));
+  const minf = twice("minf", box("minf", concat(twice("dinf", box("dinf", dref)), twice("stbl", box("stbl", stsd)))));
+  const mdhd = twice("mdhd", fullBox("mdhd", 0, concat(u32(0), u32(0), u32(options.timescale), u32(options.duration), u16(0x55c4), u16(0))));
+  const hdlr = twice("hdlr", fullBox("hdlr", 0, concat(u32(0), ascii(options.handler), new Uint8Array(12), u8(0))));
+  return box("trak", twice("mdia", box("mdia", concat(mdhd, hdlr, minf))));
 }
 
 /** A minimal audio MP4 (an AAC-LC stereo one at 44.1 kHz by default). */
@@ -150,7 +153,9 @@ export function buildM4a(options: M4aOptions = {}): Uint8Array {
     drefFlags: options.drefFlags ?? [1],
     ...(options.noEsds === undefined ? {} : { noEsds: options.noEsds }),
   };
+  // Extra tracks are plain: only the first track carries a repeated box.
   const extra = (options.extraTracks ?? []).map((handler) => track({ ...full, handler }));
+  const first = { ...full, ...(options.dupBox === undefined ? {} : { dupBox: options.dupBox }) };
   const ftyp = options.noFtyp === true ? new Uint8Array(0) : box("ftyp", concat(ascii("isom"), u32(512), ascii("isom"), ascii("iso2"), ascii("mp41")));
-  return concat(ftyp, box("moov", concat(track(full), ...extra, ...(options.moovExtra ?? []))), box("mdat", options.mdat ?? new Uint8Array(16)), ...(options.topExtra ?? []));
+  return concat(ftyp, box("moov", concat(track(first), ...extra, ...(options.moovExtra ?? []))), box("mdat", options.mdat ?? new Uint8Array(16)), ...(options.topExtra ?? []));
 }

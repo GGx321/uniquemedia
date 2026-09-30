@@ -164,7 +164,7 @@ describe("only the boxes an audio file has", () => {
     expect(refused(buildM4a({ moovExtra: [box(type, new Uint8Array(8))] }))).toBe("box-not-allowed");
   });
 
-  test.each(["mvhd", "udta", "free", "skip", "iods"])("a %j inside moov is allowed", (type) => {
+  test.each(["mvhd", "free", "skip", "iods"])("a %j inside moov is allowed", (type) => {
     expect(probeMp4Audio(buildM4a({ moovExtra: [box(type, new Uint8Array(8))] })).ok).toBe(true);
   });
 
@@ -179,6 +179,37 @@ describe("only the boxes an audio file has", () => {
   test("a compressed moov (a cmov that holds the real one) is refused as a whole, whatever it claims to hold", () => {
     const bomb = concat(box("ftyp", new Uint8Array(8)), box("moov", box("cmov", concat(box("dcom", new TextEncoder().encode("zlib")), box("cmvd", new Uint8Array(64))))));
     expect(refused(bomb)).toBe("box-not-allowed");
+  });
+});
+
+// 3c.4 re-review: `udta/meta/ilst/covr` makes ffmpeg see a second stream (an attached picture), and a box repeated inside
+// its parent is read by the walker once and by another demuxer perhaps otherwise. Neither depends on ffmpeg's version.
+describe("tags with pictures, and repeated boxes", () => {
+  const tags = (...items: Uint8Array[]): Uint8Array => box("udta", box("meta", concat(u32(0), box("ilst", concat(...items)))));
+
+  test("cover art (udta/meta/ilst/covr) is refused: ffmpeg would show it as a second stream", () => {
+    expect(refusalOf(buildM4a({ moovExtra: [tags(box("covr", box("data", new Uint8Array(16))))] }))).toBe("box-not-allowed");
+  });
+
+  test("cover art among other tags is refused too", () => {
+    expect(refusalOf(buildM4a({ moovExtra: [tags(box("©too", box("data", new Uint8Array(16))), box("covr", box("data", new Uint8Array(16))))] }))).toBe("box-not-allowed");
+  });
+
+  test("the encoder tag a re-cut file carries (the 3c.1 fixtures have it) is allowed", () => {
+    expect(probeMp4Audio(buildM4a({ moovExtra: [tags(box("©too", box("data", new Uint8Array(16))))] })).ok).toBe(true);
+  });
+
+  test("a udta of plain boxes is allowed, and a meta too short to read is a bad box", () => {
+    expect(probeMp4Audio(buildM4a({ moovExtra: [box("udta", box("free", new Uint8Array(8)))] })).ok).toBe(true);
+    expect(refusalOf(buildM4a({ moovExtra: [box("udta", box("meta", new Uint8Array(2)))] }))).toBe("bad-box");
+  });
+
+  test.each(["mdia", "hdlr", "mdhd", "minf", "dinf", "dref", "stbl", "stsd", "esds"])("a %s repeated inside its parent is refused", (type) => {
+    expect(probeMp4Audio(buildM4a({ dupBox: type })).ok).toBe(false);
+  });
+
+  test("the real files have none of these: every cached CDN excerpt still walks", () => {
+    for (const fixture of Object.values(musicTracks)) expect(probeMp4Audio(bytesOf(fixture.file)).ok).toBe(true);
   });
 });
 

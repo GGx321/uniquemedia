@@ -103,7 +103,12 @@ function childrenOf(bytes: Uint8Array, view: DataView, start: number, end: numbe
   return found;
 }
 
-const firstOf = (boxes: readonly BoxRef[], type: string): BoxRef | undefined => boxes.find((box) => box.type === type);
+/** The one box of `type` in a parent. A repeat is refused: the walker reads one, and another demuxer may read the other. */
+function firstOf(boxes: readonly BoxRef[], type: string): BoxRef | undefined {
+  const found = boxes.filter((box) => box.type === type);
+  if (found.length > 1) throw new Refusal("bad-box");
+  return found[0];
+}
 
 /** The bits of an MPEG-4 descriptor's length: one to four bytes of seven bits, the high bit saying another follows. */
 function descriptorAt(bytes: Uint8Array, at: number, limit: number): { tag: number; body: number; end: number } {
@@ -233,6 +238,17 @@ function walk(bytes: Uint8Array): Mp4AudioInfo {
   // `cmov` (a compressed moov that ffmpeg inflates: a 1 MB file can claim a gigabyte, and a video track can hide in it)
   // and `mvex` (fragments) are refused here, with anything else a moov does not carry.
   if (inMoov.some((child) => !MOOV_BOXES.has(child.type))) throw new Refusal("box-not-allowed");
+  // Cover art (`udta/meta/ilst/covr`) makes ffmpeg show a second stream, an attached picture. Tags without one (the
+  // encoder's `©too`) are harmless and are what a re-cut file carries; only `covr` is refused, along the fixed path.
+  for (const udta of inMoov.filter((child) => child.type === "udta")) {
+    for (const meta of childrenOf(bytes, view, udta.body, udta.end, budget).filter((child) => child.type === "meta")) {
+      // `meta` is a full box: four bytes of version and flags come before its children.
+      if (meta.end - meta.body < 4) throw new Refusal("bad-box");
+      for (const ilst of childrenOf(bytes, view, meta.body + 4, meta.end, budget).filter((child) => child.type === "ilst")) {
+        if (childrenOf(bytes, view, ilst.body, ilst.end, budget).some((item) => item.type === "covr")) throw new Refusal("box-not-allowed");
+      }
+    }
+  }
   const traks = inMoov.filter((child) => child.type === "trak");
   // Counted before any is read: a file of a hundred tracks is refused for that, not for what the first one lacks.
   if (traks.length > MAX_TRACKS) throw new Refusal("too-many-tracks");
