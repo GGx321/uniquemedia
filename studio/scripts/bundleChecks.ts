@@ -22,6 +22,8 @@ const FORBIDDEN_DEBUG_MARKERS = [
   // T6c: the import photo dialog's own E2E-only switch (main.ts's pickImportFile).
   "studio-pick-import-file",
   "studio-openrouter-base-url",
+  // 3c.3: the flashapi mock's E2E-only switch (main.ts's flashapiBaseUrlForTests).
+  "studio-flashapi-base-url",
   "ELECTRON_RENDERER_URL",
   "DEBUGGABLE",
   "__STUDIO_DEV__",
@@ -106,9 +108,16 @@ export function productionMainProblems(main: string): string[] {
   return problems;
 }
 
-/** Problems with out-studio/engine/main.js of a production build (invariant 13). */
+/**
+ * Problems with out-studio/engine/main.js of a production build (invariant 13): neither the OpenRouter nor the flashapi
+ * base URL may be overridable. Each must be the one call with the build flag folded to `false`; a bundle that lost the
+ * call altogether is a problem too, since the rule then cannot be read from it.
+ */
 export function productionEngineProblems(engine: string): string[] {
-  return /resolveOpenRouterBaseUrl\(init\.openRouterBaseUrl, false\)/.test(engine) ? [] : ["the engine takes an OpenRouter base-URL override"];
+  const problems: string[] = [];
+  if (!/resolveOpenRouterBaseUrl\(init\.openRouterBaseUrl, false\)/.test(engine)) problems.push("the engine takes an OpenRouter base-URL override");
+  if (!/resolveMusicBaseUrl\(init\.musicBaseUrl, false\)/.test(engine)) problems.push("the engine takes a flashapi base-URL override");
+  return problems;
 }
 
 /**

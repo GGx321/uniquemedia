@@ -311,7 +311,7 @@ export class EngineHost<Transfer> {
       local.start();
       started.postMessage(init, [remote]);
       if (key !== null) local.postMessage({ kind: "control", type: "apiKey.set", key } satisfies HostControl);
-      if (musicKey !== null) local.postMessage({ kind: "control", type: "musicKey.set", key: musicKey } satisfies HostControl);
+      if (musicKey !== null) local.postMessage({ kind: "control", type: "musicKey.set", key: musicKey, origin: "start" } satisfies HostControl);
       port = local;
     } catch (error) {
       child?.kill();

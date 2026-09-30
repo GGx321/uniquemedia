@@ -137,6 +137,13 @@ function openRouterBaseUrlForTests(): string | undefined {
   return url === "" ? undefined : url;
 }
 
+/** A mock flashapi for end-to-end tests: read only in an E2E build, and honoured only by an E2E engine (a loopback base only). */
+function flashapiBaseUrlForTests(): string | undefined {
+  if (!STUDIO_E2E) return undefined;
+  const url = app.commandLine.getSwitchValue("studio-flashapi-base-url");
+  return url === "" ? undefined : url;
+}
+
 /**
  * The folder main's dialog answers with, for the smoke test, which cannot
  * click a native dialog. Read only by an E2E build: every other build has it
@@ -218,6 +225,9 @@ async function startStudio(): Promise<void> {
       settings: settings.current,
       encryptionAvailable: keys.status().encryptionAvailable,
       openRouterBaseUrl: openRouterBaseUrlForTests(),
+      // The flashapi quota log lives here (3c.3); the lists and tracks of 3c.4 will too.
+      musicDir: join(userData, "music"),
+      musicBaseUrl: flashapiBaseUrlForTests(),
       notices: [...notices.all],
     }),
     apiKey: () => keys.read(),

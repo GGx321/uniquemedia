@@ -95,6 +95,8 @@ import { FileStateChecker } from "./videos/fileState";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
 import { MontageService, type MontageServiceDeps } from "./montages/service";
 import { DraftStore, type DraftStoreDeps } from "./montages/store";
+import { FLASHAPI_BASE, type FlashapiFetch } from "./music/client";
+import { MusicService } from "./music/service";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -114,6 +116,11 @@ export interface EngineDeps {
   post: (message: ResponseMessage | EventMessage | EngineReply) => void;
   /** The fetch every OpenRouter request goes through: the runtime's own in the utilityProcess, a fake in tests. */
   fetch: OpenRouterFetch;
+  /**
+   * The fetch the flashapi client uses (3c.3): the runtime's own by default. A test passes one that answers the REAL
+   * base URL from a loopback mock, so the real host is never contacted and the URL the engine asks for is still checked.
+   */
+  musicFetch?: FlashapiFetch;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
   /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
@@ -234,6 +241,15 @@ function messageOf(error: unknown, fallback: string): string {
  */
 export function resolveOpenRouterBaseUrl(requested: string | undefined, e2e: boolean): string {
   return e2e && requested !== undefined ? requested : OPENROUTER_API_BASE;
+}
+
+/**
+ * The flashapi base the music client must use: the real one, unless this is an E2E build and main asked for a mock
+ * (the same rule as OpenRouter's, invariant 13). A production build has `STUDIO_E2E` false, so the override is inert
+ * there whatever main sends. `e2e` is a parameter so both branches can be tested.
+ */
+export function resolveMusicBaseUrl(requested: string | undefined, e2e: boolean): string {
+  return e2e && requested !== undefined ? requested : FLASHAPI_BASE;
 }
 
 /**
@@ -438,6 +454,8 @@ export class Engine {
   readonly #events: EventLog;
   readonly #encryptionAvailable: boolean;
   readonly #openRouterBaseUrl: string;
+  /** The flashapi list and its quota (3c.3). */
+  readonly #music: MusicService;
   #settings: EngineSettings;
   readonly #money: Money;
   #apiKey: string | null = null;
@@ -617,6 +635,19 @@ export class Engine {
     this.#cpuPool = new CpuPool(deps.cpuPoolSize ?? defaultCpuPoolSize());
     this.#qaGates = deps.qaGates ?? [];
     this.#faceGateLoadError = deps.faceGateLoadError;
+    this.#music = new MusicService({
+      quotaPath: init.musicDir === undefined ? null : join(init.musicDir, "quota.jsonl"),
+      baseUrl: resolveMusicBaseUrl(init.musicBaseUrl, STUDIO_E2E),
+      allowBaseUrlOverride: STUDIO_E2E,
+      fetch: deps.musicFetch ?? ((url, request) => fetch(url, request)),
+      clock: deps.clock,
+      newId: deps.newId,
+      key: () => this.#musicKey,
+      keyRejected: () => this.#musicKeyRejected,
+      markKeyRejected: (key) => this.markMusicKeyRejected(key),
+      emit: (status) => this.#emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "music.changed", payload: { status } }),
+      log: (line) => console.warn(line),
+    });
     const priceFetch = priceFetchFrom(deps.fetch);
     this.#prices = new PriceCache({
       load: (models) => loadPriceBook({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl, ...models }),
@@ -682,8 +713,15 @@ export class Engine {
    * accepted, every queued and running render is cancelled, and a bounded wait lets a commit that is past its claim
    * finish, so its file, record and used mark are complete and nothing is left for the next start to settle.
    */
-  shutdown(waitMs: number = SHUTDOWN_RENDER_WAIT_MS): Promise<{ idle: boolean }> {
-    return this.#videos.shutdown(waitMs);
+  async shutdown(waitMs: number = SHUTDOWN_RENDER_WAIT_MS): Promise<{ idle: boolean }> {
+    // A music request in flight is aborted (its send stays counted); the renders get their bounded wait.
+    const [, renders] = await Promise.all([this.#music.stop(), this.#videos.shutdown(waitMs)]);
+    return renders;
+  }
+
+  /** Resolves once a running music refresh and every status it announced are done. Tests wait on it; nothing else does. */
+  musicSettled(): Promise<void> {
+    return this.#music.settled();
   }
 
   /**
@@ -915,15 +953,19 @@ export class Engine {
         this.#keyRejected = false;
         this.#emitSettings();
         return;
-      case "musicKey.set":
-        this.#musicKey = control.key;
+      case "musicKey.set": {
+        const { key } = control;
+        this.#musicKey = key;
         this.#musicKeyRejected = false;
         this.#emitSettings();
+        await this.#afterMusicKeySet(key, control.origin ?? "user");
         return;
+      }
       case "musicKey.clear":
         this.#musicKey = null;
         this.#musicKeyRejected = false;
         this.#emitSettings();
+        await this.#music.noteKeyChange(null);
         return;
       case "settings.update": {
         const refusal = await this.#applySettings(control.settings);
@@ -936,6 +978,26 @@ export class Engine {
         return;
       }
     }
+  }
+
+  /**
+   * What follows a music key hand-over. The OWNER's set or clear is written to the quota log, so an earlier 401 no
+   * longer applies to a key stored again. Main's hand-over at (re)start instead READS the log: if the last answer for
+   * a key with these last four chars was a 401 and nothing changed since, the key reads as rejected again, so a revoked
+   * key does not look fine after a restart and the next «Обновить» does not spend one of the 30 to learn it. The log
+   * holds the last four chars only, never the key or a hash of it.
+   */
+  async #afterMusicKeySet(key: string, origin: "user" | "start"): Promise<void> {
+    const last4 = key.slice(-4);
+    if (origin === "user") {
+      await this.#music.noteKeyChange(last4);
+      return;
+    }
+    if (!(await this.#music.keyRejected(last4))) return;
+    // The key may have been replaced or already marked while the log was read.
+    if (this.#musicKey !== key || this.#musicKeyRejected) return;
+    this.#musicKeyRejected = true;
+    this.#emitSettings();
   }
 
   /** Parses and answers one command. Never throws. */
@@ -1178,6 +1240,13 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.delete(command.payload.montageId) };
       case "montages.focus":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.focus(command.payload) };
+      case "music.status":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#music.status() };
+      case "music.refresh": {
+        const answer = await this.#music.refresh();
+        if (!answer.ok) return errorResponseFor(command, answer.error);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { status: answer.status } };
+      }
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }

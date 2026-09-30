@@ -57,6 +57,13 @@ export const EngineInit = z.strictObject({
   /** A mock OpenRouter for end-to-end tests; honoured only by an E2E build (invariant 13). */
   openRouterBaseUrl: z.url({ protocol: /^https?$/ }).optional(),
   /**
+   * `userData/music`: where the flashapi quota log lives (and, from 3c.4, the lists, tracks and covers). Absent, the
+   * music service has no place to keep its ledger, so every refresh is refused (MUSIC_UNAVAILABLE) and none is sent.
+   */
+  musicDir: AbsolutePath.optional(),
+  /** A mock flashapi for end-to-end tests; honoured only by an E2E build, and only a loopback base (the same rule as OpenRouter's). */
+  musicBaseUrl: z.url({ protocol: /^https?$/ }).optional(),
+  /**
    * What main has to tell the windows (the engine restarted, settings.json was
    * reset), oldest first. The engine keeps them pending in its snapshot and
    * emits each as an `engine.notice` in its own seq/bootId stream, so a window
@@ -76,7 +83,12 @@ export const HostControl = z.discriminatedUnion("type", [
    * The RapidAPI (music) key: the same hand-over as the OpenRouter key's (main decrypts it on every (re)start and on
    * a set), kept in the engine's memory for the flashapi client. Independent of `apiKey.*`.
    */
-  z.strictObject({ kind: z.literal("control"), type: z.literal("musicKey.set"), key: MusicKey }),
+  /**
+   * `origin` says who stored the key: `"user"` (the owner set it just now; an earlier 401 no longer applies, and the
+   * quota log is told) or `"start"` (main decrypted the stored key for a (re)started engine; whether it is still
+   * rejected is read back from the quota log). Absent counts as `"user"`.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("musicKey.set"), key: MusicKey, origin: z.enum(["user", "start"]).optional() }),
   z.strictObject({ kind: z.literal("control"), type: z.literal("musicKey.clear") }),
   /**
    * Settings main has just persisted (and re-sent with init after a restart).

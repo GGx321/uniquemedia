@@ -93,7 +93,7 @@ describe("settings.setMusicKey", () => {
       result: { stored: true, last4: "0000", rejected: false },
     });
     expectNoKeyFragment(JSON.stringify(response), MUSIC);
-    expect(engine.sent).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC }]);
+    expect(engine.sent).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" }]);
 
     const onDisk = await readFile(musicPath());
     expectNoKeyFragment(onDisk.toString(), MUSIC);
@@ -109,7 +109,7 @@ describe("settings.setMusicKey", () => {
 
     await handleMusicKeyCommand(parsed.message, { keys, engine });
 
-    expect(engine.sent).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC }]);
+    expect(engine.sent).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" }]);
     expect(await keys.read()).toBe(MUSIC);
   });
 
@@ -121,7 +121,7 @@ describe("settings.setMusicKey", () => {
 
     expect(await keys.read()).toBe(ROTATED);
     expect(musicKeyStatusOf(keys.status()).last4).toBe("9999");
-    expect(engine.sent.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: ROTATED });
+    expect(engine.sent.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: ROTATED, origin: "user" });
   });
 
   test("main reports a stored key as not rejected: a set is a fresh start, the engine alone learns of a 401", async () => {
@@ -556,7 +556,7 @@ describe("the answer to a command is the state it produced", () => {
     expect(setAnswer).toMatchObject({ ok: true, result: { stored: true, last4: "0000" } });
     expect(clearAnswer).toMatchObject({ ok: true, result: { stored: false, last4: null } });
     expect(engine.sent).toEqual([
-      { kind: "control", type: "musicKey.set", key: MUSIC },
+      { kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" },
       { kind: "control", type: "musicKey.clear" },
     ]);
   });
@@ -604,7 +604,7 @@ describe("a folder sync that fails after the key file was renamed into place", (
       const response = await handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine });
 
       expect(response).toMatchObject({ ok: true, result: { stored: true, last4: "0000", rejected: false } });
-      expect(engine.sent).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC }]);
+      expect(engine.sent).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" }]);
       expect(safe.decryptString(await readFile(musicPath()))).toBe(MUSIC);
       expect(keys.status().last4).toBe("0000");
       expect(await readdir(userData)).toEqual([MUSIC_SECRETS_FILE]);
@@ -752,8 +752,8 @@ describe("a music key set while the engine is restarting", () => {
 
     expect(ports[0]?.posted).toEqual([]);
     const received = ports[1]?.posted ?? [];
-    expect(received).toContainEqual({ kind: "control", type: "musicKey.set", key: MUSIC });
-    expect(received.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: MUSIC });
+    expect(received).toContainEqual({ kind: "control", type: "musicKey.set", key: MUSIC, origin: "start" });
+    expect(received.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" });
   });
 
   test("a rotation during the restart leaves the new engine on the newest key", async () => {
@@ -766,7 +766,7 @@ describe("a music key set while the engine is restarting", () => {
     await relaunch(host, timers);
 
     const received = (ports[1]?.posted ?? []) as HostControl[];
-    expect(received.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: ROTATED });
+    expect(received.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: ROTATED, origin: "user" });
     expectNoKeyFragment(JSON.stringify(received), MUSIC);
   });
 
@@ -786,6 +786,6 @@ describe("a music key set while the engine is restarting", () => {
     const first = await open();
     await first.set(MUSIC, () => {});
     const { ports } = await hostOver(await open());
-    expect(ports[0]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC }]);
+    expect(ports[0]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC, origin: "start" }]);
   });
 });

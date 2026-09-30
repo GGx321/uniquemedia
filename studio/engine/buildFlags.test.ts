@@ -16,6 +16,8 @@ useNativeGlobals();
 const ROOT = resolve(import.meta.dirname, "../..");
 const ENGINE_CALL = /resolveOpenRouterBaseUrl\(init\.openRouterBaseUrl, (true|false)\)/;
 const SWITCH = "studio-openrouter-base-url";
+const MUSIC_ENGINE_CALL = /resolveMusicBaseUrl\(init\.musicBaseUrl, (true|false)\)/;
+const MUSIC_SWITCH = "studio-flashapi-base-url";
 
 let normalDir = "";
 let e2eDir = "";
@@ -52,6 +54,16 @@ describe("the E2E build flag", () => {
   test("an E2E build lets the engine take the override and main read it (so the greps below can see it)", async () => {
     expect((await engineOf(e2eDir)).match(ENGINE_CALL)?.[1]).toBe("true");
     expect(await mainOf(e2eDir)).toContain(SWITCH);
+  });
+
+  test("an E2E build lets the engine take the flashapi override and main read its switch", async () => {
+    expect((await engineOf(e2eDir)).match(MUSIC_ENGINE_CALL)?.[1]).toBe("true");
+    expect(await mainOf(e2eDir)).toContain(MUSIC_SWITCH);
+  });
+
+  test("a normal build compiles the flashapi override out: the engine ignores it and main never reads its switch", async () => {
+    expect((await engineOf(normalDir)).match(MUSIC_ENGINE_CALL)?.[1]).toBe("false");
+    expect(await mainOf(normalDir)).not.toContain(MUSIC_SWITCH);
   });
 
   test("a normal build compiles the flag to false: the engine ignores any override and main never reads one", async () => {
@@ -93,7 +105,7 @@ describe("debug affordances are compile-time", () => {
 
   test("a production build never reads the test switches and never trusts a renderer URL from the environment", async () => {
     const main = await mainOf(normalDir);
-    expect(found(main, ["studio-pick-folder", "studio-pick-import-file", "studio-openrouter-base-url", "ELECTRON_RENDERER_URL", "__STUDIO_DEV__", "__STUDIO_E2E__"])).toEqual([]);
+    expect(found(main, ["studio-pick-folder", "studio-pick-import-file", "studio-openrouter-base-url", "studio-flashapi-base-url", "ELECTRON_RENDERER_URL", "__STUDIO_DEV__", "__STUDIO_E2E__"])).toEqual([]);
   });
 
   test("an E2E build keeps DevTools and remote debugging and reads the folder- and import-photo-dialog switches, but trusts no renderer URL", async () => {
@@ -129,9 +141,10 @@ describe("the smoke test's production bundle checks", () => {
       // (see the passing "pass a production build" test above).
       "contains studio-pick-import-file",
       "contains studio-openrouter-base-url",
+      "contains studio-flashapi-base-url",
       "DevTools are not compiled off",
       "the remote-debugging refusal is missing",
     ]);
-    expect(productionEngineProblems(await engineOf(e2eDir))).toEqual(["the engine takes an OpenRouter base-URL override"]);
+    expect(productionEngineProblems(await engineOf(e2eDir))).toEqual(["the engine takes an OpenRouter base-URL override", "the engine takes a flashapi base-URL override"]);
   });
 });

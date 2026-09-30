@@ -122,6 +122,10 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('fetch("studio-openrouter-base-url")')).toEqual(["contains studio-openrouter-base-url"]);
   });
 
+  test("flags the flashapi mock's E2E switch leaking anywhere", () => {
+    expect(productionBundleProblems('const SWITCH = "studio-flashapi-base-url";')).toEqual(["contains studio-flashapi-base-url"]);
+  });
+
   test("flags the dev-server env var and the build-time flag names if they leak anywhere", () => {
     const bundle = "const a = ELECTRON_RENDERER_URL; const b = __STUDIO_DEV__; const c = __STUDIO_E2E__; const d = DEBUGGABLE;";
     expect(productionBundleProblems(bundle)).toEqual([
@@ -142,12 +146,29 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
 });
 
 describe("productionEngineProblems", () => {
-  test("passes an engine bundle that never takes an OpenRouter base-URL override", () => {
-    expect(productionEngineProblems("resolveOpenRouterBaseUrl(init.openRouterBaseUrl, false)")).toEqual([]);
+  const BOTH_SHUT = "resolveOpenRouterBaseUrl(init.openRouterBaseUrl, false); resolveMusicBaseUrl(init.musicBaseUrl, false);";
+
+  test("passes an engine bundle that takes neither the OpenRouter nor the flashapi base-URL override", () => {
+    expect(productionEngineProblems(BOTH_SHUT)).toEqual([]);
   });
 
   test("flags an engine bundle built with the E2E override kept", () => {
-    expect(productionEngineProblems("resolveOpenRouterBaseUrl(init.openRouterBaseUrl, true)")).toEqual(["the engine takes an OpenRouter base-URL override"]);
+    expect(productionEngineProblems("resolveOpenRouterBaseUrl(init.openRouterBaseUrl, true); resolveMusicBaseUrl(init.musicBaseUrl, false);")).toEqual(["the engine takes an OpenRouter base-URL override"]);
+  });
+
+  test("flags a flashapi base-URL override kept in the engine, on its own", () => {
+    expect(productionEngineProblems("resolveOpenRouterBaseUrl(init.openRouterBaseUrl, false); resolveMusicBaseUrl(init.musicBaseUrl, true);")).toEqual(["the engine takes a flashapi base-URL override"]);
+  });
+
+  test("flags an engine bundle that lost the flashapi call altogether, so a silent rewrite cannot slip through", () => {
+    expect(productionEngineProblems("resolveOpenRouterBaseUrl(init.openRouterBaseUrl, false);")).toEqual(["the engine takes a flashapi base-URL override"]);
+  });
+
+  test("flags both when both are kept", () => {
+    expect(productionEngineProblems("resolveOpenRouterBaseUrl(init.openRouterBaseUrl, true); resolveMusicBaseUrl(init.musicBaseUrl, true);")).toEqual([
+      "the engine takes an OpenRouter base-URL override",
+      "the engine takes a flashapi base-URL override",
+    ]);
   });
 });
 

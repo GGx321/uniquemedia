@@ -60,7 +60,7 @@ export async function handleMusicKeyCommand(command: MusicKeyCommand, deps: KeyF
     switch (command.type) {
       case "settings.setMusicKey": {
         const { key } = command.payload;
-        const stored = await deps.keys.set(key, () => deps.engine.send({ kind: "control", type: "musicKey.set", key }));
+        const stored = await deps.keys.set(key, () => deps.engine.send({ kind: "control", type: "musicKey.set", key, origin: "user" }));
         if (stored === null) {
           return errorResponseFor(command, { code: "ENCRYPTION_UNAVAILABLE", detail: "the OS cannot encrypt the key, so it was not stored" });
         }

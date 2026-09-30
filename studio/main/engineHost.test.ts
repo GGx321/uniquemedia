@@ -177,7 +177,7 @@ describe("startup", () => {
     await host.start();
     expect(ports[0]?.posted).toEqual([
       { kind: "control", type: "apiKey.set", key: KEY },
-      { kind: "control", type: "musicKey.set", key: MUSIC_KEY },
+      { kind: "control", type: "musicKey.set", key: MUSIC_KEY, origin: "start" },
     ]);
     expectNoKeyFragment(JSON.stringify(children[0]?.posted), MUSIC_KEY);
   });
@@ -185,7 +185,7 @@ describe("startup", () => {
   test("a music key alone is sent without any OpenRouter key", async () => {
     const { host, ports } = setup({ musicKey: () => MUSIC_KEY });
     await host.start();
-    expect(ports[0]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC_KEY }]);
+    expect(ports[0]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC_KEY, origin: "start" }]);
   });
 
   test("without a stored key nothing but init is sent, and the key never travels with init", async () => {
@@ -322,7 +322,7 @@ describe("restart policy", () => {
     children[0]?.crash(9);
     musicKey = "Hb5-nRw3-Yc8d-Qj6f-9999";
     await endBackoff();
-    expect(ports[1]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: "Hb5-nRw3-Yc8d-Qj6f-9999" }]);
+    expect(ports[1]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: "Hb5-nRw3-Yc8d-Qj6f-9999", origin: "start" }]);
   });
 
   test("commands sent during the backoff go to the restarted engine", async () => {
