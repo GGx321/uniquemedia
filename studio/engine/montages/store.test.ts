@@ -372,6 +372,19 @@ describe("DraftStore.list", () => {
     expect(listing.skipped).toBe(0);
   });
 
+  test("newest first by the instant, not the text: stamps of another precision sort where they belong", async () => {
+    const { library, avatarIds } = await openWithAvatars();
+    const [avatarId = ""] = avatarIds;
+    const store = storeOf();
+    // As text «…10:00:00Z» sorts after «…10:00:00.500Z»; as instants it is half a second earlier.
+    await store.write(library, montageOf(avatarId, "montage-0001", { updatedAt: "2026-09-30T10:00:00Z" }));
+    await store.write(library, montageOf(avatarId, "montage-0002", { updatedAt: "2026-09-30T10:00:00.500Z" }));
+
+    const listing = await store.list(library, avatarId);
+
+    expect(listing.montages.map((m) => m.montageId)).toEqual(["montage-0002", "montage-0001"]);
+  });
+
   test("without an avatar it lists every avatar's drafts together", async () => {
     const { library, avatarIds } = await openWithAvatars(2);
     const [first = "", second = ""] = avatarIds;

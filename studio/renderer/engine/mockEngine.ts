@@ -1477,7 +1477,12 @@ export class MockEngine implements EngineBridge {
     if (refusal) return this.fail(c, refusal);
     const drafts = [...this.montages.values()]
       .filter((m) => avatarId === undefined || m.spec.avatarId === avatarId)
-      .sort((a, b) => (a.updatedAt !== b.updatedAt ? (a.updatedAt < b.updatedAt ? 1 : -1) : a.montageId < b.montageId ? -1 : 1));
+      // Newest first by the instant, as the engine's store sorts (never by the text of the stamp).
+      .sort((a, b) => {
+        const at = Date.parse(a.updatedAt);
+        const bt = Date.parse(b.updatedAt);
+        return at !== bt ? (at < bt ? 1 : -1) : a.montageId < b.montageId ? -1 : 1;
+      });
     const items = drafts.slice(0, MAX_LISTED_MONTAGES).map((montage) => ({
       montage,
       issues: this.draftIssues(montage.spec),
@@ -1493,7 +1498,9 @@ export class MockEngine implements EngineBridge {
     const stored = this.montages.get(montageId);
     if (stored === undefined) return this.fail(c, this.unknownDraft(montageId));
     if (spec.avatarId !== stored.spec.avatarId) return this.fail(c, { code: "VALIDATION", detail: "the spec belongs to another avatar than the draft" });
-    const montage = Montage.parse({ montageId, name, spec, updatedAt: this.nowIso() });
+    // As the engine stamps a save: its clock's now, but always after the stamp it replaces.
+    const updatedAt = new Date(Math.max(Date.parse(this.nowIso()), Date.parse(stored.updatedAt) + 1)).toISOString();
+    const montage = Montage.parse({ montageId, name, spec, updatedAt });
     this.montages.set(montageId, montage);
     this.announceDraft(montage);
     return this.ok(c, { montage });

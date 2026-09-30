@@ -51,6 +51,40 @@ describe("montages.save", () => {
     expect(await r.store.read(w.library, w.avatar.id, ID)).toEqual({ kind: "ok", montage });
   });
 
+  test("a clock behind the stored draft still moves updatedAt forward: 1 ms after the stored one (3d.2 re-review)", async () => {
+    const w = world();
+    // The draft was saved on a machine whose clock ran a day ahead; this one's clock is correct.
+    const r = montageRig(w, { now: () => new Date("2026-09-30T15:00:00.000Z") });
+    await r.store.write(w.library, draft(w.avatar.id, ID, [], { updatedAt: "2026-10-01T10:00:00.000Z" }));
+
+    const first = await r.service.save({ montageId: ID, spec: defaultSpec(w.avatar.id, [], 5), name: null });
+    const second = await r.service.save({ montageId: ID, spec: defaultSpec(w.avatar.id, [], 6), name: null });
+
+    expect(first.montage.updatedAt).toBe("2026-10-01T10:00:00.001Z");
+    expect(second.montage.updatedAt).toBe("2026-10-01T10:00:00.002Z");
+  });
+
+  test("the stored stamp is compared as a time, not as text: another precision does not fool it", async () => {
+    const w = world();
+    // «…:00Z» sorts after «…:00.000Z» as text although it is the same instant.
+    const r = montageRig(w, { now: () => new Date("2026-09-30T14:59:59.500Z") });
+    await r.store.write(w.library, draft(w.avatar.id, ID, [], { updatedAt: "2026-09-30T15:00:00Z" }));
+
+    const { montage } = await r.service.save({ montageId: ID, spec: defaultSpec(w.avatar.id, [], 5), name: null });
+
+    expect(montage.updatedAt).toBe("2026-09-30T15:00:00.001Z");
+  });
+
+  test("a clock ahead of the stored draft stamps its own now", async () => {
+    const w = world();
+    const r = montageRig(w, { now: () => new Date("2026-09-30T15:00:00.000Z") });
+    await r.store.write(w.library, draft(w.avatar.id, ID, [], { updatedAt: "2026-09-30T14:00:00.000Z" }));
+
+    const { montage } = await r.service.save({ montageId: ID, spec: defaultSpec(w.avatar.id, [], 5), name: null });
+
+    expect(montage.updatedAt).toBe("2026-09-30T15:00:00.000Z");
+  });
+
   test("a name of null clears the name", async () => {
     const w = world();
     const r = montageRig(w);

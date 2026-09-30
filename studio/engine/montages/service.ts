@@ -74,6 +74,17 @@ function unreadable(read: Exclude<DraftRead, { kind: "ok" }>, montageId: string)
   return new EngineFailure({ code: "INTERNAL", detail: `the draft cannot be read (${read.reason})` });
 }
 
+/**
+ * A save's `updatedAt`: the clock's now, but always after the stamp it replaces (by 1 ms at least). The wall clock can
+ * go back (an NTP step, a clock corrected), and a library in a synced folder may hold drafts stamped by a machine whose
+ * clock ran ahead: the draft's own stamps still only move forward. Compared as instants, never as text (an ISO stamp
+ * may come in another precision: «…:00Z» sorts after «…:00.000Z» as text).
+ */
+function nextStamp(now: Date, stored: string): string {
+  const after = Date.parse(stored) + 1;
+  return new Date(Number.isNaN(after) ? now.getTime() : Math.max(now.getTime(), after)).toISOString();
+}
+
 const libraryUnavailable = (): EngineFailure => new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
 
 export class MontageService {
@@ -272,7 +283,7 @@ export class MontageService {
         if (found === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
         if (found.read.kind !== "ok") throw unreadable(found.read, montageId);
         if (spec.avatarId !== found.avatarId) throw new EngineFailure({ code: "VALIDATION", detail: "the spec belongs to another avatar than the draft" });
-        const montage = Montage.parse({ montageId, name, spec, updatedAt: this.#deps.now().toISOString() });
+        const montage = Montage.parse({ montageId, name, spec, updatedAt: nextStamp(this.#deps.now(), found.read.montage.updatedAt) });
         await this.#write(library, montage);
         this.#announceUpsert(montage);
         return { montage };

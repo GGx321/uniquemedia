@@ -100,9 +100,14 @@ function kindOf(error: unknown): string {
   return "code" in error && typeof error.code === "string" ? error.code : error.name;
 }
 
-/** The order of a listing: newest first; the id breaks a tie so the order is the same on every call. */
+/**
+ * The order of a listing: newest first, by the instant (an ISO stamp may come in another precision, and «…:00Z» sorts
+ * after «…:00.500Z» as text); the id breaks a tie so the order is the same on every call.
+ */
 function newestFirst(a: Montage, b: Montage): number {
-  if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
+  const at = Date.parse(a.updatedAt);
+  const bt = Date.parse(b.updatedAt);
+  if (at !== bt) return at < bt ? 1 : -1;
   return a.montageId < b.montageId ? -1 : a.montageId > b.montageId ? 1 : 0;
 }
 
