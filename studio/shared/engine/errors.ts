@@ -218,3 +218,16 @@ export const ENGINE_GONE_DETAIL = "the engine crashed too many times and will no
  * distinguishes the detail (studio/renderer/lib/errors.ts).
  */
 export const AGE_CHECK_ALREADY_REFUSED_DETAIL = "this exact photo was already refused by the one-time image age check; nothing was charged this time";
+
+/**
+ * `EngineError.detail` of an INTERNAL `montages.get` for a draft file written by a newer Studio (3d.1a). The
+ * window tells the owner to update the app (studio/renderer/lib/errors.ts), never that the draft is broken or
+ * gone. A plain string, not a new `ErrorCode`, like `ENGINE_GONE_DETAIL`: only the detail tells it apart.
+ */
+export const DRAFT_TOO_NEW_DETAIL = "this draft was written by a newer version of Studio; update the app to open it";
+
+/**
+ * `EngineError.detail` of an INTERNAL `montages.get` for a draft whose file was replaced by saves faster than it
+ * could be read: a retry reads it, so the window retries and never offers to delete the draft.
+ */
+export const DRAFT_CHANGING_DETAIL = "the draft was changed just now and could not be read; try again";

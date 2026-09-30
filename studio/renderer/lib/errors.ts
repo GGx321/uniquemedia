@@ -1,4 +1,11 @@
-import { AGE_CHECK_ALREADY_REFUSED_DETAIL, ERROR_MESSAGES_RU, type EngineError, type ErrorCode } from "../../shared/engine";
+import {
+  AGE_CHECK_ALREADY_REFUSED_DETAIL,
+  DRAFT_CHANGING_DETAIL,
+  DRAFT_TOO_NEW_DETAIL,
+  ERROR_MESSAGES_RU,
+  type EngineError,
+  type ErrorCode,
+} from "../../shared/engine";
 import type { SettingsFocus } from "../navigation";
 import { waitLabel } from "./format";
 
@@ -12,9 +19,24 @@ import { waitLabel } from "./format";
 const AGE_CHECK_ALREADY_REFUSED_RU =
   "Это фото уже не подтвердило возраст при прошлой попытке. Импорт отменён, ничего не сохранено и не потрачено — выберите другое фото.";
 
+/**
+ * 3d.2 (the 3d.1a review): two INTERNAL answers of `montages.get` the owner can act on, told apart by their shared
+ * detail. A draft from a newer Studio is not broken, the app is old; a draft replaced while it was read opens on
+ * a retry. Neither may read as «Внутренняя ошибка движка».
+ */
+const DRAFT_TOO_NEW_RU = "Этот черновик сохранён более новой версией Studio. Обновите приложение, чтобы открыть его: сам черновик цел.";
+const DRAFT_CHANGING_RU = "Черновик как раз сохранялся, и его не удалось прочитать. Повторите — он откроется.";
+
+function baseText(error: EngineError): string {
+  if (error.code === "AGE_CHECK_FAILED" && error.detail === AGE_CHECK_ALREADY_REFUSED_DETAIL) return AGE_CHECK_ALREADY_REFUSED_RU;
+  if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
+  if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
+  return ERROR_MESSAGES_RU[error.code];
+}
+
 /** The Russian text for an engine error, plus the wait when the engine gave one. */
 export function errorText(error: EngineError): string {
-  const base = error.code === "AGE_CHECK_FAILED" && error.detail === AGE_CHECK_ALREADY_REFUSED_DETAIL ? AGE_CHECK_ALREADY_REFUSED_RU : ERROR_MESSAGES_RU[error.code];
+  const base = baseText(error);
   if (error.retryAfterMs !== undefined && error.retryAfterMs > 0) return `${base} Повторите через ${waitLabel(error.retryAfterMs)}.`;
   return base;
 }

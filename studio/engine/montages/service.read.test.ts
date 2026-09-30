@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { EngineFailure } from "../engineFailure";
-import type { EngineError } from "../../shared/engine";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type EngineError } from "../../shared/engine";
 import { MAX_LISTED_MONTAGES, Montage, MAX_MONTAGE_ISSUES } from "../../shared/engine/montage";
 import { defaultSpec } from "../../shared/montage";
 import { sceneSpec, writeVideoRecord } from "../library/testing/videoRecords";
@@ -125,7 +125,8 @@ describe("montages.get", () => {
     const error = await failureOf(r.service.get("montage-0000001"));
 
     expect(error.code).toBe("INTERNAL");
-    expect(error.detail).toMatch(/newer/);
+    // The shared detail: the window matches on it to say «обновите Studio» (3d.2).
+    expect(error.detail).toBe(DRAFT_TOO_NEW_DETAIL);
   });
 
   test("the issues are cut at 64", async () => {
@@ -322,7 +323,8 @@ describe("montages.list", () => {
     const error = await failureOf(r.service.get("montage-0000001"));
 
     expect(error.code).toBe("INTERNAL");
-    expect(error.detail).toMatch(/changed just now|try again/);
+    // The shared detail: the window matches on it to retry (3d.2).
+    expect(error.detail).toBe(DRAFT_CHANGING_DETAIL);
     expect(error.detail ?? "").not.toMatch(/cannot be read|not-a-file|corrupt/);
   });
 

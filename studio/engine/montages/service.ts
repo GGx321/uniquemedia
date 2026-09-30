@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { PROTOCOL_VERSION, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, PROTOCOL_VERSION, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, type Focus, type MontageIssue } from "../../shared/engine/montage";
 import { defaultSpec } from "../../shared/montage";
 import { EngineFailure } from "../engineFailure";
@@ -69,8 +69,8 @@ function kindOf(error: unknown): string {
 /** A draft file that is there and cannot be used, told by its reason code alone (never a path or the file's text). */
 function unreadable(read: Exclude<DraftRead, { kind: "ok" }>, montageId: string): EngineFailure {
   if (read.kind === "missing") return new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
-  if (read.reason === "changing") return new EngineFailure({ code: "INTERNAL", detail: "the draft was changed just now and could not be read; try again" });
-  if (read.reason === "too-new") return new EngineFailure({ code: "INTERNAL", detail: "this draft was written by a newer version of Studio; update the app to open it" });
+  if (read.reason === "changing") return new EngineFailure({ code: "INTERNAL", detail: DRAFT_CHANGING_DETAIL });
+  if (read.reason === "too-new") return new EngineFailure({ code: "INTERNAL", detail: DRAFT_TOO_NEW_DETAIL });
   return new EngineFailure({ code: "INTERNAL", detail: `the draft cannot be read (${read.reason})` });
 }
 
