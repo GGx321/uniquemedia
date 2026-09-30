@@ -588,8 +588,8 @@ first.
 | K | Change | Blocks |
 | --- | --- | --- |
 | K1 | `Montage.name`: `MontageName.nullable()`. `montages.create` stores `null`; the UI shows «без названия» (EditorNew's «новый ролик» aligns to it). | 3d.1a, 3d.2 |
-| K2 | `montages.get {montageId}` → `{montage: Montage, issues: MontageIssue[] (0..64)}`. `issues` = `montageIssues(spec, "spec")` plus the engine's referential issues (K7), so the Render reason and the cell highlights are the engine's verdict. Errors: `NOT_FOUND`, `LIBRARY_UNAVAILABLE`. | 3d.1a, 3d.2, 3d.6 |
-| K3 | `montages.list {avatarId?: Id}` → `{items: {montage: Montage, issues: MontageIssue[] (0..64), videoCount: Count}[] (≤ MAX_LISTED_MONTAGES = 200), total: Count}`, newest `updatedAt` first. No `avatarId` = every avatar (the drafts screen's «Все»). Reuses `Montage` instead of a new summary shape. | 3d.1a, 3d.2 |
+| K2 | `montages.get {montageId}` → `{montage: Montage, issues: MontageIssue[] (0..64)}`. `issues` = `montageIssues(spec, "spec")` plus the engine's referential issues (K7), so the Render reason and the cell highlights are the engine's verdict. Errors: `NOT_FOUND`, `LIBRARY_UNAVAILABLE`, and `INTERNAL` (no path in its detail) for a draft file that cannot be read or was written by a newer Studio. **Built in 3d.1a:** `issues` = the structural issues, then what a render refuses for a part whose slice has not landed (`not-yet-supported`), then the referential ones; while the avatar's usage cannot be trusted every photo of the draft is `photo-unavailable` (fail closed, like the render). | 3d.1a, 3d.2, 3d.6 |
+| K3 | `montages.list {avatarId?: Id}` → `{items: {montage: Montage, issues: MontageIssue[] (0..64), videoCount: Count}[] (≤ MAX_LISTED_MONTAGES = 200), total: Count}`, newest `updatedAt` first. No `avatarId` = every avatar (the drafts screen's «Все»). Reuses `Montage` instead of a new summary shape. **Built in 3d.1a:** the answer also carries `skippedTotal: Count` (draft files that could not be read, plus files left unread when a folder holds more than 1000 draft files: the oldest by mtime); `total` counts the drafts read. A drafts folder that cannot be listed is `INTERNAL`, not a shorter list. | 3d.1a, 3d.2 |
 | K4 | `montages.save {montageId, spec: MontageDraft, name: MontageName \| null}` → `{montage: Montage}`. `spec.avatarId` must equal the stored draft's (`VALIDATION` otherwise); no referential check (a draft may hold a rejected photo); `NOT_FOUND` for a deleted draft. Saves stay serialised in the renderer, latest wins. | 3d.1a, 3d.2 |
 | K5 | `montages.delete {montageId}` → `{montageId}`. Allowed while a render of it is queued or running (the job keeps its spec; its record then lists `montageId: null`). | 3d.1a, 3d.2 |
 | K6 | `montages.focus {avatarId, photo: PhotoRef}` → `{focus: Focus \| null}`. `null` = not resolved: the draft stores `null` and the preview draws `FOCUS_FALLBACK`. ≤ 20 s; `NOT_FOUND`, `PHOTO_UNAVAILABLE`. The plan's `{photoId \| mediaId}` needs `avatarId` because the focus cache is per avatar. | 3d.1a, 3d.3a, 3d.4 |
@@ -749,6 +749,15 @@ still lives in the old folder. **Recommended default: allow it, with the confirm
 останется в прежней папке, а фото снова станут свободными».**
 
 ---
+
+## 5b. 3d.1a as built (montage drafts API)
+
+- **Protocol** stays 5 until Stage 3's first release (consistent with 3a.8b.2): the new commands and events did not bump it.
+- **Commands:** `montages.create / get / list / save / delete / focus` and events `montage.changed`, `export.status` (K1-K9, K11). `videos.render {montageId}` now reads the draft; the job keeps the spec it read, and a draft deleted while its render is queued or running leaves the record with `montageId: null` (`videos.list` does the same for a draft deleted later).
+- **Storage:** `avatars/<avatarId>/montages/<montageId>.json`, atomic writes; a draft over 256 KiB or from a newer Studio is not read; a torn file is skipped and counted in `skippedTotal`.
+- **Focus on create:** all photos at once under one budget (20 s of main's 30 s; the command's own deadline is 25 s, with a 5 s margin); a photo not judged in time is stored with `focus: null`.
+- **`export.status`** is emitted when the status changes; the start's own check is the baseline (the snapshot carries it). It follows checks only (start, settings update, a render attempt); a re-check on window focus or on a timer is for 3e.3 / 3d.6.
+- **Left for later:** own-media / caption / track issue codes (3b.3, 3c.4, 3f.*); a proper message for a newer-schema draft (3d.2); 3d.6 must tolerate `NOT_FOUND` for the draft of a job whose draft was deleted (the engine remembers deleted drafts for its own life only).
 
 ## 6. Per-task UI checklists
 
