@@ -8,9 +8,10 @@ import { deleteVideo } from "./delete";
 import { FileStateChecker } from "./fileState";
 import { commitIntent, writeIntent } from "./intents";
 import { CommitTracker } from "./live";
+import { withRootLock } from "./rootLock";
 import { videoPaths } from "./record";
 import { recoverVideos, type ExportRootRef } from "./recovery";
-import { CrashError, errnoError, exportFiles, failureOf, fakeVideoBytes, FINAL, libraryVideoFiles, openFolder, rig, sampleRecord, useWorld, writeTemp, type Rig, type World } from "./testing/kit";
+import { CrashError, errnoError, exportFiles, failureOf, fakeVideoBytes, FINAL, libraryVideoFiles, openFolder, rig, sampleRecord, useWorld, watchUnhandledRejections, writeTemp, type Rig, type World } from "./testing/kit";
 useNativeGlobals();
 
 // Round 3 (the last) of 3a.8b.1: the write-once commit must work where hard links do not exist,
@@ -145,20 +146,79 @@ describe("the lock key ignores the case flag, and waits are bounded and abortabl
   test("a commit waiting for the lock honours its cancel and ends with the abort reason", async () => {
     const a = await rig(world);
     const b = await rig(world, { input: { jobId: "job-00000002", videoId: "video-00000002" } });
+    const unhandled = watchUnhandledRejections();
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => (release = resolve));
-    const first = a.run({ hooks: { reached: async (step) => (step === "name-claimed" ? gate : undefined) } });
-    await sleep(40);
-    const controller = new AbortController();
-    const reason = new Error("cancelled while waiting");
-    const second = b.run({ signal: controller.signal }).then(() => "done", (e: unknown) => e);
-    await sleep(30);
-    controller.abort(reason);
-    expect(await second).toBe(reason);
-    expect(existsSync(b.temp)).toBe(false); // its temp is removed, nothing was claimed
-    release();
+    let holding: () => void = () => undefined;
+    const holdsTheLock = new Promise<void>((resolve) => (holding = resolve));
+    let queuing: () => void = () => undefined;
+    const isQueuing = new Promise<void>((resolve) => (queuing = resolve));
+    const outcome = (promise: Promise<unknown>): Promise<unknown> => promise.then(() => "done", (e: unknown) => e);
+    // Ordered by the commits' own hooks, never by sleeping: on a slow runner the first commit may not have the lock after 40 ms.
+    const first = a.run({
+      hooks: {
+        reached: async (step) => {
+          if (step !== "name-claimed") return;
+          holding(); // past the claim, so inside the lock
+          await gate;
+        },
+      },
+    });
+    const firstOutcome = outcome(first);
+    try {
+      await Promise.race([holdsTheLock, firstOutcome.then((e) => Promise.reject(new Error(`the first commit ended before it held the lock: ${String(e)}`)))]);
+      const controller = new AbortController();
+      const reason = new Error("cancelled while waiting");
+      const second = outcome(
+        b.run({
+          signal: controller.signal,
+          hooks: { reached: (step) => (step === "temp-synced" ? queuing() : undefined) }, // the last step before it asks for the lock
+        }),
+      );
+      await Promise.race([isQueuing, second.then((e) => Promise.reject(new Error(`the second commit ended before it queued: ${String(e)}`)))]);
+      controller.abort(reason);
+      expect(await second).toBe(reason);
+      expect(existsSync(b.temp)).toBe(false); // its temp is removed, nothing was claimed
+    } finally {
+      release();
+      await firstOutcome; // a commit this test started is always settled here, even when an assertion above failed
+    }
     expect((await first).result.relPath).toBe(FINAL);
     expect(await exportFiles(a.w)).toEqual([FINAL]);
+    expect(await unhandled.settle()).toEqual([]);
+  });
+
+  test("a waiter that gave up leaves nothing unobserved when the lock later comes free for its abandoned turn", async () => {
+    const w = world();
+    const unhandled = watchUnhandledRejections();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let holding: () => void = () => undefined;
+    const holdsTheLock = new Promise<void>((resolve) => (holding = resolve));
+    const holder = withRootLock(NODE_COMMIT_FS, w.exportRoot, async () => {
+      holding();
+      await gate;
+    });
+    let ran = false;
+    try {
+      await holdsTheLock;
+      const waiter = await failureOf(
+        withRootLock(
+          NODE_COMMIT_FS,
+          w.exportRoot,
+          async () => {
+            ran = true;
+          },
+          { waitMs: 10 },
+        ),
+      );
+      expect((waiter as Error).name).toBe("LockWaitTimeout");
+    } finally {
+      release();
+      await holder.catch(() => undefined);
+    }
+    expect(ran).toBe(false); // the abandoned turn never runs the work, and its own rejection is swallowed
+    expect(await unhandled.settle()).toEqual([]);
   });
 
   test("recovery waits a bounded time for a busy root, then defers its intents as root-busy instead of hanging", async () => {

@@ -323,6 +323,27 @@ export const libraryVideoFiles = async (w: World) => {
 };
 export const FINAL = "Mia/2026-09-29_photo_001.mp4";
 
+/**
+ * Collects every unhandled rejection from now on. `settle()` gives the runtime its turn to report them, stops watching and
+ * returns what it saw; a listener also keeps the runner from failing an unrelated test for it. Call `settle()` in a `finally`.
+ */
+export function watchUnhandledRejections(): { settle(): Promise<unknown[]> } {
+  const seen: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    seen.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandled);
+  return {
+    settle: async () => {
+      // A rejection is reported after the microtasks that could still handle it have run: give it two macrotask turns.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      process.off("unhandledRejection", onUnhandled);
+      return seen;
+    },
+  };
+}
+
 /** The failure a promise ended with, whatever it was. */
 export async function failureOf(promise: Promise<unknown>): Promise<unknown> {
   try {
