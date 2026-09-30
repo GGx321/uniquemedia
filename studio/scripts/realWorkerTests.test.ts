@@ -9,6 +9,7 @@ import {
   listTestFiles,
   MAX_ATTEMPTS,
   commandLineLength,
+  DEFAULT_TEST_TIMEOUT_MS,
   runOnce,
   runShards,
   runWithCrashRetry,
@@ -17,6 +18,7 @@ import {
   shardFiles,
   testTarget,
   WORKER_TEARDOWN_CRASHES,
+  withDefaultTimeout,
 } from "./realWorkerTests";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { NODE_TEST_SUITES, SUITE_TIMEOUT_MS } from "./electronNodeTests";
@@ -354,6 +356,41 @@ describe("the bounds", () => {
       expect(step).not.toBeNull();
       expect(Number(step?.[1])).toBeGreaterThan((shards * MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
     }
+  });
+});
+
+describe("the per-test timeout", () => {
+  const ROOT = join(import.meta.dir, "..", "..");
+
+  test("is added to every shard's arguments, ahead of the files, unless the caller gave one", () => {
+    expect(withDefaultTimeout(["--randomize", "./a.test.ts"])).toEqual([`--timeout=${DEFAULT_TEST_TIMEOUT_MS}`, "--randomize", "./a.test.ts"]);
+    expect(withDefaultTimeout(["--timeout=90000", "./a.test.ts"])).toEqual(["--timeout=90000", "./a.test.ts"]);
+    expect(withDefaultTimeout(["--timeout", "./a.test.ts"])).toEqual(["--timeout", "./a.test.ts"]);
+  });
+
+  // Windows CI failed a different default-timeout test in every run at 5.2 to 6.0 s; bun ignores bunfig's `timeout`.
+  test("is well above the 5 s default that slow Windows runs hit, and below the shard bound", () => {
+    expect(DEFAULT_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(20_000);
+    expect(DEFAULT_TEST_TIMEOUT_MS).toBeLessThanOrEqual(60_000);
+    expect(DEFAULT_TEST_TIMEOUT_MS).toBeLessThan(ATTEMPT_TIMEOUT_MS);
+  });
+
+  test("really applies: a test that outlasts the flag fails on it, and one within it passes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "studio-timeout-"));
+    try {
+      const file = join(dir, "slow.test.ts");
+      await writeFile(file, 'import { test } from "bun:test";\ntest("slow", async () => { await Bun.sleep(1500); });\n');
+      const run = (timeout: number) => runOnce({ command: [process.execPath, "--no-env-file", "test", `--timeout=${timeout}`, file], env: childEnv(process.env), timeoutMs: 60_000, graceMs: 300, echo: false });
+      expect((await run(500)).exitCode).not.toBe(0);
+      expect((await run(10_000)).exitCode).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the suite scripts leave the flag to the runner, so no script overrides it", async () => {
+    const scripts = scriptsOf(JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")));
+    for (const name of ["test:studio:suite", "test:studio:suite:canary"]) expect(scripts[name]).not.toContain("--timeout");
   });
 });
 

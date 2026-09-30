@@ -42,6 +42,26 @@ import { join, relative, resolve, sep } from "node:path";
 
 export const MAX_ATTEMPTS = 3;
 /**
+ * The per-test timeout the runner hands to `bun test`, in milliseconds. Bun 1.3.12 IGNORES the `[test] timeout` key of
+ * bunfig.toml (60 s there; verified with a 6 s test: it failed at 5000 ms), so every test without its own explicit
+ * timeout ran under Bun's default 5 s. On the Windows runner that failed a different test in every CI run (RenderQueue's
+ * reserved-photos tests at 5.3 to 6.0 s, the age-check moderation test at 5.4 s, videos.list at 5.6 s), each followed by
+ * "Unhandled error between tests" from the timed-out test's leftover async work: slow-runner timeouts, not assertion
+ * failures. Measured over five Windows suite logs: the slowest tests that are not bounded by an explicit timeout cost
+ * 5.2 to 6.0 s (they were cut at 5 s, so the true cost is at least that), and the slowest passing tests, all with
+ * explicit timeouts of their own, took 6 to 30 s. 30 s is five times the slowest default-timeout test seen, and half
+ * of bunfig's stated 60 s. A test with its own timeout keeps it (the option is only the default), and a real hang is
+ * still killed by the shard's bound, so the flag only stops slow-but-progressing tests from being cut.
+ */
+export const DEFAULT_TEST_TIMEOUT_MS = 30_000;
+
+/** The `bun test` arguments with the per-test timeout added, unless the caller gave `--timeout` (either form) itself. */
+export function withDefaultTimeout(args: readonly string[]): string[] {
+  const given = args.some((arg) => arg === "--timeout" || arg.startsWith("--timeout="));
+  return given ? [...args] : [`--timeout=${DEFAULT_TEST_TIMEOUT_MS}`, ...args];
+}
+
+/**
  * One attempt's bound for a suite shard. Measured: the whole suite takes 7.5 to over 10 minutes on Windows CI
  * (the slowest runner), so a third of it is 2.5 to 4 minutes and this bound is about four times the slowest shard
  * seen. Raise the `--shards=` count in package.json before raising this: a shard past it is treated as hung and fails at once.
@@ -317,7 +337,7 @@ if (import.meta.main) {
   let plan: string[][];
   try {
     target = testTarget(process.argv.slice(2));
-    plan = await shardedTestArgs(target.testArgs, target.shards, process.cwd());
+    plan = (await shardedTestArgs(target.testArgs, target.shards, process.cwd())).map(withDefaultTimeout);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(2);
