@@ -94,6 +94,8 @@ async function isRegularFileOfSize(path: string, bytes: number): Promise<boolean
   }
 }
 
+const countPending = (record: ListRecord): number => record.tracks.reduce((sum, entry) => sum + Number(entry.audio.state === "pending") + Number(entry.cover.state === "pending"), 0);
+
 function reasonOf(error: unknown): string {
   if (error instanceof DownloadError) return error.kind;
   if (error instanceof DecodeError) return `decode:${error.kind}`;
@@ -119,9 +121,35 @@ export class TrackStore implements MusicListSink {
       const names = await readdir(join(deps.dir, folder)).catch(() => [] as string[]);
       for (const name of names) if (isTempName(name)) await rm(join(deps.dir, folder, name), { force: true }).catch(() => undefined);
     }
-    const store = new TrackStore(deps, await TrackStore.#load(deps));
-    store.#record = await store.#reconcile(store.#record);
+    const loaded = await TrackStore.#load(deps);
+    const store = new TrackStore(deps, loaded);
+    store.#record = await store.#reconcile(loaded);
+    // A signed URL that expired while the app was closed is of no use: the record stops holding it (best effort).
+    if (loaded !== null && store.#record !== null && countPending(store.#record) < countPending(loaded)) {
+      await writeJsonAtomic(join(deps.dir, "lists", "current.json"), store.#record).catch(() => deps.log("studio engine: the music list record could not be rewritten"));
+    }
     return store;
+  }
+
+  /** How many downloads (a track's audio or a cover) are still to run, from URLs that have not expired. */
+  pendingCount(): number {
+    return this.#record === null ? 0 : countPending(this.#record);
+  }
+
+  /**
+   * Finishes what an earlier run left pending (a stop or a crash after the request was spent), with the URLs its record
+   * kept and only until they expire. Nothing is requested when nothing is pending. Same rules and same failure handling
+   * as `accept`; a pending URL is checked against the host policy again by the download itself.
+   */
+  async resume(progress: (done: number, total: number) => void, signal: AbortSignal): Promise<void> {
+    if (this.#busy) throw new Error("a music refresh is already being stored");
+    if (this.pendingCount() === 0) return;
+    this.#busy = true;
+    try {
+      await this.#download(progress, signal);
+    } finally {
+      this.#busy = false;
+    }
   }
 
   static async #load(deps: TrackStoreDeps): Promise<ListRecord | null> {

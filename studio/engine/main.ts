@@ -258,6 +258,10 @@ parentPort.once("message", (event) => {
       guardNotice.notify = () => engine.noteUnhandledRejection();
     }, () => undefined);
 
+    // Downloads a stopped or crashed refresh left pending are finished now: their request was spent, and the record kept
+    // the signed URLs until they expire. Costs no quota; a start that failed has no engine to resume.
+    void ready.then((engine) => engine.resumeMusic()).catch(() => undefined);
+
     // A failed start ends the process, so main restarts it and tells the windows.
     exitIfStartFails(ready, (code) => process.exit(code));
 

@@ -37,6 +37,10 @@ export interface MusicListSink {
   accept(list: FetchedList, progress: (done: number, total: number) => void, signal: AbortSignal): Promise<void>;
   /** What is held now, for the status. Epoch ms; 0 bytes when nothing is on disk. */
   summary(): { listFetchedAt: number | null; trackCount: number; bytesOnDisk: number };
+  /** How many downloads an earlier, stopped refresh left to finish (from URLs that have not expired). Optional: a sink that cannot resume has none. */
+  pendingCount?(): number;
+  /** Finishes those downloads, reporting like `accept`. No request to flashapi is involved: the list was already fetched and stored. */
+  resume?(progress: (done: number, total: number) => void, signal: AbortSignal): Promise<void>;
   /** The tracks of the current list that are stored, for `music.list` (K23): at most 100, no URL, path or hash. */
   list(): TrackSummary[];
   /** A window of a stored track's waveform (K26), or null when that track is not stored. */
@@ -483,6 +487,42 @@ export class MusicService {
       this.#busy = false;
       this.#changed();
     }
+  }
+
+  /**
+   * At engine start: finishes the downloads a stopped or crashed refresh left pending. The request for that list was
+   * spent long ago, so this costs no quota and touches no ledger; it only continues with the URLs the record kept, until
+   * they expire. It takes the same one-at-a-time slot as a refresh (a refresh asked meanwhile is IN_FLIGHT), reports
+   * through the same status and events, and does nothing when nothing is pending, when the sink cannot resume, when a
+   * refresh is running, or when the engine is shutting down. Never rejects.
+   */
+  async resumePending(): Promise<void> {
+    const sink = this.#sink;
+    if (this.#closing || this.#busy || sink.resume === undefined || sink.pendingCount === undefined) return;
+    try {
+      if (sink.pendingCount() === 0) return;
+    } catch {
+      return;
+    }
+    this.#busy = true;
+    const controller = new AbortController();
+    this.#abort = controller;
+    this.#refresh = { state: "running", done: 0, total: 1 };
+    this.#changed();
+    const resume = sink.resume.bind(sink);
+    this.#task = (async () => {
+      let failure: { ok: false; error: EngineError } | null = null;
+      try {
+        await resume((done, total) => this.#progress(done, total), controller.signal);
+      } catch (error) {
+        failure = fail("MUSIC_UNAVAILABLE", `the downloads could not be finished (${error instanceof Error ? error.message : "unknown error"})`);
+      } finally {
+        this.#refresh = failure === null ? { state: "idle" } : { state: "failed", error: failure.error };
+        this.#abort = null;
+        this.#busy = false;
+        this.#changed();
+      }
+    })();
   }
 
   /** What an answer says that the ledger keeps: the server's figures and its own clock (validated by the client). */

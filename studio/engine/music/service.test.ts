@@ -1242,3 +1242,103 @@ describe("the catalogue the sink offers (music.list, music.peaks)", () => {
     expect(await memory.peaks()).toBeNull();
   });
 });
+
+describe("resuming downloads left over from a stopped refresh", () => {
+  const resumable = (state: { pending: number; calls: number; onResume?: (progress: (d: number, t: number) => void, signal: AbortSignal) => Promise<void> }): MusicListSink => ({
+    persistent: true,
+    ...NO_CATALOGUE,
+    accept: () => Promise.resolve(),
+    summary: () => ({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 }),
+    pendingCount: () => state.pending,
+    resume: async (progress, signal) => {
+      state.calls++;
+      await (state.onResume ?? (async (p) => void p(3, 3)))(progress, signal);
+    },
+  });
+
+  test("runs the sink's resume with no request and no ledger line, announcing running then idle", async () => {
+    const state = { pending: 2, calls: 0 };
+    const h = harness({ sink: resumable({ ...state, onResume: async (progress) => void (progress(1, 3), progress(3, 3)) }) });
+    await h.service.resumePending();
+    await h.service.settled();
+    expect(mock?.requests).toEqual([]);
+    expect(await quotaLines()).toEqual([]);
+    const states = h.events.map((e) => e.refresh.state);
+    expect(states[0]).toBe("running");
+    expect(states.at(-1)).toBe("idle");
+    expect(h.events.some((e) => e.refresh.state === "running" && e.refresh.done === 1 && e.refresh.total === 3)).toBe(true);
+  });
+
+  test("does nothing when nothing is pending", async () => {
+    const state = { pending: 0, calls: 0 };
+    const h = harness({ sink: resumable(state) });
+    await h.service.resumePending();
+    await h.service.settled();
+    expect(state.calls).toBe(0);
+    expect(h.events).toEqual([]);
+  });
+
+  test("does nothing for a sink that cannot resume", async () => {
+    const h = harness({ sink: new PersistingTestSink() });
+    await h.service.resumePending();
+    await h.service.settled();
+    expect(h.events).toEqual([]);
+  });
+
+  test("a resume that fails ends failed, and does not leave the service busy: the next refresh goes through", async () => {
+    const state = {
+      pending: 1,
+      calls: 0,
+      onResume: async () => {
+        throw new Error("disk full");
+      },
+    };
+    const h = harness({ sink: resumable(state) });
+    await h.service.resumePending();
+    await h.service.settled();
+    expect((await h.service.status()).refresh).toMatchObject({ state: "failed", error: { code: "MUSIC_UNAVAILABLE" } });
+    state.pending = 0;
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
+  });
+
+  test("a refresh asked while it runs is IN_FLIGHT, and a resume asked while a refresh runs is skipped", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const state = { pending: 1, calls: 0, onResume: () => gate };
+    const h = harness({ sink: resumable(state) });
+    await h.service.resumePending();
+    expect(refused(await h.service.refresh()).code).toBe("IN_FLIGHT");
+    await h.service.resumePending();
+    expect(state.calls).toBe(1);
+    release();
+    await h.service.settled();
+  });
+
+  test("stop() aborts a resume in flight and waits for it", async () => {
+    let aborted = false;
+    const state = {
+      pending: 1,
+      calls: 0,
+      onResume: (_p: (d: number, t: number) => void, signal: AbortSignal) =>
+        new Promise<void>((_resolve, reject) =>
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("cancelled"));
+          }),
+        ),
+    };
+    const h = harness({ sink: resumable(state) });
+    await h.service.resumePending();
+    await h.service.stop();
+    expect(aborted).toBe(true);
+  });
+
+  test("a service that is shutting down does not start one", async () => {
+    const state = { pending: 1, calls: 0 };
+    const h = harness({ sink: resumable(state) });
+    await h.service.stop();
+    await h.service.resumePending();
+    expect(state.calls).toBe(0);
+  });
+});

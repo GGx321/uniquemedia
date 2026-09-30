@@ -230,3 +230,46 @@ describe("music.peaks", () => {
     expect(failed(await engine.handle(peaksCommand("4199287736976977", patch))).error.code).toBe("VALIDATION");
   });
 });
+
+describe("resuming at start", () => {
+  test("an engine started over an interrupted refresh finishes its downloads with no flashapi request and no quota spent", async () => {
+    // A first run, cut in the middle of the second track.
+    const first = await start();
+    const controller = new AbortController();
+    first.cdn.serve(first.tracks[1]?.downloadUrl ?? "", {
+      body: (async function* () {
+        controller.abort();
+        await new Promise<void>(() => undefined);
+        yield new Uint8Array(1);
+      })(),
+    });
+    await first.store
+      .accept({ fetchedAt: NOW, tracks: first.tracks.slice(0, 3) }, () => undefined, controller.signal)
+      .catch(() => undefined);
+    expect(first.store.pendingCount()).toBeGreaterThan(0);
+    await mock?.stop();
+
+    // A second run over the same folder.
+    const cdn = fakeCdn();
+    first.tracks.forEach((track, index) => {
+      cdn.serve(track.downloadUrl, { bytes: excerptOf(index) });
+      if (track.coverUrl !== null) cdn.serve(track.coverUrl, { bytes: JPEG_1X1 });
+    });
+    const store = await TrackStore.open({ dir: musicDir(), transport: cdn.transport, clock: () => NOW, log: () => undefined, decode: async (o) => ({ decodedMs: o.expectedMs, peaks: [1, 2, 3] }) });
+    const second = await startEngine(dir(), { key: null, init: { musicDir: musicDir() }, deps: { musicSink: store } });
+    await second.engine.resumeMusic();
+    await second.engine.musicSettled();
+    expect((await listOf(second.engine)).tracks).toHaveLength(3);
+    expect((await statusOf(second.engine)).refresh).toEqual({ state: "idle" });
+    expect((await statusOf(second.engine)).sentLast31d).toBe(0);
+    expect(cdn.requested).toHaveLength(4);
+  });
+
+  test("an engine with nothing pending resumes nothing", async () => {
+    const { engine, cdn } = await start();
+    await engine.resumeMusic();
+    await engine.musicSettled();
+    expect(cdn.requested).toEqual([]);
+    expect((await statusOf(engine)).refresh).toEqual({ state: "idle" });
+  });
+});

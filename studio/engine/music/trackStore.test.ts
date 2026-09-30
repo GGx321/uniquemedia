@@ -850,3 +850,85 @@ describe("the waveform", () => {
     expect(await h.store.peaks(all[0]?.trackId ?? "", 0, 1000, 16)).toHaveLength(16);
   });
 });
+
+describe("resuming after a stop or a crash", () => {
+  /** A first run that is cut in the middle of the second track: one stored, two pending with their URLs. */
+  async function interrupted(): Promise<{ tracks: MusicTrack[] }> {
+    const controller = new AbortController();
+    const first = await harness({ decode: fastDecode });
+    const tracks = listTracks(3);
+    serveAll(first.cdn, tracks);
+    first.cdn.serve(tracks[1]?.downloadUrl ?? "", {
+      body: (async function* () {
+        controller.abort();
+        await new Promise<void>(() => undefined);
+        yield new Uint8Array(1);
+      })(),
+    });
+    await refresh(first, tracks, controller.signal).catch(() => undefined);
+    return { tracks };
+  }
+
+  test("a store opened over the interrupted run knows what is still to download", async () => {
+    await interrupted();
+    const again = await harness({ decode: fastDecode });
+    expect(again.store.pendingCount()).toBe(4);
+    expect(again.store.list()).toHaveLength(1);
+  });
+
+  test("resume downloads only what is pending, with the URLs the record kept, and then the record is complete and holds none", async () => {
+    const { tracks } = await interrupted();
+    const again = await harness({ decode: fastDecode });
+    serveAll(again.cdn, tracks);
+    await again.store.resume((done, total) => void again.progress.push([done, total]), signal());
+    expect(again.cdn.requested).toEqual([tracks[1], tracks[2]].flatMap((t) => [t?.downloadUrl ?? "", t?.coverUrl ?? ""]));
+    expect(again.store.pendingCount()).toBe(0);
+    expect(again.store.list()).toHaveLength(3);
+    const text = await readFile(join(musicDir, "lists", "current.json"), "utf8");
+    expect(JSON.parse(text).complete).toBe(true);
+    expect(text).not.toMatch(/https?:|oh=|oe=|cdninstagram|fbcdn/i);
+    expect(again.progress[0]).toEqual([1, 5]);
+    expect(again.progress.at(-1)).toEqual([5, 5]);
+  });
+
+  test("a URL that expired while the app was closed is dropped when the store opens, and the record on disk stops holding it", async () => {
+    await interrupted();
+    now = FETCHED + 200 * HOUR;
+    const again = await harness({ decode: fastDecode });
+    expect(again.store.pendingCount()).toBe(0);
+    const text = await readFile(join(musicDir, "lists", "current.json"), "utf8");
+    expect(text).not.toMatch(/https?:|oh=|oe=|cdninstagram|fbcdn/i);
+    await again.store.resume(() => undefined, signal());
+    expect(again.cdn.requested).toEqual([]);
+  });
+
+  test("with nothing pending resume does nothing: no request, no progress", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(2);
+    serveAll(h.cdn, tracks);
+    await refresh(h, tracks);
+    h.cdn.requested.length = 0;
+    h.progress.length = 0;
+    await h.store.resume((done, total) => void h.progress.push([done, total]), signal());
+    expect(h.cdn.requested).toEqual([]);
+    expect(h.progress).toEqual([]);
+  });
+
+  test("a resumed track that fails is recorded as failed, and the ones after it still go on", async () => {
+    const { tracks } = await interrupted();
+    const again = await harness({ decode: fastDecode });
+    serveAll(again.cdn, tracks);
+    again.cdn.serve(tracks[1]?.downloadUrl ?? "", { status: 503 });
+    await again.store.resume(() => undefined, signal());
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["stored", "failed", "stored"]);
+  });
+
+  test("resume is refused while a refresh is being stored", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(2);
+    serveAll(h.cdn, tracks);
+    const running = refresh(h, tracks);
+    await expect(h.store.resume(() => undefined, signal())).rejects.toBeDefined();
+    await running;
+  });
+});

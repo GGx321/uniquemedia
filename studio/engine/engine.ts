@@ -771,6 +771,11 @@ export class Engine {
     return renders;
   }
 
+  /** After start: finishes the music downloads a stopped or crashed refresh left pending (no quota, no request to flashapi). Never rejects. */
+  resumeMusic(): Promise<void> {
+    return this.#music.resumePending();
+  }
+
   /** Resolves once a running music refresh and every status it announced are done. Tests wait on it; nothing else does. */
   musicSettled(): Promise<void> {
     return this.#music.settled();
