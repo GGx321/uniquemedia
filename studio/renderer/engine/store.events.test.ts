@@ -210,7 +210,7 @@ test("job.progress alone gives a candidates job its kind and avatarId, and no ru
   const h = await host();
   await h.emit({ type: "job.progress", payload: { kind: "avatar.candidates", jobId: "job-00000009", avatarId: DRAFT.avatarId, done: 1, total: 4 } });
 
-  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: "avatar.candidates", avatarId: DRAFT.avatarId, runId: null, status: "running", done: 1, total: 4, result: null, error: null }]);
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: "avatar.candidates", avatarId: DRAFT.avatarId, runId: null, montageId: null, status: "running", done: 1, total: 4, result: null, error: null }]);
   h.stop();
 });
 
@@ -218,7 +218,7 @@ test("job.progress alone gives a run job its kind, runId and avatarId", async ()
   const h = await host();
   await h.emit({ type: "job.progress", payload: { kind: "run", jobId: "job-00000010", runId: "run-00000010", avatarId: SAVED.avatarId, done: 3, total: 20 } });
 
-  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000010", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000010", status: "running", done: 3, total: 20, result: null, error: null }]);
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000010", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000010", montageId: null, status: "running", done: 3, total: 20, result: null, error: null }]);
   h.stop();
 });
 
@@ -228,7 +228,7 @@ test("a run's launch announcement (done 0) makes it a running, cancellable job i
   const h = await host();
   await h.emit({ type: "job.progress", payload: { kind: "run", jobId: "job-00000013", runId: "run-00000013", avatarId: SAVED.avatarId, done: 0, total: 20 } });
 
-  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000013", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000013", status: "running", done: 0, total: 20, result: null, error: null }]);
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000013", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000013", montageId: null, status: "running", done: 0, total: 20, result: null, error: null }]);
   h.stop();
 });
 
@@ -357,7 +357,7 @@ test("a snapshot that lists a queued render restores it as a render job with no 
   const queued: Snapshot["jobs"][number] = { ...RENDER_REF, status: "queued", done: 0, total: 240 };
   const h = await host({ jobs: [queued] });
   expect(h.store.getView().jobs).toEqual([
-    { jobId: "job-render-0001", kind: "render", avatarId: "avatar-draft-0001", runId: null, status: "queued", done: 0, total: 240, result: null, error: null },
+    { jobId: "job-render-0001", kind: "render", avatarId: "avatar-draft-0001", runId: null, montageId: "montage-0000001", status: "queued", done: 0, total: 240, result: null, error: null },
   ]);
   h.stop();
 });
@@ -367,6 +367,25 @@ test("job.progress of a render the window never started creates its view and cou
   await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 60, total: 240 } });
   expect(h.store.getView().jobs).toMatchObject([{ jobId: "job-render-0001", kind: "render", avatarId: "avatar-draft-0001", runId: null, status: "running", done: 60, total: 240 }]);
   expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("a render job knows the draft it came from: from its first event, kept through its end", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 60, total: 240 } });
+  await h.emit({ type: "job.done", payload: { jobId: RENDER_REF.jobId, result: RENDER_RESULT } });
+  expect(h.store.getView().jobs).toMatchObject([{ jobId: "job-render-0001", montageId: "montage-0000001", status: "done" }]);
+  h.stop();
+});
+
+test("a headless render names no draft, and neither does a render first heard of at its job.done (the result carries none)", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, jobId: "job-render-0002", videoId: "video-0000002", montageId: null, done: 1, total: 240 } });
+  await h.emit({ type: "job.done", payload: { jobId: RENDER_REF.jobId, result: RENDER_RESULT } });
+  expect(h.store.getView().jobs).toMatchObject([
+    { jobId: "job-render-0002", montageId: null },
+    { jobId: "job-render-0001", montageId: null, status: "done" },
+  ]);
   h.stop();
 });
 
@@ -429,6 +448,20 @@ test("montage.changed moves lastSeq on and changes nothing else: drafts are list
   await h.emit({ type: "montage.changed", payload: { change: "removed", montageId: STORED_DRAFT.montageId, avatarId: STORED_DRAFT.spec.avatarId } });
   expect(h.store.getView()).toEqual({ ...before, lastSeq: before.lastSeq + 2 });
   expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("montage.changed reaches the montage listeners once each, in seq order, and stops at unsubscribe", async () => {
+  const h = await host();
+  const heard: string[] = [];
+  const stopListening = h.store.subscribeMontages((change) => heard.push(change.change === "upserted" ? `upserted:${change.montage.updatedAt}` : `removed:${change.montageId}`));
+  await h.emit({ type: "montage.changed", payload: { change: "upserted", montage: STORED_DRAFT } });
+  await h.emit({ type: "montage.changed", payload: { change: "upserted", montage: { ...STORED_DRAFT, updatedAt: "2026-09-30T10:00:01.000Z" } } });
+  await h.emit({ type: "montage.changed", payload: { change: "removed", montageId: STORED_DRAFT.montageId, avatarId: STORED_DRAFT.spec.avatarId } });
+  stopListening();
+  await h.emit({ type: "montage.changed", payload: { change: "upserted", montage: STORED_DRAFT } });
+
+  expect(heard).toEqual(["upserted:2026-09-30T10:00:00.000Z", "upserted:2026-09-30T10:00:01.000Z", "removed:montage-0000001"]);
   h.stop();
 });
 

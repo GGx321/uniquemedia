@@ -18,12 +18,19 @@ test("jobFromState reads a run job's avatarId, not null", () => {
     kind: "run",
     avatarId: "avatar-0001",
     runId: "run-00000001",
+    montageId: null,
     status: "running",
     done: 3,
     total: 20,
     result: null,
     error: null,
   });
+});
+
+test("jobFromState reads a render job's draft", () => {
+  const renderJob: JobState = { kind: "render", jobId: "job-00000003", videoId: "video-0000001", avatarId: "avatar-0001", montageId: "montage-0000001", status: "queued", done: 0, total: 240 };
+
+  expect(jobFromState(renderJob)).toMatchObject({ kind: "render", runId: null, montageId: "montage-0000001" });
 });
 
 test("jobFromState reads null runId for an avatar.candidates job", () => {
@@ -76,7 +83,7 @@ test("trackRunJob records a run job with its size, and a resume's ended slots, b
   const { store } = await started({ avatars: [zoe()] });
   store.trackRunJob("job-00000042", "run-00000042", "avatar-zoe-0001", 20);
   expect(store.getView().jobs).toEqual([
-    { jobId: "job-00000042", kind: "run", avatarId: "avatar-zoe-0001", runId: "run-00000042", status: "queued", done: 0, total: 20, result: null, error: null },
+    { jobId: "job-00000042", kind: "run", avatarId: "avatar-zoe-0001", runId: "run-00000042", montageId: null, status: "queued", done: 0, total: 20, result: null, error: null },
   ]);
 
   store.trackRunJob("job-00000043", "run-00000043", "avatar-zoe-0001", 12, 8);

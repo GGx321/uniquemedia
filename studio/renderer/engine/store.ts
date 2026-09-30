@@ -30,6 +30,12 @@ export interface JobView {
   readonly avatarId: string;
   /** A run job's own run; null exactly for a candidates job. */
   readonly runId: string | null;
+  /**
+   * The montage draft a render job came from: the drafts screen's «Рендер 42 %» and the editor's button find it by
+   * this. Null for every other kind, for a headless render, and for a render this window first heard of at its
+   * `job.done` (the result names no draft).
+   */
+  readonly montageId: string | null;
   readonly status: JobStatus;
   readonly done: number;
   readonly total: number;
@@ -120,6 +126,7 @@ export function jobFromState(j: JobState): JobView {
     kind: j.kind,
     avatarId: j.avatarId,
     runId: j.kind === "run" ? j.runId : null,
+    montageId: j.kind === "render" ? j.montageId : null,
     status: j.status,
     done: j.done,
     total: j.total,
@@ -132,12 +139,26 @@ export function jobFromState(j: JobState): JobView {
 type JobRef = { readonly jobId: string; readonly avatarId: string } & (
   | { readonly kind: "avatar.candidates" }
   | { readonly kind: "run"; readonly runId: string }
-  | { readonly kind: "render" }
+  | { readonly kind: "render"; readonly montageId: string | null }
 );
 
 function newJob(ref: JobRef): JobView {
-  return { jobId: ref.jobId, kind: ref.kind, avatarId: ref.avatarId, runId: ref.kind === "run" ? ref.runId : null, status: "queued", done: 0, total: 0, result: null, error: null };
+  return {
+    jobId: ref.jobId,
+    kind: ref.kind,
+    avatarId: ref.avatarId,
+    runId: ref.kind === "run" ? ref.runId : null,
+    montageId: ref.kind === "render" ? ref.montageId : null,
+    status: "queued",
+    done: 0,
+    total: 0,
+    result: null,
+    error: null,
+  };
 }
+
+/** What `montage.changed` carries: a draft created or saved, or removed. */
+export type MontageChange = Extract<EventMessage, { type: "montage.changed" }>["payload"];
 
 /**
  * Adds `notice` to `notices`, deduped by `noticeId` (an exact repeat delivery
@@ -204,6 +225,7 @@ export interface EngineStoreOptions {
 export class EngineStore {
   private view: EngineView = INITIAL;
   private readonly listeners = new Set<() => void>();
+  private readonly montageListeners = new Set<(change: MontageChange) => void>();
   private held: EventMessage[] = [];
   private syncing = false;
   private queuedSnapshot = false;
@@ -243,6 +265,18 @@ export class EngineStore {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  };
+
+  /**
+   * `montage.changed` as the store applies it: in seq order, once each, never from a stale engine or a replayed
+   * duplicate. The drafts are not kept in the view (they are listed on demand); the editor and the drafts screen
+   * listen here instead of on the raw event stream.
+   */
+  readonly subscribeMontages = (listener: (change: MontageChange) => void): (() => void) => {
+    this.montageListeners.add(listener);
+    return () => {
+      this.montageListeners.delete(listener);
     };
   };
 
@@ -640,7 +674,8 @@ export class EngineStore {
           result.kind === "run"
             ? { kind: "run", jobId, runId: result.runId, avatarId: result.avatarId }
             : result.kind === "render"
-              ? { kind: "render", jobId, avatarId: result.avatarId }
+              ? // The result names no draft: a render first heard of here keeps none (one already known keeps its own).
+                { kind: "render", jobId, avatarId: result.avatarId, montageId: null }
               : { kind: "avatar.candidates", jobId, avatarId: result.avatarId };
         this.patchJob(
           ref,
@@ -715,8 +750,9 @@ export class EngineStore {
         this.update({ lastSeq });
         return;
       case "montage.changed":
-        // Drafts are listed on demand (montages.list); the event only has to keep the seq moving.
+        // Drafts are listed on demand (montages.list): the view keeps only the seq, and the listeners hear the change.
         this.update({ lastSeq });
+        for (const listener of [...this.montageListeners]) listener(event.payload);
         return;
       case "export.status":
         this.update({ exportStatus: event.payload.exportStatus, lastSeq });
