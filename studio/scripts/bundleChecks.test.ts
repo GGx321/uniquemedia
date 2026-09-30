@@ -169,6 +169,10 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('const SWITCH = "studio-flashapi-base-url";')).toEqual(["contains studio-flashapi-base-url"]);
   });
 
+  test("flags the mock CDN's E2E switch leaking anywhere", () => {
+    expect(productionBundleProblems('const SWITCH = "studio-music-cdn-base-url";')).toEqual(["contains studio-music-cdn-base-url"]);
+  });
+
   test("flags the dev-server env var and the build-time flag names if they leak anywhere", () => {
     const bundle = "const a = ELECTRON_RENDERER_URL; const b = __STUDIO_DEV__; const c = __STUDIO_E2E__; const d = DEBUGGABLE;";
     expect(productionBundleProblems(bundle)).toEqual([
@@ -193,8 +197,27 @@ describe("productionEngineProblems", () => {
   const OPEN_RESOLVE = "resolveOpenRouterBaseUrl(init.openRouterBaseUrl, false);";
   const OPEN_CLIENT = "baseUrl: this.#openRouterBaseUrl,\n\t\t\tallowBaseUrlOverride: false,";
   const MUSIC_CLIENT = "baseUrl: resolveMusicBaseUrl(init.musicBaseUrl, false),\n\t\t\tallowBaseUrlOverride: false,";
+  // 3c.4: a production bundle has no mock-CDN code at all (its branch is behind the build flag, which folds to `false`),
+  // so there is no call to read; the check is that none of the transport is there.
   const bundle = (...parts: string[]) => parts.join("\n");
   const SHUT = bundle(OPEN_RESOLVE, OPEN_CLIENT, MUSIC_CLIENT);
+
+  test("flags the loopback mock transport in the engine bundle: it must be compiled out, not merely unused", () => {
+    expect(productionEngineProblems(bundle(SHUT, "function createLoopbackCdnTransport(base) {}"))).toEqual(["the mock-CDN transport is in the engine bundle"]);
+  });
+
+  test("flags the mock CDN's messages in the engine bundle even if the function was renamed", () => {
+    expect(productionEngineProblems(bundle(SHUT, 'throw new TypeError("the mock CDN may only be a loopback host");'))).toEqual(["the mock-CDN transport is in the engine bundle"]);
+  });
+
+  test("flags a test-only track-store helper in the engine bundle", () => {
+    expect(productionEngineProblems(bundle(SHUT, "export function fakeCdn() {}"))).toEqual(["a test-only music helper is in the engine bundle"]);
+    expect(productionEngineProblems(bundle(SHUT, "const m4aBuilder = 1;"))).toEqual(["a test-only music helper is in the engine bundle"]);
+  });
+
+  test("flags the fixtures' host patterns being imported into the engine bundle", () => {
+    expect(productionEngineProblems(bundle(SHUT, "export const cdnHostPatterns = [];"))).toEqual(["a test-only music helper is in the engine bundle"]);
+  });
 
   test("passes an engine bundle that allows neither the OpenRouter nor the flashapi base-URL override, at either layer", () => {
     expect(productionEngineProblems(SHUT)).toEqual([]);

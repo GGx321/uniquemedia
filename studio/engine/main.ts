@@ -20,6 +20,10 @@ import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
 import { createPdqGate } from "./runs/pdqGate";
 import { productionGateOrder } from "./runs/productionGates";
+import { STUDIO_E2E } from "./buildFlags";
+import { resolveMusicCdnBase } from "./music/cdnOverride";
+import { createHttpsTransport, createLoopbackCdnTransport } from "./music/cdnTransport";
+import { TrackStore } from "./music/trackStore";
 import { TEXT_ASSET_DIRS } from "./text/assetLayout";
 import { loadTextRasteriser } from "./text/load";
 import { RASTER_WASM } from "./text/rasterTypes";
@@ -216,7 +220,23 @@ parentPort.once("message", (event) => {
     await withinStartWait(textLoad, TEXT_LOAD_START_WAIT_MS);
     const qaGates = productionGateOrder({ pdq: pdqGate, face: "error" in loaded ? null : createFaceQaGate({ faceGate: loaded.faceGate }), age: ageGate });
 
+    // 3c.4: the track store is the sink that turns `music.refresh` on. Its downloads use the pinned-address HTTPS
+    // transport; only an E2E build may send them to a loopback mock CDN instead (invariant 31), and the mock's code is
+    // behind `STUDIO_E2E`, so a production bundle does not hold it. Without a music folder there is no sink: a refresh is
+    // then refused as not available yet, and nothing is sent.
+    const musicCdnBase = resolveMusicCdnBase(init.data.musicCdnBaseUrl, STUDIO_E2E);
+    const musicSink =
+      init.data.musicDir === undefined
+        ? undefined
+        : await TrackStore.open({
+            dir: init.data.musicDir,
+            transport: STUDIO_E2E && musicCdnBase !== null ? createLoopbackCdnTransport(musicCdnBase) : createHttpsTransport(),
+            clock: Date.now,
+            log: (line) => console.warn(line),
+          });
+
     const ready = Engine.start(init.data, {
+      ...(musicSink === undefined ? {} : { musicSink }),
       bootId: randomUUID(),
       clock: Date.now,
       monotonic: () => performance.now(),

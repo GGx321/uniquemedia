@@ -164,6 +164,8 @@ describe("the smoke test's production bundle checks", () => {
       "contains studio-pick-import-file",
       "contains studio-openrouter-base-url",
       "contains studio-flashapi-base-url",
+      // 3c.4: the mock CDN's E2E-only switch, live in an E2E build and compiled out of production.
+      "contains studio-music-cdn-base-url",
       "DevTools are not compiled off",
       "the remote-debugging refusal is missing",
     ]);
@@ -172,6 +174,8 @@ describe("the smoke test's production bundle checks", () => {
       "the engine takes a flashapi base-URL override",
       "the OpenRouter client is built with a base-URL override allowed",
       "the flashapi client is built with a base-URL override allowed",
+      // 3c.4: the loopback transport is in an E2E bundle and absent from a production one.
+      "the mock-CDN transport is in the engine bundle",
       // 3a.9: the commit hold the packaged E2E arms; compiled out of production (the passing test above).
       "a test-only commit hold is in the engine bundle",
     ]);

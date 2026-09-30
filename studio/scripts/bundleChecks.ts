@@ -31,6 +31,8 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "moveExportFolder",
   // 3e.3: the mock's stand-in for main's folder dialog.
   "pickExportFolderNext",
+  // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
+  "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",
   "DEBUGGABLE",
   "__STUDIO_DEV__",
@@ -41,6 +43,9 @@ const FORBIDDEN_DEBUG_MARKERS = [
   // under — is itself a problem, whatever it is trying to append.
   "appendSwitch",
 ] as const;
+
+/** Names that exist only in the test-only music helpers and fixtures: none may be in the engine bundle. */
+const TEST_ONLY_MUSIC_NAMES = ["hangingBody", "fakeCdn", "m4aBuilder", "storeKit", "cdnHostPatterns"] as const;
 
 /** Which of the forbidden debug markers a bundle's text carries, each reported as `contains <marker>`. */
 function forbiddenMarkerProblems(bundle: string): string[] {
@@ -158,10 +163,14 @@ export function productionEngineProblems(engine: string): string[] {
   const allowed = engine.match(/allowBaseUrlOverride: (true|!0)/g)?.length ?? 0;
   const named = Number(!openClientShut) + Number(!musicClientShut);
   if (allowed > named) problems.push("a client in the engine allows a base-URL override");
-  // Test-only music helpers live under studio/engine/music/testing/. A persisting test sink in the bundle would turn
-  // `music.refresh` on, which only the real track store (3c.4) may do.
+  // The mock CDN (3c.4, invariant 31): the engine entry picks the loopback transport only behind `STUDIO_E2E`, so with the
+  // flag folded to `false` the bundler drops the transport and its messages altogether: none of it may be in the bundle.
+  // (Unlike the base URLs above there is no call left to read: the whole branch is gone, which is the stronger result.)
+  if (engine.includes("createLoopbackCdnTransport") || engine.includes("the mock CDN")) problems.push("the mock-CDN transport is in the engine bundle");
+  // Test-only music helpers live under studio/engine/music/testing/ and studio/engine/music/fixtures/. A persisting test
+  // sink in the bundle would turn `music.refresh` on, which only the real track store (3c.4) may do.
   if (engine.includes("PersistingTestSink")) problems.push("a test-only music sink is in the engine bundle");
-  if (engine.includes("hangingBody")) problems.push("a test-only music helper is in the engine bundle");
+  if (TEST_ONLY_MUSIC_NAMES.some((name) => engine.includes(name))) problems.push("a test-only music helper is in the engine bundle");
   // 3a.9: the packaged E2E stops a commit right after the rename to kill the engine there (studio/engine/videos/e2eCommitHold.ts).
   // The hook is built behind STUDIO_E2E, so a production bundle has neither the module nor the marker its files are named by.
   if (engine.includes("studio-e2e-commit-hold")) problems.push("a test-only commit hold is in the engine bundle");

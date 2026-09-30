@@ -64,6 +64,11 @@ export const EngineInit = z.strictObject({
   /** A mock flashapi for end-to-end tests; honoured only by an E2E build, and only a loopback base (the same rule as OpenRouter's). */
   musicBaseUrl: z.url({ protocol: /^https?$/ }).optional(),
   /**
+   * A mock CDN for end-to-end tests (3c.4); honoured only by an E2E build, and only a loopback plain-http base. Every
+   * download URL still passes the host allowlist: only where its bytes come from changes.
+   */
+  musicCdnBaseUrl: z.url({ protocol: /^https?$/ }).optional(),
+  /**
    * What main has to tell the windows (the engine restarted, settings.json was
    * reset), oldest first. The engine keeps them pending in its snapshot and
    * emits each as an `engine.notice` in its own seq/bootId stream, so a window

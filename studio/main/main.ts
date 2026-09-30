@@ -160,6 +160,13 @@ function flashapiBaseUrlForTests(): string | undefined {
   return url === "" ? undefined : url;
 }
 
+/** A mock CDN for end-to-end tests (3c.4): read only in an E2E build, and honoured only by an E2E engine (a loopback plain-http base only). */
+function musicCdnBaseUrlForTests(): string | undefined {
+  if (!STUDIO_E2E) return undefined;
+  const url = app.commandLine.getSwitchValue("studio-music-cdn-base-url");
+  return url === "" ? undefined : url;
+}
+
 /**
  * The folder main's dialog answers with, for the smoke test, which cannot
  * click a native dialog. Read only by an E2E build: every other build has it
@@ -241,9 +248,10 @@ async function startStudio(): Promise<void> {
       settings: settings.current,
       encryptionAvailable: keys.status().encryptionAvailable,
       openRouterBaseUrl: openRouterBaseUrlForTests(),
-      // The flashapi quota log lives here (3c.3); the lists and tracks of 3c.4 will too.
+      // The flashapi quota log (3c.3) and the track store's lists, tracks, covers and waveforms (3c.4) live here.
       musicDir: join(userData, "music"),
       musicBaseUrl: flashapiBaseUrlForTests(),
+      musicCdnBaseUrl: musicCdnBaseUrlForTests(),
       notices: [...notices.all],
     }),
     apiKey: () => keys.read(),
