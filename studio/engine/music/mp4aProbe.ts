@@ -212,6 +212,34 @@ function readTrack(bytes: Uint8Array, view: DataView, trak: BoxRef, budget: { vi
   return facts;
 }
 
+/**
+ * Refuses cover art wherever a tag holder is: `udta` and `meta` may sit under `moov`, under a `trak`, or under a `mdia`,
+ * nested in each other, with or without a version field (QuickTime's `meta` has none), and ffmpeg reads the tags by
+ * scanning, even inside a `free`. So the structure is not trusted: every `udta` and `meta` found under `moov`, `trak` and
+ * `mdia` is searched for the bytes `covr` whole, and a hit refuses the file. A `meta` too short to hold anything is a bad box.
+ */
+function refuseCoverArt(bytes: Uint8Array, view: DataView, boxes: readonly BoxRef[], budget: { visited: number }, depth: number): void {
+  if (depth > 4) throw new Refusal("box-not-allowed");
+  for (const box of boxes) {
+    if (box.type === "udta" || box.type === "meta") {
+      if (box.type === "meta" && box.end - box.body < 4) throw new Refusal("bad-box");
+      if (box.type === "udta") {
+        // A `meta` inside it too short to hold anything is as much a bad box as one beside it.
+        let inside: BoxRef[] = [];
+        try {
+          inside = childrenOf(bytes, view, box.body, box.end, budget);
+        } catch (error) {
+          if (!(error instanceof Refusal)) throw error;
+        }
+        if (inside.some((child) => child.type === "meta" && child.end - child.body < 4)) throw new Refusal("bad-box");
+      }
+      if (Buffer.from(bytes.buffer, bytes.byteOffset + box.body, box.end - box.body).includes("covr", 0, "latin1")) throw new Refusal("box-not-allowed");
+    } else if (box.type === "trak" || box.type === "mdia") {
+      refuseCoverArt(bytes, view, childrenOf(bytes, view, box.body, box.end, budget), budget, depth + 1);
+    }
+  }
+}
+
 function walk(bytes: Uint8Array): Mp4AudioInfo {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.byteLength < 16) throw new Refusal("bad-box");
@@ -238,17 +266,9 @@ function walk(bytes: Uint8Array): Mp4AudioInfo {
   // `cmov` (a compressed moov that ffmpeg inflates: a 1 MB file can claim a gigabyte, and a video track can hide in it)
   // and `mvex` (fragments) are refused here, with anything else a moov does not carry.
   if (inMoov.some((child) => !MOOV_BOXES.has(child.type))) throw new Refusal("box-not-allowed");
-  // Cover art (`udta/meta/ilst/covr`) makes ffmpeg show a second stream, an attached picture. Tags without one (the
-  // encoder's `©too`) are harmless and are what a re-cut file carries; only `covr` is refused, along the fixed path.
-  for (const udta of inMoov.filter((child) => child.type === "udta")) {
-    for (const meta of childrenOf(bytes, view, udta.body, udta.end, budget).filter((child) => child.type === "meta")) {
-      // `meta` is a full box: four bytes of version and flags come before its children.
-      if (meta.end - meta.body < 4) throw new Refusal("bad-box");
-      for (const ilst of childrenOf(bytes, view, meta.body + 4, meta.end, budget).filter((child) => child.type === "ilst")) {
-        if (childrenOf(bytes, view, ilst.body, ilst.end, budget).some((item) => item.type === "covr")) throw new Refusal("box-not-allowed");
-      }
-    }
-  }
+  // Cover art makes ffmpeg show a second stream, an attached picture. Tags without one (the encoder's `©too`) are harmless
+  // and are what a re-cut file carries; only a picture is refused, wherever the file puts it.
+  refuseCoverArt(bytes, view, inMoov, budget, 0);
   const traks = inMoov.filter((child) => child.type === "trak");
   // Counted before any is read: a file of a hundred tracks is refused for that, not for what the first one lacks.
   if (traks.length > MAX_TRACKS) throw new Refusal("too-many-tracks");

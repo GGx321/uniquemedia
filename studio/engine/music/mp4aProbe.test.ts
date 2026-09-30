@@ -195,6 +195,22 @@ describe("tags with pictures, and repeated boxes", () => {
     expect(refusalOf(buildM4a({ moovExtra: [tags(box("©too", box("data", new Uint8Array(16))), box("covr", box("data", new Uint8Array(16))))] }))).toBe("box-not-allowed");
   });
 
+  // Round 3: cover art hides wherever ffmpeg looks for tags, not only under moov/udta/meta/ilst.
+  const covr = box("covr", box("data", new Uint8Array(16)));
+  const meta = (prefix = true): Uint8Array => box("meta", concat(prefix ? u32(0) : new Uint8Array(0), box("ilst", covr)));
+
+  test.each([
+    ["trak/udta/meta/ilst", { trakExtra: [box("udta", meta())] }],
+    ["trak/meta/ilst", { trakExtra: [meta()] }],
+    ["mdia/udta/meta/ilst", { mdiaExtra: [box("udta", meta())] }],
+    ["moov/udta/udta/meta/ilst", { moovExtra: [box("udta", box("udta", meta()))] }],
+    ["moov/udta/meta with no version field (QuickTime style)", { moovExtra: [box("udta", meta(false))] }],
+    ["moov/meta/ilst", { moovExtra: [meta()] }],
+    ["a meta whose only visible child is a free that holds the picture", { moovExtra: [box("udta", box("meta", concat(u32(0), box("free", concat(box("hdlr", new Uint8Array(24)), box("ilst", covr))))))] }],
+  ])("cover art under %s is refused", (_label, options) => {
+    expect(probeMp4Audio(buildM4a(options)).ok).toBe(false);
+  });
+
   test("the encoder tag a re-cut file carries (the 3c.1 fixtures have it) is allowed", () => {
     expect(probeMp4Audio(buildM4a({ moovExtra: [tags(box("©too", box("data", new Uint8Array(16))))] })).ok).toBe(true);
   });
