@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
+import { STUDIO_E2E } from "./buildFlags";
 import { EngineInit } from "./control";
 import { ortWasmPathsFrom } from "./decode/wasmPaths";
 import { deliver, Engine, exitIfStartFails } from "./engine";
@@ -24,6 +25,7 @@ import { loadTextRasteriser } from "./text/load";
 import { RASTER_WASM } from "./text/rasterTypes";
 import { createTextWorkerSpawner } from "./text/worker/spawn";
 import { createTextGate, TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textGate";
+import { createCommitHold } from "./videos/e2eCommitHold";
 
 const parentPort = process.parentPort;
 if (!parentPort) throw new Error("the studio engine must run as an Electron utilityProcess");
@@ -226,6 +228,10 @@ parentPort.once("message", (event) => {
       // The same worker gate serves the render's focus points (`videos.render`, S8); without it every photo takes the stand-in point.
       ...("error" in loaded ? { faceGateLoadError: loaded.error } : { faceGate: loaded.faceGate }),
       text: { gate: textGate, loadError: () => textLoadError },
+      // 3a.9: only an E2E build lets the smoke stop a commit right after the rename (the file is under its final name, the record
+      // is not linked) to kill the engine there. `STUDIO_E2E` is a build-time constant: a production bundle has neither the
+      // branch nor the module (bundleChecks.ts's `productionEngineProblems`).
+      ...(STUDIO_E2E ? { videos: { renderOverrides: { hooks: { reached: createCommitHold({ dir: dirname(init.data.ledgerPath) }) } } } } : {}),
     });
 
     void ready.then((engine) => {

@@ -172,6 +172,8 @@ describe("the smoke test's production bundle checks", () => {
       "the engine takes a flashapi base-URL override",
       "the OpenRouter client is built with a base-URL override allowed",
       "the flashapi client is built with a base-URL override allowed",
+      // 3a.9: the commit hold the packaged E2E arms; compiled out of production (the passing test above).
+      "a test-only commit hold is in the engine bundle",
     ]);
   });
 });

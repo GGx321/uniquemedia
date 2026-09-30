@@ -162,6 +162,9 @@ export function productionEngineProblems(engine: string): string[] {
   // `music.refresh` on, which only the real track store (3c.4) may do.
   if (engine.includes("PersistingTestSink")) problems.push("a test-only music sink is in the engine bundle");
   if (engine.includes("hangingBody")) problems.push("a test-only music helper is in the engine bundle");
+  // 3a.9: the packaged E2E stops a commit right after the rename to kill the engine there (studio/engine/videos/e2eCommitHold.ts).
+  // The hook is built behind STUDIO_E2E, so a production bundle has neither the module nor the marker its files are named by.
+  if (engine.includes("studio-e2e-commit-hold")) problems.push("a test-only commit hold is in the engine bundle");
   return problems;
 }
 

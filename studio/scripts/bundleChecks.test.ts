@@ -233,6 +233,10 @@ describe("productionEngineProblems", () => {
     expect(productionEngineProblems(bundle(SHUT, "const hangingBody = () => {};"))).toEqual(["a test-only music helper is in the engine bundle"]);
   });
 
+  test("flags the E2E commit hold that made it into the engine bundle: it would stop a real commit at the rename", () => {
+    expect(productionEngineProblems(bundle(SHUT, 'const held = "studio-e2e-commit-hold.held";'))).toEqual(["a test-only commit hold is in the engine bundle"]);
+  });
+
   test("flags every layer when everything is kept", () => {
     expect(
       productionEngineProblems(
