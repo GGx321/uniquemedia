@@ -1,5 +1,5 @@
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
-import { STICKER_MANIFEST } from "../../shared/stickers";
+import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { Library } from "../library";
 import { photoAvailability, type Availability } from "./availability";
 

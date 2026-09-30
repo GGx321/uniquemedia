@@ -1742,7 +1742,21 @@ async function main(): Promise<void> {
     const videosDelete = await req(cdp, "videos.delete", { videoId: "smoke-no-such-video-01", mode: "record" });
     check("videos.delete of an unknown video is NOT_FOUND", field(videosDelete, "ok") === false && field(videosDelete, "error", "code") === "NOT_FOUND", videosDelete);
     const videosDraft = await req(cdp, "videos.render", { montageId: "smoke-no-such-montage-01" });
-    check("videos.render of a montage draft is NOT_FOUND until drafts exist", field(videosDraft, "ok") === false && field(videosDraft, "error", "code") === "NOT_FOUND", videosDraft);
+    check("videos.render of a montage draft that does not exist is NOT_FOUND", field(videosDraft, "ok") === false && field(videosDraft, "error", "code") === "NOT_FOUND", videosDraft);
+    // 2c. The montage draft commands are wired in the packaged engine (3d.1a). The smoke avatar is a draft avatar, so it has no
+    // scene photos to put in a montage: refusals and empty answers only (the drafts themselves are the engine tests' work).
+    const montagesList = await req(cdp, "montages.list", {});
+    check("montages.list answers a library with no drafts with an empty list", field(montagesList, "ok") === true && JSON.stringify(field(montagesList, "result", "items")) === "[]" && field(montagesList, "result", "total") === 0, montagesList);
+    const montagesListAvatar = await req(cdp, "montages.list", { avatarId: avatar.id });
+    check("montages.list of an avatar with no drafts is an empty list too", field(montagesListAvatar, "ok") === true && field(montagesListAvatar, "result", "skippedTotal") === 0, montagesListAvatar);
+    const montagesGet = await req(cdp, "montages.get", { montageId: "smoke-no-such-montage-01" });
+    check("montages.get of an unknown draft is NOT_FOUND", field(montagesGet, "ok") === false && field(montagesGet, "error", "code") === "NOT_FOUND", montagesGet);
+    const montagesDelete = await req(cdp, "montages.delete", { montageId: "smoke-no-such-montage-01" });
+    check("montages.delete of an unknown draft is NOT_FOUND", field(montagesDelete, "ok") === false && field(montagesDelete, "error", "code") === "NOT_FOUND", montagesDelete);
+    const montagesCreate = await req(cdp, "montages.create", { avatarId: avatar.id, photoIds: [] });
+    check("montages.create for an avatar that is not active is NOT_FOUND", field(montagesCreate, "ok") === false && field(montagesCreate, "error", "code") === "NOT_FOUND", montagesCreate);
+    const montagesFocus = await req(cdp, "montages.focus", { avatarId: avatar.id, photo: { source: "scene", photoId: photo.id } });
+    check("montages.focus for an avatar that is not active is NOT_FOUND", field(montagesFocus, "ok") === false && field(montagesFocus, "error", "code") === "NOT_FOUND", montagesFocus);
     const layered = {
       schemaVersion: 1,
       avatarId: avatar.id,

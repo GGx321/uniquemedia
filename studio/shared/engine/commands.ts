@@ -291,7 +291,10 @@ const ENGINE_SPECS = [
   //                     trusted right now (an unreadable record or a stale index: `detail` says which);
   //   RENDER_QUEUE_FULL (`detail` names the limit) too many renders are queued or running;
   //   LIBRARY_TOO_NEW   a video record was written by a newer Studio;
-  //   NOT_FOUND         an unknown avatar, or a `montageId` (drafts arrive with 3d.1a, so it answers NOT_FOUND until then).
+  //   NOT_FOUND         an unknown avatar, or a `montageId` no draft has; a draft file that cannot be read is INTERNAL.
+  // A `montageId` renders the draft's spec as stored NOW (the job keeps that copy: a later save or delete does not reach it), and
+  // is judged exactly like a `spec`. Deleting the draft while the render is queued or running is allowed: the video's record then
+  // lists `montageId: null`, as `videos.list` does for a draft deleted after the video was made.
   // `spec` takes the montage's shape only, so a structurally invalid one gets that issue list rather than a bare
   // VALIDATION error. The answer carries the job and video ids; `job.progress`, then `job.done` / `job.failed` /
   // `job.cancelled` follow, and `video.changed` when the record lands.
@@ -335,7 +338,8 @@ const ENGINE_SPECS = [
   defineCommand("montages.create", z.strictObject({ avatarId: Id, photoIds: MontagePhotoIds }), z.strictObject({ montage: Montage })),
   // A draft as it stands, with the engine's verdict: `issues` are the structural ones (`montageIssues(spec, "spec")`, what a
   // render would refuse) plus the referential ones (a photo that is no longer usable, a sticker that is gone), bounded at 64.
-  // NOT_FOUND for a draft that does not exist (or cannot be read); LIBRARY_UNAVAILABLE without a library.
+  // NOT_FOUND for a draft that does not exist; INTERNAL (its detail names no path) for a draft file that cannot be read or
+  // was written by a newer Studio; LIBRARY_UNAVAILABLE without a library.
   defineCommand("montages.get", z.strictObject({ montageId: Id }), z.strictObject({ montage: Montage, issues: MontageIssues })),
   // Drafts, newest `updatedAt` first, at most MAX_LISTED_MONTAGES; `total` counts every readable draft, `skippedTotal` the files
   // that could not be read (they are left out, never a failed list). No `avatarId` = every avatar. `videoCount` = the videos

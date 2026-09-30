@@ -54,12 +54,12 @@ const TEXT_WORKER_ENTRY = join(ENGINE_DIR, "text", "worker", "textWorker.ts");
 const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@jsquash/jpeg/decode.js", "@jsquash/png/decode.js", "@resvg/resvg-wasm"]);
 
 /**
- * Where engine code may live: its own tree, studio/node, the pure contract,
+ * Where engine code may live: its own tree, studio/node, the pure contract, the pure montage and sticker modules,
  * and the uniquifier's src/core and src/node, which Studio may import (never
  * edit) — held to the same rules below.
  */
 const ALLOWED_ROOTS = [
-  ...["engine", "node", join("shared", "engine"), join("shared", "montage")].map((d) => join(STUDIO_DIR, d)),
+  ...["engine", "node", join("shared", "engine"), join("shared", "montage"), join("shared", "stickers")].map((d) => join(STUDIO_DIR, d)),
   ...[join("src", "core"), join("src", "node")].map((d) => join(STUDIO_DIR, "..", d)),
 ];
 
