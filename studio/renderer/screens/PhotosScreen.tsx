@@ -147,13 +147,14 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
       else next.add(photoId);
       return next;
     });
-    // Only this photo's mark goes: the others the engine refused stay marked until they are dealt with.
-    setRefused((current) => {
-      if (!current.has(photoId)) return current;
-      const next = new Set(current);
+    // Only this photo's mark goes: the others the engine refused stay marked until they are dealt with. The last
+    // one dealt with takes the refusal notice with it.
+    if (refused.has(photoId)) {
+      const next = new Set(refused);
       next.delete(photoId);
-      return next;
-    });
+      setRefused(next);
+      if (next.size === 0) setCreateError(null);
+    }
   }
 
   /** «Монтаж из выбранных · N»: a draft of the picked photos in the order picked (`defaultSpec` in the engine), then the editor. */
@@ -243,7 +244,16 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
 
       <div id={panelId} className="photos-panel" role="tabpanel" aria-labelledby={tabId}>
         {view.phase === "offline" ? <EngineOffline view={view} /> : <AccountBanner view={view} />}
-        {createError !== null && <ErrorNotice error={createError} />}
+        {createError !== null && (
+          <ErrorNotice
+            error={createError}
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setCreateError(null)}>
+                Закрыть
+              </button>
+            }
+          />
+        )}
 
         <GenerateCard
           avatar={avatar}

@@ -92,6 +92,26 @@ describe("from the Photos screen", () => {
     expect(document.querySelectorAll(".photo-tile-refused")).toHaveLength(1);
   });
 
+  test("the refusal goes once its marked photos are unpicked, and it can be closed", async () => {
+    const { engine } = await studio({ photos: freePhotos(3) });
+    await openSection("Фото");
+    const picks = await screen.findAllByRole("button", { name: /Выбрать для монтажа/ });
+    fireEvent.click(picks[0] ?? document.body);
+    fireEvent.click(picks[1] ?? document.body);
+    engine.failNext("montages.create", { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photoIds", 1] }] });
+    fireEvent.click(screen.getByRole("button", { name: /Монтаж из выбранных/ }));
+    await screen.findByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Выбрать для монтажа/ })[1] ?? document.body);
+    expect(screen.queryByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE)).toBeNull();
+
+    engine.failNext("montages.create", { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photoIds", 0] }] });
+    fireEvent.click(screen.getByRole("button", { name: /Монтаж из выбранных/ }));
+    await screen.findByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE);
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
+    expect(screen.queryByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE)).toBeNull();
+  });
+
   test("a photo the engine refuses is marked on its tile, and the refusal is said", async () => {
     const { engine } = await studio({ photos: freePhotos(2) });
     await openSection("Фото");
