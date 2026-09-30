@@ -160,6 +160,21 @@ describe("«Рендер»", () => {
     expect(callsOf(engine, "montages.save").at(-1)?.payload.spec.clips[0]?.durationMs).toBe(8_000);
   });
 
+  test("an answer that beats the job's first event keeps the button busy: no second render in between", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.setDelivery(false);
+    fireEvent.click(renderButton());
+    await waitFor(() => expect(callsOf(engine, "videos.render")).toHaveLength(1));
+    await flush();
+    const busy = screen.getByRole("button", { name: "Рендер…" });
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(busy);
+    await flush();
+    expect(callsOf(engine, "videos.render").map((c) => c.payload)).toEqual([{ montageId: made.montageId }]);
+  });
+
   test("a running render shows on the button; once done, the photos are in that video and «Рендер» says so (Q1)", async () => {
     const { client, scheduler } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1, P2, PHOTO_IDS[2] ?? "", PHOTO_IDS[3] ?? "", PHOTO_IDS[4] ?? ""]);

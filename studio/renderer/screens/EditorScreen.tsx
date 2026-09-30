@@ -190,6 +190,8 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
   const [videos, setVideos] = useState<readonly VideoSummary[] | null>(null);
   const [focusTick, setFocusTick] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  /** The render this window just queued, until the store knows how it ended: no second submit in between. */
+  const [submittedJob, setSubmittedJob] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<EngineError | null>(null);
 
   // The store's montage.changed, in seq order: echoes of this window's saves change nothing, a save from
@@ -281,7 +283,13 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
     usedVideoTitle,
   });
   const activeJob = renderJob !== null && isActiveJob(renderJob) ? renderJob : null;
-  const busy = submitting
+  // The answer may come before the job's first event (only the events and the snapshot promise it): until the store
+  // has heard of the submitted job, the button stays busy.
+  const submittedUnheard = submittedJob !== null && !view.jobs.some((j) => j.jobId === submittedJob);
+  useEffect(() => {
+    if (submittedJob !== null && !submittedUnheard) setSubmittedJob(null);
+  }, [submittedJob, submittedUnheard]);
+  const busy = submitting || submittedUnheard
     ? { label: "Рендер…" }
     : activeJob === null
       ? null
@@ -306,7 +314,8 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
     const reply = await client.request("videos.render", { montageId });
     if (!mounted.current) return;
     setSubmitting(false);
-    if (!reply.ok) {
+    if (reply.ok) setSubmittedJob(reply.result.jobId);
+    else {
       setRenderError(reply.error);
       setFocusTick((n) => n + 1);
     }
