@@ -108,6 +108,8 @@ export interface VideoRenderDeps {
   readonly draftRemoved?: (montageId: string) => boolean;
   /** `COMMIT_DEADLINE_MS` unless a test says otherwise. */
   readonly commitDeadlineMs?: number;
+  /** The timer behind `commitDeadlineMs`; the real one unless a test moves time itself (a short real deadline races the disk it is testing). */
+  readonly deadlineTimers?: { readonly set: (fn: () => void, ms: number) => unknown; readonly clear: (handle: unknown) => void };
   /** `EXPORT_STEP_DEADLINE_MS` unless a test says otherwise. */
   readonly stepDeadlineMs?: number;
   /**
@@ -177,6 +179,15 @@ async function assertSameRoot(root: string, rootId: string): Promise<void> {
     throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: `the export folder's marker could not be read (${marker.code})` });
   }
   throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "missing", detail: "the export folder is not the one that was checked" });
+}
+
+/** The real timer of one commit's deadline: the handle is the timer itself, kept here so nothing has to be cast. */
+function realDeadlineTimer(): NonNullable<VideoRenderDeps["deadlineTimers"]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    set: (fn, ms) => (timer = setTimeout(fn, ms)),
+    clear: () => clearTimeout(timer),
+  };
 }
 
 export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) => (context: RenderContext) => Promise<RenderResult> {
@@ -267,14 +278,15 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       );
 
       const now = deps.now();
+      const deadlineTimers = deps.deadlineTimers ?? realDeadlineTimer();
       const stop = new AbortController();
       const commitSignal = AbortSignal.any([context.signal, stop.signal]);
       // Armed until `onSaving`: at the deadline the commit is told to stop (it never claims, then) and the job fails.
       let pastNoReturn = false;
       let deadlineFired = false;
-      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      let deadlineTimer: unknown;
       const deadline = new Promise<never>((_resolve, reject) => {
-        deadlineTimer = setTimeout(() => {
+        deadlineTimer = deadlineTimers.set(() => {
           if (pastNoReturn) return;
           deadlineFired = true;
           const failure = new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "saving the video took too long: the export folder does not answer" });
@@ -314,7 +326,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           // The point of no return: no deadline and no cancel from here; the window is told the job is saving.
           onSaving: () => {
             pastNoReturn = true;
-            clearTimeout(deadlineTimer);
+            deadlineTimers.clear(deadlineTimer);
             context.saving();
           },
           ...(deps.verify === undefined ? {} : { verify: deps.verify }),
@@ -339,7 +351,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       // The deadline covers only what comes BEFORE the point of no return. Past it (`onSaving`) the timer is gone: the job
       // stays running until the record lands, holding its queue slot, its photo reservation and the busy state.
       try {
-        const committed = await Promise.race([commit, deadline]).finally(() => clearTimeout(deadlineTimer));
+        const committed = await Promise.race([commit, deadline]).finally(() => deadlineTimers.clear(deadlineTimer));
         return committed.result;
       } catch (error) {
         // A commit that failed AFTER writing its intent may have left it, with a file that would not go (a player or an

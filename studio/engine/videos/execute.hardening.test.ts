@@ -10,6 +10,7 @@ import { RenderQueue } from "../renderQueue/queue";
 import { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 import { partNameOf, type VideoRecord } from "./record";
 import { NODE_COMMIT_FS } from "./commitFs";
+import { FakeTimers } from "./testing/serviceKit";
 import { acceptingVerify, exportFiles, fakeVideoBytes, FINAL, libraryVideoFiles, MARKER, specOf, unhandledRejectionsDuring, useWorld, type World } from "./testing/kit";
 useNativeGlobals();
 
@@ -364,29 +365,49 @@ describe("the case probe of the export volume", () => {
 });
 
 describe("the commit has its own deadline", () => {
-  const hangAt = (step: string, release: Promise<void>): NonNullable<VideoRenderDeps["hooks"]> => ({
-    reached: async (reached) => {
-      if (reached === step) await release;
-    },
-  });
-
-  test("a commit stuck before the claim ends the job (EXPORT_UNAVAILABLE), frees the queue, and cleans up once it wakes: nothing is saved", async () => {
+  // The deadline runs on a clock the test moves (`FakeTimers`), never on a short real one: a 30 ms real deadline races the
+  // very disk the commit is writing to, and on a slow runner it fired before the commit had reached the step under test.
+  /** A commit held at `step` until `wake()`; `reached` settles when it is there (the hook is what says so, no polling). */
+  function stall(step: string): { hooks: NonNullable<VideoRenderDeps["hooks"]>; reached: Promise<void>; wake: () => void } {
     let wake: () => void = () => undefined;
+    let arrived: () => void = () => undefined;
     const release = new Promise<void>((resolve) => {
       wake = resolve;
     });
-    const r = rig({ commitDeadlineMs: 30, hooks: hangAt("temp-synced", release) });
+    const reached = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    return {
+      hooks: {
+        reached: async (at) => {
+          if (at !== step) return;
+          arrived();
+          await release;
+        },
+      },
+      reached,
+      wake: () => wake(),
+    };
+  }
 
-    r.submit();
-    await r.queue.idle();
+  test("a commit stuck before the claim ends the job (EXPORT_UNAVAILABLE), frees the queue, and cleans up once it wakes: nothing is saved", async () => {
+    const timers = new FakeTimers();
+    const held = stall("temp-synced");
+    const r = rig({ commitDeadlineMs: 30, deadlineTimers: timers, hooks: held.hooks });
+    try {
+      r.submit();
+      await held.reached;
+      await timers.advance(30);
+      await r.queue.idle();
 
-    expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
-    expect(r.queue.reservedPhotos(r.w.avatar.id).size).toBe(0);
-    // the stuck commit is still alive: recovery must not take its temp for a crash's leftover
-    expect(r.tracker.hasJob(JOB)).toBe(true);
-
-    wake();
-    await until(() => !r.tracker.hasJob(JOB));
+      expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
+      expect(r.queue.reservedPhotos(r.w.avatar.id).size).toBe(0);
+      // the stuck commit is still alive: recovery must not take its temp for a crash's leftover
+      expect(r.tracker.hasJob(JOB)).toBe(true);
+    } finally {
+      held.wake();
+      await until(() => !r.tracker.hasJob(JOB));
+    }
 
     expect(await exportFiles(r.w)).toEqual([]);
     expect(await libraryVideoFiles(r.w)).toEqual([]);
@@ -395,18 +416,18 @@ describe("the commit has its own deadline", () => {
 
   test("a commit that outlives its pre-claim deadline and then fails on its own leaves no unhandled rejection", async () => {
     const seen = await unhandledRejectionsDuring(async () => {
-      let wake: () => void = () => undefined;
-      const release = new Promise<void>((resolve) => {
-        wake = resolve;
-      });
-      const r = rig({ commitDeadlineMs: 30, hooks: hangAt("temp-synced", release) });
+      const timers = new FakeTimers();
+      const held = stall("temp-synced");
+      const r = rig({ commitDeadlineMs: 30, deadlineTimers: timers, hooks: held.hooks });
       try {
         r.submit();
+        await held.reached;
+        await timers.advance(30);
         await r.queue.idle();
         expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE" } });
         await rm(r.w.exportRoot, { recursive: true, force: true }); // what the woken commit finds is a folder that is gone: it fails by itself
       } finally {
-        wake();
+        held.wake();
         await until(() => !r.tracker.hasJob(JOB));
       }
     });
@@ -414,40 +435,43 @@ describe("the commit has its own deadline", () => {
   });
 
   test("after the pre-claim deadline the photos are free again: the reservation is released and nothing marks them used", async () => {
-    let wake: () => void = () => undefined;
-    const release = new Promise<void>((resolve) => {
-      wake = resolve;
-    });
-    const r = rig({ commitDeadlineMs: 30, hooks: hangAt("temp-synced", release) });
-
-    r.submit();
-    await r.queue.idle();
-
+    const timers = new FakeTimers();
+    const held = stall("temp-synced");
+    const r = rig({ commitDeadlineMs: 30, deadlineTimers: timers, hooks: held.hooks });
     const photo = r.w.photos[0]?.id ?? "";
-    expect(r.queue.reservedPhotos(r.w.avatar.id).has(photo)).toBe(false);
-    expect(r.w.library.photoStates(r.w.avatar.id).get(photo)?.usedIn).toEqual([]);
-    wake();
-    await until(() => !r.tracker.hasJob(JOB));
+    try {
+      r.submit();
+      await held.reached;
+      await timers.advance(30);
+      await r.queue.idle();
+
+      expect(r.queue.reservedPhotos(r.w.avatar.id).has(photo)).toBe(false);
+      expect(r.w.library.photoStates(r.w.avatar.id).get(photo)?.usedIn).toEqual([]);
+    } finally {
+      held.wake();
+      await until(() => !r.tracker.hasJob(JOB));
+    }
     expect(r.w.library.photoStates(r.w.avatar.id).get(photo)?.usedIn).toEqual([]); // the woken commit never claims: it was told to stop
   });
 
   test("a commit stuck AFTER the claim is never failed and never released: the job stays running in its saving phase, the photos stay reserved, and the record lands", async () => {
-    let wake: () => void = () => undefined;
-    const release = new Promise<void>((resolve) => {
-      wake = resolve;
-    });
-    const r = rig({ commitDeadlineMs: 30, hooks: hangAt("name-claimed", release) });
-
-    r.submit();
-    await new Promise((resolve) => setTimeout(resolve, 200)); // six deadlines later
-
+    const timers = new FakeTimers();
+    const held = stall("name-claimed");
+    const r = rig({ commitDeadlineMs: 30, deadlineTimers: timers, hooks: held.hooks });
     const photo = r.w.photos[0]?.id ?? "";
-    expect(r.states()[0]).toMatchObject({ status: "running", saving: true });
-    expect(r.queue.active()).toBe(1); // what a library switch and a shutdown wait for
-    expect(r.queue.reservedPhotos(r.w.avatar.id).has(photo)).toBe(true);
-    expect(r.tracker.hasJob(JOB)).toBe(true);
+    try {
+      r.submit();
+      await held.reached;
+      expect(timers.delays).toEqual([]); // the point of no return took the deadline away
+      await timers.advance(6 * 30); // six deadlines later
 
-    wake();
+      expect(r.states()[0]).toMatchObject({ status: "running", saving: true });
+      expect(r.queue.active()).toBe(1); // what a library switch and a shutdown wait for
+      expect(r.queue.reservedPhotos(r.w.avatar.id).has(photo)).toBe(true);
+      expect(r.tracker.hasJob(JOB)).toBe(true);
+    } finally {
+      held.wake();
+    }
     await r.queue.idle();
 
     expect(r.states()[0]).toMatchObject({ status: "done", result: { relPath: FINAL } });
@@ -458,16 +482,17 @@ describe("the commit has its own deadline", () => {
   });
 
   test("a cancel during that stall is ignored: the job still ends done", async () => {
-    let wake: () => void = () => undefined;
-    const release = new Promise<void>((resolve) => {
-      wake = resolve;
-    });
-    const r = rig({ commitDeadlineMs: 30, hooks: hangAt("name-claimed", release) });
-
-    r.submit();
-    await until(() => r.states().some((state) => "saving" in state && state.saving === true));
-    r.queue.cancel(JOB);
-    wake();
+    const timers = new FakeTimers();
+    const held = stall("name-claimed");
+    const r = rig({ commitDeadlineMs: 30, deadlineTimers: timers, hooks: held.hooks });
+    try {
+      r.submit();
+      await held.reached; // `onSaving` runs before the claim step's hook: the job is saving by now
+      expect(r.states()[0]).toMatchObject({ status: "running", saving: true });
+      r.queue.cancel(JOB);
+    } finally {
+      held.wake();
+    }
     await r.queue.idle();
 
     expect(r.states()[0]?.status).toBe("done");
