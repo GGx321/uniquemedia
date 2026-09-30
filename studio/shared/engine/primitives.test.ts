@@ -117,7 +117,7 @@ describe("ApiKey", () => {
 });
 
 describe("MusicKey", () => {
-  const FAKE = "test-rapidapi-key-0000";
+  const FAKE = "Zq7-vKt9-Wm2x-Lp4s-0000";
 
   test("accepts a RapidAPI-shaped key", () => {
     expect(MusicKey.safeParse(`${"0a".repeat(25)}p1jsn`).success).toBe(true);
@@ -131,12 +131,12 @@ describe("MusicKey", () => {
     ["empty", ""],
     ["only whitespace", "   \t "],
     ["shorter than 8 chars", "abc1234"],
-    ["whitespace inside", "test-rapidapi key-0000"],
-    ["a tab inside", "test-rapidapi\tkey-0000"],
-    ["a newline inside", "test-rapidapi\nkey-0000"],
-    ["a NUL byte", "test-rapidapi\0key-0000"],
-    ["an escape character", "test-rapidapi\u001bkey-0000"],
-    ["non-ASCII", "test-rapidapi-ключ-0000"],
+    ["whitespace inside", "Zq7-vKt9 Wm2x-Lp4s-0000"],
+    ["a tab inside", "Zq7-vKt9\tWm2x-Lp4s-0000"],
+    ["a newline inside", "Zq7-vKt9\nWm2x-Lp4s-0000"],
+    ["a NUL byte", "Zq7-vKt9\0Wm2x-Lp4s-0000"],
+    ["an escape character", "Zq7-vKt9\u001bWm2x-Lp4s-0000"],
+    ["non-ASCII", "Zq7-vKt9-ключ-0000"],
     ["over 256 chars", "a".repeat(257)],
   ])("rejects a key that is %s", (_label, key) => {
     expect(MusicKey.safeParse(key).success).toBe(false);
@@ -154,7 +154,7 @@ describe("MusicKey", () => {
   });
 
   test("a rejection never echoes the key", () => {
-    const result = MusicKey.safeParse("test-rapidapi key-0000");
+    const result = MusicKey.safeParse("Zq7-vKt9 Wm2x-Lp4s-0000");
     expect(JSON.stringify(result)).not.toContain("key-0000");
   });
 });

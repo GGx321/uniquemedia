@@ -249,7 +249,7 @@ describe("MusicKeyStatus", () => {
   });
 
   test("rejects a status that carries the key itself", () => {
-    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, key: "test-rapidapi-key-0000" }).success).toBe(false);
+    expect(MusicKeyStatus.safeParse({ ...musicKeyStatus, key: "Zq7-vKt9-Wm2x-Lp4s-0000" }).success).toBe(false);
   });
 
   test("rejects a status with the quota in it: K24 keeps the quota in MusicStatus", () => {
@@ -272,7 +272,7 @@ describe("Settings", () => {
   });
 
   test("rejects a music key status that smuggles the key", () => {
-    expect(Settings.safeParse({ ...settings, musicKey: { ...musicKeyStatus, key: "test-rapidapi-key-0000" } }).success).toBe(false);
+    expect(Settings.safeParse({ ...settings, musicKey: { ...musicKeyStatus, key: "Zq7-vKt9-Wm2x-Lp4s-0000" } }).success).toBe(false);
   });
 
   test("rejects a float budget", () => {

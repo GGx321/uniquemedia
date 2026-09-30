@@ -1,4 +1,4 @@
-import { open, readFile, rm } from "node:fs/promises";
+import { lstat, open, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   ApiKey,
@@ -10,7 +10,7 @@ import {
 } from "../shared/engine";
 import type { HostControl } from "../engine/control";
 import { fsyncDir, tempSiblingPath } from "../engine/library/durableFs";
-import { renameWithRetry } from "../engine/library/renameRetry";
+import { errorCode, renameWithRetry } from "../engine/library/renameRetry";
 
 /** The encrypted key blob in userData; the only file the key ever reaches (invariant 10). */
 export const SECRETS_FILE = "secrets.bin";
@@ -24,10 +24,6 @@ export interface SafeStorageLike {
 
 /** The commands main answers itself (T0 `MAIN_ONLY_COMMANDS`). */
 export type KeyCommand = Extract<CommandMessage, { type: "settings.setApiKey" | "settings.clearApiKey" }>;
-
-function errorCode(error: unknown): string {
-  return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "unknown";
-}
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
@@ -48,12 +44,15 @@ function rulesOf(options: KeyStoreOptions): KeyRules {
 async function decryptFile(safe: SafeStorageLike, path: string, rules: KeyRules): Promise<string | null> {
   let blob: Buffer;
   try {
+    // Only a regular file is read: opening a FIFO for reading blocks until a writer shows up, which would hang main's
+    // start or the engine's launch. A symlink counts as not regular (lstat), for the same reason.
+    if (!(await lstat(path)).isFile()) throw Object.assign(new Error("the key file is not a regular file"), { code: "ENOTFILE" });
     blob = await readFile(path);
   } catch (error) {
     if (isMissing(error)) return null;
     if (rules.unreadable === "throw") throw error;
     // An optional key's file must not stop the app: it reads as no key, and only the error's code is logged.
-    console.warn(`studio: the stored ${rules.label} could not be read (${errorCode(error)})`);
+    console.warn(`studio: the stored ${rules.label} could not be read (${errorCode(error) ?? "unknown"})`);
     return null;
   }
   if (!safe.isEncryptionAvailable()) return null;
@@ -68,7 +67,7 @@ async function decryptFile(safe: SafeStorageLike, path: string, rules: KeyRules)
 }
 
 /** Temp file created 0600 + fsync + rename + directory fsync: the blob is never readable by others, even mid-write. */
-async function writeSecretAtomic(path: string, data: Uint8Array): Promise<void> {
+async function writeSecretAtomic(path: string, data: Uint8Array, syncDir: (dir: string) => Promise<void>, label: string): Promise<void> {
   const temp = tempSiblingPath(path);
   try {
     const handle = await open(temp, "wx", 0o600);
@@ -88,7 +87,13 @@ async function writeSecretAtomic(path: string, data: Uint8Array): Promise<void> 
     await rm(temp, { force: true });
     throw error;
   }
-  await fsyncDir(dirname(path));
+  // The blob is in place now. A directory sync that fails only weakens durability (the rename may not survive a
+  // power loss), so it is a warning, not a failed set: the disk, the status and the engine must end up agreeing.
+  try {
+    await syncDir(dirname(path));
+  } catch (error) {
+    console.warn(`studio: the folder of the stored ${label} could not be synced (${errorCode(error) ?? "unknown"}); it may not survive a power loss`);
+  }
 }
 
 export interface KeyStoreOptions {
@@ -102,9 +107,12 @@ export interface KeyStoreOptions {
   /**
    * What a file that exists but cannot be read (a directory in its place, no permission) does at open and on every
    * read: `"throw"` (the default, the OpenRouter key's) or `"absent"`, which logs the error's code and reads as no
-   * key, for an optional key that must not take the app down.
+   * key, for an optional key that must not take the app down. Note that `"absent"` also swallows a transient error
+   * (EMFILE, EIO, EBUSY): the key reads as absent until the next set or restart, then comes back on its own.
    */
   unreadable?: "throw" | "absent";
+  /** Test seam: syncs the key file's folder after the rename; `fsyncDir` by default. */
+  syncDir?: (dir: string) => Promise<void>;
   /** Test seam: runs inside the lock right before the blob is written. */
   beforeWrite?: () => Promise<void>;
 }
@@ -164,7 +172,7 @@ export class KeyStore {
         return null;
       }
       await this.#options.beforeWrite?.();
-      await writeSecretAtomic(this.#path, blob);
+      await writeSecretAtomic(this.#path, blob, this.#options.syncDir ?? fsyncDir, this.#rules.label);
       this.#last4 = key.slice(-4);
       stored();
       return this.status();

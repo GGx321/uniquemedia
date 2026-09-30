@@ -19,7 +19,8 @@ const DEFAULT_DELAYS_MS = [25, 50, 100, 200, 400, 800, 1600] as const;
 // briefly holds a handle on the source or the target.
 const TRANSIENT_ON_WINDOWS = new Set(["EPERM", "EACCES", "EBUSY"]);
 
-function errorCode(error: unknown): string | undefined {
+/** The `code` of a Node error (ENOENT, EIO ...), or undefined for anything else. */
+export function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }
 

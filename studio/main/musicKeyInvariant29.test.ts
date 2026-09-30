@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PROTOCOL_VERSION } from "../shared/engine";
@@ -19,8 +19,8 @@ useNativeGlobals();
 // Invariant 29 (Stage 3 plan): the RapidAPI key lives only in its KeyStore (safeStorage, main) and the engine's memory:
 // never in the renderer, logs, library, cache files or a child process's environment. Every key here is obviously fake.
 
-const MUSIC = "test-rapidapi-key-0000";
-const ROTATED = "test-rapidapi-key-9999";
+const MUSIC = "Zq7-vKt9-Wm2x-Lp4s-0000";
+const ROTATED = "Hb5-nRw3-Yc8d-Qj6f-9999";
 
 const dir = useEngineDir("studio-music-invariant29-");
 
@@ -158,9 +158,9 @@ describe("the music key never reaches the renderer", () => {
 
   test("a refused key (a space in it) is refused without echoing any part of it", async () => {
     const w = await wired();
-    const response = await w.ask("settings.setMusicKey", { key: "test-rapidapi key-0000" });
+    const response = await w.ask("settings.setMusicKey", { key: "Zq7-vKt9 Wm2x-Lp4s-0000" });
     expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
-    expectNoKeyFragment(JSON.stringify(response), "test-rapidapi key-0000");
+    expectNoKeyFragment(JSON.stringify(response), "Zq7-vKt9 Wm2x-Lp4s-0000");
     expect(w.engine.musicKey).toBeNull();
   });
 

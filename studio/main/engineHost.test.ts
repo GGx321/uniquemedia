@@ -6,12 +6,13 @@ import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
 import { REFERENCE_TIMEOUT_MS } from "../engine/runs/timeouts";
 import { MAX_ATTEMPT_MS } from "../engine/openrouter/transport";
 import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort } from "./engineHost";
+import { expectNoKeyFragment } from "../testing/keyLeaks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
-const MUSIC_KEY = "test-rapidapi-key-0000";
+const MUSIC_KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
 
 const INIT: EngineInit = {
   kind: "control",
@@ -178,7 +179,7 @@ describe("startup", () => {
       { kind: "control", type: "apiKey.set", key: KEY },
       { kind: "control", type: "musicKey.set", key: MUSIC_KEY },
     ]);
-    expect(JSON.stringify(children[0]?.posted)).not.toContain(MUSIC_KEY);
+    expectNoKeyFragment(JSON.stringify(children[0]?.posted), MUSIC_KEY);
   });
 
   test("a music key alone is sent without any OpenRouter key", async () => {
@@ -319,9 +320,9 @@ describe("restart policy", () => {
     const { host, children, ports, endBackoff } = setup({ musicKey: () => musicKey });
     await host.start();
     children[0]?.crash(9);
-    musicKey = "test-rapidapi-key-9999";
+    musicKey = "Hb5-nRw3-Yc8d-Qj6f-9999";
     await endBackoff();
-    expect(ports[1]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: "test-rapidapi-key-9999" }]);
+    expect(ports[1]?.posted).toEqual([{ kind: "control", type: "musicKey.set", key: "Hb5-nRw3-Yc8d-Qj6f-9999" }]);
   });
 
   test("commands sent during the backoff go to the restarted engine", async () => {

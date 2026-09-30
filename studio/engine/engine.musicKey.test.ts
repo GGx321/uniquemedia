@@ -1,5 +1,6 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { command, failed, KEY, ok, startEngine, useEngineDir } from "./testing/engineHarness";
+import { captureConsole, expectNoKeyFragment } from "../testing/keyLeaks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -9,8 +10,8 @@ useNativeGlobals();
 
 const dir = useEngineDir("studio-engine-music-key-");
 
-const MUSIC = "test-rapidapi-key-0000";
-const ROTATED = "test-rapidapi-key-9999";
+const MUSIC = "Zq7-vKt9-Wm2x-Lp4s-0000";
+const ROTATED = "Hb5-nRw3-Yc8d-Qj6f-9999";
 
 /** No OpenRouter key by default (the harness would store one), so a test sees only what it sets. */
 const start = () => startEngine(dir(), { key: null });
@@ -35,7 +36,7 @@ describe("musicKey.set / musicKey.clear", () => {
     expect(engine.musicKey).toBe(MUSIC);
     expect(events()).toMatchObject([{ type: "settings.changed", payload: { settings: { musicKey: { stored: true, last4: "0000", rejected: false } } } }]);
     expect((await settingsOf(engine)).musicKey).toEqual({ stored: true, last4: "0000", rejected: false });
-    expect(JSON.stringify(posted)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(posted), MUSIC);
   });
 
   test("the snapshot carries the music key's status, not the key", async () => {
@@ -43,7 +44,7 @@ describe("musicKey.set / musicKey.clear", () => {
     await engine.applyControl({ kind: "control", type: "musicKey.set", key: MUSIC });
     const snapshot = ok(await engine.handle(command("engine.snapshot")));
     expect(snapshot).toMatchObject({ result: { settings: { musicKey: { stored: true, last4: "0000", rejected: false } } } });
-    expect(JSON.stringify(snapshot)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(snapshot), MUSIC);
   });
 
   test("musicKey.clear forgets the key and announces it", async () => {
@@ -71,19 +72,19 @@ describe("musicKey.set / musicKey.clear", () => {
   });
 
   test.each([
-    ["too short", "short"],
-    ["holding a space", "test-rapidapi key-0000"],
-    ["holding a newline", "test-rapidapi\nkey-0000"],
+    ["too short", "Zq7-vK9"],
+    ["holding a space", "Zq7-vKt9 Wm2x-Lp4s-0000"],
+    ["holding a newline", "Zq7-vKt9\nWm2x-Lp4s-0000"],
   ])("an invalid key (%s) changes nothing, posts nothing and is not echoed in the log", async (_label, key) => {
     const { engine, posted } = await start();
-    const error = spyOn(console, "error").mockImplementation(() => {});
+    const output = captureConsole();
     try {
       await engine.applyControl({ kind: "control", type: "musicKey.set", key });
       expect(engine.musicKey).toBeNull();
       expect(posted).toEqual([]);
-      expect(JSON.stringify(error.mock.calls)).not.toContain("rapidapi");
+      expectNoKeyFragment(output.text(), key);
     } finally {
-      error.mockRestore();
+      output.restore();
     }
   });
 
@@ -136,7 +137,7 @@ describe("a music key flashapi rejected (401)", () => {
 
     expect(events().slice(before)).toMatchObject([{ type: "settings.changed", payload: { settings: { musicKey: { stored: true, last4: "0000", rejected: true } } } }]);
     expect(events().some((e) => e.type === "engine.error")).toBe(false);
-    expect(JSON.stringify(posted)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(posted), MUSIC);
     expect((await settingsOf(engine)).musicKey).toEqual({ stored: true, last4: "0000", rejected: true });
     expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { settings: { musicKey: { rejected: true } } } });
   });
@@ -193,7 +194,7 @@ describe("the music key commands are main's alone", () => {
     const { engine } = await start();
     const response = failed(await engine.handle(command(type, payload)));
     expect(response.error.code).toBe("VALIDATION");
-    expect(JSON.stringify(response)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(response), MUSIC);
     expect(engine.musicKey).toBeNull();
   });
 });

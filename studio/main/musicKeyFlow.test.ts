@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseMessage, PROTOCOL_VERSION, ResponseMessage } from "../shared/engine";
@@ -14,8 +15,8 @@ useNativeGlobals();
 
 // Stage 3, task 3c.2: the RapidAPI (music) key at rest and on its way to the engine. Only fake keys here.
 
-const MUSIC = "test-rapidapi-key-0000";
-const ROTATED = "test-rapidapi-key-9999";
+const MUSIC = "Zq7-vKt9-Wm2x-Lp4s-0000";
+const ROTATED = "Hb5-nRw3-Yc8d-Qj6f-9999";
 
 let userData = "";
 let safe: FakeSafeStorage;
@@ -60,7 +61,7 @@ describe("settings.setMusicKey", () => {
     expect(await readdir(userData)).toEqual([]);
     expect(engine.sent).toEqual([]);
     expect(musicKeyStatusOf(keys.status())).toEqual({ stored: false, last4: null, rejected: false });
-    expect(JSON.stringify(response)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(response), MUSIC);
   });
 
   test("an encryptString that throws (Keychain denied) answers ENCRYPTION_UNAVAILABLE and stores nothing", async () => {
@@ -71,7 +72,7 @@ describe("settings.setMusicKey", () => {
     const response = await handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine });
 
     expect(response).toMatchObject({ ok: false, error: { code: "ENCRYPTION_UNAVAILABLE" } });
-    expect(JSON.stringify(response)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(response), MUSIC);
     expect(await readdir(userData)).toEqual([]);
     expect(engine.sent).toEqual([]);
   });
@@ -91,11 +92,11 @@ describe("settings.setMusicKey", () => {
       ok: true,
       result: { stored: true, last4: "0000", rejected: false },
     });
-    expect(JSON.stringify(response)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(response), MUSIC);
     expect(engine.sent).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC }]);
 
     const onDisk = await readFile(musicPath());
-    expect(onDisk.toString()).not.toContain(MUSIC);
+    expectNoKeyFragment(onDisk.toString(), MUSIC);
     expect(safe.decryptString(onDisk)).toBe(MUSIC);
     expect(await readdir(userData)).toEqual([MUSIC_SECRETS_FILE]);
   });
@@ -240,8 +241,8 @@ describe("the music key store across restarts", () => {
   });
 
   test.each([
-    ["holds a space", "test-rapidapi key-0000"],
-    ["has whitespace around it", " test-rapidapi-key-0000 "],
+    ["holds a space", "Zq7-vKt9 Wm2x-Lp4s-0000"],
+    ["has whitespace around it", " Zq7-vKt9-Wm2x-Lp4s-0000 "],
     ["is shorter than eight chars", "abc1234"],
   ])("a blob whose key %s is ignored", async (_label, plain) => {
     await writeFile(musicPath(), safe.encryptString(plain));
@@ -347,10 +348,10 @@ describe("a secrets-rapidapi.bin that cannot be read", () => {
 
   test("setting a key over a directory answers a clean INTERNAL, tells the engine nothing and leaves no stray file", async () => {
     await directoryInPlace();
-    const keys = await open();
-    const engine = engineSpy();
     const output = captureConsole();
     try {
+      const keys = await open();
+      const engine = engineSpy();
       const response = await handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine });
 
       expect(response).toMatchObject({ ok: false, id: "cmd-set-0001", type: "settings.setMusicKey", error: { code: "INTERNAL" } });
@@ -369,16 +370,17 @@ describe("a secrets-rapidapi.bin that cannot be read", () => {
   test("clearing over a directory answers a clean INTERNAL instead of throwing, and does not delete the directory", async () => {
     await directoryInPlace();
     await writeFile(join(musicPath(), "keep.txt"), "not ours");
-    const keys = await open();
-    const engine = engineSpy();
     const output = captureConsole();
     try {
+      const keys = await open();
+      const engine = engineSpy();
       const response = await handleMusicKeyCommand(clearMusicKey, { keys, engine });
 
       expect(response).toMatchObject({ ok: false, id: "cmd-clear-001", type: "settings.clearMusicKey", error: { code: "INTERNAL" } });
       expect(ResponseMessage.safeParse(response).success).toBe(true);
       expect(engine.sent).toEqual([]);
       expect(await readdir(musicPath())).toEqual(["keep.txt"]);
+      expectNoKeyFragment(output.text(), MUSIC);
     } finally {
       output.restore();
     }
@@ -406,10 +408,173 @@ describe("a key the store's shape rule would drop", () => {
   });
 
   test("through the command it answers INTERNAL", async () => {
+    const output = captureConsole();
+    try {
+      const keys = await open();
+      const response = await handleMusicKeyCommand(setMusicKey(` ${MUSIC}`), { keys, engine: engineSpy() });
+      expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+      expectNoKeyFragment(JSON.stringify(response), MUSIC);
+      expectNoKeyFragment(output.text(), MUSIC);
+    } finally {
+      output.restore();
+    }
+  });
+});
+
+// ---------- special files ----------
+
+/** A FIFO at the key file's path: opening it for reading would block until a writer shows up. POSIX only. */
+function makeFifo(path: string): void {
+  const made = spawnSync("mkfifo", [path]);
+  if (made.status !== 0) throw new Error("mkfifo failed");
+}
+
+/** `run`'s result, or "hung" once `ms` pass: a read that blocks must fail the test, not hang the suite. */
+async function orHung<T>(run: Promise<T>, ms = 1500): Promise<T | "hung"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<"hung">((resolve) => {
+    timer = setTimeout(() => resolve("hung"), ms);
+  });
+  try {
+    return await Promise.race([run, hung]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+describe.skipIf(process.platform === "win32")("a FIFO or another special file at the key file's path", () => {
+  test("the music store opens as no key without blocking, and logs only a code", async () => {
+    makeFifo(musicPath());
+    const output = captureConsole();
+    try {
+      const keys = await orHung(open());
+      expect(keys).not.toBe("hung");
+      if (keys === "hung") return;
+      expect(musicKeyStatusOf(keys.status()).stored).toBe(false);
+      expect(await orHung(keys.read())).toBeNull();
+      expect(output.text()).toMatch(/could not be read \([A-Z]+\)/);
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("the engine host still starts", async () => {
+    makeFifo(musicPath());
+    const output = captureConsole();
+    try {
+      const keys = await open();
+      const started = await orHung(hostOver(keys, OPENROUTER_KEY));
+      expect(started).not.toBe("hung");
+      if (started !== "hung") expect(started.host.phase).toBe("running");
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("the OpenRouter store keeps its existing error path: it refuses to open, without blocking", async () => {
+    makeFifo(join(userData, SECRETS_FILE));
+    const outcome = await orHung(KeyStore.open(safe, join(userData, SECRETS_FILE)).then(() => "opened", () => "refused"));
+    expect(outcome).toBe("refused");
+  });
+
+  test("a key can be stored over the FIFO: the rename replaces it", async () => {
+    makeFifo(musicPath());
     const keys = await open();
-    const response = await handleMusicKeyCommand(setMusicKey(` ${MUSIC}`), { keys, engine: engineSpy() });
-    expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
-    expectNoKeyFragment(JSON.stringify(response), MUSIC);
+    const response = await handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine: engineSpy() });
+    expect(response).toMatchObject({ ok: true, result: { stored: true, last4: "0000" } });
+    expect(await (await open()).read()).toBe(MUSIC);
+  });
+});
+
+// ---------- one command's answer is its own ----------
+
+describe("the answer to a command is the state it produced", () => {
+  test("a set that a queued clear follows still answers with its own key's last four chars", async () => {
+    let writes = 0;
+    const keys = await openMusicKeyStore(safe, userData, {
+      // The first write is slow, so the clear is queued behind it and lands before the set's answer is built.
+      beforeWrite: async () => {
+        if (++writes === 1) await Bun.sleep(30);
+      },
+    });
+    const engine = engineSpy();
+
+    const [setAnswer, clearAnswer] = await Promise.all([
+      handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine }),
+      handleMusicKeyCommand(clearMusicKey, { keys, engine }),
+    ]);
+
+    expect(setAnswer).toMatchObject({ ok: true, result: { stored: true, last4: "0000" } });
+    expect(clearAnswer).toMatchObject({ ok: true, result: { stored: false, last4: null } });
+    expect(engine.sent).toEqual([
+      { kind: "control", type: "musicKey.set", key: MUSIC },
+      { kind: "control", type: "musicKey.clear" },
+    ]);
+  });
+
+  test("a clear that a queued set follows still answers no key", async () => {
+    const keys = await open();
+    await keys.set(MUSIC, () => {});
+    let clears = 0;
+    const slowClear = keys.clear(() => void ++clears);
+    const [clearAnswer, setAnswer] = await Promise.all([
+      slowClear.then(() => handleMusicKeyCommand(clearMusicKey, { keys, engine: engineSpy() })),
+      handleMusicKeyCommand(setMusicKey(ROTATED), { keys, engine: engineSpy() }),
+    ]);
+    expect(clearAnswer).toMatchObject({ ok: true, result: { stored: false } });
+    expect(setAnswer).toMatchObject({ ok: true, result: { stored: true, last4: "9999" } });
+  });
+});
+
+// ---------- the folder cannot be synced ----------
+
+describe("a folder sync that fails after the key file was renamed into place", () => {
+  const failingSync = async (): Promise<void> => {
+    throw Object.assign(new Error(`EIO while syncing ${userData}`), { code: "EIO" });
+  };
+
+  test("the key is stored: the disk, the status and the engine agree, and the answer is ok", async () => {
+    const keys = await KeyStore.open(safe, musicPath(), { syncDir: failingSync, accepts: () => true, label: "RapidAPI key" });
+    const engine = engineSpy();
+    const output = captureConsole();
+    try {
+      const response = await handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine });
+
+      expect(response).toMatchObject({ ok: true, result: { stored: true, last4: "0000", rejected: false } });
+      expect(engine.sent).toEqual([{ kind: "control", type: "musicKey.set", key: MUSIC }]);
+      expect(safe.decryptString(await readFile(musicPath()))).toBe(MUSIC);
+      expect(keys.status().last4).toBe("0000");
+      expect(await readdir(userData)).toEqual([MUSIC_SECRETS_FILE]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("it is logged as a durability warning with the code only", async () => {
+    const keys = await KeyStore.open(safe, musicPath(), { syncDir: failingSync, label: "RapidAPI key" });
+    const output = captureConsole();
+    try {
+      await keys.set(MUSIC, () => {});
+      expect(output.text()).toContain("could not be synced (EIO)");
+      expect(output.text()).not.toContain(userData);
+      expectNoKeyFragment(output.text(), MUSIC);
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("the OpenRouter key's store had the same bug and is fixed the same way", async () => {
+    const path = join(userData, SECRETS_FILE);
+    const keys = await KeyStore.open(safe, path, { syncDir: failingSync });
+    const sent: string[] = [];
+    const output = captureConsole();
+    try {
+      const status = await keys.set("sk-or-v1-0123456789abcdef-wxyz", () => sent.push("told"));
+      expect(status).toMatchObject({ stored: true, last4: "wxyz" });
+      expect(sent).toEqual(["told"]);
+    } finally {
+      output.restore();
+    }
   });
 });
 
@@ -539,7 +704,7 @@ describe("a music key set while the engine is restarting", () => {
 
     const received = (ports[1]?.posted ?? []) as HostControl[];
     expect(received.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: ROTATED });
-    expect(JSON.stringify(received)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(received), MUSIC);
   });
 
   test("a clear during the restart leaves the new engine without a key", async () => {

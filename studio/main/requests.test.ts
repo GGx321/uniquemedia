@@ -20,7 +20,7 @@ const PACKAGED: TrustedRenderer = { fileUrl: FILE_URL };
 const DEV: TrustedRenderer = { devServerUrl: "http://localhost:5173/", fileUrl: FILE_URL };
 const APP_FRAME: SenderFrame = { url: FILE_URL, isTopFrame: true, isAppWindow: true };
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
-const MUSIC_KEY = "test-rapidapi-key-0000";
+const MUSIC_KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
 
 function routesSpy() {
   const mainOnly: KeyCommand[] = [];
@@ -210,15 +210,15 @@ describe("handleRendererRequest", () => {
   });
 
   test.each([
-    ["holding a space", "test-rapidapi key-0000"],
-    ["holding a control character", "test-rapidapi\u0007key-0000"],
+    ["holding a space", "Zq7-vKt9 Wm2x-Lp4s-0000"],
+    ["holding a control character", "Zq7-vKt9\u0007Wm2x-Lp4s-0000"],
     ["too short", "abc"],
     ["not a string", 12345678],
   ])("a music key %s is refused with VALIDATION before any route runs, and is not echoed", async (_label, key) => {
     const { routes, mainOnly, musicKey, engine } = routesSpy();
     const response = await handleRendererRequest(command("settings.setMusicKey", { key }), APP_FRAME, PACKAGED, routes);
     expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
-    expect(JSON.stringify(response)).not.toContain("rapidapi");
+    expect(JSON.stringify(response)).not.toContain("Wm2x");
     expect([mainOnly, musicKey, engine]).toEqual([[], [], []]);
   });
 

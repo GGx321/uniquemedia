@@ -38,7 +38,7 @@ const API_KEY = `sk-or-v1-${"0a".repeat(32)}`;
 
 const keyStatus: ApiKeyStatus = { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
 
-const MUSIC_KEY = "test-rapidapi-key-0000";
+const MUSIC_KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
 const musicKeyStatus: MusicKeyStatus = { stored: true, last4: "0000", rejected: false };
 
 const settings: Settings = {
@@ -960,9 +960,9 @@ describe("rejection reasons", () => {
   });
 
   test("never echo a submitted music key", () => {
-    const reason = reasonOf(command("settings.setMusicKey", { key: "test-rapidapi secret-0000" }));
+    const reason = reasonOf(command("settings.setMusicKey", { key: "Zq7-vKt9 Wm2x-Lp4s-0000" }));
     expect(reason).toContain("payload.key");
-    expect(reason).not.toContain("secret");
+    expect(reason).not.toContain("Wm2x");
   });
 
   test("strip a field name that looks like a key", () => {

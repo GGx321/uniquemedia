@@ -8,7 +8,8 @@ import {
   type MusicKeyStatus,
   type ResponseMessage,
 } from "../shared/engine";
-import { KeyStore, type KeyFlowDeps, type SafeStorageLike } from "./keyFlow";
+import { errorCode } from "../engine/library/renameRetry";
+import { KeyStore, type KeyFlowDeps, type KeyStoreOptions, type SafeStorageLike } from "./keyFlow";
 
 /** The encrypted RapidAPI key blob in userData; a second file, never the OpenRouter key's `secrets.bin` (S20). */
 export const MUSIC_SECRETS_FILE = "secrets-rapidapi.bin";
@@ -21,8 +22,13 @@ export type MusicKeyCommand = Extract<CommandMessage, { type: "settings.setMusic
  * and one-at-a-time changes), over its own file and with the music key's shape rule. A blob that decrypts to
  * anything but a key `MusicKey` would have stored untouched (trimmed, printable ASCII, 8 to 256 chars) reads as no key.
  */
-export function openMusicKeyStore(safe: SafeStorageLike, userDataDir: string): Promise<KeyStore> {
+export function openMusicKeyStore(
+  safe: SafeStorageLike,
+  userDataDir: string,
+  testSeams: Pick<KeyStoreOptions, "beforeWrite" | "syncDir"> = {},
+): Promise<KeyStore> {
   return KeyStore.open(safe, join(userDataDir, MUSIC_SECRETS_FILE), {
+    ...testSeams,
     accepts: (key) => {
       const parsed = MusicKey.safeParse(key);
       return parsed.success && parsed.data === key;
@@ -67,8 +73,8 @@ export async function handleMusicKeyCommand(command: MusicKeyCommand, deps: KeyF
     }
   } catch (error) {
     // The file cannot be written or removed (a directory in its place, no permission, a full disk). Only the code is
-    // logged and nothing of the key is in the answer; the engine was not told, so it and the disk still agree.
-    const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "unknown";
+    // logged and nothing of the key is in the answer. The engine is told only after the file changed, so it and the disk agree.
+    const code = errorCode(error) ?? "unknown";
     console.warn(`studio: the RapidAPI key could not be ${command.type === "settings.setMusicKey" ? "stored" : "cleared"} (${code})`);
     return errorResponseFor(command, { code: "INTERNAL", detail: "the key file could not be changed" });
   }
