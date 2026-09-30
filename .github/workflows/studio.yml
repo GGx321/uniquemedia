@@ -144,7 +144,7 @@ jobs:
       # a few percent of runs (`Segmentation fault at address 0x3C`; `mprotect failed: 487` on Windows). There is no
       # Bun crash to retry here, so no retry: any failure is real. The face tests need the models fetched above, and
       # a run without them fails, it never skips. The step also prints the worst legitimate shadow caption on this
-      # runner, which the text test holds to at most a fifth of the deadline (median) and a third of it (slowest).
+      # runner, which the text test holds to at most a fifth of the deadline (median) and a third of it (second-slowest of 7).
       - name: Real worker tests (Electron's Node)
         run: bun run test:studio:electron-node
         timeout-minutes: 15

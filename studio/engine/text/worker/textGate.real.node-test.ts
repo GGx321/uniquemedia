@@ -185,11 +185,12 @@ describe("the real worker under Electron's Node", () => {
     assert.ok(worstGap < Math.max(100, took / 3), `this thread stalled ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render`);
   });
 
-  test("the deadline is at least 5x a legitimate shadow caption's typical cost and 3x its worst of 7 on this runner", async () => {
-    // Two bounds over 7 renders after a warm-up. The MEDIAN is the caption's typical cost (5x). The MAX is the tail
-    // (3x, a looser factor): on a shared runner the worst of a few is a scheduling hiccup (the max of 5 read 836 ms on
-    // one macOS run and 410 ms on another), so it cannot carry the 5x, but a deadline that a plain slow caption on this
-    // runner could trip would cut legitimate work, and the median alone would not show it.
+  test("the deadline is at least 5x a legitimate shadow caption's typical cost and 3x its second-slowest of 7 on this runner", async () => {
+    // Two bounds over 7 renders after a warm-up. The MEDIAN is the caption's typical cost (5x). The tail is the
+    // SECOND-slowest (3x, a looser factor), not the slowest: on a shared runner the single worst of a few is a
+    // scheduling hiccup (the max of 5 read 836 ms on one macOS run and 410 ms on another), and this suite has no
+    // retry, so one outlier must not fail it. Two slow renders in 7 are a slow runner, and a deadline that a plain
+    // slow caption on it could trip would cut legitimate work, which the median alone would not show.
     const { gate: g } = gate({ renderTimeoutMs: 60_000 });
     const request = { svg: worstShadowCaption(), font: "manrope" } as const;
     await g.render(request); // warm
@@ -207,7 +208,8 @@ describe("the real worker under Electron's Node", () => {
       `legitimate shadow caption on ${process.platform}: min ${min.toFixed(0)} / median ${median.toFixed(0)} / max ${max.toFixed(0)} ms of 7; deadline ${TEXT_RENDER_DEADLINE_MS} ms (${(TEXT_RENDER_DEADLINE_MS / median).toFixed(1)}x the median)`,
     );
     assert.ok(median * 5 <= TEXT_RENDER_DEADLINE_MS, `a shadow caption's median is ${Math.round(median)} ms: the ${TEXT_RENDER_DEADLINE_MS} ms deadline is under 5x that`);
-    assert.ok(max * 3 <= TEXT_RENDER_DEADLINE_MS, `a shadow caption's slowest of 7 is ${Math.round(max)} ms: the ${TEXT_RENDER_DEADLINE_MS} ms deadline is under 3x that`);
+    const secondSlowest = times[5] ?? Number.NaN;
+    assert.ok(secondSlowest * 3 <= TEXT_RENDER_DEADLINE_MS, `a shadow caption's second-slowest of 7 is ${Math.round(secondSlowest)} ms: the ${TEXT_RENDER_DEADLINE_MS} ms deadline is under 3x that`);
   });
 
   test("the loader starts it, and the self-test through the worker gives the pinned fingerprint", async () => {
