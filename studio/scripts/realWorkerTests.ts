@@ -216,6 +216,54 @@ export async function shardedTestArgs(testArgs: readonly string[], shards: numbe
   return plan;
 }
 
+/** A test slower than this is reported as a `::warning::` (the per-test default above is far higher, so a stall would otherwise pass unseen). */
+export const SLOW_TEST_WARNING_MS = 5_000;
+
+/** At most this many slow tests are annotated per attempt (GitHub shows few annotations per step); the rest are counted. */
+const MAX_SLOW_ANNOTATIONS = 10;
+
+export interface SlowTest {
+  /** The test file Bun printed as the header above the test, when there was one. */
+  file: string | undefined;
+  name: string;
+  ms: number;
+}
+
+/**
+ * The tests in `output` (Bun's own report) that took `thresholdMs` or longer, slowest first. Bun prints `(pass) name [123.00ms]`
+ * (`[1.23s]` past a second), and a `path/to/file.test.ts:` line, or `::group::path:` under GitHub Actions, above each file's tests.
+ */
+export function slowTests(output: string, thresholdMs: number = SLOW_TEST_WARNING_MS): SlowTest[] {
+  const slow: SlowTest[] = [];
+  let file: string | undefined;
+  for (const raw of output.replace(ANSI, "").split(/\r?\n/)) {
+    const line = raw.replace(/^(::group::|##\[group\])/, "");
+    const header = /^(\S+\.(?:test|spec|node-test)\.[cm]?[jt]sx?):\s*$/i.exec(line);
+    if (header !== null) {
+      file = header[1];
+      continue;
+    }
+    const result = /^\((?:pass|fail)\) (.*) \[(\d+(?:\.\d+)?)(ms|s)\]\s*$/.exec(line);
+    if (result === null) continue;
+    const ms = Number(result[2]) * (result[3] === "s" ? 1000 : 1);
+    if (ms >= thresholdMs) slow.push({ file, name: result[1] ?? "", ms });
+  }
+  return slow.sort((a, b) => b.ms - a.ms);
+}
+
+/** A workflow command's message: `%`, CR and LF are escaped the way GitHub reads them, so a test name cannot end the annotation early. */
+function annotationText(text: string): string {
+  return text.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+/** The `::warning::` lines for the slow tests of one attempt, `label` naming the shard; empty when none was slow. */
+export function slowTestWarnings(tests: readonly SlowTest[], label?: string): string[] {
+  const where = label === undefined ? "" : `${label}: `;
+  const lines = tests.slice(0, MAX_SLOW_ANNOTATIONS).map((t) => `::warning::${annotationText(`realWorkerTests: ${where}slow test, ${(t.ms / 1000).toFixed(1)} s (over ${SLOW_TEST_WARNING_MS / 1000} s): ${t.file === undefined ? "" : `${t.file} > `}${t.name}`)}`);
+  if (tests.length > MAX_SLOW_ANNOTATIONS) lines.push(`::warning::${annotationText(`realWorkerTests: ${where}${tests.length - MAX_SLOW_ANNOTATIONS} more slow tests not listed`)}`);
+  return lines;
+}
+
 export interface AttemptResult {
   exitCode: number;
   output: string;
@@ -354,6 +402,8 @@ if (import.meta.main) {
         echo: true,
       });
       if (result.timedOut === true) hung = true;
+      // The 30 s default per test would let a stall through without a word: every test over 5 s is named.
+      for (const line of slowTestWarnings(slowTests(result.output), label)) console.log(line);
       return result;
     };
     const code = await runWithCrashRetry(attempt, knownCrashesOnly ? { label, signatures: WORKER_TEARDOWN_CRASHES } : { label });

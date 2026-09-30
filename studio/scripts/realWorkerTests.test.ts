@@ -16,6 +16,9 @@ import {
   shardedTestArgs,
   WINDOWS_COMMAND_LINE_LIMIT,
   shardFiles,
+  SLOW_TEST_WARNING_MS,
+  slowTests,
+  slowTestWarnings,
   testTarget,
   WORKER_TEARDOWN_CRASHES,
   withDefaultTimeout,
@@ -652,5 +655,65 @@ describe("runWithCrashRetry", () => {
     }
     expect(out.filter((l) => l.startsWith("::warning::"))).toHaveLength(1);
     expect(err).toEqual([]);
+  });
+});
+
+describe("slow test warnings", () => {
+  const REPORT = [
+    "bun test v1.3.12 (700fc117)",
+    "",
+    "studio/engine/a.test.ts:",
+    "(pass) fast one [12.00ms]",
+    "(pass) exactly at the limit [5000.00ms]",
+    "(pass) just under the limit [4999.99ms]",
+    "(pass) a stalled one [7.25s]",
+    "",
+    "studio/engine/b.test.ts:",
+    "(fail) a slow failure [6100.00ms]",
+    "(pass) a slow one in seconds [12.5s]",
+    "",
+    " 5 pass",
+    "Ran 5 tests across 2 files. [30.00s]",
+  ].join("\n");
+
+  test("the limit is 5 s", () => {
+    expect(SLOW_TEST_WARNING_MS).toBe(5_000);
+  });
+
+  test("finds every test at or over the limit, slowest first, with the file above it (a test just under is not slow)", () => {
+    expect(slowTests(REPORT)).toEqual([
+      { file: "studio/engine/b.test.ts", name: "a slow one in seconds", ms: 12_500 },
+      { file: "studio/engine/a.test.ts", name: "a stalled one", ms: 7_250 },
+      { file: "studio/engine/b.test.ts", name: "a slow failure", ms: 6_100 },
+      { file: "studio/engine/a.test.ts", name: "exactly at the limit", ms: 5_000 },
+    ]);
+  });
+
+  test("reads a file header under GitHub Actions' group marker, colours and CRLF lines", () => {
+    const output = "::group::studio\\engine\\w.test.ts:\r\n\u001b[32m(pass)\u001b[0m x [9.00s]\r\n";
+    expect(slowTests(output)).toEqual([{ file: "studio\\engine\\w.test.ts", name: "x", ms: 9_000 }]);
+  });
+
+  test("a test name that contains brackets and a time is read whole", () => {
+    expect(slowTests("(pass) a > b [1.00s] then [8.00s]")).toEqual([{ file: undefined, name: "a > b [1.00s] then", ms: 8_000 }]);
+  });
+
+  test("no slow test, no output, no warning", () => {
+    expect(slowTests("(pass) x [4.00s]")).toEqual([]);
+    expect(slowTests("")).toEqual([]);
+    expect(slowTestWarnings([])).toEqual([]);
+  });
+
+  test("a warning names the shard, the time, the file and the test, and a name cannot break the annotation", () => {
+    const [line, ...rest] = slowTestWarnings([{ file: "studio/x.test.ts", name: "50% done\nsecond line", ms: 7_250 }], "shard 2 of 3");
+    expect(rest).toEqual([]);
+    expect(line).toBe("::warning::realWorkerTests: shard 2 of 3: slow test, 7.3 s (over 5 s): studio/x.test.ts > 50%25 done%0Asecond line");
+  });
+
+  test("past ten slow tests the rest are counted in one line", () => {
+    const many = Array.from({ length: 13 }, (_unused, i) => ({ file: undefined, name: `t${i}`, ms: 6_000 + i }));
+    const lines = slowTestWarnings(many);
+    expect(lines).toHaveLength(11);
+    expect(lines[10]).toBe("::warning::realWorkerTests: 3 more slow tests not listed");
   });
 });
