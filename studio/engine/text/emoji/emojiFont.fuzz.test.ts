@@ -9,7 +9,7 @@ useNativeGlobals();
 // that takes long fails the test (and the run's alarm catches a real infinite loop).
 
 const SEED = 0x5eed_4a11;
-const MAX_MS_PER_OPEN = 250;
+const MAX_MS_PER_OPEN = 5000; // hang detection, not a benchmark: each open copies 10 MB, so a Windows runner can stall a GC for a second
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
