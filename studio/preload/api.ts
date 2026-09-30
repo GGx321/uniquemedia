@@ -9,8 +9,10 @@ export const CH = {
   event: "studio:event",
   /** main → renderer: before quitting, save what the owner is editing; carries the ask's id. */
   flushRequest: "studio:flush-request",
-  /** renderer → main (`ipcRenderer.send`): the window's saves for that ask are done; carries its id. */
+  /** renderer → main (`ipcRenderer.send`): the window's saves for that ask are done: `{id, ok}` (ok: all saved). */
   flushDone: "studio:flush-done",
+  /** renderer → main: the owner quits although this window could not save (the quit skips asking again). */
+  quitWithoutSaving: "studio:quit-without-saving",
 } as const;
 
 /**
@@ -28,8 +30,11 @@ export interface StudioApi {
   /** Studio's own version (studio/version.json), not the uniquifier's. */
   version(): Promise<string>;
   /**
-   * `handler` saves what the owner is editing; main calls it before quitting and waits (bounded) for it to settle.
-   * Returns the function that removes it. The handler gets nothing from main but the ask itself.
+   * `handler` saves what the owner is editing and answers whether it did; main calls it before quitting and waits
+   * (bounded) for the answer: a window that could not save cancels the quit. Returns the function that removes it.
+   * The handler gets nothing from main but the ask itself.
    */
-  onFlushRequest(handler: () => Promise<void>): () => void;
+  onFlushRequest(handler: () => Promise<boolean>): () => void;
+  /** Quits although this window could not save: the owner's explicit choice. */
+  quitWithoutSaving(): void;
 }

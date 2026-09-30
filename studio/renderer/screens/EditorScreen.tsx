@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExtern
 import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type Montage, type MontageIssue, type PhotoSummary, type VideoSummary } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
-import { onFlushRequest } from "../engine/windowStudio";
+import { onFlushRequest, quitWithoutSaving } from "../engine/windowStudio";
 import { isActiveJob, type EngineView } from "../engine/store";
 import { errorText } from "../lib/errors";
 import { NBSP } from "../lib/format";
@@ -271,12 +271,15 @@ function DraftEditor({
   // dialog), the edit is saved, then the window closes itself. A refused save keeps the window open with the reason
   // and «Закрыть без сохранения» (the 3d.2 review's HIGH 2).
   const [closeRefused, setCloseRefused] = useState(false);
+  /** A quit (⌘Q) was cancelled because the edit could not be saved: «Выйти без сохранения» is offered. */
+  const [quitRefused, setQuitRefused] = useState(false);
   const allowClose = useRef(false);
   const saved = state.save.kind === "saved";
   useEffect(() => {
     if (saved) {
       setBlockedLeave(null);
       setCloseRefused(false);
+      setQuitRefused(false);
     }
   }, [saved]);
   useEffect(() => {
@@ -302,9 +305,13 @@ function DraftEditor({
   useEffect(
     () =>
       onFlushRequest(async () => {
-        await session.flush();
+        const flushed = await session.flush();
+        const saved = flushed.ok || session.state.save.kind === "gone";
+        // Not saved: main cancels the quit before touching the engine, and the window offers to quit anyway.
+        if (!saved && mounted.current) setQuitRefused(true);
+        return saved;
       }),
-    [session],
+    [session, mounted],
   );
 
   // The store's montage.changed, in seq order: echoes of this window's saves change nothing, a save from
@@ -495,7 +502,23 @@ function DraftEditor({
             <ErrorNotice
               error={state.save.error}
               actions={
-                closeRefused ? (
+                quitRefused ? (
+                  <>
+                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                      Сохранить ещё раз
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-s btn-d"
+                      onClick={() => {
+                        allowClose.current = true;
+                        quitWithoutSaving();
+                      }}
+                    >
+                      Выйти без сохранения
+                    </button>
+                  </>
+                ) : closeRefused ? (
                   <>
                     <button type="button" className="btn btn-s" onClick={() => session.retry()}>
                       Сохранить ещё раз

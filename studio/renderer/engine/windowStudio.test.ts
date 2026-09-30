@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { type CommandMessage, type MoneyStatus, PROTOCOL_VERSION } from "../../shared/engine";
-import { onFlushRequest, readStudioVersion, readWindowBridge, windowStudioClient } from "./windowStudio";
+import { onFlushRequest, quitWithoutSaving, readStudioVersion, readWindowBridge, windowStudioClient } from "./windowStudio";
 
 afterEach(() => {
   Reflect.deleteProperty(window, "studio");
@@ -137,23 +137,31 @@ test("the version is read through the bridge", async () => {
 
 // 3d.2 review, HIGH 2: before quitting, main asks the window to save what the owner is editing.
 test("a flush handler is handed to the bridge, and the function it returns removes it", () => {
-  const handlers = new Set<() => Promise<void>>();
+  const handlers = new Set<() => Promise<boolean>>();
   Reflect.set(window, "studio", {
-    onFlushRequest: (handler: () => Promise<void>) => {
+    onFlushRequest: (handler: () => Promise<boolean>) => {
       handlers.add(handler);
       return () => handlers.delete(handler);
     },
   });
-  const handler = async (): Promise<void> => undefined;
+  const handler = async (): Promise<boolean> => true;
   const off = onFlushRequest(handler);
   expect([...handlers]).toEqual([handler]);
   off();
   expect(handlers.size).toBe(0);
 });
 
+test("quitting without saving goes to the bridge, and is a no-op without one", () => {
+  expect(() => quitWithoutSaving()).not.toThrow();
+  let asked = 0;
+  Reflect.set(window, "studio", { quitWithoutSaving: () => void (asked += 1) });
+  quitWithoutSaving();
+  expect(asked).toBe(1);
+});
+
 test("without a bridge (a browser, an older preload) asking for flushes is a no-op", () => {
-  const off = onFlushRequest(async () => undefined);
+  const off = onFlushRequest(async () => true);
   expect(() => off()).not.toThrow();
   Reflect.set(window, "studio", { version: async () => "0.1.0" });
-  expect(() => onFlushRequest(async () => undefined)()).not.toThrow();
+  expect(() => onFlushRequest(async () => true)()).not.toThrow();
 });

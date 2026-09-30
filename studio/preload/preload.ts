@@ -2,13 +2,15 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { EventMessage } from "../shared/engine";
 import { CH, type StudioApi } from "./api";
 
-/** What the window saves before a quit (the montage editor's pending edit); main waits for them, bounded. */
-const flushHandlers = new Set<() => Promise<void>>();
+/** What the window saves before a quit (the montage editor's pending edit); each answers whether it saved. */
+const flushHandlers = new Set<() => Promise<boolean>>();
 
 ipcRenderer.on(CH.flushRequest, (_event: IpcRendererEvent, id: unknown) => {
   if (typeof id !== "string") return;
-  // Every handler settles, whatever it answers: a failed save is the window's to show, not a reason to stall the quit.
-  void Promise.allSettled([...flushHandlers].map((handler) => handler())).then(() => ipcRenderer.send(CH.flushDone, id));
+  // A handler that throws did not save. The answer goes back whatever happened: main decides whether the quit goes on.
+  void Promise.all([...flushHandlers].map((handler) => handler().then((saved) => saved === true, () => false))).then((saved) =>
+    ipcRenderer.send(CH.flushDone, { id, ok: saved.every(Boolean) }),
+  );
 });
 
 const studio: StudioApi = {
@@ -28,6 +30,7 @@ const studio: StudioApi = {
       flushHandlers.delete(handler);
     };
   },
+  quitWithoutSaving: () => ipcRenderer.send(CH.quitWithoutSaving),
 };
 
 contextBridge.exposeInMainWorld("studio", studio);

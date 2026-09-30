@@ -28,7 +28,7 @@ import { handleMusicKeyCommand, musicKeyStatusOf, openMusicKeyStore } from "./mu
 import { createStickerLookup } from "./media/stickers";
 import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES } from "./mediaProtocol";
 import { HostNotices } from "./notices";
-import { createQuitFlow } from "./quitFlow";
+import { createQuitFlow, WINDOW_FLUSH_WAIT_MS } from "./quitFlow";
 import { createWindowFlush } from "./windowFlush";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { handleSettingsCommand, reconcileLibraryPath } from "./settingsFlow";
@@ -84,6 +84,9 @@ function isDevServer(url: string): boolean {
   return devServerUrl !== undefined && new URL(url).origin === new URL(devServerUrl).origin;
 }
 
+/** Whether the quit is agreed (quitFlow.ts's `isQuitting`); set once the quit flow exists. */
+let quitAgreed: () => boolean = () => false;
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1440,
@@ -102,6 +105,10 @@ function createWindow(): void {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // A page holds a close with beforeunload while it saves (the montage editor); during an agreed quit it may not.
+  win.webContents.on("will-prevent-unload", (event) => {
+    if (quitAgreed()) event.preventDefault();
+  });
   win.webContents.on("will-navigate", (event) => {
     if (!isDevServer(event.url)) event.preventDefault();
   });
@@ -259,17 +266,19 @@ async function startStudio(): Promise<void> {
   // the next start to settle (quitFlow.ts): `before-quit` is held for the whole wait, however often it is pressed, and the
   // engine's process is stopped only in `will-quit`, when the quit really goes on.
   // Before that, each window saves what its owner is editing (the montage editor's autosave waits for a quiet spell):
-  // main asks, the preload answers once the window's save landed, and the wait is bounded by the quit flow.
+  // main asks, the preload answers `{id, ok}` once the window's save landed, and the wait is bounded. A window that
+  // could not save cancels the quit before the engine is touched; its «Выйти без сохранения» quits skipping the ask.
   const windowFlush = createWindowFlush({
     targets: () =>
       BrowserWindow.getAllWindows().map((win) => ({
         send: (id: string) => win.webContents.send(CH.flushRequest, id),
-        isDestroyed: () => win.isDestroyed() || win.webContents.isDestroyed(),
+        isGone: () => win.isDestroyed() || win.webContents.isDestroyed() || win.webContents.isCrashed(),
       })),
     newId: randomUUID,
+    timeoutMs: WINDOW_FLUSH_WAIT_MS,
   });
-  ipcMain.on(CH.flushDone, (event, id: unknown) => {
-    if (isTrustedSender(senderFrameOf(event), TRUSTED)) windowFlush.acknowledge(id);
+  ipcMain.on(CH.flushDone, (event, answer: unknown) => {
+    if (isTrustedSender(senderFrameOf(event), TRUSTED)) windowFlush.acknowledge(answer);
   });
   const quitFlow = createQuitFlow({
     flushWindows: () => windowFlush.request(),
@@ -277,6 +286,11 @@ async function startStudio(): Promise<void> {
     quit: () => app.quit(),
     stop: () => engine.stop(),
   });
+  ipcMain.on(CH.quitWithoutSaving, (event) => {
+    if (isTrustedSender(senderFrameOf(event), TRUSTED)) quitFlow.quitWithoutSaving();
+  });
+  // Once the quit is agreed and the engine shut down, a page's beforeunload (an edit made meanwhile) may not cancel it.
+  quitAgreed = () => quitFlow.isQuitting();
   app.on("before-quit", (event) => quitFlow.beforeQuit(event));
   app.on("will-quit", () => quitFlow.willQuit());
 

@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { createQuitFlow } from "./quitFlow";
+import type { FlushOutcome } from "./windowFlush";
 useNativeGlobals();
 
-// Quitting Studio: the windows are first asked to save what the owner is editing (3d.2 review, HIGH 2: an edit
-// still inside its autosave wait must not be lost to Cmd+Q), then the engine is asked to cancel its renders and let
-// a commit that is past its claim finish, BEFORE the app goes. `before-quit` is held while that runs (a second Cmd+Q
-// during the wait must not skip it), the quit is asked again once it is over, and the engine is stopped only when the
-// quit really goes on (`will-quit`).
+// Quitting Studio: the windows are first asked to save what the owner is editing (3d.2 review, HIGH 2: an edit still
+// inside its autosave wait must not be lost to Cmd+Q; re-review: a window that could not save cancels the quit BEFORE
+// the engine is touched, and the owner may then quit without saving). Then the engine is asked to cancel its renders
+// and let a commit that is past its claim finish, BEFORE the app goes. `before-quit` is held while that runs (a second
+// Cmd+Q during the wait must not skip it), the quit is asked again once it is over, and the engine is stopped only when
+// the quit really goes on (`will-quit`).
 
-function rig(options: { flushTimeoutMs?: number; flush?: () => Promise<void> } = {}) {
+function rig(options: { flushTimeoutMs?: number; flush?: () => Promise<FlushOutcome> } = {}) {
   const calls: string[] = [];
   let finish: () => void = () => undefined;
   let fail: (error: Error) => void = () => undefined;
@@ -18,6 +20,7 @@ function rig(options: { flushTimeoutMs?: number; flush?: () => Promise<void> } =
       options.flush ??
       (async () => {
         calls.push("flush");
+        return "saved";
       }),
     flushTimeoutMs: options.flushTimeoutMs ?? 5_000,
     shutdown: () =>
@@ -52,19 +55,66 @@ describe("the quit flow", () => {
   });
 
   test("the engine is not shut down while a window is still saving: it waits for the answer", async () => {
-    let saved: () => void = () => undefined;
-    const r = rig({ flush: () => new Promise<void>((resolve) => (saved = resolve)) });
+    let saved: (o: FlushOutcome) => void = () => undefined;
+    const r = rig({ flush: () => new Promise<FlushOutcome>((resolve) => (saved = resolve)) });
     r.flow.beforeQuit(r.event());
     await settle();
     expect(r.calls).toEqual([]);
 
-    saved();
+    saved("saved");
     await settle();
     expect(r.calls).toEqual(["shutdown"]);
   });
 
+  test("a window that could not save cancels the quit before the engine is touched; the next Cmd+Q asks again", async () => {
+    let answers = 0;
+    const r = rig({
+      flush: async () => {
+        answers += 1;
+        return answers === 1 ? "refused" : "saved";
+      },
+    });
+    r.flow.beforeQuit(r.event());
+    await settle();
+    expect(r.calls).toEqual([]);
+    expect(r.flow.isQuitting()).toBe(false);
+
+    const again = r.event();
+    r.flow.beforeQuit(again);
+    await settle();
+    expect(again.prevented).toBe(true);
+    expect(answers).toBe(2);
+    expect(r.calls).toEqual(["shutdown"]);
+  });
+
+  test("«Выйти без сохранения» skips the ask: the engine is shut down and the app quits", async () => {
+    const r = rig({ flush: async () => "refused" });
+    r.flow.beforeQuit(r.event());
+    await settle();
+    expect(r.calls).toEqual([]);
+
+    r.flow.quitWithoutSaving();
+    await settle();
+    expect(r.calls).toEqual(["shutdown"]);
+    r.finish();
+    await settle();
+    expect(r.calls).toEqual(["shutdown", "quit"]);
+    expect(r.flow.isQuitting()).toBe(true);
+  });
+
+  test("the quit is agreed (a page may no longer hold it) only once the shutdown is over", async () => {
+    const r = rig();
+    expect(r.flow.isQuitting()).toBe(false);
+    r.flow.beforeQuit(r.event());
+    await settle();
+    expect(r.flow.isQuitting()).toBe(false);
+    r.finish();
+    await settle();
+    expect(r.flow.isQuitting()).toBe(true);
+  });
+
   test("a window that never answers does not keep the app from quitting: the wait is bounded", async () => {
-    const r = rig({ flush: () => new Promise<void>(() => undefined), flushTimeoutMs: 20 });
+    const r = rig({ flush: () => new Promise<FlushOutcome>(() => undefined), flushTimeoutMs: 20 });
     r.flow.beforeQuit(r.event());
     await settle();
     expect(r.calls).toEqual([]);

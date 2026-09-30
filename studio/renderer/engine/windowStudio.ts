@@ -39,15 +39,23 @@ export function windowStudioClient(): EngineClient | null {
 }
 
 /**
- * Hands `handler` to the preload: main calls it before quitting and waits (bounded) for it to settle, so an edit
- * still inside its autosave wait is saved first (3d.2 review, HIGH 2). A no-op without a bridge that offers it.
+ * Hands `handler` to the preload: main calls it before quitting and waits (bounded) for its answer, so an edit still
+ * inside its autosave wait is saved first (3d.2 review, HIGH 2); `false` (not saved) cancels the quit before the
+ * engine is shut down (the re-review). A no-op without a bridge that offers it.
  */
-export function onFlushRequest(handler: () => Promise<void>): () => void {
+export function onFlushRequest(handler: () => Promise<boolean>): () => void {
   const studio = studioObject();
   const register = studio ? method(studio, "onFlushRequest") : null;
   if (!register) return () => {};
   const off = register(handler);
   return typeof off === "function" ? () => void Reflect.apply(off, undefined, []) : () => {};
+}
+
+/** Asks main to quit although this window could not save (the owner's «Выйти без сохранения»); a no-op without a bridge. */
+export function quitWithoutSaving(): void {
+  const studio = studioObject();
+  const quit = studio ? method(studio, "quitWithoutSaving") : null;
+  if (quit) quit();
 }
 
 /** Studio's version from the preload; rejects when there is no bridge or it fails. */

@@ -347,27 +347,52 @@ describe("closing the window or quitting never drops an edit (the review's HIGH 
     expect(closeWindow().defaultPrevented).toBe(false);
   });
 
-  test("main's ask before a quit saves the edit and is answered only once it is saved", async () => {
-    const asks: (() => Promise<void>)[] = [];
+  /** A preload bridge that records main's asks and the owner's «Выйти без сохранения». */
+  function bridge(): { asks: (() => Promise<boolean>)[]; quits: () => number } {
+    const asks: (() => Promise<boolean>)[] = [];
+    let quits = 0;
     Reflect.set(window, "studio", {
       version: async () => "0.0.0",
-      onFlushRequest: (handler: () => Promise<void>) => {
+      onFlushRequest: (handler: () => Promise<boolean>) => {
         asks.push(handler);
         return () => asks.splice(asks.indexOf(handler), 1);
       },
+      quitWithoutSaving: () => void (quits += 1),
     });
+    return { asks, quits: () => quits };
+  }
+
+  test("main's ask before a quit saves the edit and answers «saved» only once it is saved", async () => {
+    const main = bridge();
     const { client, engine } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
     await unsavedEdit(client, made);
     const before = callsOf(engine, "montages.save").length;
-    expect(asks).toHaveLength(1);
+    expect(main.asks).toHaveLength(1);
 
-    await asAnotherWindow(async () => {
-      await Promise.all(asks.map((ask) => ask()));
-    });
+    const answers = await asAnotherWindow(() => Promise.all(main.asks.map((ask) => ask())));
+    expect(answers).toEqual([true]);
     expect(callsOf(engine, "montages.save").length).toBe(before + 1);
     expect(within(header()).getByText(/^черновик · сохранён/)).toBeDefined();
+  });
+
+  test("a save refused on the way out of a quit answers «not saved» (the quit is cancelled) and offers «Выйти без сохранения»", async () => {
+    const main = bridge();
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+
+    const answers = await asAnotherWindow(() => Promise.all(main.asks.map((ask) => ask())));
+    expect(answers).toEqual([false]);
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+
+    fireEvent.click(screen.getByRole("button", { name: "Выйти без сохранения" }));
+    expect(main.quits()).toBe(1);
+    // The owner chose: the close that follows is not held again.
+    expect(closeWindow().defaultPrevented).toBe(false);
   });
 });
 
