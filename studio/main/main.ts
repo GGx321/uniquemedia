@@ -23,7 +23,8 @@ import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
 import { handleMusicKeyCommand, musicKeyStatusOf, openMusicKeyStore } from "./musicKeyFlow";
-import { handleMediaRequest, MEDIA_SCHEME } from "./mediaProtocol";
+import { createStickerLookup } from "./media/stickers";
+import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES } from "./mediaProtocol";
 import { HostNotices } from "./notices";
 import { createQuitFlow } from "./quitFlow";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
@@ -56,10 +57,8 @@ const userDataSwitch = app.commandLine.getSwitchValue("user-data-dir");
 if (userDataSwitch !== "") app.setPath("userData", resolve(userDataSwitch));
 else if (!app.isPackaged) app.setPath("userData", join(app.getPath("appData"), "uniquemedia-studio-dev"));
 
-// Must run before `ready`. No bypassCSP: the renderer CSP allows the scheme in img-src.
-protocol.registerSchemesAsPrivileged([
-  { scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
-]);
+// Must run before `ready`. The CSP is never bypassed: the renderer CSP allows the scheme in img-src and media-src.
+protocol.registerSchemesAsPrivileged([{ scheme: MEDIA_SCHEME, privileges: MEDIA_SCHEME_PRIVILEGES }]);
 
 const RENDERER_FILE = join(import.meta.dirname, "../renderer/index.html");
 // Inside app.asar when packaged; utilityProcess loads it from there.
@@ -67,6 +66,12 @@ const ENGINE_ENTRY = join(import.meta.dirname, "../engine/main.js");
 /** In userData, next to the ledger: bodies of paid answers that could not be used, kept (redacted) as evidence. */
 const RAW_DIR = "raw";
 const RENDER_TMP_DIR = "render-tmp";
+/** In userData: `tracks/` and `covers/` of the music store (3c). */
+const MUSIC_DIR = "music";
+/** In `render-tmp`: the engine's text previews (3b.4b), served by `studio-media://text/<previewId>`. */
+const TEXT_PREVIEW_DIR = "text";
+/** The built-in stickers: inside app.asar when packaged, next to `out-studio/` in the repo. */
+const STICKER_DIR = join(import.meta.dirname, "../../studio/assets/stickers");
 const TRUSTED: TrustedRenderer = { devServerUrl, fileUrl: pathToFileURL(RENDERER_FILE).href };
 
 function isDevServer(url: string): boolean {
@@ -241,7 +246,16 @@ async function startStudio(): Promise<void> {
   app.on("before-quit", (event) => quitFlow.beforeQuit(event));
   app.on("will-quit", () => quitFlow.willQuit());
 
-  protocol.handle(MEDIA_SCHEME, (request) => handleMediaRequest(request, { libraryRoot: () => settings.current.libraryPath }));
+  // Invariant 28: every route is built from ids under a root of its own. The built-in stickers sit in the asar (or the
+  // repo) at the same place relative to this bundle: out-studio/main/main.js -> ../../studio/assets/stickers.
+  const mediaDeps = {
+    libraryRoot: () => settings.current.libraryPath,
+    exportRoot: () => settings.current.exportPath,
+    musicRoot: () => join(userData, MUSIC_DIR),
+    textPreviewRoot: () => join(userData, RENDER_TMP_DIR, TEXT_PREVIEW_DIR),
+    sticker: createStickerLookup(STICKER_DIR),
+  };
+  protocol.handle(MEDIA_SCHEME, (request) => handleMediaRequest(request, mediaDeps));
 
   ipcMain.handle(CH.request, (event, raw: unknown) =>
     handleRendererRequest(raw, senderFrameOf(event), TRUSTED, {

@@ -1,68 +1,47 @@
-import { readFile } from "node:fs/promises";
-import { resolveMediaPath } from "../engine/library/mediaPath";
+import { respond } from "./media/respond";
+import { resolveMedia, type MediaDeps } from "./media/resolve";
+import { MEDIA_SCHEME, parseMediaRoute } from "./media/route";
 
-/** Registered privileged (standard, secure, fetch) without `bypassCSP`; the renderer CSP allows it in `img-src`. */
-export const MEDIA_SCHEME = "studio-media";
-
-const ID = /^[a-z0-9-]{8,64}$/;
-
-export interface MediaIds {
-  avatarId: string;
-  photoId: string;
-}
+export { MEDIA_SCHEME, parseMediaRoute, type MediaRoute } from "./media/route";
+export type { MediaDeps } from "./media/resolve";
 
 /**
- * Accepts exactly `studio-media://photo/<avatarId>/<photoId>` with both ids
- * matching `^[a-z0-9-]{8,64}$` (invariant 12): no other host, no extra or
- * empty segments, no credentials, port, query or fragment.
+ * The scheme's privileges, registered before `ready` (main.ts). `standard` + `secure` give it an origin and a secure
+ * context (the sticker preview's `ImageDecoder` needs one), `supportFetchAPI` lets `fetch` and `<img>` load it, and
+ * `stream` lets `<video>` and `<audio>` play from it with Range. Nothing else: no `bypassCSP` (the renderer's CSP
+ * names the scheme in `img-src` and `media-src` and nowhere else), no `corsEnabled`, no `codeCache`.
  */
-export function parseMediaUrl(url: string): MediaIds | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== `${MEDIA_SCHEME}:` || parsed.hostname !== "photo") return null;
-  if (parsed.username !== "" || parsed.password !== "" || parsed.port !== "" || parsed.search !== "" || parsed.hash !== "") return null;
-  const segments = parsed.pathname.split("/");
-  if (segments.length !== 3 || segments[0] !== "") return null;
-  const [, avatarId = "", photoId = ""] = segments;
-  if (!ID.test(avatarId) || !ID.test(photoId)) return null;
-  return { avatarId, photoId };
+export const MEDIA_SCHEME_PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true, stream: true } as const;
+
+/** What a `protocol.handle` request has of the `Request`: the URL, the method, the headers (for `Range`) and the abort signal. */
+export interface MediaRequest {
+  readonly url: string;
+  readonly method: string;
+  readonly headers?: { get(name: string): string | null };
+  readonly signal?: AbortSignal;
 }
 
-export interface MediaDeps {
-  /** The library root from the current settings. */
-  libraryRoot(): string;
-  resolve?: typeof resolveMediaPath;
-  read?: (path: string) => Promise<Uint8Array<ArrayBuffer>>;
-}
-
+// One answer for everything that is not a file to serve: no body, and nothing that tells "there is no such file"
+// from "there is one and it was refused" from "that is not a route". No path, id or reason is put in it or logged.
 function notFound(): Response {
   return new Response(null, { status: 404, headers: { "X-Content-Type-Options": "nosniff" } });
 }
 
 /**
- * The `protocol.handle` handler. A photo is found only by id through T4's
- * `resolveMediaPath` (library naming convention, image extension allowlist,
- * realpath inside the root, magic bytes matching the extension) and served
- * with its image MIME type and `nosniff`. Everything else is a 404.
+ * The `protocol.handle` handler for `studio-media://` (invariant 28). The URL is parsed to a route and its ids
+ * (media/route.ts: nothing else of it survives), the route makes a file of them (media/resolve.ts) that must lie in
+ * its own root, be a plain file and start like the kind the route serves (media/diskSource.ts), and the answer is
+ * 200, 206 or 416 with the bytes streamed a chunk at a time (media/respond.ts). Only GET; everything else, and any
+ * failure at all, is the same 404.
  */
-export async function handleMediaRequest(request: { url: string; method: string }, deps: MediaDeps): Promise<Response> {
+export async function handleMediaRequest(request: MediaRequest, deps: MediaDeps): Promise<Response> {
   if (request.method !== "GET") return notFound();
-  const ids = parseMediaUrl(request.url);
-  if (ids === null) return notFound();
-  const resolve = deps.resolve ?? resolveMediaPath;
-  const read = deps.read ?? readFile;
+  const route = parseMediaRoute(request.url);
+  if (route === null) return notFound();
   try {
-    const resolved = await resolve(deps.libraryRoot(), ids.avatarId, ids.photoId);
-    if (!resolved.ok) return notFound();
-    const body = await read(resolved.path);
-    return new Response(body, {
-      status: 200,
-      headers: { "Content-Type": resolved.mediaType, "X-Content-Type-Options": "nosniff" },
-    });
+    const served = await resolveMedia(route, deps);
+    if (served === null) return notFound();
+    return respond(served.source, { contentType: served.contentType, range: request.headers?.get("Range") ?? null, signal: request.signal ?? null });
   } catch {
     return notFound();
   }

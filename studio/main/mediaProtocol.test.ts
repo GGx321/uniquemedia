@@ -1,70 +1,70 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { handleMediaRequest, parseMediaUrl } from "./mediaProtocol";
-import { useNativeGlobals } from "../testing/nativeGlobals";
+import { join, resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { videoPaths } from "../engine/videos/record";
+import { fakeVideoBytes, sampleRecord, useWorld, type World } from "../engine/videos/testing/kit";
+import { useNativeGlobals, useNativeWebClasses } from "../testing/nativeGlobals";
+import { CHUNK_BYTES } from "./media/respond";
+import { createStickerLookup } from "./media/stickers";
+import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES, type MediaDeps, type MediaRequest } from "./mediaProtocol";
 useNativeGlobals();
+useNativeWebClasses();
+
+// The `studio-media://` handler, end to end over real folders and the product's own `Response` class (not
+// happy-dom's, which the repo's test setup installs): the routes of invariant 28, Range, and the ways a request
+// can go wrong. The pieces have their own files under ./media; this one proves they are wired in the right order.
 
 const AVATAR = "avatar-0001";
 const PHOTO = "photo-00001";
-const PNG = Uint8Array.from(
-  Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"),
-);
+const VIDEO = "video-00000001";
+const TRACK = "track-000001";
+const PNG = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcxjAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"));
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100, 1)]);
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from("ftypisom"), Buffer.from(fakeVideoBytes(CHUNK_BYTES * 2 + 1000, 5))]);
 
-describe("parseMediaUrl", () => {
-  test("accepts studio-media://photo/<avatarId>/<photoId>", () => {
-    expect(parseMediaUrl(`studio-media://photo/${AVATAR}/${PHOTO}`)).toEqual({ avatarId: AVATAR, photoId: PHOTO });
-  });
+const world = useWorld();
+let w: World;
+let outside = "";
+let userData = "";
+beforeEach(async () => {
+  w = world();
+  outside = await mkdtemp(join(tmpdir(), "studio-media-outside-"));
+  userData = join(w.dir, "userdata");
+  await mkdir(join(userData, "music", "tracks"), { recursive: true });
+  await mkdir(join(userData, "render-tmp", "text"), { recursive: true });
+  await mkdir(join(w.libraryRoot, "avatars", AVATAR, "photos"), { recursive: true });
+  await mkdir(videoPaths(w.libraryRoot, w.avatar.id).videosDir, { recursive: true });
+});
+afterEach(() => rm(outside, { recursive: true, force: true }));
 
-  const rejected: [string, string][] = [
-    ["another host", `studio-media://video/${AVATAR}/${PHOTO}`],
-    ["another scheme", `file://photo/${AVATAR}/${PHOTO}`],
-    ["a missing photo id", `studio-media://photo/${AVATAR}`],
-    ["a trailing slash", `studio-media://photo/${AVATAR}/${PHOTO}/`],
-    ["an extra segment", `studio-media://photo/${AVATAR}/${PHOTO}/x`],
-    ["an empty segment", `studio-media://photo//${AVATAR}/${PHOTO}`],
-    ["a dot-dot walk", `studio-media://photo/${AVATAR}/../../etc/passwd`],
-    ["an encoded dot-dot", `studio-media://photo/%2e%2e/${PHOTO}`],
-    ["an encoded slash", `studio-media://photo/${AVATAR}%2f${PHOTO}/x`],
-    ["uppercase ids", `studio-media://photo/AVATAR-0001/${PHOTO}`],
-    ["a short id", `studio-media://photo/abc/${PHOTO}`],
-    ["an id longer than 64", `studio-media://photo/${"a".repeat(65)}/${PHOTO}`],
-    ["an extension in the id", `studio-media://photo/${AVATAR}/${PHOTO}.png`],
-    ["a query", `studio-media://photo/${AVATAR}/${PHOTO}?x=1`],
-    ["a fragment", `studio-media://photo/${AVATAR}/${PHOTO}#x`],
-    ["credentials", `studio-media://user:pw@photo/${AVATAR}/${PHOTO}`],
-    ["a port", `studio-media://photo:81/${AVATAR}/${PHOTO}`],
-    ["garbage", "not a url"],
-  ];
-  for (const [name, url] of rejected) {
-    test(`rejects ${name}`, () => {
-      expect(parseMediaUrl(url)).toBeNull();
-    });
-  }
-
-  test("accepts ids at the 8 and 64 char limits", () => {
-    const long = "a".repeat(64);
-    expect(parseMediaUrl(`studio-media://photo/abcdefgh/${long}`)).toEqual({ avatarId: "abcdefgh", photoId: long });
-    expect(parseMediaUrl(`studio-media://photo/abcdefg/${PHOTO}`)).toBeNull();
-  });
+const deps = (overrides: Partial<MediaDeps> = {}): MediaDeps => ({
+  libraryRoot: () => w.libraryRoot,
+  exportRoot: () => w.exportRoot,
+  musicRoot: () => join(userData, "music"),
+  textPreviewRoot: () => join(userData, "render-tmp", "text"),
+  sticker: createStickerLookup(resolve(import.meta.dirname, "../assets/stickers")),
+  ...overrides,
 });
 
-describe("handleMediaRequest", () => {
-  let root = "";
-  let outside = "";
-  beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "studio-media-"));
-    outside = await mkdtemp(join(tmpdir(), "studio-media-outside-"));
-    await mkdir(join(root, "avatars", AVATAR, "photos"), { recursive: true });
-    await writeFile(join(root, "avatars", AVATAR, "photos", `${PHOTO}.png`), PNG);
-  });
-  afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
-    await rm(outside, { recursive: true, force: true });
-  });
+const get = (url: string, extra: Partial<MediaRequest> & { range?: string } = {}, overrides: Partial<MediaDeps> = {}): Promise<Response> => {
+  const { range, ...rest } = extra;
+  return handleMediaRequest({ url, method: "GET", headers: new Headers(range === undefined ? {} : { Range: range }), ...rest }, deps(overrides));
+};
 
-  const get = (url: string) => handleMediaRequest({ url, method: "GET" }, { libraryRoot: () => root });
+/** A committed video of `MP4` at the export root, with its record. */
+async function commitVideo(): Promise<string> {
+  const record = sampleRecord(w, { videoId: VIDEO, relPath: "Mia/2026-09-29_photo_001.mp4", bytes: MP4 });
+  await writeFile(videoPaths(w.libraryRoot, w.avatar.id).record(VIDEO), JSON.stringify(record));
+  await mkdir(join(w.exportRoot, "Mia"), { recursive: true });
+  const file = join(w.exportRoot, "Mia", "2026-09-29_photo_001.mp4");
+  await writeFile(file, MP4);
+  return file;
+}
+const videoUrl = (): string => `studio-media://video/${w.avatar.id}/${VIDEO}`;
+
+describe("photo: the route Stage 1 shipped stays as it was", () => {
+  beforeEach(() => writeFile(join(w.libraryRoot, "avatars", AVATAR, "photos", `${PHOTO}.png`), PNG));
 
   test("serves a real photo with its image MIME type and nosniff", async () => {
     const response = await get(`studio-media://photo/${AVATAR}/${PHOTO}`);
@@ -82,48 +82,267 @@ describe("handleMediaRequest", () => {
     }
   });
 
-  test("a malformed URL is a 404 and never reaches the file system", async () => {
-    let resolved = 0;
-    const response = await handleMediaRequest(
-      { url: `studio-media://photo/${AVATAR}/../../x`, method: "GET" },
-      {
-        libraryRoot: () => root,
-        resolve: async () => {
-          resolved++;
-          return { ok: false, code: "not-found", message: "" };
-        },
-      },
-    );
-    expect(response.status).toBe(404);
-    expect(resolved).toBe(0);
-  });
-
-  test("a method other than GET is a 404", async () => {
-    const response = await handleMediaRequest({ url: `studio-media://photo/${AVATAR}/${PHOTO}`, method: "POST" }, { libraryRoot: () => root });
-    expect(response.status).toBe(404);
-  });
-
   test("a symlink out of the library is a 404", async () => {
     await writeFile(join(outside, "secret.png"), PNG);
-    await symlink(join(outside, "secret.png"), join(root, "avatars", AVATAR, "photos", "photo-00002.png"));
+    try {
+      await symlink(join(outside, "secret.png"), join(w.libraryRoot, "avatars", AVATAR, "photos", "photo-00002.png"));
+    } catch (error) {
+      if (process.platform === "win32" && error instanceof Error && Reflect.get(error, "code") === "EPERM") return;
+      throw error;
+    }
     expect((await get(`studio-media://photo/${AVATAR}/photo-00002`)).status).toBe(404);
   });
 
   test("a file whose bytes are not the image its extension claims is a 404", async () => {
-    await writeFile(join(root, "avatars", AVATAR, "photos", "photo-00003.png"), "<html>not an image</html>");
+    await writeFile(join(w.libraryRoot, "avatars", AVATAR, "photos", "photo-00003.png"), "<html>not an image</html>");
     expect((await get(`studio-media://photo/${AVATAR}/photo-00003`)).status).toBe(404);
   });
 
   test("a missing library root is a 404", async () => {
-    const response = await handleMediaRequest({ url: `studio-media://photo/${AVATAR}/${PHOTO}`, method: "GET" }, { libraryRoot: () => join(root, "nope") });
-    expect(response.status).toBe(404);
+    expect((await get(`studio-media://photo/${AVATAR}/${PHOTO}`, {}, { libraryRoot: () => join(w.dir, "nope") })).status).toBe(404);
   });
 
-  test("a read error is a 404, not a crash", async () => {
-    const response = await handleMediaRequest(
-      { url: `studio-media://photo/${AVATAR}/${PHOTO}`, method: "GET" },
-      { libraryRoot: () => root, read: async () => { throw new Error("EIO"); } },
-    );
+  test("a photo answers a Range too", async () => {
+    const response = await get(`studio-media://photo/${AVATAR}/${PHOTO}`, { range: "bytes=0-3" });
+    expect(response.status).toBe(206);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(PNG.slice(0, 4));
+  });
+});
+
+describe("every route answers over the wire shape the renderer sees", () => {
+  test("video, poster, track, cover, sticker, text and media each serve their file with the right type", async () => {
+    await commitVideo();
+    const videos = videoPaths(w.libraryRoot, w.avatar.id).videosDir;
+    await writeFile(join(videos, `${VIDEO}.poster.jpg`), JPEG);
+    await writeFile(join(userData, "music", "tracks", `${TRACK}.m4a`), MP4);
+    await mkdir(join(userData, "music", "covers"), { recursive: true });
+    await writeFile(join(userData, "music", "covers", `${TRACK}.jpg`), JPEG);
+    await writeFile(join(userData, "render-tmp", "text", "preview-0001.png"), PNG);
+    await mkdir(join(w.libraryRoot, "media"), { recursive: true });
+    await writeFile(join(w.libraryRoot, "media", "media-000001.gif"), Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(20)]));
+    const cases: [string, string][] = [
+      [videoUrl(), "video/mp4"],
+      [`studio-media://poster/${w.avatar.id}/${VIDEO}`, "image/jpeg"],
+      [`studio-media://track/${TRACK}`, "audio/mp4"],
+      [`studio-media://cover/${TRACK}`, "image/jpeg"],
+      ["studio-media://sticker/heart-pulse", "image/apng"],
+      ["studio-media://text/preview-0001", "image/png"],
+      ["studio-media://media/media-000001", "image/gif"],
+    ];
+    for (const [url, type] of cases) {
+      const response = await get(url);
+      expect([url, response.status]).toEqual([url, 200]);
+      expect(response.headers.get("Content-Type")).toBe(type);
+      expect(response.headers.get("Accept-Ranges")).toBe("bytes");
+      expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+      await response.arrayBuffer();
+    }
+  });
+});
+
+describe("video: Range and streaming", () => {
+  test("no Range: 200 with the whole file, streamed", async () => {
+    await commitVideo();
+    const response = await get(videoUrl());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Length")).toBe(String(MP4.length));
+    expect(Buffer.from(await response.arrayBuffer()).equals(MP4)).toBe(true);
+  });
+
+  test("a seek: 206 with the bytes asked for and their Content-Range", async () => {
+    await commitVideo();
+    const response = await get(videoUrl(), { range: `bytes=${CHUNK_BYTES - 5}-${CHUNK_BYTES + 5}` });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("Content-Range")).toBe(`bytes ${CHUNK_BYTES - 5}-${CHUNK_BYTES + 5}/${MP4.length}`);
+    expect(Buffer.from(await response.arrayBuffer()).equals(MP4.subarray(CHUNK_BYTES - 5, CHUNK_BYTES + 6))).toBe(true);
+  });
+
+  test("the last byte, by suffix", async () => {
+    await commitVideo();
+    const response = await get(videoUrl(), { range: "bytes=-1" });
+    expect(response.status).toBe(206);
+    expect(Buffer.from(await response.arrayBuffer()).equals(MP4.subarray(MP4.length - 1))).toBe(true);
+  });
+
+  test("a range past the end is 416 with the size, and no body", async () => {
+    await commitVideo();
+    const response = await get(videoUrl(), { range: `bytes=${MP4.length}-` });
+    expect(response.status).toBe(416);
+    expect(response.headers.get("Content-Range")).toBe(`bytes */${MP4.length}`);
+    expect((await response.arrayBuffer()).byteLength).toBe(0);
+  });
+
+  test("several ranges are 416", async () => {
+    await commitVideo();
+    expect((await get(videoUrl(), { range: "bytes=0-1,5-6" })).status).toBe(416);
+  });
+
+  test("a malformed Range is 416", async () => {
+    await commitVideo();
+    expect((await get(videoUrl(), { range: "bytes=abc" })).status).toBe(416);
+  });
+
+  test("a Range on a route that would 404 is still a 404, with no Content-Range", async () => {
+    const response = await get(videoUrl(), { range: "bytes=0-1" });
     expect(response.status).toBe(404);
+    expect(response.headers.get("Content-Range")).toBeNull();
+  });
+});
+
+describe("video: the renderer goes away, and the file is deleted while it plays", () => {
+  test("cancelling the response stops the reading and leaves nothing open", async () => {
+    await commitVideo();
+    const response = await get(videoUrl());
+    const reader = response.body?.getReader();
+    expect((await reader?.read())?.value?.length).toBe(CHUNK_BYTES);
+    await reader?.cancel();
+    // Nothing more to observe from outside but this: the file can be replaced and removed at once.
+    await rm(join(w.exportRoot, "Mia", "2026-09-29_photo_001.mp4"));
+  });
+
+  test("an aborted request ends the stream with an error", async () => {
+    await commitVideo();
+    const controller = new AbortController();
+    const response = await get(videoUrl(), { signal: controller.signal });
+    const reader = response.body?.getReader();
+    await reader?.read();
+    controller.abort();
+    await expect(reader?.read()).rejects.toBeDefined();
+  });
+
+  test("the file can be deleted between two chunks of a stream (what videos.delete does, and what a Windows handle would block), and the stream then fails instead of hanging", async () => {
+    const file = await commitVideo();
+    const response = await get(videoUrl());
+    const reader = response.body?.getReader();
+    expect((await reader?.read())?.value?.length).toBe(CHUNK_BYTES);
+    await unlink(file);
+    await expect(reader?.read()).rejects.toBeDefined();
+  });
+
+  test("a video replaced between two chunks does not leak the other file's bytes", async () => {
+    const file = await commitVideo();
+    const response = await get(videoUrl());
+    const reader = response.body?.getReader();
+    await reader?.read();
+    await writeFile(`${file}.swap`, Buffer.concat([MP4.subarray(0, 12), Buffer.alloc(MP4.length - 12, 0x58)]));
+    await rename(`${file}.swap`, file);
+    await expect(reader?.read()).rejects.toBeDefined();
+  });
+
+  test("a stalled reader holds nothing: the file can be deleted while the renderer has stopped asking", async () => {
+    const file = await commitVideo();
+    const response = await get(videoUrl());
+    const reader = response.body?.getReader();
+    await reader?.read();
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    await unlink(file);
+    await reader?.cancel();
+  });
+});
+
+describe("every refusal looks the same", () => {
+  const plain = async (response: Response): Promise<unknown> => ({
+    status: response.status,
+    headers: [...response.headers.entries()].sort(),
+    body: (await response.text()).length,
+  });
+
+  test("a 404 has no body and only nosniff: nothing in it names a file, an id or a reason", async () => {
+    const response = await get(`studio-media://photo/${AVATAR}/photo-99999`);
+    expect(response.status).toBe(404);
+    expect([...response.headers.entries()]).toEqual([["x-content-type-options", "nosniff"]]);
+    expect(await response.text()).toBe("");
+  });
+
+  test("a file that is not there, a file refused for its kind, a link and an unparsable URL all answer identically", async () => {
+    const photos = join(w.libraryRoot, "avatars", AVATAR, "photos");
+    await writeFile(join(photos, "photo-0000bad1.png"), "<html></html>");
+    await writeFile(join(outside, "secret.png"), PNG);
+    let linked = true;
+    try {
+      await symlink(join(outside, "secret.png"), join(photos, "photo-0000bad2.png"));
+    } catch {
+      linked = false;
+    }
+    const urls = [
+      `studio-media://photo/${AVATAR}/photo-0000none`,
+      `studio-media://photo/${AVATAR}/photo-0000bad1`,
+      ...(linked ? [`studio-media://photo/${AVATAR}/photo-0000bad2`] : []),
+      `studio-media://photo/${AVATAR}/../../etc/passwd`,
+      "studio-media://nothing/whatever",
+      videoUrl(),
+    ];
+    const answers = await Promise.all(urls.map(async (url) => plain(await get(url))));
+    for (const answer of answers) expect(answer).toEqual(answers[0]);
+  });
+
+  test("a method other than GET is a 404, on every route", async () => {
+    await commitVideo();
+    for (const method of ["POST", "PUT", "DELETE", "HEAD", "PATCH", "OPTIONS"]) {
+      expect((await handleMediaRequest({ url: videoUrl(), method }, deps())).status).toBe(404);
+    }
+  });
+
+  test("a malformed URL never reaches the file system", async () => {
+    let touched = 0;
+    const counting = deps({
+      libraryRoot: () => {
+        touched++;
+        return w.libraryRoot;
+      },
+      exportRoot: () => {
+        touched++;
+        return w.exportRoot;
+      },
+      musicRoot: () => {
+        touched++;
+        return join(userData, "music");
+      },
+      textPreviewRoot: () => {
+        touched++;
+        return join(userData, "render-tmp", "text");
+      },
+    });
+    for (const url of [`studio-media://video/${w.avatar.id}/..%2f..%2fetc`, `studio-media://track/${TRACK}/x`, `studio-media://track/%2e%2e`, "studio-media://video/x/y"]) {
+      expect((await handleMediaRequest({ url, method: "GET" }, counting)).status).toBe(404);
+    }
+    expect(touched).toBe(0);
+  });
+
+  test("a dependency that throws is a 404, not a crash", async () => {
+    const response = await get(`studio-media://photo/${AVATAR}/${PHOTO}`, {}, {
+      libraryRoot: () => {
+        throw new Error("EIO: /secret/path");
+      },
+    });
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("");
+  });
+});
+
+describe("the scheme's privileges and the renderer's policy", () => {
+  test("the scheme is registered standard, secure, fetch and stream, and nothing more", () => {
+    expect(MEDIA_SCHEME).toBe("studio-media");
+    expect(MEDIA_SCHEME_PRIVILEGES).toEqual({ standard: true, secure: true, supportFetchAPI: true, stream: true });
+  });
+
+  test("main registers exactly those privileges and never bypasses the CSP", async () => {
+    const source = await readFile(resolve(import.meta.dirname, "main.ts"), "utf8");
+    expect(source).toContain("privileges: MEDIA_SCHEME_PRIVILEGES");
+    expect(source).not.toMatch(/bypassCSP\s*:/);
+    expect(MEDIA_SCHEME_PRIVILEGES).not.toHaveProperty("bypassCSP");
+    expect(MEDIA_SCHEME_PRIVILEGES).not.toHaveProperty("corsEnabled");
+  });
+
+  test("the renderer CSP lets the scheme into img-src and media-src only", async () => {
+    const html = await readFile(resolve(import.meta.dirname, "../renderer/index.html"), "utf8");
+    const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)?.[1] ?? "";
+    const directives = Object.fromEntries(csp.split(";").map((part) => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+    expect(directives["img-src"]).toContain("studio-media:");
+    expect(directives["media-src"]).toEqual(["studio-media:"]);
+    for (const [name, values] of Object.entries(directives)) {
+      if (name !== "img-src" && name !== "media-src") expect([name, values.includes("studio-media:")]).toEqual([name, false]);
+    }
+    expect(directives["default-src"]).toEqual(["'self'"]);
   });
 });
