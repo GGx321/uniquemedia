@@ -14,6 +14,7 @@ import {
 } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import type { SyncPhase } from "../engine/store";
+import { EXPORT_UNAVAILABLE_TITLE, pickedNotice, refusedPickText, unavailableText, type PickedNotice } from "../lib/exportFolder";
 import { countOf, monthName, NBSP, waitLabel } from "../lib/format";
 import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars, type DollarsParse } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
@@ -55,6 +56,8 @@ interface RowProps {
   /** The control the label names; without it the label is plain text (`b`). */
   labelFor?: string;
   labelId?: string;
+  /** A path in mono under the label, a line of its own before the hint (the sheet's «Готовые видео» row). */
+  path?: { id: string; text: string };
   hint?: ReactNode;
   hintId?: string;
   /** A hint that reports a result (`status`) or a problem (`alert`) rather than explaining the row. */
@@ -64,7 +67,7 @@ interface RowProps {
 }
 
 /** The sheet's settings row: `.row` with the name and hint (`.rl`) on the left and the control on the right. */
-function Row({ label, labelFor, labelId, hint, hintId, hintRole, hintTone, children }: RowProps) {
+function Row({ label, labelFor, labelId, path, hint, hintId, hintRole, hintTone, children }: RowProps) {
   return (
     <div className="row">
       <div className="rl">
@@ -74,6 +77,11 @@ function Row({ label, labelFor, labelId, hint, hintId, hintRole, hintTone, child
           </label>
         ) : (
           <b id={labelId}>{label}</b>
+        )}
+        {path !== undefined && (
+          <span id={path.id} className="mono rl-path">
+            {path.text}
+          </span>
         )}
         {/* Keyed on its role: a result or a problem arrives as a fresh live region, which screen readers announce reliably. */}
         {hint !== undefined && (
@@ -785,11 +793,92 @@ function LibraryRow({ settings }: { settings: Settings }) {
   );
 }
 
+/** What the row last did: a pick that took (with its counts), or one that was refused (with the words for it). A cancel leaves it as it was. */
+type ExportOutcome = { kind: "picked"; notice: PickedNotice } | { kind: "refused"; text: string };
+
+/**
+ * «Готовые видео» (3e.3, K18). The folder is picked in main's own dialog: the window sends no path and gets back how many videos
+ * resolve in it and how many stay in the previous folder. The path shown is main's display string (home as «~»), asked again
+ * whenever the folder changes. When the folder in use cannot take a video (an unplugged disk), the store's live status says why.
+ */
+function ExportFolderRow({ settings }: { settings: Settings }) {
+  const { client, store } = useEngine();
+  const view = useEngineView();
+  const pathId = useId();
+  const [shown, setShown] = useState<{ folder: string; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<ExportOutcome | null>(null);
+  const status = view.exportStatus;
+
+  useEffect(() => {
+    let current = true;
+    void client.request("settings.exportDisplay", {}).then((reply) => {
+      // Main could not say (an older preload): the folder as the settings hold it is better than none.
+      if (current) setShown({ folder: settings.exportPath, text: reply.ok ? reply.result.display : settings.exportPath });
+    });
+    return () => {
+      current = false;
+    };
+  }, [client, settings.exportPath]);
+
+  async function choose(): Promise<void> {
+    setBusy(true);
+    const reply = await client.request("settings.setExportPath", {});
+    setBusy(false);
+    if (!reply.ok) {
+      setOutcome({ kind: "refused", text: refusedPickText(reply.error) });
+      return;
+    }
+    // A cancelled dialog changes nothing: not the path, and not what the row last said.
+    if (!reply.result.picked) return;
+    store.setSettings(reply.result.settings);
+    setOutcome({ kind: "picked", notice: pickedNotice(reply.result) });
+  }
+
+  return (
+    <>
+      <Row
+        label="Готовые видео"
+        path={shown !== null && shown.folder === settings.exportPath ? { id: pathId, text: shown.text } : undefined}
+        hint="здесь хранятся готовые видео · Studio держит у себя только запись о каждом"
+      >
+        <button type="button" className="btn btn-s" aria-label="Изменить папку «Готовые видео»" aria-describedby={pathId} aria-busy={busy} disabled={busy} onClick={() => void choose()}>
+          Изменить
+        </button>
+      </Row>
+      {status?.status === "unavailable" && (
+        <Notice
+          tone="danger"
+          title={EXPORT_UNAVAILABLE_TITLE}
+          actions={
+            <button type="button" className="btn btn-s" onClick={() => void store.recheckExport({ force: true })}>
+              Проверить снова
+            </button>
+          }
+        >
+          {unavailableText(status.reason)}
+        </Notice>
+      )}
+      {outcome?.kind === "refused" && (
+        <Notice tone="danger">{outcome.text}</Notice>
+      )}
+      {outcome?.kind === "picked" && (
+        <Notice tone={outcome.notice.tone}>
+          <p>{outcome.notice.text}</p>
+          {outcome.notice.hint !== null && <p>{outcome.notice.hint}</p>}
+        </Notice>
+      )}
+    </>
+  );
+}
+
 export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
   const { store } = useEngine();
   const view = useEngineView();
   // The key and the money share one card now («OpenRouter и расходы»): an error link to either lands on its heading.
   const openRouterHeading = useRef<HTMLHeadingElement>(null);
+  // An EXPORT_UNAVAILABLE link lands on the folders card, where the export folder is fixed.
+  const foldersHeading = useRef<HTMLHeadingElement>(null);
   const ready = view.phase === "ready";
 
   useEffect(() => {
@@ -798,7 +887,7 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
 
   useEffect(() => {
     if (!ready || !focus) return;
-    const target = openRouterHeading.current;
+    const target = focus === "export" ? foldersHeading.current : openRouterHeading.current;
     target?.scrollIntoView?.({ block: "start", behavior: "smooth" });
     target?.focus({ preventScroll: true });
   }, [ready, focus]);
@@ -861,8 +950,9 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
             <Card title="Производительность" id="settings-performance">
               <ConcurrencyRow settings={settings} />
             </Card>
-            <Card title="Папки и экспорт" id="settings-folders">
+            <Card title="Папки и экспорт" id="settings-folders" headingRef={foldersHeading}>
               <LibraryRow settings={settings} />
+              <ExportFolderRow settings={settings} />
             </Card>
           </div>
         </div>

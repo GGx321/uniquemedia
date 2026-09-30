@@ -3,6 +3,7 @@ import {
   DRAFT_CHANGING_DETAIL,
   DRAFT_TOO_NEW_DETAIL,
   ERROR_MESSAGES_RU,
+  EXPORT_UNAVAILABLE_REASONS_RU,
   type EngineError,
   type ErrorCode,
 } from "../../shared/engine";
@@ -36,7 +37,9 @@ function baseText(error: EngineError): string {
 
 /** The Russian text for an engine error, plus the wait when the engine gave one. */
 export function errorText(error: EngineError): string {
-  const base = baseText(error);
+  let base = baseText(error);
+  // 3e.3: an unusable export folder says why (the engine's closed list of reasons), after the general text.
+  if (error.code === "EXPORT_UNAVAILABLE" && error.exportReason !== undefined) base = `${base} ${EXPORT_UNAVAILABLE_REASONS_RU[error.exportReason]}`;
   if (error.retryAfterMs !== undefined && error.retryAfterMs > 0) return `${base} Повторите через ${waitLabel(error.retryAfterMs)}.`;
   return base;
 }
@@ -53,11 +56,19 @@ export function errorSettingsFocus(code: ErrorCode): SettingsFocus | null {
     case "SETTLE_ABOVE_WORST":
     case "LEDGER_WRITE_FAILED":
       return "money";
+    case "EXPORT_UNAVAILABLE":
+      return "export";
     default:
       return null;
   }
 }
 
+const SETTINGS_LINK_LABELS: Record<SettingsFocus, string> = {
+  key: "Открыть ключ в Настройках",
+  money: "Открыть деньги в Настройках",
+  export: "Открыть папку в Настройках",
+};
+
 export function settingsLinkLabel(focus: SettingsFocus): string {
-  return focus === "key" ? "Открыть ключ в Настройках" : "Открыть деньги в Настройках";
+  return SETTINGS_LINK_LABELS[focus];
 }

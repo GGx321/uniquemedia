@@ -217,6 +217,9 @@ const MAX_STALE_BOOTS = 64;
 /** `user`: the first load or a retry, whose first snapshot is not counted against the automatic budget. */
 type SyncOrigin = "user" | "auto";
 
+/** A window that comes back to the front asks the engine to check the export folder at most this often (3e.3). */
+export const EXPORT_RECHECK_MIN_MS = 5_000;
+
 export interface EngineStoreOptions {
   /** A monotonic clock in ms for the automatic-snapshot budget (default `performance.now`); tests may pass their own. */
   now?: () => number;
@@ -247,6 +250,11 @@ export class EngineStore {
   /** The bootIds the last snapshot refuted: stale whatever the cap evicted, so one batch cannot re-trigger itself. */
   private lastRefuted = new Set<string>();
   private readonly now: () => number;
+  /** The export check this window is waiting for, and when it asked last (`recheckExport`). */
+  private exportCheck: Promise<void> | null = null;
+  private lastExportCheck: number | null = null;
+  /** How many `export.status` events came: an answer to a check that began before one is older than it. */
+  private exportStatusEvents = 0;
   /**
    * The library-switch generation the avatar and draft lists came from (the
    * last snapshot's). Compared instead of the path string: two spellings of
@@ -418,6 +426,35 @@ export class EngineStore {
   async refreshMoney(): Promise<void> {
     const reply = await this.client.request("money.status", {});
     if (reply.ok) this.setMoney(reply.result);
+  }
+
+  /**
+   * Asks the engine for a fresh look at the export folder (`export.check`), so an unplugged or replugged disk shows up without a
+   * render attempt: `export.status` follows checks only (K9). Called when the window comes back to the front, so it is throttled
+   * (`EXPORT_RECHECK_MIN_MS`, unless `force`: the owner asked), joins an ask that is still waiting, and never throws: a failed
+   * ask changes nothing (and still counts toward the interval, so a broken engine is not asked again and again). Not before the
+   * first snapshot, and the answer is dropped when an `export.status` arrived meanwhile: that event is newer.
+   */
+  recheckExport(options: { force?: boolean } = {}): Promise<void> {
+    if (this.view.phase !== "ready") return Promise.resolve();
+    if (this.exportCheck !== null) return this.exportCheck;
+    const now = this.now();
+    if (options.force !== true && this.lastExportCheck !== null && now - this.lastExportCheck < EXPORT_RECHECK_MIN_MS) return Promise.resolve();
+    this.lastExportCheck = now;
+    const generation = this.generation;
+    const eventsBefore = this.exportStatusEvents;
+    const check = (async (): Promise<void> => {
+      try {
+        const reply = await this.client.request("export.check", {});
+        if (reply.ok && generation === this.generation && eventsBefore === this.exportStatusEvents) this.update({ exportStatus: reply.result.exportStatus });
+      } catch {
+        // The ask failed before it could be answered: nothing to show.
+      } finally {
+        this.exportCheck = null;
+      }
+    })();
+    this.exportCheck = check;
+    return check;
   }
 
   async refreshSettings(): Promise<void> {
@@ -765,6 +802,7 @@ export class EngineStore {
         for (const listener of [...this.montageListeners]) listener(event.payload);
         return;
       case "export.status":
+        this.exportStatusEvents += 1;
         this.update({ exportStatus: event.payload.exportStatus, lastSeq });
         return;
       case "music.changed":

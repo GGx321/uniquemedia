@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { AGE_CHECK_ALREADY_REFUSED_DETAIL, DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ERROR_MESSAGES_RU } from "../../shared/engine";
-import { errorText } from "./errors";
+import { AGE_CHECK_ALREADY_REFUSED_DETAIL, DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU } from "../../shared/engine";
+import { errorSettingsFocus, errorText, settingsLinkLabel } from "./errors";
 
 // T6c review round 3, L8: the free re-pick's own wording (errors.ts:17)
 // override was never directly tested — only reachable through the whole
@@ -48,4 +48,26 @@ test("a draft that changed while it was read says a retry will open it", () => {
 
 test("any other INTERNAL keeps the engine's own text", () => {
   expect(errorText({ code: "INTERNAL", detail: "the draft cannot be read (not-a-file)" })).toBe(ERROR_MESSAGES_RU.INTERNAL);
+});
+
+// 3e.3: the notice behind EXPORT_UNAVAILABLE says why, and links to the Settings card where the folder is fixed.
+test("EXPORT_UNAVAILABLE says why the folder cannot be used, after the general text", () => {
+  const text = errorText({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" });
+  expect(text).toContain(ERROR_MESSAGES_RU.EXPORT_UNAVAILABLE);
+  expect(text).toContain(EXPORT_UNAVAILABLE_REASONS_RU["not-writable"]);
+});
+
+test("EXPORT_UNAVAILABLE for a damaged marker with records never tells the owner to delete the file", () => {
+  const text = errorText({ code: "EXPORT_UNAVAILABLE", exportReason: "invalid-marker-with-records" });
+  expect(text).toContain(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]);
+  expect(text).not.toMatch(/удал/i);
+});
+
+test("EXPORT_UNAVAILABLE without a reason keeps the general text alone", () => {
+  expect(errorText({ code: "EXPORT_UNAVAILABLE" })).toBe(ERROR_MESSAGES_RU.EXPORT_UNAVAILABLE);
+});
+
+test("EXPORT_UNAVAILABLE is fixed in Settings, on the export folder's card", () => {
+  expect(errorSettingsFocus("EXPORT_UNAVAILABLE")).toBe("export");
+  expect(settingsLinkLabel("export")).toBe("Открыть папку в Настройках");
 });

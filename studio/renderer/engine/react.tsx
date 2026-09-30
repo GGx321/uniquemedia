@@ -17,14 +17,22 @@ export function EngineProvider({ client, children }: { client: EngineClient; chi
 
   useEffect(() => {
     const onVisible = (): void => {
-      if (document.visibilityState === "visible") store.reconnect();
+      if (document.visibilityState === "visible") {
+        store.reconnect();
+        // A disk unplugged or plugged back while the window was away: `export.status` follows checks only, so ask for one.
+        void store.recheckExport();
+      }
     };
     const onOnline = (): void => store.reconnect();
+    // The window coming to the front again (a click back from the file manager). The store throttles the ask.
+    const onFocus = (): void => void store.recheckExport();
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("online", onOnline);
+    window.addEventListener("focus", onFocus);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("focus", onFocus);
     };
   }, [store]);
 
