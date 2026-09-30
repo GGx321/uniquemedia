@@ -315,6 +315,26 @@ describe("the bounds", () => {
   });
 });
 
+describe("the workflow's concurrency rule", () => {
+  const ROOT = join(import.meta.dir, "..", "..");
+
+  // A branch run that a newer one supersedes is cancelled. A main push or a tag run never is, and never shares a
+  // group with another run: GitHub drops an older PENDING run of a shared group even with cancel-in-progress off.
+  test("cancels only non-main, non-tag refs, and gives main and tag runs a group of their own", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    const block = /^concurrency:\r?\n((?:[ \t]+.*\r?\n)+)/m.exec(workflow)?.[1] ?? "";
+    const group = /^\s+group: (.*)$/m.exec(block)?.[1] ?? "";
+    const cancel = /^\s+cancel-in-progress: (.*)$/m.exec(block)?.[1] ?? "";
+    expect(group).toContain("github.workflow");
+    expect(group).toContain("github.ref");
+    expect(group).toContain("github.run_id");
+    expect(group).toContain("refs/heads/main");
+    expect(group).toContain("refs/tags/");
+    expect(cancel).toContain("github.ref != 'refs/heads/main'");
+    expect(cancel).toContain("!startsWith(github.ref, 'refs/tags/')");
+  });
+});
+
 describe("runOnce", () => {
   const HUNG = [process.execPath, "-e", "setInterval(() => {}, 1e6)"];
 

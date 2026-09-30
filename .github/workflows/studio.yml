@@ -24,6 +24,14 @@ on:
     - cron: "17 6 * * 1"
 permissions:
   contents: write
+# A superseded run on a branch (a second dispatch or push of the same ref) is cancelled, so it stops spending
+# runner minutes on a result nobody will read. Main and tags are never cancelled: every push to main must finish,
+# so a red commit stays identifiable, and a release run must not be cut short. Their group is unique per run
+# (run_id), not just non-cancelling: with a shared group and cancel-in-progress off, GitHub still drops an older
+# PENDING run when a newer one queues behind the running one, and that would skip a main commit's check.
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 jobs:
   build:
     # The schedule trigger is only for the canary job below; the full
