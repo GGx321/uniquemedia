@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { musicTracks } from "./fixtures";
 import { probeMp4Audio } from "./mp4aProbe";
 import { box, buildM4a, concat, fullBox, largeBox, u32 } from "./testing/m4aBuilder";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Invariant 31, acceptance: a track is accepted only after a bounded box walker reads an `mp4a` audio stream (HE-AAC
 // `mp4a.40.5` and AAC-LC both). The walker never believes a size: each is checked against what its parent holds.

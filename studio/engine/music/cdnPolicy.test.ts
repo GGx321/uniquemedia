@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { CDN_HOST_PATTERNS, checkCdnUrl, hostForLog } from "./cdnPolicy";
 import { cdnHostPatterns, musicLists } from "./fixtures";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Invariant 31, sources: https only, port 443, a host that matches one of two anchored lowercase patterns at label
 // boundaries, no credentials, and anything else refused and named by host only.

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { CdnBlockedError, type CdnResponse, type CdnTransport } from "./cdnTransport";
 import { downloadCapped, DownloadError } from "./downloadCapped";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Invariant 31, downloads: the URL is checked before anything is requested, no redirect is followed, the size is capped
 // by the declared length AND by what actually arrives, a stalled or trickling body ends, and a failure names the host

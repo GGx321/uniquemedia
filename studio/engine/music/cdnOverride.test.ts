@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { EngineInit } from "../control";
 import { resolveMusicCdnBase } from "./cdnOverride";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // The E2E-only mock CDN (invariant 31, S11): honoured by an E2E build, inert in every other, whatever main sends.
 

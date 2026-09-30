@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { TrackSummary } from "../../shared/engine";
 import { expiresAtFor, EXPIRY_CEILING_MS, EXPIRY_FALLBACK_MS, normaliseHighlights, toSummary, windowPeaks, type TrackEntry } from "./trackRecord";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 const FETCHED = Date.UTC(2026, 8, 27, 20, 42, 44);
 const HOUR = 3600 * 1000;

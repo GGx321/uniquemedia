@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isPublicAddress } from "./addressPolicy";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // The SSRF defence at connect time: an address a CDN host name resolves to is used only when it is a public unicast
 // one. Every range a request could be steered into (this host, the LAN, cloud metadata, multicast, reserved) is refused.

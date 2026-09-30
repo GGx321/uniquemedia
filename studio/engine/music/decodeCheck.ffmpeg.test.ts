@@ -8,6 +8,8 @@ import type { FfmpegChild, FfmpegSpawner } from "../../node/runFfmpeg";
 import { configureFfmpegEnv } from "../../node/ffmpegEnv";
 import { decodeAudio, DecodeError, PEAK_STEP_MS } from "./decodeCheck";
 import { musicTracks } from "./fixtures";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Invariant 31, acceptance, second gate: the file is decoded by ffmpeg under a time bound and an output bound, from a
 // file on disk (never the network), with the mov demuxer forced and only the file protocol allowed, and what came out
