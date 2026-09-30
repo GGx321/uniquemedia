@@ -13,6 +13,13 @@ export const FRAME_H = 1920;
 /** The black gutter between collage cells, in pixels (the mockup's 3 px at 306 px, rounded to an even 12). */
 export const GUTTER = 12;
 
+/**
+ * The size, in pixels on the 1080-wide frame, a caption is drawn at when its `scale` is 1: the engine's text layout starts
+ * from `TEXT_BASE_PX * scale` (then shrinks to fit), and the editor shows `round(scale * TEXT_BASE_PX)` as «Размер».
+ * The rasteriser's canvas limits (`DEFAULT_RASTER_LIMITS`) are derived from it.
+ */
+export const TEXT_BASE_PX = 56;
+
 /** The face-less focus: horizontally centred, a little above the middle where a face usually sits. */
 export const FOCUS_FALLBACK = { x: 0.5, y: 0.38 } as const;
 

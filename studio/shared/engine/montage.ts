@@ -158,10 +158,10 @@ const fraction = z.number().min(0).max(1);
 const HexColor = z.string().regex(/^#[0-9a-f]{6}$/, "must be #rrggbb in lowercase");
 
 /**
- * A text box anchored at its centre. `color` is the TEXT colour in every
- * style; the style decides the rest: «Плашка» keeps its white plaque,
- * «Обводка» its black outline and «Без фона» its soft shadow. The editor's
- * default is the style's own default text colour.
+ * A text box anchored at its centre. What `color` paints depends on the style (the owner, 2026-09-30): «Плашка» paints
+ * the PLAQUE with it, and the engine draws the text #111111 or #ffffff, whichever contrasts more; «Обводка» and
+ * «Без фона» take it as the TEXT colour, and a dark one flips the outline or shadow to white. The editor's default is
+ * the style's own default colour (#ffffff).
  */
 export const TextLayer = z.strictObject({
   ...layerBase,
