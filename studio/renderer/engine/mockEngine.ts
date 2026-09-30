@@ -15,6 +15,7 @@ import {
   EventLog,
   type EventMessage,
   type FailedCandidateSlot,
+  type FileState,
   type ImageAgeCheck,
   IMPORT_FALLBACK_PRICE,
   type ImportPhotoPicked,
@@ -31,6 +32,7 @@ import {
   PROTOCOL_VERSION,
   type ReconcileReason,
   type ReconcileResult,
+  type RenderResult,
   type ResponseMessage,
   type RunRequest,
   type RunSummary,
@@ -39,7 +41,11 @@ import {
   type Snapshot,
   type UnreadableAvatar,
   type UnsequencedEvent,
+  type VideoSummary,
 } from "../../shared/engine";
+import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
+import { defaultSpec, notYetSupportedIssues } from "../../shared/montage";
+import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -123,6 +129,9 @@ const MOCK_FACE_COS = [0.86, 0.81, 0.71, 0.78] as const;
 const MOCK_UNCHECKED_EVERY = 5;
 
 const START_OF_TIME = Date.UTC(2026, 8, 24, 10, 0, 0);
+
+/** Where the mock's focus resolver puts the subject of a photo its face gate scored (the real one detects a face; the mock never looks at a pixel). */
+export const MOCK_FOCUS = { x: 0.5, y: 0.35 } as const;
 
 type SlotOutcome = "success" | "age-rejected" | "failed";
 
@@ -260,6 +269,38 @@ interface MockJob {
   cancelTimers: (() => void)[];
 }
 
+/** A rendered video the mock keeps: the record the windows see, the photos it shows, and the draft as the record was written. */
+interface MockVideo {
+  summary: VideoSummary;
+  photoIds: string[];
+  /** The draft it was rendered from AS WRITTEN: null when that draft was already deleted at commit. `videos.list` also shows null once it is deleted later. */
+  montageId: string | null;
+  /** What a check of its file finds, when the test says so; null = present (or `elsewhere` while the export folder is unusable). */
+  fileState: FileState | null;
+}
+
+/** A render on the mock's queue: `queued` until a pool slot frees, then `running` through its progress and its saving phase. */
+interface MockRenderJob {
+  jobId: string;
+  videoId: string;
+  avatarId: string;
+  /** The draft it was queued from: the job's events keep naming it even if the draft is deleted meanwhile. */
+  montageId: string | null;
+  /** The job keeps the spec it was queued with: a later save or delete of the draft does not reach it. */
+  spec: MontageDraft;
+  photoIds: string[];
+  status: JobState["status"];
+  done: number;
+  total: number;
+  /** The commit has passed its point of no return: a cancel is ignored from here. */
+  saving: boolean;
+  error: EngineError | null;
+  result: RenderResult | null;
+  timers: (() => void)[];
+}
+
+const isActive = (j: { status: JobState["status"] }): boolean => j.status === "queued" || j.status === "running";
+
 const SKIN: Record<AvatarTraits["skinTone"], string> = {
   "very-light": "very fair",
   light: "fair",
@@ -343,6 +384,22 @@ function demoAvatars(): AvatarSummary[] {
   });
 }
 
+/** `spec` with each scene photo's cell focus set from `focuses` (by photo id): what `montages.create` stores. */
+function withFocus(spec: MontageDraft, focuses: ReadonlyMap<string, Focus | null>): MontageDraft {
+  const focusOf = <C extends { photo: { source: string; photoId?: string } | null; focus: Focus | null }>(cell: C): C => {
+    const photoId = cell.photo?.source === "scene" ? cell.photo.photoId : undefined;
+    return photoId === undefined ? cell : { ...cell, focus: focuses.get(photoId) ?? null };
+  };
+  return {
+    ...spec,
+    clips: spec.clips.map((clip) => {
+      if (clip.kind === "photo") return { ...clip, cell: focusOf(clip.cell) };
+      if (clip.kind === "collage") return { ...clip, cells: clip.cells.map(focusOf) };
+      return clip;
+    }),
+  };
+}
+
 export class MockEngine implements EngineBridge {
   /** Every command received, in order: tests assert on what the UI sent. */
   readonly calls: CommandMessage[] = [];
@@ -415,6 +472,16 @@ export class MockEngine implements EngineBridge {
   private readonly mastersMissing = new Set<string>();
   /** What the engine's own look at the master (the gates' prepare) answers at a run start, per avatar. */
   private readonly masterPreflight = new Map<string, EngineError>();
+  private focusAvailable = true;
+  private skippedDrafts = 0;
+  /** The montage drafts, in the order they were made; they outlive a restart, as the real engine's files do. */
+  private montages = new Map<string, Montage>();
+  /** Drafts deleted in this engine's life: a video's record stops naming them. */
+  private readonly removedMontages = new Set<string>();
+  private montageSeeds = 0;
+  /** Committed videos, oldest first; `videos.list` answers newest first. */
+  private videos: MockVideo[] = [];
+  private renderJobs: MockRenderJob[] = [];
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -645,6 +712,19 @@ export class MockEngine implements EngineBridge {
   setMasterPreflightFailure(avatarId: string, error: EngineError | null): void {
     if (error === null) this.masterPreflight.delete(avatarId);
     else this.masterPreflight.set(avatarId, error);
+  }
+
+  /**
+   * The face gate that judges the focus of a placed photo is missing (its models did not load): every focus the montage commands
+   * resolve is `null`, and the draft stores null, as the real engine's resolver answers when it cannot judge.
+   */
+  setFocusAvailable(available: boolean): void {
+    this.focusAvailable = available;
+  }
+
+  /** `count` draft files could not be read: `montages.list` reports them as `skippedTotal` and leaves them out, never fails. */
+  setSkippedDrafts(count: number): void {
+    this.skippedDrafts = Math.max(0, count);
   }
 
   /** Undoes `removeMaster`. */
@@ -1092,15 +1172,21 @@ export class MockEngine implements EngineBridge {
       case "videos.reveal":
       case "music.status":
       case "music.refresh":
-      case "montages.create":
-      case "montages.get":
-      case "montages.list":
-      case "montages.save":
-      case "montages.delete":
-      case "montages.focus":
         // Stage 3, task 3a.1: the contract exists, the behaviour comes with its slices (mock parity: task 3d.1b).
         // Until then the mock refuses exactly as the real engine does for a command it does not implement yet.
         return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
+      case "montages.create":
+        return this.montagesCreate(c, c.payload);
+      case "montages.get":
+        return this.montagesGet(c, c.payload.montageId);
+      case "montages.list":
+        return this.montagesList(c, c.payload.avatarId);
+      case "montages.save":
+        return this.montagesSave(c, c.payload);
+      case "montages.delete":
+        return this.montagesDelete(c, c.payload.montageId);
+      case "montages.focus":
+        return this.montagesFocus(c, c.payload);
       case "photos.setRejected": {
         // The real engine's behaviour (task 3a.2): the owner's mark is set or cleared, an already-set one changes nothing, and the avatar's eligibleUnusedCount follows (the mock's photos are never used or reserved).
         const { avatarId, photoId, rejected } = c.payload;
@@ -1192,6 +1278,149 @@ export class MockEngine implements EngineBridge {
   private jobRunningFor(avatarId: string): boolean {
     const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
     return this.jobs.some(active) || this.runJobs.some(active);
+  }
+
+  // ---------- montage drafts (3d.1b) ----------
+  //
+  // The real engine's `MontageService`, over the mock's own data. The order of every refusal is the engine's: the library first
+  // (every command asks for it), then the draft or the avatar, then what the command checks about them. Nothing here reads a pixel:
+  // a photo's focus is `MOCK_FOCUS` when its face gate scored it and `null` when it did not.
+
+  /** The photo as the windows see it: `used`, `usedIn` and `reserved` follow the mock's videos and queued or running renders, on top of what a seeded photo already says. */
+  private photoView(photo: PhotoSummary): PhotoSummary {
+    const usedIn = [...new Set([...photo.usedIn, ...this.videos.filter((v) => v.summary.avatarId === photo.avatarId && v.photoIds.includes(photo.photoId)).map((v) => v.summary.videoId)])];
+    const reserved = photo.reserved || this.renderJobs.some((j) => isActive(j) && j.avatarId === photo.avatarId && j.photoIds.includes(photo.photoId));
+    return { ...photo, used: usedIn.length > 0, usedIn, reserved };
+  }
+
+  /** The engine's `photoAvailability(...).usable`: an eligible scene photo of the avatar that is in no video and held by no render. */
+  private photoUsable(avatarId: string, photoId: string): boolean {
+    const photo = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photoId);
+    if (photo === undefined) return false;
+    const view = this.photoView(photo);
+    return view.eligible && !view.used && !view.reserved;
+  }
+
+  private avatarKnown(avatarId: string): boolean {
+    return this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId);
+  }
+
+  private activeAvatarRefusal(avatarId: string): EngineError | null {
+    return this.avatars.some((a) => a.avatarId === avatarId && a.status === "active") ? null : { code: "NOT_FOUND", detail: `no active avatar ${avatarId} in the open library` };
+  }
+
+  private unknownDraft(montageId: string): EngineError {
+    return { code: "NOT_FOUND", detail: `no montage draft ${montageId}` };
+  }
+
+  /** K11: a photo that is not an eligible, unused, unreserved scene photo of this avatar is refused, with its index in `photoIds`. */
+  private photosRefusal(avatarId: string, photoIds: readonly string[]): EngineError | null {
+    const issues: MontageIssue[] = [];
+    photoIds.forEach((photoId, i) => {
+      if (!this.photoUsable(avatarId, photoId)) issues.push({ code: "photo-unavailable", path: ["photoIds", i] });
+    });
+    return issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues };
+  }
+
+  private focusOf(avatarId: string, photoId: string): Focus | null {
+    if (!this.focusAvailable) return null;
+    const photo = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photoId);
+    return photo?.qa?.faceCos === undefined ? null : { ...MOCK_FOCUS };
+  }
+
+  /** The engine's `draftIssues`: what a render refuses (structure, then the parts whose slice has not landed), then the referential issues, cut at 64. */
+  private draftIssues(spec: MontageDraft): MontageIssue[] {
+    const referential: MontageIssue[] = [];
+    spec.clips.forEach((clip, i) => {
+      if (clip.kind === "photo") {
+        if (clip.cell.photo?.source === "scene" && !this.photoUsable(spec.avatarId, clip.cell.photo.photoId)) referential.push({ code: "photo-unavailable", path: ["clips", i, "cell"] });
+      } else if (clip.kind === "collage") {
+        clip.cells.forEach((cell, j) => {
+          if (cell.photo?.source === "scene" && !this.photoUsable(spec.avatarId, cell.photo.photoId)) referential.push({ code: "photo-unavailable", path: ["clips", i, "cells", j] });
+        });
+      }
+    });
+    const stickers: ReadonlySet<string> = new Set(STICKER_MANIFEST.map((sticker) => sticker.id));
+    spec.layers.forEach((layer, i) => {
+      if (layer.kind === "sticker" && layer.sticker.source === "builtin" && !stickers.has(layer.sticker.stickerId)) referential.push({ code: "sticker-unavailable", path: ["layers", i, "sticker"] });
+    });
+    return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referential].slice(0, MAX_MONTAGE_ISSUES);
+  }
+
+  private announceDraft(montage: Montage): void {
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "montage.changed", payload: { change: "upserted", montage } });
+  }
+
+  private montagesCreate(c: CommandMessage, payload: { avatarId: string; photoIds: string[] }): ResponseMessage {
+    const { avatarId, photoIds } = payload;
+    // The contract already refuses both; the real service checks them again for callers that did not go through it.
+    if (photoIds.length > MAX_CLIPS) return this.fail(c, { code: "VALIDATION", detail: `at most ${MAX_CLIPS} photos, got ${photoIds.length}` });
+    if (new Set(photoIds).size !== photoIds.length) return this.fail(c, { code: "VALIDATION", detail: "a photo can appear only once in a montage" });
+    const refusal = this.libraryGate() ?? this.activeAvatarRefusal(avatarId) ?? this.photosRefusal(avatarId, photoIds);
+    if (refusal) return this.fail(c, refusal);
+    this.montageSeeds += 1;
+    const seed = (this.montageSeeds * 2_654_435_761) % 4_294_967_296;
+    const spec = withFocus(defaultSpec(avatarId, photoIds, seed), new Map(photoIds.map((photoId) => [photoId, this.focusOf(avatarId, photoId)])));
+    const montage = Montage.parse({ montageId: this.nextId("montage"), name: null, spec, updatedAt: this.nowIso() });
+    this.montages.set(montage.montageId, montage);
+    this.announceDraft(montage);
+    return this.ok(c, { montage });
+  }
+
+  private montagesGet(c: CommandMessage, montageId: string): ResponseMessage {
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    const montage = this.montages.get(montageId);
+    if (montage === undefined) return this.fail(c, this.unknownDraft(montageId));
+    return this.ok(c, { montage, issues: this.draftIssues(montage.spec) });
+  }
+
+  private montagesList(c: CommandMessage, avatarId: string | undefined): ResponseMessage {
+    const refusal = this.libraryGate() ?? (avatarId !== undefined && !this.avatarKnown(avatarId) ? { code: "NOT_FOUND" as const, detail: `no avatar ${avatarId} in the open library` } : null);
+    if (refusal) return this.fail(c, refusal);
+    const drafts = [...this.montages.values()]
+      .filter((m) => avatarId === undefined || m.spec.avatarId === avatarId)
+      .sort((a, b) => (a.updatedAt !== b.updatedAt ? (a.updatedAt < b.updatedAt ? 1 : -1) : a.montageId < b.montageId ? -1 : 1));
+    const items = drafts.slice(0, MAX_LISTED_MONTAGES).map((montage) => ({
+      montage,
+      issues: this.draftIssues(montage.spec),
+      videoCount: this.videos.filter((v) => v.montageId === montage.montageId).length,
+    }));
+    return this.ok(c, { items, total: drafts.length, skippedTotal: this.skippedDrafts });
+  }
+
+  private montagesSave(c: CommandMessage, payload: { montageId: string; spec: MontageDraft; name: string | null }): ResponseMessage {
+    const { montageId, spec, name } = payload;
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    const stored = this.montages.get(montageId);
+    if (stored === undefined) return this.fail(c, this.unknownDraft(montageId));
+    if (spec.avatarId !== stored.spec.avatarId) return this.fail(c, { code: "VALIDATION", detail: "the spec belongs to another avatar than the draft" });
+    const montage = Montage.parse({ montageId, name, spec, updatedAt: this.nowIso() });
+    this.montages.set(montageId, montage);
+    this.announceDraft(montage);
+    return this.ok(c, { montage });
+  }
+
+  private montagesDelete(c: CommandMessage, montageId: string): ResponseMessage {
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    const stored = this.montages.get(montageId);
+    if (stored === undefined) return this.fail(c, this.unknownDraft(montageId));
+    this.montages.delete(montageId);
+    this.removedMontages.add(montageId);
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "montage.changed", payload: { change: "removed", montageId, avatarId: stored.spec.avatarId } });
+    return this.ok(c, { montageId });
+  }
+
+  private montagesFocus(c: CommandMessage, payload: { avatarId: string; photo: { source: "scene"; photoId: string } | { source: "own"; mediaId: string } }): ResponseMessage {
+    const { avatarId, photo } = payload;
+    const refusal = this.libraryGate() ?? this.activeAvatarRefusal(avatarId);
+    if (refusal) return this.fail(c, refusal);
+    if (photo.source === "own") return this.fail(c, { code: "NOT_FOUND", detail: "own photos are not available yet" });
+    const known = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photo.photoId);
+    if (known === undefined || !known.eligible) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] });
+    return this.ok(c, { focus: this.focusOf(avatarId, photo.photoId) });
   }
 
   // ---------- photo runs (T8b) ----------

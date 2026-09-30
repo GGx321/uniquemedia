@@ -777,14 +777,14 @@ test("runs.list answers an empty list through the validating client before any r
   expect(await unwrap(client.request("runs.list", {}))).toEqual({ runs: [] });
 });
 
-// Stage 3 task 3a.1 adds the montage and video commands; the mock's parity with the engine behind them is task 3d.1b.
-// Until then it answers exactly what the real engine answers for a command it does not implement yet.
+// Stage 3 task 3a.1 added the montage and video commands; 3d.1b gives the mock the engine's behaviour for the montage commands
+// (mockEngine.montages.test.ts) and for the video commands (mockEngine.videos.test.ts). What is left answers exactly what the
+// real engine answers for a command it does not implement yet.
 test.each([
   ["videos.render", { montageId: "montage-00000001" }],
   ["videos.cancel", { jobId: "job-00000004" }],
   ["videos.list", { avatarId: "avatar-0001" }],
   ["videos.delete", { videoId: "video-00000001", mode: "video" }],
-  ["montages.create", { avatarId: "avatar-0001", photoIds: [] }],
 ] as const)("%s answers the typed INTERNAL refusal the real engine gives, and the mock keeps working", async (type, payload) => {
   const { client } = makeMock();
   const reply = await client.request(type, payload);
