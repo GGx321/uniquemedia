@@ -10,7 +10,7 @@ import { decodeAudio, DecodeError, type DecodeOptions, type DecodeResult, PEAK_S
 import { downloadCapped, DownloadError } from "./downloadCapped";
 import { probeMp4Audio } from "./mp4aProbe";
 import { withoutLongPathPrefix } from "./quotaLedger";
-import type { FetchedList, MusicListSink } from "./service";
+import { SinkError, type FetchedList, type MusicListSink } from "./service";
 import {
   COVER_EXTENSIONS,
   EnvelopeSchema,
@@ -96,8 +96,17 @@ async function isRegularFileOfSize(path: string, bytes: number): Promise<boolean
 
 const countPending = (record: ListRecord): number => record.tracks.reduce((sum, entry) => sum + Number(entry.audio.state === "pending") + Number(entry.cover.state === "pending"), 0);
 
+/** How many refusals in a row, from the start of a run, stop it (review F4). */
+const BREAKER_AFTER = 3;
+
+/** What a refusal a circuit breaker counts is called (`status-403`, `blocked-address`), or null for any other failure. */
+function refusalSignature(audio: Audio): string | null {
+  if (audio.state !== "failed") return null;
+  return /^status-(401|403|429)$/.test(audio.reason) || audio.reason === "blocked-address" ? audio.reason : null;
+}
+
 function reasonOf(error: unknown): string {
-  if (error instanceof DownloadError) return error.kind;
+  if (error instanceof DownloadError) return error.kind === "status" && error.status !== null ? `status-${error.status}` : error.kind;
   if (error instanceof DecodeError) return `decode:${error.kind}`;
   return "write-failed";
 }
@@ -142,7 +151,7 @@ export class TrackStore implements MusicListSink {
    * as `accept`; a pending URL is checked against the host policy again by the download itself.
    */
   async resume(progress: (done: number, total: number) => void, signal: AbortSignal): Promise<void> {
-    if (this.#busy) throw new Error("a music refresh is already being stored");
+    if (this.#busy) throw new SinkError("a music refresh is already being stored");
     if (this.pendingCount() === 0) return;
     this.#busy = true;
     try {
@@ -172,7 +181,15 @@ export class TrackStore implements MusicListSink {
     }
     // Set aside, never overwritten: the owner (or a newer Studio) may want it.
     deps.log(`studio engine: the music list record could not be read (${why}); it was set aside and the store starts empty`);
-    await renameWithRetry(path, `${path}.${deps.clock()}`).catch(() => undefined);
+    // The copy keeps no signed URL (review F6): a pending one would sit on disk long after it stopped working. If the
+    // scrubbed copy cannot be written the original is moved aside as it is, which loses nothing.
+    const aside = `${path}.${deps.clock()}`;
+    try {
+      await writeFileAtomic(aside, text.replace(/https?:\/\/[^\s"'\\]*/gi, "[url]"));
+      await rm(path, { force: true });
+    } catch {
+      await renameWithRetry(path, aside).catch(() => undefined);
+    }
     return null;
   }
 
@@ -274,7 +291,7 @@ export class TrackStore implements MusicListSink {
    * Rejects when the list cannot be stored, when a cancel came, or when not one track of a non-empty list could be stored.
    */
   async accept(list: FetchedList, progress: (done: number, total: number) => void, signal: AbortSignal): Promise<void> {
-    if (this.#busy) throw new Error("a music refresh is already being stored");
+    if (this.#busy) throw new SinkError("a music refresh is already being stored");
     this.#busy = true;
     try {
       const planned = await this.#plan(list);
@@ -348,16 +365,44 @@ export class TrackStore implements MusicListSink {
     const total = 1 + wanted.reduce((sum, entry) => sum + Number(entry.audio.state === "pending") + Number(entry.cover.state === "pending"), 0);
     let done = 1;
     progress(done, total);
-    let attempted = 0;
-    const reasons = new Map<string, number>();
+    const record = (): ListRecord => this.#record ?? start;
+    const persistEntry = (entry: TrackEntry): Promise<void> =>
+      this.#persist({ ...record(), tracks: record().tracks.map((candidate) => (candidate.trackId === entry.trackId ? entry : candidate)) });
+    // The circuit breaker (review F4). The first downloads of a run that are refused the same way (401, 403, 429, or an
+    // address that is not public) are HELD, not recorded: if the third one is refused too, the run stops with every entry
+    // still pending and its URL kept, because a failed entry erases its URL and the request is spent. A cause that is fixed
+    // (a header a CDN wants, a changed host shape) is then retried by `resume` at the next start with no new list.
+    let audioAttempts = 0;
+    let held: TrackEntry[] = [];
+    const flushHeld = async (): Promise<void> => {
+      for (const failedEntry of held) {
+        // A cover for a track that could not be stored is not worth a request.
+        const cover: Cover = failedEntry.cover.state === "pending" ? { state: "failed", reason: "skipped" } : failedEntry.cover;
+        if (failedEntry.cover.state === "pending") progress(++done, total);
+        await persistEntry({ ...failedEntry, cover });
+      }
+      held = [];
+    };
     for (const wantedEntry of wanted) {
       let entry = wantedEntry;
       if (entry.audio.state === "pending") {
-        attempted++;
+        audioAttempts++;
         const audio = await this.#downloadTrack(entry, entry.audio, signal);
-        if (audio.state === "failed") reasons.set(audio.reason, (reasons.get(audio.reason) ?? 0) + 1);
         entry = { ...entry, audio };
         progress(++done, total);
+        const signature = audioAttempts <= BREAKER_AFTER ? refusalSignature(audio) : null;
+        if (signature !== null) {
+          held.push(entry);
+          if (audioAttempts === BREAKER_AFTER) {
+            if (held.length === BREAKER_AFTER && held.every((candidate) => refusalSignature(candidate.audio) === signature)) {
+              this.#say(`studio engine: the first ${BREAKER_AFTER} downloads were all refused (${signature}); the run was stopped and its downloads kept`);
+              throw new SinkError(`the CDN refused the first ${BREAKER_AFTER} downloads (${signature}); nothing more was requested, and the ${countPending(record())} downloads that remain are kept to retry at the next start`);
+            }
+            await flushHeld();
+          }
+          continue;
+        }
+        await flushHeld();
       }
       if (entry.cover.state === "pending") {
         // A cover for a track that could not be stored is not worth a request.
@@ -365,13 +410,18 @@ export class TrackStore implements MusicListSink {
         entry = { ...entry, cover };
         progress(++done, total);
       }
-      await this.#persist({ ...(this.#record ?? start), tracks: (this.#record ?? start).tracks.map((candidate) => (candidate.trackId === entry.trackId ? entry : candidate)) });
+      await persistEntry(entry);
     }
-    await this.#persist({ ...(this.#record ?? start), complete: true });
-    const stored = (this.#record?.tracks ?? []).filter((entry) => entry.inList && entry.audio.state === "stored").length;
-    if (attempted > 0 && stored === 0) {
+    await flushHeld();
+    await this.#persist({ ...record(), complete: true });
+    // A refresh that stores nothing is a failure, whether its downloads failed or its URLs were refused before any request
+    // (review F3): a paid list must not read as "done" with an empty catalogue.
+    const listed = record().tracks.filter((entry) => entry.inList);
+    if (listed.length > 0 && listed.every((entry) => entry.audio.state !== "stored")) {
+      const reasons = new Map<string, number>();
+      for (const entry of listed) if (entry.audio.state === "failed") reasons.set(entry.audio.reason, (reasons.get(entry.audio.reason) ?? 0) + 1);
       const summary = [...reasons].map(([reason, count]) => `${reason} x${count}`).join(", ");
-      throw new Error(`none of the ${attempted} tracks could be stored (${summary})`);
+      throw new SinkError(`none of the ${listed.length} tracks could be stored (${summary})`);
     }
   }
 
@@ -386,7 +436,7 @@ export class TrackStore implements MusicListSink {
     try {
       got = await downloadCapped({ transport: this.#deps.transport, url: pending.url, maxBytes: TRACK_MAX_BYTES, signal, ...this.#deps.limits });
     } catch (error) {
-      if (signal.aborted) throw new Error("the refresh was cancelled");
+      if (signal.aborted) throw new SinkError("the refresh was cancelled");
       return failed(reasonOf(error), error instanceof DownloadError ? error.message : "the download failed");
     }
     const probe = probeMp4Audio(got.bytes);
@@ -415,7 +465,7 @@ export class TrackStore implements MusicListSink {
     } catch (error) {
       await rm(temp, { force: true }).catch(() => undefined);
       if (peaksWritten) await rm(this.#peaksPath(entry.trackId), { force: true }).catch(() => undefined);
-      if (signal.aborted) throw new Error("the refresh was cancelled");
+      if (signal.aborted) throw new SinkError("the refresh was cancelled");
       return failed(reasonOf(error), error instanceof DecodeError ? `the decode did not accept it: ${error.kind}` : "the file could not be written");
     }
   }
@@ -431,7 +481,7 @@ export class TrackStore implements MusicListSink {
     try {
       got = await downloadCapped({ transport: this.#deps.transport, url: pending.url, maxBytes: COVER_MAX_BYTES, signal, ...this.#deps.limits });
     } catch (error) {
-      if (signal.aborted) throw new Error("the refresh was cancelled");
+      if (signal.aborted) throw new SinkError("the refresh was cancelled");
       return failed(reasonOf(error), error instanceof DownloadError ? error.message : "the download failed");
     }
     const ext = sniffCover(got.bytes);

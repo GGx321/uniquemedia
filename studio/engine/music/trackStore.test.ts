@@ -538,7 +538,8 @@ describe("invariant 31: sources", () => {
   ])("%s is refused before any request", async (_label, downloadUrl) => {
     const h = await harness({ decode: fastDecode });
     const track = { ...(listTracks(1)[0] as MusicTrack), downloadUrl, coverUrl: null };
-    await refresh(h, [track]).catch(() => undefined);
+    // Nothing is storable, so the refresh fails (F3) as well as making no request.
+    await expect(refresh(h, [track])).rejects.toBeDefined();
     expect(h.cdn.requested).toEqual([]);
   });
 
@@ -930,5 +931,192 @@ describe("resuming after a stop or a crash", () => {
     const running = refresh(h, tracks);
     await expect(h.store.resume(() => undefined, signal())).rejects.toBeDefined();
     await running;
+  });
+});
+
+// Review 3c.4 F3: a list whose every URL is refused by the host policy used to "succeed" with nothing stored.
+describe("a refresh that stores nothing is a failure", () => {
+  test("every URL refused by the host policy: the refresh rejects with a clear text, and no request is made", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(3).map((t) => ({ ...t, downloadUrl: "https://cdn.example.net/a.m4a?oh=SIGNATURE", coverUrl: null }));
+    const error = await refresh(h, tracks).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(error?.message).toMatch(/none of the 3 tracks could be stored/);
+    expect(error?.message).toContain("refused-host");
+    expect(error?.message).not.toContain("SIGNATURE");
+    expect(h.cdn.requested).toEqual([]);
+    expect((await readRecord()).tracks.every((t) => t.audio.state === "failed")).toBe(true);
+  });
+
+  test("a list with at least one storable track is still a success", async () => {
+    const h = await harness({ decode: fastDecode });
+    const [good, other] = listTracks(2) as [MusicTrack, MusicTrack];
+    serveAll(h.cdn, [good]);
+    await refresh(h, [good, { ...other, downloadUrl: "https://cdn.example.net/a.m4a", coverUrl: null }]);
+    expect(h.store.summary().trackCount).toBe(1);
+  });
+});
+
+// Review 3c.4 F4: a batch of refused downloads (a 403 for a missing User-Agent, a host-shape change) must not close the
+// record with no URLs, since the request is spent and only the URLs can recover it.
+describe("the circuit breaker", () => {
+  const RECORD_URLS = /https?:/;
+
+  async function tripped(status: number) {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(10);
+    // Nothing is served but a refusal for every audio URL.
+    for (const track of tracks) h.cdn.serve(track.downloadUrl, { status });
+    const error = await refresh(h, tracks).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    return { h, tracks, error };
+  }
+
+  test.each([401, 403, 429])("three downloads in a row refused with %i stop the refresh: nothing more is requested", async (status) => {
+    const { h, tracks, error } = await tripped(status);
+    expect(error).not.toBeNull();
+    expect(h.cdn.requested).toEqual(tracks.slice(0, 3).map((t) => t.downloadUrl));
+  });
+
+  test("the refresh says why, and that the rest is kept for the next start, without a URL", async () => {
+    const { error } = await tripped(403);
+    expect(error?.message).toMatch(/refused the first 3 downloads/);
+    expect(error?.message).toContain("status-403");
+    expect(error?.message).toMatch(/kept/);
+    expect(error?.message).not.toMatch(/https?:|oh=|oe=/);
+  });
+
+  test("every entry stays pending WITH its URL, the record incomplete, so the next start can retry them all", async () => {
+    const { h, tracks } = await tripped(403);
+    const record = await readRecord();
+    expect(record.complete).toBe(false);
+    expect(record.tracks.map((t) => t.audio.state)).toEqual(Array(10).fill("pending"));
+    expect(record.tracks.map((t) => (t.audio.state === "pending" ? t.audio.url : ""))).toEqual(tracks.map((t) => t.downloadUrl));
+    expect(h.store.pendingCount()).toBeGreaterThanOrEqual(10);
+  });
+
+  test("after the cause is fixed, resume at the next start stores everything from the kept URLs, with no new list", async () => {
+    const { tracks } = await tripped(403);
+    const again = await harness({ decode: fastDecode });
+    serveAll(again.cdn, tracks);
+    await again.store.resume(() => undefined, signal());
+    expect(again.store.summary().trackCount).toBe(10);
+    const text = await readFile(join(musicDir, "lists", "current.json"), "utf8");
+    expect(JSON.parse(text).complete).toBe(true);
+    expect(text).not.toMatch(RECORD_URLS);
+  });
+
+  test("a refused address three times in a row trips it too", async () => {
+    const cdn = fakeCdn();
+    const h = await harness({ cdn: { ...cdn, transport: () => Promise.reject(new CdnBlockedError("address")) }, decode: fastDecode });
+    const tracks = listTracks(8);
+    await expect(refresh(h, tracks)).rejects.toBeDefined();
+    const record = await readRecord();
+    expect(record.tracks.map((t) => t.audio.state)).toEqual(Array(8).fill("pending"));
+  });
+
+  test("it does not trip on a mix: 403, 404, 403 are three failures of two kinds, recorded, and the rest go on", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(6);
+    serveAll(h.cdn, tracks);
+    h.cdn.serve(tracks[0]?.downloadUrl ?? "", { status: 403 });
+    h.cdn.serve(tracks[1]?.downloadUrl ?? "", { status: 404 });
+    h.cdn.serve(tracks[2]?.downloadUrl ?? "", { status: 403 });
+    await refresh(h, tracks);
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["failed", "failed", "failed", "stored", "stored", "stored"]);
+  });
+
+  test("it does not trip when the first two fail and the third works: the two are recorded as failed", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(4);
+    serveAll(h.cdn, tracks);
+    h.cdn.serve(tracks[0]?.downloadUrl ?? "", { status: 403 });
+    h.cdn.serve(tracks[1]?.downloadUrl ?? "", { status: 403 });
+    await refresh(h, tracks);
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["failed", "failed", "stored", "stored"]);
+  });
+
+  test("it does not trip on fewer than three downloads: two refusals are failures", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(2);
+    for (const track of tracks) h.cdn.serve(track.downloadUrl, { status: 403 });
+    await expect(refresh(h, tracks)).rejects.toBeDefined();
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["failed", "failed"]);
+  });
+
+  test("it looks only at the first three of THIS run: later refusals are ordinary failures", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(8);
+    serveAll(h.cdn, tracks);
+    for (const i of [3, 4, 5]) h.cdn.serve(tracks[i]?.downloadUrl ?? "", { status: 403 });
+    await refresh(h, tracks);
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["stored", "stored", "stored", "failed", "failed", "failed", "stored", "stored"]);
+  });
+
+  test("a failure reason carries the status, so a log tells 403 from 404", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(1);
+    h.cdn.serve(tracks[0]?.downloadUrl ?? "", { status: 404 });
+    await refresh(h, tracks).catch(() => undefined);
+    expect((await readRecord()).tracks[0]?.audio).toEqual({ state: "failed", reason: "status-404" });
+  });
+});
+
+// Review 3c.4 F6 and F7.
+describe("records that are not the store's own", () => {
+  const pending = (url: string) => ({
+    trackId: "4199287736976977",
+    title: "T",
+    artist: null,
+    durationMs: 8000,
+    explicit: false,
+    highlights: [],
+    monetization: null,
+    licensedSubtype: null,
+    inList: true,
+    audio: { state: "pending", url, expiresAt: FETCHED + 50 * HOUR },
+    cover: { state: "none" },
+  });
+
+  test("a record set aside as unreadable keeps no signed URL: they are scrubbed from the copy, and the original is gone", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    const signed = "https://scontent-fra3-1.cdninstagram.com/v/t/x.m4a?oh=00_SECRETSIG&oe=6ABF5FF1";
+    await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 2, fetchedAt: FETCHED, complete: false, tracks: [pending(signed)] }));
+    await harness();
+    const files = (await tree()).filter((f) => f.startsWith("lists/"));
+    expect(files).not.toContain("lists/current.json");
+    expect(files).toHaveLength(1);
+    const kept = await readFile(join(musicDir, files[0] ?? ""), "utf8");
+    expect(kept).not.toContain("SECRETSIG");
+    expect(kept).not.toMatch(/https?:/);
+  });
+
+  test("a set-aside copy of text that is not JSON is scrubbed too", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), '{ "url": "https://scontent-fra3-1.cdninstagram.com/x?oh=SECRETSIG" ');
+    await harness();
+    const files = (await tree()).filter((f) => f.startsWith("lists/"));
+    expect(await readFile(join(musicDir, files[0] ?? ""), "utf8")).not.toContain("SECRETSIG");
+  });
+
+  test("a pending URL on a foreign host in a tampered record is refused on resume: no request, the track failed", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 1, fetchedAt: FETCHED, complete: false, tracks: [pending("https://evil.example/secret/x.m4a?oh=SIG")] }));
+    const h = await harness({ decode: fastDecode });
+    await h.store.resume(() => undefined, signal()).catch(() => undefined);
+    expect(h.cdn.requested).toEqual([]);
+    expect((await readRecord()).tracks[0]?.audio.state).toBe("failed");
+  });
+
+  test("a pending URL on an allowed host that says http is refused too", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 1, fetchedAt: FETCHED, complete: false, tracks: [pending("http://scontent-fra3-1.cdninstagram.com/x.m4a")] }));
+    const h = await harness({ decode: fastDecode });
+    await h.store.resume(() => undefined, signal()).catch(() => undefined);
+    expect(h.cdn.requested).toEqual([]);
   });
 });
