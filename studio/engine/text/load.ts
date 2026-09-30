@@ -2,6 +2,7 @@ import type { Worker } from "node:worker_threads";
 import { performance } from "node:perf_hooks";
 import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
 import { RasterError } from "./rasterTypes";
+import { assertCaptionSelfTest } from "./caption/selfTest";
 import { assertTextSelfTest, selfTestSvg } from "./selfTest";
 import { createTextGate, type TextGate, type TextGateOptions } from "./worker/textGate";
 
@@ -48,7 +49,7 @@ export interface TextRuntimeConfig {
   /** Bounds the whole load, self-test included. Default 10 s: it takes well under a second. */
   timeoutMs?: number;
   log?: TextRuntimeLog;
-  /** Injectable for tests; the default is the fingerprint check of selfTest.ts, run through the worker. */
+  /** Injectable for tests; the default is the fingerprint check of selfTest.ts and then the caption check of caption/selfTest.ts (one caption with an emoji), both run through the worker. */
   selfTest?: (gate: TextGate) => Promise<string>;
 }
 
@@ -78,6 +79,13 @@ async function measure(gate: TextGate, signal: AbortSignal): Promise<Omit<TextTi
   return { roundTripMs: roundTrip / TIMING_RENDERS, workerMs: inside / TIMING_RENDERS };
 }
 
+/** The text known-answer test, then the caption one: the fingerprint it returns is the text one, the packaged smoke's. */
+async function defaultSelfTest(gate: TextGate): Promise<string> {
+  const fingerprint = await assertTextSelfTest(gate);
+  await assertCaptionSelfTest(gate);
+  return fingerprint;
+}
+
 /**
  * Starts the text worker (resvg-wasm and the fonts, both sha256-verified inside it), proves it with the
  * known-answer self-test through the worker, and measures what a call costs. Never throws, like the face gate's
@@ -88,7 +96,7 @@ async function measure(gate: TextGate, signal: AbortSignal): Promise<Omit<TextTi
 export async function loadTextRasteriser(config: TextRuntimeConfig): Promise<TextRuntimeLoad> {
   const log = config.log ?? consoleLog;
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const selfTest = config.selfTest ?? assertTextSelfTest;
+  const selfTest = config.selfTest ?? defaultSelfTest;
   const gate = config.gate ?? (config.spawnWorker === undefined ? undefined : createTextGate({ ...config.gateOptions, spawnWorker: config.spawnWorker }));
   if (gate === undefined) throw new TypeError("loadTextRasteriser needs a gate or a spawnWorker");
   const timeout = timeoutSignal(timeoutMs);
