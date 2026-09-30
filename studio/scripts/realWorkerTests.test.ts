@@ -19,7 +19,21 @@ import {
   WORKER_TEARDOWN_CRASHES,
 } from "./realWorkerTests";
 import { useNativeGlobals } from "../testing/nativeGlobals";
+import { NODE_TEST_SUITES, SUITE_TIMEOUT_MS } from "./electronNodeTests";
 useNativeGlobals();
+
+/** The `scripts` of a package.json, read without a cast: anything that is not an object of strings throws. */
+function scriptsOf(pkg: unknown): Record<string, string> {
+  if (typeof pkg !== "object" || pkg === null || !("scripts" in pkg)) throw new Error("package.json has no scripts");
+  const { scripts } = pkg;
+  if (typeof scripts !== "object" || scripts === null) throw new Error("package.json scripts is not an object");
+  const result: Record<string, string> = {};
+  for (const [name, command] of Object.entries(scripts)) {
+    if (typeof command !== "string") throw new Error(`package.json script ${name} is not a string`);
+    result[name] = command;
+  }
+  return result;
+}
 
 // The suite runs through studio/scripts/realWorkerTests.ts because Bun itself
 // segfaults in a few percent of runs while it tears down a worker running WASM.
@@ -331,8 +345,7 @@ describe("the bounds", () => {
   });
 
   test("each workflow step that runs the sharded suite has a timeout-minutes above shards x attempts x bound, and every suite script shards", async () => {
-    const pkg: unknown = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
-    const scripts = (pkg as { scripts: Record<string, string> }).scripts;
+    const scripts = scriptsOf(JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")));
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     for (const name of ["test:studio:suite", "test:studio:suite:canary"]) {
       const shards = Number(/--shards=(\d+)/.exec(scripts[name] ?? "")?.[1]);
@@ -341,6 +354,21 @@ describe("the bounds", () => {
       expect(step).not.toBeNull();
       expect(Number(step?.[1])).toBeGreaterThan((shards * MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
     }
+  });
+});
+
+describe("the Electron-Node steps' bounds", () => {
+  const ROOT = join(import.meta.dir, "..", "..");
+
+  // electronNodeTests.ts kills a suite past SUITE_TIMEOUT_MS and runs the suites one after another, so a step that
+  // hangs in its last suite is still bounded by the runner itself only if the step's own limit is above all of them.
+  test("every workflow step that runs the suites has a timeout-minutes above suites x the suite bound, and the script exists", async () => {
+    const scripts = scriptsOf(JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")));
+    expect(scripts["test:studio:electron-node"]).toContain("electronNodeTests.ts");
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    const steps = [...workflow.matchAll(/run: bun run test:studio:electron-node\r?\n\s+timeout-minutes: (\d+)/g)];
+    expect(steps).toHaveLength(2); // the build job and the canary
+    for (const step of steps) expect(Number(step[1])).toBeGreaterThan((NODE_TEST_SUITES.length * SUITE_TIMEOUT_MS) / 60_000);
   });
 });
 

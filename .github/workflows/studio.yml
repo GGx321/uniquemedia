@@ -166,7 +166,7 @@ jobs:
       # runner, which the text test holds to at most a fifth of the deadline (median) and a third of it (slowest).
       - name: Real worker tests (Electron's Node)
         run: bun run test:studio:electron-node
-        timeout-minutes: 10
+        timeout-minutes: 15
       - if: env.PACKAGE == 'true'
         run: bun run build:studio
       # Studio's version comes from studio/version.json via the config's `extends`.
@@ -342,4 +342,4 @@ jobs:
       # The real workers' Electron-Node tests (face and text): the canary's `bun latest` is only the bundler here.
       - name: Real worker tests (Electron's Node)
         run: bun run test:studio:electron-node
-        timeout-minutes: 10
+        timeout-minutes: 15
