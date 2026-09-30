@@ -24,6 +24,11 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "studio-openrouter-base-url",
   // 3c.3: the flashapi mock's E2E-only switch (main.ts's flashapiBaseUrlForTests).
   "studio-flashapi-base-url",
+  // 3d.1b: the mock engine's test controls. The mock is dev-only (`select.ts` drops it from a release build), and these
+  // method names exist nowhere else, so finding one in any bundle means the mock shipped.
+  "failNextRender",
+  "setExportDisk",
+  "moveExportFolder",
   "ELECTRON_RENDERER_URL",
   "DEBUGGABLE",
   "__STUDIO_DEV__",

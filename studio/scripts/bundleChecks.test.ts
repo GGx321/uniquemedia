@@ -122,6 +122,10 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('fetch("studio-openrouter-base-url")')).toEqual(["contains studio-openrouter-base-url"]);
   });
 
+  test.each(["failNextRender", "setExportDisk", "moveExportFolder"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
+    expect(productionBundleProblems(`engine.${control}(1);`)).toEqual([`contains ${control}`]);
+  });
+
   test("flags the flashapi mock's E2E switch leaking anywhere", () => {
     expect(productionBundleProblems('const SWITCH = "studio-flashapi-base-url";')).toEqual(["contains studio-flashapi-base-url"]);
   });
