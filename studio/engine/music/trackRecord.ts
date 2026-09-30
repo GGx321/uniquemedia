@@ -65,6 +65,12 @@ export const ListRecordSchema = z.strictObject({
   fetchedAt: EpochMs,
   /** False while a download is still to run (a crash or a stop left it), true once every entry is stored or failed. */
   complete: z.boolean(),
+  /**
+   * The circuit breaker's mark (3c.4 review): the sampled downloads of a run were all refused alike, so the run stopped with
+   * every entry still pending. If the next run samples the same tracks and they are refused again, those are given up on and
+   * the rest goes on; a mark that does not match is replaced. Gone once a run completes.
+   */
+  breaker: z.strictObject({ ids: z.array(Id).min(1).max(3), signature: Reason }).optional(),
   tracks: z.array(TrackEntrySchema).max(MAX_RECORDED_TRACKS),
 });
 export type ListRecord = z.infer<typeof ListRecordSchema>;

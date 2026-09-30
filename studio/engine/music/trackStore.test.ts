@@ -296,7 +296,7 @@ describe("a track that is refused or fails does not poison the list", () => {
     const h = await harness({ decode: fastDecode });
     const tracks = listTracks(1);
     serveAll(h.cdn, tracks);
-    h.cdn.serve(tracks[0]?.downloadUrl ?? "", { status: 403 });
+    h.cdn.serve(tracks[0]?.downloadUrl ?? "", { status: 404 });
     await refresh(h, tracks).catch(() => undefined);
     const audio = (await readRecord()).tracks[0]?.audio;
     expect(audio).toMatchObject({ state: "failed" });
@@ -552,13 +552,25 @@ describe("invariant 31: sources", () => {
     expect((await readRecord()).tracks[0]?.audio).toEqual({ state: "failed", reason: "redirect" });
   });
 
-  test("a refused address (SSRF) fails that track and is logged by host only", async () => {
+  test("a refused address (SSRF) on one track fails that track, logged without an address, and the others go on", async () => {
+    const cdn = fakeCdn();
+    const tracks = listTracks(4);
+    serveAll(cdn, tracks);
+    const blockedHref = tracks[1]?.downloadUrl ?? "";
+    const routed = { ...cdn, transport: (request: Parameters<typeof cdn.transport>[0]) => (request.url.href === blockedHref ? Promise.reject(new CdnBlockedError("address")) : cdn.transport(request)) };
+    const h = await harness({ cdn: routed, decode: fastDecode });
+    await refresh(h, tracks);
+    expect((await readRecord()).tracks.map((t) => (t.audio.state === "failed" ? t.audio.reason : t.audio.state))).toEqual(["stored", "blocked-address", "stored", "stored"]);
+    expect(h.logs.join("\n")).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/);
+  });
+
+  test("a refused address on every sampled track is a trip (kept pending), and it is logged without an address", async () => {
     const cdn = fakeCdn();
     const blocked = { ...cdn, transport: () => Promise.reject(new CdnBlockedError("address")) };
     const h = await harness({ cdn: blocked, decode: fastDecode });
     const tracks = listTracks(2);
     await refresh(h, tracks).catch(() => undefined);
-    expect((await readRecord()).tracks.map((t) => (t.audio.state === "failed" ? t.audio.reason : t.audio.state))).toEqual(["blocked-address", "blocked-address"]);
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["pending", "pending"]);
     expect(h.logs.join("\n")).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/);
   });
 
@@ -976,15 +988,17 @@ describe("the circuit breaker", () => {
     return { h, tracks, error };
   }
 
-  test.each([401, 403, 429])("three downloads in a row refused with %i stop the refresh: nothing more is requested", async (status) => {
+  // Re-review 1: the three that are tried first are spread across the list (first, middle, last), not the first three, so
+  // three neighbours that are bad for their own reasons cannot stop the ones that are fine.
+  test.each([401, 403, 429])("the three sampled downloads (first, middle, last) all refused with %i stop the refresh: nothing more is requested", async (status) => {
     const { h, tracks, error } = await tripped(status);
     expect(error).not.toBeNull();
-    expect(h.cdn.requested).toEqual(tracks.slice(0, 3).map((t) => t.downloadUrl));
+    expect(h.cdn.requested).toEqual([0, 5, 9].map((i) => tracks[i]?.downloadUrl ?? ""));
   });
 
   test("the refresh says why, and that the rest is kept for the next start, without a URL", async () => {
     const { error } = await tripped(403);
-    expect(error?.message).toMatch(/refused the first 3 downloads/);
+    expect(error?.message).toMatch(/refused the 3 sampled downloads/);
     expect(error?.message).toContain("status-403");
     expect(error?.message).toMatch(/kept/);
     expect(error?.message).not.toMatch(/https?:|oh=|oe=/);
@@ -1040,12 +1054,61 @@ describe("the circuit breaker", () => {
     expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["failed", "failed", "stored", "stored"]);
   });
 
-  test("it does not trip on fewer than three downloads: two refusals are failures", async () => {
+  test("with fewer than three downloads it samples them all: two refused alike are kept pending, not erased", async () => {
     const h = await harness({ decode: fastDecode });
     const tracks = listTracks(2);
     for (const track of tracks) h.cdn.serve(track.downloadUrl, { status: 403 });
     await expect(refresh(h, tracks)).rejects.toBeDefined();
-    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["failed", "failed"]);
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["pending", "pending"]);
+  });
+
+  test("a single pending download refused is kept pending too", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(1);
+    h.cdn.serve(tracks[0]?.downloadUrl ?? "", { status: 403 });
+    await expect(refresh(h, tracks)).rejects.toBeDefined();
+    expect((await readRecord()).tracks[0]?.audio.state).toBe("pending");
+  });
+
+  test("three neighbours at the head of the list, each bad for its own reason, do not stop the rest", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(8);
+    serveAll(h.cdn, tracks);
+    for (const i of [0, 1, 2]) h.cdn.serve(tracks[i]?.downloadUrl ?? "", { status: 403 });
+    await refresh(h, tracks);
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["failed", "failed", "failed", "stored", "stored", "stored", "stored", "stored"]);
+  });
+
+  // The probe of the re-review: three sampled tracks that are bad for their own reasons trip it at the refresh, and again
+  // at every start, over the same URLs. The second time those three are given up on and the rest is saved.
+  test("a repeated trip over the same three marks them failed and saves the rest, no later than the next start", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(8);
+    serveAll(h.cdn, tracks);
+    const sampled = [0, 4, 7];
+    for (const i of sampled) h.cdn.serve(tracks[i]?.downloadUrl ?? "", { status: 403 });
+    await expect(refresh(h, tracks)).rejects.toBeDefined();
+    expect(h.cdn.requested).toEqual(sampled.map((i) => tracks[i]?.downloadUrl ?? ""));
+    expect((await readRecord()).tracks.every((t) => t.audio.state === "pending")).toBe(true);
+
+    const again = await harness({ decode: fastDecode });
+    serveAll(again.cdn, tracks);
+    for (const i of sampled) again.cdn.serve(tracks[i]?.downloadUrl ?? "", { status: 403 });
+    await again.store.resume(() => undefined, signal());
+    expect((await readRecord()).tracks.map((t) => t.audio.state)).toEqual(["failed", "stored", "stored", "stored", "failed", "stored", "stored", "failed"]);
+    expect(again.store.summary().trackCount).toBe(5);
+    expect((await readRecord()).complete).toBe(true);
+    expect(await readFile(join(musicDir, "lists", "current.json"), "utf8")).not.toMatch(/https?:|breaker/);
+  });
+
+  test("a first trip is recorded as such: the marker names the three sampled and the way they were refused", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(6);
+    for (const track of tracks) h.cdn.serve(track.downloadUrl, { status: 429 });
+    await expect(refresh(h, tracks)).rejects.toBeDefined();
+    const record = await readRecord();
+    expect(record.breaker?.signature).toBe("status-429");
+    expect([...(record.breaker?.ids ?? [])].sort()).toEqual([0, 3, 5].map((i) => tracks[i]?.trackId ?? "").sort());
   });
 
   test("it looks only at the first three of THIS run: later refusals are ordinary failures", async () => {
@@ -1118,5 +1181,63 @@ describe("records that are not the store's own", () => {
     const h = await harness({ decode: fastDecode });
     await h.store.resume(() => undefined, signal()).catch(() => undefined);
     expect(h.cdn.requested).toEqual([]);
+  });
+});
+
+// 3c.4 re-review 5: the scrub of a set-aside record.
+describe("scrubbing a record that is set aside", () => {
+  const SIGNED = "https://scontent-fra3-1.cdninstagram.com/v/t/x.m4a?oh=00_SECRETSIG&oe=6ABF5FF1";
+
+  async function asideText(): Promise<string> {
+    const files = (await tree()).filter((f) => f.startsWith("lists/") && f !== "lists/current.json");
+    expect(files).toHaveLength(1);
+    return readFile(join(musicDir, files[0] ?? ""), "utf8");
+  }
+
+  test("a URL written with escaped slashes (https:\\/\\/) is scrubbed", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), `{ "v": 9, "url": "https:\\/\\/scontent-fra3-1.cdninstagram.com\\/x?oh=SECRETSIG" }`);
+    await harness();
+    expect(await asideText()).not.toContain("SECRETSIG");
+  });
+
+  test("a URL in text that is not JSON is scrubbed through a quote and to the end of the URL", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), `not json 'https://scontent-fra3-1.cdninstagram.com/x?a=b'SECRETSIG' more`);
+    await harness();
+    expect(await asideText()).not.toContain("SECRETSIG");
+  });
+
+  test("a URL in a nested JSON value, under a key of any name, is scrubbed by walking the values", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 2, deep: { list: [{ any: SIGNED }, "text " + SIGNED + " more"] } }));
+    await harness();
+    const text = await asideText();
+    expect(text).not.toContain("SECRETSIG");
+    expect(text).not.toMatch(/https?:/);
+  });
+
+  test("the copy keeps what is not a URL, so a newer Studio's record is still worth keeping", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 2, fetchedAt: FETCHED, note: "kept", url: SIGNED }));
+    await harness();
+    expect(JSON.parse(await asideText())).toMatchObject({ v: 2, fetchedAt: FETCHED, note: "kept" });
+  });
+
+  test("when the original cannot be removed the scrubbed copy is NOT overwritten by the unscrubbed original", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 2, url: SIGNED }));
+    const logs: string[] = [];
+    await TrackStore.open({
+      dir: musicDir,
+      transport: fakeCdn().transport,
+      clock: () => now,
+      log: (line) => void logs.push(line),
+      removeFile: () => Promise.reject(new Error("EBUSY")),
+    });
+    const copies = (await tree()).filter((f) => f.startsWith("lists/current.json."));
+    expect(copies).toHaveLength(1);
+    expect(await readFile(join(musicDir, copies[0] ?? ""), "utf8")).not.toContain("SECRETSIG");
+    expect(logs.join("\n")).not.toContain("SECRETSIG");
   });
 });

@@ -56,6 +56,8 @@ export interface TrackStoreDeps {
   log: (line: string) => void;
   /** The bounded decode; ffmpeg by default (a test passes a fast stand-in). */
   decode?: (options: DecodeOptions) => Promise<DecodeResult>;
+  /** Removes a file; `fs.rm` by default. A test passes one that fails. */
+  removeFile?: (path: string) => Promise<void>;
   /** Lowers the limits in a test; never passed in the app. */
   limits?: { timeoutMs?: number; idleMs?: number };
 }
@@ -70,6 +72,27 @@ function sniffCover(bytes: Uint8Array): CoverExtension | null {
   if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "png";
   if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return "webp";
   return null;
+}
+
+const URL_TEXT = /https?:(?:\\?\/){2}[^\s"]*/gi;
+
+/**
+ * `text` without any URL: a signed one in a record set aside would sit on disk long after it stopped working. JSON is
+ * walked by its values (so escaped slashes and any key name are covered) and written again; anything else is scrubbed as
+ * text, through a quote and an escaped slash, up to the whitespace or the double quote that ends a URL.
+ */
+function scrubUrls(text: string): string {
+  try {
+    const walk = (value: unknown): unknown => {
+      if (typeof value === "string") return value.replace(URL_TEXT, "[url]");
+      if (Array.isArray(value)) return value.map(walk);
+      if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, walk(inner)]));
+      return value;
+    };
+    return JSON.stringify(walk(JSON.parse(text)));
+  } catch {
+    return text.replace(URL_TEXT, "[url]");
+  }
 }
 
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
@@ -96,8 +119,11 @@ async function isRegularFileOfSize(path: string, bytes: number): Promise<boolean
 
 const countPending = (record: ListRecord): number => record.tracks.reduce((sum, entry) => sum + Number(entry.audio.state === "pending") + Number(entry.cover.state === "pending"), 0);
 
-/** How many refusals in a row, from the start of a run, stop it (review F4). */
-const BREAKER_AFTER = 3;
+/** How many downloads the circuit breaker samples: the first, the middle and the last pending one (all of them when fewer). */
+function pickProbes(pending: readonly TrackEntry[]): TrackEntry[] {
+  const at = [...new Set([0, Math.floor(pending.length / 2), pending.length - 1])].filter((i) => i >= 0 && i < pending.length);
+  return at.map((i) => pending[i]).filter((entry): entry is TrackEntry => entry !== undefined);
+}
 
 /** What a refusal a circuit breaker counts is called (`status-403`, `blocked-address`), or null for any other failure. */
 function refusalSignature(audio: Audio): string | null {
@@ -184,12 +210,17 @@ export class TrackStore implements MusicListSink {
     // The copy keeps no signed URL (review F6): a pending one would sit on disk long after it stopped working. If the
     // scrubbed copy cannot be written the original is moved aside as it is, which loses nothing.
     const aside = `${path}.${deps.clock()}`;
+    let copied = false;
     try {
-      await writeFileAtomic(aside, text.replace(/https?:\/\/[^\s"'\\]*/gi, "[url]"));
-      await rm(path, { force: true });
+      await writeFileAtomic(aside, scrubUrls(text));
+      copied = true;
     } catch {
+      // The scrubbed copy could not be written: the original is moved aside as it is, which loses nothing.
       await renameWithRetry(path, aside).catch(() => undefined);
     }
+    // Never a rename after a good copy: that would put the unscrubbed original over it. An original that will not go stays
+    // where it is (the next refresh replaces it) and is said so.
+    if (copied) await (deps.removeFile ?? ((file) => rm(file, { force: true })))(path).catch(() => deps.log("studio engine: the set-aside music list record could not be removed"));
     return null;
   }
 
@@ -368,52 +399,61 @@ export class TrackStore implements MusicListSink {
     const record = (): ListRecord => this.#record ?? start;
     const persistEntry = (entry: TrackEntry): Promise<void> =>
       this.#persist({ ...record(), tracks: record().tracks.map((candidate) => (candidate.trackId === entry.trackId ? entry : candidate)) });
-    // The circuit breaker (review F4). The first downloads of a run that are refused the same way (401, 403, 429, or an
-    // address that is not public) are HELD, not recorded: if the third one is refused too, the run stops with every entry
-    // still pending and its URL kept, because a failed entry erases its URL and the request is spent. A cause that is fixed
-    // (a header a CDN wants, a changed host shape) is then retried by `resume` at the next start with no new list.
-    let audioAttempts = 0;
-    let held: TrackEntry[] = [];
-    const flushHeld = async (): Promise<void> => {
-      for (const failedEntry of held) {
-        // A cover for a track that could not be stored is not worth a request.
-        const cover: Cover = failedEntry.cover.state === "pending" ? { state: "failed", reason: "skipped" } : failedEntry.cover;
-        if (failedEntry.cover.state === "pending") progress(++done, total);
-        await persistEntry({ ...failedEntry, cover });
-      }
-      held = [];
-    };
-    for (const wantedEntry of wanted) {
-      let entry = wantedEntry;
-      if (entry.audio.state === "pending") {
-        audioAttempts++;
-        const audio = await this.#downloadTrack(entry, entry.audio, signal);
-        entry = { ...entry, audio };
-        progress(++done, total);
-        const signature = audioAttempts <= BREAKER_AFTER ? refusalSignature(audio) : null;
-        if (signature !== null) {
-          held.push(entry);
-          if (audioAttempts === BREAKER_AFTER) {
-            if (held.length === BREAKER_AFTER && held.every((candidate) => refusalSignature(candidate.audio) === signature)) {
-              this.#say(`studio engine: the first ${BREAKER_AFTER} downloads were all refused (${signature}); the run was stopped and its downloads kept`);
-              throw new SinkError(`the CDN refused the first ${BREAKER_AFTER} downloads (${signature}); nothing more was requested, and the ${countPending(record())} downloads that remain are kept to retry at the next start`);
-            }
-            await flushHeld();
-          }
-          continue;
-        }
-        await flushHeld();
-      }
+    // What follows an entry's audio: its cover (not worth a request for a track that could not be stored), then the record.
+    const finishEntry = async (given: TrackEntry): Promise<void> => {
+      let entry = given;
       if (entry.cover.state === "pending") {
-        // A cover for a track that could not be stored is not worth a request.
         const cover: Cover = entry.audio.state === "stored" ? await this.#downloadCover(entry, entry.cover, signal) : { state: "failed", reason: "skipped" };
         entry = { ...entry, cover };
         progress(++done, total);
       }
       await persistEntry(entry);
+    };
+
+    // The circuit breaker. The request behind this list is spent and a failed entry erases its URL, so a batch of refusals
+    // that one cause explains (a header a CDN wants, a changed host shape) must not close the record. Three downloads are
+    // tried FIRST, spread over the list (first, middle, last) so that neighbours that are bad for their own reasons cannot
+    // speak for the rest; with fewer than three pending, all of them are. If every one is refused the same way (401, 403,
+    // 429, or an address that is not public) the run stops with every entry still pending and its URL kept, marked with
+    // those tracks, and `resume` retries them at the next start with no new list. If the next run samples the same tracks
+    // and they are refused again, they are given up on and the rest is saved.
+    const audioPending = wanted.filter((entry) => entry.audio.state === "pending");
+    const probes = pickProbes(audioPending);
+    const probeIds = new Set(probes.map((entry) => entry.trackId));
+    const probed = new Map<string, Audio>();
+    for (const probe of probes) {
+      if (probe.audio.state !== "pending") continue;
+      const audio = await this.#downloadTrack(probe, probe.audio, signal);
+      progress(++done, total);
+      probed.set(probe.trackId, audio);
+      // Only a refusal is held back until the whole sample is known; anything else is recorded at once, so a stop in the
+      // middle of the sample loses no stored track.
+      if (refusalSignature(audio) === null) await finishEntry({ ...probe, audio });
     }
-    await flushHeld();
-    await this.#persist({ ...record(), complete: true });
+    const signatures = probes.map((probe) => refusalSignature(probed.get(probe.trackId) ?? probe.audio));
+    const first = signatures[0] ?? null;
+    if (first !== null && signatures.every((signature) => signature === first)) {
+      const ids = probes.map((probe) => probe.trackId).sort();
+      const prior = record().breaker;
+      if (prior === undefined || prior.ids.join(",") !== ids.join(",")) {
+        await this.#persist({ ...record(), breaker: { ids, signature: first } });
+        this.#say(`studio engine: the ${probes.length} sampled downloads were all refused (${first}); the run was stopped and its downloads kept`);
+        throw new SinkError(`the CDN refused the ${probes.length} sampled downloads (${first}); nothing more was requested, and the ${countPending(record())} downloads that remain are kept to retry at the next start`);
+      }
+      this.#say(`studio engine: the same ${probes.length} downloads were refused again (${first}); they are given up on and the rest goes on`);
+    }
+    for (const probe of probes) {
+      const audio = probed.get(probe.trackId) ?? probe.audio;
+      if (refusalSignature(audio) !== null) await finishEntry({ ...probe, audio });
+    }
+    for (const entry of wanted) {
+      if (probeIds.has(entry.trackId)) continue;
+      const audio: Audio = entry.audio.state === "pending" ? await this.#downloadTrack(entry, entry.audio, signal) : entry.audio;
+      if (entry.audio.state === "pending") progress(++done, total);
+      await finishEntry({ ...entry, audio });
+    }
+    const { breaker: _cleared, ...rest } = record();
+    await this.#persist({ ...rest, complete: true });
     // A refresh that stores nothing is a failure, whether its downloads failed or its URLs were refused before any request
     // (review F3): a paid list must not read as "done" with an empty catalogue.
     const listed = record().tracks.filter((entry) => entry.inList);
