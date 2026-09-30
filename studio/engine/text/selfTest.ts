@@ -13,7 +13,8 @@ import type { RasterImage, RasterRequest } from "./rasterTypes";
  * the bytes agree by construction, and a platform that differs fails loudly.
  *
  * This is NOT the caption template (3b.4b's fixed SVG with layout, styles and
- * emoji): SP2's `5c996c795344026e` fingerprint belongs to that layer test.
+ * emoji): that layer has its own fingerprint over 15 font x style layers (caption/fingerprint.ts), which replaced SP2's
+ * `5c996c795344026e`.
  */
 export const SELF_TEST_TEXT = "Привет, мир! Ёж 2026 Beach";
 

@@ -616,7 +616,7 @@ first.
 | K | Change | Blocks |
 | --- | --- | --- |
 | K19 | Error code `TEXT_INVALID` with a required `captionIssue` (on `TEXT_INVALID` only, like `exportReason`): `charset \| emoji-missing \| emoji-text-style \| too-long \| too-many-lines`. `CAPTION_ISSUES_RU` holds the texts; `charset` names © ® ™ explicitly. | 3d.5, 3d.6 |
-| K20 | `montages.textPreview {avatarId, layer: TextLayer}` → `{previewId, width, height}` (raster px at the 1080 scale, for `textBox`). `avatarId` because the number rule reads the avatar's age. `TEXT_INVALID` (K19); a rasteriser timeout is `RENDER_FAILED`. | 3d.4, 3d.5 |
+| K20 | `montages.textPreview {avatarId, layer: TextLayer}` → `{previewId, width, height}` (raster px at the 1080 scale, for `textBox`). `avatarId` because the number rule reads the avatar's age. `TEXT_INVALID` (K19); a rasteriser timeout is `RENDER_FAILED`. **Built in 3b.4b:** `avatarId` is accepted and not read (the age rule was dropped); a queued preview superseded by a newer one of the same layer is answered by the new error code `TEXT_PREVIEW_SUPERSEDED` (the window ignores it); `TEXT_BASE_PX` = 56 (K21). | 3d.4, 3d.5 |
 | K21 | A shared constant `TEXT_BASE_PX` in `studio/shared/montage/` (the rendered size at `scale` = 1), so «Размер» shows `round(scale × TEXT_BASE_PX)`. | 3d.5 |
 | K22 | **Removal:** drop `stickers.list` from the plan. The renderer imports `STICKER_MANIFEST` / `STICKER_CATEGORIES` (pure, shared); own stickers come from `media.list`. | 3d.5 (unblocks) |
 
