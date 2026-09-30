@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { isFfmpegCommand, parsePosixPs, parseWindowsSamples, PeakTracker } from "./processSampler";
+import { isFfmpegCommand, ownedRows, parsePosixPs, parseWindowsSamples, PeakTracker, type ProcSample } from "./processSampler";
 
 // The packaged E2E measures how much memory each render's ffmpeg takes (plan 3a.9, SP1's open item on Windows). These are
-// the pure parts: reading `ps` and the Windows sampler's lines, and turning a run of samples into a peak per render.
+// the pure parts: reading `ps` and the Windows sampler's lines, keeping only the ffmpegs that belong to the app under test
+// (a developer's machine may run others), and turning a run of samples into a peak per render.
 
 const MIB = 1024 * 1024;
 
@@ -21,69 +22,99 @@ describe("isFfmpegCommand", () => {
 });
 
 describe("parsePosixPs", () => {
-  test("reads pid and resident size (ps prints KiB) of the ffmpeg rows only", () => {
+  test("reads pid, parent and resident size (ps prints KiB) of the ffmpeg rows, and every process's parent", () => {
     const out = [
-      "  101  2048 /bin/zsh -l",
-      "  202 710000 /repo/node_modules/ffmpeg-static/ffmpeg -hide_banner -filter_complex a;b",
-      "  303  4096 /repo/node_modules/ffprobe-static/bin/darwin/arm64/ffprobe x",
+      "  101     1  2048 /bin/zsh -l",
+      "  202   101 710000 /repo/node_modules/ffmpeg-static/ffmpeg -hide_banner -filter_complex a;b",
+      "  303   202  4096 /repo/node_modules/ffprobe-static/bin/darwin/arm64/ffprobe x",
       "",
     ].join("\n");
 
-    expect(parsePosixPs(out)).toEqual([{ pid: 202, rssBytes: 710_000 * 1024, peakBytes: null }]);
+    const sample = parsePosixPs(out);
+
+    expect(sample.rows).toEqual([{ pid: 202, ppid: 101, rssBytes: 710_000 * 1024, peakBytes: null }]);
+    expect([...sample.parents]).toEqual([[101, 1], [202, 101], [303, 202]]);
   });
 
   test("skips a line that is not a process row, instead of throwing", () => {
-    expect(parsePosixPs("PID RSS COMMAND\nnot a row\n")).toEqual([]);
+    expect(parsePosixPs("PID PPID RSS COMMAND\nnot a row\n")).toEqual({ rows: [], parents: new Map() });
   });
 });
 
 describe("parseWindowsSamples", () => {
-  test("splits the sampler's output at its separator lines, reading working set and peak working set per ffmpeg", () => {
-    const out = ["11 1048576 2097152", "--", "--", "12 3145728 5242880", "13 1000 2000", "--"].join("\r\n");
+  test("splits the sampler's output at its separator lines: an ffmpeg line has pid, parent, working set and peak, a `P` line is any process's parent", () => {
+    const out = ["P 4 0", "11 4 1048576 2097152", "--", "P 4 0", "--", "12 4 3145728 5242880", "13 12 1000 2000", "P 12 4", "--"].join("\r\n");
 
     expect(parseWindowsSamples(out)).toEqual([
-      [{ pid: 11, rssBytes: 1 * MIB, peakBytes: 2 * MIB }],
-      [],
-      [
-        { pid: 12, rssBytes: 3 * MIB, peakBytes: 5 * MIB },
-        { pid: 13, rssBytes: 1000, peakBytes: 2000 },
-      ],
+      { rows: [{ pid: 11, ppid: 4, rssBytes: 1 * MIB, peakBytes: 2 * MIB }], parents: new Map([[4, 0]]) },
+      { rows: [], parents: new Map([[4, 0]]) },
+      {
+        rows: [
+          { pid: 12, ppid: 4, rssBytes: 3 * MIB, peakBytes: 5 * MIB },
+          { pid: 13, ppid: 12, rssBytes: 1000, peakBytes: 2000 },
+        ],
+        parents: new Map([[12, 4]]),
+      },
     ]);
   });
 
   test("drops a last sample that was cut off before its separator, since it may hold half the processes", () => {
-    expect(parseWindowsSamples("11 1 2\n--\n12 3 4\n")).toEqual([[{ pid: 11, rssBytes: 1, peakBytes: 2 }]]);
+    expect(parseWindowsSamples("11 4 1 2\n--\n12 4 3 4\n")).toEqual([{ rows: [{ pid: 11, ppid: 4, rssBytes: 1, peakBytes: 2 }], parents: new Map() }]);
   });
 
-  test("ignores a line that is not numbers (PowerShell's own noise)", () => {
-    expect(parseWindowsSamples("WARNING: something\n11 1 2\n--\n")).toEqual([[{ pid: 11, rssBytes: 1, peakBytes: 2 }]]);
+  test("ignores a line that is not numbers (PowerShell's own noise), and reads a missing peak as none", () => {
+    expect(parseWindowsSamples("WARNING: something\n11 4 1 \n--\n")).toEqual([{ rows: [{ pid: 11, ppid: 4, rssBytes: 1, peakBytes: null }], parents: new Map() }]);
+  });
+});
+
+describe("ownedRows", () => {
+  const sample = (rows: ProcSample["rows"], parents: [number, number][]): ProcSample => ({ rows, parents: new Map(parents) });
+  const ffmpeg = (pid: number, ppid: number) => ({ pid, ppid, rssBytes: 100, peakBytes: null });
+
+  test("keeps an ffmpeg that descends from the app through the engine, and drops one that does not", () => {
+    // app 10 -> engine 20 -> ffmpeg 30; somebody else's shell 50 -> ffmpeg 60
+    const s = sample([ffmpeg(30, 20), ffmpeg(60, 50)], [[20, 10], [30, 20], [50, 1], [60, 50]]);
+
+    expect(ownedRows(s, 10).map((r) => r.pid)).toEqual([30]);
+  });
+
+  test("takes an ffmpeg whose parent is the app itself", () => {
+    expect(ownedRows(sample([ffmpeg(30, 10)], []), 10).map((r) => r.pid)).toEqual([30]);
+  });
+
+  test("does not loop forever on a parent chain that cycles", () => {
+    expect(ownedRows(sample([ffmpeg(30, 40)], [[40, 30]]), 10)).toEqual([]);
+  });
+
+  test("an orphan whose parent is gone belongs to nobody, so a survivor of a killed engine is not counted here (the smoke follows its pid instead)", () => {
+    expect(ownedRows(sample([ffmpeg(30, 20)], []), 10)).toEqual([]);
   });
 });
 
 describe("PeakTracker", () => {
   test("reports, for a time window, the largest single process and the most the ffmpegs held together", () => {
     const tracker = new PeakTracker();
-    tracker.record(100, [{ pid: 1, rssBytes: 300 * MIB, peakBytes: null }]);
+    tracker.record(100, [{ pid: 1, ppid: 0, rssBytes: 300 * MIB, peakBytes: null }]);
     tracker.record(200, [
-      { pid: 1, rssBytes: 400 * MIB, peakBytes: null },
-      { pid: 2, rssBytes: 200 * MIB, peakBytes: null },
+      { pid: 1, ppid: 0, rssBytes: 400 * MIB, peakBytes: null },
+      { pid: 2, ppid: 0, rssBytes: 200 * MIB, peakBytes: null },
     ]);
-    tracker.record(300, [{ pid: 2, rssBytes: 100 * MIB, peakBytes: null }]);
+    tracker.record(300, [{ pid: 2, ppid: 0, rssBytes: 100 * MIB, peakBytes: null }]);
 
     expect(tracker.between(0, 1000)).toEqual({ peakSingleBytes: 400 * MIB, peakConcurrentBytes: 600 * MIB, samples: 3 });
   });
 
   test("keeps samples outside the window out of it", () => {
     const tracker = new PeakTracker();
-    tracker.record(100, [{ pid: 1, rssBytes: 900 * MIB, peakBytes: null }]);
-    tracker.record(500, [{ pid: 2, rssBytes: 100 * MIB, peakBytes: null }]);
+    tracker.record(100, [{ pid: 1, ppid: 0, rssBytes: 900 * MIB, peakBytes: null }]);
+    tracker.record(500, [{ pid: 2, ppid: 0, rssBytes: 100 * MIB, peakBytes: null }]);
 
     expect(tracker.between(400, 600)).toEqual({ peakSingleBytes: 100 * MIB, peakConcurrentBytes: 100 * MIB, samples: 1 });
   });
 
   test("reads a process's own recorded peak when it is higher than what the sample caught", () => {
     const tracker = new PeakTracker();
-    tracker.record(100, [{ pid: 1, rssBytes: 100 * MIB, peakBytes: 700 * MIB }]);
+    tracker.record(100, [{ pid: 1, ppid: 0, rssBytes: 100 * MIB, peakBytes: 700 * MIB }]);
 
     expect(tracker.between(0, 1000)).toEqual({ peakSingleBytes: 700 * MIB, peakConcurrentBytes: 100 * MIB, samples: 1 });
   });

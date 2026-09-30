@@ -6,10 +6,17 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 
 export interface ProcRow {
   readonly pid: number;
+  readonly ppid: number;
   /** The resident size (working set on Windows) when sampled. */
   readonly rssBytes: number;
   /** The process's own recorded peak so far (Windows' `PeakWorkingSet64`), when the OS keeps one. */
   readonly peakBytes: number | null;
+}
+
+/** One look at the machine: its ffmpegs, and every process's parent (to tell whose ffmpeg each is). */
+export interface ProcSample {
+  readonly rows: readonly ProcRow[];
+  readonly parents: ReadonlyMap<number, number>;
 }
 
 /** Whether a command line is the bundled ffmpeg (the package folder, in or out of the asar, either separator). Not ffprobe, not a process that only names it. */
@@ -17,36 +24,57 @@ export function isFfmpegCommand(command: string): boolean {
   return /[\\/]ffmpeg-static[\\/]ffmpeg(?:\.exe)?(?:\s|$)/i.test(command);
 }
 
-/** `ps -Ao pid=,rss=,command=` (rss in KiB), keeping the ffmpeg rows. A line that is not a row is skipped. */
-export function parsePosixPs(output: string): ProcRow[] {
+/** `ps -Ao pid=,ppid=,rss=,command=` (rss in KiB): the ffmpeg rows, and every process's parent. A line that is not a row is skipped. */
+export function parsePosixPs(output: string): ProcSample {
   const rows: ProcRow[] = [];
+  const parents = new Map<number, number>();
   for (const line of output.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
     if (match === null) continue;
-    const [, pid = "", rssKiB = "", command = ""] = match;
-    if (isFfmpegCommand(command)) rows.push({ pid: Number(pid), rssBytes: Number(rssKiB) * 1024, peakBytes: null });
+    const [, pid = "", ppid = "", rssKiB = "", command = ""] = match;
+    parents.set(Number(pid), Number(ppid));
+    if (isFfmpegCommand(command)) rows.push({ pid: Number(pid), ppid: Number(ppid), rssBytes: Number(rssKiB) * 1024, peakBytes: null });
   }
-  return rows;
+  return { rows, parents };
 }
 
 /**
- * The Windows sampler's output: one `<pid> <WorkingSet64> <PeakWorkingSet64>` line per ffmpeg, and a `--` line after each
- * sample. A last sample with no separator after it was cut off (it may hold half the processes) and is dropped, as is any line
- * that is not three numbers.
+ * The Windows sampler's output, one sample per `--` line: an ffmpeg is `<pid> <parent> <WorkingSetSize> <PeakWorkingSet64>` and any
+ * process's parent is `P <pid> <parent>`. A last sample with no separator after it was cut off (it may hold half the processes) and
+ * is dropped, as is any line that is neither.
  */
-export function parseWindowsSamples(output: string): ProcRow[][] {
-  const samples: ProcRow[][] = [];
-  let current: ProcRow[] = [];
+export function parseWindowsSamples(output: string): ProcSample[] {
+  const samples: ProcSample[] = [];
+  let rows: ProcRow[] = [];
+  let parents = new Map<number, number>();
   for (const line of output.split(/\r?\n/)) {
     if (line.trim() === "--") {
-      samples.push(current);
-      current = [];
+      samples.push({ rows, parents });
+      rows = [];
+      parents = new Map();
       continue;
     }
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/.exec(line);
-    if (match !== null) current.push({ pid: Number(match[1]), rssBytes: Number(match[2]), peakBytes: Number(match[3]) });
+    const parent = /^\s*P\s+(\d+)\s+(\d+)\s*$/.exec(line);
+    if (parent !== null) {
+      parents.set(Number(parent[1]), Number(parent[2]));
+      continue;
+    }
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)(?:\s+(\d+))?\s*$/.exec(line);
+    if (match !== null) rows.push({ pid: Number(match[1]), ppid: Number(match[2]), rssBytes: Number(match[3]), peakBytes: match[4] === undefined ? null : Number(match[4]) });
   }
   return samples;
+}
+
+/** The ffmpegs of a sample that descend from `rootPid` (the app under test), through however many parents. Somebody else's ffmpeg, and an orphan whose parent is gone, are not owned. */
+export function ownedRows(sample: ProcSample, rootPid: number): ProcRow[] {
+  return sample.rows.filter((row) => {
+    const seen = new Set<number>([row.pid]);
+    for (let at: number | undefined = row.ppid; at !== undefined && !seen.has(at); at = sample.parents.get(at)) {
+      if (at === rootPid) return true;
+      seen.add(at);
+    }
+    return false;
+  });
 }
 
 export interface Peak {
@@ -83,22 +111,41 @@ export class PeakTracker {
 
 export interface FfmpegSampler {
   readonly tracker: PeakTracker;
-  /** The pids of the ffmpegs in the newest sample. */
+  /** Counts only the ffmpegs that descend from this process (the app under test); the app is relaunched, so it can change. */
+  follow(pid: number): void;
+  /** The pids of the app's ffmpegs in the newest sample. */
   latestPids(): number[];
   stop(): void;
 }
 
 const POSIX_INTERVAL_MS = 100;
-/** Get-Process is cheap; the loop's own sleep sets the rate. `--` ends a sample. */
-const WINDOWS_SCRIPT = "$ErrorActionPreference='SilentlyContinue'; while ($true) { Get-Process -Name ffmpeg | ForEach-Object { '{0} {1} {2}' -f $_.Id, $_.WorkingSet64, $_.PeakWorkingSet64 }; '--'; Start-Sleep -Milliseconds 100 }";
+/**
+ * One sample per loop: every process's parent (`P`), and each ffmpeg's own line with its peak working set (`Get-Process` knows the
+ * peak, CIM knows the parent). CIM over all processes costs a few hundred ms on a runner, so the rate is the loop's own.
+ */
+const WINDOWS_SCRIPT = [
+  "$ErrorActionPreference='SilentlyContinue'",
+  "while ($true) {",
+  "  $peaks = @{}; Get-Process -Name ffmpeg | ForEach-Object { $peaks[[int]$_.Id] = $_.PeakWorkingSet64 }",
+  "  Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,WorkingSetSize | ForEach-Object {",
+  "    if ($_.Name -eq 'ffmpeg.exe') { '{0} {1} {2} {3}' -f $_.ProcessId, $_.ParentProcessId, $_.WorkingSetSize, $peaks[[int]$_.ProcessId] }",
+  "    else { 'P {0} {1}' -f $_.ProcessId, $_.ParentProcessId }",
+  "  }",
+  "  '--'",
+  "}",
+].join("\n");
 
-/** Starts sampling the ffmpegs of the machine (the smoke's own ffmpeg calls are not running while a render is measured). */
+/** Starts sampling the machine's ffmpegs; only those of the followed app are kept (a developer's machine may run others of its own). */
 export function startFfmpegSampler(platform: NodeJS.Platform = process.platform): FfmpegSampler {
   const tracker = new PeakTracker();
+  let owner = -1;
   let latest: ProcRow[] = [];
-  const take = (rows: ProcRow[], at: number): void => {
-    latest = rows;
-    tracker.record(at, rows);
+  const take = (sample: ProcSample, at: number): void => {
+    latest = ownedRows(sample, owner);
+    tracker.record(at, latest);
+  };
+  const follow = (pid: number): void => {
+    owner = pid;
   };
 
   if (platform === "win32") {
@@ -117,6 +164,7 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
     });
     return {
       tracker,
+      follow,
       latestPids: () => latest.map((row) => row.pid),
       stop: () => {
         child.kill();
@@ -126,8 +174,8 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
   }
 
   const timer = setInterval(() => {
-    const ps = spawnSync("ps", ["-Ao", "pid=,rss=,command="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    const ps = spawnSync("ps", ["-Ao", "pid=,ppid=,rss=,command="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
     if (ps.status === 0) take(parsePosixPs(ps.stdout), Date.now());
   }, POSIX_INTERVAL_MS);
-  return { tracker, latestPids: () => latest.map((row) => row.pid), stop: () => clearInterval(timer) };
+  return { tracker, follow, latestPids: () => latest.map((row) => row.pid), stop: () => clearInterval(timer) };
 }
