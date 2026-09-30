@@ -78,10 +78,15 @@ function reply(content: string, cost = 0.0112): Step {
 }
 
 let money: Money;
+/** Every phase a test started. A test that fails (or times out) on an assertion leaves its phase running: the ledger's folder must not be removed under it, and its late errors must not surface as "unhandled error between tests". */
+let started: Promise<unknown>[] = [];
 beforeEach(async () => {
   money = await setupMoney();
 });
 afterEach(async () => {
+  const running = started;
+  started = [];
+  await Promise.allSettled(running);
   await money.cleanup();
 });
 
@@ -107,6 +112,7 @@ function run(steps: Step[], j: WriterRun = job()) {
     { chat: client.chat, budget: money.budget, priceBook: money.priceBook, acquire: async () => () => {}, onChunk: async () => {} },
     phaseFor(j),
   );
+  started.push(result);
   return { net, result };
 }
 
