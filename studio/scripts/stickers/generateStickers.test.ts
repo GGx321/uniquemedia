@@ -225,7 +225,9 @@ describe("determinism", () => {
     const entry = STICKER_MANIFEST.find((s) => s.id === "heart-pulse");
     if (entry === undefined) throw new Error("heart-pulse missing from the manifest");
     expect(sha256(generateSticker(entry).bytes)).toBe(sha256(generateSticker(entry).bytes));
-  });
+    // Two full renders of a 48-frame sticker are CPU-bound (about 0.4 s each on a quiet machine): the bound is this test's
+    // own, not Bun's default 5 s, so a loaded shared runner cannot cut it.
+  }, 30_000);
 
   test("running the script in a fresh process reproduces the committed files", async () => {
     const out = mkdtempSync(join(tmpdir(), "b5-stickers-"));
