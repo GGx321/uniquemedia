@@ -236,6 +236,18 @@ describe("start-up failures of the real worker name their cause", () => {
 // against a scripted gate; this pins that the point it derives really lands on
 // the face.
 describe("focus resolution on the real face fixtures", () => {
+  // The resolver saves a photo's focus in the background, after focusFor has answered. Every resolver a test makes is
+  // flushed before its folder is removed (this hook is registered first, so it runs first), or that save lands in a
+  // folder being deleted: an ENOENT log line, or an ENOTEMPTY from the removal itself.
+  const resolvers: ReturnType<typeof createFocusResolver>[] = [];
+  const resolver = (...args: Parameters<typeof createFocusResolver>) => {
+    const made = createFocusResolver(...args);
+    resolvers.push(made);
+    return made;
+  };
+  afterEach(async () => {
+    await Promise.all(resolvers.splice(0).map((r) => r.flush()));
+  });
   const libraryRoot = useTempDir("studio-focus-real-");
 
   /** Points measured with YuNet on the committed fixtures: the centre of the largest face box, as fractions of the image. */
@@ -262,7 +274,7 @@ describe("focus resolution on the real face fixtures", () => {
     test(`centres the focus on the face in ${file}`, { timeout: 30_000 }, async () => {
       const size = file === MASTER.file ? { width: 864, height: 1152 } : { width: 720, height: 1280 };
       const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(file), ...size }]);
-      const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
+      const { focusFor } = resolver({ library, faceGate: sharedRealFaceGate() });
       const { focus, resolved } = await focusFor(avatarId, photoIds[0] ?? "");
       assert.equal(resolved, true);
       assert.ok(Math.abs(focus.x - expected.x) < 0.005, `x ${focus.x} against ${expected.x}`);
@@ -272,14 +284,14 @@ describe("focus resolution on the real face fixtures", () => {
 
   test("gives the (0.5, 0.38) fallback for an image with no face, and it is not an error", { timeout: 30_000 }, async () => {
     const { library, avatarId, photoIds } = await libraryWith([{ bytes: flatGreyJpeg(), width: 640, height: 640 }]);
-    const { focusFor } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
+    const { focusFor } = resolver({ library, faceGate: sharedRealFaceGate() });
     assert.deepEqual(await focusFor(avatarId, photoIds[0] ?? ""), { focus: { x: 0.5, y: 0.38 }, resolved: true }); // judged: there is really no face
   });
 
   test("a restarted resolver answers from the saved file: the second one never reaches the detector", { timeout: 30_000 }, async () => {
     const { library, avatarId, photoIds } = await libraryWith([{ bytes: await fixtureJpeg(MASTER.file), width: 864, height: 1152 }]);
     const real = sharedRealFaceGate();
-    const firstResolver = createFocusResolver({ library, faceGate: real });
+    const firstResolver = resolver({ library, faceGate: real });
     const first = await firstResolver.focusFor(avatarId, photoIds[0] ?? "");
     await firstResolver.flush();
     let detections = 0;
@@ -290,7 +302,7 @@ describe("focus resolution on the real face fixtures", () => {
         return real.detect(bytes, signal);
       },
     };
-    assert.deepEqual(await createFocusResolver({ library, faceGate: counting }).focusFor(avatarId, photoIds[0] ?? ""), first);
+    assert.deepEqual(await resolver({ library, faceGate: counting }).focusFor(avatarId, photoIds[0] ?? ""), first);
     assert.equal(detections, 0);
   });
 
@@ -299,7 +311,7 @@ describe("focus resolution on the real face fixtures", () => {
       { bytes: await fixtureJpeg(MASTER.file), width: 864, height: 1152 },
       { bytes: await fixtureJpeg("render-best-home-1.jpg"), width: 720, height: 1280 },
     ]);
-    const { fillMissingFocus } = createFocusResolver({ library, faceGate: sharedRealFaceGate() });
+    const { fillMissingFocus } = resolver({ library, faceGate: sharedRealFaceGate() });
     const [a = "", b = ""] = photoIds;
     const base = { durationMs: 2_000, transitionIn: "cut" as const, motion: "kenburns" as const };
     const { spec: filled, unresolved } = await fillMissingFocus({
