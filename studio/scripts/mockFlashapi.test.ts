@@ -80,3 +80,36 @@ describe("the mock flashapi", () => {
     expect(response.headers.get("x-echo")).toBe("wrong-key-value");
   });
 });
+
+describe("transformResponse", () => {
+  test("changes the list it serves, and only the list", async () => {
+    const m = start({
+      transformResponse: (response) => {
+        const copy = structuredClone(response) as { items: unknown[] };
+        return { ...copy, items: copy.items.slice(0, 3) };
+      },
+    });
+    const response = await call(m);
+    expect(((await response.json()) as { items: unknown[] }).items).toHaveLength(3);
+    expect(response.headers.get("x-ratelimit-requests-remaining")).toBe("28");
+  });
+
+  test("is asked once, so a later answer is the same list", async () => {
+    let calls = 0;
+    const m = start({
+      transformResponse: (response) => {
+        calls++;
+        return response;
+      },
+    });
+    await (await call(m)).text();
+    await (await call(m)).text();
+    expect(calls).toBe(1);
+  });
+
+  test("leaves a scripted answer alone", async () => {
+    const m = start({ transformResponse: () => ({ items: [] }) });
+    m.script({ status: 429, body: "quota exceeded" });
+    expect(await (await call(m)).text()).toBe("quota exceeded");
+  });
+});

@@ -54,6 +54,11 @@ export interface MockFlashapiOptions {
   remaining?: number;
   /** Echo what a request sent (the key included) in its 401 body and in a header, to prove the client redacts it. */
   echoKey?: boolean;
+  /**
+   * Changes the list the mock serves, once, when it starts (3c.4): the E2E run that downloads from the mock CDN makes each
+   * track claim the length of the excerpt that serves it. Scripted answers are not touched.
+   */
+  transformResponse?: (response: unknown) => unknown;
 }
 
 export interface MockFlashapi {
@@ -72,7 +77,7 @@ interface FixtureFile {
 
 export function startMockFlashapi(options: MockFlashapiOptions): MockFlashapi {
   const fixture = JSON.parse(readFileSync(musicLists[options.fixture ?? "kyiv"].file, "utf8")) as FixtureFile;
-  const listBody = JSON.stringify(fixture.response);
+  const listBody = JSON.stringify(options.transformResponse === undefined ? fixture.response : options.transformResponse(fixture.response));
   let remaining = options.remaining ?? Number(fixture.quota.remaining);
   const limit = fixture.quota.limit;
   const requests: RecordedFlashapiRequest[] = [];
