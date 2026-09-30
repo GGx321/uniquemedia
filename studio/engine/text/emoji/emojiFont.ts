@@ -80,7 +80,7 @@ const MAX_LOOKUPS = 512;
 const MAX_LOOKUP_SUBTABLES = 256;
 const MAX_LIGATURES = 100_000;
 /** Coverage entries read plus ligature sets read, over the whole GSUB: what the real font needs is a few thousand. */
-const MAX_GSUB_WORK = 1_000_000;
+const MAX_GSUB_WORK = 200_000;
 const VS16 = 0xfe0f;
 /** "IHDR" as a big-endian u32. */
 const IHDR_TAG = 0x49484452;
