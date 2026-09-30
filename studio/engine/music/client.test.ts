@@ -12,6 +12,7 @@ import {
   type FlashapiFailure,
   type FlashapiFetch,
 } from "./client";
+import { hangingBody } from "./testing/hangingBody";
 useNativeGlobals();
 useNativeHttp();
 
@@ -369,6 +370,56 @@ describe("a request that fails before an answer", () => {
     controller.abort();
     expect((await failureOf(clientFor(m).fetchTrending(controller.signal))).kind).toBe("aborted");
     expect(m.requests).toEqual([]);
+  });
+});
+
+describe("a body that never finishes still says what its headers said", () => {
+  const zero = { "x-ratelimit-requests-remaining": "0", "x-ratelimit-requests-limit": "30", date: "Wed, 30 Sep 2026 12:00:00 GMT" };
+
+  test.each([
+    ["a 200", 200],
+    ["a 429", 429],
+    ["a 500", 500],
+  ])("%s with remaining 0 and a hanging body: the timeout carries the answer's figures, the status and the server's time", async (_label, status) => {
+    const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: hangingBody(status, zero), timeoutMs: 80 });
+    const error = await failureOf(client.fetchTrending());
+    expect(error.kind).toBe("timeout");
+    expect(error.status).toBe(status);
+    expect(error.response).toMatchObject({ status, remaining: 0, limit: 30, bodyBytes: 0, serverDateMs: Date.UTC(2026, 8, 30, 12, 0, 0) });
+    expect(error.response?.rateLimit).toEqual({ "x-ratelimit-requests-limit": "30", "x-ratelimit-requests-remaining": "0" });
+  });
+
+  test("a caller's abort while the body hangs is `aborted`, and carries the figures too", async () => {
+    const controller = new AbortController();
+    const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: hangingBody(200, zero), timeoutMs: 5000 });
+    const run = client.fetchTrending(controller.signal);
+    setTimeout(() => controller.abort(), 30);
+    const error = await failureOf(run);
+    expect(error.kind).toBe("aborted");
+    expect(error.response?.remaining).toBe(0);
+  });
+
+  test("a body cut by the network mid-read is `network` and carries the figures", async () => {
+    const cut: FlashapiFetch = () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.error(new TypeError("terminated"));
+            },
+          }),
+          { status: 200, headers: zero },
+        ),
+      );
+    const error = await failureOf(createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: cut }).fetchTrending());
+    expect(error.kind).toBe("network");
+    expect(error.response).toMatchObject({ status: 200, remaining: 0 });
+    expectNoKeyFragment(everythingOf(error), KEY);
+  });
+
+  test("a failure before any answer still has no response", async () => {
+    const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: () => Promise.reject(new TypeError("fetch failed")) });
+    expect((await failureOf(client.fetchTrending())).response).toBeNull();
   });
 });
 

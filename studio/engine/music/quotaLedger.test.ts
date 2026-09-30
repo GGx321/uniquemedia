@@ -12,6 +12,7 @@ useNativeGlobals();
 
 const NOW = Date.UTC(2026, 8, 30, 12, 0, 0);
 const DAY = 24 * 3600 * 1000;
+const HOUR_MS = 3600 * 1000;
 const KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
 const LAST4 = "0000";
 
@@ -355,6 +356,7 @@ describe("what the file holds", () => {
 
   test("on Windows `mkdir` reports the folder it made with a long-path prefix, and the synced folder is named without it", () => {
     expect(withoutLongPathPrefix("\\\\?\\C:\\Users\\RUNNER~1\\Temp\\studio-quota-x")).toBe("C:\\Users\\RUNNER~1\\Temp\\studio-quota-x");
+    expect(withoutLongPathPrefix("\\\\?\\UNC\\server\\share\\folder")).toBe("\\\\server\\share\\folder");
     expect(withoutLongPathPrefix("C:\\Users\\x")).toBe("C:\\Users\\x");
     expect(withoutLongPathPrefix("/var/folders/x")).toBe("/var/folders/x");
   });
@@ -365,6 +367,46 @@ describe("what the file holds", () => {
     await l.reserve({ id: "refresh-0001", key: LAST4 });
     await l.recordKeyChange(LAST4);
     expect(synced).toEqual([dir]);
+  });
+
+  test("every level that was created is synced into its parent, not only the first", async () => {
+    const synced: string[] = [];
+    const nested = join(dir, "a", "b", "music", "quota.jsonl");
+    const l = new QuotaLedger(nested, { clock: () => now, syncDir: async (folder) => void synced.push(folder) });
+    await l.reserve({ id: "refresh-0001", key: LAST4 });
+    expect(synced.sort()).toEqual([dir, join(dir, "a"), join(dir, "a", "b")].sort());
+  });
+
+  test("a folder that already exists is not synced again", async () => {
+    await mkdir(join(dir, "a", "b", "music"), { recursive: true });
+    const synced: string[] = [];
+    const l = new QuotaLedger(join(dir, "a", "b", "music", "quota.jsonl"), { clock: () => now, syncDir: async (folder) => void synced.push(folder) });
+    await l.reserve({ id: "refresh-0001", key: LAST4 });
+    expect(synced).toEqual([]);
+  });
+
+  test("the time a result line carries can be given (a held line keeps the moment its answer came)", async () => {
+    const l = ledger();
+    await l.recordResult({ id: "refresh-0001", key: LAST4, outcome: "http-error", status: 429, remaining: 0, at: NOW - 3 * HOUR_MS });
+    expect(JSON.parse((await fileLines()).at(-1) ?? "")).toMatchObject({ kind: "result", at: NOW - 3 * HOUR_MS });
+    await l.recordKeyChange(LAST4, NOW - 2 * HOUR_MS);
+    expect(JSON.parse((await fileLines()).at(-1) ?? "")).toMatchObject({ kind: "key", at: NOW - 2 * HOUR_MS });
+  });
+
+  test.each([
+    ["a time in 1970", 1],
+    ["a time before 2000", Date.UTC(1999, 11, 31)],
+    ["a time past 2100", Date.UTC(2100, 0, 2)],
+    ["a time no Date can hold", 9e15],
+  ])("a line with %s is corruption, so a wild time can never reach a date conversion", async (_label, at) => {
+    await mkdir(join(dir, "music"), { recursive: true });
+    await writeFile(path, `${JSON.stringify({ v: 1, kind: "send", id: "refresh-0001", at, key: LAST4 })}\n`);
+    await expect(ledger().summary()).rejects.toMatchObject({ code: "corrupt" });
+  });
+
+  test("the writer refuses such a time too, so it never writes what it could not read back", async () => {
+    await expect(ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "ok", serverAt: 9e15 })).rejects.toBeDefined();
+    await expect(ledger().recordKeyChange(LAST4, 1)).rejects.toBeDefined();
   });
 
   test("a folder that cannot be synced does not stop the send: the line is written and counted", async () => {

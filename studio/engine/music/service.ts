@@ -79,6 +79,22 @@ export interface MusicServiceDeps {
 
 export type RefreshAnswer = { ok: true; status: MusicStatus } | { ok: false; error: EngineError };
 
+/** A line the ledger could not take yet: its own time kept, so a held floor still counts its 31 days from the answer. */
+type PendingLine =
+  | { kind: "result"; input: Parameters<QuotaLedger["recordResult"]>[0] & { at: number } }
+  | { kind: "key"; key: string | null; at: number };
+
+/** What a status says before anything is known; a refresh's answer falls back to it when the real one cannot be built. */
+const NEVER_REFRESHED: Omit<MusicStatus, "refresh"> = {
+  listFetchedAt: null,
+  trackCount: 0,
+  bytesOnDisk: 0,
+  sentLast31d: 0,
+  limit: MUSIC_QUOTA_LIMIT,
+  serverRemaining: null,
+  nextFreeAt: null,
+};
+
 const MAX_DETAIL = 400;
 const last4 = (key: string): string => key.slice(-4);
 
@@ -124,10 +140,15 @@ export class MusicService {
   /** `stop()` was called: the process is going away, so no refresh may start (a request must not be spent on a dying engine). */
   #closing = false;
   /**
-   * A `result` line could not be written. The 401 or the server's 0 it carried is then known to this session only, so
-   * the next refresh is refused until a ledger write succeeds again (the owner storing a key, or the next result).
+   * Lines the ledger could not take (a `result` that carried a 401 or the server's 0, a key change), OLDEST FIRST and
+   * kept whole, with the time each was made. They are written before anything else: at the start of the next refresh
+   * and before a key change's own line, so the order on disk is the order it happened in and a re-entered key cannot
+   * lift a floor or a 401 that was never recorded. Until they are written a refresh answers MUSIC_UNAVAILABLE.
    */
-  #ledgerWriteFailed = false;
+  readonly #pending: PendingLine[] = [];
+  #flushing: Promise<unknown> = Promise.resolve();
+  /** Refreshes that are still inside admission (before their request is started), so `stop()` can wait for them. */
+  readonly #admissions = new Set<Promise<unknown>>();
 
   constructor(deps: MusicServiceDeps) {
     this.#deps = deps;
@@ -179,15 +200,39 @@ export class MusicService {
     }
   }
 
-  /** The owner stored (`last4`) or cleared (null) the key: an earlier 401 no longer applies. Logs and goes on if the log cannot be written. */
+  /**
+   * The owner stored (`last4`) or cleared (null) the key: an earlier 401 no longer applies. The line goes BEHIND any
+   * line still held from an earlier failed write, so a 401 or a 0 that was not recorded is not lifted by it. A log
+   * that cannot be written keeps the change held (and logs its kind); the next refresh writes it or answers UNAVAILABLE.
+   */
   async noteKeyChange(key4: string | null): Promise<void> {
     if (this.#ledger === null) return;
-    try {
-      await this.#ledger.recordKeyChange(key4);
-      this.#ledgerWriteFailed = false;
-    } catch (error) {
-      this.#deps.log(`studio engine: a music key change could not be noted in the quota log (${errorKind(error)})`);
+    this.#pending.push({ kind: "key", key: key4, at: this.#deps.clock() });
+    await this.#flush();
+  }
+
+  /** Writes what is held, in order. Resolves true when nothing is left; on a failure the rest stays held and the kind is logged. */
+  #flush(): Promise<boolean> {
+    const run = this.#flushing.then(() => this.#flushNow());
+    this.#flushing = run;
+    return run;
+  }
+
+  async #flushNow(): Promise<boolean> {
+    const ledger = this.#ledger;
+    if (ledger === null) return true;
+    for (let next = this.#pending[0]; next !== undefined; next = this.#pending[0]) {
+      try {
+        if (next.kind === "result") await ledger.recordResult(next.input);
+        else await ledger.recordKeyChange(next.key, next.at);
+      } catch (error) {
+        const what = next.kind === "result" ? "a flashapi result could not be written to the quota log" : "a music key change could not be noted in the quota log";
+        this.#deps.log(`studio engine: ${what} (${errorKind(error)})`);
+        return false;
+      }
+      this.#pending.shift();
     }
+    return true;
   }
 
   /**
@@ -195,7 +240,17 @@ export class MusicService {
    * MUSIC_QUOTA_EXHAUSTED, IN_FLIGHT or MUSIC_UNAVAILABLE; otherwise answers AT ONCE with the status running, and the
    * request, the parse and the sink go on in the background, reporting through `emit`.
    */
-  async refresh(): Promise<RefreshAnswer> {
+  refresh(): Promise<RefreshAnswer> {
+    const admission = this.#admit();
+    this.#admissions.add(admission);
+    void admission.then(
+      () => this.#admissions.delete(admission),
+      () => this.#admissions.delete(admission),
+    );
+    return admission;
+  }
+
+  async #admit(): Promise<RefreshAnswer> {
     if (this.#closing) return fail("MUSIC_UNAVAILABLE", "the engine is shutting down, so nothing was sent");
     // Before anything else and at no cost: a list that would be lost at the next restart is not worth one of the 30.
     if (!this.#sink.persistent) return fail("MUSIC_UNAVAILABLE", "the music list is not available yet, so nothing was sent");
@@ -207,8 +262,10 @@ export class MusicService {
       if (key === null) return fail("MUSIC_KEY_MISSING", "no RapidAPI key is stored");
       if (this.#deps.keyRejected()) return fail("MUSIC_KEY_REJECTED", "the stored RapidAPI key was rejected; replace it");
       if (this.#ledger === null) return fail("MUSIC_UNAVAILABLE", "the music folder is not available, so nothing was sent");
-      if (this.#ledgerWriteFailed) {
-        return fail("MUSIC_UNAVAILABLE", "the last result could not be written to the quota log, so a 401 or the server's 0 may be unrecorded: nothing is sent until a log write succeeds");
+      // What an earlier failed write held goes to the log FIRST: a 401 or a 0 that was never recorded must count before
+      // this request is admitted. If it still cannot be written, nothing is sent.
+      if (!(await this.#flush())) {
+        return fail("MUSIC_UNAVAILABLE", "the quota log could not be written (a result or key change is still held), so nothing was sent; try again later");
       }
       // Built before anything is written: a base URL or key the client refuses must never cost a send.
       let client;
@@ -251,6 +308,9 @@ export class MusicService {
             : `flashapi's last answer said no requests remain; the next may leave at ${when}`,
         );
       }
+      // `stop()` may have come while this refresh waited in the ledger: nothing may leave after it. The send line is
+      // already on disk and stays counted (the conservative side: a request that never left costs a slot, not the reverse).
+      if (this.#closing) return fail("MUSIC_UNAVAILABLE", "the engine is shutting down, so nothing was sent");
       admitted = true;
       const controller = new AbortController();
       this.#abort = controller;
@@ -259,7 +319,13 @@ export class MusicService {
       this.#changed();
       // The request goes first: nothing after the send may leave the service busy, whatever the status building does.
       this.#task = this.#run({ client, key, id, hadOk: before.hadOkResult, sent: admission.summary.sentInWindow, signal: controller.signal });
-      return { ok: true, status: { ...(await this.status()), refresh: running } };
+      let status: MusicStatus;
+      try {
+        status = { ...(await this.status()), refresh: running };
+      } catch {
+        status = { ...NEVER_REFRESHED, sentLast31d: Math.min(MUSIC_QUOTA_LIMIT, admission.summary.sentInWindow), refresh: running };
+      }
+      return { ok: true, status };
     } finally {
       if (!admitted) this.#busy = false;
     }
@@ -319,18 +385,15 @@ export class MusicService {
     return { remaining: response.remaining, limit: response.limit, ...(response.serverDateMs === null ? {} : { serverAt: response.serverDateMs }) };
   }
 
+  /**
+   * Queues the result line with the moment it was made and writes what is held. The ledger takes the key's last four
+   * chars and throws on anything longer, so a whole key can never reach the file. A line the log cannot take stays held
+   * (see `#pending`): the send is on disk and counts, and the 401 or the server's 0 this result carried is not lost.
+   */
   async #record(input: Parameters<QuotaLedger["recordResult"]>[0]): Promise<void> {
-    try {
-      // The ledger takes the key's last four chars and throws on anything longer, so a whole key can never reach the file.
-      await this.#ledger?.recordResult({ ...input, key: last4(input.key) });
-      this.#ledgerWriteFailed = false;
-    } catch (error) {
-      // The send is on disk and counts, but the 401 or the server's 0 this result carried is lost to the next start, and
-      // to this session unless it is remembered here: the next refresh is refused until a write succeeds. Only the kind
-      // of error is logged.
-      this.#ledgerWriteFailed = true;
-      this.#deps.log(`studio engine: a flashapi result could not be written to the quota log (${errorKind(error)})`);
-    }
+    if (this.#ledger === null) return;
+    this.#pending.push({ kind: "result", input: { ...input, key: last4(input.key), at: this.#deps.clock() } });
+    await this.#flush();
   }
 
   /** The plan's first-real-refresh log, until one answer has been good: never the key, never a whole signed URL. */
@@ -366,6 +429,9 @@ export class MusicService {
   /** Aborts a request in flight (the engine is shutting down) and waits for it to end. */
   async stop(): Promise<void> {
     this.#closing = true;
+    // A refresh already inside admission (waiting in the ledger) gives up at its own re-check; wait for it, so that
+    // nothing starts after this resolves. Its request, if it had started, is aborted below.
+    await Promise.allSettled([...this.#admissions]);
     this.#abort?.abort();
     await this.settled();
   }

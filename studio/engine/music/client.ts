@@ -239,13 +239,16 @@ export function createFlashapiClient(options: FlashapiClientOptions): FlashapiCl
     }, timeoutMs);
     const onCallerAbort = (): void => controller.abort();
     signal?.addEventListener("abort", onCallerAbort, { once: true });
-    const interrupted = (error: unknown): FlashapiError => {
-      if (timedOut) return new FlashapiError("timeout", `flashapi did not answer within ${timeoutMs} ms`);
-      if (signal?.aborted) return new FlashapiError("aborted", "the request was cancelled");
+    // `head` is what the answer's headers said, when they had arrived: a request cut short in its BODY (a timeout, a
+    // dropped connection, an abort) must still carry the server's `remaining`, or a floor of 0 is lost with it.
+    const interrupted = (error: unknown, head: FlashapiResponseInfo | null = null): FlashapiError => {
+      const extra = head === null ? {} : { status: head.status, response: head };
+      if (timedOut) return new FlashapiError("timeout", `flashapi did not answer within ${timeoutMs} ms`, extra);
+      if (signal?.aborted) return new FlashapiError("aborted", "the request was cancelled", extra);
       // Under Electron's Node `fetch failed` says nothing more: the runtime's cause code (only) says why.
       const code = causeCode(error);
       const what = error instanceof Error ? `${error.name}: ${error.message}${code === null ? "" : `, ${code}`}` : "unknown error";
-      return new FlashapiError("network", `the request failed (${snippet(what, redact)})`);
+      return new FlashapiError("network", `the request failed (${snippet(what, redact)})`, extra);
     };
     try {
       let res: Response;
@@ -259,13 +262,15 @@ export function createFlashapiClient(options: FlashapiClientOptions): FlashapiCl
       } catch (error) {
         throw interrupted(error);
       }
+      // The figures live in the headers and do not depend on the body, so they are read BEFORE it.
+      const head = infoOf(res, 0);
       let read: { bytes: Uint8Array; over: boolean };
       try {
         read = await readCapped(res, res.ok ? maxBodyBytes : ERROR_BODY_BYTES, !res.ok);
       } catch (error) {
-        throw interrupted(error);
+        throw interrupted(error, head);
       }
-      const response = infoOf(res, read.bytes.byteLength);
+      const response = { ...head, bodyBytes: read.bytes.byteLength };
 
       if (res.status >= 300 || res.status < 200) {
         const said = read.bytes.byteLength > 0 ? `: ${snippet(new TextDecoder().decode(read.bytes), redact)}` : "";

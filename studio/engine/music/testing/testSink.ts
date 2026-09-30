@@ -1,4 +1,4 @@
-import type { FetchedList, MusicListSink } from "./service";
+import type { FetchedList, MusicListSink } from "../service";
 
 /**
  * Test-only: a sink that stands in for 3c.4's persisting one. It keeps the list in memory but says `persistent: true`,

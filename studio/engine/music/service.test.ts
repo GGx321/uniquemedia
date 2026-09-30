@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,9 @@ import { type FlashapiFetch } from "./client";
 import { musicLists } from "./fixtures";
 import { QUOTA_LIMIT, QUOTA_WINDOW_MS, type QuotaLine } from "./quotaLedger";
 import { MemoryListSink, MusicService, type FetchedList, type MusicListSink } from "./service";
-import { PersistingTestSink } from "./testSink";
+import { runExclusive } from "../library/keyedMutex";
+import { hangingBody } from "./testing/hangingBody";
+import { PersistingTestSink } from "./testing/testSink";
 useNativeGlobals();
 useNativeHttp();
 
@@ -568,37 +570,105 @@ describe("a result that could not be written", () => {
     return nativeFetch(url, init);
   };
 
-  test("is remembered in this session: the next refresh is MUSIC_UNAVAILABLE, not a request the floor or a 401 could not stop", async () => {
+  const zero = { "x-ratelimit-requests-remaining": "0" };
+  /** Breaks the log for the FIRST request only; a later one is served plainly. */
+  const breakingOnce = (): FlashapiFetch => {
+    let first = true;
+    return (url, init) => {
+      if (!first) return nativeFetch(url, init);
+      first = false;
+      return breakingTheLog(url, init);
+    };
+  };
+
+  test("is held as the line itself: while the log stays broken the next refresh is MUSIC_UNAVAILABLE and sends nothing", async () => {
     mock = startMockFlashapi({ key: KEY });
-    mock.script({ status: 429, body: "quota exceeded", headers: { "x-ratelimit-requests-remaining": "0" } });
+    mock.script({ status: 429, body: "quota exceeded", headers: zero });
     const h = harness({ fetch: breakingTheLog });
-    const output = captureConsole();
-    try {
-      await h.service.refresh();
-      await h.service.settled();
-      await rm(quotaPath(), { recursive: true, force: true });
-      await writeFile(quotaPath(), "");
-      const error = refused(await h.service.refresh());
-      expect(error.code).toBe("MUSIC_UNAVAILABLE");
-      expect(error.detail).toContain("could not be written");
-      expect(mock.requests).toHaveLength(1);
-      expect(h.logs.join("\n")).not.toContain("(unknown)");
-    } finally {
-      output.restore();
-    }
+    await h.service.refresh();
+    await h.service.settled();
+    const error = refused(await h.service.refresh());
+    expect(error.code).toBe("MUSIC_UNAVAILABLE");
+    expect(error.detail).toContain("could not be written");
+    expect(mock.requests).toHaveLength(1);
+    expect(h.logs.join("\n")).not.toContain("(unknown)");
   });
 
-  test("clears once a ledger write succeeds again (the owner stores a key)", async () => {
+  test("is written FIRST when the log works again, so the server's 0 still refuses the next refresh (the floor is not lost)", async () => {
     mock = startMockFlashapi({ key: KEY });
-    mock.script({ status: 500, body: "x" });
+    mock.script({ status: 429, body: "quota exceeded", headers: zero });
     const h = harness({ fetch: breakingTheLog });
     await h.service.refresh();
     await h.service.settled();
     await rm(quotaPath(), { recursive: true, force: true });
-    expect(refused(await h.service.refresh()).code).toBe("MUSIC_UNAVAILABLE");
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(mock.requests).toHaveLength(1);
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result"]);
+    expect((await quotaLines())[0]).toMatchObject({ outcome: "http-error", status: 429, remaining: 0 });
+  });
+
+  test("keeps its own time: the line is written with the moment the answer came, not the moment the log recovered", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 429, body: "x", headers: zero });
+    const h = harness({ fetch: breakingTheLog });
+    await h.service.refresh();
+    await h.service.settled();
+    await rm(quotaPath(), { recursive: true, force: true });
+    now += 5 * HOUR;
+    await h.service.refresh();
+    expect((await quotaLines())[0]).toMatchObject({ kind: "result", at: NOW });
+  });
+
+  test("a re-entered key does not lose it: the unwritten 429 goes to the log BEFORE the key line, and the next refresh is still refused", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 429, body: "quota exceeded", headers: zero });
+    const h = harness({ fetch: breakingTheLog });
+    await h.service.refresh();
+    await h.service.settled();
+    await rm(quotaPath(), { recursive: true, force: true });
     await h.service.noteKeyChange("0000");
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result", "key"]);
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(mock.requests).toHaveLength(1);
+  });
+
+  test("a 401 that could not be written survives a re-entered key the same way: the key line lands after it and clears it", async () => {
+    mock = startMockFlashapi({ key: ROTATED });
+    const h = harness({ fetch: breakingTheLog });
+    await h.service.refresh();
+    await h.service.settled();
+    await rm(quotaPath(), { recursive: true, force: true });
+    await h.service.noteKeyChange("0000");
+    // The owner stored a key: the 401 is older than that, so the new key is not held rejected by it.
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result", "key"]);
+    expect(await h.service.keyRejected("0000")).toBe(false);
+  });
+
+  test("a key change made while the log is broken is queued behind it, and the refresh waits for both", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 500, body: "x" });
+    const h = harness({ fetch: breakingOnce() });
+    await h.service.refresh();
+    await h.service.settled();
+    await h.service.noteKeyChange("0000");
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_UNAVAILABLE");
+    await rm(quotaPath(), { recursive: true, force: true });
     expect((await h.service.refresh()).ok).toBe(true);
     await h.service.settled();
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result", "key", "send", "result"]);
+  });
+
+  test("clears once the line is written: a refresh that had no zero and no 401 to keep goes through", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 500, body: "x" });
+    const h = harness({ fetch: breakingOnce() });
+    await h.service.refresh();
+    await h.service.settled();
+    await rm(quotaPath(), { recursive: true, force: true });
+    now += HOUR;
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result", "send", "result"]);
   });
 
   test("names the kind of error in the log, not `unknown`, and never the key", async () => {
@@ -636,6 +706,20 @@ describe("a refresh never sticks busy", () => {
     expect((await h.service.refresh()).ok).toBe(true);
     await h.service.settled();
     expect((await quotaLines()).filter((l) => l.kind === "send")).toHaveLength(2);
+  });
+
+  test("the request goes FIRST, then the status: a status() that throws after the send does not stop the request or the answer", async () => {
+    const h = harness();
+    const broken = spyOn(h.service, "status").mockImplementation(() => Promise.reject(new Error("status is broken")));
+    const answer = await h.service.refresh();
+    broken.mockRestore();
+    expect(answer).toMatchObject({ ok: true, status: { refresh: { state: "running", done: 0, total: 1 } } });
+    await h.service.settled();
+    expect(mock?.requests).toHaveLength(1);
+    expect((await h.service.status()).refresh).toEqual({ state: "idle" });
+    now += HOUR;
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
   });
 
   test("a status that cannot be built after the send still ends the refresh: nothing is stuck running", async () => {
@@ -676,6 +760,84 @@ describe("a service that is shutting down", () => {
     await stopping;
     expect(mock.requests.length).toBeLessThanOrEqual(1);
     expect((await quotaLines()).filter((l) => l.kind === "send")).toHaveLength(1);
+  });
+});
+
+describe("stop() racing a refresh that is already inside admission", () => {
+  /** Holds the quota file's lock, so a refresh that has passed its first checks waits inside the ledger. */
+  async function holdLedger(): Promise<() => void> {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    void runExclusive(`quota:${quotaPath()}`, () => gate);
+    await Bun.sleep(5);
+    return release;
+  }
+
+  test("no request leaves after stop() has resolved, and stop() waits for that refresh to give up", async () => {
+    const h = harness();
+    const release = await holdLedger();
+    let refreshDone = false;
+    const refreshing = h.service.refresh().then((answer) => {
+      refreshDone = true;
+      return answer;
+    });
+    await Bun.sleep(10);
+    let stopped = false;
+    const stopping = h.service.stop().then(() => {
+      stopped = true;
+    });
+    await Bun.sleep(10);
+    expect(stopped).toBe(false);
+    release();
+    await Promise.all([refreshing, stopping]);
+    expect(refreshDone).toBe(true);
+    expect(refused(await refreshing).code).toBe("MUSIC_UNAVAILABLE");
+    await Bun.sleep(50);
+    expect(mock?.requests).toEqual([]);
+    // The send may already be on disk (conservative: it stays counted); a result or a request never is.
+    expect((await quotaLines()).filter((l) => l.kind === "result")).toEqual([]);
+  });
+
+  test("a refresh that was admitted before stop() is aborted by it, and stop() ends", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ delayMs: 2000 });
+    const h = harness();
+    await h.service.refresh();
+    await Bun.sleep(20);
+    const started = performance.now();
+    await h.service.stop();
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect((await h.service.status()).refresh.state).toBe("failed");
+  });
+});
+
+describe("a body that hangs still leaves the floor", () => {
+  const zero = { "x-ratelimit-requests-remaining": "0", "x-ratelimit-requests-limit": "30" };
+
+  test.each([
+    ["a 200", 200],
+    ["a 429", 429],
+  ])("%s with remaining 0 and a body that never arrives: the timeout's result line carries 0, and the next refresh is refused with one request in all", async (_label, status) => {
+    let calls = 0;
+    const hanging = hangingBody(status, zero);
+    const h = harness({ fetch: (url, init) => (calls++, hanging(url, init)), timeoutMs: 80 });
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome: "timeout", status, remaining: 0, limit: 30 });
+    expect((await h.service.status()).serverRemaining).toBe(0);
+    now += HOUR;
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(calls).toBe(1);
+  });
+
+  test("the same when stop() aborts the read", async () => {
+    const h = harness({ fetch: hangingBody(200, zero), timeoutMs: 5000 });
+    await h.service.refresh();
+    await Bun.sleep(20);
+    await h.service.stop();
+    expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome: "network-error", remaining: 0 });
   });
 });
 

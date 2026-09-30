@@ -128,6 +128,10 @@ export function productionEngineProblems(engine: string): string[] {
   const allowed = engine.match(/allowBaseUrlOverride: (true|!0)/g)?.length ?? 0;
   const named = Number(!openClientShut) + Number(!musicClientShut);
   if (allowed > named) problems.push("a client in the engine allows a base-URL override");
+  // Test-only music helpers live under studio/engine/music/testing/. A persisting test sink in the bundle would turn
+  // `music.refresh` on, which only the real track store (3c.4) may do.
+  if (engine.includes("PersistingTestSink")) problems.push("a test-only music sink is in the engine bundle");
+  if (engine.includes("hangingBody")) problems.push("a test-only music helper is in the engine bundle");
   return problems;
 }
 

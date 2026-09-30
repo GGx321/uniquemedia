@@ -185,6 +185,11 @@ describe("productionEngineProblems", () => {
     expect(productionEngineProblems(bundle(OPEN_RESOLVE, OPEN_CLIENT))).toEqual(["the engine takes a flashapi base-URL override", "the flashapi client is built with a base-URL override allowed"]);
   });
 
+  test("flags a test-only sink that made it into the engine bundle: it would turn the music refresh on", () => {
+    expect(productionEngineProblems(bundle(SHUT, "class PersistingTestSink { persistent = true; }"))).toEqual(["a test-only music sink is in the engine bundle"]);
+    expect(productionEngineProblems(bundle(SHUT, "const hangingBody = () => {};"))).toEqual(["a test-only music helper is in the engine bundle"]);
+  });
+
   test("flags every layer when everything is kept", () => {
     expect(
       productionEngineProblems(

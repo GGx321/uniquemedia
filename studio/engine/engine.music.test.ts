@@ -8,7 +8,7 @@ import { useNativeGlobals } from "../testing/nativeGlobals";
 import { nativeFetch, useNativeHttp } from "../testing/nativeHttp";
 import { resolveMusicBaseUrl } from "./engine";
 import { FLASHAPI_BASE, type FlashapiFetch } from "./music/client";
-import { PersistingTestSink } from "./music/testSink";
+import { PersistingTestSink } from "./music/testing/testSink";
 import { command, failed, ok, startEngine, useEngineDir } from "./testing/engineHarness";
 useNativeGlobals();
 useNativeHttp();
