@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { nonEmpty, ProtocolVersion, Seq } from "./envelope";
 import { EngineError } from "./errors";
+import { Montage } from "./montage";
 import { Count, Id, Micros } from "./primitives";
 import { VideoSummary } from "./video";
-import { AvatarSummary, Draft, EngineNotice, JobCancelled, JobFailed, JobProgress, JobResult, MoneyStatus, ReconcileReasons, Settings } from "./state";
+import { AvatarSummary, Draft, EngineNotice, ExportStatus, JobCancelled, JobFailed, JobProgress, JobResult, MoneyStatus, ReconcileReasons, Settings } from "./state";
 
 function defineEvent<const T extends string, P extends z.ZodType>(type: T, payload: P) {
   return {
@@ -32,6 +33,8 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
  * - `engine.error`: a failure that belongs to no command.
  * - `engine.notice`: something the windows must be told that is not an error; also pending in the snapshot.
  * - `video.changed`: a video record was committed or changed (`upserted`, with its record and current file state), or is gone (`removed`).
+ * - `montage.changed`: a montage draft was created or saved (`upserted`, with the draft), or deleted (`removed`).
+ * - `export.status`: the export folder's status changed (not on every check): the Render button follows the disk live.
  */
 const EVENT_SPECS = [
   defineEvent("job.progress", JobProgress),
@@ -53,6 +56,14 @@ const EVENT_SPECS = [
       z.strictObject({ change: z.literal("removed"), videoId: Id, avatarId: Id }),
     ]),
   ),
+  defineEvent(
+    "montage.changed",
+    z.discriminatedUnion("change", [
+      z.strictObject({ change: z.literal("upserted"), montage: Montage }),
+      z.strictObject({ change: z.literal("removed"), montageId: Id, avatarId: Id }),
+    ]),
+  ),
+  defineEvent("export.status", z.strictObject({ exportStatus: ExportStatus })),
 ] as const;
 
 type EventSpec = (typeof EVENT_SPECS)[number];

@@ -2,11 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   MAX_CLIPS,
   MAX_LAYERS,
+  MAX_LISTED_MONTAGES,
   MAX_MONTAGE_ISSUES,
   MAX_STICKER_LAYERS,
   MAX_TEXT_LAYERS,
+  Montage,
   MontageDraft,
   MontageIssue,
+  MontageListItem,
   MontageShape,
   MontageSpec,
   montageIssues,
@@ -877,5 +880,85 @@ describe("MontageIssue", () => {
   test("the closed set has no repeats", () => {
     const codesList: readonly MontageIssueCode[] = MONTAGE_ISSUE_CODES;
     expect(new Set(codesList).size).toBe(codesList.length);
+  });
+});
+
+// ---------- the engine-only issue codes (K7) ----------
+
+describe("the engine-only issue codes", () => {
+  const ENGINE_ONLY = ["photo-unavailable", "not-yet-supported", "caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short"] as const;
+
+  test.each([...ENGINE_ONLY])("%s is a known code", (code) => {
+    expect(MontageIssue.safeParse({ code, path: [] }).success).toBe(true);
+  });
+
+  test.each(["caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short"] as const)("the shared checks never produce %s", (code) => {
+    const busy = spec({
+      clips: [photoClip(1, 8_000), videoClip(2, 5_000)],
+      layers: [textLayer(1), stickerLayer(1)],
+      music: { source: "own", mediaId: id("media", 9), startMs: 0 },
+    });
+    expect(codes(issuesOf(busy, "spec"))).not.toContain(code);
+  });
+});
+
+// ---------- the saved draft (K1, K3) ----------
+
+describe("Montage", () => {
+  const stored = (over: Record<string, unknown> = {}) => ({ montageId: "montage-0001", name: null, spec: spec({ clips: [] }), updatedAt: "2026-09-30T10:00:00.000Z", ...over });
+
+  test("a new draft has no name: null is the name montages.create stores", () => {
+    expect(Montage.safeParse(stored()).success).toBe(true);
+  });
+
+  test("a named draft keeps its name", () => {
+    expect(Montage.parse(stored({ name: "Кафе и город" })).name).toBe("Кафе и город");
+  });
+
+  test("an empty name is refused: null is the way to say unnamed", () => {
+    expect(Montage.safeParse(stored({ name: "" })).success).toBe(false);
+  });
+
+  test("a missing name is refused", () => {
+    const { name: _name, ...rest } = stored();
+    expect(Montage.safeParse(rest).success).toBe(false);
+  });
+
+  test("the draft may have no clips at all", () => {
+    expect(Montage.safeParse(stored({ spec: spec({ clips: [] }) })).success).toBe(true);
+  });
+});
+
+describe("MontageListItem", () => {
+  const item = (issueCount: number, over: Record<string, unknown> = {}) => ({
+    montage: { montageId: "montage-0001", name: null, spec: spec({ clips: [] }), updatedAt: "2026-09-30T10:00:00.000Z" },
+    issues: Array.from({ length: issueCount }, () => ({ code: "photo-unavailable", path: ["clips", 0, "cell"] })),
+    videoCount: 0,
+    ...over,
+  });
+
+  test("lists at most 200 drafts per answer", () => {
+    expect(MAX_LISTED_MONTAGES).toBe(200);
+  });
+
+  test("64 issues are allowed", () => {
+    expect(MontageListItem.safeParse(item(64)).success).toBe(true);
+  });
+
+  test("65 issues are refused", () => {
+    expect(MontageListItem.safeParse(item(65)).success).toBe(false);
+  });
+
+  test("no issues is fine: the draft is ready", () => {
+    expect(MontageListItem.safeParse(item(0)).success).toBe(true);
+  });
+
+  test("a negative video count is refused", () => {
+    expect(MontageListItem.safeParse(item(0, { videoCount: -1 })).success).toBe(false);
+  });
+
+  test("an item without its video count is refused", () => {
+    const { videoCount: _count, ...rest } = item(0);
+    expect(MontageListItem.safeParse(rest).success).toBe(false);
   });
 });

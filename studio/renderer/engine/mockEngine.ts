@@ -1091,6 +1091,11 @@ export class MockEngine implements EngineBridge {
       case "videos.delete":
       case "videos.reveal":
       case "montages.create":
+      case "montages.get":
+      case "montages.list":
+      case "montages.save":
+      case "montages.delete":
+      case "montages.focus":
         // Stage 3, task 3a.1: the contract exists, the behaviour comes with its slices (mock parity: task 3d.1b).
         // Until then the mock refuses exactly as the real engine does for a command it does not implement yet.
         return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });

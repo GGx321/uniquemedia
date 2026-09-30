@@ -228,6 +228,17 @@ describe("MONTAGE_ISSUE_MESSAGES_RU", () => {
     expect(text).toMatch(/[А-Яа-яЁё]/);
   });
 
+  test("the messages say «кадр», the editor's word, never «клип»", () => {
+    for (const text of Object.values(MONTAGE_ISSUE_MESSAGES_RU)) expect(text).not.toMatch(/клип/i);
+    expect(MONTAGE_ISSUE_MESSAGES_RU["no-clips"]).toMatch(/кадр/);
+    expect(MONTAGE_ISSUE_MESSAGES_RU["cell-empty"]).toMatch(/кадр/);
+    expect(MONTAGE_ISSUE_MESSAGES_RU["duplicate-clip-id"]).toMatch(/кадр/);
+  });
+
+  test.each(["caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short"] as const)("the engine-only code %s has its own text", (code) => {
+    expect(MONTAGE_ISSUE_MESSAGES_RU[code]).toMatch(/[А-Яа-яЁё]/);
+  });
+
   test("messages are all distinct", () => {
     const texts = Object.values(MONTAGE_ISSUE_MESSAGES_RU);
     expect(new Set(texts).size).toBe(texts.length);

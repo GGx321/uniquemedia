@@ -3,7 +3,7 @@ import { AvatarName, AvatarTraits } from "./avatar";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
-import { MAX_CLIPS, Montage, MontageShape } from "./montage";
+import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
@@ -326,8 +326,41 @@ const ENGINE_SPECS = [
     z.strictObject({ videoId: Id, fileDeleted: z.boolean(), fileState: FileState }),
   ),
   // A new draft for an avatar from 0 to 20 of its scene photos (0: an empty draft, «Новый монтаж»), with the focus of
-  // every placed photo resolved.
+  // every placed photo resolved and no name (`name: null`, the window says «без названия»). Refused, and nothing is stored, with
+  //   PHOTO_UNAVAILABLE (issues `photo-unavailable` at `["photoIds", i]`) a photo that is not eligible, or is already in a video,
+  //                     or is held by a render that is queued or running: one photo goes into one video;
+  //   NOT_FOUND         an avatar that does not exist or is not active.
+  // The focus of every photo is asked at the same time under ONE budget that fits main's 30 s deadline; a photo that could not be
+  // judged in time gets `focus: null` (the preview draws the stand-in point, and a render tries again).
   defineCommand("montages.create", z.strictObject({ avatarId: Id, photoIds: MontagePhotoIds }), z.strictObject({ montage: Montage })),
+  // A draft as it stands, with the engine's verdict: `issues` are the structural ones (`montageIssues(spec, "spec")`, what a
+  // render would refuse) plus the referential ones (a photo that is no longer usable, a sticker that is gone), bounded at 64.
+  // NOT_FOUND for a draft that does not exist (or cannot be read); LIBRARY_UNAVAILABLE without a library.
+  defineCommand("montages.get", z.strictObject({ montageId: Id }), z.strictObject({ montage: Montage, issues: MontageIssues })),
+  // Drafts, newest `updatedAt` first, at most MAX_LISTED_MONTAGES; `total` counts every readable draft, `skippedTotal` the files
+  // that could not be read (they are left out, never a failed list). No `avatarId` = every avatar. `videoCount` = the videos
+  // rendered from the draft. NOT_FOUND for an `avatarId` the library does not have.
+  defineCommand(
+    "montages.list",
+    z.strictObject({ avatarId: Id.optional() }),
+    z.strictObject({ items: z.array(MontageListItem).max(MAX_LISTED_MONTAGES), total: Count, skippedTotal: Count }),
+  ),
+  // Replaces a draft's spec and name. `spec.avatarId` must be the stored draft's (VALIDATION otherwise); nothing is checked
+  // against the library (a draft may hold a photo that was rejected since), so a save never fails for a photo. NOT_FOUND for a
+  // draft that was deleted. Saves of one draft are applied in the order they arrive: the last one wins.
+  defineCommand(
+    "montages.save",
+    z.strictObject({ montageId: Id, spec: MontageDraft, name: MontageName.nullable() }),
+    z.strictObject({ montage: Montage }),
+  ),
+  // Removes a draft. Allowed while a render of it is queued or running: the job keeps its spec, and the video's record then
+  // lists `montageId: null`. NOT_FOUND for a draft that does not exist.
+  defineCommand("montages.delete", z.strictObject({ montageId: Id }), z.strictObject({ montageId: Id })),
+  // The focus of one photo, for a photo the owner just placed (a cell change): `null` when it could not be judged (no face
+  // models, no answer in time; the draft then stores null). At most 20 s. NOT_FOUND for an avatar that does not exist or is not
+  // active, or an own upload (no such store yet); PHOTO_UNAVAILABLE (issue at `["photo"]`) for a scene photo that is not an
+  // eligible photo of this avatar.
+  defineCommand("montages.focus", z.strictObject({ avatarId: Id, photo: PhotoRef }), z.strictObject({ focus: Focus.nullable() })),
   // engine
   defineCommand("engine.snapshot", Empty, Snapshot),
   defineCommand("engine.events", z.strictObject({ afterSeq: Count, bootId: Id }), EventsSince),

@@ -236,6 +236,14 @@ type Shape = z.infer<typeof MontageShape>;
  * - `photo-repeated`: a scene photo appears more than once;
  * - `photo-unavailable`: the engine's answer for a cell whose scene photo is not eligible (PHOTO_UNAVAILABLE carries these); never produced here;
  * - `not-yet-supported`: the engine's own answer for a part whose slice has not landed (N9); never produced here.
+ *
+ * The last five are engine-only too (the referential half, never produced by `montageIssues`); `montages.get` and
+ * `montages.list` report them next to the structural ones:
+ * - `caption-invalid`: a text layer's caption breaks the engine's caption rules (`layers.i.value`);
+ * - `media-unavailable`: an own media id is missing or of the wrong kind (`clips.i`, `clips.i.cells.j`, `music`, `layers.i.sticker`);
+ * - `sticker-unavailable`: a sticker that is no longer available (`layers.i.sticker`);
+ * - `track-unavailable`: the music track is gone (`music`);
+ * - `track-too-short`: the track is shorter than its `startMs` plus the montage's total (`music`).
  */
 export const MONTAGE_ISSUE_CODES = [
   "no-clips",
@@ -252,6 +260,11 @@ export const MONTAGE_ISSUE_CODES = [
   "photo-repeated",
   "photo-unavailable",
   "not-yet-supported",
+  "caption-invalid",
+  "media-unavailable",
+  "sticker-unavailable",
+  "track-unavailable",
+  "track-too-short",
 ] as const;
 
 export const MontageIssueCode = z.enum(MONTAGE_ISSUE_CODES);
@@ -343,12 +356,24 @@ export const MontageName = z
   .refine((name) => !/\p{Cc}/u.test(name), "must not contain control characters");
 
 /**
- * A saved montage draft as `montages.create` returns it: the draft itself
- * (which may be incomplete: «Новый монтаж» starts with no clips) with its
- * name and id. The focus of every placed photo is resolved by then.
+ * A saved montage draft as the montage commands return it: the draft itself
+ * (which may be incomplete: «Новый монтаж» starts with no clips) with its id,
+ * its name and when it last changed. `name` is null until the owner names it
+ * (`montages.create` stores null; the window shows «без названия»). The focus
+ * of every placed photo is resolved by the time `montages.create` answers.
  */
-export const Montage = z.strictObject({ montageId: Id, name: MontageName, spec: MontageDraft, updatedAt: z.iso.datetime() });
+export const Montage = z.strictObject({ montageId: Id, name: MontageName.nullable(), spec: MontageDraft, updatedAt: z.iso.datetime() });
 export type Montage = z.infer<typeof Montage>;
+
+/** `montages.list` answers at most this many drafts, newest `updatedAt` first: no cursor yet, like `MAX_LISTED_VIDEOS`. */
+export const MAX_LISTED_MONTAGES = 200;
+
+/** Everything wrong with a draft as the engine sees it now: the structural issues and the referential ones, bounded like an error's. */
+export const MontageIssues = z.array(MontageIssue).max(MAX_MONTAGE_ISSUES);
+
+/** A draft with the engine's verdict on it and how many videos were rendered from it (`montages.list`). */
+export const MontageListItem = z.strictObject({ montage: Montage, issues: MontageIssues, videoCount: Count });
+export type MontageListItem = z.infer<typeof MontageListItem>;
 
 export type Clip = z.infer<typeof Clip>;
 export type Layer = z.infer<typeof Layer>;

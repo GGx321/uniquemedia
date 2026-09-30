@@ -291,7 +291,28 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "videos.reveal": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
   "montages.create": {
     payload: { avatarId: "avatar-0001", photoIds: ["photo-0002"] },
-    result: { montage: { montageId: "montage-00000001", name: "Монтаж 1", spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
+    result: { montage: { montageId: "montage-00000001", name: null, spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
+  },
+  "montages.get": {
+    payload: { montageId: "montage-00000001" },
+    result: { montage: { montageId: "montage-00000001", name: "Кафе и город", spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" }, issues: [{ code: "photo-unavailable", path: ["clips", 0, "cell"] }] },
+  },
+  "montages.list": {
+    payload: { avatarId: "avatar-0001" },
+    result: {
+      items: [{ montage: { montageId: "montage-00000001", name: null, spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" }, issues: [], videoCount: 2 }],
+      total: 1,
+      skippedTotal: 0,
+    },
+  },
+  "montages.save": {
+    payload: { montageId: "montage-00000001", spec: montageDraft, name: "Кафе и город" },
+    result: { montage: { montageId: "montage-00000001", name: "Кафе и город", spec: montageDraft, updatedAt: "2026-09-29T12:05:00.000Z" } },
+  },
+  "montages.delete": { payload: { montageId: "montage-00000001" }, result: { montageId: "montage-00000001" } },
+  "montages.focus": {
+    payload: { avatarId: "avatar-0001", photo: { source: "scene", photoId: "photo-0002" } },
+    result: { focus: { x: 0.5, y: 0.31 } },
   },
   "engine.snapshot": {
     payload: {},
@@ -329,6 +350,8 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "engine.error": { error: { code: "INTERNAL" } },
   "engine.notice": { notice },
   "video.changed": { change: "upserted", video },
+  "montage.changed": { change: "upserted", montage: { montageId: "montage-00000001", name: null, spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
+  "export.status": { exportStatus: { status: "unavailable", reason: "missing" } },
 };
 
 // ---------- helpers ----------
@@ -411,6 +434,11 @@ describe("contract surface", () => {
         "videos.delete",
         "videos.reveal",
         "montages.create",
+        "montages.get",
+        "montages.list",
+        "montages.save",
+        "montages.delete",
+        "montages.focus",
         "engine.snapshot",
         "engine.events",
       ].sort(),
@@ -433,6 +461,8 @@ describe("contract surface", () => {
         "engine.error",
         "engine.notice",
         "video.changed",
+        "montage.changed",
+        "export.status",
       ].sort(),
     );
   });
@@ -1250,6 +1280,105 @@ describe("montages.create", () => {
   test("its result refuses an empty name", () => {
     const result = { montage: { montageId: "montage-00000001", name: "", spec: emptyDraft, updatedAt: "2026-09-29T12:00:00.000Z" } };
     expect(parseMessage(okResponse("montages.create", result)).ok).toBe(false);
+  });
+});
+
+describe("montages.get, list, save, delete, focus", () => {
+  const stored = { montageId: "montage-00000001", name: null, spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" };
+  const issues = (n: number) => Array.from({ length: n }, () => ({ code: "photo-unavailable", path: ["clips", 0, "cell"] }));
+  const send = (type: string, payload: unknown) => parseMessage(command(type, payload)).ok;
+  const answer = (type: string, result: unknown) => parseMessage(okResponse(type, result)).ok;
+
+  test("get takes a montage id and refuses a broken one", () => {
+    expect(send("montages.get", { montageId: "montage-00000001" })).toBe(true);
+    expect(send("montages.get", { montageId: "../montage" })).toBe(false);
+    expect(send("montages.get", {})).toBe(false);
+  });
+
+  test("get answers the draft and at most 64 issues", () => {
+    expect(answer("montages.get", { montage: stored, issues: issues(64) })).toBe(true);
+    expect(answer("montages.get", { montage: stored, issues: issues(65) })).toBe(false);
+  });
+
+  test("get's answer carries its issues even when there are none", () => {
+    expect(answer("montages.get", { montage: stored, issues: [] })).toBe(true);
+    expect(answer("montages.get", { montage: stored })).toBe(false);
+  });
+
+  test("list takes an optional avatar: no avatar means every avatar", () => {
+    expect(send("montages.list", {})).toBe(true);
+    expect(send("montages.list", { avatarId: "avatar-0001" })).toBe(true);
+    expect(send("montages.list", { avatarId: "../avatar" })).toBe(false);
+  });
+
+  test("list answers at most 200 drafts, with the real total beside them", () => {
+    const item = { montage: stored, issues: [], videoCount: 0 };
+    expect(answer("montages.list", { items: Array.from({ length: 200 }, () => item), total: 250, skippedTotal: 0 })).toBe(true);
+    expect(answer("montages.list", { items: Array.from({ length: 201 }, () => item), total: 201, skippedTotal: 0 })).toBe(false);
+  });
+
+  test("list counts the draft files it could not read", () => {
+    expect(answer("montages.list", { items: [], total: 0, skippedTotal: 3 })).toBe(true);
+    expect(answer("montages.list", { items: [], total: 0, skippedTotal: -1 })).toBe(false);
+  });
+
+  test("save takes a draft that may be incomplete, and a name or null", () => {
+    expect(send("montages.save", { montageId: "montage-00000001", spec: emptyDraft, name: null })).toBe(true);
+    expect(send("montages.save", { montageId: "montage-00000001", spec: montageDraft, name: "Кафе" })).toBe(true);
+  });
+
+  test("save refuses an empty name: null is the way to clear it", () => {
+    expect(send("montages.save", { montageId: "montage-00000001", spec: montageDraft, name: "" })).toBe(false);
+  });
+
+  test("save refuses a spec that breaks the draft's structure", () => {
+    const twice = { ...montageDraft, clips: [...montageDraft.clips, { ...montageDraft.clips[0], clipId: "clip-0002" }] };
+    expect(send("montages.save", { montageId: "montage-00000001", spec: twice, name: null })).toBe(false);
+  });
+
+  test("save needs every field", () => {
+    expect(send("montages.save", { montageId: "montage-00000001", spec: montageDraft })).toBe(false);
+    expect(send("montages.save", { montageId: "montage-00000001", name: null })).toBe(false);
+  });
+
+  test("delete answers the id it removed", () => {
+    expect(send("montages.delete", { montageId: "montage-00000001" })).toBe(true);
+    expect(answer("montages.delete", { montageId: "montage-00000001" })).toBe(true);
+  });
+
+  test("focus takes an avatar and a photo reference, and answers a point or null", () => {
+    expect(send("montages.focus", { avatarId: "avatar-0001", photo: { source: "scene", photoId: "photo-0002" } })).toBe(true);
+    expect(send("montages.focus", { avatarId: "avatar-0001", photo: { source: "own", mediaId: "media-0002" } })).toBe(true);
+    expect(answer("montages.focus", { focus: null })).toBe(true);
+    expect(answer("montages.focus", { focus: { x: 1, y: 0 } })).toBe(true);
+    expect(answer("montages.focus", { focus: { x: 1.1, y: 0 } })).toBe(false);
+  });
+
+  test("focus refuses a bare photo id: the source says which store it is from", () => {
+    expect(send("montages.focus", { avatarId: "avatar-0001", photo: "photo-0002" })).toBe(false);
+    expect(send("montages.focus", { photo: { source: "scene", photoId: "photo-0002" } })).toBe(false);
+  });
+
+  test("create answers a draft with no name", () => {
+    expect(answer("montages.create", { montage: { ...stored, name: null } })).toBe(true);
+  });
+
+  test("montage.changed says a draft was saved, or that it is gone", () => {
+    expect(parseMessage(event("montage.changed", { change: "upserted", montage: stored })).ok).toBe(true);
+    expect(parseMessage(event("montage.changed", { change: "removed", montageId: "montage-00000001", avatarId: "avatar-0001" })).ok).toBe(true);
+  });
+
+  test("montage.changed refuses an upsert without its draft, a removal without its avatar and a change it does not know", () => {
+    expect(parseMessage(event("montage.changed", { change: "upserted" })).ok).toBe(false);
+    expect(parseMessage(event("montage.changed", { change: "removed", montageId: "montage-00000001" })).ok).toBe(false);
+    expect(parseMessage(event("montage.changed", { change: "renamed", montage: stored })).ok).toBe(false);
+  });
+
+  test("export.status carries the folder's status, and nothing else", () => {
+    expect(parseMessage(event("export.status", { exportStatus: { status: "ok" } })).ok).toBe(true);
+    expect(parseMessage(event("export.status", { exportStatus: { status: "unavailable", reason: "not-writable" } })).ok).toBe(true);
+    expect(parseMessage(event("export.status", { exportStatus: { status: "unavailable" } })).ok).toBe(false);
+    expect(parseMessage(event("export.status", { status: "ok" })).ok).toBe(false);
   });
 });
 

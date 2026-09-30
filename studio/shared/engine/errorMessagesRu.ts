@@ -53,20 +53,25 @@ export const ERROR_MESSAGES_RU = {
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {
-  "no-clips": "В монтаже нет ни одного клипа.",
+  "no-clips": "В монтаже нет ни одного кадра.",
   "duration-too-short": "Монтаж короче 4 секунд.",
   "duration-too-long": "Монтаж длиннее 15 секунд.",
   "too-many-text-layers": "Текстовых слоёв больше 10.",
   "too-many-sticker-layers": "Стикеров больше 10.",
   "cells-layout-mismatch": "Число фото в коллаже не совпадает с его раскладкой.",
-  "cell-empty": "В клипе есть пустая ячейка: добавьте фото или уберите клип.",
+  "cell-empty": "В кадре есть пустая ячейка: добавьте фото или уберите кадр.",
   "layer-too-short": "Слой короче 0,3 секунды.",
   "layer-outside-timeline": "Слой заканчивается после конца монтажа.",
-  "duplicate-clip-id": "Два клипа с одним идентификатором.",
+  "duplicate-clip-id": "Два кадра с одним идентификатором.",
   "duplicate-layer-id": "Два слоя с одним идентификатором.",
   "photo-repeated": "Одно и то же фото стоит в монтаже больше одного раза.",
   "photo-unavailable": "Это фото нельзя использовать в видео: оно не подходит или было отклонено.",
   "not-yet-supported": "Эта часть монтажа пока не поддерживается.",
+  "caption-invalid": "Надпись не проходит проверку: замените её текст.",
+  "media-unavailable": "Файла, который стоит в этом месте монтажа, больше нет среди ваших файлов.",
+  "sticker-unavailable": "Этого стикера больше нет: выберите другой.",
+  "track-unavailable": "Этого трека больше нет: выберите другой.",
+  "track-too-short": "Трек короче монтажа с выбранного места: сдвиньте начало или выберите другой трек.",
 } as const satisfies Record<MontageIssueCode, string>;
 
 /** Why the «Готовые видео» folder cannot be used, for the notice behind EXPORT_UNAVAILABLE. */
