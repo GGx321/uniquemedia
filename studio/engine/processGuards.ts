@@ -33,10 +33,15 @@ const CODE_TOKEN = /^[A-Z][A-Z0-9_]{1,40}$/;
 
 /** `TypeError` or `Error (ENOENT)`: the error's class and its code when it is a plain token, never its text. */
 export function describeError(error: unknown): string {
-  if (!(error instanceof Error)) return typeof error;
-  const name = /^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(error.name) ? error.name : "Error";
-  const code: unknown = "code" in error ? error.code : undefined;
-  return typeof code === "string" && CODE_TOKEN.test(code) ? `${name} (${code})` : name;
+  try {
+    if (!(error instanceof Error)) return typeof error;
+    const name = /^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(error.name) ? error.name : "Error";
+    const code: unknown = "code" in error ? error.code : undefined;
+    return typeof code === "string" && CODE_TOKEN.test(code) ? `${name} (${code})` : name;
+  } catch {
+    // A getter on `name` or `code` that throws (a hostile or broken error object) must not fail the handler that reports it.
+    return "unknown";
+  }
 }
 
 /** Installs the policy above; call it once, first thing in the process. */

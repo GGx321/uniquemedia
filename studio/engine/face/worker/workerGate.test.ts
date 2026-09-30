@@ -452,13 +452,15 @@ describe("idle recycling: an idle worker's memory is given back", () => {
         };
       },
     });
-    const askedAt = performance.now(); // the idle timer is armed AFTER the check ends, so it cannot fire sooner than idleRecycleMs after this
     await h.gate.check(checkInput(), live());
+    // From the END of the check: the idle timer is armed when the lane is released, an instant before this line, so it cannot fire
+    // sooner than idleRecycleMs less that instant after it. (Measured from the check's start, a slow check alone would satisfy it.)
+    const idleFrom = performance.now();
     expect(h.alive()).toBe(1);
     await exited(h.workers[0]);
     expect(h.alive()).toBe(0);
     expect(terminatedAt).not.toBeNull();
-    expect((terminatedAt ?? 0) - askedAt).toBeGreaterThanOrEqual(39); // 40 ms, less a millisecond of timer granularity
+    expect((terminatedAt ?? 0) - idleFrom).toBeGreaterThanOrEqual(35); // 40 ms, less the microtasks between arming the timer and idleFrom
   });
 
   test("the next check after a recycle respawns a worker and succeeds, with no overlap between the two workers", async () => {

@@ -8,6 +8,8 @@ import ts from "typescript";
 // been told about (add the helper to SPAWNING_CALLEES), an aliased import (`import { spawnSync as run }`), or a call through a
 // variable. It does follow the immediately-invoked function (an IIFE at module scope runs at collection) and the callbacks of
 // describe blocks, `.map` and the like, which also run at once.
+// Known gaps: static class blocks (`class X { static { spawnSync(..) } }` run at collection and are skipped like any class body),
+// a spawn behind a namespace alias (`import * as proc from "node:child_process"; proc.spawnSync(..)`), and the ones above.
 
 /** The child_process functions, by the names they are called under: bare (from an import), or on the usual module aliases. */
 const CHILD_PROCESS_FUNCTIONS = ["spawnSync", "execSync", "execFileSync", "spawn", "exec", "execFile", "fork"];

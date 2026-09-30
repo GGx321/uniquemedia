@@ -37,6 +37,26 @@ describe("describeError: the class and a plain code, never the text", () => {
     expect(describeError(named)).toBe("Error");
   });
 
+  test("an error whose name or code getter throws is reported as unknown, and the handler still runs", () => {
+    const hostile = new Error("x");
+    Object.defineProperty(hostile, "name", {
+      get() {
+        throw new Error("no name for you");
+      },
+    });
+    expect(describeError(hostile)).toBe("unknown");
+    const codeless = Object.defineProperty(new Error("x"), "code", {
+      get() {
+        throw new Error("no code for you");
+      },
+    });
+    expect(describeError(codeless)).toBe("unknown");
+    const { target, lines, exits } = rig("engine");
+    expect(() => target.emit("uncaughtException", hostile)).not.toThrow();
+    expect(lines).toEqual(["studio engine: an uncaught exception (unknown); the engine exits so main restarts it"]);
+    expect(exits).toEqual([1]);
+  });
+
   test("anything that is not an Error is named by its type alone", () => {
     expect(describeError(SECRET)).toBe("string");
     expect(describeError(undefined)).toBe("undefined");

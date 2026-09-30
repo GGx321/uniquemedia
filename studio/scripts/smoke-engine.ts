@@ -1440,7 +1440,8 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     const crashEvent = await waitFor(
       "an engine.notice event for this scenario's own engine",
       async () => {
-        const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice")`);
+        // By code: any other engine.notice (there is one for a swallowed rejection now) must not be taken for the restart's.
+        const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice" && e.payload.notice.code === "engine-restarted")`);
         return Array.isArray(events) && events.length > 0 ? events[0] : null;
       },
       30_000,
@@ -1993,7 +1994,7 @@ async function main(): Promise<void> {
     // 6. Restart policy.
     process.kill(pid, "SIGKILL");
     const crashEvent = await waitFor("an engine.notice event", async () => {
-      const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice")`);
+      const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice" && e.payload.notice.code === "engine-restarted")`);
       return Array.isArray(events) && events.length > 0 ? events[0] : null;
     });
     check("a killed engine is reported as an engine-restarted notice",
