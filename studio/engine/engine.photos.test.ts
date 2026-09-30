@@ -50,13 +50,29 @@ async function seedAvatar(opts: { count?: number; status?: "active" | "draft" | 
     const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
     await library.updateAvatar(avatar.id, { status: opts.status ?? "active", masterPhotoId: master.id });
   }
-  // Chunks of photos are added at once: on Windows every add costs tens of milliseconds of file-system latency (the
-  // boundary test's 501 of them, one after another, outlasted its 30 s). `addPhoto` takes its id and its `createdAt`
-  // before its first await, so the order of the calls is still the order of the ids and of the timestamps.
+  // The first run photo goes through the library (its real record is the template); the rest are written as plain files, without
+  // the library's fsync and rename per file. On Windows each durable add cost 10 to 25 ms, so the boundary test's 501 of them
+  // took 9 to 13 s and once outlasted 30 s; the engine only READS these, so plain files of the same shape are what it meets.
   const photoIds: string[] = [];
-  for (let from = 0; from < count; from += SEED_CHUNK) {
-    const chunk = Array.from({ length: Math.min(SEED_CHUNK, count - from) }, (_unused, k) => library.addPhoto(avatar.id, PNG_1X1, runPhotoMeta(runId, from + k + 1)));
-    for (const photo of await Promise.all(chunk)) photoIds.push(photo.id);
+  if (count > 0) {
+    const first = await library.addPhoto(avatar.id, PNG_1X1, runPhotoMeta(runId, 1));
+    photoIds.push(first.id);
+    const photosDir = join(dir(), "library", "avatars", avatar.id, "photos");
+    const rest = Array.from({ length: count - 1 }, (_unused, k) => {
+      const n = k + 2;
+      const id = `bulk${seeded}-${String(n).padStart(5, "0")}`;
+      const sidecar = { ...first, id, file: `${id}.png`, source: runPhotoMeta(runId, n).source, createdAt: new Date(Date.parse(first.createdAt) + n * 1000).toISOString() };
+      photoIds.push(id);
+      return { id, sidecar };
+    });
+    for (let from = 0; from < rest.length; from += SEED_CHUNK) {
+      await Promise.all(
+        rest.slice(from, from + SEED_CHUNK).map(async ({ id, sidecar }) => {
+          await writeFile(join(photosDir, `${id}.png`), PNG_1X1);
+          await writeFile(join(photosDir, `${id}.json`), `${JSON.stringify(sidecar, null, 2)}\n`);
+        }),
+      );
+    }
   }
   return { avatarId: avatar.id, photoIds };
 }
