@@ -62,6 +62,21 @@ describe("the leave guard", () => {
     expect(went).toEqual([{ name: "settings" }]);
   });
 
+  test("a guard that refuses knows where the owner meant to go last, not first", async () => {
+    const { nav } = rig();
+    let answer: (ok: boolean) => void = () => undefined;
+    let target: () => Route = () => ({ name: "avatars" });
+    nav.guard((to) => {
+      target = to;
+      return new Promise((resolve) => (answer = resolve));
+    });
+    nav.navigate({ name: "montages" });
+    nav.navigate({ name: "settings" });
+    answer(false);
+    await settle();
+    expect(target()).toEqual({ name: "settings" });
+  });
+
   test("removing a guard removes only that guard", async () => {
     const { went, nav } = rig();
     const removeFirst = nav.guard(async () => false);

@@ -10,14 +10,17 @@ export class DraftFlushes {
   readonly #pending = new Map<string, Promise<FlushResult>>();
   readonly #lost = new Map<string, EngineError>();
 
-  /** The flush of an editor of `montageId` that is closing; a newer one of the same draft replaces it. */
-  track(montageId: string, flush: Promise<FlushResult>): void {
+  /**
+   * The flush of an editor of `montageId` that is closing; a newer one of the same draft replaces it. `report: false`:
+   * the owner chose to leave the edit behind («Уйти без сохранения»), so its failure is not told again on the reopen.
+   */
+  track(montageId: string, flush: Promise<FlushResult>, { report = true }: { report?: boolean } = {}): void {
     this.#pending.set(montageId, flush);
     void flush.then((result) => {
       if (this.#pending.get(montageId) !== flush) return;
       this.#pending.delete(montageId);
       // A deleted draft lost nothing that could be reopened.
-      if (!result.ok && result.error.code !== "NOT_FOUND") this.#lost.set(montageId, result.error);
+      if (report && !result.ok && result.error.code !== "NOT_FOUND") this.#lost.set(montageId, result.error);
       else this.#lost.delete(montageId);
     });
   }

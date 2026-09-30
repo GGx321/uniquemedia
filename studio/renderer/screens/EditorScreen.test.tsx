@@ -267,7 +267,7 @@ describe("opening a draft whose last editor is still saving (the review's open q
     expect(within(header()).getByText(/8\.0 с · ≈ 3\.5 МБ/)).toBeDefined();
   });
 
-  test("a save that failed as the editor closed is said when the draft opens again", async () => {
+  test("after «Уйти без сохранения» a failed last try is not told again: the draft opens as Studio holds it", async () => {
     const { client, engine } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
@@ -279,8 +279,8 @@ describe("opening a draft whose last editor is still saving (the review's open q
 
     fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
     await screen.findByRole("region", { name: "Таймлайн" });
-    expect(screen.getByText("Последнее изменение не сохранилось")).toBeDefined();
-    expect(screen.getByText(new RegExp(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE.slice(0, 30)))).toBeDefined();
+    expect(screen.queryByText("Последнее изменение не сохранилось")).toBeNull();
+    expect(within(header()).getByText(/5\.0 с · ≈ 2\.2 МБ/)).toBeDefined();
   });
 });
 

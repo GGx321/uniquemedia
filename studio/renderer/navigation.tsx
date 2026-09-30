@@ -25,8 +25,11 @@ export interface NavigateOptions {
 
 export type Navigate = (route: Route, options?: NavigateOptions) => void;
 
-/** Asked before the window leaves a screen with unsaved work; true lets it go. */
-export type LeaveGuard = (to: Route) => Promise<boolean>;
+/**
+ * Asked before the window leaves a screen with unsaved work; true lets it go. `target` answers where the owner means
+ * to go NOW: clicks while the guard is deciding change it, so a refusal remembers the latest one.
+ */
+export type LeaveGuard = (target: () => Route) => Promise<boolean>;
 
 export interface Navigation {
   readonly navigate: Navigate;
@@ -56,7 +59,7 @@ export function createNavigation(go: (route: Route) => void): Navigation {
       }
       const ask = { target: route };
       asking = ask;
-      void current(route).then(
+      void current(() => ask.target).then(
         (ok) => {
           if (asking !== ask) return;
           asking = null;
@@ -96,7 +99,7 @@ export function useLeaveGuard(guard: LeaveGuard): void {
   const { guard: register } = useNavigation();
   const latest = useRef(guard);
   latest.current = guard;
-  useEffect(() => register((to) => latest.current(to)), [register]);
+  useEffect(() => register((target) => latest.current(target)), [register]);
 }
 
 export function sectionOf(route: Route): SectionId {

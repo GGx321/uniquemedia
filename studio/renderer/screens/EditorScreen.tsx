@@ -258,13 +258,14 @@ function DraftEditor({
   // Every way out (the header's buttons, the sidebar, a link in a notice) saves the unsaved edit FIRST, and stays
   // if the engine refuses it: the edit is never dropped behind the owner's back (the 3d.2 review's HIGH 1).
   // Leaving without it is the owner's own choice (`force`). A deleted draft has nothing left to save.
-  useLeaveGuard(async (to) => {
+  useLeaveGuard(async (target) => {
     setLeaving(true);
     const flushed = await session.flush();
     if (!mounted.current) return true;
     setLeaving(false);
     if (flushed.ok || session.state.save.kind === "gone") return true;
-    setBlockedLeave(to);
+    // Where the owner meant to go last (clicks while the save was out change it).
+    setBlockedLeave(target());
     return false;
   });
   // Closing the window (⌘W) with an edit that is not saved yet: the close is held (Electron cancels it without a
@@ -330,7 +331,9 @@ function DraftEditor({
   // Closing the editor any way at all (even leaving without saving) sends whatever is still unsaved once more, and
   // the window keeps that save's promise: the same draft opened again is read only after it answered.
   const flushes = useDraftFlushes();
-  useEffect(() => () => flushes.track(montageId, session.flush()), [flushes, montageId, session]);
+  // After «Уйти без сохранения» the owner already chose: a failure of that last try is not told again on the reopen.
+  const leftBehind = useRef(false);
+  useEffect(() => () => flushes.track(montageId, session.flush(), { report: !leftBehind.current }), [flushes, montageId, session]);
 
   useEffect(() => {
     const onFocus = (): void => setFocusTick((n) => n + 1);
@@ -544,7 +547,14 @@ function DraftEditor({
                     <button type="button" className="btn btn-s" onClick={() => navigate(blockedLeave)}>
                       Сохранить и перейти
                     </button>
-                    <button type="button" className="btn btn-s btn-d" onClick={() => navigate(blockedLeave, { force: true })}>
+                    <button
+                      type="button"
+                      className="btn btn-s btn-d"
+                      onClick={() => {
+                        leftBehind.current = true;
+                        navigate(blockedLeave, { force: true });
+                      }}
+                    >
                       Уйти без сохранения
                     </button>
                   </>

@@ -44,6 +44,19 @@ describe("the flushes of closed editors", () => {
     expect(await flushes.settle("montage-0000001")).toBeNull();
   });
 
+  test("a save the owner chose to leave behind is waited for, but its failure is not told again", async () => {
+    const flushes = new DraftFlushes();
+    const old = deferred();
+    flushes.track("montage-0000001", old.promise, { report: false });
+    let lost: unknown = "unset";
+    void flushes.settle("montage-0000001").then((l) => (lost = l));
+    await settle();
+    expect(lost).toBe("unset");
+    old.resolve({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+    await settle();
+    expect(lost).toBeNull();
+  });
+
   test("a draft deleted meanwhile is not a lost edit: there is nothing to reopen", async () => {
     const flushes = new DraftFlushes();
     flushes.track("montage-0000001", Promise.resolve({ ok: false, error: { code: "NOT_FOUND" } }));
