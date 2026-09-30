@@ -21,6 +21,10 @@ export interface CommitOptions {
    * One version for a burst of the same edit (a slider drag, a trim handle): a keyed edit right after one with the
    * same key replaces the present instead of adding a version. The first keyed edit still adds one, so the state
    * before the burst stays one undo away.
+   *
+   * The key names ONE GESTURE, not a property: two drags of the same handle are two undo steps. So a caller either
+   * makes the key unique per gesture (e.g. `trim:clip-001:<pointerId>:<pointerdown time>`), or seals the gesture
+   * on pointerup with `sealVersion` (`DraftSession.endMerge`).
    */
   readonly mergeKey?: string;
   /** The cap on versions; `MAX_SPEC_VERSIONS` when absent. */
@@ -45,6 +49,11 @@ export function commitVersion<T>(h: History<T>, next: T, options: CommitOptions 
   const keep = Math.max(0, (options.limit ?? MAX_SPEC_VERSIONS) - 1);
   const past = [...h.past, h.present];
   return { past: past.slice(Math.max(0, past.length - keep)), present: next, future: [], mergeKey };
+}
+
+/** Ends a keyed burst (pointerup at the end of a drag): the next edit starts a new version even with the same key. */
+export function sealVersion<T>(h: History<T>): History<T> {
+  return h.mergeKey === null ? h : { ...h, mergeKey: null };
 }
 
 export function undoVersion<T>(h: History<T>): History<T> {

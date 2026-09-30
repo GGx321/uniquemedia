@@ -44,6 +44,16 @@ describe("edits, undo and redo", () => {
     expect(saves.sent().map((c) => c.spec)).toEqual([version(2), version(1), version(2)]);
   });
 
+  test("two drags of the same handle are two undo steps once the first one ends", () => {
+    const { session } = rig();
+    session.edit(version(1), { mergeKey: "trim" });
+    session.edit(version(2), { mergeKey: "trim" });
+    session.endMerge();
+    session.edit(version(3), { mergeKey: "trim" });
+    session.undo();
+    expect(session.state.spec).toEqual(version(2));
+  });
+
   test("undo and redo with nothing to do answer false and send nothing", () => {
     const { scheduler, saves, session } = rig();
     expect(session.undo()).toBe(false);

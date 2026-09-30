@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { canRedo, canUndo, commitVersion, MAX_SPEC_VERSIONS, redoVersion, startHistory, undoVersion, type History } from "./history";
+import { canRedo, canUndo, commitVersion, MAX_SPEC_VERSIONS, redoVersion, sealVersion, startHistory, undoVersion, type History } from "./history";
 
 // The editor's undo/redo (3d.2): at most 100 spec versions are kept in the renderer, a new edit drops the redo
 // branch, and an edit that changes nothing is not a version.
@@ -126,6 +126,21 @@ describe("merged edits: one version for a burst of the same edit (a slider drag)
     const undone = undoVersion(h);
     const after = commitVersion(undone, v(6), { mergeKey: "b" });
     expect(undoVersion(after).present).toEqual(v(4));
+  });
+
+  test("the end of a gesture seals it: a second drag with the same key is its own undo step", () => {
+    let h = commitVersion(startHistory(v(1)), v(2), { mergeKey: "clip-001.durationMs" });
+    h = commitVersion(h, v(3), { mergeKey: "clip-001.durationMs" });
+    h = sealVersion(h);
+    h = commitVersion(h, v(4), { mergeKey: "clip-001.durationMs" });
+    h = commitVersion(h, v(5), { mergeKey: "clip-001.durationMs" });
+    expect(undoVersion(h).present).toEqual(v(3));
+    expect(undoVersion(undoVersion(h)).present).toEqual(v(1));
+  });
+
+  test("sealing with nothing to seal changes nothing", () => {
+    const h = commitVersion(startHistory(v(1)), v(2));
+    expect(sealVersion(h)).toBe(h);
   });
 
   test("the first keyed edit is its own version: the state before it stays reachable", () => {

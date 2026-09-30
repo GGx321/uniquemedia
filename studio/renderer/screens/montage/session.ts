@@ -2,7 +2,7 @@ import { MontageDraft, MontageName, type Montage } from "../../../shared/engine"
 import type { Scheduler } from "../../engine/scheduler";
 import type { MontageChange } from "../../engine/store";
 import { DraftAutosave, type FlushResult, type SaveState, type SendSave } from "./autosave";
-import { canRedo, canUndo, commitVersion, type CommitOptions, type History, redoVersion, startHistory, undoVersion } from "./history";
+import { canRedo, canUndo, commitVersion, type CommitOptions, type History, redoVersion, sealVersion, startHistory, undoVersion } from "./history";
 
 // One open draft in the editor (3d.2): the undo/redo history of its spec (at most 100 versions, renderer only)
 // in front of the serialised autosave. Every task that edits the draft (the timeline 3d.3a/3d.3b, the preview
@@ -83,6 +83,11 @@ export class DraftSession {
     this.#history = commitVersion(this.#history, next, options);
     this.#push();
     return true;
+  }
+
+  /** The end of a gesture (pointerup): the next keyed edit is a new undo step even with the same `mergeKey`. */
+  endMerge(): void {
+    this.#history = sealVersion(this.#history);
   }
 
   undo(): boolean {
