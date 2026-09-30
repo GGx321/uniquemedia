@@ -8,7 +8,7 @@ import type { TextGate } from "./worker/textGate";
 useNativeGlobals();
 
 // The loader's own logic against the scripted worker (testing/scriptedTextWorker.ts): the real thread, with resvg,
-// is loaded through it by worker/textGate.real.test.ts, which runs apart from this suite (a Bun crash on terminating
+// is loaded through it by worker/textGate.real.node-test.ts, which runs apart from this suite (a Bun crash on terminating
 // a worker that runs wasm).
 
 const SCRIPT = fileURLToPath(new URL("./testing/scriptedTextWorker.ts", import.meta.url));

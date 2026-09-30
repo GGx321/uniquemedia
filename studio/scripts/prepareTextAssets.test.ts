@@ -45,7 +45,7 @@ describe("prepareTextAssets", () => {
   test("what it copies loads and passes the self-test, as the packaged engine will run it", async () => {
     const root = await tempDir();
     const paths = await prepareTextAssets(ROOT, { outRoot: root });
-    // In-process here; the worker thread that loads the same layout is exercised by text/worker/textGate.real.test.ts.
+    // In-process here; the worker thread that loads the same layout is exercised by text/worker/textGate.real.node-test.ts.
     const rasteriser = createTextRasteriser({ wasmPath: paths.wasmPath, fontDir: paths.fontDir });
     expect(await assertTextSelfTest(rasteriser)).toBe(SELF_TEST_FINGERPRINT);
   });

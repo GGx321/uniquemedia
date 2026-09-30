@@ -8,7 +8,7 @@ useNativeGlobals();
 
 // The text worker's lifecycle against a scripted worker (testing/scriptedTextWorker.ts) that speaks the real wire
 // protocol with no resvg: the deadline, terminate and respawn, the FIFO lane, crashes and protocol violations are
-// pinned in milliseconds. The real worker is pinned by textGate.real.test.ts.
+// pinned in milliseconds. The real worker is pinned by textGate.real.node-test.ts.
 
 const SCRIPT = fileURLToPath(new URL("../testing/scriptedTextWorker.ts", import.meta.url));
 /** A terminate is milliseconds; CI machines are slow, not seconds-slow. */
