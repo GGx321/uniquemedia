@@ -440,27 +440,42 @@ async function exited(worker: Worker | undefined): Promise<void> {
 
 describe("idle recycling: an idle worker's memory is given back", () => {
   test("a worker left idle for idleRecycleMs is terminated, by the gate's own recycle and not before the idle time is up", async () => {
-    // The gate's own `terminate` call is spied on: without it, a worker that died for any other reason would pass as "recycled".
+    // Two things are spied on. The gate's own `terminate`: without it, a worker that died for any other reason would pass as
+    // "recycled". And the moment the gate ARMS its idle timer (the one setTimeout with this test's unique delay): measured from
+    // there the idle time is exact, whereas any reading taken by the test after `check` returns includes however long the runner
+    // took to resume it (5.7 ms on a Windows runner, which failed a 35 ms bound).
+    const IDLE_MS = 47;
     let terminatedAt: number | null = null;
-    const h = harness({
-      idleRecycleMs: 40,
-      tamper: (worker) => {
-        const real = worker.terminate.bind(worker);
-        worker.terminate = () => {
-          terminatedAt ??= performance.now();
-          return real();
-        };
+    let armedAt: number | null = null;
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = Object.assign(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === IDLE_MS) armedAt ??= performance.now();
+        return realSetTimeout(...args);
       },
-    });
-    await h.gate.check(checkInput(), live());
-    // From the END of the check: the idle timer is armed when the lane is released, an instant before this line, so it cannot fire
-    // sooner than idleRecycleMs less that instant after it. (Measured from the check's start, a slow check alone would satisfy it.)
-    const idleFrom = performance.now();
-    expect(h.alive()).toBe(1);
-    await exited(h.workers[0]);
-    expect(h.alive()).toBe(0);
+      realSetTimeout,
+    );
+    try {
+      const h = harness({
+        idleRecycleMs: IDLE_MS,
+        tamper: (worker) => {
+          const real = worker.terminate.bind(worker);
+          worker.terminate = () => {
+            terminatedAt ??= performance.now();
+            return real();
+          };
+        },
+      });
+      await h.gate.check(checkInput(), live());
+      expect(h.alive()).toBe(1);
+      await exited(h.workers[0]);
+      expect(h.alive()).toBe(0);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
     expect(terminatedAt).not.toBeNull();
-    expect((terminatedAt ?? 0) - idleFrom).toBeGreaterThanOrEqual(35); // 40 ms, less the microtasks between arming the timer and idleFrom
+    expect(armedAt).not.toBeNull();
+    expect((terminatedAt ?? 0) - (armedAt ?? 0)).toBeGreaterThanOrEqual(IDLE_MS - 2); // less two milliseconds of timer granularity
   });
 
   test("the next check after a recycle respawns a worker and succeeds, with no overlap between the two workers", async () => {
