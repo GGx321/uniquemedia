@@ -75,7 +75,7 @@ import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
-import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
@@ -478,6 +478,18 @@ async function rendererBundleText(target: Target): Promise<string> {
   return files.map((p) => asarText(target, p.replace(/^\//, ""))).join("\n");
 }
 
+/** The shared chunks beside the entries (`out-studio/*.js`, where zod, the contract and the money core land), from disk or, packaged, the asar. */
+async function sharedChunkText(target: Target): Promise<string> {
+  if (target.asar === null) {
+    const dir = join(ROOT, "out-studio");
+    const files = (await readdir(dir)).filter((f) => f.endsWith(".js"));
+    return (await Promise.all(files.map((f) => readFile(join(dir, f), "utf8")))).join("\n");
+  }
+  const entries = listPackage(target.asar, { isPack: false }).map((p) => p.replaceAll("\\", "/"));
+  const files = entries.filter((p) => /^\/out-studio\/[^/]+\.js$/.test(p));
+  return files.map((p) => asarText(target, p.replace(/^\//, ""))).join("\n");
+}
+
 /** The renderer's built CSS (fonts.css once Vite resolves it), read the same way as rendererBundleText's JS. */
 async function rendererCssText(target: Target): Promise<string> {
   if (target.asar === null) {
@@ -491,11 +503,13 @@ async function rendererCssText(target: Target): Promise<string> {
 }
 
 /** Every debug door compiled out of a production build's bundles (bundleChecks.ts), wherever they were read from. */
-function checkProductionBundles(where: string, main: string, engine: string, preload: string, renderer: string, rendererCss: string): void {
+function checkProductionBundles(where: string, main: string, engine: string, preload: string, renderer: string, rendererCss: string, sharedChunks: string): void {
   const mainProblems = productionMainProblems(main);
   check(`${where}: main has every debug door compiled out (no test switch, no env renderer URL, DevTools off, remote debugging refused)`, mainProblems.length === 0, mainProblems);
   const engineProblems = productionEngineProblems(engine);
   check(`${where}: the engine was built without the E2E flag (no base-URL override)`, engineProblems.length === 0, engineProblems);
+  const timingProblems = productionMoneyTimingProblems(sharedChunks);
+  check(`${where}: the money timings are the production ones (the E2E build's shortened reconcile wait and request timeout are compiled out)`, timingProblems.length === 0, timingProblems);
   check(`${where}: a preload bundle was read`, preload.length > 0);
   const preloadProblems = productionBundleProblems(preload);
   check(`${where}: preload has every debug door compiled out`, preloadProblems.length === 0, preloadProblems);
@@ -580,6 +594,7 @@ async function productionCheck(target: Target): Promise<void> {
       await readFile(join(ROOT, "out-studio", "preload", "preload.cjs"), "utf8"),
       await rendererBundleText(target),
       await rendererCssText(target),
+      await sharedChunkText(target),
     );
     const builtTextAssets = [
       ...(await readdir(join(ROOT, "out-studio", "engine", "fonts")).catch(() => [])).map((f) => `/out-studio/engine/fonts/${f}`),
@@ -611,6 +626,7 @@ async function productionCheck(target: Target): Promise<void> {
     asarText(target, join("out-studio", "preload", "preload.cjs")),
     await rendererBundleText(target),
     await rendererCssText(target),
+    await sharedChunkText(target),
   );
   const packagedEntries = new Set(listPackage(target.asar, { isPack: false }).map((p) => p.replaceAll("\\", "/")));
   checkTextWorker(
@@ -883,9 +899,9 @@ async function runAvatarScenario(target: Target): Promise<void> {
     );
 
     // 9. money.reconcile against the mock's /credits: a bounded poll for the
-    // reconcile wait (studio/engine/money/reconcile.ts's RECONCILE_QUIET_MS,
-    // 2 minutes) to pass, never a fixed sleep past what the engine itself
-    // reports. Thanks to the baseline reconcile above, this is a real
+    // reconcile wait (studio/engine/money/reconcile.ts's RECONCILE_QUIET_MS:
+    // 2 minutes in production, 5 s in this E2E build) to pass, never a fixed
+    // sleep past what the engine itself reports. Thanks to the baseline reconcile above, this is a real
     // comparison (M2 of the whole-slice review), not the "no baseline"
     // branch: creditsDeltaMicros is /credits' usage since that baseline —
     // exactly the mock's charged total — checked against the ledger total
@@ -897,7 +913,7 @@ async function runAvatarScenario(target: Target): Promise<void> {
         if (field(r, "ok") !== true || field(r, "result", "status") === "too-early") return null;
         return r;
       },
-      170_000,
+      60_000,
     );
     check(
       "avatar scenario: money.reconcile against the mock's /credits is a real comparison — the delta equals the mock's charged total and the ledger total, and mismatch is false",
@@ -1446,9 +1462,9 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     // RECONCILE_REQUIRED until the owner reconciles. A bounded poll of
     // money.reconcile past its own quiet window (money/reconcile.ts's
     // RECONCILE_QUIET_MS after REQUEST_TIMEOUT_MS since this engine opened
-    // the ledger — the same wait a real kill -9 would force on the owner):
-    // a known >= 300 s floor, so a 3 s poll interval finds it just as
-    // promptly as the default 200 ms would, for a fraction of the calls.
+    // the ledger — the same wait a real kill -9 would force on the owner;
+    // 300 s in production, 20 s in this E2E build): a 1 s poll interval
+    // finds it promptly for a modest number of calls.
     const reconciledAfterKill = await waitFor(
       "money.reconcile past its quiet window (invariant 4: nothing more is spent until reconciled)",
       async () => {
@@ -1456,8 +1472,8 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
         if (field(r, "ok") !== true || field(r, "result", "status") === "too-early") return null;
         return r;
       },
-      340_000,
-      3_000,
+      90_000,
+      1_000,
     );
     check("run scenario: money.reconcile closes the reserve the kill left open, before any more paid calls", field(reconciledAfterKill, "result", "status") === "done", reconciledAfterKill);
 

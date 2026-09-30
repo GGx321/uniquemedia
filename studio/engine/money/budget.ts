@@ -1,3 +1,4 @@
+import { STUDIO_E2E } from "../buildFlags";
 import { MoneyError } from "./errors";
 import { isAttemptId, type Clock, type Ledger, type LedgerLine, type Scope } from "./ledger";
 import { reconcileLedger, type CreditsFetcher, type ReconcileResult } from "./reconcile";
@@ -5,8 +6,12 @@ import { reconcileLedger, type CreditsFetcher, type ReconcileResult } from "./re
 /** The contract's attempt id rule, defined with the ledger that stores the ids. */
 export { isAttemptId };
 
-/** The client's request timeout (T3): an open reserve's request may have run this long after its `at`. */
-export const REQUEST_TIMEOUT_MS = 180_000;
+/**
+ * The client's request timeout (T3): an open reserve's request may have run this long after its `at`.
+ * An E2E build (never a shipped one: the flag is a build-time constant) shrinks it, and RECONCILE_QUIET_MS with it, so
+ * the packaged smoke does not wait out minutes of real time for a reconcile (the mock answers in well under a second).
+ */
+export const REQUEST_TIMEOUT_MS = STUDIO_E2E ? 15_000 : 180_000;
 
 export interface BudgetLimits {
   /** One cap for every scope, or a cap per scope (a run's plan worst case, an avatar job's worst case). */

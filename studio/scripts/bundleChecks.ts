@@ -114,6 +114,19 @@ export function productionMainProblems(main: string): string[] {
 }
 
 /**
+ * Problems with the money timings in a production build's shared chunks (every `out-studio/*.js` beside the entries): an
+ * E2E build shortens the reconcile wait and the request timeout so its smoke does not wait minutes (STUDIO_E2E in
+ * money/budget.ts and money/reconcile.ts); a production build must carry the real 120 s and 180 s, with the shortened
+ * branch folded away. Both must be found (a renamed constant fails here, not silently passes).
+ */
+export function productionMoneyTimingProblems(chunks: string): string[] {
+  const problems: string[] = [];
+  if (!/\bRECONCILE_QUIET_MS = (12e4|120000)\b/.test(chunks)) problems.push("RECONCILE_QUIET_MS is not the production 120 s (or was not found)");
+  if (!/\bREQUEST_TIMEOUT_MS = (18e4|180000)\b/.test(chunks)) problems.push("REQUEST_TIMEOUT_MS is not the production 180 s (or was not found)");
+  return problems;
+}
+
+/**
  * Problems with out-studio/engine/main.js of a production build (invariant 13): neither the OpenRouter nor the flashapi
  * base URL may be overridable. Each must be the one call with the build flag folded to `false`; a bundle that lost the
  * call altogether is a problem too, since the rule then cannot be read from it.

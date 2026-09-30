@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionRendererCssProblems, relativeImportsOf, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, relativeImportsOf, textWorkerProblems } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -100,6 +100,32 @@ describe("productionMainProblems: the remote-debugging refusal must match one st
     // but this pins the exact reason it is allowed.
     expect(CLEAN_MAIN).toContain('app.commandLine.getSwitchValue("user-data-dir")');
     expect(productionMainProblems(CLEAN_MAIN).some((p) => p.includes("accesses commandLine"))).toBe(false);
+  });
+});
+
+describe("productionMoneyTimingProblems: an E2E build's shortened money timings never reach a production build", () => {
+  const PRODUCTION = "var RECONCILE_QUIET_MS = 12e4;\nvar REQUEST_TIMEOUT_MS = 18e4;";
+
+  test("passes the production values, as the bundler prints them", () => {
+    expect(productionMoneyTimingProblems(PRODUCTION)).toEqual([]);
+    expect(productionMoneyTimingProblems("var RECONCILE_QUIET_MS = 120000;\nvar REQUEST_TIMEOUT_MS = 180000;")).toEqual([]);
+  });
+
+  test("flags the E2E values (the shortened branch was not folded away)", () => {
+    expect(productionMoneyTimingProblems("var RECONCILE_QUIET_MS = 5e3;\nvar REQUEST_TIMEOUT_MS = 15e3;")).toEqual([
+      "RECONCILE_QUIET_MS is not the production 120 s (or was not found)",
+      "REQUEST_TIMEOUT_MS is not the production 180 s (or was not found)",
+    ]);
+  });
+
+  test("flags a ternary that survived, and a value that is 120 s plus something", () => {
+    expect(productionMoneyTimingProblems("var RECONCILE_QUIET_MS = STUDIO_E2E ? 5e3 : 12e4;\nvar REQUEST_TIMEOUT_MS = 18e4;")).toEqual(["RECONCILE_QUIET_MS is not the production 120 s (or was not found)"]);
+    expect(productionMoneyTimingProblems("var RECONCILE_QUIET_MS = 12e45;\nvar REQUEST_TIMEOUT_MS = 18e4;")).toEqual(["RECONCILE_QUIET_MS is not the production 120 s (or was not found)"]);
+  });
+
+  test("flags a constant that cannot be found at all", () => {
+    expect(productionMoneyTimingProblems("")).toHaveLength(2);
+    expect(productionMoneyTimingProblems("var OTHER_QUIET_MS = 12e4;\nvar OTHER_TIMEOUT_MS = 18e4;")).toHaveLength(2);
   });
 });
 

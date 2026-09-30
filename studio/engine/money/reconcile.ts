@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { STUDIO_E2E } from "../buildFlags";
 import type { Budget } from "./budget";
 import type { Clock, Ledger, LedgerLine } from "./ledger";
 import { costToMicros } from "./settleRule";
 
-/** `/credits` usage lags; reconcile waits this long after the last activity. */
-export const RECONCILE_QUIET_MS = 120_000;
+/** `/credits` usage lags; reconcile waits this long after the last activity. Shorter in an E2E build only (see REQUEST_TIMEOUT_MS). */
+export const RECONCILE_QUIET_MS = STUDIO_E2E ? 5_000 : 120_000;
 
 /** `/credits` is account-wide: a difference above $0.01 from the ledger is flagged as a mismatch. */
 export const RECONCILE_TOLERANCE_MICROS = 10_000;
