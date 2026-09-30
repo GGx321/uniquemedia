@@ -2248,7 +2248,7 @@ describe("the export folder's status (task 3a.8a)", () => {
       const responses = await Promise.all(Array.from({ length: 10 }, () => engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }))));
       expect(responses.every((r) => !r.ok && r.error.code === "EXPORT_UNAVAILABLE")).toBe(true);
       expect(stats - before).toBe(1);
-      expect(Date.now() - started).toBeLessThan(40 * 4);
+      expect(Date.now() - started).toBeLessThan(40 * 8); // ten serial timeouts would take 400
     } finally {
       errors.mockRestore();
     }
@@ -2270,11 +2270,15 @@ describe("the export folder's status (task 3a.8a)", () => {
   test("a check that timed out does not block the next one once the volume answers", async () => {
     await mkdir(join(dir, "export"));
     let hang = true;
+    // The timeout is read at each check: short for the hung one, and one that cannot race for the real check that follows
+    // (a slow runner's real disk answers in more than 30 ms, and that would be read as "not writable").
+    let timeoutMs = 30;
     const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, stat: (path) => (hang ? new Promise<never>(() => undefined) : NODE_EXPORT_ROOT_FS.stat(path)) };
     const errors = spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: 30 });
+      const { engine } = await startEngine({}, { exportRootFs, exportCheckTimeoutMs: () => timeoutMs });
       hang = false;
+      timeoutMs = 60_000;
       await engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }));
       expect(await statusNow(engine)).toEqual({ status: "ok" });
     } finally {

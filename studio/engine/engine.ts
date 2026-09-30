@@ -115,8 +115,8 @@ export interface EngineDeps {
   folderFs?: FolderFs;
   /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
   exportRootFs?: ExportRootFs;
-  /** Bounds each export folder check; EXPORT_CHECK_TIMEOUT_MS unless a test says otherwise. */
-  exportCheckTimeoutMs?: number;
+  /** Bounds each export folder check; EXPORT_CHECK_TIMEOUT_MS unless a test says otherwise. A function is asked at the start of each check (a test gives a hung check a short bound and the real check after it one that cannot race). */
+  exportCheckTimeoutMs?: number | (() => number);
   /**
    * Whether the export folder's VOLUME folds letter case, asked per folder (3a.8b.1): a probe file and its case-flipped
    * name, not the platform's guess (APFS can be case-sensitive). The real probe unless a test plays a volume.
@@ -422,7 +422,7 @@ export class Engine {
   #exportChain: Promise<unknown> = Promise.resolve();
   /** The latest queued check that has not started yet, with the size estimate it carries (or none); a later caller asking for exactly the same joins it. */
   #queuedExport: { readonly run: Promise<ExportRootCheck>; readonly requiredBytes: number | undefined } | null = null;
-  readonly #exportCheckTimeoutMs: number;
+  readonly #exportCheckTimeoutMs: () => number;
   readonly #preflight: (signal: AbortSignal) => Promise<void>;
   readonly #preflightTimeoutMs: number;
   readonly #liveLibraryIdentityTimeoutMs: number;
@@ -534,7 +534,8 @@ export class Engine {
     this.#deps = deps;
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
-    this.#exportCheckTimeoutMs = deps.exportCheckTimeoutMs ?? EXPORT_CHECK_TIMEOUT_MS;
+    const checkTimeout = deps.exportCheckTimeoutMs ?? EXPORT_CHECK_TIMEOUT_MS;
+    this.#exportCheckTimeoutMs = typeof checkTimeout === "function" ? checkTimeout : () => checkTimeout;
     this.#caseProbe = deps.caseProbe ?? new CaseSensitivityProbe();
     this.#defaultExportPath = init.defaultExportPath ?? null;
     this.#preflight = deps.preflightDownscale ?? preflightDownscale;
@@ -1612,7 +1613,7 @@ export class Engine {
   /** One bounded check; never rejects. */
   async #checkExportOnce(requiredBytes: number | undefined): Promise<ExportRootCheck> {
     const exportPath = this.#settings.exportPath;
-    const timeout = timeoutSignal(this.#exportCheckTimeoutMs);
+    const timeout = timeoutSignal(this.#exportCheckTimeoutMs());
     let check: ExportRootCheck;
     try {
       check = await untilAborted(
