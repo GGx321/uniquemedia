@@ -778,14 +778,9 @@ test("runs.list answers an empty list through the validating client before any r
 });
 
 // Stage 3 task 3a.1 added the montage and video commands; 3d.1b gives the mock the engine's behaviour for the montage commands
-// (mockEngine.montages.test.ts) and for the video commands (mockEngine.videos.test.ts). What is left answers exactly what the
-// real engine answers for a command it does not implement yet.
-test.each([
-  ["videos.render", { montageId: "montage-00000001" }],
-  ["videos.cancel", { jobId: "job-00000004" }],
-  ["videos.list", { avatarId: "avatar-0001" }],
-  ["videos.delete", { videoId: "video-00000001", mode: "video" }],
-] as const)("%s answers the typed INTERNAL refusal the real engine gives, and the mock keeps working", async (type, payload) => {
+// (mockEngine.montages.test.ts) and for the video commands (mockEngine.videos.test.ts). `videos.reveal` is main's own command (it
+// opens the OS file manager), so no engine handles it: the mock answers what a build with no handler for it answers.
+test.each([["videos.reveal", { videoId: "video-00000001" }]] as const)("%s answers the typed INTERNAL refusal the real engine gives, and the mock keeps working", async (type, payload) => {
   const { client } = makeMock();
   const reply = await client.request(type, payload);
   expect(reply).toMatchObject({ ok: false, error: { code: "INTERNAL" } });

@@ -11,6 +11,8 @@ import {
   type Draft,
   type EngineError,
   type EngineNotice,
+  type ExportStatus,
+  type ExportUnavailableReason,
   type Estimate,
   EventLog,
   type EventMessage,
@@ -32,6 +34,7 @@ import {
   PROTOCOL_VERSION,
   type ReconcileReason,
   type ReconcileResult,
+  type RenderConcurrency,
   type RenderResult,
   type ResponseMessage,
   type RunRequest,
@@ -43,9 +46,11 @@ import {
   type UnsequencedEvent,
   type VideoSummary,
 } from "../../shared/engine";
+import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
-import { defaultSpec, notYetSupportedIssues } from "../../shared/montage";
+import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, totalFrames } from "../../shared/montage";
 import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
+import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -130,6 +135,16 @@ const MOCK_UNCHECKED_EVERY = 5;
 
 const START_OF_TIME = Date.UTC(2026, 8, 24, 10, 0, 0);
 
+/**
+ * A mock render announces this many progress steps (each `stepMs` apart, never reaching the total) before its saving phase, and
+ * commits one step after that. The real engine's steps follow ffmpeg's frames (two passes folded into one range), so their count
+ * differs: an intended difference the parity suite normalises.
+ */
+export const MOCK_RENDER_STEPS = 4;
+
+/** How many finished renders the snapshot keeps listing: the real registry's `KEEP_FINISHED`. */
+const MOCK_KEEP_FINISHED_RENDERS = 50;
+
 /** Where the mock's focus resolver puts the subject of a photo its face gate scored (the real one detects a face; the mock never looks at a pixel). */
 export const MOCK_FOCUS = { x: 0.5, y: 0.35 } as const;
 
@@ -158,6 +173,8 @@ export interface MockEngineOptions {
   stepMs?: number;
   apiKey?: ApiKeyStatus;
   musicKey?: MusicKeyStatus;
+  /** How many renders run at once (the setting's own values); «auto» is ONE in the mock, so a second render is visibly queued. */
+  renderConcurrency?: RenderConcurrency;
   eventCapacity?: number;
   avatars?: AvatarSummary[];
   drafts?: Draft[];
@@ -294,6 +311,8 @@ interface MockRenderJob {
   total: number;
   /** The commit has passed its point of no return: a cancel is ignored from here. */
   saving: boolean;
+  /** A cancel was accepted while running: the job ends when its work has stopped, a moment later. */
+  cancelling: boolean;
   error: EngineError | null;
   result: RenderResult | null;
   timers: (() => void)[];
@@ -482,6 +501,14 @@ export class MockEngine implements EngineBridge {
   /** Committed videos, oldest first; `videos.list` answers newest first. */
   private videos: MockVideo[] = [];
   private renderJobs: MockRenderJob[] = [];
+  /** The export folder as the disk has it, and as the last CHECK found it (the snapshot and `export.status` follow checks only). */
+  private exportDisk: ExportStatus = { status: "ok" };
+  private exportReported: ExportStatus = { status: "ok" };
+  private exportFreeBytes: number | null = null;
+  private renderQueueLimit = MOCK_MAX_UNFINISHED_RENDERS;
+  /** Files in the export folder (their `relPath`): «Удалить запись» leaves the file, so its name stays taken. */
+  private readonly exportFiles = new Set<string>();
+  private nextRenderFailure: EngineError | null = null;
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -501,7 +528,7 @@ export class MockEngine implements EngineBridge {
       concurrency: { network: options.concurrency ?? 6 },
       imageAgeCheck: options.imageAgeCheck ?? "off",
       exportPath: "/Users/studio/Studio/export",
-      renderConcurrency: "auto",
+      renderConcurrency: options.renderConcurrency ?? "auto",
     };
     this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.drafts = options.drafts ?? [];
@@ -727,6 +754,34 @@ export class MockEngine implements EngineBridge {
     this.skippedDrafts = Math.max(0, count);
   }
 
+  /**
+   * The export folder's state on the disk (a drive unplugged, a folder removed). Nothing is announced: like the real engine, the
+   * mock learns of it at its next check (a render attempt, `videos.list`, `videos.delete`) and only then tells the windows.
+   */
+  setExportDisk(status: ExportStatus): void {
+    this.exportDisk = status;
+  }
+
+  /** Free space in the export folder: a render whose upper size estimate needs twice this much is refused `not-enough-space` (for that render only; the status stays `ok`). `null`: plenty. */
+  setExportFreeBytes(bytes: number | null): void {
+    this.exportFreeBytes = bytes;
+  }
+
+  /** How many renders may be queued or running together before `videos.render` answers RENDER_QUEUE_FULL; the real queue's is 20. */
+  setRenderQueueLimit(limit: number): void {
+    this.renderQueueLimit = limit;
+  }
+
+  /** What a check of this video's file finds from now on (`missing`, `changed`, `elsewhere`); `null` restores `present`. */
+  setVideoFileState(videoId: string, state: FileState | null): void {
+    this.videos = this.videos.map((v) => (v.summary.videoId === videoId ? { ...v, fileState: state } : v));
+  }
+
+  /** The next render that reaches its saving step fails with `error` instead of committing: no video, and its photos leave the reservation. */
+  failNextRender(error: EngineError): void {
+    this.nextRenderFailure = error;
+  }
+
   /** Undoes `removeMaster`. */
   restoreMaster(avatarId: string): void {
     this.mastersMissing.delete(avatarId);
@@ -826,6 +881,12 @@ export class MockEngine implements EngineBridge {
       for (const cancel of job.cancelTimers) cancel();
       if (job.status === "queued" || job.status === "running") job.status = "cancelled";
     }
+    // The renders of the old process are gone with their reservations; the videos and the drafts are on disk and stay.
+    for (const job of this.renderJobs.filter(isActive)) {
+      for (const cancel of job.timers) cancel();
+      this.movingUsage(job.avatarId, job.photoIds, () => void (job.status = "cancelled"));
+    }
+    this.renderJobs = [];
     this.boot += 1;
     this.log = new EventLog(this.capacity, this.bootId());
     if (this.reserves.size > 0 && !this.reconcileReasons.includes("open-reserves")) {
@@ -889,7 +950,8 @@ export class MockEngine implements EngineBridge {
         this.emitSettingsChanged();
         return this.ok(c, this.settings);
       case "settings.setLibraryPath":
-        if (this.running().length > 0) return this.fail(c, { code: "IN_FLIGHT" });
+        // A library switch is refused while any job, a render included, is queued or running.
+        if (this.running().length > 0 || this.renderJobs.some(isActive)) return this.fail(c, { code: "IN_FLIGHT" });
         if (c.payload.path !== this.settings.libraryPath) this.librarySwitchGeneration += 1;
         this.settings = { ...this.settings, libraryPath: c.payload.path };
         this.emitSettingsChanged();
@@ -1081,7 +1143,7 @@ export class MockEngine implements EngineBridge {
         // NOT_FOUND only for an id the library does not have at all: a draft, an active and an archived avatar all get their list.
         const known = this.libraryOpen && (this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId));
         if (!known) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-        const photos = this.photos.filter((p) => p.avatarId === avatarId).reverse().slice(0, MAX_LISTED_PHOTOS);
+        const photos = this.photos.filter((p) => p.avatarId === avatarId).reverse().slice(0, MAX_LISTED_PHOTOS).map((p) => this.photoView(p));
         return this.ok(c, { photos, skippedTotal: this.skippedPhotos[avatarId] ?? 0 });
       }
       case "runs.list":
@@ -1166,14 +1228,18 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
       }
       case "videos.render":
+        return this.videosRender(c, c.payload);
       case "videos.cancel":
+        return this.videosCancel(c, c.payload.jobId);
       case "videos.list":
+        return this.videosList(c, c.payload.avatarId);
       case "videos.delete":
+        return this.videosDelete(c, c.payload);
       case "videos.reveal":
       case "music.status":
       case "music.refresh":
-        // Stage 3, task 3a.1: the contract exists, the behaviour comes with its slices (mock parity: task 3d.1b).
-        // Until then the mock refuses exactly as the real engine does for a command it does not implement yet.
+        // Music parity comes with its engine (3c.4); the mock, like main and the engine for `videos.reveal`, has no handler yet.
+        // Main handles `videos.reveal` itself (it opens the OS file manager); no engine does.
         return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
       case "montages.create":
         return this.montagesCreate(c, c.payload);
@@ -1192,11 +1258,13 @@ export class MockEngine implements EngineBridge {
         const { avatarId, photoId, rejected } = c.payload;
         const photo = this.libraryOpen ? this.photos.find((p) => p.photoId === photoId && p.avatarId === avatarId) : undefined;
         if (photo === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene photo ${photoId} of avatar ${avatarId} in the open library` });
-        if (photo.rejected === rejected) return this.ok(c, { photo });
+        if (photo.rejected === rejected) return this.ok(c, { photo: this.photoView(photo) });
         const updated: PhotoSummary = { ...photo, rejected, eligible: !rejected };
+        // A photo that is in a video or held by a render was not counted as eligible and unused, and is not now: the count moves only for a free one.
+        const free = !this.photoView(photo).used && !this.photoView(photo).reserved;
         this.photos = this.photos.map((p) => (p === photo ? updated : p));
-        this.shiftEligibleUnused(avatarId, rejected ? -1 : 1);
-        return this.ok(c, { photo: updated });
+        this.shiftEligibleUnused(avatarId, free ? (rejected ? -1 : 1) : 0);
+        return this.ok(c, { photo: this.photoView(updated) });
       }
       case "engine.snapshot":
         return this.ok(c, this.snapshot());
@@ -1421,6 +1489,298 @@ export class MockEngine implements EngineBridge {
     const known = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photo.photoId);
     if (known === undefined || !known.eligible) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] });
     return this.ok(c, { focus: this.focusOf(avatarId, photo.photoId) });
+  }
+
+  // ---------- videos and render jobs (3d.1b) ----------
+  //
+  // The real engine's `VideoService` and render queue, over the mock's own data. `videos.render` checks in the engine's order (the
+  // draft, the spec, the export folder, the avatar, the photos, the queue) and only then reserves; the job is `queued` until a pool
+  // slot frees, `running` through `MOCK_RENDER_STEPS` progress steps, `saving` (a cancel is ignored from there), and commits a
+  // record before it ends. Every step announces itself in the order the engine's events come. The video is a record only: the
+  // mock makes no file, and `bytes` is the montage's expected size.
+
+  private renderPoolSize(): number {
+    const setting = this.settings.renderConcurrency;
+    return setting === "auto" ? 1 : setting;
+  }
+
+  /** Keeps the export folder's status and, when a check finds it CHANGED, tells the windows (`export.status`); the first look of an engine's life is the baseline the snapshot carries. */
+  private setReportedExport(next: ExportStatus): void {
+    const before = this.exportReported;
+    this.exportReported = next;
+    const same = before.status === next.status && (before.status === "ok" || (next.status === "unavailable" && before.reason === next.reason));
+    if (!same) this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "export.status", payload: { exportStatus: next } });
+  }
+
+  /**
+   * One check of the export folder, as the engine makes it at a render attempt, a listing and a delete. `requiredBytes` (a render's
+   * upper size estimate) also asks for twice that free: not enough room refuses THAT render and is never the status every window shows.
+   */
+  private checkExport(requiredBytes?: number): ExportUnavailableReason | null {
+    const disk = this.exportDisk;
+    let reason: ExportUnavailableReason | null = disk.status === "unavailable" ? disk.reason : null;
+    if (reason === null && requiredBytes !== undefined && this.exportFreeBytes !== null && this.exportFreeBytes < requiredBytes * 2) reason = "not-enough-space";
+    if (requiredBytes === undefined || reason !== "not-enough-space") this.setReportedExport(reason === null ? { status: "ok" } : { status: "unavailable", reason });
+    return reason;
+  }
+
+  /** Where a video's file stands, as the check that just ran found it: a folder that cannot be looked in reads `elsewhere`. */
+  private fileStateOf(video: MockVideo): FileState {
+    if (this.exportReported.status === "unavailable") return "elsewhere";
+    return video.fileState ?? "present";
+  }
+
+  private adjustAvatar(avatarId: string, delta: { videoCount?: number; eligibleUnused?: number }): void {
+    this.avatars = this.avatars.map((a) =>
+      a.avatarId === avatarId
+        ? { ...a, videoCount: Math.max(0, a.videoCount + (delta.videoCount ?? 0)), eligibleUnusedCount: Math.max(0, a.eligibleUnusedCount + (delta.eligibleUnused ?? 0)) }
+        : a,
+    );
+  }
+
+  /** Tells the windows the avatar's counts moved (`avatar.changed`). */
+  private announceAvatar(avatarId: string): void {
+    const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+    if (avatar !== undefined) this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });
+  }
+
+  /** Runs `change`, then moves the avatar's eligibleUnusedCount by the photos it made usable or unusable (silently: the caller announces). */
+  private movingUsage(avatarId: string, photoIds: readonly string[], change: () => void): void {
+    const usable = (): number => photoIds.filter((photoId) => this.photoUsable(avatarId, photoId)).length;
+    const before = usable();
+    change();
+    this.adjustAvatar(avatarId, { eligibleUnused: usable() - before });
+  }
+
+  private liveDraft(montageId: string | null): string | null {
+    return montageId !== null && this.montages.has(montageId) ? montageId : null;
+  }
+
+  private videosRender(c: CommandMessage, payload: { montageId: string } | { spec: MontageDraft }): ResponseMessage {
+    let montageId: string | null = null;
+    let spec: MontageDraft;
+    if ("montageId" in payload) {
+      // A saved draft is read first: a draft that is gone refuses before anything else is looked at.
+      const gone = this.libraryGate();
+      if (gone) return this.fail(c, gone);
+      const draft = this.montages.get(payload.montageId);
+      if (draft === undefined) return this.fail(c, this.unknownDraft(payload.montageId));
+      montageId = draft.montageId;
+      spec = draft.spec;
+    } else {
+      spec = payload.spec;
+    }
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
+    if (issues.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues });
+    const reason = this.checkExport(estimateBytesUpper(spec.clips));
+    if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
+    const refusal = this.libraryGate() ?? this.activeAvatarRefusal(spec.avatarId);
+    if (refusal) return this.fail(c, refusal);
+    const cells = sceneCells(spec);
+    const unavailable = cells.filter((cell) => !this.photoUsable(spec.avatarId, cell.photoId));
+    if (unavailable.length > 0) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable" as const, path: cell.path })) });
+    if (this.renderJobs.filter(isActive).length >= this.renderQueueLimit) {
+      return this.fail(c, { code: "RENDER_QUEUE_FULL", detail: `the render queue is full: ${this.renderQueueLimit} renders are already queued or running` });
+    }
+
+    const job: MockRenderJob = {
+      jobId: this.nextId("job"),
+      videoId: this.nextId("video"),
+      avatarId: spec.avatarId,
+      montageId,
+      spec,
+      photoIds: cells.map((cell) => cell.photoId),
+      status: "queued",
+      done: 0,
+      total: totalFrames(spec.clips),
+      saving: false,
+      cancelling: false,
+      error: null,
+      result: null,
+      timers: [],
+    };
+    // The photos are reserved now: the avatar's eligibleUnusedCount moved.
+    this.movingUsage(job.avatarId, job.photoIds, () => void this.renderJobs.push(job));
+    this.pumpRenders();
+    // A render that has to wait is announced now; one that started already was, by its start.
+    if (job.status === "queued") this.emitRenderProgress(job);
+    this.announceAvatar(job.avatarId);
+    return this.ok(c, { jobId: job.jobId, videoId: job.videoId });
+  }
+
+  private emitRenderProgress(job: MockRenderJob): void {
+    this.emit({
+      v: PROTOCOL_VERSION,
+      id: this.nextId("evt"),
+      kind: "event",
+      type: "job.progress",
+      payload: { kind: "render", jobId: job.jobId, videoId: job.videoId, avatarId: job.avatarId, montageId: job.montageId, done: job.done, total: job.total, ...(job.saving ? { saving: true } : {}) },
+    });
+  }
+
+  /** Starts the queued renders that fit the pool, first in, first out. */
+  private pumpRenders(): void {
+    for (;;) {
+      if (this.renderJobs.filter((j) => j.status === "running").length >= this.renderPoolSize()) return;
+      const next = this.renderJobs.find((j) => j.status === "queued");
+      if (next === undefined) return;
+      this.startRenderJob(next);
+    }
+  }
+
+  /** The job's clock: the start is announced at zero, then `MOCK_RENDER_STEPS` steps that never reach the total, the saving phase, and the commit. */
+  private startRenderJob(job: MockRenderJob): void {
+    job.status = "running";
+    this.emitRenderProgress(job);
+    const advance = (step: number): void => {
+      job.timers.push(
+        this.scheduler.schedule(this.stepMs, () => {
+          if (step <= MOCK_RENDER_STEPS) {
+            job.done = Math.floor((job.total * step) / (MOCK_RENDER_STEPS + 1));
+            this.emitRenderProgress(job);
+            advance(step + 1);
+          } else if (step === MOCK_RENDER_STEPS + 1) {
+            job.saving = true;
+            this.emitRenderProgress(job);
+            advance(step + 1);
+          } else {
+            this.commitRender(job);
+          }
+        }),
+      );
+    };
+    advance(1);
+  }
+
+  /** The commit: the record lands (and the window is told, before the job ends), then the job ends `done`. A scripted failure ends it `failed` instead. */
+  private commitRender(job: MockRenderJob): void {
+    const failure = this.nextRenderFailure;
+    if (failure !== null) {
+      this.nextRenderFailure = null;
+      this.endRender(job, "failed", failure);
+      return;
+    }
+    const { spec } = job;
+    const avatar = this.avatars.find((a) => a.avatarId === job.avatarId);
+    const kind = videoKindOf(spec.clips);
+    const relPath = mockRelPath(mockFolderName(avatar?.name ?? "", job.avatarId), new Date(this.clock).toISOString().slice(0, 10), kind, this.exportFiles);
+    this.exportFiles.add(relPath);
+    const durationMs = spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
+    const bytes = estimateBytes(spec.clips);
+    const montageId = this.liveDraft(job.montageId);
+    const summary: VideoSummary = {
+      videoId: job.videoId,
+      avatarId: job.avatarId,
+      kind,
+      durationMs,
+      bytes,
+      createdAt: this.nowIso(),
+      relPath,
+      fileState: "present",
+      montageId,
+      photoCount: job.photoIds.length,
+      music: null,
+      hasPoster: false,
+    };
+    this.videos.push({ summary, photoIds: job.photoIds, montageId, fileState: null });
+    this.adjustAvatar(job.avatarId, { videoCount: 1 });
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "upserted", video: summary } });
+    this.announceAvatar(job.avatarId);
+
+    job.status = "done";
+    job.done = job.total;
+    job.result = { kind: "render", videoId: job.videoId, avatarId: job.avatarId, bytes, durationMs, videoKind: kind, relPath };
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: job.result } });
+    this.announceAvatar(job.avatarId);
+    this.trimFinishedRenders();
+    this.pumpRenders();
+  }
+
+  /** A render that ends without a video: its photos leave the reservation, then the window is told, then the next queued render starts. */
+  private endRender(job: MockRenderJob, status: "cancelled" | "failed", error?: EngineError): void {
+    for (const cancel of job.timers) cancel();
+    job.timers = [];
+    this.movingUsage(job.avatarId, job.photoIds, () => {
+      job.status = status;
+      job.error = error ?? null;
+    });
+    const ref = { kind: "render" as const, jobId: job.jobId, videoId: job.videoId, avatarId: job.avatarId, montageId: job.montageId };
+    if (status === "failed") this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { ...ref, error: error ?? { code: "INTERNAL", detail: "the render failed" } } });
+    else this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: ref });
+    this.announceAvatar(job.avatarId);
+    this.trimFinishedRenders();
+    this.pumpRenders();
+  }
+
+  /** The registry keeps the latest finished jobs: the snapshot lists at most this many after the queued and running ones. */
+  private trimFinishedRenders(): void {
+    const finished = this.renderJobs.filter((j) => !isActive(j));
+    const drop = new Set(finished.slice(0, Math.max(0, finished.length - MOCK_KEEP_FINISHED_RENDERS)));
+    if (drop.size > 0) this.renderJobs = this.renderJobs.filter((j) => !drop.has(j));
+  }
+
+  private videosCancel(c: CommandMessage, jobId: string): ResponseMessage {
+    const job = this.renderJobs.find((j) => j.jobId === jobId);
+    if (job === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no render job ${jobId}` });
+    if (job.status === "queued") {
+      this.endRender(job, "cancelled");
+    } else if (job.status === "running" && !job.saving && !job.cancelling) {
+      // The command answers before the work has stopped; the job ends a moment later. Past the point of no return a cancel is ignored: done wins.
+      job.cancelling = true;
+      for (const cancel of job.timers) cancel();
+      job.timers = [this.scheduler.schedule(CANCEL_CONFIRM_DELAY_MS, () => this.endRender(job, "cancelled"))];
+    }
+    return this.ok(c, { jobId });
+  }
+
+  private videosList(c: CommandMessage, avatarId: string): ResponseMessage {
+    if (!this.libraryOpen || !this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    this.checkExport();
+    const videos = this.videos
+      .filter((v) => v.summary.avatarId === avatarId)
+      .map((v): VideoSummary => ({ ...v.summary, fileState: this.fileStateOf(v), montageId: this.liveDraft(v.montageId) }))
+      .reverse()
+      .slice(0, MAX_LISTED_VIDEOS);
+    return this.ok(c, { videos });
+  }
+
+  private videosDelete(c: CommandMessage, payload: { videoId: string; mode: "video" | "record" }): ResponseMessage {
+    const { videoId, mode } = payload;
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    // «Удалить» needs a usable folder, asked before the video is looked for: a sleeping drive must never turn it into a record-only delete.
+    const reason = this.checkExport();
+    if (mode === "video" && reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
+    const video = this.videos.find((v) => v.summary.videoId === videoId);
+    if (video === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no video ${videoId}` });
+    const state = this.fileStateOf(video);
+    if (mode === "video" && state === "elsewhere") return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: "missing", detail: "the video's file is not in the current export folder" });
+    const fileDeleted = mode === "video" && state === "present";
+    const { avatarId } = video.summary;
+    this.movingUsage(avatarId, video.photoIds, () => {
+      this.videos = this.videos.filter((v) => v !== video);
+      if (fileDeleted) this.exportFiles.delete(video.summary.relPath);
+    });
+    this.adjustAvatar(avatarId, { videoCount: -1 });
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId } });
+    this.announceAvatar(avatarId);
+    return this.ok(c, { videoId, fileDeleted, fileState: state });
+  }
+
+  private renderJobState(j: MockRenderJob): JobState {
+    return {
+      kind: "render",
+      jobId: j.jobId,
+      videoId: j.videoId,
+      avatarId: j.avatarId,
+      montageId: j.montageId,
+      status: j.status,
+      done: j.done,
+      total: j.total,
+      ...(j.saving ? { saving: true } : {}),
+      ...(j.status === "failed" && j.error !== null ? { error: j.error } : {}),
+      ...(j.status === "done" && j.result !== null ? { result: j.result } : {}),
+    };
   }
 
   // ---------- photo runs (T8b) ----------
@@ -1895,9 +2255,9 @@ export class MockEngine implements EngineBridge {
       drafts: this.drafts,
       unreadableAvatars: this.unreadable,
       unreadableTotal: this.unreadableCount(),
-      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j))],
+      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j))],
       librarySwitchGeneration: this.librarySwitchGeneration,
-      exportStatus: { status: "ok" },
+      exportStatus: this.exportReported,
       notices: [],
     };
   }

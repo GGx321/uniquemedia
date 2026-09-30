@@ -74,3 +74,26 @@ export async function unwrap<T>(reply: Promise<{ ok: true; result: T } | { ok: f
 export const PHOTO_IDS = freePhotos(6).map((p) => p.photoId);
 
 export const scene = (photoId: string) => ({ source: "scene" as const, photoId });
+
+/** A saved draft of `photoIds` (in this order), made through the client. */
+export async function draftOf(mock: Mock, photoIds: string[], avatarId: string = MIA.avatarId) {
+  return (await unwrap(mock.client.request("montages.create", { avatarId, photoIds }))).montage;
+}
+
+/** `videos.render` of a draft, unwrapped. */
+export async function renderDraft(mock: Mock, montageId: string): Promise<{ jobId: string; videoId: string }> {
+  return unwrap(mock.client.request("videos.render", { montageId }));
+}
+
+export const typesOf = (events: EventMessage[]): string[] => events.map((e) => e.type);
+
+/** The events of one job, in order. */
+export function eventsOfJob(events: EventMessage[], jobId: string): EventMessage[] {
+  return events.filter((e) => "jobId" in e.payload && e.payload.jobId === jobId);
+}
+
+/** The render jobs of the snapshot. */
+export async function renderJobsOf(mock: Mock) {
+  const snapshot = await unwrap(mock.client.request("engine.snapshot", {}));
+  return snapshot.jobs.flatMap((j) => (j.kind === "render" ? [j] : []));
+}
