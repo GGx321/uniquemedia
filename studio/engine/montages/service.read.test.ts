@@ -295,6 +295,31 @@ describe("montages.list", () => {
     expect(r.logs.filter((line) => /cannot be trusted/.test(line))).toHaveLength(1);
   });
 
+  test("the untrusted-usage line is logged once per avatar, however many gets and lists follow", async () => {
+    const w = world();
+    const r = montageRig(w);
+    const [a = ""] = worldPhotoIds(w);
+    await r.store.write(w.library, draft(w.avatar.id, "montage-0000001", [a]));
+    w.library.flagVideoIndexStale(w.avatar.id, "video-0000001");
+
+    for (let i = 0; i < 3; i++) await r.service.get("montage-0000001");
+    await r.service.list(w.avatar.id);
+    await r.service.list(undefined);
+
+    expect(r.logs.filter((line) => /cannot be trusted/.test(line))).toHaveLength(1);
+  });
+
+  test("a drafts folder that cannot be listed is INTERNAL by code alone, not a quietly shorter list", async () => {
+    const w = world();
+    const r = montageRig(w);
+    await writeFile(w.library.montagesDir(w.avatar.id), "not a folder");
+
+    const error = await failureOf(r.service.list(w.avatar.id));
+
+    expect(error.code).toBe("INTERNAL");
+    expect(error.detail ?? "").not.toContain(w.libraryRoot);
+  });
+
   test("the focus resolver is never asked by a read", async () => {
     const w = world();
     const focus = scriptedFocus(() => "never");

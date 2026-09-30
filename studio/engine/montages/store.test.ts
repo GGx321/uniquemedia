@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Montage } from "../../shared/engine/montage";
 import { defaultSpec } from "../../shared/montage";
 import { openLibrary, type Library } from "../library";
 import { SAMPLE_AVATAR, sequentialIds, steppingClock, useTempDir } from "../library/testing/helpers";
-import { DraftStore, MAX_DRAFT_BYTES, MAX_DRAFT_FILES_READ, type DraftStoreDeps } from "./store";
+import { DraftFolderError, DraftNotAFileError, DraftStore, MAX_DRAFT_BYTES, MAX_DRAFT_FILES_READ, type DraftStoreDeps } from "./store";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -375,7 +375,7 @@ describe("DraftStore.list", () => {
     expect(listing).toMatchObject({ montages: [], skipped: 1 });
   });
 
-  test("reads at most MAX_DRAFT_FILES_READ files, says so, and still counts the ones it read", async () => {
+  test("reads at most MAX_DRAFT_FILES_READ files, and the ones it leaves are the OLDEST: the newest drafts always show", async () => {
     logs.length = 0;
     const { library, avatarIds } = await openWithAvatars();
     const [avatarId = ""] = avatarIds;
@@ -383,13 +383,65 @@ describe("DraftStore.list", () => {
     await mkdir(dir, { recursive: true });
     const name = (n: number) => `montage-${String(n).padStart(6, "0")}`;
     const text = (n: number) => JSON.stringify({ schemaVersion: 1, ...montageOf(avatarId, name(n)) });
-    await Promise.all(Array.from({ length: MAX_DRAFT_FILES_READ + 3 }, (_, n) => writeFile(join(dir, `${name(n)}.json`), text(n))));
+    const total = MAX_DRAFT_FILES_READ + 3;
+    await Promise.all(Array.from({ length: total }, (_, n) => writeFile(join(dir, `${name(n)}.json`), text(n))));
+    // the last three names are the newest files; a cut by name would drop exactly them
+    const old = new Date("2026-01-01T00:00:00.000Z");
+    const recent = new Date("2026-09-01T00:00:00.000Z");
+    await Promise.all(Array.from({ length: total }, (_, n) => utimes(join(dir, `${name(n)}.json`), n >= MAX_DRAFT_FILES_READ ? recent : old, n >= MAX_DRAFT_FILES_READ ? recent : old)));
 
     const listing = await storeOf().list(library, avatarId);
 
     expect(listing.montages).toHaveLength(MAX_DRAFT_FILES_READ);
+    const listed = new Set(listing.montages.map((m) => m.montageId));
+    for (let n = MAX_DRAFT_FILES_READ; n < total; n++) expect(listed.has(name(n))).toBe(true);
     expect(listing.truncated).toBe(true);
+    expect(listing.skipped).toBe(3); // the files left unread are counted with the skipped ones
     expect(logs.join("\n")).toMatch(/more draft files than/);
+  });
+
+  test("the largest legitimate draft (20 collages of 4 with the longest ids, 10 longest captions, 10 stickers) fits well inside the size bound", async () => {
+    const { library, avatarIds } = await openWithAvatars();
+    const [avatarId = ""] = avatarIds;
+    const longId = (prefix: string, n: number) => `${prefix}-${String(n).padStart(3, "0")}`.padEnd(64, "x");
+    const caption = "\u{1F469}\u{1F3FB}\u200D\u2764\uFE0F\u200D\u{1F48B}\u200D\u{1F468}\u{1F3FD}".repeat(60); // 60 graphemes of 15 units: the 900-unit worst case
+    const clips = Array.from({ length: 20 }, (_, i) => ({
+      clipId: longId("clip", i),
+      kind: "collage" as const,
+      layout: "collage4" as const,
+      cells: Array.from({ length: 4 }, (_, j) => ({ photo: { source: "scene" as const, photoId: longId("photo", i * 4 + j) }, focus: { x: 0.123456789, y: 0.987654321 } })),
+      motion: "kenburns" as const,
+      stagger: true,
+      durationMs: 500,
+      transitionIn: "cut" as const,
+    }));
+    const texts = Array.from({ length: 10 }, (_, i) => ({ layerId: longId("layer", i), kind: "text" as const, startMs: 0, endMs: 5_000, value: caption, font: "manrope" as const, style: "plaque" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 }));
+    const stickers = Array.from({ length: 10 }, (_, i) => ({ layerId: longId("layer", 50 + i), kind: "sticker" as const, startMs: 0, endMs: 5_000, sticker: { source: "own" as const, mediaId: longId("media", i) }, x: 0.5, y: 0.5, size: 0.3 }));
+    const biggest = Montage.parse({
+      montageId: "montage-0001",
+      name: "n".repeat(80),
+      spec: { schemaVersion: 1, avatarId, clips, layers: [...texts, ...stickers], music: { source: "own", mediaId: longId("media", 99), startMs: 599_999 }, seed: 4_294_967_295 },
+      updatedAt: "2026-09-30T10:00:00.000Z",
+    });
+    const store = storeOf();
+
+    await store.write(library, biggest);
+
+    const bytes = (await readFile(library.montageFilePath(avatarId, "montage-0001"))).length;
+    expect(bytes).toBeLessThan(MAX_DRAFT_BYTES / 2);
+    expect(await store.read(library, avatarId, "montage-0001")).toEqual({ kind: "ok", montage: biggest });
+  });
+
+  test("the size bound is 256 KiB: a whole listing of the most files stays a few hundred MB to parse at worst, not a GiB", () => {
+    expect(MAX_DRAFT_BYTES).toBe(256 * 1024);
+  });
+
+  test("a montages folder that cannot be listed is an error, not one more skipped file", async () => {
+    const { library, avatarIds } = await openWithAvatars();
+    const [avatarId = ""] = avatarIds;
+    await writeFile(library.montagesDir(avatarId), "not a folder");
+
+    await expect(storeOf().list(library, avatarId)).rejects.toBeInstanceOf(DraftFolderError);
   });
 });
 
@@ -410,6 +462,19 @@ describe("DraftStore.remove", () => {
     const [avatarId = ""] = avatarIds;
 
     expect(await storeOf().remove(library, avatarId, "montage-0001")).toBe(false);
+  });
+
+  test("a folder or link with a draft's name is refused at once as not a file, and never retried or removed", async () => {
+    const { library, avatarIds } = await openWithAvatars();
+    const [avatarId = ""] = avatarIds;
+    const asFolder = library.montageFilePath(avatarId, "montage-0001");
+    await mkdir(join(asFolder, "inside"), { recursive: true });
+    const started = performance.now();
+
+    await expect(storeOf().remove(library, avatarId, "montage-0001")).rejects.toBeInstanceOf(DraftNotAFileError);
+
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(await readdir(asFolder)).toEqual(["inside"]);
   });
 
   test("removes a damaged draft too: the owner can always clear it", async () => {

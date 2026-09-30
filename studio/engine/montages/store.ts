@@ -1,5 +1,6 @@
 import { lstat, mkdir, readdir } from "node:fs/promises";
-import { basename } from "node:path";
+import type { Dirent } from "node:fs";
+import { basename, join } from "node:path";
 import { z } from "zod";
 import { Id } from "../../shared/engine/primitives";
 import { Montage, MontageDraft, MontageName } from "../../shared/engine/montage";
@@ -28,10 +29,16 @@ import { unlinkWithRetry } from "../library/unlinkRetry";
 // draft never interleave and the last one asked is the last one written. Reads are not queued (an atomic replace
 // makes them safe).
 
-/** A draft is a few KB (20 clips, 20 layers, captions of at most 1024 units); a file this large is not one. */
-export const MAX_DRAFT_BYTES = 1024 * 1024;
+/**
+ * The largest legitimate draft (20 collages of 4 with the longest ids, 10 captions of 900 units, 10 stickers, pretty-printed) is
+ * about 125 KB; a file over this is not a draft. Small enough that a listing of `MAX_DRAFT_FILES_READ` files parses at most
+ * a quarter of a GiB.
+ */
+export const MAX_DRAFT_BYTES = 256 * 1024;
 /** One listing reads at most this many draft files (sorted by name), so a folder of junk cannot stall the engine. */
 export const MAX_DRAFT_FILES_READ = 1000;
+/** How many times a read looks again when a save replaced the file between its two looks. */
+const OPEN_ATTEMPTS = 5;
 /** Draft files are read this many at a time. */
 const READ_CONCURRENCY = 16;
 
@@ -54,10 +61,28 @@ export type DraftRead = { kind: "ok"; montage: Montage } | { kind: "missing" } |
 export interface DraftListing {
   /** Every readable draft, newest `updatedAt` first, ties by id. */
   montages: Montage[];
-  /** Files named like a draft that could not be used. */
+  /** Files named like a draft that could not be used, plus the files left unread when there were more than `MAX_DRAFT_FILES_READ` (the oldest by mtime). */
   skipped: number;
-  /** More draft files than `MAX_DRAFT_FILES_READ`: the rest were not read. */
+  /** More draft files than `MAX_DRAFT_FILES_READ`: the oldest were not read (and are counted in `skipped`). */
   truncated: boolean;
+}
+
+/** An avatar's drafts folder that could not be listed (not a missing one: that is no drafts). `code` is the disk's. */
+export class DraftFolderError extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(`the drafts folder could not be listed (${code})`);
+    this.name = "DraftFolderError";
+    this.code = code;
+  }
+}
+
+/** Something that is not a regular file has a draft's name (a folder, a link): it is never deleted or retried. */
+export class DraftNotAFileError extends Error {
+  constructor() {
+    super("a draft's name is taken by something that is not a file");
+    this.name = "DraftNotAFileError";
+  }
 }
 
 export interface DraftStoreDeps {
@@ -103,13 +128,19 @@ export class DraftStore {
 
   async #readFile(path: string, avatarId: string, montageId: string): Promise<DraftRead> {
     let handle;
-    try {
-      handle = await openRegularNoFollow(path);
-    } catch (error) {
-      if (hasErrorCode(error, "ENOENT")) return { kind: "missing" };
-      if (error instanceof UnsafeOpenError) return { kind: "unreadable", reason: "not-a-file" };
-      this.#deps.log(`a draft file could not be opened (${kindOf(error)})`);
-      return { kind: "unreadable", reason: "io" };
+    // A save replaces the file by rename: a read that looked at the old file and opened the new one meets `ECHANGED`, which
+    // is the race, not a bad file. It looks again (the new file is whole by then); a file that keeps changing is not read.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        handle = await openRegularNoFollow(path);
+        break;
+      } catch (error) {
+        if (hasErrorCode(error, "ENOENT")) return { kind: "missing" };
+        if (error instanceof UnsafeOpenError && error.code === "ECHANGED" && attempt < OPEN_ATTEMPTS - 1) continue;
+        if (error instanceof UnsafeOpenError) return { kind: "unreadable", reason: "not-a-file" };
+        this.#deps.log(`a draft file could not be opened (${kindOf(error)})`);
+        return { kind: "unreadable", reason: "io" };
+      }
     }
     let text: string;
     try {
@@ -172,18 +203,22 @@ export class DraftStore {
     let budget = MAX_DRAFT_FILES_READ;
     for (const id of avatarIds) {
       const dir = library.montagesDir(id);
-      let entries;
+      let entries: Dirent[];
       try {
         entries = await readdir(dir, { withFileTypes: true });
       } catch (error) {
         if (hasErrorCode(error, "ENOENT")) continue;
-        skipped++;
         this.#deps.log(`the drafts folder of an avatar could not be listed (${kindOf(error)})`);
-        continue;
+        throw new DraftFolderError(kindOf(error));
       }
-      const named = entries.filter((entry) => !isTempName(entry.name) && DRAFT_FILE_NAME.test(entry.name)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-      if (named.length > budget) truncated = true;
+      let named = entries.filter((entry) => !isTempName(entry.name) && DRAFT_FILE_NAME.test(entry.name)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      if (named.length > budget) {
+        // Too many to read: keep the NEWEST by modification time (the drafts the owner is working on), not the ones whose random ids sort first.
+        truncated = true;
+        named = await this.#newestFirst(dir, named);
+      }
       const wanted = named.slice(0, budget);
+      skipped += named.length - wanted.length;
       budget -= wanted.length;
       for (let at = 0; at < wanted.length; at += READ_CONCURRENCY) {
         const batch = wanted.slice(at, at + READ_CONCURRENCY);
@@ -198,6 +233,23 @@ export class DraftStore {
     if (truncated) this.#deps.log(`the drafts folders hold more draft files than one listing reads (${MAX_DRAFT_FILES_READ}); the rest are left out`);
     montages.sort(newestFirst);
     return { montages, skipped, truncated };
+  }
+
+  /** `entries` by modification time, newest first, ties by name; a file that cannot be looked at goes last. */
+  async #newestFirst(dir: string, entries: readonly Dirent[]): Promise<Dirent[]> {
+    const times = new Map<string, number>();
+    for (let at = 0; at < entries.length; at += READ_CONCURRENCY * 4) {
+      await Promise.all(
+        entries.slice(at, at + READ_CONCURRENCY * 4).map(async (entry) => {
+          try {
+            times.set(entry.name, (await lstat(join(dir, entry.name))).mtimeMs);
+          } catch {
+            times.set(entry.name, -Infinity);
+          }
+        }),
+      );
+    }
+    return [...entries].sort((a, b) => (times.get(b.name) ?? -Infinity) - (times.get(a.name) ?? -Infinity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   }
 
   /**
@@ -215,7 +267,9 @@ export class DraftStore {
   /** Deletes the draft's file (a damaged one too) and remembers it as removed; false when it was already gone. */
   async remove(library: Library, avatarId: string, montageId: string): Promise<boolean> {
     const path = library.montageFilePath(avatarId, montageId);
+    // Looked at first: on Windows unlinking a folder answers EPERM, which the retry would take for a lock and spend seconds on.
     try {
+      if (!(await lstat(path)).isFile()) throw new DraftNotAFileError();
       await unlinkWithRetry(path);
     } catch (error) {
       if (hasErrorCode(error, "ENOENT")) return false;

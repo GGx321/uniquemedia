@@ -363,10 +363,14 @@ describe("montages.delete", () => {
     const asFolder = w.library.montageFilePath(w.avatar.id, ID);
     await mkdir(join(asFolder, "inside"), { recursive: true });
 
+    const started = performance.now();
+
     const error = await failureOf(r.service.delete(ID));
 
     expect(error.code).toBe("INTERNAL");
+    expect(error.detail ?? "").toMatch(/not a file/);
     expect(error.detail ?? "").not.toContain(w.libraryRoot);
+    expect(performance.now() - started).toBeLessThan(500); // no lock-retry on a folder
     expect(r.events).toEqual([]);
   });
 

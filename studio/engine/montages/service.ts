@@ -7,7 +7,7 @@ import type { FocusResolver } from "../focus/focusResolver";
 import type { Library } from "../library";
 import { photoAvailability, type Availability } from "./availability";
 import { draftIssues } from "./issues";
-import type { DraftRead, DraftStore } from "./store";
+import { DraftFolderError, DraftNotAFileError, type DraftRead, type DraftStore } from "./store";
 
 // The montage drafts (Stage 3 plan, 3d.1a): `montages.create`, `get`, `list`, `save`, `delete` and `focus`. The engine
 // wires it; the library, the focus resolver, the disk (through `DraftStore`) and the clock come in as dependencies, so each
@@ -77,6 +77,8 @@ const libraryUnavailable = (): EngineFailure => new EngineFailure({ code: "LIBRA
 
 export class MontageService {
   readonly #deps: MontageServiceDeps;
+  /** Avatars whose untrusted usage was already logged. */
+  readonly #untrustedLogged = new Set<string>();
 
   constructor(deps: MontageServiceDeps) {
     this.#deps = deps;
@@ -97,13 +99,15 @@ export class MontageService {
 
       if (photoIds.length > 0) this.#assertPhotosFree(library, avatarId, photoIds);
 
+      const montageId = await this.#freshId(library);
       const focuses = photoIds.length === 0 ? [] : await this.#focusAll(library, avatarId, photoIds, this.#focusBudget(entered), "montages.create");
-      // A photo may have been rejected, or taken by a render, while its focus was being judged: look again, with no await
-      // between this and the write's start, so nothing is stored for a photo the owner just put out of reach.
+      // A photo may have been rejected, or taken by a render, while its focus was being judged: look again. Everything from
+      // here to queueing the write is synchronous (the id was taken above), so no event of the engine can land in between and
+      // nothing is stored for a photo the owner just put out of reach.
       if (photoIds.length > 0) this.#assertPhotosFree(library, avatarId, photoIds);
 
       const spec = defaultSpec(avatarId, photoIds, this.#seed());
-      const montage = Montage.parse({ montageId: await this.#freshId(library), name: null, spec: withFocus(spec, new Map(photoIds.map((id, i) => [id, focuses[i] ?? null]))), updatedAt: this.#deps.now().toISOString() });
+      const montage = Montage.parse({ montageId, name: null, spec: withFocus(spec, new Map(photoIds.map((id, i) => [id, focuses[i] ?? null]))), updatedAt: this.#deps.now().toISOString() });
       await this.#deps.store.exclusive(montage.montageId, () => this.#write(library, montage));
       this.#announceUpsert(montage);
       return { montage };
@@ -199,7 +203,7 @@ export class MontageService {
     if (found === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
     if (found.read.kind !== "ok") throw unreadable(found.read, montageId);
     const { montage } = found.read;
-    return { montage, issues: draftIssues(library, montage.spec, this.#deps.log) };
+    return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, this.#availabilityOf(library, montage.spec.avatarId)) };
   }
 
   // ---------- montages.list ----------
@@ -212,18 +216,38 @@ export class MontageService {
   async list(avatarId: string | undefined): Promise<CommandResult<"montages.list">> {
     const library = this.#readableLibrary();
     if (avatarId !== undefined && library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-    const listing = await this.#deps.store.list(library, avatarId);
+    let listing;
+    try {
+      listing = await this.#deps.store.list(library, avatarId);
+    } catch (error) {
+      if (error instanceof DraftFolderError) throw new EngineFailure({ code: "INTERNAL", detail: `the drafts folder could not be listed (${error.code})` });
+      throw error;
+    }
     const availability = new Map<string, Availability>();
     const items = listing.montages.slice(0, MAX_LISTED_MONTAGES).map((montage) => {
       const owner = montage.spec.avatarId;
       let known = availability.get(owner);
       if (known === undefined) {
-        known = photoAvailability(library, owner, this.#deps.log);
+        known = this.#availabilityOf(library, owner);
         availability.set(owner, known);
       }
       return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, known), videoCount: library.videoCountForMontage(owner, montage.montageId) };
     });
     return { items, total: listing.montages.length, skippedTotal: listing.skipped };
+  }
+
+  /**
+   * The avatar's photo state for a read. While it cannot be trusted the log says so ONCE per avatar (until it is trusted
+   * again), not on every `get` of every draft the window opens.
+   */
+  #availabilityOf(library: Library, avatarId: string): Availability {
+    const availability = photoAvailability(library, avatarId);
+    if (availability.state === "known") this.#untrustedLogged.delete(avatarId);
+    else if (!this.#untrustedLogged.has(avatarId)) {
+      this.#untrustedLogged.add(avatarId);
+      photoAvailability(library, avatarId, this.#deps.log);
+    }
+    return availability;
   }
 
   /** The open library for a read, or the engine's own refusal. */
@@ -276,6 +300,7 @@ export class MontageService {
           removed = await this.#deps.store.remove(library, found.avatarId, montageId);
         } catch (error) {
           this.#deps.log(`a draft could not be deleted (${kindOf(error)})`);
+          if (error instanceof DraftNotAFileError) throw new EngineFailure({ code: "INTERNAL", detail: "the draft cannot be deleted: its name is taken by something that is not a file" });
           throw new EngineFailure({ code: "INTERNAL", detail: `the draft could not be deleted (${kindOf(error)})` });
         }
         if (!removed) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
