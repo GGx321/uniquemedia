@@ -1806,6 +1806,27 @@ async function main(): Promise<void> {
     check("montages.create for an avatar that is not active is NOT_FOUND", field(montagesCreate, "ok") === false && field(montagesCreate, "error", "code") === "NOT_FOUND", montagesCreate);
     const montagesFocus = await req(cdp, "montages.focus", { avatarId: avatar.id, photo: { source: "scene", photoId: photo.id } });
     check("montages.focus for an avatar that is not active is NOT_FOUND", field(montagesFocus, "ok") === false && field(montagesFocus, "error", "code") === "NOT_FOUND", montagesFocus);
+    // 2d. The text preview (3b.4b) through the packaged text worker: the caption rules, the layout, the template and resvg-wasm inside
+    // app.asar, the PNG written under userData/render-tmp/text and served by studio-media://text/<previewId>.
+    const previewLayer = { layerId: "smoke-layer-0001", kind: "text", startMs: 0, endMs: 1000, value: "sunday reset ☀️", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.195, scale: 1 };
+    const textPreview = await req(cdp, "montages.textPreview", { avatarId: avatar.id, layer: previewLayer });
+    const previewId = field(textPreview, "result", "previewId");
+    const previewWidth = field(textPreview, "result", "width");
+    check(
+      "montages.textPreview draws a caption through the packaged text worker",
+      field(textPreview, "ok") === true && typeof previewId === "string" && typeof previewWidth === "number" && previewWidth > 100 && previewWidth <= 1080,
+      textPreview,
+    );
+    const previewLoaded = await cdp.evaluate(
+      `(async () => new Promise((r) => { const i = new Image(); i.onload = () => r({ loaded: true, width: i.naturalWidth }); i.onerror = () => r({ loaded: false }); i.src = "studio-media://text/${String(previewId)}"; }))()`,
+    );
+    check("the text preview PNG is served at studio-media://text/<previewId> at the size the answer states", JSON.stringify(previewLoaded) === JSON.stringify({ loaded: true, width: previewWidth }), previewLoaded);
+    const previewRefused = await req(cdp, "montages.textPreview", { avatarId: avatar.id, layer: { ...previewLayer, value: "café" } });
+    check(
+      "montages.textPreview refuses a caption outside the charset as TEXT_INVALID (charset)",
+      field(previewRefused, "ok") === false && field(previewRefused, "error", "code") === "TEXT_INVALID" && field(previewRefused, "error", "captionIssue") === "charset",
+      previewRefused,
+    );
     const layered = {
       schemaVersion: 1,
       avatarId: avatar.id,
