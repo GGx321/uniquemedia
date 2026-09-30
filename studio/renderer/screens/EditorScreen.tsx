@@ -196,7 +196,16 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
 
   // The store's montage.changed, in seq order: echoes of this window's saves change nothing, a save from
   // elsewhere is taken while nothing here is unsaved, a delete ends the session.
-  useEffect(() => store.subscribeMontages((change) => void session.receive(change)), [store, session]);
+  // A resync lost whatever montage.changed was in its gap: the draft is read again (below), and that answer goes
+  // through the same echo / adopt / keep rules as an event.
+  useEffect(
+    () =>
+      store.subscribeMontages((signal) => {
+        if (signal.change === "resynced") setFocusTick((n) => n + 1);
+        else session.receive(signal);
+      }),
+    [store, session],
+  );
 
   // Leaving (the sidebar, «Назад», «Черновики») sends whatever is unsaved at once instead of after the quiet spell.
   useEffect(() => () => void session.flush(), [session]);

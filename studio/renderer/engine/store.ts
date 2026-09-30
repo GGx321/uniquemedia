@@ -161,6 +161,13 @@ function newJob(ref: JobRef): JobView {
 export type MontageChange = Extract<EventMessage, { type: "montage.changed" }>["payload"];
 
 /**
+ * What the montage listeners hear: each `montage.changed`, and `resynced` when the store had to take a snapshot
+ * again (a seq gap, a restarted engine, a retry). Drafts are not in the snapshot, so any `montage.changed` in the
+ * gap is lost: a listener re-reads what it shows.
+ */
+export type MontageSignal = MontageChange | { readonly change: "resynced" };
+
+/**
  * Adds `notice` to `notices`, deduped by `noticeId` (an exact repeat delivery
  * changes nothing) and by `code` (only one of each kind is shown, so e.g. two
  * `engine-restarted` notices show once). Which one of a same-code pair is
@@ -225,7 +232,7 @@ export interface EngineStoreOptions {
 export class EngineStore {
   private view: EngineView = INITIAL;
   private readonly listeners = new Set<() => void>();
-  private readonly montageListeners = new Set<(change: MontageChange) => void>();
+  private readonly montageListeners = new Set<(signal: MontageSignal) => void>();
   private held: EventMessage[] = [];
   private syncing = false;
   private queuedSnapshot = false;
@@ -273,7 +280,7 @@ export class EngineStore {
    * duplicate. The drafts are not kept in the view (they are listed on demand); the editor and the drafts screen
    * listen here instead of on the raw event stream.
    */
-  readonly subscribeMontages = (listener: (change: MontageChange) => void): (() => void) => {
+  readonly subscribeMontages = (listener: (signal: MontageSignal) => void): (() => void) => {
     this.montageListeners.add(listener);
     return () => {
       this.montageListeners.delete(listener);
@@ -627,6 +634,7 @@ export class EngineStore {
     // The engine that was replaced may still have events in flight.
     if (this.view.bootId !== null && this.view.bootId !== s.bootId) this.markStale(this.view.bootId);
     this.staleBoots.delete(s.bootId);
+    const again = this.view.bootId !== null;
     this.listsLibraryGeneration = s.librarySwitchGeneration;
     this.update({
       phase: "ready",
@@ -644,6 +652,8 @@ export class EngineStore {
       engineError: null,
       notices: s.notices.reduce(mergeNotice, [] as readonly EngineNotice[]),
     });
+    // Not for the first load: nothing was shown, so nothing was missed.
+    if (again) for (const listener of [...this.montageListeners]) listener({ change: "resynced" });
   }
 
   private apply(event: EventMessage): void {

@@ -454,7 +454,9 @@ test("montage.changed moves lastSeq on and changes nothing else: drafts are list
 test("montage.changed reaches the montage listeners once each, in seq order, and stops at unsubscribe", async () => {
   const h = await host();
   const heard: string[] = [];
-  const stopListening = h.store.subscribeMontages((change) => heard.push(change.change === "upserted" ? `upserted:${change.montage.updatedAt}` : `removed:${change.montageId}`));
+  const stopListening = h.store.subscribeMontages((signal) =>
+    heard.push(signal.change === "upserted" ? `upserted:${signal.montage.updatedAt}` : signal.change === "removed" ? `removed:${signal.montageId}` : signal.change),
+  );
   await h.emit({ type: "montage.changed", payload: { change: "upserted", montage: STORED_DRAFT } });
   await h.emit({ type: "montage.changed", payload: { change: "upserted", montage: { ...STORED_DRAFT, updatedAt: "2026-09-30T10:00:01.000Z" } } });
   await h.emit({ type: "montage.changed", payload: { change: "removed", montageId: STORED_DRAFT.montageId, avatarId: STORED_DRAFT.spec.avatarId } });
@@ -462,6 +464,27 @@ test("montage.changed reaches the montage listeners once each, in seq order, and
   await h.emit({ type: "montage.changed", payload: { change: "upserted", montage: STORED_DRAFT } });
 
   expect(heard).toEqual(["upserted:2026-09-30T10:00:00.000Z", "upserted:2026-09-30T10:00:01.000Z", "removed:montage-0000001"]);
+  h.stop();
+});
+
+test("a snapshot taken again tells the montage listeners to re-read: montage.changed events in the gap are not replayed", async () => {
+  const h = await host();
+  const heard: string[] = [];
+  h.store.subscribeMontages((change) => heard.push(change.change));
+  h.store.reload();
+  await flush();
+  expect(h.snapshots()).toBe(2);
+  expect(heard).toEqual(["resynced"]);
+  h.stop();
+});
+
+test("the first snapshot is not a resync: nothing was missed before it", async () => {
+  const heard: string[] = [];
+  const h = await host();
+  // Listening from the start (the host already loaded its first snapshot): no signal for that load.
+  h.store.subscribeMontages((change) => heard.push(change.change));
+  await flush();
+  expect(heard).toEqual([]);
   h.stop();
 });
 
