@@ -73,13 +73,37 @@ describe("collectionTimeSpawns: what runs while a test file is collected", () =>
   test("the list names the process-starting helpers the studio tests use", () => {
     for (const name of ["spawnSync", "execSync", "execFileSync", "Bun.spawnSync", "facePoolImagePng", "letterboxedMasterJpeg"]) expect(SPAWNING_CALLEES).toContain(name);
   });
+
+  test("flags Bun.spawn, the async child_process calls, and the module-alias forms", () => {
+    const source = ['const a = Bun.spawn(["ls"]);', 'const b = spawn("ls");', 'const c = exec("ls");', 'const d = cp.execSync("ls");', 'const e = childProcess.execFile("ls");', 'const f = child_process.spawnSync("ls");'].join("\n");
+    expect(collectionTimeSpawns(source).map((call) => call.callee)).toEqual(["Bun.spawn", "spawn", "exec", "cp.execSync", "childProcess.execFile", "child_process.spawnSync"]);
+  });
+
+  test("does not mistake a regular expression's exec for a process", () => {
+    expect(collectionTimeSpawns('const m = /a(b)/.exec("ab");\nconst n = pattern.exec("ab");')).toEqual([]);
+  });
+
+  test("follows an immediately-invoked function at module scope, arrow or function expression", () => {
+    const source = ['(() => { spawnSync("ffmpeg"); })();', "(function () { execSync(\"ls\"); })();", '(async () => { await Bun.spawn(["ls"]).exited; })();'].join("\n");
+    expect(collectionTimeSpawns(source).map((call) => call.callee)).toEqual(["spawnSync", "execSync", "Bun.spawn"]);
+  });
+
+  test("a parenthesised function that is not invoked here is deferred", () => {
+    expect(collectionTimeSpawns('const later = (() => spawnSync("ffmpeg"));')).toEqual([]);
+  });
+
+  test("leaves node:test's before and after hooks alone", () => {
+    const source = ['describe("d", () => {', '  before(() => { spawnSync("ffmpeg"); });', '  after(() => { spawnSync("ffmpeg"); });', "});"].join("\n");
+    expect(collectionTimeSpawns(source)).toEqual([]);
+  });
 });
 
 describe("no studio test file starts a process while it is collected", () => {
   test("every studio test file, scanned", () => {
     const offenders: string[] = [];
     let scanned = 0;
-    for (const path of new Bun.Glob("studio/**/*.{test,spec}.{ts,tsx}").scanSync({ cwd: ROOT })) {
+    // `*.node-test.ts` (run under Electron's Node by electronNodeTests.ts) count too: a spawn at their module scope fails the same way.
+    for (const path of new Bun.Glob("studio/**/*.{test,spec,node-test}.{ts,tsx}").scanSync({ cwd: ROOT })) {
       if (path.includes("node_modules")) continue;
       scanned++;
       const source = readFileSync(resolve(ROOT, path), "utf8");

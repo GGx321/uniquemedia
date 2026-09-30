@@ -111,7 +111,7 @@ export function serviceRig(w: World, options: ServiceRigOptions = {}): ServiceRi
     log: (line) => void logs.push(line),
     // The scripted ffmpeg and verifier are the defaults; a test that swaps one (a faulty `fs`, a hook, a refusing `verify`) keeps the
     // other. Without the merge, such a test silently ran REAL ffmpeg and the real verifier (0.5 s on a quiet Mac, 1.7 s on Windows).
-    renderOverrides: { verify: acceptingVerify, runDeps: { run: writingRun }, ...renderOverrides },
+    renderOverrides: { verify: acceptingVerify, ...renderOverrides, runDeps: { run: writingRun, ...renderOverrides?.runDeps } },
     announceAvatar: (_library, avatarId) => void announced.push(avatarId),
     staleRetryDelaysMs: [5, 5, 5],
     ...otherDeps,

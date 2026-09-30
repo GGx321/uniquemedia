@@ -439,12 +439,26 @@ async function exited(worker: Worker | undefined): Promise<void> {
 }
 
 describe("idle recycling: an idle worker's memory is given back", () => {
-  test("a worker left idle for idleRecycleMs is terminated", async () => {
-    const h = harness({ idleRecycleMs: 40 });
+  test("a worker left idle for idleRecycleMs is terminated, by the gate's own recycle and not before the idle time is up", async () => {
+    // The gate's own `terminate` call is spied on: without it, a worker that died for any other reason would pass as "recycled".
+    let terminatedAt: number | null = null;
+    const h = harness({
+      idleRecycleMs: 40,
+      tamper: (worker) => {
+        const real = worker.terminate.bind(worker);
+        worker.terminate = () => {
+          terminatedAt ??= performance.now();
+          return real();
+        };
+      },
+    });
+    const askedAt = performance.now(); // the idle timer is armed AFTER the check ends, so it cannot fire sooner than idleRecycleMs after this
     await h.gate.check(checkInput(), live());
     expect(h.alive()).toBe(1);
     await exited(h.workers[0]);
     expect(h.alive()).toBe(0);
+    expect(terminatedAt).not.toBeNull();
+    expect((terminatedAt ?? 0) - askedAt).toBeGreaterThanOrEqual(39); // 40 ms, less a millisecond of timer granularity
   });
 
   test("the next check after a recycle respawns a worker and succeeds, with no overlap between the two workers", async () => {

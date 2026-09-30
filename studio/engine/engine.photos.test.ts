@@ -38,9 +38,10 @@ function runPhotoMeta(runId: string, slot: number, extra: Parameters<typeof samp
   });
 }
 
-/** A saved avatar (active by default), with `count` run photos already stored, oldest first. */
+/** How many plain photo files are written at once when seeding. */
 const SEED_CHUNK = 50;
 
+/** A saved avatar (active by default), with `count` run photos already stored, oldest first. */
 async function seedAvatar(opts: { count?: number; status?: "active" | "draft" | "archived"; runId?: string } = {}): Promise<{ avatarId: string; photoIds: string[] }> {
   const count = opts.count ?? 0;
   const runId = opts.runId ?? "run-00000001";

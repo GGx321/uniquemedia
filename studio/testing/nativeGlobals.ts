@@ -30,6 +30,22 @@ import { nativeAbortController, nativeAbortSignal, nativeHeaders, nativeRequest,
 const happyDomAbortController = globalThis.AbortController;
 const happyDomAbortSignal = globalThis.AbortSignal;
 
+/*
+ * KNOWN GAP (design note, CI-2b): happy-dom also replaces setTimeout/setInterval/setImmediate/queueMicrotask, performance, URL,
+ * URLSearchParams and fetch for the whole run, and `useNativeGlobals` restores only AbortController and AbortSignal (`useNativeWebClasses` the web classes), so engine code under test runs
+ * on happy-dom's timers (which catch an exception thrown in a callback and report it as a window `error` event, where
+ * Electron's Node stops on it). Not fixed here, measured:
+ *  - the natives cannot be captured from studio/: they exist only before testSetup.ts registers happy-dom, and the only
+ *    capture point is the root nativeGlobals.ts that testSetup.ts imports first (uniquifier-owned);
+ *  - re-deriving them (`node:timers`, `node:perf_hooks`, `node:url`, `Bun.fetch`) and assigning them to globalThis in
+ *    beforeAll for every studio test file made the run spin at 100% CPU without finishing: it hung at
+ *    studio/scripts/distinctPattern.test.ts, and a fresh 15-test file hung too. Bun's `node:timers` calls back through
+ *    the global, so the swap recurses.
+ * The way out is a capture in the root nativeGlobals.ts (timers, performance, URL, fetch, queueMicrotask next to
+ * AbortController) plus an opt-in `useNativeRuntimeGlobals()` here that restores those, adopted file by file starting with
+ * the ones that inject timers (videos, runs); it needs the owner's word to touch the root file.
+ */
+
 /**
  * Call this once, at the top level of a studio/engine, studio/main,
  * studio/node or studio/scripts test file — never inside a `test()` or
@@ -47,21 +63,6 @@ const happyDomAbortSignal = globalThis.AbortSignal;
  * function, by contrast, runs its body fresh every time it is called, so
  * each file's own call to `useNativeGlobals()` registers fresh hooks against
  * that file's own suite.
- */
-/*
- * KNOWN GAP (design note, CI-2b): happy-dom also replaces setTimeout/setInterval/setImmediate/queueMicrotask, performance, URL,
- * URLSearchParams and fetch for the whole run, and this helper restores only the classes above, so engine code under test runs
- * on happy-dom's timers (which catch an exception thrown in a callback and report it as a window `error` event, where
- * Electron's Node stops on it). Not fixed here, measured:
- *  - the natives cannot be captured from studio/: they exist only before testSetup.ts registers happy-dom, and the only
- *    capture point is the root nativeGlobals.ts that testSetup.ts imports first (uniquifier-owned);
- *  - re-deriving them (`node:timers`, `node:perf_hooks`, `node:url`, `Bun.fetch`) and assigning them to globalThis in
- *    beforeAll for every studio test file made the run spin at 100% CPU without finishing: it hung at
- *    studio/scripts/distinctPattern.test.ts, and a fresh 15-test file hung too. Bun's `node:timers` calls back through
- *    the global, so the swap recurses.
- * The way out is a capture in the root nativeGlobals.ts (timers, performance, URL, fetch, queueMicrotask next to
- * AbortController) plus an opt-in `useNativeRuntimeGlobals()` here that restores those, adopted file by file starting with
- * the ones that inject timers (videos, runs); it needs the owner's word to touch the root file.
  */
 export function useNativeGlobals(): void {
   beforeAll(() => {
