@@ -94,6 +94,13 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
     minTests: 8,
     workers: { "textWorker.js": "studio/engine/text/worker/textWorker.ts" },
   },
+  {
+    // 3a.9: what each OS's disk answers when something is already at the export name (a folder, a link), under the product's runtime.
+    name: "export name claim",
+    entry: "studio/engine/exportClaim.node-test.ts",
+    minTests: 7,
+    workers: {},
+  },
 ];
 
 /** One suite's bound; a run that takes longer is hung, not slow (the suite takes a few seconds). */
