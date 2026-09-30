@@ -77,6 +77,7 @@ let ids = 0;
 
 export function serviceRig(w: World, options: ServiceRigOptions = {}): ServiceRig {
   const library = options.library ?? w.library;
+  const { renderOverrides, ...otherDeps } = options.deps ?? {};
   const tracker = new CommitTracker();
   const checker = new FileStateChecker();
   const jobs = new JobRegistry();
@@ -108,10 +109,12 @@ export function serviceRig(w: World, options: ServiceRigOptions = {}): ServiceRi
     now: () => new Date(2026, 8, 29, 10, 0, 0),
     emit: (event) => void events.push(event),
     log: (line) => void logs.push(line),
-    renderOverrides: { verify: acceptingVerify, runDeps: { run: writingRun } },
+    // The scripted ffmpeg and verifier are the defaults; a test that swaps one (a faulty `fs`, a hook, a refusing `verify`) keeps the
+    // other. Without the merge, such a test silently ran REAL ffmpeg and the real verifier (0.5 s on a quiet Mac, 1.7 s on Windows).
+    renderOverrides: { verify: acceptingVerify, runDeps: { run: writingRun }, ...renderOverrides },
     announceAvatar: (_library, avatarId) => void announced.push(avatarId),
     staleRetryDelaysMs: [5, 5, 5],
-    ...options.deps,
+    ...otherDeps,
   };
   const service = new VideoService(deps);
   holder.service = service;
