@@ -1383,6 +1383,16 @@ describe("what a failing sink may say in the status", () => {
     expectNoKeyFragment(JSON.stringify((await h.service.status()).refresh) + JSON.stringify(h.events), KEY);
   });
 
+  test("with no key in memory a resume's text still goes through the shared secret patterns", async () => {
+    const sink: MusicListSink = { ...failing(fsError), pendingCount: () => 1, resume: () => Promise.reject(new SinkError("storing failed near sk-or-v1-0123456789abcdef-wxyz and x-rapidapi-key: Zq7secretvalue")) };
+    const h = harness({ sink, key: null });
+    await h.service.resumePending();
+    await h.service.settled();
+    const text = JSON.stringify((await h.service.status()).refresh);
+    expect(text).not.toContain("sk-or-v1-0123456789abcdef");
+    expect(text).not.toContain("Zq7secretvalue");
+  });
+
   test("the same for a resume that fails", async () => {
     const sink: MusicListSink = { ...failing(fsError), pendingCount: () => 1, resume: () => Promise.reject(fsError()) };
     const h = harness({ sink });

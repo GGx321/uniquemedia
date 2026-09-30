@@ -1,4 +1,4 @@
-import { MUSIC_QUOTA_LIMIT, type EngineError, type MusicStatus, type TrackSummary } from "../../shared/engine";
+import { MUSIC_QUOTA_LIMIT, redactSecrets, type EngineError, type MusicStatus, type TrackSummary } from "../../shared/engine";
 import { createFlashapiClient, FlashapiConfigError, FlashapiError, type FlashapiFetch, type FlashapiResponseInfo } from "./client";
 import type { ListParse, MusicTrack } from "./listSchema";
 import { CLOCK_MIN_MS, clockInRange, QuotaLedger, QuotaLogError, type QuotaLine, type QuotaOutcome, type QuotaSummary } from "./quotaLedger";
@@ -537,7 +537,7 @@ export class MusicService {
         // Redacted of the key like a refresh's, whatever the sink's own text says: the key may be in memory here too.
         const text = `the downloads could not be finished (${sinkErrorText(error)})`;
         const key = this.#deps.key();
-        failure = fail("MUSIC_UNAVAILABLE", key === null ? text : redactKnown(text, key));
+        failure = fail("MUSIC_UNAVAILABLE", redactSecrets(key === null ? text : redactKnown(text, key)));
       } finally {
         this.#refresh = failure === null ? { state: "idle" } : { state: "failed", error: failure.error };
         this.#abort = null;
