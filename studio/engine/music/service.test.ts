@@ -42,6 +42,9 @@ afterEach(async () => {
 
 const quotaPath = () => join(dir, "music", "quota.jsonl");
 
+/** What a sink that stores nothing answers to music.list and music.peaks. */
+const NO_CATALOGUE = { list: (): [] => [], peaks: (): Promise<null> => Promise.resolve(null) };
+
 async function quotaLines(): Promise<QuotaLine[]> {
   const text = await readFile(quotaPath(), "utf8").catch(() => "");
   return text.split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as QuotaLine);
@@ -163,6 +166,7 @@ describe("a refresh that goes through", () => {
     const accepted: FetchedList[] = [];
     const sink: MusicListSink = {
       persistent: true,
+      ...NO_CATALOGUE,
       accept: async (list, progress) => {
         accepted.push(list);
         progress(1, 61);
@@ -185,6 +189,7 @@ describe("a refresh that goes through", () => {
   test("a sink that reports progress past its total or a zero total still yields valid statuses", async () => {
     const sink: MusicListSink = {
       persistent: true,
+      ...NO_CATALOGUE,
       accept: async (_list, progress) => {
         progress(5, 3);
         progress(0, 0);
@@ -479,7 +484,7 @@ describe("a request that fails", () => {
   });
 
   test("a sink that throws ends failed and keeps the request counted", async () => {
-    const sink: MusicListSink = { persistent: true, accept: () => Promise.reject(new Error(`disk full near ${KEY}`)), summary: () => ({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 }) };
+    const sink: MusicListSink = { persistent: true, ...NO_CATALOGUE, accept: () => Promise.reject(new Error(`disk full near ${KEY}`)), summary: () => ({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 }) };
     const h = harness({ sink });
     await h.service.refresh();
     await h.service.settled();
@@ -691,6 +696,7 @@ describe("a refresh never sticks busy", () => {
     let broken = true;
     const sink: MusicListSink = {
       persistent: true,
+      ...NO_CATALOGUE,
       accept: () => Promise.resolve(),
       summary: () => {
         if (broken) throw new Error("summary is broken");
@@ -726,6 +732,7 @@ describe("a refresh never sticks busy", () => {
     let calls = 0;
     const sink: MusicListSink = {
       persistent: true,
+      ...NO_CATALOGUE,
       accept: () => Promise.resolve(),
       summary: () => {
         if (++calls === 1) throw new Error("only the first summary fails");
@@ -1199,5 +1206,39 @@ describe("the flush chain survives a failure of its own", () => {
     expect(answer.ok || answer.error.code !== "INTERNAL").toBe(true);
     await h.service.settled();
     expect((await quotaLines()).map((l) => l.kind)).toContain("result");
+  });
+});
+
+describe("the catalogue the sink offers (music.list, music.peaks)", () => {
+  const summary = { trackId: "4199287736976977", title: "T", artist: null, durationMs: 1000, explicit: false, highlights: [], hasCover: false };
+  const sinkOf = (overrides: Partial<MusicListSink>): MusicListSink => ({ ...new PersistingTestSink(), persistent: true, accept: () => Promise.resolve(), summary: () => ({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 }), ...NO_CATALOGUE, ...overrides });
+
+  test("list is what the sink holds", () => {
+    expect(harness({ sink: sinkOf({ list: () => [summary] }) }).service.list()).toEqual([summary]);
+  });
+
+  test("a sink whose list throws offers nothing, and the command does not fail", () => {
+    const sink = sinkOf({
+      list: () => {
+        throw new Error("boom");
+      },
+    });
+    expect(harness({ sink }).service.list()).toEqual([]);
+  });
+
+  test("peaks are what the sink answers", async () => {
+    const sink = sinkOf({ peaks: () => Promise.resolve([1, 2, 3]) });
+    expect(await harness({ sink }).service.peaks("4199287736976977", 0, 1000, 16)).toEqual([1, 2, 3]);
+  });
+
+  test("a sink whose peaks reject is a track with no waveform", async () => {
+    const sink = sinkOf({ peaks: () => Promise.reject(new Error("boom")) });
+    expect(await harness({ sink }).service.peaks("4199287736976977", 0, 1000, 16)).toBeNull();
+  });
+
+  test("the in-memory sink offers nothing: it stores no file", async () => {
+    const memory = new MemoryListSink();
+    expect(memory.list()).toEqual([]);
+    expect(await memory.peaks()).toBeNull();
   });
 });

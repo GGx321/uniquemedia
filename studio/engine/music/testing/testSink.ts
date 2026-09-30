@@ -1,3 +1,4 @@
+import type { TrackSummary } from "../../../shared/engine";
 import type { FetchedList, MusicListSink } from "../service";
 
 /**
@@ -17,5 +18,13 @@ export class PersistingTestSink implements MusicListSink {
   summary(): { listFetchedAt: number | null; trackCount: number; bytesOnDisk: number } {
     const last = this.accepted.at(-1);
     return { listFetchedAt: last?.fetchedAt ?? null, trackCount: last?.tracks.length ?? 0, bytesOnDisk: 0 };
+  }
+
+  list(): TrackSummary[] {
+    return [];
+  }
+
+  peaks(): Promise<number[] | null> {
+    return Promise.resolve(null);
   }
 }

@@ -1,4 +1,4 @@
-import { MUSIC_QUOTA_LIMIT, type EngineError, type MusicStatus } from "../../shared/engine";
+import { MUSIC_QUOTA_LIMIT, type EngineError, type MusicStatus, type TrackSummary } from "../../shared/engine";
 import { createFlashapiClient, FlashapiConfigError, FlashapiError, type FlashapiFetch, type FlashapiResponseInfo } from "./client";
 import type { ListParse, MusicTrack } from "./listSchema";
 import { CLOCK_MIN_MS, clockInRange, QuotaLedger, QuotaLogError, type QuotaLine, type QuotaOutcome, type QuotaSummary } from "./quotaLedger";
@@ -37,6 +37,10 @@ export interface MusicListSink {
   accept(list: FetchedList, progress: (done: number, total: number) => void, signal: AbortSignal): Promise<void>;
   /** What is held now, for the status. Epoch ms; 0 bytes when nothing is on disk. */
   summary(): { listFetchedAt: number | null; trackCount: number; bytesOnDisk: number };
+  /** The tracks of the current list that are stored, for `music.list` (K23): at most 100, no URL, path or hash. */
+  list(): TrackSummary[];
+  /** A window of a stored track's waveform (K26), or null when that track is not stored. */
+  peaks(trackId: string, startMs: number, durationMs: number, bars: number): Promise<number[] | null>;
 }
 
 /** The 3c.3 sink: the last parsed list, in memory only. */
@@ -52,6 +56,15 @@ export class MemoryListSink implements MusicListSink {
 
   summary(): { listFetchedAt: number | null; trackCount: number; bytesOnDisk: number } {
     return { listFetchedAt: this.#held?.fetchedAt ?? null, trackCount: this.#held?.tracks.length ?? 0, bytesOnDisk: 0 };
+  }
+
+  /** Nothing is stored, so nothing is offered. */
+  list(): TrackSummary[] {
+    return [];
+  }
+
+  peaks(): Promise<number[] | null> {
+    return Promise.resolve(null);
   }
 }
 
@@ -220,6 +233,25 @@ export class MusicService {
       nextFreeAt: iso(summary?.nextFreeAt ?? null),
       refresh: this.#refresh,
     };
+  }
+
+  /** The tracks of the current list that are stored (`music.list`). Free: it reads what the sink holds. */
+  list(): TrackSummary[] {
+    try {
+      return this.#sink.list();
+    } catch {
+      // A sink that cannot say what it holds offers nothing; it must not take the command down.
+      return [];
+    }
+  }
+
+  /** A window of a stored track's waveform (`music.peaks`), or null when it is not stored or cannot be read. */
+  async peaks(trackId: string, startMs: number, durationMs: number, bars: number): Promise<number[] | null> {
+    try {
+      return await this.#sink.peaks(trackId, startMs, durationMs, bars);
+    } catch {
+      return null;
+    }
   }
 
   /** Whether the ledger says the key with these last four chars was rejected (kept across restarts, without the key). */

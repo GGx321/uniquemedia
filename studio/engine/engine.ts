@@ -1308,6 +1308,16 @@ export class Engine {
         if (!answer.ok) return errorResponseFor(command, answer.error);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { status: answer.status } };
       }
+      case "music.list":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { tracks: this.#music.list() } };
+      case "music.peaks": {
+        const { track, startMs, durationMs, bars } = command.payload;
+        // Own music arrives with 3f; until then there is no such track, and the answer says why.
+        if (track.source === "own") return errorResponseFor(command, { code: "NOT_FOUND", detail: "own music is not available yet" });
+        const peaks = await this.#music.peaks(track.trackId, startMs, durationMs, bars);
+        if (peaks === null) return errorResponseFor(command, { code: "NOT_FOUND", detail: `track ${track.trackId} is not stored` });
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { peaks } };
+      }
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
