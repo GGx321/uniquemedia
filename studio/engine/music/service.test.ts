@@ -1375,6 +1375,14 @@ describe("what a failing sink may say in the status", () => {
     expect(text).not.toContain("/Users/alex");
   });
 
+  test("a resume's failure text is redacted of the key too, as a refresh's is", async () => {
+    const sink: MusicListSink = { ...failing(fsError), pendingCount: () => 1, resume: () => Promise.reject(new SinkError(`disk full near ${KEY}`)) };
+    const h = harness({ sink });
+    await h.service.resumePending();
+    await h.service.settled();
+    expectNoKeyFragment(JSON.stringify((await h.service.status()).refresh) + JSON.stringify(h.events), KEY);
+  });
+
   test("the same for a resume that fails", async () => {
     const sink: MusicListSink = { ...failing(fsError), pendingCount: () => 1, resume: () => Promise.reject(fsError()) };
     const h = harness({ sink });

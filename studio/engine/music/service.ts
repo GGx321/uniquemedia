@@ -534,7 +534,10 @@ export class MusicService {
       try {
         await resume((done, total) => this.#progress(done, total), controller.signal);
       } catch (error) {
-        failure = fail("MUSIC_UNAVAILABLE", `the downloads could not be finished (${sinkErrorText(error)})`);
+        // Redacted of the key like a refresh's, whatever the sink's own text says: the key may be in memory here too.
+        const text = `the downloads could not be finished (${sinkErrorText(error)})`;
+        const key = this.#deps.key();
+        failure = fail("MUSIC_UNAVAILABLE", key === null ? text : redactKnown(text, key));
       } finally {
         this.#refresh = failure === null ? { state: "idle" } : { state: "failed", error: failure.error };
         this.#abort = null;
