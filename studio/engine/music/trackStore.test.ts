@@ -1241,3 +1241,100 @@ describe("scrubbing a record that is set aside", () => {
     expect(logs.join("\n")).not.toContain("SECRETSIG");
   });
 });
+
+// Round 3: a retrip over the same sample must not hand the whole paid list to a CDN-wide refusal.
+describe("the circuit breaker across starts", () => {
+  const states = async () => (await readRecord()).tracks.map((t) => t.audio.state[0]?.toUpperCase()).join("");
+  const refuseAll = (cdn: FakeCdn, tracks: readonly MusicTrack[], status: number) => {
+    for (const track of tracks) cdn.serve(track.downloadUrl, { status });
+  };
+
+  test("a CDN-wide refusal at the refresh AND at the next start costs at most three tracks: the rest stay pending with their URLs, under a NEW mark with different ids", async () => {
+    const tracks = listTracks(12);
+    const first = await harness({ decode: fastDecode });
+    refuseAll(first.cdn, tracks, 403);
+    await expect(refresh(first, tracks)).rejects.toBeDefined();
+    const firstMark = (await readRecord()).breaker;
+    expect(firstMark?.ids).toHaveLength(3);
+
+    const second = await harness({ decode: fastDecode });
+    refuseAll(second.cdn, tracks, 403);
+    await expect(second.store.resume(() => undefined, signal())).rejects.toBeDefined();
+    // Three given up, the other nine still waiting with their URLs: no more than the old sample and a new one were asked.
+    expect(second.cdn.requested).toHaveLength(6);
+    expect(await states()).toMatch(/^(?=(?:[^F]*F){3}[^F]*$)[FP]{12}$/);
+    expect((await readRecord()).tracks.filter((t) => t.audio.state === "pending").every((t) => t.audio.state === "pending" && t.audio.url.startsWith("https://"))).toBe(true);
+    const secondMark = (await readRecord()).breaker;
+    expect(secondMark?.ids).toHaveLength(3);
+    expect(secondMark?.ids.some((id) => firstMark?.ids.includes(id))).toBe(false);
+    expect((await readRecord()).complete).toBe(false);
+  });
+
+  test("the third start, with the CDN fixed, saves everything that is left", async () => {
+    const tracks = listTracks(12);
+    const first = await harness({ decode: fastDecode });
+    refuseAll(first.cdn, tracks, 403);
+    await expect(refresh(first, tracks)).rejects.toBeDefined();
+    const second = await harness({ decode: fastDecode });
+    refuseAll(second.cdn, tracks, 403);
+    await expect(second.store.resume(() => undefined, signal())).rejects.toBeDefined();
+
+    const third = await harness({ decode: fastDecode });
+    serveAll(third.cdn, tracks);
+    await third.store.resume(() => undefined, signal());
+    expect(third.store.summary().trackCount).toBe(9);
+    const record = await readRecord();
+    expect(record.complete).toBe(true);
+    expect(record.breaker).toBeUndefined();
+    expect((await states()).split("").filter((s) => s === "F")).toHaveLength(3);
+    expect(await readFile(join(musicDir, "lists", "current.json"), "utf8")).not.toMatch(/https?:/);
+  });
+
+  test("403 at the refresh and 429 at the next start over the same three is a trip, not the same refusal: nothing is given up", async () => {
+    const tracks = listTracks(12);
+    const first = await harness({ decode: fastDecode });
+    refuseAll(first.cdn, tracks, 403);
+    await expect(refresh(first, tracks)).rejects.toBeDefined();
+    const ids = (await readRecord()).breaker?.ids ?? [];
+
+    const second = await harness({ decode: fastDecode });
+    refuseAll(second.cdn, tracks, 429);
+    await expect(second.store.resume(() => undefined, signal())).rejects.toBeDefined();
+    expect(second.cdn.requested).toHaveLength(3);
+    expect(await states()).toBe("PPPPPPPPPPPP");
+    const mark = (await readRecord()).breaker;
+    expect(mark?.signature).toBe("status-429");
+    expect([...(mark?.ids ?? [])].sort()).toEqual([...ids].sort());
+  });
+
+  test("a sample that is bad for its own reasons still resolves at the next start: those three are given up and the rest saved", async () => {
+    const tracks = listTracks(12);
+    const badSample = [0, 6, 11];
+    const serve = (h: Awaited<ReturnType<typeof harness>>) => {
+      serveAll(h.cdn, tracks);
+      for (const i of badSample) h.cdn.serve(tracks[i]?.downloadUrl ?? "", { status: 403 });
+    };
+    const first = await harness({ decode: fastDecode });
+    serve(first);
+    await expect(refresh(first, tracks)).rejects.toBeDefined();
+    const second = await harness({ decode: fastDecode });
+    serve(second);
+    await second.store.resume(() => undefined, signal());
+    expect(second.store.summary().trackCount).toBe(9);
+    expect((await readRecord()).complete).toBe(true);
+  });
+
+  test("a new sample that is not refused alike ends the give-up: what it finds is recorded and the rest goes on", async () => {
+    const tracks = listTracks(12);
+    const first = await harness({ decode: fastDecode });
+    refuseAll(first.cdn, tracks, 403);
+    await expect(refresh(first, tracks)).rejects.toBeDefined();
+    // At the next start the old three are still refused, but everything else works.
+    const badSample = [0, 6, 11];
+    const second = await harness({ decode: fastDecode });
+    serveAll(second.cdn, tracks);
+    for (const i of badSample) second.cdn.serve(tracks[i]?.downloadUrl ?? "", { status: 403 });
+    await second.store.resume(() => undefined, signal());
+    expect(second.store.summary().trackCount).toBe(9);
+  });
+});

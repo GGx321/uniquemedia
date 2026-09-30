@@ -417,37 +417,52 @@ export class TrackStore implements MusicListSink {
     // 429, or an address that is not public) the run stops with every entry still pending and its URL kept, marked with
     // those tracks, and `resume` retries them at the next start with no new list. If the next run samples the same tracks
     // and they are refused again, they are given up on and the rest is saved.
-    const audioPending = wanted.filter((entry) => entry.audio.state === "pending");
-    const probes = pickProbes(audioPending);
-    const probeIds = new Set(probes.map((entry) => entry.trackId));
-    const probed = new Map<string, Audio>();
-    for (const probe of probes) {
-      if (probe.audio.state !== "pending") continue;
-      const audio = await this.#downloadTrack(probe, probe.audio, signal);
-      progress(++done, total);
-      probed.set(probe.trackId, audio);
-      // Only a refusal is held back until the whole sample is known; anything else is recorded at once, so a stop in the
-      // middle of the sample loses no stored track.
-      if (refusalSignature(audio) === null) await finishEntry({ ...probe, audio });
-    }
-    const signatures = probes.map((probe) => refusalSignature(probed.get(probe.trackId) ?? probe.audio));
-    const first = signatures[0] ?? null;
-    if (first !== null && signatures.every((signature) => signature === first)) {
-      const ids = probes.map((probe) => probe.trackId).sort();
-      const prior = record().breaker;
-      if (prior === undefined || prior.ids.join(",") !== ids.join(",")) {
-        await this.#persist({ ...record(), breaker: { ids, signature: first } });
-        this.#say(`studio engine: the ${probes.length} sampled downloads were all refused (${first}); the run was stopped and its downloads kept`);
-        throw new SinkError(`the CDN refused the ${probes.length} sampled downloads (${first}); nothing more was requested, and the ${countPending(record())} downloads that remain are kept to retry at the next start`);
+    // A repeat counts only when the tracks AND the way they were refused are the same. Giving those three up is not a licence
+    // for the rest: a NEW sample is taken from what remains, and a CDN-wide refusal that survives a restart (a header a CDN
+    // wants, the likeliest first-real-refresh failure) costs three tracks per start, never the list.
+    const mark = record().breaker;
+    let remaining = wanted.filter((entry) => entry.audio.state === "pending");
+    const handled = new Set<string>();
+    for (;;) {
+      const probes = pickProbes(remaining);
+      if (probes.length === 0) break;
+      const probed = new Map<string, Audio>();
+      for (const probe of probes) {
+        if (probe.audio.state !== "pending") continue;
+        const audio = await this.#downloadTrack(probe, probe.audio, signal);
+        progress(++done, total);
+        probed.set(probe.trackId, audio);
+        handled.add(probe.trackId);
+        // Only a refusal is held back until the whole sample is known; anything else is recorded at once, so a stop in the
+        // middle of the sample loses no stored track.
+        if (refusalSignature(audio) === null) await finishEntry({ ...probe, audio });
       }
-      this.#say(`studio engine: the same ${probes.length} downloads were refused again (${first}); they are given up on and the rest goes on`);
-    }
-    for (const probe of probes) {
-      const audio = probed.get(probe.trackId) ?? probe.audio;
-      if (refusalSignature(audio) !== null) await finishEntry({ ...probe, audio });
+      const signatures = probes.map((probe) => refusalSignature(probed.get(probe.trackId) ?? probe.audio));
+      const first = signatures[0] ?? null;
+      const refusedAlike = first !== null && signatures.every((signature) => signature === first);
+      if (refusedAlike) {
+        const ids = probes.map((probe) => probe.trackId).sort();
+        const repeat = mark !== undefined && mark.signature === first && mark.ids.join(",") === ids.join(",");
+        if (!repeat) {
+          // These stay pending with their URLs (they were held, never recorded): the mark says which and how.
+          for (const probe of probes) handled.delete(probe.trackId);
+          await this.#persist({ ...record(), breaker: { ids, signature: first } });
+          this.#say(`studio engine: the ${probes.length} sampled downloads were all refused (${first}); the run was stopped and its downloads kept`);
+          throw new SinkError(`the CDN refused the ${probes.length} sampled downloads (${first}); nothing more was requested, and the ${countPending(record())} downloads that remain are kept to retry at the next start`);
+        }
+        this.#say(`studio engine: the same ${probes.length} downloads were refused again (${first}); they are given up on, and a new sample is taken`);
+      }
+      for (const probe of probes) {
+        const audio = probed.get(probe.trackId) ?? probe.audio;
+        if (refusalSignature(audio) !== null) await finishEntry({ ...probe, audio });
+      }
+      // Given up, a sample leaves the remainder to a new sample; otherwise the sample has said enough and the rest goes on.
+      if (!refusedAlike) break;
+      const given = new Set(probes.map((probe) => probe.trackId));
+      remaining = remaining.filter((entry) => !given.has(entry.trackId));
     }
     for (const entry of wanted) {
-      if (probeIds.has(entry.trackId)) continue;
+      if (handled.has(entry.trackId)) continue;
       const audio: Audio = entry.audio.state === "pending" ? await this.#downloadTrack(entry, entry.audio, signal) : entry.audio;
       if (entry.audio.state === "pending") progress(++done, total);
       await finishEntry({ ...entry, audio });
