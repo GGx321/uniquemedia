@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { Count, MUSIC_QUOTA_LIMIT, MUSIC_QUOTA_WINDOW_DAYS } from "../../shared/engine";
-import { appendJsonLine, readJsonl } from "../library/durableFs";
+import { appendJsonLine, fsyncDir, readJsonl } from "../library/durableFs";
 import { LibraryError } from "../library/errors";
 import { runExclusive } from "../library/keyedMutex";
 import { errorCode } from "../library/renameRetry";
@@ -17,7 +17,8 @@ import { errorCode } from "../library/renameRetry";
 //
 // The file holds no key and no hash of one: each line tags the key by its LAST FOUR chars, the very four the status
 // already shows. That tag is what lets a 401 outlive a restart (`rejectedKey`) without a secret at rest. A last-four
-// collision between an old and a new key is 1 in about 78 million; the owner storing a key again clears the mark.
+// collision between an old and a new key is about 1 in 14.8 million for an alphanumeric key (62^4); the owner storing a
+// key again clears the mark.
 //
 // A torn last line (no newline) is a crash inside the append, before the request could leave: it is not a send. It is
 // moved aside to `<file>.torn` by the next append (`appendJsonLine`). A complete line that does not parse is not the
@@ -45,6 +46,8 @@ const QuotaLineSchema = z.discriminatedUnion("kind", [
     status: Count.optional(),
     remaining: Count.nullable().optional(),
     limit: Count.nullable().optional(),
+    /** The server's own clock (its `Date` header, epoch ms), for clock-skew forensics: a wrong local clock moves the window. */
+    serverAt: Count.optional(),
   }),
   z.strictObject({ v: z.literal(1), kind: z.literal("key"), at: Count, key: KeyTag.nullable() }),
 ]);
@@ -121,6 +124,8 @@ export type Admission = { ok: true; summary: QuotaSummary } | { ok: false; refus
 
 export interface QuotaLedgerOptions {
   clock: () => number;
+  /** Test seam: syncs a folder after it gained an entry; `fsyncDir` (a no-op on Windows) by default. */
+  syncDir?: (dir: string) => Promise<void>;
 }
 
 function assertKeyTag(key: string | null): void {
@@ -130,10 +135,12 @@ function assertKeyTag(key: string | null): void {
 export class QuotaLedger {
   readonly #path: string;
   readonly #clock: () => number;
+  readonly #syncDir: (dir: string) => Promise<void>;
 
   constructor(path: string, options: QuotaLedgerOptions) {
     this.#path = path;
     this.#clock = options.clock;
+    this.#syncDir = options.syncDir ?? fsyncDir;
   }
 
   async #load(): Promise<QuotaLine[]> {
@@ -145,9 +152,15 @@ export class QuotaLedger {
     }
   }
 
-  async #append(line: QuotaLine): Promise<void> {
+  async #append(candidate: QuotaLine): Promise<void> {
+    // Read back through the very schema the ledger loads with: a line this code could write but not read would close
+    // the ledger for good (a complete unreadable line is corruption), so it is never written.
+    const line = QuotaLineSchema.parse(candidate);
     try {
-      await mkdir(dirname(this.#path), { recursive: true });
+      const made = await mkdir(dirname(this.#path), { recursive: true });
+      // The first `music/` made its parent gain an entry: make that durable too, or a power loss could take the folder
+      // (and the send line inside it) although the file itself was fsynced. A folder that cannot be synced only weakens this.
+      if (made !== undefined) await this.#syncDir(dirname(made)).catch(() => undefined);
       await appendJsonLine(this.#path, line);
     } catch (error) {
       throw new QuotaLogError("unwritable", `the quota log could not be written (${errorCode(error) ?? "unknown"})`);
@@ -182,7 +195,7 @@ export class QuotaLedger {
   }
 
   /** What came back for `id`: its outcome, status and the server's own figures. Never a body. */
-  async recordResult(input: { id: string; key: string; outcome: QuotaOutcome; status?: number; remaining?: number | null; limit?: number | null }): Promise<void> {
+  async recordResult(input: { id: string; key: string; outcome: QuotaOutcome; status?: number; remaining?: number | null; limit?: number | null; serverAt?: number }): Promise<void> {
     assertKeyTag(input.key);
     return await this.#exclusive(() =>
       this.#append({
@@ -195,6 +208,7 @@ export class QuotaLedger {
         ...(input.status === undefined ? {} : { status: input.status }),
         ...(input.remaining === undefined ? {} : { remaining: input.remaining }),
         ...(input.limit === undefined ? {} : { limit: input.limit }),
+        ...(input.serverAt === undefined ? {} : { serverAt: input.serverAt }),
       }),
     );
   }

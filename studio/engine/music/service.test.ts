@@ -8,8 +8,10 @@ import { captureConsole, expectNoKeyFragment, fragmentForms } from "../../testin
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { nativeFetch, useNativeHttp } from "../../testing/nativeHttp";
 import { type FlashapiFetch } from "./client";
+import { musicLists } from "./fixtures";
 import { QUOTA_LIMIT, QUOTA_WINDOW_MS, type QuotaLine } from "./quotaLedger";
 import { MemoryListSink, MusicService, type FetchedList, type MusicListSink } from "./service";
+import { PersistingTestSink } from "./testSink";
 useNativeGlobals();
 useNativeHttp();
 
@@ -83,7 +85,7 @@ function harness(options: { fetch?: FlashapiFetch; sink?: MusicListSink; quota?:
     markKeyRejected: (key) => void rejectedCalls.push(key),
     emit: (status) => void events.push(status),
     log: (line) => void logs.push(line),
-    ...(options.sink === undefined ? {} : { sink: options.sink }),
+    sink: options.sink ?? new PersistingTestSink(),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
   });
   return { service, events, logs, rejectedCalls, holder, fetched };
@@ -158,6 +160,7 @@ describe("a refresh that goes through", () => {
   test("hands the parsed list to the sink, and the sink's progress becomes the status's progress", async () => {
     const accepted: FetchedList[] = [];
     const sink: MusicListSink = {
+      persistent: true,
       accept: async (list, progress) => {
         accepted.push(list);
         progress(1, 61);
@@ -179,6 +182,7 @@ describe("a refresh that goes through", () => {
 
   test("a sink that reports progress past its total or a zero total still yields valid statuses", async () => {
     const sink: MusicListSink = {
+      persistent: true,
       accept: async (_list, progress) => {
         progress(5, 3);
         progress(0, 0);
@@ -473,7 +477,7 @@ describe("a request that fails", () => {
   });
 
   test("a sink that throws ends failed and keeps the request counted", async () => {
-    const sink: MusicListSink = { accept: () => Promise.reject(new Error(`disk full near ${KEY}`)), summary: () => ({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 }) };
+    const sink: MusicListSink = { persistent: true, accept: () => Promise.reject(new Error(`disk full near ${KEY}`)), summary: () => ({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 }) };
     const h = harness({ sink });
     await h.service.refresh();
     await h.service.settled();
@@ -506,6 +510,276 @@ describe("a request that fails", () => {
     await h.service.stop();
     expect(performance.now() - started).toBeLessThan(1500);
     expect((await h.service.status()).refresh.state).toBe("failed");
+  });
+});
+
+describe("the server's remaining = 0 on an ERROR answer is the floor (the real exhaustion path is a 429)", () => {
+  const zero = { "x-ratelimit-requests-remaining": "0" };
+
+  test.each([
+    ["429", { status: 429, body: "quota exceeded", headers: zero }, "http-error", "MUSIC_QUOTA_EXHAUSTED"],
+    ["500", { status: 500, body: "boom", headers: zero }, "http-error", "MUSIC_QUOTA_EXHAUSTED"],
+    ["403", { status: 403, body: "no subscription", headers: zero }, "http-error", "MUSIC_QUOTA_EXHAUSTED"],
+  ] as const)("a %s that carries remaining 0 is recorded with it, and the next refresh is refused as exhausted with one request in all", async (_label, step, outcome, code) => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script(step);
+    const h = harness();
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome, remaining: 0 });
+    expect((await h.service.status()).serverRemaining).toBe(0);
+    now += HOUR;
+    expect(refused(await h.service.refresh()).code).toBe(code);
+    expect(mock.requests).toHaveLength(1);
+  });
+
+  test("a 401 that carries remaining 0 records it too, and the next refresh is refused with one request in all", async () => {
+    mock = startMockFlashapi({ key: ROTATED });
+    mock.script({ status: 401, body: { message: "Invalid API key" }, headers: zero });
+    const h = harness();
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome: "rejected", status: 401, remaining: 0 });
+    // Both refusals apply (the key is rejected AND the server says 0); the key's is the one that can be acted on.
+    expect(["MUSIC_KEY_REJECTED", "MUSIC_QUOTA_EXHAUSTED"]).toContain(refused(await h.service.refresh()).code);
+    expect(mock.requests).toHaveLength(1);
+    // A key stored again is still held back by the floor.
+    await h.service.noteKeyChange("0000");
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(mock.requests).toHaveLength(1);
+  });
+
+  test("a server that reports a NEGATIVE remaining is exhausted too", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 429, body: "x", headers: { "x-ratelimit-requests-remaining": "-3" } });
+    const h = harness();
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await quotaLines()).at(-1)).toMatchObject({ remaining: 0 });
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+  });
+});
+
+describe("a result that could not be written", () => {
+  /** A fetch that, when the request arrives, puts a FOLDER where the quota file is, so the result line cannot be appended. */
+  const breakingTheLog: FlashapiFetch = async (url, init) => {
+    await rm(quotaPath(), { force: true });
+    await mkdir(quotaPath());
+    return nativeFetch(url, init);
+  };
+
+  test("is remembered in this session: the next refresh is MUSIC_UNAVAILABLE, not a request the floor or a 401 could not stop", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 429, body: "quota exceeded", headers: { "x-ratelimit-requests-remaining": "0" } });
+    const h = harness({ fetch: breakingTheLog });
+    const output = captureConsole();
+    try {
+      await h.service.refresh();
+      await h.service.settled();
+      await rm(quotaPath(), { recursive: true, force: true });
+      await writeFile(quotaPath(), "");
+      const error = refused(await h.service.refresh());
+      expect(error.code).toBe("MUSIC_UNAVAILABLE");
+      expect(error.detail).toContain("could not be written");
+      expect(mock.requests).toHaveLength(1);
+      expect(h.logs.join("\n")).not.toContain("(unknown)");
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("clears once a ledger write succeeds again (the owner stores a key)", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 500, body: "x" });
+    const h = harness({ fetch: breakingTheLog });
+    await h.service.refresh();
+    await h.service.settled();
+    await rm(quotaPath(), { recursive: true, force: true });
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_UNAVAILABLE");
+    await h.service.noteKeyChange("0000");
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
+  });
+
+  test("names the kind of error in the log, not `unknown`, and never the key", async () => {
+    const output = captureConsole();
+    try {
+      mock = startMockFlashapi({ key: KEY });
+      const h = harness({ fetch: breakingTheLog });
+      await h.service.refresh();
+      await h.service.settled();
+      expectNoKeyFragment(output.text() + h.logs.join("\n"), KEY);
+      expect(h.logs.join("\n")).toMatch(/quota log \((unwritable|[A-Z]+)\)/);
+    } finally {
+      output.restore();
+    }
+  });
+});
+
+describe("a refresh never sticks busy", () => {
+  test("a sink whose summary throws does not leave the service running or the refresh unanswered", async () => {
+    let broken = true;
+    const sink: MusicListSink = {
+      persistent: true,
+      accept: () => Promise.resolve(),
+      summary: () => {
+        if (broken) throw new Error("summary is broken");
+        return { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 };
+      },
+    };
+    const h = harness({ sink });
+    const answer = await h.service.refresh();
+    expect(answer.ok).toBe(true);
+    await h.service.settled();
+    broken = false;
+    now += HOUR;
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
+    expect((await quotaLines()).filter((l) => l.kind === "send")).toHaveLength(2);
+  });
+
+  test("a status that cannot be built after the send still ends the refresh: nothing is stuck running", async () => {
+    let calls = 0;
+    const sink: MusicListSink = {
+      persistent: true,
+      accept: () => Promise.resolve(),
+      summary: () => {
+        if (++calls === 1) throw new Error("only the first summary fails");
+        return { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 };
+      },
+    };
+    const h = harness({ sink });
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await h.service.status()).refresh.state).not.toBe("running");
+  });
+});
+
+describe("a service that is shutting down", () => {
+  test("stop() closes it: a refresh after it is refused before anything is written or sent", async () => {
+    const h = harness();
+    await h.service.stop();
+    const error = refused(await h.service.refresh());
+    expect(error.code).toBe("MUSIC_UNAVAILABLE");
+    expect(error.detail).toContain("shutting down");
+    expect(mock?.requests).toEqual([]);
+    expect(await quotaLines()).toEqual([]);
+  });
+
+  test("stop() while a request is in flight aborts it, and a refresh asked right after is refused too", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ delayMs: 500 });
+    const h = harness();
+    await h.service.refresh();
+    const stopping = h.service.stop();
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_UNAVAILABLE");
+    await stopping;
+    expect(mock.requests.length).toBeLessThanOrEqual(1);
+    expect((await quotaLines()).filter((l) => l.kind === "send")).toHaveLength(1);
+  });
+});
+
+describe("a refusal because the ledger remembers a rejected key", () => {
+  test("also tells the engine, so the settings show the key as rejected without another request", async () => {
+    await seedQuota([
+      { v: 1, kind: "send", id: "seed-1", at: NOW - 2 * HOUR, key: "0000" },
+      { v: 1, kind: "result", id: "seed-1", at: NOW - 2 * HOUR, key: "0000", outcome: "rejected", status: 401 },
+    ]);
+    const h = harness();
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_KEY_REJECTED");
+    expect(h.rejectedCalls).toEqual([KEY]);
+    expect(mock?.requests).toEqual([]);
+  });
+});
+
+describe("a result that is not a FlashapiError", () => {
+  test("still ends failed, with the key redacted from what is said", async () => {
+    // A Response whose headers are fine to read a length from and blow up on enumeration, with the key in the message.
+    const hostile = {
+      status: 200,
+      ok: true,
+      body: null,
+      headers: {
+        get: () => null,
+        forEach: () => {
+          throw new Error(`the runtime broke while reading headers for ${KEY}`);
+        },
+      },
+    } as unknown as Response;
+    const h = harness({ fetch: () => Promise.resolve(hostile) });
+    const output = captureConsole();
+    try {
+      await h.service.refresh();
+      await h.service.settled();
+      const status = await h.service.status();
+      expect(status.refresh).toMatchObject({ state: "failed", error: { code: "MUSIC_UNAVAILABLE" } });
+      expectNoKeyFragment(JSON.stringify(h.events) + h.logs.join("\n") + output.text(), KEY);
+      expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome: "network-error" });
+    } finally {
+      output.restore();
+    }
+  });
+});
+
+describe("a good answer that echoes the key", () => {
+  test("in its status, its next_max_id and an unknown field NAME leaves nothing of the key in the log, the events or the files", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    const list = JSON.parse(await Bun.file(musicLists.kyiv.file).text()) as { response: Record<string, unknown> };
+    const body = { ...list.response, status: KEY, page_info: { next_max_id: KEY, more_available: true }, [KEY]: "echo" };
+    mock.script({ status: 200, body, headers: { "x-ratelimit-requests-remaining": "9", "x-ratelimit-note": KEY } });
+    const h = harness();
+    const output = captureConsole();
+    try {
+      await h.service.refresh();
+      await h.service.settled();
+      const first = h.logs.filter((l) => l.includes("first flashapi refresh"));
+      expect(first).toHaveLength(1);
+      expectNoKeyFragment(h.logs.join("\n") + JSON.stringify(h.events) + output.text(), KEY);
+      const files = (await readdir(dir, { recursive: true, withFileTypes: true })).filter((e) => e.isFile());
+      for (const file of files) expectNoKeyFragment((await readFile(join(file.parentPath, file.name))).toString("utf8"), KEY);
+    } finally {
+      output.restore();
+    }
+  });
+});
+
+describe("the server's clock", () => {
+  test("its Date header is written on the result line (validated), for clock-skew forensics", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 200, body: { status: "ok", items: [] }, headers: { date: "Wed, 30 Sep 2026 12:00:07 GMT" } });
+    const h = harness();
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", serverAt: Date.UTC(2026, 8, 30, 12, 0, 7) });
+  });
+
+  test("a junk Date header leaves the field out", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 200, body: { status: "ok", items: [] }, headers: { date: "someday" } });
+    const h = harness();
+    await h.service.refresh();
+    await h.service.settled();
+    expect(Object.keys((await quotaLines()).at(-1) ?? {})).not.toContain("serverAt");
+  });
+});
+
+describe("until a sink that persists exists (3c.4)", () => {
+  test("music.refresh is refused as not available yet: nothing is sent, and no request is spent into memory", async () => {
+    const h = harness({ sink: new MemoryListSink() });
+    const error = refused(await h.service.refresh());
+    expect(error.code).toBe("MUSIC_UNAVAILABLE");
+    expect(error.detail).toContain("not available yet");
+    expect(mock?.requests).toEqual([]);
+    expect(await quotaLines()).toEqual([]);
+  });
+
+  test("the in-memory sink says it does not persist, and a persisting one lets a refresh through", () => {
+    expect(new MemoryListSink().persistent).toBe(false);
+    expect(new PersistingTestSink().persistent).toBe(true);
+  });
+
+  test("the status still works with the in-memory sink", async () => {
+    expect((await harness({ sink: new MemoryListSink() }).service.status()).refresh).toEqual({ state: "idle" });
   });
 });
 

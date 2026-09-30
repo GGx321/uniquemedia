@@ -338,6 +338,28 @@ describe("the body and the items", () => {
     expect(Reflect.get(list.tracks[0] ?? {}, "polluted")).toBeUndefined();
   });
 
+  test("what is reported about a response is bounded: at most 64 values of at most 64 chars each, sorted", () => {
+    const items = Array.from({ length: 150 }, (_, i) =>
+      item(good({ id: String(1_000_000_000 + i), song_monetization_info: `${String(i).padStart(3, "0")}${"m".repeat(100)}`, licensed_music_subtype: `s${i}`, [`u${String(i).padStart(3, "0")}_${"k".repeat(80)}`]: 1 }), {
+        [`metadata_${i}`]: 1,
+      }),
+    );
+    const { observed } = parsed(body(...items));
+    for (const values of [observed.monetizationValues, observed.subtypeValues, observed.unknownTrackKeys, observed.unknownMetadataKeys]) {
+      expect(values.length).toBe(64);
+      for (const value of values) expect(value.length).toBeLessThanOrEqual(64);
+      expect([...values]).toEqual([...values].sort());
+    }
+    expect(observed.itemCount).toBe(150);
+  });
+
+  test("the URL origins and the page_info are bounded the same way", () => {
+    const items = Array.from({ length: 100 }, (_, i) => item(good({ id: String(1_000_000_000 + i), cover_artwork_uri: `https://host-${i}.example/c.jpg` })));
+    const list = parsed({ ...body(...items), page_info: { next_max_id: "9".repeat(500), more_available: true } });
+    expect(list.observed.urlOrigins.length).toBe(64);
+    expect(list.observed.pageInfo?.nextMaxId?.length).toBe(64);
+  });
+
   test("a large list of junk items parses in a fair time", () => {
     const junk = Array.from({ length: 20_000 }, (_, i) => (i % 2 === 0 ? null : { track: { id: i } }));
     const started = performance.now();

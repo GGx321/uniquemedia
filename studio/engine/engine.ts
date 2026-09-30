@@ -96,7 +96,7 @@ import { VideoService, type VideoServiceDeps } from "./videos/service";
 import { MontageService, type MontageServiceDeps } from "./montages/service";
 import { DraftStore, type DraftStoreDeps } from "./montages/store";
 import { FLASHAPI_BASE, type FlashapiFetch } from "./music/client";
-import { MusicService } from "./music/service";
+import { MusicService, type MusicListSink } from "./music/service";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -121,6 +121,12 @@ export interface EngineDeps {
    * base URL from a loopback mock, so the real host is never contacted and the URL the engine asks for is still checked.
    */
   musicFetch?: FlashapiFetch;
+  /**
+   * Where a fetched list goes (3c.4's track store). Absent: `MemoryListSink`, which does not persist, so
+   * `music.refresh` is refused as not available yet. 3c.4 passes its persisting sink here (`main.ts`), which is the one
+   * switch that turns the refresh on.
+   */
+  musicSink?: MusicListSink;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
   /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
@@ -640,6 +646,7 @@ export class Engine {
       baseUrl: resolveMusicBaseUrl(init.musicBaseUrl, STUDIO_E2E),
       allowBaseUrlOverride: STUDIO_E2E,
       fetch: deps.musicFetch ?? ((url, request) => fetch(url, request)),
+      ...(deps.musicSink === undefined ? {} : { sink: deps.musicSink }),
       clock: deps.clock,
       newId: deps.newId,
       key: () => this.#musicKey,

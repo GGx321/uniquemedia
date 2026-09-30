@@ -247,6 +247,17 @@ describe("ERROR_MESSAGES_RU", () => {
     expect(new Set(texts).size).toBe(texts.length);
   });
 
+  test("MUSIC_QUOTA_EXHAUSTED covers both causes: the local 30 in 31 days AND the server saying no requests remain", () => {
+    expect(ERROR_MESSAGES_RU.MUSIC_QUOTA_EXHAUSTED).toMatch(/30 за 31 день/);
+    expect(ERROR_MESSAGES_RU.MUSIC_QUOTA_EXHAUSTED).toMatch(/сервис|RapidAPI|сервер/);
+    expect(ERROR_MESSAGES_RU.MUSIC_QUOTA_EXHAUSTED).toMatch(/не осталось/);
+  });
+
+  test("MUSIC_UNAVAILABLE does not claim a request was counted: it is also the code for a refusal before anything was sent", () => {
+    expect(ERROR_MESSAGES_RU.MUSIC_UNAVAILABLE).not.toMatch(/мог быть засчитан/);
+    expect(ERROR_MESSAGES_RU.MUSIC_UNAVAILABLE).toMatch(/если запрос (уже )?был отправлен/i);
+  });
+
   test("the RATE_LIMITED message names «Продолжить» as the way to go on with a photo run, not a new run", () => {
     expect(ERROR_MESSAGES_RU.RATE_LIMITED).toContain("«Продолжить»");
     expect(ERROR_MESSAGES_RU.RATE_LIMITED).toMatch(/не нужно/);

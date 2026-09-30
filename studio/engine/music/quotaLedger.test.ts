@@ -206,6 +206,27 @@ describe("the server's remaining = 0 floor", () => {
     expect((await fileLines()).length).toBe(2);
   });
 
+  test.each([
+    ["a 429", { outcome: "http-error", status: 429 }],
+    ["a 500", { outcome: "http-error", status: 500 }],
+    ["a 403", { outcome: "http-error", status: 403 }],
+    ["a 401", { outcome: "rejected", status: 401 }],
+    ["an answer that was too large", { outcome: "too-large", status: 200 }],
+    ["an answer that was not a list", { outcome: "invalid", status: 200 }],
+  ] as const)("an ERROR answer (%s) that carries remaining 0 is the floor too: the real exhaustion path is a 429", async (_label, extra) => {
+    await seed([send(NOW - 2000), result(NOW - 1000, { ...extra, remaining: 0 })]);
+    const answer = await reserve();
+    expect(answer).toMatchObject({ ok: false, refusal: "floor" });
+    expect(answer.summary.serverRemaining).toBe(0);
+    expect(answer.summary.nextFreeAt).toBe(NOW - 1000 + QUOTA_WINDOW_MS);
+    expect((await fileLines()).length).toBe(2);
+  });
+
+  test("an error answer with a positive remaining lifts an earlier floor, like any answer that carries a figure", async () => {
+    await seed([result(NOW - 3 * DAY, { remaining: 0 }), result(NOW - DAY, { outcome: "http-error", status: 500, remaining: 6 })]);
+    expect((await reserve()).ok).toBe(true);
+  });
+
   test("the floor lifts 31 days after that answer, to the ms", async () => {
     const at = NOW - 10 * DAY;
     await seed([result(at, { remaining: 0 })]);
@@ -309,6 +330,41 @@ describe("what the file holds", () => {
     await expect(ledger().recordKeyChange(KEY)).rejects.toBeInstanceOf(TypeError);
     await expect(ledger().recordResult({ id: "refresh-0001", key: KEY, outcome: "ok" })).rejects.toBeInstanceOf(TypeError);
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test.each([
+    ["a fractional remaining", { remaining: 1.5 }],
+    ["a negative status", { status: -1 }],
+    ["a fractional limit", { limit: 0.5 }],
+    ["a server time that is not a whole number", { serverAt: 1.5 }],
+  ])("a result line the ledger itself could not read back is never written (%s): it would close the ledger for good", async (_label, bad) => {
+    const l = ledger();
+    await l.reserve({ id: "refresh-0001", key: LAST4 });
+    const before = await readFile(path, "utf8");
+    await expect(l.recordResult({ id: "refresh-0001", key: LAST4, outcome: "ok", ...bad })).rejects.toBeDefined();
+    expect(await readFile(path, "utf8")).toBe(before);
+    expect((await l.summary()).sentInWindow).toBe(1);
+  });
+
+  test("the server's own time (its Date header) is kept on the result line", async () => {
+    const l = ledger();
+    await l.reserve({ id: "refresh-0001", key: LAST4 });
+    await l.recordResult({ id: "refresh-0001", key: LAST4, outcome: "ok", serverAt: NOW + 5000 });
+    expect(JSON.parse((await fileLines()).at(-1) ?? "")).toMatchObject({ kind: "result", serverAt: NOW + 5000 });
+  });
+
+  test("creating music/ the first time also syncs the folder that holds it, once", async () => {
+    const synced: string[] = [];
+    const l = new QuotaLedger(path, { clock: () => now, syncDir: async (dir) => void synced.push(dir) });
+    await l.reserve({ id: "refresh-0001", key: LAST4 });
+    await l.recordKeyChange(LAST4);
+    expect(synced).toEqual([dir]);
+  });
+
+  test("a folder that cannot be synced does not stop the send: the line is written and counted", async () => {
+    const l = new QuotaLedger(path, { clock: () => now, syncDir: () => Promise.reject(Object.assign(new Error("EIO"), { code: "EIO" })) });
+    expect((await l.reserve({ id: "refresh-0001", key: LAST4 })).ok).toBe(true);
+    expect((await l.summary()).sentInWindow).toBe(1);
   });
 
   test("the send line is the first thing the file holds after reserve resolves", async () => {

@@ -8,6 +8,7 @@ import { useNativeGlobals } from "../testing/nativeGlobals";
 import { nativeFetch, useNativeHttp } from "../testing/nativeHttp";
 import { resolveMusicBaseUrl } from "./engine";
 import { FLASHAPI_BASE, type FlashapiFetch } from "./music/client";
+import { PersistingTestSink } from "./music/testSink";
 import { command, failed, ok, startEngine, useEngineDir } from "./testing/engineHarness";
 useNativeGlobals();
 useNativeHttp();
@@ -38,14 +39,14 @@ function viaMock(seen: string[]): FlashapiFetch {
 
 const musicDir = () => join(dir(), "userData", "music");
 
-async function start(options: { key?: string | null; origin?: "user" | "start"; mockKey?: string; withDir?: boolean; seen?: string[] } = {}) {
+async function start(options: { defaultSink?: boolean; key?: string | null; origin?: "user" | "start"; mockKey?: string; withDir?: boolean; seen?: string[] } = {}) {
   mock = startMockFlashapi({ key: options.mockKey ?? MUSIC });
   mocks.push(mock);
   const seen = options.seen ?? [];
   const started = await startEngine(dir(), {
     key: null,
     init: options.withDir === false ? {} : { musicDir: musicDir() },
-    deps: { musicFetch: viaMock(seen) },
+    deps: { musicFetch: viaMock(seen), ...(options.defaultSink === true ? {} : { musicSink: new PersistingTestSink() }) },
   });
   if (options.key !== null) await started.engine.applyControl({ kind: "control", type: "musicKey.set", key: options.key ?? MUSIC, origin: options.origin ?? "user" });
   return { ...started, seen };
@@ -113,6 +114,15 @@ describe("music.refresh", () => {
     const { engine } = await start({ withDir: false });
     expect(failed(await engine.handle(command("music.refresh", { confirm: true }))).error.code).toBe("MUSIC_UNAVAILABLE");
     expect(mock?.requests).toEqual([]);
+  });
+
+  test("with no persisting sink (until 3c.4) it is refused as not available yet: no request, no quota line", async () => {
+    const { engine } = await start({ defaultSink: true });
+    const response = failed(await engine.handle(command("music.refresh", { confirm: true })));
+    expect(response.error.code).toBe("MUSIC_UNAVAILABLE");
+    expect(response.error.detail).toContain("not available yet");
+    expect(mock?.requests).toEqual([]);
+    expect((await statusOf(engine)).sentLast31d).toBe(0);
   });
 
   test("a refresh without confirm: true is refused by the contract", async () => {

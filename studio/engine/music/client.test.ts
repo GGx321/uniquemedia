@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { startMockFlashapi, type MockFlashapi, type MockFlashapiStep } from "../../scripts/mockFlashapi";import { captureConsole, expectNoKeyFragment } from "../../testing/keyLeaks";
+import { startMockFlashapi, type MockFlashapi, type MockFlashapiStep } from "../../scripts/mockFlashapi";
+import { captureConsole, expectNoKeyFragment } from "../../testing/keyLeaks";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { nativeFetch, useNativeHttp } from "../../testing/nativeHttp";
-import { createFlashapiClient, FLASHAPI_BASE, FLASHAPI_HOST, FlashapiError, type FlashapiClientOptions, type FlashapiFailure, type FlashapiFetch } from "./client";
+import {
+  createFlashapiClient,
+  FLASHAPI_BASE,
+  FLASHAPI_HOST,
+  FlashapiError,
+  type FlashapiClientOptions,
+  type FlashapiFailure,
+  type FlashapiFetch,
+} from "./client";
 useNativeGlobals();
 useNativeHttp();
 
@@ -49,7 +58,8 @@ async function failureOf(run: Promise<unknown>): Promise<FlashapiError> {
 
 /** Everything a failure could print or carry, for a leak check. */
 function everythingOf(error: FlashapiError): string {
-  return [error.message, error.detail, error.stack ?? "", JSON.stringify(error), JSON.stringify(error.response)].join("\n");
+  // `Bun.inspect` is what `console.error(error)` prints: it shows own properties and a `cause`, which `message` does not.
+  return [error.message, error.detail, error.stack ?? "", JSON.stringify(error), JSON.stringify(error.response), Bun.inspect(error)].join("\n");
 }
 
 describe("the request", () => {
@@ -149,6 +159,16 @@ describe("a good answer", () => {
     expect(response.rateLimit["x-ratelimit-note"]).toBe("[redacted]");
   });
 
+  test("the server's own time, from its Date header, comes back as epoch ms; a missing or junk one is null", async () => {
+    const m = start();
+    m.script({ status: 200, body: { status: "ok", items: [] }, headers: { date: "Wed, 30 Sep 2026 12:00:00 GMT" } });
+    expect((await clientFor(m).fetchTrending()).response.serverDateMs).toBe(Date.UTC(2026, 8, 30, 12, 0, 0));
+    for (const junk of ["yesterday", "", "Thu, 01 Jan 1970 00:00:00 GMT", "Wed, 30 Sep 3000 12:00:00 GMT"]) {
+      m.script({ status: 200, body: { status: "ok", items: [] }, headers: { date: junk } });
+      expect((await clientFor(m).fetchTrending()).response.serverDateMs).toBeNull();
+    }
+  });
+
   test("an empty list is a good answer: no tracks, and the figures still come back", async () => {
     const m = start();
     m.script({ status: 200, body: { status: "ok", items: [] }, headers: { "x-ratelimit-requests-remaining": "0" } });
@@ -168,7 +188,9 @@ describe("a good answer", () => {
     ["a number", "7", 7],
     ["zero", "0", 0],
     ["not a number", "many", null],
-    ["negative", "-1", null],
+    ["negative (a server that over-counted: it is exhausted, so 0)", "-1", 0],
+    ["a huge negative", "-999999999", 0],
+    ["a negative with junk", "-1x", null],
     ["fractional", "2.5", null],
     ["a huge digit string", "9".repeat(30), null],
   ])("the server's remaining, when it is %s, reads as %p", async (_label, header, expected) => {
@@ -277,6 +299,43 @@ describe("a request that fails before an answer", () => {
     expectNoKeyFragment(everythingOf(error), KEY);
   });
 
+  test.each([
+    ["ECONNREFUSED", "ECONNREFUSED"],
+    ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_CONNECT_TIMEOUT"],
+    ["ENOTFOUND", "ENOTFOUND"],
+  ])("under Electron's Node `fetch failed` hides its cause: a cause code %s is appended to the detail", async (_label, code) => {
+    const client = createFlashapiClient({
+      key: KEY,
+      baseUrl: FLASHAPI_BASE,
+      allowBaseUrlOverride: false,
+      fetch: () => Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error(`connect ${KEY}`), { code }) })),
+    });
+    const error = await failureOf(client.fetchTrending());
+    expect(error.kind).toBe("network");
+    expect(error.detail).toContain(code);
+    expectNoKeyFragment(everythingOf(error), KEY);
+  });
+
+  test.each([
+    ["lower case", "econnrefused"],
+    ["too short", "E"],
+    ["too long", "E".repeat(41)],
+    ["holding the key", KEY],
+    ["holding a space", "ECONN REFUSED"],
+    ["not a string", 42],
+  ])("a cause code that is %s is ignored, and the error keeps no reference to the cause", async (_label, code) => {
+    const client = createFlashapiClient({
+      key: KEY,
+      baseUrl: FLASHAPI_BASE,
+      allowBaseUrlOverride: false,
+      fetch: () => Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code } })),
+    });
+    const error = await failureOf(client.fetchTrending());
+    expect(error.detail).toBe("the request failed (TypeError: fetch failed)");
+    expect(Reflect.get(error, "cause")).toBeUndefined();
+    expectNoKeyFragment(everythingOf(error), KEY);
+  });
+
   test("a refused connection (nothing listening) is `network`", async () => {
     const m = start();
     const base = m.url;
@@ -314,11 +373,40 @@ describe("a request that fails before an answer", () => {
 });
 
 describe("the size of the answer is bounded", () => {
-  test("a Content-Length over the cap is refused without reading the body", async () => {
-    const m = start();
-    m.script({ oversize: { bytes: 20_000, contentLength: true } });
-    const error = await failureOf(clientFor(m, { maxBodyBytes: 5000 }).fetchTrending());
+  test("a Content-Length over the cap is refused BEFORE the body is read: not one chunk is pulled, and the stream is cancelled", async () => {
+    let pulled = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(new TextEncoder().encode("x".repeat(1024)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fake: FlashapiFetch = () => Promise.resolve(new Response(stream, { status: 200, headers: { "content-length": "20000" } }));
+    const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: fake, maxBodyBytes: 5000 });
+    const error = await failureOf(client.fetchTrending());
     expect(error.kind).toBe("too-large");
+    expect(error.detail).toContain("5000");
+    expect(cancelled).toBe(true);
+    // A stream cut is different: it has to pull past the cap first. Here the body was never asked for.
+    expect(pulled).toBeLessThanOrEqual(1);
+  });
+
+  test("a body that lies about its Content-Length by being longer is cut at the cap, having been read", async () => {
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(new TextEncoder().encode("x".repeat(1024)));
+      },
+    });
+    const fake: FlashapiFetch = () => Promise.resolve(new Response(stream, { status: 200, headers: { "content-length": "100" } }));
+    const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: fake, maxBodyBytes: 5000 });
+    expect((await failureOf(client.fetchTrending())).kind).toBe("too-large");
+    expect(pulled).toBeGreaterThanOrEqual(5);
   });
 
   test("a streamed body without a Content-Length is cut off past the cap", async () => {

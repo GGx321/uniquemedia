@@ -22,6 +22,7 @@ const response: FlashapiResponseInfo = {
   remaining: 28,
   limit: 30,
   bodyBytes: 196_000,
+  serverDateMs: null,
 };
 
 function realList() {
@@ -32,7 +33,7 @@ function realList() {
 
 describe("buildRefreshReport", () => {
   test("of a good answer names the status, header names, rate-limit values and both quota counters", () => {
-    const report = buildRefreshReport({ response, list: realList(), localSentInWindow: 1, now: Date.parse(musicLists.kyiv.fetchedAt) });
+    const report = buildRefreshReport({ response, list: realList(), localSentInWindow: 1, now: Date.parse(musicLists.kyiv.fetchedAt), key: KEY });
     expect(report).toMatchObject({
       httpStatus: 200,
       headerNames: response.headerNames,
@@ -46,7 +47,7 @@ describe("buildRefreshReport", () => {
   });
 
   test("lists the distinct open-string values, the dropped items, the page_info and the unknown keys", () => {
-    const report = buildRefreshReport({ response, list: realList(), localSentInWindow: 1, now: 0 });
+    const report = buildRefreshReport({ response, list: realList(), localSentInWindow: 1, now: 0, key: KEY });
     expect(report.monetizationValues).toContain("REVSHARE");
     expect(report.licensedSubtypes).toContain("DEFAULT");
     expect(report.pageInfo).toEqual({ nextMaxId: "30", moreAvailable: true });
@@ -58,7 +59,7 @@ describe("buildRefreshReport", () => {
     const junk = Array.from({ length: 80 }, () => null);
     const parsed = parseFlashapiList({ status: "ok", items: junk });
     if (!parsed.ok) throw new Error("list");
-    const report = buildRefreshReport({ response, list: parsed, localSentInWindow: 2, now: 0 });
+    const report = buildRefreshReport({ response, list: parsed, localSentInWindow: 2, now: 0, key: KEY });
     expect(report.dropped.total).toBe(80);
     expect(report.dropped.byReason).toEqual({ "no-track": 80 });
     expect(report.dropped.indices.length).toBeLessThanOrEqual(50);
@@ -66,7 +67,7 @@ describe("buildRefreshReport", () => {
 
   test("gives each URL's scheme and host and the earliest expiry, never a path, a query or a signature", () => {
     const now = Date.parse(musicLists.kyiv.fetchedAt);
-    const report = buildRefreshReport({ response, list: realList(), localSentInWindow: 1, now });
+    const report = buildRefreshReport({ response, list: realList(), localSentInWindow: 1, now, key: KEY });
     expect(report.urlOrigins).toContain("https://instagram.fkiv8-1.fna.fbcdn.net");
     const text = JSON.stringify(report);
     expect(text).not.toMatch(/oe=|oh=|_nc_|\.mp4|\.jpg/);
@@ -77,12 +78,12 @@ describe("buildRefreshReport", () => {
   });
 
   test("of an answer with no list (an error) still has the status, the names and the counters", () => {
-    const report = buildRefreshReport({ response: { ...response, status: 401, remaining: null, limit: null, rateLimit: {} }, list: null, localSentInWindow: 3, now: 0 });
+    const report = buildRefreshReport({ response: { ...response, status: 401, remaining: null, limit: null, rateLimit: {} }, list: null, localSentInWindow: 3, now: 0, key: KEY });
     expect(report).toMatchObject({ httpStatus: 401, items: null, kept: null, minExpiresAt: null, quota: { localSentInWindow: 3, serverRemaining: null } });
   });
 
   test("of a request that got no answer says so", () => {
-    const report = buildRefreshReport({ response: null, list: null, localSentInWindow: 3, now: 0 });
+    const report = buildRefreshReport({ response: null, list: null, localSentInWindow: 3, now: 0, key: KEY });
     expect(report.httpStatus).toBeNull();
     expect(report.headerNames).toEqual([]);
   });

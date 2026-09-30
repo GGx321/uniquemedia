@@ -20,8 +20,8 @@ export interface RefreshReportInput {
   /** Sends the ledger holds in the window, this request included. */
   localSentInWindow: number;
   now: number;
-  /** When given, every string in the report is passed through `redactKnown(text, key)`. */
-  key?: string;
+  /** Every string in the report is passed through `redactKnown(text, key)`: required, so no caller can forget it. */
+  key: string;
 }
 
 export interface RefreshReport {
@@ -85,5 +85,5 @@ export function buildRefreshReport(input: RefreshReportInput): RefreshReport {
     urlOrigins: [...(list?.observed.urlOrigins ?? [])],
     minExpiresAt: expiries.length === 0 ? null : new Date(Math.min(...expiries)).toISOString(),
   };
-  return input.key === undefined ? report : redactDeep(report, input.key);
+  return redactDeep(report, input.key);
 }

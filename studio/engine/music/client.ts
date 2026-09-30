@@ -53,6 +53,8 @@ export interface FlashapiResponseInfo {
   /** `x-ratelimit-requests-limit` as a whole number, else null. */
   limit: number | null;
   bodyBytes: number;
+  /** The server's own clock, from its `Date` header, epoch ms; null when absent or not a plausible time. Kept for clock-skew forensics. */
+  serverDateMs: number | null;
 }
 
 /** A request that did not end in a usable list. `detail` is redacted of the key; `response` is null when nothing came back. */
@@ -122,6 +124,29 @@ function checkedBaseUrl(baseUrl: string, allowOverride: boolean): string {
 function checkedKey(key: string): string {
   if (!HEADER_SAFE_KEY.test(key)) throw new FlashapiConfigError("INVALID_KEY", "the RapidAPI key cannot be sent as a header");
   return key;
+}
+
+/**
+ * The server's `remaining`: a whole number, and a NEGATIVE one (a server that over-counted) reads as 0, since a
+ * quota that has gone below zero is exhausted, never "unknown".
+ */
+function remainingFigure(value: string | null): number | null {
+  if (value !== null && /^-\d{1,9}$/.test(value)) return 0;
+  return wholeNumber(value);
+}
+
+/** A `Date` header as epoch ms, or null unless it is a real time between 2000 and 2100. */
+function serverDate(value: string | null): number | null {
+  if (value === null) return null;
+  const at = Date.parse(value);
+  return Number.isFinite(at) && at >= 946_684_800_000 && at < 4_102_444_800_000 ? at : null;
+}
+
+/** A runtime's own error code (`ECONNREFUSED`, `UND_ERR_CONNECT_TIMEOUT`), read from an error's `cause`; nothing else of the cause is used. */
+function causeCode(error: unknown): string | null {
+  const cause: unknown = error instanceof Error ? error.cause : undefined;
+  const code: unknown = typeof cause === "object" && cause !== null ? Reflect.get(cause, "code") : undefined;
+  return typeof code === "string" && /^[A-Z0-9_]{2,40}$/.test(code) ? code : null;
 }
 
 function wholeNumber(value: string | null): number | null {
@@ -197,9 +222,10 @@ export function createFlashapiClient(options: FlashapiClientOptions): FlashapiCl
       status: res.status,
       headerNames: headerNames.sort(),
       rateLimit,
-      remaining: wholeNumber(res.headers.get("x-ratelimit-requests-remaining")),
+      remaining: remainingFigure(res.headers.get("x-ratelimit-requests-remaining")),
       limit: wholeNumber(res.headers.get("x-ratelimit-requests-limit")),
       bodyBytes,
+      serverDateMs: serverDate(res.headers.get("date")),
     };
   }
 
@@ -216,7 +242,9 @@ export function createFlashapiClient(options: FlashapiClientOptions): FlashapiCl
     const interrupted = (error: unknown): FlashapiError => {
       if (timedOut) return new FlashapiError("timeout", `flashapi did not answer within ${timeoutMs} ms`);
       if (signal?.aborted) return new FlashapiError("aborted", "the request was cancelled");
-      const what = error instanceof Error ? `${error.name}: ${error.message}` : "unknown error";
+      // Under Electron's Node `fetch failed` says nothing more: the runtime's cause code (only) says why.
+      const code = causeCode(error);
+      const what = error instanceof Error ? `${error.name}: ${error.message}${code === null ? "" : `, ${code}`}` : "unknown error";
       return new FlashapiError("network", `the request failed (${snippet(what, redact)})`);
     };
     try {

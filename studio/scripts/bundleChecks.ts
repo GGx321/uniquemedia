@@ -115,8 +115,19 @@ export function productionMainProblems(main: string): string[] {
  */
 export function productionEngineProblems(engine: string): string[] {
   const problems: string[] = [];
+  // Layer one: the resolver of each base URL, with the build flag folded to false.
   if (!/resolveOpenRouterBaseUrl\(init\.openRouterBaseUrl, false\)/.test(engine)) problems.push("the engine takes an OpenRouter base-URL override");
   if (!/resolveMusicBaseUrl\(init\.musicBaseUrl, false\)/.test(engine)) problems.push("the engine takes a flashapi base-URL override");
+  // Layer two: each client is built with `allowBaseUrlOverride: false`, the flag its own check reads (`checkedBaseUrl`).
+  // A mutation of only this layer to true leaves the resolver shut and the client open to any loopback base.
+  const openClientShut = /baseUrl: this\.#openRouterBaseUrl,\s*allowBaseUrlOverride: (false|!1),/.test(engine);
+  const musicClientShut = /baseUrl: resolveMusicBaseUrl\(init\.musicBaseUrl, \w+\),\s*allowBaseUrlOverride: (false|!1),/.test(engine);
+  if (!openClientShut) problems.push("the OpenRouter client is built with a base-URL override allowed");
+  if (!musicClientShut) problems.push("the flashapi client is built with a base-URL override allowed");
+  // Any other `true` (a third client, a reshaped call) that the two shapes above do not account for.
+  const allowed = engine.match(/allowBaseUrlOverride: (true|!0)/g)?.length ?? 0;
+  const named = Number(!openClientShut) + Number(!musicClientShut);
+  if (allowed > named) problems.push("a client in the engine allows a base-URL override");
   return problems;
 }
 

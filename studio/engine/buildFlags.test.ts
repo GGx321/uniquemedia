@@ -145,6 +145,11 @@ describe("the smoke test's production bundle checks", () => {
       "DevTools are not compiled off",
       "the remote-debugging refusal is missing",
     ]);
-    expect(productionEngineProblems(await engineOf(e2eDir))).toEqual(["the engine takes an OpenRouter base-URL override", "the engine takes a flashapi base-URL override"]);
+    expect(productionEngineProblems(await engineOf(e2eDir))).toEqual([
+      "the engine takes an OpenRouter base-URL override",
+      "the engine takes a flashapi base-URL override",
+      "the OpenRouter client is built with a base-URL override allowed",
+      "the flashapi client is built with a base-URL override allowed",
+    ]);
   });
 });

@@ -10,9 +10,12 @@ import { redactKnown } from "./redactKnown";
 // `send` line BEFORE the one request leaves, records the result, and hands the parsed list to a `MusicListSink`.
 //
 // THE SEAM FOR 3c.4: the sink is where the list is persisted and every track and cover downloaded (invariant 31).
-// Until then the default `MemoryListSink` keeps the parsed list in memory only, which is fine because no window can
-// call `music.refresh` before 3c.4 and 3c.6 land. 3c.4 MUST persist the list record before it starts downloading:
-// the request has been spent, and the signed URLs expire 104 to 108 hours after it.
+// Until 3c.4 lands, the sink is `MemoryListSink`, which keeps the parsed list in memory only and says
+// `persistent: false`. `music.refresh` is reachable from the window (the bridge forwards it), and a refresh into
+// memory would spend one of the 30 requests for a list that is gone at the next restart, so a service whose sink is
+// not persistent REFUSES a refresh (MUSIC_UNAVAILABLE, "not available yet"). That is the one switch 3c.4 flips: it
+// passes a sink with `persistent: true`. It MUST persist the list record before it starts downloading, since the
+// request has been spent and the signed URLs expire 104 to 108 hours after it.
 
 /** What the sink is given after one good request. The URLs in it are signed and live in memory only. */
 export interface FetchedList {
@@ -22,6 +25,11 @@ export interface FetchedList {
 }
 
 export interface MusicListSink {
+  /**
+   * Whether an accepted list survives a restart. False refuses `music.refresh` (see the header): a request must never
+   * be spent on a list that will be lost.
+   */
+  readonly persistent: boolean;
   /**
    * Stores the list and downloads what it names, reporting `progress(done, total)` (the list request itself is the
    * first step, so a sink that counts a track and a cover each reports a total of about 61). Rejects when it cannot.
@@ -33,6 +41,7 @@ export interface MusicListSink {
 
 /** The 3c.3 sink: the last parsed list, in memory only. */
 export class MemoryListSink implements MusicListSink {
+  readonly persistent = false;
   #held: FetchedList | null = null;
 
   accept(list: FetchedList, progress: (done: number, total: number) => void, _signal?: AbortSignal): Promise<void> {
@@ -73,6 +82,12 @@ export type RefreshAnswer = { ok: true; status: MusicStatus } | { ok: false; err
 const MAX_DETAIL = 400;
 const last4 = (key: string): string => key.slice(-4);
 
+/** The kind of an error for a log line: the ledger's code, else the error's own name (`TypeError`), never its text. */
+function errorKind(error: unknown): string {
+  if (error instanceof QuotaLogError) return error.code;
+  return error instanceof Error ? error.name : "unknown";
+}
+
 function fail(code: EngineError["code"], detail: string): { ok: false; error: EngineError } {
   return { ok: false, error: { code, detail: detail.slice(0, MAX_DETAIL) } };
 }
@@ -106,6 +121,13 @@ export class MusicService {
   #task: Promise<void> = Promise.resolve();
   #emitting: Promise<void> = Promise.resolve();
   #abort: AbortController | null = null;
+  /** `stop()` was called: the process is going away, so no refresh may start (a request must not be spent on a dying engine). */
+  #closing = false;
+  /**
+   * A `result` line could not be written. The 401 or the server's 0 it carried is then known to this session only, so
+   * the next refresh is refused until a ledger write succeeds again (the owner storing a key, or the next result).
+   */
+  #ledgerWriteFailed = false;
 
   constructor(deps: MusicServiceDeps) {
     this.#deps = deps;
@@ -127,7 +149,13 @@ export class MusicService {
         unreadable = true;
       }
     }
-    const list = this.#sink.summary();
+    // A sink that cannot say what it holds must not take the status (and a refresh's answer) down with it.
+    let list: ReturnType<MusicListSink["summary"]>;
+    try {
+      list = this.#sink.summary();
+    } catch {
+      list = { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 };
+    }
     const iso = (at: number | null): string | null => (at === null ? null : new Date(at).toISOString());
     return {
       listFetchedAt: iso(list.listFetchedAt),
@@ -156,8 +184,9 @@ export class MusicService {
     if (this.#ledger === null) return;
     try {
       await this.#ledger.recordKeyChange(key4);
+      this.#ledgerWriteFailed = false;
     } catch (error) {
-      this.#deps.log(`studio engine: a music key change could not be noted in the quota log (${error instanceof QuotaLogError ? error.code : "unknown"})`);
+      this.#deps.log(`studio engine: a music key change could not be noted in the quota log (${errorKind(error)})`);
     }
   }
 
@@ -167,6 +196,9 @@ export class MusicService {
    * request, the parse and the sink go on in the background, reporting through `emit`.
    */
   async refresh(): Promise<RefreshAnswer> {
+    if (this.#closing) return fail("MUSIC_UNAVAILABLE", "the engine is shutting down, so nothing was sent");
+    // Before anything else and at no cost: a list that would be lost at the next restart is not worth one of the 30.
+    if (!this.#sink.persistent) return fail("MUSIC_UNAVAILABLE", "the music list is not available yet, so nothing was sent");
     if (this.#busy) return fail("IN_FLIGHT", "a music refresh is already running");
     this.#busy = true;
     let admitted = false;
@@ -175,6 +207,9 @@ export class MusicService {
       if (key === null) return fail("MUSIC_KEY_MISSING", "no RapidAPI key is stored");
       if (this.#deps.keyRejected()) return fail("MUSIC_KEY_REJECTED", "the stored RapidAPI key was rejected; replace it");
       if (this.#ledger === null) return fail("MUSIC_UNAVAILABLE", "the music folder is not available, so nothing was sent");
+      if (this.#ledgerWriteFailed) {
+        return fail("MUSIC_UNAVAILABLE", "the last result could not be written to the quota log, so a 401 or the server's 0 may be unrecorded: nothing is sent until a log write succeeds");
+      }
       // Built before anything is written: a base URL or key the client refuses must never cost a send.
       let client;
       try {
@@ -195,7 +230,11 @@ export class MusicService {
       } catch (error) {
         return fail("MUSIC_UNAVAILABLE", error instanceof QuotaLogError ? `${error.message}; nothing was sent` : "the quota log could not be read; nothing was sent");
       }
-      if (before.rejectedKey === last4(key)) return fail("MUSIC_KEY_REJECTED", "flashapi rejected this key on an earlier refresh; replace it");
+      if (before.rejectedKey === last4(key)) {
+        // The engine must show the key as rejected too, so the settings say so without another request.
+        this.#deps.markKeyRejected(key);
+        return fail("MUSIC_KEY_REJECTED", "flashapi rejected this key on an earlier refresh; replace it");
+      }
       const id = this.#deps.newId();
       let admission;
       try {
@@ -215,11 +254,12 @@ export class MusicService {
       admitted = true;
       const controller = new AbortController();
       this.#abort = controller;
-      this.#refresh = { state: "running", done: 0, total: 1 };
-      const status = await this.status();
+      const running = { state: "running", done: 0, total: 1 } as const;
+      this.#refresh = running;
       this.#changed();
+      // The request goes first: nothing after the send may leave the service busy, whatever the status building does.
       this.#task = this.#run({ client, key, id, hadOk: before.hadOkResult, sent: admission.summary.sentInWindow, signal: controller.signal });
-      return { ok: true, status };
+      return { ok: true, status: { ...(await this.status()), refresh: running } };
     } finally {
       if (!admitted) this.#busy = false;
     }
@@ -273,17 +313,23 @@ export class MusicService {
     }
   }
 
-  #figures(response: FlashapiResponseInfo | null): { remaining?: number | null; limit?: number | null } {
-    return response === null ? {} : { remaining: response.remaining, limit: response.limit };
+  /** What an answer says that the ledger keeps: the server's figures and its own clock (validated by the client). */
+  #figures(response: FlashapiResponseInfo | null): { remaining?: number | null; limit?: number | null; serverAt?: number } {
+    if (response === null) return {};
+    return { remaining: response.remaining, limit: response.limit, ...(response.serverDateMs === null ? {} : { serverAt: response.serverDateMs }) };
   }
 
   async #record(input: Parameters<QuotaLedger["recordResult"]>[0]): Promise<void> {
     try {
       // The ledger takes the key's last four chars and throws on anything longer, so a whole key can never reach the file.
       await this.#ledger?.recordResult({ ...input, key: last4(input.key) });
+      this.#ledgerWriteFailed = false;
     } catch (error) {
-      // The send is on disk and counts; only what came back is lost. Only a code is logged.
-      this.#deps.log(`studio engine: a flashapi result could not be written to the quota log (${error instanceof QuotaLogError ? error.code : "unknown"})`);
+      // The send is on disk and counts, but the 401 or the server's 0 this result carried is lost to the next start, and
+      // to this session unless it is remembered here: the next refresh is refused until a write succeeds. Only the kind
+      // of error is logged.
+      this.#ledgerWriteFailed = true;
+      this.#deps.log(`studio engine: a flashapi result could not be written to the quota log (${errorKind(error)})`);
     }
   }
 
@@ -319,6 +365,7 @@ export class MusicService {
 
   /** Aborts a request in flight (the engine is shutting down) and waits for it to end. */
   async stop(): Promise<void> {
+    this.#closing = true;
     this.#abort?.abort();
     await this.settled();
   }
