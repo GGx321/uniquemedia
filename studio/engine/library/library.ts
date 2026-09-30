@@ -28,6 +28,7 @@ import {
   LIBRARY_FILE,
   MANIFEST_FILE,
   MANIFEST_SCHEMA_VERSION,
+  MONTAGES_DIR,
   PHOTOS_DIR,
   PLAN_FILE,
   REFUSED_IMPORTS_FILE,
@@ -611,6 +612,18 @@ export class Library {
     return join(this.#avatarDir(avatarId), FOCUS_FILE);
   }
 
+  /** Where the avatar's montage drafts live (`avatars/<avatarId>/montages`); the id becomes a path segment, so it is validated. */
+  montagesDir(avatarId: string): string {
+    if (!isLibraryId(avatarId)) throw new LibraryError("invalid-id", `avatar id ${JSON.stringify(avatarId)} breaks the id pattern`);
+    return join(this.#avatarDir(avatarId), MONTAGES_DIR);
+  }
+
+  /** One draft's file, by the library's own naming; both ids are validated because both become path segments. */
+  montageFilePath(avatarId: string, montageId: string): string {
+    if (!isLibraryId(montageId)) throw new LibraryError("invalid-id", `montage id ${JSON.stringify(montageId)} breaks the id pattern`);
+    return join(this.montagesDir(avatarId), `${montageId}.json`);
+  }
+
   getPhoto(photoId: string): PhotoSidecar | undefined {
     return this.#photos.get(photoId);
   }
@@ -742,6 +755,11 @@ export class Library {
   /** The avatar's video records, whatever state their files are in. */
   videoCount(avatarId: string): number {
     return this.#videosByAvatar.get(avatarId)?.length ?? 0;
+  }
+
+  /** How many of the avatar's video records were rendered from this draft (whatever state their files are in). */
+  videoCountForMontage(avatarId: string, montageId: string): number {
+    return (this.#videosByAvatar.get(avatarId) ?? []).filter((record) => record.montageId === montageId).length;
   }
 
   /**

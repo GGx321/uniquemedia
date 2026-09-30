@@ -10,6 +10,12 @@ export const THUMBS_DIR = "thumbs";
 export const REJECTED_FILE = "rejected.jsonl";
 /** Video records, one write-once JSON per video (task 3a.8b writes them; 3a.2 reads them). "Used" is derived from these, never from a log of its own. */
 export const VIDEOS_DIR = "videos";
+/**
+ * Montage drafts (Stage 3, 3d.1a): one JSON per draft, `avatars/<avatarId>/montages/<montageId>.json`, written
+ * atomically (temp, fsync, rename) by the montage service. A draft is the owner's work in progress, never a source
+ * of "used" (only a rendered video's record is).
+ */
+export const MONTAGES_DIR = "montages";
 /** S8: an avatar's cached focus points (`avatars/<id>/focus.json`); a cache, rebuilt when missing or corrupt. */
 export const FOCUS_FILE = "focus.json";
 export const HISTORY_FILE = "history.jsonl";
@@ -29,6 +35,8 @@ export const LIBRARY_FILE_SCHEMA_VERSION = 1;
 export const MANIFEST_SCHEMA_VERSION = 2;
 export const SIDECAR_SCHEMA_VERSION = 1;
 export const REFUSED_IMPORTS_SCHEMA_VERSION = 1;
+/** A draft file's `schemaVersion`: the montage service stamps it, and refuses to read a newer one (it would drop what it does not know on the next save). */
+export const MONTAGE_FILE_SCHEMA_VERSION = 1;
 /** A video record's `schemaVersion`: the writer (task 3a.8b) stamps it, the reader (videoRecords.ts) refuses a newer one with its own reason. */
 export const VIDEO_RECORD_SCHEMA_VERSION = 1;
 

@@ -44,7 +44,7 @@ export function sceneSpec(avatarId: string, photoIds: readonly string[], options
 }
 
 /** The JSON of a record for `spec`, with the fields the plan's layout lists. */
-export function videoRecordJson(videoId: string, spec: MontageSpec): Record<string, unknown> {
+export function videoRecordJson(videoId: string, spec: MontageSpec, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schemaVersion: 1,
     id: videoId,
@@ -60,14 +60,15 @@ export function videoRecordJson(videoId: string, spec: MontageSpec): Record<stri
     kind: "photo",
     spec,
     createdAt: "2026-09-29T10:00:00.000Z",
+    ...extra,
   };
 }
 
 /** Writes `avatars/<avatarId>/videos/<videoId>.json` under the library root, creating the folder; returns the path. */
-export async function writeVideoRecord(libraryRoot: string, videoId: string, spec: MontageSpec): Promise<string> {
+export async function writeVideoRecord(libraryRoot: string, videoId: string, spec: MontageSpec, extra: Record<string, unknown> = {}): Promise<string> {
   const dir = join(libraryRoot, "avatars", spec.avatarId, "videos");
   await mkdir(dir, { recursive: true });
   const path = join(dir, `${videoId}.json`);
-  await writeFile(path, `${JSON.stringify(videoRecordJson(videoId, spec), null, 2)}\n`);
+  await writeFile(path, `${JSON.stringify(videoRecordJson(videoId, spec, extra), null, 2)}\n`);
   return path;
 }

@@ -8,6 +8,7 @@ import { isLibraryId } from "./ids";
 import {
   AVATARS_DIR,
   MANIFEST_FILE,
+  MONTAGES_DIR,
   PHOTOS_DIR,
   RUNS_DIR,
   THUMBS_DIR,
@@ -204,6 +205,11 @@ export async function surveyLibrary(root: string): Promise<Survey> {
     const thumbsDir = join(path, THUMBS_DIR);
     for (const { name } of await entriesOf(thumbsDir)) {
       if (isTempName(name) || name.includes(".part-")) survey.moves.push({ path: join(thumbsDir, name), reason: "temp-file" });
+    }
+    // A draft is written to a temp name first; a crash mid-write leaves that temp behind (the draft itself is either the old one or the new one).
+    const montagesDir = join(path, MONTAGES_DIR);
+    for (const { name } of await entriesOf(montagesDir)) {
+      if (isTempName(name)) survey.moves.push({ path: join(montagesDir, name), reason: "temp-file" });
     }
     // A torn last line is an interrupted append; the next append moves it to
     // rejected.jsonl.torn, so it is only skipped here. A bad complete line is

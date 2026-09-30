@@ -48,6 +48,8 @@ const VideoRecordShape = z.looseObject({
   id: LibraryIdSchema,
   avatarId: LibraryIdSchema,
   spec: RecordSpecShape,
+  /** Only the draft's name matters here; a value that is not an id reads as "no draft" and never makes the record unreadable. */
+  montageId: LibraryIdSchema.nullable().optional().catch(null),
 });
 
 /** One record, reduced to what the index needs. */
@@ -55,6 +57,8 @@ export interface VideoRecordUse {
   videoId: string;
   /** The scene photos it lists, each once, in order of appearance. */
   photoIds: string[];
+  /** The draft it was rendered from; null for a headless spec, or a record written before drafts existed. */
+  montageId?: string | null;
 }
 
 /**
@@ -154,7 +158,7 @@ export async function readVideoRecords(avatarDir: string, avatarId: string, opti
       const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
       for (const cell of cells) if (cell.photo.source === "scene") photoIds.add(cell.photo.photoId);
     }
-    read.records.push({ videoId: record.id, photoIds: [...photoIds] });
+    read.records.push({ videoId: record.id, photoIds: [...photoIds], montageId: record.montageId ?? null });
   }
   return read;
 }

@@ -29,7 +29,7 @@ function kindOf(error: unknown): string {
 
 export async function indexCommittedRecord(library: IndexPort, record: VideoRecord, log: (line: string) => void): Promise<IndexOutcome> {
   try {
-    library.addVideoRecordToIndex(record.avatarId, { videoId: record.id, photoIds: scenePhotoIds(record.spec.clips) });
+    library.addVideoRecordToIndex(record.avatarId, { videoId: record.id, photoIds: scenePhotoIds(record.spec.clips), montageId: record.montageId });
     return "indexed";
   } catch (error) {
     log(`video ${record.id}: the used index could not take the committed record (${kindOf(error)}); rebuilding it from disk`);
