@@ -612,9 +612,27 @@
   cursor: not-allowed;
 }
 
+.ed-title-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .ed-title-input {
   width: 240px;
   height: 26px;
+}
+
+.ed-title-input[aria-invalid="true"] {
+  border-color: var(--danger-70);
+}
+
+.ed-title-error {
+  max-width: 320px;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: normal;
 }
 
 .ed-saved {
