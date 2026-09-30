@@ -156,6 +156,52 @@ describe("leaving never drops an edit (the review's HIGH 1)", () => {
   });
 });
 
+describe("opening a draft whose last editor is still saving (the review's open question b)", () => {
+  /** Leaves the draft with its edit unsaved: the save before leaving is refused, and the owner leaves anyway. */
+  async function leaveUnsaved(engine: Awaited<ReturnType<typeof studio>>["engine"]): Promise<void> {
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(screen.getByRole("button", { name: "Черновики" }));
+    await screen.findByRole("button", { name: "Уйти без сохранения" });
+  }
+
+  test("the draft is read only once the old editor's save answered, so it opens as saved", async () => {
+    const { client, engine, scheduler } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    await leaveUnsaved(engine);
+    // The editor sends its edit once more as it closes; that save is slow.
+    engine.delayNext("montages.save", 10_000);
+    fireEvent.click(screen.getByRole("button", { name: "Уйти без сохранения" }));
+    await screen.findByRole("heading", { level: 2, name: "Черновики" });
+
+    const gets = callsOf(engine, "montages.get").length;
+    fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
+    await flush();
+    expect(callsOf(engine, "montages.get").length).toBe(gets);
+
+    runAll(scheduler);
+    await screen.findByRole("region", { name: "Таймлайн" });
+    expect(within(header()).getByText(/8\.0 с · ≈ 3\.5 МБ/)).toBeDefined();
+  });
+
+  test("a save that failed as the editor closed is said when the draft opens again", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    await leaveUnsaved(engine);
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(screen.getByRole("button", { name: "Уйти без сохранения" }));
+    await screen.findByRole("heading", { level: 2, name: "Черновики" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
+    await screen.findByRole("region", { name: "Таймлайн" });
+    expect(screen.getByText("Последнее изменение не сохранилось")).toBeDefined();
+    expect(screen.getByText(new RegExp(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE.slice(0, 30)))).toBeDefined();
+  });
+});
+
 describe("closing the window or quitting never drops an edit (the review's HIGH 2)", () => {
   const originalClose = window.close;
   afterEach(() => {

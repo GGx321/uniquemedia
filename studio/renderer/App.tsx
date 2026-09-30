@@ -9,6 +9,7 @@ import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
 import { DraftsScreen } from "./screens/DraftsScreen";
 import { EditorScreen } from "./screens/EditorScreen";
+import { DraftFlushes, DraftFlushesProvider } from "./screens/montage/flushes";
 import { PhotosScreen } from "./screens/PhotosScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
@@ -198,6 +199,8 @@ export function App({ client }: { client: EngineClient }) {
   // Every way to another screen, the sidebar included, goes through the leave guard of the screen on show (3d.2
   // review: the montage editor's unsaved edit).
   const [navigation] = useState(() => createNavigation(setRoute));
+  // The saves of montage editors that closed, so the same draft opened again waits for them.
+  const [draftFlushes] = useState(() => new DraftFlushes());
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
   const lastPhotos = useRef<string | null>(null);
@@ -275,7 +278,9 @@ export function App({ client }: { client: EngineClient }) {
 
           <main className="content">
             <EngineNoticesBar />
-            <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+            <DraftFlushesProvider value={draftFlushes}>
+              <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+            </DraftFlushesProvider>
           </main>
         </div>
       </NavigationProvider>

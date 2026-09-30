@@ -4,6 +4,7 @@ import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
 import { onFlushRequest } from "../engine/windowStudio";
 import { isActiveJob, type EngineView } from "../engine/store";
+import { errorText } from "../lib/errors";
 import { NBSP } from "../lib/format";
 import { type Route, useLeaveGuard, useNavigate } from "../navigation";
 import { EngineOffline } from "../ui/EngineOffline";
@@ -13,6 +14,7 @@ import { ScreenTitle } from "../ui/ScreenTitle";
 import { MediaPanel, PreviewSlot, PropertiesSlot, TimelineSlot } from "./montage/EditorSlots";
 import { draftName, draftTitle, outputLabel, saveLabel } from "./montage/labels";
 import { photoProblems, renderBlock, type EngineVerdict, type RenderBlock } from "./montage/renderBlock";
+import { useDraftFlushes } from "./montage/flushes";
 import { DraftSession } from "./montage/session";
 import { useMounted } from "./photos/shared";
 
@@ -21,10 +23,16 @@ import { useMounted } from "./photos/shared";
 // and the four slots the next tasks fill: the timeline (3d.3a, 3d.3b), the preview (3d.4), the media and
 // properties panels (3d.5). The «Рендер» button shows why it is disabled; its queue and job states are 3d.6's.
 
-type Load = { kind: "loading" } | { kind: "error"; error: EngineError } | { kind: "ready"; montage: Montage; issues: readonly MontageIssue[] };
+type Load =
+  | { kind: "loading" }
+  | { kind: "error"; error: EngineError }
+  /** `lost`: why the last edit of the editor that closed before was not saved, told once. */
+  | { kind: "ready"; montage: Montage; issues: readonly MontageIssue[]; lost: EngineError | null };
 
 /** How many times an INTERNAL «the draft was changed just now» is retried before it is shown. */
 const CHANGING_RETRIES = 2;
+/** The pause before such a retry: the save that was replacing the file is done by then. */
+const CHANGING_PAUSE_MS = 150;
 
 /** A key that is the owner typing: text undo belongs to the field, not to the draft. */
 function isTyping(target: EventTarget | null): boolean {
@@ -170,7 +178,21 @@ function EditorHeader({
   );
 }
 
-function DraftEditor({ initial, initialIssues, created, avatar, view }: { initial: Montage; initialIssues: readonly MontageIssue[]; created: boolean; avatar: AvatarSummary | null; view: EngineView }) {
+function DraftEditor({
+  initial,
+  initialIssues,
+  lostEdit,
+  created,
+  avatar,
+  view,
+}: {
+  initial: Montage;
+  initialIssues: readonly MontageIssue[];
+  lostEdit: EngineError | null;
+  created: boolean;
+  avatar: AvatarSummary | null;
+  view: EngineView;
+}) {
   const { client, store } = useEngine();
   const navigate = useNavigate();
   const mounted = useMounted();
@@ -198,6 +220,8 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
   const [submittedJob, setSubmittedJob] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<EngineError | null>(null);
   const [leaving, setLeaving] = useState(false);
+  /** Why the previous editor's last edit of this draft was not saved (told once, on this open). */
+  const [lost, setLost] = useState<EngineError | null>(lostEdit);
   /** Where the owner was going when the save before leaving was refused: the edit stays, and so does the window. */
   const [blockedLeave, setBlockedLeave] = useState<Route | null>(null);
 
@@ -266,8 +290,10 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
     [store, session],
   );
 
-  // Leaving (the sidebar, «Назад», «Черновики») sends whatever is unsaved at once instead of after the quiet spell.
-  useEffect(() => () => void session.flush(), [session]);
+  // Closing the editor any way at all (even leaving without saving) sends whatever is still unsaved once more, and
+  // the window keeps that save's promise: the same draft opened again is read only after it answered.
+  const flushes = useDraftFlushes();
+  useEffect(() => () => flushes.track(montageId, session.flush()), [flushes, montageId, session]);
 
   useEffect(() => {
     const onFocus = (): void => setFocusTick((n) => n + 1);
@@ -398,6 +424,21 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
         onDrafts={() => navigate({ name: "montages" })}
         onRender={() => void submitRender()}
       />
+      {lost !== null && (
+        <div className="ed-notices">
+          <Notice
+            tone="warn"
+            title="Последнее изменение не сохранилось"
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setLost(null)}>
+                Понятно
+              </button>
+            }
+          >
+            {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
+          </Notice>
+        </div>
+      )}
       {(gone || state.save.kind === "failed" || renderError !== null) && (
         <div className="ed-notices">
           {gone ? (
@@ -511,6 +552,7 @@ function EditorProblem({ error, onRetry }: { error: EngineError; onRetry: () => 
 export function EditorScreen({ montageId, created = false }: { montageId: string; created?: boolean }) {
   const view = useEngineView();
   const { client } = useEngine();
+  const flushes = useDraftFlushes();
   const ready = view.phase === "ready";
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -520,25 +562,33 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
     if (!ready || loaded) return;
     let alive = true;
     let retries = 0;
-    const get = (): void => {
+    let cancelPause: (() => void) | null = null;
+    const get = (lost: EngineError | null): void => {
       void client.request("montages.get", { montageId }).then((reply) => {
         if (!alive) return;
-        if (reply.ok) setLoad({ kind: "ready", montage: reply.result.montage, issues: reply.result.issues });
+        if (reply.ok) setLoad({ kind: "ready", montage: reply.result.montage, issues: reply.result.issues, lost });
         else if (reply.error.code === "INTERNAL" && reply.error.detail === DRAFT_CHANGING_DETAIL && retries < CHANGING_RETRIES) {
+          // Being saved right now: a moment later it reads whole.
           retries += 1;
-          get();
+          cancelPause = realScheduler.schedule(CHANGING_PAUSE_MS, () => get(lost));
         } else setLoad({ kind: "error", error: reply.error });
       });
     };
-    get();
+    // An editor of this draft that just closed may still be saving its last edit: read the draft after that.
+    void flushes.settle(montageId).then((lost) => {
+      if (alive) get(lost);
+    });
     return () => {
       alive = false;
+      cancelPause?.();
     };
-  }, [ready, loaded, client, montageId, attempt]);
+  }, [ready, loaded, client, flushes, montageId, attempt]);
 
   if (load.kind === "ready") {
     const avatar = view.avatars.find((a) => a.avatarId === load.montage.spec.avatarId) ?? null;
-    return <DraftEditor key={load.montage.montageId} initial={load.montage} initialIssues={load.issues} created={created} avatar={avatar} view={view} />;
+    return (
+      <DraftEditor key={load.montage.montageId} initial={load.montage} initialIssues={load.issues} lostEdit={load.lost} created={created} avatar={avatar} view={view} />
+    );
   }
   if (view.phase === "offline") {
     return (
