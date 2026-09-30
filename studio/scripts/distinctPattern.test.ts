@@ -110,7 +110,12 @@ describe("the composited (face + PDQ-distinct background) pool the E2E smoke's f
   // A representative slice, not the full 48: each one needs a real Electron
   // decode plus ONNX inference, unlike the plain pool's own ffmpeg-only proof.
   const COMPOSITE_COUNT = 8;
-  const composites = Array.from({ length: COMPOSITE_COUNT }, (_, i) => facePoolImagePng(i));
+  // In a hook, not the describe body: an ffmpeg call there runs at collection time, and its failure is an "Unhandled
+  // error between tests" that names no test and prints no `(fail)` line.
+  let composites: Uint8Array[] = [];
+  beforeAll(() => {
+    composites = Array.from({ length: COMPOSITE_COUNT }, (_, i) => facePoolImagePng(i));
+  }, 300_000);
 
   test(`every pair of ${COMPOSITE_COUNT} composited images is > ${MIN_HAMMING_DISTANCE} bits apart, decoded through the real gate pipeline`, () => {
     const hashes = composites.map((png) => computePdqHash(decodeServedGray64(png)));
