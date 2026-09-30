@@ -63,25 +63,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      # Windows Defender's real-time scanning reads every file the install, the bundler and the tests create or
-      # open, and the suite spawns many short processes and temp files. The workspace, the temp dirs and Bun's
-      # install cache are excluded from it before any of that happens. Best effort: a runner image that does not
-      # allow it (no admin rights, Defender off) logs a warning and the job goes on, only slower.
-      - name: Exclude the workspace, temp and bun cache dirs from Windows Defender scanning
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP)
-          try { $paths += (bun pm cache) } catch { Write-Host "::warning::could not ask bun for its cache dir: $($_.Exception.Message)" }
-          foreach ($path in ($paths | Where-Object { $_ } | Select-Object -Unique)) {
-            try {
-              Add-MpPreference -ExclusionPath $path -ErrorAction Stop
-              Write-Host "Defender exclusion added: $path"
-            } catch {
-              Write-Host "::warning::could not add a Defender exclusion for ${path}: $($_.Exception.Message)"
-            }
-          }
-          try { Write-Host ("Defender exclusions now: " + ((Get-MpPreference -ErrorAction Stop).ExclusionPath -join "; ")) } catch { Write-Host "::warning::could not read the Defender exclusions back: $($_.Exception.Message)" }
       - run: bun install
       # T7b, the face gate: the two model binaries (38.7 MB + 233 KB) are
       # never committed (studio/engine/face/modelSource.ts, .gitignore) — CI
