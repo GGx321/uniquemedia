@@ -243,6 +243,8 @@ export class VideoService {
     // it does not reach the render.
     const source: RenderSource = "montageId" in payload ? await this.#loadDraft(payload.montageId) : { montageId: null, spec: payload.spec, library: null };
     const { spec } = source;
+    // The read waited in the draft's queue: whatever it used of the command's time is gone, so out of time is said as that.
+    if (source.library !== null && remaining() <= marginMs) throw new EngineFailure({ code: "INTERNAL", detail: "the render request ran out of time before it could be queued; nothing was queued" });
     const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;

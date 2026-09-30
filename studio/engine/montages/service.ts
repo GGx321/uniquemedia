@@ -69,6 +69,7 @@ function kindOf(error: unknown): string {
 /** A draft file that is there and cannot be used, told by its reason code alone (never a path or the file's text). */
 function unreadable(read: Exclude<DraftRead, { kind: "ok" }>, montageId: string): EngineFailure {
   if (read.kind === "missing") return new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
+  if (read.reason === "changing") return new EngineFailure({ code: "INTERNAL", detail: "the draft was changed just now and could not be read; try again" });
   if (read.reason === "too-new") return new EngineFailure({ code: "INTERNAL", detail: "this draft was written by a newer version of Studio; update the app to open it" });
   return new EngineFailure({ code: "INTERNAL", detail: `the draft cannot be read (${read.reason})` });
 }
@@ -241,12 +242,9 @@ export class MontageService {
    * again), not on every `get` of every draft the window opens.
    */
   #availabilityOf(library: Library, avatarId: string): Availability {
-    const availability = photoAvailability(library, avatarId);
+    const availability = photoAvailability(library, avatarId, this.#untrustedLogged.has(avatarId) ? undefined : this.#deps.log);
     if (availability.state === "known") this.#untrustedLogged.delete(avatarId);
-    else if (!this.#untrustedLogged.has(avatarId)) {
-      this.#untrustedLogged.add(avatarId);
-      photoAvailability(library, avatarId, this.#deps.log);
-    }
+    else this.#untrustedLogged.add(avatarId);
     return availability;
   }
 

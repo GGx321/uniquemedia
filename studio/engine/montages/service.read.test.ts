@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { EngineFailure } from "../engineFailure";
 import type { EngineError } from "../../shared/engine";
 import { MAX_LISTED_MONTAGES, Montage, MAX_MONTAGE_ISSUES } from "../../shared/engine/montage";
@@ -7,7 +8,7 @@ import { defaultSpec } from "../../shared/montage";
 import { sceneSpec, writeVideoRecord } from "../library/testing/videoRecords";
 import { useWorld } from "../videos/testing/kit";
 import { withOverrides } from "../videos/testing/serviceKit";
-import { montageRig, scriptedFocus, worldPhotoIds } from "./testing/rig";
+import { montageRig, scriptedFocus, swappedOps, worldPhotoIds } from "./testing/rig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -292,7 +293,37 @@ describe("montages.list", () => {
     const answer = await r.service.list(w.avatar.id);
 
     expect(answer.items).toHaveLength(3);
+    for (const item of answer.items) expect(item.issues).toEqual([{ code: "photo-unavailable", path: ["clips", 0, "cell"] }]);
     expect(r.logs.filter((line) => /cannot be trusted/.test(line))).toHaveLength(1);
+  });
+
+  test("a record that needs repair closes the avatar's photos the same way: list and get mark every photo unavailable", async () => {
+    const w = world();
+    const r = montageRig(w);
+    const [a = ""] = worldPhotoIds(w);
+    await r.store.write(w.library, draft(w.avatar.id, "montage-0000001", [a]));
+    await mkdir(join(w.libraryRoot, "avatars", w.avatar.id, "videos"), { recursive: true });
+    await writeFile(join(w.libraryRoot, "avatars", w.avatar.id, "videos", "video-0000001.json"), "{ torn");
+    await w.library.reloadVideoRecords(w.avatar.id);
+
+    const listed = await r.service.list(w.avatar.id);
+    const got = await r.service.get("montage-0000001");
+
+    expect(listed.items[0]?.issues).toEqual([{ code: "photo-unavailable", path: ["clips", 0, "cell"] }]);
+    expect(got.issues).toEqual([{ code: "photo-unavailable", path: ["clips", 0, "cell"] }]);
+  });
+
+  test("a draft whose file keeps being replaced under the read is told apart from a broken one: retry, not delete", async () => {
+    const w = world();
+    const counter = { lstats: 0 };
+    const r = montageRig(w, { store: { open: swappedOps(1_000, counter) } });
+    await montageRig(w).store.write(w.library, draft(w.avatar.id, "montage-0000001"));
+
+    const error = await failureOf(r.service.get("montage-0000001"));
+
+    expect(error.code).toBe("INTERNAL");
+    expect(error.detail).toMatch(/changed just now|try again/);
+    expect(error.detail ?? "").not.toMatch(/cannot be read|not-a-file|corrupt/);
   });
 
   test("the untrusted-usage line is logged once per avatar, however many gets and lists follow", async () => {

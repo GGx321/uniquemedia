@@ -339,7 +339,8 @@ const ENGINE_SPECS = [
   // A draft as it stands, with the engine's verdict: `issues` are the structural ones (`montageIssues(spec, "spec")`, what a
   // render would refuse) plus the referential ones (a photo that is no longer usable, a sticker that is gone), bounded at 64.
   // NOT_FOUND for a draft that does not exist; INTERNAL (its detail names no path) for a draft file that cannot be read or
-  // was written by a newer Studio; LIBRARY_UNAVAILABLE without a library.
+  // was written by a newer Studio, or was replaced by saves faster than it could be read (detail: try again); LIBRARY_UNAVAILABLE
+  // without a library.
   defineCommand("montages.get", z.strictObject({ montageId: Id }), z.strictObject({ montage: Montage, issues: MontageIssues })),
   // Drafts, newest `updatedAt` first, at most MAX_LISTED_MONTAGES; `total` counts every readable draft, `skippedTotal` the files
   // that could not be read (they are left out, never a failed list). No `avatarId` = every avatar. `videoCount` = the videos

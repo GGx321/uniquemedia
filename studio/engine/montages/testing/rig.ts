@@ -1,8 +1,11 @@
+import { lstat } from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
 import { EventMessage, type UnsequencedEvent } from "../../../shared/engine";
 import type { Focus } from "../../../shared/engine/montage";
 import { EngineFailure } from "../../engineFailure";
 import type { FocusResolver, FocusResult } from "../../focus/focusResolver";
 import type { Library } from "../../library";
+import { NODE_OPEN_OPS, type OpenRegularOptions } from "../../library/openRegular";
 import { PNG_1X1, SAMPLE_SOURCE, samplePhotoMeta } from "../../library/testing/helpers";
 import type { World } from "../../videos/testing/kit";
 import { MontageService, type MontageServiceDeps } from "../service";
@@ -125,3 +128,20 @@ export async function addScenePhotos(w: World, n: number, avatarId: string = w.a
 
 /** The world's own three scene photos' ids. */
 export const worldPhotoIds = (w: World): string[] => w.photos.map((p) => p.id);
+
+/**
+ * Disk calls of the no-follow open that report the `lstat` of ANOTHER file (a different inode) for the first `swaps` looks:
+ * a save's rename landing between a read's two looks. `counter.lstats` counts the looks.
+ */
+export function swappedOps(swaps: number, counter: { lstats: number }): OpenRegularOptions {
+  return {
+    ops: {
+      ...NODE_OPEN_OPS,
+      lstat: async (path: string): Promise<BigIntStats> => {
+        counter.lstats++;
+        const real = await lstat(path, { bigint: true });
+        return counter.lstats <= swaps ? Object.assign(Object.create(real), { ino: real.ino + 1n }) : real;
+      },
+    },
+  };
+}

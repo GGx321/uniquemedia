@@ -8,7 +8,7 @@ import { hasErrorCode, isTempName, writeJsonAtomic } from "../library/durableFs"
 import { runExclusive } from "../library/keyedMutex";
 import { isFromNewerVersion, MONTAGE_FILE_SCHEMA_VERSION } from "../library/layout";
 import type { Library } from "../library/library";
-import { openRegularNoFollow, UnsafeOpenError } from "../library/openRegular";
+import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOptions } from "../library/openRegular";
 import { unlinkWithRetry } from "../library/unlinkRetry";
 
 // The montage drafts on disk (Stage 3 plan, "Library, storage and contract additions"):
@@ -30,8 +30,8 @@ import { unlinkWithRetry } from "../library/unlinkRetry";
 // makes them safe).
 
 /**
- * The largest legitimate draft (20 collages of 4 with the longest ids, 10 captions of 900 units, 10 stickers, pretty-printed) is
- * about 125 KB; a file over this is not a draft. Small enough that a listing of `MAX_DRAFT_FILES_READ` files parses at most
+ * The largest legitimate draft (20 collages of 4 with the longest ids, 10 captions of 1024 units, 10 stickers, pretty-printed) is
+ * about 125 KB (a caption of 1024 three-byte units is the worst for bytes); a file over this is not a draft. Small enough that a listing of `MAX_DRAFT_FILES_READ` files parses at most
  * a quarter of a GiB.
  */
 export const MAX_DRAFT_BYTES = 256 * 1024;
@@ -53,7 +53,8 @@ const DraftFile = z.strictObject({
   updatedAt: z.iso.datetime(),
 });
 
-export type DraftUnreadable = "corrupt" | "too-new" | "misfiled" | "too-large" | "not-a-file" | "io";
+/** `changing`: saves replaced the file faster than it could be opened, so it could not be read just now (try again); never a verdict on the draft. */
+export type DraftUnreadable = "corrupt" | "too-new" | "misfiled" | "too-large" | "not-a-file" | "io" | "changing";
 
 /** `missing`: nothing is there. `unreadable`: something is, and it is not a usable draft (the reason is a code, never text from the file). */
 export type DraftRead = { kind: "ok"; montage: Montage } | { kind: "missing" } | { kind: "unreadable"; reason: DraftUnreadable };
@@ -88,6 +89,8 @@ export class DraftNotAFileError extends Error {
 export interface DraftStoreDeps {
   /** Codes and counts only: never a path or a file's text. */
   log: (line: string) => void;
+  /** Test seam of the no-follow open (its disk calls), to play a rename landing between the two looks. */
+  open?: OpenRegularOptions;
   /** Test seam of `writeJsonAtomic`: runs after the temp is durable and before the rename; throwing leaves the disk as a crash there would. */
   beforeRename?: (finalPath: string) => void | Promise<void>;
 }
@@ -132,11 +135,14 @@ export class DraftStore {
     // is the race, not a bad file. It looks again (the new file is whole by then); a file that keeps changing is not read.
     for (let attempt = 0; ; attempt++) {
       try {
-        handle = await openRegularNoFollow(path);
+        handle = await openRegularNoFollow(path, this.#deps.open);
         break;
       } catch (error) {
         if (hasErrorCode(error, "ENOENT")) return { kind: "missing" };
-        if (error instanceof UnsafeOpenError && error.code === "ECHANGED" && attempt < OPEN_ATTEMPTS - 1) continue;
+        if (error instanceof UnsafeOpenError && error.code === "ECHANGED") {
+          if (attempt < OPEN_ATTEMPTS - 1) continue;
+          return { kind: "unreadable", reason: "changing" };
+        }
         if (error instanceof UnsafeOpenError) return { kind: "unreadable", reason: "not-a-file" };
         this.#deps.log(`a draft file could not be opened (${kindOf(error)})`);
         return { kind: "unreadable", reason: "io" };
@@ -212,6 +218,12 @@ export class DraftStore {
         throw new DraftFolderError(kindOf(error));
       }
       let named = entries.filter((entry) => !isTempName(entry.name) && DRAFT_FILE_NAME.test(entry.name)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      if (budget === 0) {
+        // Nothing left to read: what this avatar has is counted, not looked at.
+        skipped += named.length;
+        truncated = truncated || named.length > 0;
+        continue;
+      }
       if (named.length > budget) {
         // Too many to read: keep the NEWEST by modification time (the drafts the owner is working on), not the ones whose random ids sort first.
         truncated = true;

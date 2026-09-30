@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, symlink, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, symlink, utimes, writeFile } from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
+import { NODE_OPEN_OPS, type OpenRegularOptions } from "../library/openRegular";
+import { swappedOps } from "./testing/rig";
 import { join } from "node:path";
 import { Montage } from "../../shared/engine/montage";
 import { defaultSpec } from "../../shared/montage";
@@ -216,6 +219,85 @@ describe("DraftStore.read of a file that is not a good draft", () => {
   });
 });
 
+describe("DraftStore.read when a save replaces the file between its two looks", () => {
+  async function stored() {
+    const { library, avatarIds } = await openWithAvatars();
+    const [avatarId = ""] = avatarIds;
+    const montage = montageOf(avatarId, "montage-0001");
+    await storeOf().write(library, montage);
+    return { library, avatarId, montage };
+  }
+
+  test("a swap 4 times in a row is looked through: the draft is read", async () => {
+    const { library, avatarId, montage } = await stored();
+    const counter = { lstats: 0 };
+
+    const read = await storeOf({ open: swappedOps(4, counter) }).read(library, avatarId, "montage-0001");
+
+    expect(read).toEqual({ kind: "ok", montage });
+    expect(counter.lstats).toBe(5);
+  });
+
+  test("a swap 5 times in a row is given up on, as `changing`: not a corrupt or foreign file", async () => {
+    const { library, avatarId } = await stored();
+    const counter = { lstats: 0 };
+
+    const read = await storeOf({ open: swappedOps(5, counter) }).read(library, avatarId, "montage-0001");
+
+    expect(read).toEqual({ kind: "unreadable", reason: "changing" });
+    expect(counter.lstats).toBe(5);
+  });
+
+  test("a link or a folder is refused at the first look, never retried", async () => {
+    const { library, avatarId } = await stored();
+    for (const refusal of ["isSymbolicLink", "notFile"] as const) {
+      const counter = { lstats: 0 };
+      const open: OpenRegularOptions = {
+        ops: {
+          ...NODE_OPEN_OPS,
+          lstat: async (path: string): Promise<BigIntStats> => {
+            counter.lstats++;
+            const real = await lstat(path, { bigint: true });
+            return Object.assign(Object.create(real), refusal === "isSymbolicLink" ? { isSymbolicLink: () => true } : { isFile: () => false });
+          },
+        },
+      };
+
+      const read = await storeOf({ open }).read(library, avatarId, "montage-0001");
+
+      expect(read).toEqual({ kind: "unreadable", reason: "not-a-file" });
+      expect(counter.lstats).toBe(1);
+    }
+  });
+
+  test("a file that is not there is missing at the first look, never retried", async () => {
+    const { library, avatarId } = await stored();
+    const counter = { lstats: 0 };
+
+    const read = await storeOf({ open: swappedOps(0, counter) }).read(library, avatarId, "montage-0002");
+
+    expect(read).toEqual({ kind: "missing" });
+    expect(counter.lstats).toBe(1);
+  });
+
+  test("real saves and real reads at once: a read is never `unreadable` for a save's rename", async () => {
+    const { library, avatarId } = await stored();
+    const store = storeOf();
+    const stop = Date.now() + 500;
+    const kinds = new Set<string>();
+    const writer = (async () => {
+      for (let n = 0; Date.now() < stop; n++) await store.exclusive("montage-0001", () => store.write(library, montageOf(avatarId, "montage-0001", { name: `save-${n}` })));
+    })();
+    const readers = Array.from({ length: 4 }, async () => {
+      while (Date.now() < stop) kinds.add((await store.read(library, avatarId, "montage-0001")).kind);
+    });
+
+    await Promise.all([writer, ...readers]);
+
+    expect(kinds).toEqual(new Set(["ok"]));
+  });
+});
+
 describe("DraftStore.find", () => {
   test("finds the avatar a draft belongs to, whichever avatar it is", async () => {
     const { library, avatarIds } = await openWithAvatars(3);
@@ -400,11 +482,30 @@ describe("DraftStore.list", () => {
     expect(logs.join("\n")).toMatch(/more draft files than/);
   });
 
-  test("the largest legitimate draft (20 collages of 4 with the longest ids, 10 longest captions, 10 stickers) fits well inside the size bound", async () => {
+  test("once the reading budget is spent, the avatars after it are counted as skipped without being read", async () => {
+    const { library, avatarIds } = await openWithAvatars(2);
+    const [first = "", second = ""] = avatarIds;
+    const name = (n: number) => `montage-${String(n).padStart(6, "0")}`;
+    const dir = library.montagesDir(first);
+    await mkdir(dir, { recursive: true });
+    await Promise.all(Array.from({ length: MAX_DRAFT_FILES_READ }, (_, n) => writeFile(join(dir, `${name(n)}.json`), JSON.stringify({ schemaVersion: 1, ...montageOf(first, name(n)) }))));
+    await storeOf().write(library, montageOf(second, "montage-9990001"));
+    await storeOf().write(library, montageOf(second, "montage-9990002"));
+
+    const listing = await storeOf().list(library);
+
+    expect(listing.montages).toHaveLength(MAX_DRAFT_FILES_READ);
+    expect(listing.skipped).toBe(2);
+    expect(listing.truncated).toBe(true);
+    expect(listing.montages.every((m) => m.spec.avatarId === first)).toBe(true);
+  });
+
+  test("the largest legitimate draft (20 collages of 4 with the longest ids, 10 captions of 1024 units, 10 stickers) fits well inside the size bound", async () => {
     const { library, avatarIds } = await openWithAvatars();
     const [avatarId = ""] = avatarIds;
     const longId = (prefix: string, n: number) => `${prefix}-${String(n).padStart(3, "0")}`.padEnd(64, "x");
-    const caption = "\u{1F469}\u{1F3FB}\u200D\u2764\uFE0F\u200D\u{1F48B}\u200D\u{1F468}\u{1F3FD}".repeat(60); // 60 graphemes of 15 units: the 900-unit worst case
+    // one grapheme of 1024 UTF-16 units (a letter and 1023 three-byte combining marks): the contract's longest caption, and the worst for bytes
+    const caption = `a${"\u20D0".repeat(1023)}`;
     const clips = Array.from({ length: 20 }, (_, i) => ({
       clipId: longId("clip", i),
       kind: "collage" as const,
