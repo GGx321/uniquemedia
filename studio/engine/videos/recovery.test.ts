@@ -439,7 +439,7 @@ describe("the root's own leftovers", () => {
     expect((await exportFiles(w)).sort()).toEqual([".studio-export.json.bak", ".studio-export.json.tmp-not-a-uuid"]);
   });
 
-  test("the old timestamps do not matter: a temp is swept whatever its age", async () => {
+  test("a temp with the oldest possible timestamp (the epoch) is swept: an old mtime never protects scratch, only a fresh one does", async () => {
     const w = world();
     const path = join(w.exportRoot, MARKER_TMP);
     writeFileSync(path, "x");

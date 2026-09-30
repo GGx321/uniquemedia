@@ -40,7 +40,8 @@ import { LockWaitTimeout, withRootLock } from "./rootLock";
 //
 // HANDS OFF: nothing is deleted that no intent or record of ours names, except `.studio-part-*`
 // temps, 0-byte placeholders of our name pattern in a real `<SafeName>/` folder, and Studio's own
-// scratch in the root (`.studio-export.json.tmp-*`, 0-byte `.studio-probe-*` of our two shapes).
+// scratch in the root (`.studio-export.json.tmp-*`, 0-byte `.studio-probe-*` of our two shapes), the
+// last two only once they are older than `SCRATCH_MIN_AGE_MS`: a live export check may own a fresh one.
 // A symlink is never followed and never removed, and a folder is checked again (identity and real
 // path) right before anything in it is removed.
 //
@@ -514,10 +515,13 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
 
   /**
    * Scratch made moments ago may be LIVE: an export check's probe (created and removed within a call) or a marker's publish
-   * temp. Recovery runs in the background while checks run, and a leftover of a crash is older than the restart that follows it.
+   * temp. Recovery runs in the background while checks run, so it cannot tell a live one from a leftover by its name. A
+   * leftover of a crash is only as old as the time the restart took: after an automatic restart (`RESTART_DELAY_MS`, 1 s)
+   * that is about a second, so such leftovers are NOT swept by that open and wait for the next library open (they are
+   * empty or tiny, and harmless). `scratchMinAgeMs: 0` turns the gate off.
    */
   const scratchMinAgeMs = deps.scratchMinAgeMs ?? SCRATCH_MIN_AGE_MS;
-  const isFresh = (facts: FileFacts): boolean => Date.now() - facts.mtimeMs < scratchMinAgeMs;
+  const isFresh = (facts: FileFacts): boolean => scratchMinAgeMs > 0 && Date.now() - facts.mtimeMs < scratchMinAgeMs;
 
   /** Studio's own scratch in the root: marker temps (healing a marker they are linked to) and empty probes of our shapes. */
   async function sweepRootScratch(ready: UsableRoot): Promise<void> {

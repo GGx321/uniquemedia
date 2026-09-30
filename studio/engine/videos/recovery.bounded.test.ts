@@ -143,6 +143,18 @@ describe("recovery leaves the root's FRESH scratch alone (the review's Windows f
     expect(existsSync(join(w.exportRoot, PROBE))).toBe(false);
     expect(existsSync(join(w.exportRoot, MARKER_TMP))).toBe(false);
     expect(report.removed.probes).toBe(1);
+    expect(report.removed.markerTemps).toBe(1);
+  });
+
+  test("a minimum age of 0 really turns the gate off: a brand-new scratch file is swept", async () => {
+    const w = world();
+    writeFileSync(join(w.exportRoot, PROBE), "");
+    const library = await w.reopen();
+
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) }, { scratchMinAgeMs: 0 });
+
+    expect(existsSync(join(w.exportRoot, PROBE))).toBe(false);
+    expect(report.removed.probes).toBe(1);
   });
 });
 
