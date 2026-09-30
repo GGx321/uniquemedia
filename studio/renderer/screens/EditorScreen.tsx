@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExtern
 import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type Montage, type MontageIssue, type PhotoSummary, type VideoSummary } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
+import { onFlushRequest } from "../engine/windowStudio";
 import { isActiveJob, type EngineView } from "../engine/store";
 import { NBSP } from "../lib/format";
 import { type Route, useLeaveGuard, useNavigate } from "../navigation";
@@ -212,10 +213,45 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
     setBlockedLeave(to);
     return false;
   });
+  // Closing the window (⌘W) with an edit that is not saved yet: the close is held (Electron cancels it without a
+  // dialog), the edit is saved, then the window closes itself. A refused save keeps the window open with the reason
+  // and «Закрыть без сохранения» (the 3d.2 review's HIGH 2).
+  const [closeRefused, setCloseRefused] = useState(false);
+  const allowClose = useRef(false);
   const saved = state.save.kind === "saved";
   useEffect(() => {
-    if (saved) setBlockedLeave(null);
+    if (saved) {
+      setBlockedLeave(null);
+      setCloseRefused(false);
+    }
   }, [saved]);
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (allowClose.current) return;
+      const kind = session.state.save.kind;
+      if (kind !== "pending" && kind !== "saving" && kind !== "failed") return;
+      event.preventDefault();
+      event.returnValue = false;
+      void session.flush().then((result) => {
+        if (!mounted.current) return;
+        if (result.ok) {
+          allowClose.current = true;
+          window.close();
+        } else setCloseRefused(true);
+      });
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [session, mounted]);
+
+  // Quitting (⌘Q): main asks every window to save before the engine shuts down, and waits (bounded) for the answer.
+  useEffect(
+    () =>
+      onFlushRequest(async () => {
+        await session.flush();
+      }),
+    [session],
+  );
 
   // The store's montage.changed, in seq order: echoes of this window's saves change nothing, a save from
   // elsewhere is taken while nothing here is unsaved, a delete ends the session.
@@ -380,7 +416,23 @@ function DraftEditor({ initial, initialIssues, created, avatar, view }: { initia
             <ErrorNotice
               error={state.save.error}
               actions={
-                blockedLeave === null ? (
+                closeRefused ? (
+                  <>
+                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                      Сохранить ещё раз
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-s btn-d"
+                      onClick={() => {
+                        allowClose.current = true;
+                        window.close();
+                      }}
+                    >
+                      Закрыть без сохранения
+                    </button>
+                  </>
+                ) : blockedLeave === null ? (
                   <button type="button" className="btn btn-s" onClick={() => session.retry()}>
                     Сохранить ещё раз
                   </button>

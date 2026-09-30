@@ -38,6 +38,18 @@ export function windowStudioClient(): EngineClient | null {
   return bridge ? createEngineClient(bridge, "window") : null;
 }
 
+/**
+ * Hands `handler` to the preload: main calls it before quitting and waits (bounded) for it to settle, so an edit
+ * still inside its autosave wait is saved first (3d.2 review, HIGH 2). A no-op without a bridge that offers it.
+ */
+export function onFlushRequest(handler: () => Promise<void>): () => void {
+  const studio = studioObject();
+  const register = studio ? method(studio, "onFlushRequest") : null;
+  if (!register) return () => {};
+  const off = register(handler);
+  return typeof off === "function" ? () => void Reflect.apply(off, undefined, []) : () => {};
+}
+
 /** Studio's version from the preload; rejects when there is no bridge or it fails. */
 export async function readStudioVersion(): Promise<string> {
   const studio = studioObject();

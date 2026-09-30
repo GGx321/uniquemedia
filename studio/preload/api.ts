@@ -7,6 +7,10 @@ export const CH = {
   request: "studio:request",
   /** main → renderer (`webContents.send`): T0 engine events. */
   event: "studio:event",
+  /** main → renderer: before quitting, save what the owner is editing; carries the ask's id. */
+  flushRequest: "studio:flush-request",
+  /** renderer → main (`ipcRenderer.send`): the window's saves for that ask are done; carries its id. */
+  flushDone: "studio:flush-done",
 } as const;
 
 /**
@@ -23,4 +27,9 @@ export interface StudioApi {
   subscribe(listener: (event: EventMessage) => void): () => void;
   /** Studio's own version (studio/version.json), not the uniquifier's. */
   version(): Promise<string>;
+  /**
+   * `handler` saves what the owner is editing; main calls it before quitting and waits (bounded) for it to settle.
+   * Returns the function that removes it. The handler gets nothing from main but the ask itself.
+   */
+  onFlushRequest(handler: () => Promise<void>): () => void;
 }

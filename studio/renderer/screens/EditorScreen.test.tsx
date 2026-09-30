@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ERROR_MESSAGES_RU, type Montage } from "../../shared/engine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
@@ -153,6 +153,93 @@ describe("leaving never drops an edit (the review's HIGH 1)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
     await screen.findByRole("heading", { level: 1, name: "Настройки" });
     expect(callsOf(engine, "montages.save").length).toBe(before + 1);
+  });
+});
+
+describe("closing the window or quitting never drops an edit (the review's HIGH 2)", () => {
+  const originalClose = window.close;
+  afterEach(() => {
+    Reflect.set(window, "close", originalClose);
+    Reflect.deleteProperty(window, "studio");
+  });
+
+  /** Counts `window.close()` calls instead of closing. */
+  function spyClose(): { count: () => number } {
+    let n = 0;
+    Reflect.set(window, "close", () => void (n += 1));
+    return { count: () => n };
+  }
+
+  function closeWindow(): Event {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event;
+  }
+
+  test("⌘W with an edit on its way holds the close, saves the edit, then closes the window itself", async () => {
+    const closes = spyClose();
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    const before = callsOf(engine, "montages.save").length;
+
+    const event = closeWindow();
+    expect(event.defaultPrevented).toBe(true);
+    await waitFor(() => expect(closes.count()).toBe(1));
+    expect(callsOf(engine, "montages.save").length).toBe(before + 1);
+    expect(callsOf(engine, "montages.save").at(-1)?.payload.spec.clips[0]?.durationMs).toBe(8_000);
+  });
+
+  test("with nothing unsaved the close is not held", async () => {
+    const closes = spyClose();
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    expect(closeWindow().defaultPrevented).toBe(false);
+    await flush();
+    expect(closes.count()).toBe(0);
+  });
+
+  test("a save refused while closing keeps the window; closing without it is the owner's choice", async () => {
+    const closes = spyClose();
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+
+    expect(closeWindow().defaultPrevented).toBe(true);
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    expect(closes.count()).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть без сохранения" }));
+    expect(closes.count()).toBe(1);
+    // The owner chose to close: the next close is not held again.
+    expect(closeWindow().defaultPrevented).toBe(false);
+  });
+
+  test("main's ask before a quit saves the edit and is answered only once it is saved", async () => {
+    const asks: (() => Promise<void>)[] = [];
+    Reflect.set(window, "studio", {
+      version: async () => "0.0.0",
+      onFlushRequest: (handler: () => Promise<void>) => {
+        asks.push(handler);
+        return () => asks.splice(asks.indexOf(handler), 1);
+      },
+    });
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await unsavedEdit(client, made);
+    const before = callsOf(engine, "montages.save").length;
+    expect(asks).toHaveLength(1);
+
+    await asAnotherWindow(async () => {
+      await Promise.all(asks.map((ask) => ask()));
+    });
+    expect(callsOf(engine, "montages.save").length).toBe(before + 1);
+    expect(within(header()).getByText(/^черновик · сохранён/)).toBeDefined();
   });
 });
 

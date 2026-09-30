@@ -7,6 +7,7 @@ import {
   protocol,
   safeStorage,
   utilityProcess,
+  type IpcMainEvent,
   type IpcMainInvokeEvent,
   type MessagePortMain,
   type OpenDialogOptions,
@@ -28,6 +29,7 @@ import { createStickerLookup } from "./media/stickers";
 import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES } from "./mediaProtocol";
 import { HostNotices } from "./notices";
 import { createQuitFlow } from "./quitFlow";
+import { createWindowFlush } from "./windowFlush";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { handleSettingsCommand, reconcileLibraryPath } from "./settingsFlow";
 import { defaultLibraryPath, defaultSettings, SettingsStore } from "./settingsStore";
@@ -107,7 +109,7 @@ function createWindow(): void {
   else win.loadFile(RENDERER_FILE);
 }
 
-function senderFrameOf(event: IpcMainInvokeEvent): SenderFrame {
+function senderFrameOf(event: IpcMainInvokeEvent | IpcMainEvent): SenderFrame {
   const frame = event.senderFrame;
   const top = event.sender.mainFrame;
   return {
@@ -256,7 +258,25 @@ async function startStudio(): Promise<void> {
   // by `SHUTDOWN_WAIT_MS`), so no orphaned ffmpeg keeps writing into the export folder and no half-saved video is left for
   // the next start to settle (quitFlow.ts): `before-quit` is held for the whole wait, however often it is pressed, and the
   // engine's process is stopped only in `will-quit`, when the quit really goes on.
-  const quitFlow = createQuitFlow({ shutdown: () => engine.shutdown(), quit: () => app.quit(), stop: () => engine.stop() });
+  // Before that, each window saves what its owner is editing (the montage editor's autosave waits for a quiet spell):
+  // main asks, the preload answers once the window's save landed, and the wait is bounded by the quit flow.
+  const windowFlush = createWindowFlush({
+    targets: () =>
+      BrowserWindow.getAllWindows().map((win) => ({
+        send: (id: string) => win.webContents.send(CH.flushRequest, id),
+        isDestroyed: () => win.isDestroyed() || win.webContents.isDestroyed(),
+      })),
+    newId: randomUUID,
+  });
+  ipcMain.on(CH.flushDone, (event, id: unknown) => {
+    if (isTrustedSender(senderFrameOf(event), TRUSTED)) windowFlush.acknowledge(id);
+  });
+  const quitFlow = createQuitFlow({
+    flushWindows: () => windowFlush.request(),
+    shutdown: () => engine.shutdown(),
+    quit: () => app.quit(),
+    stop: () => engine.stop(),
+  });
   app.on("before-quit", (event) => quitFlow.beforeQuit(event));
   app.on("will-quit", () => quitFlow.willQuit());
 

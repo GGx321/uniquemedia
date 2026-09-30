@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { type CommandMessage, type MoneyStatus, PROTOCOL_VERSION } from "../../shared/engine";
-import { readStudioVersion, readWindowBridge, windowStudioClient } from "./windowStudio";
+import { onFlushRequest, readStudioVersion, readWindowBridge, windowStudioClient } from "./windowStudio";
 
 afterEach(() => {
   Reflect.deleteProperty(window, "studio");
@@ -133,4 +133,27 @@ test("the version is read through the bridge", async () => {
   await expect(readStudioVersion()).rejects.toThrow();
   install(okMoney);
   expect(await readStudioVersion()).toBe("0.1.0");
+});
+
+// 3d.2 review, HIGH 2: before quitting, main asks the window to save what the owner is editing.
+test("a flush handler is handed to the bridge, and the function it returns removes it", () => {
+  const handlers = new Set<() => Promise<void>>();
+  Reflect.set(window, "studio", {
+    onFlushRequest: (handler: () => Promise<void>) => {
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    },
+  });
+  const handler = async (): Promise<void> => undefined;
+  const off = onFlushRequest(handler);
+  expect([...handlers]).toEqual([handler]);
+  off();
+  expect(handlers.size).toBe(0);
+});
+
+test("without a bridge (a browser, an older preload) asking for flushes is a no-op", () => {
+  const off = onFlushRequest(async () => undefined);
+  expect(() => off()).not.toThrow();
+  Reflect.set(window, "studio", { version: async () => "0.1.0" });
+  expect(() => onFlushRequest(async () => undefined)()).not.toThrow();
 });
