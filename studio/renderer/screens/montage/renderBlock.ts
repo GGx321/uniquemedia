@@ -25,11 +25,16 @@ export interface RenderBlockInput {
   readonly exportStatus: ExportStatus | null;
   readonly avatarActive: boolean;
   readonly verdict: EngineVerdict | null;
-  /** The avatar's photos by id (`photos.list`): why the engine refused one. */
-  readonly photos: ReadonlyMap<string, PhotoSummary>;
-  /** The video that holds the used photos, as the owner knows it: «Фото уже в видео «…»». */
-  readonly usedVideoTitle: string | null;
+  /** The avatar's photos by id (`photos.list`): why the engine refused one. Null until they are read. */
+  readonly photos: ReadonlyMap<string, PhotoSummary> | null;
+  /**
+   * The video that holds the used photos: made from this very draft, or another one by its file name in «Готовые
+   * видео» (the video's own title, K12, comes with 3e.2); null while unknown.
+   */
+  readonly usedVideo: UsedVideo | null;
 }
+
+export type UsedVideo = "this-draft" | { readonly file: string };
 
 export interface RenderBlock {
   readonly text: string;
@@ -118,10 +123,11 @@ const numberAt = (path: MontageIssue["path"], i: number): number => {
   return typeof value === "number" ? value : 0;
 };
 
-function photoText(first: FlaggedCell, usedVideoTitle: string | null): string {
+function photoText(first: FlaggedCell, usedVideo: UsedVideo | null): string {
   switch (first.problem) {
     case "used":
-      return usedVideoTitle === null ? "Фото уже в видео — замените их или удалите то видео" : `Фото уже в видео «${usedVideoTitle}» — замените их или удалите то видео`;
+      if (usedVideo === "this-draft") return "Фото уже в видео из этого черновика — замените их или удалите то видео";
+      return usedVideo === null ? "Фото уже в видео — замените их или удалите то видео" : `Фото уже в видео «${usedVideo.file}» — замените их или удалите то видео`;
     case "rejected":
       return `${clipName(first.clip)}: фото отклонено — замените его`;
     case "reserved":
@@ -188,11 +194,13 @@ export function renderBlock(input: RenderBlockInput): RenderBlock | null {
     return reason(`${clipName(clip)}: пустая ячейка`, [clip]);
   }
 
-  const flagged = photoProblems(spec, verdict, input.photos);
+  const flagged = photoProblems(spec, verdict, input.photos ?? new Map());
   const first = flagged[0];
   if (first !== undefined) {
+    // Until the photos are read, why is not known: the button is blocked all the same, without a guess.
+    if (input.photos === null) return reason("Проверяем фото…", [first.clip]);
     const clips = first.problem === "used" ? [...new Set(flagged.map((f) => f.clip))] : [first.clip];
-    return reason(photoText(first, input.usedVideoTitle), clips);
+    return reason(photoText(first, input.usedVideo), clips);
   }
 
   const caption = engine("caption-invalid");

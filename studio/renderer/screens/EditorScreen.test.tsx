@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ERROR_MESSAGES_RU, type Montage } from "../../shared/engine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
-import { callsOf, flush, runAll } from "../testing";
+import { callsOf, flush, runAll, tick } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
 
@@ -375,8 +375,44 @@ describe("«Рендер»", () => {
 
     runAll(scheduler);
     await flush();
-    await screen.findByText("Фото уже в видео «без названия» — замените их или удалите то видео");
+    await screen.findByText("Фото уже в видео из этого черновика — замените их или удалите то видео");
     expect(renderButton().hasAttribute("disabled")).toBe(true);
+  });
+
+  test("when a render ends, «Рендер» stays busy until the engine's verdict read after the end answers: it never flashes ready", async () => {
+    const { client, engine, scheduler } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1, P2, PHOTO_IDS[2] ?? "", PHOTO_IDS[3] ?? "", PHOTO_IDS[4] ?? ""]);
+    await openEditor();
+    // Every verdict read from here on is slow: none answers before the render's own steps are over, so the last
+    // verdict the window holds is the one from before the render (its photos still free).
+    for (let i = 0; i < 12; i++) engine.delayNext("montages.get", 60_000);
+    fireEvent.click(renderButton());
+    await screen.findByRole("button", { name: /Рендер · \d+\s%|В очереди/ });
+
+    for (let i = 0; i < 30 && screen.queryByRole("button", { name: /Рендер · \d+\s%|В очереди/ }) !== null; i++) tick(scheduler);
+    await flush();
+    expect(screen.queryByRole("button", { name: /Рендер · \d+\s%|В очереди/ })).toBeNull();
+    const button = screen.getByRole("button", { name: /^Рендер/ });
+    expect(button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true").toBe(true);
+
+    runAll(scheduler);
+    await flush();
+    await screen.findByText("Фото уже в видео из этого черновика — замените их или удалите то видео");
+    expect(made.montageId).toMatch(/^montage-/);
+  });
+
+  test("a save made elsewhere while this window heard nothing is picked up when the window comes back", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.setDelivery(false);
+    await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: withFirstClip(made, 5_000), name: "из другого окна" }));
+    expect(within(header()).getByText(/8\.0 с · ≈ 3\.5 МБ/)).toBeDefined();
+
+    engine.setDelivery(true);
+    window.dispatchEvent(new Event("focus"));
+    await screen.findByRole("heading", { level: 1, name: "Mia · «из другого окна»" });
+    expect(within(header()).getByText(/5\.0 с · ≈ 2\.2 МБ/)).toBeDefined();
   });
 
   test("the export folder the engine found unavailable blocks it, with the way to Settings", async () => {

@@ -27,7 +27,7 @@ const photosOf = (...list: PhotoSummary[]): ReadonlyMap<string, PhotoSummary> =>
 const READY = draftSpec(4);
 
 function input(patch: Partial<RenderBlockInput> = {}): RenderBlockInput {
-  return { spec: READY, exportStatus: { status: "ok" }, avatarActive: true, verdict: { spec: READY, issues: [] }, photos: photosOf(), usedVideoTitle: null, ...patch };
+  return { spec: READY, exportStatus: { status: "ok" }, avatarActive: true, verdict: { spec: READY, issues: [] }, photos: photosOf(), usedVideo: null, ...patch };
 }
 
 const unavailableAt = (...clips: number[]): MontageIssue[] => clips.map((i) => ({ code: "photo-unavailable", path: ["clips", i, "cell"] }));
@@ -69,9 +69,19 @@ describe("the reasons, each on its own", () => {
     expect(renderBlock(input({ spec }))).toEqual({ text: "Кадр 2: пустая ячейка", settings: false, clips: [1] });
   });
 
-  test("one photo → one video: a photo already in a video blocks with the owner's own words, naming that video", () => {
-    const r = renderBlock(input({ verdict: { spec: READY, issues: unavailableAt(0, 1, 2, 3) }, photos: photosOf(photo(1, { used: true, usedIn: ["video-0000001"] }), photo(2, { used: true, usedIn: ["video-0000001"] })), usedVideoTitle: "кафе и город" }));
-    expect(r).toEqual({ text: "Фото уже в видео «кафе и город» — замените их или удалите то видео", settings: false, clips: [0, 1, 2, 3] });
+  test("one photo → one video: a photo already in a video blocks with the owner's own words, naming that video by its file", () => {
+    const r = renderBlock(input({ verdict: { spec: READY, issues: unavailableAt(0, 1, 2, 3) }, photos: photosOf(photo(1, { used: true, usedIn: ["video-0000001"] }), photo(2, { used: true, usedIn: ["video-0000001"] })), usedVideo: { file: "2026-09-30_collage3_001" } }));
+    expect(r).toEqual({ text: "Фото уже в видео «2026-09-30_collage3_001» — замените их или удалите то видео", settings: false, clips: [0, 1, 2, 3] });
+  });
+
+  test("a video made from this very draft is called so, not by the draft's name (which may have changed since)", () => {
+    const r = renderBlock(input({ verdict: { spec: READY, issues: unavailableAt(0) }, photos: photosOf(photo(1, { used: true, usedIn: ["video-0000001"] })), usedVideo: "this-draft" }));
+    expect(r?.text).toBe("Фото уже в видео из этого черновика — замените их или удалите то видео");
+  });
+
+  test("before the photos are read, a refused photo blocks without guessing why", () => {
+    const r = renderBlock(input({ verdict: { spec: READY, issues: unavailableAt(1) }, photos: null }));
+    expect(r).toEqual({ text: "Проверяем фото…", settings: false, clips: [1] });
   });
 
   test("the used-photo reason without a known title still says what to do", () => {

@@ -12,8 +12,8 @@ import { Icon, PlayIcon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { MediaPanel, PreviewSlot, PropertiesSlot, TimelineSlot } from "./montage/EditorSlots";
-import { draftName, draftTitle, outputLabel, saveLabel } from "./montage/labels";
-import { photoProblems, renderBlock, type EngineVerdict, type RenderBlock } from "./montage/renderBlock";
+import { draftTitle, outputLabel, saveLabel } from "./montage/labels";
+import { photoProblems, renderBlock, type EngineVerdict, type RenderBlock, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
 import { DraftSession } from "./montage/session";
 import { useMounted } from "./photos/shared";
@@ -211,7 +211,11 @@ function DraftEditor({
     useCallback((listener: () => void) => session.subscribe(listener), [session]),
     () => session.state,
   );
-  const [verdict, setVerdict] = useState<EngineVerdict>({ spec: initial.spec, issues: initialIssues });
+  // This draft's latest render as the store knows it; its key moves with the job's status.
+  const renderJob = view.jobs.filter((j) => j.kind === "render" && j.montageId === montageId).at(-1) ?? null;
+  const renderKey = renderJob === null ? "none" : `${renderJob.jobId}:${renderJob.status}`;
+  /** The engine's verdict, and the render state it was read AFTER: a verdict older than a render's end is stale. */
+  const [verdict, setVerdict] = useState<EngineVerdict & { after: string }>(() => ({ spec: initial.spec, issues: initialIssues, after: renderKey }));
   const [photos, setPhotos] = useState<readonly PhotoSummary[] | null>(null);
   const [videos, setVideos] = useState<readonly VideoSummary[] | null>(null);
   const [focusTick, setFocusTick] = useState(0);
@@ -320,15 +324,18 @@ function DraftEditor({
   // was rejected: `avatar.changed`), and when the window comes back. Under a stale used index `montages.get` marks
   // every photo unavailable while a render would re-read it, and nothing announces the index healing: these
   // refetches are what clear it (the 3d.1a review note for 3d.2).
-  const renderJob = view.jobs.filter((j) => j.kind === "render" && j.montageId === montageId).at(-1) ?? null;
-  const renderKey = renderJob === null ? "none" : `${renderJob.jobId}:${renderJob.status}`;
+  // Each answer is also the draft as the engine holds it now: it goes through the same echo / adopt / keep rules as
+  // a montage.changed, so a save this window missed (a resync gap, a hidden window) is picked up here.
   useEffect(() => {
     if (state.save.kind === "gone") return;
     let alive = true;
+    const after = renderKey;
     void client.request("montages.get", { montageId }).then((reply) => {
       if (!alive || !mounted.current) return;
-      if (reply.ok) setVerdict({ spec: reply.result.montage.spec, issues: reply.result.issues });
-      else if (reply.error.code === "NOT_FOUND") session.receive({ change: "removed", montageId, avatarId });
+      if (reply.ok) {
+        session.receive({ change: "upserted", montage: reply.result.montage });
+        setVerdict({ spec: reply.result.montage.spec, issues: reply.result.issues, after });
+      } else if (reply.error.code === "NOT_FOUND") session.receive({ change: "removed", montageId, avatarId });
     });
     return () => {
       alive = false;
@@ -347,8 +354,8 @@ function DraftEditor({
     };
   }, [client, avatarId, avatar, focusTick]);
 
-  const photoIndex = useMemo(() => new Map((photos ?? []).map((p) => [p.photoId, p])), [photos]);
-  const flagged = photoProblems(state.spec, verdict, photoIndex);
+  const photoIndex = useMemo(() => (photos === null ? null : new Map(photos.map((p) => [p.photoId, p]))), [photos]);
+  const flagged = photoProblems(state.spec, verdict, photoIndex ?? new Map());
   const usedVideoId = flagged.find((f) => f.problem === "used")?.videoId ?? null;
 
   // Only when a photo is already in a video: its title for «Фото уже в видео «…»».
@@ -363,10 +370,10 @@ function DraftEditor({
     };
   }, [client, avatarId, usedVideoId, avatar]);
 
-  const usedVideo = usedVideoId === null ? undefined : videos?.find((v) => v.videoId === usedVideoId);
-  // K12 (the video's own title) comes with 3e.2: until then a video made from this draft is called by the draft's
-  // name, any other by its file name in «Готовые видео».
-  const usedVideoTitle = usedVideo === undefined ? null : usedVideo.montageId === montageId ? draftName(state.name) : fileLabel(usedVideo);
+  const holder = usedVideoId === null ? undefined : videos?.find((v) => v.videoId === usedVideoId);
+  // K12 (the video's own title) comes with 3e.2: until then a video made from this draft is «из этого черновика»
+  // (the draft's name may have changed since), any other is called by its file name in «Готовые видео».
+  const usedVideo: UsedVideo | null = holder === undefined ? null : holder.montageId === montageId ? "this-draft" : { file: fileLabel(holder) };
 
   const block = renderBlock({
     spec: state.spec,
@@ -374,16 +381,19 @@ function DraftEditor({
     avatarActive: avatar?.status !== "archived",
     verdict,
     photos: photoIndex,
-    usedVideoTitle,
+    usedVideo,
   });
   const activeJob = renderJob !== null && isActiveJob(renderJob) ? renderJob : null;
+  // A render of this draft that just ended moved its photos (one photo, one video): until a verdict read after that
+  // end answers, the old one cannot be trusted, so «Рендер» stays busy instead of flashing ready.
+  const verdictBehind = renderJob !== null && !isActiveJob(renderJob) && verdict.after !== renderKey;
   // The answer may come before the job's first event (only the events and the snapshot promise it): until the store
   // has heard of the submitted job, the button stays busy.
   const submittedUnheard = submittedJob !== null && !view.jobs.some((j) => j.jobId === submittedJob);
   useEffect(() => {
     if (submittedJob !== null && !submittedUnheard) setSubmittedJob(null);
   }, [submittedJob, submittedUnheard]);
-  const busy = submitting || submittedUnheard
+  const busy = submitting || submittedUnheard || verdictBehind
     ? { label: "Рендер…" }
     : activeJob === null
       ? null
@@ -416,7 +426,7 @@ function DraftEditor({
       <EditorHeader
         session={session}
         title={{ avatar: avatar?.name ?? null }}
-        fresh={created && state.saved.updatedAt === initial.updatedAt}
+        fresh={created && state.saved.updatedAt === initial.updatedAt && renderJob === null}
         block={gone ? null : block}
         busy={busy}
         leaving={leaving}
