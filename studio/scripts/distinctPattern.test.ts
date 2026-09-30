@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { hammingDistance } from "../../src/core/pdq/hamming";
 import { computePdqHash } from "../../src/core/pdq/pdq";
 import { createRealDecodeBackend } from "../engine/decode/realBackend";
@@ -34,6 +34,8 @@ useNativeGlobals();
 const POOL_SIZE = 48;
 const MIN_HAMMING_DISTANCE = 40;
 const HASH_SIZE = 64;
+/** One decode is tens of milliseconds; the bound only has to fit a heavily loaded Windows runner (a 30 s bound was hit there once, with no message saying so). */
+const DECODE_TIMEOUT_MS = 120_000;
 
 /**
  * Decodes a served pool image exactly the way T7a's PDQ gate will: ffmpeg's
@@ -48,10 +50,13 @@ function decodeServedGray64(png: Uint8Array): Uint8Array {
   const result = spawnSync(
     ffmpegPath(),
     ["-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0", "-vf", "scale=64:64:flags=area,format=gray", "-f", "rawvideo", "-frames:v", "1", "pipe:1"],
-    { input: Buffer.from(png), timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
+    { input: Buffer.from(png), timeout: DECODE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
   );
   if (result.status !== 0) {
-    throw new Error(`ffmpeg (${ffmpegPath()}) could not decode a pool image the way the PDQ gate will: ${result.stderr.toString()}`);
+    // An empty stderr with a null status is a spawn that never ran to its end (timeout, ENOBUFS, a spawn error, a signal): say which.
+    const code = result.error !== undefined && "code" in result.error ? String(result.error.code) : "none";
+    const how = `error ${code}${result.error === undefined ? "" : ` (${result.error.message})`}, status ${String(result.status)}, signal ${String(result.signal)}`;
+    throw new Error(`ffmpeg (${ffmpegPath()}) could not decode a pool image the way the PDQ gate will: ${how}; stderr: ${result.stderr?.toString() ?? ""}`);
   }
   const gray = new Uint8Array(result.stdout);
   if (gray.length !== HASH_SIZE * HASH_SIZE) {
@@ -61,7 +66,11 @@ function decodeServedGray64(png: Uint8Array): Uint8Array {
 }
 
 describe("the served pool is PDQ-distinct through the real gate pipeline", () => {
-  const hashes = Array.from({ length: POOL_SIZE }, (_, index) => computePdqHash(decodeServedGray64(servedPoolImagePng(index))));
+  // In a hook, not the describe body: a decode that fails there is a named failure, not a load error that hides which test it belongs to.
+  let hashes: Uint8Array[] = [];
+  beforeAll(() => {
+    hashes = Array.from({ length: POOL_SIZE }, (_, index) => computePdqHash(decodeServedGray64(servedPoolImagePng(index))));
+  }, 300_000);
 
   test("every hash is PDQ's own 32 bytes (256 bits)", () => {
     for (const hash of hashes) expect(hash.length).toBe(32);
