@@ -1,4 +1,4 @@
-import type { ErrorCode, ExportUnavailableReason } from "./errors";
+import type { CaptionIssue, ErrorCode, ExportUnavailableReason } from "./errors";
 import type { MontageIssueCode } from "./montage";
 
 /** Russian user-facing text for each error code. Codes never carry text themselves. */
@@ -49,7 +49,21 @@ export const ERROR_MESSAGES_RU = {
   RENDER_VERIFY_FAILED: "Собранное видео не прошло проверку и не сохранено. Попробуйте ещё раз.",
   RENDER_QUEUE_FULL: "В очереди уже слишком много видео. Дождитесь, пока часть из них соберётся, или отмените лишние, и повторите. Ничего не потрачено и не сохранено.",
   LIBRARY_TOO_NEW: "Часть записей видео создана более новой версией Studio. Обновите приложение: до этого такие записи не показываются и не удаляются, а новые видео этого аватара не собираются.",
+  TEXT_INVALID: "Надпись не подходит для видео. Исправьте текст надписи.",
 } as const satisfies Record<ErrorCode, string>;
+
+/**
+ * Why a caption is refused (the `captionIssue` behind TEXT_INVALID). The charset text names © ® ™ on purpose:
+ * the fonts have them, but the owner does not allow them in captions.
+ */
+export const CAPTION_ISSUES_RU = {
+  charset:
+    "В надписи допустимы английские буквы, цифры, обычные знаки препинания, ’ ‘ “ ” – — … и эмодзи. Символы ©, ® и ™ не поддерживаются (ни отдельно, ни как эмодзи), как и любые другие знаки, управляющие символы и текст на других языках.",
+  "emoji-missing": "Этого эмодзи нет в шрифте, поэтому его не удастся нарисовать. Замените его другим.",
+  "emoji-text-style": "Эмодзи с селектором текстового начертания (VS15) нарисовать нельзя. Уберите селектор или возьмите обычный цветной эмодзи.",
+  "too-long": "В надписи больше 60 символов. Сократите текст.",
+  "too-many-lines": "В надписи больше двух строк. Уберите лишние переносы строки.",
+} as const satisfies Record<CaptionIssue, string>;
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {

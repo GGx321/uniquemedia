@@ -63,6 +63,9 @@ import { Count, SafeText } from "./primitives";
  * - RENDER_VERIFY_FAILED: the finished file did not pass the output verifier (metadata allowlist, frame count); it is not kept.
  * - RENDER_QUEUE_FULL: `videos.render` was refused up front because the render queue already holds its most (queued and
  *   running together); `detail` carries the limit. Nothing was reserved or written; retry once some renders end.
+ * - TEXT_INVALID: a caption breaks the caption rules (3b.3), so nothing is drawn: `captionIssue` says which rule, the
+ *   first that fails in `CAPTION_ISSUES` order. Never retried; the text has to change. A rasteriser timeout is
+ *   RENDER_FAILED, not this.
  * - LIBRARY_TOO_NEW: a video record was written by a newer Studio. What follows is per record and per avatar:
  *   `videos.render` refuses for an avatar that has such a record (its usage cannot be trusted), `videos.delete` refuses
  *   that record, and `videos.list` leaves it out. The owner updates the app.
@@ -103,6 +106,7 @@ export const ERROR_CODES = [
   "RENDER_VERIFY_FAILED",
   "RENDER_QUEUE_FULL",
   "LIBRARY_TOO_NEW",
+  "TEXT_INVALID",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -120,11 +124,27 @@ export const ExportUnavailableReason = z.enum(EXPORT_UNAVAILABLE_REASONS);
 export type ExportUnavailableReason = z.infer<typeof ExportUnavailableReason>;
 
 /**
+ * Which caption rule a text breaks (K19), in the order the engine reports them: a text that breaks several
+ * carries the first one. The rules themselves live in the engine (`captionIssues`); this is the closed
+ * vocabulary that travels, texts in `CAPTION_ISSUES_RU`.
+ *
+ * - charset: a character outside printable ASCII and ’ ‘ “ ” – — …, a control character, or © ® ™ in any form.
+ * - emoji-missing: an emoji the bundled emoji font cannot draw (also a lone flag half, a bare subdivision-flag tag).
+ * - emoji-text-style: an emoji forced to text presentation (VS15), which the font cannot draw that way.
+ * - too-long: over 60 characters as a person counts them.
+ * - too-many-lines: over 2 lines.
+ */
+export const CAPTION_ISSUES = ["charset", "emoji-missing", "emoji-text-style", "too-long", "too-many-lines"] as const;
+export const CaptionIssue = z.enum(CAPTION_ISSUES);
+export type CaptionIssue = z.infer<typeof CaptionIssue>;
+
+/**
  * An error as it travels between processes: a code plus optional diagnostics,
- * never user text. Three codes must say more than their name: MONTAGE_INVALID
+ * never user text. Four codes must say more than their name: MONTAGE_INVALID
  * carries the `issues` (a closed list of codes and paths, never values),
  * PHOTO_UNAVAILABLE the same list with only `photo-unavailable` issues (which
- * cells), and EXPORT_UNAVAILABLE its `exportReason`; no other code carries any.
+ * cells), EXPORT_UNAVAILABLE its `exportReason` and TEXT_INVALID its
+ * `captionIssue`; no other code carries any.
  */
 export const EngineError = z
   .strictObject({
@@ -133,6 +153,7 @@ export const EngineError = z
     retryAfterMs: Count.optional(),
     issues: z.array(MontageIssue).min(1).max(MAX_MONTAGE_ISSUES).optional(),
     exportReason: ExportUnavailableReason.optional(),
+    captionIssue: CaptionIssue.optional(),
   })
   .refine((e) => (e.code === "MONTAGE_INVALID" || e.code === "PHOTO_UNAVAILABLE") === (e.issues !== undefined), {
     message: "issues must be present exactly on MONTAGE_INVALID and PHOTO_UNAVAILABLE",
@@ -145,6 +166,10 @@ export const EngineError = z
   .refine((e) => (e.code === "EXPORT_UNAVAILABLE") === (e.exportReason !== undefined), {
     message: "exportReason must be present exactly on EXPORT_UNAVAILABLE",
     path: ["exportReason"],
+  })
+  .refine((e) => (e.code === "TEXT_INVALID") === (e.captionIssue !== undefined), {
+    message: "captionIssue must be present exactly on TEXT_INVALID",
+    path: ["captionIssue"],
   });
 
 export type ErrorCode = z.infer<typeof ErrorCode>;

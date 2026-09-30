@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU, MONTAGE_ISSUE_MESSAGES_RU } from "./errorMessagesRu";
-import { ERROR_CODES, EXPORT_UNAVAILABLE_REASONS, EngineError, ErrorCode } from "./errors";
+import { CAPTION_ISSUES_RU, ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU, MONTAGE_ISSUE_MESSAGES_RU } from "./errorMessagesRu";
+import { CAPTION_ISSUES, ERROR_CODES, EXPORT_UNAVAILABLE_REASONS, EngineError, ErrorCode } from "./errors";
 import { MAX_MONTAGE_ISSUES, MONTAGE_ISSUE_CODES } from "./montage";
 
 const EXPECTED_CODES = [
@@ -39,13 +39,14 @@ const EXPECTED_CODES = [
   "RENDER_VERIFY_FAILED",
   "RENDER_QUEUE_FULL",
   "LIBRARY_TOO_NEW",
+  "TEXT_INVALID",
 ];
 
-/** The two codes that must say more than their code: what is wrong with the montage, and why the folder is unusable. */
-const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE"];
+/** The codes that must say more than their code: what is wrong with the montage, which cells, why the folder is unusable, which caption rule broke. */
+const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE", "TEXT_INVALID"];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of thirty-five codes", () => {
+  test("is exactly the closed set of thirty-six codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });
@@ -174,6 +175,55 @@ describe("EngineError for an unusable export folder", () => {
 
   test("a reason on any other code is refused", () => {
     expect(EngineError.safeParse({ code: "NOT_FOUND", exportReason: "missing" }).success).toBe(false);
+  });
+});
+
+describe("EngineError for a caption that cannot be drawn", () => {
+  test("the issues are exactly the five of K19, in the order the engine reports them", () => {
+    expect([...CAPTION_ISSUES]).toEqual(["charset", "emoji-missing", "emoji-text-style", "too-long", "too-many-lines"]);
+  });
+
+  test.each([...CAPTION_ISSUES])("TEXT_INVALID says what is wrong: %s", (captionIssue) => {
+    expect(EngineError.safeParse({ code: "TEXT_INVALID", captionIssue }).success).toBe(true);
+  });
+
+  test("TEXT_INVALID without an issue is refused: the owner could not be told what to fix", () => {
+    expect(EngineError.safeParse({ code: "TEXT_INVALID" }).success).toBe(false);
+  });
+
+  test("an unknown caption issue is refused", () => {
+    expect(EngineError.safeParse({ code: "TEXT_INVALID", captionIssue: "ugly" }).success).toBe(false);
+  });
+
+  test("a caption issue on any other code is refused", () => {
+    expect(EngineError.safeParse({ code: "RENDER_FAILED", captionIssue: "charset" }).success).toBe(false);
+  });
+
+  test("a caption issue next to an export reason is refused", () => {
+    expect(EngineError.safeParse({ code: "EXPORT_UNAVAILABLE", exportReason: "missing", captionIssue: "charset" }).success).toBe(false);
+  });
+});
+
+describe("CAPTION_ISSUES_RU", () => {
+  test("has a text for exactly the caption issues", () => {
+    expect(Object.keys(CAPTION_ISSUES_RU).sort()).toEqual([...CAPTION_ISSUES].sort());
+  });
+
+  test.each([...CAPTION_ISSUES])("the %s text is non-empty Russian", (issue) => {
+    expect(CAPTION_ISSUES_RU[issue]).toMatch(/[А-Яа-яЁё]/);
+  });
+
+  test("the texts are all distinct", () => {
+    const texts = Object.values(CAPTION_ISSUES_RU);
+    expect(new Set(texts).size).toBe(texts.length);
+  });
+
+  test("the charset text names © ® ™ explicitly", () => {
+    for (const sign of ["©", "®", "™"]) expect(CAPTION_ISSUES_RU.charset).toContain(sign);
+  });
+
+  test("the text-style text tells the owner what to do instead", () => {
+    expect(CAPTION_ISSUES_RU["emoji-text-style"]).toMatch(/цветн/);
   });
 });
 
