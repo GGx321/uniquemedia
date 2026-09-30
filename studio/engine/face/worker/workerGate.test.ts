@@ -481,17 +481,24 @@ describe("idle recycling: an idle worker's memory is given back", () => {
   });
 
   test("an unsolicited-message kill takes the lane: a check arriving mid-kill never overlaps the dying worker", async () => {
+    // The kill is held for 150 ms inside `terminate`; the check is sent as soon as the gate has CALLED terminate (an event, not a
+    // sleep that guessed when the worker's out-of-turn message would land), so it arrives during the kill on any runner.
+    let terminateCalled: () => void = () => undefined;
+    const killStarted = new Promise<void>((resolve) => {
+      terminateCalled = resolve;
+    });
     const h = harness({
       tamper: (worker) => {
         const real = worker.terminate.bind(worker);
         worker.terminate = async () => {
+          terminateCalled();
           await Bun.sleep(150);
           return real();
         };
       },
     });
     await h.gate.check(checkInput(Behaviour.chatty), live());
-    await Bun.sleep(60); // the worker speaks out of turn ~20 ms after answering: the kill is now in progress (~150 ms)
+    await killStarted; // the worker speaks out of turn ~20 ms after answering; the gate answers by terminating it
     expect((await h.gate.check(checkInput(), live())).kind).toBe("match");
     expect(h.spawned()).toBe(2);
     expect(h.aliveAtSpawn.every((n) => n === 0)).toBe(true);
