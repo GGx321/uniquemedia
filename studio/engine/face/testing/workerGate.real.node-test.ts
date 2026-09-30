@@ -14,10 +14,10 @@ import { openLibrary } from "../../library/library";
 import { SAMPLE_AVATAR, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/sampleData";
 import { createFaceGate } from "../gate";
 import { NoFaceInReferenceError } from "../noFaceError";
-import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, sharedRealFaceGate, twelveMegapixelJpeg, twoKJpeg } from "../testing/realWorker";
+import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, sharedRealFaceGate, twelveMegapixelJpeg, twoKJpeg } from "./realWorker";
 import { faceModelPaths } from "../../../scripts/faceModelCache";
 import { MASTER } from "../fixtures/expected";
-import { createWorkerFaceGate, type WorkerFaceGate } from "./workerGate";
+import { createWorkerFaceGate, type WorkerFaceGate } from "../worker/workerGate";
 
 // T7c: the REAL face worker — real models, real codecs — behind
 // createWorkerFaceGate. workerGate.test.ts pins the lifecycle against a

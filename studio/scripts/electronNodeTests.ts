@@ -19,7 +19,7 @@
  *
  *   bun run test:studio:electron-node
  *
- * The face worker's real tests (`workerGate.real.node-test.ts`) run here too: they need the face models (CI fetches
+ * The face worker's real tests (`face/testing/workerGate.real.node-test.ts`) run here too: they need the face models (CI fetches
  * them; a run without them fails, it never skips), onnxruntime-web and a library folder, all of which work under Node.
  */
 import { spawn } from "node:child_process";
@@ -74,7 +74,7 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
   },
   {
     name: "face worker",
-    entry: "studio/engine/face/worker/workerGate.real.node-test.ts",
+    entry: "studio/engine/face/testing/workerGate.real.node-test.ts",
     workers: { "faceWorker.js": "studio/engine/face/worker/faceWorker.ts" },
   },
 ];
