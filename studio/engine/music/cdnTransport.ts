@@ -39,9 +39,15 @@ export type CdnTransport = (request: CdnRequest) => Promise<CdnResponse>;
 
 /** The transport refused to connect: the URL breaks the source rule, or the name resolves to an address that is not public. Never carries a URL or an address. */
 export class CdnBlockedError extends Error {
-  readonly reason: "url" | "address";
+  readonly reason: "url" | "address" | "no-mock";
   constructor(reason: CdnBlockedError["reason"]) {
-    super(reason === "url" ? "the URL is not one a download may use" : "the host resolves to an address that is not public");
+    super(
+      reason === "url"
+        ? "the URL is not one a download may use"
+        : reason === "address"
+          ? "the host resolves to an address that is not public"
+          : "no download may leave this build",
+    );
     this.name = "CdnBlockedError";
     this.reason = reason;
   }
@@ -161,6 +167,16 @@ export function createHttpsTransport(options: HttpsTransportOptions = {}): CdnTr
       signal,
     );
   };
+}
+
+/**
+ * The E2E build's transport when it was given NO mock CDN: every download is refused and no connection is made. An E2E
+ * build must fail closed, like its OpenRouter and flashapi clients: without this it would fall back to the real HTTPS
+ * transport and a test run could reach the real CDN hosts. It is chosen only behind `STUDIO_E2E`, so a production bundle
+ * does not hold it (`bundleChecks.ts`).
+ */
+export function createRefusingCdnTransport(): CdnTransport {
+  return () => Promise.reject(new CdnBlockedError("no-mock"));
 }
 
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);

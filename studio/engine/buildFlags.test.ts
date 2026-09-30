@@ -83,6 +83,21 @@ describe("the E2E build flag", () => {
     expect(await mainOf(e2eDir)).toContain(MUSIC_SWITCH);
   });
 
+  // The music CDN, fail closed: an E2E build that is given no mock CDN must not download from the real hosts, so it gets a
+  // transport that refuses everything. A production build has neither the mock nor the refusal: only the pinned HTTPS one.
+  test("an E2E build without a mock CDN base uses a transport that refuses every download, never the real one", async () => {
+    const engine = await engineOf(e2eDir);
+    expect(engine).toMatch(/musicCdnBase !== null \? createLoopbackCdnTransport\(musicCdnBase\) : createRefusingCdnTransport\(\)/);
+    expect(engine).not.toMatch(/: createHttpsTransport\(\)/);
+  });
+
+  test("a normal build holds only the pinned HTTPS transport: no mock CDN, no refusing stand-in", async () => {
+    const engine = await engineOf(normalDir);
+    expect(engine).toMatch(/transport: createHttpsTransport\(\)/);
+    expect(engine).not.toContain("createLoopbackCdnTransport");
+    expect(engine).not.toContain("createRefusingCdnTransport");
+  });
+
   test("a normal build compiles the flashapi override out: the engine ignores it and main never reads its switch", async () => {
     expect((await engineOf(normalDir)).match(MUSIC_ENGINE_CALL)?.[1]).toBe("false");
     expect(await mainOf(normalDir)).not.toContain(MUSIC_SWITCH);

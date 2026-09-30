@@ -166,7 +166,7 @@ export function productionEngineProblems(engine: string): string[] {
   // The mock CDN (3c.4, invariant 31): the engine entry picks the loopback transport only behind `STUDIO_E2E`, so with the
   // flag folded to `false` the bundler drops the transport and its messages altogether: none of it may be in the bundle.
   // (Unlike the base URLs above there is no call left to read: the whole branch is gone, which is the stronger result.)
-  if (engine.includes("createLoopbackCdnTransport") || engine.includes("the mock CDN")) problems.push("the mock-CDN transport is in the engine bundle");
+  if (["createLoopbackCdnTransport", "createRefusingCdnTransport", "the mock CDN"].some((name) => engine.includes(name))) problems.push("the mock-CDN transport is in the engine bundle");
   // Test-only music helpers live under studio/engine/music/testing/ and studio/engine/music/fixtures/. A persisting test
   // sink in the bundle would turn `music.refresh` on, which only the real track store (3c.4) may do.
   if (engine.includes("PersistingTestSink")) problems.push("a test-only music sink is in the engine bundle");

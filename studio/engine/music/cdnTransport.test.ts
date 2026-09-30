@@ -5,7 +5,7 @@ import type { RequestOptions } from "node:https";
 import { Readable } from "node:stream";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { useNativeHttp } from "../../testing/nativeHttp";
-import { CDN_USER_AGENT, CdnBlockedError, checkedLookup, createHttpsTransport, createLoopbackCdnTransport, type Resolver } from "./cdnTransport";
+import { CDN_USER_AGENT, CdnBlockedError, checkedLookup, createHttpsTransport, createLoopbackCdnTransport, createRefusingCdnTransport, type Resolver } from "./cdnTransport";
 useNativeGlobals();
 useNativeHttp();
 
@@ -209,6 +209,23 @@ describe("the HTTPS transport", () => {
     const { request, sent } = fakeRequest({ status: 200, headers: {}, chunks: [] });
     await expect(createHttpsTransport({ request, resolve: resolving("157.240.22.35") })({ url: new URL(raw), signal: signal() })).rejects.toBeInstanceOf(CdnBlockedError);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe("the refusing transport of an E2E build that was given no mock CDN", () => {
+  test("refuses every download, even one the allowlist accepts, and opens no connection", async () => {
+    const transport = createRefusingCdnTransport();
+    await expect(transport({ url: CDN_URL, signal: signal() })).rejects.toBeInstanceOf(CdnBlockedError);
+    await expect(transport({ url: new URL("https://instagram.fkiv8-1.fna.fbcdn.net/x.m4a"), signal: signal() })).rejects.toBeInstanceOf(CdnBlockedError);
+  });
+
+  test("its refusal names no URL", async () => {
+    const error = await createRefusingCdnTransport()({ url: CDN_URL, signal: signal() }).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(error?.message).not.toContain("SIGNATURE");
+    expect(error?.message).not.toContain("cdninstagram");
   });
 });
 

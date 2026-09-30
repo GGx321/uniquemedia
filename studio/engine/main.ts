@@ -22,7 +22,7 @@ import { createPdqGate } from "./runs/pdqGate";
 import { productionGateOrder } from "./runs/productionGates";
 import { STUDIO_E2E } from "./buildFlags";
 import { resolveMusicCdnBase } from "./music/cdnOverride";
-import { createHttpsTransport, createLoopbackCdnTransport } from "./music/cdnTransport";
+import { createHttpsTransport, createLoopbackCdnTransport, createRefusingCdnTransport } from "./music/cdnTransport";
 import { TrackStore } from "./music/trackStore";
 import { TEXT_ASSET_DIRS } from "./text/assetLayout";
 import { loadTextRasteriser } from "./text/load";
@@ -230,7 +230,7 @@ parentPort.once("message", (event) => {
         ? undefined
         : await TrackStore.open({
             dir: init.data.musicDir,
-            transport: STUDIO_E2E && musicCdnBase !== null ? createLoopbackCdnTransport(musicCdnBase) : createHttpsTransport(),
+            transport: STUDIO_E2E ? (musicCdnBase !== null ? createLoopbackCdnTransport(musicCdnBase) : createRefusingCdnTransport()) : createHttpsTransport(),
             clock: Date.now,
             log: (line) => console.warn(line),
           });

@@ -206,6 +206,10 @@ describe("productionEngineProblems", () => {
     expect(productionEngineProblems(bundle(SHUT, "function createLoopbackCdnTransport(base) {}"))).toEqual(["the mock-CDN transport is in the engine bundle"]);
   });
 
+  test("flags the E2E build's refusing CDN transport in the engine bundle: it too is for an E2E build alone", () => {
+    expect(productionEngineProblems(bundle(SHUT, "function createRefusingCdnTransport() {}"))).toEqual(["the mock-CDN transport is in the engine bundle"]);
+  });
+
   test("flags the mock CDN's messages in the engine bundle even if the function was renamed", () => {
     expect(productionEngineProblems(bundle(SHUT, 'throw new TypeError("the mock CDN may only be a loopback host");'))).toEqual(["the mock-CDN transport is in the engine bundle"]);
   });
