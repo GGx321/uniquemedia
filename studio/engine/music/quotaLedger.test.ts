@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fragmentForms, expectNoKeyFragment } from "../../testing/keyLeaks";
-import { QUOTA_LIMIT, QUOTA_WINDOW_MS, QuotaLedger, QuotaLogError, summarize, type QuotaLine } from "./quotaLedger";
+import { QUOTA_LIMIT, QUOTA_WINDOW_MS, QuotaLedger, QuotaLogError, summarize, withoutLongPathPrefix, type QuotaLine } from "./quotaLedger";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -351,6 +351,12 @@ describe("what the file holds", () => {
     await l.reserve({ id: "refresh-0001", key: LAST4 });
     await l.recordResult({ id: "refresh-0001", key: LAST4, outcome: "ok", serverAt: NOW + 5000 });
     expect(JSON.parse((await fileLines()).at(-1) ?? "")).toMatchObject({ kind: "result", serverAt: NOW + 5000 });
+  });
+
+  test("on Windows `mkdir` reports the folder it made with a long-path prefix, and the synced folder is named without it", () => {
+    expect(withoutLongPathPrefix("\\\\?\\C:\\Users\\RUNNER~1\\Temp\\studio-quota-x")).toBe("C:\\Users\\RUNNER~1\\Temp\\studio-quota-x");
+    expect(withoutLongPathPrefix("C:\\Users\\x")).toBe("C:\\Users\\x");
+    expect(withoutLongPathPrefix("/var/folders/x")).toBe("/var/folders/x");
   });
 
   test("creating music/ the first time also syncs the folder that holds it, once", async () => {

@@ -128,6 +128,11 @@ export interface QuotaLedgerOptions {
   syncDir?: (dir: string) => Promise<void>;
 }
 
+/** Windows' `mkdir` answers a folder it made as `\\?\C:\...`; the folder to sync is named without that prefix. */
+export function withoutLongPathPrefix(path: string): string {
+  return path.startsWith("\\\\?\\") ? path.slice(4) : path;
+}
+
 function assertKeyTag(key: string | null): void {
   if (key !== null && !KEY_TAG.test(key)) throw new TypeError("the quota log takes the last four chars of a key, never the key");
 }
@@ -160,7 +165,7 @@ export class QuotaLedger {
       const made = await mkdir(dirname(this.#path), { recursive: true });
       // The first `music/` made its parent gain an entry: make that durable too, or a power loss could take the folder
       // (and the send line inside it) although the file itself was fsynced. A folder that cannot be synced only weakens this.
-      if (made !== undefined) await this.#syncDir(dirname(made)).catch(() => undefined);
+      if (made !== undefined) await this.#syncDir(dirname(withoutLongPathPrefix(made))).catch(() => undefined);
       await appendJsonLine(this.#path, line);
     } catch (error) {
       throw new QuotaLogError("unwritable", `the quota log could not be written (${errorCode(error) ?? "unknown"})`);
