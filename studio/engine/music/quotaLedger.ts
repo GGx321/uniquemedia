@@ -35,7 +35,14 @@ const LineId = z.string().min(1).max(64);
  * A time on a line: epoch ms between 2000 and 2100. A wild one (1970, or past what a `Date` holds) would make a status
  * conversion throw and a window count nonsense, so such a line is corruption and is never written either.
  */
-const EpochMs = Count.min(946_684_800_000).max(4_102_444_800_000);
+export const CLOCK_MIN_MS = 946_684_800_000;
+export const CLOCK_MAX_MS = 4_102_444_800_000;
+const EpochMs = Count.min(CLOCK_MIN_MS).max(CLOCK_MAX_MS);
+
+/** Whether a clock reading is a real date the ledger can write (2000 to 2100). NaN, 1970 (a dead RTC battery) and 2101 are not. */
+export function clockInRange(at: number): boolean {
+  return Number.isFinite(at) && at >= CLOCK_MIN_MS && at <= CLOCK_MAX_MS;
+}
 
 export const QUOTA_OUTCOMES = ["ok", "rejected", "http-error", "network-error", "timeout", "too-large", "invalid"] as const;
 export type QuotaOutcome = (typeof QUOTA_OUTCOMES)[number];
@@ -126,7 +133,8 @@ export function summarize(lines: readonly QuotaLine[], now: number): QuotaSummar
   };
 }
 
-export type Admission = { ok: true; summary: QuotaSummary } | { ok: false; refusal: "quota" | "floor"; summary: QuotaSummary };
+/** `at` on an admitted request is the moment its `send` line was written. */
+export type Admission = { ok: true; summary: QuotaSummary; at: number } | { ok: false; refusal: "quota" | "floor"; summary: QuotaSummary };
 
 export interface QuotaLedgerOptions {
   clock: () => number;
@@ -190,6 +198,10 @@ export class QuotaLedger {
     }
   }
 
+  #assertNotFuture(at: number | undefined): void {
+    if (at !== undefined && at > this.#clock()) throw new TypeError("the quota log takes a held line's own time, never one after now");
+  }
+
   #exclusive<T>(task: () => Promise<T>): Promise<T> {
     return runExclusive(`quota:${this.#path}`, task);
   }
@@ -197,6 +209,14 @@ export class QuotaLedger {
   /** What the log says now. Throws `QuotaLogError` when it cannot be read or trusted. */
   summary(): Promise<QuotaSummary> {
     return this.#exclusive(async () => summarize(await this.#load(), this.#clock()));
+  }
+
+  /**
+   * What the log would say with `held` appended after it, in order: lines the service has not managed to write yet.
+   * Writes nothing. The status and the rejected-key check use it, so a floor or a 401 that is only held still counts.
+   */
+  summaryWith(held: readonly QuotaLine[]): Promise<QuotaSummary> {
+    return this.#exclusive(async () => summarize([...(await this.#load()), ...held], this.#clock()));
   }
 
   /**
@@ -213,13 +233,18 @@ export class QuotaLedger {
       if (before.refusal !== null) return { ok: false, refusal: before.refusal, summary: before };
       const line: QuotaLine = { v: 1, kind: "send", id: input.id, at: now, key: input.key };
       await this.#append(line);
-      return { ok: true, summary: summarize([...lines, line], now) };
+      return { ok: true, summary: summarize([...lines, line], now), at: now };
     });
   }
 
-  /** What came back for `id`: its outcome, status and the server's own figures. Never a body. */
+  /**
+   * What came back for `id`: its outcome, status and the server's own figures. Never a body. `at` is for a line the
+   * service held and writes later (the moment the answer came); it is never after the ledger's own clock, so no caller
+   * can date a floor into the future.
+   */
   async recordResult(input: { id: string; key: string; outcome: QuotaOutcome; status?: number; remaining?: number | null; limit?: number | null; serverAt?: number; at?: number }): Promise<void> {
     assertKeyTag(input.key);
+    this.#assertNotFuture(input.at);
     return await this.#exclusive(() =>
       this.#append({
         v: 1,
@@ -240,6 +265,7 @@ export class QuotaLedger {
   /** The owner stored (`last4`) or cleared (null) the key: an older 401 no longer applies to it. */
   async recordKeyChange(key: string | null, at?: number): Promise<void> {
     assertKeyTag(key);
+    this.#assertNotFuture(at);
     return await this.#exclusive(() => this.#append({ v: 1, kind: "key", at: at ?? this.#clock(), key }));
   }
 }

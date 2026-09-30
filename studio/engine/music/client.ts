@@ -268,6 +268,13 @@ export function createFlashapiClient(options: FlashapiClientOptions): FlashapiCl
       try {
         read = await readCapped(res, res.ok ? maxBodyBytes : ERROR_BODY_BYTES, !res.ok);
       } catch (error) {
+        // A 401 and a 429 are complete answers in their headers: a body that hangs or is cut (or a caller's abort
+        // while it is read) must not turn them into a timeout or a network error, or the rejected key would go
+        // unmarked and a 429's Retry-After would be lost.
+        if (head.status === 401) throw new FlashapiError("rejected", "flashapi answered 401 (its body could not be read)", { status: 401, response: head });
+        if (head.status === 429) {
+          throw new FlashapiError("rate-limited", "flashapi answered 429 (its body could not be read)", { status: 429, retryAfterMs: retryAfterMs(res.headers.get("retry-after")), response: head });
+        }
         throw interrupted(error, head);
       }
       const response = { ...head, bodyBytes: read.bytes.byteLength };

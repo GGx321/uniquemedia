@@ -432,3 +432,51 @@ describe("summarize", () => {
     expect(summarize(sends(31), NOW).sentInWindow).toBe(31);
   });
 });
+
+describe("an explicit `at` is for lines the service held, and is never in the future", () => {
+  test("recordResult refuses an `at` after the ledger's clock and writes nothing", async () => {
+    await expect(ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "ok", at: NOW + 1 })).rejects.toBeInstanceOf(TypeError);
+    await expect(readFile(path, "utf8")).rejects.toBeDefined();
+  });
+
+  test("recordKeyChange refuses an `at` after the ledger's clock and writes nothing", async () => {
+    await expect(ledger().recordKeyChange(LAST4, NOW + 1)).rejects.toBeInstanceOf(TypeError);
+    await expect(readFile(path, "utf8")).rejects.toBeDefined();
+  });
+
+  test("an `at` equal to now is written", async () => {
+    await ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "ok", at: NOW });
+    expect(JSON.parse((await fileLines())[0] ?? "")).toMatchObject({ kind: "result", at: NOW });
+  });
+
+  test("a held floor cannot be pushed into the future by a later `at`: a floor only ever counts from a moment that has passed", async () => {
+    await expect(ledger().recordResult({ id: "refresh-0001", key: LAST4, outcome: "http-error", status: 429, remaining: 0, at: NOW + 30 * DAY })).rejects.toBeInstanceOf(TypeError);
+  });
+});
+
+describe("reserve says when the send was made", () => {
+  test("the admission carries the send line's `at`, so a result held for later can be kept after it", async () => {
+    const answer = await reserve();
+    expect(answer.ok && answer.at).toBe(NOW);
+  });
+});
+
+describe("summaryWith", () => {
+  test("counts lines that are not on disk yet, in order, as if they had been appended", async () => {
+    await seed(sends(2));
+    const merged = await ledger().summaryWith([result(NOW - 1000, { outcome: "http-error", status: 429, remaining: 0 })]);
+    expect(merged.serverRemaining).toBe(0);
+    expect(merged.refusal).toBe("floor");
+    expect(merged.sentInWindow).toBe(2);
+  });
+
+  test("a held key line after a held 401 clears it, in the order given", async () => {
+    const merged = await ledger().summaryWith([result(NOW - 2000, { outcome: "rejected", status: 401 }), keySet(NOW - 1000, LAST4)]);
+    expect(merged.rejectedKey).toBeNull();
+  });
+
+  test("writes nothing", async () => {
+    await ledger().summaryWith([result(NOW - 1000)]);
+    await expect(readFile(path, "utf8")).rejects.toBeDefined();
+  });
+});

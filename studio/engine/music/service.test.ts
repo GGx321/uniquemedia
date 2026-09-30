@@ -63,7 +63,7 @@ interface Harness {
   fetched: string[];
 }
 
-function harness(options: { fetch?: FlashapiFetch; sink?: MusicListSink; quota?: string | null; key?: string | null; baseUrl?: string; timeoutMs?: number; mockOptions?: Parameters<typeof startMockFlashapi>[0] } = {}): Harness {
+function harness(options: { log?: (line: string) => void; fetch?: FlashapiFetch; sink?: MusicListSink; quota?: string | null; key?: string | null; baseUrl?: string; timeoutMs?: number; mockOptions?: Parameters<typeof startMockFlashapi>[0] } = {}): Harness {
   mock ??= startMockFlashapi(options.mockOptions ?? { key: KEY });
   const events: MusicStatus[] = [];
   const logs: string[] = [];
@@ -86,7 +86,7 @@ function harness(options: { fetch?: FlashapiFetch; sink?: MusicListSink; quota?:
     keyRejected: () => holder.rejected,
     markKeyRejected: (key) => void rejectedCalls.push(key),
     emit: (status) => void events.push(status),
-    log: (line) => void logs.push(line),
+    log: (line) => (logs.push(line), options.log?.(line)),
     sink: options.sink ?? new PersistingTestSink(),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
   });
@@ -817,15 +817,15 @@ describe("a body that hangs still leaves the floor", () => {
   const zero = { "x-ratelimit-requests-remaining": "0", "x-ratelimit-requests-limit": "30" };
 
   test.each([
-    ["a 200", 200],
-    ["a 429", 429],
-  ])("%s with remaining 0 and a body that never arrives: the timeout's result line carries 0, and the next refresh is refused with one request in all", async (_label, status) => {
+    ["a 200", 200, "timeout"],
+    ["a 429", 429, "http-error"],
+  ] as const)("%s with remaining 0 and a body that never arrives: the result line carries 0 (outcome %s from the status), and the next refresh is refused with one request in all", async (_label, status, outcome) => {
     let calls = 0;
     const hanging = hangingBody(status, zero);
     const h = harness({ fetch: (url, init) => (calls++, hanging(url, init)), timeoutMs: 80 });
     await h.service.refresh();
     await h.service.settled();
-    expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome: "timeout", status, remaining: 0, limit: 30 });
+    expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome, status, remaining: 0, limit: 30 });
     expect((await h.service.status()).serverRemaining).toBe(0);
     now += HOUR;
     expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
@@ -838,6 +838,25 @@ describe("a body that hangs still leaves the floor", () => {
     await Bun.sleep(20);
     await h.service.stop();
     expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome: "network-error", remaining: 0 });
+  });
+});
+
+describe("a 401 or a 429 whose body hangs is classified from its status", () => {
+  test("a 401: MUSIC_KEY_REJECTED, the key marked rejected, the result line `rejected`", async () => {
+    const h = harness({ fetch: hangingBody(401, {}), timeoutMs: 80 });
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await h.service.status()).refresh).toMatchObject({ state: "failed", error: { code: "MUSIC_KEY_REJECTED" } });
+    expect(h.rejectedCalls).toEqual([KEY]);
+    expect((await quotaLines()).at(-1)).toMatchObject({ kind: "result", outcome: "rejected", status: 401 });
+  });
+
+  test("a 429 with a Retry-After: MUSIC_UNAVAILABLE carrying retryAfterMs, the floor kept", async () => {
+    const h = harness({ fetch: hangingBody(429, { "retry-after": "9", "x-ratelimit-requests-remaining": "0" }), timeoutMs: 80 });
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await h.service.status()).refresh).toMatchObject({ state: "failed", error: { code: "MUSIC_UNAVAILABLE", retryAfterMs: 9000 } });
+    expect((await quotaLines()).at(-1)).toMatchObject({ outcome: "http-error", status: 429, remaining: 0 });
   });
 });
 
@@ -996,5 +1015,189 @@ describe("MemoryListSink", () => {
     expect(sink.summary()).toEqual({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 });
     await sink.accept({ fetchedAt: NOW, tracks: [] }, () => undefined, new AbortController().signal);
     expect(sink.summary()).toEqual({ listFetchedAt: NOW, trackCount: 0, bytesOnDisk: 0 });
+  });
+});
+
+// The clock the ledger trusts is the local one, and a dead RTC battery reads 1970. A line the schema refuses (a time
+// outside 2000..2100) used to sit held forever and block every refresh behind it.
+describe("a system clock that is not a date between 2000 and 2100", () => {
+  test.each([
+    ["1970", 0],
+    ["1999", Date.UTC(1999, 11, 31, 23, 59, 59)],
+    ["2101", Date.UTC(2101, 0, 1)],
+  ])("at %s a refresh is refused naming the clock, with no request and no ledger line", async (_label, at) => {
+    now = at;
+    const h = harness();
+    const error = refused(await h.service.refresh());
+    expect(error.code).toBe("MUSIC_UNAVAILABLE");
+    expect(error.detail).toContain("system clock");
+    expect(error.detail).toContain("nothing was sent");
+    expect(mock?.requests).toHaveLength(0);
+    expect(await quotaLines()).toEqual([]);
+  });
+
+  test("a clock that reads NaN is refused the same way", async () => {
+    now = Number.NaN;
+    const error = refused(await harness().service.refresh());
+    expect(error.detail).toContain("system clock");
+  });
+
+  test("the status still answers with the clock out of range", async () => {
+    await seedQuota(sends(3));
+    now = 0;
+    const status = await harness().service.status();
+    expect(MusicStatus.safeParse(status).success).toBe(true);
+  });
+
+  test("the refresh is refused for the clock alone: once it is right the same service goes through", async () => {
+    now = 0;
+    const h = harness();
+    expect(refused(await h.service.refresh()).detail).toContain("system clock");
+    now = NOW;
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
+    expect(mock?.requests).toHaveLength(1);
+  });
+});
+
+describe("a line held while the clock is wrong", () => {
+  const zero = { "x-ratelimit-requests-remaining": "0" };
+  /** Serves the mock, but the clock has gone to 1970 by the time the answer is read. */
+  const clockDiesDuringRequest: FlashapiFetch = (url, init) => {
+    now = 0;
+    return nativeFetch(url, init);
+  };
+
+  test("a result made at a wrong clock is held, and written after the clock recovers with a time between the send and now", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 429, body: "quota exceeded", headers: zero });
+    const h = harness({ fetch: clockDiesDuringRequest });
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["send"]);
+    now = NOW + 5 * HOUR;
+    // The floor it carried still refuses, and the line is written first.
+    expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    const lines = await quotaLines();
+    expect(lines.map((l) => l.kind)).toEqual(["send", "result"]);
+    const written = lines[1];
+    expect(written?.at).toBeGreaterThanOrEqual(NOW);
+    expect(written?.at).toBeLessThanOrEqual(NOW + 5 * HOUR);
+    expect(mock.requests).toHaveLength(1);
+  });
+
+  test("names the clock in the log, not `unknown`, while it is held", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    const h = harness({ fetch: clockDiesDuringRequest });
+    await h.service.refresh();
+    await h.service.settled();
+    expect(h.logs.join("\n")).toContain("system clock");
+    expect(h.logs.join("\n")).not.toContain("(unknown)");
+  });
+
+  test("a key change noted at a wrong clock is held, then written after the send it follows, with an `at` in range", async () => {
+    const h = harness();
+    now = 0;
+    await h.service.noteKeyChange("0000");
+    expect(await quotaLines()).toEqual([]);
+    now = NOW;
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
+    const lines = await quotaLines();
+    expect(lines.map((l) => l.kind)).toEqual(["key", "send", "result"]);
+    expect(lines[0]?.at).toBeGreaterThanOrEqual(946_684_800_000);
+    expect(lines[0]?.at).toBeLessThanOrEqual(NOW);
+  });
+
+  test("a key change noted at a good clock keeps that time", async () => {
+    const h = harness();
+    now = NOW + HOUR;
+    await h.service.noteKeyChange("0000");
+    expect((await quotaLines())[0]).toMatchObject({ kind: "key", at: NOW + HOUR });
+  });
+
+  test("a clock stepped BACK after the send (still a real date) writes the result no later than now", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    const h = harness({
+      fetch: (url, init) => {
+        now = NOW - 3 * HOUR;
+        return nativeFetch(url, init);
+      },
+    });
+    await h.service.refresh();
+    await h.service.settled();
+    const lines = await quotaLines();
+    expect(lines.map((l) => l.kind)).toEqual(["send", "result"]);
+    expect(lines[1]?.at).toBeLessThanOrEqual(now);
+  });
+
+  test("the status counts a held floor: it does not show room the refresh will refuse", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 429, body: "x", headers: zero });
+    const h = harness({ fetch: clockDiesDuringRequest });
+    await h.service.refresh();
+    await h.service.settled();
+    now = NOW + HOUR;
+    const status = await h.service.status();
+    expect(status.serverRemaining).toBe(0);
+    expect(status.nextFreeAt).not.toBeNull();
+    expect(Date.parse(status.nextFreeAt ?? "")).toBeGreaterThan(NOW + 30 * 24 * HOUR);
+  });
+
+  test("the status counts a held 401: keyRejected says so before the line is written", async () => {
+    mock = startMockFlashapi({ key: ROTATED });
+    const h = harness({ fetch: clockDiesDuringRequest });
+    await h.service.refresh();
+    await h.service.settled();
+    now = NOW + HOUR;
+    expect(await h.service.keyRejected("0000")).toBe(true);
+  });
+});
+
+describe("a held line the schema refuses is not a poison pill", () => {
+  test("a key change with a tag that is not four chars is dropped and logged; the refresh behind it still goes through", async () => {
+    const h = harness();
+    await h.service.noteKeyChange("ab");
+    expect(h.logs.join("\n")).toMatch(/not valid|invalid/);
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["send", "result"]);
+  });
+
+  test("a later valid line is written after a refused one", async () => {
+    const h = harness();
+    await h.service.noteKeyChange("ab");
+    await h.service.noteKeyChange("0000");
+    expect(await quotaLines()).toMatchObject([{ kind: "key", key: "0000" }]);
+  });
+});
+
+describe("the flush chain survives a failure of its own", () => {
+  test("a log() that throws while a write fails does not leave every later flush rejected", async () => {
+    mock = startMockFlashapi({ key: KEY });
+    let first = true;
+    const breaking: FlashapiFetch = async (url, init) => {
+      if (first) {
+        first = false;
+        await rm(quotaPath(), { force: true });
+        await mkdir(quotaPath());
+      }
+      return nativeFetch(url, init);
+    };
+    let armed = true;
+    const h = harness({
+      fetch: breaking,
+      log: () => {
+        if (armed) throw new Error("the logger broke");
+      },
+    });
+    await h.service.refresh();
+    await h.service.settled();
+    armed = false;
+    await rm(quotaPath(), { recursive: true, force: true });
+    const answer = await h.service.refresh();
+    expect(answer.ok || answer.error.code !== "INTERNAL").toBe(true);
+    await h.service.settled();
+    expect((await quotaLines()).map((l) => l.kind)).toContain("result");
   });
 });

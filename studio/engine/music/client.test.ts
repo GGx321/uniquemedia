@@ -378,7 +378,6 @@ describe("a body that never finishes still says what its headers said", () => {
 
   test.each([
     ["a 200", 200],
-    ["a 429", 429],
     ["a 500", 500],
   ])("%s with remaining 0 and a hanging body: the timeout carries the answer's figures, the status and the server's time", async (_label, status) => {
     const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: hangingBody(status, zero), timeoutMs: 80 });
@@ -387,6 +386,43 @@ describe("a body that never finishes still says what its headers said", () => {
     expect(error.status).toBe(status);
     expect(error.response).toMatchObject({ status, remaining: 0, limit: 30, bodyBytes: 0, serverDateMs: Date.UTC(2026, 8, 30, 12, 0, 0) });
     expect(error.response?.rateLimit).toEqual({ "x-ratelimit-requests-limit": "30", "x-ratelimit-requests-remaining": "0" });
+  });
+
+  test("a 401 whose body never arrives is still `rejected`, from its status: the key is not left looking good", async () => {
+    const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: hangingBody(401, zero), timeoutMs: 80 });
+    const error = await failureOf(client.fetchTrending());
+    expect(error.kind).toBe("rejected");
+    expect(error.status).toBe(401);
+    expect(error.response).toMatchObject({ status: 401, remaining: 0 });
+  });
+
+  test("a 429 whose body never arrives is still `rate-limited`, with its Retry-After and figures", async () => {
+    const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: hangingBody(429, { ...zero, "retry-after": "7" }), timeoutMs: 80 });
+    const error = await failureOf(client.fetchTrending());
+    expect(error.kind).toBe("rate-limited");
+    expect(error.status).toBe(429);
+    expect(error.retryAfterMs).toBe(7000);
+    expect(error.response).toMatchObject({ status: 429, remaining: 0 });
+  });
+
+  test.each([
+    ["401", 401, "rejected"],
+    ["429", 429, "rate-limited"],
+  ] as const)("a %s whose body is cut by the network still ends as its status says", async (_label, status, kind) => {
+    const cut: FlashapiFetch = () =>
+      Promise.resolve(new Response(new ReadableStream<Uint8Array>({ pull: (controller) => controller.error(new TypeError("terminated")) }), { status, headers: zero }));
+    const error = await failureOf(createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: cut }).fetchTrending());
+    expect(error.kind).toBe(kind);
+    expect(error.response).toMatchObject({ status, remaining: 0 });
+    expectNoKeyFragment(everythingOf(error), KEY);
+  });
+
+  test("a caller's abort while a 401's body hangs is `rejected`: the answer was already given", async () => {
+    const controller = new AbortController();
+    const client = createFlashapiClient({ key: KEY, baseUrl: FLASHAPI_BASE, allowBaseUrlOverride: false, fetch: hangingBody(401, zero), timeoutMs: 5000 });
+    const run = client.fetchTrending(controller.signal);
+    setTimeout(() => controller.abort(), 30);
+    expect((await failureOf(run)).kind).toBe("rejected");
   });
 
   test("a caller's abort while the body hangs is `aborted`, and carries the figures too", async () => {

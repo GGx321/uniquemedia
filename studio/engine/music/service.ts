@@ -1,7 +1,7 @@
 import { MUSIC_QUOTA_LIMIT, type EngineError, type MusicStatus } from "../../shared/engine";
 import { createFlashapiClient, FlashapiConfigError, FlashapiError, type FlashapiFetch, type FlashapiResponseInfo } from "./client";
 import type { ListParse, MusicTrack } from "./listSchema";
-import { QuotaLedger, QuotaLogError, type QuotaOutcome, type QuotaSummary } from "./quotaLedger";
+import { CLOCK_MIN_MS, clockInRange, QuotaLedger, QuotaLogError, type QuotaLine, type QuotaOutcome, type QuotaSummary } from "./quotaLedger";
 import { buildRefreshReport } from "./refreshReport";
 import { redactKnown } from "./redactKnown";
 
@@ -79,10 +79,42 @@ export interface MusicServiceDeps {
 
 export type RefreshAnswer = { ok: true; status: MusicStatus } | { ok: false; error: EngineError };
 
-/** A line the ledger could not take yet: its own time kept, so a held floor still counts its 31 days from the answer. */
+/**
+ * A line the ledger could not take yet. `madeAt` is the moment it was made, so a held floor still counts its 31 days
+ * from the answer; it is null when the clock was not a real date then (a dead RTC battery reads 1970), and the line's
+ * time is then settled when it is written: no earlier than the send it answers and no later than now.
+ */
 type PendingLine =
-  | { kind: "result"; input: Parameters<QuotaLedger["recordResult"]>[0] & { at: number } }
-  | { kind: "key"; key: string | null; at: number };
+  | { kind: "result"; input: Omit<Parameters<QuotaLedger["recordResult"]>[0], "at">; sentAt: number; madeAt: number | null }
+  | { kind: "key"; key: string | null; madeAt: number | null };
+
+/** The moment a held line is written at: the moment it was made, else now; a result never before its send, no line after now. */
+function writeTimeOf(line: PendingLine, now: number): number {
+  if (line.kind === "result") return Math.min(Math.max(line.madeAt ?? now, line.sentAt), now);
+  return Math.min(line.madeAt ?? now, now);
+}
+
+/** What a held line reads as for a status: its own time, or the send's when the clock was wrong. A held line is a stand-in, never written from this. */
+function heldAsLine(line: PendingLine): QuotaLine {
+  if (line.kind === "key") return { v: 1, kind: "key", at: line.madeAt ?? CLOCK_MIN_MS, key: line.key };
+  const { input } = line;
+  return {
+    v: 1,
+    kind: "result",
+    id: input.id,
+    at: line.madeAt ?? line.sentAt,
+    key: input.key,
+    outcome: input.outcome,
+    ...(input.status === undefined ? {} : { status: input.status }),
+    ...(input.remaining === undefined ? {} : { remaining: input.remaining }),
+    ...(input.limit === undefined ? {} : { limit: input.limit }),
+  };
+}
+
+/** How a clock reading is told to the owner: its year, or that it is not a time at all. */
+function describeClock(at: number): string {
+  return Number.isFinite(at) && Math.abs(at) <= 8.64e15 ? `year ${new Date(at).getUTCFullYear()}` : "no valid time";
+}
 
 /** What a status says before anything is known; a refresh's answer falls back to it when the real one cannot be built. */
 const NEVER_REFRESHED: Omit<MusicStatus, "refresh"> = {
@@ -165,7 +197,7 @@ export class MusicService {
     let unreadable = false;
     if (this.#ledger !== null) {
       try {
-        summary = await this.#ledger.summary();
+        summary = await this.#summaryNow();
       } catch {
         unreadable = true;
       }
@@ -194,10 +226,17 @@ export class MusicService {
   async keyRejected(key4: string | null): Promise<boolean> {
     if (this.#ledger === null || key4 === null) return false;
     try {
-      return (await this.#ledger.summary()).rejectedKey === key4;
+      return (await this.#summaryNow()).rejectedKey === key4;
     } catch {
       return false;
     }
+  }
+
+  /** What the ledger says, with the lines still held after what is on disk: a floor or a 401 that is only held counts. */
+  #summaryNow(): Promise<QuotaSummary> {
+    const ledger = this.#ledger;
+    if (ledger === null) return Promise.reject(new QuotaLogError("unreadable", "there is no quota log"));
+    return this.#pending.length === 0 ? ledger.summary() : ledger.summaryWith(this.#pending.map(heldAsLine));
   }
 
   /**
@@ -207,13 +246,29 @@ export class MusicService {
    */
   async noteKeyChange(key4: string | null): Promise<void> {
     if (this.#ledger === null) return;
-    this.#pending.push({ kind: "key", key: key4, at: this.#deps.clock() });
+    const now = this.#deps.clock();
+    this.#pending.push({ kind: "key", key: key4, madeAt: clockInRange(now) ? now : null });
     await this.#flush();
   }
 
-  /** Writes what is held, in order. Resolves true when nothing is left; on a failure the rest stays held and the kind is logged. */
+  /** The logger must never be what breaks the write path. */
+  #say(line: string): void {
+    try {
+      this.#deps.log(line);
+    } catch {
+      // Nothing to do: the line is a diagnostic.
+    }
+  }
+
+  /**
+   * Writes what is held, in order. Resolves true when nothing is left; on a failure the rest stays held and the kind is
+   * logged. The chain never stays rejected: whatever one flush ends in, the next one runs.
+   */
   #flush(): Promise<boolean> {
-    const run = this.#flushing.then(() => this.#flushNow());
+    const run = this.#flushing
+      .catch(() => undefined)
+      .then(() => this.#flushNow())
+      .catch(() => false);
     this.#flushing = run;
     return run;
   }
@@ -221,14 +276,26 @@ export class MusicService {
   async #flushNow(): Promise<boolean> {
     const ledger = this.#ledger;
     if (ledger === null) return true;
+    const now = this.#deps.clock();
+    // A line cannot be dated while the clock is not a real date: it stays held (and counted by the status) until it is.
+    if (this.#pending.length > 0 && !clockInRange(now)) {
+      this.#say(`studio engine: quota log lines stay held: the system clock reads ${describeClock(now)}, which is not a real date`);
+      return false;
+    }
     for (let next = this.#pending[0]; next !== undefined; next = this.#pending[0]) {
+      const at = writeTimeOf(next, now);
       try {
-        if (next.kind === "result") await ledger.recordResult(next.input);
-        else await ledger.recordKeyChange(next.key, next.at);
+        if (next.kind === "result") await ledger.recordResult({ ...next.input, at });
+        else await ledger.recordKeyChange(next.key, at);
       } catch (error) {
         const what = next.kind === "result" ? "a flashapi result could not be written to the quota log" : "a music key change could not be noted in the quota log";
-        this.#deps.log(`studio engine: ${what} (${errorKind(error)})`);
-        return false;
+        // Only the log's own failure (I/O) is worth retrying. A line the schema or the tag rule refuses will be refused
+        // again, and left in front it would block every line and refresh behind it for good, so it is dropped.
+        if (error instanceof QuotaLogError) {
+          this.#say(`studio engine: ${what} (${errorKind(error)})`);
+          return false;
+        }
+        this.#say(`studio engine: ${what}: the line was not valid and was dropped (${errorKind(error)})`);
       }
       this.#pending.shift();
     }
@@ -262,6 +329,12 @@ export class MusicService {
       if (key === null) return fail("MUSIC_KEY_MISSING", "no RapidAPI key is stored");
       if (this.#deps.keyRejected()) return fail("MUSIC_KEY_REJECTED", "the stored RapidAPI key was rejected; replace it");
       if (this.#ledger === null) return fail("MUSIC_UNAVAILABLE", "the music folder is not available, so nothing was sent");
+      // A clock that is not a real date cannot date a send line (the ledger refuses one, and a window counted from 1970
+      // is nonsense): nothing leaves until it is set right, and the owner is told why.
+      const clockNow = this.#deps.clock();
+      if (!clockInRange(clockNow)) {
+        return fail("MUSIC_UNAVAILABLE", `the system clock reads ${describeClock(clockNow)}, which is not a real date, so nothing was sent; set the date and time and try again`);
+      }
       // What an earlier failed write held goes to the log FIRST: a 401 or a 0 that was never recorded must count before
       // this request is admitted. If it still cannot be written, nothing is sent.
       if (!(await this.#flush())) {
@@ -318,7 +391,7 @@ export class MusicService {
       this.#refresh = running;
       this.#changed();
       // The request goes first: nothing after the send may leave the service busy, whatever the status building does.
-      this.#task = this.#run({ client, key, id, hadOk: before.hadOkResult, sent: admission.summary.sentInWindow, signal: controller.signal });
+      this.#task = this.#run({ client, key, id, hadOk: before.hadOkResult, sent: admission.summary.sentInWindow, sentAt: admission.at, signal: controller.signal });
       let status: MusicStatus;
       try {
         status = { ...(await this.status()), refresh: running };
@@ -331,8 +404,9 @@ export class MusicService {
     }
   }
 
-  async #run(job: { client: ReturnType<typeof createFlashapiClient>; key: string; id: string; hadOk: boolean; sent: number; signal: AbortSignal }): Promise<void> {
+  async #run(job: { client: ReturnType<typeof createFlashapiClient>; key: string; id: string; hadOk: boolean; sent: number; sentAt: number; signal: AbortSignal }): Promise<void> {
     const { key, id } = job;
+    const record = (input: Parameters<QuotaLedger["recordResult"]>[0]): Promise<void> => this.#record(input, job.sentAt);
     const redact = (text: string): string => redactKnown(text, key);
     let response: FlashapiResponseInfo | null = null;
     let list: Extract<ListParse, { ok: true }> | null = null;
@@ -345,7 +419,7 @@ export class MusicService {
       } catch (error) {
         if (error instanceof FlashapiError) {
           response = error.response;
-          await this.#record({ id, key, outcome: outcomeOf(error), ...(error.status === null ? {} : { status: error.status }), ...this.#figures(error.response) });
+          await record({ id, key, outcome: outcomeOf(error), ...(error.status === null ? {} : { status: error.status }), ...this.#figures(error.response) });
           if (error.kind === "rejected") this.#deps.markKeyRejected(key);
           failure = fail(
             error.kind === "rejected" ? "MUSIC_KEY_REJECTED" : "MUSIC_UNAVAILABLE",
@@ -353,12 +427,12 @@ export class MusicService {
           );
           if (error.retryAfterMs !== null) failure.error.retryAfterMs = error.retryAfterMs;
         } else {
-          await this.#record({ id, key, outcome: "network-error" });
+          await record({ id, key, outcome: "network-error" });
           failure = fail("MUSIC_UNAVAILABLE", redact(error instanceof Error ? error.message : "the request failed"));
         }
       }
       if (failure === null && response !== null && list !== null) {
-        await this.#record({ id, key, outcome: "ok", status: response.status, ...this.#figures(response) });
+        await record({ id, key, outcome: "ok", status: response.status, ...this.#figures(response) });
         if (list.tracks.length === 0) {
           failure = fail("MUSIC_UNAVAILABLE", `flashapi returned no usable track (${list.observed.itemCount} items, ${list.dropped.length} dropped)`);
         }
@@ -390,9 +464,10 @@ export class MusicService {
    * chars and throws on anything longer, so a whole key can never reach the file. A line the log cannot take stays held
    * (see `#pending`): the send is on disk and counts, and the 401 or the server's 0 this result carried is not lost.
    */
-  async #record(input: Parameters<QuotaLedger["recordResult"]>[0]): Promise<void> {
+  async #record(input: Parameters<QuotaLedger["recordResult"]>[0], sentAt: number): Promise<void> {
     if (this.#ledger === null) return;
-    this.#pending.push({ kind: "result", input: { ...input, key: last4(input.key), at: this.#deps.clock() } });
+    const now = this.#deps.clock();
+    this.#pending.push({ kind: "result", input: { ...input, key: last4(input.key) }, sentAt, madeAt: clockInRange(now) ? now : null });
     await this.#flush();
   }
 
