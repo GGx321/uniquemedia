@@ -602,7 +602,12 @@ describe("text layers", () => {
 
   test.each([
     ["a C0 control character", "a\u0001b"],
-    ["a newline", "line one\nline two"],
+    ["a lone carriage return", "line one\rline two"],
+    ["a carriage return that ends the text", "line one\r"],
+    ["a line feed then a carriage return", "line one\n\rline two"],
+    ["a vertical tab", "a\u000Bb"],
+    ["a form feed", "a\u000Cb"],
+    ["NEL", "a\u0085b"],
     ["a tab", "a\tb"],
     ["DEL", "a\u007fb"],
     ["a C1 control character", "a\u0085b"],
@@ -614,6 +619,20 @@ describe("text layers", () => {
     ["a lone low surrogate", "a\uDC00b"],
   ])("refuses %s: resvg would crash on it or the text would read otherwise than it shows", (_label, value) => {
     expect(MontageSpec.safeParse(withText({ value })).success).toBe(false);
+  });
+
+  test.each([
+    ["a line feed", "line one\nline two"],
+    ["a CRLF", "line one\r\nline two"],
+    ["a trailing line feed", "line one\n"],
+    ["three lines (the engine's caption rules count lines, not the schema)", "a\nb\nc"],
+  ])("accepts %s: the only line breaks a caption may hold", (_label, value) => {
+    expect(MontageSpec.safeParse(withText({ value })).success).toBe(true);
+  });
+
+  test("a line break is still one of the 60 characters", () => {
+    expect(MontageSpec.safeParse(withText({ value: `${"a".repeat(30)}\r\n${"b".repeat(29)}` })).success).toBe(true);
+    expect(MontageSpec.safeParse(withText({ value: `${"a".repeat(30)}\n${"b".repeat(30)}` })).success).toBe(false);
   });
 
   test("a well-formed surrogate pair is fine", () => {

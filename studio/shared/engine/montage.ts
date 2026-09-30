@@ -34,7 +34,7 @@ export const MIN_LAYER_MS = 300;
 export const MAX_TEXT_LAYERS = 10;
 export const MAX_STICKER_LAYERS = 10;
 export const MAX_LAYERS = MAX_TEXT_LAYERS + MAX_STICKER_LAYERS;
-/** A caption is 1 to 60 graphemes (the engine's caption rules add the charset and the age words). */
+/** A caption is 1 to 60 graphemes (the engine's caption rules add the charset and the line count). */
 export const MAX_CAPTION_GRAPHEMES = 60;
 /**
  * The longest caption in UTF-16 code units: a cheap bound that runs before the
@@ -120,14 +120,17 @@ export const TextFont = z.enum(["manrope", "playfair", "oswald", "ptmono", "cave
 /** «Без фона» / «Плашка» / «Обводка». */
 export const TextStyle = z.enum(["none", "plaque", "outline"]);
 
-const graphemeCount = (text: string): number => [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text)].length;
+/** Characters as a person counts them (`Intl.Segmenter`): the one count the contract and the engine's caption rules share. */
+export const graphemeCount = (text: string): number => [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(text)].length;
 
 /**
  * Text no renderer should ever be handed: control characters (C0, DEL and C1;
  * resvg throws "non-XML character" on them, SP2) and the bidi overrides and
- * isolates that make text read otherwise than it is stored.
+ * isolates that make text read otherwise than it is stored. The one exception
+ * is the line break: LF and CRLF are how a caption gets its second line (the
+ * engine's caption rules count the lines, at most two). A lone CR is refused.
  */
-const UNSAFE_CHARS = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u;
+const UNSAFE_CHARS = /[^\P{Cc}\n\r]|\r(?!\n)|[\u202A-\u202E\u2066-\u2069]/u;
 /** A surrogate half with no partner: not text at all. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
@@ -137,7 +140,7 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
  * free of control characters, bidi overrides and lone surrogates. That much is
  * checked here, up front, because it is what could crash or mislead the
  * rasteriser. The charset itself (printable ASCII, a few typographic
- * marks, the emoji the bundled font covers) and the age words are the
+ * marks, the emoji the bundled font covers) and the line count are the
  * engine's caption rules (slice 3b).
  */
 export const Caption = z
