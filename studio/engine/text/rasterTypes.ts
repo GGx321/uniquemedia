@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { CaptionIssue } from "../../shared/engine";
 import type { TextFontKey } from "./fonts";
 
 /**
@@ -37,19 +38,31 @@ export const RASTER_ERROR_CODES = [
   "BROKEN",
   /** The worker died, broke the protocol or would not start (engine side only). */
   "WORKER_FAILED",
+  /** A caption breaks a caption rule (3b.3), so nothing was drawn; the error carries which rule. */
+  "CAPTION_INVALID",
 ] as const;
 export type RasterErrorCode = (typeof RASTER_ERROR_CODES)[number];
 
 const MESSAGE_PREFIX = "text rasteriser: ";
 
+export interface RasterErrorOptions extends ErrorOptions {
+  /** The rule a `CAPTION_INVALID` names, and only that code carries one: it becomes `TEXT_INVALID.captionIssue`. */
+  captionIssue?: CaptionIssue;
+}
+
 export class RasterError extends Error {
   readonly code: RasterErrorCode;
+  readonly captionIssue?: CaptionIssue;
 
-  constructor(code: RasterErrorCode, message: string, options?: ErrorOptions) {
+  constructor(code: RasterErrorCode, message: string, options?: RasterErrorOptions) {
+    if ((code === "CAPTION_INVALID") !== (options?.captionIssue !== undefined)) {
+      throw new TypeError("a RasterError names a caption rule exactly when its code is CAPTION_INVALID");
+    }
     // A message that crossed the worker wire already carries the prefix.
-    super(message.startsWith(MESSAGE_PREFIX) ? message : `${MESSAGE_PREFIX}${message}`, options);
+    super(message.startsWith(MESSAGE_PREFIX) ? message : `${MESSAGE_PREFIX}${message}`, options === undefined ? undefined : "cause" in options ? { cause: options.cause } : undefined);
     this.name = "RasterError";
     this.code = code;
+    if (options?.captionIssue !== undefined) this.captionIssue = options.captionIssue;
   }
 }
 
