@@ -7,7 +7,7 @@ import { buildCaptionSvg, CaptionTemplateError, EMOJI_BASELINE, escapeXml, inkFo
 useNativeGlobals();
 
 // The template is the ONLY place caption text meets markup (invariant 17): these tests read the SVG it builds as text,
-// the way a hostile caption would try to abuse it. Rendering it is caption.render.test.ts's job.
+// the way a hostile caption would try to abuse it. Rendering it is renderer.test.ts's and template.property.test.ts's job.
 
 const METRICS = { unitsPerEm: 2000, ascender: 2132, descender: -600 };
 const EMOJI_ASPECT = 136 / 128;
@@ -58,7 +58,7 @@ describe("hostile text stays character data", () => {
   const HOSTILE = `<b>&amp; "q" 'x' </text><rect width="9999" height="9999" fill="red"/><image href="file:///etc/passwd"/><script>1</script>`;
 
   test("adds no element: one plaque rect, one text per piece, no image, no script", () => {
-    const { svg } = build(HOSTILE.slice(0, 60));
+    const { svg } = build(HOSTILE);
     expect(count(svg, "rect")).toBe(1);
     expect(count(svg, "image")).toBe(0);
     expect(count(svg, "script")).toBe(0);
@@ -66,7 +66,7 @@ describe("hostile text stays character data", () => {
   });
 
   test("no raw markup character is left inside any text node", () => {
-    const { svg } = build(HOSTILE.slice(0, 60), { style: "outline" });
+    const { svg } = build(HOSTILE, { style: "outline" });
     const nodes = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1] ?? "");
     expect(nodes.length).toBeGreaterThan(0);
     for (const node of nodes) {
@@ -84,7 +84,7 @@ describe("hostile text stays character data", () => {
   test("only the template's own elements ever appear, for every style", () => {
     const allowed = new Set(["svg", "defs", "filter", "feGaussianBlur", "feOffset", "feFlood", "feComposite", "feMerge", "feMergeNode", "rect", "g", "text", "image", "use"]);
     for (const style of ["none", "plaque", "outline"] as const) {
-      const { svg } = build(`${HOSTILE.slice(0, 40)} \u{1F600}`, { style });
+      const { svg } = build(`${HOSTILE} \u{1F600}`, { style });
       expect(tagNames(svg).filter((name) => !allowed.has(name))).toEqual([]);
     }
   });
@@ -216,6 +216,20 @@ describe("the no-background style", () => {
     expect(build("hello", { style: "none", color: "#111111" }).svg).toContain('flood-color="#ffffff" flood-opacity="0.5"');
   });
 
+  test("the light shadow under a dark text colour is the mockup's own: 8 px of blur and 1 px down, i.e. sigma 0.168 em and 0.042 em", () => {
+    const size = layoutOf("hello").fontSize;
+    const { svg } = build("hello", { style: "none", color: "#111111" });
+    expect(Number(/stdDeviation="([0-9.]+)"/.exec(svg)?.[1])).toBeCloseTo(0.168 * size, 2);
+    expect(Number(/dy="([0-9.]+)"/.exec(svg)?.[1])).toBeCloseTo(0.042 * size, 2);
+  });
+
+  test("the dark shadow is the mockup's 12 px of blur (cut to sigma 0.2 em to fit the frame) and 2 px down: 0.084 em", () => {
+    const size = layoutOf("hello").fontSize;
+    const { svg } = build("hello", { style: "none", color: "#ffffff" });
+    expect(Number(/stdDeviation="([0-9.]+)"/.exec(svg)?.[1])).toBeCloseTo(0.2 * size, 2);
+    expect(Number(/dy="([0-9.]+)"/.exec(svg)?.[1])).toBeCloseTo(0.084 * size, 2);
+  });
+
   test("the filter covers the whole box, so the blur is never cut short of it", () => {
     const { svg, width, height } = build("hi", { style: "none" });
     expect(svg).toContain(`filterUnits="userSpaceOnUse" x="0" y="0" width="${width}" height="${height}"`);
@@ -252,7 +266,7 @@ describe("the box", () => {
   });
 
   test("a layout wider than the frame is refused, not silently clipped", () => {
-    const wide: CaptionLayout = { fontSize: 100, lineHeight: 115, lines: [{ items: [{ kind: "text", text: "x", x: 0, width: 1200 }], width: 1200, text: "x" }], textWidth: 1200 };
+    const wide: CaptionLayout = { fontSize: 100, lineHeight: 115, lines: [{ items: [{ kind: "text", text: "x", x: 0, width: 1200 }], width: 1200, inkLeft: 0, inkRight: 0, text: "x" }], textWidth: 1200 };
     expect(() => buildCaptionSvg({ layout: wide, font: "manrope", style: "plaque", color: "#ffffff", metrics: METRICS, emoji: emojiImage })).toThrow(CaptionTemplateError);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MAX_CAPTION_UNITS } from "../../../shared/engine/montage";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { DEFAULT_RASTER_LIMITS } from "../rasterTypes";
 import { TextWorkerRequestSchema, TextWorkerResponseSchema } from "./protocol";
@@ -65,6 +66,18 @@ describe("the captioned response", () => {
     expect(TextWorkerResponseSchema.safeParse({ ...captioned, layout: { ...layout, lines: [] } }).success).toBe(false);
     expect(TextWorkerResponseSchema.safeParse({ ...captioned, layout: { ...layout, fontSize: Number.NaN } }).success).toBe(false);
     expect(TextWorkerResponseSchema.safeParse({ ...captioned, layout: { ...layout, fontSize: 0 } }).success).toBe(false);
+  });
+
+  test("accepts the worst legal caption's layout: 41 kiss emoji are 41 graphemes, 615 UTF-16 units and 410 code points on one line", () => {
+    const kiss = "\u{1F469}\u{1F3FD}‍❤️‍\u{1F48B}‍\u{1F468}\u{1F3FB}";
+    const line = kiss.repeat(41);
+    expect(line.length).toBe(615);
+    expect(TextWorkerResponseSchema.safeParse({ ...captioned, layout: { ...layout, lines: [line] } }).success).toBe(true);
+  });
+
+  test("accepts a line as long as the contract lets a caption be, and refuses one longer", () => {
+    expect(TextWorkerResponseSchema.safeParse({ ...captioned, layout: { ...layout, lines: ["a".repeat(MAX_CAPTION_UNITS)] } }).success).toBe(true);
+    expect(TextWorkerResponseSchema.safeParse({ ...captioned, layout: { ...layout, lines: ["a".repeat(MAX_CAPTION_UNITS + 1)] } }).success).toBe(false);
   });
 
   test("refuses a layout whose box is not the picture's", () => {

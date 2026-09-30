@@ -4,7 +4,7 @@ import type { TextFontKey } from "../fonts";
 import type { TextRasteriser } from "../rasteriser";
 import { RasterError } from "../rasterTypes";
 import { CaptionLayoutError, layoutCaption } from "./layout";
-import { buildCaptionSvg, CaptionTemplateError, measureSvg } from "./template";
+import { buildCaptionSvg, CaptionTemplateError, INK_ORIGIN_PX, inkSvg, measureSvg } from "./template";
 import type { CaptionImage, CaptionRequest } from "./types";
 
 /**
@@ -13,8 +13,8 @@ import type { CaptionImage, CaptionRequest } from "./types";
  * fallback: a rule broken is `CAPTION_INVALID`, and every other failure is a `RasterError` of the rasteriser's own or
  * `RENDER_FAILED`.
  *
- * Two caches keep a keystroke's re-render cheap and both are bounded: the width of each text run at 100 px (per font),
- * and each emoji bitmap's base64 and aspect (per glyph id).
+ * Three caches keep a keystroke's re-render cheap and all are bounded: the advance of each text run at 100 px (per font), how
+ * far its ink sticks out past that advance (the box is sized by ink), and each emoji bitmap's base64 and aspect (per glyph id).
  */
 
 export type { CaptionImage, CaptionRequest, ResolvedCaptionLayout } from "./types";
@@ -41,6 +41,7 @@ interface EmojiEntry {
 export function createCaptionRenderer(deps: CaptionRendererDeps): CaptionRenderer {
   const { rasteriser, emoji } = deps;
   const widths = new Map<string, number>();
+  const overhangs = new Map<string, { left: number; right: number }>();
   const bitmaps = new Map<number, EmojiEntry>();
 
   function inkWidth(font: TextFontKey, svg: string): number {
@@ -51,23 +52,39 @@ export function createCaptionRenderer(deps: CaptionRendererDeps): CaptionRendere
 
   /** The advance of a run at 100 px: the ink of `|run|` less the ink of `||`, so a space at either end counts. */
   function advance(font: TextFontKey, run: string): number {
-    const key = `${font}\u0000${run}`;
+    const key = `advance\u0000${font}\u0000${run}`;
     const known = widths.get(key);
     if (known !== undefined) return known;
     const bars = cachedBars(font);
     const width = inkWidth(font, measureSvg(font, run)) - bars;
-    if (widths.size >= MAX_WIDTHS) widths.clear();
-    widths.set(key, width);
+    remember(key, width);
     return width;
   }
 
   function cachedBars(font: TextFontKey): number {
-    const key = `${font}\u0000`;
+    const key = `bars\u0000${font}`;
     const known = widths.get(key);
     if (known !== undefined) return known;
     const bars = inkWidth(font, measureSvg(font, ""));
-    widths.set(key, bars);
+    remember(key, bars);
     return bars;
+  }
+
+  /** How far the ink of a run sticks out before its start and past its end at 100 px: its ink box against its advance. */
+  function overhang(font: TextFontKey, run: string): { left: number; right: number } {
+    const key = `ink\u0000${font}\u0000${run}`;
+    const known = overhangs.get(key);
+    if (known !== undefined) return known;
+    const box = rasteriser.measure({ svg: inkSvg(font, run), font });
+    const answer = box === null ? { left: 0, right: 0 } : { left: INK_ORIGIN_PX - box.x, right: box.x + box.width - INK_ORIGIN_PX - advance(font, run) };
+    if (overhangs.size >= MAX_WIDTHS) overhangs.clear();
+    overhangs.set(key, answer);
+    return answer;
+  }
+
+  function remember(key: string, width: number): void {
+    if (widths.size >= MAX_WIDTHS) widths.clear();
+    widths.set(key, width);
   }
 
   function emojiEntry(codePoints: readonly number[]): { key: number; entry: EmojiEntry } {
@@ -94,6 +111,7 @@ export function createCaptionRenderer(deps: CaptionRendererDeps): CaptionRendere
           scale: request.scale,
           measure: (run) => advance(request.font, run),
           emojiAspect: (codePoints) => emojiEntry(codePoints).entry.aspect,
+          inkOverhang: (run) => overhang(request.font, run),
         });
         const box = buildCaptionSvg({
           layout,

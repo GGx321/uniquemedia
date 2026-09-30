@@ -23,9 +23,14 @@ import { EMOJI_HEIGHT_EM, type CaptionLayout } from "./layout";
  *   Q2, Instagram-like). Padding 0.5 em across, 0.13 em above and 0.21 em below; radius 0.3 em (the mockup's 7 px, 25 px on 1080).
  * - «Обводка»: the text in `color` with a 0.125 em stroke (the mockup's eight 1.5 px text shadows), black, or white under a
  *   dark colour.
- * - «Без фона»: the text in `color` over a soft shadow, 0.55 black or 0.5 white under a dark colour. The mockup's
- *   is 12 px of blur (sigma 0.25 em) at 2 px down; here sigma is 0.2 em and 0.084 em down, so three sigma of blur plus
- *   the widest legal text (929 px at 112 px) still fits the 1080 frame.
+ * - «Без фона»: the text in `color` over a soft shadow. The dark one (0.55 black) is the mockup's 12 px of blur (sigma 0.25 em)
+ *   at 2 px down, with sigma cut to 0.2 em and 0.084 em down so three sigma of blur plus the widest legal text (929 px at 112 px)
+ *   still fits the 1080 frame. Under a dark colour it is the mockup's own light one: 0.5 white, 8 px of blur, 1 px down
+ *   (sigma 0.168 em, 0.042 em down).
+ *
+ * The box is sized by INK on each side, not by advance: a glyph that sticks out past its advance (Caveat's bracket by 0.3 em, its
+ * f and j) plus what the style draws beyond the ink (half the stroke and a pixel, three sigma of blur) must fit inside it, or the
+ * edge would cut it in a hard vertical line. The frame caps the box; past the cap it is a shadow's far tail that is cut.
  */
 
 /**
@@ -40,6 +45,9 @@ const SHADOW_SIGMA_EM = 0.2;
 const SHADOW_DY_EM = 0.084;
 const SHADOW_OPACITY = 0.55;
 const SHADOW_OPACITY_ON_DARK = 0.5;
+/** The light shadow under a dark text colour is the mockup's own: `0 1px 8px` on the 84 px preview, sigma 4 px = 0.168 em, 0.042 em down. It is the smaller of the two, so the box's room for the dark one covers it. */
+const SHADOW_SIGMA_ON_DARK_EM = 0.168;
+const SHADOW_DY_ON_DARK_EM = 0.042;
 const PLAQUE_RADIUS_EM = 0.3;
 
 /** Each style's padding around the text, in ems: across, above and below. */
@@ -48,6 +56,13 @@ const PADDING_EM: Record<TextStyle, { x: number; top: number; bottom: number }> 
   outline: { x: 0.25, top: 0.15, bottom: 0.15 },
   // Three sigma of blur on every side; the offset moves the shadow down, so the room above shrinks by it and below grows by it.
   none: { x: 3 * SHADOW_SIGMA_EM, top: 3 * SHADOW_SIGMA_EM - SHADOW_DY_EM, bottom: 3 * SHADOW_SIGMA_EM + SHADOW_DY_EM },
+};
+
+/** How far past the ink each style draws on the sides: the stroke's outer half plus a pixel of antialiasing, three sigma of blur, nothing. */
+const REACH: Record<TextStyle, { em: number; px: number }> = {
+  plaque: { em: 0, px: 0 },
+  outline: { em: OUTLINE_EM / 2, px: 1 },
+  none: { em: 3 * SHADOW_SIGMA_EM, px: 0 },
 };
 
 /** The mockups' `letter-spacing` per font, in ems. */
@@ -160,6 +175,21 @@ export function measureSvg(font: TextFontKey, run: string): string {
   );
 }
 
+/** Where `inkSvg` puts a run: far enough right of 0 that ink before the origin is still measured. */
+export const INK_ORIGIN_PX = 200;
+
+/**
+ * The SVG resvg's `getBBox()` measures the INK of a run on: the run alone at 100 px, at x = 200, with no bars. Its box, against the
+ * run's advance, says how far the ink sticks out before its start and after its end.
+ */
+export function inkSvg(font: TextFontKey, run: string): string {
+  const spacing = LETTER_SPACING_EM[font] === 0 ? "" : String(Number((LETTER_SPACING_EM[font] * REFERENCE_PX).toFixed(2)));
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${MEASURE_CANVAS_PX}" height="${MEASURE_CANVAS_PX}">` +
+    `<text x="${INK_ORIGIN_PX}" y="0" ${textAttributes(font, String(REFERENCE_PX), spacing)} xml:space="preserve">${escapeXml(run)}</text></svg>`
+  );
+}
+
 interface DefinedEmoji {
   id: string;
   width: number;
@@ -171,7 +201,15 @@ export function buildCaptionSvg(input: TemplateInput): CaptionSvg {
   const color = checkColor(input.color);
   const size = layout.fontSize;
   const pad = PADDING_EM[style];
-  const width = Math.ceil(layout.textWidth + 2 * pad.x * size);
+  // The box is sized by INK on each side: a glyph that sticks out past its advance (Caveat's bracket, its f and j) plus what the
+  // style itself draws beyond the ink must fit, whatever the style's padding is. The frame caps it: past it the tail of a
+  // shadow is what is cut, never the ink.
+  const reach = REACH[style];
+  const room = Math.max(pad.x * size, (FRAME_W - layout.textWidth) / 2);
+  const sideOf = (ink: number): number => Math.max(pad.x * size, Math.min(ink + reach.em * size + reach.px, room));
+  const padLeft = sideOf(Math.max(0, ...layout.lines.map((line) => line.inkLeft)));
+  const padRight = sideOf(Math.max(0, ...layout.lines.map((line) => line.inkRight)));
+  const width = Math.ceil(padLeft + layout.textWidth + padRight);
   const height = Math.ceil(layout.lineHeight * layout.lines.length + (pad.top + pad.bottom) * size);
   if (width > FRAME_W) throw new CaptionTemplateError(`the box would be ${width} px wide, over the ${FRAME_W} px frame`);
 
@@ -189,7 +227,7 @@ export function buildCaptionSvg(input: TemplateInput): CaptionSvg {
   let body = "";
   layout.lines.forEach((line, row) => {
     const baseline = pad.top * size + row * layout.lineHeight + (layout.lineHeight - (ascent + descent)) / 2 + ascent;
-    const left = (width - line.width) / 2;
+    const left = padLeft + (layout.textWidth - line.width) / 2;
     for (const item of line.items) {
       const x = px(left + item.x);
       if (item.kind === "text") {
@@ -214,11 +252,13 @@ export function buildCaptionSvg(input: TemplateInput): CaptionSvg {
     const radius = Math.min(PLAQUE_RADIUS_EM * size, height / 2);
     inner = `<rect width="${width}" height="${height}" rx="${px(radius)}" fill="${color}"/>${body}`;
   } else if (style === "none") {
-    const shadow = dark ? { color: INK_LIGHT, opacity: SHADOW_OPACITY_ON_DARK } : { color: "#000000", opacity: SHADOW_OPACITY };
+    const shadow = dark
+      ? { color: INK_LIGHT, opacity: SHADOW_OPACITY_ON_DARK, sigma: SHADOW_SIGMA_ON_DARK_EM, dy: SHADOW_DY_ON_DARK_EM }
+      : { color: "#000000", opacity: SHADOW_OPACITY, sigma: SHADOW_SIGMA_EM, dy: SHADOW_DY_EM };
     defs +=
       `<filter id="s" filterUnits="userSpaceOnUse" x="0" y="0" width="${width}" height="${height}">` +
-      `<feGaussianBlur in="SourceAlpha" stdDeviation="${px(SHADOW_SIGMA_EM * size)}"/>` +
-      `<feOffset dx="0" dy="${px(SHADOW_DY_EM * size)}" result="b"/>` +
+      `<feGaussianBlur in="SourceAlpha" stdDeviation="${px(shadow.sigma * size)}"/>` +
+      `<feOffset dx="0" dy="${px(shadow.dy * size)}" result="b"/>` +
       `<feFlood flood-color="${shadow.color}" flood-opacity="${shadow.opacity}"/>` +
       `<feComposite in2="b" operator="in"/>` +
       `<feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;

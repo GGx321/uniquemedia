@@ -37,34 +37,44 @@ export interface CaptionFingerprintLayer {
   request: CaptionRequest;
 }
 
+/**
+ * Layers that pin more than the font's own caption: a long one that wraps (with the three characters that are markup, so the
+ * escaping and the wrapping arithmetic are pinned across platforms together), and one whose ends stick out past their advance
+ * (Caveat's bracket and its j), so the ink-sized box is pinned too.
+ */
+const OVERRIDES: Readonly<Record<string, { value: string; scale: number }>> = {
+  "playfair/outline": { value: "coffee & cake <3 > tea & toast, no rush, just slow sips ☕", scale: 1.5 },
+  "caveat/outline": { value: "jump, chef & brief [", scale: 2 },
+};
+
 export const CAPTION_FINGERPRINT_LAYERS: readonly CaptionFingerprintLayer[] = TEXT_FONT_KEYS.flatMap((font, fontIndex) =>
-  CAPTION_STYLES.map((style) => ({
-    key: `${font}/${style}`,
-    request: { ...CAPTIONS[font], font, style, color: COLORS[style][fontIndex] ?? "#ffffff" } satisfies CaptionRequest,
-  })),
+  CAPTION_STYLES.map((style) => {
+    const key = `${font}/${style}`;
+    return { key, request: { ...(OVERRIDES[key] ?? CAPTIONS[font]), font, style, color: COLORS[style][fontIndex] ?? "#ffffff" } satisfies CaptionRequest };
+  }),
 );
 
 /** sha256 prefix of each layer's PNG. */
 export const CAPTION_LAYER_HASHES: Readonly<Record<string, string>> = {
-  "manrope/plaque": "3111c6b410a0fd1d",
-  "manrope/outline": "c1338c4439f16934",
-  "manrope/none": "5bfec1e7ec10348e",
-  "playfair/plaque": "3aae689973582184",
-  "playfair/outline": "f5e4d8ab55bb5432",
-  "playfair/none": "8a23029ae177c18f",
-  "oswald/plaque": "1461450923703368",
-  "oswald/outline": "3430c2f4d92b435e",
-  "oswald/none": "6ecec78da8020138",
-  "ptmono/plaque": "4db5463c0ac75b96",
-  "ptmono/outline": "3797268de143d5d9",
-  "ptmono/none": "5160dfde9259dc84",
-  "caveat/plaque": "32bb4299867961ab",
-  "caveat/outline": "e6fb0e74b8832f63",
-  "caveat/none": "3fcbbdab5ac78f48",
+  "manrope/plaque": "08540547ec4c6f27",
+  "manrope/outline": "8cb8ba7e2ce5f958",
+  "manrope/none": "56445bf444fdef38",
+  "playfair/plaque": "37e6a91bbad086f9",
+  "playfair/outline": "c58369618c98a1d3",
+  "playfair/none": "45290c9df808dc6a",
+  "oswald/plaque": "794c850692d92f3a",
+  "oswald/outline": "3ec51ffd3821d314",
+  "oswald/none": "252911a42744891b",
+  "ptmono/plaque": "6ce987d00b5381d0",
+  "ptmono/outline": "42828bd727f10a9b",
+  "ptmono/none": "289430338f1b1ff1",
+  "caveat/plaque": "92e4aa5a15478fc1",
+  "caveat/outline": "b31dc077b3344eb5",
+  "caveat/none": "21f739b10b3bc0fc",
 };
 
-/** The fingerprint over the fifteen hashes, in layer order (macOS mac arm64 and Windows agree: see the CI run). */
-export const CAPTION_FINGERPRINT = "bc496a2495711c7f";
+/** The fingerprint over the fifteen hashes, in layer order. CI asserts it on macOS and on Windows. */
+export const CAPTION_FINGERPRINT = "7adf42174a44da99";
 
 export function hashOf(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex").slice(0, 16);

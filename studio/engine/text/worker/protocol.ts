@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CAPTION_ISSUES } from "../../../shared/engine";
-import { TextStyle } from "../../../shared/engine/montage";
+import { MAX_CAPTION_UNITS, TextStyle } from "../../../shared/engine/montage";
 import { TEXT_FONT_KEYS } from "../fonts";
 import { DEFAULT_RASTER_LIMITS, RASTER_ERROR_CODES } from "../rasterTypes";
 
@@ -60,7 +60,8 @@ const Png = z.instanceof(ArrayBuffer).refine((b) => b.byteLength > 0 && b.byteLe
 /** What a text layer's resolved layout stores: the size the text was drawn at, what each of its one or two lines says, and the picture's box. */
 const ResolvedLayout = z.strictObject({
   fontSize: finite.positive(),
-  lines: z.array(z.string().max(400)).min(1).max(2),
+  // A line is at most a whole caption, which the contract bounds in UTF-16 units: 41 kiss emoji are 41 graphemes and 615 units.
+  lines: z.array(z.string().max(MAX_CAPTION_UNITS)).min(1).max(2),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
 });

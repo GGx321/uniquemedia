@@ -117,22 +117,29 @@ describe("captions through the real worker under Electron's Node", () => {
     assert.equal(spawned(), 1);
   });
 
-  test("the deadline is at least 5x the worst legitimate «Без фона» caption's median and 3x its second-slowest of 7 on this runner", async () => {
-    // The worst the real template can emit: two lines of the widest text at the largest scale, with the shadow filter over the whole box.
-    const { gate: g } = gate({ renderTimeoutMs: 60_000 });
-    const request = { ...base, style: "none", value: `${"W".repeat(15)} ${"W".repeat(15)}\n${"W".repeat(15)} ${"W".repeat(10)}`, font: "ptmono", scale: 2 } as const;
-    await g.caption(request); // warm
-    const times: number[] = [];
-    for (let i = 0; i < 7; i++) {
-      const started = performance.now();
-      await g.caption(request);
-      times.push(performance.now() - started);
+  test("the deadline is at least 5x the worst legitimate \u00ABБез фона\u00BB caption's median and 3x its second-slowest of 7 on this runner, for text and for emoji", async () => {
+    // The worst the real template can emit: two lines of the widest text at the largest scale, with the shadow filter over the whole box,
+    // and the same with 60 distinct emoji (the most bitmaps to decode, embed and blur), the widest legal caption of pictures.
+    const emoji = Array.from({ length: 60 }, (_, i) => String.fromCodePoint(0x1f600 + i)).join("");
+    const cases = [
+      { name: "text", request: { ...base, style: "none", value: `${"W".repeat(15)} ${"W".repeat(15)}\n${"W".repeat(15)} ${"W".repeat(10)}`, font: "ptmono", scale: 2 } as const },
+      { name: "emoji", request: { ...base, style: "none", value: emoji, font: "manrope", scale: 2 } as const },
+    ];
+    for (const { name, request } of cases) {
+      const { gate: g } = gate({ renderTimeoutMs: 60_000 });
+      await g.caption(request); // warm
+      const times: number[] = [];
+      for (let i = 0; i < 7; i++) {
+        const started = performance.now();
+        await g.caption(request);
+        times.push(performance.now() - started);
+      }
+      times.sort((a, b) => a - b);
+      const median = times[3] ?? Number.NaN;
+      const secondSlowest = times[5] ?? Number.NaN;
+      console.log(`worst template shadow caption (${name}) on ${process.platform}: median ${median.toFixed(0)} ms, second-slowest of 7 ${secondSlowest.toFixed(0)} ms; deadline ${TEXT_RENDER_DEADLINE_MS} ms`);
+      assert.ok(median * 5 <= TEXT_RENDER_DEADLINE_MS, `${name}: median ${Math.round(median)} ms: the deadline is under 5x that`);
+      assert.ok(secondSlowest * 3 <= TEXT_RENDER_DEADLINE_MS, `${name}: second-slowest ${Math.round(secondSlowest)} ms: the deadline is under 3x that`);
     }
-    times.sort((a, b) => a - b);
-    const median = times[3] ?? Number.NaN;
-    const secondSlowest = times[5] ?? Number.NaN;
-    console.log(`worst template shadow caption on ${process.platform}: median ${median.toFixed(0)} ms, second-slowest of 7 ${secondSlowest.toFixed(0)} ms; deadline ${TEXT_RENDER_DEADLINE_MS} ms`);
-    assert.ok(median * 5 <= TEXT_RENDER_DEADLINE_MS, `median ${Math.round(median)} ms: the deadline is under 5x that`);
-    assert.ok(secondSlowest * 3 <= TEXT_RENDER_DEADLINE_MS, `second-slowest ${Math.round(secondSlowest)} ms: the deadline is under 3x that`);
   });
 });

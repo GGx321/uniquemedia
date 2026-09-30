@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
+import { captionIssue } from "../captionRules";
 import { openEmojiFont, type EmojiFont } from "../emoji/emojiFont";
 import { loadPinnedEmojiFont } from "../emoji/emojiFont.testkit";
 import { TEXT_FONT_KEYS, type TextFontKey } from "../fonts";
@@ -12,7 +13,7 @@ import { buildCaptionSvg } from "./template";
 useNativeGlobals();
 
 // The renderer with the REAL resvg-wasm and the REAL emoji reader, in this process (no worker: the worker's own
-// behaviour is textCaption.node-test.ts's). It reads the pixels back, so what is asserted is what a viewer sees.
+// behaviour is worker/textCaption.real.node-test.ts's). It reads the pixels back, so what is asserted is what a viewer sees.
 
 const FONT_DIR = join(import.meta.dir, "..", "..", "..", "assets", "fonts");
 const WASM_PATH = join(import.meta.dir, "..", "..", "..", "..", "node_modules", "@resvg", "resvg-wasm", RASTER_WASM.file);
@@ -27,6 +28,8 @@ beforeAll(async () => {
 
 const request = (over: Partial<CaptionRequest> = {}): CaptionRequest => ({ value: "sunday reset", font: "manrope", style: "plaque", color: "#ffffff", scale: 1, ...over });
 const renderer = () => createCaptionRenderer({ rasteriser, emoji });
+/** A single code point the caption rules take as one emoji the font draws (so a caption of them is legal). */
+const captionRulesAccept = (sequence: string): boolean => captionIssue(sequence, { hasEmoji: (codePoints) => emoji.has(codePoints) }) === null;
 const opaque = (r: number, g: number, b: number, a: number) => a === 255 && r === g && g === b;
 
 async function codeOf(promise: Promise<unknown>): Promise<{ code: string; captionIssue: string | undefined } | "not a RasterError"> {
@@ -187,15 +190,23 @@ describe("emoji", () => {
     expect(Buffer.byteLength(svg.svg)).toBeLessThan(Buffer.byteLength(inlined) / 2);
   });
 
-  test("sixty distinct emoji fit the SVG cap, or are refused as too large, never truncated", async () => {
-    const value = Array.from({ length: 60 }, (_, i) => String.fromCodePoint(0x1f600 + (i % 60))).join("");
-    const outcome = await renderer()
-      .render(request({ value, style: "outline" }))
-      .then(
-        () => "drawn",
-        (e: unknown) => (e instanceof RasterError ? e.code : "other"),
-      );
-    expect(["drawn", "SVG_TOO_LARGE"]).toContain(outcome);
+  test("sixty distinct emoji of the largest bitmaps in the font are DRAWN: they fit under the SVG cap, and the layout stays in its bounds", async () => {
+    const sizes: { sequence: string; bytes: number }[] = [];
+    for (let cp = 0x1f300; cp <= 0x1faff; cp++) {
+      const sequence = String.fromCodePoint(cp);
+      if (!captionRulesAccept(sequence)) continue;
+      const bitmap = emoji.bitmap(sequence);
+      if (bitmap !== null) sizes.push({ sequence, bytes: bitmap.png.byteLength });
+    }
+    const value = sizes
+      .sort((a, b) => b.bytes - a.bytes)
+      .slice(0, 60)
+      .map((entry) => entry.sequence)
+      .join("");
+    expect([...value]).toHaveLength(60);
+    const image = await renderer().render(request({ value, style: "outline" }));
+    expect(image.layout.lines).toEqual([value]);
+    expect(image.width).toBeLessThanOrEqual(1080);
   });
 
   test("reads each distinct bitmap out of the font once, however many captions use it", async () => {

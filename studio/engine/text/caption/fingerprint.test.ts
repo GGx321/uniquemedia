@@ -39,6 +39,8 @@ describe("the caption fingerprint layers", () => {
       expect(requests.filter((r) => r.style === style && r.color === "#111111").length).toBeGreaterThan(0);
       expect(requests.filter((r) => r.style === style && r.color !== "#111111").length).toBeGreaterThan(0);
     }
+    expect(requests.some((r) => /[&<>]/.test(r.value) && r.value.length > 40)).toBe(true);
+    expect(requests.some((r) => r.font === "caveat" && r.value.endsWith("["))).toBe(true);
     expect(Math.max(...requests.map((r) => r.scale))).toBe(2);
     expect(Math.min(...requests.map((r) => r.scale))).toBeLessThanOrEqual(1);
   });

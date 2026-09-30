@@ -55,6 +55,12 @@ export interface LaidLine {
   /** The pieces left to right; `x` is from the line's own left edge, and the gap between two words is one space. */
   items: LaidItem[];
   width: number;
+  /**
+   * How far the ink of the line's first and last text run sticks out past its advance, in pixels at the drawn size (0 when an
+   * emoji ends the line, or nothing was measured). The box is sized by ink, not by advance.
+   */
+  inkLeft: number;
+  inkRight: number;
   /** What the line says: its words with one space between them. */
   text: string;
 }
@@ -77,6 +83,12 @@ export interface LayoutInput {
   measure: (run: string) => number;
   /** Width over height of the bitmap an emoji cluster is drawn from. */
   emojiAspect: (codePoints: readonly number[]) => number;
+  /**
+   * How far the ink of a run of text sticks out past its advance at 100 px, before its start (left) and after its end (right):
+   * Caveat's bracket reaches 0.3 em. Asked once per distinct run, only for the first and the last text run of a line.
+   * Absent: nothing sticks out.
+   */
+  inkOverhang?: (run: string) => { left: number; right: number };
 }
 
 interface Piece {
@@ -119,6 +131,17 @@ export function layoutCaption(input: LayoutInput): CaptionLayout {
     .filter((words) => words.length > 0);
   if (lineWords.length === 0) throw new CaptionLayoutError("EMPTY", "the caption has nothing to draw");
   if (lineWords.length > MAX_LINES) throw new CaptionLayoutError("TOO_MANY_LINES", `the caption has ${lineWords.length} lines, at most ${MAX_LINES} are drawn`);
+
+  const overhangs = new Map<string, { left: number; right: number }>();
+  const overhangOf = (run: string): { left: number; right: number } => {
+    const known = overhangs.get(run);
+    if (known !== undefined) return known;
+    const answered = input.inkOverhang?.(run) ?? { left: 0, right: 0 };
+    if (!Number.isFinite(answered.left) || !Number.isFinite(answered.right)) throw new CaptionLayoutError("BAD_MEASURE", "the ink measure answered a value that is not a number");
+    const clean = { left: Math.max(0, answered.left), right: Math.max(0, answered.right) };
+    overhangs.set(run, clean);
+    return clean;
+  };
 
   const toWord = (raw: string): Word => {
     const pieces: Piece[] = segmentCaption(raw).map((run) => {
@@ -177,7 +200,15 @@ export function layoutCaption(input: LayoutInput): CaptionLayout {
         x += width;
       }
     });
-    return { items, width: x, text: words.map((word) => word.text).join(" ") };
+    const first = items[0];
+    const last = items[items.length - 1];
+    return {
+      items,
+      width: x,
+      inkLeft: first?.kind === "text" ? overhangOf(first.text).left * k : 0,
+      inkRight: last?.kind === "text" ? overhangOf(last.text).right * k : 0,
+      text: words.map((word) => word.text).join(" "),
+    };
   });
 
   return { fontSize, lineHeight: fontSize * LINE_HEIGHT_EM, lines: laid, textWidth: Math.max(...laid.map((line) => line.width)) };
