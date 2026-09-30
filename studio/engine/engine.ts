@@ -92,6 +92,7 @@ import { maskHome } from "./renderQueue/scrubber";
 import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
 import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
+import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
 import { MontageService, type MontageServiceDeps } from "./montages/service";
 import { DraftStore, type DraftStoreDeps } from "./montages/store";
@@ -913,6 +914,8 @@ export class Engine {
         await this.shutdown();
         return { kind: "control", type: "reply", callId: call.callId };
       }
+      case "export.choose":
+        return { kind: "control", type: "reply", callId: call.callId, ...(await this.#chooseExportFolder(call.path)) };
       case "import.stagePhoto": {
         // Free (design constraint 2): media checks, not animated, a readable
         // size — before anything is downscaled or paid for. A rejection here
@@ -1281,6 +1284,11 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.focus(command.payload) };
       case "montages.textPreview":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#textPreview.preview(command.payload.layer) };
+      case "export.check": {
+        // A fresh look at the current folder: `export.status` follows when it changed (a window asks on focus).
+        const check = await this.#refreshExportStatus();
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { exportStatus: exportStatusOf(check) } };
+      }
       case "music.status":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#music.status() };
       case "music.refresh": {
@@ -1792,9 +1800,23 @@ export class Engine {
     return run;
   }
 
-  /** One bounded check; never rejects. */
+  /** One bounded check of the current export folder, whose result is the status every window shows; never rejects. */
   async #checkExportOnce(requiredBytes: number | undefined): Promise<ExportRootCheck> {
     const exportPath = this.#settings.exportPath;
+    const check = await this.#boundedExportCheck(exportPath, { mayCreate: exportPath === this.#defaultExportPath, probeCase: true, requiredBytes });
+    // "Not enough room" answers a question about THIS render's size (`requiredBytes`), not about the folder: a 4 s spec may fit
+    // where a 15 s one does not, so it is a refusal for that render and never the status every window shows.
+    if (requiredBytes === undefined || check.ok || check.reason !== "not-enough-space") this.#setExportStatus(exportStatusOf(check));
+    return check;
+  }
+
+  /**
+   * The export check of `exportPath` (any folder: the current one, or one the owner is about to pick), bounded, and never
+   * rejecting: a disk error the check cannot classify, or a volume that does not answer, reads as not writable. It moves no
+   * status. `probeCase` also asks the volume whether it folds letter case, which leaves a probe file behind for a moment, so a
+   * folder that is only being looked at is not probed.
+   */
+  async #boundedExportCheck(exportPath: string, options: { mayCreate: boolean; probeCase: boolean; requiredBytes?: number | undefined }): Promise<ExportRootCheck> {
     const timeout = timeoutSignal(this.#exportCheckTimeoutMs());
     let check: ExportRootCheck;
     try {
@@ -1806,13 +1828,15 @@ export class Engine {
           fs: this.#exportRootFs,
           exportPath,
           libraryPath: this.#settings.libraryPath,
-          mayCreate: exportPath === this.#defaultExportPath,
+          mayCreate: options.mayCreate,
           newId: this.#deps.newId,
           now: () => new Date(this.#deps.clock()),
           caseInsensitive: true,
-          ...(requiredBytes === undefined ? {} : { requiredBytes }),
+          // A damaged marker in a library that already holds videos gets the text that never advises deleting it (3e.3).
+          recordsExist: () => (this.#live === null ? Promise.resolve(false) : libraryHasVideoRecords(this.#live.library)),
+          ...(options.requiredBytes === undefined ? {} : { requiredBytes: options.requiredBytes }),
         }).then(async (checked) => {
-          if (checked.ok) await this.#caseProbe.isCaseInsensitive(exportPath);
+          if (checked.ok && options.probeCase) await this.#caseProbe.isCaseInsensitive(exportPath);
           return checked;
         }),
         timeout.signal,
@@ -1823,11 +1847,31 @@ export class Engine {
     } finally {
       timeout.clear();
     }
-    // "Not enough room" answers a question about THIS render's size (`requiredBytes`), not about the folder: a 4 s spec may fit
-    // where a 15 s one does not, so it is a refusal for that render and never the status every window shows.
     if (!check.ok) console.warn(`studio engine: the export folder check refused it (${check.reason})`); // the reason only: a CI log or a support report can say which step
-    if (requiredBytes === undefined || check.ok || check.reason !== "not-enough-space") this.#setExportStatus(exportStatusOf(check));
     return check;
+  }
+
+  /**
+   * `export.choose`: what the folder the owner picked is, and how many records resolve in it. Nothing is adopted and no status
+   * moves: main persists the path and sends `settings.update`, and that is what makes it the export folder.
+   */
+  async #chooseExportFolder(path: string): Promise<Pick<EngineReply, "error" | "exportFolder">> {
+    // A render commits into the folder it was planned for, and its record would be left behind by a switch under it.
+    const inFlight = (): boolean => this.#renders.active() > 0;
+    const refuseInFlight = { error: { code: "IN_FLIGHT", detail: "a video render is queued or running; change the export folder when it ends" } } as const;
+    if (inFlight()) return refuseInFlight;
+    // Never created: the dialog makes folders, and a path that is not there is a drive that is not plugged in.
+    const check = await this.#boundedExportCheck(path, { mayCreate: false, probeCase: false });
+    if (!check.ok) return { error: { code: "EXPORT_UNAVAILABLE", exportReason: check.reason, detail: `the folder cannot be the export folder (${check.reason})` } };
+    if (inFlight()) return refuseInFlight;
+    try {
+      const counts = this.#live === null ? { resolved: 0, elsewhere: 0 } : await countRecordsByRoot(this.#live.library, check.rootId);
+      return { exportFolder: { rootId: check.rootId, resolved: counts.resolved, elsewhere: counts.elsewhere } };
+    } catch (error) {
+      // The raw error names the library's own path: only its kind is told.
+      console.error(`studio engine: the video records could not be counted for the export folder (${errorKind(error)})`);
+      return { error: { code: "INTERNAL", detail: "the video records could not be read, so the folder was not changed" } };
+    }
   }
 
   /**

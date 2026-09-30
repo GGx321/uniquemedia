@@ -349,6 +349,51 @@ describe("the root marker", () => {
     expect(await readFile(join(exportPath, EXPORT_MARKER_FILE), "utf8")).toBe("{not json");
   });
 
+  describe("an invalid marker in a library that already holds video records", () => {
+    test("is told apart, so the owner is never advised to delete the file the records may name", async () => {
+      await seed("{not json");
+      expect(await check({ recordsExist: async () => true })).toEqual({ ok: false, reason: "invalid-marker-with-records" });
+    });
+
+    test("stays the plain invalid-marker when the library holds no record", async () => {
+      await seed("{not json");
+      expect(await check({ recordsExist: async () => false })).toEqual({ ok: false, reason: "invalid-marker" });
+    });
+
+    test("is treated as holding records when the library cannot be asked: the advice errs toward them", async () => {
+      await seed("{not json");
+      expect(await check({ recordsExist: async () => Promise.reject(errno("EIO")) })).toEqual({ ok: false, reason: "invalid-marker-with-records" });
+    });
+
+    test("is still left as it was", async () => {
+      await seed("{not json");
+      await check({ recordsExist: async () => true });
+      expect(await readFile(join(exportPath, EXPORT_MARKER_FILE), "utf8")).toBe("{not json");
+    });
+
+    test("is not asked about for a valid marker, a newer one or a folder with no marker yet", async () => {
+      let asked = 0;
+      const recordsExist = async () => (asked++, true);
+      await mkdir(exportPath);
+      expect((await check({ recordsExist })).ok).toBe(true);
+      await rm(exportPath, { recursive: true });
+      await seed(JSON.stringify({ schemaVersion: 2, rootId: "root-00000009" }));
+      expect(await check({ recordsExist })).toEqual({ ok: false, reason: "newer-marker" });
+      expect(asked).toBe(0);
+    });
+
+    test("a marker a racing check left damaged is told apart the same way", async () => {
+      await mkdir(exportPath);
+      const fs = faulty({
+        publishExclusive: async (path) => {
+          await writeFile(path, "{not json");
+          throw errno("EEXIST");
+        },
+      });
+      expect(await check({ fs, recordsExist: async () => true })).toEqual({ ok: false, reason: "invalid-marker-with-records" });
+    });
+  });
+
   test("a directory in the marker's place is an invalid marker", async () => {
     await mkdir(join(exportPath, EXPORT_MARKER_FILE), { recursive: true });
     expect(await check()).toEqual({ ok: false, reason: "invalid-marker" });

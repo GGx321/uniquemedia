@@ -41,6 +41,21 @@ export const ImportPhotoPicked = z.discriminatedUnion("picked", [
 ]);
 export type ImportPhotoPicked = z.infer<typeof ImportPhotoPicked>;
 
+/**
+ * `settings.setExportPath`'s result (3e.3, K18): the renderer never names the folder (design constraint 1). Main opens its
+ * own dialog; `picked: false` is a plain cancel. A picked folder answers the settings as they now stand, the folder's
+ * `rootId` (the identity in its marker), and how many video records now resolve in it (`resolved`: they name this
+ * `rootId`) and how many stay in another folder (`elsewhere`) until that folder is chosen again.
+ */
+export const ExportPathPicked = z.discriminatedUnion("picked", [
+  z.strictObject({ picked: z.literal(true), settings: Settings, rootId: Id, resolved: Count, elsewhere: Count }),
+  z.strictObject({ picked: z.literal(false) }),
+]);
+export type ExportPathPicked = z.infer<typeof ExportPathPicked>;
+
+/** A path as a person reads it (home as «~»), composed by main: for display only, never to be sent back as a path. */
+export const DisplayPath = z.string().min(1).max(4096);
+
 const Empty = z.strictObject({});
 
 /** runs.list answers at most this many runs, newest first. */
@@ -171,6 +186,15 @@ const MAIN_ONLY_SPECS = [
   // Stage 3 (3e): «Показать в папке». Only main can open the system file manager (`shell.showItemInFolder`),
   // and only for a video whose file is `present`; the engine has no such command.
   defineCommand("videos.reveal", z.strictObject({ videoId: Id }), z.strictObject({ videoId: Id })),
+  // Stage 3 (3e.3, K18): the export folder «Готовые видео». Main opens its own folder dialog (at the current folder), and the
+  // engine checks the pick (overlap, directory, write probe, marker; the marker is written when the folder has none) and
+  // counts the records that resolve in it. Nothing changes on a cancel, and nothing on a refusal: EXPORT_UNAVAILABLE
+  // (`exportReason`) for a folder that cannot be used, IN_FLIGHT while a render is queued or running, VALIDATION for a
+  // pick that is not an absolute path.
+  defineCommand("settings.setExportPath", Empty, ExportPathPicked),
+  // The export folder as a person reads it (`~/Studio/export`): only main knows the home folder, and the window has no other
+  // way to show the path the way the design does. Re-asked whenever `Settings.exportPath` changes.
+  defineCommand("settings.exportDisplay", Empty, z.strictObject({ display: DisplayPath })),
 ] as const;
 
 /** Commands main forwards to the engine. */
@@ -390,6 +414,10 @@ const ENGINE_SPECS = [
     z.strictObject({ avatarId: Id, layer: TextLayer }),
     z.strictObject({ previewId: Id, width: z.number().int().positive(), height: z.number().int().positive() }),
   ),
+  // A fresh look at the export folder (3e.3, K9): the same check a render attempt makes, without a render. Free. The answer is the
+  // status as the check found it, and `export.status` follows when it CHANGED, so a window that asks on focus shows an
+  // unplugged drive, and a plugged one, without a render attempt.
+  defineCommand("export.check", Empty, z.strictObject({ exportStatus: ExportStatus })),
   // engine
   defineCommand("engine.snapshot", Empty, Snapshot),
   defineCommand("engine.events", z.strictObject({ afterSeq: Count, bootId: Id }), EventsSince),

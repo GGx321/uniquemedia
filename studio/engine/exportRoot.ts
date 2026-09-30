@@ -224,6 +224,12 @@ export interface CheckExportRootOptions {
   caseInsensitive: boolean;
   /** The render's size estimate; the folder needs twice this free (invariant 35). Omit for the status check without a render. */
   requiredBytes?: number;
+  /**
+   * Whether the library already holds video records. Asked only when the marker is invalid: then the refusal is
+   * `invalid-marker-with-records`, whose text never advises touching the file. A question that fails counts as yes.
+   * Omit where there is no library to ask: the plain `invalid-marker` stands.
+   */
+  recordsExist?: () => Promise<boolean>;
 }
 
 /**
@@ -271,13 +277,23 @@ export async function checkExportRoot(options: CheckExportRootOptions): Promise<
   }
 
   const marker = await readOrCreateMarker(fs, exportPath, options);
-  if (!marker.ok) return refuse(marker.reason);
+  if (!marker.ok) return refuse(marker.reason === "invalid-marker" ? await invalidMarkerReason(options.recordsExist) : marker.reason);
 
   if (options.requiredBytes !== undefined && options.requiredBytes > 0) {
     const free = await fs.freeBytes(exportPath);
     if (free !== null && free < 2 * options.requiredBytes) return refuse("not-enough-space");
   }
   return { ok: true, rootId: marker.rootId, root: exportPath };
+}
+
+/** `invalid-marker`, or its variant for a library that already holds records (deleting the file would orphan them). */
+async function invalidMarkerReason(recordsExist: (() => Promise<boolean>) | undefined): Promise<"invalid-marker" | "invalid-marker-with-records"> {
+  if (recordsExist === undefined) return "invalid-marker";
+  try {
+    return (await recordsExist()) ? "invalid-marker-with-records" : "invalid-marker";
+  } catch {
+    return "invalid-marker-with-records";
+  }
 }
 
 /** Whether the folder is there and is a directory, creating the default one; otherwise the reason. */

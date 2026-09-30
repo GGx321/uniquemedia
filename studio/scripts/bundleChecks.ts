@@ -29,6 +29,8 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "failNextRender",
   "setExportDisk",
   "moveExportFolder",
+  // 3e.3: the mock's stand-in for main's folder dialog.
+  "pickExportFolderNext",
   "ELECTRON_RENDERER_URL",
   "DEBUGGABLE",
   "__STUDIO_DEV__",

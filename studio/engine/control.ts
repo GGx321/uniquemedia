@@ -157,6 +157,15 @@ export const HostCall = z.discriminatedUnion("type", [
    * own wait on the reply and kills the process either way; whatever is left, the next start's recovery settles.
    */
   z.strictObject({ kind: z.literal("control"), type: z.literal("engine.shutdown"), callId: Id }),
+  /**
+   * 3e.3 (K18): the owner picked `path` in main's own dialog as the export folder «Готовые видео». The engine checks it as
+   * the export check does (it must not overlap the library, must be a folder that takes a write, and must carry a valid
+   * root marker, which is written when it has none) and counts the video records that resolve in it. It adopts NOTHING:
+   * main persists the path and sends `settings.update` only after an ok reply. A folder is never created here (the
+   * dialog makes folders); refused with EXPORT_UNAVAILABLE (`exportReason`), or IN_FLIGHT while a render is queued or
+   * running (a render commits into the folder it was planned for, and its record must not be left behind by a switch).
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("export.choose"), callId: Id, path: AbsolutePath }),
 ]);
 export type HostCall = z.infer<typeof HostCall>;
 
@@ -173,6 +182,8 @@ export const EngineReply = z.strictObject({
   callId: Id,
   error: EngineError.optional(),
   stage: z.strictObject({ stagingId: Id, width: Count, height: Count }).optional(),
+  /** Set only by a successful `export.choose`: the folder's identity, and how many records resolve in it or stay elsewhere. */
+  exportFolder: z.strictObject({ rootId: Id, resolved: Count, elsewhere: Count }).optional(),
 });
 export type EngineReply = z.infer<typeof EngineReply>;
 

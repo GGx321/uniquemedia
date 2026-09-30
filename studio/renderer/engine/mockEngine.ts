@@ -135,6 +135,22 @@ const MOCK_UNCHECKED_EVERY = 5;
 
 const START_OF_TIME = Date.UTC(2026, 8, 24, 10, 0, 0);
 
+/** The home folder the mock's settings live under; `settings.exportDisplay` shows it as «~», as main does for the real one. */
+const MOCK_HOME = "/Users/studio";
+
+function displayPath(path: string): string {
+  return path === MOCK_HOME || path.startsWith(`${MOCK_HOME}/`) ? `~${path.slice(MOCK_HOME.length)}` : path;
+}
+
+/** What main's folder dialog answers in the mock (`pickExportFolderNext`). */
+export interface MockExportPick {
+  path: string;
+  /** The reason the engine's check gives the folder; the pick is then refused and nothing changes. */
+  refuse?: ExportUnavailableReason;
+  /** The folder is the one that stood at this path before (moved or renamed by the owner): same marker, so the same identity. */
+  movedFrom?: string;
+}
+
 /**
  * A mock render announces this many progress steps (each `stepMs` apart, never reaching the total) before its saving phase, and
  * commits one step after that. The real engine's steps follow ffmpeg's frames (two passes folded into one range), so their count
@@ -307,8 +323,8 @@ interface MockVideo {
   montageId: string | null;
   /** What a check of its file finds, when the test says so; null = present (or `elsewhere` while the export folder is unusable). */
   fileState: FileState | null;
-  /** The export folder it was made in (`exportGeneration` then). */
-  generation: number;
+  /** The identity of the export folder it was made in (`exportRootId` then): a folder with another identity does not hold it. */
+  rootId: string;
 }
 
 /** A render on the mock's queue: `queued` until a pool slot frees, then `running` through its progress and its saving phase. */
@@ -521,10 +537,16 @@ export class MockEngine implements EngineBridge {
   private exportReported: ExportStatus = { status: "ok" };
   private exportFreeBytes: number | null = null;
   private renderQueueLimit = MOCK_MAX_UNFINISHED_RENDERS;
-  /** Files in the export folder (their `relPath`): «Удалить запись» leaves the file, so its name stays taken. */
-  private exportFiles = new Set<string>();
-  /** Bumped when the owner points the export folder somewhere else: the videos made before are then in another folder. */
-  private exportGeneration = 0;
+  /** The identity the export folder's marker holds (`rootId`): the videos made under it resolve only in a folder that holds it. */
+  private exportRootId = "root-mock-0001";
+  /** The export folders the mock has seen, by path, each with its identity: a folder the owner picks again gets its old one back. */
+  private readonly exportFolders = new Map<string, string>();
+  /** Files in each export folder (their `relPath`), by identity: «Удалить запись» leaves the file, so its name stays taken. */
+  private readonly exportFilesByRoot = new Map<string, Set<string>>();
+  private exportRootsMade = 1;
+  /** What main's folder dialog answers next: a pick, `null` for a cancel, `undefined` for an unscripted one. */
+  private exportPick: MockExportPick | null | undefined = undefined;
+  private unscriptedPicks = 0;
   private nextRenderFailure: { error: EngineError; at: "encode" | "saving" } | null = null;
 
   constructor(options: MockEngineOptions = {}) {
@@ -547,6 +569,7 @@ export class MockEngine implements EngineBridge {
       exportPath: "/Users/studio/Studio/export",
       renderConcurrency: options.renderConcurrency ?? "auto",
     };
+    this.exportFolders.set(this.settings.exportPath, this.exportRootId);
     this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.drafts = options.drafts ?? [];
     this.unreadable = options.unreadableAvatars ?? [];
@@ -805,8 +828,29 @@ export class MockEngine implements EngineBridge {
 
   /** The owner chose another export folder: every video made so far is in the old one (`elsewhere`), and the new folder is empty. */
   moveExportFolder(): void {
-    this.exportGeneration += 1;
-    this.exportFiles = new Set();
+    this.exportRootId = this.newExportRootId();
+  }
+
+  /**
+   * What main's folder dialog answers the next `settings.setExportPath`: the folder picked, or `null` for a cancel. Used once; with
+   * nothing scripted the dialog picks a new folder of its own, so the dev mock shows a switch. `refuse` is the reason the engine's
+   * check gives that folder, `movedFrom` says the folder is the one that stood at that path before (same marker, new place).
+   */
+  pickExportFolderNext(pick: MockExportPick | null): void {
+    this.exportPick = pick;
+  }
+
+  private newExportRootId(): string {
+    return `root-mock-${String(++this.exportRootsMade).padStart(4, "0")}`;
+  }
+
+  private get exportFiles(): Set<string> {
+    let files = this.exportFilesByRoot.get(this.exportRootId);
+    if (files === undefined) {
+      files = new Set();
+      this.exportFilesByRoot.set(this.exportRootId, files);
+    }
+    return files;
   }
 
   /** Undoes `removeMaster`. */
@@ -983,6 +1027,14 @@ export class MockEngine implements EngineBridge {
         this.settings = { ...this.settings, libraryPath: c.payload.path };
         this.emitSettingsChanged();
         return this.ok(c, this.settings);
+      case "settings.setExportPath":
+        return this.setExportPath(c);
+      case "settings.exportDisplay":
+        return this.ok(c, { display: displayPath(this.settings.exportPath) });
+      case "export.check": {
+        this.checkExport();
+        return this.ok(c, { exportStatus: this.exportReported });
+      }
       case "settings.setModels":
         this.settings = { ...this.settings, imageModel: c.payload.imageModel, textModel: c.payload.textModel };
         this.emitSettingsChanged();
@@ -1557,7 +1609,7 @@ export class MockEngine implements EngineBridge {
    */
   private checkExport(requiredBytes?: number): ExportUnavailableReason | null {
     const disk = this.exportDisk;
-    let reason: ExportUnavailableReason | null = disk.status === "unavailable" ? disk.reason : null;
+    let reason: ExportUnavailableReason | null = disk.status === "unavailable" ? this.markerReason(disk.reason) : null;
     if (reason === null && requiredBytes !== undefined && this.exportFreeBytes !== null && this.exportFreeBytes < requiredBytes * 2) reason = "not-enough-space";
     if (requiredBytes === undefined || reason !== "not-enough-space") this.setReportedExport(reason === null ? { status: "ok" } : { status: "unavailable", reason });
     return reason;
@@ -1565,8 +1617,45 @@ export class MockEngine implements EngineBridge {
 
   /** Where a video's file stands, as the check that just ran found it: a folder that cannot be looked in reads `elsewhere`. */
   private fileStateOf(video: MockVideo): FileState {
-    if (this.exportReported.status === "unavailable" || video.generation !== this.exportGeneration) return "elsewhere";
+    if (this.exportReported.status === "unavailable" || video.rootId !== this.exportRootId) return "elsewhere";
     return video.fileState ?? "present";
+  }
+
+  /** The engine tells a damaged marker apart once the library holds a video: the text then never advises deleting the file. */
+  private markerReason(reason: ExportUnavailableReason): ExportUnavailableReason {
+    return reason === "invalid-marker" && this.videos.length > 0 ? "invalid-marker-with-records" : reason;
+  }
+
+  /**
+   * `settings.setExportPath`: main's dialog, then the engine's check of the pick, then main's save and `settings.update`. A
+   * cancel changes nothing. The folder is identified by its marker: one the mock has seen keeps its identity (so the videos made
+   * in it resolve again), a new one gets its own.
+   */
+  private setExportPath(c: CommandMessage): ResponseMessage {
+    const pick = this.exportPick;
+    this.exportPick = undefined;
+    if (pick === null) return this.ok(c, { picked: false });
+    if (this.renderJobs.some(isActive)) {
+      return this.fail(c, { code: "IN_FLIGHT", detail: "a video render is queued or running; change the export folder when it ends" });
+    }
+    const path = pick?.path ?? `${MOCK_HOME}/Reels-${++this.unscriptedPicks}`;
+    if (pick?.refuse !== undefined) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: this.markerReason(pick.refuse) });
+    let rootId = this.exportFolders.get(path);
+    if (rootId === undefined) {
+      const moved = pick?.movedFrom === undefined ? undefined : this.exportFolders.get(pick.movedFrom);
+      if (pick?.movedFrom !== undefined) this.exportFolders.delete(pick.movedFrom);
+      rootId = moved ?? this.newExportRootId();
+      this.exportFolders.set(path, rootId);
+    }
+    const resolved = this.videos.filter((v) => v.rootId === rootId).length;
+    const elsewhere = this.videos.length - resolved;
+    this.settings = { ...this.settings, exportPath: path };
+    this.exportRootId = rootId;
+    this.exportDisk = { status: "ok" };
+    // The engine checks the folder again when it gets the settings, then announces them.
+    this.checkExport();
+    this.emitSettingsChanged();
+    return this.ok(c, { picked: true, settings: this.settings, rootId, resolved, elsewhere });
   }
 
   private adjustAvatar(avatarId: string, delta: { videoCount?: number; eligibleUnused?: number }): void {
@@ -1728,7 +1817,7 @@ export class MockEngine implements EngineBridge {
       music: null,
       hasPoster: false,
     };
-    this.videos.push({ summary, photoIds: job.photoIds, montageId, fileState: null, generation: this.exportGeneration });
+    this.videos.push({ summary, photoIds: job.photoIds, montageId, fileState: null, rootId: this.exportRootId });
     this.adjustAvatar(job.avatarId, { videoCount: 1 });
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "upserted", video: summary } });
     this.announceAvatar(job.avatarId);

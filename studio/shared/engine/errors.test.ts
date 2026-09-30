@@ -165,9 +165,9 @@ describe("EngineError for an unusable export folder", () => {
     expect(EngineError.safeParse({ code: "EXPORT_UNAVAILABLE", exportReason }).success).toBe(true);
   });
 
-  test("the reasons are exactly: missing, not a directory, not writable, not enough space, overlaps the library, invalid marker, newer marker", () => {
+  test("the reasons are exactly: missing, not a directory, not writable, not enough space, overlaps the library, invalid marker (with or without records), newer marker", () => {
     const actual: string[] = [...EXPORT_UNAVAILABLE_REASONS].sort();
-    expect(actual).toEqual(["invalid-marker", "missing", "newer-marker", "not-a-directory", "not-enough-space", "not-writable", "overlaps-library"]);
+    expect(actual).toEqual(["invalid-marker", "invalid-marker-with-records", "missing", "newer-marker", "not-a-directory", "not-enough-space", "not-writable", "overlaps-library"]);
   });
 
   test("EXPORT_UNAVAILABLE without a reason is refused", () => {
@@ -314,6 +314,16 @@ describe("MONTAGE_ISSUE_MESSAGES_RU", () => {
 describe("EXPORT_UNAVAILABLE_REASONS_RU", () => {
   test("the newer-marker message does not tell the owner to delete the marker (that would orphan every record)", () => {
     expect(EXPORT_UNAVAILABLE_REASONS_RU["newer-marker"]).not.toMatch(/удал|повреж/i);
+  });
+
+  test("the invalid-marker-with-records message never tells the owner to delete the marker, or to move or rename it (every record of a video depends on its id)", () => {
+    expect(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]).not.toMatch(/удал|убер|сотр|переим|перенес|перемест/i);
+  });
+
+  test("the invalid-marker message without records may still name the file, and differs from the one with records", () => {
+    expect(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker"]).toContain(".studio-export.json");
+    expect(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]).toContain(".studio-export.json");
+    expect(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]).not.toBe(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker"]);
   });
 
   test("has a message for exactly the reasons, no more, no less", () => {

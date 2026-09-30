@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { COMMAND_DEADLINE_MS, EngineInit, HostCall, MAX_IMPORT_PHOTO_BYTES } from "./control";
+import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_IMPORT_PHOTO_BYTES } from "./control";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -76,5 +76,27 @@ describe("EngineInit.defaultExportPath", () => {
 
   test("ffmpegEnv refuses a value that is not a string", () => {
     expect(EngineInit.safeParse({ ...base, ffmpegEnv: { PATH: 1 } }).success).toBe(false);
+  });
+});
+
+// 3e.3: the owner's pick of the export folder reaches the engine as a call with an absolute path, and its reply says what
+// the folder is. The reply is held to the contract like every message that leaves the engine.
+describe("HostCall export.choose and its reply", () => {
+  const call = { kind: "control" as const, type: "export.choose" as const, callId: "call-00000001" };
+
+  test("takes an absolute path", () => {
+    expect(HostCall.safeParse({ ...call, path: process.platform === "win32" ? "D:\\Reels" : "/Volumes/Reels" }).success).toBe(true);
+  });
+
+  test("refuses a relative path, and a path that climbs out with ..", () => {
+    expect(HostCall.safeParse({ ...call, path: "Reels" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: "/Volumes/Reels/../Other" }).success).toBe(false);
+  });
+
+  test("the reply carries the folder's id with its counts, and refuses a count that is negative or an id that is not one", () => {
+    const reply = { kind: "control" as const, type: "reply" as const, callId: "call-00000001" };
+    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 0 } }).success).toBe(true);
+    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "root-00000001", resolved: -1, elsewhere: 0 } }).success).toBe(false);
+    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "../root", resolved: 0, elsewhere: 0 } }).success).toBe(false);
   });
 });

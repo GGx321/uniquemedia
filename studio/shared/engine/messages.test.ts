@@ -301,6 +301,9 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "videos.list": { payload: { avatarId: "avatar-0001" }, result: { videos: [video] } },
   "videos.delete": { payload: { videoId: "video-00000001", mode: "video" }, result: { videoId: "video-00000001", fileDeleted: true, fileState: "present" } },
   "videos.reveal": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
+  "settings.setExportPath": { payload: {}, result: { picked: true, settings, rootId: "root-00000001", resolved: 3, elsewhere: 1 } },
+  "settings.exportDisplay": { payload: {}, result: { display: "~/Studio/export" } },
+  "export.check": { payload: {}, result: { exportStatus: { status: "unavailable", reason: "missing" } } },
   "music.status": { payload: {}, result: musicStatus },
   "music.refresh": { payload: { confirm: true }, result: { status: { ...musicStatus, refresh: { state: "running", done: 0, total: 1 } } } },
   "montages.create": {
@@ -424,6 +427,8 @@ describe("contract surface", () => {
         "settings.clearMusicKey",
         "settings.setBudget",
         "settings.setLibraryPath",
+        "settings.setExportPath",
+        "settings.exportDisplay",
         "settings.setModels",
         "settings.setConcurrency",
         "settings.setImageAgeCheck",
@@ -464,6 +469,7 @@ describe("contract surface", () => {
         "montages.delete",
         "montages.focus",
         "montages.textPreview",
+        "export.check",
         "engine.snapshot",
         "engine.events",
       ].sort(),
@@ -505,13 +511,15 @@ describe("contract surface", () => {
     expect(covered).toEqual(all);
   });
 
-  test("only the key commands, the import photo dialog and «show in folder» are handled by main alone", () => {
+  test("only the key commands, the dialogs («import photo», «export folder») and «show in folder» are handled by main alone", () => {
     const actual: string[] = [...MAIN_ONLY_COMMANDS].sort();
     expect(actual).toEqual([
       "avatars.pickImportPhoto",
       "settings.clearApiKey",
       "settings.clearMusicKey",
+      "settings.exportDisplay",
       "settings.setApiKey",
+      "settings.setExportPath",
       "settings.setMusicKey",
       "videos.reveal",
     ]);
@@ -1246,6 +1254,29 @@ describe("Stage 3 payloads", () => {
     expect(send("videos.delete", { videoId: "video-00000001" })).toBe(false);
     expect(send("videos.delete", { videoId: "video-00000001", mode: "everything" })).toBe(false);
     expect(send("videos.reveal", { videoId: "video-00000001", path: "/tmp" })).toBe(false);
+  });
+
+  test("settings.setExportPath is sent with no payload: the folder is picked in main's own dialog, never named by the window (K18)", () => {
+    expect(send("settings.setExportPath", {})).toBe(true);
+    expect(send("settings.setExportPath", { path: "/Volumes/Reels" })).toBe(false);
+  });
+
+  test("settings.setExportPath answers either a cancel or the picked folder with its counts", () => {
+    const ok = (result: unknown) => parseMessage({ v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "settings.setExportPath", ok: true, result }).ok;
+    expect(ok({ picked: false })).toBe(true);
+    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: 0, elsewhere: 0 })).toBe(true);
+    // a cancel carries nothing else, and a pick carries every part of the answer
+    expect(ok({ picked: false, resolved: 0 })).toBe(false);
+    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: 3 })).toBe(false);
+    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: -1, elsewhere: 0 })).toBe(false);
+    expect(ok({ picked: true, settings, rootId: "../root", resolved: 0, elsewhere: 0 })).toBe(false);
+  });
+
+  test("settings.exportDisplay and export.check take no payload", () => {
+    expect(send("settings.exportDisplay", {})).toBe(true);
+    expect(send("settings.exportDisplay", { path: "/tmp" })).toBe(false);
+    expect(send("export.check", {})).toBe(true);
+    expect(send("export.check", { force: true })).toBe(false);
   });
 
   test("videos.list names an avatar", () => {

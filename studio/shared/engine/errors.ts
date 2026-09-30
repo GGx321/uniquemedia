@@ -139,8 +139,22 @@ export const ErrorCode = z.enum(ERROR_CODES);
  * `.studio-export.json` is unreadable or invalid (never silently replaced), or
  * the marker was written by a newer Studio (`newer-marker`: not damaged, so the
  * owner must never be told to delete it).
+ *
+ * `invalid-marker-with-records` is `invalid-marker` for a library that already holds video records (3e.3): the damaged
+ * marker may be the very one those records name, so the owner is never told to delete, move or rename it (a fresh
+ * marker would have a new id, and every record would read `elsewhere`). The engine makes the call; `invalid-marker`
+ * stays for a library with no records, where deleting the file costs nothing.
  */
-export const EXPORT_UNAVAILABLE_REASONS = ["missing", "not-a-directory", "not-writable", "not-enough-space", "overlaps-library", "invalid-marker", "newer-marker"] as const;
+export const EXPORT_UNAVAILABLE_REASONS = [
+  "missing",
+  "not-a-directory",
+  "not-writable",
+  "not-enough-space",
+  "overlaps-library",
+  "invalid-marker",
+  "invalid-marker-with-records",
+  "newer-marker",
+] as const;
 export const ExportUnavailableReason = z.enum(EXPORT_UNAVAILABLE_REASONS);
 export type ExportUnavailableReason = z.infer<typeof ExportUnavailableReason>;
 

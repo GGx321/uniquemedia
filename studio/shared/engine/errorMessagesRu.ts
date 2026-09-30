@@ -103,4 +103,7 @@ export const EXPORT_UNAVAILABLE_REASONS_RU = {
   "overlaps-library": "Папка «Готовые видео» не может быть внутри папки библиотеки или содержать её.",
   "newer-marker": "Эту папку «Готовые видео» создала более новая версия Studio. Обновите приложение или выберите другую папку.",
   "invalid-marker": "Служебный файл .studio-export.json в этой папке повреждён. Выберите другую папку или удалите этот файл сами.",
+  // Never suggests touching the file: the records of the videos made so far may name the very id it held.
+  "invalid-marker-with-records":
+    "Служебный файл .studio-export.json в этой папке повреждён, а по нему Studio узнаёт папку с вашими видео. Оставьте файл как есть: верните его из резервной копии или выберите другую папку — записи о прежних видео сохранятся.",
 } as const satisfies Record<ExportUnavailableReason, string>;
