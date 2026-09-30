@@ -5,6 +5,7 @@ import type { KeyCommand } from "./keyFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
+import { captureConsole, expectNoKeyFragment } from "../testing/keyLeaks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
@@ -229,9 +230,15 @@ describe("handleRendererRequest", () => {
         throw new Error(`disk full while writing ${MUSIC_KEY}`);
       },
     };
-    const response = await handleRendererRequest(command("settings.setMusicKey", { key: MUSIC_KEY }), APP_FRAME, PACKAGED, throwing);
-    expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
-    expect(JSON.stringify(response)).not.toContain(MUSIC_KEY);
+    const output = captureConsole();
+    try {
+      const response = await handleRendererRequest(command("settings.setMusicKey", { key: MUSIC_KEY }), APP_FRAME, PACKAGED, throwing);
+      expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+      expectNoKeyFragment(JSON.stringify(response), MUSIC_KEY);
+      expectNoKeyFragment(output.text(), MUSIC_KEY);
+    } finally {
+      output.restore();
+    }
   });
 
   test("avatars.pickImportPhoto is handled by main and never forwarded to the engine", async () => {

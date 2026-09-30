@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseMessage, PROTOCOL_VERSION, ResponseMessage } from "../shared/engine";
 import type { EngineInit, HostControl } from "../engine/control";
 import { FakeSafeStorage } from "../testing/fakeSafeStorage";
+import { captureConsole, expectNoKeyFragment } from "../testing/keyLeaks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { EngineHost, RESTART_DELAY_MS, type EngineChild, type HostPort, type HostTimers } from "./engineHost";
 import { KeyStore, SECRETS_FILE } from "./keyFlow";
@@ -58,7 +59,7 @@ describe("settings.setMusicKey", () => {
     expect(response).toMatchObject({ ok: false, id: "cmd-set-0001", type: "settings.setMusicKey", error: { code: "ENCRYPTION_UNAVAILABLE" } });
     expect(await readdir(userData)).toEqual([]);
     expect(engine.sent).toEqual([]);
-    expect(musicKeyStatusOf(keys)).toEqual({ stored: false, last4: null, rejected: false });
+    expect(musicKeyStatusOf(keys.status())).toEqual({ stored: false, last4: null, rejected: false });
     expect(JSON.stringify(response)).not.toContain(MUSIC);
   });
 
@@ -118,14 +119,14 @@ describe("settings.setMusicKey", () => {
     await handleMusicKeyCommand(setMusicKey(ROTATED), { keys, engine });
 
     expect(await keys.read()).toBe(ROTATED);
-    expect(musicKeyStatusOf(keys).last4).toBe("9999");
+    expect(musicKeyStatusOf(keys.status()).last4).toBe("9999");
     expect(engine.sent.at(-1)).toEqual({ kind: "control", type: "musicKey.set", key: ROTATED });
   });
 
   test("main reports a stored key as not rejected: a set is a fresh start, the engine alone learns of a 401", async () => {
     const keys = await open();
     await handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine: engineSpy() });
-    expect(musicKeyStatusOf(keys).rejected).toBe(false);
+    expect(musicKeyStatusOf(keys.status()).rejected).toBe(false);
   });
 
   test.skipIf(process.platform === "win32")("the file is readable by its owner only (0600)", async () => {
@@ -176,7 +177,7 @@ describe("the music key store across restarts", () => {
     await first.set(MUSIC, () => {});
 
     const second = await open();
-    expect(musicKeyStatusOf(second)).toEqual({ stored: true, last4: "0000", rejected: false });
+    expect(musicKeyStatusOf(second.status())).toEqual({ stored: true, last4: "0000", rejected: false });
     expect(await second.read()).toBe(MUSIC);
   });
 
@@ -185,7 +186,7 @@ describe("the music key store across restarts", () => {
     await first.set(MUSIC, () => {});
     safe.available = false;
     const second = await open();
-    expect(musicKeyStatusOf(second)).toEqual({ stored: false, last4: null, rejected: false });
+    expect(musicKeyStatusOf(second.status())).toEqual({ stored: false, last4: null, rejected: false });
     expect(await second.read()).toBeNull();
   });
 
@@ -193,15 +194,15 @@ describe("the music key store across restarts", () => {
     const first = await open();
     await first.set(MUSIC, () => {});
     safe.failDecrypt = true;
-    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const output = captureConsole();
     try {
       const second = await open();
-      expect(musicKeyStatusOf(second).stored).toBe(false);
+      expect(musicKeyStatusOf(second.status()).stored).toBe(false);
       expect(await second.read()).toBeNull();
       expect(await readdir(userData)).toEqual([MUSIC_SECRETS_FILE]);
-      expect(JSON.stringify(warn.mock.calls)).not.toContain(MUSIC);
+      expectNoKeyFragment(output.text(), MUSIC);
     } finally {
-      warn.mockRestore();
+      output.restore();
     }
   });
 
@@ -212,13 +213,13 @@ describe("the music key store across restarts", () => {
     ["a header with nothing after it", Buffer.from("enc:")],
   ])("%s reads as no key, without throwing", async (_label, bytes) => {
     await writeFile(musicPath(), bytes);
-    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const output = captureConsole();
     try {
       const keys = await open();
-      expect(musicKeyStatusOf(keys)).toEqual({ stored: false, last4: null, rejected: false });
+      expect(musicKeyStatusOf(keys.status())).toEqual({ stored: false, last4: null, rejected: false });
       expect(await keys.read()).toBeNull();
     } finally {
-      warn.mockRestore();
+      output.restore();
     }
   });
 
@@ -244,9 +245,16 @@ describe("the music key store across restarts", () => {
     ["is shorter than eight chars", "abc1234"],
   ])("a blob whose key %s is ignored", async (_label, plain) => {
     await writeFile(musicPath(), safe.encryptString(plain));
-    const keys = await open();
-    expect(musicKeyStatusOf(keys).stored).toBe(false);
-    expect(await keys.read()).toBeNull();
+    const output = captureConsole();
+    try {
+      const keys = await open();
+      expect(musicKeyStatusOf(keys.status()).stored).toBe(false);
+      expect(await keys.read()).toBeNull();
+      // The decrypted text of a blob that fails the shape rule (a real key with padding, say) must not be logged either.
+      expectNoKeyFragment(output.text(), plain.trim());
+    } finally {
+      output.restore();
+    }
   });
 });
 
@@ -266,6 +274,142 @@ describe("the two key stores are independent", () => {
     await openRouter.clear(() => {});
     expect(await readdir(userData)).toEqual([MUSIC_SECRETS_FILE]);
     expect(await music.read()).toBe(MUSIC);
+  });
+});
+
+// ---------- a file that cannot be read ----------
+
+const OPENROUTER_KEY = "sk-or-v1-0123456789abcdef-wxyz";
+
+describe("a secrets-rapidapi.bin that cannot be read", () => {
+  /** A directory in the file's place: unreadable on every platform (EISDIR). */
+  async function directoryInPlace(): Promise<void> {
+    await mkdir(musicPath());
+  }
+
+  test("a directory in its place opens as no key, and logs only the error code", async () => {
+    await directoryInPlace();
+    const output = captureConsole();
+    try {
+      const keys = await open();
+      expect(musicKeyStatusOf(keys.status())).toEqual({ stored: false, last4: null, rejected: false });
+      expect(await keys.read()).toBeNull();
+      expect(output.text()).toMatch(/the stored RapidAPI key could not be read \([A-Z]+\)/);
+      expect(output.text()).not.toContain(userData);
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("the engine host starts anyway, and still delivers the OpenRouter key", async () => {
+    await directoryInPlace();
+    const output = captureConsole();
+    try {
+      const keys = await open();
+      const { host, ports } = await hostOver(keys, OPENROUTER_KEY);
+      expect(host.phase).toBe("running");
+      expect(ports[0]?.posted).toEqual([{ kind: "control", type: "apiKey.set", key: OPENROUTER_KEY }]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("a read that starts failing after main opened the store still lets the engine start, without a music key", async () => {
+    const keys = await open();
+    await keys.set(MUSIC, () => {});
+    await rm(musicPath());
+    await directoryInPlace();
+    const output = captureConsole();
+    try {
+      const { host, ports } = await hostOver(keys, OPENROUTER_KEY);
+      expect(host.phase).toBe("running");
+      expect(ports[0]?.posted).toEqual([{ kind: "control", type: "apiKey.set", key: OPENROUTER_KEY }]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("a file with no read permission (EACCES) opens as no key", async () => {
+    await writeFile(musicPath(), safe.encryptString(MUSIC));
+    await chmod(musicPath(), 0o000);
+    const output = captureConsole();
+    try {
+      const keys = await open();
+      expect(musicKeyStatusOf(keys.status()).stored).toBe(false);
+      expect(await keys.read()).toBeNull();
+      expect(output.text()).toContain("EACCES");
+      expectNoKeyFragment(output.text(), MUSIC);
+    } finally {
+      output.restore();
+      await chmod(musicPath(), 0o600);
+    }
+  });
+
+  test("setting a key over a directory answers a clean INTERNAL, tells the engine nothing and leaves no stray file", async () => {
+    await directoryInPlace();
+    const keys = await open();
+    const engine = engineSpy();
+    const output = captureConsole();
+    try {
+      const response = await handleMusicKeyCommand(setMusicKey(MUSIC), { keys, engine });
+
+      expect(response).toMatchObject({ ok: false, id: "cmd-set-0001", type: "settings.setMusicKey", error: { code: "INTERNAL" } });
+      expect(ResponseMessage.safeParse(response).success).toBe(true);
+      expectNoKeyFragment(JSON.stringify(response), MUSIC);
+      expectNoKeyFragment(output.text(), MUSIC);
+      expect(engine.sent).toEqual([]);
+      expect(musicKeyStatusOf(keys.status()).stored).toBe(false);
+      expect(await readdir(userData)).toEqual([MUSIC_SECRETS_FILE]);
+      expect((await stat(musicPath())).isDirectory()).toBe(true);
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("clearing over a directory answers a clean INTERNAL instead of throwing, and does not delete the directory", async () => {
+    await directoryInPlace();
+    await writeFile(join(musicPath(), "keep.txt"), "not ours");
+    const keys = await open();
+    const engine = engineSpy();
+    const output = captureConsole();
+    try {
+      const response = await handleMusicKeyCommand(clearMusicKey, { keys, engine });
+
+      expect(response).toMatchObject({ ok: false, id: "cmd-clear-001", type: "settings.clearMusicKey", error: { code: "INTERNAL" } });
+      expect(ResponseMessage.safeParse(response).success).toBe(true);
+      expect(engine.sent).toEqual([]);
+      expect(await readdir(musicPath())).toEqual(["keep.txt"]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  test("the OpenRouter key's store is unchanged: an unreadable file still throws", async () => {
+    await mkdir(join(userData, SECRETS_FILE));
+    await expect(KeyStore.open(safe, join(userData, SECRETS_FILE))).rejects.toThrow();
+  });
+});
+
+describe("a key the store's shape rule would drop", () => {
+  test("is refused by set, so it cannot vanish after a restart, and the error does not carry it", async () => {
+    const keys = await open();
+    const engine = engineSpy();
+    const padded = ` ${MUSIC}`;
+
+    const error = await keys.set(padded, () => engine.send({ kind: "control", type: "musicKey.set", key: padded })).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expectNoKeyFragment(String((error as Error).message), MUSIC);
+    expect(engine.sent).toEqual([]);
+    expect(await readdir(userData)).toEqual([]);
+    expect(musicKeyStatusOf(keys.status()).stored).toBe(false);
+  });
+
+  test("through the command it answers INTERNAL", async () => {
+    const keys = await open();
+    const response = await handleMusicKeyCommand(setMusicKey(` ${MUSIC}`), { keys, engine: engineSpy() });
+    expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    expectNoKeyFragment(JSON.stringify(response), MUSIC);
   });
 });
 
@@ -342,7 +486,7 @@ const INIT: EngineInit = {
   notices: [],
 };
 
-async function hostOver(keys: Awaited<ReturnType<typeof open>>) {
+async function hostOver(keys: Awaited<ReturnType<typeof open>>, openRouterKey: string | null = null) {
   const children: FakeChild[] = [];
   const ports: FakePort[] = [];
   const timers = new ManualTimers();
@@ -358,7 +502,7 @@ async function hostOver(keys: Awaited<ReturnType<typeof open>>) {
       return { local: port, remote: `remote-port-${ports.length}` };
     },
     init: async () => INIT,
-    apiKey: async () => null,
+    apiKey: async () => openRouterKey,
     musicKey: () => keys.read(),
     onEvent: () => {},
     onExit: () => {},

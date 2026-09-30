@@ -147,6 +147,12 @@ describe("MusicKey", () => {
     expect(MusicKey.safeParse("a".repeat(8)).success).toBe(true);
   });
 
+  test("bounds the raw string before it trims: a 1 MB paste is refused, padding within the bound is not", () => {
+    expect(MusicKey.safeParse(" ".repeat(1_000_000) + "a".repeat(20)).success).toBe(false);
+    expect(MusicKey.safeParse(`${" ".repeat(600)}${FAKE}${" ".repeat(600)}`).success).toBe(false);
+    expect(MusicKey.parse(`${" ".repeat(100)}${FAKE}${" ".repeat(100)}`)).toBe(FAKE);
+  });
+
   test("a rejection never echoes the key", () => {
     const result = MusicKey.safeParse("test-rapidapi key-0000");
     expect(JSON.stringify(result)).not.toContain("key-0000");

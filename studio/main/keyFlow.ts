@@ -25,6 +25,10 @@ export interface SafeStorageLike {
 /** The commands main answers itself (T0 `MAIN_ONLY_COMMANDS`). */
 export type KeyCommand = Extract<CommandMessage, { type: "settings.setApiKey" | "settings.clearApiKey" }>;
 
+function errorCode(error: unknown): string {
+  return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "unknown";
+}
+
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
@@ -33,10 +37,11 @@ function isMissing(error: unknown): boolean {
 interface KeyRules {
   accepts: (key: string) => boolean;
   label: string;
+  unreadable: "throw" | "absent";
 }
 
 function rulesOf(options: KeyStoreOptions): KeyRules {
-  return { accepts: options.accepts ?? ((key) => ApiKey.safeParse(key).success), label: options.label ?? "API key" };
+  return { accepts: options.accepts ?? ((key) => ApiKey.safeParse(key).success), label: options.label ?? "API key", unreadable: options.unreadable ?? "throw" };
 }
 
 /** Decrypts the stored blob; null when there is none or it cannot be read back as a key. */
@@ -46,7 +51,10 @@ async function decryptFile(safe: SafeStorageLike, path: string, rules: KeyRules)
     blob = await readFile(path);
   } catch (error) {
     if (isMissing(error)) return null;
-    throw error;
+    if (rules.unreadable === "throw") throw error;
+    // An optional key's file must not stop the app: it reads as no key, and only the error's code is logged.
+    console.warn(`studio: the stored ${rules.label} could not be read (${errorCode(error)})`);
+    return null;
   }
   if (!safe.isEncryptionAvailable()) return null;
   try {
@@ -74,7 +82,12 @@ async function writeSecretAtomic(path: string, data: Uint8Array): Promise<void> 
     await rm(temp, { force: true });
     throw error;
   }
-  await renameWithRetry(temp, path);
+  try {
+    await renameWithRetry(temp, path);
+  } catch (error) {
+    await rm(temp, { force: true });
+    throw error;
+  }
   await fsyncDir(dirname(path));
 }
 
@@ -86,6 +99,12 @@ export interface KeyStoreOptions {
   accepts?: (key: string) => boolean;
   /** How the key is named in the log line for a blob that cannot be decrypted. Defaults to "API key". */
   label?: string;
+  /**
+   * What a file that exists but cannot be read (a directory in its place, no permission) does at open and on every
+   * read: `"throw"` (the default, the OpenRouter key's) or `"absent"`, which logs the error's code and reads as no
+   * key, for an optional key that must not take the app down.
+   */
+  unreadable?: "throw" | "absent";
   /** Test seam: runs inside the lock right before the blob is written. */
   beforeWrite?: () => Promise<void>;
 }
@@ -135,6 +154,8 @@ export class KeyStore {
    */
   set(key: string, stored: () => void): Promise<ApiKeyStatus | null> {
     return this.#exclusive(async () => {
+      // A key this store would drop on the next start is refused now (the error names no part of it).
+      if (!this.#rules.accepts(key)) throw new Error(`the ${this.#rules.label} does not have the shape this store keeps`);
       if (!this.#safe.isEncryptionAvailable()) return null;
       let blob: Uint8Array;
       try {

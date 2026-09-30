@@ -3,6 +3,7 @@ import {
   errorResponseFor,
   MusicKey,
   PROTOCOL_VERSION,
+  type ApiKeyStatus,
   type CommandMessage,
   type MusicKeyStatus,
   type ResponseMessage,
@@ -27,6 +28,9 @@ export function openMusicKeyStore(safe: SafeStorageLike, userDataDir: string): P
       return parsed.success && parsed.data === key;
     },
     label: "RapidAPI key",
+    // The music key is optional: a file that cannot be read (a directory in its place, no permission) must not stop
+    // the app or the engine, so it reads as no key.
+    unreadable: "absent",
   });
 }
 
@@ -34,8 +38,7 @@ export function openMusicKeyStore(safe: SafeStorageLike, userDataDir: string): P
  * What main knows of the music key (K24): whether one is stored and its last four chars. `rejected` is the engine's
  * to know (a 401 from flashapi), so main's own view is never rejected; the engine's `settings.get` carries the flag.
  */
-export function musicKeyStatusOf(keys: KeyStore): MusicKeyStatus {
-  const { stored, last4 } = keys.status();
+export function musicKeyStatusOf({ stored, last4 }: Pick<ApiKeyStatus, "stored" | "last4">): MusicKeyStatus {
   return { stored, last4, rejected: false };
 }
 
@@ -47,18 +50,26 @@ export function musicKeyStatusOf(keys: KeyStore): MusicKeyStatus {
  */
 export async function handleMusicKeyCommand(command: MusicKeyCommand, deps: KeyFlowDeps): Promise<ResponseMessage> {
   const v = PROTOCOL_VERSION;
-  switch (command.type) {
-    case "settings.setMusicKey": {
-      const { key } = command.payload;
-      const stored = await deps.keys.set(key, () => deps.engine.send({ kind: "control", type: "musicKey.set", key }));
-      if (stored === null) {
-        return errorResponseFor(command, { code: "ENCRYPTION_UNAVAILABLE", detail: "the OS cannot encrypt the key, so it was not stored" });
+  try {
+    switch (command.type) {
+      case "settings.setMusicKey": {
+        const { key } = command.payload;
+        const stored = await deps.keys.set(key, () => deps.engine.send({ kind: "control", type: "musicKey.set", key }));
+        if (stored === null) {
+          return errorResponseFor(command, { code: "ENCRYPTION_UNAVAILABLE", detail: "the OS cannot encrypt the key, so it was not stored" });
+        }
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: musicKeyStatusOf(stored) };
       }
-      return { v, id: command.id, kind: "response", type: command.type, ok: true, result: musicKeyStatusOf(deps.keys) };
+      case "settings.clearMusicKey": {
+        const cleared = await deps.keys.clear(() => deps.engine.send({ kind: "control", type: "musicKey.clear" }));
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: musicKeyStatusOf(cleared) };
+      }
     }
-    case "settings.clearMusicKey": {
-      await deps.keys.clear(() => deps.engine.send({ kind: "control", type: "musicKey.clear" }));
-      return { v, id: command.id, kind: "response", type: command.type, ok: true, result: musicKeyStatusOf(deps.keys) };
-    }
+  } catch (error) {
+    // The file cannot be written or removed (a directory in its place, no permission, a full disk). Only the code is
+    // logged and nothing of the key is in the answer; the engine was not told, so it and the disk still agree.
+    const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "unknown";
+    console.warn(`studio: the RapidAPI key could not be ${command.type === "settings.setMusicKey" ? "stored" : "cleared"} (${code})`);
+    return errorResponseFor(command, { code: "INTERNAL", detail: "the key file could not be changed" });
   }
 }

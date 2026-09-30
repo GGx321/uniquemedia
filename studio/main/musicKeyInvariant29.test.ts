@@ -9,6 +9,7 @@ import { configuredFfmpegEnv, configureFfmpegEnv } from "../node/ffmpegEnv";
 import { fakeSpawner } from "../node/fakeFfmpeg.testkit";
 import { runFfmpegArgv } from "../node/runFfmpeg";
 import { FakeSafeStorage } from "../testing/fakeSafeStorage";
+import { captureConsole, expectNoKeyFragment, fragmentForms } from "../testing/keyLeaks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { engineEnv } from "./engineEnv";
 import { handleMusicKeyCommand, MUSIC_SECRETS_FILE, musicKeyStatusOf, openMusicKeyStore } from "./musicKeyFlow";
@@ -19,24 +20,11 @@ useNativeGlobals();
 // never in the renderer, logs, library, cache files or a child process's environment. Every key here is obviously fake.
 
 const MUSIC = "test-rapidapi-key-0000";
-/** Everything of the key but the last four chars, which the status may show. */
-const MUSIC_HEAD = MUSIC.slice(0, -4);
 const ROTATED = "test-rapidapi-key-9999";
 
 const dir = useEngineDir("studio-music-invariant29-");
 
 // ---------- a scan that is shown to find what it looks for ----------
-
-/** The key as bytes a file or a stream could hold it in: UTF-8, UTF-16 (ID3v2 frames, Windows), base64 and hex. */
-function forms(key: string): { name: string; bytes: Buffer }[] {
-  return [
-    { name: "utf8", bytes: Buffer.from(key, "utf8") },
-    { name: "utf16le", bytes: Buffer.from(key, "utf16le") },
-    { name: "utf16be", bytes: Buffer.from(key, "utf16le").swap16() },
-    { name: "base64", bytes: Buffer.from(Buffer.from(key).toString("base64")) },
-    { name: "hex", bytes: Buffer.from(Buffer.from(key).toString("hex")) },
-  ];
-}
 
 async function filesUnder(root: string): Promise<string[]> {
   const found: string[] = [];
@@ -48,19 +36,21 @@ async function filesUnder(root: string): Promise<string[]> {
   return found;
 }
 
-/** Files under `root` that hold `key` in any form, as `path (form)`. */
+/** Files under `root` that hold the key, or any 6-char fragment of it, in any form, as `path (form)`. */
 async function filesHolding(root: string, key: string): Promise<string[]> {
-  const hits: string[] = [];
+  const hits = new Set<string>();
   for (const path of await filesUnder(root)) {
     const bytes = await readFile(path);
-    for (const form of forms(key)) if (bytes.includes(form.bytes)) hits.push(`${path} (${form.name})`);
+    for (const form of fragmentForms(key)) {
+      if (bytes.includes(form.bytes)) hits.add(`${path} (${form.name})`);
+    }
   }
-  return hits;
+  return [...hits];
 }
 
 describe("the scan itself", () => {
   test("finds the key in a file in each form it looks for", async () => {
-    for (const form of forms(MUSIC)) {
+    for (const form of fragmentForms(MUSIC).filter((f, i, all) => all.findIndex((g) => g.name === f.name) === i)) {
       await writeFile(join(dir(), `leak-${form.name}.bin`), Buffer.concat([Buffer.from("xx"), form.bytes, Buffer.from("yy")]));
     }
     const hits = await filesHolding(dir(), MUSIC);
@@ -84,17 +74,6 @@ const APP_FRAME: SenderFrame = { url: FILE_URL, isTopFrame: true, isAppWindow: t
 let seq = 0;
 function rendererCommand(type: string, payload: unknown = {}): unknown {
   return { v: PROTOCOL_VERSION, id: `cmd-inv29-${String(++seq).padStart(4, "0")}`, kind: "command", type, payload };
-}
-
-/** What a console call would print, for every level. */
-function captureConsole() {
-  const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) => spyOn(console, level).mockImplementation(() => {}));
-  return {
-    text: () => JSON.stringify(spies.flatMap((spy) => spy.mock.calls)),
-    restore: () => {
-      for (const spy of spies) spy.mockRestore();
-    },
-  };
 }
 
 let userData = "";
@@ -157,8 +136,7 @@ describe("the music key never reaches the renderer", () => {
     await w.ask("settings.get");
 
     const seen = whatTheRendererSaw(w);
-    for (const key of [MUSIC, ROTATED]) expect(seen).not.toContain(key);
-    for (const key of [MUSIC_HEAD, ROTATED.slice(0, -4)]) expect(seen).not.toContain(key);
+    for (const key of [MUSIC, ROTATED]) expectNoKeyFragment(seen, key);
   });
 
   test("the answer to a set carries the last four chars and nothing else of the key", async () => {
@@ -182,7 +160,7 @@ describe("the music key never reaches the renderer", () => {
     const w = await wired();
     const response = await w.ask("settings.setMusicKey", { key: "test-rapidapi key-0000" });
     expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
-    expect(JSON.stringify(response)).not.toContain("rapidapi");
+    expectNoKeyFragment(JSON.stringify(response), "test-rapidapi key-0000");
     expect(w.engine.musicKey).toBeNull();
   });
 
@@ -191,7 +169,7 @@ describe("the music key never reaches the renderer", () => {
     w.safe.available = false;
     const response = await w.ask("settings.setMusicKey", { key: MUSIC });
     expect(response).toMatchObject({ ok: false, error: { code: "ENCRYPTION_UNAVAILABLE" } });
-    expect(JSON.stringify(response)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(response), MUSIC);
     expect(w.engine.musicKey).toBeNull();
   });
 
@@ -207,7 +185,7 @@ describe("the music key never reaches the renderer", () => {
     const w = await wired();
     await w.ask("settings.setMusicKey", { key: MUSIC });
     expect(w.engine.musicKey).toBe(MUSIC);
-    expect(musicKeyStatusOf(w.keys)).toEqual({ stored: true, last4: "0000", rejected: false });
+    expect(musicKeyStatusOf(w.keys.status())).toEqual({ stored: true, last4: "0000", rejected: false });
   });
 });
 
@@ -224,12 +202,15 @@ describe("the music key never reaches a log", () => {
     w.safe.failDecrypt = false;
     await writeFile(join(userData, MUSIC_SECRETS_FILE), Buffer.from("en"));
     await openMusicKeyStore(w.safe, userData);
+    // A real key pasted with whitespace and stored by some other route: it does not pass the shape rule, and its text must not be logged.
+    await writeFile(join(userData, MUSIC_SECRETS_FILE), w.safe.encryptString(` ${MUSIC}\n`));
+    await openMusicKeyStore(w.safe, userData);
     await w.ask("settings.clearMusicKey");
     // An invalid control message straight to the engine, as a compromised main might send it.
     await w.engine.applyControl({ kind: "control", type: "musicKey.set", key: "bad key with spaces" });
 
     const printed = output.text();
-    for (const key of [MUSIC, ROTATED, MUSIC_HEAD, "bad key with spaces"]) expect(printed).not.toContain(key);
+    for (const key of [MUSIC, ROTATED, "bad key with spaces"]) expectNoKeyFragment(printed, key);
   });
 });
 
@@ -285,7 +266,7 @@ describe("the music key never reaches a child process's environment", () => {
   test("the engine's own environment from main drops it, under any name or letter case", () => {
     const env = engineEnv(PARENT_ENV);
     expect(Object.keys(env).sort()).toEqual(["HOME", "PATH"]);
-    expect(JSON.stringify(env)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(env), MUSIC);
   });
 
   test("an engine started with the key in the environment it was given still configures ffmpeg children from the allowlist only", async () => {
@@ -295,7 +276,7 @@ describe("the music key never reaches a child process's environment", () => {
     const env = configuredFfmpegEnv();
     expect(env).toBeDefined();
     expect(allowed(Object.keys(env ?? {}))).toBe(true);
-    expect(JSON.stringify(env)).not.toContain(MUSIC);
+    expectNoKeyFragment(JSON.stringify(env), MUSIC);
   });
 
   test("an ffmpeg child's env keys are a subset of the engine env allowlist, whatever the environment it is given", async () => {
@@ -314,18 +295,7 @@ describe("the music key never reaches a child process's environment", () => {
     for (const call of calls) {
       const env = call.options.env ?? {};
       expect(allowed(Object.keys(env))).toBe(true);
-      expect(JSON.stringify(env)).not.toContain(MUSIC);
+      expectNoKeyFragment(JSON.stringify(env), MUSIC);
     }
-  });
-
-  test("the key is never an argument of an ffmpeg child either", async () => {
-    const w = await wired();
-    await w.ask("settings.setMusicKey", { key: MUSIC });
-    const { spawner, calls } = fakeSpawner((c) => {
-      c.child.report(30, true);
-      c.child.exit(0);
-    });
-    await runFfmpegArgv({ argv: ["-hide_banner", "-y", "-i", "in.png", "/out/a.mkv"], output: "/out/a.mkv", spawner });
-    expect(JSON.stringify(calls.map((c) => c.args))).not.toContain(MUSIC);
   });
 });

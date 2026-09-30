@@ -50,6 +50,7 @@ export const ApiKey = z
  */
 export const MusicKey = z
   .string()
+  .max(1024)
   .trim()
   .min(8)
   .max(256)

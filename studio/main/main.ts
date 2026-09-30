@@ -253,7 +253,7 @@ async function startStudio(): Promise<void> {
           engine,
           pickFolder: (defaultPath) => pickFolder(BrowserWindow.fromWebContents(event.sender), defaultPath),
           keyStatus: () => keys.status(),
-          musicKeyStatus: () => musicKeyStatusOf(musicKeys),
+          musicKeyStatus: () => musicKeyStatusOf(musicKeys.status()),
           newId: randomUUID,
         }),
       importPhoto: (command) =>
