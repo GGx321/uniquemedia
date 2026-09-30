@@ -9,6 +9,9 @@
  *   (money over a prepared userData/ledger.jsonl);
  * - studio-media:// answers 404 for a malformed and an unknown id and 200 (image
  *   MIME, nosniff) for a real photo in a temp library;
+ * - the widened routes (3b.1): a committed video (moov at the end) loads and seeks through Range (a 206 with a
+ *   Content-Range), a video with no record is a 404, and the poster and a built-in sticker (from the asar when
+ *   packaged) load;
  * - main refuses a command that breaks the contract;
  * - the `videos.*` commands are wired in the engine: refusals only (an empty list, NOT_FOUND, the N9 "not yet
  *   supported" answer), nothing rendered or written (a real render, kill and restart is the packaged E2E, 3a.9);
@@ -57,12 +60,16 @@
 import { extractFile, listPackage } from "@electron/asar";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import { FACE_MODELS } from "../engine/face/modelSource";
 import { openLibrary } from "../engine/library";
+import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
+import { EXPORT_MARKER_FILE } from "../engine/exportRoot";
+import { videoPaths } from "../engine/videos/record";
 import { Ledger } from "../engine/money/ledger";
 import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
@@ -994,6 +1001,46 @@ async function runAvatarScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- studio-media:// routes (3b.1) ----------
+
+/** A real 2 s H.264/AAC MP4 from the bundled ffmpeg, with its index (moov) at the END, so a player must seek with Range to play it. Never a committed blob. */
+function renderSmokeVideo(path: string): void {
+  const r = spawnSync(ffmpegPath(), [
+    "-y", "-f", "lavfi", "-i", "testsrc=size=128x128:rate=30:duration=2", "-f", "lavfi", "-i", "sine=duration=2",
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path,
+  ]);
+  if (r.status !== 0) throw new Error(`smoke test could not render a video: ${r.stderr.toString()}`);
+}
+
+const MEDIA_ROOT_ID = "smoke-export-root-0001";
+const MEDIA_VIDEO_ID = "smoke-video-0000001";
+const MEDIA_REL = "Smoke/2026-09-30_photo_001.mp4";
+
+/** The export folder with its marker, the video file and a poster, before launch; the record is written later (`writeMediaRecord`) so `videos.list` is empty when the earlier checks look. */
+async function prepareMediaFixtures(exportRoot: string, avatarId: string, libraryRoot: string, poster: Uint8Array): Promise<void> {
+  await mkdir(join(exportRoot, "Smoke"), { recursive: true });
+  await writeFile(join(exportRoot, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: MEDIA_ROOT_ID, createdAt: new Date().toISOString() }));
+  renderSmokeVideo(join(exportRoot, MEDIA_REL));
+  const videosDir = videoPaths(libraryRoot, avatarId).videosDir;
+  await mkdir(videosDir, { recursive: true });
+  await writeFile(join(videosDir, `${MEDIA_VIDEO_ID}.poster.png`), poster);
+}
+
+async function writeMediaRecord(exportRoot: string, libraryRoot: string, avatarId: string, photoId: string): Promise<string> {
+  const file = join(exportRoot, MEDIA_REL);
+  const bytes = await readFile(file);
+  const record = {
+    ...videoRecordJson(MEDIA_VIDEO_ID, sceneSpec(avatarId, [photoId])),
+    jobId: "smoke-job-media-0001",
+    montageId: null,
+    music: null,
+    file: { rootId: MEDIA_ROOT_ID, relPath: MEDIA_REL, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), mtimeMs: Math.floor((await stat(file)).mtimeMs) },
+  };
+  const path = videoPaths(libraryRoot, avatarId).record(MEDIA_VIDEO_ID);
+  await writeFile(path, JSON.stringify(record));
+  return path;
+}
+
 // ---------- import an existing avatar end-to-end scenario (T6c) ----------
 
 /** T6c has no owner-authored vibe at all (traits come from the vision call); the entered name is the only user text that could leak. */
@@ -1678,7 +1725,9 @@ async function main(): Promise<void> {
       costMicros: 50_000,
     },
   });
-  await saveSettings(userData, { ...defaultSettings(userData), libraryPath: libraryRoot });
+  const exportRoot = join(tmp, "export");
+  await prepareMediaFixtures(exportRoot, avatar.id, libraryRoot, PNG);
+  await saveSettings(userData, { ...defaultSettings(userData), libraryPath: libraryRoot, exportPath: exportRoot });
 
   // A ledger with one settled attempt this month and one left open by "a crash".
   const ledger = await Ledger.open(join(userData, "ledger.jsonl"));
@@ -1793,6 +1842,47 @@ async function main(): Promise<void> {
     check("the unknown photo is a 404", unknown?.status === 404, [...statuses]);
     const malformed = [...statuses].find(([url]) => url.includes("NOPE") || url.includes("/x"));
     check("the malformed id is a 404", malformed?.[1].status === 404, [...statuses]);
+
+    // 3b. The widened routes (3b.1, invariant 28), in the real app: a committed video plays and seeks through Range, the poster
+    // and a built-in sticker (from inside app.asar when packaged) load, and a video with no record is a 404.
+    const responses: { url: string; status: number; contentRange: string | null }[] = [];
+    cdp.on((method, params) => {
+      if (method !== "Network.responseReceived") return;
+      const url = field(params, "response", "url");
+      if (typeof url !== "string" || !url.startsWith("studio-media://video/")) return;
+      const headers = field(params, "response", "headers");
+      const range = typeof headers === "object" && headers !== null ? Object.entries(headers).find(([k]) => k.toLowerCase() === "content-range")?.[1] : undefined;
+      responses.push({ url, status: Number(field(params, "response", "status")), contentRange: typeof range === "string" ? range : null });
+    });
+    const recordPath = await writeMediaRecord(exportRoot, libraryRoot, avatar.id, photo.id);
+    const videoUrl = `studio-media://video/${avatar.id}/${MEDIA_VIDEO_ID}`;
+    const played = await cdp.evaluate(`(async () => {
+      const once = (el, ok, bad) => new Promise((r) => { el.addEventListener(ok, () => r(true), { once: true }); el.addEventListener(bad, () => r(false), { once: true }); setTimeout(() => r(false), 15000); });
+      const v = document.createElement("video");
+      v.muted = true; v.preload = "auto"; v.src = "${videoUrl}";
+      const meta = await once(v, "loadedmetadata", "error");
+      const duration = v.duration;
+      v.currentTime = 1.5;
+      const seeked = await once(v, "seeked", "error");
+      const at = v.currentTime;
+      const missing = document.createElement("video");
+      missing.src = "studio-media://video/${avatar.id}/smoke-no-such-video-01";
+      const missingFailed = !(await once(missing, "loadedmetadata", "error"));
+      const load = (src) => new Promise((r) => { const i = new Image(); i.onload = () => r({ loaded: true, width: i.naturalWidth }); i.onerror = () => r({ loaded: false }); i.src = src; });
+      return { meta, duration, seeked, at, missingFailed,
+        poster: await load("studio-media://poster/${avatar.id}/${MEDIA_VIDEO_ID}"),
+        sticker: await load("studio-media://sticker/heart-pulse"),
+        unknownSticker: await load("studio-media://sticker/no-such-sticker") };
+    })()`);
+    check("a committed video loads its metadata through studio-media://video", field(played, "meta") === true && Math.abs(Number(field(played, "duration")) - 2) < 0.3, played);
+    check("a committed video seeks (Range) to 1.5 s", field(played, "seeked") === true && Math.abs(Number(field(played, "at")) - 1.5) < 0.2, played);
+    check("the player was served with Range: a 206 answer carried a Content-Range", responses.some((r) => r.status === 206 && r.contentRange !== null && /^bytes \d+-\d+\/\d+$/.test(r.contentRange)), responses);
+    check("a video with no record does not load (404)", field(played, "missingFailed") === true && responses.some((r) => r.url.includes("smoke-no-such-video-01") && r.status === 404), [played, responses]);
+    check("the poster route serves a poster", field(played, "poster", "loaded") === true, played);
+    check("a built-in sticker loads through studio-media://sticker (from the asar when packaged)", field(played, "sticker", "loaded") === true && field(played, "sticker", "width") === 320, played);
+    check("an unknown sticker does not load", field(played, "unknownSticker", "loaded") === false, played);
+    // The record was only there for this section: later checks (and a restarted engine) must find the library as it was.
+    await rm(recordPath);
 
     // 4. Key flow.
     const set = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
