@@ -796,6 +796,14 @@ id it was queued with), the export status moving only when a check finds a chang
 `not-enough-space` refusing one render without touching the status, the snapshot's job list (queued, running, finished; the latest 50
 finished kept; the saving mark dropped at the job's end), and the photo grid's newest-first order.
 
+## 5d. 3e.3 as built (the export folder in Settings)
+
+- **Flow (K18).** `settings.setExportPath {}` (main-only) -> main opens its own dialog at the current folder -> the engine call `export.choose {path}` checks the pick with the export check (overlap, directory, write probe, marker; a folder is never created, the marker is written when missing) and counts the records by `rootId` -> only after an ok reply main saves `exportPath` and sends `settings.update`. Result: `{picked: false}` or `{picked: true, settings, rootId, resolved, elsewhere}`. `resolved` = records naming the picked folder's marker, `elsewhere` = the rest (every avatar, archived included). Refused with `EXPORT_UNAVAILABLE` (+ `exportReason`), `IN_FLIGHT` while a render is queued or running, `VALIDATION` for a pick that is not absolute.
+- **Contract additions.** `settings.exportDisplay {}` (main-only) -> `{display}`: the path with home as `~` (Windows: case-folded drive and names, `\`). `export.check {}` -> `{exportStatus}`: a fresh look at the current folder; `export.status` follows when it changed (the focus re-check of K9). New `ExportUnavailableReason` `invalid-marker-with-records`: a damaged marker in a library that already holds any video record (an unreadable record file counts); its text never advises deleting, moving or renaming the file. `invalid-marker` (no records) keeps its text.
+- **Window.** The store asks `export.check` on window focus and when the page becomes visible: throttled to 5 s, joins an ask in flight, never throws, a failed ask still counts, and an answer is dropped when an `export.status` event arrived meanwhile. The «Готовые видео» row has a «Проверить снова» button that ignores the throttle.
+- **Not built.** No timer re-check (focus only). K15 `unchecked` is 3e.2's. The library row still shows its absolute path (not `~`).
+- **Mock.** `pickExportFolderNext` stands in for the dialog (`cancel`, a pick, `refuse`, `movedFrom`); an unscripted dialog picks a new folder. The parity suite plays main's real flow over the real engine against the mock: cancel, switch, switch back, a move, every refusal, `export.check`.
+
 ## 6. Per-task UI checklists
 
 What each of the next UI tasks must implement from the artboards. «Скоро» means disabled with
