@@ -151,7 +151,7 @@ describe("the real worker under Electron's Node", () => {
       if (full >= 3 * bound && full < TEXT_RENDER_DEADLINE_MS * 0.9) break;
       rects = Number.isFinite(full) ? Math.ceil((rects * TARGET_MS) / full) : Math.max(1, Math.floor(rects / 2));
     }
-    assert.ok(Buffer.byteLength(probe, "utf8") < 512 * 1024, "the probe is over the SVG byte cap");
+    assert.ok(Buffer.byteLength(probe, "utf8") < 512 * 1024, `the probe (${rects} rects) is over the SVG byte cap`);
     assert.ok(full >= 3 * bound, `probe too light for this runner: ${rects} rects took ${Math.round(full)} ms uninterrupted, under 3 x ${bound} ms`);
 
     const { gate: g, spawned } = gate({ renderTimeoutMs: DEADLINE_MS });
