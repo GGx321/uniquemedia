@@ -133,6 +133,15 @@ describe("montage.changed", () => {
     expect(saves.sent()).toEqual([{ spec: version(1), name: null }]);
   });
 
+  test("after a kept save from elsewhere, undo back to the loaded version still saves it: the engine holds the other one", () => {
+    const { scheduler, saves, session } = rig();
+    session.edit(version(1));
+    session.receive({ change: "upserted", montage: montageOf(version(5), null, "2026-09-30T11:00:00.000Z") });
+    session.undo();
+    scheduler.runAll();
+    expect(saves.sent()).toEqual([{ spec: version(0), name: null }]);
+  });
+
   test("another draft's changes are not this session's business", () => {
     const { session } = rig();
     const other = { ...montageOf(version(5)), montageId: "montage-0000002" };

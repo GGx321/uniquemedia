@@ -287,6 +287,31 @@ describe("echoes of this window's own saves", () => {
     expect(autosave.state.kind).toBe("saved");
   });
 
+  test("a save from elsewhere that is kept is still what the engine holds: an edit back to the old content is sent", async () => {
+    const { scheduler, saves, autosave } = rig();
+    autosave.set(content(1));
+    const foreign = montageOf(version(7), null, "2026-09-30T11:00:00.000Z");
+    expect(autosave.adoptRemote(foreign)).toBe(false);
+    autosave.noteKept(foreign);
+    // Undo back to what this window loaded: the engine holds version 7 now, so this is an edit, not a no-op.
+    autosave.set(content(0));
+    scheduler.runAll();
+    expect(saves.sent()).toEqual([content(0)]);
+    expect(autosave.state.kind).toBe("saving");
+  });
+
+  test("an answer older than a save from elsewhere it overtook is not taken as the engine's state: this window saves again", async () => {
+    const { scheduler, saves, autosave } = rig();
+    autosave.set(content(1));
+    scheduler.next();
+    // Another window saved after this window's save was applied: its event is newer than this answer.
+    autosave.noteKept(montageOf(version(7), null, "2026-09-30T11:00:00.000Z"));
+    saves.ok();
+    await settle();
+    expect(autosave.saved.spec).toEqual(version(7));
+    expect(saves.sent()).toEqual([content(1), content(1)]);
+  });
+
   test("a change from elsewhere is left alone while an edit is pending or in flight: this window's save wins", async () => {
     const { scheduler, saves, autosave } = rig();
     autosave.set(content(1));

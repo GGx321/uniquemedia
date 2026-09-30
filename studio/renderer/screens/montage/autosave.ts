@@ -178,11 +178,34 @@ export class DraftAutosave {
   adoptRemote(montage: Montage): boolean {
     if (montage.montageId !== this.#montageId || this.#gone !== null || this.#closed) return false;
     if (this.#inflight !== null || this.#dirty()) return false;
+    // A save older than what the engine already answered is stale news, not the draft as it stands.
+    if (montage.updatedAt < this.#acked.updatedAt) return false;
     this.#acked = montage;
     this.#latest = contentOf(montage);
     this.#error = null;
     this.#emit();
     return true;
+  }
+
+  /**
+   * A save from elsewhere that this window did not adopt (an edit here is unsaved or in flight): it is still what
+   * the engine holds now, so "unsaved" is measured against it. An edit back to the content this window loaded is
+   * then a real change and is sent, and this window's own save follows it and wins.
+   */
+  noteKept(montage: Montage): void {
+    if (montage.montageId !== this.#montageId || this.#gone !== null) return;
+    this.#noteEngine(montage);
+    this.#emit();
+    if (this.#dirty() && this.#inflight === null && !this.#timerRunning()) this.#arm();
+  }
+
+  /** The engine's newest known state: an answer or event older than the one already known does not replace it. */
+  #noteEngine(montage: Montage): void {
+    if (montage.updatedAt >= this.#acked.updatedAt) this.#acked = montage;
+  }
+
+  #timerRunning(): boolean {
+    return this.#cancelDebounce !== null || this.#cancelMaxWait !== null;
   }
 
   /** Unsaved: the newest content differs from what the engine will hold once the save in flight lands. */
@@ -245,7 +268,9 @@ export class DraftAutosave {
       this.#settle({ ok: false, error: reply.error });
       return;
     }
-    this.#acked = reply.result.montage;
+    // A save from elsewhere applied after this one (its event came first) stays the engine's state: then this
+    // window's content is unsaved again and goes out once more, so the owner's version still wins.
+    this.#noteEngine(reply.result.montage);
     this.#emit();
     if (!this.#dirty()) {
       this.#settle({ ok: true, montage: this.#acked });
@@ -253,8 +278,7 @@ export class DraftAutosave {
     }
     // Edited while this save was out: a waiting flush, or a quiet spell already over, sends the newest now; an
     // edit still inside its quiet spell waits for its own timer.
-    const timerRunning = this.#cancelDebounce !== null || this.#cancelMaxWait !== null;
-    if (this.#waiters.length > 0 || !timerRunning) void this.#pump();
+    if (this.#waiters.length > 0 || !this.#timerRunning()) void this.#pump();
   }
 
   #settle(result: FlushResult): void {

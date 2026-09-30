@@ -123,7 +123,12 @@ export class DraftSession {
     const { montage } = change;
     if (montage.montageId !== this.#montageId) return "other";
     if (this.#autosave.isOwnEcho(montage)) return "own";
-    if (!this.#autosave.adoptRemote(montage)) return "kept";
+    if (!this.#autosave.adoptRemote(montage)) {
+      // Not adopted, but it is what the engine holds now: this window's unsaved edit is measured against it.
+      this.#autosave.noteKept(montage);
+      this.#refresh();
+      return "kept";
+    }
     this.#history = commitVersion(this.#history, montage.spec);
     this.#refresh();
     return "adopted";
