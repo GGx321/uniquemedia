@@ -47,6 +47,20 @@ jobs:
       # A push to main only checks; tags (and manual runs) build installers.
       PACKAGE: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     steps:
+      # Windows Defender scans every file the tests, the install and the build write, and holds a just-written one for a
+      # while: the suite's tests take 10 to 15 times longer than on macOS (a median of 125 to 700 ms per test in the
+      # library, render and engine files against a few ms), and `renameWithRetry` stalls on EPERM. The workspace, the runner's
+      # temp folders and Bun's cache are excluded from scanning; where Defender cannot be configured the step only warns.
+      - name: Exclude the build folders from Windows Defender scanning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          try {
+            Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, "$env:USERPROFILE\.bun"
+            (Get-MpPreference).ExclusionPath | ForEach-Object { Write-Host "excluded: $_" }
+          } catch {
+            Write-Host "::warning::could not add the Defender exclusions: $($_.Exception.Message)"
+          }
       - uses: actions/checkout@v4
       # Pinned, via .bun-version (the convention setup-bun's bun-version-file
       # input, and version managers such as mise/asdf, read; `bun` itself has
