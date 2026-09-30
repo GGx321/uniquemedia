@@ -35,6 +35,13 @@ export const FACE_PATCH_HEIGHT = 170;
 export const FACE_PATCH_X = Math.round((POOL_IMAGE_WIDTH - FACE_PATCH_WIDTH) / 2);
 export const FACE_PATCH_Y = 20;
 
+/** Why an ffmpeg spawn failed: an empty stderr with a null status is a spawn that never ran to its end (a spawn error, EPIPE on the piped input, a timeout, a signal), and this says which. */
+function spawnFailure(result: ReturnType<typeof spawnSync>): string {
+  const code = result.error !== undefined && "code" in result.error ? String(result.error.code) : "none";
+  const error = result.error === undefined ? "" : ` (${result.error.message})`;
+  return `error ${code}${error}, status ${String(result.status)}, signal ${String(result.signal)}; stderr: ${result.stderr?.toString() ?? ""}`;
+}
+
 /**
  * Composites `faceImagePath` (a real image file on disk — this runs only in
  * the harness/test process, never in the engine, so a plain ffmpeg file
@@ -60,7 +67,7 @@ export function facePoolImagePng(index: number, faceImagePath: string = FACE_FIX
   ];
   const result = spawnSync(ffmpegPath(), args, { input: Buffer.from(background), maxBuffer: 32 * 1024 * 1024, timeout: 30_000 });
   if (result.status !== 0) {
-    throw new Error(`ffmpeg (${ffmpegPath()}) could not composite a face pool image (index ${index}): ${result.stderr.toString()}`);
+    throw new Error(`ffmpeg (${ffmpegPath()}) could not composite a face pool image (index ${index}): ${spawnFailure(result)}`);
   }
   return new Uint8Array(result.stdout);
 }
@@ -93,7 +100,7 @@ export function facePoolNoFacePng(index: number, format: "png" | "jpeg" = "png")
   ];
   const result = spawnSync(ffmpegPath(), args, { input: Buffer.from(background), maxBuffer: 32 * 1024 * 1024, timeout: 30_000 });
   if (result.status !== 0) {
-    throw new Error(`ffmpeg (${ffmpegPath()}) could not re-encode a no-face pool image (index ${index}) as JPEG: ${result.stderr.toString()}`);
+    throw new Error(`ffmpeg (${ffmpegPath()}) could not re-encode a no-face pool image (index ${index}) as JPEG: ${spawnFailure(result)}`);
   }
   return new Uint8Array(result.stdout);
 }
