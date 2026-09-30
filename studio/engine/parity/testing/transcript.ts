@@ -42,6 +42,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "render pool: «auto» is ONE render at a time in the mock (the engine picks by cores and memory), so a second render is visibly queued; scenarios set the pool explicitly",
   "the mock's clock: a render makes 4 progress steps 700 ms apart, then the saving phase, then commits one step later; a running render's cancel ends after 50 ms. The engine's times follow its work: no scenario waits for either, and the numbers of steps are checked by rule (progress.ts)",
   "bursts: commands sent together are answered in the order sent by both, and each echo comes before its answer; how the echoes of one burst interleave with the answers of others is not compared (the engine writes a file per save, the mock answers at once)",
+  "the export folder's dialog: main's own flow runs over the real engine in the real rig, and the mock plays both; the settings a pick answers carry the rig's own paths and are not written (the folder's identity as `root#N`, and the counts, are). In the app the engine's export.status after a switch may land just after main's answer; the rig applies it first, so the transcript has it before the answer. `settings.exportDisplay` is main's own string and is tested in main",
   "the mock keeps the drafts, the videos and the last 50 finished renders in memory: a restart keeps the first two and drops the renders, like the engine's; nothing else of the disk is modelled (no torn draft files, no stale used index, no record from a newer Studio, no closed library): those refusals are the engine's own unit tests' business",
 ];
 
@@ -193,6 +194,13 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
     return [`< ok photos ${compact({ count: listed.length, free: listed.length - held.length, skippedTotal: answer.result.skippedTotal, order })}`, ...held.map((s) => `  ${s}`)].join("\n");
   }
   if (type === "engine.snapshot") return snapshotLine(answer.result, norm);
+  if (type === "settings.setExportPath") {
+    // A pick answers the settings too, whose folder paths are the rig's own (a temp dir, the mock's home): only the folder's identity
+    // (as `root#N`, in order of appearance, so a folder met again reads the same) and the counts are compared.
+    if (answer.result.picked !== true) return `< ok ${compact(answer.result)}`;
+    const { rootId, resolved, elsewhere } = answer.result;
+    return `< ok ${compact({ picked: true, rootId: typeof rootId === "string" ? norm.register("root", rootId) : rootId, resolved, elsewhere })}`;
+  }
   if (type === "photos.setRejected") {
     // The fixtures' own run, date and QA verdicts differ by construction: what is compared is the photo's state.
     const p = objectOf(answer.result.photo);

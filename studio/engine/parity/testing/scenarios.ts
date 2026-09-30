@@ -452,6 +452,96 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: "export folder: a cancelled dialog changes nothing, another folder leaves the videos elsewhere, and choosing the first again brings them back",
+    async run(t, w, control) {
+      await t.call("videos.render", { montageId: await draft(t, w, [photo(w, 1), photo(w, 2)]) });
+      await t.settle();
+      await t.call("videos.render", { montageId: await draft(t, w, [photo(w, 3), photo(w, 4)]) });
+      await t.settle();
+      t.note("the dialog is cancelled");
+      await control.exportDialog("cancel");
+      await t.call("settings.setExportPath", {});
+      await t.call("videos.list", { avatarId: w.avatarId });
+      t.note("another folder: a marker of its own, both videos are elsewhere");
+      await control.exportDialog("fresh");
+      await t.call("settings.setExportPath", {});
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await t.call("engine.snapshot", {});
+      t.note("a video made in the new folder");
+      await t.call("videos.render", { montageId: await draft(t, w, [photo(w, 5), photo(w, 6)]) });
+      await t.settle();
+      t.note("the first folder again: its two videos resolve, the third is elsewhere");
+      await control.exportDialog("first");
+      await t.call("settings.setExportPath", {});
+      await t.call("videos.list", { avatarId: w.avatarId });
+    },
+  },
+  {
+    name: "export folder: a folder the owner moved is the same folder, and every video resolves in it",
+    async run(t, w, control) {
+      await t.call("videos.render", { montageId: await draft(t, w, [photo(w, 1), photo(w, 2)]) });
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+      t.note("the owner moved the folder and points Settings at it");
+      await control.exportDialog("moved");
+      await t.call("settings.setExportPath", {});
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await t.call("engine.snapshot", {});
+    },
+  },
+  {
+    name: "export folder: a pick that cannot be the folder is refused with its reason, and nothing changes",
+    async run(t, w, control) {
+      const refuse = async (answer: "missing" | "file" | "damaged" | "insideLibrary", note: string): Promise<void> => {
+        t.note(note);
+        await control.exportDialog(answer);
+        await t.call("settings.setExportPath", {});
+      };
+      await refuse("missing", "a folder that is not there");
+      await refuse("file", "a file where a folder should be");
+      await refuse("insideLibrary", "a folder inside the library");
+      await refuse("damaged", "a damaged marker, while no video exists: the owner may delete the file");
+      t.note("the volume takes no write");
+      control.exportWritable(false);
+      await control.exportDialog("fresh");
+      await t.call("settings.setExportPath", {});
+      control.exportWritable(true);
+      await t.call("videos.render", { montageId: await draft(t, w, [photo(w, 1), photo(w, 2)]) });
+      t.note("a render is queued: the folder cannot be changed under it");
+      await control.exportDialog("fresh");
+      await t.call("settings.setExportPath", {});
+      await t.settle();
+      await refuse("damaged", "a damaged marker, now that a video exists: the text that never advises deleting the file");
+      await t.call("engine.snapshot", {});
+      await t.call("videos.list", { avatarId: w.avatarId });
+    },
+  },
+  {
+    name: "export.check: a folder that went away shows up without a render attempt, and so does its return",
+    async run(t, w, control) {
+      await t.call("export.check", {});
+      await control.exportFolder("away");
+      t.note("the folder is away: only the check finds out, and tells the windows once");
+      await t.call("export.check", {});
+      await t.call("export.check", {});
+      await t.call("engine.snapshot", {});
+      await control.exportFolder("back");
+      await t.call("export.check", {});
+      t.note("a marker that became unreadable, with no video and with one");
+      await control.exportMarker("damaged");
+      await t.call("export.check", {});
+      await control.exportMarker("intact");
+      await t.call("export.check", {});
+      await t.call("videos.render", { montageId: await draft(t, w, [photo(w, 1), photo(w, 2)]) });
+      await t.settle();
+      await control.exportMarker("damaged");
+      await t.call("export.check", {});
+      await t.call("videos.render", { montageId: await draft(t, w, [photo(w, 3), photo(w, 4)]) });
+      await control.exportMarker("intact");
+      await t.call("export.check", {});
+    },
+  },
+  {
     name: "an editor's autosave burst: saves sent together answer in order, each echo before its answer, the latest wins",
     async run(t, w) {
       const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1)] });

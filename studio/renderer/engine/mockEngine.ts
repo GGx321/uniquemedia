@@ -1639,7 +1639,10 @@ export class MockEngine implements EngineBridge {
       return this.fail(c, { code: "IN_FLIGHT", detail: "a video render is queued or running; change the export folder when it ends" });
     }
     const path = pick?.path ?? `${MOCK_HOME}/Reels-${++this.unscriptedPicks}`;
-    if (pick?.refuse !== undefined) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: this.markerReason(pick.refuse) });
+    if (pick?.refuse !== undefined) {
+      const exportReason = this.markerReason(pick.refuse);
+      return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason, detail: `the folder cannot be the export folder (${exportReason})` });
+    }
     let rootId = this.exportFolders.get(path);
     if (rootId === undefined) {
       const moved = pick?.movedFrom === undefined ? undefined : this.exportFolders.get(pick.movedFrom);

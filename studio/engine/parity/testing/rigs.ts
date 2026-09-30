@@ -1,12 +1,15 @@
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CommandMessage, EventMessage, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
+import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
+import { SettingsStore } from "../../../main/settingsStore";
+import { EngineReply } from "../../control";
 import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg";
-import { MockEngine } from "../../../renderer/engine/mockEngine";
+import { MockEngine, type MockExportPick } from "../../../renderer/engine/mockEngine";
 import { MIA, NORA, scenePhoto, SOFIA } from "../../../renderer/engine/mockEngine.testkit";
 import { ManualScheduler } from "../../../renderer/engine/scheduler";
 import { manifestTraits } from "../../avatars/records";
-import { NODE_EXPORT_ROOT_FS, type ExportRootFs } from "../../exportRoot";
+import { EXPORT_MARKER_FILE, NODE_EXPORT_ROOT_FS, type ExportRootFs } from "../../exportRoot";
 import { openLibrary } from "../../library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import { RenderFailure } from "../../renderQueue/queue";
@@ -51,7 +54,18 @@ export interface Control {
   exportWritable(writable: boolean): void;
   /** Free bytes the volume reports for the export folder; `null` is the disk's own answer. */
   freeSpace(bytes: number | null): void;
+  /** What main's folder dialog answers the next `settings.setExportPath` (used once; with nothing said it is cancelled). */
+  exportDialog(answer: ExportDialog): Promise<void>;
+  /** The export folder's marker becomes unreadable (`damaged`), or is put back as it was (`intact`). */
+  exportMarker(state: "damaged" | "intact"): Promise<void>;
 }
+
+/**
+ * The owner's pick in the dialog: nothing (`cancel`), a new empty folder (`fresh`), the export folder the rig started with (`first`),
+ * that folder moved to another place (`moved`), a path with nothing there (`missing`), a file (`file`), a folder whose marker is
+ * damaged (`damaged`), or a folder inside the library (`insideLibrary`).
+ */
+export type ExportDialog = "cancel" | "fresh" | "first" | "moved" | "missing" | "file" | "damaged" | "insideLibrary";
 
 /** What a scenario may ask of a rig before it starts. */
 export interface RigOptions {
@@ -89,6 +103,32 @@ const isSavingOrEnd = (e: EventMessage): boolean => (e.type === "job.progress" &
 
 // ---------- the mock ----------
 
+/** The export folder the mock starts with. */
+const MOCK_FIRST_EXPORT = "/Users/studio/Studio/export";
+
+/** The mock's stand-in for what the owner does in main's dialog; `n` makes the folders of one scenario differ. */
+function mockDialog(answer: ExportDialog, writable: boolean, n: number): MockExportPick | null {
+  const path = `/Users/studio/Reels-${n}`;
+  switch (answer) {
+    case "cancel":
+      return null;
+    case "fresh":
+      return writable ? { path } : { path, refuse: "not-writable" };
+    case "first":
+      return { path: MOCK_FIRST_EXPORT };
+    case "moved":
+      return { path: "/Users/studio/Moved", movedFrom: MOCK_FIRST_EXPORT };
+    case "missing":
+      return { path, refuse: "missing" };
+    case "file":
+      return { path, refuse: "not-a-directory" };
+    case "damaged":
+      return { path, refuse: "invalid-marker" };
+    case "insideLibrary":
+      return { path, refuse: "overlaps-library" };
+  }
+}
+
 export function mockRig(options: RigOptions = {}): ParityRig {
   const scheduler = new ManualScheduler();
   const photos: PhotoSummary[] = [
@@ -104,6 +144,8 @@ export function mockRig(options: RigOptions = {}): ParityRig {
   const events: EventMessage[] = [];
   engine.subscribe((raw) => events.push(EventMessage.parse(raw)));
   let messages = 0;
+  let writable = true;
+  let dialogs = 0;
   const photoIds = photos.filter((p) => p.avatarId === MIA.avatarId).map((p) => p.photoId);
   const world: World = {
     avatarId: MIA.avatarId,
@@ -145,8 +187,13 @@ export function mockRig(options: RigOptions = {}): ParityRig {
         else if (state === "back") engine.setExportDisk({ status: "ok" });
         else engine.moveExportFolder();
       },
-      exportWritable: (writable) => engine.setExportDisk(writable ? { status: "ok" } : { status: "unavailable", reason: "not-writable" }),
+      exportWritable: (canWrite) => {
+        writable = canWrite;
+        engine.setExportDisk(canWrite ? { status: "ok" } : { status: "unavailable", reason: "not-writable" });
+      },
       freeSpace: (bytes) => engine.setExportFreeBytes(bytes),
+      exportMarker: async (state) => engine.setExportDisk(state === "damaged" ? { status: "unavailable", reason: "invalid-marker" } : { status: "ok" }),
+      exportDialog: async (answer) => engine.pickExportFolderNext(mockDialog(answer, writable, ++dialogs)),
     },
     async stop() {
       scheduler.runAll();
@@ -249,7 +296,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   };
   const concurrency = options.renderConcurrency ?? 1;
   const settings = (patch: Parameters<typeof engineSettings>[1] = {}) => engineSettings(dir, { renderConcurrency: concurrency, ...patch });
-  const { engine, events } = await startEngine(dir, {
+  const { engine, events, posted } = await startEngine(dir, {
     init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings() },
     deps: {
       exportRootFs,
@@ -290,11 +337,56 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     gate.reset();
   };
 
+  // Main's half of `settings.setExportPath`: the real flow (main/exportFolderFlow.ts) over the real engine and a real settings file,
+  // with the dialog answered by the rig. What main sends the engine is applied before the answer, so the status event it causes is
+  // in the transcript before the answer (in the app it may land just after it).
+  const mainDir = join(dir, "main-user-data");
+  await mkdir(mainDir);
+  const { store: mainSettings } = await SettingsStore.open(mainDir);
+  await mainSettings.save(settings());
+  let nextPick: string | null = null;
+  let hostCalls = 0;
+  const told: Promise<void>[] = [];
+  const mainDeps: ExportFolderFlowDeps = {
+    settings: mainSettings,
+    engine: {
+      send: (control) => void told.push(engine.applyControl(control)),
+      request: (asked) => engine.handle(asked),
+      chooseExport: async (path) => {
+        const callId = `call-${String(++hostCalls).padStart(8, "0")}`;
+        await engine.receive({ kind: "control", type: "export.choose", callId, path });
+        const reply = posted.map((m) => EngineReply.safeParse(m)).find((r) => r.success && r.data.callId === callId);
+        if (reply === undefined || !reply.success) throw new Error("the engine did not answer export.choose");
+        return { error: reply.data.error ?? null, exportFolder: reply.data.exportFolder };
+      },
+    },
+    pickFolder: async () => {
+      const pick = nextPick;
+      nextPick = null;
+      return pick;
+    },
+    keyStatus: () => ({ stored: true, last4: "wxyz", encryptionAvailable: true, rejected: false }),
+    musicKeyStatus: () => ({ stored: false, last4: null, rejected: false }),
+    newId: () => `host-${String(++hostCalls).padStart(8, "0")}`,
+    home: () => dir,
+    platform: process.platform,
+  };
+  let dialogs = 0;
+  const markerPath = join(exportDir, EXPORT_MARKER_FILE);
+  let markerText: string | null = null;
+
   return {
     name: "real",
     world,
     events,
     async send(type, payload) {
+      if (type === "settings.setExportPath" || type === "settings.exportDisplay") {
+        const asked = CommandMessage.safeParse({ v: 5, id: `msg-${String(++hostCalls).padStart(6, "0")}`, kind: "command", type, payload });
+        if (!asked.success || !isExportFolderCommand(asked.data)) return { ok: false, error: { code: "VALIDATION", detail: `${type}: the payload breaks the contract` } };
+        const response = await handleExportFolderCommand(asked.data, mainDeps);
+        await Promise.all(told.splice(0));
+        return answerOf(ResponseMessage.parse(response));
+      }
       return answerOf(ResponseMessage.parse(await engine.handle(command(type, payload))));
     },
     async advance(step) {
@@ -335,6 +427,35 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       },
       freeSpace: (bytes) => {
         free = bytes;
+      },
+      exportMarker: async (state) => {
+        if (state === "damaged") {
+          markerText ??= await readFile(markerPath, "utf8");
+          await writeFile(markerPath, "{ damaged");
+        } else if (markerText !== null) {
+          await writeFile(markerPath, markerText);
+          markerText = null;
+        }
+      },
+      exportDialog: async (answer) => {
+        const folder = (name: string): string => join(dir, `${name}-${++dialogs}`);
+        if (answer === "cancel") nextPick = null;
+        else if (answer === "first") nextPick = exportDir;
+        else if (answer === "moved") {
+          nextPick = join(dir, "export-moved");
+          await rename(exportDir, nextPick);
+        } else if (answer === "missing") nextPick = folder("nowhere");
+        else if (answer === "file") {
+          nextPick = folder("a-file");
+          await writeFile(nextPick, "not a folder");
+        } else if (answer === "insideLibrary") {
+          nextPick = join(dir, "library", `exports-${++dialogs}`);
+          await mkdir(nextPick);
+        } else {
+          nextPick = folder(answer === "fresh" ? "reels" : "damaged");
+          await mkdir(nextPick);
+          if (answer === "damaged") await writeFile(join(nextPick, EXPORT_MARKER_FILE), "{ not ours");
+        }
       },
     },
     stop: settle,
