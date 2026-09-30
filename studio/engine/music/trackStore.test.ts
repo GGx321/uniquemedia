@@ -1217,6 +1217,30 @@ describe("scrubbing a record that is set aside", () => {
     expect(text).not.toMatch(/https?:/);
   });
 
+  test("a URL used as a JSON KEY is scrubbed too", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 2, [SIGNED]: 1, nested: { [SIGNED]: [1] } }));
+    await harness();
+    expect(await asideText()).not.toContain("SECRETSIG");
+  });
+
+  test("text that writes its slashes as \\u002f is scrubbed", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), `not json https:\\u002f\\u002fscontent-fra3-1.cdninstagram.com\\u002fx?oh=SECRETSIG\\u0026oe=1 tail`);
+    await harness();
+    expect(await asideText()).not.toContain("SECRETSIG");
+  });
+
+  test("an original that cannot be removed is not copied again at every open", async () => {
+    await mkdir(join(musicDir, "lists"), { recursive: true });
+    await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 2, url: SIGNED }));
+    for (let i = 0; i < 3; i++) {
+      now += 1000;
+      await TrackStore.open({ dir: musicDir, transport: fakeCdn().transport, clock: () => now, log: () => undefined, removeFile: () => Promise.reject(new Error("EBUSY")) });
+    }
+    expect((await tree()).filter((f) => f.startsWith("lists/current.json."))).toHaveLength(1);
+  });
+
   test("the copy keeps what is not a URL, so a newer Studio's record is still worth keeping", async () => {
     await mkdir(join(musicDir, "lists"), { recursive: true });
     await writeFile(join(musicDir, "lists", "current.json"), JSON.stringify({ v: 2, fetchedAt: FETCHED, note: "kept", url: SIGNED }));

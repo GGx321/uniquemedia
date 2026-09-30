@@ -74,7 +74,7 @@ function sniffCover(bytes: Uint8Array): CoverExtension | null {
   return null;
 }
 
-const URL_TEXT = /https?:(?:\\?\/){2}[^\s"]*/gi;
+const URL_TEXT = /https?:(?:\\?\/|\\u002[fF]){2}(?:\\.|[^\s"\\])*/gi;
 
 /**
  * `text` without any URL: a signed one in a record set aside would sit on disk long after it stopped working. JSON is
@@ -86,7 +86,7 @@ function scrubUrls(text: string): string {
     const walk = (value: unknown): unknown => {
       if (typeof value === "string") return value.replace(URL_TEXT, "[url]");
       if (Array.isArray(value)) return value.map(walk);
-      if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, walk(inner)]));
+      if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key.replace(URL_TEXT, "[url]"), walk(inner)]));
       return value;
     };
     return JSON.stringify(walk(JSON.parse(text)));
@@ -212,7 +212,14 @@ export class TrackStore implements MusicListSink {
     const aside = `${path}.${deps.clock()}`;
     let copied = false;
     try {
-      await writeFileAtomic(aside, scrubUrls(text));
+      const scrubbed = scrubUrls(text);
+      // An original that will not go is met again at every open: one copy of the same content is enough.
+      const names = await readdir(dirname(path)).catch(() => [] as string[]);
+      let already = false;
+      for (const name of names.filter((candidate) => candidate.startsWith("current.json."))) {
+        if ((await readFile(join(dirname(path), name), "utf8").catch(() => null)) === scrubbed) already = true;
+      }
+      if (!already) await writeFileAtomic(aside, scrubbed);
       copied = true;
     } catch {
       // The scrubbed copy could not be written: the original is moved aside as it is, which loses nothing.
