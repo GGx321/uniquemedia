@@ -34,7 +34,12 @@ useNativeGlobals();
 const POOL_SIZE = 48;
 const MIN_HAMMING_DISTANCE = 40;
 const HASH_SIZE = 64;
-/** One decode is tens of milliseconds; the bound only has to fit a heavily loaded Windows runner (a 30 s bound was hit there once, with no message saying so). */
+/**
+ * One decode is tens of milliseconds; the bound only has to fit a heavily loaded Windows runner. A decode once failed
+ * there with no message; it first read as a 30 s timeout, but the log shows ffmpeg failing about 22 ms after it
+ * started, so the cause is unknown (a spawn error or a crash, not a timeout). The diagnostics in `decodeServedGray64`
+ * name it if it happens again.
+ */
 const DECODE_TIMEOUT_MS = 120_000;
 
 /**
