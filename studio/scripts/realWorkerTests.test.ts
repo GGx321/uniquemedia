@@ -320,7 +320,7 @@ describe("the bounds", () => {
     for (const name of ["test:studio:suite", "test:studio:suite:canary"]) {
       const shards = Number(/--shards=(\d+)/.exec(scripts[name] ?? "")?.[1]);
       expect(shards).toBeGreaterThan(1);
-      const step = new RegExp(`run: bun run ${name} .*\\n\\s+timeout-minutes: (\\d+)`).exec(workflow);
+      const step = new RegExp(`run: bun run ${name} .*\\r?\\n\\s+timeout-minutes: (\\d+)`).exec(workflow);
       expect(step).not.toBeNull();
       expect(Number(step?.[1])).toBeGreaterThan((shards * MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
     }
