@@ -41,10 +41,12 @@ test("money production code uses no Bun-only API and never reads process.env", (
   expect(violations).toEqual([]);
 });
 
-test("money production code imports only node:*, zod and sibling modules", () => {
+// `../buildFlags` is the one module outside money that is allowed: build-time constants and nothing else (no imports of its
+// own), which the E2E build reads to shorten the reconcile wait and the request timeout.
+test("money production code imports only node:*, zod, sibling modules and the build flags", () => {
   const violations = PRODUCTION.flatMap((file) =>
     importsOf(readFileSync(join(DIR, file), "utf8"))
-      .filter((spec) => !spec.startsWith("node:") && spec !== "zod" && !spec.startsWith("./"))
+      .filter((spec) => !spec.startsWith("node:") && spec !== "zod" && !spec.startsWith("./") && spec !== "../buildFlags")
       .map((spec) => `${file}: ${spec}`)
   );
 
