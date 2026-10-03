@@ -60,7 +60,7 @@ test("EXPORT_UNAVAILABLE says why the folder cannot be used, after the general t
 test("EXPORT_UNAVAILABLE for a damaged marker with records never tells the owner to delete the file", () => {
   const text = errorText({ code: "EXPORT_UNAVAILABLE", exportReason: "invalid-marker-with-records" });
   expect(text).toContain(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]);
-  expect(text).not.toMatch(/удал/i);
+  expect(text).not.toMatch(/(?<!не )(удал|убер|сотр|переим|перенес|перемест)/i);
 });
 
 test("EXPORT_UNAVAILABLE without a reason keeps the general text alone", () => {

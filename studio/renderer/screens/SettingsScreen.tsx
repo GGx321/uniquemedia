@@ -13,8 +13,8 @@ import {
   type Settings,
 } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
-import type { SyncPhase } from "../engine/store";
-import { EXPORT_UNAVAILABLE_TITLE, pickedNotice, refusedPickText, unavailableText, type PickedNotice } from "../lib/exportFolder";
+import { isActiveJob, type SyncPhase } from "../engine/store";
+import { EXPORT_UNAVAILABLE_TITLE, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText, type PickedNotice } from "../lib/exportFolder";
 import { countOf, monthName, NBSP, waitLabel } from "../lib/format";
 import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars, type DollarsParse } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
@@ -688,6 +688,8 @@ function ImageAgeCheckRow({ settings }: { settings: Settings }) {
 
 function LibraryRow({ settings }: { settings: Settings }) {
   const { client, store } = useEngine();
+  // A queued or running render is what holds the library folder then, and the generic text talks about paid requests.
+  const rendering = useEngineView().jobs.some((job) => job.kind === "render" && isActiveJob(job));
   const inputId = useId();
   const issueId = useId();
   const [editing, setEditing] = useState(false);
@@ -788,7 +790,7 @@ function LibraryRow({ settings }: { settings: Settings }) {
           {issue}
         </p>
       )}
-      {error && <ErrorNotice error={error} />}
+      {error && (error.code === "IN_FLIGHT" && rendering ? <Notice tone="danger">{LIBRARY_RENDER_BUSY_TEXT}</Notice> : <ErrorNotice error={error} />)}
     </>
   );
 }

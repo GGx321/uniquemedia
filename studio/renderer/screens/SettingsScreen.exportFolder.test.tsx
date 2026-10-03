@@ -196,7 +196,7 @@ describe("a pick that is refused", () => {
 
     const text = notice("alert").textContent ?? "";
     expect(text).toContain(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]);
-    expect(text).not.toMatch(/удал|убер|переим|перенес|перемест/i);
+    expect(text).not.toMatch(/(?<!не )(удал|убер|сотр|переим|перенес|перемест)/i);
   });
 
   test("while a render runs the folder cannot be changed, and the row says to wait or cancel", async () => {
@@ -259,7 +259,7 @@ describe("the folder in use cannot be used", () => {
 
     const text = notice("alert").textContent ?? "";
     expect(text).toContain(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]);
-    expect(text).not.toMatch(/удал/i);
+    expect(text).not.toMatch(/(?<!не )(удал|убер|сотр|переим|перенес|перемест)/i);
   });
 
   test("goes away by itself when the disk is back and the window is looked at again", async () => {
@@ -299,6 +299,56 @@ describe("the folder in use cannot be used", () => {
     await pick(ctx, { path: REELS });
 
     expect(screen.queryByText("Папка «Готовые видео» недоступна")).toBeNull();
+  });
+});
+
+describe("the library row refused while renders run", () => {
+  function changeLibrary(path: string): void {
+    fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+    const input = screen.getByLabelText("Библиотека");
+    fireEvent.change(input, { target: { value: path } });
+    const form = input.closest("form");
+    if (!form) throw new Error("library form missing");
+    fireEvent.submit(form);
+  }
+
+  test("says it is the renders that hold the folder, and what to do, instead of the text about paid requests", async () => {
+    const photos = freePhotos(6);
+    const ctx = await openFolders({ avatars: [{ ...MIA, photoCount: photos.length, eligibleUnusedCount: photos.length }], photos });
+    const created = await ctx.client.request("montages.create", { avatarId: MIA.avatarId, photoIds: [P1, P2] });
+    if (!created.ok) throw new Error("the draft was not made");
+    await ctx.client.request("videos.render", { montageId: created.result.montage.montageId });
+    await flush();
+
+    changeLibrary("/Volumes/Data/Studio");
+    await flush();
+
+    const text = notice("alert").textContent ?? "";
+    expect(text).toContain("Пока идут рендеры, папку библиотеки менять нельзя: дождитесь их конца или отмените их.");
+    expect(text).not.toContain(ERROR_MESSAGES_RU.IN_FLIGHT);
+  });
+
+  test("when no render is the reason (a paid request is), the ordinary text stays", async () => {
+    const ctx = await openFolders();
+    ctx.engine.failNext("settings.setLibraryPath", { code: "IN_FLIGHT" });
+
+    changeLibrary("/Volumes/Data/Studio");
+    await flush();
+
+    expect(notice("alert").textContent).toContain(ERROR_MESSAGES_RU.IN_FLIGHT);
+  });
+});
+
+describe("a pick whose counts are not whole", () => {
+  test("is warned about, and does not say that every video is there", async () => {
+    const ctx = await withTwoVideos();
+
+    await pick(ctx, { path: "/Users/studio/Archive/export", movedFrom: FIRST, incomplete: true });
+
+    const text = notice("alert").textContent ?? "";
+    expect(text).toContain(`Папка выбрана: 2${NBSP}видео на месте.`);
+    expect(text).not.toContain("все");
+    expect(text).toContain("Часть записей о видео прочитать не удалось");
   });
 });
 

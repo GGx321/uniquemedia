@@ -27,18 +27,27 @@ export interface PickedNotice {
  * many stayed in the previous one (`elsewhere`). A moved folder and the first folder chosen again resolve everything; another folder
  * leaves the old videos behind until the old folder is chosen again.
  */
-export function pickedNotice(counts: { resolved: number; elsewhere: number }): PickedNotice {
-  const { resolved, elsewhere } = counts;
+export function pickedNotice(counts: { resolved: number; elsewhere: number; incomplete: boolean }): PickedNotice {
+  const { resolved, elsewhere, incomplete } = counts;
+  const behind = "Они снова откроются, когда вы выберете прежнюю папку ещё раз.";
+  // Some record files could not be read: the numbers may be short, so «все» is never said and the owner is told why.
+  const partial = "Часть записей о видео прочитать не удалось, поэтому числа могут быть неполными.";
   if (elsewhere > 0) {
     return {
       tone: "warn",
       text: `Папка выбрана: ${countOf(resolved, VIDEOS)} на месте, ${countOf(elsewhere, VIDEOS)} ${stayedVerb(elsewhere)} в прежней папке.`,
-      hint: "Они снова откроются, когда вы выберете прежнюю папку ещё раз.",
+      hint: incomplete ? `${behind} ${partial}` : behind,
     };
   }
-  if (resolved === 0) return { tone: "ok", text: "Папка выбрана.", hint: null };
-  return { tone: "ok", text: `Папка выбрана: ${resolved === 1 ? countOf(1, VIDEOS) : `все ${countOf(resolved, VIDEOS)}`} на месте.`, hint: null };
+  const tone = incomplete ? "warn" : "ok";
+  const hint = incomplete ? partial : null;
+  if (resolved === 0) return { tone, text: "Папка выбрана.", hint };
+  const holds = resolved === 1 || incomplete ? countOf(resolved, VIDEOS) : `все ${countOf(resolved, VIDEOS)}`;
+  return { tone, text: `Папка выбрана: ${holds} на месте.`, hint };
 }
+
+/** «Библиотека · Изменить» refused while renders are queued or running: the generic IN_FLIGHT text talks about paid requests, which is not the reason then. */
+export const LIBRARY_RENDER_BUSY_TEXT = "Пока идут рендеры, папку библиотеки менять нельзя: дождитесь их конца или отмените их.";
 
 /** Why a pick was refused, and that nothing changed: the old folder is still the export folder. */
 export function refusedPickText(error: EngineError): string {
