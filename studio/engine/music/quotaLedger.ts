@@ -1,8 +1,8 @@
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { Count, MUSIC_QUOTA_LIMIT, MUSIC_QUOTA_WINDOW_DAYS } from "../../shared/engine";
-import { appendJsonLine, fsyncDir, readJsonl } from "../library/durableFs";
+import { appendJsonLine, fsyncDir, readJsonl, writeFileAtomic, writeFileDurable } from "../library/durableFs";
 import { LibraryError } from "../library/errors";
 import { runExclusive } from "../library/keyedMutex";
 import { errorCode } from "../library/renameRetry";
@@ -24,6 +24,17 @@ import { errorCode } from "../library/renameRetry";
 // A torn last line (no newline) is a crash inside the append, before the request could leave: it is not a send. It is
 // moved aside to `<file>.torn` by the next append (`appendJsonLine`). A complete line that does not parse is not the
 // result of a crash, so the ledger refuses to guess the count and the refresh does not leave.
+//
+// The way out of such a log (3c.6, `recover`, behind the owner's confirmation): the damaged file is copied aside to
+// `<file>.corrupt-<time>` and a new log replaces it whose only line, `recovered`, counts as 30 sends made at that moment.
+// The quota is therefore closed for exactly 31 days, the reading of a count nobody can trust that can never be too low.
+// Each step fails closed: the copy is made first, and the new log replaces the old one in one atomic rename, so a crash
+// leaves either the damaged log (still closed) or the new one (closed for 31 days), never an empty one.
+//
+// Deleting the log by hand resets the local count to 0: the ledger cannot tell a deleted log from a first start. What
+// still holds is the server's own count. The first request after a deletion leaves, and if flashapi answers that no
+// requests remain (`remaining` 0, a 429 above all) the floor closes the next 31 days again. So a deletion costs at most
+// one request beyond what the account allows, per deletion; on a plan with overage that one request may be billed.
 
 export const QUOTA_LIMIT = MUSIC_QUOTA_LIMIT;
 export const QUOTA_WINDOW_MS = MUSIC_QUOTA_WINDOW_DAYS * 24 * 3600 * 1000;
@@ -31,6 +42,8 @@ export const QUOTA_WINDOW_MS = MUSIC_QUOTA_WINDOW_DAYS * 24 * 3600 * 1000;
 const KEY_TAG = /^[\x21-\x7e]{4}$/;
 const KeyTag = z.string().regex(KEY_TAG);
 const LineId = z.string().min(1).max(64);
+/** A plain file name in the log's own folder (the damaged log's copy): no separator, no path. */
+const QuarantineName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 /**
  * A time on a line: epoch ms between 2000 and 2100. A wild one (1970, or past what a `Date` holds) would make a status
  * conversion throw and a window count nonsense, so such a line is corruption and is never written either.
@@ -63,6 +76,16 @@ const QuotaLineSchema = z.discriminatedUnion("kind", [
     serverAt: EpochMs.optional(),
   }),
   z.strictObject({ v: z.literal(1), kind: z.literal("key"), at: EpochMs, key: KeyTag.nullable() }),
+  // 3c.6: the first line of a log that replaced a damaged one: `sends` sends made at `at` (the limit, so the quota is
+  // closed for 31 days), the name the damaged file was copied to, and the key the engine knew to be rejected then.
+  z.strictObject({
+    v: z.literal(1),
+    kind: z.literal("recovered"),
+    at: EpochMs,
+    sends: Count.min(1).max(1000),
+    quarantined: QuarantineName,
+    rejectedKey: KeyTag.nullable(),
+  }),
 ]);
 export type QuotaLine = z.infer<typeof QuotaLineSchema>;
 
@@ -108,6 +131,11 @@ export function summarize(lines: readonly QuotaLine[], now: number): QuotaSummar
         hadOkResult = true;
         if (rejectedKey === line.key) rejectedKey = null;
       }
+    } else if (line.kind === "recovered") {
+      // A fresh start after a damaged log: its sends, all made at its time, and nothing the damaged log said.
+      if (line.at > windowStart) for (let i = 0; i < line.sends; i++) sendTimes.push(line.at);
+      lastRemaining = null;
+      rejectedKey = line.rejectedKey;
     } else {
       rejectedKey = null;
     }
@@ -136,10 +164,27 @@ export function summarize(lines: readonly QuotaLine[], now: number): QuotaSummar
 /** `at` on an admitted request is the moment its `send` line was written. */
 export type Admission = { ok: true; summary: QuotaSummary; at: number } | { ok: false; refusal: "quota" | "floor"; summary: QuotaSummary };
 
+/**
+ * What `recover` did: the damaged log was put aside (`quarantined`, a name in the log's folder) and the new one counts as
+ * the limit spent now; or why nothing changed: the log is sound (or absent), cannot be read at all, or the clock is not
+ * a real date the new log could be dated with.
+ */
+export type Recovery = { ok: true; summary: QuotaSummary; quarantined: string } | { ok: false; refusal: "not-corrupt" | "unreadable" | "clock" };
+
 export interface QuotaLedgerOptions {
   clock: () => number;
   /** Test seam: syncs a folder after it gained an entry; `fsyncDir` (a no-op on Windows) by default. */
   syncDir?: (dir: string) => Promise<void>;
+  /** Test seam: runs in `recover` after the damaged log was copied aside and before the new log replaces it. Throw to play a crash there. */
+  beforeReplace?: () => Promise<void>;
+}
+
+/** How many copies of a damaged log one second may hold before `recover` gives up on a free name. */
+const MAX_QUARANTINE_TRIES = 100;
+
+/** `20261003T101500Z`: a moment as a file name can carry it, to the second, in UTC. */
+function fileStamp(at: number): string {
+  return new Date(at).toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[-:]/g, "");
 }
 
 /**
@@ -159,11 +204,13 @@ export class QuotaLedger {
   readonly #path: string;
   readonly #clock: () => number;
   readonly #syncDir: (dir: string) => Promise<void>;
+  readonly #beforeReplace: (() => Promise<void>) | undefined;
 
   constructor(path: string, options: QuotaLedgerOptions) {
     this.#path = path;
     this.#clock = options.clock;
     this.#syncDir = options.syncDir ?? fsyncDir;
+    this.#beforeReplace = options.beforeReplace;
   }
 
   async #load(): Promise<QuotaLine[]> {
@@ -270,5 +317,61 @@ export class QuotaLedger {
   async recordKeyChange(key: string | null, at?: number): Promise<void> {
     assertKeyTag(key);
     return await this.#exclusive(() => this.#append({ v: 1, kind: "key", at: this.#clampAt(at), key }));
+  }
+
+  /**
+   * The way out of a damaged log (3c.6), for the owner's confirmed request only. When, and only when, the log holds a
+   * complete line that cannot be read: copies the file aside, byte for byte, to `<file>.corrupt-<time>` (fsynced, a name
+   * of its own), then replaces the log in one atomic rename with a new one whose only line counts as the limit spent NOW,
+   * carrying `rejectedKey` (the last four chars of a key the caller knows to be rejected, or null). A sound or absent log,
+   * one that cannot be read at all, and a clock that is not a real date change nothing. A write that fails throws
+   * `QuotaLogError("unwritable")` and leaves the damaged log as the log: still closed, and the copy may stay behind.
+   */
+  async recover(input: { rejectedKey: string | null }): Promise<Recovery> {
+    assertKeyTag(input.rejectedKey);
+    return this.#exclusive(async () => {
+      try {
+        await this.#load();
+        return { ok: false, refusal: "not-corrupt" };
+      } catch (error) {
+        if (!(error instanceof QuotaLogError) || error.code !== "corrupt") return { ok: false, refusal: "unreadable" };
+      }
+      const now = this.#clock();
+      if (!clockInRange(now)) return { ok: false, refusal: "clock" };
+      let damaged: Buffer;
+      try {
+        damaged = await readFile(this.#path);
+      } catch {
+        return { ok: false, refusal: "unreadable" };
+      }
+      try {
+        const quarantined = await this.#copyAside(damaged, now);
+        const line = QuotaLineSchema.parse({ v: 1, kind: "recovered", at: now, sends: QUOTA_LIMIT, quarantined, rejectedKey: input.rejectedKey });
+        await this.#beforeReplace?.();
+        await writeFileAtomic(this.#path, `${JSON.stringify(line)}\n`);
+        return { ok: true, quarantined, summary: summarize([line], now) };
+      } catch (error) {
+        throw new QuotaLogError("unwritable", `the quota log could not be recovered (${errorCode(error) ?? "unknown"})`);
+      }
+    });
+  }
+
+  /** Writes `bytes` to a new file beside the log, named for `at` (`-2`, `-3` ... when that second is taken), and makes it durable. */
+  async #copyAside(bytes: Uint8Array, at: number): Promise<string> {
+    const folder = dirname(this.#path);
+    const base = `${basename(this.#path)}.corrupt-${fileStamp(at)}`;
+    for (let n = 1; n <= MAX_QUARANTINE_TRIES; n++) {
+      const name = n === 1 ? base : `${base}-${n}`;
+      try {
+        await writeFileDurable(join(folder, name), bytes);
+      } catch (error) {
+        if (errorCode(error) === "EEXIST") continue;
+        throw error;
+      }
+      // The copy's entry in the folder: a folder that cannot be synced only weakens this, as for a new log's folder.
+      await this.#syncDir(folder).catch(() => undefined);
+      return name;
+    }
+    throw Object.assign(new Error("no free name for the damaged quota log"), { code: "EEXIST" });
   }
 }
