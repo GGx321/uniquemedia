@@ -23,12 +23,14 @@ export interface SmokeSpecPlan {
   readonly clips: readonly ClipPlan[];
   /** One scene photo per cell: one photo goes into one video. */
   readonly photoCount: number;
+  /** Text and sticker layers (3b.6), in z-order. */
+  readonly layers?: Shape["layers"];
 }
 
 const cellsOf = (layout: ClipPlan["layout"]): number => (layout === "photo" ? 1 : COLLAGE_CELL_COUNT[layout]);
 
-function plan(name: string, clips: readonly ClipPlan[]): SmokeSpecPlan {
-  return { name, clips, photoCount: clips.reduce((sum, clip) => sum + cellsOf(clip.layout), 0) };
+function plan(name: string, clips: readonly ClipPlan[], layers?: Shape["layers"]): SmokeSpecPlan {
+  return { name, clips, photoCount: clips.reduce((sum, clip) => sum + cellsOf(clip.layout), 0), ...(layers === undefined ? {} : { layers }) };
 }
 
 /** Each 4 s in one clip. The motions are spread so none depends on a single kind: Ken Burns on a photo and on a collage, a pan on a photo and on a collage, static on a collage (and in the mixed timeline, on a photo). */
@@ -49,8 +51,25 @@ export const MIXED_SPEC: SmokeSpecPlan = plan("mixed-15s", [
   { layout: "collage4", motion: "pan", durationMs: 3_000, stagger: false },
 ]);
 
+/**
+ * 15 s over two photo clips with the heaviest layers one render needs to prove the packaged build draws them (3b.6): a REAL caption in the
+ * shadow style («Без фона», the costliest to draw and to store) with an emoji, scale 1.6, and a large built-in sticker (read out of app.asar
+ * inside the real utilityProcess). One render, so the CI time it adds stays small; its peak ffmpeg RSS is gated against `peakRSS` like the others.
+ */
+export const LAYERED_SPEC: SmokeSpecPlan = plan(
+  "layered-15s",
+  [
+    { layout: "photo", motion: "static", durationMs: 8_000 },
+    { layout: "photo", motion: "kenburns", durationMs: 7_000 },
+  ],
+  [
+    { layerId: "layer-smoke-text-01", kind: "text", startMs: 1_000, endMs: 14_000, value: "slow morning in lisbon \u2600\uFE0F", font: "manrope", style: "none", color: "#ffffff", x: 0.5, y: 0.2, scale: 1.6 },
+    { layerId: "layer-smoke-stkr-02", kind: "sticker", startMs: 2_000, endMs: 14_000, sticker: { source: "builtin", stickerId: "heart-pulse" }, x: 0.5, y: 0.6, size: 0.45 },
+  ],
+);
+
 /** How many scene photos the library must hold for every spec to have its own. */
-export const SMOKE_PHOTOS_NEEDED: number = [...PAIRWISE_SPECS, MIXED_SPEC].reduce((sum, p) => sum + p.photoCount, 0);
+export const SMOKE_PHOTOS_NEEDED: number = [...PAIRWISE_SPECS, MIXED_SPEC, LAYERED_SPEC].reduce((sum, p) => sum + p.photoCount, 0);
 
 const FOCUS = { x: 0.5, y: 0.4 } as const;
 
@@ -77,5 +96,5 @@ export function smokeSpec(spec: SmokeSpecPlan, avatarId: string, photoIds: reado
       transitionIn: "cut",
     };
   });
-  return { schemaVersion: 1, avatarId, clips, layers: [], music: null, seed: 7 };
+  return { schemaVersion: 1, avatarId, clips, layers: [...(spec.layers ?? [])], music: null, seed: 7 };
 }

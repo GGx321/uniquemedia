@@ -50,7 +50,7 @@ import {
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, totalFrames, trackIssues } from "../../shared/montage";
-import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
+import { stickerIssues } from "../../shared/stickers/stickerIssues";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { realScheduler, type Scheduler } from "./scheduler";
@@ -1496,10 +1496,8 @@ export class MockEngine implements EngineBridge {
         });
       }
     });
-    const stickers: ReadonlySet<string> = new Set(STICKER_MANIFEST.map((sticker) => sticker.id));
-    spec.layers.forEach((layer, i) => {
-      if (layer.kind === "sticker" && layer.sticker.source === "builtin" && !stickers.has(layer.sticker.stickerId)) referential.push({ code: "sticker-unavailable", path: ["layers", i, "sticker"] });
-    });
+    // The set is in the build: the engine's own function, so the mock and the engine name the same stickers.
+    referential.push(...stickerIssues(spec));
     // The mock holds no tracks, like an engine with no track store: a trending track is never held (the engine's own function).
     referential.push(...trackIssues(spec, undefined));
     return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referential].slice(0, MAX_MONTAGE_ISSUES);

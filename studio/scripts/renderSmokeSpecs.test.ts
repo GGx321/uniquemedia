@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { COLLAGE_CELL_COUNT, MontageSpec } from "../shared/engine";
 import { videoKindOf } from "../engine/videos/service";
-import { MIXED_SPEC, PAIRWISE_SPECS, SMOKE_PHOTOS_NEEDED, smokeSpec, type SmokeSpecPlan } from "./renderSmokeSpecs";
+import { LAYERED_SPEC, MIXED_SPEC, PAIRWISE_SPECS, SMOKE_PHOTOS_NEEDED, smokeSpec, type SmokeSpecPlan } from "./renderSmokeSpecs";
+import { montageIssues } from "../shared/engine/montage";
+import { notYetSupportedIssues } from "../shared/montage/notYetSupported";
+import { stickerIssues } from "../shared/stickers/stickerIssues";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -9,7 +12,7 @@ useNativeGlobals();
 // render today, every collage size and every motion, and one mixed 15 s timeline. They are data only; the smoke feeds them
 // to `videos.render`.
 
-const ALL = [...PAIRWISE_SPECS, MIXED_SPEC];
+const ALL = [...PAIRWISE_SPECS, MIXED_SPEC, LAYERED_SPEC];
 const photoIds = (plan: SmokeSpecPlan): string[] => Array.from({ length: plan.photoCount }, (_, i) => `photo-${plan.name}-${i}`);
 const specOf = (plan: SmokeSpecPlan) => smokeSpec(plan, "avatar-0001", photoIds(plan));
 
@@ -76,13 +79,16 @@ describe("every spec", () => {
     }
   });
 
-  test("never asks for a layer, music or an own video, which the engine refuses as not yet supported", () => {
+  test("never asks for music or an own video, which the engine refuses as not yet supported", () => {
     for (const plan of ALL) {
       const spec = specOf(plan);
-      expect(spec.layers).toEqual([]);
       expect(spec.music).toBeNull();
       expect(spec.clips.some((clip) => clip.kind === "video")).toBe(false);
     }
+  });
+
+  test("asks for layers only in the one layered spec", () => {
+    for (const plan of ALL) expect(specOf(plan).layers.length > 0).toBe(plan === LAYERED_SPEC);
   });
 
   test("refuses to be built over the wrong number of photos", () => {
@@ -92,5 +98,38 @@ describe("every spec", () => {
 
 test("the library needs one scene photo per cell of every spec: no photo is shared, because one photo goes into one video", () => {
   expect(SMOKE_PHOTOS_NEEDED).toBe(ALL.reduce((sum, plan) => sum + plan.photoCount, 0));
-  expect(SMOKE_PHOTOS_NEEDED).toBe(1 + 1 + 2 + 3 + 4 + 11);
+  expect(SMOKE_PHOTOS_NEEDED).toBe(1 + 1 + 2 + 3 + 4 + 11 + 2);
+});
+
+describe("the layered timeline (3b.6, the packaged render with a real caption and a built-in sticker)", () => {
+  const spec = specOf(LAYERED_SPEC);
+
+  test("is 15 s, the longest a montage may be, so its peak memory is the render's worst: two photo clips and nothing else", () => {
+    expect(spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0)).toBe(15_000);
+    expect(spec.clips.every((clip) => clip.kind === "photo")).toBe(true);
+  });
+
+  test("has one text layer, drawn by the real rasteriser, and one built-in sticker", () => {
+    expect(spec.layers.map((l) => l.kind)).toEqual(["text", "sticker"]);
+    const sticker = spec.layers[1];
+    expect(sticker?.kind === "sticker" ? sticker.sticker.source : null).toBe("builtin");
+  });
+
+  test("uses the heaviest text style, a shadow («Без фона»), with an emoji, and a large sticker", () => {
+    const [text, sticker] = spec.layers;
+    expect(text?.kind === "text" ? text.style : null).toBe("none");
+    expect(text?.kind === "text" ? text.value : "").toMatch(/\p{Extended_Pictographic}/u);
+    expect(sticker?.kind === "sticker" ? sticker.size : 0).toBeGreaterThanOrEqual(0.4);
+  });
+
+  test("is refused by nothing: no structural issue, no N9, a sticker the set has", () => {
+    expect([...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec)]).toEqual([]);
+  });
+
+  test("keeps its layers inside the timeline, each at least 300 ms", () => {
+    for (const layer of spec.layers) {
+      expect(layer.endMs).toBeLessThanOrEqual(15_000);
+      expect(layer.endMs - layer.startMs).toBeGreaterThanOrEqual(300);
+    }
+  });
 });

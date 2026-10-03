@@ -17,7 +17,7 @@ import type { PhotoSource } from "../render";
 import type { RenderQueue, RenderQueueEvent } from "../renderQueue/queue";
 import { sweepRenderTmp } from "../renderQueue/sweep";
 import { TEXT_PREVIEW_DIR } from "../text/preview";
-import { stickerIssues } from "../montages/issues";
+import { stickerIssues } from "../../shared/stickers/stickerIssues";
 import type { DraftStore } from "../montages/store";
 import type { CommitFs } from "./commitFs";
 import { deleteVideo, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";

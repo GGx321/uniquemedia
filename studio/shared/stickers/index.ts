@@ -3,3 +3,4 @@
 // in, facts out.
 export * from "./apng";
 export * from "./manifest";
+export * from "./stickerIssues";

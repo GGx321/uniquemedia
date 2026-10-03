@@ -102,7 +102,7 @@ import { looksLikeAStackTrace } from "./stackTrace";
 import { boxTree, formatBoxTree, mp4Facts } from "./mp4Facts";
 import { startFfmpegSampler } from "./processSampler";
 import { renderedFileProblems } from "./renderSmokeChecks";
-import { MIXED_SPEC, PAIRWISE_SPECS, SMOKE_PHOTOS_NEEDED, smokeSpec, type SmokeSpecPlan } from "./renderSmokeSpecs";
+import { LAYERED_SPEC, MIXED_SPEC, PAIRWISE_SPECS, SMOKE_PHOTOS_NEEDED, smokeSpec, type SmokeSpecPlan } from "./renderSmokeSpecs";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 const SMOKE_KEY = "sk-or-v1-smoke-test-not-real-7q3z";
@@ -2100,7 +2100,7 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
   // One scene photo per cell: spec 0..4 are the pairwise ones, then the mixed timeline.
   let next = 0;
   const take = (plan: SmokeSpecPlan): string[] => world.photoIds.slice(next, (next += plan.photoCount));
-  const photosOf = new Map<SmokeSpecPlan, string[]>([...PAIRWISE_SPECS, MIXED_SPEC].map((plan) => [plan, take(plan)]));
+  const photosOf = new Map<SmokeSpecPlan, string[]>([...PAIRWISE_SPECS, MIXED_SPEC, LAYERED_SPEC].map((plan) => [plan, take(plan)]));
   const photosFor = (plan: SmokeSpecPlan): string[] => photosOf.get(plan) ?? [];
   const [kenBurns, pan, collage2, collage3, collage4] = PAIRWISE_SPECS;
   if (kenBurns === undefined || pan === undefined || collage2 === undefined || collage3 === undefined || collage4 === undefined) throw new Error("the pairwise specs changed shape");
@@ -2188,6 +2188,8 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
     await measured(kenBurns);
     await measured(collage2);
     await measured(MIXED_SPEC);
+    // One real caption and one built-in sticker, 15 s: commits, passes the verifier, and its peak ffmpeg RSS is gated (the layer pass's calls and pass 2 each).
+    await measured(LAYERED_SPEC);
 
     // 3. Kill ONLY the engine in the middle of a render (Windows without /T). After the restart nothing of it is left: no file under a final
     // name, no record, no used mark, and no ffmpeg of its own.

@@ -1,10 +1,10 @@
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
-import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { Library } from "../library";
 import { photoAvailability, type Availability } from "./availability";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 import { trackIssues } from "../../shared/montage/trackIssues";
 import type { TrackLookup } from "../music/renderTrack";
+import { stickerIssues } from "../../shared/stickers/stickerIssues";
 
 // The engine's verdict on a draft (`montages.get`, `montages.list`): the structural issues a render would raise
 // (`montageIssues(spec, "spec")`, the same function `videos.render` uses), what a render refuses for a part whose slice
@@ -24,8 +24,6 @@ import type { TrackLookup } from "../music/renderTrack";
 //   track-too-short      DONE  a trending track shorter than `startMs` plus the montage's total (`music`). TODO(3f.4) for an own track.
 // Nothing is invented for the TODOs: a render still refuses those parts with `not-yet-supported` (N9) until their slices land.
 
-const BUILTIN_STICKERS: ReadonlySet<string> = new Set(STICKER_MANIFEST.map((sticker) => sticker.id));
-
 /** One scene-photo cell of a draft and where it is (the issue's path). */
 interface SceneCell {
   readonly photoId: string;
@@ -44,20 +42,6 @@ function sceneCells(spec: Pick<MontageDraft, "clips">): SceneCell[] {
     }
   });
   return cells;
-}
-
-/**
- * The built-in stickers of a spec that the set does not have (`sticker-unavailable` at the layer's `sticker`). `videos.render`
- * asks this too (3b.6), so a render refuses a gone sticker up front instead of failing a job: it needs no library.
- */
-export function stickerIssues(spec: Pick<MontageDraft, "layers">): MontageIssue[] {
-  const issues: MontageIssue[] = [];
-  spec.layers.forEach((layer, i) => {
-    if (layer.kind === "sticker" && layer.sticker.source === "builtin" && !BUILTIN_STICKERS.has(layer.sticker.stickerId)) {
-      issues.push({ code: "sticker-unavailable", path: ["layers", i, "sticker"] });
-    }
-  });
-  return issues;
 }
 
 /** The referential issues of a draft, in order: photos (clips, then cells), then stickers (layers), then the music track. Not bounded here. */
