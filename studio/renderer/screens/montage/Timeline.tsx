@@ -349,6 +349,8 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     // Escape clears the selection from anywhere but text entry: a slider (the zoom) has no Escape of its own.
     if (event.key === "Escape" && selection !== null && !isTextEntry(event.target)) {
       event.preventDefault();
+      // A trim handle goes with the selection: the focus moves to its block first, never to the page.
+      if (event.target instanceof HTMLElement && event.target.classList.contains("hd")) event.target.parentElement?.querySelector("button")?.focus();
       timeline.select(null);
       return;
     }

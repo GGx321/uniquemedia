@@ -262,6 +262,54 @@ describe("moving and trimming a layer (100 ms steps, one undo step per gesture)"
   });
 });
 
+describe("the keyboard focus stays on a block that changes rows (review round 1)", () => {
+  test("⌥← into a neighbour moves the block to another row and it keeps the focus; two separate bursts are two undo steps", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [textLayer(0, 0, 3_000), textLayer(1, 3_000, 6_000)] });
+    const second = block(/^Текст 2:/);
+    second.focus();
+    fireEvent.keyDown(second, { key: "ArrowLeft", altKey: true });
+    // 2.9–5.9 s covers the first text: a second row now, the same element.
+    expect(texts().querySelectorAll(".ed-blk-slot").length).toBe(2);
+    expect(document.activeElement === second && second.isConnected).toBe(true);
+    fireEvent.keyUp(second, { key: "ArrowLeft" });
+    fireEvent.keyDown(second, { key: "ArrowLeft", altKey: true });
+    fireEvent.keyUp(second, { key: "ArrowLeft" });
+    expect(blockNames(texts())[1]).toBe("Текст 2: «sunday reset», 2.8–5.8 с");
+    undo();
+    expect(blockNames(texts())[1]).toBe("Текст 2: «sunday reset», 2.9–5.9 с");
+  });
+
+  test("a trim handle stays on its block while it is dragged; Escape on a handle gives the focus to the block", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [textLayer(0, 300, 4_400)] });
+    fireEvent.click(block(/^Текст 1:/));
+    const end = within(timeline()).getByRole("slider", { name: "Текст 1: конец" });
+    fireEvent.pointerDown(end, { pointerId: 14, button: 0, clientX: 500 });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 14, clientX: 500 + ONE_SECOND_PX }));
+    });
+    expect(within(timeline()).queryAllByRole("slider", { name: "Текст 1: конец" }).length).toBe(1);
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 14, clientX: 500 + ONE_SECOND_PX }));
+    });
+    const start = within(timeline()).getByRole("slider", { name: "Текст 1: начало" });
+    start.focus();
+    fireEvent.keyDown(start, { key: "Escape" });
+    expect(document.activeElement?.getAttribute("data-layer-id")).toBe("layer-001");
+    expect(block(/^Текст 1:/).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  test("a sticker picked from the menu gives the focus back to «+»", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    const add = within(timeline()).getByRole("button", { name: "Добавить стикер" });
+    fireEvent.click(add);
+    fireEvent.click(within(timeline()).getByRole("menuitem", { name: "Звезда" }));
+    expect(document.activeElement === add).toBe(true);
+  });
+});
+
 describe("the z-order («Слой выше» / «Слой ниже»)", () => {
   test("a text under a sticker of the same time goes up and back down; at the extremes the step is off with the reason", async () => {
     const { client, engine } = await studio();

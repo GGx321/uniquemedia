@@ -102,6 +102,8 @@ export function StickerAdd({ name, why, onPick }: StickerAddProps) {
                   onClick={() => {
                     setOpen(false);
                     onPick(sticker.id);
+                    // The picked item goes with the menu: the focus comes back to «+», as on Escape.
+                    plus.current?.focus();
                   }}
                 >
                   {url === null ? <Icon name="sparkle" size={16} /> : <img src={url} alt="" draggable={false} />}

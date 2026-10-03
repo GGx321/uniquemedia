@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useRef, useState } from "react";
 import type { Layer, MontageDraft } from "../../../shared/engine";
 import { FPS } from "../../../shared/montage";
 import { stickerById } from "../../../shared/stickers/manifest";
@@ -28,6 +28,8 @@ export const MIN_ROWS: Record<LayerKind, number> = { text: 2, sticker: 1 };
 /** One row of a layer lane, and the gap between rows, as drawn. */
 export const ROW_PX = 26;
 export const ROW_GAP_PX = 4;
+/** A block's inset from its row's top and bottom (the sheet's .blk: 3 px). */
+const BLOCK_INSET_PX = 3;
 
 /** A lane's height for `rows` rows: the track header beside it takes the same. */
 export const laneHeight = (rows: number): number => rows * ROW_PX + Math.max(0, rows - 1) * ROW_GAP_PX;
@@ -76,19 +78,9 @@ export interface LayerTracksProps {
 export function LayerTracks({ session, spec, timeline, kit, pxPerMs, text, sticker, targets, flagged, onSelect }: LayerTracksProps) {
   const { client } = useEngine();
   const [drag, setDrag] = useState<LayerDrag | null>(null);
-  const buttons = useRef(new Map<string, HTMLButtonElement>());
-  /** A block to focus after the next render: one that changed rows after a z-order step. */
-  const pendingFocus = useRef<string | null>(null);
   /** The key holding a keyboard move or trim open: its release (not a modifier's) ends the undo step. */
   const heldKey = useRef<string | null>(null);
   const total = spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
-
-  useEffect(() => {
-    const target = pendingFocus.current;
-    if (target === null) return;
-    pendingFocus.current = null;
-    buttons.current.get(target)?.focus();
-  });
 
   const indexOf = (layerId: string): number => session.state.spec.layers.findIndex((l) => l.layerId === layerId);
 
@@ -178,8 +170,9 @@ export function LayerTracks({ session, spec, timeline, kit, pxPerMs, text, stick
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat) return;
+      // The block may change rows; it stays the same element (lanes are flat, keyed by layer), so it keeps the focus.
       const edit = event.key === "ArrowUp" ? raiseLayer(current, index) : lowerLayer(current, index);
-      if (edit.ok && session.edit(edit.spec)) pendingFocus.current = layerId;
+      if (edit.ok) session.edit(edit.spec);
       return;
     }
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -213,7 +206,7 @@ export function LayerTracks({ session, spec, timeline, kit, pxPerMs, text, stick
 
   // ---------- drawing ----------
 
-  function block(index: number) {
+  function block(index: number, row: number) {
     const layer = spec.layers[index];
     if (layer === undefined) return null;
     const dragged = drag?.layerId === layer.layerId ? drag : null;
@@ -255,12 +248,8 @@ export function LayerTracks({ session, spec, timeline, kit, pxPerMs, text, stick
     };
 
     return (
-      <div key={layer.layerId} className={slot} style={{ left: `calc(${pct(startMs)} + 1px)`, width: `calc(${pct(endMs - startMs)} - 2px)` }}>
+      <div key={layer.layerId} className={slot} style={{ top: row * (ROW_PX + ROW_GAP_PX) + BLOCK_INSET_PX, left: `calc(${pct(startMs)} + 1px)`, width: `calc(${pct(endMs - startMs)} - 2px)` }}>
         <button
-          ref={(node) => {
-            if (node === null) buttons.current.delete(layer.layerId);
-            else buttons.current.set(layer.layerId, node);
-          }}
           type="button"
           className="blk ed-blk"
           data-layer-id={layer.layerId}
@@ -297,7 +286,7 @@ export function LayerTracks({ session, spec, timeline, kit, pxPerMs, text, stick
             </>
           )}
         </button>
-        {selected && dragged === null && (
+        {selected && (
           <>
             {handle("start")}
             {handle("end")}
@@ -308,14 +297,21 @@ export function LayerTracks({ session, spec, timeline, kit, pxPerMs, text, stick
     );
   }
 
+  // A lane is flat: its rows are drawn as stripes, and every block sits in the lane itself, keyed by its layer and placed
+  // on its row. A block that changes rows (a move, a trim, a z-order step, an undo) stays the same element, so it keeps
+  // the keyboard focus and its held key's undo step.
   function lane(kind: LayerKind, layout: LaneLayout) {
     return (
-      <div className={`ed-layer-lane ed-layer-lane-${kind}`} role="group" aria-label={kind === "text" ? "Тексты" : "Стикеры"}>
+      <div className={`ed-layer-lane ed-layer-lane-${kind}`} role="group" aria-label={kind === "text" ? "Тексты" : "Стикеры"} style={{ height: laneHeight(layout.count) }}>
         {Array.from({ length: layout.count }, (_, row) => (
-          <div key={row} className={kind === "text" ? "trk ed-lane-text" : "trk ed-lane-sticker"} onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)}>
-            {layout.indexes.map((index, i) => (layout.rows[i] === row ? block(index) : null))}
-          </div>
+          <div
+            key={row}
+            className={kind === "text" ? "trk ed-lane-text ed-lane-row" : "trk ed-lane-sticker ed-lane-row"}
+            style={{ top: row * (ROW_PX + ROW_GAP_PX) }}
+            onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)}
+          />
         ))}
+        {layout.indexes.map((index, i) => block(index, layout.rows[i] ?? 0))}
       </div>
     );
   }
