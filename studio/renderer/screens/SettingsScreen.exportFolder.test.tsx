@@ -77,7 +77,7 @@ describe("the export folder's row", () => {
     const { engine } = await openFolders();
 
     expect(callsOf(engine, "settings.exportDisplay")).toHaveLength(1);
-    expect(screen.queryByText(FIRST)).toBeNull();
+    expect(screen.queryByText(FIRST) === null).toBe(true);
   });
 
   test("the library's own «Изменить» is still the only one by that name", async () => {
@@ -101,7 +101,7 @@ describe("a pick", () => {
     await pick(ctx, null);
 
     expect(within(row()).getByText("~/Studio/export")).toBeDefined();
-    expect(screen.queryByText(/Папка выбрана/)).toBeNull();
+    expect(screen.queryByText(/Папка выбрана/) === null).toBe(true);
   });
 
   test("a new folder becomes the path at once, and is announced", async () => {
@@ -130,7 +130,7 @@ describe("a pick", () => {
     await pick(ctx, { path: FIRST });
 
     expect(notice("status").textContent).toContain(`Папка выбрана: все 2${NBSP}видео на месте.`);
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("alert") === null).toBe(true);
     expect(within(row()).getByText("~/Studio/export")).toBeDefined();
   });
 
@@ -227,7 +227,7 @@ describe("a pick that is refused", () => {
 
     await pick(ctx, { path: REELS });
 
-    expect(screen.queryByText(/Эту папку выбрать нельзя/)).toBeNull();
+    expect(screen.queryByText(/Эту папку выбрать нельзя/) === null).toBe(true);
     expect(notice("status").textContent).toContain("Папка выбрана.");
   });
 });
@@ -270,7 +270,7 @@ describe("the folder in use cannot be used", () => {
     fireEvent.click(screen.getByRole("button", { name: "Проверить снова" }));
     await flush();
 
-    expect(screen.queryByText("Папка «Готовые видео» недоступна")).toBeNull();
+    expect(screen.queryByText("Папка «Готовые видео» недоступна") === null).toBe(true);
   });
 
   test("«Проверить снова» asks at once, whatever the focus throttle says", async () => {
@@ -287,8 +287,8 @@ describe("the folder in use cannot be used", () => {
   test("a usable folder shows no notice at all", async () => {
     await openFolders();
 
-    expect(screen.queryByText("Папка «Готовые видео» недоступна")).toBeNull();
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("Папка «Готовые видео» недоступна") === null).toBe(true);
+    expect(screen.queryByRole("alert") === null).toBe(true);
   });
 
   test("a pick of a good folder clears it: the new folder is what the status is about", async () => {
@@ -298,7 +298,7 @@ describe("the folder in use cannot be used", () => {
 
     await pick(ctx, { path: REELS });
 
-    expect(screen.queryByText("Папка «Готовые видео» недоступна")).toBeNull();
+    expect(screen.queryByText("Папка «Готовые видео» недоступна") === null).toBe(true);
   });
 });
 

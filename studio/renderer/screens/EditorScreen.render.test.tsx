@@ -58,7 +58,7 @@ describe("a render's life on the button", () => {
 
     runAll(scheduler);
     await flush();
-    expect(screen.queryByRole("button", { name: "Отменить рендер" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Отменить рендер" }) === null).toBe(true);
     await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
   });
 
@@ -75,7 +75,7 @@ describe("a render's life on the button", () => {
     fireEvent.click(screen.getByRole("button", { name: "Отменить рендер" }));
     await flush();
     expect(callsOf(engine, "videos.cancel")).toHaveLength(1);
-    await waitFor(() => expect(screen.queryByRole("button", { name: /В очереди/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: /В очереди/ }) === null).toBe(true));
     expect(isDisabled(renderButton())).toBe(false);
     runAll(scheduler);
   });
@@ -129,7 +129,7 @@ describe("a render's life on the button", () => {
     fireEvent.click(screen.getByRole("button", { name: "Открыть в папке" }));
     await flush();
     await screen.findByText(/Файла нет в папке «Готовые видео»/);
-    expect(screen.queryByText(/Запрошенный объект не найден/)).toBeNull();
+    expect(screen.queryByText(/Запрошенный объект не найден/) === null).toBe(true);
     expect(engine.revealed).toEqual([]);
   });
 
@@ -151,7 +151,7 @@ describe("a render's life on the button", () => {
     runAll(scheduler);
     await flush();
     await screen.findByText("Готово");
-    expect(screen.queryByText(/Не удалось собрать видео/)).toBeNull();
+    expect(screen.queryByText(/Не удалось собрать видео/) === null).toBe(true);
   });
 
   test("a failed render's notice can be closed, and the button is plain «Рендер» again", async () => {
@@ -165,7 +165,7 @@ describe("a render's life on the button", () => {
     await screen.findByText(/Не удалось собрать видео/);
 
     fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
-    expect(screen.queryByText(/Не удалось собрать видео/)).toBeNull();
+    expect(screen.queryByText(/Не удалось собрать видео/) === null).toBe(true);
     expect(isDisabled(renderButton())).toBe(false);
   });
 
@@ -208,7 +208,7 @@ describe("an engine that restarts under a submit", () => {
     engine.setDelivery(true);
     engine.restart();
     await flush();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Рендер…" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Рендер…" }) === null).toBe(true));
     expect(screen.getAllByRole("button", { name: /^Рендер/ }).length).toBeGreaterThan(0);
   });
 });
@@ -252,7 +252,7 @@ describe("what a refusal says (nothing was queued: the button is ready again)", 
   test("a switch of the export folder in that moment has its own text, not the one about paid requests", async () => {
     await refused({ code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
     await screen.findByText(/Папку «Готовые видео» как раз меняют/);
-    expect(screen.queryByText(/платных/)).toBeNull();
+    expect(screen.queryByText(/платных/) === null).toBe(true);
     expect(isDisabled(renderButton())).toBe(false);
   });
 
@@ -265,8 +265,8 @@ describe("what a refusal says (nothing was queued: the button is ready again)", 
   test("PHOTO_UNAVAILABLE highlights the cells named by its issues and never shows its detail", async () => {
     await refused({ code: "PHOTO_UNAVAILABLE", detail: "an unreadable video record: Mia/2026-10-03_photo_001.mp4", issues: [{ code: "photo-unavailable", path: ["clips", 0, "cells", 1] }] });
     await screen.findByText(/Это фото нельзя использовать в видео/);
-    expect(screen.queryByText(/unreadable video record/)).toBeNull();
-    expect(screen.queryByText(/photo_001/)).toBeNull();
+    expect(screen.queryByText(/unreadable video record/) === null).toBe(true);
+    expect(screen.queryByText(/photo_001/) === null).toBe(true);
     const clips = document.querySelectorAll(".ed-clip-slot");
     expect(clips[0]?.className).toContain("ed-clip-warn");
   });
@@ -281,13 +281,13 @@ describe("what a refusal says (nothing was queued: the button is ready again)", 
     await refused({ code: "NOT_FOUND" });
     await screen.findByText(/Запрошенный объект не найден/);
     fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
-    expect(screen.queryByText(/Запрошенный объект не найден/)).toBeNull();
+    expect(screen.queryByText(/Запрошенный объект не найден/) === null).toBe(true);
   });
 
   test("a refused render is not a failed job: no «Повторить рендер», the plain button retries", async () => {
     await refused({ code: "RENDER_QUEUE_FULL", detail: "the render queue is full: 20 renders are already queued or running" });
     await screen.findByText(/В очереди уже 20\sрендеров/);
-    expect(screen.queryByRole("button", { name: "Повторить рендер" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Повторить рендер" }) === null).toBe(true);
     expect(isDisabled(renderButton())).toBe(false);
   });
 });

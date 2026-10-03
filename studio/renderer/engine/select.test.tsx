@@ -31,7 +31,7 @@ test("the real bridge wins in any build", () => {
 test("without an engine the app says so plainly and offers no retry that cannot help", async () => {
   render(<App client={chooseEngineClient(false, demo)} />);
   expect(await screen.findByText("Движок недоступен")).toBeDefined();
-  expect(screen.queryByRole("button", { name: "Повторить" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Повторить" }) === null).toBe(true);
 });
 
 test("each mock client numbers its own messages", async () => {

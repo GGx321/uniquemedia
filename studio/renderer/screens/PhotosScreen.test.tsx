@@ -222,7 +222,7 @@ test("with no category chosen there is nothing to price and nothing to start", a
   expect(screen.getByText("Выберите хотя бы одну категорию.")).toBeDefined();
   // Priced at every step down to one category, never with none (the contract requires at least one).
   expect(callsOf(engine, "runs.estimate").map((c) => c.payload.categories.length)).toEqual([5, 4, 3, 2, 1]);
-  expect(screen.queryByText(/Гламур — только неоткровенные наряды/)).toBeNull();
+  expect(screen.queryByText(/Гламур — только неоткровенные наряды/) === null).toBe(true);
 });
 
 test("turning off every category clears a stale estimate error, not just the price (L12)", async () => {
@@ -240,7 +240,7 @@ test("turning off every category clears a stale estimate error, not just the pri
 
   fireEvent.click(screen.getByRole("button", { name: /^Фитнес/ })); // the last one off: nothing left to price
   await flush();
-  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK)).toBeNull();
+  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK) === null).toBe(true);
   expect(screen.getByText("Выберите хотя бы одну категорию.")).toBeDefined();
 });
 
@@ -337,7 +337,7 @@ test("PRICE_CHANGED keeps the button busy until the fresh price replaces it, the
   // The re-price is on its way: the refused price is still on a disabled, busy button.
   expect(isDisabled(goButton())).toBe(true);
   expect(goButton().getAttribute("aria-busy")).toBe("true");
-  expect(screen.queryByText("Цена выросла")).toBeNull();
+  expect(screen.queryByText("Цена выросла") === null).toBe(true);
 
   tick(scheduler, 1);
   await screen.findByText("Цена выросла");
@@ -349,7 +349,7 @@ test("PRICE_CHANGED keeps the button busy until the fresh price replaces it, the
   fireEvent.click(goButton());
   await screen.findByText(/Рисуем фото/);
   expect(callsOf(engine, "runs.start").map((c) => c.payload.acceptedWorstMicros)).toEqual([3_075_000, 3_675_000]);
-  expect(screen.queryByText("Цена выросла")).toBeNull();
+  expect(screen.queryByText("Цена выросла") === null).toBe(true);
 });
 
 test("a failed re-price after PRICE_CHANGED drops the refused price: the button can only ask again", async () => {
@@ -384,7 +384,7 @@ test("PRICE_CHANGED reads «Цена изменилась», not «выросл�
   tick(scheduler, 1);
 
   await screen.findByText("Цена изменилась");
-  expect(screen.queryByText("Цена выросла")).toBeNull();
+  expect(screen.queryByText("Цена выросла") === null).toBe(true);
   expect(goButton().textContent).toBe("Подтвердить новую цену · до $3.08");
 });
 
@@ -417,7 +417,7 @@ test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's o
   // clickable, not stuck disabled with nothing to accept.
   expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.20");
   expect(isDisabled(goButton())).toBe(false);
-  expect(screen.queryByText("Цена выросла")).toBeNull();
+  expect(screen.queryByText("Цена выросла") === null).toBe(true);
 
   fireEvent.click(goButton());
   await screen.findByText(/Рисуем фото/);
@@ -456,7 +456,7 @@ describe.each([
     expect(callsOf(engine, "runs.start")).toHaveLength(1);
     expect(isDisabled(goButton())).toBe(false);
     expect(goButton().textContent).toMatch(/до \$\d/);
-    expect(screen.queryByText(/Рисуем фото/)).toBeNull();
+    expect(screen.queryByText(/Рисуем фото/) === null).toBe(true);
     const listed = await client.request("runs.list", {});
     expect(listed.ok ? listed.result.runs : "runs.list failed").toEqual([]);
   });
@@ -476,7 +476,7 @@ describe.each([
 
     await screen.findByText(text);
     expect(callsOf(engine, "runs.resume")).toHaveLength(1);
-    expect(screen.queryByText(/Рисуем фото/)).toBeNull();
+    expect(screen.queryByText(/Рисуем фото/) === null).toBe(true);
   });
 });
 
@@ -523,7 +523,7 @@ test("a running run shows its progress and pending tiles; each step refreshes th
   runAll(scheduler);
   await screen.findByText("Запуск завершён");
   expect(screen.getByText(/В галерее 20 фото этого запуска\./)).toBeDefined();
-  expect(screen.queryByText("Рисуется")).toBeNull();
+  expect(screen.queryByText("Рисуется") === null).toBe(true);
   await waitFor(() => expect(document.querySelectorAll(".photo-tile:not(.photo-tile-drawing):not(.photo-tile-queued)")).toHaveLength(20));
   // Every fifth photo carries no similarity in the mock (a profile or back shot).
   expect(screen.getAllByText("лицо не проверялось")).toHaveLength(4);
@@ -583,7 +583,7 @@ test("another window's second run, cancelled from this window, shows its own out
   await flush();
 
   expect(await screen.findByText("Генерация остановлена")).toBeDefined();
-  expect(screen.queryByText("Запуск завершён")).toBeNull();
+  expect(screen.queryByText("Запуск завершён") === null).toBe(true);
 });
 
 test("another window's second run failing (AUTH_INVALID) after this window watched the first finish shows its own error (N1b)", async () => {
@@ -592,7 +592,7 @@ test("another window's second run failing (AUTH_INVALID) after this window watch
   await flush();
 
   expect(await screen.findByText(ERROR_MESSAGES_RU.AUTH_INVALID)).toBeDefined();
-  expect(screen.queryByText("Запуск завершён")).toBeNull();
+  expect(screen.queryByText("Запуск завершён") === null).toBe(true);
 });
 
 test("cancel shows «Отменяем…» until the job really ends; the cancelled attempts' reserves stay open until reconciled (M3)", async () => {
@@ -612,7 +612,7 @@ test("cancel shows «Отменяем…» until the job really ends; the cancel
   expect(callsOf(engine, "runs.cancel").map((c) => c.payload.runId)).toEqual([started]);
   // Accepted, but the job has not ended yet.
   expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
-  expect(screen.queryByText("Генерация остановлена")).toBeNull();
+  expect(screen.queryByText("Генерация остановлена") === null).toBe(true);
 
   runAll(scheduler);
   await screen.findByText("Генерация остановлена");
@@ -632,7 +632,7 @@ test("cancel shows «Отменяем…» until the job really ends; the cancel
   await act(async () => {
     await client.request("money.reconcile", {});
   });
-  await waitFor(() => expect(screen.queryByText("Платные запросы остановлены до сверки расходов.")).toBeNull());
+  await waitFor(() => expect(screen.queryByText("Платные запросы остановлены до сверки расходов.") === null).toBe(true));
   expect(isDisabled(goButton())).toBe(false);
   // Reconciling releases the 13 slots that were never actually sent: the row
   // re-asks its price on its own (MEDIUM-1) and shows the higher, uncapped one.
@@ -724,7 +724,7 @@ test("another window's run that fails before its first progress shows its own er
   await flush();
 
   expect(await screen.findByText(ERROR_MESSAGES_RU.AUTH_INVALID)).toBeDefined();
-  expect(screen.queryByText("Запуск завершён")).toBeNull();
+  expect(screen.queryByText("Запуск завершён") === null).toBe(true);
 });
 
 test("a finished run this window only finds in the store when the screen opens is not announced again", async () => {
@@ -739,7 +739,7 @@ test("a finished run this window only finds in the store when the screen opens i
   await openSection("Фото");
   await screen.findByRole("heading", { level: 1, name: "Mia" });
   await flush();
-  expect(screen.queryByText("Запуск завершён")).toBeNull();
+  expect(screen.queryByText("Запуск завершён") === null).toBe(true);
 });
 
 test("a stopped run is resumed with exactly the worst case runs.estimateResume showed", async () => {
@@ -756,7 +756,7 @@ test("a stopped run is resumed with exactly the worst case runs.estimateResume s
   await screen.findByText("Рисуем фото: 8 из 12");
   expect(callsOf(harness.engine, "runs.resume").map((c) => c.payload)).toEqual([{ runId, acceptedWorstMicros: 600_000 }]);
   // The resumed run is running now: no second resume offered for it.
-  await waitFor(() => expect(screen.queryByRole("button", { name: /Продолжить/ })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("button", { name: /Продолжить/ }) === null).toBe(true));
 });
 
 test("a resume refused with PRICE_CHANGED shows the new price and asks again", async () => {
@@ -793,7 +793,7 @@ test("a resume's PRICE_CHANGED also reads «Цена изменилась», not
   tick(harness.scheduler, 1);
 
   await screen.findByText("Цена изменилась");
-  expect(screen.queryByText("Цена выросла")).toBeNull();
+  expect(screen.queryByText("Цена выросла") === null).toBe(true);
   expect(await screen.findByRole("button", { name: "Подтвердить новую цену · до $0.60" })).toBeDefined();
 });
 
@@ -812,7 +812,7 @@ test("a resume stays busy through its PRICE_CHANGED re-price, and a double click
   expect(callsOf(harness.engine, "runs.resume")).toHaveLength(1);
   expect(resume.hasAttribute("disabled")).toBe(true);
   expect(resume.getAttribute("aria-busy")).toBe("true");
-  expect(screen.queryByText("Цена выросла")).toBeNull();
+  expect(screen.queryByText("Цена выросла") === null).toBe(true);
 
   tick(harness.scheduler, 1);
   const confirm = await screen.findByRole("button", { name: "Подтвердить новую цену · до $0.72" });
@@ -917,7 +917,7 @@ test("a resume row whose very first (mount-time) estimateResume fails shows «У
 
   fireEvent.click(ask);
   expect(await screen.findByRole("button", { name: "Продолжить · до $0.60" })).toBeDefined();
-  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK)).toBeNull();
+  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK) === null).toBe(true);
 });
 
 test("an older estimateResume answer landing after a newer one must not win the button back (N2)", async () => {
@@ -942,7 +942,7 @@ test("an older estimateResume answer landing after a newer one must not win the 
 
   // Must still show the newer, already-accepted price — a sequence guard drops the stale failure.
   expect(document.querySelector(".photos-run-go")?.textContent).toContain("до $0.60");
-  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK)).toBeNull();
+  expect(screen.queryByText(ERROR_MESSAGES_RU.NETWORK) === null).toBe(true);
 });
 
 test("a reconcileNeeded flip while this row's own resume is in flight does not clobber its busy state, and re-asks once it is done (N3)", async () => {
@@ -980,10 +980,10 @@ test("a run whose cap is used up is shown as ended: a plain summary with no butt
 
   await screen.findByText("Лимит исчерпан");
   expect(screen.getByText(/Готово 8 из 12 · не дорисовано 4/)).toBeDefined();
-  expect(screen.queryByRole("button", { name: /Продолжить/ })).toBeNull();
-  expect(screen.queryByText("до $0.00")).toBeNull();
-  expect(screen.queryByText("Остановлен")).toBeNull();
-  expect(document.querySelector(".photos-run-go")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Продолжить/ }) === null).toBe(true);
+  expect(screen.queryByText("до $0.00") === null).toBe(true);
+  expect(screen.queryByText("Остановлен") === null).toBe(true);
+  expect(document.querySelector(".photos-run-go") === null).toBe(true);
   // Not resumable, so no price is even asked for it, and nothing can be sent.
   expect(callsOf(harness.engine, "runs.estimateResume")).toHaveLength(0);
   expect(callsOf(harness.engine, "runs.resume")).toHaveLength(0);
@@ -996,7 +996,7 @@ test("a run whose cap still leaves one attempt stays a resume row: «Остан�
 
   await screen.findByRole("button", { name: /Продолжить/ });
   expect(screen.getByText("Остановлен")).toBeDefined();
-  expect(screen.queryByText("Лимит исчерпан")).toBeNull();
+  expect(screen.queryByText("Лимит исчерпан") === null).toBe(true);
 });
 
 // ---------- the gallery ----------
@@ -1078,8 +1078,8 @@ test("an avatar with no photos yet gets an empty gallery that says where they wi
   await openPhotos();
   expect(await screen.findByText("Фото пока нет")).toBeDefined();
   expect(screen.getByText("0 фото")).toBeDefined();
-  expect(screen.queryByRole("button", { name: /Продолжить/ })).toBeNull();
-  expect(screen.queryByRole("note", { name: "Показаны не все фото" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Продолжить/ }) === null).toBe(true);
+  expect(screen.queryByRole("note", { name: "Показаны не все фото" }) === null).toBe(true);
 });
 
 test("a failed photos.list is shown with a retry", async () => {
@@ -1103,7 +1103,7 @@ test("the shot caption's quality word matches the model: «low» for the setting
   // The engine's own route sends quality: null once the settings' image model
   // already is the fallback (nothing lower to fall back to): no «low» here either.
   await screen.findByText(/· 9:16 · референс — мастер-портрет$/);
-  expect(screen.queryByText(/· low · 9:16/)).toBeNull();
+  expect(screen.queryByText(/· low · 9:16/) === null).toBe(true);
 });
 
 test("what the contract cannot do yet is drawn disabled and marked «скоро»", async () => {
@@ -1169,7 +1169,7 @@ test("route smoke test: switching avatars via the grid (a full screen-type chang
   expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
   // Still Sofia's own state: Mia's two photos did not leak onto her gallery.
   expect(screen.getByText("Фото пока нет")).toBeDefined();
-  expect(screen.queryByText("лицо 0.86")).toBeNull();
+  expect(screen.queryByText("лицо 0.86") === null).toBe(true);
   expect(document.querySelectorAll(".photo-tile:not(.photo-tile-drawing):not(.photo-tile-queued)")).toHaveLength(0);
   expect(callsOf(engine, "photos.list").map((c) => c.payload.avatarId)).toContain(SOFIA.avatarId);
 });
@@ -1199,13 +1199,13 @@ test("the sidebar's «Фото» staying on the same route through a library swi
   await screen.findByRole("heading", { level: 1, name: "Sofia" });
   // Sofia's own gallery is itself still loading (her mount-time ask drew one
   // of the two delays) — but Mia's tile must not appear regardless.
-  expect(screen.queryByText("лицо 0.86")).toBeNull();
+  expect(screen.queryByText("лицо 0.86") === null).toBe(true);
 
   tick(scheduler, 2); // Sofia's own (delayed) mount-time ask, and Mia's own stale one, both land now
   await flush();
 
   expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
-  expect(screen.queryByText("лицо 0.86")).toBeNull();
+  expect(screen.queryByText("лицо 0.86") === null).toBe(true);
   expect(screen.getByText("20 фото")).toBeDefined();
 });
 
@@ -1243,7 +1243,7 @@ test("the sidebar's «Фото» with no avatar named pins its resolved avatar: 
   // Still Mia — archived now, not silently switched to Sofia (the new "first active").
   expect(await screen.findByRole("heading", { level: 1, name: "Mia" })).toBeDefined();
   expect(screen.getByText("Аватар в архиве — новые фото для него не создаются.")).toBeDefined();
-  expect(screen.queryByRole("heading", { level: 1, name: "Sofia" })).toBeNull();
+  expect(screen.queryByRole("heading", { level: 1, name: "Sofia" }) === null).toBe(true);
 });
 
 test("if the pinned avatar disappears (a library switch), the fallback is re-pinned too, not left exposed to the same switch bug (LOW-9)", async () => {
@@ -1268,7 +1268,7 @@ test("if the pinned avatar disappears (a library switch), the fallback is re-pin
   });
   expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
   expect(screen.getByText("Аватар в архиве — новые фото для него не создаются.")).toBeDefined();
-  expect(screen.queryByRole("heading", { level: 1, name: "Elena" })).toBeNull();
+  expect(screen.queryByRole("heading", { level: 1, name: "Elena" }) === null).toBe(true);
 });
 
 test("a named route (from the grid) also pins its fallback once the named avatar disappears (N5)", async () => {
@@ -1294,7 +1294,7 @@ test("a named route (from the grid) also pins its fallback once the named avatar
   });
   expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
   expect(screen.getByText("Аватар в архиве — новые фото для него не создаются.")).toBeDefined();
-  expect(screen.queryByRole("heading", { level: 1, name: "Elena" })).toBeNull();
+  expect(screen.queryByRole("heading", { level: 1, name: "Elena" }) === null).toBe(true);
 });
 
 test("with no saved avatar the Photos screen points back to the Avatars screen", async () => {

@@ -53,7 +53,7 @@ function vibeInput(): HTMLElement {
 test("the estimate is shown before anything is spent", async () => {
   const { engine } = setup({ imageAgeCheck: "on" });
   await openWizard();
-  expect(screen.queryByRole("button", { name: /Сгенерировать/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Сгенерировать/ }) === null).toBe(true);
 
   await estimate();
   expect(estimateText()).toBe("до $0.23 · ожидаемая ≈ $0.21");
@@ -90,7 +90,7 @@ test("a price that arrives after the traits changed is dropped, never shown for 
   await flush();
   expect(callsOf(engine, "avatars.estimate")).toHaveLength(1);
   expect(estimateText()).toBeNull();
-  expect(screen.queryByRole("button", { name: /Сгенерировать/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Сгенерировать/ }) === null).toBe(true);
   expect(screen.getByRole("button", { name: "Оценить стоимость" }).hasAttribute("disabled")).toBe(false);
 });
 
@@ -110,7 +110,7 @@ test("changing the traits drops the estimate, so a stale price can never be acce
   await estimate();
   fireEvent.click(screen.getByRole("radio", { name: "Азиатский" }));
   expect(estimateText()).toBeNull();
-  expect(screen.queryByRole("button", { name: /Сгенерировать/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Сгенерировать/ }) === null).toBe(true);
   expect(screen.getByRole("button", { name: "Оценить стоимость" })).toBeDefined();
 });
 
@@ -230,7 +230,7 @@ test("a failed fallback re-estimate clears the stale whole-avatar price so it ca
   // must not sit around clickable: a click on it would send that whole
   // worst to generateCandidates, bringing back M1. With the batch price
   // unknown, there must be no generate button at all right now.
-  expect(screen.queryByRole("button", { name: /Сгенерировать 4 варианта|Ещё 4 варианта/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Сгенерировать 4 варианта|Ещё 4 варианта/ }) === null).toBe(true);
   expect(callsOf(engine, "avatars.generateCandidates")).toHaveLength(0);
 
   fireEvent.click(screen.getByRole("button", { name: "Повторить оценку" }));
@@ -257,7 +257,7 @@ test("progress, then four candidates, then pick and save", async () => {
   runAll(scheduler);
   const radios = screen.getAllByRole("radio", { name: /^Вариант [A-D]$/ });
   expect(radios).toHaveLength(4);
-  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.queryByRole("progressbar") === null).toBe(true);
   expect(screen.getByText(/Готово: 4 варианта на выбор/)).toBeDefined();
 
   // Save is not possible before a candidate is chosen.
@@ -418,7 +418,7 @@ test("cancel keeps «Отменяем…» after its own command replies, until 
   await flush();
   expect(callsOf(engine, "avatars.cancel")).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
-  expect(screen.queryByText("Генерация остановлена")).toBeNull();
+  expect(screen.queryByText("Генерация остановлена") === null).toBe(true);
   // Still not done: the progress line stays, it is just being cancelled.
   expect(screen.getByText(/Рисуем портреты/)).toBeDefined();
 
@@ -442,14 +442,14 @@ test("a delayed avatars.cancel reply also shows «Отменяем…» while in
   fireEvent.click(cancelButton);
   expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
   expect(cancelButton.hasAttribute("disabled")).toBe(true);
-  expect(screen.queryByText("Генерация остановлена")).toBeNull();
+  expect(screen.queryByText("Генерация остановлена") === null).toBe(true);
 
   tick(scheduler, 1); // the delayed avatars.cancel reply arrives
   await flush();
   expect(callsOf(engine, "avatars.cancel")).toHaveLength(1);
   // Accepted, but not yet actually ended.
   expect(screen.getByRole("button", { name: "Отменяем…" })).toBeDefined();
-  expect(screen.queryByText("Генерация остановлена")).toBeNull();
+  expect(screen.queryByText("Генерация остановлена") === null).toBe(true);
 
   runAll(scheduler); // the mock's own, separate cancel-confirm delay elapses
   await flush();
@@ -505,8 +505,8 @@ test("when every slot fails, the failed tiles are not wrapped in an empty radio 
   expect(screen.getAllByText("Не получилось")).toHaveLength(4);
   // No real candidate to choose among: a <fieldset>/radiogroup with nothing
   // to select in it is empty semantics, so the tiles must sit outside one.
-  expect(screen.queryByRole("group", { name: "Выберите вариант" })).toBeNull();
-  expect(document.querySelector(".cand-fieldset")).toBeNull();
+  expect(screen.queryByRole("group", { name: "Выберите вариант" }) === null).toBe(true);
+  expect(document.querySelector(".cand-fieldset") === null).toBe(true);
 });
 
 test("errors are shown in Russian with a way to fix them", async () => {
@@ -577,7 +577,7 @@ test("a 401 in the middle of the job stops it and says so", async () => {
   await flush();
   expect(screen.getByText(ERROR_MESSAGES_RU.AUTH_INVALID)).toBeDefined();
   expect(screen.getByText("OpenRouter отклонил ключ (401)")).toBeDefined();
-  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.queryByRole("progressbar") === null).toBe(true);
 });
 
 test("without a key the wizard explains and does not offer to spend", async () => {
@@ -596,7 +596,7 @@ test("the vibe is checked live: «schoolgirl» is refused, «girl next door» is
   fireEvent.change(vibeInput(), { target: { value: "schoolgirl look, coffee" } });
   expect(vibeErrors()).toContain("«schoolgirl»");
   // Announced politely, not as an alert on every keystroke.
-  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("alert") === null).toBe(true);
   expect(screen.getByText("Исправьте поле «Вайб».")).toBeDefined();
   expect(vibeInput().getAttribute("aria-invalid")).toBe("true");
   expect(estimateButton.hasAttribute("disabled")).toBe(true);
@@ -650,7 +650,7 @@ test("the form is labelled and keyboard operable with native controls", async ()
   const steps = screen.getByRole("list", { name: "Шаги" });
   expect(within(steps).getByText("Внешность").closest("li")?.getAttribute("aria-current")).toBe("step");
   // No language selector: on-video text is English only.
-  expect(screen.queryByText(/Язык/)).toBeNull();
+  expect(screen.queryByText(/Язык/) === null).toBe(true);
 });
 
 // Three steps, as on the mockup: the estimate belongs to «Кандидаты».
@@ -715,7 +715,7 @@ test("leaving the wizard while the draft is being created buys no batch afterwar
   if (!(back instanceof HTMLElement)) throw new Error("no back link");
   fireEvent.click(back);
   await flush();
-  expect(screen.queryByRole("heading", { level: 1, name: "Новый аватар" })).toBeNull();
+  expect(screen.queryByRole("heading", { level: 1, name: "Новый аватар" }) === null).toBe(true);
 
   await answerAll();
 
@@ -778,7 +778,7 @@ test("says nothing about a stricter threshold when nothing is hidden", async () 
   setup({ drafts: [draft] });
   await continueDraft();
 
-  expect(screen.queryByText(/из прошлой партии/)).toBeNull();
+  expect(screen.queryByText(/из прошлой партии/) === null).toBe(true);
 });
 
 // A schema-invalid descriptor cannot sit in a fixture draft: the mock validates
@@ -793,7 +793,7 @@ test("DESCRIPTOR_INVALID on a continued draft's own price points at the rewrite 
   await continueDraft();
 
   await screen.findByText(ERROR_MESSAGES_RU.DESCRIPTOR_INVALID);
-  expect(screen.queryByRole("button", { name: /Ещё 4 варианта/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Ещё 4 варианта/ }) === null).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Переписать описание" }));
   await screen.findByRole("heading", { level: 1, name: "Аватары" });
 });

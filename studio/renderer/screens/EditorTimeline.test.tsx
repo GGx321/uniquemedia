@@ -153,7 +153,7 @@ describe("placing photos from the bin", () => {
     await flush();
     expect(clipButtons()).toHaveLength(1);
     // The render's reason moves on: the montage now has a clip, but only 2 s of it.
-    expect(screen.queryByText("Добавьте хотя бы один кадр")).toBeNull();
+    expect(screen.queryByText("Добавьте хотя бы один кадр") === null).toBe(true);
     expect(screen.getByText("Ролик короче 4 с")).toBeDefined();
   });
 });
@@ -227,7 +227,7 @@ describe("selecting and acting on a clip", () => {
     expect(clipButtons()).toHaveLength(4);
     expect(within(timeline()).getByRole("button", { name: "Удалить выбранное" }).hasAttribute("disabled")).toBe(true);
     // Keyboard focus stays on the track: the clip that took the deleted one's place.
-    expect(document.activeElement).toBe(clipButtons()[2] ?? null);
+    expect(document.activeElement === (clipButtons()[2] ?? null)).toBe(true);
     const saved = await nextSave(engine, 0);
     expect(saved.clips.map(photoOf)).toEqual([P1, P2, PHOTO_IDS[3], PHOTO_IDS[4]]);
 
@@ -270,7 +270,7 @@ describe("selecting and acting on a clip", () => {
     // The test DOM has no layout: every pointer reads 0 s, the first boundary.
     const saved = await nextSave(engine, 0);
     expect(saved.clips.map(photoOf)).toEqual([P3, P1, P2, PHOTO_IDS[3], PHOTO_IDS[4]]);
-    expect(timeline().querySelector(".ed-clip-lifted")).toBeNull();
+    expect(timeline().querySelector(".ed-clip-lifted") === null).toBe(true);
   });
 
   test("the right handle trims by 0.1 s per arrow (⇧: 1 s), never under 0.5 s; a held key is one undo step", async () => {
@@ -580,7 +580,7 @@ describe("a cancelled pointer", () => {
       window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 9 }));
     });
     await flush();
-    expect(timeline().querySelector(".ed-clip-lifted")).toBeNull();
+    expect(timeline().querySelector(".ed-clip-lifted") === null).toBe(true);
     expect(clipButtons().map((b) => b.getAttribute("data-clip-id"))).toEqual(["clip-001", "clip-002", "clip-003", "clip-004", "clip-005"]);
     expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
     expect(callsOf(engine, "montages.save")).toHaveLength(0);

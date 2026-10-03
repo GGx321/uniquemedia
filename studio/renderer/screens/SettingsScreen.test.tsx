@@ -44,7 +44,7 @@ test("key state: not set", async () => {
   await openSettings(NOT_SET);
   expect(screen.getByText(/^не задан/)).toBeDefined();
   expect(keyInput().getAttribute("type")).toBe("password");
-  expect(screen.queryByDisplayValue(/••••/)).toBeNull();
+  expect(screen.queryByDisplayValue(/••••/) === null).toBe(true);
 });
 
 test("key state: stored shows only the last four characters", async () => {
@@ -122,7 +122,7 @@ test("the budget is typed in dollars and sent as integer micros", async () => {
   const input = screen.getByLabelText("Бюджет на месяц");
   expect(input instanceof HTMLInputElement ? input.value : null).toBe("$10.00");
   // Nothing to save until the amount changes.
-  expect(screen.queryByRole("button", { name: "Сохранить бюджет" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Сохранить бюджет" }) === null).toBe(true);
   fireEvent.change(input, { target: { value: "12.5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить бюджет" }));
   await screen.findByText(/сохранён: \$12\.50 в месяц/);
@@ -215,7 +215,7 @@ test("a first reconcile with no baseline still shows the ledger's own total and 
   fireEvent.click(screen.getByRole("button", { name: "Сверить" }));
   await screen.findByText(/первая сверка: сравнить с \/credits не с чем · журнал \$0\.2110/);
   expect(screen.getByText(/закрыто по худшей цене: 1\s*резерв/)).toBeDefined();
-  expect(screen.queryByText(/\/credits \$/)).toBeNull();
+  expect(screen.queryByText(/\/credits \$/) === null).toBe(true);
 });
 
 test("a negative account-wide /credits delta is explained instead of compared", async () => {
@@ -265,7 +265,7 @@ test("the clock-skew warning stays visible after the countdown ends, not just wh
     // Once the countdown passes its own end, "ещё не обновил расход · сверить
     // можно через …" (the still-waiting state) must go — but the clock-skew
     // warning must stay, not vanish along with it.
-    expect(screen.queryByText(/ещё не обновил расход/)).toBeNull();
+    expect(screen.queryByText(/ещё не обновил расход/) === null).toBe(true);
     expect(screen.getByText(/системные часы отстают/)).toBeDefined();
     expect(screen.getByRole("button", { name: "Сверить" }).hasAttribute("disabled")).toBe(false);
   } finally {
@@ -361,7 +361,7 @@ test("models are shown read-only, with the face check's hybrid mode", async () =
   expect(screen.getByText("x-ai/grok-imagine-image-2.0")).toBeDefined();
   expect(screen.getByText("x-ai/grok-4.3")).toBeDefined();
   expect(screen.getByText("гибрид")).toBeDefined();
-  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(screen.queryByRole("combobox") === null).toBe(true);
   // The face-gate hint's threshold is hand-typed (the renderer bundle never
   // imports engine code for it): pin it against the engine's own real
   // default so the two numbers cannot silently drift apart.

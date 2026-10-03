@@ -70,7 +70,7 @@ describe("a render that ends out of sight", () => {
     fireEvent.click(screen.getByRole("button", { name: "Открыть в папке" }));
     await flush();
     expect(screen.getByText(/Папка библиотеки недоступна/)).toBeDefined();
-    expect(screen.queryByText(/Файла нет в папке/)).toBeNull();
+    expect(screen.queryByText(/Файла нет в папке/) === null).toBe(true);
   });
 
   test("«Открыть в папке» is disabled while its request is out: one click, one request", async () => {
@@ -105,7 +105,7 @@ describe("a render that ends out of sight", () => {
     await screen.findByText("Рендер не удался");
     expect(screen.getByText(/Не удалось собрать видео/)).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
-    expect(screen.queryByText("Рендер не удался")).toBeNull();
+    expect(screen.queryByText("Рендер не удался") === null).toBe(true);
   });
 
   test("a render that ended while the owner was in the editor of that very draft is told by its header, not twice", async () => {
@@ -121,7 +121,7 @@ describe("a render that ends out of sight", () => {
     await flush();
 
     await screen.findByText("Готово");
-    expect(screen.queryByText("Видео готово")).toBeNull();
+    expect(screen.queryByText("Видео готово") === null).toBe(true);
   });
 
   test("a cancelled render raises none: it is the owner's own doing", async () => {
@@ -133,8 +133,8 @@ describe("a render that ends out of sight", () => {
     await asAnotherWindow(() => client.request("videos.cancel", { jobId }));
     runAll(scheduler);
     await flush();
-    expect(screen.queryByText("Видео готово")).toBeNull();
-    expect(screen.queryByText("Рендер не удался")).toBeNull();
+    expect(screen.queryByText("Видео готово") === null).toBe(true);
+    expect(screen.queryByText("Рендер не удался") === null).toBe(true);
     expect(made.montageId).toMatch(/^montage-/);
   });
 });
@@ -151,7 +151,7 @@ describe("a saving phase that never ends", () => {
       await flush();
     }
     expect(screen.getByText("Сохранение…")).toBeDefined();
-    expect(screen.queryByText("Сохранение идёт дольше обычного")).toBeNull();
+    expect(screen.queryByText("Сохранение идёт дольше обычного") === null).toBe(true);
 
     act(() => {
       jest.advanceTimersByTime(SAVING_STALL_MS + 10_000);
@@ -161,6 +161,6 @@ describe("a saving phase that never ends", () => {
 
     runAll(scheduler);
     await flush();
-    expect(screen.queryByText("Сохранение идёт дольше обычного")).toBeNull();
+    expect(screen.queryByText("Сохранение идёт дольше обычного") === null).toBe(true);
   });
 });

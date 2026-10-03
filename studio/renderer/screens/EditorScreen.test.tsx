@@ -175,7 +175,7 @@ describe("the header", () => {
     await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
     expect(within(header()).getByText(/черновик · не сохранён/)).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Сохранить ещё раз" }));
-    await waitFor(() => expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE) === null).toBe(true));
     expect(callsOf(engine, "montages.save").at(-1)?.payload).toMatchObject({ name: "вечер" });
   });
 });
@@ -200,7 +200,7 @@ describe("leaving never drops an edit (the review's HIGH 1)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Черновики" }));
     await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
     expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
-    expect(screen.queryByRole("heading", { level: 2, name: "Черновики" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "Черновики" }) === null).toBe(true);
     expect(within(header()).getByText(/черновик · не сохранён/)).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Уйти без сохранения" }));
@@ -279,7 +279,7 @@ describe("opening a draft whose last editor is still saving (the review's open q
 
     fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
     await screen.findByRole("region", { name: "Таймлайн" });
-    expect(screen.queryByText("Последнее изменение не сохранилось")).toBeNull();
+    expect(screen.queryByText("Последнее изменение не сохранилось") === null).toBe(true);
     expect(within(header()).getByText(/5\.0 с · ≈ 2\.2 МБ/)).toBeDefined();
   });
 });
@@ -500,7 +500,7 @@ describe("«Рендер»", () => {
     const onItsWay = /Рендер · \d+\s%|В очереди|Сохранение…/;
     for (let i = 0; i < 30 && screen.queryByRole("button", { name: onItsWay }) !== null; i++) tick(scheduler);
     await flush();
-    expect(screen.queryByRole("button", { name: onItsWay })).toBeNull();
+    expect(screen.queryByRole("button", { name: onItsWay }) === null).toBe(true);
     const button = screen.getByRole("button", { name: /^Рендер/ });
     expect(button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true").toBe(true);
 
@@ -521,7 +521,7 @@ describe("«Рендер»", () => {
     runAll(scheduler);
     await flush();
     await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
-    expect(screen.queryByRole("button", { name: "Рендер…" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Рендер…" }) === null).toBe(true);
     expect(screen.getByText("Черновик не удалось проверить после рендера")).toBeDefined();
     expect(renderButton().hasAttribute("disabled")).toBe(true);
 
@@ -535,7 +535,7 @@ describe("«Рендер»", () => {
     if (!(notice instanceof HTMLElement)) throw new Error("no notice");
     fireEvent.click(within(notice).getByRole("button", { name: "Повторить" }));
     await flush();
-    expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).toBeNull();
+    expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE) === null).toBe(true);
     expect(screen.getByRole("button", { name: "Рендер…" })).toBeDefined();
 
     runAll(scheduler);
@@ -601,8 +601,8 @@ describe("a draft that cannot be opened", () => {
     engine.failNext("montages.get", { code: "INTERNAL", detail: DRAFT_TOO_NEW_DETAIL });
     fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
     await screen.findByText(/сохранён более новой версией Studio/);
-    expect(screen.queryByText(ERROR_MESSAGES_RU.INTERNAL)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Повторить" })).toBeNull();
+    expect(screen.queryByText(ERROR_MESSAGES_RU.INTERNAL) === null).toBe(true);
+    expect(screen.queryByRole("button", { name: "Повторить" }) === null).toBe(true);
   });
 
   test("a draft that was being saved while it was read is read again by itself", async () => {

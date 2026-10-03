@@ -51,7 +51,7 @@ test("nothing is spent until a photo is picked: no estimate button and no estima
   const { engine } = setup();
   await openImport();
   expect(estimateText()).toBeNull();
-  expect(screen.queryByText(/ожидаемая/)).toBeNull();
+  expect(screen.queryByText(/ожидаемая/) === null).toBe(true);
   expect(callsOf(engine, "avatars.pickImportPhoto")).toHaveLength(0);
   expect(callsOf(engine, "avatars.estimateImport")).toHaveLength(0);
 });
@@ -62,7 +62,7 @@ test("M1: the empty estimate state never mentions the wizard's own (nonexistent,
   setup();
   await openImport();
   expect(await screen.findByText(/Сначала выберите фото/)).toBeTruthy();
-  expect(screen.queryByText(/Оценить стоимость/)).toBeNull();
+  expect(screen.queryByText(/Оценить стоимость/) === null).toBe(true);
 });
 
 // M1: the import's age check is mandatory whatever settings.imageAgeCheck
@@ -74,7 +74,7 @@ test("M1: the estimate's caption is the import's own — the mandatory age check
   await pickPhoto();
 
   expect(await screen.findByText(/Обязательная проверка возраста и описание по фото \(до 2 попыток\)/)).toBeTruthy();
-  expect(screen.queryByText(/Дескриптор и 4 портрета/)).toBeNull();
+  expect(screen.queryByText(/Дескриптор и 4 портрета/) === null).toBe(true);
 });
 
 test("design constraint 1: pick, then estimate for that exact staged photo", async () => {

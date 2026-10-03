@@ -21,8 +21,8 @@ test("a render is «Рендер 0 / 1» in the queue box, never «Генера�
   expect(box.getByText(/^1\s*задача$/)).toBeDefined();
   expect(box.getByText("Рендер")).toBeDefined();
   expect(box.getByText("0 / 1")).toBeDefined();
-  expect(box.queryByText("Генерация")).toBeNull();
-  expect(box.queryByText(/240/)).toBeNull();
+  expect(box.queryByText("Генерация") === null).toBe(true);
+  expect(box.queryByText(/240/) === null).toBe(true);
 });
 
 test("«Рендер a / b» counts what was submitted since the queue was last empty: a ended of b, and goes with the queue", async () => {
@@ -45,7 +45,7 @@ test("«Рендер a / b» counts what was submitted since the queue was last 
   runAll(scheduler);
   await flush();
   expect(within(queue()).getByText("пусто")).toBeDefined();
-  expect(within(queue()).queryByText("Рендер")).toBeNull();
+  expect(within(queue()).queryByText("Рендер") === null).toBe(true);
 });
 
 test("the next submit after the queue emptied starts a new count", async () => {

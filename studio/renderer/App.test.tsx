@@ -23,7 +23,7 @@ test("a failed version lookup shows a dash instead of a version", async () => {
   Reflect.set(window, "studio", { version: () => Promise.reject(new Error("no handler for studio:version")) });
   setup();
   expect(await screen.findByText("—")).toBeDefined();
-  expect(screen.queryByText(/^v\d/)).toBeNull();
+  expect(screen.queryByText(/^v\d/) === null).toBe(true);
 });
 
 test("without a preload bridge the version is a dash too", async () => {
@@ -63,7 +63,7 @@ test("an engine notice shows on whatever screen is open, deduped by code, with r
 
   inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
   await screen.findByText("Движок перезапускался");
-  expect(screen.queryByText(/Повторилось/)).toBeNull();
+  expect(screen.queryByText(/Повторилось/) === null).toBe(true);
 
   // Not tied to the Avatars screen: it follows the window, not one section.
   fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
@@ -105,14 +105,14 @@ test("the sidebar foot shows the running queue and this month's spend, and no ma
   const spend = screen.getByRole("region", { name: "Расходы за месяц" });
   expect(within(spend).getByText("$1.42")).toBeDefined();
   expect(within(spend).getByText("из $10.00")).toBeDefined();
-  expect(screen.queryByText(/Баланс|Рендер|Уникализатор/)).toBeNull();
+  expect(screen.queryByText(/Баланс|Рендер|Уникализатор/) === null).toBe(true);
 });
 
 test("the sidebar spending block is hidden when the ledger is not open", async () => {
   setup({ money: { unavailable: { cause: "LEDGER_CORRUPT", detail: "ledger.jsonl:3 is not valid JSON" } } });
   const queue = await screen.findByRole("region", { name: "Очередь" });
   expect(within(queue).getByText("пусто")).toBeDefined();
-  expect(screen.queryByRole("region", { name: "Расходы за месяц" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Расходы за месяц" }) === null).toBe(true);
 });
 
 test("the sidebar queue never shows 0 / 0 before the job's first progress event", async () => {
@@ -128,7 +128,7 @@ test("the sidebar queue never shows 0 / 0 before the job's first progress event"
   // first job.progress event, which the scheduler has not fired yet.
   const queue = screen.getByRole("region", { name: "Очередь" });
   expect(within(queue).getByText("0 / 4")).toBeDefined();
-  expect(within(queue).queryByText("0 / 0")).toBeNull();
+  expect(within(queue).queryByText("0 / 0") === null).toBe(true);
 });
 
 test("a running candidates job shows in the sidebar queue with its progress", async () => {

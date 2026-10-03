@@ -73,7 +73,7 @@ describe("the list", () => {
     await openDrafts();
     await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
     fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
-    await waitFor(() => expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE) === null).toBe(true));
     expect(await screen.findByText(`0 черновиков`)).toBeDefined();
   });
 
@@ -108,7 +108,7 @@ describe("what a card says about its render", () => {
     runAll(scheduler);
     await flush();
     await screen.findByText(`✓ уже 1 видео из этого черновика`);
-    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByRole("progressbar") === null).toBe(true);
   });
 
   // 3d.6: the card reads the render as the editor and the sidebar do (the job model): the floor percent of frames, and the
@@ -134,7 +134,7 @@ describe("what a card says about its render", () => {
         expect(within(article).getByText(new RegExp(`^${now}\\s%$`))).toBeDefined();
         expect(Number(now)).toBeLessThan(100);
       }
-      if (sawSaving) expect(within(article).queryByText(/\d\s%/)).toBeNull();
+      if (sawSaving) expect(within(article).queryByText(/\d\s%/) === null).toBe(true);
     }
     expect(sawPercent).toBe(true);
     expect(sawSaving).toBe(true);
@@ -188,6 +188,6 @@ describe("«Пустой ролик»", () => {
     const button = screen.getByRole("button", { name: "Пустой ролик" });
     expect(button.hasAttribute("disabled")).toBe(true);
     expect(button.getAttribute("title")).toBe("Сначала нужен аватар");
-    expect(screen.queryByRole("button", { name: /Открыть фото/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Открыть фото/ }) === null).toBe(true);
   });
 });

@@ -103,13 +103,13 @@ describe("from the Photos screen", () => {
     await screen.findByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE);
 
     fireEvent.click(screen.getAllByRole("button", { name: /Выбрать для монтажа/ })[1] ?? document.body);
-    expect(screen.queryByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE)).toBeNull();
+    expect(screen.queryByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE) === null).toBe(true);
 
     engine.failNext("montages.create", { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photoIds", 0] }] });
     fireEvent.click(screen.getByRole("button", { name: /Монтаж из выбранных/ }));
     await screen.findByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE);
     fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
-    expect(screen.queryByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE)).toBeNull();
+    expect(screen.queryByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE) === null).toBe(true);
   });
 
   test("a photo the engine refuses is marked on its tile, and the refusal is said", async () => {
