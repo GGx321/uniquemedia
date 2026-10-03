@@ -115,6 +115,11 @@ export interface FfmpegSampler {
   follow(pid: number): void;
   /** The pids of the app's ffmpegs in the newest sample. */
   latestPids(): number[];
+  /**
+   * Which of `pids` are an ffmpeg in the newest sample, whoever's parent it has now (a killed engine's ffmpeg is an orphan). Judged by
+   * the sample's own command line, so a pid the OS has handed to another process since is not counted as alive.
+   */
+  runningAmong(pids: readonly number[]): number[];
   stop(): void;
 }
 
@@ -135,12 +140,14 @@ const WINDOWS_SCRIPT = [
   "}",
 ].join("\n");
 
-/** Starts sampling the machine's ffmpegs; only those of the followed app are kept (a developer's machine may run others of its own). */
+/** Starts sampling the machine's ffmpegs; only those of the followed app count toward a peak (a developer's machine may run others of its own). */
 export function startFfmpegSampler(platform: NodeJS.Platform = process.platform): FfmpegSampler {
   const tracker = new PeakTracker();
   let owner = -1;
   let latest: ProcRow[] = [];
+  let latestAll: readonly ProcRow[] = [];
   const take = (sample: ProcSample, at: number): void => {
+    latestAll = sample.rows;
     latest = ownedRows(sample, owner);
     tracker.record(at, latest);
   };
@@ -166,6 +173,7 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
       tracker,
       follow,
       latestPids: () => latest.map((row) => row.pid),
+      runningAmong: (pids) => latestAll.filter((row) => pids.includes(row.pid)).map((row) => row.pid),
       stop: () => {
         child.kill();
         spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"]);
@@ -177,5 +185,11 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
     const ps = spawnSync("ps", ["-Ao", "pid=,ppid=,rss=,command="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
     if (ps.status === 0) take(parsePosixPs(ps.stdout), Date.now());
   }, POSIX_INTERVAL_MS);
-  return { tracker, follow, latestPids: () => latest.map((row) => row.pid), stop: () => clearInterval(timer) };
+  return {
+    tracker,
+    follow,
+    latestPids: () => latest.map((row) => row.pid),
+    runningAmong: (pids) => latestAll.filter((row) => pids.includes(row.pid)).map((row) => row.pid),
+    stop: () => clearInterval(timer),
+  };
 }

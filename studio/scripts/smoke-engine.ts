@@ -344,12 +344,17 @@ async function connectPage(port: number): Promise<Cdp> {
   await waitFor("window.studio.request", async () =>
     (await cdp.evaluate(`document.readyState === "complete" && typeof window.studio?.request === "function"`)) === true ? true : null,
   );
+  await installPageHelpers(cdp);
+  return cdp;
+}
+
+/** The request and event helpers the smoke drives the page with (`window.__req`, `window.__smoke.events`). */
+async function installPageHelpers(cdp: Cdp): Promise<void> {
   await cdp.evaluate(`
     window.__smoke = { events: [] };
     window.studio.subscribe((e) => window.__smoke.events.push(e));
     window.__req = (type, payload = {}) => window.studio.request({ v: ${PROTOCOL_VERSION}, id: crypto.randomUUID(), kind: "command", type, payload });
     true`);
-  return cdp;
 }
 
 async function pageCount(port: number): Promise<number> {
@@ -468,6 +473,27 @@ async function removeTemp(dir: string): Promise<void> {
   } catch (error) {
     if (process.platform === "win32") console.log(`CLEANUP  ${basename(dir)} could not be removed; processes naming it: ${processesUsing(dir).join(", ") || "none"}`);
     throw error;
+  }
+}
+
+/**
+ * One Range request to a `studio-media://` URL, byte for byte. The window's own fetch is refused by its CSP and the scheme has no CORS
+ * grant, and Electron opens no second tab, so the one window is sent to the URL itself (a page ON the video's origin, where a same-origin
+ * fetch with the header is allowed), asked, and sent back to the app, whose helpers are installed again. Nothing else may be in flight.
+ * Answers status, Content-Range and the body's length.
+ */
+async function rangeProbe(cdp: Cdp, url: string, range: string): Promise<unknown> {
+  const home = await cdp.evaluate("location.href");
+  if (typeof home !== "string") throw new Error("the window has no address");
+  await cdp.send("Page.enable");
+  await cdp.send("Page.navigate", { url });
+  try {
+    await waitFor("the window to be on the video's origin", async () => ((await cdp.evaluate("location.protocol").catch(() => null)) === "studio-media:" ? true : null), 10_000, 100);
+    return await cdp.evaluate(`(async () => { const r = await fetch(location.href, { headers: { Range: ${JSON.stringify(range)} } }); const b = await r.arrayBuffer(); return { status: r.status, range: r.headers.get("content-range"), length: b.byteLength }; })()`);
+  } finally {
+    await cdp.send("Page.navigate", { url: home });
+    await waitFor("the app's window to be back", async () => ((await cdp.evaluate(`document.readyState === "complete" && typeof window.studio?.request === "function"`).catch(() => null)) === true ? true : null), 15_000, 100);
+    await installPageHelpers(cdp);
   }
 }
 
@@ -1977,7 +2003,7 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
       renders.push(render);
       const peak = sampler.tracker.between(started.startedAt, started.startedAt + render.ms);
       fact(`render of ${plan.name} (${render.videoKind})`, { seconds: Math.round(render.ms / 100) / 10, answerMs: started.answerMs, peakSingleFfmpegMiB: Math.round(peak.peakSingleBytes / MIB), peakAllFfmpegMiB: Math.round(peak.peakConcurrentBytes / MIB), samples: peak.samples, bytes: render.bytes });
-      check(`render scenario: ${plan.name} stays under the pool's peakRSS (${PEAK_RSS_BYTES / MIB} MiB)`, peak.samples > 0 && peak.peakConcurrentBytes <= PEAK_RSS_BYTES, peak);
+      check(`render scenario: ${plan.name} stays under the pool's peakRSS (${PEAK_RSS_BYTES / MIB} MiB)`, peak.samples > 0 && Math.max(peak.peakSingleBytes, peak.peakConcurrentBytes) <= PEAK_RSS_BYTES, peak);
       await examine(render);
     };
 
@@ -1997,6 +2023,11 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
 
     // 3. Kill ONLY the engine in the middle of a render (Windows without /T). After the restart nothing of it is left: no file under a final
     // name, no record, no used mark, and no ffmpeg of its own.
+    // Everything the kill needs is found BEFORE the victim is sent, so nothing slow (a CIM query on Windows) sits between "its ffmpeg is
+    // running" and the kill: the kill lands mid-render, not in verify after ffmpeg has exited.
+    const bootBefore = field(await req(cdp, "engine.snapshot"), "result", "bootId");
+    const engineToKill = enginePid(running.child.pid ?? -1);
+    check("render scenario: the engine process is found to kill", engineToKill !== null, { mainPid: running.child.pid });
     const victim = await submit(collage4);
     await waitFor(
       "the victim render to be mid-flight with an ffmpeg running",
@@ -2008,27 +2039,35 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
       50,
     );
     const ffmpegsAtKill = sampler.latestPids();
-    const engineBefore = await req(cdp, "engine.snapshot");
-    const bootBefore = field(engineBefore, "result", "bootId");
-    const mainPid = running.child.pid ?? -1;
-    const engineToKill = enginePid(mainPid);
-    check("render scenario: the engine process is found to kill", engineToKill !== null, { mainPid });
+    const phase = await cdp.evaluate(`(() => {
+      const mine = window.__smoke.events.filter((e) => e.payload && e.payload.jobId === ${JSON.stringify(victim.jobId)});
+      return { ended: mine.some((e) => e.type === "job.done" || e.type === "job.failed" || e.type === "job.cancelled"), saving: mine.some((e) => e.type === "job.progress" && e.payload.saving === true) };
+    })()`);
+    check(
+      "render scenario: the engine is killed mid-render: the victim's ffmpeg is running, the job has no end event and is not in its saving phase",
+      ffmpegsAtKill.length > 0 && sampler.runningAmong(ffmpegsAtKill).length > 0 && field(phase, "ended") === false && field(phase, "saving") === false,
+      { ffmpegsAtKill, phase },
+    );
     if (engineToKill !== null) killEngineOnly(engineToKill);
     const killedAt = Date.now();
+    // 1 s after the kill, before the restarted engine is even up: is the engine's ffmpeg still there?
+    await Bun.sleep(1_000);
+    fact("the killed engine's ffmpeg 1 s after the kill", sampler.runningAmong(ffmpegsAtKill).length > 0 ? "still running (it outlives the engine)" : "already gone");
     await waitFor("a snapshot from the restarted engine", async () => {
       const s = await req(cdp, "engine.snapshot");
       return field(s, "ok") === true && field(s, "result", "bootId") !== bootBefore ? s : null;
     });
-    await Bun.sleep(250);
-    fact("ffmpeg 250 ms after its engine was killed on its own", ffmpegsAtKill.some((pid) => pidAlive(pid)) ? "still running (it outlives the engine, for a while)" : "already gone");
-    const survivorsGone = await waitFor("the killed engine's ffmpeg to be gone", async () => (ffmpegsAtKill.some((pid) => pidAlive(pid)) ? null : true), 15_000, 100).then(
+    const survivorsGone = await waitFor("the killed engine's ffmpeg to be gone", async () => (sampler.runningAmong(ffmpegsAtKill).length > 0 ? null : true), 15_000, 100).then(
       () => true,
       () => false,
     );
-    fact("ffmpeg after the engine was killed on its own", survivorsGone ? `gone within ${Date.now() - killedAt} ms` : `STILL RUNNING after ${Date.now() - killedAt} ms: ${ffmpegsAtKill.filter((pid) => pidAlive(pid)).join(", ")}`);
-    check("render scenario: an ffmpeg was running when the engine was killed (so the next check means something)", ffmpegsAtKill.length > 0, ffmpegsAtKill);
-    check("render scenario: the killed engine's ffmpeg does not run on for good: it is gone within 15 s", survivorsGone, ffmpegsAtKill.filter((pid) => pidAlive(pid)));
-    for (const pid of ffmpegsAtKill) if (pidAlive(pid)) hardKill(pid); // defensive: a survivor must not write into the next steps
+    fact("the killed engine's ffmpeg after the kill", survivorsGone ? `gone within ${Date.now() - killedAt} ms` : `STILL RUNNING after ${Date.now() - killedAt} ms: ${sampler.runningAmong(ffmpegsAtKill).join(", ")}`);
+    check(
+      "render scenario: the killed engine's ffmpeg is gone within 15 s (a 4 s render's pass; on macOS it outlives the engine until that pass ends, which grows with the timeline)",
+      survivorsGone,
+      sampler.runningAmong(ffmpegsAtKill),
+    );
+    for (const pid of sampler.runningAmong(ffmpegsAtKill)) killEngineOnly(pid); // defensive: a survivor must not write into the next steps (by its pid alone, never its tree)
 
     const mia = join(exportRoot, "Mia");
     // A temp file the killed ffmpeg still had open is one the restarted engine's sweep may have to skip (Windows: EBUSY, retried, then left
@@ -2080,6 +2119,10 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
     check("render scenario: the committed video seeks to 12 s", field(played, "seeked") === true && Math.abs(Number(field(played, "at")) - 12) < 0.3, played);
     check("render scenario: the player was served by Range: a 206 whose Content-Range total is the file's size", responses.some((r) => r.url === urlOf(mixed) && r.status === 206 && r.contentRange?.endsWith(`/${mixedBytes}`) === true), responses.filter((r) => r.url === urlOf(mixed)));
 
+    // An explicit Range request, byte for byte (from the window sent to the video's own origin and back: see rangeProbe).
+    const rangeAnswer = await rangeProbe(cdp, urlOf(mixed), "bytes=1000-1999");
+    check("render scenario: an explicit Range: bytes=1000-1999 on studio-media://video is a 206 with that Content-Range and exactly those 1000 bytes", field(rangeAnswer, "status") === 206 && field(rangeAnswer, "range") === `bytes 1000-1999/${mixedBytes}` && field(rangeAnswer, "length") === 1000, rangeAnswer);
+
     // A `missing` record: its file is gone from a root that is still the record's.
     const firstPath = join(exportRoot, first.relPath);
     await retrying(() => rename(firstPath, `${firstPath}.away`));
@@ -2100,6 +2143,15 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
     check("render scenario: an elsewhere record answers 404 and never plays", field(elsewherePlayed, "meta") === false && responses.some((r) => r.url === urlOf(third) && r.status === 404) && !responses.some((r) => r.url === urlOf(third) && r.status < 400), { elsewherePlayed, responses: responses.filter((r) => r.url === urlOf(third)) });
     const restored = await listVideos(cdp, avatarId);
     check("render scenario: with the file and the marker back every record is present again", restored.length === renders.length && restored.every((v) => v.fileState === "present"), restored);
+    // The positive control: the same two videos that answered 404 play now, so the 404s above were the states and not a player that never works for them.
+    // A fresh document: a failed load of the same URL may be remembered by the old one's memory cache.
+    await cdp.send("Network.clearBrowserCache");
+    await cdp.send("Page.reload", { ignoreCache: true });
+    await waitFor("the window to reload", async () => ((await cdp.evaluate(`document.readyState === "complete" && typeof window.studio?.request === "function"`).catch(() => null)) === true ? true : null), 15_000, 100);
+    await installPageHelpers(cdp);
+    const firstAgain = await play(first, 1);
+    const thirdAgain = await play(third, 1);
+    check("render scenario: with the file and the marker back the two videos that answered 404 play again", field(firstAgain, "meta") === true && field(thirdAgain, "meta") === true, { firstAgain, thirdAgain });
 
     // 6. A fresh app (the engine host restarts a crashed engine once per run): kill ONLY the engine between the rename and the record, where the
     // restart must ADOPT the video with its record and its used mark. The hold is a test hook of the E2E build, armed by a file in userData.
