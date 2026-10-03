@@ -35,6 +35,7 @@ async function failureOf(work: Promise<unknown>): Promise<EngineError> {
 }
 
 const textLayer = (n: number) => ({ layerId: `layer-0000000${n}`, kind: "text" as const, startMs: 0, endMs: 1000, value: "hello", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 });
+const ownStickerLayer = (n: number) => ({ ...stickerLayer(n), sticker: { source: "own" as const, mediaId: "media-0000001" } });
 const stickerLayer = (n: number) => ({ layerId: `layer-0000001${n}`, kind: "sticker" as const, startMs: 0, endMs: 1000, sticker: { source: "builtin" as const, stickerId: "sticker-0001" }, x: 0.5, y: 0.5, size: 0.3 });
 
 /** Nothing about the render may be touched by a refusal: no job, no reservation, no export folder, no intermediate, no record. */
@@ -117,8 +118,7 @@ describe("videos.render: the answer", () => {
 
 describe("videos.render: N9, what is not supported yet is refused, never dropped", () => {
   const cases: Array<[string, (w: World) => MontageDraft, string[]]> = [
-    ["a text layer", (w) => ({ ...specFor(w), layers: [textLayer(1)] }), ["layers", "0"]],
-    ["a sticker layer", (w) => ({ ...specFor(w), layers: [stickerLayer(1)] }), ["layers", "0"]],
+    ["an own sticker layer", (w) => ({ ...specFor(w), layers: [ownStickerLayer(1)] }), ["layers", "0"]],
     ["an own track", (w) => ({ ...specFor(w), music: { source: "own", mediaId: "media-0000001", startMs: 0 } }), ["music"]],
     [
       "an own video clip",
@@ -166,11 +166,96 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
     await expectNothingTouched(r);
   });
 
+  test("a text layer and a built-in sticker are NOT refused since 3b.6: the render is queued and ends done", async () => {
+    const w = world();
+    const gate = { caption: async () => ({ png: Uint8Array.from([137, 80, 78, 71]), width: 700, height: 120, layout: { fontSize: 56, lines: ["hello"], width: 700, height: 120 }, workerMs: 1 }) };
+    const stickers = { read: async () => ({ bytes: Uint8Array.from([1, 2, 3]), loopFrames: 24, width: 320, height: 320 }) };
+    const r = serviceRig(w, { deps: { layers: { gate, stickers } } });
+    const known = { ...stickerLayer(1), sticker: { source: "builtin" as const, stickerId: "heart-pulse" } };
+
+    await r.service.render({ spec: { ...specFor(w), layers: [textLayer(1), known] } });
+    await r.queue.idle();
+
+    expect(r.queue.states()[0]?.status).toBe("done");
+  });
+
+  test("a built-in sticker the set does not have is MONTAGE_INVALID sticker-unavailable at its layer, before anything is touched", async () => {
+    const w = world();
+    const r = serviceRig(w);
+
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: [stickerLayer(1)] } })); // "sticker-0001" is not in the set
+
+    expect(error.code).toBe("MONTAGE_INVALID");
+    expect(error.issues).toEqual([{ code: "sticker-unavailable", path: ["layers", 0, "sticker"] }]);
+    expect(r.checks).toHaveLength(0);
+    await expectNothingTouched(r);
+  });
+
+  test("a layer that ends after the clips do is refused, never clamped: MONTAGE_INVALID layer-outside-timeline at its end", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const past = { ...textLayer(1), startMs: 3_000, endMs: SPEC_MS + 100 };
+
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: [past] } }));
+
+    expect(error.code).toBe("MONTAGE_INVALID");
+    expect(error.issues).toEqual([{ code: "layer-outside-timeline", path: ["layers", 0, "endMs"] }]);
+    await expectNothingTouched(r);
+  });
+
+  test("a layer that ends exactly with the clips is accepted", async () => {
+    const w = world();
+    const gate = { caption: async () => ({ png: Uint8Array.from([137, 80, 78, 71]), width: 700, height: 120, layout: { fontSize: 56, lines: ["hello"], width: 700, height: 120 }, workerMs: 1 }) };
+    const r = serviceRig(w, { deps: { layers: { gate, stickers: { read: () => Promise.reject(new Error("unused")) } } } });
+
+    await r.service.render({ spec: { ...specFor(w), layers: [{ ...textLayer(1), startMs: 3_000, endMs: SPEC_MS }] } });
+    await r.queue.idle();
+
+    expect(r.queue.states()[0]?.status).toBe("done");
+  });
+
+  test.each([
+    ["a zero-length window", 1_000, 1_000],
+    ["a window shorter than 300 ms", 1_000, 1_200],
+    ["a window that ends before it starts", 2_000, 1_000],
+  ] as const)("%s is MONTAGE_INVALID layer-too-short", async (_name, startMs, endMs) => {
+    const w = world();
+    const r = serviceRig(w);
+
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: [{ ...textLayer(1), startMs, endMs }] } }));
+
+    expect(error.code).toBe("MONTAGE_INVALID");
+    expect(error.issues).toEqual([{ code: "layer-too-short", path: ["layers", 0] }]);
+    await expectNothingTouched(r);
+  });
+
+  test("a window of exactly 300 ms is accepted", async () => {
+    const w = world();
+    const gate = { caption: async () => ({ png: Uint8Array.from([137, 80, 78, 71]), width: 700, height: 120, layout: { fontSize: 56, lines: ["hello"], width: 700, height: 120 }, workerMs: 1 }) };
+    const r = serviceRig(w, { deps: { layers: { gate, stickers: { read: () => Promise.reject(new Error("unused")) } } } });
+
+    await r.service.render({ spec: { ...specFor(w), layers: [{ ...textLayer(1), startMs: 1_000, endMs: 1_300 }] } });
+    await r.queue.idle();
+
+    expect(r.queue.states()[0]?.status).toBe("done");
+  });
+
+  test("one layer past the contract's cap of 10 text layers is MONTAGE_INVALID too-many-text-layers; ten are accepted by the same check", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const texts = (n: number) => Array.from({ length: n }, (_, k) => ({ ...textLayer(1), layerId: `layer-text-${String(k).padStart(3, "0")}` }));
+
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: texts(11) } }));
+
+    expect(error.issues).toEqual([{ code: "too-many-text-layers", path: ["layers"] }]);
+    await expectNothingTouched(r);
+  });
+
   test("a structurally invalid spec gets its issue list too, together with the unsupported parts", async () => {
     const w = world();
     const r = serviceRig(w);
 
-    const error = await failureOf(r.service.render({ spec: { ...specFor(w), clips: [], layers: [textLayer(1)] } }));
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), clips: [], layers: [ownStickerLayer(1)] } }));
 
     expect(error.code).toBe("MONTAGE_INVALID");
     expect(error.issues?.map((i) => i.code)).toEqual(expect.arrayContaining(["no-clips", "not-yet-supported"]));

@@ -46,17 +46,27 @@ function sceneCells(spec: Pick<MontageDraft, "clips">): SceneCell[] {
   return cells;
 }
 
+/**
+ * The built-in stickers of a spec that the set does not have (`sticker-unavailable` at the layer's `sticker`). `videos.render`
+ * asks this too (3b.6), so a render refuses a gone sticker up front instead of failing a job: it needs no library.
+ */
+export function stickerIssues(spec: Pick<MontageDraft, "layers">): MontageIssue[] {
+  const issues: MontageIssue[] = [];
+  spec.layers.forEach((layer, i) => {
+    if (layer.kind === "sticker" && layer.sticker.source === "builtin" && !BUILTIN_STICKERS.has(layer.sticker.stickerId)) {
+      issues.push({ code: "sticker-unavailable", path: ["layers", i, "sticker"] });
+    }
+  });
+  return issues;
+}
+
 /** The referential issues of a draft, in order: photos (clips, then cells), then stickers (layers), then the music track. Not bounded here. */
 export function referentialIssues(spec: MontageDraft, availability: Availability, tracks?: TrackLookup): MontageIssue[] {
   const issues: MontageIssue[] = [];
   for (const cell of sceneCells(spec)) {
     if (!availability.usable(cell.photoId)) issues.push({ code: "photo-unavailable", path: cell.path });
   }
-  spec.layers.forEach((layer, i) => {
-    if (layer.kind === "sticker" && layer.sticker.source === "builtin" && !BUILTIN_STICKERS.has(layer.sticker.stickerId)) {
-      issues.push({ code: "sticker-unavailable", path: ["layers", i, "sticker"] });
-    }
-  });
+  issues.push(...stickerIssues(spec));
   issues.push(...trackIssues(spec, tracks === undefined ? undefined : (trackId) => tracks.stored(trackId)));
   return issues;
 }

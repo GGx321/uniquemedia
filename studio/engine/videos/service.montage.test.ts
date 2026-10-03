@@ -240,7 +240,8 @@ describe("montages.save while a render of the draft runs", () => {
 });
 
 describe("get's issues cover what videos.render refuses, for every kind of part", () => {
-  const text = { layerId: "layer-001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "hi", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+  const sticker = { layerId: "layer-001", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "own" as const, mediaId: "media-0000003" }, x: 0.5, y: 0.5, size: 0.2 };
+  const goneSticker = { ...sticker, sticker: { source: "builtin" as const, stickerId: "no-such-sticker" } };
   const own = (photo: PhotoRef | null) => ({ photo, focus: null });
   const ownMedia = { source: "own" as const, mediaId: "media-0000001" };
 
@@ -251,7 +252,8 @@ describe("get's issues cover what videos.render refuses, for every kind of part"
     const collageWith = (cells: ReturnType<typeof own>[]) => ({ clipId: "clip-0000009", kind: "collage" as const, layout: "collage2" as const, cells, motion: "static" as const, stagger: false, durationMs: 4_000, transitionIn: "cut" as const });
     const manyOwn = Array.from({ length: 20 }, (_, i) => ({ ...collageWith([own(ownMedia), own(ownMedia)]), layout: "collage4" as const, cells: [own(ownMedia), own(ownMedia), own(ownMedia), own(ownMedia)], clipId: `clip-${String(i + 1).padStart(7, "0")}`, durationMs: 500 }));
     return [
-      ["a text layer", { ...base, layers: [text] }],
+      ["an own sticker layer", { ...base, layers: [sticker] }],
+      ["a built-in sticker the set does not have", { ...base, layers: [goneSticker] }],
       ["music", { ...base, music: { source: "trending", trackId: "track-0000001", startMs: 0 } }],
       ["an own video clip", { ...base, clips: [clip, { clipId: "clip-0000008", kind: "video", mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" }] }],
       ["an own photo in a photo clip's cell", { ...base, clips: [{ ...clip, cell: own(ownMedia) } as MontageDraft["clips"][number]] }],
@@ -262,7 +264,7 @@ describe("get's issues cover what videos.render refuses, for every kind of part"
     ];
   }
 
-  for (const label of ["a text layer", "music", "an own video clip", "an own photo in a photo clip's cell", "an own photo in a collage's cell j", "a spec that is too short", "a draft with no clips", "more than 64 issues"]) {
+  for (const label of ["an own sticker layer", "a built-in sticker the set does not have", "music", "an own video clip", "an own photo in a photo clip's cell", "an own photo in a collage's cell j", "a spec that is too short", "a draft with no clips", "more than 64 issues"]) {
     test(`${label}: every issue the render refuses is in the draft's issues`, async () => {
       const w = world();
       const m = montageRig(w);

@@ -17,11 +17,13 @@ import type { PhotoSource } from "../render";
 import type { RenderQueue, RenderQueueEvent } from "../renderQueue/queue";
 import { sweepRenderTmp } from "../renderQueue/sweep";
 import { TEXT_PREVIEW_DIR } from "../text/preview";
+import { stickerIssues } from "../montages/issues";
 import type { DraftStore } from "../montages/store";
 import type { CommitFs } from "./commitFs";
 import { deleteVideo, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
 import { createRenderExecute, totalFramesOf, type RenderPlan, type SettleInput, type VideoRenderDeps } from "./execute";
 import { newHashBudget, type FileStateChecker } from "./fileState";
+import type { LayerDeps } from "./layers";
 import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
 import type { CommitTracker, LiveCommits } from "./live";
 import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
@@ -33,7 +35,7 @@ import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery"
 // and the export check come in as dependencies, so each mapping is tested with a fake.
 //
 // `videos.render` is ONE step before `submit`, and nothing is claimed, reserved or written until `submit` answers ok:
-//   1. the spec's structure and N9 (pure);
+//   1. the spec's structure, N9 and the built-in stickers it names (pure);
 //   2. the export folder, checked afresh (invariant 35), its marker's id going into the plan; then the avatar (active only);
 //   3. eligibility and used (invariant 18) through the library's own refusal-aware function, BEFORE any focus work;
 //   4. the focus is filled, under what is left of the command's own deadline;
@@ -81,6 +83,8 @@ export interface VideoServiceDeps {
   readonly focus: (library: Library) => Pick<FocusResolver, "fillMissingFocus">;
   /** `userData/render-tmp`; a render is refused without it (no `os.tmpdir` fallback). */
   readonly renderTmpDir: string | undefined;
+  /** The text rasteriser and the verified sticker set, for the layers of a spec (3b.6). Absent, a spec with layers fails its job INTERNAL. */
+  readonly layers?: LayerDeps;
   /**
    * The track store (3c.5): `videos.render` judges a trending track against its record up front (`trackIssues`), and the job
    * opens it through it when it starts. Absent: no track is held, so a spec with music is refused as `track-unavailable`.
@@ -275,7 +279,8 @@ export class VideoService {
     const { spec } = source;
     // The read waited in the draft's queue: whatever it used of the command's time is gone, so out of time is said as that.
     if (source.library !== null && remaining() <= marginMs) throw new EngineFailure({ code: "INTERNAL", detail: RENDER_NOT_QUEUED_DETAIL });
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...this.#trackIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
+    // In the order `montages.get` reports them: structure, what has not landed (N9), the stickers the set lacks, the music track.
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...this.#trackIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
     if (renderTmpDir === undefined) throw new EngineFailure({ code: "INTERNAL", detail: "no render folder is configured, so nothing can be rendered" });
@@ -411,6 +416,7 @@ export class VideoService {
       log: deps.log,
       ...(deps.tracks === undefined ? {} : { tracks: deps.tracks }),
       onCommitted: (record) => this.#committed(record),
+      ...(deps.layers === undefined ? {} : { layers: deps.layers }),
       ...(deps.drafts === undefined ? {} : { draftRemoved: (id: string) => deps.drafts?.wasRemoved(id) === true }),
       // A commit that fails and leaves its intent is settled inside the job, before it ends (the reservation still held).
       settleLeftover: (input, signal) => this.#settleLeftover(library, input, signal),

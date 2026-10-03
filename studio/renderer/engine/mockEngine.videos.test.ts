@@ -191,7 +191,7 @@ describe("videos.render", () => {
   test("refuses a draft with a part whose slice has not landed as MONTAGE_INVALID (not-yet-supported)", async () => {
     const mock = makeMock();
     const draft = await draftOf(mock, [P1]);
-    const layer = { layerId: "layer-0001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "Hi", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+    const layer = { layerId: "layer-0001", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "own" as const, mediaId: "media-0000001" }, x: 0.5, y: 0.5, size: 0.2 };
     await unwrap(mock.client.request("montages.save", { montageId: draft.montageId, spec: { ...draft.spec, layers: [layer] }, name: null }));
 
     const reply = await mock.client.request("videos.render", { montageId: draft.montageId });

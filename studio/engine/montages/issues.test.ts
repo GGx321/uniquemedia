@@ -158,11 +158,21 @@ describe("draftIssues: a scene photo that cannot be used", () => {
 describe("draftIssues: what a render refuses for a part whose slice has not landed", () => {
   const text = { layerId: "layer-001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "hi", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
 
-  test("a layer is not-yet-supported, like videos.render says", () => {
-    const w = world();
-    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text] });
+  const builtinSticker = { layerId: "layer-002", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId: "heart-pulse" }, x: 0.5, y: 0.5, size: 0.2 };
+  const ownSticker = { ...builtinSticker, layerId: "layer-003", sticker: { source: "own" as const, mediaId: "media-0000001" } };
 
-    expect(issuesOf(w, spec)).toEqual([{ code: "not-yet-supported", path: ["layers", 0] }]);
+  test("a text layer and a built-in sticker are rendered since 3b.6, so they are not refused", () => {
+    const w = world();
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text, builtinSticker] });
+
+    expect(issuesOf(w, spec)).toEqual([]);
+  });
+
+  test("an own sticker is still not-yet-supported, like videos.render says: own media arrive in 3f", () => {
+    const w = world();
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text, ownSticker] });
+
+    expect(issuesOf(w, spec)).toEqual([{ code: "not-yet-supported", path: ["layers", 1] }]);
   });
 
   test("an own track, an own video clip and an own photo are too (a trending track no longer is: 3c.5)", () => {

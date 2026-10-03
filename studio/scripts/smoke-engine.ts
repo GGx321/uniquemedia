@@ -2540,11 +2540,11 @@ async function main(): Promise<void> {
       seed: 1,
       music: null,
       clips: [{ clipId: "smoke-clip-0001", kind: "photo", cell: { photo: { source: "scene", photoId: photo.id }, focus: null }, motion: "static", durationMs: 4000, transitionIn: "cut" }],
-      layers: [{ layerId: "smoke-layer-0001", kind: "text", startMs: 0, endMs: 1000, value: "hello", font: "manrope", style: "none", color: "#ffffff", x: 0.5, y: 0.5, scale: 1 }],
+      layers: [{ layerId: "smoke-layer-0001", kind: "sticker", startMs: 0, endMs: 1000, sticker: { source: "own", mediaId: "smoke-media-0001" }, x: 0.5, y: 0.5, size: 0.2 }],
     };
     const videosLayered = await req(cdp, "videos.render", { spec: layered });
     check(
-      "videos.render refuses a spec with a text layer as not-yet-supported (N9), before touching anything",
+      "videos.render refuses a spec with an own sticker layer as not-yet-supported (N9, own media come in 3f), before touching anything",
       field(videosLayered, "ok") === false && field(videosLayered, "error", "code") === "MONTAGE_INVALID" && JSON.stringify(field(videosLayered, "error", "issues")).includes("not-yet-supported"),
       videosLayered,
     );

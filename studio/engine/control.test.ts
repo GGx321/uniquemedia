@@ -70,6 +70,15 @@ describe("EngineInit.defaultExportPath", () => {
     expect(EngineInit.safeParse({ ...base, renderTmpDir }).success).toBe(false);
   });
 
+  test("stickerDir is optional, and accepts an absolute path", () => {
+    expect(EngineInit.safeParse(base).success).toBe(true);
+    expect(EngineInit.safeParse({ ...base, stickerDir: "/app/studio/assets/stickers" }).success).toBe(true);
+  });
+
+  test.each(["", "assets/stickers", "../stickers"])("stickerDir refuses %p, which is not absolute", (stickerDir) => {
+    expect(EngineInit.safeParse({ ...base, stickerDir }).success).toBe(false);
+  });
+
   test("ffmpegEnv is optional, and accepts a record of strings", () => {
     expect(EngineInit.safeParse({ ...base, ffmpegEnv: { PATH: "/usr/bin", TMPDIR: "/tmp" } }).success).toBe(true);
   });

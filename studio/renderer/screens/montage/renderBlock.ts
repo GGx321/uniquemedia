@@ -141,7 +141,8 @@ function photoText(first: FlaggedCell, usedVideo: UsedVideo | null): string {
 function notYetText(spec: MontageDraft, issue: MontageIssue): string {
   const [root, i] = issue.path;
   if (root === "music") return "Музыка в видео — скоро";
-  if (root === "layers") return spec.layers[numberAt(issue.path, 1)]?.kind === "sticker" ? "Стикеры в видео — скоро" : "Текст в видео — скоро";
+  // Text and built-in stickers render since 3b.6: the only layer N9 still refuses is an own sticker (3f).
+  if (root === "layers") return "Свои стикеры — скоро";
   if (root === "clips" && typeof i === "number" && spec.clips[i]?.kind === "video") return "Своё видео — скоро";
   return "Свои фото — скоро";
 }

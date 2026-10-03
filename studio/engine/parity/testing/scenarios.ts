@@ -53,7 +53,8 @@ function newestVideoId(answer: Answer): string {
   return stringAt(Object.fromEntries(Object.entries(first)), "videoId");
 }
 
-const textLayer = { layerId: "layer-0001", kind: "text", startMs: 0, endMs: 1_000, value: "Hi", font: "manrope", style: "none", color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+// An own sticker is the one layer N9 still refuses (3f brings own media); a text layer and a built-in sticker render since 3b.6.
+const ownStickerLayer = { layerId: "layer-0001", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "own", mediaId: "media-0000001" }, x: 0.5, y: 0.5, size: 0.2 };
 
 /** A draft of `photoIds`, made and named. */
 async function draft(t: Transcript, w: World, photoIds: readonly string[]): Promise<string> {
@@ -215,7 +216,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const layered = await draft(t, w, [photo(w, 1)]);
       const created = await t.call("montages.get", { montageId: layered });
       const stored = montageOf(created);
-      await t.call("montages.save", { montageId: layered, spec: { ...objectAt(stored, "spec"), layers: [textLayer] }, name: null });
+      await t.call("montages.save", { montageId: layered, spec: { ...objectAt(stored, "spec"), layers: [ownStickerLayer] }, name: null });
       const taken = await draft(t, w, [photo(w, 2)]);
       const same = await draft(t, w, [photo(w, 2)]);
       await t.call("videos.render", { montageId: taken });

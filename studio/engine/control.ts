@@ -46,6 +46,12 @@ export const EngineInit = z.strictObject({
    */
   renderTmpDir: AbsolutePath.optional(),
   /**
+   * `studio/assets/stickers`: the built-in sticker set (the APNGs and `catalog.json`), inside app.asar when packaged. A render reads
+   * each sticker from here, checked against the catalogue, and copies it into its own job folder (3b.6). Absent, a spec with a
+   * sticker layer fails its job, with a reason that names no path.
+   */
+  stickerDir: AbsolutePath.optional(),
+  /**
    * The environment every ffmpeg child gets (S4): main's `engineEnv` allowlist.
    * The engine never reads the process environment, so it arrives here; the
    * engine filters it through the allowlist once more. Absent, a child inherits

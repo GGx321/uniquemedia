@@ -116,11 +116,15 @@ describe("the reasons, each on its own", () => {
     expect(renderBlock(input({ spec: withMusic, verdict: { spec: withMusic, issues: [{ code: "track-too-short", path: ["music"] }] } }))?.text).toBe("Трек короче ролика с выбранного места");
   });
 
+  test("a text layer and a built-in sticker block nothing since 3b.6", () => {
+    const text = { layerId: "layer-001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "hi", font: "manrope" as const, style: "plaque" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+    const sticker = { layerId: "layer-002", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId: "heart-pulse" }, x: 0.5, y: 0.5, size: 0.2 };
+    expect(renderBlock(input({ spec: draftSpec(4, { layers: [text, sticker] }), verdict: null }))).toBeNull();
+  });
+
   test("a part whose slice has not landed yet says «скоро» for that part", () => {
-    const withText = draftSpec(4, { layers: [{ layerId: "layer-001", kind: "text", startMs: 0, endMs: 1_000, value: "hi", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.5, scale: 1 }] });
-    expect(renderBlock(input({ spec: withText, verdict: null }))?.text).toBe("Текст в видео — скоро");
-    const withSticker = draftSpec(4, { layers: [{ layerId: "layer-001", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "builtin", stickerId: "sticker-sparkle" }, x: 0.5, y: 0.5, size: 0.2 }] });
-    expect(renderBlock(input({ spec: withSticker, verdict: null }))?.text).toBe("Стикеры в видео — скоро");
+    const withOwnSticker = draftSpec(4, { layers: [{ layerId: "layer-001", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "own", mediaId: "media-0000001" }, x: 0.5, y: 0.5, size: 0.2 }] });
+    expect(renderBlock(input({ spec: withOwnSticker, verdict: null }))?.text).toBe("Свои стикеры — скоро");
     // A trending track is supported since 3c.5; an own track waits for 3f.4.
     const withMusic = draftSpec(4, { music: { source: "own", mediaId: "media-0000001", startMs: 0 } });
     expect(renderBlock(input({ spec: withMusic, verdict: null }))?.text).toBe("Музыка в видео — скоро");

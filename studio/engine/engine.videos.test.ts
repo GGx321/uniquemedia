@@ -7,6 +7,8 @@ import { manifestTraits } from "./avatars/records";
 import { formatExportDate } from "./exportName";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { extractFrames } from "./render/ffmpeg.testkit";
+import { makeSolid, meanAround, splitYuv420 } from "./render/render.testkit";
 import { videoPaths } from "./videos/record";
 import { CrashError, faultyFs, listTree } from "./videos/testing/kit";
 import { NODE_EXPORT_ROOT_FS } from "./exportRoot";
@@ -21,6 +23,8 @@ useNativeGlobals();
 
 const dir = useEngineDir("studio-engine-videos-");
 const renderTmp = () => join(dir(), "userData", "render-tmp");
+/** The shipped sticker set: what main hands the engine as `stickerDir`. */
+const STICKER_DIR = join(import.meta.dir, "../assets/stickers");
 const exportDir = () => join(dir(), "export");
 const FIXTURES = join(import.meta.dir, "face/fixtures/images");
 const PHOTO_FILES = ["render-best-home-1.jpg", "render-median-travel-2.jpg", "render-worst-fitness-3.jpg"];
@@ -138,6 +142,75 @@ describe("a real render through videos.render", () => {
     },
     REAL_RENDER_TIMEOUT_MS,
   );
+
+  test(
+    "renders a text layer and a built-in sticker through the whole engine: staged in the job's folder, composited by the layer pass, in their windows only, verified and committed",
+    async () => {
+      await mkdir(exportDir());
+      const { avatarId, photoIds } = await seedAvatar();
+      // The text gate is a fake that answers a real 400x120 white PNG, standing in for the rasteriser (its own tests are in text/).
+      const png = join(dir(), "caption.png");
+      await makeSolid(png, "white", 400, 120, "png-rgba");
+      const gate = {
+        caption: async (request: { value: string }) => ({ png: new Uint8Array(readFileSync(png)), width: 400, height: 120, layout: { fontSize: 56, lines: [request.value], width: 400, height: 120 }, workerMs: 1 }),
+      };
+      const { engine, events } = await start({ init: { settings: settingsOf(), stickerDir: STICKER_DIR }, deps: { text: { gate } } });
+      await engine.settled();
+      const text = { layerId: "layer-0001", kind: "text", startMs: 1_000, endMs: 2_000, value: "sunday reset", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.2, scale: 1 };
+      const sticker = { layerId: "layer-0002", kind: "sticker", startMs: 2_000, endMs: 3_000, sticker: { source: "builtin", stickerId: "heart-pulse" }, x: 0.5, y: 0.6, size: 0.3 };
+
+      const { jobId, videoId } = await render(engine, { ...specOf(avatarId, photoIds.slice(0, 2)), layers: [text, sticker] });
+      const end = await jobEnd(events, jobId);
+
+      expect(end.type).toBe("job.done");
+      const [video] = await listVideos(engine, avatarId);
+      expect(video).toMatchObject({ videoId, fileState: "present", durationMs: 4000 });
+      expect(JSON.stringify(events().filter((e) => e.type.startsWith("job.") || e.type === "video.changed"))).not.toContain(dir());
+      expect(await readdir(renderTmp())).not.toContain(jobId); // the job's folder, staged files and layer file with it, is gone
+
+      // Pixels: 4 s = 120 frames, 2 clips of 60 (static photos), the text on [30, 60) and the sticker on [60, 90).
+      const file = join(exportDir(), video?.relPath ?? "");
+      const frames = await extractFrames(file, [15, 25, 45, 75, 100, 110], "yuv420p", { w: 1080, h: 1920 });
+      const lumaAt = (i: number, x: number, y: number): number => meanAround(splitYuv420(frames[i] ?? new Uint8Array(), 1080, 1920).y, 1080, x, y, 40);
+      const [textX, textY, stickerX, stickerY] = [540, 384, 540, 1152]; // box centres: 0.5 x 0.2 and 0.5 x 0.6
+      expect(lumaAt(2, textX, textY)).toBeCloseTo(235, -1); // frame 45: inside the text's window, flat white
+      expect(Math.abs(lumaAt(0, textX, textY) - 235)).toBeGreaterThan(3); // frame 15: before it, the photo
+      expect(Math.abs(lumaAt(0, textX, textY) - lumaAt(1, textX, textY))).toBeLessThan(1); // frames 15 and 25: the same static photo
+      expect(Math.abs(lumaAt(3, stickerX, stickerY) - lumaAt(4, stickerX, stickerY))).toBeGreaterThan(5); // frame 75 (sticker) against 100 (none)
+      expect(Math.abs(lumaAt(4, stickerX, stickerY) - lumaAt(5, stickerX, stickerY))).toBeLessThan(1); // frames 100 and 110: the same static photo
+    },
+    REAL_RENDER_TIMEOUT_MS,
+  );
+
+  test("a text layer with no text rasteriser in the engine fails the job RENDER_FAILED and leaves nothing in the export folder", async () => {
+    await mkdir(exportDir());
+    const { avatarId, photoIds } = await seedAvatar();
+    const { engine, events } = await start({ init: { settings: settingsOf(), stickerDir: STICKER_DIR } });
+    await engine.settled();
+    const text = { layerId: "layer-0001", kind: "text", startMs: 1_000, endMs: 2_000, value: "hi", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.2, scale: 1 };
+
+    const { jobId } = await render(engine, { ...specOf(avatarId, photoIds.slice(0, 2)), layers: [text] });
+    const end = await jobEnd(events, jobId);
+
+    expect(end.type).toBe("job.failed");
+    expect(end.payload).toMatchObject({ error: { code: "RENDER_FAILED" } });
+    expect(await readdir(join(exportDir(), "Mia")).catch(() => [])).toEqual([]);
+  });
+
+  test("a sticker layer in an engine given no sticker folder fails the job RENDER_FAILED, naming no path", async () => {
+    await mkdir(exportDir());
+    const { avatarId, photoIds } = await seedAvatar();
+    const { engine, events } = await start({ init: { settings: settingsOf() } });
+    await engine.settled();
+    const sticker = { layerId: "layer-0001", kind: "sticker", startMs: 1_000, endMs: 2_000, sticker: { source: "builtin", stickerId: "heart-pulse" }, x: 0.5, y: 0.6, size: 0.3 };
+
+    const { jobId } = await render(engine, { ...specOf(avatarId, photoIds.slice(0, 2)), layers: [sticker] });
+    const end = await jobEnd(events, jobId);
+
+    expect(end.type).toBe("job.failed");
+    expect(end.payload).toMatchObject({ error: { code: "RENDER_FAILED" } });
+    expect(JSON.stringify(end.payload)).not.toContain(dir());
+  });
 
   test("a photo used by that video is refused for the next render until the video is deleted", async () => {
     await mkdir(exportDir());

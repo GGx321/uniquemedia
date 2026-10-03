@@ -94,6 +94,7 @@ import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
+import { createStickerAssets, StickerAssetError, type StickerAssets } from "./videos/stickerAssets";
 import { MontageService, type MontageServiceDeps } from "./montages/service";
 import { DraftStore, type DraftStoreDeps } from "./montages/store";
 import { FLASHAPI_BASE, type FlashapiFetch } from "./music/client";
@@ -108,6 +109,11 @@ export const EVENT_LOG_CAPACITY = 1000;
 /** What an engine without a text runtime draws text through: a refusal, so `montages.textPreview` says so instead of pretending. */
 const NO_TEXT_GATE: PreviewGate = {
   caption: () => Promise.reject(new RasterError("WORKER_FAILED", "no text worker is wired into this engine")),
+};
+
+/** What an engine given no sticker folder reads stickers from: a refusal that names no path, so a render with a sticker fails its job instead of dropping it. */
+const NO_STICKERS: StickerAssets = {
+  read: () => Promise.reject(new StickerAssetError("unreadable", "this engine was given no sticker folder")),
 };
 
 /** `detail` travels as T0 `SafeText`, which allows at most 500 chars. */
@@ -653,6 +659,12 @@ export class Engine {
       caseProbe: this.#caseProbe,
       focus: deps.videos?.focus ?? ((library) => this.#focusOf(library)),
       renderTmpDir: init.renderTmpDir,
+      // The layers of a spec (3b.6): the same text gate `montages.textPreview` draws through, and the verified built-in sticker set.
+      layers: {
+        gate: deps.text?.gate ?? NO_TEXT_GATE,
+        stickers: init.stickerDir === undefined ? NO_STICKERS : createStickerAssets(init.stickerDir),
+        ...(deps.text?.loadError === undefined ? {} : { loadError: deps.text.loadError }),
+      },
       ...(deps.musicTracks === undefined ? {} : { tracks: deps.musicTracks }),
       newId: deps.newId,
       now: () => new Date(deps.clock()),
