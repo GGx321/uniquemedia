@@ -18,6 +18,7 @@ import { tempDirFor } from "../../../testing/tempDir";
 import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, sharedRealFaceGate, twelveMegapixelJpeg, twoKJpeg } from "./realWorker";
 import { faceModelPaths } from "../../../scripts/faceModelCache";
 import { MASTER } from "../fixtures/expected";
+import { CONTROL_RUNS, loopFreeProblem, type TimerGap, WORKER_RUNS } from "./loopFree";
 import { createWorkerFaceGate, type WorkerFaceGate } from "../worker/workerGate";
 
 // T7c: the REAL face worker — real models, real codecs — behind
@@ -60,21 +61,16 @@ function ownGate(overrides: Parameters<typeof realWorkerInit>[0]): WorkerFaceGat
 
 const live = (): AbortSignal => new AbortController().signal;
 
-interface TimerGap {
-  maxGapMs: number;
-  durationMs: number;
+/** Measures `work` `runs` times, every run kept. */
+async function gapsOf(runs: number, work: () => Promise<unknown>): Promise<TimerGap[]> {
+  const gaps: TimerGap[] = [];
+  for (let i = 0; i < runs; i++) gaps.push(await timerGapDuring(work));
+  return gaps;
 }
 
-const CONTROL_RUNS = 3;
-const WORKER_RUNS = 5;
-
-/** Measures `work` `runs` times and returns the run whose loop was blocked the least (its gap with its own duration). */
-async function leastBlockedOf(runs: number, work: () => Promise<unknown>): Promise<TimerGap> {
-  let best: TimerGap | undefined;
-  for (let i = 0; i < runs; i++) {
-    const gap = await timerGapDuring(work);
-    if (best === undefined || gap.maxGapMs < best.maxGapMs) best = gap;
-  }
+/** The run whose loop was blocked the least: noise only raises a gap, so for the CONTROL (which must block) the minimum only tightens the bound. */
+function leastBlocked(gaps: readonly TimerGap[]): TimerGap {
+  const best = [...gaps].sort((x, y) => x.maxGapMs - y.maxGapMs)[0];
   if (best === undefined) throw new Error("no runs");
   return best;
 }
@@ -122,7 +118,7 @@ describe("the real face worker", () => {
     try {
       const masterEmbedding = await inThread.embed(await decode(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live()));
       await inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding }); // warm-up
-      control = await leastBlockedOf(CONTROL_RUNS, async () => inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding }));
+      control = leastBlocked(await gapsOf(CONTROL_RUNS, async () => inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding })));
     } finally {
       await inThread.dispose();
     }
@@ -131,18 +127,14 @@ describe("the real face worker", () => {
     await gate.start();
     const masterEmbedding = await masterEmbeddingVia(gate);
     await gate.check({ pose: "front", bytes: image, masterEmbedding }, live()); // warm-up
-    const worker = await leastBlockedOf(WORKER_RUNS, () => gate.check({ pose: "front", bytes: image, masterEmbedding }, live()));
+    const workerRuns = await gapsOf(WORKER_RUNS, () => gate.check({ pose: "front", bytes: image, masterEmbedding }, live()));
     console.log(
-      `event loop: worker path best-of-${WORKER_RUNS} gap ${worker.maxGapMs.toFixed(0)} ms over ${worker.durationMs.toFixed(0)} ms; in-thread control best-of-${CONTROL_RUNS} gap ${control.maxGapMs.toFixed(0)} ms (${process.platform})`,
+      `event loop: worker gaps [${workerRuns.map((r) => r.maxGapMs.toFixed(0)).join(", ")}] ms over [${workerRuns.map((r) => r.durationMs.toFixed(0)).join(", ")}] ms; in-thread control best-of-${CONTROL_RUNS} gap ${control.maxGapMs.toFixed(0)} ms (${process.platform})`,
     );
 
-    // The control must actually block (else this test measures nothing) ...
-    assert.ok(control.maxGapMs > 40, `the control blocked the loop for only ${control.maxGapMs} ms`);
-    // ... and the worker path must not: a fraction of it. Relative only (an absolute millisecond bound is flaky on 3-4 vCPU runners and
-    // under Windows' 15.6 ms timer), and judged on the LEAST blocked of several runs: a runner that is busy elsewhere stalls this thread
-    // for a stretch now and then, whichever path is under test, but a path that blocks the loop blocks it in every run.
-    assert.ok(worker.maxGapMs < control.maxGapMs / 2, `worker gap ${worker.maxGapMs} ms against control gap ${control.maxGapMs} ms`);
-    assert.ok(worker.durationMs > worker.maxGapMs * 2, `duration ${worker.durationMs} ms against gap ${worker.maxGapMs} ms`);
+    // Relative only (an absolute millisecond bound is flaky on 3-4 vCPU runners and under Windows' 15.6 ms timer); the rule, and why it reads
+    // the second-largest of five worker gaps, is in loopFree.ts.
+    assert.equal(loopFreeProblem(workerRuns, control), undefined);
   });
 
   test("cancelling a real 2K check mid-flight terminates the worker promptly, and the next check succeeds on a respawned worker", { timeout: 60_000 }, async () => {
