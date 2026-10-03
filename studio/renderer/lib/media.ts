@@ -20,6 +20,16 @@ export function textPreviewUrl(client: Pick<EngineClient, "kind" | "textPreviewU
   return `studio-media://text/${previewId}`;
 }
 
+/**
+ * The picture of a built-in sticker (3d.3b): main serves the catalogue as `studio-media://sticker/<stickerId>` (an APNG that
+ * plays its loop); the dev mock hands its own stand-in. Null for an id that breaks the contract.
+ */
+export function stickerUrl(client: Pick<EngineClient, "kind" | "stickerUrl">, stickerId: string): string | null {
+  if (client.stickerUrl !== undefined) return client.stickerUrl(stickerId);
+  if (!Id.safeParse(stickerId).success) return null;
+  return `studio-media://sticker/${stickerId}`;
+}
+
 // Neutral placeholder gradients (warm and cool greys, as in the mockup) for
 // the mock engine, which has no real images.
 const PLACEHOLDERS = [

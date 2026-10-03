@@ -56,6 +56,7 @@ import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIss
 import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, totalFrames, trackIssues } from "../../shared/montage";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
+import { mockStickerUrl } from "./mockStickers";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
@@ -2859,8 +2860,9 @@ export class MockEngine implements EngineBridge {
 export function mockEngineClient(engine: MockEngine = new MockEngine()): EngineClient {
   let messageCounter = 0;
   const client = createEngineClient(engine, "mock", () => `msg-${String(++messageCounter).padStart(6, "0")}`);
-  // The dev build has no `studio-media://`: a text preview's PNG is handed to the window as a data URL.
-  return { ...client, textPreviewUrl: (previewId) => pngDataUrl(engine.mockPreviewPng(previewId)) };
+  // The dev build has no `studio-media://`: a text preview's PNG is handed to the window as a data URL, and a built-in
+  // sticker as a stand-in of the mock's own.
+  return { ...client, textPreviewUrl: (previewId) => pngDataUrl(engine.mockPreviewPng(previewId)), stickerUrl: mockStickerUrl };
 }
 
 function pngDataUrl(bytes: Uint8Array | null): string | null {

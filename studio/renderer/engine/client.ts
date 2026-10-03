@@ -34,6 +34,11 @@ export interface EngineClient {
    * Null for an id the mock does not hold (never given, or evicted).
    */
   textPreviewUrl?(previewId: string): string | null;
+  /**
+   * Where the window gets a built-in sticker's picture (3d.3b): the mock's own stand-in (a data URL; the dev build has no
+   * `studio-media://`). Absent on the real client, whose stickers are `studio-media://sticker/<stickerId>` (lib/media.ts).
+   */
+  stickerUrl?(stickerId: string): string | null;
 }
 
 /** The wire: what `window.studio` exposes, and what the mock engine implements. */
