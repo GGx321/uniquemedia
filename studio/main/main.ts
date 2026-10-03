@@ -21,6 +21,7 @@ import type { EventMessage } from "../shared/engine";
 import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { installProcessGuards } from "../engine/processGuards";
+import { e2eIdentityProblem, userDataFolderName } from "./e2eIdentity";
 import { engineEnv } from "./engineEnv";
 import { handleExportFolderCommand } from "./exportFolderFlow";
 import { handleRevealCommand } from "./revealFlow";
@@ -66,7 +67,17 @@ const devServerUrl = STUDIO_DEV ? process.env.ELECTRON_RENDERER_URL : undefined;
 // "Electron" folder.
 const userDataSwitch = app.commandLine.getSwitchValue("user-data-dir");
 if (userDataSwitch !== "") app.setPath("userData", resolve(userDataSwitch));
-else if (!app.isPackaged) app.setPath("userData", join(app.getPath("appData"), "uniquemedia-studio-dev"));
+else if (!app.isPackaged) app.setPath("userData", join(app.getPath("appData"), userDataFolderName(STUDIO_E2E)));
+
+// An E2E build packaged under Studio's own identity would share Studio's userData (settings, library, ledger): it does not start.
+// Inside `if (STUDIO_E2E)` so a production bundle drops it whole: `isPackaged` decides nothing there but where unpackaged data lives.
+if (STUDIO_E2E) {
+  const identityProblem = e2eIdentityProblem({ e2e: true, packaged: app.isPackaged, appName: app.name });
+  if (identityProblem !== null) {
+    console.error(`studio: ${identityProblem}`);
+    app.exit(1);
+  }
+}
 
 // Must run before `ready`. The CSP is never bypassed: the renderer CSP allows the scheme in img-src and media-src.
 protocol.registerSchemesAsPrivileged([{ scheme: MEDIA_SCHEME, privileges: MEDIA_SCHEME_PRIVILEGES }]);

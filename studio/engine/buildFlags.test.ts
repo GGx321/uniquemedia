@@ -183,6 +183,9 @@ describe("the smoke test's production bundle checks", () => {
       "contains studio-music-cdn-base-url",
       "DevTools are not compiled off",
       "the remote-debugging refusal is missing",
+      // The E2E identity guard (studio/main/e2eIdentity.ts) reads `isPackaged`: an E2E-only line, compiled out of production
+      // (the passing "pass a production build" test above keeps its single `isPackaged`, the userData one).
+      expect.stringContaining("isPackaged decides more than where unpackaged data lives"),
     ]);
     expect(productionEngineBundleProblems(await engineOf(e2eDir), await chunksOf(e2eDir))).toEqual([
       "the engine takes an OpenRouter base-URL override",
