@@ -1,4 +1,4 @@
-import { MAX_STICKER_LAYERS, MAX_TEXT_LAYERS, MIN_LAYER_MS, type Layer, type MontageDraft } from "../../../shared/engine";
+import { MAX_STICKER_LAYERS, MAX_TEXT_LAYERS, MIN_LAYER_MS, type Layer, type MontageDraft, type TextFont, type TextStyle } from "../../../shared/engine";
 import { DEFAULT_STICKER, DEFAULT_TEXT_Y, MAX_TOTAL_MS, STEP_MS } from "../../../shared/montage";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { nextLayerId, totalMs } from "./clipOps";
@@ -106,9 +106,13 @@ function addLayer(spec: MontageDraft, kind: LayerKind, atMs: number, make: (base
   return done(withLayers(spec, [...spec.layers, layer]), layerId);
 }
 
-/** «Добавить текст»: the first preset («Плашка · Manrope», white) with the neutral sample, where the mockup sets a text. */
-export function addTextLayer(spec: MontageDraft, atMs: number): LayerEdit {
-  return addLayer(spec, "text", atMs, (base) => ({ ...base, kind: "text", value: DEFAULT_TEXT_VALUE, font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: DEFAULT_TEXT_Y, scale: 1 }));
+/**
+ * «Добавить текст»: the first preset («Плашка · Manrope», white) with the neutral sample, where the mockup sets a text. A «Стили»
+ * preset (3d.5, T2) adds its own font, style and sample instead; the colour is the styles' default, white.
+ */
+export function addTextLayer(spec: MontageDraft, atMs: number, preset?: { readonly font: TextFont; readonly style: TextStyle; readonly sample: string }): LayerEdit {
+  const look = preset === undefined ? { value: DEFAULT_TEXT_VALUE, font: "manrope" as const, style: "plaque" as const } : { value: preset.sample, font: preset.font, style: preset.style };
+  return addLayer(spec, "text", atMs, (base) => ({ ...base, kind: "text", ...look, color: "#ffffff", x: 0.5, y: DEFAULT_TEXT_Y, scale: 1 }));
 }
 
 /** A built-in sticker at the playhead, where and as large as the mockup sets one. */
