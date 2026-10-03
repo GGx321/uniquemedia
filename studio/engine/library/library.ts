@@ -937,6 +937,11 @@ export class Library {
       if (!this.#avatars.has(folder)) continue;
       const avatarDir = this.#avatarDir(folder);
       const reading = { beforeRead: this.#beforeReadVideoRecord };
+      // `videos:<folder>` is the RELOAD's lock (`reloadVideoRecords`): it keeps the index's re-read and these moves apart. The
+      // writers do not take it, and need not: a record is written once (its commit intent is renamed to a new `<id>.json`) and
+      // never rewritten, so no writer turns a file read as broken here into a sound one, and `videos.delete` refuses a record it
+      // cannot read, so nothing else moves or removes these files. Only a hand edit can change one, and the look right before
+      // each move (`stillUnreadable`) catches that.
       await runExclusive(`videos:${folder}`, async () => {
         const read = await readVideoRecords(avatarDir, folder, reading);
         for (const problem of read.problems) {
