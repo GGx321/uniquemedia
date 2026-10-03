@@ -72,6 +72,12 @@ describe("parseTruePeak", () => {
     expect(parseTruePeak(summary("-inf"))).toBe(Number.NEGATIVE_INFINITY);
   });
 
+  test("reads inf and +inf as plus infinity, which the gain rule then refuses", () => {
+    expect(parseTruePeak(summary("inf"))).toBe(Number.POSITIVE_INFINITY);
+    expect(parseTruePeak(summary("+inf"))).toBe(Number.POSITIVE_INFINITY);
+    expect(() => musicGainDb(parseTruePeak(summary("inf")))).toThrow(RenderGraphError);
+  });
+
   test("reads a summary that ends its lines with CR LF, as on Windows", () => {
     expect(parseTruePeak(summary("-1.6").replaceAll("\n", "\r\n"))).toBe(-1.6);
   });

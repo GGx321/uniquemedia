@@ -232,6 +232,15 @@ describe("a render job with music: a track that does not pass, and nothing is to
   });
 });
 
+describe("invariant 31 by type", () => {
+  test("a plan cannot carry a music path: the audio of a plan is silence, and a track only comes through `track` and the store", () => {
+    const w = world();
+    // @ts-expect-error a `{ kind: "music", path }` plan would bypass `openForRender`
+    const bypass: RenderPlan = planOf(w, { audio: { kind: "music", path: "/anywhere/track.m4a", startMs: 0 } });
+    expect(bypass.track).toBeDefined();
+  });
+});
+
 describe("a render job without music is unchanged", () => {
   test("never opens a track, renders the silent track, and records no resolved audio", async () => {
     const r = rig();

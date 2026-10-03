@@ -72,8 +72,8 @@ export interface RenderPlan {
   /** photoId to its file and STORED size; resolved up front so a missing photo answers PHOTO_UNAVAILABLE, never a builder error. */
   readonly resolvePhoto: PhotoResolver;
   readonly overlays: readonly OverlayInput[];
-  /** The audio of a montage with no music: silence. With `track` it is replaced by the track the store hands over at the job's start. */
-  readonly audio: AudioPlan;
+  /** Silence, by type (invariant 31): a plan cannot name a track file. A track comes only through `track`, opened from the store when the job starts. */
+  readonly audio: { readonly kind: "silent" };
   /**
    * The trending track the montage uses, by id (3c.5, invariant 31). Only the id and where to start: the file's path is never in
    * the plan. The job asks the track store for it when it starts, and the store checks it again before handing it over.

@@ -113,5 +113,7 @@ export function parseTruePeak(stderr: string): number {
   let last: string | undefined;
   for (const match of stderr.matchAll(TRUE_PEAK)) last = match[1];
   if (last === undefined) return bad("ffmpeg's loudness summary holds no true peak");
-  return last.endsWith("inf") ? Number.NEGATIVE_INFINITY : Number(last);
+  // `-inf` is the peak of silence; `inf` or `+inf` is a failed measurement, which `musicGainDb` refuses.
+  if (last.endsWith("inf")) return last.startsWith("-") ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+  return Number(last);
 }
