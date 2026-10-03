@@ -286,12 +286,37 @@ describe("the engine's clock is not this window's business (3d.2 re-review, HIGH
     expect(flushed).toMatchObject({ ok: true });
   });
 
+  test("a re-read sent before this window's save and answered after its ack is stale: not adopted, not kept, no save", async () => {
+    const { scheduler, saves, autosave } = rig();
+    autosave.set(content(1));
+    scheduler.next();
+    saves.ok(); // stamped 10:00:01
+    await settle();
+    // The draft as it was read BEFORE the save (10:00:00): older than what the engine answered since.
+    const stale = montageOf(version(0), null, "2026-09-30T10:00:00.000Z");
+    expect(autosave.isStale(stale)).toBe(true);
+    expect(autosave.adoptRemote(stale)).toBe(false);
+    autosave.noteKept(stale);
+    scheduler.runAll();
+    expect(autosave.content).toEqual(content(1));
+    expect(autosave.saved.spec).toEqual(version(1));
+    expect(saves.calls).toHaveLength(1);
+  });
+
+  test("stamps are compared as instants (another precision is not newer), and one that cannot be read is never stale", async () => {
+    const { autosave } = rig();
+    expect(autosave.isStale(montageOf(version(5), null, "2026-09-30T10:00:00Z"))).toBe(false);
+    expect(autosave.isStale(montageOf(version(5), null, "2026-09-30T09:59:59.999Z"))).toBe(true);
+    expect(autosave.isStale({ ...montageOf(version(5)), updatedAt: "not a stamp" })).toBe(false);
+  });
+
   test("a save from elsewhere noted while this window's save is out is re-sent over ONCE, whatever the stamps say", async () => {
     const { scheduler, saves, autosave } = rig();
     autosave.set(content(1));
     scheduler.next();
-    // Stamped EARLIER than this window's answer will be: still, which of the two the engine applied last is unknown.
-    autosave.noteKept(montageOf(version(7), null, "2026-01-01T00:00:00.000Z"));
+    // Stamped after the open draft (engine stamps move forward per draft) but EARLIER than this window's answer will
+    // be (10:00:01): still, which of the two the engine applied last is not read from the stamps.
+    autosave.noteKept(montageOf(version(7), null, "2026-09-30T10:00:00.500Z"));
     saves.ok();
     await settle();
     expect(saves.sent()).toEqual([content(1), content(1)]);

@@ -174,15 +174,24 @@ export class DraftAutosave {
   }
 
   /**
-   * Takes a save made elsewhere as the stored draft, but only while nothing here is unsaved or in flight: otherwise
-   * this window's own save follows and wins (the engine applies saves in order). True when adopted.
+   * Whether `montage` is older than what the engine already answered: a re-read sent before this window's last save
+   * and answered after it. Compared as instants (`Date.parse`; another precision of the same stamp is not newer), and
+   * meaningful because the engine's stamps move forward per draft whatever its clock does; a stamp that cannot be read
+   * is never stale. NEVER applied to the answer to this window's own save: that one is always taken (the round-2 HIGH).
+   */
+  isStale(montage: Montage): boolean {
+    const at = Date.parse(montage.updatedAt);
+    const acked = Date.parse(this.#acked.updatedAt);
+    return !Number.isNaN(at) && !Number.isNaN(acked) && at < acked;
+  }
+
+  /**
+   * Takes a save made elsewhere as the stored draft, but only while nothing here is unsaved or in flight (otherwise
+   * this window's own save follows and wins: the engine applies saves in order), and only if it is not stale.
    */
   adoptRemote(montage: Montage): boolean {
     if (montage.montageId !== this.#montageId || this.#gone !== null || this.#closed) return false;
-    if (this.#inflight !== null || this.#dirty()) return false;
-    // No `updatedAt` comparison here or anywhere in this file: the engine stamps it from a wall clock that can go
-    // back (an NTP step, a library written by a machine with a fast clock). Order comes from the store (events in seq
-    // order) and from the editor dropping a re-read that a newer one overtook.
+    if (this.#inflight !== null || this.#dirty() || this.isStale(montage)) return false;
     this.#acked = montage;
     this.#latest = contentOf(montage);
     this.#error = null;
@@ -197,7 +206,7 @@ export class DraftAutosave {
    * out, nobody can tell which of the two the engine applied last, so that save goes out ONCE more after its answer.
    */
   noteKept(montage: Montage): void {
-    if (montage.montageId !== this.#montageId || this.#gone !== null) return;
+    if (montage.montageId !== this.#montageId || this.#gone !== null || this.isStale(montage)) return;
     this.#acked = montage;
     if (this.#inflight !== null) this.#keptDuringFlight = montage;
     this.#emit();

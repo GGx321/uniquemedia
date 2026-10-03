@@ -152,6 +152,20 @@ describe("montage.changed", () => {
     expect(saves.sent()).toEqual([{ spec: version(0), name: null }]);
   });
 
+  test("a re-read answered after this window's save but read before it is stale: the screen keeps this window's version", async () => {
+    const { scheduler, saves, session } = rig();
+    session.edit(version(1));
+    scheduler.runAll();
+    saves.ok();
+    await settle();
+    expect(session.receive({ change: "upserted", montage: montageOf(version(0), null, "2026-09-30T10:00:00.000Z") })).toBe("stale");
+    expect(session.state.spec).toEqual(version(1));
+    scheduler.runAll();
+    expect(saves.calls).toHaveLength(1);
+    // A newer save from elsewhere is still taken.
+    expect(session.receive({ change: "upserted", montage: montageOf(version(5), null, "2026-09-30T11:00:00.000Z") })).toBe("adopted");
+  });
+
   test("another draft's changes are not this session's business", () => {
     const { session } = rig();
     const other = { ...montageOf(version(5)), montageId: "montage-0000002" };

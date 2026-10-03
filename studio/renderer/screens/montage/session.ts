@@ -25,10 +25,11 @@ export interface SessionState {
  * - `own`: the echo of this window's save; nothing changes;
  * - `adopted`: a save from elsewhere, taken as the newest version (this window had nothing unsaved);
  * - `kept`: a save from elsewhere, left alone: this window's unsaved edit is saved after it and wins;
+ * - `stale`: older than what the engine already answered (a re-read overtaken by this window's save); ignored;
  * - `removed`: this draft was deleted; the session saves nothing any more;
  * - `other`: another draft's change.
  */
-export type Received = "own" | "adopted" | "kept" | "removed" | "other";
+export type Received = "own" | "adopted" | "kept" | "stale" | "removed" | "other";
 
 export interface SessionOptions {
   readonly montage: Montage;
@@ -128,6 +129,7 @@ export class DraftSession {
     const { montage } = change;
     if (montage.montageId !== this.#montageId) return "other";
     if (this.#autosave.isOwnEcho(montage)) return "own";
+    if (this.#autosave.isStale(montage)) return "stale";
     if (!this.#autosave.adoptRemote(montage)) {
       // Not adopted, but it is what the engine holds now: this window's unsaved edit is measured against it.
       this.#autosave.noteKept(montage);
