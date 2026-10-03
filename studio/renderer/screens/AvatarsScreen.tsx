@@ -67,9 +67,9 @@ function photosLabel(count: number): string {
 }
 
 /**
- * A saved avatar. The sheet's tile also carries a video count, «N новых» and
- * category tags; the contract has none of them yet, so only the name and the
- * photo count are drawn, each in its own slot.
+ * A saved avatar. The sheet's tile also carries «N новых» and category tags;
+ * the contract has neither, so the name, the photo count and (3e.2) the video
+ * count are drawn, the last opening the avatar's «Видео» tab.
  */
 function AvatarCard({ avatar }: { avatar: AvatarSummary }) {
   const navigate = useNavigate();
@@ -93,7 +93,13 @@ function AvatarCard({ avatar }: { avatar: AvatarSummary }) {
             </button>
           </h2>
         </div>
-        <span className="mono muted">{photosLabel(avatar.photoCount)}</span>
+        <span className="mono muted avatar-counts">
+          {photosLabel(avatar.photoCount)} ·{" "}
+          <button type="button" className="avatar-link avatar-videos" aria-label={`Видео аватара ${avatar.name}: ${avatar.videoCount}`} onClick={() => navigate({ name: "photos", avatarId: avatar.avatarId, tab: "videos" })}>
+            {groupNumber(avatar.videoCount)}
+            {NBSP}видео
+          </button>
+        </span>
       </div>
     </article>
   );
