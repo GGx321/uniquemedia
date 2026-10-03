@@ -432,14 +432,24 @@ const progressCounts = { done: Count, total: Count };
  * before that. The window disables Cancel once it sees `true`. Set by the engine, never derived from the frame count.
  */
 const renderSaving = { saving: z.boolean().optional() };
+/**
+ * A render announced while it still waits for a free slot (3d.6). The announcement of a waiting render and the one of the same
+ * render starting look alike (both at zero), so the engine says which: `queued: true` on the first, absent on the start. Only at
+ * zero, and never together with `saving`. The window shows «В очереди · после N» for it, and «Рендер · P %» once it runs.
+ */
+const renderQueued = { queued: z.boolean().optional() };
 
 export const JobProgress = z
   .discriminatedUnion("kind", [
     z.strictObject({ ...candidatesJobRef, ...progressCounts }),
     z.strictObject({ ...runJobRef, ...progressCounts }),
-    z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving }),
+    z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving, ...renderQueued }),
   ])
-  .refine(doneWithinTotal.check, doneWithinTotal.params);
+  .refine(doneWithinTotal.check, doneWithinTotal.params)
+  .refine((p) => !(p.kind === "render" && p.queued === true) || (p.done === 0 && p.saving !== true), {
+    message: "a queued render is announced at zero and is not saving",
+    path: ["queued"],
+  });
 
 /** `job.failed`'s payload: the job's identity (see `JobProgress`) and why it failed. */
 export const JobFailed = z.discriminatedUnion("kind", [

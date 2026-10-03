@@ -719,7 +719,14 @@ export class EngineStore {
         // The event names its job (kind, avatar, runId): a window that never
         // started it, or hears of it first here, still knows exactly whose it is.
         const saving = event.payload.kind === "render" && event.payload.saving === true;
-        this.patchJob(event.payload, (job) => (isFinished(job) ? job : { ...job, status: "running", done, total, saving: job.saving || saving }), lastSeq);
+        // A render announced `queued` is waiting for a slot (the same announcement at zero otherwise means it started); a job that
+        // already runs is never taken back.
+        const queued = event.payload.kind === "render" && event.payload.queued === true;
+        this.patchJob(
+          event.payload,
+          (job) => (isFinished(job) ? job : { ...job, status: queued && job.status !== "running" ? "queued" : "running", done, total, saving: job.saving || saving }),
+          lastSeq,
+        );
         return;
       }
       case "job.done": {

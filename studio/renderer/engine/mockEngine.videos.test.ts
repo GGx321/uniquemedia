@@ -32,6 +32,21 @@ describe("videos.render", () => {
     expect(sent[0]?.payload).toEqual({ kind: "render", jobId, videoId, avatarId: MIA.avatarId, montageId: draft.montageId, done: 0, total: TWO_PHOTO_FRAMES });
   });
 
+  // 3d.6, as the engine: a waiting render's announcement says queued, its start (and a render that started at once) does not.
+  test("a render that waits for a slot is announced queued, and announced again, not queued, when it starts", async () => {
+    const mock = makeMock();
+    const first = await renderDraft(mock, (await draftOf(mock, [P1, P2])).montageId);
+    const second = await renderDraft(mock, (await draftOf(mock, [P3, P4])).montageId);
+
+    const flagsOf = (jobId: string): unknown[] =>
+      eventsOfJob(mock.events, jobId).flatMap((e) => (e.type === "job.progress" && e.payload.kind === "render" && e.payload.done === 0 ? [e.payload.queued] : []));
+    expect(flagsOf(first.jobId)).toEqual([undefined]);
+    expect(flagsOf(second.jobId)).toEqual([true]);
+
+    mock.scheduler.runAll();
+    expect(flagsOf(second.jobId)).toEqual([true, undefined]);
+  });
+
   test("reserves the photos: they are held, and the avatar's eligibleUnusedCount drops by their number", async () => {
     const mock = makeMock();
     const draft = await draftOf(mock, [P1, P2]);

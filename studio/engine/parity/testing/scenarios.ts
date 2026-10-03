@@ -575,6 +575,19 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    // 3d.6: a waiting render and a starting one are both announced at zero; the window tells them apart by `queued`, which only the
+    // first carries. The transcript does not write the flag (it would rewrite the older stories), so this one writes it as notes.
+    name: "queued: a render that waits for a slot is announced queued, the first one and every start are not",
+    async run(t, w) {
+      const ids = [await draft(t, w, [photo(w, 1), photo(w, 2)]), await draft(t, w, [photo(w, 3), photo(w, 4)]), await draft(t, w, [photo(w, 5), photo(w, 6)])];
+      for (const montageId of ids) await t.call("videos.render", { montageId });
+      t.note(`announced queued: ${t.announcedQueued().join(", ")}`);
+      await t.settle();
+      t.note(`announced queued after every start: ${t.announcedQueued().join(", ")}`);
+      await t.call("engine.snapshot", {});
+    },
+  },
+  {
     name: "two renders at once: both run, the third waits, and a slot freed by a cancel starts it",
     rig: { renderConcurrency: 2 },
     async run(t, w) {

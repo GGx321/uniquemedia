@@ -8,7 +8,7 @@ useNativeGlobals();
 // («Рендер · P %») depends on exactly these. Each test feeds a story to the checker and says which rule it breaks.
 
 const TOTAL = 240;
-const p = (done: number, saving = false, jobId = "job-a", total = TOTAL): RenderProgress => ({ jobId, done, total, ...(saving ? { saving: true } : {}) });
+const p = (done: number, saving = false, jobId = "job-a", total = TOTAL, queued = false): RenderProgress => ({ jobId, done, total, ...(saving ? { saving: true } : {}), ...(queued ? { queued: true } : {}) });
 
 function run(...events: RenderProgress[]): void {
   const checker = new ProgressInvariants();
@@ -42,6 +42,23 @@ describe("a render's progress numbers", () => {
 
   test("accepts the start twice: once when the render is queued, once when a slot frees and it runs", () => {
     expect(() => run(p(0), p(0), p(84))).not.toThrow();
+  });
+
+  // 3d.6: the engine says which of the two announcements at zero is the waiting one.
+  test("accepts a queued announcement first and the start after it; a job that started at once is never queued", () => {
+    expect(() => run(p(0, false, "job-a", TOTAL, true), p(0), p(84))).not.toThrow();
+    expect(() => run(p(0), p(84))).not.toThrow();
+  });
+
+  test("refuses a queued announcement that is not the job's first, or comes after a step", () => {
+    expect(() => run(p(0), p(0, false, "job-a", TOTAL, true))).toThrow(/queued/);
+    expect(() => run(p(0, false, "job-a", TOTAL, true), p(0, false, "job-a", TOTAL, true))).toThrow(/queued/);
+    expect(() => run(p(0), p(84), p(90, false, "job-a", TOTAL, true))).toThrow(/queued/);
+  });
+
+  test("refuses a queued announcement that is not at zero or is saving", () => {
+    expect(() => run(p(5, false, "job-a", TOTAL, true))).toThrow(/queued/);
+    expect(() => run(p(0, true, "job-a", TOTAL, true))).toThrow(/queued/);
   });
 
   test("refuses a third announcement at zero: a step is progress", () => {

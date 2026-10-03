@@ -605,7 +605,7 @@ export class VideoService {
       id: this.#deps.newId(),
       kind: "event",
       type: "job.progress",
-      payload: { kind: "render", jobId: state.jobId, videoId: state.videoId, avatarId: state.avatarId, montageId: state.montageId, done: state.done, total: state.total, ...(state.saving === true ? { saving: true } : {}) },
+      payload: { kind: "render", jobId: state.jobId, videoId: state.videoId, avatarId: state.avatarId, montageId: state.montageId, done: state.done, total: state.total, ...(state.saving === true ? { saving: true } : {}), ...(state.status === "queued" ? { queued: true } : {}) },
     });
   }
 

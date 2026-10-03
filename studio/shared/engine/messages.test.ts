@@ -1559,6 +1559,16 @@ describe("Stage 3 results and events", () => {
     expect(JobState.safeParse({ ...snapshotJob, kind: "avatar.candidates", videoId: undefined, montageId: undefined }).success).toBe(false);
   });
 
+  // 3d.6: a queued render and a running one at zero look the same on the wire, so the engine says which one the announcement is.
+  test("a render's job.progress can say it is still queued (waiting for a slot); another kind of job cannot, nor can a saving one", () => {
+    expect(parseMessage(event("job.progress", { ...renderRef, done: 0, total: 120, queued: true })).ok).toBe(true);
+    expect(parseMessage(event("job.progress", { ...renderRef, done: 0, total: 120, queued: false })).ok).toBe(true);
+    expect(parseMessage(event("job.progress", { ...renderRef, done: 0, total: 120, queued: "yes" })).ok).toBe(false);
+    expect(parseMessage(event("job.progress", { ...renderRef, done: 0, total: 120, queued: true, saving: true })).ok).toBe(false);
+    expect(parseMessage(event("job.progress", { ...renderRef, done: 5, total: 120, queued: true })).ok).toBe(false);
+    expect(parseMessage(event("job.progress", { kind: "run", jobId: "job-00000004", runId: "run-00000001", avatarId: "avatar-0001", done: 0, total: 4, queued: true })).ok).toBe(false);
+  });
+
   test("the error inside job.failed is strict too: no `cause` next to its code", () => {
     const payload = { ...renderRef, error: { code: "RENDER_FAILED", cause: { spawnargs: ["-i", "/Users/owner/photo.jpg"] } } };
     expect(parseMessage(event("job.failed", payload)).ok).toBe(false);

@@ -657,6 +657,21 @@ describe("the render events", () => {
     ]);
   });
 
+  // 3d.6: the two announcements at zero (waiting, then starting) look alike, so the waiting one says so.
+  test("the announcement of a render that waits for a slot says queued; the one that started at once, and the start of a waiting one, do not", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { renderOverrides: { runDeps: { run: () => new Promise<void>(() => undefined) } } } });
+
+    const first = await r.service.render({ spec: specFor(w, 0) });
+    const second = await r.service.render({ spec: specFor(w, 1) });
+
+    const flags = r.stamped().flatMap((e) => (e.type === "job.progress" && e.payload.kind === "render" ? [[e.payload.jobId, e.payload.queued]] : []));
+    expect(flags).toEqual([
+      [first.jobId, undefined],
+      [second.jobId, true],
+    ]);
+  });
+
   test("a finished render emits video.changed (upserted, present, with its summary) and then job.done with the result", async () => {
     const w = world();
     const r = serviceRig(w);

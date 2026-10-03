@@ -1752,7 +1752,7 @@ export class MockEngine implements EngineBridge {
       id: this.nextId("evt"),
       kind: "event",
       type: "job.progress",
-      payload: { kind: "render", jobId: job.jobId, videoId: job.videoId, avatarId: job.avatarId, montageId: job.montageId, done: job.done, total: job.total, ...(job.saving ? { saving: true } : {}) },
+      payload: { kind: "render", jobId: job.jobId, videoId: job.videoId, avatarId: job.avatarId, montageId: job.montageId, done: job.done, total: job.total, ...(job.saving ? { saving: true } : {}), ...(job.status === "queued" ? { queued: true } : {}) },
     });
   }
 

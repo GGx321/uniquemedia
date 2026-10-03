@@ -607,3 +607,28 @@ test("a snapshot's batch starts at its oldest active render", async () => {
   expect([...h.store.getView().renderBatch]).toEqual(["job-render-0002"]);
   h.stop();
 });
+
+// 3d.6: the engine says whether an announcement at zero is a render waiting for a slot or one starting.
+test("a render announced queued is queued; its start announcement and any step make it running; a started one is never taken back to queued", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 0, total: 240, queued: true } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "queued", done: 0, total: 240 });
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 0, total: 240 } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "running" });
+  // A late copy of the queued announcement (it cannot come after the start, but the rule is stated): the job stays running.
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 0, total: 240, queued: true } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "running" });
+  expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("a queued render still queued is not a running one: a render announced queued from the first event the window hears", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, jobId: "job-render-0007", videoId: "video-0000007", done: 0, total: 240, queued: true } });
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, jobId: "job-render-0008", videoId: "video-0000008", done: 0, total: 240 } });
+  expect(h.store.getView().jobs.map((j) => [j.jobId, j.status])).toEqual([
+    ["job-render-0007", "queued"],
+    ["job-render-0008", "running"],
+  ]);
+  h.stop();
+});

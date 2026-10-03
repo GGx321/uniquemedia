@@ -119,7 +119,9 @@ export function eventLine(event: EventMessage, norm: Normalizer): string | null 
     const p = objectOf(event.payload);
     const done = typeof p.done === "number" ? p.done : -1;
     const phase = p.saving === true ? "saving" : done === 0 ? "start" : "mid";
-    const { done: _done, saving: _saving, ...rest } = p;
+    // `queued` is not written (it would rewrite every queued render's line in the older stories): a scenario that is about it asks
+    // `Transcript.announcedQueued()` and writes the answer as a note.
+    const { done: _done, saving: _saving, queued: _queued, ...rest } = p;
     return `event job.progress ${compact({ ...objectOf(norm.value(rest)), phase })}`;
   }
   if (event.type === "avatar.changed") return `event avatar.changed ${compact(norm.value(avatarLine(objectOf(event.payload).avatar)))}`;
@@ -222,6 +224,8 @@ export class Transcript {
   readonly #rig: Recorded;
   readonly norm: Normalizer;
   readonly #progress = new ProgressInvariants();
+  /** The renders announced as waiting for a slot, in order (as aliases): what the window shows as «В очереди». */
+  readonly #queued: string[] = [];
   #seen: number;
 
   constructor(rig: Recorded, norm: Normalizer) {
@@ -236,7 +240,10 @@ export class Transcript {
     const all = this.#rig.events();
     for (const event of all.slice(this.#seen)) {
       // The transcript leaves a render's `done` out; the rules its numbers must satisfy are checked here, on both engines.
-      if (event.type === "job.progress" && event.payload.kind === "render") this.#progress.check(event.payload);
+      if (event.type === "job.progress" && event.payload.kind === "render") {
+        this.#progress.check(event.payload);
+        if (event.payload.queued === true) this.#queued.push(String(objectOf(this.norm.value({ jobId: event.payload.jobId })).jobId));
+      }
       const line = eventLine(event, this.norm);
       if (line !== null) this.#lines.push(line);
     }
@@ -306,6 +313,12 @@ export class Transcript {
     const mark = this.#lines.length;
     this.#drain();
     if (this.#lines.length > mark) this.#lines.splice(mark, 0, "~ end of scenario");
+  }
+
+  /** The jobs announced `queued` so far, in order (events not yet drained are read first). */
+  announcedQueued(): string[] {
+    this.#drain();
+    return [...this.#queued];
   }
 
   /** A line the scenario writes for its reader. */
