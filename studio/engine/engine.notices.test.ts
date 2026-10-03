@@ -76,6 +76,44 @@ describe("noteUnhandledRejection", () => {
     expect(noticesOf(events)).toHaveLength(2);
   });
 
+  test("a trailing announcement that cannot be posted is logged, not thrown out of the timer (an uncaught exception would end the engine)", async () => {
+    let failing = false;
+    let delivered = 0;
+    const warned: string[] = [];
+    const realWarn = console.warn;
+    console.warn = (...args: unknown[]) => void warned.push(args.join(" "));
+    try {
+      const { engine } = await startEngine(dir(), {
+        deps: {
+          monotonic: () => performance.now(),
+          internalNoticeWindowMs: 30,
+          post: (message) => {
+            if (failing) throw new Error("the port is closed");
+            if (typeof message === "object" && message !== null && "type" in message && message.type === "engine.notice") delivered += 1;
+          },
+        },
+      });
+      for (let n = 0; n < 3; n++) engine.noteUnhandledRejection();
+      failing = true; // only the trailing announcement meets the failure
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(warned.some((line) => line.includes("trailing"))).toBe(true);
+      expect(delivered).toBe(1);
+    } finally {
+      console.warn = realWarn;
+    }
+  });
+
+  test("a shutdown drops the trailing announcement: nothing is posted after the engine said it is stopping", async () => {
+    const { engine, events } = await startEngine(dir(), { deps: { monotonic: () => performance.now(), internalNoticeWindowMs: 60 } });
+    for (let n = 0; n < 3; n++) engine.noteUnhandledRejection();
+    expect(noticesOf(events)).toHaveLength(1);
+
+    await engine.shutdown(0);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(noticesOf(events)).toHaveLength(1);
+  });
+
   test("a single rejection schedules no trailing announcement", async () => {
     const { engine, events } = await startEngine(dir(), { deps: { monotonic: () => performance.now(), internalNoticeWindowMs: 20 } });
     engine.noteUnhandledRejection();

@@ -788,6 +788,9 @@ export class Engine {
    * finish, so its file, record and used mark are complete and nothing is left for the next start to settle.
    */
   async shutdown(waitMs: number = SHUTDOWN_RENDER_WAIT_MS): Promise<{ idle: boolean }> {
+    // The held-back notice announcement is for windows of a running engine: it is dropped, not posted into a stopping one.
+    if (this.#internalNoticeTimer !== null) clearTimeout(this.#internalNoticeTimer);
+    this.#internalNoticeTimer = null;
     // A music request in flight is aborted (its send stays counted); the renders get their bounded wait.
     const [, renders] = await Promise.all([this.#music.stop(), this.#videos.shutdown(waitMs)]);
     return renders;
@@ -3067,8 +3070,13 @@ export class Engine {
           if (pending === undefined || pending.noticeId === this.#internalNoticeEmittedId) return; // already announced by a later call
           this.#internalNoticeEmittedId = pending.noticeId;
           this.#internalNoticeEmittedAt = this.#deps.monotonic();
-          this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice: pending } });
-        }, Math.max(0, window - (now - this.#internalNoticeEmittedAt)));
+          try {
+            this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice: pending } });
+          } catch (error) {
+            // A timer callback has no caller to throw to: an exception here would end the engine for a notice. The pending notice stays in the snapshot.
+            console.warn(`studio engine: the trailing engine-internal-error notice could not be announced (${messageOf(error, "unknown error")})`);
+          }
+        },Math.max(0, window - (now - this.#internalNoticeEmittedAt)));
         this.#internalNoticeTimer.unref();
       }
       return;
