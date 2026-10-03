@@ -7,7 +7,6 @@ import {
   clampDuration,
   clipStartMs,
   duplicateClip,
-  duplicateLayer,
   type Edit,
   evenOut,
   fillFocus,
@@ -19,7 +18,6 @@ import {
   nextClipId,
   nextLayerId,
   removeClip,
-  removeLayer,
   roomMs,
   setCellPhoto,
   setDuration,
@@ -27,7 +25,6 @@ import {
   setMotion,
   setStagger,
   splitClipAt,
-  splitLayerAt,
   totalMs,
 } from "./clipOps";
 import { collageClip, draftSpec, photoClip, photoClips, stickerLayer, textLayer, videoClip } from "./testkit";
@@ -425,32 +422,3 @@ describe("the focus found for a placed photo (K6)", () => {
   });
 });
 
-describe("layers (the selection's other kinds; their tracks are 3d.3b)", () => {
-  const spec = draftSpec(3, { layers: [textLayer(0, 300, 4_400), stickerLayer(1, 1_000, 2_000)] });
-
-  test("removing a layer keeps the others in z-order", () => {
-    expect(removeLayer(spec, 0).layers.map((l) => l.layerId)).toEqual(["layer-002"]);
-    expect(() => removeLayer(spec, 2)).toThrow(RangeError);
-  });
-
-  test("a split keeps 0.3 s on both sides; the second part is a new layer right above the first", () => {
-    const split = ok(splitLayerAt(spec, 0, 600));
-    expect(split.layers.map((l) => [l.layerId, l.startMs, l.endMs])).toEqual([
-      ["layer-001", 300, 600],
-      ["layer-003", 600, 4_400],
-      ["layer-002", 1_000, 2_000],
-    ]);
-    expect(splitLayerAt(spec, 0, 500)).toEqual({ ok: false, reason: "too-short" });
-    expect(splitLayerAt(spec, 0, 4_200)).toEqual({ ok: false, reason: "too-short" });
-    expect(splitLayerAt(spec, 0, 300)).toEqual({ ok: false, reason: "not-splittable" });
-  });
-
-  test("a copy is a new layer over the same range, right above; ten of a kind is the cap", () => {
-    const copy = ok(duplicateLayer(spec, 1));
-    expect(copy.layers.map((l) => l.layerId)).toEqual(["layer-001", "layer-002", "layer-003"]);
-    expect(copy.layers[2]).toMatchObject({ kind: "sticker", startMs: 1_000, endMs: 2_000 });
-    const tenTexts = draftSpec(3, { layers: Array.from({ length: 10 }, (_, i) => textLayer(i, 0, 1_000)) });
-    expect(duplicateLayer(tenTexts, 0)).toEqual({ ok: false, reason: "layer-cap" });
-    expect(splitLayerAt(tenTexts, 0, 500)).toEqual({ ok: false, reason: "layer-cap" });
-  });
-});

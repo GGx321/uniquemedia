@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boundaryAt, boundaryMs, clampZoom, clockMs, msAtFraction, rulerMarks, seekInto, snapEdge, snapPlayhead, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
+import { boundaryAt, boundaryMs, clampZoom, clockMs, msAtFraction, rulerMarks, seekInto, snapEdge, snapMove, snapPlayhead, snapTargets, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
 
 // 3d.3a: the timeline's scale and the playhead. The ruler always spans 0–15 s; the zoom (1–8) widens it. The
 // playhead is the renderer's clock on the 100 ms grid, within the montage.
@@ -121,5 +121,26 @@ describe("a clip's film strip", () => {
     expect(tileCount(24)).toBe(2);
     expect(tileCount(25)).toBe(3);
     expect(tileCount(170)).toBe(9);
+  });
+});
+
+describe("snapping a layer's edges (3d.3b: they stick to the playhead and the clips' bounds)", () => {
+  test("the targets: the playhead on its step, both ends of the montage and every clip boundary, once each", () => {
+    expect(snapTargets([2_000, 2_400, 1_600], 4_160)).toEqual([0, 2_000, 4_100, 4_400, 6_000]);
+    expect(snapTargets([2_000], 2_000)).toEqual([0, 2_000]);
+    expect(snapTargets([], 0)).toEqual([0]);
+  });
+
+  test("a moved block's start goes where its nearer edge meets a target; the start edge wins a tie", () => {
+    const targets = [2_000, 3_000, 5_000];
+    // The end (2030) is 30 ms from 2000.
+    expect(snapMove(1_030, 1_000, targets, 50)).toBe(1_000);
+    // The start (4970) is 30 ms from 5000.
+    expect(snapMove(4_970, 1_000, targets, 50)).toBe(5_000);
+    // Both edges 20 ms off (1980 from 2000, 3020 from 3000): the start's target.
+    expect(snapMove(1_980, 1_040, targets, 50)).toBe(2_000);
+    // The nearer edge wins: the end is 10 ms off, the start 30.
+    expect(snapMove(1_970, 1_040, targets, 50)).toBe(1_960);
+    expect(snapMove(1_400, 1_000, targets, 50)).toBe(1_400);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MontageDraft, MontageIssue, PhotoSummary } from "../../../shared/engine";
-import { photoProblems, renderBlock, type RenderBlockInput } from "./renderBlock";
-import { AVATAR_ID, draftSpec, photoClip } from "./testkit";
+import { layerProblems, photoProblems, renderBlock, type RenderBlockInput } from "./renderBlock";
+import { AVATAR_ID, draftSpec, photoClip, stickerLayer, textLayer } from "./testkit";
 
 // Why «Рендер» is disabled (3d.2; the 3d.6 checklist's order): the export folder, then no clips, the length, an
 // empty cell, a photo that cannot go into a video (one photo → one video, the owner's Q1), a caption, a layer
@@ -183,5 +183,46 @@ describe("photoProblems: the cells whose photo cannot go into a video", () => {
 
   test("no verdict yet: nothing is flagged", () => {
     expect(photoProblems(READY, null, photosOf())).toEqual([]);
+  });
+});
+
+// 3d.3b: the timeline marks a layer block the engine refuses, by the layer's id (the judged spec's index may since have
+// moved), with what is wrong in a few words.
+describe("layerProblems: the layers the engine refuses", () => {
+  const own = { ...stickerLayer(2, 0, 1_000), sticker: { source: "own", mediaId: "media-own-0001" } } as const;
+  const spec = draftSpec(2, { layers: [textLayer(0, 0, 1_000), stickerLayer(1, 0, 1_000), own, { ...own, layerId: "layer-004" }] });
+
+  test("a caption, a sticker gone from the set, an own sticker's file, an own sticker not supported yet", () => {
+    const issues: MontageIssue[] = [
+      { code: "caption-invalid", path: ["layers", 0, "value"] },
+      { code: "sticker-unavailable", path: ["layers", 1, "sticker"] },
+      { code: "media-unavailable", path: ["layers", 2, "sticker"] },
+      { code: "not-yet-supported", path: ["layers", 3] },
+    ];
+    expect([...layerProblems(spec, issues)]).toEqual([
+      ["layer-001", "надпись не проходит проверку"],
+      ["layer-002", "стикера больше нет"],
+      ["layer-003", "файла больше нет"],
+      ["layer-004", "свои стикеры — скоро"],
+    ]);
+  });
+
+  test("only the engine's referential issues of a layer: a clip's, the track's and the structural ones are drawn elsewhere", () => {
+    const issues: MontageIssue[] = [
+      { code: "photo-unavailable", path: ["clips", 0, "cell"] },
+      { code: "track-unavailable", path: ["music"] },
+      { code: "layer-outside-timeline", path: ["layers", 0, "endMs"] },
+      { code: "not-yet-supported", path: ["clips", 1] },
+    ];
+    expect(layerProblems(spec, issues).size).toBe(0);
+  });
+
+  test("a path to no layer of the judged spec names nothing; a layer's first issue is the one told", () => {
+    const issues: MontageIssue[] = [
+      { code: "caption-invalid", path: ["layers", 9, "value"] },
+      { code: "caption-invalid", path: ["layers", 0, "value"] },
+      { code: "not-yet-supported", path: ["layers", 0] },
+    ];
+    expect([...layerProblems(spec, issues)]).toEqual([["layer-001", "надпись не проходит проверку"]]);
   });
 });

@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { MontageDraft } from "../../../shared/engine";
-import { duplicateSelected, removeSelected, resolveSelection, selectClip, selectionActions, splitSelected, type Applied } from "./selection";
+import { duplicateSelected, lowerSelected, raiseSelected, removeSelected, resolveSelection, selectClip, selectionActions, splitSelected, type Applied } from "./selection";
 import { collageClip, draftSpec, photoClip, photoClips, stickerLayer, textLayer, videoClip } from "./testkit";
 
 // 3d.3a: one item selected at a time (a clip and one of its cells, a text or sticker layer, or the music). The
 // selection names the item by id, so it survives a reorder and an undo; an item that is gone selects nothing.
 
 const MUSIC = { source: "trending", trackId: "track-espresso-01", startMs: 42_000 } as const;
+/** Only a text or a sticker has a place in the z-order. */
+const NOT_LAYER = { enabled: false, why: "not-a-layer" } as const;
 
 function applied(result: Applied | string | null): Applied {
   if (result === null || typeof result === "string") throw new Error(`not applied: ${String(result)}`);
@@ -57,12 +59,14 @@ describe("what the toolbar can do with the selection", () => {
       split: { enabled: false, why: "nothing-selected" },
       duplicate: { enabled: false, why: "nothing-selected" },
       remove: { enabled: false, why: "nothing-selected" },
+      raise: { enabled: false, why: "nothing-selected" },
+      lower: { enabled: false, why: "nothing-selected" },
     });
   });
 
   test("a photo or collage clip is never split (CF4); it is copied and deleted", () => {
     for (const id of ["clip-001", "clip-003"]) {
-      expect(selectionActions(spec, clip(id), 500)).toEqual({ split: { enabled: false, why: "photo-split" }, duplicate: { enabled: true }, remove: { enabled: true } });
+      expect(selectionActions(spec, clip(id), 500)).toEqual({ split: { enabled: false, why: "photo-split" }, duplicate: { enabled: true }, remove: { enabled: true }, raise: NOT_LAYER, lower: NOT_LAYER });
     }
   });
 
@@ -83,7 +87,7 @@ describe("what the toolbar can do with the selection", () => {
 
   test("a layer splits inside its range with 0.3 s on both sides; ten of a kind stop a copy", () => {
     const layer = { kind: "layer", layerId: "layer-001" } as const;
-    expect(selectionActions(spec, layer, 900)).toEqual({ split: { enabled: true }, duplicate: { enabled: true }, remove: { enabled: true } });
+    expect(selectionActions(spec, layer, 900)).toEqual({ split: { enabled: true }, duplicate: { enabled: true }, remove: { enabled: true }, raise: { enabled: false, why: "top" }, lower: { enabled: false, why: "bottom" } });
     expect(selectionActions(spec, layer, 400).split).toEqual({ enabled: false, why: "too-short" });
     expect(selectionActions(spec, layer, 1_500).split).toEqual({ enabled: false, why: "playhead-outside" });
     const ten = draftSpec(1, { layers: Array.from({ length: 10 }, (_, i) => textLayer(i, 0, 1_000)) });
@@ -91,7 +95,7 @@ describe("what the toolbar can do with the selection", () => {
   });
 
   test("the music is deleted, never split or copied", () => {
-    expect(selectionActions(spec, { kind: "music" }, 500)).toEqual({ split: { enabled: false, why: "music" }, duplicate: { enabled: false, why: "music" }, remove: { enabled: true } });
+    expect(selectionActions(spec, { kind: "music" }, 500)).toEqual({ split: { enabled: false, why: "music" }, duplicate: { enabled: false, why: "music" }, remove: { enabled: true }, raise: NOT_LAYER, lower: NOT_LAYER });
   });
 });
 
@@ -120,5 +124,35 @@ describe("acting on the selection", () => {
     expect(split.selection).toEqual({ kind: "clip", clipId: "clip-003", cell: 0 });
     expect(splitSelected(spec, { kind: "clip", clipId: "clip-001", cell: 0 }, 500)).toBe("not-splittable");
     expect(applied(splitSelected(spec, { kind: "layer", layerId: "layer-001" }, 400)).selection).toEqual({ kind: "layer", layerId: "layer-002" });
+  });
+});
+
+describe("the selected layer's place in the z-order («Слой выше» / «Слой ниже», 3d.3b)", () => {
+  // A text 0–2 s under a sticker 1–3 s, and a text 5–6 s that shares the screen with neither.
+  const spec = draftSpec(4, { layers: [textLayer(0, 0, 2_000), stickerLayer(1, 1_000, 3_000), textLayer(2, 5_000, 6_000)], music: MUSIC });
+  const layer = (layerId: string) => ({ kind: "layer", layerId }) as const;
+
+  test("a layer under another can go up, not down; the one above it the other way; one alone neither way", () => {
+    expect(selectionActions(spec, layer("layer-001"), 0)).toMatchObject({ raise: { enabled: true }, lower: { enabled: false, why: "bottom" } });
+    expect(selectionActions(spec, layer("layer-002"), 0)).toMatchObject({ raise: { enabled: false, why: "top" }, lower: { enabled: true } });
+    expect(selectionActions(spec, layer("layer-003"), 0)).toMatchObject({ raise: { enabled: false, why: "top" }, lower: { enabled: false, why: "bottom" } });
+  });
+
+  test("a clip and the music have no z-order", () => {
+    expect(selectionActions(spec, { kind: "clip", clipId: "clip-001", cell: 0 }, 0)).toMatchObject({ raise: NOT_LAYER, lower: NOT_LAYER });
+    expect(selectionActions(spec, { kind: "music" }, 0)).toMatchObject({ raise: NOT_LAYER, lower: NOT_LAYER });
+  });
+
+  test("raising and lowering keep the layer selected; a refusal says why", () => {
+    const up = applied(raiseSelected(spec, layer("layer-001")));
+    expect(up.spec.layers.map((l) => l.layerId)).toEqual(["layer-002", "layer-001", "layer-003"]);
+    expect(up.selection).toEqual(layer("layer-001"));
+    const down = applied(lowerSelected(up.spec, layer("layer-001")));
+    expect(down.spec.layers.map((l) => l.layerId)).toEqual(["layer-001", "layer-002", "layer-003"]);
+    expect(down.selection).toEqual(layer("layer-001"));
+    expect(raiseSelected(spec, layer("layer-003"))).toBe("top");
+    expect(lowerSelected(spec, layer("layer-001"))).toBe("bottom");
+    expect(raiseSelected(spec, { kind: "music" })).toBe("not-a-layer");
+    expect(lowerSelected(spec, null)).toBe("not-a-layer");
   });
 });

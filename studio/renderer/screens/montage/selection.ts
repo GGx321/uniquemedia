@@ -1,11 +1,13 @@
 import { MAX_STICKER_LAYERS, MAX_TEXT_LAYERS, MIN_LAYER_MS, type Clip, type Layer, type MontageDraft } from "../../../shared/engine";
 import { MIN_CLIP_MS, STEP_MS } from "../../../shared/montage";
-import { addRefusal, cellsOf, clipStartMs, duplicateClip, duplicateLayer, type Edit, type Refusal, removeClip, removeLayer, splitClipAt, splitLayerAt } from "./clipOps";
+import { addRefusal, cellsOf, clipStartMs, duplicateClip, type Edit, type Refusal, removeClip, splitClipAt } from "./clipOps";
+import { duplicateLayer, type LayerEdit, type LayerRefusal, lowerLayer, raiseLayer, removeLayer, splitLayerAt } from "./layerOps";
 
 // 3d.3a: the timeline's one selected item (a clip and one of its cells, a text or sticker layer, or the music), and
-// what the toolbar's «Разрезать по плейхеду», «Дублировать выбранное» and «Удалить выбранное» can do with it. The
-// selection is renderer state, never saved; it names the item by id, so it survives a reorder and an undo, and an
-// item that is gone (undone, deleted in another window) selects nothing.
+// what the toolbar's «Разрезать по плейхеду», «Дублировать выбранное» and «Удалить выбранное» can do with it (3d.3b
+// adds «Слой выше» / «Слой ниже», a layer's place in the z-order). The selection is renderer state, never saved; it
+// names the item by id, so it survives a reorder and an undo, and an item that is gone (undone, deleted in another
+// window) selects nothing.
 
 export type Selection =
   | { readonly kind: "clip"; readonly clipId: string; readonly cell: number }
@@ -25,9 +27,11 @@ export type Resolved =
  * - `playhead-outside`: the playhead is not strictly inside the selected item;
  * - `too-short`: a part would be under its minimum (0.5 s for a clip, 0.3 s for a layer);
  * - `clip-cap` / `no-room` / `layer-cap`: no place for a copy (`Refusal`'s meaning);
- * - `music`: the one track is neither split nor copied.
+ * - `music`: the one track is neither split nor copied;
+ * - `not-a-layer`: only a text or a sticker has a place in the z-order;
+ * - `top` / `bottom`: no layer on screen at the same time is above / below it (`raiseLayer`, `lowerLayer`).
  */
-export type ActionBlock = "nothing-selected" | "photo-split" | "playhead-outside" | "too-short" | "clip-cap" | "no-room" | "layer-cap" | "music";
+export type ActionBlock = "nothing-selected" | "photo-split" | "playhead-outside" | "too-short" | "clip-cap" | "no-room" | "layer-cap" | "music" | "not-a-layer" | "top" | "bottom";
 
 export type ActionState = { readonly enabled: true } | { readonly enabled: false; readonly why: ActionBlock };
 
@@ -35,6 +39,10 @@ export interface Actions {
   readonly split: ActionState;
   readonly duplicate: ActionState;
   readonly remove: ActionState;
+  /** «Слой выше»: the layer goes above the next layer on screen at the same time. */
+  readonly raise: ActionState;
+  /** «Слой ниже». */
+  readonly lower: ActionState;
 }
 
 /** An action's result: the new draft and what is selected after it. */
@@ -83,22 +91,35 @@ function splitState(startMs: number, endMs: number, atMs: number, minMs: number)
 
 const refusalBlock = (why: Refusal | null): ActionState => (why === null ? ON : why === "clip-cap" || why === "no-room" || why === "layer-cap" ? off(why) : off("too-short"));
 
+/** Whether a z-order step is possible, and its own refusal (`top`, `bottom`) when not. */
+const zState = (edit: LayerEdit): ActionState => (edit.ok ? ON : off(edit.reason === "top" || edit.reason === "bottom" ? edit.reason : "not-a-layer"));
+
 /** What the toolbar can do with the selection, the playhead at `playheadMs`. */
 export function selectionActions(spec: MontageDraft, selection: Selection | null, playheadMs: number): Actions {
   const item = resolveSelection(spec, selection);
-  if (item === null) return { split: off("nothing-selected"), duplicate: off("nothing-selected"), remove: off("nothing-selected") };
-  if (item.kind === "music") return { split: off("music"), duplicate: off("music"), remove: ON };
+  if (item === null) {
+    const none = off("nothing-selected");
+    return { split: none, duplicate: none, remove: none, raise: none, lower: none };
+  }
+  const flat = off("not-a-layer");
+  if (item.kind === "music") return { split: off("music"), duplicate: off("music"), remove: ON, raise: flat, lower: flat };
   if (item.kind === "layer") {
-    const { layer } = item;
+    const { layer, index } = item;
     const full = spec.layers.filter((l) => l.kind === layer.kind).length >= (layer.kind === "text" ? MAX_TEXT_LAYERS : MAX_STICKER_LAYERS);
     const split = splitState(layer.startMs, layer.endMs, playheadMs, MIN_LAYER_MS);
-    return { split: split.enabled && full ? off("layer-cap") : split, duplicate: full ? off("layer-cap") : ON, remove: ON };
+    return {
+      split: split.enabled && full ? off("layer-cap") : split,
+      duplicate: full ? off("layer-cap") : ON,
+      remove: ON,
+      raise: zState(raiseLayer(spec, index)),
+      lower: zState(lowerLayer(spec, index)),
+    };
   }
   const { clip, index } = item;
   const start = clipStartMs(spec, index);
   const split = clip.kind === "video" ? splitState(start, start + clip.durationMs, playheadMs, MIN_CLIP_MS) : off("photo-split");
   const cap = addRefusal(spec);
-  return { split: split.enabled && cap === "clip-cap" ? off("clip-cap") : split, duplicate: refusalBlock(cap), remove: ON };
+  return { split: split.enabled && cap === "clip-cap" ? off("clip-cap") : split, duplicate: refusalBlock(cap), remove: ON, raise: flat, lower: flat };
 }
 
 /** «Удалить выбранное» (and Delete): the item goes, nothing stays selected; null when there is nothing to delete. */
@@ -110,22 +131,40 @@ export function removeSelected(spec: MontageDraft, selection: Selection | null):
   return { spec: removeClip(spec, item.index), selection: null };
 }
 
-function selectCreated(edit: Edit, kind: "clip" | "layer"): Applied | Refusal {
+function selectCreated(edit: Edit | LayerEdit, kind: "clip" | "layer"): Applied | Refusal | LayerRefusal {
   if (!edit.ok) return edit.reason;
   const selection: Selection | null = edit.id === undefined ? null : kind === "clip" ? { kind: "clip", clipId: edit.id, cell: 0 } : { kind: "layer", layerId: edit.id };
   return { spec: edit.spec, selection };
 }
 
 /** «Дублировать выбранное»: the copy is selected. */
-export function duplicateSelected(spec: MontageDraft, selection: Selection | null): Applied | Refusal {
+export function duplicateSelected(spec: MontageDraft, selection: Selection | null): Applied | Refusal | LayerRefusal {
   const item = resolveSelection(spec, selection);
   if (item === null || item.kind === "music") return "not-splittable";
   return item.kind === "layer" ? selectCreated(duplicateLayer(spec, item.index), "layer") : selectCreated(duplicateClip(spec, item.index), "clip");
 }
 
 /** «Разрезать по плейхеду»: the second part is selected. */
-export function splitSelected(spec: MontageDraft, selection: Selection | null, playheadMs: number): Applied | Refusal {
+export function splitSelected(spec: MontageDraft, selection: Selection | null, playheadMs: number): Applied | Refusal | LayerRefusal {
   const item = resolveSelection(spec, selection);
   if (item === null || item.kind === "music") return "not-splittable";
   return item.kind === "layer" ? selectCreated(splitLayerAt(spec, item.index, playheadMs), "layer") : selectCreated(splitClipAt(spec, item.index, playheadMs), "clip");
+}
+
+/** A z-order step of the selected layer; the layer stays selected. */
+function zStep(spec: MontageDraft, selection: Selection | null, step: (spec: MontageDraft, index: number) => LayerEdit): Applied | LayerRefusal | "not-a-layer" {
+  const item = resolveSelection(spec, selection);
+  if (item === null || item.kind !== "layer") return "not-a-layer";
+  const edit = step(spec, item.index);
+  return edit.ok ? { spec: edit.spec, selection: { kind: "layer", layerId: item.layer.layerId } } : edit.reason;
+}
+
+/** «Слой выше»: the selected layer goes above the next layer on screen at the same time. */
+export function raiseSelected(spec: MontageDraft, selection: Selection | null): Applied | LayerRefusal | "not-a-layer" {
+  return zStep(spec, selection, raiseLayer);
+}
+
+/** «Слой ниже»: the selected layer goes below the nearest layer under it on screen at the same time. */
+export function lowerSelected(spec: MontageDraft, selection: Selection | null): Applied | LayerRefusal | "not-a-layer" {
+  return zStep(spec, selection, lowerLayer);
 }

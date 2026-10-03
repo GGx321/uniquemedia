@@ -1,5 +1,6 @@
 import type { Clip, Montage, MontageDraft } from "../../../shared/engine";
 import { estimateBytes, FPS, FRAME_H, FRAME_W, FRAMES_PER_STEP, staggerStepFrames } from "../../../shared/montage";
+import { stickerById } from "../../../shared/stickers/manifest";
 import { countOf, NBSP } from "../../lib/format";
 import type { RenderControl } from "../../engine/renderJobs";
 import type { SaveState } from "./autosave";
@@ -100,7 +101,7 @@ export function clipAria(index: number, clip: Clip, problem: PhotoProblem | null
 export function actionWhyLabel(why: ActionBlock): string {
   switch (why) {
     case "nothing-selected":
-      return "Сначала выберите кадр на таймлайне";
+      return "Сначала выберите кадр, текст или стикер на таймлайне";
     case "photo-split":
       return "Фото и коллаж не режутся: одно фото — один раз в ролике";
     case "playhead-outside":
@@ -115,7 +116,100 @@ export function actionWhyLabel(why: ActionBlock): string {
       return "Не больше 10 слоёв одного вида";
     case "music":
       return "Трек в ролике один — его можно только убрать";
+    case "not-a-layer":
+      return "Выше и ниже двигаются только текст и стикеры";
+    case "top":
+      return "Выше в это время ничего нет";
+    case "bottom":
+      return "Ниже в это время ничего нет";
   }
+}
+
+// ---------- the layer and music tracks (3d.3b) ----------
+
+type StickerLayer = Extract<MontageDraft["layers"][number], { kind: "sticker" }>;
+
+/** A caption on one line: a line break (LF or CRLF, the engine wraps to two lines) reads as a space on a block. */
+export function captionLine(value: string): string {
+  return value.replace(/\r?\n/g, " ");
+}
+
+/** «Текст 2» / «Стикер 1»: a layer counted among the layers of its own kind, in z-order (as the render's reasons say it). */
+export function layerName(spec: MontageDraft, index: number): string {
+  const layer = spec.layers[index];
+  if (layer === undefined) return "Слой";
+  const place = spec.layers.slice(0, index + 1).filter((l) => l.kind === layer.kind).length;
+  return layer.kind === "text" ? `Текст ${place}` : `Стикер ${place}`;
+}
+
+/** What a sticker is called: its Russian name in the built-in set, «свой стикер» (3f), or «стикер недоступен» (gone from the set). */
+export function stickerName(layer: StickerLayer): string {
+  if (layer.sticker.source === "own") return "свой стикер";
+  return stickerById(layer.sticker.stickerId)?.nameRu ?? "стикер недоступен";
+}
+
+/** «петля 0.8 с»: a built-in sticker's loop (its 30 fps frames, 3b.6), or null when the set does not have it. */
+export function loopLabel(layer: StickerLayer): string | null {
+  if (layer.sticker.source !== "builtin") return null;
+  const entry = stickerById(layer.sticker.stickerId);
+  return entry === undefined ? null : `петля ${(entry.loopFrames / FPS).toFixed(1)}${NBSP}с`;
+}
+
+/**
+ * A layer block's accessible name: «Текст 1: «sunday reset ☀️», 0.3–4.4 с», «Стикер 2: Сердце, 6.0–9.6 с, петля 0.8 с»,
+ * and «…, после конца ролика» for one that ends past the montage (a render refuses it: `layer-outside-timeline`).
+ */
+export function layerAria(spec: MontageDraft, index: number, totalMs: number): string {
+  const layer = spec.layers[index];
+  if (layer === undefined) return layerName(spec, index);
+  const what = layer.kind === "text" ? `«${captionLine(layer.value)}»` : stickerName(layer);
+  const loop = layer.kind === "sticker" ? loopLabel(layer) : null;
+  const parts = [what, rangeLabel(layer.startMs, layer.endMs), ...(loop === null ? [] : [loop]), ...(layer.endMs > totalMs ? ["после конца ролика"] : [])];
+  return `${layerName(spec, index)}: ${parts.join(", ")}`;
+}
+
+/** A layer's trim handle: «Текст 1: начало», «Стикер 2: конец». */
+export function layerEdgeLabel(spec: MontageDraft, index: number, edge: "start" | "end"): string {
+  return `${layerName(spec, index)}: ${edge === "start" ? "начало" : "конец"}`;
+}
+
+/** «0.3 → 4.4 с»: the range a dragged layer would take, over the block (the components sheet). */
+export function dragRangeLabel(startMs: number, endMs: number): string {
+  return `${(startMs / 1000).toFixed(1)} → ${(endMs / 1000).toFixed(1)}${NBSP}с`;
+}
+
+/** A layer track's «+»: its accessible name, and why it is off (its tooltip), as the components sheet writes the caps. */
+export function layerAddLabel(kind: "text" | "sticker", why: "layer-cap" | "no-room" | null, totalMs: number): { name: string; why: string | null } {
+  const name = kind === "text" ? "Добавить текст" : "Добавить стикер";
+  if (why === null) return { name, why: null };
+  if (why === "layer-cap") return { name: `${name}: не больше 10`, why: kind === "text" ? "Не больше 10 текстов в одном видео" : "Не больше 10 стикеров в одном видео" };
+  return { name: `${name}: нет места`, why: totalMs === 0 ? "Сначала добавьте кадр" : `До конца ролика меньше 0.3${NBSP}с — поставьте плейхед раньше` };
+}
+
+/** A time in a track: «0:42», «1:18», «10:00»; tenths («0:42.1») only when it falls between whole seconds (N16). */
+export function trackClock(ms: number): string {
+  const whole = Math.max(0, Math.floor(ms));
+  const minutes = Math.floor(whole / 60_000);
+  const seconds = Math.floor((whole % 60_000) / 1000);
+  const rest = whole % 1000;
+  const clock = `${minutes}:${String(seconds).padStart(2, "0")}`;
+  return rest === 0 ? clock : `${clock}.${Math.floor(rest / 100)}`;
+}
+
+/** «Espresso · Sabrina Carpenter»: a track's title and artist; the title alone when the list gave no artist. */
+export function trackTitle(track: { readonly title: string; readonly artist: string | null }): string {
+  return track.artist === null ? track.title : `${track.title} · ${track.artist}`;
+}
+
+/**
+ * The music block's accessible name: the track and where it starts («Музыка: Espresso · Sabrina Carpenter, с 0:42»),
+ * «трек из прежнего списка» for a stored track the current list no longer offers (so its title is not known), and what
+ * is wrong with it.
+ */
+export function musicAria(music: NonNullable<MontageDraft["music"]>, track: { readonly title: string; readonly artist: string | null } | null, problem: "unavailable" | "too-short" | null): string {
+  if (problem === "unavailable") return "Музыка: трек недоступен";
+  const what = track === null ? "трек из прежнего списка" : trackTitle(track);
+  return `Музыка: ${what}, с ${trackClock(music.startMs)}${problem === "too-short" ? ", трек короче ролика" : ""}`;
 }
 
 /** The bin's line when a click on a photo cannot add a clip (the components sheet's caps state). */

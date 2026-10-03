@@ -1,4 +1,4 @@
-import { MAX_STICKER_LAYERS, MAX_TEXT_LAYERS, MIN_LAYER_MS, type Cell, type Clip, type Focus, type Layer, type MontageDraft, type Motion } from "../../../shared/engine";
+import { type Cell, type Clip, type Focus, type MontageDraft, type Motion } from "../../../shared/engine";
 import { MAX_CLIPS, MAX_TOTAL_MS, MIN_CLIP_MS, splitEvenly, STEP_MS } from "../../../shared/montage";
 
 // 3d.3a: the clip track's edits, as pure functions over a draft. The editor sends each result through
@@ -49,13 +49,6 @@ function clipAt(spec: MontageDraft, index: number): Clip {
   const clip = spec.clips[index];
   if (clip === undefined) throw new RangeError(`no clip at ${index}`);
   return clip;
-}
-
-function layerAt(spec: MontageDraft, index: number): Layer {
-  assertIndex(index, spec.layers.length, "layer index");
-  const layer = spec.layers[index];
-  if (layer === undefined) throw new RangeError(`no layer at ${index}`);
-  return layer;
 }
 
 const withClips = (spec: MontageDraft, clips: Clip[]): MontageDraft => ({ ...spec, clips });
@@ -298,33 +291,3 @@ export function fillFocus(spec: MontageDraft, photoId: string, focus: Focus): Mo
   return changed ? withClips(spec, clips) : spec;
 }
 
-// ---------- layers: the selection's other kinds (their tracks and blocks come with 3d.3b) ----------
-
-const layerCap = (spec: MontageDraft, kind: Layer["kind"]): boolean =>
-  spec.layers.filter((l) => l.kind === kind).length >= (kind === "text" ? MAX_TEXT_LAYERS : MAX_STICKER_LAYERS);
-
-export function removeLayer(spec: MontageDraft, index: number): MontageDraft {
-  layerAt(spec, index);
-  return { ...spec, layers: spec.layers.filter((_, i) => i !== index) };
-}
-
-/** Splits a layer at `atMs` (snapped to 100 ms); the second part is a new layer right above the first. */
-export function splitLayerAt(spec: MontageDraft, index: number, atMs: number): Edit {
-  const layer = layerAt(spec, index);
-  const at = Math.round(atMs / STEP_MS) * STEP_MS;
-  if (at <= layer.startMs || at >= layer.endMs) return refuse("not-splittable");
-  if (at - layer.startMs < MIN_LAYER_MS || layer.endMs - at < MIN_LAYER_MS) return refuse("too-short");
-  if (layerCap(spec, layer.kind)) return refuse("layer-cap");
-  const layerId = nextLayerId(spec);
-  const first: Layer = { ...layer, endMs: at };
-  const second: Layer = { ...layer, layerId, startMs: at };
-  return done({ ...spec, layers: [...spec.layers.slice(0, index), first, second, ...spec.layers.slice(index + 1)] }, layerId);
-}
-
-/** A copy of a layer over the same range, right above it. */
-export function duplicateLayer(spec: MontageDraft, index: number): Edit {
-  const layer = layerAt(spec, index);
-  if (layerCap(spec, layer.kind)) return refuse("layer-cap");
-  const layerId = nextLayerId(spec);
-  return done({ ...spec, layers: [...spec.layers.slice(0, index + 1), { ...layer, layerId }, ...spec.layers.slice(index + 1)] }, layerId);
-}

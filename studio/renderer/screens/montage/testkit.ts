@@ -40,12 +40,12 @@ export function videoClip(index: number, durationMs = 2_000, trimStartMs = 0): E
 }
 
 /** A text layer over `[startMs, endMs)`. */
-export function textLayer(index: number, startMs: number, endMs: number): MontageDraft["layers"][number] {
+export function textLayer(index: number, startMs: number, endMs: number): Extract<MontageDraft["layers"][number], { kind: "text" }> {
   return { layerId: `layer-${String(index + 1).padStart(3, "0")}`, startMs, endMs, kind: "text", value: "sunday reset", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.2, scale: 1 };
 }
 
 /** A built-in sticker layer over `[startMs, endMs)`. */
-export function stickerLayer(index: number, startMs: number, endMs: number): MontageDraft["layers"][number] {
+export function stickerLayer(index: number, startMs: number, endMs: number): Extract<MontageDraft["layers"][number], { kind: "sticker" }> {
   return { layerId: `layer-${String(index + 1).padStart(3, "0")}`, startMs, endMs, kind: "sticker", sticker: { source: "builtin", stickerId: "sticker-heart" }, x: 0.6, y: 0.5, size: 0.2 };
 }
 

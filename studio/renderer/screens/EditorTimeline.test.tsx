@@ -317,7 +317,7 @@ describe("selecting and acting on a clip", () => {
     await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
     const split = within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" });
-    expect(split.getAttribute("title")).toBe("Сначала выберите кадр на таймлайне");
+    expect(split.getAttribute("title")).toBe("Сначала выберите кадр, текст или стикер на таймлайне");
     fireEvent.click(clipButtons()[0] ?? document.body);
     expect(split.hasAttribute("disabled")).toBe(true);
     expect(split.getAttribute("title")).toBe("Фото и коллаж не режутся: одно фото — один раз в ролике");

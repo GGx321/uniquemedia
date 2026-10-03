@@ -115,6 +115,33 @@ export function snapEdge(edgeMs: number, targets: readonly number[], toleranceMs
   return best;
 }
 
+/**
+ * What a dragged layer's edges stick to (3d.3b, the components sheet: «края липнут к плейхеду и границам кадров»): the
+ * playhead on the step the clock shows, and every clip boundary, the montage's start and end included. Ascending, once each.
+ */
+export function snapTargets(durations: readonly number[], playheadMs: number): number[] {
+  const targets = new Set<number>([0, clockMs(playheadMs)]);
+  let at = 0;
+  for (const d of durations) {
+    at += d;
+    targets.add(at);
+  }
+  return [...targets].sort((a, b) => a - b);
+}
+
+/**
+ * A moved block's start (its length `lengthMs`), shifted so that whichever of its edges is nearer a target within
+ * `toleranceMs` meets it; the start edge wins a tie. Unchanged when neither edge is near one.
+ */
+export function snapMove(startMs: number, lengthMs: number, targets: readonly number[], toleranceMs: number): number {
+  const byStart = snapEdge(startMs, targets, toleranceMs);
+  const byEnd = snapEdge(startMs + lengthMs, targets, toleranceMs) - lengthMs;
+  const startShift = Math.abs(byStart - startMs);
+  const endShift = Math.abs(byEnd - startMs);
+  if (byStart !== startMs && (byEnd === startMs || startShift <= endShift)) return byStart;
+  return byEnd;
+}
+
 /** How many 24 px frames a clip's film strip of `widthPx` draws: one more than fit, so it never ends short. */
 export function tileCount(widthPx: number): number {
   return Math.ceil(Math.max(0, widthPx) / STRIP_FRAME_PX) + 1;

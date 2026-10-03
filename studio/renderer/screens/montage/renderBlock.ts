@@ -107,6 +107,32 @@ export function photoProblems(spec: MontageDraft, verdict: EngineVerdict | null,
   return cells;
 }
 
+/** What the engine's referential issue of a layer says on its block (3d.3b). */
+const LAYER_PROBLEMS: Partial<Record<MontageIssueCode, string>> = {
+  "caption-invalid": "надпись не проходит проверку",
+  "sticker-unavailable": "стикера больше нет",
+  "media-unavailable": "файла больше нет",
+  "not-yet-supported": "свои стикеры — скоро",
+};
+
+/**
+ * The layers the engine refuses, by the layer's id in the spec IT judged (`judged`), with a few words for the block
+ * (3d.3b): a caption that breaks the rules, a sticker gone from the set, an own sticker (missing, or not supported until
+ * 3f). A layer's first issue is the one told. Structural issues (`layer-outside-timeline`, `layer-too-short`) are drawn by
+ * the timeline from the current spec itself.
+ */
+export function layerProblems(judged: MontageDraft, issues: readonly MontageIssue[]): ReadonlyMap<string, string> {
+  const found = new Map<string, string>();
+  for (const issue of issues) {
+    const [root, i] = issue.path;
+    const text = LAYER_PROBLEMS[issue.code];
+    if (root !== "layers" || typeof i !== "number" || text === undefined) continue;
+    const layer = judged.layers[i];
+    if (layer !== undefined && !found.has(layer.layerId)) found.set(layer.layerId, text);
+  }
+  return found;
+}
+
 /** «Кадр 2»: clips are counted from 1. */
 const clipName = (i: number): string => `Кадр ${i + 1}`;
 
