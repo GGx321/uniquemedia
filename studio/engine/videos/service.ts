@@ -65,6 +65,11 @@ export interface VideoServiceDeps {
   /** A FRESH check of the export folder (its marker read now, never a snapshot). With `requiredBytes` it also wants twice that free. Never rejects. */
   readonly checkExport: (requiredBytes?: number) => Promise<ExportRootCheck>;
   /**
+   * The export folder's switch (3e.3), asked right before a render is submitted: `pending` while the owner's pick has been
+   * answered and its `settings.update` has not arrived, `currentPath` the folder the settings name now. Absent, no render is held.
+   */
+  readonly exportSwitch?: { pending(): boolean; currentPath(): string };
+  /**
    * The montage drafts: `videos.render {montageId}` reads its spec from here, a video's record stops naming a draft that was
    * deleted, and so does `videos.list`. Absent: a `montageId` is NOT_FOUND, as before drafts existed.
    */
@@ -219,6 +224,7 @@ export class VideoService {
   readonly #deps: VideoServiceDeps;
   readonly #timers: ServiceTimers;
   #closing = false;
+  #preparing = 0;
   /** Startup, recovery and settle work in the background. Never awaited by a command or by the library opening. */
   readonly #tasks = new Set<Promise<void>>();
   /** One controller per library whose recovery may still be running: a switch aborts every other one. */
@@ -233,7 +239,23 @@ export class VideoService {
 
   // ---------- videos.render ----------
 
+  /** Renders that are being prepared: the export folder is in their plan, but nothing is queued yet (`active()` of the queue does not see them). */
+  get preparing(): number {
+    return this.#preparing;
+  }
+
   async render(payload: CommandPayload<"videos.render">): Promise<{ jobId: string; videoId: string }> {
+    // Counted from the first line to the last: a switch of the export folder must not slip in while the focus of the photos is
+    // judged (up to 15 s), after the folder was resolved into the plan and before the job is submitted.
+    this.#preparing++;
+    try {
+      return await this.#prepareAndSubmit(payload);
+    } finally {
+      this.#preparing--;
+    }
+  }
+
+  async #prepareAndSubmit(payload: CommandPayload<"videos.render">): Promise<{ jobId: string; videoId: string }> {
     const entered = performance.now();
     const budgetMs = this.#deps.commandDeadlineMs ?? RENDER_COMMAND_DEADLINE_MS;
     const marginMs = this.#deps.commandMarginMs ?? RENDER_COMMAND_MARGIN_MS;
@@ -334,6 +356,12 @@ export class VideoService {
     if (time.remaining() <= 0) throw outOfTime();
     this.#assertAvailable(library, spec.avatarId, cells);
     if (this.#closing) throw new EngineFailure({ code: "INTERNAL", detail: "the engine is shutting down" });
+    // The folder the plan is about to name must still be the export folder, and none may be being switched: a render that commits
+    // into the old folder after the owner was told «nothing is left behind» would be lost with the folder they then clear out.
+    const exportSwitch = deps.exportSwitch;
+    if (exportSwitch !== undefined && (exportSwitch.pending() || check.root !== exportSwitch.currentPath())) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: "the export folder is being changed; try the render again in a moment" });
+    }
     const sources = new Map<string, PhotoSource>();
     for (const cell of cells) {
       const sidecar = library.getPhoto(cell.photoId);

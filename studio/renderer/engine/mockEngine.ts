@@ -149,6 +149,8 @@ export interface MockExportPick {
   refuse?: ExportUnavailableReason;
   /** The folder is the one that stood at this path before (moved or renamed by the owner): same marker, so the same identity. */
   movedFrom?: string;
+  /** Some record files could not be read: the answer says its counts may be short. */
+  incomplete?: boolean;
 }
 
 /**
@@ -1658,7 +1660,7 @@ export class MockEngine implements EngineBridge {
     // The engine checks the folder again when it gets the settings, then announces them.
     this.checkExport();
     this.emitSettingsChanged();
-    return this.ok(c, { picked: true, settings: this.settings, rootId, resolved, elsewhere });
+    return this.ok(c, { picked: true, settings: this.settings, rootId, resolved, elsewhere, incomplete: pick?.incomplete === true });
   }
 
   private adjustAvatar(avatarId: string, delta: { videoCount?: number; eligibleUnused?: number }): void {

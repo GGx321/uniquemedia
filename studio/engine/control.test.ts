@@ -95,8 +95,10 @@ describe("HostCall export.choose and its reply", () => {
 
   test("the reply carries the folder's id with its counts, and refuses a count that is negative or an id that is not one", () => {
     const reply = { kind: "control" as const, type: "reply" as const, callId: "call-00000001" };
-    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 0 } }).success).toBe(true);
-    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "root-00000001", resolved: -1, elsewhere: 0 } }).success).toBe(false);
-    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "../root", resolved: 0, elsewhere: 0 } }).success).toBe(false);
+    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 0, incomplete: false } }).success).toBe(true);
+    // the counts say whether they are whole: a reply that does not say is refused
+    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 0 } }).success).toBe(false);
+    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "root-00000001", resolved: -1, elsewhere: 0, incomplete: false } }).success).toBe(false);
+    expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "../root", resolved: 0, elsewhere: 0, incomplete: false } }).success).toBe(false);
   });
 });

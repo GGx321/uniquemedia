@@ -766,9 +766,9 @@ describe("calls to the engine (export.choose)", () => {
     const call = ports[0]?.posted[0];
     expect(call).toMatchObject({ kind: "control", type: "export.choose", path: "/Volumes/Reels" });
     const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
-    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 1 } });
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 1, incomplete: false } });
 
-    expect(await pending).toEqual({ error: null, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 1 } });
+    expect(await pending).toEqual({ error: null, exportFolder: { rootId: "root-00000001", resolved: 3, elsewhere: 1, incomplete: false } });
   });
 
   test("a refusal (EXPORT_UNAVAILABLE with its reason) is passed on, with no folder", async () => {

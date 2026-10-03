@@ -146,7 +146,7 @@ describe("export.choose: a folder the owner moved or renamed is the same folder"
 
     const reply = await choose(started, moved);
 
-    expect(reply).toEqual({ kind: "control", type: "reply", callId: "call-00000001", exportFolder: { rootId, resolved: 3, elsewhere: 0 } });
+    expect(reply).toEqual({ kind: "control", type: "reply", callId: "call-00000001", exportFolder: { rootId, resolved: 3, elsewhere: 0, incomplete: false } });
   });
 
   test("a folder renamed in place answers the same id", async () => {
@@ -238,7 +238,7 @@ describe("export.choose: a different folder, and back", () => {
     const back = await choose(started, exportDir());
     await adopt(started, exportDir());
 
-    expect(back.exportFolder).toEqual({ rootId, resolved: 2, elsewhere: 0 });
+    expect(back.exportFolder).toEqual({ rootId, resolved: 2, elsewhere: 0, incomplete: false });
     expect(statesOf(await listVideos(started, avatarId))).toEqual(["present", "present"]);
   });
 
@@ -249,8 +249,8 @@ describe("export.choose: a different folder, and back", () => {
     const secondId = await markedFolder(second);
     const started = await start();
 
-    expect((await choose(started, second)).exportFolder).toEqual({ rootId: secondId, resolved: 0, elsewhere: 2 });
-    expect((await choose(started, exportDir())).exportFolder).toEqual({ rootId: first, resolved: 2, elsewhere: 0 });
+    expect((await choose(started, second)).exportFolder).toEqual({ rootId: secondId, resolved: 0, elsewhere: 2, incomplete: false });
+    expect((await choose(started, exportDir())).exportFolder).toEqual({ rootId: first, resolved: 2, elsewhere: 0, incomplete: false });
   });
 
   test("a library with no video has nothing to resolve or to leave behind", async () => {
@@ -457,6 +457,220 @@ describe("export.choose while a render is queued or running", () => {
     await started.engine.renders.idle();
     // once nothing is running, the same pick goes through
     expect((await choose(started, other)).exportFolder).toBeDefined();
+  });
+});
+
+/** A promise that is let go by hand. */
+function gate(): { wait: Promise<void>; open: () => void } {
+  let open: () => void = () => undefined;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open };
+}
+
+/**
+ * A render's life has three parts the folder switch must not slip between: it PREPARES (the export folder is resolved into its
+ * plan at once, then the focus of its photos is judged, up to 15 s, with nothing queued yet), it is QUEUED or running, and the
+ * switch itself has a window between main's answer and the `settings.update` that makes it real.
+ */
+describe("export.choose against a render that is still being prepared, and the window before settings.update", () => {
+  async function rig(options: { holdFocus?: boolean; holdRun?: boolean; exportRootFs?: ExportRootFs } = {}) {
+    const rootId = await markedFolder(exportDir());
+    const seeded = await seedVideos(exportDir(), rootId, 1, 2);
+    const focus = gate();
+    const focusEntered = gate();
+    const run = gate();
+    const started = await start({
+      deps: {
+        ...(options.exportRootFs === undefined ? {} : { exportRootFs: options.exportRootFs }),
+        videos: {
+          focus: () => ({
+            fillMissingFocus: async (spec) => {
+              focusEntered.open();
+              if (options.holdFocus === true) await focus.wait;
+              return { spec, unresolved: [] };
+            },
+          }),
+          renderOverrides: {
+            verify: acceptingVerify,
+            runDeps: {
+              run: async (opts) => {
+                if (options.holdRun === true) await run.wait;
+                await writingRun(opts);
+              },
+            },
+          },
+        },
+      },
+    });
+    const other = join(dir(), "other");
+    await mkdir(other);
+    const render = () => started.engine.handle(command("videos.render", { spec: specOf(seeded.avatarId, seeded.freePhotoIds, 2_000) }));
+    return { started, rootId, other, render, focus, focusEntered, run, seeded };
+  }
+
+  test("a render whose focus is still being judged holds the folder: the pick is refused IN_FLIGHT, though nothing is queued yet", async () => {
+    const { started, other, render, focus, focusEntered } = await rig({ holdFocus: true });
+    const rendering = render();
+    await focusEntered.wait;
+
+    const reply = await choose(started, other);
+
+    expect(reply.error).toMatchObject({ code: "IN_FLIGHT" });
+    expect(reply.exportFolder).toBeUndefined();
+    focus.open();
+    ok(await rendering);
+    await started.engine.renders.idle();
+  });
+
+  test("once that render is queued and ended, the same pick goes through", async () => {
+    const { started, other, render, focus, focusEntered } = await rig({ holdFocus: true });
+    const rendering = render();
+    await focusEntered.wait;
+    focus.open();
+    ok(await rendering);
+    await started.engine.renders.idle();
+
+    expect((await choose(started, other)).exportFolder).toBeDefined();
+  });
+
+  test("a render refused while it prepared (its photos were taken) does not hold the folder after", async () => {
+    const { started, other, render, seeded } = await rig();
+    ok(await render());
+    await started.engine.renders.idle();
+    // the same photos are in a video now: this render is refused as PHOTO_UNAVAILABLE
+    expect(failed(await started.engine.handle(command("videos.render", { spec: specOf(seeded.avatarId, seeded.freePhotoIds, 2_000) }))).error.code).toBe("PHOTO_UNAVAILABLE");
+
+    expect((await choose(started, other)).exportFolder).toBeDefined();
+  });
+
+  test("a render that starts while the pick is being checked is seen after the check, and the pick is refused", async () => {
+    const probe = gate();
+    const probeEntered = gate();
+    const exportRootFs: ExportRootFs = {
+      ...NODE_EXPORT_ROOT_FS,
+      createExclusive: async (path, text) => {
+        if (path.includes("other")) {
+          probeEntered.open();
+          await probe.wait;
+        }
+        await NODE_EXPORT_ROOT_FS.createExclusive(path, text);
+      },
+    };
+    const { started, other, render, run } = await rig({ holdRun: true, exportRootFs });
+    const picking = choose(started, other);
+    await probeEntered.wait;
+    ok(await render());
+
+    probe.open();
+    const reply = await picking;
+
+    expect(reply.error).toMatchObject({ code: "IN_FLIGHT" });
+    expect(reply.exportFolder).toBeUndefined();
+    run.open();
+    await started.engine.renders.idle();
+  });
+
+  test("after an ok pick a render is refused IN_FLIGHT until the settings arrive, so it cannot commit into the folder the window was told is empty", async () => {
+    const { started, other, render } = await rig();
+    expect((await choose(started, other)).exportFolder).toBeDefined();
+
+    expect(failed(await render()).error).toMatchObject({ code: "IN_FLIGHT" });
+  });
+
+  test("the settings that follow end the wait: a render then goes into the new folder", async () => {
+    const { started, other, render } = await rig();
+    await choose(started, other);
+    await adopt(started, other);
+
+    ok(await render());
+    await started.engine.renders.idle();
+
+    expect((await readdir(join(other, "Mia"))).length).toBe(1);
+  });
+
+  test("a refused pick leaves no wait behind: renders go on into the old folder", async () => {
+    const { started, render } = await rig();
+    await choose(started, join(dir(), "nowhere"));
+
+    ok(await render());
+    await started.engine.renders.idle();
+  });
+
+  test("a render prepared for the old folder is refused IN_FLIGHT when the settings changed the folder under it, and writes nothing into the old one", async () => {
+    const { started, other, render, focus, focusEntered } = await rig({ holdFocus: true });
+    const rendering = render();
+    await focusEntered.wait;
+    await markedFolder(other);
+    await adopt(started, other);
+    focus.open();
+
+    expect(failed(await rendering).error).toMatchObject({ code: "IN_FLIGHT" });
+    await started.engine.renders.idle();
+    expect(await readdir(join(exportDir(), "Mia"))).toHaveLength(1); // only the seeded video's file
+  });
+});
+
+describe("a damaged marker when the library cannot be read", () => {
+  test("is told as invalid-marker-with-records: the records could not be looked for, so the file is never advised away", async () => {
+    await markedFolder(exportDir());
+    await writeFile(join(exportDir(), EXPORT_MARKER_FILE), "{ damaged");
+    const started = await start({ init: { settings: engineSettings(dir(), { renderConcurrency: 1, libraryPath: join(dir(), "no-such-library") }) } });
+
+    expect(await check(started)).toEqual({ status: "unavailable", reason: "invalid-marker-with-records" });
+  });
+
+  test("and so is a library that holds an avatar nobody could read: its videos may be the ones that name the marker", async () => {
+    await markedFolder(exportDir());
+    const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("bad") });
+    await library.createAvatar({ name: "Early", age: 25, traits: { hair: "chestnut" }, descriptor: GOOD });
+    await writeFile(join(exportDir(), EXPORT_MARKER_FILE), "{ damaged");
+    const started = await start();
+
+    expect(await check(started)).toEqual({ status: "unavailable", reason: "invalid-marker-with-records" });
+  });
+});
+
+describe("export.choose: the engine's own work folder", () => {
+  test("a folder inside userData/render-tmp is refused, since the start-up sweep of that folder would delete what is exported there", async () => {
+    await markedFolder(exportDir());
+    const started = await start();
+    const inside = join(dir(), "userData", "render-tmp", "exports");
+    await mkdir(inside, { recursive: true });
+
+    const reply = await choose(started, inside);
+
+    expect(reply.error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "overlaps-work-folder" });
+    expect(await readdir(inside)).toEqual([]);
+  });
+
+  test("so is the render folder itself, and a folder that holds it", async () => {
+    await markedFolder(exportDir());
+    const started = await start();
+    await mkdir(join(dir(), "userData", "render-tmp"), { recursive: true });
+
+    expect((await choose(started, join(dir(), "userData", "render-tmp"))).error).toMatchObject({ exportReason: "overlaps-work-folder" });
+    expect((await choose(started, join(dir(), "userData"))).error).toMatchObject({ exportReason: "overlaps-work-folder" });
+  });
+});
+
+describe("export.choose: counts that are not whole", () => {
+  test("a record file nobody could read is said so: the counts are marked incomplete", async () => {
+    const rootId = await markedFolder(exportDir());
+    const seeded = await seedVideos(exportDir(), rootId, 1);
+    await writeFile(join(libraryDir(), "avatars", seeded.avatarId, "videos", "video-0000000b.json"), "{ not json");
+    const started = await start();
+
+    expect((await choose(started, exportDir())).exportFolder).toMatchObject({ resolved: 1, elsewhere: 0, incomplete: true });
+  });
+
+  test("whole counts are not marked", async () => {
+    const rootId = await markedFolder(exportDir());
+    await seedVideos(exportDir(), rootId, 1);
+    const started = await start();
+
+    expect((await choose(started, exportDir())).exportFolder).toMatchObject({ incomplete: false });
   });
 });
 

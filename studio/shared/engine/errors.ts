@@ -151,6 +151,8 @@ export const EXPORT_UNAVAILABLE_REASONS = [
   "not-writable",
   "not-enough-space",
   "overlaps-library",
+  // The engine's own work folder (`userData/render-tmp`, swept at every start): what is exported there would be deleted.
+  "overlaps-work-folder",
   "invalid-marker",
   "invalid-marker-with-records",
   "newer-marker",

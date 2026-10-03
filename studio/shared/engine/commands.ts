@@ -48,7 +48,8 @@ export type ImportPhotoPicked = z.infer<typeof ImportPhotoPicked>;
  * `rootId`) and how many stay in another folder (`elsewhere`) until that folder is chosen again.
  */
 export const ExportPathPicked = z.discriminatedUnion("picked", [
-  z.strictObject({ picked: z.literal(true), settings: Settings, rootId: Id, resolved: Count, elsewhere: Count }),
+  // `incomplete`: some record files could not be read (or an avatar's records are more than one read takes), so the counts may be short.
+  z.strictObject({ picked: z.literal(true), settings: Settings, rootId: Id, resolved: Count, elsewhere: Count, incomplete: z.boolean() }),
   z.strictObject({ picked: z.literal(false) }),
 ]);
 export type ExportPathPicked = z.infer<typeof ExportPathPicked>;

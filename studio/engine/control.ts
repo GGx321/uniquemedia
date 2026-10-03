@@ -183,7 +183,7 @@ export const EngineReply = z.strictObject({
   error: EngineError.optional(),
   stage: z.strictObject({ stagingId: Id, width: Count, height: Count }).optional(),
   /** Set only by a successful `export.choose`: the folder's identity, and how many records resolve in it or stay elsewhere. */
-  exportFolder: z.strictObject({ rootId: Id, resolved: Count, elsewhere: Count }).optional(),
+  exportFolder: z.strictObject({ rootId: Id, resolved: Count, elsewhere: Count, incomplete: z.boolean() }).optional(),
 });
 export type EngineReply = z.infer<typeof EngineReply>;
 

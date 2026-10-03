@@ -398,6 +398,9 @@ export const PREFLIGHT_TIMEOUT_MS = 10_000;
 
 /** How long #liveLibrary's identity re-check (one stat, one realpath) may take before it is read as "cannot be identified right now" (review LOW 15). */
 export const LIVE_LIBRARY_IDENTITY_TIMEOUT_MS = 5_000;
+/** How long after an ok `export.choose` renders wait for the `settings.update` that follows (main's own deadline for a call). */
+const EXPORT_SWITCH_WAIT_MS = 30_000;
+
 /** Bounds one export folder check (start, a settings update, a render attempt): a stale network share must not block any of them. */
 export const EXPORT_CHECK_TIMEOUT_MS = 5_000;
 
@@ -468,6 +471,13 @@ export class Engine {
   readonly #caseProbe: { isCaseInsensitive(root: string): Promise<boolean> };
   /** `init.defaultExportPath`: the one export folder that is created on first use. */
   readonly #defaultExportPath: string | null;
+  /** `userData/render-tmp`, swept at every start: the export folder may be neither inside it nor hold it. */
+  readonly #renderTmpDir: string | null;
+  /**
+   * Set when an `export.choose` was answered ok, until the `settings.update` that follows it arrives (or this much time passes, if
+   * main never sends it): a render submitted in that window would commit into the folder the owner was just told is empty.
+   */
+  #exportSwitchUntil: number | null = null;
   /** The export folder's status as of the last check (start, a settings update, a render attempt), for the snapshot. */
   #exportStatus: ExportStatus = { status: "ok" };
   /** Whether the start's own check has set the status: it is the baseline, so it is not announced (a window learns it from the snapshot). */
@@ -603,6 +613,7 @@ export class Engine {
     this.#exportCheckTimeoutMs = typeof checkTimeout === "function" ? checkTimeout : () => checkTimeout;
     this.#caseProbe = deps.caseProbe ?? new CaseSensitivityProbe();
     this.#defaultExportPath = init.defaultExportPath ?? null;
+    this.#renderTmpDir = init.renderTmpDir ?? null;
     this.#preflight = deps.preflightDownscale ?? preflightDownscale;
     this.#downscaleImportPhoto = deps.downscaleImportPhoto ?? ((bytes, maxSide, signal) => downscaleToJpeg(bytes, { maxSide, signal }));
     this.#importDownscaleTimeoutMs = deps.importDownscaleTimeoutMs ?? IMPORT_DOWNSCALE_TIMEOUT_MS;
@@ -630,6 +641,7 @@ export class Engine {
       withLibrary: (work) => this.#withLiveLibrary(work),
       openLibrary: () => this.library,
       checkExport: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
+      exportSwitch: { pending: () => this.#exportSwitchPending(), currentPath: () => this.#settings.exportPath },
       caseProbe: this.#caseProbe,
       focus: deps.videos?.focus ?? ((library) => this.#focusOf(library)),
       renderTmpDir: init.renderTmpDir,
@@ -964,7 +976,7 @@ export class Engine {
 
   /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, or a render is queued or running (invariant 25): a library switch must be refused. */
   #busy(): boolean {
-    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || this.#renders.active() > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
+    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || this.#renders.active() > 0 || this.#videos.preparing > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
   }
 
   #inFlightRefusal(): EngineError {
@@ -1832,8 +1844,10 @@ export class Engine {
           newId: this.#deps.newId,
           now: () => new Date(this.#deps.clock()),
           caseInsensitive: true,
-          // A damaged marker in a library that already holds videos gets the text that never advises deleting it (3e.3).
-          recordsExist: () => (this.#live === null ? Promise.resolve(false) : libraryHasVideoRecords(this.#live.library)),
+          // A damaged marker in a library that already holds videos gets the text that never advises deleting it (3e.3). A library
+          // that cannot be looked in (closed, or an avatar nobody could read) may hold them: the question then answers yes.
+          recordsExist: () => this.#recordsMayExist(),
+          workPaths: this.#renderTmpDir === null ? [] : [this.#renderTmpDir],
           ...(options.requiredBytes === undefined ? {} : { requiredBytes: options.requiredBytes }),
         }).then(async (checked) => {
           if (checked.ok && options.probeCase) await this.#caseProbe.isCaseInsensitive(exportPath);
@@ -1851,22 +1865,35 @@ export class Engine {
     return check;
   }
 
+  #exportSwitchPending(): boolean {
+    return this.#exportSwitchUntil !== null && this.#deps.monotonic() < this.#exportSwitchUntil;
+  }
+
+  /** Whether the library may hold video records: it cannot be looked in (closed), an avatar of it could not be read, or a record file is there. */
+  async #recordsMayExist(): Promise<boolean> {
+    if (this.#live === null || this.#libraryView().unreadableTotal > 0) return true;
+    return libraryHasVideoRecords(this.#live.library);
+  }
+
   /**
    * `export.choose`: what the folder the owner picked is, and how many records resolve in it. Nothing is adopted and no status
    * moves: main persists the path and sends `settings.update`, and that is what makes it the export folder.
    */
   async #chooseExportFolder(path: string): Promise<Pick<EngineReply, "error" | "exportFolder">> {
-    // A render commits into the folder it was planned for, and its record would be left behind by a switch under it.
-    const inFlight = (): boolean => this.#renders.active() > 0;
+    // A render commits into the folder it was planned for, and its record would be left behind by a switch under it. One that is
+    // still being prepared counts: its plan already names the folder, and nothing is queued for `active()` to see.
+    const inFlight = (): boolean => this.#renders.active() > 0 || this.#videos.preparing > 0;
     const refuseInFlight = { error: { code: "IN_FLIGHT", detail: "a video render is queued or running; change the export folder when it ends" } } as const;
     if (inFlight()) return refuseInFlight;
     // Never created: the dialog makes folders, and a path that is not there is a drive that is not plugged in.
     const check = await this.#boundedExportCheck(path, { mayCreate: false, probeCase: false });
     if (!check.ok) return { error: { code: "EXPORT_UNAVAILABLE", exportReason: check.reason, detail: `the folder cannot be the export folder (${check.reason})` } };
-    if (inFlight()) return refuseInFlight;
     try {
-      const counts = this.#live === null ? { resolved: 0, elsewhere: 0 } : await countRecordsByRoot(this.#live.library, check.rootId);
-      return { exportFolder: { rootId: check.rootId, resolved: counts.resolved, elsewhere: counts.elsewhere } };
+      const counts = this.#live === null ? { resolved: 0, elsewhere: 0, unreadable: 0, truncated: false } : await countRecordsByRoot(this.#live.library, check.rootId);
+      // From now until the settings arrive, no render may be submitted: the owner is about to be told what the folder holds.
+      if (inFlight()) return refuseInFlight;
+      this.#exportSwitchUntil = this.#deps.monotonic() + EXPORT_SWITCH_WAIT_MS;
+      return { exportFolder: { rootId: check.rootId, resolved: counts.resolved, elsewhere: counts.elsewhere, incomplete: counts.unreadable > 0 || counts.truncated } };
     } catch (error) {
       // The raw error names the library's own path: only its kind is told.
       console.error(`studio engine: the video records could not be counted for the export folder (${errorKind(error)})`);
@@ -2742,6 +2769,8 @@ export class Engine {
    */
   async #applySettings(next: EngineSettings): Promise<EngineError | null> {
     const previous = this.#settings;
+    // The settings main sends after an ok `export.choose` end the wait: from here the export folder is the one they name.
+    this.#exportSwitchUntil = null;
     this.#pendingLibraryPath = next.libraryPath;
     this.#settings = { ...next, libraryPath: previous.libraryPath };
     // A larger render pool takes waiting jobs now, not when one happens to finish.

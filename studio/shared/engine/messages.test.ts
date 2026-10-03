@@ -301,7 +301,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "videos.list": { payload: { avatarId: "avatar-0001" }, result: { videos: [video] } },
   "videos.delete": { payload: { videoId: "video-00000001", mode: "video" }, result: { videoId: "video-00000001", fileDeleted: true, fileState: "present" } },
   "videos.reveal": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
-  "settings.setExportPath": { payload: {}, result: { picked: true, settings, rootId: "root-00000001", resolved: 3, elsewhere: 1 } },
+  "settings.setExportPath": { payload: {}, result: { picked: true, settings, rootId: "root-00000001", resolved: 3, elsewhere: 1, incomplete: false } },
   "settings.exportDisplay": { payload: {}, result: { display: "~/Studio/export" } },
   "export.check": { payload: {}, result: { exportStatus: { status: "unavailable", reason: "missing" } } },
   "music.status": { payload: {}, result: musicStatus },
@@ -1264,12 +1264,14 @@ describe("Stage 3 payloads", () => {
   test("settings.setExportPath answers either a cancel or the picked folder with its counts", () => {
     const ok = (result: unknown) => parseMessage({ v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "settings.setExportPath", ok: true, result }).ok;
     expect(ok({ picked: false })).toBe(true);
-    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: 0, elsewhere: 0 })).toBe(true);
+    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: 0, elsewhere: 0, incomplete: true })).toBe(true);
     // a cancel carries nothing else, and a pick carries every part of the answer
     expect(ok({ picked: false, resolved: 0 })).toBe(false);
-    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: 3 })).toBe(false);
-    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: -1, elsewhere: 0 })).toBe(false);
-    expect(ok({ picked: true, settings, rootId: "../root", resolved: 0, elsewhere: 0 })).toBe(false);
+    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: 3, incomplete: false })).toBe(false);
+    // the counts say whether they are whole: a pick that does not say is refused
+    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: 3, elsewhere: 0 })).toBe(false);
+    expect(ok({ picked: true, settings, rootId: "root-00000001", resolved: -1, elsewhere: 0, incomplete: false })).toBe(false);
+    expect(ok({ picked: true, settings, rootId: "../root", resolved: 0, elsewhere: 0, incomplete: false })).toBe(false);
   });
 
   test("settings.exportDisplay and export.check take no payload", () => {

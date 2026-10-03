@@ -167,7 +167,7 @@ describe("EngineError for an unusable export folder", () => {
 
   test("the reasons are exactly: missing, not a directory, not writable, not enough space, overlaps the library, invalid marker (with or without records), newer marker", () => {
     const actual: string[] = [...EXPORT_UNAVAILABLE_REASONS].sort();
-    expect(actual).toEqual(["invalid-marker", "invalid-marker-with-records", "missing", "newer-marker", "not-a-directory", "not-enough-space", "not-writable", "overlaps-library"]);
+    expect(actual).toEqual(["invalid-marker", "invalid-marker-with-records", "missing", "newer-marker", "not-a-directory", "not-enough-space", "not-writable", "overlaps-library", "overlaps-work-folder"]);
   });
 
   test("EXPORT_UNAVAILABLE without a reason is refused", () => {
@@ -317,7 +317,15 @@ describe("EXPORT_UNAVAILABLE_REASONS_RU", () => {
   });
 
   test("the invalid-marker-with-records message never tells the owner to delete the marker, or to move or rename it (every record of a video depends on its id)", () => {
-    expect(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]).not.toMatch(/удал|убер|сотр|переим|перенес|перемест/i);
+    expect(EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"]).not.toMatch(/(?<!не )(удал|убер|сотр|переим|перенес|перемест)/i);
+  });
+
+  test("the invalid-marker-with-records message says plainly not to delete the file, and where to turn instead", () => {
+    const text = EXPORT_UNAVAILABLE_REASONS_RU["invalid-marker-with-records"];
+
+    expect(text).toContain("Не удаляйте его");
+    expect(text).toContain("резервная копия");
+    expect(text).toContain("выберите другую папку");
   });
 
   test("the invalid-marker message without records may still name the file, and differs from the one with records", () => {

@@ -91,6 +91,15 @@ describe("settings.setExportPath", () => {
     expect(await unwrap(setExportPath(mock))).toMatchObject({ picked: true, resolved: 0, elsewhere: 0 });
   });
 
+  test("counts are whole unless the pick says some records could not be read", async () => {
+    const mock = await withTwoVideos();
+    mock.engine.pickExportFolderNext({ path: REELS });
+    expect(await unwrap(setExportPath(mock))).toMatchObject({ picked: true, incomplete: false });
+
+    mock.engine.pickExportFolderNext({ path: FIRST, incomplete: true });
+    expect(await unwrap(setExportPath(mock))).toMatchObject({ picked: true, incomplete: true });
+  });
+
   test("an unscripted dialog picks a new folder, so the dev mock shows the switch", async () => {
     const mock = await withTwoVideos();
 

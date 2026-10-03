@@ -55,7 +55,7 @@ async function harness(options: { pick?: string | null; choice?: ExportChoice | 
       },
       chooseExport: async (path) => {
         chosen.push(path);
-        const choice = options.choice ?? { error: null, exportFolder: { rootId: ROOT_ID, resolved: 3, elsewhere: 1 } };
+        const choice = options.choice ?? { error: null, exportFolder: { rootId: ROOT_ID, resolved: 3, elsewhere: 1, incomplete: false } };
         return typeof choice === "function" ? choice(path) : choice;
       },
     },
@@ -125,7 +125,7 @@ describe("settings.setExportPath: a pick the engine accepts", () => {
       ok: true,
       id: "cmd-exp-00001",
       type: "settings.setExportPath",
-      result: { picked: true, rootId: ROOT_ID, resolved: 3, elsewhere: 1, settings: { exportPath: picked, apiKey: KEY_STATUS } },
+      result: { picked: true, rootId: ROOT_ID, resolved: 3, elsewhere: 1, incomplete: false, settings: { exportPath: picked, apiKey: KEY_STATUS } },
     });
     expect(h.chosen).toEqual([picked]);
     expect((await loadSettings(userData)).settings.exportPath).toBe(picked);
@@ -187,11 +187,23 @@ describe("settings.setExportPath: a pick the engine refuses", () => {
 
   test("IN_FLIGHT (a render is queued or running) is passed on, and nothing changes", async () => {
     const h = await harness({ pick: join(userData, "Reels"), choice: refused({ code: "IN_FLIGHT", detail: "a video render is queued or running" }) });
+    const before = h.store.current;
 
     const response = await handleExportFolderCommand(command("settings.setExportPath"), h.deps);
 
     expect(response).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
     expect(h.sent).toEqual([]);
+    expect(h.store.current).toEqual(before);
+    expect(await loadSettings(userData)).toMatchObject({ settings: before });
+  });
+
+  test("an answer that says its counts are incomplete passes that on: the window must not claim that every video is there", async () => {
+    const h = await harness({ pick: join(userData, "Reels"), choice: { error: null, exportFolder: { rootId: ROOT_ID, resolved: 2, elsewhere: 0, incomplete: true } } });
+
+    const response = await handleExportFolderCommand(command("settings.setExportPath"), h.deps);
+
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(response).toMatchObject({ ok: true, result: { picked: true, resolved: 2, elsewhere: 0, incomplete: true } });
   });
 
   test("an engine that does not answer (INTERNAL) is passed on, and nothing changes", async () => {

@@ -349,6 +349,27 @@ describe("the root marker", () => {
     expect(await readFile(join(exportPath, EXPORT_MARKER_FILE), "utf8")).toBe("{not json");
   });
 
+  describe("the engine's own work folders", () => {
+    test("a folder inside one is refused as overlapping it, before anything is written", async () => {
+      const work = join(dir, "render-tmp");
+      await mkdir(join(work, "exports"), { recursive: true });
+      exportPath = join(work, "exports");
+
+      expect(await check({ workPaths: [work] })).toEqual({ ok: false, reason: "overlaps-work-folder" });
+      expect(await readdir(exportPath)).toEqual([]);
+    });
+
+    test("a folder that holds one is refused too, and one beside it is fine", async () => {
+      const work = join(dir, "export", "render-tmp");
+      await mkdir(work, { recursive: true });
+      expect(await check({ workPaths: [work] })).toEqual({ ok: false, reason: "overlaps-work-folder" });
+
+      await mkdir(join(dir, "elsewhere"));
+      exportPath = join(dir, "elsewhere");
+      expect((await check({ workPaths: [work] })).ok).toBe(true);
+    });
+  });
+
   describe("an invalid marker in a library that already holds video records", () => {
     test("is told apart, so the owner is never advised to delete the file the records may name", async () => {
       await seed("{not json");

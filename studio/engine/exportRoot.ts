@@ -218,6 +218,8 @@ export interface CheckExportRootOptions {
   libraryPath: string;
   /** True for the default folder only: it is created on first use. A folder the owner chose must already exist. */
   mayCreate: boolean;
+  /** Folders the engine owns and sweeps (`userData/render-tmp`): the export folder may be neither inside one nor hold one. */
+  workPaths?: readonly string[];
   /** A fresh id for a new marker. */
   newId: () => string;
   now: () => Date;
@@ -255,6 +257,10 @@ export async function checkExportRoot(options: CheckExportRootOptions): Promise<
 
   const [exportCanonical, libraryCanonical] = await Promise.all([canonicalize(fs, exportPath), canonicalize(fs, options.libraryPath)]);
   if (pathsOverlap(exportCanonical, libraryCanonical, { caseInsensitive: options.caseInsensitive })) return refuse("overlaps-library");
+  // The engine's own work folders (render-tmp is swept at every start): whatever is exported there would be deleted.
+  for (const work of options.workPaths ?? []) {
+    if (pathsOverlap(exportCanonical, await canonicalize(fs, work), { caseInsensitive: options.caseInsensitive })) return refuse("overlaps-work-folder");
+  }
 
   const shape = await folderShape(fs, exportPath, options.mayCreate);
   if (shape !== "ok") return refuse(shape);

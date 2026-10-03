@@ -27,7 +27,7 @@ export function isExportFolderCommand(command: CommandMessage): command is Expor
 /** The engine's answer to `export.choose`: `error` is null on success, with `exportFolder` set. */
 export interface ExportChoice {
   error: EngineError | null;
-  exportFolder?: { rootId: string; resolved: number; elsewhere: number } | undefined;
+  exportFolder?: { rootId: string; resolved: number; elsewhere: number; incomplete: boolean } | undefined;
 }
 
 export interface ExportFolderFlowDeps extends ReportedSettingsDeps {
