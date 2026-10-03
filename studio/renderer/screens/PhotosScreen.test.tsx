@@ -74,6 +74,11 @@ async function openPhotos(options: Parameters<typeof setup>[0] = {}) {
   return harness;
 }
 
+/** The gallery's photo tiles (not the slots of a run still drawing). */
+function galleryTiles(): Element[] {
+  return Array.from(document.querySelectorAll(".photos-gallery .photo-tile:not(.photo-tile-drawing):not(.photo-tile-queued):not(.photo-tile-skipped)"));
+}
+
 async function priced(): Promise<HTMLElement> {
   return await screen.findByRole("button", { name: /до \$\d/ });
 }
@@ -1034,7 +1039,7 @@ test("the gallery shows each photo's face similarity, and says when the face was
   // Newest first, as photos.list answers.
   const labels = Array.from(document.querySelectorAll(".photo-label")).map((l) => l.textContent);
   expect(labels).toEqual(["Фитнес", "Путешествия", "Дом"]);
-  expect(screen.getByText("3 фото")).toBeDefined();
+  expect(galleryTiles()).toHaveLength(3);
 });
 
 test("the low-score badge styling compares on the same rounded value it displays, not the raw score (L2)", async () => {
@@ -1078,7 +1083,7 @@ test("photos the engine could not list are counted discreetly after the gallery"
 test("an avatar with no photos yet gets an empty gallery that says where they will come from", async () => {
   await openPhotos();
   expect(await screen.findByText("Фото пока нет")).toBeDefined();
-  expect(screen.getByText("0 фото")).toBeDefined();
+  expect(galleryTiles()).toHaveLength(0);
   expect(screen.queryByRole("button", { name: /Продолжить/ }) === null).toBe(true);
   expect(screen.queryByRole("note", { name: "Показаны не все фото" }) === null).toBe(true);
 });
@@ -1110,11 +1115,13 @@ test("the shot caption's quality word matches the model: «low» for the setting
 test("what the contract cannot do yet is drawn disabled and marked «скоро»", async () => {
   await openPhotos();
   await priced();
-  for (const name of ["История сцен", "Видео"]) expect(isDisabled(screen.getByRole("tab", { name }))).toBe(true);
+  // «История сцен» is out of Stage 3 (CF18); «Видео» and the gallery's filters work since 3e.2.
+  expect(isDisabled(screen.getByRole("tab", { name: "История сцен" }))).toBe(true);
+  expect(isDisabled(screen.getByRole("tab", { name: "Видео" }))).toBe(false);
   expect(screen.getByRole("tab", { name: "Фото" }).getAttribute("aria-selected")).toBe("true");
   expect(isDisabled(screen.getByRole("button", { name: "Пересоставить" }))).toBe(true);
-  expect(isDisabled(screen.getByRole("button", { name: "Неиспользованные" }))).toBe(true);
-  expect(isDisabled(screen.getByRole("button", { name: "Отклонённые" }))).toBe(true);
+  expect(isDisabled(screen.getByRole("button", { name: "Неиспользованные" }))).toBe(false);
+  expect(isDisabled(screen.getByRole("button", { name: "Отклонённые" }))).toBe(false);
   const review = screen.getByRole("switch", { name: "Сцены на проверку" });
   // Owner decision: aria-disabled, not the native attribute — full opacity,
   // not the near-invisible 45%-dimmed disabled track; the «скоро» tag alone says it is not available yet.
@@ -1187,7 +1194,7 @@ test("the sidebar's «Фото» staying on the same route through a library swi
   await openSection("Фото");
   await screen.findByRole("heading", { level: 1, name: "Mia" });
   await screen.findByText("лицо 0.86");
-  expect(screen.getByText("25 фото")).toBeDefined();
+  expect(galleryTiles()).toHaveLength(25);
 
   engine.delayNext("photos.list", 500);
   engine.delayNext("photos.list", 500);
@@ -1207,7 +1214,7 @@ test("the sidebar's «Фото» staying on the same route through a library swi
 
   expect(await screen.findByRole("heading", { level: 1, name: "Sofia" })).toBeDefined();
   expect(screen.queryByText("лицо 0.86") === null).toBe(true);
-  expect(screen.getByText("20 фото")).toBeDefined();
+  expect(galleryTiles()).toHaveLength(20);
 });
 
 test("an avatar's name on the grid opens its photos; the sidebar's «Фото» comes back to it", async () => {

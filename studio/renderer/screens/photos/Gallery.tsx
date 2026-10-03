@@ -1,11 +1,12 @@
 import { useId } from "react";
-import type { EngineError, PhotoSummary } from "../../../shared/engine";
+import type { AvatarSummary, EngineError, PhotoSummary } from "../../../shared/engine";
 import { countOf } from "../../lib/format";
-import { Icon } from "../../ui/Icon";
+import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice } from "../../ui/Notice";
 import { Portrait, Silhouette } from "../../ui/Portrait";
 import { CATEGORY_LABEL } from "./runForm";
 import { FACE_GATE_THRESHOLD } from "./shared";
+import { galleryPhotos, type GalleryFilter } from "./videosModel";
 
 /** What photos.list last answered: the photos it could list, and how many more it could not. */
 export interface GalleryList {
@@ -20,6 +21,12 @@ export interface PendingSlots {
 }
 
 const SKIPPED_FORMS = ["фото не читается", "фото не читаются", "фото не читаются"] as const;
+
+const FILTERS: readonly { id: GalleryFilter; label: string }[] = [
+  { id: "all", label: "Все" },
+  { id: "unused", label: "Неиспользованные" },
+  { id: "rejected", label: "Отклонённые" },
+];
 
 /** "лицо 0.86": the similarity to the master portrait, rounded to what the badge shows. */
 function faceLabel(faceCos: number): string {
@@ -38,7 +45,16 @@ export function montagePickRefusal(photo: PhotoSummary): string | null {
   return null;
 }
 
-function PhotoTile({ photo, position, picked, refused, onToggle }: { photo: PhotoSummary; position: number; picked: boolean; refused: boolean; onToggle: (photoId: string) => void }) {
+/** The owner's own «do not use» mark (3e.2): what the tile's button does, and why it cannot when it cannot. */
+export interface MarkControl {
+  /** Photos whose mark is being set now. */
+  readonly marking: ReadonlySet<string>;
+  /** Why no mark can be set right now (the marks themselves cannot be read), or null. */
+  readonly blocked: string | null;
+  readonly onMark: (photo: PhotoSummary, rejected: boolean) => void;
+}
+
+function PhotoTile({ photo, position, picked, refused, onToggle, mark }: { photo: PhotoSummary; position: number; picked: boolean; refused: boolean; onToggle: (photoId: string) => void; mark: MarkControl }) {
   const label = CATEGORY_LABEL[photo.category];
   const faceCos = photo.qa?.faceCos;
   // Compared on the same rounded value the badge displays (L2): a raw score
@@ -49,12 +65,22 @@ function PhotoTile({ photo, position, picked, refused, onToggle }: { photo: Phot
   const why = montagePickRefusal(photo);
   // One photo, one video (Q1): a photo a video or a render holds is dimmed with how it is held, as in the editor's bin.
   const inVideos = photo.usedIn.length;
-  const held = inVideos > 0 ? `в ${inVideos} видео` : photo.used ? "в видео" : photo.reserved ? "в рендере" : null;
-  const classes = ["ph", "photo-tile", picked ? "photo-tile-on" : "", refused ? "photo-tile-refused" : "", held !== null ? "photo-tile-used" : ""].filter(Boolean).join(" ");
+  const held = inVideos > 0 ? `в ${inVideos} видео` : photo.used ? "в видео" : photo.reserved ? "в рендере" : null;
+  const marking = mark.marking.has(photo.photoId);
+  const classes = [
+    "ph",
+    "photo-tile",
+    picked ? "photo-tile-on" : "",
+    refused ? "photo-tile-refused" : "",
+    held !== null ? "photo-tile-used" : "",
+    photo.rejected ? "photo-tile-rejected" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div className={classes}>
       <Portrait avatarId={photo.avatarId} photoId={photo.photoId} label={`Фото ${position}: ${label}`} />
-      {held !== null && <span className="photo-held-dim" aria-hidden="true" />}
+      {(held !== null || photo.rejected) && <span className="photo-held-dim" aria-hidden="true" />}
       <button
         type="button"
         className="photo-pick"
@@ -74,8 +100,19 @@ function PhotoTile({ photo, position, picked, refused, onToggle }: { photo: Phot
           <span className="pill mono photo-badge photo-face-none">лицо не проверялось</span>
         )}
         {held !== null && <span className="pill mono photo-badge photo-held">{held}</span>}
+        {photo.rejected && <span className="pill mono photo-badge photo-rejected">отклонено</span>}
       </div>
       <span className="pill photo-label">{label}</span>
+      <button
+        type="button"
+        className={photo.rejected ? "photo-mark photo-mark-on" : "photo-mark"}
+        aria-label={`Фото ${position}: ${photo.rejected ? "вернуть из отклонённых" : "отклонить — в видео не брать"}`}
+        title={mark.blocked ?? (photo.rejected ? "Вернуть: фото снова можно брать в видео" : "Отклонить: это фото не пойдёт в видео")}
+        disabled={marking || mark.blocked !== null}
+        onClick={() => mark.onMark(photo, !photo.rejected)}
+      >
+        {marking ? <Spin /> : <Icon name={photo.rejected ? "reload" : "close"} size={13} strokeWidth={2.4} />}
+      </button>
     </div>
   );
 }
@@ -102,6 +139,17 @@ function PendingTiles({ pending }: { pending: PendingSlots }) {
   );
 }
 
+/** What the gallery says when a filter leaves nothing. */
+function emptyText(filter: GalleryFilter, usage: AvatarSummary["usage"]): { title: string; text: string } {
+  if (filter === "unused") {
+    return usage.state === "unknown"
+      ? { title: "Свободные фото не известны", text: "Пока использование фото неизвестно, Studio не считает ни одно фото свободным." }
+      : { title: "Неиспользованных фото нет", text: "Все подходящие фото уже в видео или в рендере. Новые кадры появятся после запуска выше." };
+  }
+  if (filter === "rejected") return { title: "Отклонённых фото нет", text: "Отклонённое фото не попадает в видео. Отклонить можно кнопкой на фото." };
+  return { title: "Фото пока нет", text: "Задайте запуск выше — готовые кадры появятся здесь." };
+}
+
 interface GalleryProps {
   /** Null until photos.list first answers. */
   gallery: GalleryList | null;
@@ -113,21 +161,31 @@ interface GalleryProps {
   refused?: ReadonlySet<string>;
   onToggle: (photoId: string) => void;
   onRetry: () => void;
+  /** «Все / Неиспользованные / Отклонённые» (F4). */
+  filter: GalleryFilter;
+  onFilter: (filter: GalleryFilter) => void;
+  /** Whether the avatar's usage can be trusted: «Неиспользованные» is empty while it cannot. */
+  usage: AvatarSummary["usage"];
+  mark: MarkControl;
 }
 
 /**
  * The avatar's run photos, newest first (`photos.list`), each with its face
  * similarity badge — or «лицо не проверялось» when the gate did not judge it
- * (a profile or back shot, or a photo from before the gate). The filter's
- * «Неиспользованные» and «Отклонённые» need usage and rejection data the
- * contract does not carry yet, so only «Все» works.
+ * (a profile or back shot, or a photo from before the gate). The filter
+ * (3e.2) shows every photo, the ones a montage may still take, or the owner's
+ * rejected ones; a tile's own button rejects or restores it.
  */
-export function Gallery({ gallery, error, pending, picked, refused, onToggle, onRetry }: GalleryProps) {
+export function Gallery({ gallery, error, pending, picked, refused, onToggle, onRetry, filter, onFilter, usage, mark }: GalleryProps) {
   const titleId = useId(); // L12: was the hardcoded "gallery-title"
   const loading = gallery === null && error === null;
-  const photos = gallery?.photos ?? [];
-  const skipped = gallery?.skippedTotal ?? 0;
-  const empty = gallery !== null && photos.length === 0 && skipped === 0 && pending === null;
+  const photos = galleryPhotos(gallery?.photos ?? [], filter, usage);
+  const skipped = filter === "all" ? (gallery?.skippedTotal ?? 0) : 0;
+  const slots = filter === "all" ? pending : null;
+  const empty = gallery !== null && photos.length === 0 && skipped === 0 && slots === null;
+  const nothing = emptyText(filter, usage);
+  // A photo's number is its place in the whole gallery, whatever the filter shows.
+  const positions = new Map((gallery?.photos ?? []).map((p, i) => [p.photoId, i + 1]));
 
   return (
     <section className="photos-gallery" aria-labelledby={titleId} aria-busy={loading}>
@@ -136,15 +194,11 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
           Галерея
         </h2>
         <div className="seg photos-sec-action" role="group" aria-label="Фильтр галереи">
-          <button type="button" className="on" aria-pressed="true">
-            Все
-          </button>
-          <button type="button" aria-pressed="false" disabled title="Скоро">
-            Неиспользованные
-          </button>
-          <button type="button" aria-pressed="false" disabled title="Скоро">
-            Отклонённые
-          </button>
+          {FILTERS.map((f) => (
+            <button key={f.id} type="button" className={filter === f.id ? "on" : undefined} aria-pressed={filter === f.id} onClick={() => onFilter(f.id)}>
+              {f.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -169,15 +223,23 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
         </div>
       ) : empty ? (
         <div className="photos-empty">
-          <span className="cand-slot-title">Фото пока нет</span>
-          <span className="cand-slot-sub">Задайте запуск выше — готовые кадры появятся здесь.</span>
+          <span className="cand-slot-title">{nothing.title}</span>
+          <span className="cand-slot-sub">{nothing.text}</span>
         </div>
       ) : (
-        (gallery !== null || pending !== null) && (
+        (gallery !== null || slots !== null) && (
           <div className="photos-grid">
-            {pending && <PendingTiles pending={pending} />}
-            {photos.map((photo, i) => (
-              <PhotoTile key={photo.photoId} photo={photo} position={i + 1} picked={picked.has(photo.photoId)} refused={refused?.has(photo.photoId) ?? false} onToggle={onToggle} />
+            {slots && <PendingTiles pending={slots} />}
+            {photos.map((photo) => (
+              <PhotoTile
+                key={photo.photoId}
+                photo={photo}
+                position={positions.get(photo.photoId) ?? 0}
+                picked={picked.has(photo.photoId)}
+                refused={refused?.has(photo.photoId) ?? false}
+                onToggle={onToggle}
+                mark={mark}
+              />
             ))}
             {skipped > 0 && (
               <div className="ph photo-tile photo-tile-skipped" role="note" aria-label="Показаны не все фото">

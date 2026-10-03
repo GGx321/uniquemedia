@@ -96,6 +96,8 @@
   --scrim-60: rgba(9, 9, 12, 0.6);
   --shadow-lift: 0 10px 24px rgba(0, 0, 0, 0.55);
   --warn-04: rgba(244, 185, 87, 0.04);
+  /* 3e.2 (videos.css): a video card asking to delete, the artboard's own border */
+  --danger-45: rgba(255, 138, 155, 0.45);
 
   /* other */
   --uniq: #7c6cff;

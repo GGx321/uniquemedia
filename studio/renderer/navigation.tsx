@@ -8,8 +8,8 @@ export type Route =
   | { name: "avatarNew"; draftId: string | null }
   | { name: "avatarImport" }
   | { name: "settings"; focus?: SettingsFocus }
-  /** T8b: an avatar's photos; null opens the one shown last, else the first active avatar. */
-  | { name: "photos"; avatarId: string | null }
+  /** T8b: an avatar's photos; null opens the one shown last, else the first active avatar. `tab` (3e.2): the «Видео» tab, opened from the avatar tile's «K видео». */
+  | { name: "photos"; avatarId: string | null; tab?: PhotosTab }
   /** 3d.2: the drafts screen (the sidebar's «Монтаж», EditorEmpty). */
   | { name: "montages" }
   /** 3d.2: one draft in the editor. `created`: opened right after `montages.create`, so the header says «создан только что». */
@@ -17,6 +17,9 @@ export type Route =
   | { name: "section"; id: "autopilot" };
 
 export type SettingsFocus = "key" | "money" | "export" | "music";
+
+/** The tabs of an avatar's Photos screen that work (3e.2): «Фото» and «Видео»; «История сцен» is not in Stage 3. */
+export type PhotosTab = "photos" | "videos";
 
 export interface NavigateOptions {
   /** Skips the leave guard: the owner chose to leave without saving. */
