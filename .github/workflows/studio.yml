@@ -1,6 +1,30 @@
+# TEST TIERS (CI-4). What blocks a push, and what runs somewhere else. Every test runs in exactly one place (or two, where
+# a test is both a correctness check and carries a budget), and nothing is deleted: a test is only MOVED between tiers.
+# One environment variable, STUDIO_TEST_TIER, read by both runners (`bun test` through studio/scripts/realWorkerTests.ts,
+# `node --test` under Electron's Node through studio/scripts/electronNodeTests.ts); the rules are in studio/testing/README.md.
+#
+#   blocking    `build` (macOS + Windows, every push to main and every tag): the whole suite, correctness only. A wall-clock
+#               budget in it has a generous bound that only a runaway trips (assertBudget in studio/testing/tiers.ts).
+#   perf        `perf` (every push to main, never blocks): the `[perf]` tests with their tight wall-clock budgets enforced and
+#               the numbers printed: deadline headroom, the event-loop gap, "stays fast on the worst input". ubuntu and Windows.
+#   quarantine  `quarantine` (every push to main, never blocks, skipped while the list is empty): the `[quarantine]` tests.
+#               A test that flakes ONCE is added to studio/testing/quarantine.ts with the failing run id and the date, and
+#               tagged in the same change, so main stops going red on it and the signal stays. It leaves the list when it
+#               is fixed. Quarantine is never a fix.
+#   scheduled   `heavy` and `canary` (the weekly cron, or a manual run with tier "scheduled"; ubuntu only): the `[heavy]`
+#               tests (the font byte-mutation fuzz, the sticker script in a fresh process) and the randomized suite on
+#               `bun latest`. Not per push: they cost minutes and say nothing a push could have changed.
 name: studio
 on:
   workflow_dispatch:
+    inputs:
+      tier:
+        description: "default: what a push to main runs (build, perf, quarantine). scheduled: the weekly tier only (heavy tests, canary)."
+        type: choice
+        options:
+          - default
+          - scheduled
+        default: default
   push:
     tags:
       - "studio-v*"
@@ -19,7 +43,8 @@ on:
       - "bun.lock"
       - ".github/workflows/studio.yml"
   # Weekly, so a `latest`-Bun regression (like the one the canary job guards
-  # against) is caught even on a week with no studio push.
+  # against) is caught even on a week with no studio push, and the heavy tier
+  # (see the tiers above) runs on a timer instead of on every push.
   schedule:
     - cron: "17 6 * * 1"
 permissions:
@@ -34,9 +59,10 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 jobs:
   build:
-    # The schedule trigger is only for the canary job below; the full
-    # (optionally packaging) build has nothing to do on a timer.
-    if: github.event_name != 'schedule'
+    # The schedule trigger (and a manual run of the scheduled tier) is only for the
+    # heavy and canary jobs below; the full (optionally packaging) build has
+    # nothing to do on a timer.
+    if: github.event_name != 'schedule' && inputs.tier != 'scheduled'
     strategy:
       # One OS failing must not cancel the other: each has its own smoke to report.
       fail-fast: false
@@ -250,11 +276,145 @@ jobs:
             release-studio/*.dmg
             release-studio/*.exe
 
+  # The perf tier (see TEST TIERS at the top): the tests tagged `[perf]`, with
+  # their tight wall-clock budgets ENFORCED and their numbers printed. These are
+  # measurements of the runner as much as of the code (deadline headroom, the
+  # event-loop gap, "stays fast on the worst input"), so they must not decide
+  # whether a push is red: `continue-on-error` keeps the workflow green and the
+  # numbers stay in the log. Windows is here because its coarse timers are the
+  # reason these bounds flaked; ubuntu because it is the quiet reference (and
+  # 1x, not 10x, of the private-repo minutes macOS costs). The blocking `build`
+  # job still runs every one of these tests, with a generous bound.
+  perf:
+    name: perf (${{ matrix.os }})
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.tier != 'scheduled')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    permissions:
+      contents: read
+    env:
+      STUDIO_TEST_TIER: perf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install
+      # The face worker's perf test needs the two models, like the build job's tests do (same cache, same step).
+      - name: Cache face gate models
+        uses: actions/cache@v4
+        with:
+          path: .cache/studio-face-models
+          key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
+      - name: Fetch face gate models
+        run: bun run models:face
+      # Only the `[perf]` tests run (STUDIO_TEST_TIER above): the script opens just the files that hold one.
+      - name: Perf tests (bun)
+        run: bun run test:studio:suite ./studio
+        timeout-minutes: 60
+      - name: Perf tests (Electron's Node)
+        if: ${{ !cancelled() }}
+        run: bun run test:studio:electron-node
+        timeout-minutes: 30
+
+  # The quarantine tier (see TEST TIERS at the top): `[quarantine]` tests, the
+  # ones that flaked and are waiting for a fix. Non-blocking, like perf. While
+  # studio/testing/quarantine.ts is empty (the normal state) nothing below runs
+  # and nothing is billed: a cheap ubuntu job reads the list's length, and the
+  # OS matrix (the OSes the flakes show on, macOS at 10x) only starts when there
+  # is something to run.
+  quarantine-list:
+    name: quarantine list
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.tier != 'scheduled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      count: ${{ steps.count.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Count the quarantined tests
+        id: count
+        shell: bash
+        run: echo "count=$(bun -e 'import { QUARANTINE } from "./studio/testing/quarantine"; console.log(QUARANTINE.length)')" >> "$GITHUB_OUTPUT"
+
+  quarantine:
+    name: quarantine (${{ matrix.os }})
+    needs: quarantine-list
+    if: needs.quarantine-list.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    permissions:
+      contents: read
+    env:
+      STUDIO_TEST_TIER: quarantine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install
+      - name: Cache face gate models
+        uses: actions/cache@v4
+        with:
+          path: .cache/studio-face-models
+          key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
+      - name: Fetch face gate models
+        run: bun run models:face
+      - name: Quarantined tests (bun)
+        run: bun run test:studio:suite ./studio
+        timeout-minutes: 60
+      - name: Quarantined tests (Electron's Node)
+        if: ${{ !cancelled() }}
+        run: bun run test:studio:electron-node
+        timeout-minutes: 30
+
+  # The heavy tier (see TEST TIERS at the top): `[heavy]` tests, the slow ones a
+  # push does not need: the font byte-mutation fuzz and the sticker script run
+  # in a fresh process. Platform-independent, so ubuntu only (1x of the private
+  # repo's minutes; macOS bills 10x, Windows 2x). On the weekly schedule a
+  # failure turns the run red (GitHub only emails a failed scheduled run); on a
+  # manual run of the scheduled tier it does not.
+  heavy:
+    name: heavy
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'scheduled')
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ github.event_name != 'schedule' }}
+    permissions:
+      contents: read
+    env:
+      STUDIO_TEST_TIER: heavy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install
+      - name: Heavy tests (bun)
+        run: bun run test:studio:suite ./studio
+        timeout-minutes: 60
+
   # Early warning for the next Bun release breaking studio: the `build` job
   # above is pinned to .bun-version for reproducibility, so it would not catch
-  # that on its own. Non-blocking on a push/dispatch run (`continue-on-error`,
-  # so it never fails the workflow or blocks a merge there), but not on the
-  # weekly schedule run below — a green scheduled run either way would be
+  # that on its own. Scheduled tier only (the weekly cron, or a manual run of
+  # tier "scheduled"): it used to run on every push, non-blocking, and said the
+  # same thing as the pinned macOS and Windows runs unless Bun itself moved.
+  # Dropping the per-push Linux run loses one signal: a case-sensitive file
+  # system (a wrong-case import passes on macOS and Windows), caught weekly
+  # here instead of per push. Non-blocking on a manual run (`continue-on-error`,
+  # so it never fails the workflow there), but not on the weekly schedule run
+  # — a green scheduled run either way would be
   # silent (GitHub only emails on a failed scheduled run), so a schedule
   # failure must turn the run red to be noticed. One OS is enough for a
   # version-drift check; ubuntu-latest, not macOS, to keep minutes down (this
@@ -278,6 +438,7 @@ jobs:
   # and cannot find them.
   canary:
     name: canary (bun latest)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'scheduled')
     runs-on: ubuntu-latest
     continue-on-error: ${{ github.event_name != 'schedule' }}
     permissions:

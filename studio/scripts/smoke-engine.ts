@@ -84,6 +84,7 @@ import { commitHoldPaths } from "../engine/videos/e2eCommitHold";
 import { EXPORT_MARKER_FILE } from "../engine/exportRoot";
 import { videoPaths } from "../engine/videos/record";
 import { Ledger } from "../engine/money/ledger";
+import { timeoutSignal } from "../engine/money/timeoutSignal";
 import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { PROTOCOL_VERSION } from "../shared/engine";
@@ -331,11 +332,28 @@ interface Running {
   output: () => string;
 }
 
+/** How long one DevTools HTTP question may take: the app answers it in milliseconds, so this only ever ends a request that will not settle. */
+const DEVTOOLS_FETCH_TIMEOUT_MS = 5_000;
+
+/**
+ * One bounded question to the app's DevTools HTTP port, answered with its parsed JSON (the body is read inside the bound).
+ * An unbounded `fetch` here could hang for good when the window closed mid-request (the app quitting with its last window),
+ * and every `waitFor` deadline around it would wait on a promise that never settles, past the step's own timeout.
+ */
+async function devtoolsJson(port: number, path: string): Promise<unknown> {
+  const bound = timeoutSignal(DEVTOOLS_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, { signal: bound.signal });
+    return await response.json();
+  } finally {
+    bound.clear();
+  }
+}
+
 /** Connects to the app's renderer page and installs the request and event helpers. */
 async function connectPage(port: number): Promise<Cdp> {
   const wsUrl = await waitFor("the renderer page on the DevTools port", async () => {
-    const response = await fetch(`http://127.0.0.1:${port}/json/list`);
-    const targets: unknown = await response.json();
+    const targets = await devtoolsJson(port, "/json/list");
     if (!Array.isArray(targets)) return null;
     for (const t of targets) {
       if (typeof t === "object" && t !== null && "type" in t && t.type === "page" && "url" in t && typeof t.url === "string" &&
@@ -363,7 +381,7 @@ async function installPageHelpers(cdp: Cdp): Promise<void> {
 }
 
 async function pageCount(port: number): Promise<number> {
-  const targets: unknown = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  const targets = await devtoolsJson(port, "/json/list");
   return Array.isArray(targets) ? targets.filter((t) => typeof t === "object" && t !== null && "type" in t && t.type === "page").length : -1;
 }
 
@@ -769,7 +787,7 @@ async function productionCheck(target: Target): Promise<void> {
     await checkTextRasteriser("the production app", () => output);
     let listening = false;
     for (let i = 0; i < 10 && !listening; i++) {
-      listening = await fetch(`http://127.0.0.1:${port}/json/version`).then(() => true, () => false);
+      listening = await devtoolsJson(port, "/json/version").then(() => true, () => false);
       await Bun.sleep(300);
     }
     check("the production app ignores --remote-debugging-port", !listening);
