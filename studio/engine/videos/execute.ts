@@ -11,7 +11,7 @@ import { runRenderJob, type RenderRunDeps, type RunAudio } from "../renderQueue/
 import type { VerifiedFile, VerifyExpected } from "../verify";
 import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
-import { buildForbiddenStrings, collectForbiddenStrings } from "./forbiddenStrings";
+import { collectForbiddenStrings, combineForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
@@ -283,8 +283,8 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       let forbiddenStrings: string[];
       try {
         const photoStrings = await collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips));
-        // The track's own text joins the photos' (invariant 14): neither may be found in the finished video.
-        forbiddenStrings = track === null ? photoStrings : buildForbiddenStrings([...photoStrings, ...track.forbidden]);
+        // The track's own text joins the photos' (invariant 14), each under its own quota: neither may be found in the finished video.
+        forbiddenStrings = track === null ? photoStrings : combineForbiddenStrings(photoStrings, track.forbidden);
       } catch (error) {
         log(`render ${plan.jobId}: a source photo could not be read (${error instanceof Error ? error.name : "error"})`);
         throw new RenderFailure({ code: "INTERNAL", detail: "a source photo could not be read" });

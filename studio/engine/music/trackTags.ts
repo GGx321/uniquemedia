@@ -127,18 +127,39 @@ function readId3(bytes: Uint8Array, start: number, end: number, strings: Strings
   }
 }
 
-function walk(bytes: Uint8Array, start: number, end: number, depth: number, strings: Strings): void {
+/** The string atoms a mov-style `udta` carries: name, artist, album, comment, genre (each starts with a copyright sign) and `cprt`. */
+const MOV_TEXT_ATOMS: ReadonlySet<string> = new Set(["©nam", "©ART", "©alb", "©cmt", "©gen", "cprt"]);
+
+/**
+ * A mov string atom: a 16-bit text length, a 16-bit language, then the text. The ISO `cprt` is a full box instead: version and
+ * flags, a packed language, then a terminated UTF-8 string. A length that does not fit the atom is read as the ISO form, and one
+ * that fits neither gives nothing.
+ */
+function readMovText(bytes: Uint8Array, start: number, end: number, iso: boolean, strings: Strings): void {
+  const size = end - start;
+  if (size < 4) return;
+  const length = ((bytes[start] ?? 0) << 8) | (bytes[start + 1] ?? 0);
+  if (!iso && length > 0 && 4 + length <= size) {
+    strings.addEncoded(3, bytes.subarray(start + 4, start + 4 + Math.min(length, MAX_FIELD_BYTES)));
+  } else if (iso && size > 6) {
+    strings.addEncoded(3, bytes.subarray(start + 6, Math.min(end, start + 6 + MAX_FIELD_BYTES)));
+  }
+}
+
+function walk(bytes: Uint8Array, start: number, end: number, depth: number, strings: Strings, where: { readonly parent: string; readonly inTrak: boolean } = { parent: "moov", inTrak: false }): void {
   if (depth > MAX_DEPTH) return;
   for (let at = start; at < end && !strings.full; ) {
     const found = boxAt(bytes, at, end);
     if (found === null) return;
     strings.boxes++;
-    if (CONTAINERS.has(found.type)) walk(bytes, found.start, found.end, depth + 1, strings);
+    if (CONTAINERS.has(found.type)) walk(bytes, found.start, found.end, depth + 1, strings, { parent: found.type, inTrak: where.inTrak || found.type === "trak" });
+    else if (where.parent === "udta" && MOV_TEXT_ATOMS.has(found.type)) readMovText(bytes, found.start, found.end, found.type === "cprt", strings);
+    else if (where.parent === "udta" && where.inTrak && found.type === "name") strings.addEncoded(3, bytes.subarray(found.start, Math.min(found.end, found.start + MAX_FIELD_BYTES)));
     else if (found.type === "meta") {
       // An ISO `meta` is a full box (4 bytes of version and flags first); a QuickTime one is not. The child's type says which.
       const known = new Set(["hdlr", "ilst", "keys", "ID32", "xml ", "iloc", "pitm"]);
       const skip = known.has(latin1(bytes, found.start + 8, Math.min(4, Math.max(0, found.end - found.start - 8)))) ? 4 : 0;
-      walk(bytes, found.start + skip, found.end, depth + 1, strings);
+      walk(bytes, found.start + skip, found.end, depth + 1, strings, { parent: "meta", inTrak: where.inTrak });
     } else if (found.type === "ilst") readIlst(bytes, found.start, found.end, strings);
     else if (found.type === "ID32") readId3(bytes, found.start + 6, found.end, strings);
     else if (found.type === "hdlr" && found.end - found.start > 24) {

@@ -64,6 +64,13 @@ describe("trackTagStrings", () => {
     expect(trackForbiddenStrings(bytes, ["Listed Title Here", "tiny", null])).toEqual(["Listed Title Here", "A Very Long Song Title"]);
   });
 
+  test("the track has a quota of its own: 32 strings from the photos cannot crowd its text out", () => {
+    const items = Array.from({ length: 40 }, (_, i) => ilstItem("©cmt", 1, utf8(`track comment number ${String(i).padStart(2, "0")}`)));
+    const forbidden = trackForbiddenStrings(moovWith(metaIlst(...items)), ["Listed Title Here"]);
+    expect(forbidden).toHaveLength(32);
+    expect(forbidden[0]).toBe("Listed Title Here");
+  });
+
   test("gives nothing for bytes that are not an MP4", () => {
     expect(trackTagStrings(Uint8Array.from(Buffer.from("RIFF....WAVEfmt ")))).toEqual([]);
     expect(trackTagStrings(new Uint8Array(0))).toEqual([]);
@@ -72,6 +79,29 @@ describe("trackTagStrings", () => {
   test("gives nothing, and does not throw, for a box that claims more than the file holds", () => {
     const bytes = concat(box("ftyp", utf8("isom0000isom")), box("moov", box("udta", new Uint8Array(0)), 0x7fffffff));
     expect(trackTagStrings(bytes)).toEqual([]);
+  });
+
+  // mov-style string atoms: `moov/udta/<©nam, ©ART, ...>` with a 16-bit length and a 16-bit language before the text.
+  const movText = (type: string, text: string): Uint8Array => box(type, concat(u16(utf8(text).byteLength), u16(0x15c7), utf8(text)));
+
+  test.each(["©nam", "©ART", "©alb", "©cmt", "©gen"])("reads the mov-style %s string atom under moov/udta", (type) => {
+    const bytes = moovWith(box("udta", movText(type, "Mov Style Tag Value")));
+    expect(trackTagStrings(bytes)).toContain("Mov Style Tag Value");
+  });
+
+  test("reads the ISO cprt atom (version and flags, a language, the text, a terminator)", () => {
+    const bytes = moovWith(box("udta", fullBox("cprt", 0, concat(u16(0x55c4), utf8("(c) 2026 Some Label Inc"), Uint8Array.of(0)))));
+    expect(trackTagStrings(bytes)).toContain("(c) 2026 Some Label Inc");
+  });
+
+  test("reads the name atom of a track: moov/trak/udta/name", () => {
+    const bytes = moovWith(box("trak", box("udta", box("name", utf8("Track Display Name Here")))));
+    expect(trackTagStrings(bytes)).toContain("Track Display Name Here");
+  });
+
+  test("a mov string atom that lies about its length gives nothing and does not throw", () => {
+    const bytes = moovWith(box("udta", box("©nam", concat(u16(60_000), u16(0), utf8("short")))));
+    expect(() => trackTagStrings(bytes)).not.toThrow();
   });
 
   test("is bounded: a file of thousands of tag boxes yields a bounded list", () => {

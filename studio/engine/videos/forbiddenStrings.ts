@@ -9,7 +9,13 @@
 // way each time, with no way out), and never a value so short or so plain that
 // it could occur in coded video by chance.
 
-/** A value shorter than this (in characters) could match the video data by chance; the verifier itself refuses under 6 bytes. */
+/**
+ * A value shorter than this (in characters) could match the video data by chance; the verifier itself refuses under 6 bytes.
+ * The same minimum holds for a music track's tags (3c.5): the search is a plain byte search over the whole file, which is mostly
+ * coded video and audio, and a short title like «Aurora» would occur in it by chance and refuse a clean render with no way out.
+ * The cost is that a tag under 8 characters is not searched for; the render still drops every tag (`-map_metadata -1`, and the
+ * stream's own) and the verifier's allowlist of boxes and values is what catches a short one.
+ */
 export const FORBIDDEN_STRING_MIN_LENGTH = 8;
 const MAX_STRING_CHARS = 256;
 const MAX_STRINGS = 32;
@@ -61,9 +67,9 @@ export function forbiddenCandidate(text: string): string | null {
 
 /**
  * Turns candidate texts into the list for `verifyRenderedMp4`: each through `forbiddenCandidate`,
- * deduplicated in first-seen order, and at most 32.
+ * deduplicated in first-seen order, and at most `max` (32 by default: the photos' quota; a music track has one of its own).
  */
-export function buildForbiddenStrings(candidates: Iterable<string>): string[] {
+export function buildForbiddenStrings(candidates: Iterable<string>, max: number = MAX_STRINGS): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const candidate of candidates) {
@@ -71,9 +77,17 @@ export function buildForbiddenStrings(candidates: Iterable<string>): string[] {
     if (text === null || seen.has(text)) continue;
     seen.add(text);
     out.push(text);
-    if (out.length === MAX_STRINGS) break;
+    if (out.length === max) break;
   }
   return out;
+}
+
+/**
+ * The photos' strings and a music track's, each list built under its OWN quota, joined without a string twice: a render with 32
+ * photo strings still carries every one of the track's (3c.5). Both lists already passed `forbiddenCandidate`.
+ */
+export function combineForbiddenStrings(photos: readonly string[], track: readonly string[]): string[] {
+  return [...new Set([...photos, ...track])];
 }
 
 // ---------- reading a photo's own text ----------

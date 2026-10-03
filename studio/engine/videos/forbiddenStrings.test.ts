@@ -1,12 +1,37 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { buildForbiddenStrings, collectForbiddenStrings, FORBIDDEN_STRING_MIN_LENGTH, photoMetadataStrings } from "./forbiddenStrings";
+import { buildForbiddenStrings, collectForbiddenStrings, combineForbiddenStrings, FORBIDDEN_STRING_MIN_LENGTH, photoMetadataStrings } from "./forbiddenStrings";
 useNativeGlobals();
 
 // Task 3a.8b.1 (from the 3a.7 review): the verifier refuses a video that holds
 // any of the source photos' own text (Artist, Copyright, ...). That list must
 // never contain text the ENGINE ITSELF writes into every video, or every render
 // would be refused deterministically with no way out.
+
+describe("combineForbiddenStrings: the photos and the track each have a quota of their own (3c.5)", () => {
+  const many = (prefix: string, n: number): string[] => Array.from({ length: n }, (_, i) => `${prefix} string number ${String(i).padStart(2, "0")}`);
+
+  test("keeps all 32 of the photos' strings and all of the track's, so neither crowds the other out", () => {
+    const photos = many("photo", 32);
+    const track = many("track", 5);
+    const combined = combineForbiddenStrings(photos, track);
+    expect(combined).toHaveLength(37);
+    expect(combined).toEqual(expect.arrayContaining([...photos, ...track]));
+  });
+
+  test("lists a string both have once", () => {
+    expect(combineForbiddenStrings(["Shared Value Here", "Photo Only Value"], ["Shared Value Here", "Track Only Value"])).toEqual(["Shared Value Here", "Photo Only Value", "Track Only Value"]);
+  });
+
+  test("is the photos' list alone when the track has none", () => {
+    expect(combineForbiddenStrings(["Photo Only Value"], [])).toEqual(["Photo Only Value"]);
+  });
+
+  test("buildForbiddenStrings caps at 32 by default and at the given quota otherwise", () => {
+    expect(buildForbiddenStrings(many("x", 50))).toHaveLength(32);
+    expect(buildForbiddenStrings(many("x", 50), 5)).toHaveLength(5);
+  });
+});
 
 describe("buildForbiddenStrings", () => {
   test("keeps a real artist or copyright text", () => {
