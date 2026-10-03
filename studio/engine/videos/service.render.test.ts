@@ -119,7 +119,6 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
   const cases: Array<[string, (w: World) => MontageDraft, string[]]> = [
     ["a text layer", (w) => ({ ...specFor(w), layers: [textLayer(1)] }), ["layers", "0"]],
     ["a sticker layer", (w) => ({ ...specFor(w), layers: [stickerLayer(1)] }), ["layers", "0"]],
-    ["a trending track", (w) => ({ ...specFor(w), music: { source: "trending", trackId: "track-0000001", startMs: 0 } }), ["music"]],
     ["an own track", (w) => ({ ...specFor(w), music: { source: "own", mediaId: "media-0000001", startMs: 0 } }), ["music"]],
     [
       "an own video clip",

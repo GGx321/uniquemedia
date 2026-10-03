@@ -3,6 +3,8 @@ import type { FileState, VideoSummary, CommandPayload, EngineError, UnsequencedE
 import { EXPORT_CHANGING_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail } from "../../shared/engine";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
+import { trackIssues } from "../../shared/montage/trackIssues";
+import type { RenderTrackSource } from "../music/renderTrack";
 import { estimateBytesUpper } from "../../shared/montage";
 import { resolveFocus } from "../../shared/montage/crop";
 import { EngineFailure } from "../engineFailure";
@@ -79,6 +81,11 @@ export interface VideoServiceDeps {
   readonly focus: (library: Library) => Pick<FocusResolver, "fillMissingFocus">;
   /** `userData/render-tmp`; a render is refused without it (no `os.tmpdir` fallback). */
   readonly renderTmpDir: string | undefined;
+  /**
+   * The track store (3c.5): `videos.render` judges a trending track against its record up front (`trackIssues`), and the job
+   * opens it through it when it starts. Absent: no track is held, so a spec with music is refused as `track-unavailable`.
+   */
+  readonly tracks?: RenderTrackSource;
   readonly newId: () => string;
   readonly now: () => Date;
   readonly emit: (event: UnsequencedEvent) => void;
@@ -268,7 +275,7 @@ export class VideoService {
     const { spec } = source;
     // The read waited in the draft's queue: whatever it used of the command's time is gone, so out of time is said as that.
     if (source.library !== null && remaining() <= marginMs) throw new EngineFailure({ code: "INTERNAL", detail: RENDER_NOT_QUEUED_DETAIL });
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...this.#trackIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
     if (renderTmpDir === undefined) throw new EngineFailure({ code: "INTERNAL", detail: "no render folder is configured, so nothing can be rendered" });
@@ -308,6 +315,12 @@ export class VideoService {
       }
       return { montageId, spec: found.read.montage.spec, library };
     });
+  }
+
+  /** The music's referential issues (`track-unavailable`, `track-too-short`): the one function the mock and `montages.get` use too. */
+  #trackIssues(spec: MontageDraft): MontageIssue[] {
+    const tracks = this.#deps.tracks;
+    return trackIssues(spec, tracks === undefined ? undefined : (trackId) => tracks.stored(trackId));
   }
 
   async #render(
@@ -383,6 +396,8 @@ export class VideoService {
       resolvePhoto: (ref) => (ref.source === "scene" ? sources.get(ref.photoId) : undefined),
       overlays: [],
       audio: { kind: "silent" },
+      // The id and the start only: the file's path comes from the track store when the job runs (invariant 31).
+      ...(filled.music?.source === "trending" ? { track: { trackId: filled.music.trackId, startMs: filled.music.startMs } } : {}),
       montageId,
       videoKind: videoKindOf(filled.clips),
       music: null,
@@ -394,6 +409,7 @@ export class VideoService {
       caseProbe: deps.caseProbe,
       now: deps.now,
       log: deps.log,
+      ...(deps.tracks === undefined ? {} : { tracks: deps.tracks }),
       onCommitted: (record) => this.#committed(record),
       ...(deps.drafts === undefined ? {} : { draftRemoved: (id: string) => deps.drafts?.wasRemoved(id) === true }),
       // A commit that fails and leaves its intent is settled inside the job, before it ends (the reservation still held).

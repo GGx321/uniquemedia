@@ -2,8 +2,8 @@ import type { MontageDraft, MontageIssue } from "../engine/montage";
 
 /**
  * N9: the parts of a montage whose slice has not landed. A spec that uses one is REFUSED with `not-yet-supported` at
- * that spot, never rendered without it: own media (video clips, own photos, own stickers, own tracks) until 3f, layers
- * until 3b, music until 3c. Each slice lifts its own line here.
+ * that spot, never rendered without it: own media (video clips, own photos, own stickers) until 3f, layers until 3b, an own
+ * track until 3f.4 (a trending track is supported since 3c.5). Each slice lifts its own line here.
  */
 export function notYetSupportedIssues(spec: Pick<MontageDraft, "clips" | "layers" | "music">): MontageIssue[] {
   const issues: MontageIssue[] = [];
@@ -19,6 +19,7 @@ export function notYetSupportedIssues(spec: Pick<MontageDraft, "clips" | "layers
     }
   });
   spec.layers.forEach((_layer, i) => add("layers", i));
-  if (spec.music !== null) add("music");
+  // 3c.5 lifted it for a trending track (its own issues are `trackIssues`); an own track waits for 3f.4.
+  if (spec.music?.source === "own") add("music");
   return issues;
 }

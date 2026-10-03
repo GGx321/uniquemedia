@@ -126,7 +126,7 @@ describe("TrackStore.openForRender: a track the render may read", () => {
   test("gives the title and artist the tile shows", async () => {
     const rig = await stored();
     const track = await rig.store.openForRender(idOf(rig, 0), signal());
-    expect(track.title).toBe(rig.tracks[0]?.title ?? null);
+    expect(track.title).toBe(rig.tracks[0]?.title ?? "Untitled track");
     expect(track.artist).toBe(rig.tracks[0]?.artist ?? null);
   });
 });

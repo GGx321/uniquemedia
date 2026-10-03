@@ -6,6 +6,7 @@ import { EngineFailure } from "../engineFailure";
 import type { FocusResolver } from "../focus/focusResolver";
 import type { Library } from "../library";
 import { photoAvailability, type Availability } from "./availability";
+import type { TrackLookup } from "../music/renderTrack";
 import { draftIssues } from "./issues";
 import { DraftFolderError, DraftNotAFileError, type DraftRead, type DraftStore } from "./store";
 
@@ -42,6 +43,8 @@ export interface MontageServiceDeps {
   readonly openLibrary: () => Library | null;
   /** The focus resolver of `library`. */
   readonly focus: (library: Library) => Pick<FocusResolver, "focusFor">;
+  /** What the track store holds (3c.5): a draft's trending track is judged against it. Absent: no track is held. */
+  readonly tracks?: TrackLookup;
   readonly newId: () => string;
   readonly now: () => Date;
   /** The variety seed of a new draft (a uint32); a random one when absent. */
@@ -215,7 +218,7 @@ export class MontageService {
     if (found === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
     if (found.read.kind !== "ok") throw unreadable(found.read, montageId);
     const { montage } = found.read;
-    return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, this.#availabilityOf(library, montage.spec.avatarId)) };
+    return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, this.#availabilityOf(library, montage.spec.avatarId), this.#deps.tracks) };
   }
 
   // ---------- montages.list ----------
@@ -243,7 +246,7 @@ export class MontageService {
         known = this.#availabilityOf(library, owner);
         availability.set(owner, known);
       }
-      return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, known), videoCount: library.videoCountForMontage(owner, montage.montageId) };
+      return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks), videoCount: library.videoCountForMontage(owner, montage.montageId) };
     });
     return { items, total: listing.montages.length, skippedTotal: listing.skipped };
   }

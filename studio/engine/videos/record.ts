@@ -21,6 +21,12 @@ const Sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
 const RecordMusic = z.strictObject({ title: z.string().min(1).max(120), artist: z.string().min(1).max(120).nullable() });
 
 /**
+ * What the render resolved for the music (3c.5): where in the track it started, the gain in dB the true-peak pass chose (never
+ * above 0: invariant 21), and the sha256 of the track file it read. Absent for a silent video and for a record from before 3c.5.
+ */
+const RecordAudio = z.strictObject({ trackSha: Sha256Hex, startMs: z.int().nonnegative(), gainDb: z.number().min(-60).max(0) });
+
+/**
  * The file a record names: the export root's identity plus a path RELATIVE to
  * it, never an absolute path (a moved folder keeps working), and what the file
  * was when it was committed. `mtimeMs` (whole milliseconds) is what lets a
@@ -56,6 +62,7 @@ export const VideoRecordSchema = z.looseObject({
   /** The draft it was rendered from; null for a headless spec. */
   montageId: Id.nullable(),
   music: RecordMusic.nullable(),
+  audio: RecordAudio.optional(),
   file: VideoFileRef,
   spec: RecordSpecShape,
 });

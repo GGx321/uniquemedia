@@ -3,6 +3,8 @@ import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { Library } from "../library";
 import { photoAvailability, type Availability } from "./availability";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
+import { trackIssues } from "../../shared/montage/trackIssues";
+import type { TrackLookup } from "../music/renderTrack";
 
 // The engine's verdict on a draft (`montages.get`, `montages.list`): the structural issues a render would raise
 // (`montageIssues(spec, "spec")`, the same function `videos.render` uses), what a render refuses for a part whose slice
@@ -17,9 +19,9 @@ import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 //   media-unavailable    TODO(3f.1, 3f.3b): an own media id (`clips.i`, `clips.i.cells.j`, `music`, `layers.i.sticker`)
 //                        missing or of the wrong kind; there is no media store to ask until slice 3f.
 //   sticker-unavailable  TODO(3f.5) for an OWN sticker (its media id, in the same store).
-//   track-unavailable    TODO(3c.4): a trending track that is no longer in the track store (`music`);
-//                        TODO(3f.4) for an own track.
-//   track-too-short      TODO(3c.4, 3f.4): a track shorter than `startMs` plus the montage's total (`music`).
+//   track-unavailable    DONE  a trending track that is not in the track store (`music`), by `trackIssues`, the function the mock uses
+//                        too; with no store wired no track is held. TODO(3f.4) for an own track.
+//   track-too-short      DONE  a trending track shorter than `startMs` plus the montage's total (`music`). TODO(3f.4) for an own track.
 // Nothing is invented for the TODOs: a render still refuses those parts with `not-yet-supported` (N9) until their slices land.
 
 const BUILTIN_STICKERS: ReadonlySet<string> = new Set(STICKER_MANIFEST.map((sticker) => sticker.id));
@@ -44,8 +46,8 @@ function sceneCells(spec: Pick<MontageDraft, "clips">): SceneCell[] {
   return cells;
 }
 
-/** The referential issues of a draft, in order: photos (clips, then cells), then stickers (layers). Not bounded here. */
-export function referentialIssues(spec: MontageDraft, availability: Availability): MontageIssue[] {
+/** The referential issues of a draft, in order: photos (clips, then cells), then stickers (layers), then the music track. Not bounded here. */
+export function referentialIssues(spec: MontageDraft, availability: Availability, tracks?: TrackLookup): MontageIssue[] {
   const issues: MontageIssue[] = [];
   for (const cell of sceneCells(spec)) {
     if (!availability.usable(cell.photoId)) issues.push({ code: "photo-unavailable", path: cell.path });
@@ -55,6 +57,7 @@ export function referentialIssues(spec: MontageDraft, availability: Availability
       issues.push({ code: "sticker-unavailable", path: ["layers", i, "sticker"] });
     }
   });
+  issues.push(...trackIssues(spec, tracks === undefined ? undefined : (trackId) => tracks.stored(trackId)));
   return issues;
 }
 
@@ -62,7 +65,7 @@ export function referentialIssues(spec: MontageDraft, availability: Availability
  * Every issue of `spec` as the engine sees it now: what a render would refuse first (structure, then N9), then the referential ones, cut at `MAX_MONTAGE_ISSUES`. `availability`
  * is the avatar's photo state (`photoAvailability`); a caller judging many drafts of one avatar asks it once.
  */
-export function draftIssues(library: Library, spec: MontageDraft, log: (line: string) => void, availability?: Availability): MontageIssue[] {
+export function draftIssues(library: Library, spec: MontageDraft, log: (line: string) => void, availability?: Availability, tracks?: TrackLookup): MontageIssue[] {
   const known = availability ?? photoAvailability(library, spec.avatarId, log);
-  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known)].slice(0, MAX_MONTAGE_ISSUES);
+  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known, tracks)].slice(0, MAX_MONTAGE_ISSUES);
 }

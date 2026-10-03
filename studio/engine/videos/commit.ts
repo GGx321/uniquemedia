@@ -130,6 +130,8 @@ export interface CommitInput {
   readonly durationMs: number;
   readonly montageId: string | null;
   readonly music: VideoRecord["music"];
+  /** What the render resolved for the music (start, gain, the track's sha256); absent for a silent video. */
+  readonly audio?: VideoRecord["audio"];
   /** The RESOLVED spec: what was rendered. Kept whole in the record. */
   readonly spec: z.infer<typeof MontageShape>;
   /** From `collectForbiddenStrings`. */
@@ -402,6 +404,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
             frames: input.frames,
             montageId: input.montageId,
             music: input.music,
+            ...(input.audio === undefined ? {} : { audio: input.audio }),
             file: { rootId: target.rootId, relPath: claim.relPath, bytes, sha256, mtimeMs: Math.floor(before.mtimeMs) },
             spec,
           });

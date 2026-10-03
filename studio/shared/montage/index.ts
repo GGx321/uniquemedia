@@ -15,4 +15,5 @@ export * from "./segments";
 export * from "./split";
 export * from "./stagger";
 export * from "./timeline";
+export * from "./trackIssues";
 export * from "./types";

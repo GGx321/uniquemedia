@@ -358,7 +358,7 @@ export class TrackStore implements MusicListSink, RenderTrackSource {
       bytes: audio.bytes,
       sha256: audio.sha256,
       decodedMs: audio.decodedMs,
-      title: entry.title,
+      title: toSummary(entry).title,
       artist: entry.artist,
       forbidden: trackForbiddenStrings(bytes, [entry.title, entry.artist]),
     };

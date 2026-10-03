@@ -165,11 +165,11 @@ describe("draftIssues: what a render refuses for a part whose slice has not land
     expect(issuesOf(w, spec)).toEqual([{ code: "not-yet-supported", path: ["layers", 0] }]);
   });
 
-  test("music, an own video clip and an own photo are too", () => {
+  test("an own track, an own video clip and an own photo are too (a trending track no longer is: 3c.5)", () => {
     const w = world();
     const own = { ...photoClip(2, "x"), cell: { photo: { source: "own" as const, mediaId: "media-0000001" }, focus: null } };
     const video = { clipId: "clip-003", kind: "video" as const, mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
-    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), own, video], music: { source: "trending", trackId: "track-0000001", startMs: 0 } });
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), own, video], music: { source: "own", mediaId: "media-0000003", startMs: 0 } });
 
     expect(issuesOf(w, spec).map((i) => [i.code, i.path])).toEqual([
       ["not-yet-supported", ["clips", 1, "cell"]],
@@ -250,5 +250,35 @@ describe("draftIssues: the bound", () => {
     expect(issues).toHaveLength(MAX_MONTAGE_ISSUES);
     expect(issues[0]).toEqual({ code: "duration-too-long", path: ["clips"] });
     expect(issues.slice(1).every((i) => i.code === "photo-unavailable")).toBe(true);
+  });
+});
+
+describe("draftIssues: a trending track against the track store (3c.5)", () => {
+  const trending = (startMs: number, trackId = "4199287736976977"): MontageDraft["music"] => ({ source: "trending", trackId, startMs });
+  const holds = (decodedMs: number) => ({ stored: (trackId: string) => (trackId === "4199287736976977" ? { decodedMs } : null) });
+  const withTracks = (w: World, spec: MontageDraft, tracks: { stored(trackId: string): { decodedMs: number } | null } | undefined) => draftIssues(w.library, spec, (line) => void logs.push(line), undefined, tracks);
+
+  test("a track the store holds, long enough, has no issue", () => {
+    const w = world();
+
+    expect(withTracks(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: trending(1_000) }), holds(8_000))).toEqual([]);
+  });
+
+  test("a track the store does not hold is track-unavailable at music", () => {
+    const w = world();
+
+    expect(withTracks(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: trending(0, "123") }), holds(8_000))).toEqual([{ code: "track-unavailable", path: ["music"] }]);
+  });
+
+  test("with no track store wired no track is held, so any trending track is track-unavailable", () => {
+    const w = world();
+
+    expect(withTracks(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: trending(0) }), undefined)).toEqual([{ code: "track-unavailable", path: ["music"] }]);
+  });
+
+  test("a track shorter than startMs plus the montage is track-too-short at music", () => {
+    const w = world();
+
+    expect(withTracks(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: trending(4_001) }), holds(8_000))).toEqual([{ code: "track-too-short", path: ["music"] }]);
   });
 });

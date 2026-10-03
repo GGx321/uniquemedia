@@ -4,13 +4,14 @@ import type { MontageShape } from "../../shared/engine/montage";
 import { totalFrames } from "../../shared/montage";
 import { ExportFolderError, formatExportDate, NODE_EXPORT_FOLDER_FS, prepareExportFolder, type ExportFolderFs, type PreparedFolder } from "../exportName";
 import type { Library } from "../library";
-import type { AudioSource, OverlayInput, PhotoResolver } from "../render";
+import type { AudioPlan, OverlayInput, PhotoResolver } from "../render";
+import { TrackUnavailableError, type RenderTrack, type RenderTrackSource } from "../music/renderTrack";
 import { RenderFailure, type RenderContext } from "../renderQueue/queue";
 import { runRenderJob, type RenderRunDeps } from "../renderQueue/runner";
 import type { VerifiedFile, VerifyExpected } from "../verify";
 import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
-import { collectForbiddenStrings } from "./forbiddenStrings";
+import { buildForbiddenStrings, collectForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
@@ -71,10 +72,17 @@ export interface RenderPlan {
   /** photoId to its file and STORED size; resolved up front so a missing photo answers PHOTO_UNAVAILABLE, never a builder error. */
   readonly resolvePhoto: PhotoResolver;
   readonly overlays: readonly OverlayInput[];
-  readonly audio: AudioSource;
+  /** The audio of a montage with no music: silence. With `track` it is replaced by the track the store hands over at the job's start. */
+  readonly audio: AudioPlan;
+  /**
+   * The trending track the montage uses, by id (3c.5, invariant 31). Only the id and where to start: the file's path is never in
+   * the plan. The job asks the track store for it when it starts, and the store checks it again before handing it over.
+   */
+  readonly track?: { readonly trackId: string; readonly startMs: number };
   readonly montageId: string | null;
   /** The kind token of the file name. */
   readonly videoKind: string;
+  /** The tile's music (title, artist); for a plan with a `track` the job fills it from the track it opened. */
   readonly music: VideoRecord["music"];
 }
 
@@ -91,6 +99,11 @@ export interface VideoRenderDeps {
   readonly runJob?: typeof runRenderJob;
   readonly runDeps?: RenderRunDeps;
   readonly verify?: (path: string, expected: VerifyExpected) => Promise<VerifiedFile>;
+  /**
+   * The track store, as the render uses it (3c.5): a plan's `track` is opened through it when the job starts. Absent, no track
+   * is held, and a plan with a track is refused as `track-unavailable`.
+   */
+  readonly tracks?: Pick<RenderTrackSource, "openForRender">;
   /** Codes, ids and box paths only. */
   readonly log?: (line: string) => void;
   /** Test seams of the commit. */
@@ -199,7 +212,39 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
   const deadlineMs = deps.commitDeadlineMs ?? COMMIT_DEADLINE_MS;
   const stepMs = deps.stepDeadlineMs ?? EXPORT_STEP_DEADLINE_MS;
 
+  /**
+   * A plan's track, opened through the store FIRST (before the export folder, the intermediates or any ffmpeg exist): the store
+   * checks the stored file again, and anything but a pass is the contract's refusal for it, `MONTAGE_INVALID` with
+   * `track-unavailable` (or `track-too-short` when it cannot hold `startMs` plus the montage). A cancel comes out as itself.
+   */
+  const openTrack = async (plan: RenderPlan, signal: AbortSignal): Promise<RenderTrack | null> => {
+    const wanted = plan.track;
+    if (wanted === undefined) return null;
+    const refuse = (code: "track-unavailable" | "track-too-short"): RenderFailure => new RenderFailure({ code: "MONTAGE_INVALID", issues: [{ code, path: ["music"] }] });
+    if (deps.tracks === undefined) throw refuse("track-unavailable");
+    let opened: RenderTrack;
+    try {
+      opened = await deps.tracks.openForRender(wanted.trackId, signal);
+    } catch (error) {
+      if (error instanceof TrackUnavailableError) {
+        log(`render ${plan.jobId}: the music track was refused (${error.kind})`);
+        throw refuse("track-unavailable");
+      }
+      // A cancel is the signal's own reason. Anything else (a file-system error) names the owner's userData path: only the code goes on.
+      if (signal.aborted) throw error;
+      log(`render ${plan.jobId}: the music track could not be checked (${codeOf(error)})`);
+      throw new RenderFailure({ code: "INTERNAL", detail: "the music track could not be checked" });
+    }
+    // The length the store PROVED, against what this montage needs of it: the same rule `videos.render` applied up front.
+    const montageMs = plan.spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
+    if (opened.decodedMs < wanted.startMs + montageMs) throw refuse("track-too-short");
+    return opened;
+  };
+
   return (plan) => async (context) => {
+    const track = await openTrack(plan, context.signal);
+    const audio: AudioPlan = track === null || plan.track === undefined ? plan.audio : { kind: "music", path: track.path, startMs: plan.track.startMs };
+    const tile = track === null ? plan.music : { title: track.title, artist: track.artist };
     const { root, rootId } = plan.exportRoot;
     // Everything up to pass 2 touches the export volume, which may be a network drive that has dropped: one bound for the
     // group, and a cancel gives way at once (`guarded`).
@@ -237,13 +282,15 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     try {
       let forbiddenStrings: string[];
       try {
-        forbiddenStrings = await collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips));
+        const photoStrings = await collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips));
+        // The track's own text joins the photos' (invariant 14): neither may be found in the finished video.
+        forbiddenStrings = track === null ? photoStrings : buildForbiddenStrings([...photoStrings, ...track.forbidden]);
       } catch (error) {
         log(`render ${plan.jobId}: a source photo could not be read (${error instanceof Error ? error.name : "error"})`);
         throw new RenderFailure({ code: "INTERNAL", detail: "a source photo could not be read" });
       }
 
-      await runJob(
+      const outcome = await runJob(
         {
           jobId: plan.jobId,
           tmpRoot: deps.renderTmpDir,
@@ -251,7 +298,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           clips: plan.spec.clips,
           resolvePhoto: plan.resolvePhoto,
           overlays: plan.overlays,
-          audio: plan.audio,
+          audio,
           output: temp,
           signal: context.signal,
           onProgress: (done) => void context.progress(done),
@@ -308,7 +355,9 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           frames: totalFramesOf(plan.spec.clips),
           durationMs: plan.spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0),
           montageId: plan.montageId !== null && deps.draftRemoved?.(plan.montageId) === true ? null : plan.montageId,
-          music: plan.music,
+          music: tile,
+          // What the render resolved for the music: where it started, the gain the true-peak pass chose, the file it read.
+          ...(track === null || plan.track === undefined || outcome.music === undefined ? {} : { audio: { trackSha: track.sha256, startMs: plan.track.startMs, gainDb: outcome.music.gainDb } }),
           spec: plan.spec,
           forbiddenStrings,
         },

@@ -33,8 +33,8 @@ export interface RenderTrack {
   readonly sha256: string;
   /** The length the store's decode proved, in ms: what a montage's `startMs` plus its length is measured against. */
   readonly decodedMs: number;
-  /** What the tile shows. */
-  readonly title: string | null;
+  /** What the tile shows: the list's title, or the store's placeholder for a track the list gave none. */
+  readonly title: string;
   readonly artist: string | null;
   /** Text the finished video must not carry (invariant 14): the track's own tags and handler names, and its list title and artist. */
   readonly forbidden: readonly string[];
