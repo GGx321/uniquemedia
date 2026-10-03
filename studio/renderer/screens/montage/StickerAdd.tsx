@@ -101,9 +101,10 @@ export function StickerAdd({ name, why, onPick }: StickerAddProps) {
                   title={sticker.nameRu}
                   onClick={() => {
                     setOpen(false);
-                    onPick(sticker.id);
-                    // The picked item goes with the menu: the focus comes back to «+», as on Escape.
+                    // The picked item goes with the menu: the focus comes back to «+» first, and the timeline moves it on
+                    // to the new block (never left on a «+» the cap turns off).
                     plus.current?.focus();
+                    onPick(sticker.id);
                   }}
                 >
                   {url === null ? <Icon name="sparkle" size={16} /> : <img src={url} alt="" draggable={false} />}

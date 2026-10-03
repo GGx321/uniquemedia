@@ -298,9 +298,14 @@ export function LayerTracks({ session, spec, timeline, kit, pxPerMs, text, stick
   }
 
   // A lane is flat: its rows are drawn as stripes, and every block sits in the lane itself, keyed by its layer and placed
-  // on its row. A block that changes rows (a move, a trim, a z-order step, an undo) stays the same element, so it keeps
-  // the keyboard focus and its held key's undo step.
+  // on its row. The blocks are in a STABLE DOM order (by layer id), never the z-order: a block whose row or z-order
+  // changes (a move, a trim, a z-order step, an undo) is neither remounted nor moved. Chromium drops the focus of a node
+  // React moves (`insertBefore` detaches it first), so this is what keeps the keyboard focus and a held key's undo step.
+  // Blocks of one lane never overlap, and the selected or lifted one has a z-index of its own.
   function lane(kind: LayerKind, layout: LaneLayout) {
+    const placed = layout.indexes
+      .map((index, i) => ({ index, row: layout.rows[i] ?? 0, layerId: spec.layers[index]?.layerId ?? "" }))
+      .sort((a, b) => (a.layerId < b.layerId ? -1 : a.layerId > b.layerId ? 1 : 0));
     return (
       <div className={`ed-layer-lane ed-layer-lane-${kind}`} role="group" aria-label={kind === "text" ? "Тексты" : "Стикеры"} style={{ height: laneHeight(layout.count) }}>
         {Array.from({ length: layout.count }, (_, row) => (
@@ -311,7 +316,7 @@ export function LayerTracks({ session, spec, timeline, kit, pxPerMs, text, stick
             onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)}
           />
         ))}
-        {layout.indexes.map((index, i) => block(index, layout.rows[i] ?? 0))}
+        {placed.map(({ index, row }) => block(index, row))}
       </div>
     );
   }

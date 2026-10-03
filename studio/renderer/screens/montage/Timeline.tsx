@@ -100,8 +100,8 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
   const scrollRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
   const clipButtons = useRef(new Map<string, HTMLButtonElement>());
-  /** A clip (by id) or the playhead to focus after the next render: a delete or a move by keyboard. */
-  const pendingFocus = useRef<string | "playhead" | null>(null);
+  /** What to focus after the next render: a clip (by id, after a delete or a keyboard move), a new layer's block, the playhead. */
+  const pendingFocus = useRef<string | { layerId: string } | "playhead" | null>(null);
   const suppressClick = useRef(false);
   const gesture = useRef<(() => void) | null>(null);
   /** The key holding a keyboard trim open: its release (not a modifier's) ends the undo step. */
@@ -141,14 +141,20 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
   // A gesture still running when the timeline goes (the draft closed mid-drag) ends with it.
   useEffect(() => () => gesture.current?.(), []);
 
-  // Keyboard focus follows a deleted or moved clip.
+  // Keyboard focus follows a deleted or moved clip, and goes to a layer just added (its «+» may have turned off at the cap).
   useEffect(() => {
     const target = pendingFocus.current;
     if (target === null) return;
     pendingFocus.current = null;
     if (target === "playhead") headRef.current?.focus();
-    else clipButtons.current.get(target)?.focus();
+    else if (typeof target === "string") clipButtons.current.get(target)?.focus();
+    else lanesRef.current?.querySelector<HTMLButtonElement>(`button[data-layer-id="${CSS.escape(target.layerId)}"]`)?.focus();
   });
+
+  /** A layer the header's «+» just added: selected, and the focus goes to its block. */
+  function focusAdded(layerId: string | null): void {
+    if (layerId !== null) pendingFocus.current = { layerId };
+  }
 
   // The playhead stays in view when zoomed in: while playing, scrubbing or after a seek.
   useEffect(() => {
@@ -430,14 +436,14 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
           <div className="th ed-th-text" style={{ height: laneHeight(textLane.count) }}>
             <Icon name="text" size={14} />
             Текст <span className={texts >= layerCap("text") ? "mono ed-th-full" : "mono faint"}>{texts}</span>
-            <button type="button" className="tadd" aria-label={textAdd.name} disabled={textAdd.why !== null} title={textAdd.why ?? undefined} onClick={() => void commands.addText()}>
+            <button type="button" className="tadd" aria-label={textAdd.name} disabled={textAdd.why !== null} title={textAdd.why ?? undefined} onClick={() => focusAdded(commands.addText())}>
               <Icon name="plus" size={11} strokeWidth={2.6} />
             </button>
           </div>
           <div className="th ed-th-sticker" style={{ height: laneHeight(stickerLane.count) }}>
             <Icon name="sparkle" size={14} />
             Стикеры <span className={stickers >= layerCap("sticker") ? "mono ed-th-full" : "mono faint"}>{stickers}</span>
-            <StickerAdd name={stickerAdd.name} why={stickerAdd.why} onPick={(stickerId) => void commands.addSticker(stickerId)} />
+            <StickerAdd name={stickerAdd.name} why={stickerAdd.why} onPick={(stickerId) => focusAdded(commands.addSticker(stickerId))} />
           </div>
           <div className="th ed-th-clips">
             <Icon name="film" size={14} />

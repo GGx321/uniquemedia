@@ -300,13 +300,24 @@ describe("the keyboard focus stays on a block that changes rows (review round 1)
     expect(block(/^Текст 1:/).getAttribute("aria-pressed")).toBe("false");
   });
 
-  test("a sticker picked from the menu gives the focus back to «+»", async () => {
+  test("a sticker picked from the menu takes the focus: the new block, ready for ⌥←/⌥→", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client);
-    const add = within(timeline()).getByRole("button", { name: "Добавить стикер" });
-    fireEvent.click(add);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Добавить стикер" }));
     fireEvent.click(within(timeline()).getByRole("menuitem", { name: "Звезда" }));
-    expect(document.activeElement === add).toBe(true);
+    await flush();
+    expect(document.activeElement?.getAttribute("data-layer-id")).toBe("layer-001");
+  });
+
+  test("the tenth text turns «+» off: the focus is on the new block, never left on a disabled button", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: Array.from({ length: 9 }, (_, i) => textLayer(i, 0, 1_000)) });
+    const add = within(timeline()).getByRole("button", { name: "Добавить текст" });
+    add.focus();
+    fireEvent.click(add);
+    await flush();
+    expect(within(timeline()).getByRole("button", { name: "Добавить текст: не больше 10" }).hasAttribute("disabled")).toBe(true);
+    expect(document.activeElement?.getAttribute("data-layer-id")).toBe("layer-010");
   });
 });
 
@@ -334,15 +345,26 @@ describe("the z-order («Слой выше» / «Слой ниже»)", () => {
     expect(within(props()).getByRole("button", { name: /Ниже/ }).hasAttribute("disabled")).toBe(true);
   });
 
-  test("⌥↑ on a text under another text of the same time swaps their rows, and the focus follows the block", async () => {
+  test("⌥↑ on a text under another text of the same time swaps their rows, and no block's element is moved", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { layers: [textLayer(0, 0, 2_000), textLayer(1, 1_000, 3_000)] });
     const first = block(/^Текст 1:/);
     first.focus();
+    // Chromium drops the focus of a node that is detached to be moved (happy-dom does not): no block may be taken out of the
+    // lane by a z-order step, so the DOM order of a lane's blocks never follows the z-order.
+    const removed: Node[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) removed.push(...record.removedNodes);
+    });
+    observer.observe(texts(), { childList: true });
     fireEvent.keyDown(first, { key: "ArrowUp", altKey: true });
     await flush();
-    // Rows are packed in z-order: the raised text now sits on the second row, a new button there.
-    expect(blockNames(texts())).toEqual(["Текст 1: «sunday reset», 1.0–3.0 с", "Текст 2: «sunday reset», 0.0–2.0 с"]);
+    observer.takeRecords().forEach((record) => removed.push(...record.removedNodes));
+    observer.disconnect();
+    expect(removed.length).toBe(0);
+    // Rows are packed in z-order: the raised text (now «Текст 2») sits on the second row.
+    const rowOf = (layerId: string): string | undefined => texts().querySelector<HTMLElement>(`button[data-layer-id="${layerId}"]`)?.parentElement?.style.top;
+    expect([rowOf("layer-001"), rowOf("layer-002")]).toEqual(["33px", "3px"]);
     expect(document.activeElement?.getAttribute("data-layer-id")).toBe("layer-001");
     const saved = await nextSave(engine);
     expect(saved.layers.map((l) => l.layerId)).toEqual(["layer-002", "layer-001"]);

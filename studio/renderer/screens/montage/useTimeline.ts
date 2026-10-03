@@ -125,20 +125,20 @@ export function useSelectionCommands(session: DraftSession, timeline: TimelineSt
       const result = lowerSelected(session.state.spec, selection);
       return typeof result !== "string" && session.edit(result.spec);
     }, [session, selection]),
-    /** «Добавить текст» (3d.3b; SLOT 3d.5: the «Текст» tab's button too): a text at the playhead, selected. */
-    addText: useCallback((): boolean => {
+    /** «Добавить текст» (3d.3b; SLOT 3d.5: the «Текст» tab's button too): a text at the playhead, selected; its id, or null. */
+    addText: useCallback((): string | null => {
       const edit = addTextLayer(session.state.spec, playheadMs);
-      if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return false;
+      if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return null;
       select({ kind: "layer", layerId: edit.id });
-      return true;
+      return edit.id;
     }, [session, playheadMs, select]),
-    /** A built-in sticker at the playhead, selected. */
+    /** A built-in sticker at the playhead, selected; its id, or null. */
     addSticker: useCallback(
-      (stickerId: string): boolean => {
+      (stickerId: string): string | null => {
         const edit = addStickerLayer(session.state.spec, playheadMs, stickerId);
-        if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return false;
+        if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return null;
         select({ kind: "layer", layerId: edit.id });
-        return true;
+        return edit.id;
       },
       [session, playheadMs, select],
     ),
