@@ -247,8 +247,13 @@ export function jobIdOf(response: ResponseMessage): string {
   return answer.result.jobId;
 }
 
-/** Polls `condition` every 5 ms for up to `timeoutMs` (wall time, so a slow runner's timer drift cannot shorten it). */
-export async function until(condition: () => boolean, what = "the condition", timeoutMs = 3_000): Promise<void> {
+/**
+ * Polls `condition` every 5 ms for up to `timeoutMs` (wall time, so a slow runner's timer drift cannot shorten it).
+ * The default is a ceiling, not a cost: a passing wait returns as soon as the condition holds. 3 s was too tight
+ * for a condition that needs several slots' photos through ffmpeg and the face gate on a slow Windows runner
+ * (`runs.resume` timed out at 3 s and at 5.5 s on two runs, and passed on rerun).
+ */
+export async function until(condition: () => boolean, what = "the condition", timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
   if (!condition()) throw new Error(`timed out waiting for ${what}`);
