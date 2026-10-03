@@ -205,9 +205,11 @@ export interface RenderNoticeState {
   /** When each saving render was first seen saving. */
   readonly savingSince: ReadonlyMap<string, number>;
   readonly notices: readonly RenderNotice[];
+  /** Notices the owner closed: never raised again (the stall check runs every few seconds). Forgotten with their job. */
+  readonly dismissed: ReadonlySet<string>;
 }
 
-export const NO_NOTICES: RenderNoticeState = { watching: new Set(), savingSince: new Map(), notices: [] };
+export const NO_NOTICES: RenderNoticeState = { watching: new Set(), savingSince: new Map(), notices: [], dismissed: new Set() };
 
 /**
  * Notices for renders: done or failed while the draft's editor is not on screen (`viewing` is that editor's draft, if one is: its header
@@ -220,8 +222,9 @@ export function trackNotices(state: RenderNoticeState, jobs: readonly JobView[],
   const watching = new Set([...state.watching].filter((id) => listed.has(id)));
   const savingSince = new Map<string, number>();
   let notices = [...state.notices];
+  const dismissed = new Set([...state.dismissed].filter((id) => listed.has(id.slice(0, id.indexOf(":")))));
   const raise = (notice: RenderNotice): void => {
-    if (!notices.some((n) => n.id === notice.id)) notices.push(notice);
+    if (!dismissed.has(notice.id) && !notices.some((n) => n.id === notice.id)) notices.push(notice);
   };
   for (const job of renders) {
     if (isActive(job)) {
@@ -234,14 +237,20 @@ export function trackNotices(state: RenderNoticeState, jobs: readonly JobView[],
       continue;
     }
     notices = notices.filter((n) => n.id !== `${job.jobId}:stalled`);
-    if (!watching.delete(job.jobId)) continue;
     const seen = viewing !== null && viewing === job.montageId;
+    // A video that landed after the render's `job.failed` made the job done (`applyVideoChanged`): the failed notice was wrong.
+    if (job.status === "done" && notices.some((n) => n.id === `${job.jobId}:failed`)) {
+      notices = notices.filter((n) => n.id !== `${job.jobId}:failed`);
+      if (!seen) raise({ id: `${job.jobId}:done`, kind: "done", jobId: job.jobId });
+      continue;
+    }
+    if (!watching.delete(job.jobId)) continue;
     if (!seen && job.status === "done") raise({ id: `${job.jobId}:done`, kind: "done", jobId: job.jobId });
     if (!seen && job.status === "failed") raise({ id: `${job.jobId}:failed`, kind: "failed", jobId: job.jobId });
   }
-  return { watching, savingSince, notices };
+  return { watching, savingSince, notices, dismissed };
 }
 
 export function dismissNotice(state: RenderNoticeState, id: string): RenderNoticeState {
-  return { ...state, notices: state.notices.filter((n) => n.id !== id) };
+  return { ...state, notices: state.notices.filter((n) => n.id !== id), dismissed: new Set(state.dismissed).add(id) };
 }

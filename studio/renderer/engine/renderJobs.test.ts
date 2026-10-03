@@ -464,6 +464,50 @@ describe("notices for renders that end out of sight", () => {
     expect(state.notices.map((n) => n.kind)).toEqual(["done"]);
   });
 
+  test("a dismissed stall notice stays dismissed while the phase goes on, and another job's stall is still told", () => {
+    const saving = (id = 1): JobView => render(id, { saving: true, done: 239 });
+    let state = step(NO_NOTICES, [saving()], t0);
+    state = step(state, [saving()], t0 + SAVING_STALL_MS);
+    expect(state.notices).toHaveLength(1);
+    state = dismissNotice(state, "job-00000001:stalled");
+    expect(state.notices).toEqual([]);
+    state = step(state, [saving()], t0 + SAVING_STALL_MS + 5_000);
+    expect(state.notices).toEqual([]);
+    state = step(state, [saving()], t0 + SAVING_STALL_MS * 3);
+    expect(state.notices).toEqual([]);
+    state = step(state, [saving(), saving(2)], t0 + SAVING_STALL_MS * 3);
+    state = step(state, [saving(), saving(2)], t0 + SAVING_STALL_MS * 4);
+    expect(state.notices.map((n) => n.id)).toEqual(["job-00000002:stalled"]);
+  });
+
+  test("a dismissed notice of a job the store no longer lists is forgotten, not remembered for ever", () => {
+    let state = step(NO_NOTICES, [render(1, { saving: true })], t0);
+    state = step(state, [render(1, { saving: true })], t0 + SAVING_STALL_MS);
+    state = dismissNotice(state, "job-00000001:stalled");
+    state = step(state, [], t0 + SAVING_STALL_MS + 1);
+    expect(state.dismissed.size).toBe(0);
+  });
+
+  test("a video that lands after the render's job.failed turns its failed notice into «Видео готово»", () => {
+    let state = step(NO_NOTICES, [render(1, { saving: true })]);
+    const failed = render(1, { status: "failed", error: { code: "INTERNAL" } });
+    state = step(state, [failed]);
+    expect(state.notices.map((n) => n.kind)).toEqual(["failed"]);
+    const [done] = applyVideoChanged([failed], video(1));
+    state = step(state, done ? [done] : []);
+    expect(state.notices.map((n) => n.kind)).toEqual(["done"]);
+  });
+
+  test("...and stays quiet when that draft's editor is open: the header says it", () => {
+    let state = step(NO_NOTICES, [render(1, { saving: true })], t0, null);
+    const failed = render(1, { status: "failed", error: { code: "INTERNAL" } });
+    state = step(state, [failed], t0, null);
+    expect(state.notices.map((n) => n.kind)).toEqual(["failed"]);
+    const [done] = applyVideoChanged([failed], video(1));
+    state = step(state, done ? [done] : [], t0, MONTAGE);
+    expect(state.notices).toEqual([]);
+  });
+
   test("the stall is told wherever the owner is, even in that draft's editor: it is not the header's «Готово»", () => {
     let state = step(NO_NOTICES, [render(1, { saving: true })], t0, MONTAGE);
     state = step(state, [render(1, { saving: true })], t0 + SAVING_STALL_MS, MONTAGE);
