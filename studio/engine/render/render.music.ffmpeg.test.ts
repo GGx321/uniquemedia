@@ -57,6 +57,7 @@ const rendered = new Map<string, Rendered>();
 let tagged: Rendered;
 let taggedSource: Uint8Array;
 let leaky: { output: string; bytes: Uint8Array };
+let unguardedOut: { output: string; bytes: Uint8Array };
 let padded: Rendered;
 
 const signal = new AbortController().signal;
@@ -83,9 +84,13 @@ beforeAll(async () => {
   taggedSource = readBytes(taggedPath);
   const taggedPick: Pick = { name: "tagged", path: taggedPath, startMs: 2000, pinnedPeak: musicTracks.hot.truePeakDbtp, expectedGain: -4.5 };
   tagged = await renderWith(taggedPick, "tagged.mp4");
-  // The control: the same render with the stream-metadata guard taken out, to show the search below can see a leak.
+  // Controls: the search below must be able to see a leak. (1) The track's handler name forced into the output stream, on every
+  // platform. (2) The same render with the stream-metadata guard taken out: whether ffmpeg then copies the track's stream
+  // metadata depends on its build (macOS 6.0 does, the Linux canary's does not), so what is checked is only the implication.
+  const forced = await renderWith(taggedPick, "tagged-forced.mp4", (argv) => [...argv.slice(0, -1), "-metadata:s:a:0", `handler_name=${TAG_HANDLER}`, argv.at(-1) ?? ""]);
+  leaky = { output: forced.output, bytes: forced.bytes };
   const unguarded = await renderWith(taggedPick, "tagged-unguarded.mp4", (argv) => argv.filter((_, i) => !(argv[i] === "-map_metadata:s:a:0" || argv[i - 1] === "-map_metadata:s:a:0")));
-  leaky = { output: unguarded.output, bytes: unguarded.bytes };
+  unguardedOut = { output: unguarded.output, bytes: unguarded.bytes };
   // A track that ends 3 s before the montage does (the builder's floor: silence is padded in, the length stays exact).
   padded = await renderWith({ name: "padded", path: musicTracks.he48k.file, startMs: 3000, pinnedPeak: -5.5, expectedGain: 0 }, "padded.mp4");
 }, 240_000);
@@ -232,10 +237,16 @@ describe("invariant 14 on real ffmpeg: a track that carries title and artist tag
     for (const stream of probe.streams) expect(JSON.stringify(stream.tags ?? {})).not.toContain("Core Media");
   });
 
-  test("control: with the stream-metadata guard taken out, the track's handler name DOES reach the output, and the verifier catches it", async () => {
+  test("control: a handler name forced into the output stream IS found by the byte search, and the verifier refuses the file", async () => {
     expect(Buffer.from(leaky.bytes).includes(Buffer.from(TAG_HANDLER))).toBe(true);
     const { result } = await verifyAndHashMp4(leaky.output, { frames: FRAMES, forbiddenStrings: forbidden });
     expect(result.ok).toBe(false);
+  });
+
+  test("without the stream-metadata guard, whatever ffmpeg copies from the track, the verifier refuses the file exactly when its text got through", async () => {
+    const leaked = Buffer.from(unguardedOut.bytes).includes(Buffer.from(TAG_HANDLER));
+    const { result } = await verifyAndHashMp4(unguardedOut.output, { frames: FRAMES, forbiddenStrings: forbidden });
+    expect(result.ok).toBe(!leaked);
   });
 });
 
