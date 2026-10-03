@@ -6,6 +6,7 @@ import { type FrameClock, PlaybackClock, playStartMs, windowFrameClock } from ".
 import { addStickerLayer, addTextLayer } from "./layerOps";
 import { duplicateSelected, lowerSelected, raiseSelected, removeSelected, type Selection, splitSelected } from "./selection";
 import type { DraftSession } from "./session";
+import type { TextPreset } from "./textOps";
 import { clampZoom, clockMs, MIN_ZOOM, snapPlayhead } from "./timelineScale";
 
 // 3d.3a: the timeline's renderer state, none of it saved: the one selected item, the playhead (the preview's clock,
@@ -125,13 +126,16 @@ export function useSelectionCommands(session: DraftSession, timeline: TimelineSt
       const result = lowerSelected(session.state.spec, selection);
       return typeof result !== "string" && session.edit(result.spec);
     }, [session, selection]),
-    /** «Добавить текст» (3d.3b; SLOT 3d.5: the «Текст» tab's button too): a text at the playhead, selected; its id, or null. */
-    addText: useCallback((): string | null => {
-      const edit = addTextLayer(session.state.spec, playheadMs);
-      if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return null;
-      select({ kind: "layer", layerId: edit.id });
-      return edit.id;
-    }, [session, playheadMs, select]),
+    /** «Добавить текст» (3d.3b; 3d.5: the «Текст» tab's button and its presets): a text at the playhead, selected; its id, or null. */
+    addText: useCallback(
+      (preset?: TextPreset): string | null => {
+        const edit = addTextLayer(session.state.spec, playheadMs, preset);
+        if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return null;
+        select({ kind: "layer", layerId: edit.id });
+        return edit.id;
+      },
+      [session, playheadMs, select],
+    ),
     /** A built-in sticker at the playhead, selected; its id, or null. */
     addSticker: useCallback(
       (stickerId: string): string | null => {

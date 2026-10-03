@@ -11,14 +11,23 @@ import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
+import { type BinFilter, isFreePhoto } from "./montage/bin";
 import { ClipProperties } from "./montage/ClipProperties";
 import { sameJson } from "./montage/json";
-import { LayerProperties, MusicProperties } from "./montage/LayerProperties";
-import type { TrackVerdict } from "./montage/musicOps";
+import { LayerProperties } from "./montage/LayerProperties";
+import { addLayerRefusal } from "./montage/layerOps";
+import { type MediaTab, MediaPanel } from "./montage/MediaPanel";
+import { MusicProperties } from "./montage/MusicCard";
+import { pickTrack, type TrackVerdict } from "./montage/musicOps";
+import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
-import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto } from "./montage/clipOps";
-import { isFreePhoto, MediaPanel, PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
-import { draftTitle, outputLabel, outputParts, saveLabel } from "./montage/labels";
+import { PhotoBin } from "./montage/PhotoBin";
+import { replaceSticker } from "./montage/stickerOps";
+import { StickerTab } from "./montage/StickerTab";
+import { TextTab } from "./montage/TextTab";
+import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto, totalMs } from "./montage/clipOps";
+import { PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
+import { draftTitle, layerAddLabel, layerName, outputLabel, outputParts, saveLabel } from "./montage/labels";
 import { RenderControls } from "./montage/RenderControls";
 import { layerProblems, photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
@@ -27,14 +36,15 @@ import { resolveSelection, selectClip } from "./montage/selection";
 import { DraftSession } from "./montage/session";
 import { Timeline } from "./montage/Timeline";
 import { seekInto } from "./montage/timelineScale";
-import { useFocusResolver, useTimeline } from "./montage/useTimeline";
+import { useFocusResolver, useSelectionCommands, useTimeline } from "./montage/useTimeline";
 import { useMounted } from "./photos/shared";
 
 // 3d.2: the montage editor's shell (Editor.dc.html, EditorNew.dc.html). It opens a draft by `montages.get`, keeps
 // it in a `DraftSession` (undo/redo of up to 100 spec versions, the serialised autosave), and lays out the header
 // and the regions: the timeline (3d.3a: the clip track; 3d.3b: layers and music), the preview (3d.4), the media
-// and properties panels (3d.3a places photos and edits a clip; 3d.5 the rest). The «Рендер» button shows why it is
-// disabled; its queue and job states are 3d.6's. Every edit goes through the session: one undo step, autosaved.
+// and properties panels (3d.3a places photos and edits a clip; 3d.5: the «Фото», «Музыка», «GIF» and «Текст» tabs and
+// the text, sticker and music properties). The «Рендер» button shows why it is disabled; its queue and job states are
+// 3d.6's. Every edit goes through the session: one undo step, autosaved.
 
 type Load =
   | { kind: "loading" }
@@ -206,7 +216,6 @@ function DraftEditor({
   const { client, store } = useEngine();
   const navigate = useNavigate();
   const mounted = useMounted();
-  const photosTab = useRef<HTMLButtonElement>(null);
   const { montageId } = initial;
   const avatarId = initial.spec.avatarId;
   const [session] = useState(
@@ -419,6 +428,69 @@ function DraftEditor({
   const selected = resolveSelection(state.spec, timeline.selection);
   const selectedCell = selected?.kind === "clip" ? cellsOf(selected.clip)[selected.cell] : undefined;
   const fillTarget = selected?.kind === "clip" && selectedCell !== undefined && selectedCell.photo === null ? { clip: selected.index, cell: selected.cell } : null;
+
+  // ---------- the media panel (3d.5) ----------
+  const commands = useSelectionCommands(session, timeline);
+  const [tab, setTab] = useState<MediaTab>("photos");
+  /** Bumped when the timeline's «+» or a «Заменить…» asks for a tab: the focus goes to it. */
+  const [tabFocus, setTabFocus] = useState(0);
+  const [binFilter, setBinFilter] = useState<BinFilter>({ unusedOnly: false, category: null });
+  /** «Заменить стикер» under way: the layer whose sticker the next «GIF» tile swaps (time, place and size kept). */
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const replacingIndex = replacing === null ? -1 : state.spec.layers.findIndex((l) => l.layerId === replacing && l.kind === "sticker");
+  const selectedLayer = selected?.kind === "layer" ? selected.layer : null;
+  // A replacement belongs to the sticker that asked for it: another selection, another tab, or the layer gone ends it.
+  const replaceLive = replacingIndex >= 0 && tab === "gif" && selectedLayer?.layerId === replacing;
+  useEffect(() => {
+    if (replacing !== null && !replaceLive) setReplacing(null);
+  }, [replacing, replaceLive]);
+
+  function openTab(next: MediaTab): void {
+    setTab(next);
+    setTabFocus((n) => n + 1);
+  }
+
+  /** Selects a layer from the «Текст» tab's list and brings the playhead into it, as a click on its block does. */
+  function selectLayer(layerId: string): void {
+    const spec = session.state.spec;
+    const layer = spec.layers.find((l) => l.layerId === layerId);
+    if (layer === undefined) return;
+    timeline.select({ kind: "layer", layerId });
+    const into = seekInto(timeline.playheadMs, layer.startMs, Math.min(layer.endMs, totalMs(spec)));
+    if (into !== timeline.playheadMs) timeline.seek(into);
+  }
+
+  /** A track from the «Музыка» tab: into the montage at its first highlight that fits (free: no request leaves), then selected. */
+  function pickMusic(track: Parameters<typeof pickTrack>[1]): void {
+    const spec = session.state.spec;
+    const edit = pickTrack(spec, track);
+    if (!edit.ok) return;
+    if (edit.spec !== spec && !session.edit(edit.spec)) return;
+    timeline.select({ kind: "music" });
+  }
+
+  /** A «GIF» tile: swaps the sticker being replaced, or puts a new one at the playhead. */
+  function pickSticker(stickerId: string): void {
+    if (replaceLive && replacing !== null) {
+      const spec = session.state.spec;
+      const at = spec.layers.findIndex((l) => l.layerId === replacing);
+      if (at >= 0 && spec.layers[at]?.kind === "sticker") {
+        const next = replaceSticker(spec, at, stickerId);
+        if (next !== spec) session.edit(next);
+      }
+      setReplacing(null);
+      return;
+    }
+    commands.addSticker(stickerId);
+  }
+
+  const total = totalMs(state.spec);
+  const textRefusal = addLayerRefusal(state.spec, "text", timeline.playheadMs);
+  const stickerRefusal = addLayerRefusal(state.spec, "sticker", timeline.playheadMs);
+  const textAddWhy = layerAddLabel("text", textRefusal, total).why;
+  // G10: at the cap the «GIF» tab says what to do about it.
+  const stickerAddWhy = stickerRefusal === "layer-cap" ? "Не больше 10 стикеров в одном видео — уберите один, чтобы добавить другой." : layerAddLabel("sticker", stickerRefusal, total).why;
+  const currentSticker = selectedLayer?.kind === "sticker" && selectedLayer.sticker.source === "builtin" ? selectedLayer.sticker.stickerId : null;
 
   /** Selects clip `index` of the current draft (and its cell), bringing the playhead into it. */
   function selectClipAt(index: number, cell = 0): void {
@@ -756,17 +828,35 @@ function DraftEditor({
         </div>
       )}
       <div className="ed-body">
-        <MediaPanel
-          avatarName={avatar?.name ?? "Аватар"}
-          avatarId={avatarId}
-          spec={state.spec}
-          photos={photos}
-          tabRef={photosTab}
-          onPick={pickPhoto}
-          fillTarget={fillTarget}
-          addBlock={addRefusal(state.spec)}
-          onDragPhoto={setDragPhoto}
-        />
+        <MediaPanel tab={tab} onTab={setTab} focusTick={tabFocus}>
+          {tab === "photos" ? (
+            <PhotoBin
+              avatarName={avatar?.name ?? "Аватар"}
+              avatarId={avatarId}
+              spec={state.spec}
+              photos={photos}
+              filter={binFilter}
+              onFilter={setBinFilter}
+              onPick={pickPhoto}
+              fillTarget={fillTarget}
+              addBlock={addRefusal(state.spec)}
+              onDragPhoto={setDragPhoto}
+            />
+          ) : tab === "music" ? (
+            <MusicTab spec={state.spec} status={view.music} onPick={pickMusic} />
+          ) : tab === "gif" ? (
+            <StickerTab
+              spec={state.spec}
+              current={currentSticker}
+              replacing={replaceLive ? layerName(state.spec, replacingIndex) : null}
+              onCancelReplace={() => setReplacing(null)}
+              addWhy={stickerAddWhy}
+              onPick={pickSticker}
+            />
+          ) : (
+            <TextTab spec={state.spec} playheadMs={timeline.playheadMs} selected={selectedLayer?.kind === "text" ? selectedLayer.layerId : null} addWhy={textAddWhy} onAdd={(preset) => void commands.addText(preset)} onSelect={selectLayer} />
+          )}
+        </MediaPanel>
         <PreviewSlot spec={state.spec} playheadMs={timeline.playheadMs} />
         {selected?.kind === "clip" ? (
           <ClipProperties
@@ -781,9 +871,19 @@ function DraftEditor({
             onFillCell={fillCell}
           />
         ) : selected?.kind === "layer" ? (
-          <LayerProperties session={session} spec={state.spec} index={selected.index} timeline={timeline} />
+          <LayerProperties
+            session={session}
+            spec={state.spec}
+            index={selected.index}
+            timeline={timeline}
+            avatarId={avatarId}
+            onReplaceSticker={(layerId) => {
+              setReplacing(layerId);
+              openTab("gif");
+            }}
+          />
         ) : selected?.kind === "music" ? (
-          <MusicProperties session={session} spec={state.spec} timeline={timeline} lookup={musicLookup} />
+          <MusicProperties session={session} spec={state.spec} timeline={timeline} lookup={musicLookup} listVersion={view.music?.listFetchedAt ?? null} verdict={musicVerdict} onReplace={() => openTab("music")} />
         ) : (
           <PropertiesSlot empty={state.spec.clips.length === 0} />
         )}
@@ -804,7 +904,9 @@ function DraftEditor({
           setDragPhoto(null);
           placePhoto(photoId, boundary);
         }}
-        onAddClip={() => photosTab.current?.focus()}
+        onAddClip={() => openTab("photos")}
+        onAddMusic={() => openTab("music")}
+        onAddSticker={() => openTab("gif")}
         onSelectClip={(index) => selectClipAt(index)}
       />
     </div>

@@ -1758,68 +1758,9 @@
 }
 
 .ed-blk:focus-visible,
-.ed-music:focus-visible,
-.ed-sticker-pick:focus-visible {
+.ed-music:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 1px;
-}
-
-/* The «Стикеры» track's «+» and its menu of the built-in set (until the «GIF» tab, 3d.5). */
-.ed-sticker-add {
-  position: relative;
-  display: flex;
-  margin-left: auto;
-}
-
-.ed-sticker-add .tadd {
-  margin-left: 0;
-}
-
-.ed-sticker-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  box-shadow: var(--shadow-pop);
-}
-
-.ed-sticker-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 40px);
-  gap: 4px;
-}
-
-.ed-sticker-pick {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--inset);
-  color: var(--info);
-  cursor: pointer;
-}
-
-.ed-sticker-pick:hover {
-  border-color: var(--border-strong);
-  background: var(--panel-2);
-}
-
-.ed-sticker-pick img {
-  width: 28px;
-  height: 28px;
-  object-fit: contain;
-  pointer-events: none;
 }
 
 /* ── the music track (3d.3b; the sheet's «Музыка на дорожке · метка лучшей части») ── */
@@ -2253,4 +2194,1018 @@
 .editor-loading .ed-media,
 .editor-loading .ed-props {
   background: transparent;
+}
+
+/* ══ 3d.5: the media panel's tabs and the text, sticker and music properties (EditorText, EditorGif, EditorMusic; the
+   «Монтаж · этап 3» sheet's .trow, .cov, .e, .stk, .pre) ══ */
+
+.ed-media-panel {
+  overflow: hidden;
+}
+
+.ed-chip-count {
+  font-size: 10.5px;
+  opacity: 0.85;
+}
+
+.ed-chip-s {
+  height: 26px;
+  padding: 0 10px;
+}
+
+/* «Все категории ▾»: a native select inside the chip, so the keyboard and the screen reader get a real list box. */
+.ed-chip-select {
+  position: relative;
+  padding: 0;
+}
+
+.ed-chip-select select {
+  height: 100%;
+  padding: 0 28px 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+}
+
+.ed-chip-select select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ed-chip-select svg {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+}
+
+.ed-chip-select option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.ed-bin-empty .btn {
+  margin-top: 8px;
+}
+
+/* the caption fonts and styles: font chips, presets (a likeness; the picture is the engine's) */
+
+.cap-f-manrope {
+  font-family: "Caption Manrope", var(--font-body);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.cap-f-playfair {
+  font-family: "Caption Playfair", serif;
+  font-weight: 600;
+}
+
+.cap-f-oswald {
+  font-family: "Caption Oswald", var(--font-body);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.cap-f-ptmono {
+  font-family: "Caption PT Mono", var(--font-mono);
+  font-weight: 400;
+}
+
+.cap-f-caveat {
+  font-family: "Caption Caveat", cursive;
+  font-weight: 600;
+}
+
+.cap {
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+/* «Плашка»: the engine's plaque in ems (pad 0.5 across, 0.13 above, 0.21 below, radius 0.3). */
+.cap-s-plaque {
+  padding: 0.13em 0.5em 0.21em;
+  border-radius: 0.3em;
+  background: var(--cap-paper);
+  color: var(--cap-ink);
+}
+
+.cap-s-outline {
+  color: var(--cap-paper);
+  text-shadow: var(--cap-outline);
+}
+
+.cap-s-none {
+  color: var(--cap-paper);
+  text-shadow: var(--cap-shadow);
+}
+
+/* the «Текст» tab (T1–T5) */
+
+.ed-text-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ed-text-add-btn {
+  width: 100%;
+}
+
+.ed-text-add-btn .mono {
+  font-weight: 400;
+}
+
+.ed-text-why {
+  font-size: 11.5px;
+}
+
+.ed-text-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.ed-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 8px;
+}
+
+.pre {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pre:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pre-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 9px;
+}
+
+.pre:hover:not(:disabled) .pre-box {
+  border-color: var(--accent);
+}
+
+.pre:hover:not(:disabled) .pre-name {
+  color: var(--accent-text);
+}
+
+.pre:focus-visible {
+  outline: none;
+}
+
+.pre:focus-visible .pre-box {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pre-name {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pre-box .cap {
+  font-size: 14px;
+}
+
+.pre-box .cap-f-caveat {
+  font-size: 19px;
+}
+
+.pre-box .cap-f-ptmono {
+  font-size: 13px;
+}
+
+.pre-box .cap-f-oswald,
+.pre-box .cap-f-playfair {
+  font-size: 15px;
+}
+
+.pre-box-manrope-plaque {
+  background: var(--pre-street);
+}
+
+.pre-box-oswald-outline {
+  background: var(--pre-beach);
+}
+
+.pre-box-playfair-none {
+  background: var(--pre-field);
+}
+
+.pre-box-caveat-none {
+  background: var(--pre-bed);
+}
+
+.pre-box-ptmono-plaque {
+  background: var(--pre-plane);
+}
+
+.pre-box-manrope-outline {
+  background: var(--pre-car);
+}
+
+.ed-text-layers {
+  flex: 1 1 auto;
+}
+
+.ed-text-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ed-text-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--inset);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ed-text-row:hover {
+  border-color: var(--border-strong);
+}
+
+.ed-text-row-on,
+.ed-text-row-on:hover {
+  border-color: var(--accent-ring);
+  background: var(--accent-08);
+}
+
+.ed-text-t {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--warn-16);
+  color: var(--warn);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ed-text-value {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ed-text-range {
+  margin-left: auto;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.ed-text-none {
+  font-size: 11.5px;
+}
+
+/* the «GIF» tab (G1–G10) */
+
+.ed-gif-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ed-gif-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ed-gif-grid-off {
+  opacity: 0.45;
+}
+
+.stk {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 56px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--inset);
+  color: var(--info);
+  cursor: pointer;
+}
+
+.stk:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--panel);
+}
+
+.stk:disabled {
+  cursor: not-allowed;
+}
+
+.stk img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.stk-on,
+.stk-on:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-ring);
+}
+
+.stk-count {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.stk:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ed-gif-hint {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ed-gif-cap {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ed-gif-cap svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ed-gif-replace {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-35);
+  border-radius: 10px;
+  background: var(--accent-08);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ed-gif-replace b {
+  color: var(--text);
+}
+
+.ed-gif-mine {
+  margin-top: auto;
+}
+
+.ed-gif-mine .tadd {
+  margin-left: 0;
+}
+
+/* the «Музыка» tab (U1–U18): rows in the sheet's .trow, the quota at the foot */
+
+.ed-music-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.ed-music-age {
+  font-size: 10.5px;
+}
+
+.e {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--muted);
+  color: var(--bg);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ed-tracks {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  margin: 0 -6px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.trow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px 6px 6px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trow:hover {
+  background: var(--panel);
+}
+
+.trow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.trow-on,
+.trow-on:hover {
+  border-color: var(--accent-35);
+  background: var(--accent-08);
+}
+
+.trow-off,
+.trow-off:hover {
+  background: transparent;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cov {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 7px;
+}
+
+.cov img,
+.ed-music-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.trow-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.trow-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.trow-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trow-artist {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trow-end {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.trow-end .mono {
+  font-size: 10.5px;
+}
+
+.trow-note {
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.trow-note-on {
+  color: var(--accent-text);
+}
+
+.ed-track-shim {
+  cursor: default;
+}
+
+.ed-track-shim .cov {
+  background: var(--panel-2);
+}
+
+.ed-music-empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.ed-music-empty p {
+  margin: 0;
+}
+
+.ed-music-empty .btn {
+  align-self: flex-start;
+}
+
+.ed-music-foot {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.ed-music-quota {
+  font-size: 12px;
+}
+
+.ed-music-settings {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.ed-music-note {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* the text's properties (R21–R32) */
+
+.ed-caption-head {
+  align-items: baseline;
+}
+
+.ed-caption-count {
+  font-size: 11px;
+}
+
+.ed-caption-over {
+  color: var(--danger);
+}
+
+.ed-caption-in {
+  width: 100%;
+  height: 58px;
+  padding: 9px 12px;
+  line-height: 1.4;
+  resize: none;
+}
+
+.emo {
+  font-family: var(--font-body), "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+
+.ed-caption-hint {
+  font-size: 11.5px;
+}
+
+/* The engine's verdict, under the field (the components sheet's «ошибка текста»); stale while a newer ask is out. */
+.ed-caption-notice {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ed-caption-notice:empty {
+  display: none;
+}
+
+.ed-caption-error {
+  color: var(--danger);
+}
+
+.ed-caption-warn {
+  color: var(--warn);
+}
+
+.ed-caption-stale {
+  opacity: 0.6;
+}
+
+.ed-emoji {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ed-emoji-chip {
+  justify-content: center;
+  width: 34px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.ed-text-style {
+  align-self: flex-start;
+}
+
+.ed-fonts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ed-font {
+  font-size: 12px;
+}
+
+.ed-font.cap-f-caveat {
+  font-size: 15px;
+}
+
+.ed-pgroup-fields {
+  gap: 10px;
+}
+
+.ed-field {
+  justify-content: flex-start;
+}
+
+.ed-field-label {
+  flex-shrink: 0;
+  width: 58px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.ed-field input[type="range"] {
+  flex-grow: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.ed-field-value {
+  flex-shrink: 0;
+  min-width: 32px;
+  color: var(--text);
+  text-align: right;
+}
+
+.ed-swatches {
+  display: flex;
+  gap: 7px;
+}
+
+.ed-swatches .swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ed-time {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ed-time-row {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.ed-time-in {
+  width: 62px;
+  text-align: right;
+}
+
+.ed-field-why {
+  color: var(--warn);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* the sticker's properties (R33–R41) */
+
+.ed-sticker-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ed-sticker-thumb {
+  width: 64px;
+  height: 64px;
+  cursor: default;
+}
+
+.ed-sticker-thumb img {
+  width: 42px;
+  height: 42px;
+}
+
+.ed-sticker-facts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ed-sticker-facts .mono {
+  font-size: 10.5px;
+}
+
+.ed-sticker-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.ed-zone {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn-35);
+  border-radius: 12px;
+  background: var(--warn-08);
+  color: var(--warn);
+}
+
+.ed-zone > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ed-zone-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ed-zone-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ed-zone-text {
+  margin: 0 0 6px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.ed-props-replace {
+  align-self: flex-start;
+}
+
+/* the music card (R42–R51) */
+
+.ed-music-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ed-music-cover {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 9px;
+}
+
+.ed-music-cover-none {
+  background: var(--panel-2);
+}
+
+.ed-music-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ed-music-facts .muted {
+  font-size: 12px;
+}
+
+.ed-music-facts .mono {
+  font-size: 10.5px;
+}
+
+.ed-music-name {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ed-music-problem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ed-music-problem svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* «Лучшая часть»: the whole track, its highlights as ★, and the montage's window over it (drag, click, keys). */
+.ed-hl {
+  position: relative;
+  height: 46px;
+  padding-top: 12px;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.ed-hl-marks {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 12px;
+  pointer-events: none;
+}
+
+.ed-hl-mark {
+  position: absolute;
+  top: 0;
+  display: flex;
+  margin-left: -5px;
+  color: var(--faint);
+}
+
+.ed-hl-mark-on {
+  color: var(--ok);
+}
+
+.ed-hl-wave {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 34px;
+  padding: 0 3px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--inset);
+}
+
+.ed-hl-bar {
+  flex-grow: 1;
+  border-radius: 1px;
+  background: var(--ok-30);
+}
+
+.ed-hl-bar-in {
+  background: var(--ok);
+}
+
+.ed-hl-window {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  min-width: 4px;
+  border: 1.5px solid var(--ok);
+  border-radius: 4px;
+  background: var(--ok-16);
+  cursor: grab;
+}
+
+.ed-hl-window:active {
+  cursor: grabbing;
+}
+
+.ed-hl-window:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.ed-hl-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ed-hl-picks .chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ed-hl-picks .mono {
+  font-size: 11px;
+}
+
+/* The likely 1500 default (K23): offered last, as a plain start rather than a star. */
+.ed-hl-default {
+  border-style: dashed;
+}
+
+.ed-hl-range {
+  color: var(--text);
+}
+
+.ed-music-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ed-music-copy svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--ok);
 }

@@ -49,7 +49,8 @@ describe("the empty draft (EditorNew)", () => {
     expect(outputText()).toBe("1080×1920 · 30 fps · 0 с");
     expect(screen.getByText("Ролик пока пуст")).toBeDefined();
     expect(screen.getByRole("button", { name: /Перетащите фото или видео сюда/ })).toBeDefined();
-    expect(screen.getByRole("button", { name: /Добавить музыку/ }).hasAttribute("disabled")).toBe(true);
+    // 3d.5: «Добавить музыку» opens the «Музыка» tab (it was «Скоро» until then).
+    expect(screen.getByRole("button", { name: /Добавить музыку/ }).hasAttribute("disabled")).toBe(false);
     expect(within(screen.getByRole("complementary", { name: "Свойства" })).getByText("ролик пуст")).toBeDefined();
   });
 });
@@ -618,13 +619,14 @@ describe("a draft that cannot be opened", () => {
 });
 
 describe("the shell's slots", () => {
-  test("the media tabs: «Фото» with the avatar's photos, the others «Скоро»; the draft's photos carry their clip number", async () => {
+  test("the media tabs: «Фото» with the avatar's photos, «Мои» «Скоро» until 3f; the draft's photos carry their clip number", async () => {
     const { client } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
     const tabs = within(screen.getByRole("tablist", { name: "Тип медиа" })).getAllByRole("tab");
     expect(tabs.map((t) => t.textContent)).toEqual(["Фото", "Мои", "Музыка", "GIF", "Текст"]);
-    expect(tabs.map((t) => t.hasAttribute("disabled"))).toEqual([false, true, true, true, true]);
+    // 3d.5 opened «Музыка», «GIF» and «Текст».
+    expect(tabs.map((t) => t.hasAttribute("disabled"))).toEqual([false, true, false, false, false]);
     const bin = await screen.findByRole("list", { name: "Фото аватара" });
     expect(within(bin).getAllByRole("listitem")).toHaveLength(6);
     expect(within(bin).getByRole("listitem", { name: /в кадре 1/ })).toBeDefined();

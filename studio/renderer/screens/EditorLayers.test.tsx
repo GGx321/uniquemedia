@@ -117,14 +117,18 @@ describe("adding a text or a sticker at the playhead (the track headers' «+», 
     expect(head instanceof HTMLElement && head.style.height).toBe("296px");
   });
 
-  test("«Добавить стикер» opens the built-in set; a pick puts it at the playhead, its picture and loop on the block", async () => {
+  // 3d.5 (L10): the «Стикеры» «+» opens the media panel's «GIF» tab, where the 3d.3b stand-in menu used to open; a tile there
+  // puts the sticker at the playhead.
+  test("«Добавить стикер» opens the «GIF» tab; a tile puts it at the playhead, its picture and loop on the block", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client);
     fireEvent.click(within(timeline()).getByRole("button", { name: "Добавить стикер" }));
-    const menu = within(timeline()).getByRole("menu", { name: "Стикер в плейхед" });
-    expect(within(menu).getAllByRole("menuitem")).toHaveLength(10);
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Сердце" }));
-    expect(within(timeline()).queryAllByRole("menu").length).toBe(0);
+    const gif = screen.getByRole("tab", { name: "GIF" });
+    expect(gif.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement === gif).toBe(true);
+    const tiles = within(screen.getByRole("list", { name: "Встроенные стикеры" })).getAllByRole("button");
+    expect(tiles).toHaveLength(10);
+    fireEvent.click(screen.getByRole("button", { name: "Сердце: в плейхед" }));
     expect(blockNames(stickers())).toEqual(["Стикер 1: Сердце, 0.0–3.0 с, петля 0.8 с"]);
     expect(block(/^Стикер 1:/).querySelector("img")?.getAttribute("src")?.startsWith("data:image/svg+xml,")).toBe(true);
     expect(within(props()).getByText("Стикер 1 из 1")).toBeDefined();
@@ -132,18 +136,12 @@ describe("adding a text or a sticker at the playhead (the track headers' «+», 
     expect(saved.layers).toEqual([expect.objectContaining({ kind: "sticker", sticker: { source: "builtin", stickerId: "heart-pulse" }, startMs: 0, endMs: 3_000 })]);
   });
 
-  test("Escape closes the sticker menu and gives the focus back to «+»; the selection stays", async () => {
+  test("the «Стикеры» «+» takes the focus to the «GIF» tab; the selection stays", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { layers: [textLayer(0, 0, 1_000)] });
     fireEvent.click(block(/^Текст 1:/));
-    const add = within(timeline()).getByRole("button", { name: "Добавить стикер" });
-    fireEvent.click(add);
-    const first = within(timeline()).getAllByRole("menuitem")[0];
-    if (first === undefined) throw new Error("no sticker");
-    expect(document.activeElement === first).toBe(true);
-    fireEvent.keyDown(first, { key: "Escape" });
-    expect(within(timeline()).queryAllByRole("menu").length).toBe(0);
-    expect(document.activeElement === add).toBe(true);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Добавить стикер" }));
+    expect(document.activeElement === screen.getByRole("tab", { name: "GIF" })).toBe(true);
     expect(block(/^Текст 1:/).getAttribute("aria-pressed")).toBe("true");
   });
 });
@@ -300,13 +298,17 @@ describe("the keyboard focus stays on a block that changes rows (review round 1)
     expect(block(/^Текст 1:/).getAttribute("aria-pressed")).toBe("false");
   });
 
-  test("a sticker picked from the menu takes the focus: the new block, ready for ⌥←/⌥→", async () => {
+  // 3d.5: the stand-in menu that vanished on a pick (and handed the focus to the new block) is the «GIF» tab now, whose tiles stay.
+  test("a sticker picked in the «GIF» tab keeps the focus on its tile (never lost to the page), the new block selected", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client);
     fireEvent.click(within(timeline()).getByRole("button", { name: "Добавить стикер" }));
-    fireEvent.click(within(timeline()).getByRole("menuitem", { name: "Звезда" }));
+    const star = screen.getByRole("button", { name: "Звезда: в плейхед" });
+    star.focus();
+    fireEvent.click(star);
     await flush();
-    expect(document.activeElement?.getAttribute("data-layer-id")).toBe("layer-001");
+    expect(document.activeElement === screen.getByRole("button", { name: /^Звезда: в плейхед, в ролике 1/ })).toBe(true);
+    expect(block(/^Стикер 1:/).getAttribute("aria-pressed")).toBe("true");
   });
 
   test("the tenth text turns «+» off: the focus is on the new block, never left on a disabled button", async () => {
@@ -431,12 +433,16 @@ describe("a layer's other actions and states", () => {
 describe("the music track", () => {
   const music = (startMs: number) => ({ music: { source: "trending" as const, trackId: TRACK.trackId, startMs } });
 
-  test("no music: «Добавить музыку» waits for the «Музыка» tab", async () => {
+  // 3d.5 (L24): the seam 3d.3b left «Скоро» opens the «Музыка» tab now.
+  test("no music: «Добавить музыку» opens the «Музыка» tab and takes the focus there", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client);
     const add = within(timeline()).getByRole("button", { name: "Добавить музыку" });
-    expect(add.hasAttribute("disabled")).toBe(true);
-    expect(add.getAttribute("title")).toBe("Музыка — скоро: трек выбирается во вкладке «Музыка»");
+    expect(add.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(add);
+    const tab = screen.getByRole("tab", { name: "Музыка" });
+    expect(tab.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement === tab).toBe(true);
   });
 
   test("the block: the track, its start with ★ on a highlight, the waveform of the montage's part from music.peaks", async () => {

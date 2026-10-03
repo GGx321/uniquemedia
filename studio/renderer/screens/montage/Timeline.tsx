@@ -16,7 +16,6 @@ import { MusicTrack, type TrackLookup } from "./MusicTrack";
 import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
-import { StickerAdd } from "./StickerAdd";
 import { boundaryAt, boundaryMs, clockMs, MAX_ZOOM, MIN_ZOOM, msAtFraction, rulerMarks, seekInto, snapEdge, snapTargets, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 
@@ -24,7 +23,8 @@ import { type TimelineState, useSelectionCommands } from "./useTimeline";
 // главном треке»). The toolbar, the ruler and a scrubbable playhead, the track headers with their caps, and the
 // clip track: select, trim by the handles, reorder by drag, drop a photo from the bin, «+» after the last clip.
 // 3d.3b: the text and sticker tracks (LayerTracks.tsx: add at the playhead, move, trim, z-order) and the music track
-// (MusicTrack.tsx: the waveform from `music.peaks`, the highlights, where the music starts).
+// (MusicTrack.tsx: the waveform from `music.peaks`, the highlights, where the music starts). 3d.5: the «Стикеры» «+» and
+// «Добавить музыку» open the media panel's «GIF» and «Музыка» tabs (L10, L24).
 //
 // Keyboard: ←/→ move the playhead by 0.1 s (⇧: 1 s), Home/End to the ends; Delete removes the selection, Escape
 // clears it (on a slider too: the zoom keeps only its arrows); ⌥←/⌥→ move the focused clip or layer (the music: where
@@ -89,13 +89,15 @@ export interface TimelineProps {
   readonly onInsertPhoto: (photoId: string, boundary: number) => void;
   /** «Добавить кадр»: take the owner to the photos. */
   readonly onAddClip: () => void;
-  /** «Добавить музыку»: the media panel's «Музыка» tab (SLOT 3d.5); absent, the button is «Скоро». */
+  /** «Добавить музыку»: the media panel's «Музыка» tab (3d.5); absent, the button is «Скоро». */
   readonly onAddMusic?: () => void;
+  /** The «Стикеры» «+»: the media panel's «GIF» tab (3d.5, L10), where a pick puts the sticker at the playhead. */
+  readonly onAddSticker: () => void;
   /** Selects clip `index` and brings the playhead into it. */
   readonly onSelectClip: (index: number) => void;
 }
 
-export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicVerdict, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onSelectClip }: TimelineProps) {
+export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicVerdict, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onAddSticker, onSelectClip }: TimelineProps) {
   const commands = useSelectionCommands(session, timeline);
   const lanesRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -444,7 +446,9 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
           <div className="th ed-th-sticker" style={{ height: laneHeight(stickerLane.count) }}>
             <Icon name="sparkle" size={14} />
             Стикеры <span className={stickers >= layerCap("sticker") ? "mono ed-th-full" : "mono faint"}>{stickers}</span>
-            <StickerAdd name={stickerAdd.name} why={stickerAdd.why} onPick={(stickerId) => focusAdded(commands.addSticker(stickerId))} />
+            <button type="button" className="tadd" aria-label={stickerAdd.name} disabled={stickerAdd.why !== null} title={stickerAdd.why ?? "Выбрать стикер во вкладке «GIF»"} onClick={onAddSticker}>
+              <Icon name="plus" size={11} strokeWidth={2.6} />
+            </button>
           </div>
           <div className="th ed-th-clips">
             <Icon name="film" size={14} />

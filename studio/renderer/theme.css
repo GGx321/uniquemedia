@@ -109,6 +109,20 @@
   --ok-55: rgba(79, 224, 176, 0.55);
   /* 3e.2 (videos.css): a video card asking to delete, the artboard's own border */
   --danger-45: rgba(255, 138, 155, 0.45);
+  /* the editor's media and properties panels (3d.5): a caption's ink and paper as the engine paints them (the plaque's text is
+     #111111 or #ffffff by contrast), the artboard's outline and soft shadow, and the «Стили» tiles' photo-like grounds */
+  --cap-ink: #111111;
+  --cap-paper: #ffffff;
+  --cap-outline: 1.2px 1.2px 0 #000, -1.2px 1.2px 0 #000, 1.2px -1.2px 0 #000, -1.2px -1.2px 0 #000, 0 1.2px 0 #000, 0 -1.2px 0 #000, 1.2px 0 0 #000, -1.2px 0 0 #000;
+  --cap-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  --pre-street: linear-gradient(170deg, #ecc09c 0%, #b9785a 55%, #6f3e2c 100%);
+  --pre-beach: linear-gradient(180deg, #a6d3ea 0%, #d3e8ef 52%, #e6d0a3 53%, #d3b27f 100%);
+  --pre-field: linear-gradient(180deg, #f4c77a 0%, #c98a3e 60%, #7d6a36 100%);
+  --pre-bed: linear-gradient(170deg, #f1e6d6 0%, #d9c3a4 60%, #a88c6b 100%);
+  --pre-plane: linear-gradient(175deg, #dfeaf4 0%, #b5c8da 60%, #8aa0b6 100%);
+  --pre-car: linear-gradient(170deg, #8d8790 0%, #57525a 55%, #2f2b31 100%);
+  --ok-16: rgba(79, 224, 176, 0.16);
+  --ok-30: rgba(79, 224, 176, 0.3);
 
   /* other */
   --uniq: #7c6cff;

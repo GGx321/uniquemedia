@@ -23,7 +23,7 @@ export function dayLabel(at: number, timeZone?: string): string {
 }
 
 /** «21 сент., 14:02». */
-function dayTimeLabel(at: number, timeZone?: string): string {
+export function dayTimeLabel(at: number, timeZone?: string): string {
   const [day, time] = format(at, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }, timeZone).split(", ");
   return time === undefined ? (day ?? "").replace(/\s/g, NBSP) : `${(day ?? "").replace(/\s/g, NBSP)}, ${time}`;
 }
