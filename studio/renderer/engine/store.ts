@@ -196,6 +196,12 @@ export type MontageChange = Extract<EventMessage, { type: "montage.changed" }>["
  */
 export type MontageSignal = MontageChange | { readonly change: "resynced" };
 
+/** What `video.changed` carries: a record upserted, or removed (3e.2: the Photos «Видео» tab). */
+export type VideoChange = Extract<EventMessage, { type: "video.changed" }>["payload"];
+
+/** What the video listeners hear: each `video.changed`, and `resynced` after a snapshot taken again (the records are listed on demand). */
+export type VideoSignal = VideoChange | { readonly change: "resynced" };
+
 /**
  * Adds `notice` to `notices`, deduped by `noticeId` (an exact repeat delivery
  * changes nothing) and by `code` (only one of each kind is shown, so e.g. two
@@ -265,6 +271,7 @@ export class EngineStore {
   private view: EngineView = INITIAL;
   private readonly listeners = new Set<() => void>();
   private readonly montageListeners = new Set<(signal: MontageSignal) => void>();
+  private readonly videoListeners = new Set<(signal: VideoSignal) => void>();
   private held: EventMessage[] = [];
   private syncing = false;
   private queuedSnapshot = false;
@@ -325,6 +332,18 @@ export class EngineStore {
     this.montageListeners.add(listener);
     return () => {
       this.montageListeners.delete(listener);
+    };
+  };
+
+  /**
+   * `video.changed` as the store applies it (3e.2), the drafts' way: in seq order, once each, AFTER the view took it (a record
+   * that lands after its render's `job.failed` has already made that job done), and `resynced` after a snapshot taken again.
+   * The records are not kept in the view: the Photos «Видео» tab lists them on demand and listens here.
+   */
+  readonly subscribeVideos = (listener: (signal: VideoSignal) => void): (() => void) => {
+    this.videoListeners.add(listener);
+    return () => {
+      this.videoListeners.delete(listener);
     };
   };
 
@@ -773,6 +792,7 @@ export class EngineStore {
     });
     // Not for the first load: nothing was shown, so nothing was missed.
     if (again) for (const listener of [...this.montageListeners]) listener({ change: "resynced" });
+    if (again) for (const listener of [...this.videoListeners]) listener({ change: "resynced" });
     // The snapshot carries no music status: one that was shown may have missed its events, or describe a refresh of an engine
     // that has since restarted (no event will ever end it), so it is asked again.
     if (again && this.view.music !== null) void this.refreshMusic();
@@ -890,6 +910,7 @@ export class EngineStore {
         // Video records are listed on demand (videos.list, the Photos «Видео» tab). The event keeps the seq moving, and a record that
         // lands after its render's `job.failed` makes that job done (the video exists).
         this.update(event.payload.change === "upserted" ? { lastSeq, jobs: applyVideoChanged(this.view.jobs, event.payload.video) } : { lastSeq });
+        for (const listener of [...this.videoListeners]) listener(event.payload);
         return;
       case "montage.changed":
         // Drafts are listed on demand (montages.list): the view keeps only the seq, and the listeners hear the change.
