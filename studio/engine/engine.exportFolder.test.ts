@@ -88,8 +88,15 @@ async function seedVideos(exportPath: string, rootId: string, count: number, fre
   return { avatarId: avatar.id, videoIds, freePhotoIds };
 }
 
-const start = (over: Parameters<typeof startEngine>[1] = {}): Promise<Started> =>
-  startEngine(dir(), { ...over, init: { renderTmpDir: join(dir(), "userData", "render-tmp"), settings: engineSettings(dir(), { renderConcurrency: 1 }), ...over.init } });
+/**
+ * The engine, started and settled: its recovery at start takes the export root's lock and holds files in the folder for a
+ * moment, and Windows refuses (EPERM) to rename a folder that has a file open, so a test that moves the folder waits first.
+ */
+async function start(over: Parameters<typeof startEngine>[1] = {}): Promise<Started> {
+  const started = await startEngine(dir(), { ...over, init: { renderTmpDir: join(dir(), "userData", "render-tmp"), settings: engineSettings(dir(), { renderConcurrency: 1 }), ...over.init } });
+  await started.engine.settled();
+  return started;
+}
 
 /** The engine's reply to the last call: parsed against the contract, so a reply that would not leave the engine fails here. */
 function lastReply(started: Started): EngineReply {
