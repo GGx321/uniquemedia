@@ -3,7 +3,9 @@ import { basename, dirname, join } from "node:path";
 import { Id } from "../../shared/engine";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
-import { buildPass1, buildPass2, type AudioSource, type OverlayInput, type PhotoResolver } from "../render";
+import { buildMusicMeasure, buildPass1, buildPass2, musicGainDb, RenderGraphError, type AudioPlan, type MusicMeasureJob, type OverlayInput, type Pass2Job, type PhotoResolver } from "../render";
+import { clipFrames } from "../render/durations";
+import { measureTruePeak } from "./musicMeasure";
 import { ProgressFold, renderTimeoutMs } from "./progress";
 import { scrubber, scrubStderrTail, type ScrubInput } from "./scrubber";
 
@@ -26,7 +28,11 @@ export interface RenderRunInput {
    */
   readonly resolvePhoto: PhotoResolver;
   readonly overlays: readonly OverlayInput[];
-  readonly audio: AudioSource;
+  /**
+   * Silence, or one stored track (`path` from the engine's track store, never from a window). A track's gain is not known
+   * yet: the runner measures the clip segment first and builds pass 2 with the gain the rule gives.
+   */
+  readonly audio: AudioPlan;
   /** Absolute: the temp output on the export volume (`.studio-part-<jobId>.mp4`). Removed here when the job does not succeed. */
   readonly output: string;
   readonly signal: AbortSignal;
@@ -45,6 +51,8 @@ export interface RenderRunInput {
 export interface RenderRunDeps {
   /** Runs one ffmpeg argv; `runFfmpegArgv` unless a test scripts it. */
   readonly run?: (opts: RunFfmpegArgvOptions) => Promise<void>;
+  /** Measures the true peak of a music segment (dBTP); `measureTruePeak` (ffmpeg's ebur128) unless a test scripts it. */
+  readonly measure?: (job: MusicMeasureJob, options: { readonly signal: AbortSignal; readonly timeoutMs: number }) => Promise<number>;
   /** Monotonic ms for the job's deadline. */
   readonly now?: () => number;
   /** Removes the job folder, tolerating one that is not there. A rejection is reported, never thrown. */
@@ -60,6 +68,8 @@ export interface RenderRunDeps {
 export interface RenderRunOutcome {
   /** Frames of the final video: `Σ durationMs × 3 / 100`. */
   readonly totalFrames: number;
+  /** What the true-peak pass found and the gain it chose (dB, never positive). Absent for a silent video. */
+  readonly music?: { readonly gainDb: number; readonly truePeakDb: number };
 }
 
 /** The name of the temp output a job may write and, on failure, remove; nothing else. */
@@ -98,14 +108,18 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     return source;
   };
   for (const overlay of input.overlays) scrubInputs.push({ path: overlay.path, label: "<overlay>" });
-  // `input.audio` is silence in 3a and has no file; music (3c) adds its path here, labelled `<audio>`.
+  if (input.audio.kind === "music") scrubInputs.push({ path: input.audio.path, label: "<audio>" });
 
   const pass1 = buildPass1({ seed: input.seed, clips: input.clips, resolvePhoto, clipDir });
-  const pass2 = buildPass2({ clips: input.clips.map((c) => ({ clipId: c.clipId, durationMs: c.durationMs })), clipDir, output: input.output, overlays: input.overlays, audio: input.audio });
-  const totalFrames = pass2.totalFrames;
+  const finalClips = input.clips.map((c) => ({ clipId: c.clipId, durationMs: c.durationMs }));
+  // Silence is built now, so a refused graph fails before anything is created. Music needs the gain the measurement gives (below).
+  let pass2: Pass2Job | null = input.audio.kind === "silent" ? buildPass2({ clips: finalClips, clipDir, output: input.output, overlays: input.overlays, audio: { kind: "silent" } }) : null;
+  const totalFrames = pass2?.totalFrames ?? finalClips.reduce((sum, c) => sum + clipFrames(c.durationMs), 0);
   const fold = new ProgressFold(totalFrames);
   const budgetMs = renderTimeoutMs(totalFrames);
   const deadline = now() + budgetMs;
+
+  const measure = deps.measure ?? measureTruePeak;
 
   const scrub = scrubber(input.tmpRoot, dirname(input.output), scrubInputs, deps.home);
 
@@ -142,6 +156,18 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     }
   };
 
+  /** What a failed ffmpeg call (or measurement) reaches the job as: the tail scrubbed of the user's paths, a timeout named after the whole budget. */
+  const failure = (error: unknown): unknown => {
+    // A refusal of the builders or of the peak's reading names no path: it comes out as it is, like the builders' own.
+    if (error instanceof RenderGraphError) return error;
+    // The tail may name the user's folders and files; what reaches the job's error says <tmp>, <export>, <photo>... instead.
+    if (error instanceof FfmpegTimeoutError) return new FfmpegTimeoutError(budgetMs, scrubStderrTail(scrub, error.stderrTail), { cause: error });
+    if (error instanceof FfmpegError) return new FfmpegError(scrub(error.message), error.exitCode, scrubStderrTail(scrub, error.stderrTail), { cause: error });
+    // Anything else that is not the cancel itself (whose reason must come out as it is) is a plain error: a spawn error names the binary's path.
+    if (error instanceof Error && !signal.aborted && error !== listenerError) return scrubbedCopy(error);
+    return error;
+  };
+
   /** One ffmpeg call on what is left of the job's budget; a timeout is named after the whole budget. */
   const call = async (job: { argv: readonly string[]; output: string }, options: { cwd?: string; onFrames: (frames: number) => void }): Promise<void> => {
     signal.throwIfAborted();
@@ -150,18 +176,40 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     try {
       await run({ argv: job.argv, output: job.output, signal, timeoutMs: remaining, onFrames: options.onFrames, ...(options.cwd === undefined ? {} : { cwd: options.cwd }) });
     } catch (error) {
-      // The tail may name the user's folders and files; what reaches the job's error says <tmp>, <export>, <photo>... instead.
-      if (error instanceof FfmpegTimeoutError) throw new FfmpegTimeoutError(budgetMs, scrubStderrTail(scrub, error.stderrTail), { cause: error });
-      if (error instanceof FfmpegError) throw new FfmpegError(scrub(error.message), error.exitCode, scrubStderrTail(scrub, error.stderrTail), { cause: error });
-      // Anything else that is not the cancel itself (whose reason must come out as it is) is a plain error: a spawn error names the binary's path.
-      if (error instanceof Error && !signal.aborted && error !== listenerError) throw scrubbedCopy(error);
-      throw error;
+      throw failure(error);
     }
+  };
+
+  /**
+   * The true-peak pass over the music's clip segment, on what is left of the job's budget (invariant 21): the gain is the
+   * rule's, `min(0, -1.5 - TP)`. A failure reaches the job as any ffmpeg failure does; a peak that is not a number is BAD_AUDIO.
+   */
+  const measureMusic = async (music: Extract<AudioPlan, { kind: "music" }>): Promise<{ gainDb: number; truePeakDb: number }> => {
+    signal.throwIfAborted();
+    const remaining = deadline - now();
+    if (remaining <= 0) throw new FfmpegTimeoutError(budgetMs, "");
+    const job = buildMusicMeasure({ path: music.path, startMs: music.startMs, durationMs: finalClips.reduce((sum, c) => sum + c.durationMs, 0) });
+    let truePeakDb: number;
+    try {
+      truePeakDb = await measure(job, { signal, timeoutMs: remaining });
+    } catch (error) {
+      throw failure(error);
+    }
+    return { gainDb: musicGainDb(truePeakDb), truePeakDb };
   };
 
   let succeeded = false;
   try {
     await scrubFs(mkdir(clipDir, { recursive: true }));
+
+    // Music is measured BEFORE pass 1: a track ffmpeg cannot read ends the job in a second, not after the photos were rendered.
+    let music: { gainDb: number; truePeakDb: number } | null = null;
+    if (input.audio.kind === "music") {
+      music = await measureMusic(input.audio);
+      pass2 = buildPass2({ clips: finalClips, clipDir, output: input.output, overlays: input.overlays, audio: { kind: "music", path: input.audio.path, startMs: input.audio.startMs, gainDb: music.gainDb } });
+    }
+    const finalPass = pass2;
+    if (finalPass === null) throw new TypeError("runRenderJob: pass 2 was not built");
 
     let framesOfDoneClips = 0;
     for (const job of pass1) {
@@ -171,13 +219,13 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     }
 
     signal.throwIfAborted();
-    await scrubFs(writeFile(join(clipDir, pass2.listFileName), pass2.listFileContents));
+    await scrubFs(writeFile(join(clipDir, finalPass.listFileName), finalPass.listFileContents));
     await input.beforePass2?.();
     signal.throwIfAborted();
-    await call(pass2, { cwd: pass2.cwd, onFrames: (frames) => report(fold.pass2(frames)) });
+    await call(finalPass, { cwd: finalPass.cwd, onFrames: (frames) => report(fold.pass2(frames)) });
 
     succeeded = true;
-    return { totalFrames };
+    return music === null ? { totalFrames } : { totalFrames, music };
   } finally {
     // The job folder goes on every way out. The temp output goes on every way
     // out but success. A cleanup that fails is reported and never replaces
