@@ -474,7 +474,13 @@ describe("idle recycling: an idle worker's memory is given back", () => {
     let terminated = 0;
     const armed: { delay: number | null; fire: (() => void) | null } = { delay: null, fire: null };
     const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
     const parked: ReturnType<typeof setTimeout>[] = [];
+    let clearedParked = false; // the gate cancelled its own idle timer: firing it afterwards would prove nothing
+    globalThis.clearTimeout = ((handle?: Parameters<typeof clearTimeout>[0]) => {
+      if (handle !== undefined && parked.includes(handle as ReturnType<typeof setTimeout>)) clearedParked = true;
+      return realClearTimeout(handle);
+    }) as typeof clearTimeout;
     globalThis.setTimeout = Object.assign(
       (...args: Parameters<typeof setTimeout>) => {
         if (args[1] === IDLE_MS && armed.fire === null) {
@@ -505,6 +511,7 @@ describe("idle recycling: an idle worker's memory is given back", () => {
       await Bun.sleep(IDLE_MS * 4); // far past the idle time, with the gate's timer held back
       expect(h.alive()).toBe(1);
       expect(terminated).toBe(0);
+      expect(clearedParked).toBe(false);
 
       if (armed.fire === null) throw new Error("the gate did not arm its idle timer");
       armed.fire();
@@ -513,6 +520,7 @@ describe("idle recycling: an idle worker's memory is given back", () => {
       expect(terminated).toBe(1);
     } finally {
       globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
       for (const handle of parked) clearTimeout(handle);
     }
   });
