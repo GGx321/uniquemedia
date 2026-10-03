@@ -1,4 +1,4 @@
-import { MontageDraft, MontageName, type Focus, type Montage } from "../../../shared/engine";
+import { Focus, MontageDraft, MontageName, type Montage } from "../../../shared/engine";
 import type { Scheduler } from "../../engine/scheduler";
 import type { MontageChange } from "../../engine/store";
 import { DraftAutosave, type FlushResult, type SaveState, type SendSave } from "./autosave";
@@ -94,10 +94,12 @@ export class DraftSession {
    */
   fillFocus(photoId: string, focus: Focus): boolean {
     if (this.#state.save.kind === "gone") return false;
+    // The focus itself is checked first: it is written into undone versions too, which no later edit re-checks, so
+    // the session never relies on the client having validated the engine's answer.
+    if (!Focus.safeParse(focus).success) return false;
     const before = this.#history.present;
     const next = rewriteVersions(this.#history, (spec) => fillFocus(spec, photoId, focus));
-    // Like an edit: a version the contract would refuse never enters (a focus outside the frame cannot come from
-    // the engine's validated answer, but the session does not rely on that).
+    // Like an edit: a present the contract would refuse never enters.
     if (next === this.#history || !MontageDraft.safeParse(next.present).success) return false;
     this.#history = next;
     if (next.present === before) {

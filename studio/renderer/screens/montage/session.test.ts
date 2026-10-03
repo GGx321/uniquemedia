@@ -254,6 +254,15 @@ describe("the focus found for a placed photo (3d.3a, K6)", () => {
     expect(saves.calls).toHaveLength(sent);
   });
 
+  test("a focus outside the frame is refused before it reaches any version, an undone one included", () => {
+    const { session } = rig();
+    session.edit(one);
+    session.undo();
+    expect(session.fillFocus("photo-mia-0005", { x: 2, y: 0.5 })).toBe(false);
+    session.redo();
+    expect(focusOf(session.state.spec, 0)).toBeNull();
+  });
+
   test("after the draft is gone, nothing changes", () => {
     const { session } = rig();
     session.edit(one);
