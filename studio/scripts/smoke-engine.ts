@@ -419,9 +419,13 @@ async function quit(running: Running): Promise<void> {
   killTree(running.child);
 }
 
-/** Windows only: the processes whose command line names `dir`, which is the app under test and everything it started (every Chromium child carries --user-data-dir). */
+/**
+ * Windows only: the processes whose command line names `dir`, which is the app under test and everything it started (every Chromium
+ * child carries --user-data-dir). Not the query's own PowerShell (`$PID`), whose command line names the folder too: counting it made
+ * every cleanup wait out its 15 s.
+ */
 function processesUsing(dir: string): number[] {
-  const script = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -ne $null -and $_.CommandLine.Contains('${dir.replaceAll("'", "''")}') } | ForEach-Object { $_.ProcessId }`;
+  const script = `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -ne $null -and $_.CommandLine.Contains('${dir.replaceAll("'", "''")}') } | ForEach-Object { $_.ProcessId }`;
   const out = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" }).stdout;
   return out.split(/\r?\n/).filter((line) => /^\d+$/.test(line.trim())).map(Number);
 }
