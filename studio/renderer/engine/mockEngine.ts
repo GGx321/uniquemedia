@@ -1498,8 +1498,11 @@ export class MockEngine implements EngineBridge {
     const stored = this.montages.get(montageId);
     if (stored === undefined) return this.fail(c, this.unknownDraft(montageId));
     if (spec.avatarId !== stored.spec.avatarId) return this.fail(c, { code: "VALIDATION", detail: "the spec belongs to another avatar than the draft" });
-    // As the engine stamps a save: its clock's now, but always after the stamp it replaces.
-    const updatedAt = new Date(Math.max(Date.parse(this.nowIso()), Date.parse(stored.updatedAt) + 1)).toISOString();
+    // As the engine stamps a save (`nextStamp`): its clock's now, but always after the stamp it replaces; a stored
+    // stamp that cannot be read gives way to now.
+    const now = Date.parse(this.nowIso());
+    const after = Date.parse(stored.updatedAt) + 1;
+    const updatedAt = new Date(Number.isNaN(after) ? now : Math.max(now, after)).toISOString();
     const montage = Montage.parse({ montageId, name, spec, updatedAt });
     this.montages.set(montageId, montage);
     this.announceDraft(montage);
