@@ -13,7 +13,9 @@
 
 export type CaptionRun = { kind: "text"; text: string } | { kind: "emoji"; text: string; codePoints: readonly number[] };
 
-const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+let segmenterInstance: Intl.Segmenter | undefined;
+/** Made on first use, not at load: a module that builds something when it loads cannot be dropped from a bundle that never calls it. */
+const segmenter = (): Intl.Segmenter => (segmenterInstance ??= new Intl.Segmenter("en", { granularity: "grapheme" }));
 
 const STARTS_EMOJI_PRESENTATION = /^\p{Emoji_Presentation}/u;
 const STARTS_PICTOGRAPH = /^\p{Extended_Pictographic}/u;
@@ -35,7 +37,7 @@ function codePointsOf(cluster: string): number[] {
 /** The runs in order, always adding up to the input; adjacent text is one run, every emoji cluster its own. */
 export function segmentCaption(text: string): CaptionRun[] {
   const runs: CaptionRun[] = [];
-  for (const { segment } of segmenter.segment(text)) {
+  for (const { segment } of segmenter().segment(text)) {
     if (isEmoji(segment)) {
       runs.push({ kind: "emoji", text: segment, codePoints: codePointsOf(segment) });
       continue;

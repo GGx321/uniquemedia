@@ -282,12 +282,15 @@ const MOCK_MUSIC_LIST = { trackCount: 30, bytesOnDisk: 52_400_000 } as const;
 const MOCK_TRACK_BYTES = 1_700_000;
 
 /** The dev build's music: a list fetched three days before the mock's start, 12 requests in the window, flashapi's own 18 left. */
-const DEMO_MUSIC: MockMusicOptions = {
-  sendsDaysAgo: [22, 19, 17, 15, 12, 10, 9, 7, 5, 4, 3, 1],
-  list: { fetchedAt: "2026-09-21T11:02:00.000Z", trackCount: 30, bytesOnDisk: 94_000_000 },
-  tracks: demoTracks(30),
-  serverRemaining: { value: 18, daysAgo: 1 },
-};
+function demoMusic(): MockMusicOptions {
+  // A function, not a constant: building the demo tracks at module load would keep them in a release bundle that drops the mock.
+  return {
+    sendsDaysAgo: [22, 19, 17, 15, 12, 10, 9, 7, 5, 4, 3, 1],
+    list: { fetchedAt: "2026-09-21T11:02:00.000Z", trackCount: 30, bytesOnDisk: 94_000_000 },
+    tracks: demoTracks(30),
+    serverRemaining: { value: 18, daysAgo: 1 },
+  };
+}
 
 /** The mock's music at its start: the seeded sends (days before `now`), the list, flashapi's figure and the log's state. */
 function mockMusic(options: MockMusicOptions, now: number): MockMusic {
@@ -680,7 +683,7 @@ export class MockEngine implements EngineBridge {
     this.photos = [...(options.photos ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     this.skippedPhotos = { ...options.skippedPhotos };
     if (options.preset === "demo" && options.photos === undefined) this.seedDemoRun();
-    this.music = mockMusic(options.music ?? (options.preset === "demo" ? DEMO_MUSIC : {}), this.clock);
+    this.music = mockMusic(options.music ?? (options.preset === "demo" ? demoMusic() : {}), this.clock);
   }
 
   /** The dev build's Mia: a stopped run of 12 photos, 8 of them drawn, 4 left to resume. */

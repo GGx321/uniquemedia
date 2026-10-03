@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import studioViteConfig from "../../electron.studio.vite.config";
-import { productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems } from "../scripts/bundleChecks";
+import { productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems } from "../scripts/bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -169,6 +169,27 @@ describe("debug affordances are compile-time", () => {
     expect(await devFlag("serve", "development")).toBe("true");
     expect(await devFlag("build", "production")).toBe("false");
     expect(await devFlag("build", "development")).toBe("false");
+  });
+});
+
+/** Every `.js` file under `<outDir>/renderer`: the window's bundle, with its lazy chunks. */
+async function windowOf(dir: string): Promise<string> {
+  const files: string[] = [];
+  const walk = async (folder: string): Promise<void> => {
+    for (const entry of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
+      if (entry.isDirectory()) await walk(join(folder, entry.name));
+      else if (entry.name.endsWith(".js")) files.push(join(folder, entry.name));
+    }
+  };
+  await walk(join(dir, "renderer"));
+  expect(files.length).toBeGreaterThan(0);
+  return (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n");
+}
+
+// 3d.1b review: the dev mock is dropped from a release build, and so is everything it builds when it loads (demo tracks, tables).
+describe("the production window carries nothing of the dev mock", () => {
+  test("no test control, no demo data", async () => {
+    expect(productionBundleProblems(await windowOf(normalDir))).toEqual([]);
   });
 });
 
