@@ -49,8 +49,9 @@ on:
   # (see the tiers above) runs on a timer instead of on every push.
   schedule:
     - cron: "17 6 * * 1"
+# Read-only for every job; the one that publishes (`release`, tags only) asks for write itself.
 permissions:
-  contents: write
+  contents: read
 # A superseded run on a branch (a second dispatch or push of the same ref) is cancelled, so it stops spending
 # runner minutes on a result nobody will read. Main and tags are never cancelled: every push to main must finish,
 # so a red commit stays identifiable, and a release run must not be cut short. Their group is unique per run
@@ -272,12 +273,43 @@ jobs:
             release-studio/*.dmg
             release-studio/*.exe
           if-no-files-found: ignore
+
+  # The release (tags only): the installers the `build` job uploaded (PACKAGE is true on a tag), attached to the GitHub Release once
+  # BOTH OSes built, smoke-tested and uploaded theirs, and the heavy tier (deterministic: a fixed seed) passed. BEHAVIOUR CHANGE: this
+  # step used to run inside each `build` leg, so when one OS failed the other still published its own installer; now a failure on
+  # either OS (or in the heavy tier) publishes nothing at all. The perf tier is not a gate: its budgets are measurements, and one of
+  # them has read 786 ms of 800 on Windows. Moved here from the build job as it was (same files, same `make_latest`), plus a check
+  # that both installers are present and `fail_on_unmatched_files`, so a release cannot go out with half its files.
+  release:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, heavy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: studio-*
+          merge-multiple: true
+          path: release-studio
+      - name: Check both installers are present
+        shell: bash
+        run: |
+          shopt -s nullglob
+          dmgs=(release-studio/*.dmg)
+          exes=(release-studio/*.exe)
+          ls -l release-studio
+          if [ "${#dmgs[@]}" -eq 0 ] || [ "${#exes[@]}" -eq 0 ]; then
+            echo "::error::a release needs a .dmg and an .exe: found ${#dmgs[@]} .dmg and ${#exes[@]} .exe in release-studio/"
+            exit 1
+          fi
       - name: Attach installers to the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           # The landing page reads the "latest" release, which must stay the uniquifier's.
           make_latest: false
+          fail_on_unmatched_files: true
           files: |
             release-studio/*.dmg
             release-studio/*.exe
@@ -301,9 +333,9 @@ jobs:
       matrix:
         os: ${{ fromJSON((github.event_name == 'schedule' || inputs.tier == 'scheduled' || startsWith(github.ref, 'refs/tags/')) && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    # Never blocks a push or a manual run, but BLOCKS on a release tag: a release must not ship a regression that came in since the
-    # last weekly run (the same goes for the heavy job below).
-    continue-on-error: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    # Never blocks, on a release tag either: these budgets are measurements (one has read 786 ms of 800 on Windows), so they must not
+    # gate a release. The heavy job below is deterministic and does gate it (the `release` job needs it).
+    continue-on-error: true
     permissions:
       contents: read
     env:

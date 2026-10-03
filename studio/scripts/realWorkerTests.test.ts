@@ -499,14 +499,56 @@ describe("the Electron-Node steps' bounds", () => {
     for (const m of inline) expect(Number(m[2])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
   });
 
-  // A release must not ship a regression that came in since the weekly run: on a tag the perf and heavy jobs run and BLOCK (CI-4).
-  test("the perf and heavy jobs run on a release tag, and only there (and on a schedule) do they fail the run", async () => {
+  // The release (CI-4): the installers are attached once, by a tag-only job that needs BOTH OSes and the (deterministic) heavy tier. The perf
+  // tier never gates anything: its budgets are measurements (one read 786 ms of 800 on Windows).
+  async function workflowJobs(): Promise<Record<string, Record<string, unknown>>> {
+    const parsed: unknown = Bun.YAML.parse(await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8"));
+    if (typeof parsed !== "object" || parsed === null || !("jobs" in parsed) || typeof parsed.jobs !== "object" || parsed.jobs === null) throw new Error("no jobs in the workflow");
+    return Object.fromEntries(Object.entries(parsed.jobs).map(([name, job]) => [name, typeof job === "object" && job !== null ? Object.fromEntries(Object.entries(job)) : {}]));
+  }
+
+  test("the release job exists, runs on tags only, and needs the build and the heavy tier", async () => {
+    const jobs = await workflowJobs();
+    const release = jobs.release;
+    expect(release).toBeDefined();
+    expect(release?.if).toBe("startsWith(github.ref, 'refs/tags/')");
+    expect(release?.needs).toEqual(["build", "heavy"]);
+    expect(release?.permissions).toEqual({ contents: "write" });
+    expect(release?.["continue-on-error"]).toBeUndefined();
+  });
+
+  test("the release job checks both installers and attaches them with the options the build job had, and nothing else publishes", async () => {
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
-    for (const job of ["perf", "heavy"]) {
-      const block = new RegExp(`^  ${job}:\\r?\\n((?:(?:    .*|)\\r?\\n)+)`, "m").exec(workflow)?.[1] ?? "";
-      expect(block).toMatch(/^ {4}if: .*startsWith\(github\.ref, 'refs\/tags\/'\)/m);
-      expect(block).toMatch(/^ {4}continue-on-error: .*!startsWith\(github\.ref, 'refs\/tags\/'\)/m);
-    }
+    const jobs = await workflowJobs();
+    const steps = (jobs.release?.steps ?? []) as { uses?: string; with?: Record<string, unknown>; run?: string }[];
+    const download = steps.find((step) => step.uses === "actions/download-artifact@v4");
+    expect(download?.with).toEqual({ pattern: "studio-*", "merge-multiple": true, path: "release-studio" });
+    expect(steps.some((step) => step.run?.includes("a release needs a .dmg and an .exe") && step.run.includes("exit 1"))).toBe(true);
+    const publish = steps.find((step) => step.uses === "softprops/action-gh-release@v2");
+    expect(publish?.with).toMatchObject({ make_latest: false, fail_on_unmatched_files: true });
+    expect(String(publish?.with?.files)).toContain("release-studio/*.dmg");
+    expect(String(publish?.with?.files)).toContain("release-studio/*.exe");
+    // The only publisher: no other job attaches installers, and no job but the release one has write access.
+    expect(workflow.match(/softprops\/action-gh-release/g)).toHaveLength(1);
+    expect(workflow).toMatch(/^permissions:\r?\n {2}contents: read\r?$/m);
+    expect(Object.entries(jobs).filter(([, job]) => JSON.stringify(job.permissions ?? {}).includes("write")).map(([name]) => name)).toEqual(["release"]);
+  });
+
+  test("the build job uploads the installers the release job downloads (the artifact names it matches)", async () => {
+    const jobs = await workflowJobs();
+    const steps = (jobs.build?.steps ?? []) as { uses?: string; with?: Record<string, unknown> }[];
+    const upload = steps.find((step) => step.uses === "actions/upload-artifact@v4");
+    expect(String(upload?.with?.name)).toMatch(/^studio-/);
+    expect(String(upload?.with?.path)).toContain("release-studio/*.dmg");
+    expect(String(upload?.with?.path)).toContain("release-studio/*.exe");
+  });
+
+  test("the perf job never gates a run: continue-on-error is true on every trigger, tags included; the heavy job blocks on tags and the schedule", async () => {
+    const jobs = await workflowJobs();
+    expect(jobs.perf?.["continue-on-error"]).toBe(true);
+    expect(String(jobs.perf?.if)).toContain("startsWith(github.ref, 'refs/tags/')");
+    expect(String(jobs.heavy?.if)).toContain("startsWith(github.ref, 'refs/tags/')");
+    expect(String(jobs.heavy?.["continue-on-error"])).toContain("!startsWith(github.ref, 'refs/tags/')");
   });
 });
 
