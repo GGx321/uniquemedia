@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
+import { FIRST_CALL_RENDER_TIMEOUT_MS } from "../../../testing/gateTimeouts";
 import { RasterError, type RasterErrorCode } from "../rasterTypes";
 import { createTextGate, type TextGate } from "./textGate";
 useNativeGlobals();
@@ -44,7 +45,8 @@ function harness(options: { startups?: Startup[]; loadTimeoutMs?: number; render
   const workers: Worker[] = [];
   const gate = createTextGate({
     loadTimeoutMs: options.loadTimeoutMs,
-    renderTimeoutMs: options.renderTimeoutMs,
+    // The first call to a fresh worker (also the one after a replacement) includes its spawn: not under the production 3 s unless the test is about the deadline.
+    renderTimeoutMs: options.renderTimeoutMs ?? FIRST_CALL_RENDER_TIMEOUT_MS,
     idleRecycleMs: options.idleRecycleMs,
     killTimeoutMs: options.killTimeoutMs,
     spawnWorker: () => {

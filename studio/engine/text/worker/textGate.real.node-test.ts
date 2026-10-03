@@ -7,6 +7,7 @@ import { loadTextRasteriser } from "../load";
 import { RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "../rasterTypes";
 import { SELF_TEST_FINGERPRINT, SELF_TEST_HASHES, selfTestSvg } from "../selfTest";
 import { assertBudget, tierOf } from "../../../testing/tiers";
+import { FIRST_CALL_RENDER_TIMEOUT_MS } from "../../../testing/gateTimeouts";
 import { createTextWorkerSpawner } from "./spawn";
 import { createTextGate, type TextGate } from "./textGate";
 
@@ -36,7 +37,8 @@ function gate(over: { renderTimeoutMs?: number } = {}): { gate: TextGate; spawne
       spawned += 1;
       return spawn();
     },
-    ...(over.renderTimeoutMs === undefined ? {} : { renderTimeoutMs: over.renderTimeoutMs }),
+    // The first call to a fresh worker includes its spawn and the resvg wasm init: not under the production 3 s unless the test is about the deadline.
+    renderTimeoutMs: over.renderTimeoutMs ?? FIRST_CALL_RENDER_TIMEOUT_MS,
   });
   gates.push(g);
   return { gate: g, spawned: () => spawned };
