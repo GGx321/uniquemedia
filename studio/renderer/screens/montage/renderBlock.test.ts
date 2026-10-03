@@ -121,8 +121,11 @@ describe("the reasons, each on its own", () => {
     expect(renderBlock(input({ spec: withText, verdict: null }))?.text).toBe("Текст в видео — скоро");
     const withSticker = draftSpec(4, { layers: [{ layerId: "layer-001", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "builtin", stickerId: "sticker-sparkle" }, x: 0.5, y: 0.5, size: 0.2 }] });
     expect(renderBlock(input({ spec: withSticker, verdict: null }))?.text).toBe("Стикеры в видео — скоро");
-    const withMusic = draftSpec(4, { music: { source: "trending", trackId: "track-0000001", startMs: 0 } });
+    // A trending track is supported since 3c.5; an own track waits for 3f.4.
+    const withMusic = draftSpec(4, { music: { source: "own", mediaId: "media-0000001", startMs: 0 } });
     expect(renderBlock(input({ spec: withMusic, verdict: null }))?.text).toBe("Музыка в видео — скоро");
+    const withTrack = draftSpec(4, { music: { source: "trending", trackId: "track-0000001", startMs: 0 } });
+    expect(renderBlock(input({ spec: withTrack, verdict: null }))).toBeNull();
     const withVideo = draftSpec([photoClip(0, "photo-mia-0001", 2_000), { clipId: "clip-002", durationMs: 3_000, transitionIn: "cut", kind: "video", mediaId: "media-0000001", trimStartMs: 0, focus: null }]);
     expect(renderBlock(input({ spec: withVideo, verdict: null }))?.text).toBe("Своё видео — скоро");
   });
@@ -157,8 +160,10 @@ describe("the engine's verdict against the window's newer spec", () => {
     const withMusic = draftSpec(4, { music: { source: "trending", trackId: "track-0000001", startMs: 0 } });
     const changed = { ...withMusic, seed: 2 };
     const verdict = { spec: withMusic, issues: [{ code: "track-unavailable", path: ["music"] }] satisfies MontageIssue[] };
-    // Music is not supported yet either: once the verdict is stale, that is the reason left.
-    expect(renderBlock(input({ spec: changed, verdict }))?.text).toBe("Музыка в видео — скоро");
+    // A trending track is supported since 3c.5, so once the verdict is stale there is no reason left to show.
+    expect(renderBlock(input({ spec: changed, verdict }))).toBeNull();
+    // While the spec is the one the engine judged, its answer shows.
+    expect(renderBlock(input({ spec: withMusic, verdict }))?.text).toBe("Трек больше недоступен");
   });
 });
 
