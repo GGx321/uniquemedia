@@ -967,7 +967,7 @@ export class Library {
    * in the copy, and a crash between the two steps leaves the old file and a copy (a repeat makes another copy and goes on).
    * A log with no bad line is not written: it is read again (a log the owner fixed by hand opens the avatar), `rebuilt: false`.
    * Under the same lock as `setRejected`, so no mark lands in the middle. A copy or a write that fails throws, and the log is
-   * as it was.
+   * as it was. `kept` and `dropped` count LINES of the log (a restore is a line too), not the photos left rejected.
    */
   async rebuildRejectLog(avatarId: string): Promise<{ rebuilt: boolean; kept: number; dropped: number }> {
     if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);

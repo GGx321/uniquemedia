@@ -394,7 +394,8 @@ const ENGINE_SPECS = [
   // «Восстановить отметки» (3e.2, K16): the owner's reject marks (`rejected.jsonl`) with a line that cannot be read. The file is
   // COPIED to the library's quarantine first, then replaced at once by the lines that read (a torn last line is dropped too),
   // so every mark that can be read is kept and nothing is ever lost without a copy. `rebuilt: false` when nothing needed it
-  // (safe to repeat). `kept` counts the marks kept, `dropped` the lines left out. `avatar.changed` follows when the usage moved.
+  // (safe to repeat). `kept` counts the log's lines kept (a restore is a line too: not the photos left rejected), `dropped` the
+  // lines left out. `avatar.changed` follows when the usage moved.
   // NOT_FOUND for an unknown avatar; INTERNAL (detail names no path) when the file could not be copied or written (it is then
   // as it was).
   defineCommand(

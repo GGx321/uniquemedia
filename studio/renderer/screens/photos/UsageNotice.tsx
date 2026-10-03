@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { countOf, NBSP } from "../../lib/format";
+import { countOf } from "../../lib/format";
 import { USAGE_UNKNOWN_REASONS_RU, type AvatarSummary, type EngineError } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { Spin } from "../../ui/Icon";
@@ -14,8 +14,6 @@ import { usageActions, type UsageAction } from "./videosModel";
 // The avatar's summary (and so this notice) follows the `avatar.changed` the engine sends once the usage is trusted again.
 
 const RECORD_FORMS = ["запись", "записи", "записей"] as const;
-const MARK_FORMS = ["отметка", "отметки", "отметок"] as const;
-const LINE_FORMS = ["строка", "строки", "строк"] as const;
 
 type Outcome = { tone: "ok" | "info"; text: string };
 
@@ -48,7 +46,8 @@ export function UsageNotice({ avatar }: { avatar: AvatarSummary }) {
         ? reply.error
         : !reply.result.rebuilt
           ? { tone: "info", text: "Журнал отметок цел: восстанавливать нечего." }
-          : { tone: "ok", text: `Отметки восстановлены: ${countOf(reply.result.kept, MARK_FORMS)} на месте, ${countOf(reply.result.dropped, LINE_FORMS)} не${NBSP}читались и убраны. Копия журнала — в карантине библиотеки.` };
+          : // `kept` and `dropped` count the log's lines (a restore is a line too), not the marks they leave: the text says lines.
+            { tone: "ok", text: `Журнал отметок восстановлен. Строк журнала сохранено: ${reply.result.kept}, убрано нечитаемых: ${reply.result.dropped}. Копия прежнего журнала — в карантине библиотеки.` };
     }
     if (!mounted.current) return;
     setRunning(null);

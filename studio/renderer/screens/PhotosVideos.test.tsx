@@ -113,7 +113,8 @@ describe("usage unknown (K16)", () => {
 
     expect(callsOf(h.engine, "photos.rebuildRejected").map((c) => c.payload)).toEqual([{ avatarId: MIA.avatarId }]);
     await waitFor(() => expect(screen.queryByText("Использование фото неизвестно") === null).toBe(true));
-    expect(screen.getByText(/Отметки восстановлены: 1\sотметка на месте/)).toBeDefined();
+    // The answer counts lines of the log, not marks: the text says lines.
+    expect(screen.getByText("Журнал отметок восстановлен. Строк журнала сохранено: 1, убрано нечитаемых: 1. Копия прежнего журнала — в карантине библиотеки.")).toBeDefined();
   });
 
   test("while the marks cannot be read, no tile can be rejected or restored: the button says why", async () => {
