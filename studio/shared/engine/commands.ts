@@ -5,6 +5,7 @@ import { EngineError } from "./errors";
 import { EventMessage } from "./events";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
+import { MediaPickImportPayload, MediaPickResult } from "./media";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
   ApiKeyStatus,
@@ -203,6 +204,10 @@ const MAIN_ONLY_SPECS = [
   // engine over the control channel (control.ts's `import.stagePhoto`),
   // never through this command.
   defineCommand("avatars.pickImportPhoto", Empty, ImportPhotoPicked),
+  // Stage 3 (3f.1, K29, invariant 34): own media come in through main only. The payload is the KIND and nothing else (a `path` is
+  // refused by the strict schema); main opens its own dialog with per-kind filters, checks each picked file, and hands the engine the
+  // path over the control channel (control.ts's `media.import`). The answer carries job ids and refused NAMES, never a path.
+  defineCommand("media.pickImport", MediaPickImportPayload, MediaPickResult),
   // Stage 3 (3e): «Показать в папке». Only main can open the system file manager (`shell.showItemInFolder`),
   // and only for a video whose file is `present`; the engine has no such command.
   defineCommand("videos.reveal", z.strictObject({ videoId: Id }), z.strictObject({ videoId: Id })),

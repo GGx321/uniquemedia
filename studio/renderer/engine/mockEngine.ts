@@ -26,6 +26,7 @@ import {
   type LedgerUnavailable,
   MAX_LISTED_PHOTOS,
   MAX_LISTED_RUNS,
+  type MediaUnsupportedReason,
   type MoneyHalt,
   type MoneyStatus,
   MUSIC_QUOTA_LIMIT,
@@ -149,6 +150,16 @@ const MOCK_HOME = "/Users/studio";
 
 function displayPath(path: string): string {
   return path === MOCK_HOME || path.startsWith(`${MOCK_HOME}/`) ? `~${path.slice(MOCK_HOME.length)}` : path;
+}
+
+/**
+ * What main's own-media dialog answers in the mock (`pickMediaNext`): the files picked, each by DISPLAY NAME (the mock holds no path and
+ * answers none) with the verdict the boundary gives it. No importer exists yet (3f.2 to 3f.5), so every file is refused, a good one as
+ * `not-yet-supported`; accepted files, with their jobs, arrive with the importers.
+ */
+export interface MockMediaPick {
+  name: string;
+  reason: MediaUnsupportedReason;
 }
 
 /** What main's folder dialog answers in the mock (`pickExportFolderNext`). */
@@ -655,6 +666,8 @@ export class MockEngine implements EngineBridge {
   /** What main's folder dialog answers next: a pick, `null` for a cancel, `undefined` for an unscripted one. */
   private exportPick: MockExportPick | null | undefined = undefined;
   private unscriptedPicks = 0;
+  /** What main's own-media dialog answers next: the files picked, or `null` (and the default) for a cancel. */
+  private mediaPick: readonly MockMediaPick[] | null = null;
   private nextRenderFailure: { error: EngineError; at: "encode" | "saving" | "late" } | null = null;
   private music: MockMusic;
   private readonly textPreviews: MockTextPreviews;
@@ -1112,6 +1125,14 @@ export class MockEngine implements EngineBridge {
     this.exportPick = pick;
   }
 
+  /**
+   * What main's own-media dialog answers the next `media.pickImport`: the files picked (each by display name, with the boundary's verdict),
+   * or `null` for a cancel. Used once; with nothing scripted the dialog is cancelled.
+   */
+  pickMediaNext(pick: readonly MockMediaPick[] | null): void {
+    this.mediaPick = pick;
+  }
+
   private newExportRootId(): string {
     return `root-mock-${String(++this.exportRootsMade).padStart(4, "0")}`;
   }
@@ -1307,6 +1328,12 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, this.settings);
       case "settings.setExportPath":
         return this.setExportPath(c);
+      case "media.pickImport": {
+        const pick = this.mediaPick;
+        this.mediaPick = null;
+        if (pick === null || pick.length === 0) return this.ok(c, { picked: false });
+        return this.ok(c, { picked: true, jobIds: [], refused: pick.map((file) => ({ name: file.name, reason: file.reason })) });
+      }
       case "settings.exportDisplay":
         return this.ok(c, { display: displayPath(this.settings.exportPath) });
       case "export.check": {
