@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU } from "../../shared/engine";
 import { freePhotos, PHOTO_IDS } from "../engine/mockEngine.testkit";
-import { callsOf, flush, runAll } from "../testing";
+import { callsOf, flush, runAll, tick } from "../testing";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, SOFIA, studio } from "./montage/screenKit";
 
 // 3d.2: the drafts screen (EditorEmpty.dc.html), where the sidebar's «Монтаж» leads.
 
+const runOne = (scheduler: Parameters<typeof tick>[0]): void => tick(scheduler);
 const cards = (): HTMLElement[] => screen.queryAllByRole("article");
 const card = (name: string): HTMLElement => {
   const found = cards().find((c) => within(c).queryByRole("heading", { level: 3, name }) !== null);
@@ -108,6 +109,35 @@ describe("what a card says about its render", () => {
     await flush();
     await screen.findByText(`✓ уже 1 видео из этого черновика`);
     expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  // 3d.6: the card reads the render as the editor and the sidebar do (the job model): the floor percent of frames, and the
+  // saving phase is not «100 %».
+  test("the card's percent is the job model's, and the saving phase says «Сохранение…» instead of a percent", async () => {
+    const { client, scheduler } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [PHOTO_IDS[0] ?? ""]);
+    await openDrafts();
+    await asAnotherWindow(() => client.request("videos.render", { montageId: made.montageId }));
+    const bar = await screen.findByRole("progressbar", { name: "Рендер: Mia · без названия" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("0");
+
+    let sawPercent = false;
+    let sawSaving = false;
+    for (let i = 0; i < 40 && !sawSaving; i++) {
+      runOne(scheduler);
+      await flush();
+      const article = card("Mia · без названия");
+      sawSaving = within(article).queryByText("Сохранение…") !== null;
+      const now = within(article).queryByRole("progressbar")?.getAttribute("aria-valuenow");
+      if (now !== undefined && now !== null && Number(now) > 0 && !sawSaving) {
+        sawPercent = true;
+        expect(within(article).getByText(new RegExp(`^${now}\\s%$`))).toBeDefined();
+        expect(Number(now)).toBeLessThan(100);
+      }
+      if (sawSaving) expect(within(article).queryByText(/\d\s%/)).toBeNull();
+    }
+    expect(sawPercent).toBe(true);
+    expect(sawSaving).toBe(true);
   });
 });
 

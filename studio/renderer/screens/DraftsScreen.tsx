@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { AvatarSummary, EngineError, MontageListItem, PhotoSummary } from "../../shared/engine";
 import type { EngineClient } from "../engine/client";
 import { useEngine, useEngineView } from "../engine/react";
+import { latestRenderOf, percentOf, renderPhase } from "../engine/renderJobs";
 import { isActiveJob, type JobView } from "../engine/store";
 import { countOf, NBSP, plural } from "../lib/format";
 import { useNavigate } from "../navigation";
@@ -45,7 +46,8 @@ async function loadDrafts(client: EngineClient): Promise<{ ok: true; list: Draft
 
 /** The render of this draft still queued or running, the newest if several. */
 function activeRenderOf(jobs: readonly JobView[], montageId: string): JobView | null {
-  return jobs.filter((j) => j.kind === "render" && j.montageId === montageId && isActiveJob(j)).at(-1) ?? null;
+  const latest = latestRenderOf(jobs, montageId);
+  return latest !== null && isActiveJob(latest) ? latest : null;
 }
 
 /**
@@ -78,7 +80,8 @@ function DraftCard({ item, avatar, photos, job, now }: { item: MontageListItem; 
   const title = draftTitle(avatar?.name ?? null, montage.name);
   const note = cardNote(item, photos);
   const first = montage.spec.clips[0];
-  const percent = job !== null && job.total > 0 ? Math.floor((job.done / job.total) * 100) : 0;
+  const phase = job === null ? null : renderPhase(job);
+  const percent = job === null ? 0 : percentOf(job.done, job.total);
 
   async function remove(): Promise<void> {
     setDeleting(true);
@@ -122,8 +125,8 @@ function DraftCard({ item, avatar, photos, job, now }: { item: MontageListItem; 
         {job !== null && (
           <div className="draft-render">
             <div className="draft-render-row">
-              <span>{job.status === "queued" ? "В очереди" : "Рендер"}</span>
-              {job.status === "running" && <span className="mono">{percent}{NBSP}%</span>}
+              <span>{phase === "queued" ? "В очереди" : phase === "saving" ? "Сохранение…" : "Рендер"}</span>
+              {phase === "rendering" && <span className="mono">{percent}{NBSP}%</span>}
             </div>
             <div className="bar" role="progressbar" aria-label={`Рендер: ${title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
               <span style={{ width: `${percent}%` }} />
