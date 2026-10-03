@@ -396,6 +396,20 @@ describe("a track is stored only after the walker and the decode", () => {
     expect((await readRecord()).tracks[0]?.audio).toEqual({ state: "failed", reason: "decode:exit" });
   });
 
+  test.each(["extra-stream", "dump-too-large", "bad-dump"] as const)("a file the stream check refuses (%s) is a bad file, not a CDN refusal: recorded as failed, the breaker does not trip, the rest go on", async (kind) => {
+    const h = await harness({
+      decode: async (options) => {
+        if (options.path.includes(listTracks(4)[1]?.trackId ?? "")) throw new DecodeError(kind, "scripted");
+        return fastDecode(options);
+      },
+    });
+    const tracks = listTracks(4);
+    serveAll(h.cdn, tracks);
+    await refresh(h, tracks);
+    const audio = (await readRecord()).tracks.map((t) => (t.audio.state === "failed" ? t.audio.reason : t.audio.state));
+    expect(audio).toEqual(["stored", `decode:${kind}`, "stored", "stored"]);
+  });
+
   test("audio of the wrong length is refused by the real decode", async () => {
     const h = await harness();
     const [track] = listTracks(1) as [MusicTrack];

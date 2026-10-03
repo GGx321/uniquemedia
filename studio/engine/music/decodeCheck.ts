@@ -28,7 +28,7 @@ export const DECODE_TIMEOUT_MS = 30_000;
 /** One allocation may take at most this much: 64 MiB is far above what a real track needs and far below a container bomb. */
 const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
 
-export type DecodeFailureKind = "spawn" | "exit" | "timeout" | "aborted" | "too-long" | "no-audio" | "duration-mismatch" | "extra-stream";
+export type DecodeFailureKind = "spawn" | "exit" | "timeout" | "aborted" | "too-long" | "no-audio" | "duration-mismatch" | "extra-stream" | "dump-too-large" | "bad-dump";
 
 /** A decode that did not prove the file is audio of the claimed length. `message` names the kind, never a path or ffmpeg's own text. */
 export class DecodeError extends Error {
@@ -186,22 +186,32 @@ function decodeNow(options: DecodeOptions): Promise<DecodeResult> {
 // passes only if ffmpeg lists exactly ONE stream and that stream is audio. An attached picture is a video stream to ffmpeg,
 // and a subtitle, data or attachment stream is a refusal like any other. Studio has no ffprobe, so the streams are read
 // from the `Stream #0:N: <Kind>:` lines of ffmpeg's input dump (run with no output, which ends in an error that is ignored).
+//
+// The dump is TEXT THE FILE PARTLY WRITES: ffmpeg prints a handler name or a metadata key as it finds it, newlines and all.
+// So the check does not trust it as a plain list. A dump longer than the cap is refused (`dump-too-large`), never parsed as
+// if it were whole, because a file can push a real second stream past the cap; and the stream numbers must be exactly
+// 0..n-1 in order (`bad-dump`), because a key can print a stream line of its own. A real file's dump is about 0.5 KiB.
 // The walker (`mp4aProbe.ts`) stays in front as a pre-filter; this is what the guarantee rests on.
 
 /** The most of ffmpeg's input dump that is read: a few KiB for a real file, and a bound for a hostile one. */
 const MAX_DUMP_BYTES = 256 * 1024;
 const INSPECT_TIMEOUT_MS = 15_000;
 // `Stream #0:1[0x2](und): Audio: ...`: an index, an optional hex id and language in either order, then the kind and a colon.
-const STREAM_LINE = /^\s*Stream #0:\d+(?:\[[^\]\n]*\]|\([^)\n]*\))*:\s*([A-Za-z]+):/;
+const STREAM_LINE = /^\s*Stream #0:(\d+)(?:\[[^\]\n]*\]|\([^)\n]*\))*:\s*([A-Za-z]+):/;
+
+/** The index and kind of each stream line in ffmpeg's input dump, in the order printed. */
+export function streamsOf(dump: string): { index: number; kind: string }[] {
+  const streams: { index: number; kind: string }[] = [];
+  for (const line of dump.split("\n")) {
+    const match = STREAM_LINE.exec(line);
+    if (match?.[1] !== undefined && match[2] !== undefined) streams.push({ index: Number(match[1]), kind: match[2] });
+  }
+  return streams;
+}
 
 /** The kind of each stream in ffmpeg's input dump (`Audio`, `Video`, `Subtitle`, `Data`, `Attachment`, ...), in order. */
 export function streamTypesOf(dump: string): string[] {
-  const kinds: string[] = [];
-  for (const line of dump.split("\n")) {
-    const match = STREAM_LINE.exec(line);
-    if (match?.[1] !== undefined) kinds.push(match[1]);
-  }
-  return kinds;
+  return streamsOf(dump).map((stream) => stream.kind);
 }
 
 export interface InspectOptions {
@@ -241,10 +251,17 @@ export function inspectStreams(options: InspectOptions): Promise<string[]> {
     let dump = "";
     let read = 0;
     child.stderr?.on("data", (chunk: Uint8Array) => {
-      // Only the head is kept: the stream lines come right after the input header, before anything long.
-      if (read >= MAX_DUMP_BYTES) return;
-      read += chunk.byteLength;
-      dump += Buffer.from(chunk).toString("latin1");
+      if (read >= MAX_DUMP_BYTES) {
+        // Anything past the cap is a dump this check has not seen. ffmpeg prints a file's own strings into it (a handler name,
+        // a metadata key), so a file can make it as long as it likes and put a stream line out of reach: a dump that does
+        // not fit is refused, never read as if it were whole. The child is stopped, since nothing more is wanted of it.
+        stop(new DecodeError("dump-too-large", `ffmpeg's description of the file is longer than ${MAX_DUMP_BYTES} bytes`));
+        return;
+      }
+      const room = MAX_DUMP_BYTES - read;
+      read += Math.min(chunk.byteLength, room);
+      dump += Buffer.from(chunk.subarray(0, room)).toString("latin1");
+      if (chunk.byteLength > room) stop(new DecodeError("dump-too-large", `ffmpeg's description of the file is longer than ${MAX_DUMP_BYTES} bytes`));
     });
     child.stdout?.on("data", () => undefined);
     child.on("error", () => stop(new DecodeError("spawn", "ffmpeg could not be run")));
@@ -253,7 +270,13 @@ export function inspectStreams(options: InspectOptions): Promise<string[]> {
       options.signal.removeEventListener("abort", onAbort);
       if (failure !== null) return reject(failure);
       // ffmpeg ends with an error (no output file was given), so its exit code says nothing: the dump does.
-      resolve(streamTypesOf(dump));
+      const streams = streamsOf(dump);
+      // The streams ffmpeg lists are numbered 0..n-1 in order, once each. Anything else (a stream missing, a number twice, a
+      // line a metadata key printed on its own) means the dump is not a plain list of the file's streams.
+      if (streams.some((stream, position) => stream.index !== position)) {
+        return reject(new DecodeError("bad-dump", "ffmpeg's stream numbers are not 0 to n-1 in order"));
+      }
+      resolve(streams.map((stream) => stream.kind));
     });
   });
 }

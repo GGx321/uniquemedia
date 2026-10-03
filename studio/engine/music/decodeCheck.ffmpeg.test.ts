@@ -492,6 +492,153 @@ describe("how the streams are asked for", () => {
       });
       return child;
     };
+    // Round 6: a cut dump is NOT a complete one. What lies past the cap is unknown, so the file is refused.
+    await expect(inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).rejects.toMatchObject({ kind: "dump-too-large" });
+  });
+
+  test("a dump of exactly the cap is read whole", async () => {
+    const line = "  Stream #0:0: Audio: aac\n";
+    const spawner: FfmpegSpawner = () => {
+      const child = new EventEmitter() as EventEmitter & FfmpegChild & { exitCode: number | null; stdout: PassThrough; stderr: PassThrough };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.exitCode = null;
+      child.kill = () => true;
+      queueMicrotask(() => {
+        child.stderr.write(line);
+        child.stderr.write("y".repeat(256 * 1024 - line.length));
+        child.exitCode = 1;
+        child.emit("close", 1, null);
+      });
+      return child;
+    };
     expect(await inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).toEqual(["Audio"]);
+  });
+
+  test.each([
+    ["a stream numbered 1 with no stream 0", ["  Stream #0:1: Audio: aac"]],
+    ["streams numbered 0 and 2", ["  Stream #0:0: Audio: aac", "  Stream #0:2: Video: mjpeg"]],
+    ["a stream 0 listed twice", ["  Stream #0:0: Audio: aac", "  Stream #0:0: Audio: aac"]],
+    ["indices out of order", ["  Stream #0:1: Audio: aac", "  Stream #0:0: Audio: aac"]],
+  ])("a dump whose indices are not exactly 0..n-1 in order is refused as bad-dump: %s", async (_label, lines) => {
+    const spawner: FfmpegSpawner = () => {
+      const child = new EventEmitter() as EventEmitter & FfmpegChild & { exitCode: number | null; stdout: PassThrough; stderr: PassThrough };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.exitCode = null;
+      child.kill = () => true;
+      queueMicrotask(() => {
+        child.stderr.write(`${lines.join("\n")}\n`);
+        child.exitCode = 1;
+        child.emit("close", 1, null);
+      });
+      return child;
+    };
+    await expect(inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).rejects.toMatchObject({ kind: "bad-dump" });
+  });
+
+  test("consecutive indices from 0 are fine", async () => {
+    const spawner: FfmpegSpawner = () => {
+      const child = new EventEmitter() as EventEmitter & FfmpegChild & { exitCode: number | null; stdout: PassThrough; stderr: PassThrough };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.exitCode = null;
+      child.kill = () => true;
+      queueMicrotask(() => {
+        child.stderr.write("  Stream #0:0: Audio: aac\n  Stream #0:1: Video: mjpeg\n");
+        child.exitCode = 1;
+        child.emit("close", 1, null);
+      });
+      return child;
+    };
+    expect(await inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).toEqual(["Audio", "Video"]);
+  });
+});
+
+// Round 6: the stream lines are read from ffmpeg's text, and ffmpeg prints a file's own strings into it. A file that makes the
+// dump long hides a second stream past the cap, and a metadata key with a newline in it can print a stream line of its own.
+// Both are the file writing the checker's input, so a dump that hit the cap, or whose indices do not add up, is a refusal.
+describe("a file that writes ffmpeg's dump", () => {
+  function childrenOf(b: Uint8Array, start: number, end: number): { type: string; at: number; end: number }[] {
+    const view = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const out: { type: string; at: number; end: number }[] = [];
+    for (let at = start; at + 8 <= end; ) {
+      const size = view.getUint32(at);
+      if (size < 8) break;
+      out.push({ type: String.fromCharCode(...b.subarray(at + 4, at + 8)), at, end: at + size });
+      at += size;
+    }
+    return out;
+  }
+
+  /** Replaces the box at `path` (types from the top) with `replacement`, growing every box above it. */
+  function replaceIn(b: Uint8Array, path: string[], replacement: Uint8Array): Uint8Array {
+    const chain: { type: string; at: number; end: number }[] = [];
+    let parent = { at: -8, end: b.byteLength };
+    for (const name of path) {
+      const found = childrenOf(b, parent.at + 8, parent.end).find((c) => c.type === name);
+      if (found === undefined) throw new Error(`no ${name}`);
+      chain.push(found);
+      parent = found;
+    }
+    const target = chain.at(-1);
+    if (target === undefined) throw new Error("empty path");
+    const grow = replacement.byteLength - (target.end - target.at);
+    const out = concat(b.subarray(0, target.at), replacement, b.subarray(target.end));
+    const view = new DataView(out.buffer);
+    for (const box of chain.slice(0, -1)) view.setUint32(box.at, new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(box.at) + grow);
+    return out;
+  }
+
+  const hot = async (): Promise<Uint8Array> => new Uint8Array(await readFile(musicTracks.hot.file));
+  const lines = (count: number, width: number): string => Array.from({ length: count }, (_, i) => `p${String(i).padStart(6, "0")}-${"y".repeat(width)}`).join("\n");
+
+  test("x1: a real attached picture pushed past the cap by a huge handler_name is refused, not parsed as if the dump were whole", async () => {
+    const withPicture = appendIntoMoov(await hot(), mdtaArtwork());
+    const name = new TextEncoder().encode(lines(1800, 230));
+    const hdlr = fullBox("hdlr", 0, concat(u32(0), new TextEncoder().encode("soun"), new Uint8Array(12), name, Uint8Array.of(0)));
+    const bytes = replaceIn(withPicture, ["moov", "trak", "mdia", "hdlr"], hdlr);
+    expect(name.byteLength).toBeGreaterThan(256 * 1024);
+    const path = await tempFile(bytes);
+    // The walker alone sees nothing wrong with it, and decodeAudio is called directly so only the ffmpeg layer is in play.
+    await expect(inspectStreams({ path, signal: signal() })).rejects.toMatchObject({ kind: "dump-too-large" });
+    expect((await failureOf(decodeAudio({ path, expectedMs: musicTracks.hot.durationMs, signal: signal() }))).kind).toBe("dump-too-large");
+  });
+
+  test("x2: a metadata key that prints a fake `Stream #0:0: Audio` line, with global padding past the cap, is refused", async () => {
+    const jpeg = JPEG;
+    const keyEntry = (n: Uint8Array): Uint8Array => concat(u32(8 + n.length), new TextEncoder().encode("mdta"), n);
+    const keys = fullBox("keys", 0, concat(u32(2), keyEntry(new TextEncoder().encode("com.apple.quicktime.artwork")), keyEntry(new TextEncoder().encode("z\nStream #0:0: Audio: injected"))));
+    const hdlr = fullBox("hdlr", 0, concat(u32(0), new TextEncoder().encode("mdta"), u32(0), u32(0), u32(0), Uint8Array.of(0)));
+    const art = concat(u32(8 + 16 + jpeg.length), u32(1), box("data", concat(u32(13), u32(0), jpeg)));
+    const text = (value: string): Uint8Array => {
+      const t = new TextEncoder().encode(value);
+      return concat(u32(8 + 16 + t.length), u32(2), box("data", concat(u32(1), u32(0), t)));
+    };
+    const meta = fullBox("meta", 0, concat(hdlr, keys, box("ilst", concat(text(lines(1800, 200)), art))));
+    const path = await tempFile(appendIntoMoov(await hot(), box("udta", meta)));
+    await expect(inspectStreams({ path, signal: signal() })).rejects.toMatchObject({ kind: "dump-too-large" });
+    expect((await failureOf(decodeAudio({ path, expectedMs: musicTracks.hot.durationMs, signal: signal() }))).kind).toBe("dump-too-large");
+  });
+
+  test("x3: the same fake line with no padding only ADDS a stream, so it is refused as a second one", async () => {
+    const keyEntry = (n: Uint8Array): Uint8Array => concat(u32(8 + n.length), new TextEncoder().encode("mdta"), n);
+    const keys = fullBox("keys", 0, concat(u32(2), keyEntry(new TextEncoder().encode("com.apple.quicktime.artwork")), keyEntry(new TextEncoder().encode("z\nStream #0:0: Audio: injected"))));
+    const hdlr = fullBox("hdlr", 0, concat(u32(0), new TextEncoder().encode("mdta"), u32(0), u32(0), u32(0), Uint8Array.of(0)));
+    const art = concat(u32(8 + 16 + JPEG.length), u32(1), box("data", concat(u32(13), u32(0), JPEG)));
+    const short = new TextEncoder().encode("short");
+    const item = concat(u32(8 + 16 + short.length), u32(2), box("data", concat(u32(1), u32(0), short)));
+    const meta = fullBox("meta", 0, concat(hdlr, keys, box("ilst", concat(item, art))));
+    const path = await tempFile(appendIntoMoov(await hot(), box("udta", meta)));
+    const kind = (await failureOf(decodeAudio({ path, expectedMs: musicTracks.hot.durationMs, signal: signal() }))).kind;
+    expect(["extra-stream", "bad-dump"]).toContain(kind);
+  });
+
+  test("the real files' dumps are far below the cap", async () => {
+    for (const fixture of Object.values(musicTracks)) {
+      const path = await tempFile(new Uint8Array(await readFile(fixture.file)));
+      const made = spawnSync(ffmpegPath(), ["-nostdin", "-hide_banner", "-f", "mov", "-i", path]);
+      expect(made.stderr.byteLength).toBeLessThan(8 * 1024);
+    }
   });
 });
