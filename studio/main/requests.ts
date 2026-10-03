@@ -11,6 +11,7 @@ import { isExportFolderCommand, type ExportFolderCommand } from "./exportFolderF
 import { fileUrlToPathOn } from "./fileUrl";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
+import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
 import { isRevealCommand, isRevealFolderCommand, type RevealCommand, type RevealFolderCommand } from "./revealFlow";
 import { isSettingsCommand, type SettingsCommand } from "./settingsFlow";
@@ -100,6 +101,11 @@ export interface RequestRoutes {
   reveal(command: RevealCommand): Promise<ResponseMessage>;
   /** 3e.2 (K17): «Папка «Готовые видео»». Main finds the avatar's folder in the export folder itself and opens it. */
   revealFolder(command: RevealFolderCommand): Promise<ResponseMessage>;
+  /**
+   * 3f.1 (invariant 34, K29): `media.pickImport {kind}`. Main opens its own dialog, looks at each picked file and hands the engine the path
+   * over the control channel; the window sends a kind and is never told a path.
+   */
+  mediaImport(command: MediaPickCommand): Promise<ResponseMessage>;
   /** Everything else, forwarded to the engine. */
   engine(command: EngineCommandMessage): Promise<ResponseMessage>;
 }
@@ -114,6 +120,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
     if (message.type === "settings.setApiKey" || message.type === "settings.clearApiKey") return routes.mainOnly(message);
     if (message.type === "settings.setMusicKey" || message.type === "settings.clearMusicKey") return routes.musicKey(message);
     if (message.type === "avatars.pickImportPhoto") return routes.importPhoto(message);
+    if (message.type === "media.pickImport") return routes.mediaImport(message);
     if (isExportFolderCommand(message)) return routes.exportFolder(message);
     if (isRevealCommand(message)) return routes.reveal(message);
     if (isRevealFolderCommand(message)) return routes.revealFolder(message);

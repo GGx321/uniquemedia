@@ -113,6 +113,9 @@ async function harness() {
         revealFolder: async () => {
           throw new Error("not used");
         },
+        mediaImport: async () => {
+          throw new Error("not used");
+        },
         engine: (c) => {
           if (engine === null) throw new Error("the engine is not started");
           return engine.handle(c);

@@ -9,7 +9,7 @@ import {
   type EngineError,
 } from "../shared/engine";
 import { randomUUID } from "node:crypto";
-import { COMMAND_DEADLINE_MS, EngineReply, type EngineInit, type HostCall, type HostControl } from "../engine/control";
+import { COMMAND_DEADLINE_MS, EngineReply, MEDIA_IMPORT_DEADLINE_MS, type EngineInit, type HostCall, type HostControl } from "../engine/control";
 
 /** An unexpected exit is followed by one restart, after this delay; a second one is final. */
 export const RESTART_DELAY_MS = 1000;
@@ -106,6 +106,9 @@ export interface CallResult {
   stage?: EngineReply["stage"];
   /** Set only by `export.choose`'s own successful reply: the folder's identity and how many records resolve in it or stay elsewhere. */
   exportFolder?: EngineReply["exportFolder"];
+  /** Set only by `media.import`: the job its importer started, or (with `error`) why the file was turned away. */
+  mediaJobId?: EngineReply["mediaJobId"];
+  mediaReason?: EngineReply["mediaReason"];
 }
 
 interface PendingCall {
@@ -255,6 +258,16 @@ export class EngineHost<Transfer> {
   chooseExport(path: string): Promise<CallResult> {
     const callId = (this.#deps.newId ?? randomUUID)();
     return this.#call(callId, { kind: "control", type: "export.choose", callId, path });
+  }
+
+  /**
+   * 3f.1 (invariant 34): puts a file the owner picked in main's dialog to the engine, with the identity main's look saw. The engine stages
+   * a copy and hands it to the kind's importer: `mediaJobId` on success, `error` with `mediaReason` for a file turned away. Waits up to
+   * `MEDIA_IMPORT_DEADLINE_MS`, since the call answers when the copy is done.
+   */
+  importMedia(file: Pick<Extract<HostCall, { type: "media.import" }>, "pick" | "path" | "name" | "expected">): Promise<CallResult> {
+    const callId = (this.#deps.newId ?? randomUUID)();
+    return this.#call(callId, { kind: "control", type: "media.import", callId, ...file }, MEDIA_IMPORT_DEADLINE_MS);
   }
 
   #call(callId: string, call: HostCall, boundMs?: number): Promise<CallResult> {
@@ -417,7 +430,7 @@ export class EngineHost<Transfer> {
     if (kind === "control") {
       const reply = EngineReply.safeParse(data);
       const entry = reply.success ? this.#calls.get(reply.data.callId) : undefined;
-      if (reply.success && entry !== undefined) this.#settleCall(entry, { error: reply.data.error ?? null, stage: reply.data.stage, exportFolder: reply.data.exportFolder });
+      if (reply.success && entry !== undefined) this.#settleCall(entry, { error: reply.data.error ?? null, stage: reply.data.stage, exportFolder: reply.data.exportFolder, mediaJobId: reply.data.mediaJobId, mediaReason: reply.data.mediaReason });
       else console.warn("studio: dropped an engine reply no call is waiting for");
       return;
     }

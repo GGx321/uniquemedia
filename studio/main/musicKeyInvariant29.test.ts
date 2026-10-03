@@ -115,6 +115,9 @@ async function wired() {
     revealFolder: async () => {
       throw new Error("not used");
     },
+    mediaImport: async () => {
+      throw new Error("not used");
+    },
     engine: (c) => engine.handle(c),
   };
   const ask = async (type: string, payload: unknown = {}) => {

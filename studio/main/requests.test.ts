@@ -3,6 +3,7 @@ import { ResponseMessage, type EngineCommandMessage } from "../shared/engine";
 import type { ExportFolderCommand } from "./exportFolderFlow";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
+import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
 import type { RevealCommand, RevealFolderCommand } from "./revealFlow";
 import type { SettingsCommand } from "./settingsFlow";
@@ -32,6 +33,7 @@ function routesSpy() {
   const exportFolder: ExportFolderCommand[] = [];
   const reveal: RevealCommand[] = [];
   const revealFolder: RevealFolderCommand[] = [];
+  const mediaImport: MediaPickCommand[] = [];
   const engine: EngineCommandMessage[] = [];
   const routes: RequestRoutes = {
     mainOnly: async (command) => {
@@ -62,12 +64,16 @@ function routesSpy() {
       revealFolder.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { opened: "avatar" } };
     },
+    mediaImport: async (command) => {
+      mediaImport.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
+    },
     engine: async (command) => {
       engine.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, mediaImport, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -420,6 +426,9 @@ describe("handleRendererRequest", () => {
       revealFolder: async () => {
         throw new Error("unreachable");
       },
+      mediaImport: async () => {
+        throw new Error("unreachable");
+      },
       engine: async () => {
         throw new Error("unreachable");
       },
@@ -427,5 +436,69 @@ describe("handleRendererRequest", () => {
     const response = await handleRendererRequest(command("settings.setApiKey", { key: KEY }), APP_FRAME, PACKAGED, routes);
     expect(response).toMatchObject({ ok: false, id: "cmd-00000001", error: { code: "INTERNAL", detail: "main failed to handle the command" } });
     expect(JSON.stringify(response)).not.toContain(KEY);
+  });
+});
+
+// 3f.1 (invariant 34): own media come in through main only, and the window names a kind and nothing else.
+describe("media.pickImport routing", () => {
+  test("is main's alone: it reaches the media route and is never forwarded to the engine", async () => {
+    const { routes, mediaImport, importPhoto, exportFolder, engine } = routesSpy();
+    const response = await handleRendererRequest(command("media.pickImport", { kind: "video" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: true, type: "media.pickImport", result: { picked: false } });
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(mediaImport.map((c) => c.payload)).toEqual([{ kind: "video" }]);
+    expect([importPhoto, exportFolder, engine]).toEqual([[], [], []]);
+  });
+
+  test("carrying a path is refused by the contract before any route runs", async () => {
+    const { routes, mediaImport, engine } = routesSpy();
+    for (const extra of [{ path: "/etc/passwd" }, { filePath: "C:\\a.jpg" }, { paths: ["/a"] }, { bytes: [1] }]) {
+      const response = await handleRendererRequest(command("media.pickImport", { kind: "photo", ...extra }), APP_FRAME, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect([mediaImport, engine]).toEqual([[], []]);
+  });
+
+  test("with no kind, an unknown kind or a bare string payload is refused before any route runs", async () => {
+    const { routes, mediaImport, engine } = routesSpy();
+    for (const payload of [{}, { kind: "document" }, "/etc/passwd", null]) {
+      const response = await handleRendererRequest(command("media.pickImport", payload), APP_FRAME, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect([mediaImport, engine]).toEqual([[], []]);
+  });
+
+  test("from a sender that is not the app's own top frame is refused before any route runs", async () => {
+    const { routes, mediaImport, engine } = routesSpy();
+    const frames: SenderFrame[] = [
+      { url: "https://example.com/", isTopFrame: true, isAppWindow: true },
+      { url: FILE_URL, isTopFrame: false, isAppWindow: true },
+      { url: FILE_URL, isTopFrame: true, isAppWindow: false },
+      { url: null, isTopFrame: true, isAppWindow: true },
+    ];
+    for (const frame of frames) {
+      const response = await handleRendererRequest(command("media.pickImport", { kind: "photo" }), frame, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect([mediaImport, engine]).toEqual([[], []]);
+  });
+
+  test("a route that throws becomes INTERNAL without the error's text, which may hold a path", async () => {
+    const { routes } = routesSpy();
+    const throwing: RequestRoutes = {
+      ...routes,
+      mediaImport: async () => {
+        throw new Error("could not open /Users/me/secret/holiday.jpg");
+      },
+    };
+    const output = captureConsole();
+    try {
+      const response = await handleRendererRequest(command("media.pickImport", { kind: "photo" }), APP_FRAME, PACKAGED, throwing);
+      expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+      expect(JSON.stringify(response).includes("/Users/me")).toBe(false);
+      expect(output.text().includes("/Users/me")).toBe(false);
+    } finally {
+      output.restore();
+    }
   });
 });

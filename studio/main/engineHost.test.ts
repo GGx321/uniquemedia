@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ENGINE_GONE_DETAIL, type AvatarTraits, type EngineCommandMessage, type EngineError, type EventMessage, type ResponseMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "../engine/avatars/descriptor";
-import { COMMAND_DEADLINE_MS, type EngineInit } from "../engine/control";
+import { COMMAND_DEADLINE_MS, MEDIA_IMPORT_DEADLINE_MS, type EngineInit } from "../engine/control";
 import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
 import { REFERENCE_TIMEOUT_MS } from "../engine/runs/timeouts";
 import { MAX_ATTEMPT_MS } from "../engine/openrouter/transport";
@@ -798,5 +798,59 @@ describe("calls to the engine (export.choose)", () => {
     await endBackoff();
     children[1]?.crash(1);
     expect(await host.chooseExport("/Volumes/Reels")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
+  });
+});
+
+// 3f.1: the file the owner picked in main's dialog is put to the engine, which stages a copy and hands it to the kind's importer.
+describe("calls to the engine (media.import)", () => {
+  const picked = { pick: "photo" as const, path: "/Users/me/summer.jpg", name: "summer.jpg", expected: { dev: "16777234", ino: "9876543210" } };
+
+  test("posts the path, the pick, the name and the identity with an id, and resolves with the job", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.importMedia(picked);
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    expect(call).toMatchObject({ kind: "control", type: "media.import", ...picked });
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, mediaJobId: "job-00000007" });
+
+    expect(await pending).toEqual({ error: null, mediaJobId: "job-00000007" });
+  });
+
+  test("a refusal passes on its error and its reason, with no job", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.importMedia(picked);
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, error: { code: "VALIDATION", detail: "not a photo" }, mediaReason: "format" });
+
+    expect(await pending).toEqual({ error: { code: "VALIDATION", detail: "not a photo" }, mediaReason: "format" });
+  });
+
+  test("a copy is not given up on at 30 s (a 2 GB video takes longer), but is after ten minutes", async () => {
+    const { host, timers } = setup();
+    await host.start();
+    const pending = host.importMedia(picked);
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await timers.advance(30_000);
+    await Bun.sleep(0);
+    expect(settled).toBe(false);
+    await timers.advance(MEDIA_IMPORT_DEADLINE_MS - 30_000);
+    expect(await pending).toEqual({ error: { code: "INTERNAL", detail: `the engine did not answer within ${MEDIA_IMPORT_DEADLINE_MS / 1000} s` } });
+  });
+
+  test("an engine that is gone answers INTERNAL", async () => {
+    const { host, children, endBackoff } = setup();
+    await host.start();
+    children[0]?.crash(1);
+    await endBackoff();
+    children[1]?.crash(1);
+    expect(await host.importMedia(picked)).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
   });
 });

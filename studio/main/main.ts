@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { EventMessage } from "../shared/engine";
+import type { EventMessage, MediaPickKind } from "../shared/engine";
 import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { installProcessGuards } from "../engine/processGuards";
@@ -29,6 +29,8 @@ import { handleRevealCommand, handleRevealFolderCommand } from "./revealFlow";
 import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
+import { MEDIA_DIALOG_FILTERS } from "./mediaFilters";
+import { handleMediaPickCommand } from "./mediaImportFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
 import { handleMusicKeyCommand, musicKeyStatusOf, openMusicKeyStore } from "./musicKeyFlow";
 import { createStickerLookup } from "./media/stickers";
@@ -222,6 +224,25 @@ async function pickImportFile(owner: BrowserWindow | null): Promise<string | nul
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
+/**
+ * The file main's own-media dialog answers with, for the smoke test, which cannot click a native dialog (3f.1). Read only by an E2E
+ * build: every other build has it compiled out and always shows the dialog.
+ */
+function pickedMediaForTests(): string[] | undefined {
+  if (!STUDIO_E2E) return undefined;
+  const path = app.commandLine.getSwitchValue("studio-pick-media");
+  return path === "" ? undefined : [path];
+}
+
+/** 3f.1: the owner's own open-file dialog for own media, with the kind's filters; several files. Never handed a path by the renderer. */
+async function pickMediaFiles(owner: BrowserWindow | null, kind: MediaPickKind): Promise<string[] | null> {
+  const forTests = pickedMediaForTests();
+  if (forTests !== undefined) return forTests;
+  const options: OpenDialogOptions = { properties: ["openFile", "multiSelections"], filters: MEDIA_DIALOG_FILTERS[kind].map((f) => ({ name: f.name, extensions: [...f.extensions] })) };
+  const result = owner === null ? await dialog.showOpenDialog(options) : await dialog.showOpenDialog(owner, options);
+  return result.canceled ? null : result.filePaths;
+}
+
 async function startStudio(): Promise<void> {
   const userData = app.getPath("userData");
   const { store: settings, notice } = await SettingsStore.open(userData);
@@ -351,6 +372,12 @@ async function startStudio(): Promise<void> {
         handleImportPhotoCommand(command, {
           pickImportFile: () => pickImportFile(BrowserWindow.fromWebContents(event.sender)),
           engine: { stageImportPhoto: (bytes) => engine.stageImportPhoto(bytes) },
+        }),
+      mediaImport: (command) =>
+        handleMediaPickCommand(command, {
+          pickFiles: (kind) => pickMediaFiles(BrowserWindow.fromWebContents(event.sender), kind),
+          engine: { importMedia: (file) => engine.importMedia(file) },
+          platform: process.platform,
         }),
       exportFolder: (command) =>
         handleExportFolderCommand(command, {
