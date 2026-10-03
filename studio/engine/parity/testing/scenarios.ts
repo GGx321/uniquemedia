@@ -781,6 +781,43 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    // The older scenario writes the other layer LAST, where nothing needs protecting. Here its picture is the OLDEST of all when the
+    // bound is crossed, and only being its layer's newest keeps it.
+    name: "text preview: a layer's newest picture is kept even when it is the oldest of all, and the older ones of the dragged layer go instead",
+    async run(t, w, control) {
+      const other = previewIdOf(await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ layerId: "layer-00000002", value: "other" }) }));
+      const ids: string[] = [];
+      await t.quiet(async () => {
+        for (let i = 0; i < 64; i++) ids.push(previewIdOf(await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ value: `a${i}` }) })));
+      });
+      t.note("65 pictures: the oldest is the other layer's, which is its newest, so the dragged layer's first one goes");
+      await served(t, control, other);
+      await served(t, control, ids[0] ?? "");
+      await served(t, control, ids[1] ?? "");
+      t.note("the dragged layer goes on: its own older ones go, the other layer's picture stays");
+      for (let i = 0; i < 3; i++) await t.quiet(async () => void (await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ value: `b${i}` }) })));
+      await served(t, control, other);
+      await served(t, control, ids[1] ?? "");
+      await served(t, control, ids[3] ?? "");
+      await served(t, control, ids[4] ?? "");
+    },
+  },
+  {
+    name: "text preview: past four times the bound a caller inventing layers loses the oldest picture, even a layer's newest",
+    async run(t, w, control) {
+      const ids: string[] = [];
+      await t.quiet(async () => {
+        for (let i = 0; i <= 256; i++) {
+          ids.push(previewIdOf(await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ layerId: `layer-${String(i).padStart(8, "0")}`, value: "x" }) })));
+        }
+      });
+      t.note("257 layers, one picture each: all of them are a layer's newest, and the bound is 256");
+      await served(t, control, ids[0] ?? "");
+      await served(t, control, ids[1] ?? "");
+      await served(t, control, ids[256] ?? "");
+    },
+  },
+  {
     name: "music list and peaks: with nothing stored the list is empty and no track is found, own or trending, and a payload that breaks the contract is VALIDATION",
     async run(t) {
       await t.call("music.list", {});
