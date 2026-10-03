@@ -10,6 +10,24 @@ export function photoUrl(avatarId: string, photoId: string): string | null {
   return `studio-media://photo/${avatarId}/${photoId}`;
 }
 
+/** A rendered video (3e.2, invariant 28): main resolves it through its record and serves only a file in the current export folder. */
+export function videoUrl(avatarId: string, videoId: string): string | null {
+  if (!Id.safeParse(avatarId).success || !Id.safeParse(videoId).success) return null;
+  return `studio-media://video/${avatarId}/${videoId}`;
+}
+
+/** A video's poster frame, kept with its record in the library (K14): served even for a `missing` file. */
+export function posterUrl(avatarId: string, videoId: string): string | null {
+  if (!Id.safeParse(avatarId).success || !Id.safeParse(videoId).success) return null;
+  return `studio-media://poster/${avatarId}/${videoId}`;
+}
+
+/** A trending track's cover (K13), from the music store. */
+export function coverUrl(trackId: string): string | null {
+  if (!Id.safeParse(trackId).success) return null;
+  return `studio-media://cover/${trackId}`;
+}
+
 /**
  * The address of a text preview the engine drew (3d.1b): main serves it as `studio-media://text/<previewId>`; the dev mock
  * has no such protocol and hands its own (a data URL). Null for an id that breaks the contract, or one the mock does not hold.

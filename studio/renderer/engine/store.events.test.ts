@@ -637,3 +637,39 @@ test("a queued render still queued is not a running one: a render announced queu
   ]);
   h.stop();
 });
+
+// 3e.2: the Photos «Видео» tab lists records on demand and re-reads on what the store applies, like the drafts' listeners.
+test("video.changed reaches the video listeners once each, in seq order, and stops at unsubscribe", async () => {
+  const h = await host();
+  const heard: string[] = [];
+  const stopListening = h.store.subscribeVideos((signal) => heard.push(signal.change === "upserted" ? `upserted:${signal.video.videoId}` : signal.change === "removed" ? `removed:${signal.videoId}` : signal.change));
+  await h.emit({ type: "video.changed", payload: { change: "upserted", video: RENDER_VIDEO } });
+  await h.emit({ type: "video.changed", payload: { change: "removed", videoId: RENDER_VIDEO.videoId, avatarId: RENDER_VIDEO.avatarId } });
+  stopListening();
+  await h.emit({ type: "video.changed", payload: { change: "upserted", video: RENDER_VIDEO } });
+
+  expect(heard).toEqual([`upserted:${RENDER_VIDEO.videoId}`, `removed:${RENDER_VIDEO.videoId}`]);
+  expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("a snapshot taken again tells the video listeners to re-read: video.changed events in the gap are not replayed", async () => {
+  const h = await host();
+  const heard: string[] = [];
+  h.store.subscribeVideos((signal) => heard.push(signal.change));
+  h.store.reload();
+  await flush();
+  expect(heard).toEqual(["resynced"]);
+  h.stop();
+});
+
+test("a video.changed after job.failed still reaches the listeners after the job is made done: the tab shows the late video", async () => {
+  const h = await host();
+  const order: string[] = [];
+  h.store.subscribeVideos(() => order.push(`listener:${h.store.getView().jobs[0]?.status ?? "none"}`));
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 239, total: 240, saving: true } });
+  await h.emit({ type: "job.failed", payload: { ...RENDER_REF, error: { code: "INTERNAL", detail: "the save was reported lost" } } });
+  await h.emit({ type: "video.changed", payload: { change: "upserted", video: RENDER_VIDEO } });
+  expect(order).toEqual(["listener:done"]);
+  h.stop();
+});
