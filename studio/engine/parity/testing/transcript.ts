@@ -47,6 +47,8 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "the mock keeps the drafts, the videos and the last 50 finished renders in memory: a restart keeps the first two and drops the renders, like the engine's; nothing else of the disk is modelled (no torn draft files, no stale used index, no record from a newer Studio, no closed library): those refusals are the engine's own unit tests' business",
   "text previews (3d.1b): the engine draws a caption with its rasteriser, the mock does not: its box is the engine's own layout over an arithmetic width (0.55 em a character, no font) and its picture a placeholder PNG of that box. So `width` and `height` are written as `<px>` after checking they are whole pixels inside the frame, and the picture's bytes are not compared (that they are a PNG of the answered box is the mock's own test). The mock draws every well-formed emoji; the engine refuses a cluster its font lacks (`emoji-missing`), so no story uses one it cannot draw. The time one drawing takes is not modelled by the suite: a rig's text lane is held and let go by the scenario",
   "music list and peaks (3d.1b): the real rig's store holds tracks it downloaded from a fake CDN, the mock's are seeded from the same fixture list; both answer through the track store's own highlight and waveform rules (studio/shared/music/trackShape.ts). The mock models no disk for a track: no torn envelope file, no track deleted under a live record (the engine's `peaks` is then NOT_FOUND while `list` still lists it, until a restart), no cover file: those are the store's own unit tests' business, and no story deletes the music folder after storing tracks. The cap of 100 listed tracks is not played: the real rig would have to download 101 tracks; it is pinned by the mock's own test and the track store's",
+  "a video's first clip (3e.2): the engine's record holds the RESOLVED spec (every focus filled, the stand-in point where no face was found), the mock's the draft's (null there); `videos.get` writes the clip as its kind, layout and photos, never its focus, and the older stories' lines leave out the title, the first clip and the track id (no older golden line changed)",
+  "usage (3e.2): the mock has no disk, so an avatar's broken records or marks are the usage it was seeded with (a renderer test's state) and a recovery clears its own reason; the engine moves or copies files. No story breaks a file: the suite plays the recoveries of a sound avatar, which change nothing on either. `photos.rebuildRejected`'s `kept` is the engine's count of readable log lines and the mock's of rejected photos: equal for a log of one mark per photo, which is what the story writes",
   "music (3c.6): the mock keeps its quota log and its list as numbers on its own clock, so the times a status carries (`listFetchedAt`, `nextFreeAt`) are written as set or null, a refresh's steps are not written, and a music error's detail (it names a time) is not compared: its code and its `musicReason` are. No story sends a flashapi request: the real rig's flashapi refuses every call",
 ];
 
@@ -128,6 +130,38 @@ function objectOf(value: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value));
 }
 
+/**
+ * A video summary in the shape the stories before 3e.2 were written in: the tile's title, its first clip and the track id (3e.2,
+ * K12, K13) are left out, so no older golden line changed. A story about them asks `videos.get` (`videoFactsLine`).
+ */
+function videoLine(video: unknown): Record<string, unknown> {
+  const { title: _title, firstClip: _firstClip, ...rest } = objectOf(video);
+  if (rest.music === null || rest.music === undefined) return rest;
+  const { trackId: _trackId, ...music } = objectOf(rest.music);
+  return { ...rest, music };
+}
+
+/**
+ * What 3e.2 added to a video summary, as both engines are bound to it: the title, the track id, and the first clip as its kind,
+ * layout and photos. The clip's focus is not written: the engine's record holds the RESOLVED spec (the stand-in point where no
+ * face was found), the mock's the draft's (null there).
+ */
+function videoFactsLine(video: unknown): Record<string, unknown> {
+  const v = objectOf(video);
+  const music = v.music === null || v.music === undefined ? null : objectOf(v.music);
+  const clip = v.firstClip === null || v.firstClip === undefined ? null : objectOf(v.firstClip);
+  const cells = clip === null ? [] : clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" && Array.isArray(clip.cells) ? clip.cells : [];
+  const photos = cells.map((cell) => {
+    const photo = objectOf(cell).photo;
+    return photo === null ? null : objectOf(photo).photoId ?? objectOf(photo).mediaId ?? null;
+  });
+  return {
+    title: v.title,
+    trackId: music === null ? null : music.trackId,
+    firstClip: clip === null ? null : { kind: clip.kind, ...(clip.kind === "collage" ? { layout: clip.layout } : {}), photoIds: photos },
+  };
+}
+
 /** The avatar as the grid shows it, less what differs by construction (the descriptor text, the date). */
 function avatarLine(avatar: unknown): Record<string, unknown> {
   const a = objectOf(avatar);
@@ -148,6 +182,7 @@ export function eventLine(event: EventMessage, norm: Normalizer): string | null 
   }
   if (event.type === "avatar.changed") return `event avatar.changed ${compact(norm.value(avatarLine(objectOf(event.payload).avatar)))}`;
   if (event.type === "music.changed") return `event music.changed ${compact(musicLine(event.payload.status))}`;
+  if (event.type === "video.changed" && event.payload.change === "upserted") return `event video.changed ${compact(norm.value({ change: "upserted", video: videoLine(event.payload.video) }))}`;
   return `event ${event.type} ${compact(norm.value(event.payload))}`;
 }
 
@@ -222,6 +257,15 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
       throw new Error(`a text preview's box is not whole pixels inside the frame: ${String(width)}x${String(height)}`);
     }
     return `< ok ${compact(norm.value({ previewId, width: "<px>", height: "<px>" }))}`;
+  }
+  if (type === "videos.list") {
+    const listed = Array.isArray(answer.result.videos) ? answer.result.videos : [];
+    return `< ok ${compact(norm.value({ videos: listed.map(videoLine) }))}`;
+  }
+  if (type === "videos.get") {
+    // The summary as the list writes it, then what 3e.2 added to it (`videoFactsLine`).
+    const video = answer.result.video;
+    return `< ok ${compact(norm.value({ video: videoLine(video), facts: videoFactsLine(video) }))}`;
   }
   if (type === "music.status") return `< ok music ${compact(musicLine(answer.result))}`;
   if (type === "music.refresh" || type === "music.recoverQuotaLog") return `< ok music ${compact(musicLine(answer.result.status))}`;

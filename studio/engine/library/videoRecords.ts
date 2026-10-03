@@ -92,6 +92,55 @@ function isRecordFileName(name: string): boolean {
   return !name.startsWith(".") && name.endsWith(".json");
 }
 
+/** What one name in `videos/` holds: a record, a problem, or nothing any more (deleted between the listing and the read). */
+export type RecordFileRead = { kind: "record"; record: VideoRecordUse } | { kind: "problem"; problem: VideoRecordProblem } | { kind: "gone" };
+
+/**
+ * Reads ONE record file of the avatar, by its name in `videos/`: the same judgement `readVideoRecords` passes on every file,
+ * for a caller that must look at one file again right before it acts on it (3e.2's quarantine never moves a file that reads
+ * as sound by then). `name` must be a record's file name (`<id>.json`, not a dot file).
+ */
+export async function readVideoRecordFile(avatarDir: string, avatarId: string, name: string, options: ReadVideoRecordsOptions = {}): Promise<RecordFileRead> {
+  if (!isRecordFileName(name)) throw new TypeError("readVideoRecordFile: not a record's file name");
+  const file = `${VIDEOS_DIR}/${name}`;
+  const path = join(avatarDir, VIDEOS_DIR, name);
+  await options.beforeRead?.(path);
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return { kind: "gone" };
+    // Anything else (EACCES, EISDIR, a network volume's error) is this file's problem, never the library's: it must still open.
+    return { kind: "problem", problem: { file, reason: "unreadable", detail: "could not be read" } };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { kind: "problem", problem: { file, reason: "unreadable", detail: "is not valid JSON" } };
+  }
+  if (isFromNewerVersion(value, VIDEO_RECORD_SCHEMA_VERSION)) return { kind: "problem", problem: { file, reason: "too-new", detail: "was written by a newer version of Studio" } };
+  const parsed = VideoRecordShape.safeParse(value);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return { kind: "problem", problem: { file, reason: "unreadable", detail: `does not fit a video record at ${first?.path.join(".") ?? "the top"}: ${first?.message ?? "invalid"}` } };
+  }
+  const record = parsed.data;
+  if (`${record.id}.json` !== name) return { kind: "problem", problem: { file, reason: "unreadable", detail: `record id ${record.id} does not match its file name` } };
+  if (record.avatarId !== avatarId) {
+    return { kind: "problem", problem: { file, reason: "unreadable", detail: `record belongs to avatar ${record.avatarId}, not ${avatarId}`, otherAvatarId: record.avatarId } };
+  }
+  const photoIds = new Set<string>();
+  for (const clip of record.spec.clips) {
+    const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
+    for (const cell of cells) if (cell.photo.source === "scene") photoIds.add(cell.photo.photoId);
+  }
+  return { kind: "record", record: { videoId: record.id, photoIds: [...photoIds], montageId: record.montageId ?? null } };
+}
+
+/** The problem `videos/` itself is when it is not a folder (a file where the folder goes). */
+export const VIDEOS_NOT_A_FOLDER: VideoRecordProblem = { file: VIDEOS_DIR, reason: "unreadable", detail: `${VIDEOS_DIR} is not a folder` };
+
 /**
  * Reads every record of one avatar. An absent `videos/` folder is an avatar
  * with no videos. Anything unreadable, foreign or misfiled is a problem, not a
@@ -110,55 +159,14 @@ export async function readVideoRecords(avatarDir: string, avatarId: string, opti
     names = entries.filter((e) => e.isFile() && isRecordFileName(e.name)).map((e) => e.name).sort();
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return read;
-    if (hasErrorCode(error, "ENOTDIR")) return { records: [], problems: [{ file: VIDEOS_DIR, reason: "unreadable", detail: `${VIDEOS_DIR} is not a folder` }] };
+    if (hasErrorCode(error, "ENOTDIR")) return { records: [], problems: [{ ...VIDEOS_NOT_A_FOLDER }] };
     throw error;
   }
 
   for (const name of names) {
-    const file = `${VIDEOS_DIR}/${name}`;
-    const path = join(dir, name);
-    await options.beforeRead?.(path);
-    let text: string;
-    try {
-      text = await readFile(path, "utf8");
-    } catch (error) {
-      if (hasErrorCode(error, "ENOENT")) continue;
-      // Anything else (EACCES, EISDIR, a network volume's error) is this file's problem, never the library's: it must still open.
-      read.problems.push({ file, reason: "unreadable", detail: "could not be read" });
-      continue;
-    }
-    let value: unknown;
-    try {
-      value = JSON.parse(text);
-    } catch {
-      read.problems.push({ file, reason: "unreadable", detail: "is not valid JSON" });
-      continue;
-    }
-    if (isFromNewerVersion(value, VIDEO_RECORD_SCHEMA_VERSION)) {
-      read.problems.push({ file, reason: "too-new", detail: "was written by a newer version of Studio" });
-      continue;
-    }
-    const parsed = VideoRecordShape.safeParse(value);
-    if (!parsed.success) {
-      const first = parsed.error.issues[0];
-      read.problems.push({ file, reason: "unreadable", detail: `does not fit a video record at ${first?.path.join(".") ?? "the top"}: ${first?.message ?? "invalid"}` });
-      continue;
-    }
-    const record = parsed.data;
-    if (`${record.id}.json` !== name) {
-      read.problems.push({ file, reason: "unreadable", detail: `record id ${record.id} does not match its file name` });
-      continue;
-    }
-    if (record.avatarId !== avatarId) {
-      read.problems.push({ file, reason: "unreadable", detail: `record belongs to avatar ${record.avatarId}, not ${avatarId}`, otherAvatarId: record.avatarId });
-      continue;
-    }
-    const photoIds = new Set<string>();
-    for (const clip of record.spec.clips) {
-      const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
-      for (const cell of cells) if (cell.photo.source === "scene") photoIds.add(cell.photo.photoId);
-    }
-    read.records.push({ videoId: record.id, photoIds: [...photoIds], montageId: record.montageId ?? null });
+    const one = await readVideoRecordFile(avatarDir, avatarId, name, options);
+    if (one.kind === "record") read.records.push(one.record);
+    else if (one.kind === "problem") read.problems.push(one.problem);
   }
   return read;
 }

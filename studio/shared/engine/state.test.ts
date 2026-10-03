@@ -19,6 +19,7 @@ import {
   RunSummary,
   Settings,
   UnreadableAvatar,
+  UsageUnknownReason,
 } from "./state";
 
 const keyStatus = { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
@@ -142,6 +143,7 @@ const avatar = {
   photoCount: 0,
   videoCount: 0,
   eligibleUnusedCount: 0,
+  usage: { state: "ok" },
 };
 
 const photo = {
@@ -591,6 +593,45 @@ describe("AvatarSummary", () => {
 
   test("videos may outnumber photos: a video lists several", () => {
     expect(AvatarSummary.safeParse({ ...avatar, photoCount: 2, videoCount: 7 }).success).toBe(true);
+  });
+});
+
+describe("AvatarSummary.usage (3e.2, K16)", () => {
+  test("a sound avatar's usage is ok", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "ok" } }).success).toBe(true);
+  });
+
+  test.each(["record-unreadable", "rejects-unreadable", "index-stale", "library-too-new"])("an unknown usage names why: %s", (reason) => {
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: [reason] } }).success).toBe(true);
+  });
+
+  test("an unknown usage may name every reason at once, so the window offers both recoveries", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: ["library-too-new", "index-stale", "record-unreadable", "rejects-unreadable"] } }).success).toBe(true);
+  });
+
+  test("the reasons are exactly the four the library can close an avatar for", () => {
+    const actual: string[] = [...UsageUnknownReason.options].sort();
+    expect(actual).toEqual(["index-stale", "library-too-new", "record-unreadable", "rejects-unreadable"]);
+  });
+
+  test("a summary always says how its usage stands: it is never left out", () => {
+    const { usage: _u, ...rest } = avatar;
+    expect(AvatarSummary.safeParse(rest).success).toBe(false);
+  });
+
+  test("an unknown usage without a reason is refused: the window would have nothing to offer", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: [] } }).success).toBe(false);
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown" } }).success).toBe(false);
+  });
+
+  test("a reason is named once", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: ["index-stale", "index-stale"] } }).success).toBe(false);
+  });
+
+  test("an unknown reason, or a detail beside the reasons, is refused (no file name ever travels)", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: ["disk-on-fire"] } }).success).toBe(false);
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: ["record-unreadable"], file: "videos/x.json" } }).success).toBe(false);
+    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "ok", reasons: ["index-stale"] } }).success).toBe(false);
   });
 });
 

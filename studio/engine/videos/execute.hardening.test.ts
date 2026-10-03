@@ -38,6 +38,7 @@ const planOf = (w: World, over: Partial<RenderPlan> = {}): RenderPlan => ({
   resolvePhoto: () => ({ path: "/photos/p.jpg", width: 720, height: 1280 }),
   audio: { kind: "silent" },
   montageId: null,
+  title: null,
   videoKind: "photo",
   music: null,
   ...over,

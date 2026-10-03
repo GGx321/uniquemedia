@@ -6,7 +6,7 @@ import { NODE_COMMIT_FS } from "./commitFs";
 import { commitIntent, writeIntent } from "./intents";
 import { MAX_RECORD_FILES_READ, readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
 import { videoPaths, type VideoRecord } from "./record";
-import { sampleRecord, useWorld, type World } from "./testing/kit";
+import { sampleRecord, specOf, useWorld, type World } from "./testing/kit";
 useNativeGlobals();
 
 // `videos.list` reads the records from disk (the library keeps only what "used" needs): newest first, and a record
@@ -128,8 +128,74 @@ describe("videoSummaryOf", () => {
       fileState: "missing",
       montageId: "montage-0000001",
       photoCount: 2,
-      music: { title: "Song", artist: null },
+      music: { title: "Song", artist: null, trackId: null },
       hasPoster: false,
+      title: null,
+      firstClip: specOf(w.avatar.id, [w.photos[0]?.id ?? ""]).clips[0] ?? null,
     });
+  });
+
+  test("the title is the draft's name the record kept (K12); a record from before titles reads null", () => {
+    const w = world();
+    expect(videoSummaryOf({ ...sampleRecord(w), title: "утро дома" }, "present").title).toBe("утро дома");
+    expect(videoSummaryOf(sampleRecord(w), "present").title).toBeNull();
+  });
+
+  test("a title that is not a montage name never makes the record unusable: it reads null", () => {
+    const w = world();
+    for (const title of ["", "x".repeat(81), "a\u0007b", 42]) {
+      const summary = videoSummaryOf({ ...sampleRecord(w), title } as VideoRecord, "present");
+      expect(summary.title).toBeNull();
+      expect(VideoSummary.safeParse(summary).success).toBe(true);
+    }
+  });
+
+  test("the music names its trending track by the spec's id (K13); an own track and a silent video name none", () => {
+    const w = world();
+    const base = sampleRecord(w);
+    const trending = { ...base, music: { title: "Espresso", artist: "Sabrina Carpenter" }, spec: { ...base.spec, music: { source: "trending", trackId: "4199287736976977", startMs: 42_000 } } };
+    const own = { ...base, music: { title: "My track", artist: null }, spec: { ...base.spec, music: { source: "own", mediaId: "media-0001", startMs: 0 } } };
+
+    expect(videoSummaryOf(trending, "present").music).toEqual({ title: "Espresso", artist: "Sabrina Carpenter", trackId: "4199287736976977" });
+    expect(videoSummaryOf(own, "present").music).toEqual({ title: "My track", artist: null, trackId: null });
+    expect(videoSummaryOf(base, "present").music).toBeNull();
+  });
+
+  test("a spec's track id that is not an id is never passed on: the tile gets no cover rather than a path", () => {
+    const w = world();
+    const base = sampleRecord(w);
+    const odd = { ...base, music: { title: "t", artist: null }, spec: { ...base.spec, music: { source: "trending", trackId: "../covers/x", startMs: 0 } } };
+    expect(videoSummaryOf(odd, "present").music).toEqual({ title: "t", artist: null, trackId: null });
+  });
+
+  test("the first clip is the record's own, as the contract's clip: a collage keeps its layout and cells", () => {
+    const w = world();
+    const base = sampleRecord(w);
+    const collage = {
+      clipId: "clip-00000001",
+      kind: "collage",
+      layout: "collage2",
+      cells: [
+        { photo: { source: "scene", photoId: w.photos[0]?.id ?? "" }, focus: { x: 0.5, y: 0.3 } },
+        { photo: { source: "scene", photoId: w.photos[1]?.id ?? "" }, focus: { x: 0.4, y: 0.4 } },
+      ],
+      motion: "kenburns",
+      stagger: true,
+      durationMs: 4_000,
+      transitionIn: "cut",
+    };
+    const record = { ...base, spec: { ...base.spec, clips: [collage] } } as VideoRecord;
+    expect(videoSummaryOf(record, "present").firstClip).toEqual(collage as VideoSummary["firstClip"]);
+  });
+
+  test("a first clip this build cannot read (a later build's field, a broken focus) reads null, and the summary still parses", () => {
+    const w = world();
+    const base = sampleRecord(w);
+    const clip = base.spec.clips[0];
+    for (const odd of [{ ...clip, zoom: 1.5 }, { ...clip, cell: { photo: { source: "scene", photoId: w.photos[0]?.id ?? "" }, focus: { x: 2, y: 0 } } }]) {
+      const summary = videoSummaryOf({ ...base, spec: { ...base.spec, clips: [odd] } } as VideoRecord, "present");
+      expect(summary.firstClip).toBeNull();
+      expect(VideoSummary.safeParse(summary).success).toBe(true);
+    }
   });
 });

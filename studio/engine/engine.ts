@@ -1305,6 +1305,23 @@ export class Engine {
       }
       case "photos.setRejected":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#setRejected(command.payload) };
+      case "photos.rebuildRejected": {
+        // 3e.2 «Восстановить отметки»: the log is copied aside, then rebuilt from the lines that read (library.ts).
+        const { avatarId } = command.payload;
+        const outcome = await this.#usageRecovery(avatarId, "the reject marks could not be rebuilt", async (library) => ({ result: await library.rebuildRejectLog(avatarId), avatarIds: [avatarId] }));
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId, ...outcome } };
+      }
+      case "videos.quarantineRecords": {
+        // 3e.2 «Убрать повреждённую запись»: broken record files are MOVED to the library's quarantine (library.ts).
+        const { avatarId } = command.payload;
+        const outcome = await this.#usageRecovery(avatarId, "the broken video records could not be moved aside", async (library) => {
+          const { quarantined, avatarIds } = await library.quarantineBrokenRecords(avatarId);
+          return { result: { quarantined }, avatarIds };
+        });
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId, ...outcome } };
+      }
+      case "videos.get":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { video: await this.#videos.get(command.payload.videoId) } };
       case "videos.render":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.render(command.payload) };
       case "videos.cancel":
@@ -1384,6 +1401,37 @@ export class Engine {
       this.#focusResolvers.set(library, resolver);
     }
     return resolver;
+  }
+
+  /**
+   * One of the two recoveries of an avatar whose usage is unknown (3e.2, K16), as a small write on the live library (a library
+   * switch waits for it). `work` answers its result and the avatars whose usage it may have moved; each of those whose summary
+   * did move is announced (`avatar.changed`), so a repeat that changes nothing announces nothing. NOT_FOUND for an avatar the
+   * library does not have; any other failure is INTERNAL with `what` and the disk's code only (the library's path never travels).
+   */
+  async #usageRecovery<R extends object>(avatarId: string, what: string, work: (library: Library) => Promise<{ result: R; avatarIds: readonly string[] }>): Promise<R> {
+    return this.#withLiveLibrary(async (library) => {
+      if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+      const summaryOf = (id: string): string => {
+        const manifest = library.getAvatar(id);
+        return manifest === undefined ? "" : JSON.stringify(avatarSummaryFrom(manifest, avatarCounts(library, id)));
+      };
+      const before = new Map(library.listAvatars().map((manifest) => [manifest.id, summaryOf(manifest.id)]));
+      let outcome: { result: R; avatarIds: readonly string[] };
+      try {
+        outcome = await work(library);
+      } catch (error) {
+        if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : errorKind(error);
+        console.error(`studio engine: ${what} for avatar ${avatarId} (${code})`);
+        throw new EngineFailure({ code: "INTERNAL", detail: `${what} (${code})` });
+      }
+      for (const id of outcome.avatarIds) {
+        const manifest = library.getAvatar(id);
+        if (manifest !== undefined && manifest.status !== "draft" && before.get(id) !== summaryOf(id)) this.#announceAvatarOrLog(library, id);
+      }
+      return outcome.result;
+    });
   }
 
   /**

@@ -6,6 +6,7 @@ import {
   Draft,
   MAX_UNREADABLE_AVATARS,
   UNREADABLE_REASON_DETAIL,
+  type AvatarUsage,
   type UnreadableAvatar,
   type UnreadableReason,
 } from "../../shared/engine";
@@ -85,6 +86,8 @@ export interface AvatarCounts {
   photoCount: number;
   videoCount: number;
   eligibleUnusedCount: number;
+  /** Whether the counts can be trusted, and if not why (3e.2, K16). */
+  usage: AvatarUsage;
 }
 
 /**
@@ -92,13 +95,16 @@ export interface AvatarCounts {
  * answers: the gallery photos, the video records (whatever state their files
  * are in) and `eligibleUnusedCount` (the one eligibility rule, minus used,
  * minus reserved; 0 while the avatar's video records cannot all be read, so a
- * listing never fails over it).
+ * listing never fails over it), and the reasons it cannot vouch for that
+ * usage (`usage`), read at the same moment.
  */
-export function avatarCounts(library: Pick<Library, "photosByAvatar" | "videoCount" | "eligibleUnusedCount">, avatarId: string): AvatarCounts {
+export function avatarCounts(library: Pick<Library, "photosByAvatar" | "videoCount" | "eligibleUnusedCount" | "usageReasons">, avatarId: string): AvatarCounts {
+  const [first, ...rest] = library.usageReasons(avatarId);
   return {
     photoCount: galleryPhotoCount(library, avatarId),
     videoCount: library.videoCount(avatarId),
     eligibleUnusedCount: library.eligibleUnusedCount(avatarId),
+    usage: first === undefined ? { state: "ok" } : { state: "unknown", reasons: [first, ...rest] },
   };
 }
 
@@ -115,6 +121,7 @@ export function avatarSummaryFrom(manifest: AvatarManifest, counts: AvatarCounts
     photoCount: counts.photoCount,
     videoCount: counts.videoCount,
     eligibleUnusedCount: counts.eligibleUnusedCount,
+    usage: counts.usage,
   });
   return parsed.success ? parsed.data : null;
 }
@@ -154,7 +161,7 @@ export function isRewritable(manifest: AvatarManifest): boolean {
   if (manifest.schemaVersion < 2) return false;
   if (!AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age }).success) return false;
   const withPlaceholder = { ...manifest, descriptor: placeholderDescriptor(manifest.age) };
-  return manifest.status === "draft" ? draftFrom(withPlaceholder, []) !== null : avatarSummaryFrom(withPlaceholder, { photoCount: 0, videoCount: 0, eligibleUnusedCount: 0 }) !== null;
+  return manifest.status === "draft" ? draftFrom(withPlaceholder, []) !== null : avatarSummaryFrom(withPlaceholder, { photoCount: 0, videoCount: 0, eligibleUnusedCount: 0, usage: { state: "ok" } }) !== null;
 }
 
 /**

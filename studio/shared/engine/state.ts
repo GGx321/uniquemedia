@@ -328,6 +328,28 @@ export const Draft = z
   });
 
 /**
+ * Why the library cannot vouch for an avatar's photo usage right now (3e.2, K16): until it can, no photo of the avatar
+ * counts as unused (`eligibleUnusedCount` is 0) and no render of it is queued.
+ * - `library-too-new`: a video record was written by a newer Studio; updating the app is the fix, never a repair;
+ * - `index-stale`: a committed video's record is on disk but the used index missed it; Studio reads the records again on
+ *   its own, and nothing on disk is broken;
+ * - `record-unreadable`: a file among the video records cannot be read as one (broken, foreign or misfiled), so a video
+ *   may hide in it: «Убрать повреждённую запись» (`videos.quarantineRecords`) moves it to the library's quarantine;
+ * - `rejects-unreadable`: the owner's reject marks (`rejected.jsonl`) have a line that cannot be read, so a mark may hide
+ *   in it: «Восстановить отметки» (`photos.rebuildRejected`) keeps every line that reads and sets the file aside.
+ */
+export const UsageUnknownReason = z.enum(["library-too-new", "index-stale", "record-unreadable", "rejects-unreadable"]);
+
+/** Whether the avatar's usage can be trusted; when it cannot, every reason that holds, each once (the window offers each one's way out). */
+export const AvatarUsage = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.literal("ok") }),
+  z.strictObject({
+    state: z.literal("unknown"),
+    reasons: z.array(UsageUnknownReason).min(1).max(UsageUnknownReason.options.length).refine(unique, "a reason must not repeat"),
+  }),
+]);
+
+/**
  * A saved avatar as listed in the grid; drafts are listed separately. No
  * language field: on-video text is English only.
  */
@@ -354,6 +376,8 @@ export const AvatarSummary = z.strictObject({
    * derived count that drifts can never make an avatar vanish from the list.
    */
   eligibleUnusedCount: Count,
+  /** Whether the counts above can be trusted (3e.2): the window shows «использование неизвестно» instead of them when not. */
+  usage: AvatarUsage,
 });
 
 /**
@@ -804,6 +828,8 @@ export type ReconcileResult = z.infer<typeof ReconcileResult>;
 export type Candidate = z.infer<typeof Candidate>;
 export type Draft = z.infer<typeof Draft>;
 export type AvatarSummary = z.infer<typeof AvatarSummary>;
+export type AvatarUsage = z.infer<typeof AvatarUsage>;
+export type UsageUnknownReason = z.infer<typeof UsageUnknownReason>;
 export type UnreadableReason = z.infer<typeof UnreadableReason>;
 export type UnreadableDetail = z.infer<typeof UnreadableDetail>;
 export type UnreadableAvatar = z.infer<typeof UnreadableAvatar>;

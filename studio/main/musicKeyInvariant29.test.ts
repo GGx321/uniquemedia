@@ -112,6 +112,9 @@ async function wired() {
     reveal: async () => {
       throw new Error("not used");
     },
+    revealFolder: async () => {
+      throw new Error("not used");
+    },
     engine: (c) => engine.handle(c),
   };
   const ask = async (type: string, payload: unknown = {}) => {

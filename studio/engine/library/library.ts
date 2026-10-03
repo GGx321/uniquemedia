@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { z } from "zod";
 import { downscaleToJpeg } from "../../node/downscale";
@@ -16,7 +16,7 @@ import {
   writeFileDurable,
   writeJsonAtomic,
 } from "./durableFs";
-import { isEligiblePhoto, type PhotoState } from "./eligibility";
+import { isEligiblePhoto, replayRejected, type PhotoState } from "./eligibility";
 import { LibraryError } from "./errors";
 import { isLibraryId } from "./ids";
 import { runExclusive } from "./keyedMutex";
@@ -35,6 +35,7 @@ import {
   RUNS_DIR,
   THUMBS_DIR,
   REJECTED_FILE,
+  VIDEOS_DIR,
   isFromNewerVersion,
   LIBRARY_FILE_SCHEMA_VERSION,
   REFUSED_IMPORTS_SCHEMA_VERSION,
@@ -58,9 +59,10 @@ import {
   type PhotoQa,
   type PhotoSidecar,
   type PhotoSource,
+  type RejectedEntry,
 } from "./schemas";
 import { surveyLibrary, type LogIssue } from "./survey";
-import { readVideoRecords, type VideoRecordProblem, type VideoRecordUse } from "./videoRecords";
+import { readVideoRecordFile, readVideoRecords, VIDEOS_NOT_A_FOLDER, type ReadVideoRecordsOptions, type VideoRecordProblem, type VideoRecordUse } from "./videoRecords";
 
 export type { QuarantineEntry, QuarantineReason } from "./quarantine";
 export type { LogIssue } from "./survey";
@@ -156,6 +158,40 @@ const OS_METADATA = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 
 function toJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+/** Why an avatar's usage cannot be trusted (the contract's `UsageUnknownReason`, K16), in the order `usageReasons` names them. */
+export type UsageReason = "library-too-new" | "index-stale" | "record-unreadable" | "rejects-unreadable";
+
+/**
+ * Whether the file behind `problem` still cannot be read as a record of `avatarId`, looked at once more right before it is moved
+ * aside: a file that reads as sound now (fixed by hand, or replaced) stays, and so does one that is gone or was written by a
+ * newer Studio meanwhile. `videos/` that is not a folder is checked as that.
+ */
+async function stillUnreadable(avatarDir: string, avatarId: string, problem: VideoRecordProblem, options: ReadVideoRecordsOptions): Promise<boolean> {
+  if (problem.file === VIDEOS_NOT_A_FOLDER.file) {
+    try {
+      return !(await lstat(join(avatarDir, VIDEOS_DIR))).isDirectory();
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) return false;
+      throw error;
+    }
+  }
+  const name = problem.file.slice(`${VIDEOS_DIR}/`.length);
+  const again = await readVideoRecordFile(avatarDir, avatarId, name, options);
+  return again.kind === "problem" && again.problem.reason === "unreadable";
+}
+
+/** One complete line of rejected.jsonl as a mark, or null when it is not one (the reader's own rule: JSON, then the schema). */
+function parseRejectedLine(raw: string): RejectedEntry | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const parsed = RejectedEntrySchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function byCreation(a: { createdAt: string; id: string }, b: { createdAt: string; id: string }): number {
@@ -707,6 +743,31 @@ export class Library {
     if (!this.isEligible(avatarId, photoId)) throw new LibraryError("photo-not-eligible", `photo ${photoId} may not go into a video`);
   }
 
+  /** The problems of the video records that close `avatarId`: those in its own folder, and records misfiled elsewhere that name it. */
+  #recordProblemsOf(avatarId: string): VideoRecordProblem[] {
+    const found: VideoRecordProblem[] = [];
+    for (const [source, problems] of this.#videoProblems) {
+      for (const problem of problems) if (source === avatarId || problem.otherAvatarId === avatarId) found.push(problem);
+    }
+    return found;
+  }
+
+  /**
+   * Why the avatar's usage cannot be trusted (3e.2, K16), the decisive first; empty when it can. Exactly when this is not
+   * empty, `eligibleUnusedPhotos` refuses and the count is 0 (the same facts as `#usageProblem`). The window shows the
+   * reasons instead of the counts, with each one's way out.
+   */
+  usageReasons(avatarId: string): UsageReason[] {
+    if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+    const found = this.#recordProblemsOf(avatarId);
+    const reasons: UsageReason[] = [];
+    if (found.some((p) => p.reason === "too-new")) reasons.push("library-too-new");
+    if ((this.#videoIndexStale.get(avatarId)?.size ?? 0) > 0) reasons.push("index-stale");
+    if (found.some((p) => p.reason === "unreadable")) reasons.push("record-unreadable");
+    if (this.#brokenRejectLogs.has(avatarId)) reasons.push("rejects-unreadable");
+    return reasons;
+  }
+
   /**
    * Why the avatar's usage cannot be trusted, or null when it can: an unreadable
    * rejected.jsonl or video record (`log-needs-repair`), or a record from a newer
@@ -714,10 +775,7 @@ export class Library {
    * record misfiled under another avatar closes the avatar it names too.
    */
   #usageProblem(avatarId: string): LibraryError | null {
-    const found: VideoRecordProblem[] = [];
-    for (const [source, problems] of this.#videoProblems) {
-      for (const problem of problems) if (source === avatarId || problem.otherAvatarId === avatarId) found.push(problem);
-    }
+    const found = this.#recordProblemsOf(avatarId);
     const newer = found.find((p) => p.reason === "too-new");
     if (newer !== undefined) return new LibraryError("library-too-new", `a video record of avatar ${avatarId} was written by a newer version of Studio (${newer.file}); update the app`);
     const stale = this.#videoIndexStale.get(avatarId);
@@ -849,6 +907,101 @@ export class Library {
       else this.#rejected.delete(photoId);
       return true;
     });
+  }
+
+  /**
+   * «Убрать повреждённую запись» (3e.2, K16): MOVES every file among the avatar's video records that cannot be read as a record
+   * into `quarantine/<time>/…` (nothing is ever deleted), then reads the records again, so the avatar's usage is trusted once
+   * nothing broken is left. The disk decides, as it is NOW, not as it was at open:
+   * - a file that reads as a sound record is never moved, and each file is looked at once more right before its move;
+   * - a record from a newer Studio is never moved: updating the app is its fix, and the avatar stays closed until then;
+   * - a stale used index is no broken file: it moves nothing (the read that follows is what brings the index in step);
+   * - another avatar's own broken record is that avatar's business; a record misfiled under another avatar that NAMES this one
+   *   (it may hold this avatar's photos) is moved from where it lies, which frees both.
+   * Safe to repeat: with nothing broken it moves nothing. A move that fails throws, and what was moved before it stays moved
+   * (the next call goes on from there). Answers how many files moved, and the avatars whose usage may have changed.
+   */
+  async quarantineBrokenRecords(avatarId: string): Promise<{ quarantined: number; avatarIds: string[] }> {
+    if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+    // Where a file that closes this avatar can lie: its own folder, and the folders whose last read found a record naming it.
+    const folders = new Set<string>([avatarId]);
+    for (const [source, problems] of this.#videoProblems) if (problems.some((p) => p.otherAvatarId === avatarId)) folders.add(source);
+    const quarantine = new Quarantine(this.root, this.#now);
+    const touched = new Set<string>([avatarId]);
+    let moved = 0;
+    for (const folder of [...folders].sort()) {
+      if (!this.#avatars.has(folder)) continue;
+      const avatarDir = this.#avatarDir(folder);
+      const reading = { beforeRead: this.#beforeReadVideoRecord };
+      await runExclusive(`videos:${folder}`, async () => {
+        const read = await readVideoRecords(avatarDir, folder, reading);
+        for (const problem of read.problems) {
+          if (problem.reason !== "unreadable") continue;
+          if (folder !== avatarId && problem.otherAvatarId !== avatarId) continue;
+          if (!(await stillUnreadable(avatarDir, folder, problem, reading))) continue;
+          await quarantine.move(join(avatarDir, problem.file), "invalid-video-record", problem.detail);
+          moved++;
+          touched.add(folder);
+          if (problem.otherAvatarId !== undefined && this.#avatars.has(problem.otherAvatarId)) touched.add(problem.otherAvatarId);
+        }
+      });
+      // Outside the folder's lock: the reload takes the same one.
+      await this.reloadVideoRecords(folder);
+    }
+    return { quarantined: moved, avatarIds: [...touched].sort() };
+  }
+
+  /**
+   * «Восстановить отметки» (3e.2, K16): the avatar's rejected.jsonl with a complete line that cannot be read. The file is COPIED
+   * into `quarantine/<time>/…` first (durably), and only then replaced, atomically, by the lines that do read, in their order (a
+   * torn last line goes too: an append a crash cut short). So every mark that can be read is kept, the dropped lines survive
+   * in the copy, and a crash between the two steps leaves the old file and a copy (a repeat makes another copy and goes on).
+   * A log with no bad line is not written: it is read again (a log the owner fixed by hand opens the avatar), `rebuilt: false`.
+   * Under the same lock as `setRejected`, so no mark lands in the middle. A copy or a write that fails throws, and the log is
+   * as it was.
+   */
+  async rebuildRejectLog(avatarId: string): Promise<{ rebuilt: boolean; kept: number; dropped: number }> {
+    if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+    const path = join(this.#avatarDir(avatarId), REJECTED_FILE);
+    return runExclusive(`rejected:${path}`, async () => {
+      let text: string;
+      try {
+        text = await readFile(path, "utf8");
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT")) throw error;
+        this.#replaceRejectMarks(avatarId, []);
+        return { rebuilt: false, kept: 0, dropped: 0 };
+      }
+      const lines = text.split("\n");
+      const tail = lines.pop() ?? "";
+      const kept: string[] = [];
+      const entries: RejectedEntry[] = [];
+      let bad = 0;
+      for (const raw of lines) {
+        if (raw.trim() === "") continue;
+        const entry = parseRejectedLine(raw);
+        if (entry === null) bad++;
+        else {
+          kept.push(raw);
+          entries.push(entry);
+        }
+      }
+      if (bad === 0) {
+        this.#replaceRejectMarks(avatarId, entries);
+        return { rebuilt: false, kept: entries.length, dropped: 0 };
+      }
+      await new Quarantine(this.root, this.#now).copy(path, "invalid-reject-log", `${bad} line(s) could not be read`);
+      await writeFileAtomic(path, kept.map((line) => `${line}\n`).join(""));
+      this.#replaceRejectMarks(avatarId, entries);
+      return { rebuilt: true, kept: entries.length, dropped: bad + (tail === "" ? 0 : 1) };
+    });
+  }
+
+  /** The avatar's marks as `entries` replay them (the last op per photo wins), and its log readable again. Other avatars' marks are not touched. */
+  #replaceRejectMarks(avatarId: string, entries: readonly RejectedEntry[]): void {
+    for (const photo of this.photosByAvatar(avatarId)) this.#rejected.delete(photo.id);
+    for (const photoId of replayRejected(entries)) if (this.#photos.get(photoId)?.avatarId === avatarId) this.#rejected.add(photoId);
+    this.#brokenRejectLogs.delete(avatarId);
   }
 
   /** Records the location + outfit pair a scene used, so the planner can avoid repeating it. */

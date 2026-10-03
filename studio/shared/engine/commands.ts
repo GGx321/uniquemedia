@@ -215,6 +215,11 @@ const MAIN_ONLY_SPECS = [
   // The export folder as a person reads it (`~/Studio/export`): only main knows the home folder, and the window has no other
   // way to show the path the way the design does. Re-asked whenever `Settings.exportPath` changes.
   defineCommand("settings.exportDisplay", Empty, z.strictObject({ display: DisplayPath })),
+  // Stage 3 (3e.2, K17): «Папка «Готовые видео»» on the avatar's «Видео» tab. The window names the avatar, never a folder: main
+  // finds the avatar's folder in the export folder from the place of one of its videos and opens it in the system file manager;
+  // with none there yet it opens the export folder itself (`opened` says which). EXPORT_UNAVAILABLE (`exportReason`) when the
+  // export folder cannot be used, NOT_FOUND for an unknown avatar.
+  defineCommand("videos.revealFolder", z.strictObject({ avatarId: Id }), z.strictObject({ opened: z.enum(["avatar", "root"]) })),
 ] as const;
 
 /** Commands main forwards to the engine. */
@@ -356,7 +361,8 @@ const ENGINE_SPECS = [
   defineCommand("videos.cancel", z.strictObject({ jobId: Id }), z.strictObject({ jobId: Id })),
   // An avatar's video records, newest first, bounded at MAX_LISTED_VIDEOS; each with its file's state, checked on this read
   // (one shared hash budget per listing, so it stays a `stat` for almost every record). A record that cannot be read or
-  // checked never fails the list: an unreadable one is left out, an unchecked one reads `elsewhere`. NOT_FOUND for an unknown avatar.
+  // checked never fails the list: an unreadable one is left out, one whose look failed or did not answer reads `unchecked` (3e.2,
+  // K15). NOT_FOUND for an unknown avatar.
   defineCommand("videos.list", z.strictObject({ avatarId: Id }), z.strictObject({ videos: z.array(VideoSummary).max(MAX_LISTED_VIDEOS) })),
   // Deletes a video by the OWNER'S INTENT, which the request carries (Studio never guesses it from a state it just looked at):
   //   mode "video"  («Удалить»): the file (when its FULL check finds it `present`), then the record; the photos are freed.
@@ -372,6 +378,28 @@ const ENGINE_SPECS = [
     "videos.delete",
     z.strictObject({ videoId: Id, mode: z.enum(["video", "record"]) }),
     z.strictObject({ videoId: Id, fileDeleted: z.boolean(), fileState: FileState }),
+  ),
+  // One video by id (3e.2), with its file's state looked at now: whatever its avatar and however many videos it has (a listing
+  // stops at MAX_LISTED_VIDEOS). Main's «Открыть в папке» reads the record's place through it. NOT_FOUND for an unknown video;
+  // LIBRARY_TOO_NEW for a record from a newer Studio; INTERNAL (detail names no path) for a record that cannot be read.
+  defineCommand("videos.get", z.strictObject({ videoId: Id }), z.strictObject({ video: VideoSummary })),
+  // «Убрать повреждённую запись» (3e.2, K16): every file among the avatar's video records that cannot be read as a record (and
+  // every record misfiled under another avatar that names this one) is MOVED to the library's quarantine, never deleted, and the
+  // records are read again. The engine decides from the disk as it is now: a file that reads as a sound record is never moved,
+  // a record from a newer Studio is never moved (updating the app is its fix), and a stale used index alone moves nothing.
+  // Safe to repeat: with nothing broken it moves nothing. `avatar.changed` follows when the avatar's usage moved.
+  // NOT_FOUND for an unknown avatar; INTERNAL (detail names no path) when a file could not be moved (those moved stay moved).
+  defineCommand("videos.quarantineRecords", z.strictObject({ avatarId: Id }), z.strictObject({ avatarId: Id, quarantined: Count })),
+  // «Восстановить отметки» (3e.2, K16): the owner's reject marks (`rejected.jsonl`) with a line that cannot be read. The file is
+  // COPIED to the library's quarantine first, then replaced at once by the lines that read (a torn last line is dropped too),
+  // so every mark that can be read is kept and nothing is ever lost without a copy. `rebuilt: false` when nothing needed it
+  // (safe to repeat). `kept` counts the marks kept, `dropped` the lines left out. `avatar.changed` follows when the usage moved.
+  // NOT_FOUND for an unknown avatar; INTERNAL (detail names no path) when the file could not be copied or written (it is then
+  // as it was).
+  defineCommand(
+    "photos.rebuildRejected",
+    z.strictObject({ avatarId: Id }),
+    z.strictObject({ avatarId: Id, rebuilt: z.boolean(), kept: Count, dropped: Count }),
   ),
   // Stage 3 music (3c.3, K24, K25). The status is free and never touches the network. A refresh costs one of the 30
   // requests per 31 days, so it needs `confirm: true` and is manual only. It answers AT ONCE with the status (refresh

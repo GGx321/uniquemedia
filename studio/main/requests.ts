@@ -12,7 +12,7 @@ import { fileUrlToPathOn } from "./fileUrl";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
-import { isRevealCommand, type RevealCommand } from "./revealFlow";
+import { isRevealCommand, isRevealFolderCommand, type RevealCommand, type RevealFolderCommand } from "./revealFlow";
 import { isSettingsCommand, type SettingsCommand } from "./settingsFlow";
 
 /** What main knows about the frame an IPC message came from (from `event.senderFrame`). */
@@ -98,6 +98,8 @@ export interface RequestRoutes {
   exportFolder(command: ExportFolderCommand): Promise<ResponseMessage>;
   /** 3d.6: «Открыть в папке». Main finds the video's file itself from its id and asks the system file manager to show it. */
   reveal(command: RevealCommand): Promise<ResponseMessage>;
+  /** 3e.2 (K17): «Папка «Готовые видео»». Main finds the avatar's folder in the export folder itself and opens it. */
+  revealFolder(command: RevealFolderCommand): Promise<ResponseMessage>;
   /** Everything else, forwarded to the engine. */
   engine(command: EngineCommandMessage): Promise<ResponseMessage>;
 }
@@ -114,6 +116,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
     if (message.type === "avatars.pickImportPhoto") return routes.importPhoto(message);
     if (isExportFolderCommand(message)) return routes.exportFolder(message);
     if (isRevealCommand(message)) return routes.reveal(message);
+    if (isRevealFolderCommand(message)) return routes.revealFolder(message);
     return errorResponseFor(message, { code: "INTERNAL", detail: `${message.type} has no handler in main` });
   }
   if (isSettingsCommand(message)) return routes.settings(message);

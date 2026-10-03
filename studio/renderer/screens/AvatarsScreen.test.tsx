@@ -25,6 +25,7 @@ function zoe(): AvatarSummary {
     photoCount: 3,
     videoCount: 0,
     eligibleUnusedCount: 0,
+    usage: { state: "ok" },
   };
 }
 
