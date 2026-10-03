@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute as isAbsolutePath, join, relative as relativePath } from "node:path";
 import {
   CommandMessage,
   MAX_PICKED_FILES,
@@ -211,6 +211,16 @@ describe("what main refuses before the engine hears of it", () => {
 
   test("a relative path is not-a-file: the dialog only ever returns absolute ones", async () => {
     const { result, h } = await refusedOnly("photos/summer.jpg");
+    expect(result.picked && result.refused).toEqual([{ name: "summer.jpg", reason: "not-a-file" }]);
+    expect(h.imported).toEqual([]);
+  });
+
+  test("a relative path to a file that exists is still not-a-file: only an absolute path is taken from the dialog", async () => {
+    const path = await put("summer.jpg");
+    const relative = relativePath(process.cwd(), path);
+    // On Windows a file on another drive has no relative spelling.
+    if (isAbsolutePath(relative)) return;
+    const { result, h } = await refusedOnly(relative);
     expect(result.picked && result.refused).toEqual([{ name: "summer.jpg", reason: "not-a-file" }]);
     expect(h.imported).toEqual([]);
   });

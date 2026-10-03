@@ -205,6 +205,14 @@ describe("size", () => {
     expect(await leftovers()).toEqual([]);
   });
 
+  test("a file far over the cap is refused before the first chunk is read, not after the cap's worth was copied", async () => {
+    const path = await put("big.jpg", jpeg(300));
+    const copied: number[] = [];
+    const result = await staging({ caps, chunkBytes: 16 }).stage({ path, kind: "photo", onProgress: (n) => copied.push(n) });
+    expect(refusal(result)).toBe("too-large");
+    expect(copied).toEqual([]);
+  });
+
   test("a file of exactly the cap is staged", async () => {
     const path = await put("edge.jpg", jpeg(100));
     const result = await staging({ caps }).stage({ path, kind: "photo" });
@@ -287,7 +295,7 @@ describe("size", () => {
   test("a file over the largest cap is refused under `any` before it is read", async () => {
     const path = await put("huge.mp4", Buffer.concat([Buffer.from([0, 0, 0, 24, ...ascii("ftypisom")]), Buffer.alloc(1100, 1)]));
     const copied: number[] = [];
-    const result = await staging({ caps }).stage({ path, kind: "any", onProgress: (n) => copied.push(n) });
+    const result = await staging({ caps, chunkBytes: 64 }).stage({ path, kind: "any", onProgress: (n) => copied.push(n) });
     expect(refusal(result)).toBe("too-large");
     expect(copied).toEqual([]);
   });
