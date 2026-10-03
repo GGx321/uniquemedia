@@ -51,6 +51,15 @@ async function tryLink(target: string, path: string, type: "file" | "dir"): Prom
   }
 }
 
+/**
+ * A runner that cannot make a symlink did not test the link cases, which must never read as a pass: on CI that fails the test (the runners
+ * can make links, so a refusal is a change in the runner to look at); on a developer's own machine, which may lack the privilege, the
+ * case is left out with the FACT line above. (A skipped test would fail the Electron-Node runner, which wants every test to run.)
+ */
+function linksUnavailable(): void {
+  assert.equal(process.env.CI, undefined, "this CI runner cannot create symlinks, so the link cases did not run");
+}
+
 describe("a folder at the name the claim wants", () => {
   test("records what the bare `open(dir, 'wx')` answers on this OS", async () => {
     const dir = join(root, "a-folder");
@@ -86,7 +95,7 @@ describe("a link at the name the claim wants (skipped where this account cannot 
   test("an existing file's link is EEXIST, and the file behind it is not opened or changed", async () => {
     const real = join(root, "real.mp4");
     await (await open(real, "wx")).close();
-    if (!(await tryLink(real, join(root, "link.mp4"), "file"))) return;
+    if (!(await tryLink(real, join(root, "link.mp4"), "file"))) return linksUnavailable();
 
     assert.equal(await rejection(() => NODE_COMMIT_FS.createExclusive(join(root, "link.mp4"))), "EEXIST");
     assert.equal((await lstat(real)).size, 0);
@@ -94,7 +103,7 @@ describe("a link at the name the claim wants (skipped where this account cannot 
 
   test("a dangling link is EEXIST, and its target is NOT created (where a bare `wx` on Windows would create it)", async () => {
     const target = join(root, "nowhere.mp4");
-    if (!(await tryLink(target, join(root, "dangling.mp4"), "file"))) return;
+    if (!(await tryLink(target, join(root, "dangling.mp4"), "file"))) return linksUnavailable();
 
     assert.equal(await rejection(() => NODE_COMMIT_FS.createExclusive(join(root, "dangling.mp4"))), "EEXIST");
     assert.equal((await readdir(root)).includes("nowhere.mp4"), false);
