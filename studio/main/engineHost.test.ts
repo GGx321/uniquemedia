@@ -803,7 +803,7 @@ describe("calls to the engine (export.choose)", () => {
 
 // 3f.1: the file the owner picked in main's dialog is put to the engine, which stages a copy and hands it to the kind's importer.
 describe("calls to the engine (media.import)", () => {
-  const picked = { pick: "photo" as const, path: "/Users/me/summer.jpg", name: "summer.jpg", expected: { dev: "16777234", ino: "9876543210" } };
+  const picked = { pick: "photo" as const, path: "/Users/me/summer.jpg", name: "summer.jpg", expected: { dev: "16777234", ino: "9876543210", size: "4096", mtimeNs: "1700000000123456789", birthtimeNs: "1600000000000000000" } };
 
   test("posts the path, the pick, the name and the identity with an id, and resolves with the job", async () => {
     const { host, ports } = setup();
@@ -828,6 +828,62 @@ describe("calls to the engine (media.import)", () => {
     ports[0]?.fromEngine({ kind: "control", type: "reply", callId, error: { code: "VALIDATION", detail: "not a photo" }, mediaReason: "format" });
 
     expect(await pending).toEqual({ error: { code: "VALIDATION", detail: "not a photo" }, mediaReason: "format" });
+  });
+
+  test("a call that breaks the contract (an inode written negative, as Node's signed bigint stat can) is refused at once and is never posted", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const result = await host.importMedia({ ...picked, expected: { ...picked.expected, ino: "-5" } });
+    expect(result).toMatchObject({ error: { code: "VALIDATION" } });
+    expect(ports[0]?.posted).toEqual([]);
+  });
+
+  test("main's deadline tells the engine to stop the copy before it answers INTERNAL itself", async () => {
+    const { host, ports, timers } = setup();
+    await host.start();
+    const pending = host.importMedia(picked);
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    await timers.advance(MEDIA_IMPORT_DEADLINE_MS);
+    expect(ports[0]?.posted[1]).toEqual({ kind: "control", type: "media.abortImport", callId });
+    expect(await pending).toMatchObject({ error: { code: "INTERNAL" } });
+  });
+
+  test("a window that closed (the caller's signal) tells the engine to stop the copy, and the engine's own answer settles it", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const controller = new AbortController();
+    const pending = host.importMedia(picked, controller.signal);
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    controller.abort();
+    expect(ports[0]?.posted[1]).toEqual({ kind: "control", type: "media.abortImport", callId });
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, error: { code: "INTERNAL", detail: "the import was cancelled" }, mediaReason: "cancelled" });
+    expect(await pending).toEqual({ error: { code: "INTERNAL", detail: "the import was cancelled" }, mediaReason: "cancelled" });
+  });
+
+  test("a signal that is already aborted asks the engine for nothing", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const result = await host.importMedia(picked, AbortSignal.abort());
+    expect(result).toMatchObject({ mediaReason: "cancelled" });
+    expect(ports[0]?.posted).toEqual([]);
+  });
+
+  test("a call that was answered is not aborted afterwards by a signal that fires later", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const controller = new AbortController();
+    const pending = host.importMedia(picked, controller.signal);
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, mediaJobId: "job-00000007" });
+    await pending;
+    controller.abort();
+    expect(ports[0]?.posted).toHaveLength(1);
   });
 
   test("a copy is not given up on at 30 s (a 2 GB video takes longer), but is after ten minutes", async () => {

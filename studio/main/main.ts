@@ -373,12 +373,18 @@ async function startStudio(): Promise<void> {
           pickImportFile: () => pickImportFile(BrowserWindow.fromWebContents(event.sender)),
           engine: { stageImportPhoto: (bytes) => engine.stageImportPhoto(bytes) },
         }),
-      mediaImport: (command) =>
-        handleMediaPickCommand(command, {
+      mediaImport: (command) => {
+        // The window that asked closing stops the copy in flight and the rest of its pick.
+        const closed = new AbortController();
+        const onClosed = (): void => closed.abort();
+        event.sender.once("destroyed", onClosed);
+        return handleMediaPickCommand(command, {
           pickFiles: (kind) => pickMediaFiles(BrowserWindow.fromWebContents(event.sender), kind),
-          engine: { importMedia: (file) => engine.importMedia(file) },
+          engine: { importMedia: (file, signal) => engine.importMedia(file, signal) },
           platform: process.platform,
-        }),
+          signal: closed.signal,
+        }).finally(() => event.sender.removeListener("destroyed", onClosed));
+      },
       exportFolder: (command) =>
         handleExportFolderCommand(command, {
           settings,

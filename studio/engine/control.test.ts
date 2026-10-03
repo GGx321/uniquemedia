@@ -120,7 +120,7 @@ describe("HostCall media.import and its reply", () => {
     callId: "call-00000001",
     pick: "photo" as const,
     name: "summer.jpg",
-    expected: { dev: "16777234", ino: "9876543210" },
+    expected: { dev: "16777234", ino: "9876543210", size: "4096", mtimeNs: "1700000000123456789", birthtimeNs: "1600000000000000000" },
   };
   const absolute = process.platform === "win32" ? "C:\\Users\\me\\summer.jpg" : "/Users/me/summer.jpg";
 
@@ -145,12 +145,12 @@ describe("HostCall media.import and its reply", () => {
     expect(HostCall.safeParse({ ...call, path: "/Users/me/a.jpg\0.png" }).success).toBe(false);
   });
 
-  test("needs the identity, and an identity that is not two decimal numbers is refused", () => {
+  test("needs the whole identity, and an identity that is not unsigned decimal numbers is refused", () => {
     const { expected: _gone, ...without } = call;
     expect(HostCall.safeParse({ ...without, path: absolute }).success).toBe(false);
-    expect(HostCall.safeParse({ ...call, path: absolute, expected: { dev: "x", ino: "1" } }).success).toBe(false);
-    expect(HostCall.safeParse({ ...call, path: absolute, expected: { dev: "1", ino: "-1" } }).success).toBe(false);
-    expect(HostCall.safeParse({ ...call, path: absolute, expected: { dev: "1", ino: "1", extra: 1 } }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: absolute, expected: { ...call.expected, dev: "x" } }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: absolute, expected: { ...call.expected, ino: "-1" } }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: absolute, expected: { ...call.expected, extra: 1 } }).success).toBe(false);
   });
 
   test("refuses an unknown pick kind and a field it does not know", () => {

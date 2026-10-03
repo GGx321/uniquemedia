@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   AGE_CHECK_ALREADY_REFUSED_DETAIL,
   AvatarDescriptor,
+  Id,
   AvatarTraits,
   errorResponseFor,
   EventLog,
@@ -62,7 +63,7 @@ import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { CaseSensitivityProbe } from "./exportCase";
 import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
-import { EngineReply, HostCall, HostControl, isControlMessage, type EngineInit, type EngineSettings } from "./control";
+import { EngineReply, HostCall, HostControl, isControlMessage, MEDIA_IMPORT_ENGINE_DEADLINE_MS, type EngineInit, type EngineSettings } from "./control";
 import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library, type LogIssue } from "./library";
 import type { ImageMediaType } from "./library/media";
 import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
@@ -159,7 +160,9 @@ export interface EngineDeps {
    */
   mediaImporters?: MediaImporters;
   /** Test knob: the disk calls, `O_NOFOLLOW`, chunk size and caps of the staging copy. */
-  mediaStaging?: Pick<MediaStagingOptions, "ops" | "noFollow" | "chunkBytes" | "caps">;
+  mediaStaging?: Pick<MediaStagingOptions, "ops" | "noFollow" | "chunkBytes" | "caps" | "freeBytes" | "freeMarginBytes" | "fs" | "warn">;
+  /** Test knob: how long the engine lets one `media.import` copy run; `MEDIA_IMPORT_ENGINE_DEADLINE_MS` unless a test says otherwise. */
+  mediaImportDeadlineMs?: number;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
   /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
@@ -524,6 +527,8 @@ export class Engine {
   readonly #mediaImports: MediaImports;
   /** Aborted by `shutdown`, so a copy in flight stops with the engine. */
   readonly #mediaAbort = new AbortController();
+  /** The `media.import` calls running, by `callId`: main's `media.abortImport` stops one. */
+  readonly #mediaCalls = new Map<string, AbortController>();
   #settings: EngineSettings;
   readonly #money: Money;
   #apiKey: string | null = null;
@@ -781,6 +786,7 @@ export class Engine {
       });
     }
     engine.#live = await engine.#openOrNull(init.settings.libraryPath);
+    if (engine.#live !== null) engine.#sweepMediaStaging(engine.#live.library);
     const exportCheck = await engine.#refreshExportStatus();
     for (const notice of init.notices) engine.#addNotice(notice);
     // In the BACKGROUND, never awaited (main's start deadline is 30 s, a locked leftover costs a second and a hung export
@@ -884,8 +890,17 @@ export class Engine {
   async receive(message: unknown): Promise<void> {
     if (isControlMessage(message)) {
       const call = HostCall.safeParse(message);
-      if (call.success) this.#deps.post(await this.#answer(call.data));
-      else await this.applyControl(message);
+      if (call.success) {
+        this.#deps.post(await this.#answer(call.data));
+        return;
+      }
+      // A call that breaks the contract is ANSWERED when its callId can be read: silence would leave main waiting out its whole deadline.
+      const callId = isControlMessage(message) && typeof message === "object" && message !== null && !HostControl.safeParse(message).success ? Reflect.get(message, "callId") : undefined;
+      if (Id.safeParse(callId).success && typeof callId === "string") {
+        this.#deps.post({ kind: "control", type: "reply", callId, error: { code: "VALIDATION", detail: "the call does not match the contract" } });
+        return;
+      }
+      await this.applyControl(message);
       return;
     }
     this.#deps.post(await this.handle(message));
@@ -955,7 +970,10 @@ export class Engine {
         if (staged.identity !== beforeIdentity) this.#librarySwitchGeneration++;
         this.#live = staged;
         // A different library is live: settle its crash windows in the background (never awaited here).
-        if (staged.identity !== beforeIdentity) this.#videos.libraryOpened(staged.library);
+        if (staged.identity !== beforeIdentity) {
+          this.#videos.libraryOpened(staged.library);
+          this.#sweepMediaStaging(staged.library);
+        }
         this.#settings = { ...this.#settings, libraryPath: call.path };
         this.#pendingLibraryPath = call.path;
         // Every other folder still staged (candidates main gave up on) is
@@ -1028,15 +1046,29 @@ export class Engine {
    * A refusal carries its reason and no path.
    */
   async #importMedia(call: Extract<HostCall, { type: "media.import" }>): Promise<Pick<EngineReply, "error" | "mediaJobId" | "mediaReason">> {
+    // The copy ends on main's `media.abortImport`, on the engine's own deadline (a little shorter than main's) and on shutdown. It gives
+    // the library back when it ends, whichever way it ended.
+    const stop = new AbortController();
+    this.#mediaCalls.set(call.callId, stop);
+    const deadline = AbortSignal.timeout(this.#deps.mediaImportDeadlineMs ?? MEDIA_IMPORT_ENGINE_DEADLINE_MS);
+    const signal = AbortSignal.any([stop.signal, this.#mediaAbort.signal, deadline]);
     try {
-      const result = await this.#withLiveLibrary((library) => this.#mediaImports.importFile(library.root, call, this.#mediaAbort.signal));
+      const result = await this.#withLiveLibrary((library) => this.#mediaImports.importFile(library.root, call, signal));
       if (result.ok) return { mediaJobId: result.jobId };
-      if (result.reason === "cancelled" || result.reason === "failed") return { error: { code: "INTERNAL", detail: result.detail } };
+      if (result.reason === "cancelled") return { error: { code: deadline.aborted ? "TIMEOUT" : "INTERNAL", detail: deadline.aborted ? "the copy took too long" : result.detail }, mediaReason: "cancelled" };
+      if (result.reason === "failed") return { error: { code: "INTERNAL", detail: result.detail }, mediaReason: "failed" };
       return { error: { code: "VALIDATION", detail: result.detail }, mediaReason: result.reason };
     } catch (error) {
       if (error instanceof EngineFailure) return { error: error.error };
       return { error: { code: "INTERNAL", detail: "the file could not be imported" } };
+    } finally {
+      this.#mediaCalls.delete(call.callId);
     }
+  }
+
+  /** Removes what a crash left in the staging folder of a library that has just become the live one. In the background; never rejects. */
+  #sweepMediaStaging(library: Library): void {
+    void this.#mediaImports.sweep(library.root).catch(() => undefined);
   }
 
   /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, or a render is queued or running (invariant 25): a library switch must be refused. */
@@ -1085,6 +1117,9 @@ export class Engine {
         this.#musicKeyRejected = false;
         this.#emitSettings();
         await this.#music.noteKeyChange(null);
+        return;
+      case "media.abortImport":
+        this.#mediaCalls.get(control.callId)?.abort();
         return;
       case "settings.update": {
         const refusal = await this.#applySettings(control.settings);
@@ -2969,7 +3004,10 @@ export class Engine {
         if (live !== null) this.#importStaging = null;
         this.#live = live;
         // A different library is live: settle its crash windows in the background (never awaited here).
-        if (live !== null && live.identity !== beforeIdentity) this.#videos.libraryOpened(live.library);
+        if (live !== null && live.identity !== beforeIdentity) {
+          this.#videos.libraryOpened(live.library);
+          this.#sweepMediaStaging(live.library);
+        }
       }
       this.#settings = { ...this.#settings, libraryPath: next.libraryPath };
     }

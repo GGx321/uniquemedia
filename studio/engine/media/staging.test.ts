@@ -2,20 +2,22 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, truncateSync } from "node:fs";
-import { lstat, mkdir, open, readdir, readFile, rename, rm, symlink, truncate, writeFile, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rename, rename as fsRename, rm, symlink, truncate, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
-import { MEDIA_BYTE_CAPS, type MediaKind } from "../../shared/engine";
+import { MEDIA_BYTE_CAPS, type MediaKind, type PickedFileIdentity } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
-import type { FileIdentity, OpenRegularOps } from "../library/openRegular";
-import { MediaStaging, type MediaStagingOptions, type StageResult } from "./staging";
+import type { OpenRegularOps } from "../library/openRegular";
+import { pickedIdentityOf } from "./identity";
+import { MediaStaging, type MediaStagingOptions, type StageRequest, type StageResult } from "./staging";
 useNativeGlobals();
 
 // 3f.1, invariant 34: the engine's side of the own-media hand-off. It opens a user-picked path ONCE, refuses what is not a plain file
 // of ours, copies at most the kind's cap into its own staging folder, and from then on nothing reads the user's path again.
 
 const tmp = tempDirFor({ beforeEach, afterEach }, "studio-media-staging-");
-const stagingDir = (): string => join(tmp(), "library", "media", ".staging");
+const libraryRoot = (): string => join(tmp(), "library");
+const stagingDir = (): string => join(libraryRoot(), "media", ".staging");
 const sourceDir = (): string => join(tmp(), "picked");
 
 const ascii = (text: string): number[] => [...text].map((c) => c.charCodeAt(0));
@@ -29,11 +31,23 @@ const SCRIPT = Buffer.from("#!/bin/sh\nrm -rf ~\n");
 
 beforeEach(async () => {
   await mkdir(sourceDir(), { recursive: true });
+  // The library's own folder exists before anything is staged in it: an engine only stages into a library it has opened.
+  await mkdir(libraryRoot(), { recursive: true });
 });
 
 let ids = 0;
-function staging(extra: Partial<MediaStagingOptions> = {}): MediaStaging {
-  return new MediaStaging({ dir: stagingDir(), newId: () => `staged-${String(++ids).padStart(8, "0")}`, ...extra });
+const NOTHING: PickedFileIdentity = { dev: "0", ino: "0", size: "0", mtimeNs: "0", birthtimeNs: "0" };
+
+/** The staging under test, which takes the identity of the file as it stands when a test does not say one (main always sends it). */
+class TestStaging extends MediaStaging {
+  override async stage(request: Omit<StageRequest, "expected"> & { expected?: PickedFileIdentity }): Promise<StageResult> {
+    const expected = request.expected ?? (await identityOf(request.path).catch(() => NOTHING));
+    return super.stage({ ...request, expected });
+  }
+}
+
+function staging(extra: Partial<MediaStagingOptions> = {}): TestStaging {
+  return new TestStaging({ root: libraryRoot(), newId: () => `staged-${String(++ids).padStart(8, "0")}`, ...extra });
 }
 async function put(name: string, bytes: Buffer): Promise<string> {
   const path = join(sourceDir(), name);
@@ -46,9 +60,8 @@ async function leftovers(): Promise<string[]> {
 function refusal(result: StageResult): string {
   return result.ok ? "ok" : result.reason;
 }
-async function identityOf(path: string): Promise<FileIdentity> {
-  const info = await lstat(path, { bigint: true });
-  return { dev: String(info.dev), ino: String(info.ino) };
+async function identityOf(path: string): Promise<PickedFileIdentity> {
+  return pickedIdentityOf(await lstat(path, { bigint: true }));
 }
 /** A symlink, or null when this platform will not make one for this user (Windows without the privilege): the test then has nothing to say. */
 async function tryLink(target: string, path: string): Promise<boolean> {
@@ -233,7 +246,7 @@ describe("size", () => {
     expect(await leftovers()).toEqual([]);
   });
 
-  test("a file that grows past the cap WHILE it is copied stops at the cap, is refused as too-large and leaves nothing", async () => {
+  test("a file that grows far past the cap WHILE it is copied is refused as changed, and leaves nothing", async () => {
     const path = await put("growing.jpg", jpeg(60));
     let grown = false;
     const result = await staging({ caps, chunkBytes: 16 }).stage({
@@ -245,7 +258,7 @@ describe("size", () => {
         appendFileSync(path, Buffer.alloc(500, 1));
       },
     });
-    expect(refusal(result)).toBe("too-large");
+    expect(refusal(result)).toBe("changed");
     expect(await leftovers()).toEqual([]);
   });
 
@@ -450,5 +463,337 @@ describe("the staging folder", () => {
     const result = await staging({ newId: () => "../../escape" }).stage({ path: await put("a.jpg", jpeg()), kind: "photo" });
     expect(refusal(result)).toBe("unreadable");
     expect(await readdir(join(tmp(), "library", "media")).catch(() => [])).not.toContain("escape.media");
+  });
+});
+
+// ---------- round 2: what the 3f.1 security review found ----------
+
+/** A folder with a file in it, standing for something of the owner's that a staging folder must never touch. */
+async function victim(): Promise<string> {
+  const folder = join(tmp(), "victim");
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, "keep-me.txt"), "the owner's data");
+  await writeFile(join(folder, ".owner-00000001.part"), "even a name that looks like ours, in a folder that is not ours");
+  return folder;
+}
+
+describe("the staging folder is the library's own and nothing else", () => {
+  test("a .staging that is a symlink to another folder is refused: that folder is not emptied and nothing is written into it", async () => {
+    const other = await victim();
+    await mkdir(join(libraryRoot(), "media"), { recursive: true });
+    if (!(await tryLink(other, stagingDir()))) return;
+    const result = await staging().stage({ path: await put("p.jpg", jpeg()), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+    expect((await readdir(other)).sort()).toEqual([".owner-00000001.part", "keep-me.txt"]);
+  });
+
+  test("a media folder that is a symlink to another folder is refused the same way", async () => {
+    const other = await victim();
+    await mkdir(libraryRoot(), { recursive: true });
+    if (!(await tryLink(other, join(libraryRoot(), "media")))) return;
+    const result = await staging().stage({ path: await put("p.jpg", jpeg()), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+    expect((await readdir(other)).sort()).toEqual([".owner-00000001.part", "keep-me.txt"]);
+  });
+
+  test("the cleanup alone, run at the library's opening, does not follow a .staging link either", async () => {
+    const other = await victim();
+    await mkdir(join(libraryRoot(), "media"), { recursive: true });
+    if (!(await tryLink(other, stagingDir()))) return;
+    await staging().sweep();
+    expect((await readdir(other)).sort()).toEqual([".owner-00000001.part", "keep-me.txt"]);
+  });
+
+  test("a library reached through a link is still a library: the staging folder inside it is used", async () => {
+    await mkdir(libraryRoot(), { recursive: true });
+    const via = join(tmp(), "via-library");
+    if (!(await tryLink(libraryRoot(), via))) return;
+    const result = await staging({ root: via }).stage({ path: await put("p.jpg", jpeg()), kind: "photo" });
+    expect(result.ok).toBe(true);
+  });
+
+  test("the cleanup removes only the files that have the shape of ours and leaves everything else alone", async () => {
+    await mkdir(stagingDir(), { recursive: true });
+    await writeFile(join(stagingDir(), ".staged-00000001.part"), "ours");
+    await writeFile(join(stagingDir(), "staged-00000002.media"), "ours");
+    await writeFile(join(stagingDir(), "notes.txt"), "not ours");
+    await writeFile(join(stagingDir(), ".st-1.part"), "too short an id to be ours");
+    await writeFile(join(stagingDir(), "STAGED-00000003.media"), "capitals are not ours");
+    await staging().sweep();
+    expect(await leftovers()).toEqual([".st-1.part", "STAGED-00000003.media", "notes.txt"]);
+  });
+
+  test("the cleanup is not recursive: a folder that has the name of ours is left, with what is in it", async () => {
+    await mkdir(join(stagingDir(), "staged-00000004.media"), { recursive: true });
+    await writeFile(join(stagingDir(), "staged-00000004.media", "inside.txt"), "kept");
+    await staging().sweep();
+    expect(await readdir(join(stagingDir(), "staged-00000004.media"))).toEqual(["inside.txt"]);
+  });
+
+  test("the cleanup with no staging folder yet creates nothing", async () => {
+    await staging().sweep();
+    expect(await readdir(libraryRoot()).catch(() => [])).toEqual([]);
+  });
+
+  test("a cleanup that cannot remove a file says so once, without its path, and goes on with the rest", async () => {
+    await mkdir(stagingDir(), { recursive: true });
+    await writeFile(join(stagingDir(), ".staged-00000001.part"), "locked");
+    await writeFile(join(stagingDir(), ".staged-00000002.part"), "free");
+    const warned: string[] = [];
+    const unlink = async (path: string): Promise<void> => {
+      if (path.endsWith("00000001.part")) throw Object.assign(new Error("busy"), { code: "EBUSY" });
+      await rm(path);
+    };
+    await staging({ fs: { unlink, platform: "linux" }, warn: (text) => warned.push(text) }).sweep();
+    expect(await leftovers()).toEqual([".staged-00000001.part"]);
+    expect(warned).toHaveLength(1);
+    expect(warned[0]?.includes(tmp())).toBe(false);
+  });
+});
+
+describe("a failed first use is not remembered for ever", () => {
+  test("once the obstacle is gone, the next file is staged", async () => {
+    await mkdir(libraryRoot(), { recursive: true });
+    await writeFile(join(libraryRoot(), "media"), "a file where the folder should be");
+    const s = staging();
+    const path = await put("q.jpg", jpeg());
+    expect(refusal(await s.stage({ path, kind: "photo" }))).toBe("unreadable");
+    await rm(join(libraryRoot(), "media"));
+    expect((await s.stage({ path, kind: "photo" })).ok).toBe(true);
+  });
+});
+
+describe("the copy reads no more than the file's own size plus one byte", () => {
+  /** A handle that counts the bytes `read` hands out. */
+  function counting(counter: { bytes: number }): OpenRegularOps {
+    return {
+      lstat: (p) => lstat(p, { bigint: true }),
+      open: async (p, flags) => {
+        const handle = await open(p, flags);
+        let reads = 0;
+        return new Proxy(handle, {
+          get(target, prop) {
+            if (prop === "read") {
+              return async (buffer: Buffer, offset: number, length: number, position: number | null) => {
+                const result = await target.read(buffer, offset, length, position);
+                // The first read is the look at the start of the file; every other one is the copy's.
+                if (++reads > 1) counter.bytes += result.bytesRead;
+                return result;
+              };
+            }
+            const value: unknown = Reflect.get(target, prop);
+            return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          },
+        }) as FileHandle;
+      },
+    };
+  }
+
+  test("a file that grows by a thousand times its size is refused as changed after one byte past the size it was opened at", async () => {
+    const path = await put("growing.jpg", jpeg(40));
+    const counter = { bytes: 0 };
+    let grown = false;
+    const caps = { photo: 1_000_000, video: 1_000_000, audio: 1_000_000, sticker: 1_000_000 };
+    const result = await staging({ caps, chunkBytes: 16, ops: counting(counter) }).stage({
+      path,
+      kind: "photo",
+      onProgress: () => {
+        if (grown) return;
+        grown = true;
+        appendFileSync(path, Buffer.alloc(40_000, 1));
+      },
+    });
+    expect(refusal(result)).toBe("changed");
+    expect(counter.bytes).toBeLessThanOrEqual(41);
+    expect(await leftovers()).toEqual([]);
+  });
+});
+
+describe("a copy that did not land whole", () => {
+  /** An output file whose writes are cut short: `reportsFull` says whether it also lies about it. */
+  function shortOut(reportsFull: boolean): (path: string) => Promise<FileHandle> {
+    return async (path) => {
+      const handle = await open(path, "wx");
+      return new Proxy(handle, {
+        get(target, prop) {
+          if (prop === "write") {
+            return async (buffer: Buffer, offset: number, length: number) => {
+              const half = Math.max(1, Math.floor(length / 2));
+              await target.write(buffer, offset, half);
+              return { bytesWritten: reportsFull ? length : half, buffer };
+            };
+          }
+          const value: unknown = Reflect.get(target, prop);
+          return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+        },
+      }) as FileHandle;
+    };
+  }
+
+  test("a write that says it wrote less than it was given is refused as unreadable and leaves nothing", async () => {
+    const result = await staging({ fs: { openOut: shortOut(false) } }).stage({ path: await put("a.jpg", jpeg(500)), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("a copy that is shorter on disk than the bytes read, though every write said it was whole, is refused too", async () => {
+    const result = await staging({ fs: { openOut: shortOut(true) } }).stage({ path: await put("a.jpg", jpeg(500)), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+    expect(await leftovers()).toEqual([]);
+  });
+});
+
+describe("room for the copy", () => {
+  test("a library disk with less free than the file and the margin is refused as no-space before a byte is copied", async () => {
+    const copied: number[] = [];
+    const result = await staging({ freeBytes: async () => 120, freeMarginBytes: 50 }).stage({ path: await put("a.jpg", jpeg(100)), kind: "photo", onProgress: (n) => copied.push(n) });
+    expect(refusal(result)).toBe("no-space");
+    expect(copied).toEqual([]);
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("exactly the file and the margin free is enough", async () => {
+    const result = await staging({ freeBytes: async () => 150, freeMarginBytes: 50 }).stage({ path: await put("a.jpg", jpeg(100)), kind: "photo" });
+    expect(result.ok).toBe(true);
+  });
+
+  test("one byte short of that is not", async () => {
+    const result = await staging({ freeBytes: async () => 149, freeMarginBytes: 50 }).stage({ path: await put("a.jpg", jpeg(100)), kind: "photo" });
+    expect(refusal(result)).toBe("no-space");
+  });
+
+  test("a disk that cannot say how much is free does not stop the copy", async () => {
+    const result = await staging({ freeBytes: async () => null }).stage({ path: await put("a.jpg", jpeg(100)), kind: "photo" });
+    expect(result.ok).toBe(true);
+    const failing = await staging({
+      freeBytes: async () => {
+        throw new Error("statfs is not there");
+      },
+    }).stage({ path: await put("b.jpg", jpeg(100)), kind: "photo" });
+    expect(failing.ok).toBe(true);
+  });
+
+  test("the real disk has room for a small file with the default margin", async () => {
+    expect((await staging().stage({ path: await put("a.jpg", jpeg(100)), kind: "photo" })).ok).toBe(true);
+  });
+});
+
+describe("Windows: a fresh file is renamed and removed with the retries a held handle needs", () => {
+  const eperm = (): Error => Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+
+  test("the rename of the finished copy is retried when an antivirus holds it, and the copy lands", async () => {
+    let attempts = 0;
+    const rename = async (from: string, to: string): Promise<void> => {
+      if (++attempts < 3) throw eperm();
+      await fsRename(from, to);
+    };
+    const result = await staging({ fs: { rename, platform: "win32", sleep: async () => undefined } }).stage({ path: await put("a.jpg", jpeg()), kind: "photo" });
+    expect(result.ok).toBe(true);
+    expect(attempts).toBe(3);
+  });
+
+  test("a rename that never gives is a refusal as unreadable, and the part file is removed", async () => {
+    const rename = async (): Promise<void> => {
+      throw eperm();
+    };
+    const result = await staging({ fs: { rename, platform: "win32", sleep: async () => undefined, delaysMs: [1, 1] } }).stage({ path: await put("a.jpg", jpeg()), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("dispose never throws: a copy that cannot be removed is left to the next cleanup, and the failure is told without a path", async () => {
+    const warned: string[] = [];
+    const unlink = async (): Promise<void> => {
+      throw Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" });
+    };
+    const result = await staging({ fs: { unlink, platform: "win32", sleep: async () => undefined, delaysMs: [1] }, warn: (text) => warned.push(text) }).stage({ path: await put("a.jpg", jpeg()), kind: "photo" });
+    if (!result.ok) throw new Error("refused");
+    await result.staged.dispose();
+    expect(await leftovers()).toHaveLength(1);
+    expect(warned).toHaveLength(1);
+    expect(warned[0]?.includes(tmp())).toBe(false);
+  });
+
+  test("dispose retries a transient failure and removes the copy", async () => {
+    let attempts = 0;
+    const unlink = async (path: string): Promise<void> => {
+      if (++attempts < 3) throw eperm();
+      await rm(path);
+    };
+    const result = await staging({ fs: { unlink, platform: "win32", sleep: async () => undefined } }).stage({ path: await put("a.jpg", jpeg()), kind: "photo" });
+    if (!result.ok) throw new Error("refused");
+    await result.staged.dispose();
+    expect(await leftovers()).toEqual([]);
+  });
+});
+
+describe("a path that is never a plain file is refused by the engine too", () => {
+  test("a Windows device, pipe or stream path is not-a-file without the disk being touched", async () => {
+    let touched = false;
+    const ops: OpenRegularOps = {
+      lstat: async () => {
+        touched = true;
+        throw new Error("no");
+      },
+      open: async () => {
+        touched = true;
+        throw new Error("no");
+      },
+    };
+    for (const path of ["\\\\.\\pipe\\studio", "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\a.jpg", "C:\\Users\\me\\a.jpg:secret", "C:\\Users\\me\\CON"]) {
+      expect(refusal(await staging({ ops, platform: "win32" }).stage({ path, kind: "photo" }))).toBe("not-a-file");
+    }
+    expect(touched).toBe(false);
+  });
+});
+
+describe("what is staged says which container it is", () => {
+  const ftypBox = (brand: string): Buffer => Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from(`ftyp${brand}`), Buffer.alloc(40)]);
+  const cases: [string, Buffer, MediaKind, string][] = [
+    ["a JPEG", jpeg(), "photo", "jpeg"],
+    ["a GIF", Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(40)]), "sticker", "gif"],
+    ["an MP4", ftypBox("isom"), "video", "mp4"],
+    ["a MOV", ftypBox("qt  "), "video", "mov"],
+    ["an M4A", ftypBox("M4A "), "audio", "m4a"],
+    ["a WAV", Buffer.concat([Buffer.from("RIFF\0\0\0\0WAVEfmt "), Buffer.alloc(30)]), "audio", "wav"],
+    ["a FLAC", Buffer.concat([Buffer.from("fLaC"), Buffer.alloc(40)]), "audio", "flac"],
+  ];
+  test.each(cases)("%s is named by its bytes: its kind and its container", async (_name, bytes, kind, format) => {
+    const result = await staging().stage({ path: await put("thing.dat", bytes), kind: "any" });
+    if (!result.ok) throw new Error(`refused: ${result.reason}`);
+    expect(result.staged.kind).toBe(kind);
+    expect(String(result.staged.format)).toBe(format);
+    expect(result.staged.path.endsWith(".media")).toBe(true);
+  });
+});
+
+describe("the handle the open gives is the file that is read, not the path", () => {
+  /** The path is re-pointed to another file right AFTER the open: the path now names something else than the handle does. */
+  function swappingAfterOpen(path: string, replacement: string): OpenRegularOps {
+    return {
+      lstat: (p) => lstat(p, { bigint: true }),
+      open: async (p, flags) => {
+        const handle = await open(p, flags);
+        await rename(replacement, path);
+        return handle;
+      },
+    };
+  }
+
+  test("the identity and the bytes are the opened file's: a swap after the open changes nothing", async () => {
+    const bytes = jpeg(120);
+    const path = await put("a.jpg", bytes);
+    const expected = await identityOf(path);
+    const other = await put("b.jpg", jpeg(300));
+    let result: StageResult;
+    try {
+      result = await staging({ ops: swappingAfterOpen(path, other) }).stage({ path, kind: "photo", expected });
+    } catch (error) {
+      // Windows may refuse to replace a file that is open.
+      if (process.platform === "win32") return;
+      throw error;
+    }
+    if (!result.ok) throw new Error(`refused: ${result.reason}`);
+    expect(await readFile(result.staged.path)).toEqual(bytes);
   });
 });

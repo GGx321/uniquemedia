@@ -97,3 +97,23 @@ export function isHeic(head: Uint8Array): boolean {
 export function unfitReason(pick: MediaPickKind, head: Uint8Array): "heic" | "format" {
   return isHeic(head) && (pick === "photo" || pick === "any") ? "heic" : "format";
 }
+
+/** The container of the bytes, by the names the importers use to force a demuxer (`-f mov` for `mp4`, `mov` and `m4a`, `-f aac` for `aac`). */
+export type MediaFormat = "jpeg" | "png" | "apng" | "webp" | "gif" | "mp4" | "mov" | "m4a" | "wav" | "flac" | "ogg" | "mp3" | "aac";
+
+/** What container `head` is, or null when it is none that `mediaKindsOf` takes. The importer never has to guess it from a file name. */
+export function formatOf(head: Uint8Array): MediaFormat | null {
+  if (mediaKindsOf(head).length === 0) return null;
+  if (head[0] === 0xff && head[1] === 0xd8) return "jpeg";
+  if (isPng(head)) return isApng(head) ? "apng" : "png";
+  if (ascii(head, 0, 3) === "GIF") return "gif";
+  if (ascii(head, 0, 4) === "RIFF") return ascii(head, 8, 4) === "WEBP" ? "webp" : "wav";
+  if (ascii(head, 4, 4) === "ftyp") {
+    const brand = ascii(head, 8, 4);
+    return AUDIO_BRANDS.has(brand) ? "m4a" : brand === "qt  " ? "mov" : "mp4";
+  }
+  if (ascii(head, 0, 4) === "fLaC") return "flac";
+  if (ascii(head, 0, 4) === "OggS") return "ogg";
+  if (ascii(head, 0, 3) === "ID3" || isMp3Frame(head)) return "mp3";
+  return "aac";
+}

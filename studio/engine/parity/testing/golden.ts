@@ -1860,7 +1860,7 @@ export const GOLDEN: Record<string, string[]> = {
     "< ok {\"picked\":false}",
     "# seven files at once: a photo no importer takes yet, a script, a folder, an empty file, one over the cap, a HEIC, one that is gone",
     "> media.pickImport {\"kind\":\"photo\"}",
-    "< ok {\"picked\":true,\"jobIds\":[],\"refused\":[{\"name\":\"summer.jpg\",\"reason\":\"not-yet-supported\"},{\"name\":\"notes.jpg\",\"reason\":\"format\"},{\"name\":\"album.jpg\",\"reason\":\"not-a-file\"},{\"name\":\"empty.jpg\",\"reason\":\"empty\"},{\"name\":\"huge.jpg\",\"reason\":\"too-large\"},{\"name\":\"IMG_0001.HEIC\",\"reason\":\"heic\"},{\"name\":\"gone.jpg\",\"reason\":\"not-a-file\"}]}",
+    "< ok {\"picked\":true,\"jobIds\":[],\"refused\":[{\"name\":\"summer.jpg\",\"reason\":\"not-yet-supported\"},{\"name\":\"notes.jpg\",\"reason\":\"format\"},{\"name\":\"album.jpg\",\"reason\":\"not-a-file\"},{\"name\":\"empty.jpg\",\"reason\":\"empty\"},{\"name\":\"huge.jpg\",\"reason\":\"too-large\"},{\"name\":\"IMG_0001.HEIC\",\"reason\":\"heic\"},{\"name\":\"gone.jpg\",\"reason\":\"not-a-file\"}],\"skipped\":0}",
     "# a pick is used once: the next dialog is a cancel",
     "> media.pickImport {\"kind\":\"photo\"}",
     "< ok {\"picked\":false}",

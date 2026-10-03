@@ -27,6 +27,7 @@ describe("media.pickImport", () => {
     expect(await unwrap(mock.client.request("media.pickImport", { kind: "photo" }))).toEqual({
       picked: true,
       jobIds: [],
+      skipped: 0,
       refused: [
         { name: "summer.jpg", reason: "not-yet-supported" },
         { name: "notes.jpg", reason: "format" },

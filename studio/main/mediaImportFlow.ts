@@ -2,6 +2,7 @@ import { posix, win32 } from "node:path";
 import {
   AbsolutePath,
   errorResponseFor,
+  isUnsafePickedPath,
   MAX_PICKED_FILES,
   MAX_REFUSED_FILES,
   mediaByteCap,
@@ -11,9 +12,11 @@ import {
   type MediaPickKind,
   type MediaRefusal,
   type MediaUnsupportedReason,
+  type PickedFileIdentity,
   type ResponseMessage,
 } from "../shared/engine";
-import { openRegularNoFollow, UnsafeOpenError, type FileIdentity, type OpenRegularOps } from "../engine/library/openRegular";
+import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOps } from "../engine/library/openRegular";
+import { pickedIdentityOf } from "../engine/media/identity";
 
 // Own media come in through main only (3f.1, invariant 34, K29). The window sends `media.pickImport {kind}` and nothing else, and is
 // never told a path. Main opens its own native dialog (per-kind filters, several files), and looks at EACH picked file before the engine
@@ -43,9 +46,12 @@ export interface MediaImportFlowDeps {
   /** Main's native open dialog for `kind` (several files); null when cancelled. Never handed a path by the window. */
   pickFiles(kind: MediaPickKind): Promise<readonly string[] | null>;
   engine: {
-    importMedia(call: { pick: MediaPickKind; path: string; name: string; expected: FileIdentity }): Promise<MediaImportReply>;
+    /** `signal` aborts the copy in flight: the window that asked has closed. */
+    importMedia(call: { pick: MediaPickKind; path: string; name: string; expected: PickedFileIdentity }, signal?: AbortSignal): Promise<MediaImportReply>;
   };
   platform: NodeJS.Platform;
+  /** Aborted when the window that asked closes: the copy in flight is stopped and the rest of the pick is not started. */
+  signal?: AbortSignal | undefined;
   /** The disk calls and `O_NOFOLLOW` of main's look, for a test that plays a swap or Windows. */
   ops?: OpenRegularOps;
   noFollow?: number;
@@ -56,8 +62,9 @@ const MAX_NAME_UNITS = 120;
 /** The file's base name for display: control characters replaced, at most 120 characters, `file` when nothing is left. */
 export function displayNameOf(path: string, platform: NodeJS.Platform): string {
   const base = (platform === "win32" ? win32 : posix).basename(path);
+  // C0 and C1 controls and the bidi marks, embeddings, overrides and isolates (§ MediaFileName): a name must not read as another.
   // eslint-disable-next-line no-control-regex
-  let name = base.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  let name = base.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").trim();
   if (name.length > MAX_NAME_UNITS) {
     name = name.slice(0, MAX_NAME_UNITS);
     // Never cut a surrogate pair in half.
@@ -67,32 +74,7 @@ export function displayNameOf(path: string, platform: NodeJS.Platform): string {
   return name === "" ? "file" : name;
 }
 
-const RESERVED_DEVICE_NAME = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])$/i;
-
-/**
- * True for a path Windows would not read as a plain file: the device namespace (`\\.\COM1`, `\\.\pipe\x`, `\\?\GLOBALROOT\...`), a name
- * with an alternate data stream (`a.jpg:secret`), and a reserved device name (`CON`, `nul.txt`, `COM1`). Read by Windows' rules on any
- * platform so it is tested everywhere; false on every other platform, where a colon and `CON` are ordinary.
- */
-export function isUnsafePickedPath(path: string, platform: NodeJS.Platform): boolean {
-  if (platform !== "win32") return false;
-  const normal = path.replace(/\//g, "\\");
-  if (normal.startsWith("\\\\.\\")) return true;
-  let rest = normal;
-  if (normal.startsWith("\\\\?\\")) {
-    rest = normal.slice(4);
-    if (/^UNC\\/i.test(rest)) rest = rest.slice(4);
-    else if (/^[A-Za-z]:\\/.test(rest)) rest = rest.slice(2);
-    else return true;
-  } else if (/^[A-Za-z]:/.test(normal)) {
-    rest = normal.slice(2);
-  }
-  if (rest.includes(":")) return true;
-  // The drive-relative and UNC roots have no name of a device in them; every other segment is a name Windows may read as one.
-  return rest.split("\\").some((segment) => RESERVED_DEVICE_NAME.test(segment.split(".")[0]?.trimEnd() ?? ""));
-}
-
-export type Preflight = { ok: true; identity: FileIdentity } | { ok: false; reason: MediaUnsupportedReason };
+export type Preflight = { ok: true; identity: PickedFileIdentity } | { ok: false; reason: MediaUnsupportedReason };
 
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error && typeof Reflect.get(error, "code") === "string" ? String(Reflect.get(error, "code")) : undefined;
@@ -116,7 +98,7 @@ export async function preflightPickedFile(path: string, kind: MediaPickKind, dep
     const info = await handle.stat({ bigint: true });
     if (info.size === 0n) return { ok: false, reason: "empty" };
     if (info.size > BigInt(mediaByteCap(kind))) return { ok: false, reason: "too-large" };
-    return { ok: true, identity: { dev: String(info.dev), ino: String(info.ino) } };
+    return { ok: true, identity: pickedIdentityOf(info) };
   } catch {
     return { ok: false, reason: "unreadable" };
   } finally {
@@ -124,12 +106,27 @@ export async function preflightPickedFile(path: string, kind: MediaPickKind, dep
   }
 }
 
+/** One pick at a time: a second dialog while one is open, or while its files are being copied, is refused. */
+let pickInProgress = false;
+
 /**
  * `media.pickImport`: main's dialog, a look at each picked file, and the engine's import of the ones that pass, one after another (a
- * 2 GB copy is not run beside another). A cancel is `{ picked: false }`. A refused file is listed by name and reason and the rest still go
- * through; an error that is not about a file (the engine is busy, not running) fails the whole command with that error.
+ * 2 GB copy is not run beside another, and a second pick is refused while this one runs). A cancel is `{ picked: false }`. A refused file is
+ * listed by name and reason and the rest still go through, a failed importer or a cancelled copy included. An error that is not about a file
+ * (the engine is busy, not running) fails the command only when nothing was done yet; otherwise the jobs already started are kept and
+ * that file and the rest are listed as `failed`. Files beyond what one answer lists are counted in `skipped`, never dropped silently.
  */
 export async function handleMediaPickCommand(command: MediaPickCommand, deps: MediaImportFlowDeps): Promise<ResponseMessage> {
+  if (pickInProgress) return errorResponseFor(command, { code: "IN_FLIGHT", detail: "another import is being picked" });
+  pickInProgress = true;
+  try {
+    return await pickAndImport(command, deps);
+  } finally {
+    pickInProgress = false;
+  }
+}
+
+async function pickAndImport(command: MediaPickCommand, deps: MediaImportFlowDeps): Promise<ResponseMessage> {
   const kind = command.payload.kind;
   const picked = await deps.pickFiles(kind);
   if (picked === null || picked.length === 0) return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
@@ -137,8 +134,16 @@ export async function handleMediaPickCommand(command: MediaPickCommand, deps: Me
   const jobIds: string[] = [];
   const refused: MediaRefusal[] = [];
   let taken = 0;
-  for (const path of picked.slice(0, MAX_REFUSED_FILES)) {
+  // Once the pick cannot go on (the window closed, the engine failed), every file after it is listed with that reason and not asked for.
+  let stopped: "cancelled" | "failed" | null = null;
+  const listed = picked.slice(0, MAX_REFUSED_FILES);
+  for (const path of listed) {
     const name = displayNameOf(path, deps.platform);
+    if (deps.signal?.aborted === true) stopped = "cancelled";
+    if (stopped !== null) {
+      refused.push({ name, reason: stopped });
+      continue;
+    }
     if (taken >= MAX_PICKED_FILES) {
       refused.push({ name, reason: "too-many" });
       continue;
@@ -149,11 +154,19 @@ export async function handleMediaPickCommand(command: MediaPickCommand, deps: Me
       refused.push({ name, reason: look.reason });
       continue;
     }
-    const reply = await deps.engine.importMedia({ pick: kind, path, name, expected: look.identity });
-    if (reply.error !== null && reply.mediaReason === undefined) return errorResponseFor(command, reply.error);
-    if (reply.mediaReason !== undefined) refused.push({ name, reason: reply.mediaReason });
-    else if (reply.mediaJobId !== undefined) jobIds.push(reply.mediaJobId);
-    else return errorResponseFor(command, { code: "INTERNAL", detail: "the engine answered the import with neither a job nor a reason" });
+    const reply = await deps.engine.importMedia({ pick: kind, path, name, expected: look.identity }, deps.signal);
+    if (reply.mediaReason !== undefined) {
+      refused.push({ name, reason: reply.mediaReason });
+    } else if (reply.error === null && reply.mediaJobId !== undefined) {
+      jobIds.push(reply.mediaJobId);
+    } else {
+      // Not about this file. With nothing done there is nothing to lose: the command fails with the error. Otherwise the jobs already started stay.
+      if (jobIds.length === 0 && refused.length === 0) {
+        return errorResponseFor(command, reply.error ?? { code: "INTERNAL", detail: "the engine answered the import with neither a job nor a reason" });
+      }
+      refused.push({ name, reason: "failed" });
+      stopped = "failed";
+    }
   }
-  return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: true, jobIds, refused } };
+  return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: true, jobIds, refused, skipped: picked.length - listed.length } };
 }

@@ -1,6 +1,4 @@
-import { join } from "node:path";
-import type { MediaKind, MediaPickKind, MediaUnsupportedReason } from "../../shared/engine";
-import type { FileIdentity } from "../library/openRegular";
+import type { MediaKind, MediaPickKind, MediaUnsupportedReason, PickedFileIdentity } from "../../shared/engine";
 import { MediaStaging, type MediaStagingOptions, type StagedMedia } from "./staging";
 
 // The hand-off from the import boundary to the per-kind importers (3f.2 photos, 3f.3a video, 3f.4 music, 3f.5 stickers).
@@ -25,22 +23,15 @@ export interface MediaImportCall {
   readonly path: string;
   readonly name: string;
   /** The identity main saw when the dialog answered. */
-  readonly expected: FileIdentity;
+  readonly expected: PickedFileIdentity;
 }
 
-export type MediaImportResult =
-  | { ok: true; jobId: string }
-  | { ok: false; reason: MediaUnsupportedReason | "cancelled" | "failed"; detail: string };
+export type MediaImportResult = { ok: true; jobId: string } | { ok: false; reason: MediaUnsupportedReason; detail: string };
 
 export interface MediaImportsOptions {
   readonly newId: () => string;
   readonly importers?: MediaImporters | undefined;
   readonly staging?: Pick<MediaStagingOptions, "ops" | "noFollow" | "chunkBytes" | "caps"> | undefined;
-}
-
-/** Folder of a library root where picked files are staged: `<library>/media/.staging`. */
-export function stagingDirOf(libraryRoot: string): string {
-  return join(libraryRoot, "media", ".staging");
 }
 
 export class MediaImports {
@@ -58,13 +49,18 @@ export class MediaImports {
       const importers = this.#options.importers ?? {};
       area = new MediaStaging({
         ...this.#options.staging,
-        dir: stagingDirOf(libraryRoot),
+        root: libraryRoot,
         newId: this.#options.newId,
         supports: (kind) => importers[kind] !== undefined,
       });
       this.#areas.set(libraryRoot, area);
     }
     return area;
+  }
+
+  /** Removes what a crash left in `libraryRoot`'s staging folder. Never rejects. */
+  async sweep(libraryRoot: string): Promise<void> {
+    await this.#stagingFor(libraryRoot).sweep();
   }
 
   /** Stages the picked file in `libraryRoot`'s staging area and hands the staged copy to its kind's importer. Never rejects for a bad file; a file's refusal is a result. */

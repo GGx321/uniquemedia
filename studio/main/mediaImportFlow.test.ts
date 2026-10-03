@@ -12,9 +12,11 @@ import {
   PROTOCOL_VERSION,
   ResponseMessage,
   type MediaPickKind,
+  type PickedFileIdentity,
 } from "../shared/engine";
-import type { FileIdentity, OpenRegularOps } from "../engine/library/openRegular";
-import { displayNameOf, handleMediaPickCommand, isMediaPickCommand, isUnsafePickedPath, preflightPickedFile, type MediaImportFlowDeps, type MediaImportReply } from "./mediaImportFlow";
+import type { OpenRegularOps } from "../engine/library/openRegular";
+import { pickedIdentityOf } from "../engine/media/identity";
+import { displayNameOf, handleMediaPickCommand, isMediaPickCommand, preflightPickedFile, type MediaImportFlowDeps, type MediaImportReply } from "./mediaImportFlow";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -35,9 +37,8 @@ async function put(name: string, bytes: Buffer = JPEG): Promise<string> {
   await writeFile(path, bytes);
   return path;
 }
-async function identityOf(path: string): Promise<FileIdentity> {
-  const info = await lstat(path, { bigint: true });
-  return { dev: String(info.dev), ino: String(info.ino) };
+async function identityOf(path: string): Promise<PickedFileIdentity> {
+  return pickedIdentityOf(await lstat(path, { bigint: true }));
 }
 async function tryLink(target: string, path: string): Promise<boolean> {
   try {
@@ -52,7 +53,7 @@ async function tryLink(target: string, path: string): Promise<boolean> {
 interface Harness {
   deps: MediaImportFlowDeps;
   asked: MediaPickKind[];
-  imported: { pick: MediaPickKind; path: string; name: string; expected: FileIdentity }[];
+  imported: { pick: MediaPickKind; path: string; name: string; expected: PickedFileIdentity }[];
 }
 
 function harness(options: { picks?: readonly string[] | null; reply?: (path: string) => MediaImportReply; deps?: Partial<MediaImportFlowDeps> } = {}): Harness {
@@ -114,7 +115,7 @@ describe("a good file", () => {
     const h = harness({ picks: [path] });
     const result = await run(h);
     expect(h.imported).toEqual([{ pick: "photo", path, name: "summer.jpg", expected: await identityOf(path) }]);
-    expect(result).toEqual({ picked: true, jobIds: ["job-00000001"], refused: [] });
+    expect(result).toEqual({ picked: true, jobIds: ["job-00000001"], refused: [], skipped: 0 });
   });
 
   test("the answer carries no path, whatever the dialog returned", async () => {
@@ -138,7 +139,7 @@ describe("a good file", () => {
       reply: (path) => (path.endsWith("notes.jpg") ? { error: { code: "VALIDATION", detail: "not a photo" }, mediaReason: "format" } : { error: null, mediaJobId: `job-${path.endsWith("a.jpg") ? "00000001" : "00000002"}` }),
     });
     const result = await run(h);
-    expect(result).toEqual({ picked: true, jobIds: ["job-00000001", "job-00000002"], refused: [{ name: "notes.jpg", reason: "format" }] });
+    expect(result).toEqual({ picked: true, jobIds: ["job-00000001", "job-00000002"], refused: [{ name: "notes.jpg", reason: "format" }], skipped: 0 });
   });
 
   test("at most MAX_PICKED_FILES files are imported; the rest are refused as too-many and never reach the engine", async () => {
@@ -165,7 +166,7 @@ describe("what main refuses before the engine hears of it", () => {
     const link = join(dir, "link.jpg");
     if (!(await tryLink(real, link))) return;
     const { result, h } = await refusedOnly(link);
-    expect(result).toEqual({ picked: true, jobIds: [], refused: [{ name: "link.jpg", reason: "not-a-file" }] });
+    expect(result).toEqual({ picked: true, jobIds: [], refused: [{ name: "link.jpg", reason: "not-a-file" }], skipped: 0 });
     expect(h.imported).toEqual([]);
   });
 
@@ -254,17 +255,138 @@ describe("what main refuses before the engine hears of it", () => {
     expect(h.imported).toHaveLength(1);
   });
 
-  test("the identity main saw is that of the file as it opened it, not of what the name points at later", async () => {
+  test("the identity main saw is that of the OPEN file, not of what the name points at a moment after the open", async () => {
     const path = await put("a.jpg");
     const before = await identityOf(path);
+    const other = join(dir, "other.jpg");
+    await writeFile(other, Buffer.concat([JPEG, JPEG, JPEG]));
+    const { open, rename } = await import("node:fs/promises");
+    // The name is re-pointed at another file right after the open: a stat of the PATH would now describe that file, the handle still the first.
+    const ops: OpenRegularOps = {
+      lstat: (p) => lstat(p, { bigint: true }),
+      open: async (p, flags) => {
+        const handle = await open(p, flags);
+        await rename(other, path).catch(() => undefined);
+        return handle;
+      },
+    };
+    const h = harness({ picks: [path], deps: { ops } });
+    await run(h);
+    if (process.platform !== "win32") expect(h.imported[0]?.expected).toEqual(before);
+    else expect(h.imported[0]?.expected.size === before.size || h.imported[0] === undefined).toBe(true);
+  });
+
+  test("the identity carries the size and the times as well as the inode", async () => {
+    const path = await put("a.jpg");
     const h = harness({ picks: [path] });
     await run(h);
-    expect(h.imported[0]?.expected).toEqual(before);
+    expect(Object.keys(h.imported[0]?.expected ?? {}).sort()).toEqual(["birthtimeNs", "dev", "ino", "mtimeNs", "size"]);
+    expect(h.imported[0]?.expected.size).toBe(String(JPEG.length));
+  });
+});
+
+describe("one failing file does not lose the others", () => {
+  async function many(n: number, prefix = "p"): Promise<string[]> {
+    const paths: string[] = [];
+    for (let i = 0; i < n; i++) paths.push(await put(`${prefix}${String(i).padStart(3, "0")}.jpg`));
+    return paths;
+  }
+
+  test("an engine error in the middle of a pick keeps the jobs already started and lists the failing file and the rest as failed", async () => {
+    const paths = await many(4);
+    let n = 0;
+    const h = harness({ picks: paths, reply: () => (++n === 3 ? { error: { code: "INTERNAL", detail: "x" } } : { error: null, mediaJobId: `job-${String(n).padStart(8, "0")}` }) });
+    const result = await run(h);
+    expect(result).toEqual({
+      picked: true,
+      jobIds: ["job-00000001", "job-00000002"],
+      refused: [
+        { name: "p002.jpg", reason: "failed" },
+        { name: "p003.jpg", reason: "failed" },
+      ],
+      skipped: 0,
+    });
+    expect(h.imported).toHaveLength(3);
+  });
+
+  test("an importer that failed, or a copy that was cancelled, is a refusal of that file and the pick goes on", async () => {
+    const paths = await many(3);
+    const reasons = ["failed", "cancelled"] as const;
+    let n = 0;
+    const h = harness({
+      picks: paths,
+      reply: () => {
+        const reason = reasons[n++];
+        return reason === undefined ? { error: null, mediaJobId: "job-00000009" } : { error: { code: "INTERNAL", detail: "x" }, mediaReason: reason };
+      },
+    });
+    expect(await run(h)).toEqual({
+      picked: true,
+      jobIds: ["job-00000009"],
+      refused: [
+        { name: "p000.jpg", reason: "failed" },
+        { name: "p001.jpg", reason: "cancelled" },
+      ],
+      skipped: 0,
+    });
+  });
+
+  test("a window that closed stops the pick: the file in flight is told to stop, and the rest are refused as cancelled without being asked for", async () => {
+    const paths = await many(3);
+    const controller = new AbortController();
+    const signals: (AbortSignal | undefined)[] = [];
+    const h = harness({ picks: paths, deps: { signal: controller.signal } });
+    h.deps.engine.importMedia = async (_call, signal) => {
+      signals.push(signal);
+      controller.abort();
+      return { error: { code: "INTERNAL", detail: "cancelled" }, mediaReason: "cancelled" };
+    };
+    expect(await run(h)).toEqual({
+      picked: true,
+      jobIds: [],
+      refused: [
+        { name: "p000.jpg", reason: "cancelled" },
+        { name: "p001.jpg", reason: "cancelled" },
+        { name: "p002.jpg", reason: "cancelled" },
+      ],
+      skipped: 0,
+    });
+    expect(signals).toEqual([controller.signal]);
+  });
+
+  test("more than a hundred picked files: the first twenty become jobs, the next eighty are too-many, and the rest are counted, never dropped", async () => {
+    const paths = await many(150);
+    const h = harness({ picks: paths });
+    const result = await run(h);
+    expect(result.picked && result.jobIds).toHaveLength(MAX_PICKED_FILES);
+    expect(result.picked && result.refused).toHaveLength(80);
+    expect(result.picked && result.refused.every((r) => r.reason === "too-many")).toBe(true);
+    expect(result.picked && result.skipped).toBe(50);
+    expect(h.imported).toHaveLength(MAX_PICKED_FILES);
+  });
+
+  test("a second pick while one is being made is refused as in flight, and the next one after it works", async () => {
+    const path = await put("a.jpg");
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = harness({ picks: [path] });
+    first.deps.pickFiles = async () => {
+      await gate;
+      return [path];
+    };
+    const running = handleMediaPickCommand(pickCommand(), first.deps);
+    const second = ResponseMessage.parse(await handleMediaPickCommand(pickCommand(), harness({ picks: [path] }).deps));
+    expect(!second.ok && second.error.code).toBe("IN_FLIGHT");
+    release();
+    expect(ResponseMessage.parse(await running).ok).toBe(true);
+    expect(ResponseMessage.parse(await handleMediaPickCommand(pickCommand(), harness({ picks: [path] }).deps)).ok).toBe(true);
   });
 });
 
 describe("the engine's answer", () => {
-  test("an error with no file reason (the engine is busy) fails the command with that error, not a refusal of the file", async () => {
+  test("an error with no file reason (the engine is busy) on the first file fails the command with that error: nothing was lost", async () => {
     const path = await put("a.jpg");
     const h = harness({ picks: [path], reply: () => ({ error: { code: "IN_FLIGHT", detail: "busy" } }) });
     const response = ResponseMessage.parse(await handleMediaPickCommand(pickCommand(), h.deps));
@@ -298,6 +420,14 @@ describe("display names", () => {
     expect(name).toBe("a b c d.jpg");
   });
 
+  test("bidi marks and overrides are replaced, so «photo\u202Egpj.exe» cannot read as a picture", () => {
+    for (const bad of ["\u200e", "\u200f", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "\u0085", "\u009f"]) {
+      const name = displayNameOf(`/Users/me/photo${bad}gpj.exe`, "linux");
+      expect(MediaFileName.safeParse(name).success).toBe(true);
+      expect(name).toBe("photo gpj.exe");
+    }
+  });
+
   test("a long name is cut to the contract's 120 characters", () => {
     const name = displayNameOf(`/x/${"a".repeat(300)}.jpg`, "linux");
     expect(name.length).toBe(120);
@@ -307,48 +437,6 @@ describe("display names", () => {
   test("a path with no name falls back to `file`", () => {
     expect(displayNameOf("/", "linux")).toBe("file");
     expect(displayNameOf("C:\\", "win32")).toBe("file");
-  });
-});
-
-describe("paths that are never a plain file, read by Windows' rules on any platform", () => {
-  const win = (path: string): boolean => isUnsafePickedPath(path, "win32");
-
-  test("take an ordinary drive path, a UNC path, a long-path prefix of a drive and forward slashes", () => {
-    expect(win("C:\\Users\\me\\a.jpg")).toBe(false);
-    expect(win("c:/Users/me/a.jpg")).toBe(false);
-    expect(win("\\\\server\\share\\a.jpg")).toBe(false);
-    expect(win("\\\\?\\C:\\very\\long\\path\\a.jpg")).toBe(false);
-    expect(win("\\\\?\\UNC\\server\\share\\a.jpg")).toBe(false);
-  });
-
-  test("refuse the device namespace: a COM port, a pipe, a raw volume and anything else under \\\\.\\ or \\\\?\\", () => {
-    expect(win("\\\\.\\COM1")).toBe(true);
-    expect(win("\\\\.\\pipe\\studio")).toBe(true);
-    expect(win("\\\\.\\C:")).toBe(true);
-    expect(win("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\a.jpg")).toBe(true);
-    expect(win("\\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\a.jpg")).toBe(true);
-  });
-
-  test("refuse a name with an alternate data stream", () => {
-    expect(win("C:\\Users\\me\\a.jpg:secret")).toBe(true);
-    expect(win("C:\\Users\\me\\a.jpg::$DATA")).toBe(true);
-  });
-
-  test("refuse a reserved device name, with or without an extension, in any case", () => {
-    for (const name of ["CON", "con.jpg", "NUL", "Nul.txt", "PRN", "AUX.mp4", "COM1", "com9.jpg", "LPT1", "lpt3.png", "COM\u00b9"]) {
-      expect(win(`C:\\Users\\me\\${name}`)).toBe(true);
-    }
-  });
-
-  test("do not mistake a name that merely starts like one", () => {
-    for (const name of ["console.jpg", "nullable.png", "COM10.jpg", "LPT0x.png", "auxiliary.mp3"]) {
-      expect(win(`C:\\Users\\me\\${name}`)).toBe(false);
-    }
-  });
-
-  test("a colon is an ordinary character in a POSIX name, and a device name is an ordinary file there", () => {
-    expect(isUnsafePickedPath("/Users/me/a:b.jpg", "darwin")).toBe(false);
-    expect(isUnsafePickedPath("/Users/me/CON", "linux")).toBe(false);
   });
 });
 

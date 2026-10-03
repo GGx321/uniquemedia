@@ -9,6 +9,7 @@ export * from "./eventLog";
 export * from "./events";
 export * from "./importFallbackPrice";
 export * from "./media";
+export * from "./mediaPath";
 export * from "./messages";
 export * from "./montage";
 export * from "./primitives";

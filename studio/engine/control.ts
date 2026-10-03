@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MediaFileName, MediaPickKind, MediaUnsupportedReason, MusicKey, Settings, type EngineCommandMessage } from "../shared/engine";
+import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MediaFileName, MediaPickKind, MediaUnsupportedReason, MusicKey, PickedFileIdentity, Settings, type EngineCommandMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
 import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
@@ -106,6 +106,12 @@ export const HostControl = z.discriminatedUnion("type", [
    * They are the truth: a library folder is taken only once it appears here.
    */
   z.strictObject({ kind: z.literal("control"), type: z.literal("settings.update"), settings: EngineSettings }),
+  /**
+   * 3f.1: main gives up on the `media.import` it sent as `callId` (its own deadline passed, or the window that asked closed): the engine
+   * stops that copy, removes what it copied and releases the library. There is no reply; the import's own reply (reason `cancelled`) is
+   * the answer. An abort for a call that is not running changes nothing.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("media.abortImport"), callId: Id }),
 ]);
 export type HostControl = z.infer<typeof HostControl>;
 
@@ -124,6 +130,9 @@ export const MAX_IMPORT_PHOTO_BYTES = 20 * 1024 * 1024;
  * healthy copy and leave main telling the owner the import failed while it went on.
  */
 export const MEDIA_IMPORT_DEADLINE_MS = 10 * 60_000;
+
+/** The engine gives up on a copy a little BEFORE main does, so its own answer (a TIMEOUT) is the one main reads, and the copy and its hold on the library end with it. */
+export const MEDIA_IMPORT_ENGINE_DEADLINE_MS = MEDIA_IMPORT_DEADLINE_MS - 15_000;
 
 /** A question main asks the engine; the engine answers with an `EngineReply` carrying the same `callId`. */
 export const HostCall = z.discriminatedUnion("type", [
@@ -186,8 +195,8 @@ export const HostCall = z.discriminatedUnion("type", [
   z.strictObject({ kind: z.literal("control"), type: z.literal("export.choose"), callId: Id, path: AbsolutePath }),
   /**
    * 3f.1 (invariant 34, K29): the owner picked `path` in main's own dialog as an own file to import. The window never names it. Main has
-   * already looked at the file (a plain file, not a link; within the kind's cap) and sends the identity it saw (`expected`: device and
-   * inode as exact decimal strings), so the engine can tell a file that was replaced since. The engine opens the path ONCE, with no
+   * already looked at the file (a plain file, not a link; within the kind's cap) and sends the identity it saw (`expected`: device, inode, size and
+   * times as exact unsigned decimal strings), so the engine can tell a file that was replaced since. The engine opens the path ONCE, with no
    * symlink following, judges the file from its OPEN handle and its first bytes, copies at most the kind's cap into its own staging
    * area and hands that copy, never the path, to the kind's importer. The reply is `mediaJobId`, or `error` (VALIDATION) with
    * `mediaReason` for a file the boundary or the importer turned away, or an error of its own (IN_FLIGHT, LIBRARY_UNAVAILABLE, INTERNAL).
@@ -200,7 +209,7 @@ export const HostCall = z.discriminatedUnion("type", [
     pick: MediaPickKind,
     path: AbsolutePath,
     name: MediaFileName,
-    expected: z.strictObject({ dev: z.string().regex(/^\d{1,20}$/), ino: z.string().regex(/^\d{1,20}$/) }),
+    expected: PickedFileIdentity,
   }),
 ]);
 export type HostCall = z.infer<typeof HostCall>;

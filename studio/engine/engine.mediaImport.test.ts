@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { lstat, mkdir, open, readdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { lstat, mkdir, open, readdir, readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
+import type { PickedFileIdentity } from "../shared/engine";
 import { EngineReply } from "./control";
+import { openLibrary } from "./library";
+import { pickedIdentityOf } from "./media/identity";
 import type { MediaImporter } from "./media/imports";
 import type { OpenRegularOps } from "./library/openRegular";
-import { engineSettings, startEngine, useEngineDir } from "./testing/engineHarness";
+import { engineSettings, startEngine, until, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -22,19 +26,18 @@ const jpeg = (size = 200): Buffer<ArrayBuffer> => {
   return buffer;
 };
 
-async function picked(name: string, bytes: Buffer): Promise<{ path: string; expected: { dev: string; ino: string } }> {
+async function picked(name: string, bytes: Buffer): Promise<{ path: string; expected: PickedFileIdentity }> {
   await mkdir(pickedDir(), { recursive: true });
   const path = join(pickedDir(), name);
   await writeFile(path, bytes);
-  const info = await lstat(path, { bigint: true });
-  return { path, expected: { dev: String(info.dev), ino: String(info.ino) } };
+  return { path, expected: pickedIdentityOf(await lstat(path, { bigint: true })) };
 }
 
 type Started = Awaited<ReturnType<typeof startEngine>>;
 let calls = 0;
 
-async function importCall(started: Started, file: { path: string; expected: { dev: string; ino: string } }, pick = "photo", name = "summer.jpg"): Promise<EngineReply> {
-  const callId = `call-${String(++calls).padStart(8, "0")}`;
+async function importCall(started: Started, file: { path: string; expected: PickedFileIdentity }, pick = "photo", name = "summer.jpg", id?: string): Promise<EngineReply> {
+  const callId = id ?? `call-${String(++calls).padStart(8, "0")}`;
   await started.engine.receive({ kind: "control", type: "media.import", callId, pick, path: file.path, name, expected: file.expected });
   const reply = started.posted.map((m) => EngineReply.safeParse(m)).find((r) => r.success && r.data.callId === callId);
   if (reply === undefined || !reply.success) throw new Error("the engine did not answer media.import with a reply the contract takes");
@@ -111,7 +114,7 @@ describe("with an importer", () => {
     expect(await staged()).toEqual([]);
   });
 
-  test("an importer that throws is an INTERNAL error, the staged copy is removed, and the message carries no path", async () => {
+  test("an importer that throws is a failed refusal, the staged copy is removed, and the message carries no path", async () => {
     const file = await picked("a.jpg", jpeg());
     const started = await start({
       mediaImporters: {
@@ -122,7 +125,7 @@ describe("with an importer", () => {
     });
     const reply = await importCall(started, file);
     expect(reply.error?.code).toBe("INTERNAL");
-    expect(reply.mediaReason).toBeUndefined();
+    expect(reply.mediaReason).toBe("failed");
     expect(JSON.stringify(reply).includes(pickedDir())).toBe(false);
     expect(JSON.stringify(reply).includes(stagingDir())).toBe(false);
     expect(await staged()).toEqual([]);
@@ -158,7 +161,7 @@ describe("what the boundary refuses reaches the answer as a reason, never as a p
     const started = await start({ mediaImporters: { photo: async () => ({ ok: true, jobId: "job-00000042" }) } });
     await mkdir(join(pickedDir(), "album.jpg"), { recursive: true });
     const info = await lstat(join(pickedDir(), "album.jpg"), { bigint: true });
-    const reply = await importCall(started, { path: join(pickedDir(), "album.jpg"), expected: { dev: String(info.dev), ino: String(info.ino) } });
+    const reply = await importCall(started, { path: join(pickedDir(), "album.jpg"), expected: pickedIdentityOf(info) });
     expect(reply.mediaReason).toBe("not-a-file");
   });
 
@@ -176,7 +179,7 @@ describe("what the boundary refuses reaches the answer as a reason, never as a p
       await refusedAs(started, "x.jpg", Buffer.from("not an image")),
       await refusedAs(started, "y.jpg", Buffer.alloc(0)),
       await refusedAs(started, "z.jpg", jpeg()),
-      await importCall(started, { path: join(pickedDir(), "gone.jpg"), expected: { dev: "1", ino: "1" } }),
+      await importCall(started, { path: join(pickedDir(), "gone.jpg"), expected: { dev: "1", ino: "1", size: "1", mtimeNs: "1", birthtimeNs: "1" } }),
     ];
     for (const reply of replies) {
       expect(JSON.stringify(reply).includes(pickedDir())).toBe(false);
@@ -223,5 +226,166 @@ describe("the live library", () => {
     const started = await start({ mediaImporters: { photo: async () => ({ ok: true, jobId: "job-00000042" }) } });
     await importCall(started, await picked("a.jpg", jpeg()));
     expect(await staged()).toHaveLength(1);
+  });
+});
+
+// ---------- round 2: what the 3f.1 security review found ----------
+
+/** A source whose copy can be held after its first read, so a test can abort, time out or shut down while it is in flight. */
+function heldCopy(): { ops: OpenRegularOps; release: () => void; reached: Promise<void> } {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reach: () => void = () => undefined;
+  const reached = new Promise<void>((resolve) => {
+    reach = resolve;
+  });
+  const ops: OpenRegularOps = {
+    lstat: (p) => lstat(p, { bigint: true }),
+    open: async (p, flags) => {
+      const handle = await open(p, flags);
+      let reads = 0;
+      return new Proxy(handle, {
+        get(target, prop) {
+          if (prop === "read") {
+            return async (buffer: Buffer, offset: number, length: number, position: number | null) => {
+              // The first read is the look at the start; the copy's first read is let through; the second waits.
+              if (++reads === 3) {
+                reach();
+                await gate;
+              }
+              return target.read(buffer, offset, length, position);
+            };
+          }
+          const value: unknown = Reflect.get(target, prop);
+          return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+        },
+      }) as FileHandle;
+    },
+  };
+  return { ops, release, reached };
+}
+
+const replyTo = (started: Started, callId: string): EngineReply | undefined => {
+  const found = started.posted.map((m) => EngineReply.safeParse(m)).find((r) => r.success && r.data.callId === callId);
+  return found?.success === true ? found.data : undefined;
+};
+
+describe("a call that breaks the contract is answered, never ignored", () => {
+  test("an identity with a negative inode, as Node's signed bigint stat can write it, gets a VALIDATION reply with its own callId", async () => {
+    const started = await start();
+    const file = await picked("a.jpg", jpeg());
+    await started.engine.receive({ kind: "control", type: "media.import", callId: "call-60000001", pick: "photo", path: file.path, name: "a.jpg", expected: { ...file.expected, ino: "-5" } });
+    expect(replyTo(started, "call-60000001")?.error?.code).toBe("VALIDATION");
+  });
+
+  test("a call with a relative path is answered the same way, and nothing is staged", async () => {
+    const started = await start();
+    const file = await picked("a.jpg", jpeg());
+    await started.engine.receive({ kind: "control", type: "media.import", callId: "call-60000002", pick: "photo", path: "a.jpg", name: "a.jpg", expected: file.expected });
+    expect(replyTo(started, "call-60000002")?.error?.code).toBe("VALIDATION");
+    expect(await staged()).toEqual([]);
+  });
+
+  test("a control message with no readable callId is still only logged", async () => {
+    const started = await start();
+    const before = started.posted.length;
+    await started.engine.receive({ kind: "control", type: "media.import", callId: 5 });
+    expect(started.posted.length).toBe(before);
+  });
+});
+
+describe("an importer that fails is a refusal of that file", () => {
+  test("a throw is answered with the reason failed, so the rest of a pick goes on", async () => {
+    const started = await start({
+      mediaImporters: {
+        photo: async () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    const reply = await importCall(started, await picked("a.jpg", jpeg()));
+    expect(reply.mediaReason).toBe("failed");
+    expect(reply.error?.code).toBe("INTERNAL");
+    expect(await staged()).toEqual([]);
+  });
+});
+
+describe("a copy that main gives up on stops", () => {
+  const importer: MediaImporter = async () => ({ ok: true, jobId: "job-00000042" });
+
+  test("media.abortImport ends the copy as cancelled, removes what was copied and releases the library", async () => {
+    const held = heldCopy();
+    const started = await start({ mediaImporters: { photo: importer }, mediaStaging: { ops: held.ops, chunkBytes: 16 } });
+    const file = await picked("a.jpg", jpeg(400));
+    const pending = importCall(started, file, "photo", "a.jpg", "call-60000010");
+    await held.reached;
+    await started.engine.receive({ kind: "control", type: "media.abortImport", callId: "call-60000010" });
+    held.release();
+    const reply = await pending;
+    expect(reply.mediaReason).toBe("cancelled");
+    expect(await staged()).toEqual([]);
+    const other = join(dir(), "other-library");
+    await mkdir(other);
+    await started.engine.receive({ kind: "control", type: "library.open", callId: "call-60000011", path: other });
+    expect(replyTo(started, "call-60000011")?.error).toBeUndefined();
+  });
+
+  test("an abort for a call that is not running is harmless", async () => {
+    const started = await start();
+    await started.engine.receive({ kind: "control", type: "media.abortImport", callId: "call-60000099" });
+  });
+
+  test("the engine gives up on its own a little before main does: the copy ends as cancelled with a TIMEOUT", async () => {
+    const held = heldCopy();
+    const started = await start({ mediaImporters: { photo: importer }, mediaImportDeadlineMs: 30, mediaStaging: { ops: held.ops, chunkBytes: 16 } });
+    const pending = importCall(started, await picked("a.jpg", jpeg(400)));
+    await held.reached;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    held.release();
+    const reply = await pending;
+    expect(reply.mediaReason).toBe("cancelled");
+    expect(reply.error?.code).toBe("TIMEOUT");
+    expect(await staged()).toEqual([]);
+  });
+
+  test("a shutdown aborts a copy in flight", async () => {
+    const held = heldCopy();
+    const started = await start({ mediaImporters: { photo: importer }, mediaStaging: { ops: held.ops, chunkBytes: 16 } });
+    const pending = importCall(started, await picked("a.jpg", jpeg(400)));
+    await held.reached;
+    const stopping = started.engine.shutdown();
+    held.release();
+    expect((await pending).mediaReason).toBe("cancelled");
+    await stopping;
+    expect(await staged()).toEqual([]);
+  });
+});
+
+describe("what a crash left in the staging folder", () => {
+  const orphan = ".old-00000001.part";
+
+  test("is removed when the library opens at the engine's start, with no import asked for", async () => {
+    await openLibrary(libraryDir());
+    await mkdir(stagingDir(), { recursive: true });
+    await writeFile(join(stagingDir(), orphan), "an orphaned copy");
+    await writeFile(join(stagingDir(), "notes.txt"), "the owner's");
+    await start();
+    await until(() => !existsSync(join(stagingDir(), orphan)), "the orphan to be swept");
+    expect(await staged()).toEqual(["notes.txt"]);
+  });
+
+  test("is removed when another library becomes the live one", async () => {
+    const started = await start();
+    const other = join(dir(), "other-library");
+    await mkdir(other);
+    await openLibrary(other);
+    await mkdir(join(other, "media", ".staging"), { recursive: true });
+    await writeFile(join(other, "media", ".staging", orphan), "an orphaned copy");
+    await started.engine.receive({ kind: "control", type: "library.open", callId: "call-60000020", path: other });
+    await started.engine.receive({ kind: "control", type: "library.confirm", callId: "call-60000021", path: other });
+    expect(replyTo(started, "call-60000021")?.error).toBeUndefined();
+    await until(() => !existsSync(join(other, "media", ".staging", orphan)), "the orphan to be swept");
   });
 });

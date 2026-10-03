@@ -51,24 +51,31 @@ describe("media.pickImport result", () => {
   });
 
   test("an accepted pick lists job ids and refusals by name and reason", () => {
-    const ok = { picked: true, jobIds: ["job-00000001"], refused: [{ name: "notes.txt", reason: "format" }] };
+    const ok = { picked: true, jobIds: ["job-00000001"], refused: [{ name: "notes.txt", reason: "format" }], skipped: 0 };
     expect(MediaPickResult.safeParse(ok).success).toBe(true);
   });
 
   test("a refusal has a name and a reason and no path", () => {
-    const withPath = { picked: true, jobIds: [], refused: [{ name: "a.jpg", reason: "format", path: "/home/me/a.jpg" }] };
+    const withPath = { picked: true, jobIds: [], refused: [{ name: "a.jpg", reason: "format", path: "/home/me/a.jpg" }], skipped: 0 };
     expect(MediaPickResult.safeParse(withPath).success).toBe(false);
-    expect(MediaPickResult.safeParse({ picked: true, jobIds: [], refused: [{ name: "a.jpg", reason: "heic?" }] }).success).toBe(false);
+    expect(MediaPickResult.safeParse({ picked: true, jobIds: [], refused: [{ name: "a.jpg", reason: "heic?" }], skipped: 0 }).success).toBe(false);
   });
 
   test("an answer carries no field a path could ride in", () => {
     expect(MediaPickResult.safeParse({ picked: true, jobIds: [], refused: [], path: "/x" }).success).toBe(false);
   });
 
+  test("says how many picked files were not even looked at, and that is a count and not a negative one", () => {
+    const base = { picked: true, jobIds: [], refused: [] };
+    expect(MediaPickResult.safeParse({ ...base, skipped: 50 }).success).toBe(true);
+    expect(MediaPickResult.safeParse({ ...base, skipped: -1 }).success).toBe(false);
+    expect(MediaPickResult.safeParse({ ...base }).success).toBe(false);
+  });
+
   test("at most MAX_PICKED_FILES jobs are listed", () => {
     const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `job-${String(i).padStart(8, "0")}`);
-    expect(MediaPickResult.safeParse({ picked: true, jobIds: ids(MAX_PICKED_FILES), refused: [] }).success).toBe(true);
-    expect(MediaPickResult.safeParse({ picked: true, jobIds: ids(MAX_PICKED_FILES + 1), refused: [] }).success).toBe(false);
+    expect(MediaPickResult.safeParse({ picked: true, jobIds: ids(MAX_PICKED_FILES), refused: [], skipped: 0 }).success).toBe(true);
+    expect(MediaPickResult.safeParse({ picked: true, jobIds: ids(MAX_PICKED_FILES + 1), refused: [], skipped: 0 }).success).toBe(false);
   });
 });
 
@@ -78,6 +85,16 @@ describe("MediaFileName", () => {
     expect(MediaFileName.safeParse("").success).toBe(false);
     expect(MediaFileName.safeParse("a".repeat(120)).success).toBe(true);
     expect(MediaFileName.safeParse("a".repeat(121)).success).toBe(false);
+  });
+
+  test("refuses the characters that make a name read as another: bidi marks and overrides, isolates and C1 controls", () => {
+    for (const bad of ["\u200e", "\u200f", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "\u0085", "\u009f"]) {
+      expect(MediaFileName.safeParse(`photo${bad}gpj.exe`).success).toBe(false);
+    }
+  });
+
+  test("takes Cyrillic, emoji and CJK names, and an ordinary space", () => {
+    for (const name of ["лето 2026.jpg", "🌅 sunset.png", "写真 1.jpeg"]) expect(MediaFileName.safeParse(name).success).toBe(true);
   });
 
   test("refuses control characters, a newline included", () => {
@@ -106,6 +123,6 @@ describe("byte caps", () => {
 
 describe("refusal reasons", () => {
   test("name the boundary's own reasons", () => {
-    expect(MediaUnsupportedReason.options).toEqual(["not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "too-many", "not-yet-supported"]);
+    expect(MediaUnsupportedReason.options).toEqual(["not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported"]);
   });
 });

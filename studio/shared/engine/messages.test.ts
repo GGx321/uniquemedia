@@ -281,7 +281,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "avatars.archive": { payload: { avatarId: "avatar-0001" }, result: { avatar: { ...avatar, status: "archived" } } },
   "avatars.rewriteDescriptor": { payload: { avatarId: "avatar-0009", acceptedWorstMicros: 27_500 }, result: { avatarId: "avatar-0009" } },
   "avatars.pickImportPhoto": { payload: {}, result: { picked: true, stagingId: "staging-0001", width: 1024, height: 1365 } },
-  "media.pickImport": { payload: { kind: "photo" }, result: { picked: true, jobIds: ["job-00000001"], refused: [{ name: "notes.txt", reason: "format" }] } },
+  "media.pickImport": { payload: { kind: "photo" }, result: { picked: true, jobIds: ["job-00000001"], refused: [{ name: "notes.txt", reason: "format" }], skipped: 0 } },
   "avatars.estimateImport": { payload: { stagingId: "staging-0001" }, result: { ...estimate, expectedMicros: 6_500, worstMicros: 42_000 } },
   "avatars.importAvatar": {
     payload: { stagingId: "staging-0001", name: "Лиза", confirmedAiPersona: true, acceptedWorstMicros: 42_000 },

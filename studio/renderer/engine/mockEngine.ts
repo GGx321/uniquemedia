@@ -1332,7 +1332,7 @@ export class MockEngine implements EngineBridge {
         const pick = this.mediaPick;
         this.mediaPick = null;
         if (pick === null || pick.length === 0) return this.ok(c, { picked: false });
-        return this.ok(c, { picked: true, jobIds: [], refused: pick.map((file) => ({ name: file.name, reason: file.reason })) });
+        return this.ok(c, { picked: true, jobIds: [], refused: pick.map((file) => ({ name: file.name, reason: file.reason })), skipped: 0 });
       }
       case "settings.exportDisplay":
         return this.ok(c, { display: displayPath(this.settings.exportPath) });

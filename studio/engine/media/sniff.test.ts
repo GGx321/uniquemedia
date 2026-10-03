@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { isHeic, mediaKindsOf, resolveMediaKind, unfitReason } from "./sniff";
+import { formatOf, isHeic, mediaKindsOf, resolveMediaKind, unfitReason } from "./sniff";
 useNativeGlobals();
 
 // The boundary never trusts an extension: what a file IS comes from its first bytes. This is a coarse family check (is it a photo, a
@@ -148,5 +148,30 @@ describe("HEIC", () => {
   test("any other bytes the pick does not take are a plain format refusal", () => {
     expect(unfitReason("photo", bytes(ascii("#!/bin/sh\n")))).toBe("format");
     expect(unfitReason("any", bytes(ascii("MZ"), zeros(30)))).toBe("format");
+  });
+});
+
+describe("formatOf", () => {
+  test("names the container: what ffmpeg is told with -f, never the extension's guess", () => {
+    expect(formatOf(JPEG)).toBe("jpeg");
+    expect(formatOf(PNG_STILL)).toBe("png");
+    expect(formatOf(APNG)).toBe("apng");
+    expect(formatOf(WEBP)).toBe("webp");
+    expect(formatOf(GIF89)).toBe("gif");
+    expect(formatOf(ftyp("isom"))).toBe("mp4");
+    expect(formatOf(ftyp("qt  "))).toBe("mov");
+    expect(formatOf(ftyp("M4A "))).toBe("m4a");
+    expect(formatOf(WAV)).toBe("wav");
+    expect(formatOf(bytes(ascii("fLaC"), zeros(16)))).toBe("flac");
+    expect(formatOf(bytes(ascii("OggS"), zeros(16)))).toBe("ogg");
+    expect(formatOf(bytes(ascii("ID3"), 4, 0, zeros(16)))).toBe("mp3");
+    expect(formatOf(bytes(0xff, 0xfb, 0x90, 0x00, zeros(16)))).toBe("mp3");
+    expect(formatOf(bytes(0xff, 0xf1, 0x50, 0x80, zeros(16)))).toBe("aac");
+  });
+
+  test("is null for bytes that are no container at all, and for a HEIC", () => {
+    expect(formatOf(bytes(ascii("#!/bin/sh\n")))).toBeNull();
+    expect(formatOf(ftyp("heic"))).toBeNull();
+    expect(formatOf(new Uint8Array())).toBeNull();
   });
 });

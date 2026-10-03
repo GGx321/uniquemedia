@@ -9,7 +9,7 @@ import {
   type EngineError,
 } from "../shared/engine";
 import { randomUUID } from "node:crypto";
-import { COMMAND_DEADLINE_MS, EngineReply, MEDIA_IMPORT_DEADLINE_MS, type EngineInit, type HostCall, type HostControl } from "../engine/control";
+import { COMMAND_DEADLINE_MS, EngineReply, HostCall, MEDIA_IMPORT_DEADLINE_MS, type EngineInit, type HostControl } from "../engine/control";
 
 /** An unexpected exit is followed by one restart, after this delay; a second one is final. */
 export const RESTART_DELAY_MS = 1000;
@@ -265,19 +265,25 @@ export class EngineHost<Transfer> {
    * a copy and hands it to the kind's importer: `mediaJobId` on success, `error` with `mediaReason` for a file turned away. Waits up to
    * `MEDIA_IMPORT_DEADLINE_MS`, since the call answers when the copy is done.
    */
-  importMedia(file: Pick<Extract<HostCall, { type: "media.import" }>, "pick" | "path" | "name" | "expected">): Promise<CallResult> {
+  importMedia(file: Pick<Extract<HostCall, { type: "media.import" }>, "pick" | "path" | "name" | "expected">, signal?: AbortSignal): Promise<CallResult> {
+    if (signal?.aborted === true) return Promise.resolve({ error: { code: "INTERNAL", detail: "the import was cancelled" }, mediaReason: "cancelled" });
     const callId = (this.#deps.newId ?? randomUUID)();
-    return this.#call(callId, { kind: "control", type: "media.import", callId, ...file }, MEDIA_IMPORT_DEADLINE_MS);
+    // Main's deadline, and the window that asked closing, both tell the engine to stop: giving up here must not leave a 2 GiB copy running.
+    const abort = (): void => this.send({ kind: "control", type: "media.abortImport", callId });
+    signal?.addEventListener("abort", abort, { once: true });
+    return this.#call(callId, { kind: "control", type: "media.import", callId, ...file }, MEDIA_IMPORT_DEADLINE_MS, abort).finally(() => signal?.removeEventListener("abort", abort));
   }
 
-  #call(callId: string, call: HostCall, boundMs?: number): Promise<CallResult> {
+  #call(callId: string, call: HostCall, boundMs?: number, onDeadline?: () => void): Promise<CallResult> {
+    // Held to the contract BEFORE it is posted: the engine ignores what it cannot parse, and main would wait out the whole deadline for nothing.
+    if (!HostCall.safeParse(call).success) return Promise.resolve({ error: { code: "VALIDATION", detail: "the call to the engine does not match the contract" } });
     return new Promise((resolve) => {
       const timeoutMs = boundMs ?? this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
       const entry: PendingCall = { callId, resolve, deadline: null };
-      entry.deadline = this.#timers.set(
-        () => this.#settleCall(entry, { error: { code: "INTERNAL", detail: `${NO_ANSWER_DETAIL_PREFIX}${timeoutMs / 1000} s` } }),
-        timeoutMs,
-      );
+      entry.deadline = this.#timers.set(() => {
+        onDeadline?.();
+        this.#settleCall(entry, { error: { code: "INTERNAL", detail: `${NO_ANSWER_DETAIL_PREFIX}${timeoutMs / 1000} s` } });
+      }, timeoutMs);
       this.#calls.set(callId, entry);
       void this.#runningPort().then((port) => {
         if (this.#calls.get(callId) !== entry) return;
