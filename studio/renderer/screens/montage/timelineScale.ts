@@ -134,12 +134,20 @@ export function snapTargets(durations: readonly number[], playheadMs: number): n
  * `toleranceMs` meets it; the start edge wins a tie. Unchanged when neither edge is near one.
  */
 export function snapMove(startMs: number, lengthMs: number, targets: readonly number[], toleranceMs: number): number {
-  const byStart = snapEdge(startMs, targets, toleranceMs);
-  const byEnd = snapEdge(startMs + lengthMs, targets, toleranceMs) - lengthMs;
-  const startShift = Math.abs(byStart - startMs);
-  const endShift = Math.abs(byEnd - startMs);
-  if (byStart !== startMs && (byEnd === startMs || startShift <= endShift)) return byStart;
-  return byEnd;
+  /** The nearest target's distance from `edge` within the tolerance (0: on one), or null when none is that near. */
+  const nearest = (edge: number): number | null => {
+    let best: number | null = null;
+    for (const target of targets) {
+      const distance = Math.abs(target - edge);
+      if (distance <= toleranceMs && (best === null || distance < best)) best = distance;
+    }
+    return best;
+  };
+  const startGap = nearest(startMs);
+  const endGap = nearest(startMs + lengthMs);
+  if (startGap !== null && (endGap === null || startGap <= endGap)) return snapEdge(startMs, targets, toleranceMs);
+  if (endGap !== null) return snapEdge(startMs + lengthMs, targets, toleranceMs) - lengthMs;
+  return startMs;
 }
 
 /** How many 24 px frames a clip's film strip of `widthPx` draws: one more than fit, so it never ends short. */

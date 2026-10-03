@@ -142,5 +142,8 @@ describe("snapping a layer's edges (3d.3b: they stick to the playhead and the cl
     // The nearer edge wins: the end is 10 ms off, the start 30.
     expect(snapMove(1_970, 1_040, targets, 50)).toBe(1_960);
     expect(snapMove(1_400, 1_000, targets, 50)).toBe(1_400);
+    // A start already on a target stays there, however near a target the end is.
+    expect(snapMove(2_000, 1_030, targets, 50)).toBe(2_000);
+    expect(snapMove(1_970, 1_030, targets, 50)).toBe(1_970);
   });
 });
