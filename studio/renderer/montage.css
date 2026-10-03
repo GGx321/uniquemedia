@@ -3161,7 +3161,9 @@
   cursor: grab;
 }
 
-.ed-hl-window:active {
+.ed-hl-window:active,
+.ed-hl-moving,
+.ed-hl-moving .ed-hl-window {
   cursor: grabbing;
 }
 

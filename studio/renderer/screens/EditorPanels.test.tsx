@@ -299,6 +299,68 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     await within(props()).findByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.");
   });
 
+  describe("dragging the window (one edit on release, as the timeline's block does)", () => {
+    /** The card's strip laid out 600 px wide (happy-dom lays nothing out): 100 ms of the 60 s track per pixel. */
+    function layOut(): HTMLElement {
+      const strip = props().querySelector(".ed-hl");
+      if (!(strip instanceof HTMLElement)) throw new Error("no waveform strip");
+      Object.defineProperty(strip, "getBoundingClientRect", { value: () => ({ left: 0, top: 0, right: 600, bottom: 46, width: 600, height: 46, x: 0, y: 0, toJSON: () => ({}) }) });
+      return within(props()).getByRole("slider", { name: "Начало музыки в треке" });
+    }
+    const block = (): string => plain(within(timeline()).getByRole("button", { name: /^Музыка:/ }).getAttribute("aria-label"));
+    const move = (pointerId: number, clientX: number, type: "pointermove" | "pointerup" | "pointercancel" = "pointermove"): void => {
+      act(() => {
+        window.dispatchEvent(new PointerEvent(type, { pointerId, clientX }));
+      });
+    };
+
+    test("the window follows the pointer; the draft changes once, when it is let go; one undo takes it back", async () => {
+      const { client, engine } = await studio({ music: MUSIC });
+      await openDraft(engine, client, withMusic(12_000));
+      selectBlock(/^Музыка:/);
+      const slider = layOut();
+      // The window spans 120–200 px (12–20 s of the track); taken at 150 px, 3 s into it.
+      fireEvent.pointerDown(slider, { pointerId: 7, button: 0, clientX: 150 });
+      move(7, 200);
+      move(7, 250);
+      expect(slider.getAttribute("aria-valuenow")).toBe("22000");
+      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
+      move(7, 250, "pointerup");
+      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:22");
+      undo();
+      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
+    });
+
+    test("a cancelled drag (the system took the pointer) changes nothing", async () => {
+      const { client, engine } = await studio({ music: MUSIC });
+      await openDraft(engine, client, withMusic(12_000));
+      selectBlock(/^Музыка:/);
+      const slider = layOut();
+      fireEvent.pointerDown(slider, { pointerId: 8, button: 0, clientX: 150 });
+      move(8, 250);
+      move(8, 250, "pointercancel");
+      expect(slider.getAttribute("aria-valuenow")).toBe("12000");
+      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
+      expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
+    });
+
+    test("a click elsewhere on the waveform moves the window there when it is let go, not when pressed", async () => {
+      const { client, engine } = await studio({ music: MUSIC });
+      await openDraft(engine, client, withMusic(12_000));
+      selectBlock(/^Музыка:/);
+      const slider = layOut();
+      const strip = props().querySelector(".ed-hl");
+      if (!(strip instanceof HTMLElement)) throw new Error("no waveform strip");
+      fireEvent.pointerDown(strip, { pointerId: 9, button: 0, clientX: 400 });
+      expect(slider.getAttribute("aria-valuenow")).toBe("12000");
+      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
+      move(9, 400, "pointerup");
+      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:40");
+      undo();
+      expect(block()).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:12");
+    });
+  });
+
   test("«Заменить трек» opens the «Музыка» tab", async () => {
     const { client, engine } = await studio({ music: MUSIC });
     await openDraft(engine, client, withMusic(12_000));

@@ -1,11 +1,11 @@
-import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useRef } from "react";
+import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import type { MontageDraft, TrackSummary } from "../../../shared/engine";
 import { STEP_MS } from "../../../shared/montage";
 import { useEngine } from "../../engine/react";
 import { NBSP } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
 import { totalMs } from "./clipOps";
-import { trackPointer } from "./gesture";
+import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { trackClock } from "./labels";
 import { deleteKeyHandler } from "./LayerProperties";
 import { clampMusicStart, highlightPicks, musicStartRange, musicWindow, setMusicStart, trackProblem, type TrackVerdict } from "./musicOps";
@@ -32,25 +32,39 @@ function Star() {
   );
 }
 
-/** The whole track and the montage's window over it: drag it, click elsewhere to move it there, or use the keys. */
+/**
+ * The whole track and the montage's window over it: drag it, click elsewhere to move it there, or use the keys. A drag is shown
+ * as a slip of the window alone (review round 1: the draft is not written on every move) and is ONE edit when it is let go; a
+ * cancelled pointer (`pointercancel`) changes nothing; a click that does not drag moves the window to the click on release.
+ */
 function TrackWindow({ session, track, startMs, total, peaks }: { session: DraftSession; track: TrackSummary; startMs: number; total: number; peaks: readonly number[] | null }) {
   const strip = useRef<HTMLDivElement>(null);
   const gesture = useRef<(() => void) | null>(null);
   const heldKey = useRef<string | null>(null);
+  /** Where a drag holds the window while the pointer is down; null when nothing is being dragged. */
+  const [slip, setSlip] = useState<number | null>(null);
   const trackMs = track.durationMs;
+  const shownMs = slip ?? startMs;
   const range = musicStartRange(startMs, total, trackMs);
-  const win = musicWindow(startMs, total, trackMs);
+  const win = musicWindow(shownMs, total, trackMs);
   const marks = track.highlights.filter((h) => !h.likelyDefault && h.ms < trackMs);
 
   useEffect(() => () => gesture.current?.(), []);
 
-  /** The music from `wanted` (snapped to 100 ms, held to where it may start), as a step of `mergeKey`'s gesture. */
-  function moveTo(wanted: number, mergeKey: string): void {
+  /** Where the music would start for `wanted`: the 100 ms step, held to where it may start in the draft as it is now. */
+  function startFor(wanted: number): number | null {
     const current = session.state.spec;
-    if (current.music === null) return;
-    const at = clampMusicStart(current.music.startMs, Math.round(wanted / STEP_MS) * STEP_MS, totalMs(current), trackMs);
+    if (current.music === null) return null;
+    return clampMusicStart(current.music.startMs, Math.round(wanted / STEP_MS) * STEP_MS, totalMs(current), trackMs);
+  }
+
+  /** The music from `wanted`, as one undo step (or a step of `mergeKey`'s gesture: a held key). */
+  function moveTo(wanted: number, mergeKey?: string): void {
+    const at = startFor(wanted);
+    const current = session.state.spec;
+    if (at === null) return;
     const edit = setMusicStart(current, at, trackMs);
-    if (edit.ok && edit.spec !== current) session.edit(edit.spec, { mergeKey });
+    if (edit.ok && edit.spec !== current) session.edit(edit.spec, mergeKey === undefined ? {} : { mergeKey });
   }
 
   function press(event: ReactPointerEvent<HTMLDivElement>): void {
@@ -58,18 +72,29 @@ function TrackWindow({ session, track, startMs, total, peaks }: { session: Draft
     if (event.button !== 0 || rect === undefined || rect.width <= 0) return;
     event.preventDefault();
     const msAt = (x: number): number => ((x - rect.left) / rect.width) * trackMs;
-    // Pressed inside the window, it is held where it was taken; anywhere else, the window starts there.
-    const inside = msAt(event.clientX) >= startMs && msAt(event.clientX) <= startMs + total;
-    const grab = inside ? msAt(event.clientX) - startMs : 0;
-    const mergeKey = `music-window:${event.pointerId}:${event.timeStamp}`;
-    if (!inside) moveTo(msAt(event.clientX), mergeKey);
+    const startX = event.clientX;
+    // Pressed inside the window, it is held where it was taken; anywhere else, the window's start follows the pointer.
+    const inside = msAt(startX) >= startMs && msAt(startX) <= startMs + total;
+    const grab = inside ? msAt(startX) - startMs : 0;
+    let moved = false;
+    let last: number | null = null;
     gesture.current?.();
     gesture.current = trackPointer(
       event,
-      (move) => moveTo(msAt(move.clientX) - grab, mergeKey),
-      () => {
+      (move) => {
+        if (!moved && Math.abs(move.clientX - startX) < DRAG_THRESHOLD_PX) return;
+        moved = true;
+        last = startFor(msAt(move.clientX) - grab);
+        setSlip(last);
+      },
+      (end) => {
         gesture.current = null;
-        session.endMerge();
+        setSlip(null);
+        // The system took the pointer: nothing moves.
+        if (end === null) return;
+        if (moved) {
+          if (last !== null) moveTo(last);
+        } else if (!inside) moveTo(msAt(end.clientX));
       },
     );
   }
@@ -97,10 +122,10 @@ function TrackWindow({ session, track, startMs, total, peaks }: { session: Draft
   }
 
   return (
-    <div className="ed-hl" ref={strip} onPointerDown={press}>
+    <div className={slip === null ? "ed-hl" : "ed-hl ed-hl-moving"} ref={strip} onPointerDown={press}>
       <div className="ed-hl-marks" aria-hidden="true">
         {marks.map((h) => (
-          <span key={h.ms} className={h.ms === startMs ? "ed-hl-mark ed-hl-mark-on" : "ed-hl-mark"} style={{ left: `calc(3px + (100% - 6px) * ${h.ms / trackMs})` }}>
+          <span key={h.ms} className={h.ms === shownMs ? "ed-hl-mark ed-hl-mark-on" : "ed-hl-mark"} style={{ left: `calc(3px + (100% - 6px) * ${h.ms / trackMs})` }}>
             <Star />
           </span>
         ))}
@@ -119,8 +144,8 @@ function TrackWindow({ session, track, startMs, total, peaks }: { session: Draft
         aria-label="Начало музыки в треке"
         aria-valuemin={range.min}
         aria-valuemax={range.max}
-        aria-valuenow={startMs}
-        aria-valuetext={`с ${trackClock(startMs)}`}
+        aria-valuenow={shownMs}
+        aria-valuetext={`с ${trackClock(shownMs)}`}
         aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
         style={{ left: `calc(3px + (100% - 6px) * ${win.from})`, width: `calc((100% - 6px) * ${win.width})` }}
         onKeyDown={onKeyDown}
