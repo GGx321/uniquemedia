@@ -1,7 +1,7 @@
 import { act, screen } from "@testing-library/react";
 import type { AvatarSummary, Montage, PhotoSummary } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
-import type { MockMusicOptions } from "../../engine/mockEngine";
+import type { MockEngine, MockMusicOptions } from "../../engine/mockEngine";
 import { freePhotos, MIA, SOFIA } from "../../engine/mockEngine.testkit";
 import { flush, openSection, setup } from "../../testing";
 
@@ -40,6 +40,14 @@ export async function openDrafts(): Promise<void> {
   await openSection("Монтаж");
   await screen.findByRole("heading", { level: 1, name: "Монтаж" });
   await flush();
+}
+
+/**
+ * The paid music commands a mock was sent (3d.5's money guard): `music.refresh` spends 1 of the 30 flashapi requests and
+ * `music.recoverQuotaLog` closes the quota for 31 days. Only Settings may send them, after the owner confirms; the editor never.
+ */
+export function paidMusicCalls(engine: MockEngine): string[] {
+  return engine.calls.filter((c) => c.type === "music.refresh" || c.type === "music.recoverQuotaLog").map((c) => c.type);
 }
 
 /** A command sent from the test (another window), inside act so React sees the events it causes. */

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { MontageDraft } from "../../shared/engine";
 import type { MockEngine } from "../engine/mockEngine";
@@ -6,8 +6,19 @@ import { PHOTO_IDS } from "../engine/mockEngine.testkit";
 import type { MockTrackSeed } from "../engine/mockMusicStore";
 import { callsOf, flush } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
-import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
+import { asAnotherWindow, makeDraft, MIA, openDrafts, paidMusicCalls, studio as openStudio } from "./montage/screenKit";
 import { photoClip, stickerLayer, textLayer } from "./montage/testkit";
+
+// 3d.5's money guard: whatever a test did in the editor, no paid music command left (only Settings sends one, confirmed).
+const opened: MockEngine[] = [];
+async function studio(...options: Parameters<typeof openStudio>): ReturnType<typeof openStudio> {
+  const harness = await openStudio(...options);
+  opened.push(harness.engine);
+  return harness;
+}
+afterEach(() => {
+  for (const engine of opened.splice(0)) expect(paidMusicCalls(engine)).toEqual([]);
+});
 
 // 3d.3b: the timeline's text and sticker tracks and the music track in the editor (Editor.dc.html, EditorText, EditorGif,
 // EditorMusic; the components sheet's layer blocks, handles, caps and the music block): adding at the playhead, moving,

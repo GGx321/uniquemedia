@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CAPTION_ISSUES_RU, ERROR_MESSAGES_RU, type MontageDraft, type PhotoSummary } from "../../shared/engine";
 import type { MockEngine } from "../engine/mockEngine";
@@ -6,8 +6,20 @@ import { freePhotos, scenePhoto } from "../engine/mockEngine.testkit";
 import type { MockTrackSeed } from "../engine/mockMusicStore";
 import { callsOf, flush } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
-import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
+import { asAnotherWindow, makeDraft, MIA, openDrafts, paidMusicCalls, studio as openStudio } from "./montage/screenKit";
 import { photoClip, stickerLayer, textLayer } from "./montage/testkit";
+
+// The money guard on every test of this file: whatever the panels did, no paid music command left. `music.refresh` (1 of 30
+// requests) and `music.recoverQuotaLog` are Settings' alone, behind the owner's confirmation (3c.6).
+const opened: MockEngine[] = [];
+async function studio(...options: Parameters<typeof openStudio>): ReturnType<typeof openStudio> {
+  const harness = await openStudio(...options);
+  opened.push(harness.engine);
+  return harness;
+}
+afterEach(() => {
+  for (const engine of opened.splice(0)) expect(paidMusicCalls(engine)).toEqual([]);
+});
 
 // 3d.5: the media panel's tabs and the properties of a text, a sticker and the music (Editor, EditorText, EditorGif, EditorMusic
 // artboards; the components sheet's caption error, track rows, caps). Every edit goes through the session: one undo step per
@@ -198,6 +210,24 @@ describe("the «Музыка» tab: the trending list, the «E» badge, a free p
     expect(callsOf(engine, "music.refresh")).toHaveLength(0);
   });
 
+  test("a list that could not be read says so; «Повторить» reads it again (free) and the tracks come", async () => {
+    const { client, engine } = await studio({ music: MUSIC });
+    await openDraft(engine, client);
+    // Once, so the list's status is known: the tab then asks for the list exactly once when it opens again.
+    fireEvent.click(tab("Музыка"));
+    await within(media()).findByRole("list", { name: "Треки в тренде" });
+    fireEvent.click(tab("Фото"));
+    engine.failNext("music.list", { code: "INTERNAL", detail: "the music folder could not be read" });
+    fireEvent.click(tab("Музыка"));
+    const alert = await within(media()).findByRole("alert");
+    await flush();
+    expect(plain(alert.textContent)).toContain("Не удалось прочитать список треков.");
+    const lists = callsOf(engine, "music.list").length;
+    fireEvent.click(within(alert).getByRole("button", { name: "Повторить" }));
+    await within(media()).findByRole("list", { name: "Треки в тренде" });
+    expect(callsOf(engine, "music.list").length).toBe(lists + 1);
+  });
+
   test("an empty store says the list is loaded in Settings", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client);
@@ -257,6 +287,16 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     expect(within(props()).getByRole("slider", { name: "Начало музыки в треке" }).getAttribute("aria-valuenow")).toBe("52000");
     const saved = await nextSave(engine);
     expect(saved.music?.startMs).toBe(52_000);
+  });
+
+  test("a waveform the store no longer has (NOT_FOUND) says the track is gone; nothing is fetched to make up for it", async () => {
+    const { client, engine } = await studio({ music: MUSIC });
+    await openDraft(engine, client, withMusic(12_000));
+    await flush();
+    // The timeline's own waveform was answered on opening; the card's whole-track ask is the next one.
+    engine.failNext("music.peaks", { code: "NOT_FOUND", detail: `track ${ESPRESSO.trackId} is not stored` });
+    selectBlock(/^Музыка:/);
+    await within(props()).findByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.");
   });
 
   test("«Заменить трек» opens the «Музыка» tab", async () => {
