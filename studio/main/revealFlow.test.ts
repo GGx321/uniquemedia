@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { CommandMessage, PROTOCOL_VERSION, type EngineCommandMessage, type FileState, type ResponseMessage, type VideoSummary } from "../shared/engine";
+import { CommandMessage, EXPORT_CHANGING_DETAIL, PROTOCOL_VERSION, type EngineCommandMessage, type FileState, type ResponseMessage, type VideoSummary } from "../shared/engine";
 import { MIA, SOFIA } from "../renderer/engine/mockEngine.testkit";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { handleRevealCommand, isRevealCommand, type RevealCommand, type RevealFlowDeps } from "./revealFlow";
+import { handleRevealCommand, isRevealCommand, placeOf, type RevealCommand, type RevealFlowDeps } from "./revealFlow";
 useNativeGlobals();
 
 // 3d.6: «Открыть в папке». The window names a video id and nothing else; main finds the file's place itself and asks the
@@ -127,8 +127,36 @@ describe("videos.reveal", () => {
     expect(h.shown).toEqual(["D:\\Reels\\Mia\\2026-10-03_photo_001.mp4"]);
   });
 
+  test("a switch of the export folder while the records were read refuses the reveal: the answer may name the old folder", async () => {
+    const h = harness();
+    let calls = 0;
+    h.deps.exportPath = () => (++calls === 1 ? EXPORT : join("/Users", "alex", "Elsewhere"));
+    const response = await handleRevealCommand(reveal("video-00000001"), h.deps);
+    expect(response).toMatchObject({ ok: false, error: { code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL } });
+    expect(h.shown).toEqual([]);
+  });
+
   test("a payload with a path is refused by the contract before the flow: the window names no path", () => {
     const parsed = CommandMessage.safeParse({ v: PROTOCOL_VERSION, id: "cmd-rev-00002", kind: "command", type: "videos.reveal", payload: { videoId: "video-00000001", path: "/etc/passwd" } });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe("placeOf", () => {
+  test("joins a record's relative path under an absolute root", () => {
+    expect(placeOf("/Users/alex/Reels", "Mia/2026-10-03_photo_001.mp4", "darwin")).toBe("/Users/alex/Reels/Mia/2026-10-03_photo_001.mp4");
+    expect(placeOf("D:\\Reels", "Mia/2026-10-03_photo_001.mp4", "win32")).toBe("D:\\Reels\\Mia\\2026-10-03_photo_001.mp4");
+  });
+
+  test("refuses a path that is not the record shape: a dot segment, an absolute path, a drive, a stream", () => {
+    for (const relPath of ["../x/2026-10-03_photo_001.mp4", "Mia/../../2026-10-03_photo_001.mp4", "/etc/2026-10-03_photo_001.mp4", "C:/Mia/2026-10-03_photo_001.mp4", "Mia/2026-10-03_photo_001.mp4:stream", ""]) {
+      expect(placeOf("/Users/alex/Reels", relPath, "darwin")).toBeNull();
+    }
+  });
+
+  test("refuses a root that is not absolute, whatever the platform reads", () => {
+    expect(placeOf("Reels", "Mia/2026-10-03_photo_001.mp4", "darwin")).toBeNull();
+    expect(placeOf("", "Mia/2026-10-03_photo_001.mp4", "linux")).toBeNull();
+    expect(placeOf("D:Reels", "Mia/2026-10-03_photo_001.mp4", "win32")).toBeNull();
   });
 });

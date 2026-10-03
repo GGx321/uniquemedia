@@ -1,5 +1,5 @@
 import { posix, win32 } from "node:path";
-import { errorResponseFor, PROTOCOL_VERSION, RelativePath, type CommandMessage, type EngineCommandMessage, type EngineError, type ResponseMessage } from "../shared/engine";
+import { errorResponseFor, EXPORT_CHANGING_DETAIL, PROTOCOL_VERSION, RelativePath, type CommandMessage, type EngineCommandMessage, type EngineError, type ResponseMessage } from "../shared/engine";
 
 // «Открыть в папке» (3d.6): `videos.reveal {videoId}`. Only main can open the system file manager, and the window names a
 // video id and nothing else. Main finds the record itself (the engine's own `avatars.list` and `videos.list`: no command
@@ -24,7 +24,7 @@ export interface RevealFlowDeps {
 }
 
 /** The place of a video's file: the record's relative path under `root`, or null when it would not stay inside it. */
-function placeOf(root: string, relPath: string, platform: NodeJS.Platform): string | null {
+export function placeOf(root: string, relPath: string, platform: NodeJS.Platform): string | null {
   if (!RelativePath.safeParse(relPath).success) return null;
   const api = platform === "win32" ? win32 : posix;
   if (!api.isAbsolute(root)) return null;
@@ -34,6 +34,8 @@ function placeOf(root: string, relPath: string, platform: NodeJS.Platform): stri
 }
 
 export async function handleRevealCommand(command: RevealCommand, deps: RevealFlowDeps): Promise<ResponseMessage> {
+  // The records were judged against this folder: a switch while they were read makes the answer about another one.
+  const root = deps.exportPath();
   const avatars = await deps.engine.request({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "command", type: "avatars.list", payload: {} });
   if (!avatars.ok) return errorResponseFor(command, avatars.error);
   if (avatars.type !== "avatars.list") return errorResponseFor(command, { code: "INTERNAL", detail: "the engine answered the avatars with something else" });
@@ -51,7 +53,8 @@ export async function handleRevealCommand(command: RevealCommand, deps: RevealFl
     if (video.fileState !== "present") {
       return errorResponseFor(command, { code: "NOT_FOUND", detail: `the video's file is not in the export folder (${video.fileState})` });
     }
-    const place = placeOf(deps.exportPath(), video.relPath, deps.platform);
+    if (deps.exportPath() !== root) return errorResponseFor(command, { code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
+    const place = placeOf(root, video.relPath, deps.platform);
     if (place === null) return errorResponseFor(command, { code: "INTERNAL", detail: "the video's place is not inside the export folder" });
     deps.show(place);
     return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { videoId: video.videoId } };

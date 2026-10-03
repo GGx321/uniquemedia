@@ -37,7 +37,7 @@ const DRAFT_CHANGING_RU = "Черновик как раз сохранялся, 
  * 3d.6: what a render says when it is refused or fails. The general texts of IN_FLIGHT and of an answer that never came are
  * about paid requests and OpenRouter; a render touches neither, and each of these says what happened to the job.
  */
-const EXPORT_CHANGING_RU = "Папку «Готовые видео» как раз меняют. Рендер не поставлен в очередь, ничего не потрачено — повторите через секунду.";
+const EXPORT_CHANGING_RU = "Папку «Готовые видео» как раз меняют. Ничего не сделано и не потрачено — повторите через секунду.";
 const RENDER_NOT_QUEUED_RU = "Движок не успел поставить рендер в очередь. Ничего не поставлено и не потрачено — повторите.";
 const NO_ANSWER_RU = "Движок не ответил вовремя. Команда могла выполниться: посмотрите на экран и в очередь слева, и повторите, только если ничего не изменилось.";
 const RENDER_FORMS = ["рендер", "рендера", "рендеров"] as const;
