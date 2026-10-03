@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { CommandMessage, PROTOCOL_VERSION, type EngineCommandMessage, type FileState, type ResponseMessage, type VideoSummary } from "../shared/engine";
 import { MIA, SOFIA } from "../renderer/engine/mockEngine.testkit";
+import { useNativeGlobals } from "../testing/nativeGlobals";
 import { handleRevealCommand, isRevealCommand, type RevealCommand, type RevealFlowDeps } from "./revealFlow";
+useNativeGlobals();
 
 // 3d.6: «Открыть в папке». The window names a video id and nothing else; main finds the file's place itself and asks the
 // system file manager to show it. The export folder and the record's relative path never come from the window.
