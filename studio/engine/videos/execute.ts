@@ -5,7 +5,7 @@ import type { MontageShape } from "../../shared/engine/montage";
 import { totalFrames } from "../../shared/montage";
 import { ExportFolderError, formatExportDate, NODE_EXPORT_FOLDER_FS, prepareExportFolder, type ExportFolderFs, type PreparedFolder } from "../exportName";
 import type { Library } from "../library";
-import type { OverlayInput, PhotoResolver } from "../render";
+import type { PhotoResolver } from "../render";
 import { TrackUnavailableError, type RenderTrack, type RenderTrackSource } from "../music/renderTrack";
 import { RenderFailure, type RenderContext } from "../renderQueue/queue";
 import { runRenderJob, type RenderRunDeps, type RunAudio } from "../renderQueue/runner";
@@ -73,7 +73,6 @@ export interface RenderPlan {
   readonly spec: z.infer<typeof MontageShape>;
   /** photoId to its file and STORED size; resolved up front so a missing photo answers PHOTO_UNAVAILABLE, never a builder error. */
   readonly resolvePhoto: PhotoResolver;
-  readonly overlays: readonly OverlayInput[];
   /** Silence, by type (invariant 31): a plan cannot name a track file. A track comes only through `track`, opened from the store when the job starts. */
   readonly audio: { readonly kind: "silent" };
   /**
@@ -314,7 +313,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           seed: plan.spec.seed,
           clips: plan.spec.clips,
           resolvePhoto: plan.resolvePhoto,
-          overlays: layers === undefined ? plan.overlays : [...plan.overlays, ...layers.overlays],
+          overlays: layers === undefined ? [] : layers.overlays,
           ...(layers === undefined ? {} : { stageLayers: layers.stage }),
           audio,
           output: temp,

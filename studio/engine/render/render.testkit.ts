@@ -1,8 +1,12 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { totalFrames } from "../../shared/montage";
 import { runFfmpegOk } from "./ffmpeg.testkit";
-import type { Pass1Job, Pass2Job } from "./types";
+import { buildLayerPass } from "./layerPass";
+import { buildPass2 } from "./pass2";
+import { FRAME_TAGS, OVERLAY_COLOUR_CHAIN } from "./profile";
+import type { OverlayInput, Pass1Job, Pass2Job } from "./types";
 
 // Test support for the real-ffmpeg render suites: temp folders, running the
 // builder's argv arrays the way the runner (3a.6) will, and the fixed inputs.
@@ -26,6 +30,39 @@ export async function runPass2(job: Pass2Job): Promise<void> {
   mkdirSync(job.cwd, { recursive: true });
   writeFileSync(join(job.cwd, job.listFileName), job.listFileContents);
   await runFfmpegOk(job.argv, { cwd: job.cwd });
+}
+
+/**
+ * What the production runner does with layers, for the tests that look at pixels: every layer call, then pass 2 over the one layer file. `tamper`
+ * rewrites the argv of each layer call first (a negative control swapping a colour chain for the naive one). Pass 2 never takes a layer
+ * directly any more (its memory grows by a constant per overlay input), so this is the only way a test puts a layer on a frame.
+ */
+export async function runLayersAndPass2(input: {
+  readonly clips: readonly { readonly clipId: string; readonly durationMs: number }[];
+  readonly clipDir: string;
+  readonly output: string;
+  readonly layers: readonly OverlayInput[];
+  readonly tamper?: (argv: readonly string[]) => readonly string[];
+}): Promise<void> {
+  const plan = buildLayerPass({ layers: input.layers, totalFrames: totalFrames(input.clips), clipDir: input.clipDir });
+  for (const job of plan.jobs) await runFfmpegOk(input.tamper === undefined ? job.argv : input.tamper(job.argv));
+  await runPass2(buildPass2({ clips: input.clips, clipDir: input.clipDir, output: input.output, overlays: plan.final === null ? [] : [plan.final], audio: { kind: "silent" } }));
+}
+
+/**
+ * A pass-2 job (built with NO overlays, silent) turned into one that overlays a still PNG DIRECTLY, the way pass 2 did before the layer pass.
+ * Production code no longer has this path (its memory grows by a constant per overlay input); it exists here only as the REFERENCE the
+ * two-step composite is compared with (the transparent-main un-premultiply question), so a test cannot be satisfied by two copies of one bug.
+ */
+export function withDirectStill(job: Pass2Job, o: OverlayInput): Pass2Job {
+  const at = job.argv.indexOf("-filter_complex");
+  const graph = job.argv[at + 1];
+  if (at < 0 || graph === undefined || !graph.includes(`[0:v]${FRAME_TAGS}[v]`)) throw new Error("expected a pass-2 job with no overlays");
+  const still = `[1:v]format=rgba,${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=1,trim=end_frame=${o.endFrame - o.startFrame},settb=1/30,setpts=N+${o.startFrame}[s0]`;
+  const overlay = `[b0][s0]overlay=x=${o.box.x}:y=${o.box.y}:eof_action=pass:format=yuv420[v]`;
+  const next = graph.replace(`[0:v]${FRAME_TAGS}[v]`, `[0:v]${FRAME_TAGS}[b0];${still};${overlay}`);
+  const argv = [...job.argv.slice(0, at), "-protocol_whitelist", "file", "-f", "image2", "-pattern_type", "none", "-i", o.path, "-filter_complex", next, ...job.argv.slice(at + 2)];
+  return { ...job, argv };
 }
 
 /** The graph string of an argv, for tests that tamper with it. */

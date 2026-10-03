@@ -11,14 +11,13 @@ import {
   FINAL_VIDEO_ARGS,
   FRAME_TAGS,
   METADATA_ARGS,
-  OVERLAY_COLOUR_CHAIN,
 } from "./profile";
 import { RenderGraphError, type AudioSource, type OverlayInput, type Pass2Input, type Pass2Job } from "./types";
 
 // Pass 2: one compositing pass over the pass-1 intermediates. The concat
 // DEMUXER (not the filter) feeds one decoder from a list of the job's own
 // fixed, relative file names, with ffmpeg's `cwd` set to the job's folder;
-// the text and sticker overlays, the audio and the final encode follow, and
+// the layer pass's one file (the text and stickers, 3b.6), the audio and the final encode follow, and
 // the result goes to a temp file on the export volume.
 //
 // Length is built into the graph, never cut by an output flag (invariant 20):
@@ -26,7 +25,7 @@ import { RenderGraphError, type AudioSource, type OverlayInput, type Pass2Input,
 // `apad,atrim=end_sample=N` with N = Σ durationMs × 48. There is no
 // `-frames:v`, no output `-t` and no `-shortest`.
 //
-// Inputs, by index: 0 is the concat list, 1..k the overlays in z-order. The
+// Inputs, by index: 0 is the concat list, 1 the layer pass's file when there are layers. The
 // music track (3c.5), when there is one, is the index after the overlays; the
 // silent source needs no input. Music is mapped explicitly (`-map <i>:a:0`)
 // and filtered by a simple `-af` chain of its own (`musicChain.ts`); the
@@ -69,7 +68,7 @@ export function validateOverlay(o: OverlayInput, index: number, total: number): 
 }
 
 /**
- * The input flags of an overlay (invariant 15): only the file protocol, and
+ * The input flags of a layer-pass input (invariant 15): only the file protocol, and
  * the demuxer named outright: the still-image one with no pattern matching for
  * a PNG, `apng` or `gif` for an animation. Nothing else: a still is one frame
  * that the graph converts once and repeats; an animation is read once and its
@@ -83,34 +82,19 @@ export function overlayInputArgs(o: OverlayInput): string[] {
   const demuxer = o.format === "png" ? ["-f", "image2", "-pattern_type", "none"] : o.format === "layers" ? ["-f", "matroska"] : ["-f", o.format];
   // The layer pass's FFV1 file is decoded on 4 threads, not the decoder's default of one per core: measured with the largest
   // layer set, that default cost pass 2 about 100 MiB more (777 against 670 MiB), while 1 or 2 threads halved the speed.
-  const decode = o.format === "layers" ? ["-threads", "4"] : [];
+  // A PNG, APNG or GIF is decoded on ONE thread (the plan's quick win: the reviewer measured 533 to 493 / 503 MiB per layer call).
+  const decode = o.format === "layers" ? ["-threads", "4"] : ["-threads", "1"];
   return ["-protocol_whitelist", "file", ...demuxer, ...decode, "-i", o.path];
 }
 
 /**
- * The chain that turns overlay input `inputIndex` into the stream `[s<k>]`,
- * shifted to its start frame and converted to BT.709 limited range with alpha
- * (explicitly, never left to the auto scaler), optionally resized to its box.
- *
- * A still is converted once and its one frame repeated forever. An animated
- * one is resampled to 30 fps, converted once, and looped forever from a cache
- * of its own frames (the small yuva420p ones, at most
- * `ANIMATED_LOOP_MAX_FRAMES`). Either is then cut to the layer's length and
- * numbered from the layer's first frame, so the loop starts there and every
- * loop is the file's frames in order.
+ * The chain that turns the layer pass's file (input `inputIndex`) into the stream `[s<k>]`. The file is already BT.709 yuva420p, the whole
+ * frame and exactly the timeline long: it is only re-timed onto the 30 fps grid (the container's millisecond time base would otherwise
+ * jitter the frame sync against the main input). Nothing else is ever overlaid in pass 2: its memory grows by a constant per overlay input
+ * (3b.6), so the layers are composited in the layer pass and pass 2 takes the one result.
  */
-function overlayPrepare(o: OverlayInput, inputIndex: number, k: number, totalFrames: number): string {
-  const resize = o.resize ? `scale=${o.box.w}:${o.box.h}:flags=lanczos,` : "";
-  const cut = spansTimeline(o, totalFrames) ? "" : `trim=end_frame=${o.endFrame - o.startFrame},`;
-  const shift = `settb=1/${FPS},setpts=N+${o.startFrame}`;
-  // The layer pass's file is already BT.709 yuva420p, the whole frame and exactly the timeline long: only re-time it onto the 30 fps grid
-  // (the container's millisecond time base would otherwise jitter the frame sync against the main input).
-  if (o.format === "layers") return `[${inputIndex}:v]settb=1/${FPS},setpts=N[s${k}]`;
-  if (o.format !== "png") {
-    return `[${inputIndex}:v]fps=${FPS},format=rgba,${resize}${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=${ANIMATED_LOOP_MAX_FRAMES},${cut}${shift}[s${k}]`;
-  }
-  // A still is converted ONCE, and the converted frame is repeated.
-  return `[${inputIndex}:v]format=rgba,${resize}${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=1,${cut}${shift}[s${k}]`;
+function layersPrepare(inputIndex: number, k: number): string {
+  return `[${inputIndex}:v]settb=1/${FPS},setpts=N[s${k}]`;
 }
 
 /** A layer that covers every frame of the montage. */
@@ -168,14 +152,17 @@ export function buildPass2(input: Pass2Input): Pass2Job {
     totalMs += clip.durationMs;
   }
   const audioSamples = totalMs * AUDIO_SAMPLES_PER_MS;
-  input.overlays.forEach((o, i) => validateOverlay(o, i, totalFrames));
+  input.overlays.forEach((o, i) => {
+    if (o.format !== "layers") bad(`overlay ${i} is a ${o.format}: pass 2 overlays only the layer pass's file (the layers are composited before it)`);
+    validateOverlay(o, i, totalFrames);
+  });
 
   const filters: string[] = [];
   const last = input.overlays.length - 1;
   filters.push(`[0:v]${FRAME_TAGS}[${last < 0 ? "v" : "b0"}]`);
   input.overlays.forEach((o, k) => {
     const out = k === last ? "v" : `b${k + 1}`;
-    filters.push(overlayPrepare(o, k + 1, k, totalFrames));
+    filters.push(layersPrepare(k + 1, k));
     filters.push(`[b${k}][s${k}]overlay=x=${o.box.x}:y=${o.box.y}:eof_action=${overlayEofAction(o, totalFrames)}:format=yuv420[${out}]`);
   });
   if (input.audio.kind === "silent") filters.push(silentAudio(audioSamples));

@@ -37,7 +37,6 @@ describe("a real render, end to end", () => {
       exportRoot: { root: w.exportRoot, rootId: w.rootId },
       spec: specOf(w.avatar.id, [photo.id], 1000),
       resolvePhoto: () => ({ path: PHOTO_FILE, width: 720, height: 1280 }),
-      overlays: [],
       audio: { kind: "silent" },
       montageId: null,
       videoKind: "photo",

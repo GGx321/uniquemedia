@@ -36,7 +36,6 @@ const planOf = (w: World, over: Partial<RenderPlan> = {}): RenderPlan => ({
   exportRoot: { root: w.exportRoot, rootId: w.rootId },
   spec: specOf(w.avatar.id, [w.photos[0]?.id ?? ""], 1000),
   resolvePhoto: () => ({ path: "/photos/p.jpg", width: 720, height: 1280 }),
-  overlays: [],
   audio: { kind: "silent" },
   montageId: null,
   videoKind: "photo",

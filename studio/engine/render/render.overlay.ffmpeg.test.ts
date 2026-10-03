@@ -4,12 +4,11 @@ import type { Clip } from "../../shared/engine/montage";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { extractFrames, videoFrames } from "./ffmpeg.testkit";
 import { buildPass1 } from "./pass1";
-import { buildPass2 } from "./pass2";
-import { makeBlinkApng, makeSolid, makeWorkDir, meanAround, removeDir, runPass1, runPass2, splitYuv420 } from "./render.testkit";
+import { makeBlinkApng, makeSolid, makeWorkDir, meanAround, removeDir, runLayersAndPass2, runPass1, splitYuv420 } from "./render.testkit";
 import type { OverlayInput } from "./types";
 useNativeGlobals();
 
-// REAL ffmpeg, pass 2 with overlays (the slot 3b fills with text PNGs and
+// REAL ffmpeg, the layers through the layer pass and pass 2 (text PNGs and
 // stickers): the overlay windows are frame-exact, an animated overlay's loop
 // starts on its layer's first frame, a sticker is scaled to its box, and none
 // of it changes the exact length (invariant 20, SP1's `endall` rule).
@@ -52,13 +51,13 @@ beforeAll(async () => {
   await runPass1(buildPass1({ seed: 1, clips: [clip, { ...clip, clipId: "flat-2" }], resolvePhoto: () => ({ path: flat, width: 720, height: 1280 }), clipDir: dir }));
   const overlays: OverlayInput[] = [
     { path: white, format: "png", box: STILL_WINDOWED, resize: false, startFrame: 30, endFrame: 60 },
-    { path: blink, format: "apng", box: BLINK, resize: false, startFrame: 30, endFrame: 60 },
+    { path: blink, format: "apng", box: BLINK, resize: false, startFrame: 30, endFrame: 60, loopFrames: 6, sourceSize: { w: 200, h: 200 } },
     { path: white, format: "png", box: STILL_WHOLE, resize: false, startFrame: 0, endFrame: TOTAL },
     { path: small, format: "png", box: RESIZED, resize: true, startFrame: 0, endFrame: TOTAL },
     { path: white, format: "png", box: STILL_TAIL, resize: false, startFrame: 60, endFrame: TOTAL },
   ];
   output = join(dir, "final.mp4");
-  await runPass2(buildPass2({ clips: [clip, { ...clip, clipId: "flat-2" }], clipDir: dir, output, overlays, audio: { kind: "silent" } }));
+  await runLayersAndPass2({ clips: [clip, { ...clip, clipId: "flat-2" }], clipDir: dir, output, layers: overlays });
 
   frameCount = await videoFrames(output);
   const frames = await extractFrames(output, SAMPLE_AT, "yuv420p", { w: 1080, h: 1920 });

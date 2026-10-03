@@ -399,7 +399,6 @@ export class VideoService {
       exportRoot: { root: check.root, rootId: check.rootId },
       spec: filled,
       resolvePhoto: (ref) => (ref.source === "scene" ? sources.get(ref.photoId) : undefined),
-      overlays: [],
       audio: { kind: "silent" },
       // The id and the start only: the file's path comes from the track store when the job runs (invariant 31).
       ...(filled.music?.source === "trending" ? { track: { trackId: filled.music.trackId, startMs: filled.music.startMs } } : {}),

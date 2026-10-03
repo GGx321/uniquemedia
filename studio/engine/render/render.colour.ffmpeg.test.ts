@@ -4,7 +4,6 @@ import type { Clip } from "../../shared/engine/montage";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { extractFrames } from "./ffmpeg.testkit";
 import { buildPass1 } from "./pass1";
-import { buildPass2 } from "./pass2";
 import { OVERLAY_COLOUR_CHAIN, PHOTO_COLOUR_CHAIN } from "./profile";
 import {
   CHART_BLOCK_L,
@@ -20,8 +19,8 @@ import {
   meanAround,
   mixRgb,
   removeDir,
+  runLayersAndPass2,
   runPass1,
-  runPass2,
   splitYuv420,
   tamperGraph,
   type RGB,
@@ -122,14 +121,13 @@ async function renderAndMeasure(name: string, trap: { photo?: boolean; sticker?:
   await runPass1([{ ...job, argv }]);
 
   const output = join(work, "final.mp4");
-  const pass2 = buildPass2({
+  await runLayersAndPass2({
     clips: [chartClip],
     clipDir: work,
     output,
-    overlays: [{ path: sticker, format: "png", box: { x: STICKER_AT.x, y: STICKER_AT.y, w: STICKER_W, h: STICKER_H }, resize: false, startFrame: 0, endFrame: 30 }],
-    audio: { kind: "silent" },
+    layers: [{ path: sticker, format: "png", box: { x: STICKER_AT.x, y: STICKER_AT.y, w: STICKER_W, h: STICKER_H }, resize: false, startFrame: 0, endFrame: 30 }],
+    ...(trap.sticker ? { tamper: (argv: readonly string[]) => tamperGraph(argv, OVERLAY_COLOUR_CHAIN, "format=yuva420p") } : {}),
   });
-  await runPass2({ ...pass2, argv: trap.sticker ? tamperGraph(pass2.argv, OVERLAY_COLOUR_CHAIN, "format=yuva420p") : pass2.argv });
 
   const [frame] = await extractFrames(output, [0], "yuv420p", { w: 1080, h: 1920 });
   const planes = splitYuv420(frame ?? new Uint8Array(), 1080, 1920);
@@ -179,7 +177,7 @@ describe("colour on real ffmpeg: negative controls, the two known traps must fai
     const worst = worstOf(result("sticker-trap").opaque);
     // macOS 6.0 and Windows 6.1.1 (the builds Studio ships) convert an untagged RGBA sticker with BT.601 and drift.
     // The Linux ffmpeg of the CI canary does not: its auto scaler is already right, so there is no trap to catch there.
-    if (process.platform === "linux" && worst <= OPAQUE_STICKER_TOLERANCE) {
+    if (process.platform === "linux" && worst <= 5) {
       console.log("colour: this Linux ffmpeg's auto scaler already converts the sticker correctly; the sticker trap control does not apply");
       return;
     }
