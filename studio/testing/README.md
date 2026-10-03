@@ -8,9 +8,9 @@ One environment variable, `STUDIO_TEST_TIER`, is read by both runners (`bun test
 | `STUDIO_TEST_TIER` | Runs in CI                                         | Blocks | What runs                                                                    |
 | ------------------ | -------------------------------------------------- | ------ | ---------------------------------------------------------------------------- |
 | unset              | `build` (macOS, Windows), every push to main, tags | yes    | every ordinary test; tagged tests of other tiers are skipped (or not registered) |
-| `perf`             | `perf` (ubuntu, Windows), every push to main       | no     | the `[perf]` tests, with their tight wall-clock budgets enforced and printed |
+| `perf`             | `perf` (ubuntu per push; Windows too in the weekly run) | no (yes on a release tag) | the `[perf]` tests, with their tight wall-clock budgets enforced and printed |
 | `quarantine`       | `quarantine` (macOS, Windows), every push to main  | no     | the `[quarantine]` tests; the job is skipped while the list is empty         |
-| `heavy`            | `heavy` (ubuntu), weekly cron and manual dispatch  | weekly | the `[heavy]` tests: the slow ones a push does not need                      |
+| `heavy`            | `heavy` (ubuntu), weekly cron, release tags, manual dispatch; also on `bun latest` in the weekly canary | weekly and tags | the `[heavy]` tests: the slow ones a push does not need |
 
 Locally: `STUDIO_TEST_TIER=perf bun run test:studio:suite ./studio` and `STUDIO_TEST_TIER=perf bun run test:studio:electron-node`
 (PowerShell: `$env:STUDIO_TEST_TIER = "perf"`). A tier run opens only the files that can hold its tests. An unknown value throws.
@@ -24,8 +24,12 @@ A test that is a correctness test AND carries a tight time bound (`expect(elapse
 It runs in every tier. The perf run enforces `budgetMs` and prints the number; every other run enforces only a generous
 bound (the larger of 2 s and 4x the budget, or `{ blockingMs }` where the generous bound must stay under a number the
 budget cannot tell apart, such as a serial run's total), so a runaway still fails a push. A test that is only a measurement
-(an event-loop gap, a deadline headroom over the runner's speed) is `perfOnlyTest` (bun) or registered inside
+(a deadline headroom over the runner's speed) is `perfOnlyTest` (bun) or registered inside
 `inTier("perf", ...)` (node:test): it exists in the perf run alone.
+
+A product guarantee that is only expressible as a timing keeps a blocking variant with a very wide relative criterion, and the tight one
+in the perf run: "the event loop stays free during a check" blocks when the worker's largest gap is under 0.8 x the in-thread control's, and
+holds under half of it in the perf run (`loopFree.ts`).
 
 Keep a bound blocking when it guards a product guarantee and is generous: "an aborted request ends before the 20 s timer",
 the 768 MiB RSS gate in the packaged smoke. Move it when it measures how fast the machine is.

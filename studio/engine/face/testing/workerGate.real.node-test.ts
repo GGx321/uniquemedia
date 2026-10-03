@@ -15,7 +15,7 @@ import { SAMPLE_AVATAR, samplePhotoMeta, sequentialIds, steppingClock } from "..
 import { createFaceGate } from "../gate";
 import { NoFaceInReferenceError } from "../noFaceError";
 import { tempDirFor } from "../../../testing/tempDir";
-import { inTier } from "../../../testing/tiers";
+import { tierOf } from "../../../testing/tiers";
 import { FIXTURE_IMAGE_DIR, MODELS_PRESENT, REPO_ROOT, realWorkerInit, realWorkerSpawner, sharedRealFaceGate, twelveMegapixelJpeg, twoKJpeg } from "./realWorker";
 import { faceModelPaths } from "../../../scripts/faceModelCache";
 import { MASTER } from "../fixtures/expected";
@@ -101,44 +101,43 @@ async function masterEmbeddingVia(gate: WorkerFaceGate): Promise<Float32Array> {
 }
 
 describe("the real face worker", () => {
-  // Perf-only (CI-4): the event-loop gap is a measurement of the runner, so it registers in the perf run alone (it does not block).
-  inTier("perf", () => {
-    test("[perf] a 2K check leaves the engine's event loop free: the largest timer gap stays well under what the same check blocks in-thread", { timeout: 60_000 }, async () => {
-      const image = twoKJpeg();
+  // The engine's loop staying free during a check is a product guarantee (T7c), so it blocks, but with a wide criterion (CI-4): the worker's second-largest
+  // gap must stay under 0.8 x the in-thread control's, which a check back on this thread cannot meet. The perf run holds the tight one (under half).
+  test("[perf] a 2K check leaves the engine's event loop free: the largest timer gap stays well under what the same check blocks in-thread", { timeout: 60_000 }, async () => {
+    const image = twoKJpeg();
 
-      // Control: the same decode + inference on THIS thread, as before T7c.
-      const decode = createWasmImageDecoder(await createRealDecodeBackend(join(REPO_ROOT, "node_modules")));
-      // The wasm paths are given, as the worker's own are: a bundled test has no node_modules next to it to find them by.
-      const inThread = await createFaceGate(
-        {
-          yunet: new Uint8Array(await readFile(faceModelPaths(REPO_ROOT).yunet)),
-          sface: new Uint8Array(await readFile(faceModelPaths(REPO_ROOT).sface)),
-        },
-        undefined,
-        realWorkerInit().wasmPaths,
-      );
-      let control: TimerGap;
-      try {
-        const masterEmbedding = await inThread.embed(await decode(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live()));
-        await inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding }); // warm-up
-        control = leastBlocked(await gapsOf(CONTROL_RUNS, async () => inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding })));
-      } finally {
-        await inThread.dispose();
-      }
+    // Control: the same decode + inference on THIS thread, as before T7c.
+    const decode = createWasmImageDecoder(await createRealDecodeBackend(join(REPO_ROOT, "node_modules")));
+    // The wasm paths are given, as the worker's own are: a bundled test has no node_modules next to it to find them by.
+    const inThread = await createFaceGate(
+      {
+        yunet: new Uint8Array(await readFile(faceModelPaths(REPO_ROOT).yunet)),
+        sface: new Uint8Array(await readFile(faceModelPaths(REPO_ROOT).sface)),
+      },
+      undefined,
+      realWorkerInit().wasmPaths,
+    );
+    let control: TimerGap;
+    try {
+      const masterEmbedding = await inThread.embed(await decode(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live()));
+      await inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding }); // warm-up
+      control = leastBlocked(await gapsOf(CONTROL_RUNS, async () => inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding })));
+    } finally {
+      await inThread.dispose();
+    }
 
-      const gate = sharedRealFaceGate();
-      await gate.start();
-      const masterEmbedding = await masterEmbeddingVia(gate);
-      await gate.check({ pose: "front", bytes: image, masterEmbedding }, live()); // warm-up
-      const workerRuns = await gapsOf(WORKER_RUNS, () => gate.check({ pose: "front", bytes: image, masterEmbedding }, live()));
-      console.log(
-        `event loop: worker gaps [${workerRuns.map((r) => r.maxGapMs.toFixed(0)).join(", ")}] ms over [${workerRuns.map((r) => r.durationMs.toFixed(0)).join(", ")}] ms; in-thread control best-of-${CONTROL_RUNS} gap ${control.maxGapMs.toFixed(0)} ms (${process.platform})`,
-      );
+    const gate = sharedRealFaceGate();
+    await gate.start();
+    const masterEmbedding = await masterEmbeddingVia(gate);
+    await gate.check({ pose: "front", bytes: image, masterEmbedding }, live()); // warm-up
+    const workerRuns = await gapsOf(WORKER_RUNS, () => gate.check({ pose: "front", bytes: image, masterEmbedding }, live()));
+    console.log(
+      `event loop: worker gaps [${workerRuns.map((r) => r.maxGapMs.toFixed(0)).join(", ")}] ms over [${workerRuns.map((r) => r.durationMs.toFixed(0)).join(", ")}] ms; in-thread control best-of-${CONTROL_RUNS} gap ${control.maxGapMs.toFixed(0)} ms (${process.platform})`,
+    );
 
-      // Relative only (an absolute millisecond bound is flaky on 3-4 vCPU runners and under Windows' 15.6 ms timer); the rule, and why it reads
-      // the second-largest of five worker gaps, is in loopFree.ts.
-      assert.equal(loopFreeProblem(workerRuns, control), undefined);
-    });
+    // Relative only (an absolute millisecond bound is flaky on 3-4 vCPU runners and under Windows' 15.6 ms timer); the rule, and why it reads
+    // the second-largest of five worker gaps, is in loopFree.ts.
+    assert.equal(loopFreeProblem(workerRuns, control, tierOf() === "perf" ? "tight" : "wide"), undefined);
   });
 
   test("cancelling a real 2K check mid-flight terminates the worker promptly, and the next check succeeds on a respawned worker", { timeout: 60_000 }, async () => {

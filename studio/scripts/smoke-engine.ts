@@ -350,6 +350,24 @@ async function devtoolsJson(port: number, path: string): Promise<unknown> {
   }
 }
 
+/**
+ * Whether anything answers on the app's DevTools port: ANY HTTP answer counts (its body is not read, so a malformed one still counts), and so does
+ * a request that times out, because something that holds the port without answering is still listening. Only a refused connection is "not
+ * listening". Fail-closed: this is the production build's proof that `--remote-debugging-port` is refused.
+ */
+async function devtoolsListening(port: number): Promise<boolean> {
+  const bound = timeoutSignal(DEVTOOLS_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: bound.signal });
+    await response.body?.cancel();
+    return true;
+  } catch {
+    return bound.signal.aborted;
+  } finally {
+    bound.clear();
+  }
+}
+
 /** Connects to the app's renderer page and installs the request and event helpers. */
 async function connectPage(port: number): Promise<Cdp> {
   const wsUrl = await waitFor("the renderer page on the DevTools port", async () => {
@@ -787,7 +805,7 @@ async function productionCheck(target: Target): Promise<void> {
     await checkTextRasteriser("the production app", () => output);
     let listening = false;
     for (let i = 0; i < 10 && !listening; i++) {
-      listening = await devtoolsJson(port, "/json/version").then(() => true, () => false);
+      listening = await devtoolsListening(port);
       await Bun.sleep(300);
     }
     check("the production app ignores --remote-debugging-port", !listening);

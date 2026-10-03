@@ -28,6 +28,7 @@ const NODE_PROPERTIES = new Set([
   "nextSibling",
   "previousSibling",
   "childNodes",
+  "children",
   "ownerDocument",
   "documentElement",
 ]);
@@ -53,15 +54,25 @@ function unwrap(node: ts.Expression): ts.Expression {
 }
 
 /** Whether the value of `node` is a DOM node (or a list of them) by its last step. A `?.textContent`, a `=== null`, a `.length` are not. */
-export function isNodeValued(node: ts.Expression): boolean {
+export function isNodeValued(node: ts.Expression, bindings: ReadonlyMap<string, ts.Expression> = new Map(), seen: ReadonlySet<string> = new Set()): boolean {
   const expression = unwrap(node);
+  // `const again = screen.getByRole(...)` and then `expect(again)`: the variable is as much a node as its initializer (same file, any scope: a name
+  // reused for something else in another scope is flagged too, and is cheap to rename).
+  if (ts.isIdentifier(expression)) {
+    const init = bindings.get(expression.text);
+    return init !== undefined && !seen.has(expression.text) && isNodeValued(init, bindings, new Set([...seen, expression.text]));
+  }
   if (ts.isCallExpression(expression)) {
     const callee = unwrap(expression.expression);
     const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isIdentifier(callee) ? callee.text : undefined;
     return name !== undefined && NODE_CALLS.test(name);
   }
-  if (ts.isPropertyAccessExpression(expression)) return NODE_PROPERTIES.has(expression.name.text);
-  if (ts.isElementAccessExpression(expression)) return isNodeValued(expression.expression);
+  if (ts.isPropertyAccessExpression(expression)) {
+    // `document.body`, and only that one: a request's or a response's `.body` is not a node.
+    if (expression.name.text === "body") return ts.isIdentifier(expression.expression) && expression.expression.text === "document";
+    return NODE_PROPERTIES.has(expression.name.text);
+  }
+  if (ts.isElementAccessExpression(expression)) return isNodeValued(expression.expression, bindings, seen);
   return false;
 }
 
@@ -72,6 +83,12 @@ export function isNodeValued(node: ts.Expression): boolean {
 export function domNodeMatcherUses(source: string, fileName = "test.tsx"): DomMatcherUse[] {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, fileName.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const found: DomMatcherUse[] = [];
+  const bindings = new Map<string, ts.Expression>();
+  const collect = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) bindings.set(node.name.text, node.initializer);
+    ts.forEachChild(node, collect);
+  };
+  collect(file);
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       // Walk down the matcher chain (`.not.toBe`) to the `expect(...)` call at its root.
@@ -84,7 +101,7 @@ export function domNodeMatcherUses(source: string, fileName = "test.tsx"): DomMa
       if (ts.isCallExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "expect" && inner.arguments.length === 1) {
         const [received] = inner.arguments;
         const matcher = names.join(".");
-        if (received !== undefined && isNodeValued(received) && !SAFE_MATCHERS.has(matcher)) {
+        if (received !== undefined && isNodeValued(received, bindings) && !SAFE_MATCHERS.has(matcher)) {
           found.push({ line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1, text: node.getText(file).split("\n")[0] ?? "" });
         }
       }

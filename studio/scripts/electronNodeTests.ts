@@ -83,17 +83,18 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
   {
     name: "text worker",
     entry: "studio/engine/text/worker/textGate.real.node-test.ts",
-    // 10 before CI-4: the event-loop gap and the deadline-headroom measurements moved to the perf tier, a plain "the worst
-    // shadow caption renders" test took the correctness half. The perf tier has the cut-at-the-deadline test, the gap and the headroom.
-    minTests: 9,
+    // 10 before CI-4, and 10 again: the deadline-headroom measurement moved to the perf tier, a plain "the worst shadow caption renders"
+    // test took its correctness half (the event-loop gap test stays blocking, with a wide criterion). The perf tier has the
+    // cut-at-the-deadline test, the gap and the headroom.
+    minTests: 10,
     tierTests: { perf: 3 },
     workers: { "textWorker.js": "studio/engine/text/worker/textWorker.ts" },
   },
   {
     name: "face worker",
     entry: "studio/engine/face/testing/workerGate.real.node-test.ts",
-    // 18 before CI-4: the event-loop gap test moved to the perf tier.
-    minTests: 17,
+    // The event-loop gap test blocks with a wide criterion (0.8 x the in-thread control) and holds the tight one in the perf tier.
+    minTests: 18,
     tierTests: { perf: 1 },
     workers: { "faceWorker.js": "studio/engine/face/worker/faceWorker.ts" },
   },

@@ -4,6 +4,7 @@ import { join, relative, resolve } from "node:path";
 import { NODE_TEST_SUITES } from "../scripts/electronNodeTests";
 import { tierTestArgs } from "../scripts/realWorkerTests";
 import { inQuarantineRun, QUARANTINE, quarantineEntry, type QuarantineEntry } from "./quarantine";
+import { budgetsOutsidePerfTests, holdsTierTests, nameTags, quarantineIds } from "./tierSources";
 import { assertBudget, BLOCKING_FLOOR_MS, budgetBound, inTier, TIERS, tierMarkers, tierOf, tierPattern, tierTag } from "./tiers";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
@@ -110,10 +111,7 @@ describe("quarantine", () => {
     const used = new Map<string, string[]>();
     for (const file of sourcesUnder(STUDIO)) {
       if (file.endsWith("tiers.test.ts")) continue;
-      for (const match of readFileSync(file, "utf8").matchAll(/\b(?:quarantinedTest|inQuarantineRun)\(\s*"([^"]+)"/g)) {
-        const id = match[1] ?? "";
-        used.set(id, [...(used.get(id) ?? []), relative(ROOT, file)]);
-      }
+      for (const id of quarantineIds(readFileSync(file, "utf8"), file)) used.set(id, [...(used.get(id) ?? []), relative(ROOT, file)]);
     }
     return used;
   }
@@ -125,15 +123,52 @@ describe("quarantine", () => {
   });
 });
 
+describe("tierSources", () => {
+  test("holdsTierTests sees a helper call, inTier and a tagged name, and not a string or a comment that mentions one", () => {
+    expect(holdsTierTests('heavyTest("a", () => {});', "heavy")).toBe(true);
+    expect(holdsTierTests('inTier("perf", () => { test("x", () => {}); });', "perf")).toBe(true);
+    expect(holdsTierTests('test("[perf] x", () => {});', "perf")).toBe(true);
+    expect(holdsTierTests("describe.each(rows)(`[heavy] ${name}`, () => {});", "heavy")).toBe(true);
+    expect(holdsTierTests('if (inQuarantineRun("x")) test("y", () => {});', "quarantine")).toBe(true);
+    expect(holdsTierTests('const s = \'heavyTest("a")\'; // perfTest("b")\ntest("[perf]", () => {});', "heavy")).toBe(false);
+    expect(holdsTierTests('test("[pref] typo", () => {});', "perf")).toBe(false);
+  });
+
+  test("nameTags reads the leading tag of test, suite and helper names", () => {
+    const source = 'test("[pref] a", () => {});\nperfTest("b", () => {});\ndescribe("[heavy] c", () => {});\ntest("a [mid] d", () => {});';
+    expect(nameTags(source)).toEqual([
+      { line: 1, tag: "pref" },
+      { line: 3, tag: "heavy" },
+    ]);
+  });
+
+  test("budgetsOutsidePerfTests flags an assertBudget in a plain test, and not one in a perf test", () => {
+    expect(budgetsOutsidePerfTests('test("a", () => { assertBudget(1, 2, "x"); });')).toEqual([1]);
+    expect(budgetsOutsidePerfTests('perfTest("a", () => { assertBudget(1, 2, "x"); });')).toEqual([]);
+    expect(budgetsOutsidePerfTests('test("[perf] a", () => { for (const c of cs) assertBudget(1, 2, "x"); });')).toEqual([]);
+    expect(budgetsOutsidePerfTests('perfTest("a", () => {});\ntest("b", () => { assertBudget(1, 2, "x"); });')).toEqual([2]);
+  });
+});
+
 describe("the tiers' sources", () => {
-  test("a file that checks a budget is tagged for the perf run, or the perf run never selects it", () => {
-    const untagged: string[] = [];
+  test("every assertBudget sits inside a test the perf run selects, or the perf run never enforces it", () => {
+    const outside: string[] = [];
     for (const file of sourcesUnder(STUDIO)) {
       if (file.endsWith("tiers.test.ts")) continue;
-      const source = readFileSync(file, "utf8");
-      if (/\bassertBudget\(/.test(source) && !tierMarkers("perf").some((marker) => source.includes(marker))) untagged.push(relative(ROOT, file));
+      for (const line of budgetsOutsidePerfTests(readFileSync(file, "utf8"), file)) outside.push(`${relative(ROOT, file)}:${line}`);
     }
-    expect(untagged).toEqual([]);
+    expect(outside).toEqual([]);
+  });
+
+  test("every leading [tag] of a test or suite name is a tier: a typo would drop the test out of every tier run", () => {
+    const unknown: string[] = [];
+    for (const file of sourcesUnder(STUDIO)) {
+      if (file.endsWith("tiers.test.ts") || file.endsWith("realWorkerTests.test.ts")) continue;
+      for (const { line, tag } of nameTags(readFileSync(file, "utf8"), file)) {
+        if (!TIERS.some((tier) => tier === tag)) unknown.push(`${relative(ROOT, file)}:${line} [${tag}]`);
+      }
+    }
+    expect(unknown).toEqual([]);
   });
 
   test("the perf and the heavy tiers each have tests to run, so a tier job is never an empty pass", async () => {
@@ -144,10 +179,12 @@ describe("the tiers' sources", () => {
     }
   });
 
-  test("a node suite lists a perf test count exactly when its source holds the perf tag", () => {
+  test("a node suite lists a test count for a tier exactly when its source holds tests of that tier (EVERY tier: a quarantined node test must not drop out of the quarantine run)", () => {
     for (const suite of NODE_TEST_SUITES) {
       const source = readFileSync(join(ROOT, suite.entry), "utf8");
-      expect([suite.name, suite.tierTests?.perf !== undefined]).toEqual([suite.name, source.includes(tierTag("perf"))]);
+      for (const tier of TIERS) {
+        expect([suite.name, tier, suite.tierTests?.[tier] !== undefined]).toEqual([suite.name, tier, holdsTierTests(source, tier, suite.entry)]);
+      }
     }
   });
 });

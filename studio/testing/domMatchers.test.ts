@@ -27,6 +27,15 @@ describe("the detector", () => {
     expect(uses('await waitFor(() => expect(screen.queryByText("x")).toBeNull());')).toEqual([1]);
   });
 
+  test("follows a variable bound to a node in the same file, and flags .children and .body", () => {
+    expect(uses('const again = screen.getByRole("button");\nexpect(again).toBe(button);')).toEqual([2]);
+    expect(uses('const el = document.querySelector(".a");\nconst same = el;\nexpect(same).toBeNull();')).toEqual([3]);
+    expect(uses("expect(list.children).toEqual([]);")).toEqual([1]);
+    expect(uses("expect(document.body).toBe(x);")).toEqual([1]);
+    expect(uses('const text = box.textContent;\nexpect(text).toBe("x");')).toEqual([]);
+    expect(uses("const a = a;\nexpect(a).toBe(1);")).toEqual([]);
+  });
+
   test("leaves a boolean, a text, an attribute and the matchers that never print a node alone", () => {
     expect(uses('expect(screen.queryByText("x") === null).toBe(true);')).toEqual([]);
     expect(uses('expect(screen.queryByText("x") !== null).toBe(true);')).toEqual([]);

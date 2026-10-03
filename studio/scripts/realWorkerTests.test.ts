@@ -20,6 +20,7 @@ import {
   slowTests,
   slowTestWarnings,
   testTarget,
+  tierRunMatchedNothing,
   tierTestArgs,
   WORKER_TEARDOWN_CRASHES,
   withDefaultTimeout,
@@ -340,6 +341,17 @@ describe("sharding the suite", () => {
   });
 });
 
+describe("tierRunMatchedNothing", () => {
+  test("reads bun's answer to a name pattern that selects no test (the quarantine run while the list is empty)", () => {
+    expect(tierRunMatchedNothing('bun test v1.3.12\n\nerror: regex "\\[quarantine\\]" matched 0 tests. Searched 1 file (skipping 17 tests) [176.00ms]\n')).toBe(true);
+  });
+
+  test("is false for any other output, a failure included", () => {
+    expect(tierRunMatchedNothing("(fail) a > b [1ms]\n 1 fail\n")).toBe(false);
+    expect(tierRunMatchedNothing(" 3 pass\n 0 fail\n")).toBe(false);
+  });
+});
+
 describe("tierTestArgs (STUDIO_TEST_TIER)", () => {
   const scratch: string[] = [];
   afterEach(async () => {
@@ -365,6 +377,14 @@ describe("tierTestArgs (STUDIO_TEST_TIER)", () => {
     });
     expect(await tierTestArgs(["./studio", "--randomize"], "heavy", root)).toEqual([["--randomize", "--test-name-pattern=\\[heavy\\]", "./studio/a.test.ts", "./studio/c.test.ts"]]);
     expect(await tierTestArgs(["./studio"], "perf", root)).toEqual([["--test-name-pattern=\\[perf\\]", "./studio/d.test.ts"]]);
+  });
+
+  test("selects a file by a call of the tier's helper, not by a string that merely mentions one", async () => {
+    const root = await treeWith({
+      "studio/real.test.ts": 'quarantinedTest("x", "a flaky one", () => {});',
+      "studio/fixture.test.ts": 'const source = \'quarantinedTest("x", "n", () => {})\'; // inQuarantineRun("x")\ntest("plain", () => {});',
+    });
+    expect(await tierTestArgs(["./studio"], "quarantine", root)).toEqual([["--test-name-pattern=\\[quarantine\\]", "./studio/real.test.ts"]]);
   });
 
   test("keeps a name pattern the caller gave", async () => {
@@ -473,6 +493,20 @@ describe("the Electron-Node steps' bounds", () => {
       expect(step).not.toBeNull();
       expect(Number(step?.[1])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
     }
+    // The canary runs the heavy tier on `bun latest` with the tier on the command line; its step has the same bound.
+    const inline = [...workflow.matchAll(/run: STUDIO_TEST_TIER=(\w+) bun run test:studio:suite \.\/studio\r?\n\s+timeout-minutes: (\d+)/g)];
+    expect(inline.map((m) => m[1])).toEqual(["heavy"]);
+    for (const m of inline) expect(Number(m[2])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
+  });
+
+  // A release must not ship a regression that came in since the weekly run: on a tag the perf and heavy jobs run and BLOCK (CI-4).
+  test("the perf and heavy jobs run on a release tag, and only there (and on a schedule) do they fail the run", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    for (const job of ["perf", "heavy"]) {
+      const block = new RegExp(`^  ${job}:\\r?\\n((?:(?:    .*|)\\r?\\n)+)`, "m").exec(workflow)?.[1] ?? "";
+      expect(block).toMatch(/^ {4}if: .*startsWith\(github\.ref, 'refs\/tags\/'\)/m);
+      expect(block).toMatch(/^ {4}continue-on-error: .*!startsWith\(github\.ref, 'refs\/tags\/'\)/m);
+    }
   });
 });
 
@@ -487,7 +521,8 @@ describe("the workflow's concurrency rule", () => {
     const group = /^\s+group: (.*?)\r?$/m.exec(block)?.[1];
     const cancel = /^\s+cancel-in-progress: (.*?)\r?$/m.exec(block)?.[1];
     // The exact expressions, not fragments of them: a reworded condition that keeps the same words can invert the rule.
-    expect(group).toBe("${{ github.workflow }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.run_id || github.ref }}");
+    // A branch run's group also names the dispatch tier, so a default run and a scheduled run of one branch do not cancel each other (CI-4).
+    expect(group).toBe("${{ github.workflow }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.run_id || format('{0}-{1}', github.ref, inputs.tier) }}");
     expect(cancel).toBe("${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}");
   });
 });

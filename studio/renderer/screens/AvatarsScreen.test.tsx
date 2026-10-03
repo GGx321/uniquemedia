@@ -328,7 +328,7 @@ test("a search while a rewrite is on its way keeps its tile busy, so the paid ca
   fireEvent.change(search, { target: { value: "" } });
 
   const again = screen.getByRole("button", { name: /Переписываем…/ });
-  expect(again).toBe(button);
+  expect(again === button).toBe(true);
   expect(again.hasAttribute("disabled")).toBe(true);
   fireEvent.click(again);
   await flush();

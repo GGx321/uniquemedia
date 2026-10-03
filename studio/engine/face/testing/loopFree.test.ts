@@ -40,3 +40,22 @@ describe("loopFreeProblem", () => {
     expect(() => loopFreeProblem([run(5), run(5)], control)).toThrow("at least");
   });
 });
+
+// The blocking run's criterion (CI-4): wide enough that a loaded runner does not flake it, still failing a check that is back on this thread.
+describe("loopFreeProblem, wide", () => {
+  test("accepts a worker whose gap is 70% of the control's, which the tight criterion refuses", () => {
+    const runs = [run(70), run(70), run(70), run(70), run(70)];
+    expect(loopFreeProblem(runs, control, "wide")).toBeUndefined();
+    expect(loopFreeProblem(runs, control, "tight")).toContain("blocked");
+  });
+
+  test("rejects a check that blocks this thread as long as the control (the work back on the main thread)", () => {
+    expect(loopFreeProblem([run(100), run(95), run(100), run(98), run(100)], control, "wide")).toContain("blocked");
+    expect(loopFreeProblem([run(100, 100), run(100, 100), run(100, 100), run(100, 100), run(100, 100)], control, "wide")).toContain("blocked");
+  });
+
+  test("still accepts one stalled run in five, and still refuses a control that did not block", () => {
+    expect(loopFreeProblem([run(5), run(120), run(5), run(6), run(5)], control, "wide")).toBeUndefined();
+    expect(loopFreeProblem([run(5), run(5), run(5), run(5), run(5)], { maxGapMs: 30, durationMs: 40 }, "wide")).toContain("control");
+  });
+});

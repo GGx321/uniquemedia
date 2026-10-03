@@ -182,28 +182,34 @@ describe("the real worker under Electron's Node", () => {
     assert.equal(image.height, 600);
   });
 
-  // The two measurements below are perf-only (CI-4): they judge the runner's speed, and a loaded runner fails them without
-  // any defect in the product. They register in the perf run only, which prints the numbers and does not block.
-  if (tierOf() === "perf") {
-    test("[perf] keeps this thread responsive while a heavy render runs", async () => {
-      const { gate: g } = gate({ renderTimeoutMs: 20_000 });
-      await g.render({ svg: svgOf("warm"), font: "manrope" });
-      let last = performance.now();
-      let worstGap = 0;
-      const timer = setInterval(() => {
-        const now = performance.now();
-        worstGap = Math.max(worstGap, now - last);
-        last = now;
-      }, 5);
-      const started = performance.now();
-      await g.render({ svg: blurred(4), font: "manrope" });
-      const took = performance.now() - started;
-      clearInterval(timer);
-      console.log(`this thread's worst gap ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render on ${process.platform}`);
-      assert.ok(took > 100, `the render took only ${Math.round(took)} ms`);
-      assert.ok(worstGap < Math.max(100, took / 3), `this thread stalled ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render`);
-    });
+  // The loop staying free during a render is a product guarantee (T7c): it blocks, with a wide criterion; the tight one is the perf run's (CI-4).
+  test("[perf] keeps this thread responsive while a heavy render runs", async () => {
+    const { gate: g } = gate({ renderTimeoutMs: 20_000 });
+    await g.render({ svg: svgOf("warm"), font: "manrope" });
+    let last = performance.now();
+    let worstGap = 0;
+    const timer = setInterval(() => {
+      const now = performance.now();
+      worstGap = Math.max(worstGap, now - last);
+      last = now;
+    }, 5);
+    const started = performance.now();
+    await g.render({ svg: blurred(4), font: "manrope" });
+    const took = performance.now() - started;
+    clearInterval(timer);
+    // The stretch since the last tick counts too: a loop blocked for the whole render never ticks at all (the control in the face test does the same).
+    worstGap = Math.max(worstGap, performance.now() - last);
+    console.log(`this thread's worst gap ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render on ${process.platform}`);
+    assert.ok(took > 100, `the render took only ${Math.round(took)} ms`);
+    // Blocking: the render must not be back on this thread, where the loop stalls for about the whole render (a gap of 0.8 x the render or more).
+    // The perf run holds the tight bound, which also reads the runner's speed.
+    const limit = tierOf() === "perf" ? Math.max(100, took / 3) : 0.8 * took;
+    assert.ok(worstGap < limit, `this thread stalled ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render (limit ${Math.round(limit)} ms)`);
+  });
 
+  // The measurement below is perf-only (CI-4): it judges the runner's speed, and a loaded runner fails it without
+  // any defect in the product. It registers in the perf run only, which prints the numbers and does not block.
+  if (tierOf() === "perf") {
     test("[perf] the configured deadline leaves headroom over a legitimate shadow caption's cost on this runner", async () => {
       // 15 renders after a warm-up, judged against the configured TEXT_RENDER_DEADLINE_MS by robust statistics (see
       // deadlineHeadroom.ts): the lower quartile is the caption's cost (5x) and the second-slowest of 15 leaves 3x.

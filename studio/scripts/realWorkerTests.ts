@@ -41,7 +41,8 @@
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { type Tier, tierMarkers, tierOf, tierPattern, tierTag } from "../testing/tiers";
+import { holdsTierTests } from "../testing/tierSources";
+import { type Tier, tierOf, tierPattern, tierTag } from "../testing/tiers";
 
 export const MAX_ATTEMPTS = 3;
 /**
@@ -221,9 +222,11 @@ export async function shardedTestArgs(testArgs: readonly string[], shards: numbe
 
 /**
  * The `bun test` argument lists of a TIER run (STUDIO_TEST_TIER set, see studio/testing/tiers.ts): one list, never
- * sharded (a tier run is a few files), holding only the test files whose source holds a marker of the tier (tierMarkers), and a
- * `--test-name-pattern` that selects only the tagged tests inside them. No file carries the tag: an empty plan, which is
- * a pass (the quarantine list is empty most of the time); tiers.test.ts holds that `perf` and `heavy` are never empty.
+ * sharded (a tier run is a few files), holding only the test files that call one of the tier's helpers or register a test named
+ * with its tag (holdsTierTests: by call site, so a fixture that merely mentions a helper does not count), and a
+ * `--test-name-pattern` that selects only the tagged tests inside them. No such file: an empty plan, which is a pass (the quarantine
+ * list is empty most of the time); tiers.test.ts holds that `perf` and `heavy` are never empty. A file that does hold the tier's
+ * calls but matches no test (a helper call that is skipped by name) makes bun answer "matched 0 tests": `tierRunMatchedNothing`.
  */
 export async function tierTestArgs(testArgs: readonly string[], tier: Tier, cwd: string): Promise<string[][]> {
   const flags = testArgs.filter((arg) => arg.startsWith("-"));
@@ -231,11 +234,16 @@ export async function tierTestArgs(testArgs: readonly string[], tier: Tier, cwd:
   const tagged: string[] = [];
   for (const file of await listTestFiles(paths, cwd)) {
     const source = await readFile(resolve(cwd, file), "utf8");
-    if (tierMarkers(tier).some((marker) => source.includes(marker))) tagged.push(file);
+    if (holdsTierTests(source, tier, file)) tagged.push(file);
   }
   if (tagged.length === 0) return [];
   const pattern = flags.some((flag) => flag === "--test-name-pattern" || flag.startsWith("--test-name-pattern=")) ? [] : [`--test-name-pattern=${tierPattern(tier)}`];
   return [[...flags, ...pattern, ...tagged]];
+}
+
+/** Bun's answer when a name pattern selects no test at all (exit code 1): in a tier run that is an empty tier, not a failure. */
+export function tierRunMatchedNothing(output: string): boolean {
+  return /\bmatched 0 tests\b/.test(output.replace(ANSI, ""));
 }
 
 /** A test slower than this is reported as a `::warning::` (the per-test default above is far higher, so a stall would otherwise pass unseen). */
@@ -430,6 +438,10 @@ if (import.meta.main) {
         echo: true,
       });
       if (result.timedOut === true) hung = true;
+      if (tierOf(process.env) !== undefined && result.exitCode === 1 && tierRunMatchedNothing(result.output)) {
+        console.log(`::notice::realWorkerTests: ${label}: no test in this tier matched, so there is nothing to run`);
+        return { ...result, exitCode: 0 };
+      }
       // The 30 s default per test would let a stall through without a word: every test over 5 s is named.
       for (const line of slowTestWarnings(slowTests(result.output), label)) console.log(line);
       return result;
