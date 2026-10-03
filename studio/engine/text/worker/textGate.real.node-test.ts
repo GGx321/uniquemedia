@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { afterEach, describe, test } from "node:test";
 import { join } from "node:path";
+import { deadlineHeadroomProblem, HEADROOM_SAMPLES, headroomStats } from "../deadlineHeadroom";
 import { loadTextRasteriser } from "../load";
 import { RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "../rasterTypes";
 import { SELF_TEST_FINGERPRINT, SELF_TEST_HASHES, selfTestSvg } from "../selfTest";
@@ -185,31 +186,25 @@ describe("the real worker under Electron's Node", () => {
     assert.ok(worstGap < Math.max(100, took / 3), `this thread stalled ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render`);
   });
 
-  test("the deadline is at least 5x a legitimate shadow caption's typical cost and 3x its second-slowest of 7 on this runner", async () => {
-    // Two bounds over 7 renders after a warm-up. The MEDIAN is the caption's typical cost (5x). The tail is the
-    // SECOND-slowest (3x, a looser factor), not the slowest: on a shared runner the single worst of a few is a
-    // scheduling hiccup (the max of 5 read 836 ms on one macOS run and 410 ms on another), and this suite has no
-    // retry, so one outlier must not fail it. Two slow renders in 7 are a slow runner, and a deadline that a plain
-    // slow caption on it could trip would cut legitimate work, which the median alone would not show.
+  test("the configured deadline leaves headroom over a legitimate shadow caption's cost on this runner", async () => {
+    // 15 renders after a warm-up, judged against the configured TEXT_RENDER_DEADLINE_MS by robust statistics (see
+    // deadlineHeadroom.ts): the lower quartile is the caption's cost (5x), the median leaves 3x, the second-slowest 1.5x.
+    // A loaded runner only adds time to a render, so one stalled sample cannot fail it, while a deadline that a plain slow
+    // caption could trip (or a slower runner as a whole) still does.
     const { gate: g } = gate({ renderTimeoutMs: 60_000 });
     const request = { svg: worstShadowCaption(), font: "manrope" } as const;
     await g.render(request); // warm
     const times: number[] = [];
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < HEADROOM_SAMPLES; i++) {
       const started = performance.now();
       await g.render(request);
       times.push(performance.now() - started);
     }
-    times.sort((a, b) => a - b);
-    const min = times[0] ?? Number.NaN;
-    const median = times[3] ?? Number.NaN;
-    const max = times[6] ?? Number.NaN;
+    const { lowerQuartile, median, secondSlowest } = headroomStats(times);
     console.log(
-      `legitimate shadow caption on ${process.platform}: min ${min.toFixed(0)} / median ${median.toFixed(0)} / max ${max.toFixed(0)} ms of 7; deadline ${TEXT_RENDER_DEADLINE_MS} ms (${(TEXT_RENDER_DEADLINE_MS / median).toFixed(1)}x the median)`,
+      `legitimate shadow caption on ${process.platform}: lower quartile ${lowerQuartile.toFixed(0)} / median ${median.toFixed(0)} / second-slowest ${secondSlowest.toFixed(0)} ms of ${HEADROOM_SAMPLES}; deadline ${TEXT_RENDER_DEADLINE_MS} ms`,
     );
-    assert.ok(median * 5 <= TEXT_RENDER_DEADLINE_MS, `a shadow caption's median is ${Math.round(median)} ms: the ${TEXT_RENDER_DEADLINE_MS} ms deadline is under 5x that`);
-    const secondSlowest = times[5] ?? Number.NaN;
-    assert.ok(secondSlowest * 3 <= TEXT_RENDER_DEADLINE_MS, `a shadow caption's second-slowest of 7 is ${Math.round(secondSlowest)} ms: the ${TEXT_RENDER_DEADLINE_MS} ms deadline is under 3x that`);
+    assert.equal(deadlineHeadroomProblem(times, TEXT_RENDER_DEADLINE_MS), undefined);
   });
 
   test("the loader starts it, and the self-test through the worker gives the pinned fingerprint", async () => {

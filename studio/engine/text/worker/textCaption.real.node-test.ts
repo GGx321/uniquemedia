@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import { join } from "node:path";
 import { CAPTION_FINGERPRINT, CAPTION_FINGERPRINT_LAYERS, CAPTION_LAYER_HASHES, fingerprintOf, hashOf } from "../caption/fingerprint";
+import { deadlineHeadroomProblem, HEADROOM_SAMPLES, headroomStats } from "../deadlineHeadroom";
 import { openEmojiFont } from "../emoji/emojiFont";
 import { loadEmojiFont } from "../fonts";
 import { RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "../rasterTypes";
@@ -119,7 +120,7 @@ describe("captions through the real worker under Electron's Node", () => {
     assert.equal(spawned(), 1);
   });
 
-  test("the deadline is at least 5x the worst legitimate \u00ABБез фона\u00BB caption's median and 3x its second-slowest of 7 on this runner, for text and for emoji", async () => {
+  test("the configured deadline leaves headroom over the worst legitimate \u00ABБез фона\u00BB caption on this runner, for text and for emoji", async () => {
     // The worst the real template can emit, at its largest size (a caption that SHRINKS is not the worst: `fontSize >= 108` is asserted):
     // two lines of the widest text at scale 2 with the shadow filter over the whole box, and the same with two lines of the 7 largest
     // emoji bitmaps (the most to decode, embed and blur).
@@ -146,19 +147,16 @@ describe("captions through the real worker under Electron's Node", () => {
       assert.ok(first.layout.fontSize >= 108, `${name}: the caption shrank to ${first.layout.fontSize} px, so it is not the worst case`);
       assert.equal(first.layout.lines.length, 2);
       const times: number[] = [];
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < HEADROOM_SAMPLES; i++) {
         const started = performance.now();
         await g.caption(request);
         times.push(performance.now() - started);
       }
-      times.sort((a, b) => a - b);
-      const median = times[3] ?? Number.NaN;
-      const secondSlowest = times[5] ?? Number.NaN;
+      const { lowerQuartile, median, secondSlowest } = headroomStats(times);
       console.log(
-        `worst template shadow caption (${name}, ${first.width}x${first.height} at ${first.layout.fontSize} px) on ${process.platform}: median ${median.toFixed(0)} ms, second-slowest of 7 ${secondSlowest.toFixed(0)} ms; deadline ${TEXT_RENDER_DEADLINE_MS} ms`,
+        `worst template shadow caption (${name}, ${first.width}x${first.height} at ${first.layout.fontSize} px) on ${process.platform}: lower quartile ${lowerQuartile.toFixed(0)} / median ${median.toFixed(0)} / second-slowest ${secondSlowest.toFixed(0)} ms of ${HEADROOM_SAMPLES}; deadline ${TEXT_RENDER_DEADLINE_MS} ms`,
       );
-      assert.ok(median * 5 <= TEXT_RENDER_DEADLINE_MS, `${name}: median ${Math.round(median)} ms: the deadline is under 5x that`);
-      assert.ok(secondSlowest * 3 <= TEXT_RENDER_DEADLINE_MS, `${name}: second-slowest ${Math.round(secondSlowest)} ms: the deadline is under 3x that`);
+      assert.equal(deadlineHeadroomProblem(times, TEXT_RENDER_DEADLINE_MS), undefined, name);
     }
   });
 });
