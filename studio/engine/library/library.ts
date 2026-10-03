@@ -995,7 +995,7 @@ export class Library {
         return { rebuilt: false, kept: entries.length, dropped: 0 };
       }
       await new Quarantine(this.root, this.#now).copy(path, "invalid-reject-log", `${bad} line(s) could not be read`);
-      await writeFileAtomic(path, kept.map((line) => `${line}\n`).join(""));
+      await writeFileAtomic(path, kept.map((line) => `${line}\n`).join(""), { beforeRename: this.#beforeRename });
       this.#replaceRejectMarks(avatarId, entries);
       return { rebuilt: true, kept: entries.length, dropped: bad + (tail === "" ? 0 : 1) };
     });

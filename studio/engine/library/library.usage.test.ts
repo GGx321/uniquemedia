@@ -630,6 +630,37 @@ describe("rebuildRejectLog: «Восстановить отметки»", () => 
     expect((await reopen()).photoStates(avatar.id).get(c.id)?.rejected).toBe(true);
   });
 
+  test("a mark made while the log is being rebuilt is never lost: it waits for the rebuild, then lands in the new log", async () => {
+    const { library: first, avatar } = await savedAvatar();
+    const a = await first.addPhoto(avatar.id, PNG_1X1, scene());
+    const b = await first.addPhoto(avatar.id, PNG_1X1, scene());
+    await first.setRejected(avatar.id, a.id, true);
+    let marking: Promise<boolean> | null = null;
+    const { library } = await openLibrary(
+      root(),
+      deps({
+        testHooks: {
+          // Right before the rebuilt log replaces the old one, the owner marks another photo. Without the rebuild's lock the mark
+          // would be appended to the old file and then replaced away; with it, the mark waits (at most 200 ms here) and follows.
+          beforeRename: async (finalPath) => {
+            if (finalPath !== rejectsPath(avatar.id) || marking !== null) return;
+            marking = library.setRejected(avatar.id, b.id, true);
+            await Promise.race([marking, new Promise((resolve) => setTimeout(resolve, 200))]);
+          },
+        },
+      }),
+    );
+    // The log breaks after the open (a hand edit): the library still trusts it, so marking is allowed meanwhile.
+    await appendFile(rejectsPath(avatar.id), "not json\n");
+
+    expect((await library.rebuildRejectLog(avatar.id)).rebuilt).toBe(true);
+    expect(await (marking ?? Promise.resolve(false))).toBe(true);
+
+    const reopened = await reopen();
+    expect(reopened.photoStates(avatar.id).get(a.id)?.rejected).toBe(true);
+    expect(reopened.photoStates(avatar.id).get(b.id)?.rejected).toBe(true);
+  });
+
   test("another avatar's marks are not touched", async () => {
     const { library: first, avatar } = await savedAvatar();
     const lena = await first.createAvatar({ ...SAMPLE_AVATAR, name: "Lena" });
