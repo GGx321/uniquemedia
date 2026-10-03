@@ -117,7 +117,7 @@ describe("placing photos from the bin", () => {
     const { client, engine } = await studio();
     await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
-    expect(pickButton(P1).getAttribute("aria-label")).toBe("Выбрать кадр 1");
+    expect(pickButton(P1).getAttribute("aria-label")).toBe("Фото 6: выбрать кадр 1");
     await pick(P1);
     expect(clipButtons()).toHaveLength(1);
     expect(clipButtons()[0]?.getAttribute("aria-pressed")).toBe("true");
@@ -606,5 +606,26 @@ describe("the face judge's answers", () => {
     tick(scheduler);
     await flush();
     expect(within(props()).getByText("лицо не найдено")).toBeDefined();
+  });
+});
+
+describe("the bin's buttons", () => {
+  test("each photo's button has its own name: the photo, then what a click does", async () => {
+    const photos = [...freePhotos(5), scenePhoto(6, { reserved: true })];
+    const { client } = await studio({ photos });
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    const names = within(screen.getByRole("list", { name: "Фото аватара" }))
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual([
+      "Фото 1: уже занято",
+      "Фото 2: добавить кадр в конец ролика",
+      "Фото 3: добавить кадр в конец ролика",
+      "Фото 4: добавить кадр в конец ролика",
+      "Фото 5: добавить кадр в конец ролика",
+      "Фото 6: выбрать кадр 1",
+    ]);
+    expect(new Set(names).size).toBe(names.length);
   });
 });

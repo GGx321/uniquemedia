@@ -121,7 +121,9 @@ export function MediaPanel({ avatarName, avatarId, spec, photos, tabRef, onPick,
               const state = slot !== undefined ? ` · в кадре ${slot}` : inVideos > 0 ? ` · использовано ${VIDEO_FORMS(inVideos)}` : photo.reserved ? " · в рендере" : " · не использовано";
               // A free photo is placed by a click (unless the clips are full and no cell waits for it); a placed one selects its clip.
               const blocked = busy || (slot === undefined && fillTarget === null && addBlock !== null);
-              const action = slot !== undefined ? `Выбрать кадр ${slot}` : busy ? "Фото уже занято" : fillTarget !== null ? `В ячейку ${fillTarget.cell + 1} кадра ${fillTarget.clip + 1}` : "Добавить кадр в конец ролика";
+              // Each button its own name: the photo, then what a click does («Фото 3: добавить кадр в конец ролика»).
+              const does = slot !== undefined ? `выбрать кадр ${slot}` : busy ? "уже занято" : fillTarget !== null ? `в ячейку ${fillTarget.cell + 1} кадра ${fillTarget.clip + 1}` : "добавить кадр в конец ролика";
+              const action = `Фото ${i + 1}: ${does}`;
               const draggable = slot === undefined && !busy;
               return (
                 <li key={photo.photoId} className={slot !== undefined ? "ph ed-bin-tile ed-bin-tile-in" : "ph ed-bin-tile"} aria-label={`Фото ${i + 1}${state}`}>
