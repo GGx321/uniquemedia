@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CommandMessage, EventMessage, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
@@ -11,6 +11,7 @@ import { ManualScheduler } from "../../../renderer/engine/scheduler";
 import { manifestTraits } from "../../avatars/records";
 import { EXPORT_MARKER_FILE, NODE_EXPORT_ROOT_FS, type ExportRootFs } from "../../exportRoot";
 import { openLibrary } from "../../library";
+import { PersistingTestSink } from "../../music/testing/testSink";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, startEngine, TRAITS, until } from "../../testing/engineHarness";
@@ -58,7 +59,14 @@ export interface Control {
   exportDialog(answer: ExportDialog): Promise<void>;
   /** The export folder's marker becomes unreadable (`damaged`), or is put back as it was (`intact`). */
   exportMarker(state: "damaged" | "intact"): Promise<void>;
+  /** 3c.6: the owner stored a RapidAPI key (the engine is told as main tells it after «Сохранить»). */
+  musicKey(): Promise<void>;
+  /** 3c.6: the flashapi quota log on disk gets a complete line that cannot be read (`corrupt`), or a folder where the file was (`unreadable`). */
+  musicQuotaLog(state: "corrupt" | "unreadable"): Promise<void>;
 }
+
+/** The RapidAPI key the rigs store: obviously fake (studio/testing/keyLeaks.ts). No request is ever sent with it. */
+const PARITY_MUSIC_KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
 
 /**
  * The owner's pick in the dialog: nothing (`cancel`), a new empty folder (`fresh`), the export folder the rig started with (`first`),
@@ -194,6 +202,11 @@ export function mockRig(options: RigOptions = {}): ParityRig {
       freeSpace: (bytes) => engine.setExportFreeBytes(bytes),
       exportMarker: async (state) => engine.setExportDisk(state === "damaged" ? { status: "unavailable", reason: "invalid-marker" } : { status: "ok" }),
       exportDialog: async (answer) => engine.pickExportFolderNext(mockDialog(answer, writable, ++dialogs)),
+      // The mock answers main's own key command itself, as the dev build does.
+      musicKey: async () => {
+        await engine.request(CommandMessage.parse({ v: 5, id: `msg-${String(++messages).padStart(6, "0")}`, kind: "command", type: "settings.setMusicKey", payload: { key: PARITY_MUSIC_KEY } }));
+      },
+      musicQuotaLog: async (state) => engine.setMusicQuotaLog(state),
     },
     async stop() {
       scheduler.runAll();
@@ -296,9 +309,14 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   };
   const concurrency = options.renderConcurrency ?? 1;
   const settings = (patch: Parameters<typeof engineSettings>[1] = {}) => engineSettings(dir, { renderConcurrency: concurrency, ...patch });
+  // 3c.6: the music service over a real quota log, a sink that persists (so a refresh is not refused as «not available yet»)
+  // and a flashapi that must never be reached: every music story of the suite is told without a request.
+  const musicDir = join(dir, "userData", "music");
   const { engine, events, posted } = await startEngine(dir, {
-    init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings() },
+    init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(), musicDir },
     deps: {
+      musicSink: new PersistingTestSink(),
+      musicFetch: () => Promise.reject(new Error("the parity suite never sends a flashapi request")),
       exportRootFs,
       // No face models in a test: the resolver judges the scored photos and none of the rest, as the mock does.
       montages: {
@@ -455,6 +473,17 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
           nextPick = folder(answer === "fresh" ? "reels" : "damaged");
           await mkdir(nextPick);
           if (answer === "damaged") await writeFile(join(nextPick, EXPORT_MARKER_FILE), "{ not ours");
+        }
+      },
+      // Main's half of «Сохранить»: the key is stored, then handed to the engine as the owner's (a key line in the quota log).
+      musicKey: () => engine.applyControl({ kind: "control", type: "musicKey.set", key: PARITY_MUSIC_KEY, origin: "user" }),
+      musicQuotaLog: async (state) => {
+        const log = join(musicDir, "quota.jsonl");
+        await mkdir(musicDir, { recursive: true });
+        if (state === "corrupt") await appendFile(log, "not json at all\n");
+        else {
+          await rm(log, { force: true });
+          await mkdir(log);
         }
       },
     },

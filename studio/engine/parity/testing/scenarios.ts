@@ -635,6 +635,24 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.settle();
     },
   },
+  {
+    name: "music: a damaged quota log refuses a refresh at no cost, its recovery closes the quota for 31 days, and an unreadable log cannot be recovered",
+    async run(t, _w, control) {
+      await t.call("music.status", {});
+      await t.call("music.refresh", { confirm: true });
+      await control.musicKey();
+      await control.musicQuotaLog("corrupt");
+      await t.call("music.status", {});
+      await t.call("music.refresh", { confirm: true });
+      await t.call("music.recoverQuotaLog", { confirm: true });
+      await t.call("music.refresh", { confirm: true });
+      await t.call("music.recoverQuotaLog", { confirm: true });
+      await control.musicQuotaLog("unreadable");
+      await t.call("music.status", {});
+      await t.call("music.refresh", { confirm: true });
+      await t.call("music.recoverQuotaLog", { confirm: true });
+    },
+  },
 ];
 
 /** `estimateBytesUpper` of the clips of the draft a `montages.create` answered: what a render of it asks the export folder to have twice over. */

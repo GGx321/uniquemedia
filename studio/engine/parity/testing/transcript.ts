@@ -15,7 +15,7 @@ import { ProgressInvariants } from "./progress";
 export type Answer = { readonly ok: true; readonly result: Record<string, unknown> } | { readonly ok: false; readonly error: EngineError };
 
 /** The events whose order is under test. */
-export const COVERED_EVENTS: ReadonlySet<string> = new Set(["job.progress", "job.done", "job.failed", "job.cancelled", "video.changed", "montage.changed", "avatar.changed", "export.status"]);
+export const COVERED_EVENTS: ReadonlySet<string> = new Set(["job.progress", "job.done", "job.failed", "job.cancelled", "video.changed", "montage.changed", "avatar.changed", "export.status", "music.changed"]);
 
 /**
  * Values that differ between the mock and the engine by design, with why. A masked field is written as `"<masked>"`; whether the
@@ -44,7 +44,25 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "bursts: commands sent together are answered in the order sent by both, and each echo comes before its answer; how the echoes of one burst interleave with the answers of others is not compared (the engine writes a file per save, the mock answers at once)",
   "the export folder's dialog: main's own flow runs over the real engine in the real rig, and the mock plays both; the settings a pick answers carry the rig's own paths and are not written (the folder's identity as `root#N`, and the counts, are). In the app the engine's export.status after a switch may land just after main's answer; the rig applies it first, so the transcript has it before the answer. `settings.exportDisplay` is main's own string and is tested in main",
   "the mock keeps the drafts, the videos and the last 50 finished renders in memory: a restart keeps the first two and drops the renders, like the engine's; nothing else of the disk is modelled (no torn draft files, no stale used index, no record from a newer Studio, no closed library): those refusals are the engine's own unit tests' business",
+  "music (3c.6): the mock keeps its quota log and its list as numbers on its own clock, so the times a status carries (`listFetchedAt`, `nextFreeAt`) are written as set or null, a refresh's steps are not written, and a music error's detail (it names a time) is not compared: its code and its `musicReason` are. No story sends a flashapi request: the real rig's flashapi refuses every call",
 ];
+
+/** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
+function musicLine(status: unknown): Record<string, unknown> {
+  const s = objectOf(status);
+  const refresh = objectOf(s.refresh);
+  const error = refresh.state === "failed" ? objectOf(refresh.error) : null;
+  return {
+    sentLast31d: s.sentLast31d,
+    limit: s.limit,
+    quotaLog: s.quotaLog,
+    serverRemaining: s.serverRemaining,
+    nextFreeAt: s.nextFreeAt === null ? null : "<set>",
+    listFetchedAt: s.listFetchedAt === null ? null : "<set>",
+    trackCount: s.trackCount,
+    refresh: error === null ? refresh.state : { state: "failed", code: error.code, ...(error.musicReason === undefined ? {} : { musicReason: error.musicReason }) },
+  };
+}
 
 const ID_KINDS: Readonly<Record<string, string>> = {
   avatarId: "avatar",
@@ -125,6 +143,7 @@ export function eventLine(event: EventMessage, norm: Normalizer): string | null 
     return `event job.progress ${compact({ ...objectOf(norm.value(rest)), phase })}`;
   }
   if (event.type === "avatar.changed") return `event avatar.changed ${compact(norm.value(avatarLine(objectOf(event.payload).avatar)))}`;
+  if (event.type === "music.changed") return `event music.changed ${compact(musicLine(event.payload.status))}`;
   return `event ${event.type} ${compact(norm.value(event.payload))}`;
 }
 
@@ -178,11 +197,21 @@ function snapshotLine(result: Record<string, unknown>, norm: Normalizer): string
 /** An answer as a line. */
 export function answerLine(type: string, answer: Answer, norm: Normalizer): string {
   if (!answer.ok) {
-    const { code, detail, issues, exportReason } = answer.error;
-    // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared.
-    const text = code === "VALIDATION" ? undefined : detail;
-    return `< error ${code} ${compact(norm.value({ ...(text === undefined ? {} : { detail: text }), ...(issues === undefined ? {} : { issues }), ...(exportReason === undefined ? {} : { exportReason }) }))}`;
+    const { code, detail, issues, exportReason, musicReason } = answer.error;
+    // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
+    // detail names times of the rig's own clock: its code and its cause are compared.
+    const text = code === "VALIDATION" || code.startsWith("MUSIC_") ? undefined : detail;
+    return `< error ${code} ${compact(
+      norm.value({
+        ...(text === undefined ? {} : { detail: text }),
+        ...(issues === undefined ? {} : { issues }),
+        ...(exportReason === undefined ? {} : { exportReason }),
+        ...(musicReason === undefined ? {} : { musicReason }),
+      }),
+    )}`;
   }
+  if (type === "music.status") return `< ok music ${compact(musicLine(answer.result))}`;
+  if (type === "music.refresh" || type === "music.recoverQuotaLog") return `< ok music ${compact(musicLine(answer.result.status))}`;
   if (type === "photos.list") {
     const listed = Array.isArray(answer.result.photos) ? answer.result.photos : [];
     // Only the photos that are not free are written: a free one is `used`, `reserved` and `rejected` false and `eligible` true.
