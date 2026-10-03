@@ -188,7 +188,7 @@ describe("the real worker under Electron's Node", () => {
 
   test("the configured deadline leaves headroom over a legitimate shadow caption's cost on this runner", async () => {
     // 15 renders after a warm-up, judged against the configured TEXT_RENDER_DEADLINE_MS by robust statistics (see
-    // deadlineHeadroom.ts): the lower quartile is the caption's cost (5x), the median leaves 3x, the second-slowest 1.5x.
+    // deadlineHeadroom.ts): the lower quartile is the caption's cost (5x) and the second-slowest of 15 leaves 3x.
     // A loaded runner only adds time to a render, so one stalled sample cannot fail it, while a deadline that a plain slow
     // caption could trip (or a slower runner as a whole) still does.
     const { gate: g } = gate({ renderTimeoutMs: 60_000 });

@@ -11,13 +11,13 @@ describe("deadlineHeadroomProblem", () => {
     expect(deadlineHeadroomProblem(flat(250), DEADLINE)).toBeUndefined();
   });
 
-  test("accepts a loaded runner whose median reads 658 ms when its cheap renders are still near the real cost", () => {
-    const times = [300, 310, 320, 330, 400, 500, 650, 658, 700, 720, 800, 900, 1000, 1200, 1500];
+  test("accepts one stalled sample among otherwise ordinary ones", () => {
+    const times = [...flat(250, HEADROOM_SAMPLES - 1), 2_900];
     expect(deadlineHeadroomProblem(times, DEADLINE)).toBeUndefined();
   });
 
-  test("accepts one stalled sample among otherwise ordinary ones", () => {
-    const times = [...flat(250, HEADROOM_SAMPLES - 1), 2_900];
+  test("accepts a loaded runner whose renders are all within 3x of the deadline's headroom (second-slowest 662 ms)", () => {
+    const times = [300, 310, 320, 330, 340, 350, 360, 380, 400, 420, 450, 500, 580, 662, 640];
     expect(deadlineHeadroomProblem(times, DEADLINE)).toBeUndefined();
   });
 
@@ -25,18 +25,33 @@ describe("deadlineHeadroomProblem", () => {
     expect(deadlineHeadroomProblem(flat(700), DEADLINE)).toContain("under 5x");
   });
 
-  test("rejects a deadline that is under 3x the median when the cheap renders look fine", () => {
-    const times = [...flat(250, 4), ...flat(1_100, HEADROOM_SAMPLES - 4)];
+  test("rejects a loaded runner whose median reads 658 ms and whose tail passes 1.2 s: a plain slow caption could trip the deadline", () => {
+    const times = [300, 310, 320, 330, 400, 500, 650, 658, 700, 720, 800, 900, 1000, 1200, 1500];
     expect(deadlineHeadroomProblem(times, DEADLINE)).toContain("under 3x");
   });
 
-  test("rejects a deadline that is under 1.5x the second-slowest sample", () => {
-    const times = [...flat(250, HEADROOM_SAMPLES - 2), 2_100, 2_200];
-    expect(deadlineHeadroomProblem(times, DEADLINE)).toContain("under 1.5x");
+  test("rejects a regression that makes every second render 8x slower", () => {
+    const times = Array.from({ length: HEADROOM_SAMPLES }, (_, i) => (i % 2 === 0 ? 156 : 1_250));
+    expect(deadlineHeadroomProblem(times, DEADLINE)).toContain("under 3x");
+  });
+
+  test("rejects a regression that makes every second render 4x slower on a slower runner (485 ms to 1940 ms)", () => {
+    const times = Array.from({ length: HEADROOM_SAMPLES }, (_, i) => (i % 2 === 0 ? 485 : 1_940));
+    expect(deadlineHeadroomProblem(times, DEADLINE)).toBeDefined();
+  });
+
+  test("rejects two slow renders out of 15: the tail bound reads the second-slowest, so a single stall is the only one forgiven", () => {
+    const times = [...flat(250, HEADROOM_SAMPLES - 2), 1_100, 2_900];
+    expect(deadlineHeadroomProblem(times, DEADLINE)).toContain("under 3x");
   });
 
   test("rejects NaN samples instead of passing them", () => {
     expect(deadlineHeadroomProblem(flat(Number.NaN), DEADLINE)).toBeDefined();
+  });
+
+  test("rejects one NaN or infinite sample even when the statistics would not read it", () => {
+    expect(deadlineHeadroomProblem([...flat(250, HEADROOM_SAMPLES - 1), Number.NaN], DEADLINE)).toContain("not finite");
+    expect(deadlineHeadroomProblem([Number.POSITIVE_INFINITY, ...flat(250, HEADROOM_SAMPLES - 1)], DEADLINE)).toContain("not finite");
   });
 
   test("refuses to judge fewer samples than the minimum", () => {
