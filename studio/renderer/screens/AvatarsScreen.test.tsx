@@ -57,7 +57,9 @@ test("the grid comes from engine.snapshot and is refreshed with avatars.list", a
   expect(screen.getByText(/5\s*аватаров · 350\s*фото/)).toBeDefined();
 
   const mia = screen.getByRole("article", { name: "Mia" });
-  expect(within(mia).getByText("8 фото")).toBeDefined();
+  // The tile's counts (3e.2): its photos and its video records, the latter opening the avatar's «Видео» tab.
+  expect(mia.querySelector(".avatar-counts")?.textContent).toBe("8\u00a0фото · 0\u00a0видео");
+  expect(within(mia).getByRole("button", { name: "Видео аватара Mia: 0" })).toBeDefined();
   expect(within(mia).queryByText("В архиве") === null).toBe(true);
   expect(within(mia).getByRole("img", { name: "Мастер-портрет: Mia" })).toBeDefined();
   expect(within(screen.getByRole("article", { name: "Nora" })).getByText("В архиве")).toBeDefined();
