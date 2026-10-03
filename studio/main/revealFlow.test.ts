@@ -49,6 +49,8 @@ interface Options {
   exportPath?: string;
   exportStatus?: ExportStatus;
   folders?: string[];
+  /** Links to a folder: a folder only when the link is followed. */
+  links?: string[];
   openError?: string;
 }
 
@@ -92,7 +94,7 @@ function harness(options: Options = {}): Harness {
       opened.push(path);
       return options.openError ?? "";
     },
-    isFolder: async (path) => (options.folders ?? [join(EXPORT, "Mia")]).includes(path),
+    isFolder: async (path, how) => (options.folders ?? [EXPORT, join(EXPORT, "Mia")]).includes(path) || (how?.followLink === true && (options.links ?? []).includes(path)),
     newId: () => `internal-${String(++n).padStart(4, "0")}`,
     platform: options.platform ?? process.platform,
   };
@@ -190,13 +192,37 @@ describe("videos.revealFolder (K17)", () => {
   });
 
   test("a folder named only by videos of another export folder is not trusted: the export folder itself is opened", async () => {
-    const h = harness({ videos: { [MIA.avatarId]: [video(1, { fileState: "elsewhere", relPath: "Old/2026-10-03_photo_001.mp4" })] }, folders: [join(EXPORT, "Old")] });
+    const h = harness({ videos: { [MIA.avatarId]: [video(1, { fileState: "elsewhere", relPath: "Old/2026-10-03_photo_001.mp4" })] }, folders: [EXPORT, join(EXPORT, "Old")] });
     expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
     expect(h.opened).toEqual([EXPORT]);
   });
 
   test("the avatar's folder that is gone (or is not a folder) opens the export folder instead", async () => {
-    const h = harness({ folders: [] });
+    const h = harness({ folders: [EXPORT] });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
+    expect(h.opened).toEqual([EXPORT]);
+  });
+
+  test.each(["missing", "changed"] as const)("the avatar's folder is named by its newest video even when that file is %s: the folder is this export folder's", async (fileState) => {
+    const h = harness({ videos: { [MIA.avatarId]: [video(1, { fileState }), video(2, { fileState: "elsewhere", relPath: "Old/2026-10-03_photo_002.mp4" })] }, folders: [EXPORT, join(EXPORT, "Mia"), join(EXPORT, "Old")] });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "avatar" } });
+    expect(h.opened).toEqual([join(EXPORT, "Mia")]);
+  });
+
+  test("an export folder that is no longer a folder when it would be opened refuses, and nothing opens: the shell would launch a file", async () => {
+    const h = harness({ videos: { [MIA.avatarId]: [] }, folders: [] });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
+    expect(h.opened).toEqual([]);
+  });
+
+  test("an export folder that is a link to a folder still opens: the export check follows the link too", async () => {
+    const h = harness({ videos: { [MIA.avatarId]: [] }, folders: [], links: [EXPORT] });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
+    expect(h.opened).toEqual([EXPORT]);
+  });
+
+  test("the avatar's folder is never a link: a link inside the export folder is not followed, and the export folder opens instead", async () => {
+    const h = harness({ folders: [EXPORT], links: [join(EXPORT, "Mia")] });
     expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
     expect(h.opened).toEqual([EXPORT]);
   });
@@ -214,13 +240,13 @@ describe("videos.revealFolder (K17)", () => {
   });
 
   test("a folder name that is not the record shape never becomes a path", async () => {
-    const h = harness({ videos: { [MIA.avatarId]: [video(1, { relPath: "../outside/2026-10-03_photo_001.mp4" })] }, folders: [join(EXPORT, "..", "outside")] });
+    const h = harness({ videos: { [MIA.avatarId]: [video(1, { relPath: "../outside/2026-10-03_photo_001.mp4" })] }, folders: [EXPORT, join(EXPORT, "..", "outside")] });
     expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
     expect(h.opened).toEqual([EXPORT]);
   });
 
   test("on Windows the folder is joined under the export folder with backslashes", async () => {
-    const h = harness({ platform: "win32", exportPath: "D:\\Reels", folders: ["D:\\Reels\\Mia"] });
+    const h = harness({ platform: "win32", exportPath: "D:\\Reels", folders: ["D:\\Reels", "D:\\Reels\\Mia"] });
     await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps);
     expect(h.opened).toEqual(["D:\\Reels\\Mia"]);
   });

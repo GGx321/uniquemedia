@@ -34,8 +34,11 @@ export interface RevealFolderFlowDeps {
   exportPath(): string;
   /** `shell.openPath`: resolves "" when the folder opened, else the file manager's own error text (never passed on). */
   openFolder(path: string): Promise<string>;
-  /** Whether `path` is a real folder (a link is not followed, so a link is not one). */
-  isFolder(path: string): Promise<boolean>;
+  /**
+   * Whether `path` is a real folder. A link is not followed, so a link is not one, unless `followLink` asks for it: the export
+   * folder itself may be a link to a folder (the engine's export check follows it), a folder inside it may not.
+   */
+  isFolder(path: string, how?: { followLink?: boolean }): Promise<boolean>;
   newId(): string;
   platform: NodeJS.Platform;
 }
@@ -91,6 +94,9 @@ export async function handleRevealFolderCommand(command: RevealFolderCommand, de
   const candidate = own === undefined ? null : folderOf(root, own.relPath, deps.platform);
   const folder = candidate !== null && (await deps.isFolder(candidate)) ? candidate : null;
   if (deps.exportPath() !== root) return errorResponseFor(command, { code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
+  // The shell opens whatever is at the path, and a file it would launch: the export folder is looked at again right before it
+  // is opened (the check above may be a moment old). Gone, or no longer a folder, it is the export folder that is missing.
+  if (folder === null && !(await deps.isFolder(root, { followLink: true }))) return errorResponseFor(command, { code: "EXPORT_UNAVAILABLE", exportReason: "missing" });
   const failure = await deps.openFolder(folder ?? root);
   // The file manager's text names the path: only a fixed sentence travels.
   if (failure !== "") return errorResponseFor(command, { code: "INTERNAL", detail: "the folder could not be opened" });

@@ -15,7 +15,7 @@ import {
   type OpenDialogOptions,
 } from "electron";
 import { randomUUID } from "node:crypto";
-import { lstat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { EventMessage } from "../shared/engine";
@@ -376,8 +376,9 @@ async function startStudio(): Promise<void> {
           engine,
           exportPath: () => settings.current.exportPath,
           openFolder: (path) => shell.openPath(path),
-          // A link is not followed: only a real folder inside the export folder is opened.
-          isFolder: (path) => lstat(path).then(
+          // A link is not followed: only a real folder inside the export folder is opened. The export folder itself may be a
+          // link to a folder (the engine's export check follows it): it is looked at through the link.
+          isFolder: (path, how) => (how?.followLink === true ? stat(path) : lstat(path)).then(
             (info) => info.isDirectory(),
             () => false,
           ),
