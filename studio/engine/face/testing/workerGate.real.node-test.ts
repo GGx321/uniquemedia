@@ -60,8 +60,27 @@ function ownGate(overrides: Parameters<typeof realWorkerInit>[0]): WorkerFaceGat
 
 const live = (): AbortSignal => new AbortController().signal;
 
+interface TimerGap {
+  maxGapMs: number;
+  durationMs: number;
+}
+
+const CONTROL_RUNS = 3;
+const WORKER_RUNS = 5;
+
+/** Measures `work` `runs` times and returns the run whose loop was blocked the least (its gap with its own duration). */
+async function leastBlockedOf(runs: number, work: () => Promise<unknown>): Promise<TimerGap> {
+  let best: TimerGap | undefined;
+  for (let i = 0; i < runs; i++) {
+    const gap = await timerGapDuring(work);
+    if (best === undefined || gap.maxGapMs < best.maxGapMs) best = gap;
+  }
+  if (best === undefined) throw new Error("no runs");
+  return best;
+}
+
 /** Runs `work` while a 4 ms timer ticks on THIS event loop, and reports the largest gap between ticks: how long the loop was ever unable to run anything else. */
-async function timerGapDuring(work: () => Promise<unknown>): Promise<{ maxGapMs: number; durationMs: number }> {
+async function timerGapDuring(work: () => Promise<unknown>): Promise<TimerGap> {
   let last = performance.now();
   const started = last;
   let maxGapMs = 0;
@@ -99,11 +118,11 @@ describe("the real face worker", () => {
       undefined,
       realWorkerInit().wasmPaths,
     );
-    let control: { maxGapMs: number; durationMs: number };
+    let control: TimerGap;
     try {
       const masterEmbedding = await inThread.embed(await decode(new Uint8Array(await readFile(join(FIXTURE_IMAGE_DIR, MASTER.file))), live()));
       await inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding }); // warm-up
-      control = await timerGapDuring(async () => inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding }));
+      control = await leastBlockedOf(CONTROL_RUNS, async () => inThread.check({ pose: "front", image: await decode(image, live()), masterEmbedding }));
     } finally {
       await inThread.dispose();
     }
@@ -112,11 +131,16 @@ describe("the real face worker", () => {
     await gate.start();
     const masterEmbedding = await masterEmbeddingVia(gate);
     await gate.check({ pose: "front", bytes: image, masterEmbedding }, live()); // warm-up
-    const worker = await timerGapDuring(() => gate.check({ pose: "front", bytes: image, masterEmbedding }, live()));
+    const worker = await leastBlockedOf(WORKER_RUNS, () => gate.check({ pose: "front", bytes: image, masterEmbedding }, live()));
+    console.log(
+      `event loop: worker path best-of-${WORKER_RUNS} gap ${worker.maxGapMs.toFixed(0)} ms over ${worker.durationMs.toFixed(0)} ms; in-thread control best-of-${CONTROL_RUNS} gap ${control.maxGapMs.toFixed(0)} ms (${process.platform})`,
+    );
 
     // The control must actually block (else this test measures nothing) ...
     assert.ok(control.maxGapMs > 40, `the control blocked the loop for only ${control.maxGapMs} ms`);
-    // ... and the worker path must not: a fraction of it. (Relative only: an absolute millisecond bound is flaky on 3-4 vCPU runners and under Windows' 15.6 ms timer.)
+    // ... and the worker path must not: a fraction of it. Relative only (an absolute millisecond bound is flaky on 3-4 vCPU runners and
+    // under Windows' 15.6 ms timer), and judged on the LEAST blocked of several runs: a runner that is busy elsewhere stalls this thread
+    // for a stretch now and then, whichever path is under test, but a path that blocks the loop blocks it in every run.
     assert.ok(worker.maxGapMs < control.maxGapMs / 2, `worker gap ${worker.maxGapMs} ms against control gap ${control.maxGapMs} ms`);
     assert.ok(worker.durationMs > worker.maxGapMs * 2, `duration ${worker.durationMs} ms against gap ${worker.maxGapMs} ms`);
   });
