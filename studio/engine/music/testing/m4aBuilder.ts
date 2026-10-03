@@ -107,6 +107,10 @@ export interface M4aOptions {
   /** Extra boxes inside the first `trak`, and inside its `mdia`. */
   trakExtra?: Uint8Array[];
   mdiaExtra?: Uint8Array[];
+  /** Extra boxes inside the first track's `minf`, `stbl` and `dinf`. */
+  minfExtra?: Uint8Array[];
+  stblExtra?: Uint8Array[];
+  dinfExtra?: Uint8Array[];
   /** Extra boxes inside `moov`, after the tracks. */
   moovExtra?: Uint8Array[];
   /** Extra boxes at the top level, after `mdat`. */
@@ -117,7 +121,7 @@ export interface M4aOptions {
 
 const SAMPLE_RATE_INDEX: Readonly<Record<number, number>> = { 96000: 0, 88200: 1, 64000: 2, 48000: 3, 44100: 4, 32000: 5, 24000: 6, 22050: 7, 16000: 8, 12000: 9, 11025: 10, 8000: 11 };
 
-function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | "aot" | "channels" | "sampleRate" | "timescale" | "duration" | "drefFlags">> & Pick<M4aOptions, "noEsds" | "dupBox" | "trakExtra" | "mdiaExtra">): Uint8Array {
+function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | "aot" | "channels" | "sampleRate" | "timescale" | "duration" | "drefFlags">> & Pick<M4aOptions, "noEsds" | "dupBox" | "trakExtra" | "mdiaExtra" | "minfExtra" | "stblExtra" | "dinfExtra">): Uint8Array {
   const twice = (type: string, one: Uint8Array): Uint8Array => (options.dupBox === type ? concat(one, one) : one);
   const freqIndex = SAMPLE_RATE_INDEX[options.sampleRate] ?? 4;
   const asc = audioSpecificConfig(options.aot, freqIndex, options.channels);
@@ -136,7 +140,10 @@ function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | 
   );
   const stsd = twice("stsd", fullBox("stsd", 0, concat(u32(1), box(options.entry, entryBody))));
   const dref = twice("dref", fullBox("dref", 0, concat(u32(options.drefFlags.length), ...options.drefFlags.map((flags) => fullBox("url ", flags)))));
-  const minf = twice("minf", box("minf", concat(twice("dinf", box("dinf", dref)), twice("stbl", box("stbl", stsd)))));
+  const minf = twice(
+    "minf",
+    box("minf", concat(twice("dinf", box("dinf", concat(dref, ...(options.dinfExtra ?? [])))), twice("stbl", box("stbl", concat(stsd, ...(options.stblExtra ?? [])))), ...(options.minfExtra ?? []))),
+  );
   const mdhd = twice("mdhd", fullBox("mdhd", 0, concat(u32(0), u32(0), u32(options.timescale), u32(options.duration), u16(0x55c4), u16(0))));
   const hdlr = twice("hdlr", fullBox("hdlr", 0, concat(u32(0), ascii(options.handler), new Uint8Array(12), u8(0))));
   return box("trak", concat(twice("mdia", box("mdia", concat(mdhd, hdlr, minf, ...(options.mdiaExtra ?? [])))), ...(options.trakExtra ?? [])));
@@ -158,7 +165,7 @@ export function buildM4a(options: M4aOptions = {}): Uint8Array {
   };
   // Extra tracks are plain: only the first track carries a repeated box.
   const extra = (options.extraTracks ?? []).map((handler) => track({ ...full, handler }));
-  const first = { ...full, ...(options.dupBox === undefined ? {} : { dupBox: options.dupBox }), ...(options.trakExtra === undefined ? {} : { trakExtra: options.trakExtra }), ...(options.mdiaExtra === undefined ? {} : { mdiaExtra: options.mdiaExtra }) };
+  const first = { ...full, ...(options.dupBox === undefined ? {} : { dupBox: options.dupBox }), ...(options.trakExtra === undefined ? {} : { trakExtra: options.trakExtra }), ...(options.mdiaExtra === undefined ? {} : { mdiaExtra: options.mdiaExtra }), ...(options.minfExtra === undefined ? {} : { minfExtra: options.minfExtra }), ...(options.stblExtra === undefined ? {} : { stblExtra: options.stblExtra }), ...(options.dinfExtra === undefined ? {} : { dinfExtra: options.dinfExtra }) };
   const ftyp = options.noFtyp === true ? new Uint8Array(0) : box("ftyp", concat(ascii("isom"), u32(512), ascii("isom"), ascii("iso2"), ascii("mp41")));
   return concat(ftyp, box("moov", concat(track(first), ...extra, ...(options.moovExtra ?? []))), box("mdat", options.mdat ?? new Uint8Array(16)), ...(options.topExtra ?? []));
 }

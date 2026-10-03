@@ -261,6 +261,11 @@ function walk(bytes: Uint8Array): Mp4AudioInfo {
   }
   if (moov === null) throw new Refusal("no-moov");
   if (moov.end - moov.body > MOOV_MAX_BYTES) throw new Refusal("moov-too-large");
+  // Cover art makes ffmpeg show a second stream (an attached picture), and it reads tags wherever a tag holder sits: under
+  // `udta`, `meta` or a bare `ilst`, beside the sample tables, inside a `free`. So the guarantee is not a list of places
+  // but one fact: the type `covr` appears NOWHERE in `moov`. Media bytes are in `mdat`, never here, and with the download
+  // size cap the integers of a sample table cannot spell it, so this fails closed and a false positive costs one track.
+  if (Buffer.from(bytes.buffer, bytes.byteOffset + moov.body, moov.end - moov.body).includes("covr", 0, "latin1")) throw new Refusal("box-not-allowed");
 
   const inMoov = childrenOf(bytes, view, moov.body, moov.end, budget);
   // `cmov` (a compressed moov that ffmpeg inflates: a 1 MB file can claim a gigabyte, and a video track can hide in it)

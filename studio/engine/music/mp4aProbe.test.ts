@@ -211,6 +211,24 @@ describe("tags with pictures, and repeated boxes", () => {
     expect(probeMp4Audio(buildM4a(options)).ok).toBe(false);
   });
 
+  // Round 4: deeper still. ffmpeg shows an attached picture wherever a tag holder sits, so the guarantee is "no covr
+  // anywhere in moov", not a list of places.
+  const ilstBare = box("ilst", covr);
+  test.each([
+    ["minf/udta/meta/ilst", { minfExtra: [box("udta", meta())] }],
+    ["stbl/udta/meta/ilst", { stblExtra: [box("udta", meta())] }],
+    ["minf/meta/ilst", { minfExtra: [meta()] }],
+    ["a bare ilst directly under trak", { trakExtra: [ilstBare] }],
+    ["a bare ilst under minf", { minfExtra: [ilstBare] }],
+    ["dinf/udta/meta/ilst", { dinfExtra: [box("udta", meta())] }],
+  ])("cover art under %s is refused", (_label, options) => {
+    expect(probeMp4Audio(buildM4a(options)).ok).toBe(false);
+  });
+
+  test("cover art in any other box of moov is refused too: the type bytes alone are enough", () => {
+    expect(refusalOf(buildM4a({ moovExtra: [box("free", box("covr", new Uint8Array(8)))] }))).toBe("box-not-allowed");
+  });
+
   test("the encoder tag a re-cut file carries (the 3c.1 fixtures have it) is allowed", () => {
     expect(probeMp4Audio(buildM4a({ moovExtra: [tags(box("©too", box("data", new Uint8Array(16))))] })).ok).toBe(true);
   });
