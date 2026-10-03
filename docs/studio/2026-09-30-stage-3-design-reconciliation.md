@@ -851,6 +851,40 @@ finished kept; the saving mark dropped at the job's end), and the photo grid's n
 - **Contract:** `MusicStatus.quotaLog` (with `missing` after review round 1: the log deleted with the music folder, recovered like a corrupt one), `EngineError.musicReason` (+ `MUSIC_UNAVAILABLE_REASONS_RU`), `music.recoverQuotaLog {confirm: true}`; `SettingsFocus` `music` (the editor's music tab, 3d.5, links here). A held line is written when the window asks `music.status`, so the held notice says «запись повторится, когда вы снова откроете эту карточку» and has «Проверить снова».
 - **Mock:** answers `music.status`, `music.refresh` and `music.recoverQuotaLog` like the engine (parity scenario «music: …»), and since 3d.1b-rest `music.list` and `music.peaks` too (section 5c). Do not design the editor's music tab around the mock's refresh steps (three steps on its clock) or its 30 invented demo tracks.
 
+## 5g. 3e.2 as built (the Photos screen: videos tab, filters, usage unknown)
+
+- **Contract (additive, protocol 5; renderer, main and engine ship together).**
+  - K16: `AvatarSummary.usage` is `{state: "ok"}` or `{state: "unknown", reasons}`. `reasons` is a non-empty set of `UsageUnknownReason` (`library-too-new`, `index-stale`, `record-unreadable`, `rejects-unreadable`), in that order, not K16's single `reason`: an avatar can have a broken record and a broken reject log at once, and each needs its own way out. Texts in `USAGE_UNKNOWN_REASONS_RU`.
+  - K16 commands: `videos.quarantineRecords {avatarId}` -> `{avatarId, quarantined}` and `photos.rebuildRejected {avatarId}` -> `{avatarId, rebuilt, kept, dropped}`.
+  - K15: `FileState` gains `unchecked`. `videos.list`, `videos.get` and a `mode: "record"` delete report a file check that threw or timed out as `unchecked`, no longer as `elsewhere`.
+  - K12: `VideoSummary.title` (the draft's name at render time, written into the record; older records read `null`). K13: `VideoSummary.music.trackId` (`null` for own music). New: `VideoSummary.firstClip`, the record's first clip, so a card can draw a still while no poster exists (K14's generation is not built).
+  - New engine command `videos.get {videoId}` -> `{video}`: one record found by id across the avatar folders, its file checked now. Main's `videos.reveal` reads the place through it, so a video past `MAX_LISTED_VIDEOS` (500) opens, and the N sequential `videos.list` calls are gone.
+  - K17: main-only `videos.revealFolder {avatarId}` -> `{opened: "avatar" | "root"}`. The folder is the `SafeName` of the newest record of this avatar whose file is (or was) in the current folder (`present`, `missing`, `changed`), re-checked as a safe name and a folder; else the root. `EXPORT_UNAVAILABLE` from a fresh `export.check`; `IN_FLIGHT` (`EXPORT_CHANGING_DETAIL`) while the folder is being switched; `INTERNAL` "the folder could not be opened" when the shell refuses.
+- **Recovery (engine, `library.ts`).** Both commands are safe to retry, act under the same locks as the writers (`videos:<avatarId>`, `rejected:<path>`), and never delete:
+  - «Убрать повреждённую запись» re-reads each record file under the lock and moves into `quarantine/<stamp>/…` only a file that is still unreadable. It never moves a readable record, one that is only too new for this build, or one fixed meanwhile. A record in another avatar's folder is touched only when its problem names this avatar. Then the index reloads, and `avatar.changed` goes out for every avatar whose summary changed. A second run quarantines 0.
+  - «Восстановить отметки» first COPIES the reject log into the quarantine, then writes the readable lines back atomically. `dropped` counts the bad lines plus a torn tail. A missing or intact log answers `rebuilt: false`.
+  - `LIBRARY_TOO_NEW` records and a stale index put the avatar in the unknown state too. Nothing is offered for them: the notice says why.
+- **The «Фото» tab.** The header reads «N фото · M не использовано · K видео», or «использование неизвестно» in place of M. It refreshes on `avatar.changed`. The gallery has «Все / Неиспользованные / Отклонённые». «Неиспользованные» is eligible, in no video and in no render, and empty while usage is unknown. A tile has a reject / restore mark: an icon under the pick box, shown on hover or focus and always on a rejected tile. It is named «Фото N: отклонить — в видео не брать» / «вернуть из отклонённых», and blocked while the reject log is broken. A rejected photo leaves the selection. The usage notice lists the reasons and offers each command behind its own confirmation, then says what it did.
+- **The «Видео» tab.** «Видео N · X МБ · сначала новые», the filter «Все / В работе / С ошибкой» (AM5: «С ошибкой» is failed renders only), the avatar's folder with home as `~` and «Папка «Готовые видео»». The cards come in this order:
+  - render job cards (queued with «после N», running with frames, «сохранение» with Cancel off, failed with «Изменить» / «Повторить» and a renderer-local dismiss, AM6). The title and facts come from the draft via `montages.list`;
+  - record cards by `fileState`:
+    - `present`: play in a player dialog by id, «Открыть в папке», trash -> A27 -> `mode: "video"`;
+    - `missing`: «Удалить запись» -> `mode: "record"`;
+    - `changed`: playable, «Удалить запись» behind a confirmation that the file stays;
+    - `elsewhere`: «Удалить запись» behind the owner's text (Q6). While the export folder is unavailable it reads «Не удалось проверить файл…» instead;
+    - `unchecked`: «Проверить снова» and «Удалить запись».
+
+  A delete's outcome is told from `fileDeleted` / `fileState`. «Изменить» shows only with a `montageId`. A late `video.changed` after `job.failed` shows the video (the store's `subscribeVideos` feeds the tab). The export-status notice comes from the store's `exportStatus`, never from one render.
+- **Entry points.** «Новый монтаж» -> `montages.create {avatarId, photoIds: []}` -> `{name: "editor", montageId, created: true}`, hidden for an archived avatar. The avatars grid's «K видео» opens the Photos screen on its «Видео» tab (`{name: "photos", avatarId, tab: "videos"}`).
+- **Deviations from the artboards.**
+  - The poster is the first clip's still (`ClipPoster`), not a generated frame.
+  - The facts say «N фото» (A12), not «N кадра».
+  - Several states have no artboard: `changed`, `elsewhere`, `unchecked`, the confirmation for `changed` / `elsewhere`, the player (play button on the poster's hover or focus), and the reject mark and its «отклонено» badge.
+  - «История сцен» stays disabled «Скоро» (CF18).
+  - The elsewhere pill reads «Другая папка» so it fits the 96 px poster.
+- **Not built.** K14: generating the poster and sweeping orphan posters (`hasPoster` is always false; the `poster/` media route exists since 3e.1). The draft card A32 (K3). Pagination past 500 records in the tab itself (`videos.list` still stops at `MAX_LISTED_VIDEOS`; only reveal reads by id). Recovery for `index-stale` (it clears itself on the background reload) and for `library-too-new` (update the app).
+- **Mock and parity.** The mock answers `videos.get`, `videos.quarantineRecords`, `photos.rebuildRejected` and `videos.revealFolder` (records `revealedFolders`). Its avatars carry `usage`. `failNextRender` gains `saving` and `late`: the job fails, then its video arrives. Two parity scenarios were appended: video facts (title, trackId, firstClip) and `videos.get`. The golden only grew. A broken disk (unreadable records, a torn reject log) is not in the mock or the parity suite: the engine's own tests cover it. The dev build (`select.ts`, `demoVideos: true`) gives Mia five records in every file state the tab draws. Do not design around their names.
+
 ## 6. Per-task UI checklists
 
 What each of the next UI tasks must implement from the artboards. «Скоро» means disabled with
