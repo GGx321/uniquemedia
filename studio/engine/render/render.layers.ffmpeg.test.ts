@@ -1,0 +1,289 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { copyFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Clip } from "../../shared/engine/montage";
+import { encodeApng } from "../../scripts/stickers/apngWriter";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { verifyRenderedMp4 } from "../verify";
+import { extractFrames, probeVideo, runFfmpegOk, videoFrames } from "./ffmpeg.testkit";
+import { buildLayerPass } from "./layerPass";
+import { buildPass1 } from "./pass1";
+import { buildPass2 } from "./pass2";
+import {
+  expectedBt709Limited,
+  makeSolid,
+  makeStickerPng,
+  makeWorkDir,
+  meanAround,
+  mixRgb,
+  removeDir,
+  runPass1,
+  runPass2,
+  splitYuv420,
+  stickerColour,
+  tamperGraph,
+  writeBytes,
+  type RGB,
+} from "./render.testkit";
+import type { LayerPassJob, OverlayInput } from "./types";
+useNativeGlobals();
+
+// REAL ffmpeg, the layer pass and pass 2 over it (plan 3b.6): a text-like RGBA PNG and two animated stickers are
+// composited onto a transparent lossless file, which pass 2 overlays as ONE stream.
+//
+// What is proved, on decoded pixels and never on the filter string:
+// - each layer is on screen exactly in its window [start, end) and nowhere else;
+// - a sticker shows source frame `(f - start) mod loop` at timeline frame f, on the 30 fps grid, for a loop that does
+//   not divide its window (7 frames in a 48-frame window starting at 33);
+// - the colour stays BT.709 through BOTH steps (the layer file, then the final encode): an opaque colour within 1 code,
+//   an alpha-128 blend within 2, against the BT.709 value computed from the RGBA; the naive chain is 14.6 codes off, and a
+//   graph with the explicit conversion cut out FAILS the same check (the negative control);
+// - the two-step composite agrees with pass 2's direct overlay (the transparent-main un-premultiply question);
+// - the lengths are exact (90 frames, layers file and output) and the output passes the verifier.
+
+const TOTAL = 90; // two 1.5 s clips
+const BG_Y = 126; // flat 0x808080 through the photo chain
+const GREY_RGB: RGB = [128, 128, 128];
+
+// A 7-frame counter: frame i is solid grey 20 + 32 i. Its luma classes sit at least 10 codes apart, and clear of the background's.
+const LOOP = 7;
+const counterGrey = (i: number): number => 20 + 32 * i;
+const counterLuma = (i: number): number => 16 + (219 / 255) * counterGrey(i);
+
+const TEXT_BOX = { x: 100, y: 300, w: 400, h: 300 }; // the 400x300 RGBA test PNG, as a text raster would be: not scaled
+const WINDOWED = { x: 600, y: 300, w: 128, h: 128 }; // counter, frames [33, 81)
+const SPANNING = { x: 600, y: 800, w: 128, h: 128 }; // counter, frames [0, 90)
+const TAIL = { x: 100, y: 1000, w: 200, h: 200 }; // white, frames [60, 90)
+const SHORT_LOOP = { x: 800, y: 1300, w: 128, h: 128 }; // the same 7-frame file with a STORED period of 5, frames [0, 90)
+const SHORT_PERIOD = 5;
+const TEXT_WINDOW = [30, 60] as const;
+const WINDOWED_WINDOW = [33, 81] as const;
+
+const clip: Clip = { clipId: "flat", durationMs: 1500, transitionIn: "cut", kind: "photo", cell: { photo: { source: "scene", photoId: "flat" }, focus: null }, motion: "static" };
+const clips: Clip[] = [clip, { ...clip, clipId: "flat-2" }];
+
+let dir: string;
+let layerJobs: readonly LayerPassJob[];
+let layerFile: string;
+let finalMp4: string;
+let directMp4: string;
+let layerFrames: number;
+let finalFrames: number;
+let textOverlay: OverlayInput;
+const lumaCache = new Map<string, number[]>();
+
+async function renderThrough(layers: readonly OverlayInput[], output: string, tamper?: (job: LayerPassJob) => readonly string[]): Promise<readonly LayerPassJob[]> {
+  const plan = buildLayerPass({ layers, totalFrames: TOTAL, clipDir: dir });
+  for (const job of plan.jobs) await runFfmpegOk(tamper === undefined ? job.argv : tamper(job));
+  await runPass2(buildPass2({ clips, clipDir: dir, output, overlays: plan.final === null ? [] : [plan.final], audio: { kind: "silent" } }));
+  return plan.jobs;
+}
+
+/** The mean luma of `box`'s interior (inset by 24 px) on EVERY frame of `path`. */
+async function lumaPerFrame(path: string, box: { x: number; y: number; w: number; h: number }): Promise<number[]> {
+  const key = `${path}:${box.x},${box.y},${box.w},${box.h}`;
+  const hit = lumaCache.get(key);
+  if (hit !== undefined) return hit;
+  const inset = 24;
+  const [w, h] = [box.w - 2 * inset, box.h - 2 * inset];
+  // yuv420p, not gray: the gray conversion would stretch the limited range (235 would read 253). Only the Y plane of each frame is read.
+  const r = await runFfmpegOk(["-hide_banner", "-nostdin", "-i", path, "-vf", `crop=${w}:${h}:${box.x + inset}:${box.y + inset},format=yuv420p`, "-fps_mode", "passthrough", "-f", "rawvideo", "-"]);
+  const frameBytes = (w * h * 3) / 2;
+  const out: number[] = [];
+  for (let o = 0; o + frameBytes <= r.stdout.length; o += frameBytes) {
+    let sum = 0;
+    for (let i = 0; i < w * h; i++) sum += r.stdout[o + i] ?? 0;
+    out.push(sum / (w * h));
+  }
+  lumaCache.set(key, out);
+  return out;
+}
+
+const nearest = (value: number, classes: readonly number[]): number => classes.reduce((best, c, i) => (Math.abs(c - value) < Math.abs((classes[best] ?? 0) - value) ? i : best), 0);
+
+beforeAll(async () => {
+  dir = makeWorkDir("layers");
+  const flat = join(dir, "flat.jpg");
+  await makeSolid(flat, "0x808080", 720, 1280, "jpeg");
+  const textPng = await makeStickerPng(dir, "text-00-src");
+  copyFileSync(textPng, join(dir, "text-00.png"));
+  await makeSolid(join(dir, "white.png"), "white", 200, 200, "png-rgba");
+  const frames = Array.from({ length: LOOP }, (_, i) => {
+    const px = new Uint8Array(64 * 64 * 4);
+    for (let p = 0; p < 64 * 64; p++) px.set([counterGrey(i), counterGrey(i), counterGrey(i), 255], p * 4);
+    return px;
+  });
+  writeBytes(join(dir, "counter.apng"), encodeApng({ width: 64, height: 64, frames }));
+
+  await runPass1(buildPass1({ seed: 1, clips, resolvePhoto: () => ({ path: flat, width: 720, height: 1280 }), clipDir: dir }));
+
+  textOverlay = { path: join(dir, "text-00.png"), format: "png", box: TEXT_BOX, resize: false, startFrame: TEXT_WINDOW[0], endFrame: TEXT_WINDOW[1] };
+  const layers: OverlayInput[] = [
+    textOverlay,
+    { path: join(dir, "counter.apng"), format: "apng", box: WINDOWED, resize: true, startFrame: WINDOWED_WINDOW[0], endFrame: WINDOWED_WINDOW[1], loopFrames: LOOP, sourceSize: { w: 64, h: 64 } },
+    { path: join(dir, "counter.apng"), format: "apng", box: SPANNING, resize: true, startFrame: 0, endFrame: TOTAL, loopFrames: LOOP, sourceSize: { w: 64, h: 64 } },
+    { path: join(dir, "white.png"), format: "png", box: TAIL, resize: false, startFrame: 60, endFrame: TOTAL },
+    { path: join(dir, "counter.apng"), format: "apng", box: SHORT_LOOP, resize: true, startFrame: 0, endFrame: TOTAL, loopFrames: SHORT_PERIOD, sourceSize: { w: 64, h: 64 } },
+  ];
+  finalMp4 = join(dir, "final.mp4");
+  layerJobs = await renderThrough(layers, finalMp4);
+  layerFile = layerJobs.at(-1)?.output ?? "";
+  layerFrames = await videoFrames(layerFile);
+  finalFrames = await videoFrames(finalMp4);
+
+  // The same text PNG through pass 2's direct overlay, with no layer pass: what the two-step composite is compared with.
+  directMp4 = join(dir, "direct.mp4");
+  await runPass2(buildPass2({ clips, clipDir: dir, output: directMp4, overlays: [textOverlay], audio: { kind: "silent" } }));
+}, 240_000);
+
+afterAll(() => removeDir(dir));
+
+describe("layers on real ffmpeg: the files", () => {
+  test("the layer pass wrote one call's file for five layers", () => {
+    expect(layerJobs).toHaveLength(1);
+  });
+
+  test("the layer file holds exactly the timeline's 90 frames", () => {
+    expect(layerFrames).toBe(TOTAL);
+  });
+
+  test("the layer file is lossless FFV1 with an alpha plane", async () => {
+    const stream = (await probeVideo(layerFile)).streams[0];
+    expect(stream?.codec_name).toBe("ffv1");
+    expect(stream?.pix_fmt).toBe("yuva420p");
+  });
+
+  test("the output holds exactly 90 frames, with five layers over it", () => {
+    expect(finalFrames).toBe(TOTAL);
+  });
+
+  test("the output passes the verifier: the box allow-list, the length and the metadata rule", async () => {
+    expect(await verifyRenderedMp4(finalMp4, { frames: TOTAL })).toEqual({ ok: true });
+  });
+});
+
+describe("layers on real ffmpeg: a text PNG shows only in its window [30, 60)", () => {
+  // The PNG's first colour cell (220, 40, 40), opaque, at the box's top-left.
+  const cell = { x: TEXT_BOX.x, y: TEXT_BOX.y, w: 100, h: 100 };
+  const red = (frame: number): "overlay" | "background" => ((frame >= 30 && frame < 60) ? "overlay" : "background");
+
+  test("every one of the 90 frames shows the overlay inside the window and the background outside it", async () => {
+    const luma = await lumaPerFrame(finalMp4, { ...cell, x: cell.x - 0, y: cell.y });
+    const overlayY = expectedBt709Limited(stickerColour(0))[0];
+    const wrong = luma.flatMap((v, f) => {
+      const want = red(f) === "overlay" ? overlayY : BG_Y;
+      return Math.abs(v - want) <= 3 ? [] : [`frame ${f}: ${v.toFixed(1)}, wanted ${want.toFixed(1)}`];
+    });
+    expect(wrong).toEqual([]);
+    expect(luma).toHaveLength(TOTAL);
+  });
+});
+
+describe("layers on real ffmpeg: a tail layer runs to the last frame", () => {
+  test("shows only on [60, 90), including the last frame", async () => {
+    const luma = await lumaPerFrame(finalMp4, TAIL);
+    const wrong = luma.flatMap((v, f) => (Math.abs(v - (f >= 60 ? 235 : BG_Y)) <= 3 ? [] : [`frame ${f}: ${v.toFixed(1)}`]));
+    expect(wrong).toEqual([]);
+  });
+});
+
+describe("layers on real ffmpeg: a sticker follows (t - start) mod loop on the 30 fps grid", () => {
+  const classes = [...Array.from({ length: LOOP }, (_, i) => counterLuma(i)), BG_Y];
+  const BACKGROUND = LOOP;
+
+  test("the windowed counter [33, 81) shows source frame (f - 33) mod 7 on every frame of its window and the background elsewhere", async () => {
+    const luma = await lumaPerFrame(finalMp4, WINDOWED);
+    const shown = luma.map((v) => nearest(v, classes));
+    const want = luma.map((_, f) => (f >= WINDOWED_WINDOW[0] && f < WINDOWED_WINDOW[1] ? (f - WINDOWED_WINDOW[0]) % LOOP : BACKGROUND));
+    expect(shown).toEqual(want);
+  });
+
+  test("the loop restarts inside the window: the 7-frame loop has run 6 times and 6 frames of a 7th when the window ends", async () => {
+    const luma = await lumaPerFrame(finalMp4, WINDOWED);
+    const idx = (f: number): number => nearest(luma[f] ?? 0, classes);
+    expect(idx(33)).toBe(0);
+    expect(idx(39)).toBe(6);
+    expect(idx(40)).toBe(0);
+    expect(idx(80)).toBe((80 - 33) % LOOP);
+  });
+
+  test("a counter spanning the whole timeline shows f mod 7 from frame 0 to the last frame", async () => {
+    const luma = await lumaPerFrame(finalMp4, SPANNING);
+    const shown = luma.map((v) => nearest(v, classes));
+    expect(shown).toEqual(luma.map((_, f) => f % LOOP));
+  });
+
+  test("the STORED period wins over the file's own length: a 7-frame file stored with a period of 5 loops 0 1 2 3 4 and never shows frames 5 and 6", async () => {
+    const luma = await lumaPerFrame(finalMp4, SHORT_LOOP);
+    const shown = luma.map((v) => nearest(v, classes));
+    expect(shown).toEqual(luma.map((_, f) => f % SHORT_PERIOD));
+  });
+
+  test("two layers of the same file keep their own phase", async () => {
+    const a = (await lumaPerFrame(finalMp4, WINDOWED)).map((v) => nearest(v, classes));
+    const b = (await lumaPerFrame(finalMp4, SPANNING)).map((v) => nearest(v, classes));
+    expect(a[45]).toBe((45 - 33) % LOOP);
+    expect(b[45]).toBe(45 % LOOP);
+    expect(a[45]).not.toBe(b[45]);
+  });
+});
+
+describe("layers on real ffmpeg: the colour stays BT.709 through both steps (invariant 36)", () => {
+  const FRAME = 45; // inside the text layer's window
+  const planes = new Map<string, { y: Uint8Array; u: Uint8Array; v: Uint8Array }>();
+
+  async function planesOf(path: string): Promise<{ y: Uint8Array; u: Uint8Array; v: Uint8Array }> {
+    const hit = planes.get(path);
+    if (hit !== undefined) return hit;
+    const [frame] = await extractFrames(path, [FRAME], "yuv420p", { w: 1080, h: 1920 });
+    const p = splitYuv420(frame ?? new Uint8Array(), 1080, 1920);
+    planes.set(path, p);
+    return p;
+  }
+
+  /** The decoded (Y, Cb, Cr) at the centre of PNG cell (column, row), as means over 40 x 40 luma pixels. */
+  async function sample(path: string, column: number, row: number): Promise<[number, number, number]> {
+    const { y, u, v } = await planesOf(path);
+    const cx = TEXT_BOX.x + column * 100 + 50;
+    const cy = TEXT_BOX.y + row * 100 + 50;
+    return [meanAround(y, 1080, cx, cy, 20), meanAround(u, 540, cx / 2, cy / 2, 10), meanAround(v, 540, cx / 2, cy / 2, 10)];
+  }
+
+  const worst = (got: readonly number[], want: readonly number[]): number => Math.max(...got.map((g, i) => Math.abs(g - (want[i] ?? 0))));
+
+  test.each([0, 1, 2, 3])("an opaque colour (column %d) is within 1 code value of BT.709 limited range", async (column) => {
+    expect(worst(await sample(finalMp4, column, 0), expectedBt709Limited(stickerColour(column)))).toBeLessThanOrEqual(1);
+  });
+
+  test.each([0, 1, 2, 3])("an alpha-128 colour (column %d) blends with the background within 2 code values", async (column) => {
+    const blended = mixRgb(stickerColour(column), GREY_RGB, 128 / 255);
+    expect(worst(await sample(finalMp4, column, 1), expectedBt709Limited(blended))).toBeLessThanOrEqual(2);
+  });
+
+  test("the two-step composite matches pass 2's direct overlay of the same PNG within 1.5 code values on the opaque and the alpha-128 rows", async () => {
+    for (const column of [0, 1, 2, 3]) {
+      for (const row of [0, 1]) {
+        const layered = await sample(finalMp4, column, row);
+        const direct = await sample(directMp4, column, row);
+        expect(worst(layered, direct)).toBeLessThanOrEqual(1.5);
+      }
+    }
+  });
+
+  test("an alpha ramp through the layer file is monotone: more alpha, more of the overlay's colour over the grey", async () => {
+    const { y } = await planesOf(finalMp4);
+    // Row 2 of the PNG: colour (x / 100) with alpha ramping 0 to 255 across 400 px. Read the cell of column 0 at three x positions.
+    const at = (x: number): number => meanAround(y, 1080, TEXT_BOX.x + x, TEXT_BOX.y + 250, 6);
+    const [a, b, c] = [at(20), at(60), at(90)];
+    // colour 0 is (220, 40, 40), darker than the grey background: luma falls as alpha rises
+    expect(a).toBeGreaterThan(b);
+    expect(b).toBeGreaterThan(c);
+  });
+
+  test("NEGATIVE CONTROL: a layer graph with the explicit BT.709 conversion cut out is caught by the same check (the BT.601 trap)", async () => {
+    const trapMp4 = join(dir, "trap.mp4");
+    await renderThrough([textOverlay], trapMp4, (job) => tamperGraph(job.argv, "scale=in_range=full:out_range=tv:out_color_matrix=bt709,", ""));
+    const deviations = await Promise.all([0, 1, 2, 3].map(async (column) => worst(await sample(trapMp4, column, 0), expectedBt709Limited(stickerColour(column)))));
+    expect(Math.max(...deviations)).toBeGreaterThan(5);
+  });
+});

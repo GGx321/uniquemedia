@@ -49,7 +49,7 @@ function assertWhole(value: number, what: string): void {
   if (!Number.isSafeInteger(value)) bad(`${what} must be a whole number, got ${value}`);
 }
 
-function validateOverlay(o: OverlayInput, index: number, total: number): void {
+export function validateOverlay(o: OverlayInput, index: number, total: number): void {
   const at = `overlay ${index}`;
   assertAbsolutePath(o.path, `the path of ${at}`);
   assertWhole(o.startFrame, `${at} start frame`);
@@ -62,6 +62,10 @@ function validateOverlay(o: OverlayInput, index: number, total: number): void {
   if (o.box.x < 0 || o.box.y < 0 || o.box.x % 2 !== 0 || o.box.y % 2 !== 0) bad(`${at} box offset must be even and not negative, got ${o.box.x},${o.box.y}`);
   if (o.box.w < 1 || o.box.h < 1) bad(`${at} box must have a positive size, got ${o.box.w}x${o.box.h}`);
   if (o.box.x + o.box.w > FRAME_W || o.box.y + o.box.h > FRAME_H) bad(`${at} box leaves the ${FRAME_W}x${FRAME_H} frame`);
+  // The layer pass's file is the whole frame over the whole timeline, or it is not what the layer pass wrote.
+  if (o.format === "layers" && (o.box.x !== 0 || o.box.y !== 0 || o.box.w !== FRAME_W || o.box.h !== FRAME_H || o.startFrame !== 0 || o.endFrame !== total || o.resize)) {
+    bad(`${at} (the layer pass's file) must be the whole ${FRAME_W}x${FRAME_H} frame over frames [0, ${total}), unscaled`);
+  }
 }
 
 /**
@@ -75,8 +79,8 @@ function validateOverlay(o: OverlayInput, index: number, total: number): void {
  * frame of the animation, and a file with a finite loop count ends the overlay
  * (and with `endall`, the whole output).
  */
-function overlayInputArgs(o: OverlayInput): string[] {
-  const demuxer = o.format === "png" ? ["-f", "image2", "-pattern_type", "none"] : ["-f", o.format];
+export function overlayInputArgs(o: OverlayInput): string[] {
+  const demuxer = o.format === "png" ? ["-f", "image2", "-pattern_type", "none"] : o.format === "layers" ? ["-f", "matroska"] : ["-f", o.format];
   return ["-protocol_whitelist", "file", ...demuxer, "-i", o.path];
 }
 
@@ -96,6 +100,9 @@ function overlayPrepare(o: OverlayInput, inputIndex: number, k: number, totalFra
   const resize = o.resize ? `scale=${o.box.w}:${o.box.h}:flags=lanczos,` : "";
   const cut = spansTimeline(o, totalFrames) ? "" : `trim=end_frame=${o.endFrame - o.startFrame},`;
   const shift = `settb=1/${FPS},setpts=N+${o.startFrame}`;
+  // The layer pass's file is already BT.709 yuva420p, the whole frame and exactly the timeline long: only re-time it onto the 30 fps grid
+  // (the container's millisecond time base would otherwise jitter the frame sync against the main input).
+  if (o.format === "layers") return `[${inputIndex}:v]settb=1/${FPS},setpts=N[s${k}]`;
   if (o.format !== "png") {
     return `[${inputIndex}:v]fps=${FPS},format=rgba,${resize}${OVERLAY_COLOUR_CHAIN},loop=loop=-1:size=${ANIMATED_LOOP_MAX_FRAMES},${cut}${shift}[s${k}]`;
   }
@@ -104,7 +111,7 @@ function overlayPrepare(o: OverlayInput, inputIndex: number, k: number, totalFra
 }
 
 /** A layer that covers every frame of the montage. */
-const spansTimeline = (o: OverlayInput, totalFrames: number): boolean => o.startFrame === 0 && o.endFrame === totalFrames;
+export const spansTimeline = (o: OverlayInput, totalFrames: number): boolean => o.startFrame === 0 && o.endFrame === totalFrames;
 
 /**
  * What `overlay` does when its overlay input ends (or, for one that spans the
@@ -122,7 +129,7 @@ const spansTimeline = (o: OverlayInput, totalFrames: number): boolean => o.start
  * `endall` on a windowed layer would end the whole output at its end, so it is
  * only for the spanning case.
  */
-const overlayEofAction = (o: OverlayInput, totalFrames: number): string => (spansTimeline(o, totalFrames) ? "endall" : "pass");
+export const overlayEofAction = (o: OverlayInput, totalFrames: number): string => (o.format !== "layers" && spansTimeline(o, totalFrames) ? "endall" : "pass");
 
 /** The silent audio, built inside the complex graph to exactly `samples` samples (music has its own chain, `musicChain.ts`). */
 function silentAudio(samples: number): string {

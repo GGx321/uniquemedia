@@ -76,14 +76,24 @@ export interface Pass1Job {
  * builder needs only the file, its box and its frame range.
  */
 export interface OverlayInput {
-  /** Absolute path of a PNG, APNG or GIF. */
+  /** Absolute path of a PNG, APNG or GIF (or, for `layers`, of the layer pass's finished file). */
   readonly path: string;
   /**
    * What the file is, which names its demuxer: a still `png`, or an animation
    * (`apng`, `gif`). An animation loops from the layer's first frame; a still
-   * is just held.
+   * is just held. `layers` is the layer pass's output (3b.6): one full-frame
+   * transparent lossless file that already holds every text and sticker layer,
+   * so pass 2 overlays exactly one stream whatever the layer count.
    */
-  readonly format: "png" | "apng" | "gif";
+  readonly format: "png" | "apng" | "gif" | "layers";
+  /**
+   * An animation's loop period in 30 fps frames, as stored with the sticker (the manifest and catalogue), never read off the
+   * file's own timing: it is the loop cache's `size`, and the preview wraps on the same number (`(t - start) mod period`).
+   * 1..`ANIMATED_LOOP_MAX_FRAMES`. The layer pass requires it for an animation; pass 2's direct path falls back to the maximum.
+   */
+  readonly loopFrames?: number;
+  /** An animation's own pixel size, which prices its loop cache (frames x w x h x 2.5 bytes) when the layer pass splits its calls. */
+  readonly sourceSize?: { readonly w: number; readonly h: number };
   /** Where and how large, from the geometry module (`stickerBox`, `textBox`). Even numbers. */
   readonly box: Rect;
   /** Scale the asset to `box` (stickers). A text PNG is already the size of its box. */
@@ -136,4 +146,37 @@ export interface Pass2Job {
   readonly totalFrames: number;
   /** `Σ durationMs * 48`: the exact length of the audio in samples. */
   readonly audioSamples: number;
+}
+
+/** What the layer pass needs: every text and sticker layer in z-order (later on top), the timeline's length, and the job's temp folder. */
+export interface LayerPassInput {
+  readonly layers: readonly OverlayInput[];
+  /** `Σ durationMs * 3 / 100`: the exact number of frames every layer file holds. */
+  readonly totalFrames: number;
+  /** Absolute: the job's temp folder. The layer files are written here. */
+  readonly clipDir: string;
+}
+
+/** One ffmpeg call of the layer pass: some of the layers composited onto the file the call before wrote (or onto nothing). */
+export interface LayerPassJob {
+  readonly index: number;
+  /** `layers-NN.mkv`, relative to `clipDir`. */
+  readonly fileName: string;
+  /** `clipDir/fileName`. */
+  readonly output: string;
+  /** The frames the file must hold: the timeline's. */
+  readonly frames: number;
+  /** How many layers this call composites. */
+  readonly layerCount: number;
+  /** What the cost model says this call's peak RSS is, in bytes. */
+  readonly modelledBytes: number;
+  /** Everything after the ffmpeg binary. */
+  readonly argv: readonly string[];
+}
+
+export interface LayerPassPlan {
+  /** The calls, to run one after another. Empty when there are no layers. */
+  readonly jobs: readonly LayerPassJob[];
+  /** What pass 2 overlays instead of the layers themselves: the last call's file, or null when there are no layers. */
+  readonly final: OverlayInput | null;
 }

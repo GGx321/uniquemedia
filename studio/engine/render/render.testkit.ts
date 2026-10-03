@@ -162,6 +162,17 @@ export function meanAround(plane: Uint8Array, stride: number, cx: number, cy: nu
   return sum / n;
 }
 
+export function writeBytes(path: string, bytes: Uint8Array): void {
+  writeFileSync(path, bytes);
+}
+
+/** The sticker chart's colour `i` (0..3); throws for another index, so a test never reads `undefined` as a colour. */
+export function stickerColour(i: number): RGB {
+  const c = STICKER_COLOURS[i];
+  if (c === undefined) throw new RangeError(`no sticker colour ${i}`);
+  return c;
+}
+
 export function readBytes(path: string): Uint8Array {
   return new Uint8Array(readFileSync(path));
 }

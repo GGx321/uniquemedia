@@ -50,6 +50,13 @@ export const INTERMEDIATE_VIDEO_ARGS: readonly string[] = [
   "-r", String(FPS), "-fps_mode", "cfr", "-threads", "2",
 ];
 
+/**
+ * The layer pass's file (3b.6): every text and sticker layer composited onto a transparent full-frame stream, kept
+ * LOSSLESS (FFV1, with alpha) so pass 2's final encode is the only lossy step the layers go through. `-threads 2` like the
+ * other encodes. Mostly transparent frames compress to a few MiB per second.
+ */
+export const LAYER_VIDEO_ARGS: readonly string[] = ["-c:v", "ffv1", "-pix_fmt", "yuva420p", "-r", String(FPS), "-fps_mode", "cfr", "-threads", "2"];
+
 /** The delivered video: H.264 High, medium, CRF 20 under a 3500k cap with a 2 s VBV window, 2 s GOP, constant 30 fps, tagged. */
 export const FINAL_VIDEO_ARGS: readonly string[] = [
   "-c:v", "libx264", "-profile:v", "high", "-preset", "medium", "-crf", "20",

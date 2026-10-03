@@ -315,6 +315,60 @@ describe("buildPass2: overlays", () => {
   });
 });
 
+describe("buildPass2: with no layers the graph is exactly what it was before 3b.6", () => {
+  test("tags the main input and builds the silence, and nothing else", () => {
+    expect(graphOf(build().argv)).toBe(`[0:v]${FRAME_TAGS}[v];anullsrc=r=48000:cl=stereo,apad,atrim=end_sample=384000[a]`);
+  });
+});
+
+describe("buildPass2: the layer pass's file (3b.6)", () => {
+  const layers = (over: Partial<OverlayInput> = {}): OverlayInput => ({
+    path: `${CLIP_DIR}/layers-00.mkv`,
+    format: "layers",
+    box: { x: 0, y: 0, w: 1080, h: 1920 },
+    resize: false,
+    startFrame: 0,
+    endFrame: 240,
+    ...over,
+  });
+
+  test("is one more input, read by the matroska demuxer with only the file protocol", () => {
+    const job = build({ overlays: [layers()] });
+    expect(inputsOf(job.argv)).toEqual(["list.txt", `${CLIP_DIR}/layers-00.mkv`]);
+    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-protocol_whitelist", "file", "-f", "matroska"]);
+  });
+
+  test("is overlaid whole at the frame's origin and lets the main input carry the output's length, in the graph below", () => {
+    // The file is FINITE (exactly the timeline's frames). With `endall`, the end of that finite stream ends the output one
+    // frame early (measured: 89 of 90), so the main input decides the length and the layers just run out with it.
+    expect(graphOf(build({ overlays: [layers()] }).argv)).toBe(
+      [
+        `[0:v]${FRAME_TAGS}[b0]`,
+        "[1:v]settb=1/30,setpts=N[s0]",
+        "[b0][s0]overlay=x=0:y=0:eof_action=pass:format=yuv420[v]",
+        "anullsrc=r=48000:cl=stereo,apad,atrim=end_sample=384000[a]",
+      ].join(";"),
+    );
+  });
+
+  test("is not converted, looped or cut again: it is already BT.709 yuva420p with exactly the timeline's frames", () => {
+    const graph = graphOf(build({ overlays: [layers()] }).argv);
+    expect(graph).not.toContain(OVERLAY_COLOUR_CHAIN);
+    expect(graph).not.toContain("loop=");
+    expect(graph).not.toContain("trim=end_frame");
+    expect(graph).not.toContain("fps=");
+  });
+
+  test.each([
+    ["a box that is not the whole frame", { box: { x: 0, y: 0, w: 1080, h: 1918 } }],
+    ["a start after frame 0", { startFrame: 3 }],
+    ["an end before the timeline's", { endFrame: 239 }],
+    ["a resize", { resize: true }],
+  ] as const)("refuses a layers stream with %s", (_name, over) => {
+    expect(() => build({ overlays: [layers(over)] })).toThrow(expect.objectContaining({ code: "BAD_OVERLAY" }));
+  });
+});
+
 describe("buildPass2: refusals", () => {
   test("refuses an empty clip list", () => {
     expect(() => build({ clips: [] })).toThrow(expect.objectContaining({ code: "NO_CLIPS" }));
