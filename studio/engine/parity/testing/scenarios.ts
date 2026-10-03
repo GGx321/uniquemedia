@@ -620,6 +620,20 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.call("engine.snapshot", {});
     },
   },
+  {
+    name: "music: with an unavailable photo too, get lists the photo before the track, and render refuses the track first",
+    async run(t, w) {
+      const trending = { source: "trending", trackId: "4199287736976977", startMs: 0 };
+      const taken = await draft(t, w, [photo(w, 2)]);
+      const clash = await draft(t, w, [photo(w, 2)]);
+      await t.call("videos.render", { montageId: taken });
+      const stored = objectAt(montageOf(await t.call("montages.get", { montageId: clash })), "spec");
+      await t.call("montages.save", { montageId: clash, spec: { ...stored, music: trending }, name: null });
+      await t.call("montages.get", { montageId: clash });
+      await t.call("videos.render", { montageId: clash });
+      await t.settle();
+    },
+  },
 ];
 
 /** `estimateBytesUpper` of the clips of the draft a `montages.create` answered: what a render of it asks the export folder to have twice over. */
