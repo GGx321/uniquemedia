@@ -1590,6 +1590,371 @@
   pointer-events: none;
 }
 
+/* ── the layer tracks (3d.3b; Editor.dc.html's text rows and sticker row, the sheet's «Слой текста и стикера») ── */
+
+/* A kind's rows: two for text and one for stickers as drawn, more when blocks of the same time need them (packing only). */
+.ed-layer-lane {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* A block's place on its row; the button fills it, the trim handles sit on its edges. */
+.ed-blk-slot {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  z-index: 1;
+}
+
+.ed-blk-on {
+  z-index: 2;
+}
+
+.ed-blk-lifted {
+  z-index: 3;
+}
+
+.ed-blk {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  overflow: hidden;
+  border: 1px solid var(--warn-40);
+  border-radius: 5px;
+  background: var(--warn-16);
+  color: var(--warn);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  cursor: grab;
+  touch-action: none;
+}
+
+.ed-blk-on .ed-blk {
+  border: 1.5px solid var(--warn);
+  background-color: var(--warn-28);
+}
+
+.ed-blk-sticker .ed-blk {
+  border-color: var(--info-40);
+  background-color: var(--info-16);
+  color: var(--info);
+}
+
+.ed-blk-sticker.ed-blk-on .ed-blk {
+  border: 1.5px solid var(--info);
+  background-color: var(--info-28);
+}
+
+.ed-blk-lifted .ed-blk {
+  box-shadow: var(--shadow-lift);
+  cursor: grabbing;
+}
+
+/* Past the montage's end (its clips were shortened): a render refuses it, so the edge goes dashed. */
+.ed-blk-out .ed-blk {
+  border-style: dashed;
+}
+
+/* The engine refuses it (a caption, a sticker gone from the set): the danger edge and a ⚠. */
+.ed-blk-flagged .ed-blk {
+  border: 1.5px dashed var(--danger);
+}
+
+.ed-blk-warn {
+  flex-shrink: 0;
+  color: var(--danger);
+}
+
+.ed-blk-t {
+  flex-shrink: 0;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.ed-blk-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ed-blk-thumb {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.ed-blk-icon {
+  display: flex;
+  flex-shrink: 0;
+}
+
+/* A layer's handles: 7 px bars in the block's own colour (the sheet: «ручки 7»). */
+.ed-blk-slot .hd {
+  width: 7px;
+  background: var(--warn);
+}
+
+.ed-blk-sticker .hd {
+  background: var(--info);
+}
+
+.ed-blk-slot .hd-l {
+  border-radius: 5px 0 0 5px;
+}
+
+.ed-blk-slot .hd-r {
+  border-radius: 0 5px 5px 0;
+}
+
+.ed-blk-slot .hd::after {
+  height: 8px;
+}
+
+/* «0.3 → 4.4 с» over a block being dragged. */
+.ed-blk-range {
+  position: absolute;
+  top: -22px;
+  left: -1px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--warn);
+  color: var(--accent-ink);
+  font-size: 9.5px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ed-blk-sticker .ed-blk-range {
+  background: var(--info);
+}
+
+/* An edge on the playhead or a clip boundary: the accent line the sheet draws. */
+.ed-snap {
+  position: absolute;
+  top: 18px;
+  bottom: 0;
+  z-index: 4;
+  width: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.ed-blk:focus-visible,
+.ed-music:focus-visible,
+.ed-sticker-pick:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+/* The «Стикеры» track's «+» and its menu of the built-in set (until the «GIF» tab, 3d.5). */
+.ed-sticker-add {
+  position: relative;
+  display: flex;
+  margin-left: auto;
+}
+
+.ed-sticker-add .tadd {
+  margin-left: 0;
+}
+
+.ed-sticker-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+}
+
+.ed-sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 40px);
+  gap: 4px;
+}
+
+.ed-sticker-pick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--inset);
+  color: var(--info);
+  cursor: pointer;
+}
+
+.ed-sticker-pick:hover {
+  border-color: var(--border-strong);
+  background: var(--panel-2);
+}
+
+.ed-sticker-pick img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* ── the music track (3d.3b; the sheet's «Музыка на дорожке · метка лучшей части») ── */
+
+.ed-music {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--ok-40);
+  border-radius: 5px;
+  background: var(--ok-10);
+  color: var(--text);
+  font: inherit;
+  cursor: grab;
+  touch-action: none;
+}
+
+.ed-music-on {
+  border: 1.5px solid var(--ok);
+  background: var(--ok-20);
+}
+
+.ed-music-moving {
+  cursor: grabbing;
+}
+
+.ed-music-fixed {
+  cursor: pointer;
+}
+
+.ed-music-warn {
+  border-color: var(--warn-45);
+}
+
+/* A track with no clips under it yet: only its tags. */
+.ed-music-alone {
+  padding-right: 8px;
+}
+
+.ed-wave {
+  position: absolute;
+  inset: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.ed-wave-bar {
+  flex: 1 1 0;
+  min-width: 1px;
+  max-width: 7px;
+  border-radius: 1px;
+  background: var(--ok-55);
+}
+
+/* A highlight of the track inside the montage's part of it. */
+.ed-wave-mark {
+  position: absolute;
+  top: 4px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--ok);
+  pointer-events: none;
+}
+
+.ed-wave-mark::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: -2px;
+  width: 6px;
+  height: 6px;
+  transform: rotate(45deg);
+  border-radius: 1px;
+  background: var(--ok);
+}
+
+.ed-music-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--ok);
+}
+
+.ed-music .ctag {
+  position: relative;
+}
+
+.ed-music-start {
+  margin-left: 8px;
+  color: var(--ok);
+}
+
+.ed-music-on .ed-music-start {
+  margin-left: 12px;
+}
+
+.ed-music-title {
+  margin-left: 4px;
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.ed-music-issue {
+  margin-left: 4px;
+  color: var(--warn);
+}
+
+/* Selected: the green bars on its edges, as drawn (the music is never trimmed: it is the montage's length). */
+.ed-music-hd {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 7px;
+  background: var(--ok);
+}
+
+.ed-music-hd-l {
+  left: -1px;
+  border-radius: 5px 0 0 5px;
+}
+
+.ed-music-hd-r {
+  right: -1px;
+  border-radius: 0 5px 5px 0;
+}
+
 /* The playhead: a 2 px line over every lane; its 12 px head is the slider (drag it, or ←/→). */
 .ed-playhead {
   position: absolute;
@@ -1656,6 +2021,23 @@
 .ed-props-actions {
   display: flex;
   gap: 6px;
+}
+
+/* a layer's and the music's properties head (3d.3b; the rest of those panels is 3d.5's) */
+
+.ed-zsteps {
+  display: flex;
+  gap: 8px;
+}
+
+.ed-props-sticker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ed-props-track {
+  font-weight: 600;
 }
 
 .ed-pgroup {

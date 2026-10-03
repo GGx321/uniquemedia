@@ -1,69 +1,38 @@
 import { type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { MAX_STICKER_LAYERS, MAX_TEXT_LAYERS, type Clip, type MontageDraft } from "../../../shared/engine";
+import type { Clip, MontageDraft } from "../../../shared/engine";
 import { MAX_CLIPS, MIN_CLIP_MS } from "../../../shared/montage";
 import { useEngine } from "../../engine/react";
 import { photoUrl, placeholderGradient } from "../../lib/media";
 import { NBSP } from "../../lib/format";
 import { Icon, type IconName, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { addRefusal, cellsOf, clipStartMs, isEven, maxDurationMs, moveClip, setDuration, totalMs } from "./clipOps";
+import { DRAG_THRESHOLD_PX, type GestureKit, SNAP_PX, trackPointer } from "./gesture";
 import { isTextEntry, ownsKeys } from "./keys";
-import { actionWhyLabel, clipAria, clockLabel, PHOTO_PROBLEM_TAGS, secondsLabel } from "./labels";
+import { actionWhyLabel, clipAria, clockLabel, layerAddLabel, PHOTO_PROBLEM_TAGS, secondsLabel } from "./labels";
+import { addLayerRefusal, layerCap, layerCount } from "./layerOps";
+import { laneHeight, laneLayout, LayerTracks } from "./LayerTracks";
+import { type MusicProblem, MusicTrack, type TrackLookup } from "./MusicTrack";
 import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
-import { boundaryAt, boundaryMs, clockMs, MAX_ZOOM, MIN_ZOOM, msAtFraction, rulerMarks, snapEdge, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
+import { StickerAdd } from "./StickerAdd";
+import { boundaryAt, boundaryMs, clockMs, MAX_ZOOM, MIN_ZOOM, msAtFraction, rulerMarks, seekInto, snapEdge, snapTargets, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 
 // 3d.3a: the timeline (Editor.dc.html's bottom band; the components sheet's «Линейка · плейхед · масштаб» and «Кадр на
 // главном треке»). The toolbar, the ruler and a scrubbable playhead, the track headers with their caps, and the
 // clip track: select, trim by the handles, reorder by drag, drop a photo from the bin, «+» after the last clip.
-// SLOT 3d.3b: the text and sticker blocks on their two lanes and the music block (waveform, `music.peaks`).
+// 3d.3b: the text and sticker tracks (LayerTracks.tsx: add at the playhead, move, trim, z-order) and the music track
+// (MusicTrack.tsx: the waveform from `music.peaks`, the highlights, where the music starts).
 //
 // Keyboard: ←/→ move the playhead by 0.1 s (⇧: 1 s), Home/End to the ends; Delete removes the selection, Escape
-// clears it; ⌥←/⌥→ move the focused clip; the trim handles and the playhead are sliders.
+// clears it (on a slider too: the zoom keeps only its arrows); ⌥←/⌥→ move the focused clip or layer (the music: where
+// it starts), ⌥↑/⌥↓ step a focused layer up and down the z-order; the trim handles and the playhead are sliders.
 
 /** The artboard's lanes at «Уместить»: 1048 px for 15 s. Used until the lanes are measured (and in tests). */
 const FALLBACK_LANES_PX = 1048;
-/** A pointer must travel this far before a press on a clip becomes a drag. */
-const DRAG_THRESHOLD_PX = 4;
-/** A trimmed end edge this close to the playhead meets it. */
-const SNAP_PX = 8;
 
 const pct = (ms: number): string => `${(ms / TIMELINE_MS) * 100}%`;
-
-/**
- * Window-wide pointer tracking from a press: the gesture keeps going wherever the pointer goes. `onEnd` gets the
- * release, or null when the gesture was cancelled (`pointercancel`, a new gesture, the timeline closing).
- */
-function trackPointer(press: ReactPointerEvent, onMove: (event: PointerEvent) => void, onEnd: (event: PointerEvent | null) => void): () => void {
-  const id = press.pointerId;
-  const move = (event: PointerEvent): void => {
-    if (event.pointerId === id) onMove(event);
-  };
-  const stop = (): void => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-    window.removeEventListener("pointercancel", cancel);
-  };
-  const up = (event: PointerEvent): void => {
-    if (event.pointerId !== id) return;
-    stop();
-    onEnd(event);
-  };
-  // The system took the pointer (a gesture, a lost capture): the gesture is cancelled, never dropped where it stood.
-  const cancel = (event: PointerEvent): void => {
-    if (event.pointerId !== id) return;
-    stop();
-    onEnd(null);
-  };
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", up);
-  window.addEventListener("pointercancel", cancel);
-  return () => {
-    stop();
-    onEnd(null);
-  };
-}
 
 function ToolButton({ label, icon, size, state, onClick }: { label: string; icon: IconName; size: number; state: ActionState; onClick: () => void }) {
   return (
@@ -105,17 +74,25 @@ export interface TimelineProps {
   readonly flagged: ReadonlyMap<number, PhotoProblem>;
   /** Clips the render's first blocking reason is about (an empty cell, say): an amber edge, no tag. */
   readonly highlighted: readonly number[];
+  /** Why the engine refuses a layer, by its id (3d.3b): the block says it. */
+  readonly flaggedLayers: ReadonlyMap<string, string>;
+  /** The draft's track as `music.list` describes it (3d.3b). */
+  readonly musicLookup: TrackLookup;
+  /** The engine's verdict on the track, for the spec it judged. */
+  readonly musicProblem: MusicProblem | null;
   readonly timeline: TimelineState;
   /** A bin photo being dragged, or null. */
   readonly dragPhoto: string | null;
   readonly onInsertPhoto: (photoId: string, boundary: number) => void;
   /** «Добавить кадр»: take the owner to the photos. */
   readonly onAddClip: () => void;
+  /** «Добавить музыку»: the media panel's «Музыка» tab (SLOT 3d.5); absent, the button is «Скоро». */
+  readonly onAddMusic?: () => void;
   /** Selects clip `index` and brings the playhead into it. */
   readonly onSelectClip: (index: number) => void;
 }
 
-export function Timeline({ session, spec, avatarId, flagged, highlighted, timeline, dragPhoto, onInsertPhoto, onAddClip, onSelectClip }: TimelineProps) {
+export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicProblem, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onSelectClip }: TimelineProps) {
   const commands = useSelectionCommands(session, timeline);
   const lanesRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -139,8 +116,12 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
   const resolved = resolveSelection(spec, selection);
   const actions = selectionActions(spec, selection, playheadMs);
   const addBlock = addRefusal(spec);
-  const texts = spec.layers.filter((l) => l.kind === "text").length;
-  const stickers = spec.layers.filter((l) => l.kind === "sticker").length;
+  const texts = layerCount(spec, "text");
+  const stickers = layerCount(spec, "sticker");
+  const textAdd = layerAddLabel("text", addLayerRefusal(spec, "text", playheadMs), total);
+  const stickerAdd = layerAddLabel("sticker", addLayerRefusal(spec, "sticker", playheadMs), total);
+  const textLane = laneLayout(spec, "text");
+  const stickerLane = laneLayout(spec, "sticker");
   const pxPerMs = (lanesPx > 0 ? lanesPx : FALLBACK_LANES_PX * zoom) / TIMELINE_MS;
   const { ticks, labels } = rulerMarks(zoom, total);
 
@@ -195,6 +176,25 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
     });
   }
 
+  function swallowClick(): void {
+    suppressClick.current = true;
+    window.setTimeout(() => {
+      suppressClick.current = false;
+    }, 0);
+  }
+
+  // What the layer and music tracks borrow for their gestures.
+  const kit: GestureKit = { start: startGesture, pxPerMs: livePxPerMs, swallowClick, clickSwallowed: () => suppressClick.current };
+
+  /** Selects a layer (3d.3b) and brings the playhead into it, as a click on a clip does. */
+  function selectLayer(layerId: string): void {
+    const layer = session.state.spec.layers.find((l) => l.layerId === layerId);
+    if (layer === undefined) return;
+    timeline.select({ kind: "layer", layerId });
+    const into = seekInto(timeline.playheadMs, layer.startMs, Math.min(layer.endMs, totalMs(session.state.spec)));
+    if (into !== timeline.playheadMs) timeline.seek(into);
+  }
+
   // ---------- the playhead ----------
 
   function startScrub(press: ReactPointerEvent<HTMLElement>): void {
@@ -245,10 +245,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
         setLift(null);
         if (!moved) return;
         // The click that ends a drag is not a selection.
-        suppressClick.current = true;
-        window.setTimeout(() => {
-          suppressClick.current = false;
-        }, 0);
+        swallowClick();
         if (event === null) return;
         const current = session.state.spec;
         const from = current.clips.findIndex((c) => c.clipId === clipId);
@@ -365,11 +362,6 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
       if (commands.remove()) pendingFocus.current = neighbour?.clipId ?? "playhead";
       return;
     }
-    if (event.key === "Escape" && selection !== null) {
-      event.preventDefault();
-      timeline.select(null);
-      return;
-    }
     const clipId = target instanceof HTMLElement ? target.dataset.clipId : undefined;
     if (event.altKey && clipId !== undefined && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
@@ -397,7 +389,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
   const evenTitle = spec.clips.length < 2 ? "Нужно хотя бы два кадра" : isEven(spec) ? "Кадры уже одной длины" : "Разделить длину ролика между кадрами поровну";
 
   return (
-    <section className="ed-timeline" aria-label="Таймлайн" data-slot="timeline 3d.3b" onKeyDown={onKeyDown}>
+    <section className="ed-timeline" aria-label="Таймлайн" onKeyDown={onKeyDown}>
       <div className="ed-tl-bar">
         <button type="button" className="ed-play" aria-label={timeline.playing ? "Пауза" : "Воспроизвести"} disabled={empty} onClick={timeline.togglePlay}>
           {timeline.playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
@@ -409,6 +401,8 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
         <ToolButton label="Разрезать по плейхеду" icon="scissors" size={15} state={actions.split} onClick={() => void commands.split()} />
         <ToolButton label="Дублировать выбранное" icon="copy" size={14} state={actions.duplicate} onClick={() => void commands.duplicate()} />
         <ToolButton label="Удалить выбранное" icon="trash" size={14} state={actions.remove} onClick={() => void commands.remove()} />
+        <ToolButton label="Слой выше" icon="layerUp" size={15} state={actions.raise} onClick={() => void commands.raise()} />
+        <ToolButton label="Слой ниже" icon="layerDown" size={15} state={actions.lower} onClick={() => void commands.lower()} />
         <button type="button" className="chip ed-tl-even" disabled={spec.clips.length < 2 || isEven(spec)} title={evenTitle} aria-label="Все кадры поровну" onClick={() => void commands.evenOut()}>
           Поровну
         </button>
@@ -429,20 +423,17 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
       <div className="ed-tl-body">
         <div className="ed-tl-heads">
           <div className="ed-tl-ruler-gap" />
-          <div className="th ed-th-text">
+          <div className="th ed-th-text" style={{ height: laneHeight(textLane.count) }}>
             <Icon name="text" size={14} />
-            Текст <span className={texts >= MAX_TEXT_LAYERS ? "mono ed-th-full" : "mono faint"}>{texts}</span>
-            {/* SLOT 3d.3b: adds a text layer at the playhead. */}
-            <button type="button" className="tadd" aria-label={texts >= MAX_TEXT_LAYERS ? `Добавить текст: не больше ${MAX_TEXT_LAYERS}` : "Добавить текст"} disabled title="Текст — скоро">
+            Текст <span className={texts >= layerCap("text") ? "mono ed-th-full" : "mono faint"}>{texts}</span>
+            <button type="button" className="tadd" aria-label={textAdd.name} disabled={textAdd.why !== null} title={textAdd.why ?? undefined} onClick={() => void commands.addText()}>
               <Icon name="plus" size={11} strokeWidth={2.6} />
             </button>
           </div>
-          <div className="th ed-th-sticker">
+          <div className="th ed-th-sticker" style={{ height: laneHeight(stickerLane.count) }}>
             <Icon name="sparkle" size={14} />
-            Стикеры <span className={stickers >= MAX_STICKER_LAYERS ? "mono ed-th-full" : "mono faint"}>{stickers}</span>
-            <button type="button" className="tadd" aria-label={stickers >= MAX_STICKER_LAYERS ? `Добавить стикер: не больше ${MAX_STICKER_LAYERS}` : "Добавить стикер"} disabled title="Стикеры — скоро">
-              <Icon name="plus" size={11} strokeWidth={2.6} />
-            </button>
+            Стикеры <span className={stickers >= layerCap("sticker") ? "mono ed-th-full" : "mono faint"}>{stickers}</span>
+            <StickerAdd name={stickerAdd.name} why={stickerAdd.why} onPick={(stickerId) => void commands.addSticker(stickerId)} />
           </div>
           <div className="th ed-th-clips">
             <Icon name="film" size={14} />
@@ -472,10 +463,18 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
                 </span>
               ))}
             </div>
-            {/* SLOT 3d.3b: text blocks on two rows (packing only), sticker blocks. */}
-            <div className="trk ed-lane-text" onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)} />
-            <div className="trk ed-lane-text" onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)} />
-            <div className="trk ed-lane-sticker" onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)} />
+            <LayerTracks
+              session={session}
+              spec={spec}
+              timeline={timeline}
+              kit={kit}
+              pxPerMs={pxPerMs}
+              text={textLane}
+              sticker={stickerLane}
+              targets={snapTargets(durations, playheadMs)}
+              flagged={flaggedLayers}
+              onSelect={selectLayer}
+            />
             <div
               className={dropAt !== null ? "trk ed-lane-clips ed-lane-clips-drop" : "trk ed-lane-clips"}
               onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)}
@@ -572,14 +571,18 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
               )}
               {insertAt !== null && !empty && <span className="ed-insert" aria-hidden="true" style={{ left: pct(boundaryMs(durations, Math.min(insertAt, durations.length))) }} />}
             </div>
-            <div className="trk ed-lane-music">
-              {/* SLOT 3d.3b: the music block with its waveform. */}
-              {empty && (
-                <button type="button" className="ed-lane-music-add" disabled title="Музыка — скоро">
-                  <Icon name="plus" size={13} strokeWidth={2.4} />
-                  Добавить музыку
-                </button>
-              )}
+            <div className="trk ed-lane-music" onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)}>
+              <MusicTrack
+                session={session}
+                spec={spec}
+                timeline={timeline}
+                kit={kit}
+                pxPerMs={pxPerMs}
+                lookup={musicLookup}
+                problem={musicProblem}
+                onSelect={() => timeline.select({ kind: "music" })}
+                {...(onAddMusic === undefined ? {} : { onAddMusic })}
+              />
             </div>
             {!empty && <div className="ed-tl-after" style={{ left: pct(total) }} aria-hidden="true" />}
             <div className="ed-playhead" style={{ left: pct(ph) }}>

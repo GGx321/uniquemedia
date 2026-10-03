@@ -12,11 +12,14 @@ import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { ClipProperties } from "./montage/ClipProperties";
+import { sameJson } from "./montage/json";
+import { LayerProperties, MusicProperties } from "./montage/LayerProperties";
+import { type MusicProblem, useTrackSummary } from "./montage/MusicTrack";
 import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto } from "./montage/clipOps";
 import { isFreePhoto, MediaPanel, PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
 import { draftTitle, outputLabel, outputParts, saveLabel } from "./montage/labels";
 import { RenderControls } from "./montage/RenderControls";
-import { photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
+import { layerProblems, photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
 import { isTextEntry } from "./montage/keys";
 import { resolveSelection, selectClip } from "./montage/selection";
@@ -398,8 +401,13 @@ function DraftEditor({
   const clipProblems = new Map<number, PhotoProblem>();
   for (const cell of flagged) if (!clipProblems.has(cell.clip)) clipProblems.set(cell.clip, cell.problem);
 
-  // ---------- the timeline (3d.3a) ----------
+  // ---------- the timeline (3d.3a; 3d.3b: layers and music) ----------
   const timeline = useTimeline(state.spec);
+  const musicLookup = useTrackSummary(client, state.spec.music, view.music?.listFetchedAt ?? null);
+  // The engine's referential verdict on the layers and the track counts only for the spec it judged (as renderBlock reads it).
+  const judged = sameJson(verdict.spec, state.spec) ? verdict.issues : [];
+  const musicProblem: MusicProblem | null = judged.some((i) => i.code === "track-unavailable") ? "unavailable" : judged.some((i) => i.code === "track-too-short") ? "too-short" : null;
+  const flaggedLayers = layerProblems(verdict.spec, judged);
   const focus = useFocusResolver(client, session, avatarId);
   /** A free photo dragged out of the bin. */
   const [dragPhoto, setDragPhoto] = useState<string | null>(null);
@@ -767,6 +775,10 @@ function DraftEditor({
             dragPhoto={dragPhoto}
             onFillCell={fillCell}
           />
+        ) : selected?.kind === "layer" ? (
+          <LayerProperties session={session} spec={state.spec} index={selected.index} timeline={timeline} />
+        ) : selected?.kind === "music" ? (
+          <MusicProperties session={session} spec={state.spec} timeline={timeline} lookup={musicLookup} />
         ) : (
           <PropertiesSlot empty={state.spec.clips.length === 0} />
         )}
@@ -777,6 +789,9 @@ function DraftEditor({
         avatarId={avatarId}
         flagged={clipProblems}
         highlighted={block?.clips ?? refusedClips}
+        flaggedLayers={flaggedLayers}
+        musicLookup={musicLookup}
+        musicProblem={musicProblem}
         timeline={timeline}
         dragPhoto={dragPhoto}
         onInsertPhoto={(photoId, boundary) => {

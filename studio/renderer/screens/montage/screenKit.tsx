@@ -1,6 +1,7 @@
 import { act, screen } from "@testing-library/react";
 import type { AvatarSummary, Montage, PhotoSummary } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
+import type { MockMusicOptions } from "../../engine/mockEngine";
 import { freePhotos, MIA, SOFIA } from "../../engine/mockEngine.testkit";
 import { flush, openSection, setup } from "../../testing";
 
@@ -14,11 +15,14 @@ export function withCounts(avatar: AvatarSummary, photos: readonly PhotoSummary[
   return { ...avatar, photoCount: own.length, eligibleUnusedCount: own.filter((p) => p.eligible && !p.used && !p.reserved).length };
 }
 
-/** The App with `avatars` (Mia by default) and their photos (6 free ones of Mia by default), on the Avatars screen. */
-export async function studio(options: { avatars?: AvatarSummary[]; photos?: PhotoSummary[] } = {}) {
+/**
+ * The App with `avatars` (Mia by default) and their photos (6 free ones of Mia by default), on the Avatars screen; `music` is the
+ * mock's track store (3d.3b), none by default.
+ */
+export async function studio(options: { avatars?: AvatarSummary[]; photos?: PhotoSummary[]; music?: MockMusicOptions } = {}) {
   const photos = options.photos ?? freePhotos(6);
   const avatars = (options.avatars ?? [MIA]).map((a) => withCounts(a, photos));
-  const harness = setup({ avatars, photos });
+  const harness = setup(options.music === undefined ? { avatars, photos } : { avatars, photos, music: options.music });
   const first = avatars[0];
   if (first !== undefined) await screen.findByRole("heading", { level: 2, name: first.name });
   return harness;

@@ -96,6 +96,17 @@
   --scrim-60: rgba(9, 9, 12, 0.6);
   --shadow-lift: 0 10px 24px rgba(0, 0, 0, 0.55);
   --warn-04: rgba(244, 185, 87, 0.04);
+  /* the timeline's layer and music blocks (3d.3b, the components sheet's .blk): text amber, stickers blue, music green;
+     at rest a 16 % fill and a 40 % edge (music 10 %), selected 28 % (music 20 %); the waveform's bars at 55 % */
+  --warn-28: rgba(244, 185, 87, 0.28);
+  --warn-40: rgba(244, 185, 87, 0.4);
+  --info-16: rgba(143, 176, 255, 0.16);
+  --info-28: rgba(143, 176, 255, 0.28);
+  --info-40: rgba(143, 176, 255, 0.4);
+  --ok-10: rgba(79, 224, 176, 0.1);
+  --ok-20: rgba(79, 224, 176, 0.2);
+  --ok-40: rgba(79, 224, 176, 0.4);
+  --ok-55: rgba(79, 224, 176, 0.55);
 
   /* other */
   --uniq: #7c6cff;

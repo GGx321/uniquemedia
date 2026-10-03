@@ -129,6 +129,19 @@ const PATHS = {
     </>
   ),
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  /** «Слой выше» / «Слой ниже» (3d.3b): two stacked sheets and the way the selected one goes. */
+  layerUp: (
+    <>
+      <path d="M4 15l8 4 8-4" />
+      <path d="M12 3v10M8 7l4-4 4 4" />
+    </>
+  ),
+  layerDown: (
+    <>
+      <path d="M4 9l8-4 8 4" />
+      <path d="M12 21V11M8 17l4 4 4-4" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

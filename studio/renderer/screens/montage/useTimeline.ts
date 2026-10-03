@@ -3,7 +3,8 @@ import type { Focus, MontageDraft } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
 import { evenOut, totalMs } from "./clipOps";
 import { type FrameClock, PlaybackClock, playStartMs, windowFrameClock } from "./playback";
-import { duplicateSelected, removeSelected, type Selection, splitSelected } from "./selection";
+import { addStickerLayer, addTextLayer } from "./layerOps";
+import { duplicateSelected, lowerSelected, raiseSelected, removeSelected, type Selection, splitSelected } from "./selection";
 import type { DraftSession } from "./session";
 import { clampZoom, clockMs, MIN_ZOOM, snapPlayhead } from "./timelineScale";
 
@@ -114,6 +115,33 @@ export function useSelectionCommands(session: DraftSession, timeline: TimelineSt
       const next = evenOut(spec);
       return next !== spec && session.edit(next);
     }, [session]),
+    /** «Слой выше» (3d.3b): the selected layer above the next layer on screen at the same time; it stays selected. */
+    raise: useCallback((): boolean => {
+      const result = raiseSelected(session.state.spec, selection);
+      return typeof result !== "string" && session.edit(result.spec);
+    }, [session, selection]),
+    /** «Слой ниже». */
+    lower: useCallback((): boolean => {
+      const result = lowerSelected(session.state.spec, selection);
+      return typeof result !== "string" && session.edit(result.spec);
+    }, [session, selection]),
+    /** «Добавить текст» (3d.3b; SLOT 3d.5: the «Текст» tab's button too): a text at the playhead, selected. */
+    addText: useCallback((): boolean => {
+      const edit = addTextLayer(session.state.spec, playheadMs);
+      if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return false;
+      select({ kind: "layer", layerId: edit.id });
+      return true;
+    }, [session, playheadMs, select]),
+    /** A built-in sticker at the playhead, selected. */
+    addSticker: useCallback(
+      (stickerId: string): boolean => {
+        const edit = addStickerLayer(session.state.spec, playheadMs, stickerId);
+        if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return false;
+        select({ kind: "layer", layerId: edit.id });
+        return true;
+      },
+      [session, playheadMs, select],
+    ),
   };
 }
 
