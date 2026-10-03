@@ -14,9 +14,10 @@ import { PersistingTestSink } from "./testing/testSink";
 useNativeGlobals();
 useNativeHttp();
 
-// Stage 3, task 3c.6. What the Settings «Музыка» card needs from the service:
+// Stage 3, task 3c.6. Three things the Settings «Музыка» card needs from the service:
 //  - the quota log's own state in the status (`quotaLog`), so «Обновить» can say why it is closed before a click;
 //  - the cause of every MUSIC_UNAVAILABLE (`musicReason`): «Попробуйте позже» was true for only some of them;
+//  - `recoverQuotaLog`: a damaged log is put aside and the quota closed for exactly 31 days, behind the owner's confirmation.
 // No real network: flashapi is a loopback mock (studio/scripts/mockFlashapi.ts) or a fake fetch.
 
 const KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
@@ -307,3 +308,127 @@ describe("SinkError", () => {
   });
 });
 
+describe("recoverQuotaLog", () => {
+  async function recovered(h: Harness) {
+    const answer = await h.service.recoverQuotaLog();
+    if (!answer.ok) throw new Error(`expected a recovery, got ${answer.error.code}`);
+    return MusicStatus.parse(answer.status);
+  }
+
+  test("puts a damaged log aside and answers the quota closed: 30 of 30 until exactly 31 days from now", async () => {
+    await seedText(DAMAGED);
+    const h = harness();
+    expect(await recovered(h)).toMatchObject({ quotaLog: "ok", sentLast31d: 30, serverRemaining: null, nextFreeAt: new Date(NOW + QUOTA_WINDOW_MS).toISOString() });
+    const files = (await readdir(join(dir, "music"))).sort();
+    expect(files).toEqual(["quota.jsonl", "quota.jsonl.corrupt-20261003T101500Z"]);
+    expect(await readFile(join(dir, "music", "quota.jsonl.corrupt-20261003T101500Z"), "utf8")).toBe(DAMAGED);
+  });
+
+  test("announces the new status (music.changed) before it answers", async () => {
+    await seedText(DAMAGED);
+    const h = harness();
+    await recovered(h);
+    expect(h.events).toHaveLength(1);
+    expect(h.events[0]).toMatchObject({ quotaLog: "ok", sentLast31d: 30, refresh: { state: "idle" } });
+  });
+
+  test("sends nothing, and the refresh after it is refused for the quota without a request, until the 31 days end", async () => {
+    await seedText(DAMAGED);
+    const h = harness();
+    await recovered(h);
+    expect(refusal(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    now = NOW + QUOTA_WINDOW_MS - 1;
+    expect(refusal(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(mock?.requests).toEqual([]);
+    now = NOW + QUOTA_WINDOW_MS;
+    expect((await h.service.refresh()).ok).toBe(true);
+    await h.service.settled();
+    expect(mock?.requests).toHaveLength(1);
+    expect((await h.service.status()).sentLast31d).toBe(1);
+  });
+
+  test("keeps the engine's rejected key, so a revoked key still reads as rejected after a restart", async () => {
+    await seedText(DAMAGED);
+    const h = harness();
+    h.holder.rejected = true;
+    await recovered(h);
+    expect(await harness().service.keyRejected(LAST4)).toBe(true);
+  });
+
+  test("a key that is not marked rejected is not written as one", async () => {
+    await seedText(DAMAGED);
+    const h = harness();
+    await recovered(h);
+    expect(await harness().service.keyRejected(LAST4)).toBe(false);
+  });
+
+  test("a sound log: VALIDATION, nothing changed, nothing announced", async () => {
+    const sound = `${JSON.stringify({ v: 1, kind: "send", id: "send-1", at: NOW - HOUR, key: LAST4 })}\n`;
+    await seedText(sound);
+    const h = harness();
+    const answer = await h.service.recoverQuotaLog();
+    expect(answer.ok ? null : answer.error.code).toBe("VALIDATION");
+    expect(await readFile(quotaPath(), "utf8")).toBe(sound);
+    expect(h.events).toEqual([]);
+  });
+
+  async function refusedRecovery(reason: MusicUnavailableReason): Promise<void> {
+    const h = harness();
+    const answer = await h.service.recoverQuotaLog();
+    expect(answer.ok ? null : EngineError.parse(answer.error)).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: reason });
+    expect(h.events).toEqual([]);
+  }
+
+  test("the log cannot be read at all: MUSIC_UNAVAILABLE log-unreadable, nothing changed", async () => {
+    await mkdir(quotaPath(), { recursive: true });
+    await refusedRecovery("log-unreadable");
+  });
+
+  test("the clock is not a real date: MUSIC_UNAVAILABLE clock, the damaged log left as it is", async () => {
+    await seedText(DAMAGED);
+    now = 0;
+    await refusedRecovery("clock");
+    expect(await readFile(quotaPath(), "utf8")).toBe(DAMAGED);
+  });
+
+  test("no music folder: MUSIC_UNAVAILABLE no-music-folder", async () => {
+    const answer = await harness({ quota: null }).service.recoverQuotaLog();
+    expect(answer.ok ? null : answer.error).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "no-music-folder" });
+  });
+
+  test("a stopping service: MUSIC_UNAVAILABLE shutting-down, the log left as it is", async () => {
+    await seedText(DAMAGED);
+    const h = harness();
+    await h.service.stop();
+    const answer = await h.service.recoverQuotaLog();
+    expect(answer.ok ? null : answer.error).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "shutting-down" });
+    expect(await readFile(quotaPath(), "utf8")).toBe(DAMAGED);
+  });
+
+  test("a copy that cannot be made: MUSIC_UNAVAILABLE log-unwritable, and the damaged log is still the log (still closed)", async () => {
+    await seedText(DAMAGED);
+    // Every name the copy could take is already taken.
+    for (let n = 1; n <= 100; n++) await mkdir(join(dir, "music", n === 1 ? "quota.jsonl.corrupt-20261003T101500Z" : `quota.jsonl.corrupt-20261003T101500Z-${n}`));
+    const h = harness();
+    const answer = await h.service.recoverQuotaLog();
+    expect(answer.ok ? null : answer.error).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-unwritable" });
+    expect(await readFile(quotaPath(), "utf8")).toBe(DAMAGED);
+    expect((await h.service.status()).quotaLog).toBe("corrupt");
+  });
+
+  test("nothing of the key reaches the files, the events, the log or the console", async () => {
+    await seedText(DAMAGED);
+    const output = captureConsole();
+    try {
+      const h = harness();
+      h.holder.rejected = true;
+      await recovered(h);
+      for (const name of await readdir(join(dir, "music"))) expectNoKeyFragment(await readFile(join(dir, "music", name), "utf8"), KEY);
+      expectNoKeyFragment(JSON.stringify(h.events), KEY);
+      expectNoKeyFragment(h.logs.join("\n"), KEY);
+      expectNoKeyFragment(output.text(), KEY);
+    } finally {
+      output.restore();
+    }
+  });
+});

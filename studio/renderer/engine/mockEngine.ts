@@ -1323,6 +1323,7 @@ export class MockEngine implements EngineBridge {
         return this.videosReveal(c, c.payload.videoId);
       case "music.status":
       case "music.refresh":
+      case "music.recoverQuotaLog":
       case "montages.textPreview":
       case "music.list":
       case "music.peaks":

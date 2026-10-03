@@ -307,6 +307,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "export.check": { payload: {}, result: { exportStatus: { status: "unavailable", reason: "missing" } } },
   "music.status": { payload: {}, result: musicStatus },
   "music.refresh": { payload: { confirm: true }, result: { status: { ...musicStatus, refresh: { state: "running", done: 0, total: 1 } } } },
+  "music.recoverQuotaLog": { payload: { confirm: true }, result: { status: { ...musicStatus, sentLast31d: 30, serverRemaining: null, nextFreeAt: "2026-11-03T10:00:00.000Z" } } },
   "music.list": {
     payload: {},
     result: {
@@ -473,6 +474,7 @@ describe("contract surface", () => {
         "videos.reveal",
         "music.status",
         "music.refresh",
+        "music.recoverQuotaLog",
         "music.list",
         "music.peaks",
         "montages.create",

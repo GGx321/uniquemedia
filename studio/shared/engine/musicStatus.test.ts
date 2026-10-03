@@ -92,6 +92,21 @@ describe("MusicStatus.quotaLog", () => {
   });
 });
 
+describe("music.recoverQuotaLog", () => {
+  const send = (payload: unknown) => parseEngineCommand({ v: PROTOCOL_VERSION, id: "cmd-00000001", kind: "command", type: "music.recoverQuotaLog", payload }).ok;
+
+  test("needs confirm: true, so a stray call cannot close the quota for 31 days", () => {
+    expect(send({ confirm: true })).toBe(true);
+    expect(send({})).toBe(false);
+    expect(send({ confirm: false })).toBe(false);
+    expect(send({ confirm: true, sends: 0 })).toBe(false);
+  });
+
+  test("is the engine's, not main's: the engine owns the log", () => {
+    expect(ENGINE_COMMAND_TYPES).toContain("music.recoverQuotaLog");
+  });
+});
+
 describe("the music commands and event", () => {
   const send = (type: string, payload: unknown) => parseEngineCommand({ v: PROTOCOL_VERSION, id: "cmd-00000001", kind: "command", type, payload }).ok;
   const event = (payload: unknown) => ({ v: PROTOCOL_VERSION, id: "evt-00000001", kind: "event", seq: 1, bootId: "boot-00000001", type: "music.changed", payload });

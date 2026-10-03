@@ -381,6 +381,14 @@ const ENGINE_SPECS = [
   // shows as `refresh: failed` with the error instead, and stays counted.
   defineCommand("music.status", Empty, MusicStatus),
   defineCommand("music.refresh", z.strictObject({ confirm: z.literal(true) }), z.strictObject({ status: MusicStatus })),
+  // Stage 3 (3c.6): the way out of a damaged quota log (`MusicStatus.quotaLog: "corrupt"`), which otherwise reads 30 of 30
+  // forever. The engine copies the file aside (`quota.jsonl.corrupt-<time>`) and starts a new log that counts as 30 sends
+  // made now, so the quota is closed for exactly 31 days: the conservative reading of a count nobody can trust. It needs
+  // `confirm: true` (the owner agreed to the 31 days) and sends nothing. Answers the new status; `music.changed` follows.
+  //   VALIDATION         the log is not damaged (nothing to recover): nothing changed;
+  //   MUSIC_UNAVAILABLE  it could not be done, with `musicReason` (no music folder, the clock, the log unreadable or unwritable,
+  //                      a shutting-down engine): nothing changed, or the damaged log is still the log.
+  defineCommand("music.recoverQuotaLog", z.strictObject({ confirm: z.literal(true) }), z.strictObject({ status: MusicStatus })),
   // Stage 3 track store (3c.4, K23, K26). `music.list` is free and reads what is on disk: the tracks of the current list
   // whose audio is stored, at most 100, each with its highlights ascending (the likely default last). `music.peaks` is
   // the waveform of a window of one track: `bars` integers from 0 to 1000, read from the envelope kept at download time

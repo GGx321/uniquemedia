@@ -1339,6 +1339,12 @@ export class Engine {
         if (!answer.ok) return errorResponseFor(command, answer.error);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { status: answer.status } };
       }
+      case "music.recoverQuotaLog": {
+        // 3c.6: the owner confirmed it in the window (the payload's `confirm: true`). Sends nothing.
+        const answer = await this.#music.recoverQuotaLog();
+        if (!answer.ok) return errorResponseFor(command, answer.error);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { status: answer.status } };
+      }
       case "music.list":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { tracks: this.#music.list() } };
       case "music.peaks": {

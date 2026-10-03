@@ -1,7 +1,7 @@
 import { MUSIC_QUOTA_LIMIT, redactSecrets, type EngineError, type MusicQuotaLog, type MusicStatus, type MusicUnavailableReason, type TrackSummary } from "../../shared/engine";
 import { createFlashapiClient, FlashapiConfigError, FlashapiError, type FlashapiFetch, type FlashapiResponseInfo } from "./client";
 import type { ListParse, MusicTrack } from "./listSchema";
-import { CLOCK_MIN_MS, clockInRange, QuotaLedger, QuotaLogError, type QuotaLine, type QuotaOutcome, type QuotaSummary } from "./quotaLedger";
+import { CLOCK_MIN_MS, clockInRange, QuotaLedger, QuotaLogError, type QuotaLine, type QuotaOutcome, type QuotaSummary, type Recovery } from "./quotaLedger";
 import { buildRefreshReport } from "./refreshReport";
 import { redactKnown } from "./redactKnown";
 
@@ -349,6 +349,44 @@ export class MusicService {
     const now = this.#deps.clock();
     this.#pending.push({ kind: "key", key: key4, madeAt: clockInRange(now) ? now : null });
     await this.#flush();
+  }
+
+  /**
+   * The way out of a damaged quota log (3c.6, `music.recoverQuotaLog`), which the window offers only behind the owner's
+   * confirmation: the ledger puts the file aside and starts a new log that counts as the limit spent now, so the quota is
+   * closed for exactly 31 days. Sends nothing. The key the engine holds as rejected is carried into the new log, so it
+   * still reads as rejected after a restart. Announces the new status (`music.changed`) before it answers. Refuses a log
+   * that is not damaged (VALIDATION) and anything that cannot be done (MUSIC_UNAVAILABLE, with its cause); a write that
+   * fails leaves the damaged log as the log, still closed.
+   */
+  async recoverQuotaLog(): Promise<RefreshAnswer> {
+    if (this.#closing) return unavailable("shutting-down", "the engine is shutting down, so the quota log was not changed");
+    const ledger = this.#ledger;
+    if (ledger === null) return unavailable("no-music-folder", "the music folder is not available, so there is no quota log to recover");
+    const key = this.#deps.key();
+    const rejectedKey = key !== null && this.#deps.keyRejected() ? last4(key) : null;
+    let recovery: Recovery;
+    try {
+      recovery = await ledger.recover({ rejectedKey });
+    } catch (error) {
+      return unavailable("log-unwritable", `${error instanceof QuotaLogError ? error.message : "the quota log could not be recovered"}; the damaged log is still the log`);
+    }
+    if (!recovery.ok) {
+      switch (recovery.refusal) {
+        case "not-corrupt":
+          return fail("VALIDATION", "the quota log is not damaged, so nothing was changed");
+        case "unreadable":
+          return unavailable("log-unreadable", "the quota log could not be read, so nothing was changed");
+        case "clock": {
+          const now = this.#deps.clock();
+          return unavailable("clock", `the system clock reads ${describeClock(now)}, which is not a real date, so nothing was changed; set the date and time and try again`);
+        }
+      }
+    }
+    this.#say(`studio engine: a damaged quota log was put aside as ${recovery.quarantined}; it counts as ${MUSIC_QUOTA_LIMIT} requests now, so the next may leave in 31 days`);
+    this.#changed();
+    await this.#emitting;
+    return { ok: true, status: await this.status() };
   }
 
   /** The logger must never be what breaks the write path. */
