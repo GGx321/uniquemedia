@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { E2E_APP_NAME, e2eIdentityProblem, userDataFolderName } from "./e2eIdentity";
+import { E2E_APP_NAME, e2eIdentityProblem } from "./e2eIdentity";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -14,7 +14,7 @@ describe("e2eIdentityProblem", () => {
     expect(e2eIdentityProblem({ e2e: true, packaged: true, appName: "uniquemedia-studio" })).toContain("identity");
   });
 
-  test("accepts an unpackaged E2E run: it has no identity of its own, and its userData folder is separate (userDataFolderName)", () => {
+  test("accepts an unpackaged E2E run: it has no identity of its own, and main.ts gives it a userData folder of its own", () => {
     expect(e2eIdentityProblem({ e2e: true, packaged: false, appName: "Electron" })).toBeNull();
   });
 
@@ -24,10 +24,17 @@ describe("e2eIdentityProblem", () => {
   });
 });
 
-describe("userDataFolderName", () => {
-  test("an unpackaged E2E run gets a folder of its own, never the one dev runs use", () => {
-    expect(userDataFolderName(true)).not.toBe(userDataFolderName(false));
-    expect(userDataFolderName(false)).toBe("uniquemedia-studio-dev");
+const MAIN_SOURCE = readFileSync(join(import.meta.dirname, "main.ts"), "utf8");
+
+describe("main.ts wires the E2E identity", () => {
+  test("an unpackaged E2E run keeps its userData in a folder of its own, chosen inline behind the build flag", () => {
+    expect(MAIN_SOURCE).toContain('STUDIO_E2E ? "uniquemedia-studio-e2e-dev" : "uniquemedia-studio-dev"');
+  });
+
+  test("a refused identity stops the process: process.exit(1) follows app.exit(1), so nothing after it runs on Studio's userData", () => {
+    const refusal = /if \(identityProblem !== null\) \{([\s\S]*?)\n  \}\n\}/.exec(MAIN_SOURCE)?.[1] ?? "";
+    expect(refusal.indexOf("app.exit(1)")).toBeGreaterThanOrEqual(0);
+    expect(refusal.indexOf("process.exit(1)")).toBeGreaterThan(refusal.indexOf("app.exit(1)"));
   });
 });
 

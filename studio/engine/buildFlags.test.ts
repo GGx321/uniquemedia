@@ -111,6 +111,15 @@ describe("the E2E build flag", () => {
     expect(main).not.toContain(SWITCH);
     expect(main).not.toContain("__STUDIO_E2E__");
   });
+
+  test("a normal build folds the E2E-only data folder and identity guard away; an E2E build keeps them", async () => {
+    const normal = await mainOf(normalDir);
+    expect(normal).not.toContain("uniquemedia-studio-e2e-dev");
+    expect(normal).not.toContain("Studio E2E");
+    const e2e = await mainOf(e2eDir);
+    expect(e2e).toContain("uniquemedia-studio-e2e-dev");
+    expect(e2e).toContain("Studio E2E");
+  });
 });
 
 // Every debug door (remote debugging, DevTools, the renderer URL from the

@@ -21,7 +21,7 @@ import type { EventMessage } from "../shared/engine";
 import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { installProcessGuards } from "../engine/processGuards";
-import { e2eIdentityProblem, userDataFolderName } from "./e2eIdentity";
+import { e2eIdentityProblem } from "./e2eIdentity";
 import { engineEnv } from "./engineEnv";
 import { handleExportFolderCommand } from "./exportFolderFlow";
 import { handleRevealCommand } from "./revealFlow";
@@ -67,7 +67,7 @@ const devServerUrl = STUDIO_DEV ? process.env.ELECTRON_RENDERER_URL : undefined;
 // "Electron" folder.
 const userDataSwitch = app.commandLine.getSwitchValue("user-data-dir");
 if (userDataSwitch !== "") app.setPath("userData", resolve(userDataSwitch));
-else if (!app.isPackaged) app.setPath("userData", join(app.getPath("appData"), userDataFolderName(STUDIO_E2E)));
+else if (!app.isPackaged) app.setPath("userData", join(app.getPath("appData"), STUDIO_E2E ? "uniquemedia-studio-e2e-dev" : "uniquemedia-studio-dev"));
 
 // An E2E build packaged under Studio's own identity would share Studio's userData (settings, library, ledger): it does not start.
 // Inside `if (STUDIO_E2E)` so a production bundle drops it whole: `isPackaged` decides nothing there but where unpackaged data lives.
@@ -76,6 +76,8 @@ if (STUDIO_E2E) {
   if (identityProblem !== null) {
     console.error(`studio: ${identityProblem}`);
     app.exit(1);
+    // `app.exit` does not stop this module: without this, the code below (the single-instance lock, the window) could still run on Studio's own userData.
+    process.exit(1);
   }
 }
 
