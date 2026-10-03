@@ -754,6 +754,9 @@ export const TrackHighlight = z.strictObject({ ms: Count, likelyDefault: z.boole
  * One trending track as the editor lists it (K23). Never a URL, a path or a hash: the audio and the cover are asked for
  * by id through `studio-media://track/<trackId>` and `studio-media://cover/<trackId>`. `highlights` are ascending, with
  * the likely default (at most one) last, because they arrive unsorted from the API and "first" must not mean "earliest".
+ * `durationMs` is the length the store's decode PROVED (`music.list` lists stored tracks only), the length a render and
+ * `montages.get` judge a start by (`track-too-short`): never the API's claim, which may differ by up to max(2 s, 5 %).
+ * A highlight at or past that end is not offered.
  */
 export const TrackSummary = z
   .strictObject({

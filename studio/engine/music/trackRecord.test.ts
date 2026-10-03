@@ -193,6 +193,37 @@ describe("a track as the editor lists it", () => {
     expect(toSummary({ ...entry, cover: { state: "none" } }).hasCover).toBe(false);
   });
 
+  /** Stored audio whose decode proved `decodedMs`. */
+  const storedAudio = (decodedMs: number): TrackEntry["audio"] => ({ state: "stored", bytes: 1_000, sha256: "a".repeat(64), audioObjectType: 5, sampleRate: 44100, channels: 2, decodedMs });
+
+  test("a stored track's length is the one its decode proved, not the list's claim: the render judges by that one", () => {
+    // decodeCheck lets the two differ by up to max(2 s, 5 %).
+    expect(toSummary({ ...entry, durationMs: 30_000, audio: storedAudio(29_100) }).durationMs).toBe(29_100);
+    expect(toSummary({ ...entry, durationMs: 30_000, audio: storedAudio(31_400) }).durationMs).toBe(31_400);
+  });
+
+  test("a highlight past the proven end is not offered: nothing can be played from it", () => {
+    const summary = toSummary({
+      ...entry,
+      durationMs: 30_000,
+      highlights: [
+        { ms: 12_000, likelyDefault: false },
+        { ms: 29_500, likelyDefault: false },
+        { ms: 1_500, likelyDefault: true },
+      ],
+      audio: storedAudio(29_100),
+    });
+    expect(summary.highlights).toEqual([
+      { ms: 12_000, likelyDefault: false },
+      { ms: 1_500, likelyDefault: true },
+    ]);
+    expect(TrackSummary.safeParse(summary).success).toBe(true);
+  });
+
+  test("a track whose audio is not stored (never listed) keeps the list's claim", () => {
+    expect(toSummary({ ...entry, durationMs: 30_000, audio: { state: "failed", reason: "decode:duration-mismatch" } }).durationMs).toBe(30_000);
+  });
+
   test("a track with no title gets one, so the summary stays valid", () => {
     const summary = toSummary({ ...entry, title: null });
     expect(TrackSummary.safeParse(summary).success).toBe(true);

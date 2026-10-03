@@ -208,3 +208,34 @@ describe("a montage's trending track", () => {
     expect((await spec(mock, "4199287736976999", 0)).issues).toEqual([{ code: "track-unavailable", path: ["music"] }]);
   });
 });
+
+// 3d.3b verify: the decode may prove a length up to max(2 s, 5 %) away from the list's claim. The store, the list and every
+// judgement go by the PROVEN one, so the editor never offers a start the render then refuses.
+describe("a track whose decode proved another length than the list claimed", () => {
+  const apart = seed(1, { declaredMs: 30_000, durationMs: 29_100, highlightsMs: [12_000, 29_500, 1_500], peaks: Array.from({ length: 582 }, (_, i) => (i * 7) % 1000) });
+
+  test("music.list gives the proven length, and no highlight past it", async () => {
+    const [track] = (await list(makeMock({ music: { tracks: [apart] } }))).tracks;
+    expect(track?.durationMs).toBe(29_100);
+    expect(track?.highlights).toEqual([
+      { ms: 12_000, likelyDefault: false },
+      { ms: 1_500, likelyDefault: true },
+    ]);
+  });
+
+  test("montages.get judges a start by the proven length: the last start that fits it is fine, one more is track-too-short", async () => {
+    const mock = makeMock({ music: { tracks: [apart] } });
+    const created = (await unwrap(mock.client.request("montages.create", { avatarId: MIA.avatarId, photoIds: [PHOTO_IDS[0] ?? ""] }))).montage;
+    const total = created.spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
+    const judged = async (startMs: number) => {
+      await unwrap(mock.client.request("montages.save", { montageId: created.montageId, spec: { ...created.spec, music: { source: "trending", trackId: apart.trackId, startMs } }, name: null }));
+      return (await unwrap(mock.client.request("montages.get", { montageId: created.montageId }))).issues;
+    };
+    expect(await judged(29_100 - total)).toEqual([]);
+    expect(await judged(29_100 - total + 1)).toEqual([{ code: "track-too-short", path: ["music"] }]);
+  });
+
+  test("a claim the decode proved too long the other way is listed by the proven length too", async () => {
+    expect((await list(makeMock({ music: { tracks: [seed(2, { declaredMs: 30_000, durationMs: 31_400 })] } }))).tracks[0]?.durationMs).toBe(31_400);
+  });
+});

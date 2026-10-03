@@ -41,3 +41,12 @@ export function windowPeaks(envelope: { stepMs: number; peaks: readonly number[]
   }
   return out;
 }
+
+/**
+ * A stored track as `music.list` describes it (K23, 3d.3b verify): its length is the one its decode PROVED (`decodedMs`),
+ * the length every render and `montages.get` judge a start by, never the list's claim (the decode lets the two differ by
+ * up to max(2 s, 5 %)); and a highlight at or past that end is dropped, as `normaliseHighlights` drops one past the claim.
+ */
+export function provenShape(highlights: readonly { ms: number; likelyDefault: boolean }[], decodedMs: number): { durationMs: number; highlights: { ms: number; likelyDefault: boolean }[] } {
+  return { durationMs: decodedMs, highlights: highlights.filter((highlight) => highlight.ms < decodedMs).map((highlight) => ({ ms: highlight.ms, likelyDefault: highlight.likelyDefault })) };
+}

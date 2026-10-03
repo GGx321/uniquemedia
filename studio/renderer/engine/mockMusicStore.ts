@@ -1,5 +1,5 @@
 import { MAX_LISTED_TRACKS, type TrackSummary } from "../../shared/engine";
-import { normaliseHighlights, windowPeaks } from "../../shared/music/trackShape";
+import { normaliseHighlights, provenShape, windowPeaks } from "../../shared/music/trackShape";
 
 // The dev mock's track store (3d.1b): what the engine's `TrackStore` keeps and answers for `music.list` and `music.peaks`
 // (studio/engine/music/trackStore.ts), as plain data. The highlights and the waveform window go through the SAME functions
@@ -11,8 +11,13 @@ export interface MockTrackSeed {
   readonly trackId: string;
   readonly title: string;
   readonly artist: string | null;
-  /** The proven length of the audio, in ms (the store's `decodedMs`, which is also what the list claimed). */
+  /** The proven length of the audio, in ms: the store's `decodedMs`, what `music.list` gives and every judgement goes by. */
   readonly durationMs: number;
+  /**
+   * What the list CLAIMED, when the decode proved another length (the engine's decode allows up to max(2 s, 5 %) apart);
+   * absent, the same as `durationMs`. Like the engine, the highlights are first cut at the claim, then at the proven end.
+   */
+  readonly declaredMs?: number;
   readonly explicit: boolean;
   /** As the list's API sent them: unsorted, with repeats and starts past the end. The mock offers them as the store does. */
   readonly highlightsMs: readonly number[];
@@ -31,14 +36,16 @@ export interface MockTrack {
 const ENVELOPE_STEP_MS = 50;
 
 export function mockTrack(seed: MockTrackSeed): MockTrack {
+  // As the engine: highlights normalised against the list's claim when the list is stored, the summary cut at the proven length.
+  const shape = provenShape(normaliseHighlights(seed.highlightsMs, seed.declaredMs ?? seed.durationMs), seed.durationMs);
   return {
     summary: {
       trackId: seed.trackId,
       title: seed.title,
       artist: seed.artist,
-      durationMs: seed.durationMs,
+      durationMs: shape.durationMs,
       explicit: seed.explicit,
-      highlights: normaliseHighlights(seed.highlightsMs, seed.durationMs),
+      highlights: shape.highlights,
       hasCover: seed.hasCover,
     },
     peaks: seed.peaks,

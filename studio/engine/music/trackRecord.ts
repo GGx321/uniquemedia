@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Count, Id, MAX_TRACK_HIGHLIGHTS, type TrackSummary } from "../../shared/engine";
+import { provenShape } from "../../shared/music/trackShape";
 import { CLOCK_MAX_MS, CLOCK_MIN_MS } from "./quotaLedger";
 import { signedUrlExpiresAtMs } from "./signedUrl";
 
@@ -99,15 +100,21 @@ export function expiresAtFor(url: string, fetchedAt: number): number {
 
 const UNTITLED = "Untitled track";
 
-/** A stored track as `music.list` answers it: the summary of K23, with no URL, path or hash. */
+/**
+ * A stored track as `music.list` answers it: the summary of K23, with no URL, path or hash. Its length is the one the
+ * decode proved (`decodedMs`), which renders and `montages.get` judge a start by, not the list's claim; a highlight past
+ * that end is dropped (`provenShape`, shared with the dev mock). An entry whose audio is not stored (never listed) keeps the claim.
+ */
 export function toSummary(entry: TrackEntry): TrackSummary {
+  const highlights = entry.highlights.map((highlight) => ({ ms: highlight.ms, likelyDefault: highlight.likelyDefault }));
+  const shape = entry.audio.state === "stored" ? provenShape(highlights, entry.audio.decodedMs) : { durationMs: entry.durationMs, highlights };
   return {
     trackId: entry.trackId,
     title: entry.title ?? UNTITLED,
     artist: entry.artist,
-    durationMs: entry.durationMs,
+    durationMs: shape.durationMs,
     explicit: entry.explicit,
-    highlights: entry.highlights.map((highlight) => ({ ms: highlight.ms, likelyDefault: highlight.likelyDefault })),
+    highlights: shape.highlights,
     hasCover: entry.cover.state === "stored",
   };
 }
