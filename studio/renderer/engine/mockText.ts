@@ -38,9 +38,14 @@ const KEPT_PICTURES = 64;
  */
 const RASTER_MESSAGE_PREFIX = "text rasteriser: ";
 
-/** The advance of a character at 100 px: 0.55 em, the width of an average Latin letter. */
-const ADVANCE_PER_CHAR = 55;
-/** The plaque's padding in ems (template.ts): across, above, below. Every style gets the plaque's, so the mock's box is never smaller than the engine's. */
+/**
+ * The average advance of a character in ems, per font: about the median over typical lowercase and mixed-case captions, measured on the
+ * real renderer (manrope and oswald a little under it, so a caption near the 929 px limit does not wrap in the mock while the engine keeps one line) (box width less the plaque's padding, over characters and font size). It is an average: a caption of narrow letters
+ * (iiii) or wide ones (WWWW) is off by tens of percent. `engine/text/caption/mockBox.test.ts` holds typical captions to +-15 % of the
+ * engine's width and height; the editor must never rely on the mock's numbers (reconciliation, 5c).
+ */
+const ADVANCE_EM: Readonly<Record<TextLayer["font"], number>> = { manrope: 0.5, playfair: 0.48, oswald: 0.41, ptmono: 0.6, caveat: 0.35 };
+/** The plaque's padding in ems (template.ts): across, above, below. Every style gets the plaque's: «Обводка» and «Без фона» add a stroke or a blur margin instead, so the box of those is estimated, not matched. */
 const PAD_ACROSS_EM = 0.5;
 const PAD_ABOVE_EM = 0.13;
 const PAD_BELOW_EM = 0.21;
@@ -62,7 +67,7 @@ function boxOf(layer: TextLayer): Box {
   const layout = layoutCaption({
     text: layer.value,
     scale: layer.scale,
-    measure: (run) => [...run].length * ADVANCE_PER_CHAR,
+    measure: (run) => [...run].length * ADVANCE_EM[layer.font] * 100,
     emojiAspect: () => 1,
   });
   const width = Math.min(FRAME_W, Math.ceil(layout.textWidth + 2 * PAD_ACROSS_EM * layout.fontSize));
@@ -128,7 +133,13 @@ export class MockTextPreviews {
     this.#running = call;
     call.started = true;
     const finish = (): void => {
-      const outcome = this.#draw(call.layer);
+      // Whatever breaks in a way nobody foresaw frees the lane and is answered INTERNAL with no message (the engine's own rule: a message may carry a path).
+      let outcome: MockPreviewOutcome;
+      try {
+        outcome = this.#draw(call.layer);
+      } catch {
+        outcome = { ok: false, error: { code: "INTERNAL", detail: "the text preview failed unexpectedly" } };
+      }
       this.#running = null;
       if (this.#latest.get(call.layer.layerId) === call) this.#latest.delete(call.layer.layerId);
       call.settle(outcome);

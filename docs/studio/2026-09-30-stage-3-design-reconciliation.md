@@ -786,8 +786,11 @@ depend on any of it:
   behind another is answered `TEXT_PREVIEW_SUPERSEDED` at once when a newer one of the same layer arrives (ignore it silently: it is
   not an error, `requestTextPreview` reports it as `superseded`), a running one is never cancelled, other layers never supersede each
   other, and `TEXT_INVALID` + `captionIssue` / `RENDER_FAILED` come from the same shared rules and layout. NOT the same: the **box**
-  (an estimate from arithmetic widths, 0.55 em a character: never test or design on its numbers; it is a whole-pixel box inside the
-  frame), the **picture** (a placeholder PNG of the box: a bar per line on the plaque or in the text colour, not the caption; its
+  (an estimate: the shared layout over a per-font average advance, 0.35 em a character for Caveat to 0.6 for PT Mono, plus the
+  plaque's padding. Measured against the real renderer: typical captions land within 15 % in width and height (pinned by
+  `engine/text/caption/mockBox.test.ts`), but a caption of narrow letters or of wide capitals is off by tens of percent, and one near
+  the 929 px limit may wrap in one and not in the other, which changes the height by a line. Never test or design on its numbers: it
+  is a whole-pixel box inside the frame, and placement and clamping are verified on the real engine, 3d.4), the **picture** (a placeholder PNG of the box: a bar per line on the plaque or in the text colour, not the caption; its
   address is the mock client's `textPreviewUrl`, a data URL, where the engine's is `studio-media://text/<previewId>`), the **emoji**
   (the mock draws every well-formed one, the engine refuses a cluster its font lacks with `emoji-missing`) and the **time** (the demo
   build draws in 120 ms; the engine in about 10 to 300 ms). The 64 pictures kept and their eviction (a layer's newest last) are the
