@@ -1,11 +1,12 @@
-import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { CommandMessage, EventMessage, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
+import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
+import { handleMediaPickCommand, isMediaPickCommand, type MediaImportFlowDeps } from "../../../main/mediaImportFlow";
 import { SettingsStore } from "../../../main/settingsStore";
 import { EngineReply } from "../../control";
 import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg";
-import { MockEngine, type MockExportPick } from "../../../renderer/engine/mockEngine";
+import { MockEngine, type MockExportPick, type MockMediaPick } from "../../../renderer/engine/mockEngine";
 import { MIA, NORA, scenePhoto, SOFIA } from "../../../renderer/engine/mockEngine.testkit";
 import { ManualScheduler } from "../../../renderer/engine/scheduler";
 import { manifestTraits } from "../../avatars/records";
@@ -67,6 +68,8 @@ export interface Control {
   exportDialog(answer: ExportDialog): Promise<void>;
   /** The export folder's marker becomes unreadable (`damaged`), or is put back as it was (`intact`). */
   exportMarker(state: "damaged" | "intact"): Promise<void>;
+  /** 3f.1: what main's own-media dialog answers the next `media.pickImport` (used once; with nothing said it is cancelled). */
+  mediaDialog(answer: MediaDialog): Promise<void>;
   /** 3c.6: the owner stored a RapidAPI key (the engine is told as main tells it after «Сохранить»). */
   musicKey(): Promise<void>;
   /** 3c.6: the flashapi quota log on disk gets a complete line that cannot be read (`corrupt`), or a folder where the file was (`unreadable`). */
@@ -93,6 +96,38 @@ const PARITY_MUSIC_KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
  * damaged (`damaged`), or a folder inside the library (`insideLibrary`).
  */
 export type ExportDialog = "cancel" | "fresh" | "first" | "moved" | "missing" | "file" | "damaged" | "insideLibrary";
+
+/**
+ * The owner's pick in main's own-media dialog (3f.1): nothing (`cancel`), or seven files at once, each a different way for the boundary to
+ * turn it away (`mixed`, see MIXED_MEDIA). The real rig makes the files on disk; the mock is told the verdict for each name, and holds no path.
+ */
+export type MediaDialog = "cancel" | "mixed";
+
+/** The seven files of the `mixed` pick, in the order the dialog returns them, with the verdict the boundary gives each (no importer exists yet, so a good photo is `not-yet-supported`). */
+const MIXED_MEDIA: readonly MockMediaPick[] = [
+  { name: "summer.jpg", reason: "not-yet-supported" },
+  { name: "notes.jpg", reason: "format" },
+  { name: "album.jpg", reason: "not-a-file" },
+  { name: "empty.jpg", reason: "empty" },
+  { name: "huge.jpg", reason: "too-large" },
+  { name: "IMG_0001.HEIC", reason: "heic" },
+  { name: "gone.jpg", reason: "not-a-file" },
+];
+
+/** Writes the `mixed` pick's files into `folder` and returns their paths, in the dialog's order. */
+async function writeMixedMedia(folder: string): Promise<string[]> {
+  await mkdir(folder, { recursive: true });
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(60, 7)]);
+  const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypheic"), Buffer.alloc(60)]);
+  await writeFile(join(folder, "summer.jpg"), jpeg);
+  await writeFile(join(folder, "notes.jpg"), "just some notes, not a photo");
+  await mkdir(join(folder, "album.jpg"), { recursive: true });
+  await writeFile(join(folder, "empty.jpg"), "");
+  await writeFile(join(folder, "huge.jpg"), jpeg);
+  await truncate(join(folder, "huge.jpg"), MEDIA_BYTE_CAPS.photo + 1);
+  await writeFile(join(folder, "IMG_0001.HEIC"), heic);
+  return MIXED_MEDIA.map((file) => join(folder, file.name));
+}
 
 /** What a scenario may ask of a rig before it starts. */
 export interface RigOptions {
@@ -221,6 +256,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
       freeSpace: (bytes) => engine.setExportFreeBytes(bytes),
       exportMarker: async (state) => engine.setExportDisk(state === "damaged" ? { status: "unavailable", reason: "invalid-marker" } : { status: "ok" }),
       exportDialog: async (answer) => engine.pickExportFolderNext(mockDialog(answer, writable, ++dialogs)),
+      mediaDialog: async (answer) => engine.pickMediaNext(answer === "cancel" ? null : MIXED_MEDIA),
       // The mock answers main's own key command itself, as the dev build does.
       musicKey: async () => {
         await engine.request(CommandMessage.parse({ v: 5, id: `msg-${String(++messages).padStart(6, "0")}`, kind: "command", type: "settings.setMusicKey", payload: { key: PARITY_MUSIC_KEY } }));
@@ -520,6 +556,26 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     home: () => dir,
     platform: process.platform,
   };
+  // Main's half of `media.pickImport` (3f.1): the real flow (main/mediaImportFlow.ts) over the real engine, with the dialog answered by the
+  // rig and the engine's staging area inside the rig's library. No importer is wired, as in the app until 3f.2, so a good file is refused.
+  let nextMedia: string[] | null = null;
+  const mediaDeps: MediaImportFlowDeps = {
+    pickFiles: async () => {
+      const pick = nextMedia;
+      nextMedia = null;
+      return pick;
+    },
+    engine: {
+      importMedia: async (file) => {
+        const callId = `call-${String(++hostCalls).padStart(8, "0")}`;
+        await engine.receive({ kind: "control", type: "media.import", callId, ...file });
+        const reply = posted.map((m) => EngineReply.safeParse(m)).find((r) => r.success && r.data.callId === callId);
+        if (reply === undefined || !reply.success) throw new Error("the engine did not answer media.import");
+        return { error: reply.data.error ?? null, mediaJobId: reply.data.mediaJobId, mediaReason: reply.data.mediaReason };
+      },
+    },
+    platform: process.platform,
+  };
   let dialogs = 0;
   const markerPath = join(exportDir, EXPORT_MARKER_FILE);
   let markerText: string | null = null;
@@ -535,6 +591,11 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         const response = await handleExportFolderCommand(asked.data, mainDeps);
         await Promise.all(told.splice(0));
         return answerOf(ResponseMessage.parse(response));
+      }
+      if (type === "media.pickImport") {
+        const asked = CommandMessage.safeParse({ v: 5, id: `msg-${String(++hostCalls).padStart(6, "0")}`, kind: "command", type, payload });
+        if (!asked.success || !isMediaPickCommand(asked.data)) return { ok: false, error: { code: "VALIDATION", detail: `${type}: the payload breaks the contract` } };
+        return answerOf(ResponseMessage.parse(await handleMediaPickCommand(asked.data, mediaDeps)));
       }
       // A cancel lands only on renders held at the gate, as the mock's renders are between its steps. A render still in its
       // export-folder prep (\`guarded\`) ends on the abort through promises alone, before the answer is back and before
@@ -612,6 +673,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
           await mkdir(nextPick);
           if (answer === "damaged") await writeFile(join(nextPick, EXPORT_MARKER_FILE), "{ not ours");
         }
+      },
+      mediaDialog: async (answer) => {
+        nextMedia = answer === "cancel" ? null : await writeMixedMedia(join(dir, `picked-media-${++dialogs}`));
       },
       // Main's half of «Сохранить»: the key is stored, then handed to the engine as the owner's (a key line in the quota log).
       musicKey: () => engine.applyControl({ kind: "control", type: "musicKey.set", key: PARITY_MUSIC_KEY, origin: "user" }),

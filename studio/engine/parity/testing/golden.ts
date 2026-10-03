@@ -1854,4 +1854,18 @@ export const GOLDEN: Record<string, string[]> = {
     "> videos.get {\"videoId\":\"video#1\"}",
     "< ok {\"video\":{\"videoId\":\"video#1\",\"avatarId\":\"avatar#1\",\"kind\":\"collage2\",\"durationMs\":8000,\"bytes\":\"<masked>\",\"createdAt\":\"<masked>\",\"relPath\":\"Mia/<date>_collage2_001.mp4\",\"fileState\":\"present\",\"montageId\":\"montage#1\",\"photoCount\":2,\"music\":{\"title\":\"Parity track one\",\"artist\":\"Parity artist\"},\"hasPoster\":false},\"facts\":{\"title\":\"с музыкой\",\"trackId\":\"1395615172492847\",\"firstClip\":{\"kind\":\"collage\",\"layout\":\"collage2\",\"photoIds\":[\"photo#1\",\"photo#3\"]}}}",
   ],
+  "own media: a cancelled dialog changes nothing, and a pick lists each file by name with the reason the boundary gave it": [
+    "# the dialog is cancelled",
+    "> media.pickImport {\"kind\":\"photo\"}",
+    "< ok {\"picked\":false}",
+    "# seven files at once: a photo no importer takes yet, a script, a folder, an empty file, one over the cap, a HEIC, one that is gone",
+    "> media.pickImport {\"kind\":\"photo\"}",
+    "< ok {\"picked\":true,\"jobIds\":[],\"refused\":[{\"name\":\"summer.jpg\",\"reason\":\"not-yet-supported\"},{\"name\":\"notes.jpg\",\"reason\":\"format\"},{\"name\":\"album.jpg\",\"reason\":\"not-a-file\"},{\"name\":\"empty.jpg\",\"reason\":\"empty\"},{\"name\":\"huge.jpg\",\"reason\":\"too-large\"},{\"name\":\"IMG_0001.HEIC\",\"reason\":\"heic\"},{\"name\":\"gone.jpg\",\"reason\":\"not-a-file\"}]}",
+    "# a pick is used once: the next dialog is a cancel",
+    "> media.pickImport {\"kind\":\"photo\"}",
+    "< ok {\"picked\":false}",
+    "# the window cannot name a file",
+    "> media.pickImport {\"kind\":\"photo\",\"path\":\"/etc/passwd\"}",
+    "< error VALIDATION {}",
+  ],
 };

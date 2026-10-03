@@ -69,7 +69,7 @@ const photo = (w: World, n: number): string => {
   return id;
 };
 
-export const SCENARIOS: readonly Scenario[] = [
+const BASE_SCENARIOS: readonly Scenario[] = [
   {
     name: "create, save, render, progress, done, list",
     async run(t, w) {
@@ -1003,6 +1003,30 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
 ];
+
+// ---------- 3f.1: the own-media import boundary ----------
+
+/** Appended after the 3d.1b scenarios: the golden transcripts above are append-only. */
+const OWN_MEDIA_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "own media: a cancelled dialog changes nothing, and a pick lists each file by name with the reason the boundary gave it",
+    async run(t, _w, control) {
+      t.note("the dialog is cancelled");
+      await control.mediaDialog("cancel");
+      await t.call("media.pickImport", { kind: "photo" });
+      t.note("seven files at once: a photo no importer takes yet, a script, a folder, an empty file, one over the cap, a HEIC, one that is gone");
+      await control.mediaDialog("mixed");
+      await t.call("media.pickImport", { kind: "photo" });
+      t.note("a pick is used once: the next dialog is a cancel");
+      await t.call("media.pickImport", { kind: "photo" });
+      t.note("the window cannot name a file");
+      await t.call("media.pickImport", { kind: "photo", path: "/etc/passwd" });
+    },
+  },
+];
+
+/** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {
