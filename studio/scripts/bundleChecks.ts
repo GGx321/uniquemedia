@@ -31,6 +31,9 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "moveExportFolder",
   // 3e.3: the mock's stand-in for main's folder dialog.
   "pickExportFolderNext",
+  // 3c.6: the mock's scripted music refresh failure and its stand-in for a damaged quota log.
+  "failNextMusicRefresh",
+  "setMusicQuotaLog",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",

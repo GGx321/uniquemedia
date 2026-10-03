@@ -28,6 +28,10 @@ import {
   MAX_LISTED_RUNS,
   type MoneyHalt,
   type MoneyStatus,
+  MUSIC_QUOTA_LIMIT,
+  MUSIC_QUOTA_WINDOW_DAYS,
+  type MusicQuotaLog,
+  type MusicStatus,
   OkResponse,
   type PhotoQaSummary,
   type PhotoSummary,
@@ -205,6 +209,8 @@ export interface MockEngineOptions {
   stepMs?: number;
   apiKey?: ApiKeyStatus;
   musicKey?: MusicKeyStatus;
+  /** The music list and the flashapi quota log the mock starts with (3c.6); none of either by default. */
+  music?: MockMusicOptions;
   /** How many renders run at once (the setting's own values); «auto» is ONE in the mock, so a second render is visibly queued. */
   renderConcurrency?: RenderConcurrency;
   eventCapacity?: number;
@@ -233,6 +239,74 @@ export interface MockEngineOptions {
 interface MockRunSlot {
   category: RunCategory;
   end: "done" | "failed" | null;
+}
+
+/**
+ * What the mock's music starts with (3c.6): the quota log's sends (each as days before the mock's start, oldest first), the
+ * list the store holds, flashapi's last own figure, and the state of the log itself.
+ */
+export interface MockMusicOptions {
+  sendsDaysAgo?: readonly number[];
+  list?: { fetchedAt: string; trackCount: number; bytesOnDisk: number };
+  serverRemaining?: { value: number; daysAgo: number };
+  quotaLog?: MusicQuotaLog;
+}
+
+/** The mock's music: what the engine keeps in its quota log and its track store, as plain numbers (mock clock, epoch ms). */
+interface MockMusic {
+  sends: number[];
+  serverRemaining: { value: number; at: number } | null;
+  quotaLog: MusicQuotaLog;
+  list: { fetchedAt: number; trackCount: number; bytesOnDisk: number } | null;
+  refresh: MusicStatus["refresh"];
+  /** How a scripted refresh ends instead of with a new list (`failNextMusicRefresh`). */
+  nextFailure: EngineError | null;
+}
+
+const DAY_MS = 24 * 3600 * 1000;
+const MUSIC_WINDOW_MS = MUSIC_QUOTA_WINDOW_DAYS * DAY_MS;
+/** A mock refresh's steps: the list request, then the downloads (a track and a cover each, 30 tracks): the engine's total. */
+const MOCK_MUSIC_TOTAL = 61;
+const MOCK_MUSIC_STEPS = [1, 31, 61] as const;
+/** What a mock refresh stores: 30 tracks of about 1.7 MB each. */
+const MOCK_MUSIC_LIST = { trackCount: 30, bytesOnDisk: 52_400_000 } as const;
+
+/** The dev build's music: a list fetched three days before the mock's start, 12 requests in the window, flashapi's own 18 left. */
+const DEMO_MUSIC: MockMusicOptions = {
+  sendsDaysAgo: [22, 19, 17, 15, 12, 10, 9, 7, 5, 4, 3, 1],
+  list: { fetchedAt: "2026-09-21T11:02:00.000Z", trackCount: 30, bytesOnDisk: 94_000_000 },
+  serverRemaining: { value: 18, daysAgo: 1 },
+};
+
+/** The mock's music at its start: the seeded sends (days before `now`), the list, flashapi's figure and the log's state. */
+function mockMusic(options: MockMusicOptions, now: number): MockMusic {
+  return {
+    sends: (options.sendsDaysAgo ?? []).map((days) => now - days * DAY_MS),
+    serverRemaining: options.serverRemaining === undefined ? null : { value: options.serverRemaining.value, at: now - options.serverRemaining.daysAgo * DAY_MS },
+    quotaLog: options.quotaLog ?? "ok",
+    list: options.list === undefined ? null : { fetchedAt: Date.parse(options.list.fetchedAt), trackCount: options.list.trackCount, bytesOnDisk: options.list.bytesOnDisk },
+    refresh: { state: "idle" },
+    nextFailure: null,
+  };
+}
+
+/**
+ * What the engine's quota log says at `now` (studio/engine/music/quotaLedger.ts `summarize`), from the mock's numbers: a send
+ * is in the window while `now < at + 31 days`; 30 sends, or a last server figure of 0 within the window, refuse a request.
+ */
+function mockQuota(music: MockMusic, now: number): { sent: number; refusal: "quota" | "floor" | null; nextFreeAt: number | null; serverRemaining: number | null } {
+  const windowStart = now - MUSIC_WINDOW_MS;
+  const times = music.sends.filter((at) => at > windowStart).sort((a, b) => a - b);
+  const sent = times.length;
+  const server = music.serverRemaining;
+  const floorLiftsAt = server !== null && server.value === 0 ? server.at + MUSIC_WINDOW_MS : null;
+  const floorActive = floorLiftsAt !== null && now < floorLiftsAt;
+  const countBlocked = sent >= MUSIC_QUOTA_LIMIT;
+  const countLiftsAt = countBlocked ? (times[sent - MUSIC_QUOTA_LIMIT] ?? 0) + MUSIC_WINDOW_MS : null;
+  const blocked = [countLiftsAt, floorActive ? floorLiftsAt : null].filter((at): at is number => at !== null);
+  const oldest = times[0];
+  const nextFreeAt = blocked.length > 0 ? Math.max(...blocked) : oldest === undefined ? null : oldest + MUSIC_WINDOW_MS;
+  return { sent, refusal: countBlocked ? "quota" : floorActive ? "floor" : null, nextFreeAt, serverRemaining: server !== null && server.at > windowStart ? server.value : null };
 }
 
 /** A persisted photo run (T6): it outlives its jobs, so a resume is a new job of the same run. */
@@ -553,6 +627,7 @@ export class MockEngine implements EngineBridge {
   private exportPick: MockExportPick | null | undefined = undefined;
   private unscriptedPicks = 0;
   private nextRenderFailure: { error: EngineError; at: "encode" | "saving" } | null = null;
+  private music: MockMusic;
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
@@ -564,7 +639,8 @@ export class MockEngine implements EngineBridge {
     this.encryptionAvailable = apiKey.encryptionAvailable;
     this.settings = {
       apiKey,
-      musicKey: options.musicKey ?? { stored: false, last4: null, rejected: false },
+      // The dev build shows the Settings «Музыка» card as the artboard draws it: a stored RapidAPI key (3c.6).
+      musicKey: options.musicKey ?? (options.preset === "demo" ? { stored: true, last4: "7c1e", rejected: false } : { stored: false, last4: null, rejected: false }),
       monthlyBudgetMicros: options.money?.monthlyBudgetMicros ?? 10_000_000,
       libraryPath: "/Users/studio/Studio/library",
       imageModel: "x-ai/grok-imagine-image-2.0",
@@ -585,6 +661,7 @@ export class MockEngine implements EngineBridge {
     this.photos = [...(options.photos ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     this.skippedPhotos = { ...options.skippedPhotos };
     if (options.preset === "demo" && options.photos === undefined) this.seedDemoRun();
+    this.music = mockMusic(options.music ?? (options.preset === "demo" ? DEMO_MUSIC : {}), this.clock);
   }
 
   /** The dev build's Mia: a stopped run of 12 photos, 8 of them drawn, 4 left to resume. */
@@ -671,6 +748,22 @@ export class MockEngine implements EngineBridge {
     if (!this.settings.musicKey.stored) return;
     this.settings = { ...this.settings, musicKey: { ...this.settings.musicKey, rejected: true } };
     this.emitSettingsChanged();
+  }
+
+  /**
+   * 3c.6: the next music refresh that is let through ends with `error` instead of a new list, after its request (it stays
+   * counted, as a request that left does). A MUSIC_KEY_REJECTED marks the key rejected, as the engine's 401 does.
+   */
+  failNextMusicRefresh(error: EngineError): void {
+    this.music = { ...this.music, nextFailure: error };
+  }
+
+  /**
+   * 3c.6: the quota log as the disk left it: a damaged line (`corrupt`), a file that cannot be read (`unreadable`), a line
+   * waiting to be written (`held`), or sound again (`ok`). Nothing is announced: the engine finds out when it reads the log.
+   */
+  setMusicQuotaLog(state: MusicQuotaLog): void {
+    this.music = { ...this.music, quotaLog: state };
   }
 
   setEncryptionAvailable(available: boolean): void {
@@ -1322,13 +1415,16 @@ export class MockEngine implements EngineBridge {
       case "videos.reveal":
         return this.videosReveal(c, c.payload.videoId);
       case "music.status":
+        return this.ok(c, this.musicStatus());
       case "music.refresh":
+        return this.musicRefresh(c);
       case "music.recoverQuotaLog":
+        return this.musicRecover(c);
       case "montages.textPreview":
       case "music.list":
       case "music.peaks":
         // Text preview parity comes with the window's text tab (3d.5): the mock refuses it as the engine does for a command it lacks.
-        // Music parity comes with its engine (3c.4, mock parity 3d.1b); the mock has no handler for it yet.
+        // The list's tracks and their waveforms come with the editor's music tab (3d.5); the mock holds no track yet.
         return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
       case "montages.create":
         return this.montagesCreate(c, c.payload);
@@ -2560,6 +2656,87 @@ export class MockEngine implements EngineBridge {
   }
 
   /** Mirrors the real engine's #emitSettings: every settings command emits this, so generation-based resync (store.ts) is exercised in mock/dev mode too. */
+  // ---------- music (3c.6) ----------
+
+  /** The status as the engine's music service builds it from its quota log and its track store. */
+  private musicStatus(): MusicStatus {
+    const m = this.music;
+    const iso = (at: number | null): string | null => (at === null ? null : new Date(at).toISOString());
+    const list = m.list === null ? { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 } : { listFetchedAt: iso(m.list.fetchedAt), trackCount: m.list.trackCount, bytesOnDisk: m.list.bytesOnDisk };
+    // A log that cannot be read or trusted counts as the whole quota spent, as the engine's does.
+    if (m.quotaLog === "corrupt" || m.quotaLog === "unreadable") {
+      return { ...list, sentLast31d: MUSIC_QUOTA_LIMIT, limit: MUSIC_QUOTA_LIMIT, serverRemaining: null, nextFreeAt: null, refresh: m.refresh, quotaLog: m.quotaLog };
+    }
+    const quota = mockQuota(m, this.clock);
+    return { ...list, sentLast31d: Math.min(MUSIC_QUOTA_LIMIT, quota.sent), limit: MUSIC_QUOTA_LIMIT, serverRemaining: quota.serverRemaining, nextFreeAt: iso(quota.nextFreeAt), refresh: m.refresh, quotaLog: m.quotaLog };
+  }
+
+  /** `music.refresh {confirm: true}`, refused at no cost in the engine's order, else counted and answered running at once. */
+  private musicRefresh(c: CommandMessage): ResponseMessage {
+    const m = this.music;
+    if (m.refresh.state === "running") return this.fail(c, { code: "IN_FLIGHT", detail: "a music refresh is already running" });
+    const key = this.settings.musicKey;
+    if (!key.stored) return this.fail(c, { code: "MUSIC_KEY_MISSING", detail: "no RapidAPI key is stored" });
+    if (key.rejected) return this.fail(c, { code: "MUSIC_KEY_REJECTED", detail: "the stored RapidAPI key was rejected; replace it" });
+    if (m.quotaLog === "held") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-held", detail: "the quota log could not be written (a result or key change is still held), so nothing was sent; try again later" });
+    if (m.quotaLog === "corrupt") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-corrupt", detail: "the quota log has a line that cannot be read, so the request count cannot be trusted; nothing was sent" });
+    if (m.quotaLog === "unreadable") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-unreadable", detail: "the quota log could not be read; nothing was sent" });
+    const now = this.clock;
+    const quota = mockQuota(m, now);
+    if (quota.refusal !== null) {
+      const when = quota.nextFreeAt === null ? "later" : new Date(quota.nextFreeAt).toISOString();
+      return this.fail(c, {
+        code: "MUSIC_QUOTA_EXHAUSTED",
+        detail: quota.refusal === "quota" ? `${quota.sent} of ${MUSIC_QUOTA_LIMIT} requests were sent in the last 31 days; the next may leave at ${when}` : `flashapi's last answer said no requests remain; the next may leave at ${when}`,
+      });
+    }
+    this.music = { ...m, sends: [...m.sends, now], refresh: { state: "running", done: 0, total: 1 } };
+    this.emitMusic();
+    this.scheduleMusicStep(0);
+    return this.ok(c, { status: this.musicStatus() });
+  }
+
+  /** A refresh's next step on the mock's clock: the list request (with the server's figure), the downloads, then the new list. */
+  private scheduleMusicStep(step: number): void {
+    this.scheduler.schedule(this.stepMs, () => {
+      const m = this.music;
+      if (m.refresh.state !== "running") return;
+      if (m.nextFailure !== null) {
+        const error = m.nextFailure;
+        this.music = { ...m, nextFailure: null, refresh: { state: "failed", error } };
+        if (error.code === "MUSIC_KEY_REJECTED") this.rejectMusicKey();
+        this.emitMusic();
+        return;
+      }
+      const done = MOCK_MUSIC_STEPS[step];
+      if (done === undefined) {
+        this.music = { ...m, list: { fetchedAt: this.clock, ...MOCK_MUSIC_LIST }, refresh: { state: "idle" } };
+        this.emitMusic();
+        return;
+      }
+      // The list request answers first, with the server's own count of what is left.
+      const serverRemaining = step === 0 ? { value: Math.max(0, MUSIC_QUOTA_LIMIT - mockQuota(m, this.clock).sent), at: this.clock } : m.serverRemaining;
+      this.music = { ...m, serverRemaining, refresh: { state: "running", done, total: MOCK_MUSIC_TOTAL } };
+      this.emitMusic();
+      this.scheduleMusicStep(step + 1);
+    });
+  }
+
+  /** `music.recoverQuotaLog {confirm: true}`: only a damaged log, which becomes 30 sends made now. */
+  private musicRecover(c: CommandMessage): ResponseMessage {
+    const m = this.music;
+    if (m.quotaLog === "unreadable") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-unreadable", detail: "the quota log could not be read, so nothing was changed" });
+    if (m.quotaLog !== "corrupt") return this.fail(c, { code: "VALIDATION", detail: "the quota log is not damaged, so nothing was changed" });
+    const now = this.clock;
+    this.music = { ...m, quotaLog: "ok", sends: Array.from({ length: MUSIC_QUOTA_LIMIT }, () => now), serverRemaining: null };
+    this.emitMusic();
+    return this.ok(c, { status: this.musicStatus() });
+  }
+
+  private emitMusic(): void {
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "music.changed", payload: { status: this.musicStatus() } });
+  }
+
   private emitSettingsChanged(): void {
     this.emit({
       v: PROTOCOL_VERSION,
