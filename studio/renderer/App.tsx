@@ -15,6 +15,7 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
 import { formatUsd } from "./lib/money";
 import { EngineNotices } from "./ui/EngineNotices";
+import { RenderNotices } from "./ui/RenderNotices";
 import { Icon } from "./ui/Icon";
 import { ScreenTitle } from "./ui/ScreenTitle";
 
@@ -288,6 +289,7 @@ export function App({ client }: { client: EngineClient }) {
 
           <main className="content">
             <EngineNoticesBar />
+            <RenderNotices viewing={route.name === "editor" ? route.montageId : null} />
             <DraftFlushesProvider value={draftFlushes}>
               <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
             </DraftFlushesProvider>
