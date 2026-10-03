@@ -2,7 +2,7 @@ import type { TextStyle } from "../../../shared/engine/montage";
 import { FRAME_W } from "../../../shared/montage";
 import { TEXT_FONTS, type TextFontKey } from "../fonts";
 import type { VerticalMetrics } from "../sfnt";
-import { EMOJI_HEIGHT_EM, type CaptionLayout } from "./layout";
+import { EMOJI_HEIGHT_EM, type CaptionLayout } from "../../../shared/text/layout";
 
 /**
  * The fixed SVG template (plan invariant 17): the ONLY place caption text meets markup.

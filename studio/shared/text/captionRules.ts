@@ -1,5 +1,5 @@
-import { CAPTION_ISSUES, type CaptionIssue, graphemeCount, MAX_CAPTION_GRAPHEMES, MAX_CAPTION_UNITS } from "../../shared/engine";
-import { type CaptionRun, segmentCaption } from "./emoji/segment";
+import { CAPTION_ISSUES, type CaptionIssue, graphemeCount, MAX_CAPTION_GRAPHEMES, MAX_CAPTION_UNITS } from "../engine";
+import { type CaptionRun, segmentCaption } from "./segment";
 
 /**
  * The technical caption rules (plan 3b.3, contract K19): what a text must be for the rasteriser to draw it, and never

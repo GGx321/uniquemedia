@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { TEXT_BASE_PX } from "../../../shared/montage";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
-import { CaptionLayoutError, EMOJI_HEIGHT_EM, layoutCaption, TEXT_FIT_WIDTH, type CaptionLayout, type LayoutInput } from "./layout";
+import { CaptionLayoutError, EMOJI_HEIGHT_EM, layoutCaption, TEXT_FIT_WIDTH, type CaptionLayout, type LayoutInput } from "../../../shared/text/layout";
 useNativeGlobals();
 
 // The layout is pure: the measuring is a function handed in. These tests use a fake one, a fixed 60 units per character

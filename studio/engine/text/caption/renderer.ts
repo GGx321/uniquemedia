@@ -1,9 +1,9 @@
-import { captionIssue } from "../captionRules";
+import { captionIssue } from "../../../shared/text/captionRules";
 import type { EmojiFont } from "../emoji/emojiFont";
 import type { TextFontKey } from "../fonts";
 import type { TextRasteriser } from "../rasteriser";
 import { RasterError } from "../rasterTypes";
-import { CaptionLayoutError, layoutCaption } from "./layout";
+import { CaptionLayoutError, layoutCaption } from "../../../shared/text/layout";
 import { buildCaptionSvg, CaptionTemplateError, INK_ORIGIN_PX, inkSvg, measureSvg } from "./template";
 import type { CaptionImage, CaptionRequest } from "./types";
 

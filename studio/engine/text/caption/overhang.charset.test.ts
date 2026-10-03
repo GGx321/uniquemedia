@@ -2,10 +2,10 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { FRAME_W } from "../../../shared/montage";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
-import { TEXT_ALLOWED } from "../captionRules";
+import { TEXT_ALLOWED } from "../../../shared/text/captionRules";
 import { TEXT_FONT_KEYS, type TextFontKey } from "../fonts";
 import { createTextRasteriser, RASTER_WASM, type TextRasteriser } from "../rasteriser";
-import { TEXT_FIT_WIDTH } from "./layout";
+import { TEXT_FIT_WIDTH } from "../../../shared/text/layout";
 import { INK_ORIGIN_PX, inkSvg, measureSvg } from "./template";
 useNativeGlobals();
 

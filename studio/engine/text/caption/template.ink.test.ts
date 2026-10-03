@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { FRAME_W } from "../../../shared/montage";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
-import { layoutCaption, type CaptionLayout } from "./layout";
+import { layoutCaption, type CaptionLayout } from "../../../shared/text/layout";
 import { buildCaptionSvg, INK_ORIGIN_PX, inkSvg, type TemplateInput } from "./template";
 useNativeGlobals();
 

@@ -1,5 +1,5 @@
-import { TEXT_BASE_PX } from "../../../shared/montage";
-import { segmentCaption } from "../emoji/segment";
+import { TEXT_BASE_PX } from "../montage";
+import { segmentCaption } from "./segment";
 
 /**
  * The caption layout (plan 3b.4b, A3): where every word and emoji of a caption goes, and at what size. Pure and

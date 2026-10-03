@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { openEmojiFont } from "./emojiFont";
 import { type EmojiTestEntry, keyOf, loadEmojiTest, loadPinnedEmojiFont } from "./emojiFont.testkit";
-import { type CaptionRun, segmentCaption } from "./segment";
+import { type CaptionRun, segmentCaption } from "../../../shared/text/segment";
 useNativeGlobals();
 
 const text = (value: string): CaptionRun => ({ kind: "text", text: value });

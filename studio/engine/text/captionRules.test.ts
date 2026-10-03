@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { CAPTION_ISSUES, MAX_CAPTION_GRAPHEMES, MAX_CAPTION_UNITS, type CaptionIssue } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { type CaptionContext, captionIssue, captionIssues, TEXT_ALLOWED } from "./captionRules";
+import { type CaptionContext, captionIssue, captionIssues, TEXT_ALLOWED } from "../../shared/text/captionRules";
 import { GRAPHEME_CASES } from "./captionRules.boundaries";
 import { type EmojiFont, openEmojiFont } from "./emoji/emojiFont";
 import { loadPinnedEmojiFont } from "./emoji/emojiFont.testkit";

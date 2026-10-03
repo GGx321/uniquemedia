@@ -1,13 +1,13 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
-import { captionIssue } from "../captionRules";
+import { captionIssue } from "../../../shared/text/captionRules";
 import { openEmojiFont, type EmojiFont } from "../emoji/emojiFont";
 import { loadEmojiTest, loadPinnedEmojiFont } from "../emoji/emojiFont.testkit";
-import { segmentCaption } from "../emoji/segment";
+import { segmentCaption } from "../../../shared/text/segment";
 import { TEXT_FONT_KEYS, type TextFontKey } from "../fonts";
 import { createTextRasteriser, RASTER_WASM, RasterError, type TextRasteriser } from "../rasteriser";
-import { layoutCaption } from "./layout";
+import { layoutCaption } from "../../../shared/text/layout";
 import { decodePng, extent, countPixels, pixel } from "./png.testkit";
 import { createCaptionRenderer, type CaptionRequest } from "./renderer";
 import { buildCaptionSvg } from "./template";

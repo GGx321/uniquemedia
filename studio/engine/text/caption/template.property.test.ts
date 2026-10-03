@@ -5,7 +5,7 @@ import { openEmojiFont, type EmojiFont } from "../emoji/emojiFont";
 import { loadPinnedEmojiFont } from "../emoji/emojiFont.testkit";
 import { TEXT_FONT_KEYS, type TextFontKey } from "../fonts";
 import { createTextRasteriser, RASTER_WASM, type TextRasteriser } from "../rasteriser";
-import { layoutCaption } from "./layout";
+import { layoutCaption } from "../../../shared/text/layout";
 import { decodePng } from "./png.testkit";
 import { createCaptionRenderer } from "./renderer";
 import { buildCaptionSvg, measureSvg } from "./template";

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
-import { layoutCaption, type CaptionLayout } from "./layout";
+import { layoutCaption, type CaptionLayout } from "../../../shared/text/layout";
 useNativeGlobals();
 
 // Glyphs can reach past their advance (Caveat's `[` by 0.3 em, its `f` and `j`). The layout carries how far the ink of

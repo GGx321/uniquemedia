@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
 import { join } from "node:path";
 import { graphemeCount, MAX_CAPTION_GRAPHEMES } from "../../shared/engine";
-import { captionIssues, type CaptionContext } from "./captionRules";
+import { captionIssues, type CaptionContext } from "../../shared/text/captionRules";
 import { GRAPHEME_CASES } from "./captionRules.boundaries";
 import { openEmojiFont } from "./emoji/emojiFont";
 import { loadEmojiFont } from "./fonts";
