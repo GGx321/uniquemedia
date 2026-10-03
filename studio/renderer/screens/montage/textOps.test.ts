@@ -17,6 +17,8 @@ import {
   TEXT_COLORS,
   TEXT_PRESETS,
   textSize,
+  TYPING_PAUSE_MS,
+  typingGoesOn,
 } from "./textOps";
 import { draftSpec, stickerLayer, textLayer } from "./testkit";
 
@@ -216,6 +218,26 @@ describe("the «Стили» presets (T2) and «Добавить текст» (T
   test("with no preset it is the first one with the neutral sample", () => {
     const layer = added(addTextLayer(draftSpec(4), 0));
     expect([layer.font, layer.style, layer.value]).toEqual(["manrope", "plaque", DEFAULT_TEXT_VALUE]);
+  });
+});
+
+// Review round 1: «a typing burst is one undo step» needs an end. The step closes when the field loses the focus (the panel) or
+// after TYPING_PAUSE_MS without typing (here): 1.5 s, a default the owner may change.
+describe("when a typing burst ends (one undo step per burst)", () => {
+  test("the pause is 1.5 s", () => {
+    expect(TYPING_PAUSE_MS).toBe(1_500);
+  });
+
+  test("a keystroke within 1.5 s of the last one goes on with the burst; at 1.5 s or later it starts a new one", () => {
+    expect(typingGoesOn(10_000, 10_000)).toBe(true);
+    expect(typingGoesOn(10_000, 11_499)).toBe(true);
+    expect(typingGoesOn(10_000, 11_500)).toBe(false);
+    expect(typingGoesOn(10_000, 60_000)).toBe(false);
+  });
+
+  test("the first keystroke opens a burst, and a clock that went back never stretches one", () => {
+    expect(typingGoesOn(null, 10_000)).toBe(false);
+    expect(typingGoesOn(10_000, 9_999)).toBe(false);
   });
 });
 

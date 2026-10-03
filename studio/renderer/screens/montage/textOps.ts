@@ -131,6 +131,19 @@ export function textSize(scale: number): number {
   return Math.round(scale * TEXT_BASE_PX);
 }
 
+/**
+ * A typing burst is one undo step (review round 1): it ends when the caption field loses the focus, or after this long without a
+ * keystroke. 1.5 s is the editor's default, a choice the owner may change.
+ */
+export const TYPING_PAUSE_MS = 1_500;
+
+/** Whether a keystroke at `nowMs` goes on with the burst whose last keystroke was at `lastMs` (null: no burst is open). */
+export function typingGoesOn(lastMs: number | null, nowMs: number): boolean {
+  if (lastMs === null) return false;
+  const gap = nowMs - lastMs;
+  return gap >= 0 && gap < TYPING_PAUSE_MS;
+}
+
 /** `text` put over the selection `[start, end)` of `value` (either order, held to the text), and where the caret lands after it. */
 export function insertAt(value: string, start: number, end: number, text: string): { value: string; caret: number } {
   const hold = (n: number): number => Math.min(value.length, Math.max(0, n));

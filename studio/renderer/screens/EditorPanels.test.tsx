@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CAPTION_ISSUES_RU, ERROR_MESSAGES_RU, type MontageDraft, type PhotoSummary } from "../../shared/engine";
 import type { MockEngine } from "../engine/mockEngine";
@@ -289,6 +289,24 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     expect(saved.music?.startMs).toBe(52_000);
   });
 
+  // Review round 1 (U7): a key let go ends its step, so two presses are two undo steps.
+  test("two presses of → on the window are two undo steps", async () => {
+    const { client, engine } = await studio({ music: MUSIC });
+    await openDraft(engine, client, withMusic(12_000));
+    selectBlock(/^Музыка:/);
+    const slider = (): HTMLElement => within(props()).getByRole("slider", { name: "Начало музыки в треке" });
+    await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
+    fireEvent.keyDown(slider(), { key: "ArrowRight" });
+    fireEvent.keyUp(slider(), { key: "ArrowRight" });
+    fireEvent.keyDown(slider(), { key: "ArrowRight" });
+    fireEvent.keyUp(slider(), { key: "ArrowRight" });
+    expect(slider().getAttribute("aria-valuenow")).toBe("12200");
+    undo();
+    expect(slider().getAttribute("aria-valuenow")).toBe("12100");
+    undo();
+    expect(slider().getAttribute("aria-valuenow")).toBe("12000");
+  });
+
   test("a waveform the store no longer has (NOT_FOUND) says the track is gone; nothing is fetched to make up for it", async () => {
     const { client, engine } = await studio({ music: MUSIC });
     await openDraft(engine, client, withMusic(12_000));
@@ -426,6 +444,38 @@ describe("a text's properties: the caption with the engine's verdict inline, the
     expect(caption().value).toBe("sunday reset");
   });
 
+  // Review round 1 (U6): a typing burst ends when the field loses the focus.
+  test("type, leave the field, come back, type: two undo steps", async () => {
+    await openText();
+    fireEvent.change(caption(), { target: { value: "sunday reset!" } });
+    fireEvent.blur(caption());
+    fireEvent.focus(caption());
+    fireEvent.change(caption(), { target: { value: "sunday reset!?" } });
+    undo();
+    expect(caption().value).toBe("sunday reset!");
+    undo();
+    expect(caption().value).toBe("sunday reset");
+  });
+
+  // ...and after 1.5 s without a keystroke (TYPING_PAUSE_MS, the editor's default). The clock is set, never waited for.
+  test("a pause of 1.5 s without typing ends the burst; a shorter one does not", async () => {
+    await openText();
+    try {
+      setSystemTime(new Date("2026-10-04T10:00:00.000Z"));
+      fireEvent.change(caption(), { target: { value: "sunday reset!" } });
+      setSystemTime(new Date("2026-10-04T10:00:01.499Z"));
+      fireEvent.change(caption(), { target: { value: "sunday reset!!" } });
+      setSystemTime(new Date("2026-10-04T10:00:02.999Z"));
+      fireEvent.change(caption(), { target: { value: "sunday reset!!?" } });
+    } finally {
+      setSystemTime();
+    }
+    undo();
+    expect(caption().value).toBe("sunday reset!!");
+    undo();
+    expect(caption().value).toBe("sunday reset");
+  });
+
   test("a caption the engine refuses shows its rule inline (TEXT_INVALID + captionIssue, the shared words), and clears when fixed", async () => {
     const { engine } = await openText();
     fireEvent.change(caption(), { target: { value: "утро в Лиссабоне" } });
@@ -507,12 +557,50 @@ describe("a text's properties: the caption with the engine's verdict inline, the
     await openText();
     const size = within(props()).getByRole("slider", { name: "Размер" });
     expect([size.getAttribute("min"), size.getAttribute("max"), size.getAttribute("aria-valuetext")]).toEqual(["50", "200", "56"]);
+    fireEvent.pointerDown(size, { pointerId: 11 });
     fireEvent.change(size, { target: { value: "120" } });
     fireEvent.change(size, { target: { value: "150" } });
-    fireEvent.pointerUp(size);
+    fireEvent.pointerUp(size, { pointerId: 11 });
     expect(plain(props().querySelector(".ed-field .ed-field-value")?.textContent)).toBe("84");
     undo();
     expect(within(props()).getByRole("slider", { name: "Размер" }).getAttribute("aria-valuetext")).toBe("56");
+  });
+
+  // Review round 1 (U3): the merge key names one gesture, so two drags are two steps even when a release was never seen.
+  test("«Размер»: two drags are two undo steps, a lost release between them included", async () => {
+    await openText();
+    const size = (): HTMLElement => within(props()).getByRole("slider", { name: "Размер" });
+    fireEvent.pointerDown(size(), { pointerId: 12 });
+    fireEvent.change(size(), { target: { value: "120" } });
+    // No pointerup: it was let go outside the window.
+    fireEvent.pointerDown(size(), { pointerId: 13 });
+    fireEvent.change(size(), { target: { value: "150" } });
+    fireEvent.pointerUp(size(), { pointerId: 13 });
+    undo();
+    expect(size().getAttribute("aria-valuetext")).toBe("67");
+    undo();
+    expect(size().getAttribute("aria-valuetext")).toBe("56");
+  });
+
+  test("«Размер» from the keys: each press is one step, a held key one", async () => {
+    await openText();
+    const size = (): HTMLElement => within(props()).getByRole("slider", { name: "Размер" });
+    fireEvent.keyDown(size(), { key: "ArrowRight" });
+    fireEvent.change(size(), { target: { value: "101" } });
+    fireEvent.keyDown(size(), { key: "ArrowRight", repeat: true });
+    fireEvent.change(size(), { target: { value: "102" } });
+    fireEvent.keyUp(size(), { key: "ArrowRight" });
+    fireEvent.keyDown(size(), { key: "ArrowRight" });
+    fireEvent.change(size(), { target: { value: "103" } });
+    fireEvent.keyUp(size(), { key: "ArrowRight" });
+    const value = (): string => {
+      const input = size();
+      return input instanceof HTMLInputElement ? input.value : "";
+    };
+    undo();
+    expect(value()).toBe("102");
+    undo();
+    expect(value()).toBe("100");
   });
 
   test("«Время»: a typed start is taken on Enter; an end past the montage is refused with the reason", async () => {
@@ -542,13 +630,30 @@ describe("a sticker's properties: size, time, the Reels zones, «Заменит�
     expect(within(props()).getByText("Любовь")).toBeDefined();
     const size = within(props()).getByRole("slider", { name: "Размер" });
     expect([size.getAttribute("min"), size.getAttribute("max"), size.getAttribute("aria-valuetext")]).toEqual(["5", "60", "20 %"]);
+    fireEvent.pointerDown(size, { pointerId: 14 });
     fireEvent.change(size, { target: { value: "40" } });
     fireEvent.change(size, { target: { value: "60" } });
-    fireEvent.pointerUp(size);
+    fireEvent.pointerUp(size, { pointerId: 14 });
     const saved = await nextSave(engine);
     expect(saved.layers[0]).toMatchObject({ size: 0.6 });
     undo();
     expect(within(props()).getByRole("slider", { name: "Размер" }).getAttribute("aria-valuetext")).toBe("20 %");
+  });
+
+  test("«Размер»: two drags are two undo steps, a lost release between them included", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [sticker({ size: 0.2 })] });
+    selectBlock(/^Стикер 1:/);
+    const size = (): HTMLElement => within(props()).getByRole("slider", { name: "Размер" });
+    fireEvent.pointerDown(size(), { pointerId: 15 });
+    fireEvent.change(size(), { target: { value: "30" } });
+    fireEvent.pointerDown(size(), { pointerId: 16 });
+    fireEvent.change(size(), { target: { value: "40" } });
+    fireEvent.pointerUp(size(), { pointerId: 16 });
+    undo();
+    expect(size().getAttribute("aria-valuetext")).toBe("30 %");
+    undo();
+    expect(size().getAttribute("aria-valuetext")).toBe("20 %");
   });
 
   test("a sticker under the Reels buttons is warned about; «Сдвинуть внутрь» moves it out, one undo step", async () => {

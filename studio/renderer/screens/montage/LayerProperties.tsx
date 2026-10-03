@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useId, useRef, useState } from "react";
 import { graphemeCount, MAX_CAPTION_GRAPHEMES, type MontageDraft, type TextFont, type TextLayer, type TextStyle } from "../../../shared/engine";
 import { STICKER_CATEGORIES, stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
@@ -13,7 +13,7 @@ import type { LayerEdge } from "./layerOps";
 import { type ActionState, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
 import { moveInside, setStickerSize, type StickerLayer, stickerPercent, stickerZones, type ZoneId } from "./stickerOps";
-import { type CaptionRefusal, insertAt, MAX_TEXT_SCALE, MIN_TEXT_SCALE, setCaption, setTextColor, setTextFont, setTextScale, setTextStyle, TEXT_COLORS, textSize } from "./textOps";
+import { type CaptionRefusal, insertAt, MAX_TEXT_SCALE, MIN_TEXT_SCALE, setCaption, setTextColor, setTextFont, setTextScale, setTextStyle, TEXT_COLORS, textSize, typingGoesOn } from "./textOps";
 import { setLayerTime, timeRefusalLabel } from "./timeInput";
 import { useCaptionCheck } from "./useCaptionCheck";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
@@ -50,9 +50,33 @@ export function deleteKeyHandler(remove: () => boolean) {
 /** The live index of layer `layerId` in the session's current draft (it may have moved since this render). */
 const liveIndex = (session: DraftSession, layerId: string): number => session.state.spec.layers.findIndex((l) => l.layerId === layerId);
 
-/** A slider's undo step: one per drag or held key, sealed when it is let go. */
-function sliderSeal(session: DraftSession) {
-  return { onPointerUp: () => session.endMerge(), onKeyUp: () => session.endMerge(), onBlur: () => session.endMerge() };
+/**
+ * A slider's undo steps (review round 1): each press of the pointer or of a key is ONE gesture with a merge key of its own, so two
+ * drags are two steps even when a release was never seen (let go outside the window), and a held key's repeats stay in its step.
+ * A change no gesture announced is a step of its own.
+ */
+function useSliderGesture(session: DraftSession, base: string) {
+  const key = useRef<string | null>(null);
+  const begin = (id: string): void => {
+    session.endMerge();
+    key.current = `${base}:${id}`;
+  };
+  const end = (): void => {
+    session.endMerge();
+    key.current = null;
+  };
+  return {
+    mergeKey: (): string | undefined => key.current ?? undefined,
+    handlers: {
+      onPointerDown: (event: ReactPointerEvent<HTMLInputElement>) => begin(`${event.pointerId}:${event.timeStamp}`),
+      onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
+        if (!event.repeat) begin(`key:${event.key}:${event.timeStamp}`);
+      },
+      onPointerUp: end,
+      onKeyUp: end,
+      onBlur: end,
+    },
+  };
 }
 
 // ---------- «Время» (R32, R37) ----------
@@ -158,6 +182,9 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
   const notice = captionNotice(typed?.reason ?? null, check);
   const count = graphemeCount(value);
   const captionKey = `caption:${layer.layerId}`;
+  /** When the last keystroke of the open typing burst came (null: none is open): the burst is one undo step. */
+  const lastTyped = useRef<number | null>(null);
+  const size = useSliderGesture(session, `scale:${layer.layerId}`);
 
   /** An edit of this text through the session, as one undo step (or a step of `mergeKey`'s gesture). */
   function apply(edit: (spec: MontageDraft, at: number) => MontageDraft, mergeKey?: string): void {
@@ -184,16 +211,26 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
     const start = field?.selectionStart ?? value.length;
     const end = field?.selectionEnd ?? value.length;
     const next = insertAt(value, start, end, emoji);
-    // An emoji is a step of its own, apart from the typing around it.
-    session.endMerge();
+    // An emoji is a step of its own, apart from the typing around it (an edit with no merge key always is one).
+    lastTyped.current = null;
     type(next.value);
-    session.endMerge();
     requestAnimationFrame(() => {
       const now = area.current;
       if (now === null) return;
       now.focus();
       now.setSelectionRange(next.caret, next.caret);
     });
+  }
+
+  /**
+   * A keystroke: one step per burst, which ends on blur or after TYPING_PAUSE_MS without typing (the editor's default, 1.5 s).
+   * The pause is read off the clock at each keystroke, so no timer runs.
+   */
+  function onType(text: string): void {
+    const now = Date.now();
+    if (!typingGoesOn(lastTyped.current, now)) session.endMerge();
+    lastTyped.current = now;
+    type(text, captionKey);
   }
 
   const describedBy = [hintId, notice.text !== null ? noticeId : null].filter(Boolean).join(" ");
@@ -221,8 +258,11 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
           aria-describedby={describedBy}
           aria-busy={notice.pending || undefined}
           value={value}
-          onChange={(e) => type(e.target.value, captionKey)}
-          onBlur={() => session.endMerge()}
+          onChange={(e) => onType(e.target.value)}
+          onBlur={() => {
+            lastTyped.current = null;
+            session.endMerge();
+          }}
         />
         <span id={hintId} className="faint ed-caption-hint">
           только английский · эмодзи можно · до 2 строк
@@ -270,8 +310,8 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
             step={1}
             value={Math.round(layer.scale * 100)}
             aria-valuetext={`${textSize(layer.scale)}`}
-            onChange={(e) => apply((spec, at) => setTextScale(spec, at, Number(e.target.value) / 100), `scale:${layer.layerId}`)}
-            {...sliderSeal(session)}
+            onChange={(e) => apply((spec, at) => setTextScale(spec, at, Number(e.target.value) / 100), size.mergeKey())}
+            {...size.handlers}
           />
           <span className="mono ed-field-value">{textSize(layer.scale)}</span>
         </div>
@@ -313,6 +353,7 @@ function StickerFields({ session, layer, onReplace }: { session: DraftSession; l
   const url = entry === undefined ? null : stickerUrl(client, entry.id);
   const loop = loopLabel(layer);
   const zone = zoneWords(stickerZones(layer));
+  const size = useSliderGesture(session, `size:${layer.layerId}`);
 
   function apply(edit: (spec: MontageDraft, at: number) => MontageDraft, mergeKey?: string): void {
     const at = liveIndex(session, layer.layerId);
@@ -347,8 +388,8 @@ function StickerFields({ session, layer, onReplace }: { session: DraftSession; l
             step={1}
             value={stickerPercent(layer.size)}
             aria-valuetext={`${stickerPercent(layer.size)} %`}
-            onChange={(e) => apply((spec, at) => setStickerSize(spec, at, Number(e.target.value) / 100), `size:${layer.layerId}`)}
-            {...sliderSeal(session)}
+            onChange={(e) => apply((spec, at) => setStickerSize(spec, at, Number(e.target.value) / 100), size.mergeKey())}
+            {...size.handlers}
           />
           <span className="mono ed-field-value">
             {stickerPercent(layer.size)}
