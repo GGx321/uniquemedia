@@ -463,18 +463,28 @@ async function exited(worker: Worker | undefined): Promise<void> {
 }
 
 describe("idle recycling: an idle worker's memory is given back", () => {
-  test("a worker left idle for idleRecycleMs is terminated, by the gate's own recycle and not before the idle time is up", async () => {
-    // Two things are spied on. The gate's own `terminate`: without it, a worker that died for any other reason would pass as
-    // "recycled". And the moment the gate ARMS its idle timer (the one setTimeout with this test's unique delay): measured from
-    // there the idle time is exact, whereas any reading taken by the test after `check` returns includes however long the runner
-    // took to resume it (5.7 ms on a Windows runner, which failed a 35 ms bound).
+  test("a worker left idle for idleRecycleMs is terminated, by the gate's own recycle and not before that timer fires", async () => {
+    // The ORDER is asserted, never an elapsed time: a wall-clock lower bound on a timer fails on a coarse clock (Windows' 15.6 ms
+    // granularity can fire a timer early against `performance.now()`; a 45 ms bound failed there, and a 35 ms one before it). The gate's
+    // idle timer (the one setTimeout with this test's unique delay) is captured and NOT scheduled; the test then
+    //  1. waits well past the idle time and sees the worker still alive: nothing but that timer may recycle it,
+    //  2. fires the captured callback itself and sees the gate's own `terminate` called and the worker gone.
+    // Spying on `terminate` keeps a worker that died for any other reason from passing as "recycled".
     const IDLE_MS = 47;
-    let terminatedAt: number | null = null;
-    let armedAt: number | null = null;
+    let terminated = 0;
+    const armed: { delay: number | null; fire: (() => void) | null } = { delay: null, fire: null };
     const realSetTimeout = globalThis.setTimeout;
+    const parked: ReturnType<typeof setTimeout>[] = [];
     globalThis.setTimeout = Object.assign(
       (...args: Parameters<typeof setTimeout>) => {
-        if (args[1] === IDLE_MS) armedAt ??= performance.now();
+        if (args[1] === IDLE_MS && armed.fire === null) {
+          armed.delay = args[1];
+          const callback = args[0];
+          armed.fire = () => void (callback as () => void)();
+          const handle = realSetTimeout(() => undefined, 2 ** 30); // a real handle for the gate's unref/clearTimeout; never fires
+          parked.push(handle);
+          return handle;
+        }
         return realSetTimeout(...args);
       },
       realSetTimeout,
@@ -485,21 +495,26 @@ describe("idle recycling: an idle worker's memory is given back", () => {
         tamper: (worker) => {
           const real = worker.terminate.bind(worker);
           worker.terminate = () => {
-            terminatedAt ??= performance.now();
+            terminated += 1;
             return real();
           };
         },
       });
       await h.gate.check(checkInput(), live());
+      expect(armed.delay).toBe(IDLE_MS);
+      await Bun.sleep(IDLE_MS * 4); // far past the idle time, with the gate's timer held back
       expect(h.alive()).toBe(1);
+      expect(terminated).toBe(0);
+
+      if (armed.fire === null) throw new Error("the gate did not arm its idle timer");
+      armed.fire();
       await exited(h.workers[0]);
       expect(h.alive()).toBe(0);
+      expect(terminated).toBe(1);
     } finally {
       globalThis.setTimeout = realSetTimeout;
+      for (const handle of parked) clearTimeout(handle);
     }
-    expect(terminatedAt).not.toBeNull();
-    expect(armedAt).not.toBeNull();
-    expect((terminatedAt ?? 0) - (armedAt ?? 0)).toBeGreaterThanOrEqual(IDLE_MS - 2); // less two milliseconds of timer granularity
   });
 
   test("the next check after a recycle respawns a worker and succeeds, with no overlap between the two workers", async () => {
