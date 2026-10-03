@@ -16,7 +16,9 @@ import { RenderGraphError } from "./types";
 // `startMs` plus the montage up front, as `track-too-short`; this is the builder's own floor.) There is no `-t`, no `-shortest`.
 //
 // THE INPUT is untrusted media and takes the hardening of the store's decode (`music/decodeCheck.ts`), all BEFORE `-i`: the
-// mov demuxer forced, only the file protocol, the AAC decoder forced, allocations capped. The render never lets ffmpeg pick
+// mov demuxer forced, only the file protocol, the AAC decoder forced, allocations capped. Of these, `-max_alloc` is a
+// PROCESS-GLOBAL option, not a per-input one: wherever it stands it caps every allocation of the whole ffmpeg run, the video
+// side of pass 2 included (measured fine at 1080x1920: no single buffer comes near 64 MiB). The render never lets ffmpeg pick
 // a stream: the only audio it reads is `<i>:a:0`, named in a `-map`.
 
 /** The true peak the music is brought under, in dBTP (plan, "Music": gain = min(0, -1.5 - TP)). */
@@ -25,7 +27,10 @@ export const MUSIC_TARGET_TRUE_PEAK_DB = -1.5;
 /** One allocation may take at most 64 MiB (as in `decodeCheck.ts`): far above a real track's need, far below a container bomb. */
 const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
 
-/** The flags that go before the track's `-i`; `decodeCheck.ts` runs its decode and its inspection under the same ones. */
+/**
+ * The flags that go before the track's `-i`; `decodeCheck.ts` runs its decode and its inspection under the same ones. `-protocol_whitelist`,
+ * `-f` and `-c:a` are options of THIS input; `-max_alloc` is global to the process, so in pass 2 it caps the video side too.
+ */
 export const MUSIC_INPUT_ARGS: readonly string[] = ["-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file", "-f", "mov", "-c:a", "aac"];
 
 /** 48 kHz: 48 samples per millisecond. */
