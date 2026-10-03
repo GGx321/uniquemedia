@@ -105,7 +105,7 @@ function Screen({ route, lastPhotos }: { route: Route; lastPhotos: string | null
     case "settings":
       return <SettingsScreen focus={route.focus} />;
     case "photos":
-      return <PhotosScreen avatarId={route.avatarId} />;
+      return <PhotosScreen avatarId={route.avatarId} tab={route.tab ?? "photos"} />;
     case "montages":
       return <DraftsScreen lastAvatarId={lastPhotos} />;
     case "editor":
@@ -127,7 +127,7 @@ function screenKey(route: Route): string {
     case "avatarNew":
       return `avatarNew:${route.draftId ?? "new"}`;
     case "photos":
-      return `photos:${route.avatarId ?? "last"}`;
+      return `photos:${route.avatarId ?? "last"}:${route.tab ?? "photos"}`;
     case "editor":
       return `editor:${route.montageId}`;
     case "section":

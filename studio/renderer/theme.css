@@ -107,6 +107,8 @@
   --ok-20: rgba(79, 224, 176, 0.2);
   --ok-40: rgba(79, 224, 176, 0.4);
   --ok-55: rgba(79, 224, 176, 0.55);
+  /* 3e.2 (videos.css): a video card asking to delete, the artboard's own border */
+  --danger-45: rgba(255, 138, 155, 0.45);
 
   /* other */
   --uniq: #7c6cff;

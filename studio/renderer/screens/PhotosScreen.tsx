@@ -1,20 +1,22 @@
-import { useEffect, useId, useState } from "react";
-import { MAX_CLIPS, MAX_LISTED_PHOTOS, type AvatarSummary, type EngineError, type RunSummary } from "../../shared/engine";
+import { useEffect, useId, useState, type KeyboardEvent } from "react";
+import { MAX_CLIPS, type AvatarSummary, type EngineError, type PhotoSummary, type RunSummary } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
-import { countOf, groupNumber, NBSP } from "../lib/format";
-import { useNavigate } from "../navigation";
+import { useNavigate, type PhotosTab } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
 import { Portrait } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
-import { Gallery, type GalleryList, type PendingSlots } from "./photos/Gallery";
+import { Gallery, type GalleryList, type MarkControl, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import { DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { ScenesColumn } from "./photos/ScenesColumn";
-import { PHOTO_FORMS, useMounted } from "./photos/shared";
+import { useMounted } from "./photos/shared";
+import { UsageNotice } from "./photos/UsageNotice";
+import { VideosTab } from "./photos/VideosTab";
+import { headerCounts, type GalleryFilter } from "./photos/videosModel";
 
 /**
  * The avatar asked for; else — none asked, or the one remembered is gone
@@ -24,12 +26,6 @@ import { PHOTO_FORMS, useMounted } from "./photos/shared";
 function resolveAvatar(avatars: readonly AvatarSummary[], avatarId: string | null): AvatarSummary | null {
   const asked = avatarId === null ? undefined : avatars.find((a) => a.avatarId === avatarId);
   return asked ?? avatars.find((a) => a.status === "active") ?? avatars[0] ?? null;
-}
-
-/** "124 фото"; "500+ фото" when the list is cut at its bound, whose real size is then not known. */
-function photoCountLabel(list: GalleryList): string {
-  const shown = list.photos.length + list.skippedTotal;
-  return list.photos.length >= MAX_LISTED_PHOTOS ? `${groupNumber(shown)}+${NBSP}фото` : countOf(shown, PHOTO_FORMS);
 }
 
 /**
@@ -44,18 +40,39 @@ function latestRunJob(jobs: readonly JobView[], avatarId: string): JobView | nul
   return own.filter(isActiveJob).at(-1) ?? own.at(-1) ?? null;
 }
 
-function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineView }) {
+/**
+ * «124 фото · 31 не использовано · 18 видео» (A1, F1): the avatar's own counts from its summary (the one eligibility function;
+ * the videos are its records), kept current by `avatar.changed`. While its usage cannot be trusted the middle part says so.
+ */
+function HeaderCounts({ avatar }: { avatar: AvatarSummary }) {
+  const counts = headerCounts(avatar);
+  return (
+    <p className="mono muted photos-sub">
+      {counts.photos} · <span className={counts.unknown ? "warn-text" : undefined}>{counts.unused}</span> · {counts.videos}
+      {avatar.status === "archived" && " · в архиве"}
+    </p>
+  );
+}
+
+function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; view: EngineView; initialTab: PhotosTab }) {
   const { client, store } = useEngine();
   const ready = view.phase === "ready";
   const { avatarId } = avatar;
-  const tabId = useId();
+  const photosTabId = useId();
+  const videosTabId = useId();
   const panelId = useId();
+  const [tab, setTab] = useState<PhotosTab>(initialTab);
 
   const [form, setForm] = useState<RunForm>(DEFAULT_RUN_FORM);
   /** The last list photos.list answered (null until the first); a later failure is shown above it, never instead of it. */
   const [gallery, setGallery] = useState<GalleryList | null>(null);
   const [galleryError, setGalleryError] = useState<EngineError | null>(null);
   const [galleryRetry, setGalleryRetry] = useState(0);
+  /** «Все / Неиспользованные / Отклонённые» (F4). */
+  const [filter, setFilter] = useState<GalleryFilter>("all");
+  /** Photos whose reject mark is being set (3e.2). */
+  const [marking, setMarking] = useState<ReadonlySet<string>>(new Set());
+  const [markError, setMarkError] = useState<EngineError | null>(null);
   /** This avatar's runs, for the resume rows. */
   const [runs, setRuns] = useState<readonly RunSummary[]>([]);
   const [runsError, setRunsError] = useState<EngineError | null>(null);
@@ -76,6 +93,8 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
   const [createError, setCreateError] = useState<EngineError | null>(null);
   /** The picked photos `montages.create` refused (`PHOTO_UNAVAILABLE` at `["photoIds", i]`, K11). */
   const [refused, setRefused] = useState<ReadonlySet<string>>(new Set());
+  /** «Новый монтаж» (3e.2): the empty draft of this avatar is being made. */
+  const [creatingEmpty, setCreatingEmpty] = useState(false);
   const mounted = useMounted();
   const navigate = useNavigate();
   const whyId = useId();
@@ -96,8 +115,12 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
 
   // The gallery: on open, and again whenever this avatar's run reports a
   // slot done or ends — each photo lands in the library before its progress
-  // event. An answer overtaken by a newer ask is dropped.
+  // event — and whenever the avatar's counts move (a video made or deleted,
+  // a render queued or ended, a mark set: `avatar.changed`), since a photo's
+  // used, reserved and rejected states move with them. An answer overtaken
+  // by a newer ask is dropped.
   const progressKey = runJob ? `${runJob.jobId}:${runJob.done}:${runJob.status}` : "none";
+  const countsKey = `${avatar.videoCount}:${avatar.eligibleUnusedCount}:${avatar.usage.state === "ok" ? "ok" : avatar.usage.reasons.join(",")}`;
   useEffect(() => {
     if (!ready) return;
     let alive = true;
@@ -111,7 +134,7 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
     return () => {
       alive = false;
     };
-  }, [ready, client, avatarId, progressKey, galleryRetry]);
+  }, [ready, client, avatarId, progressKey, galleryRetry, countsKey]);
 
   // The runs a resume can continue: on open, whenever this avatar's run job
   // starts or ends, and after this window's own start or resume.
@@ -182,6 +205,61 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
     if (reply.error.code === "PHOTO_UNAVAILABLE") setGalleryRetry((n) => n + 1);
   }
 
+  /** «Новый монтаж» on the «Видео» tab (the owner's option Б, 3d.2 review): an empty draft for this avatar, opened at once. */
+  async function createEmpty(): Promise<void> {
+    setCreatingEmpty(true);
+    setCreateError(null);
+    const reply = await client.request("montages.create", { avatarId, photoIds: [] });
+    if (!mounted.current) return;
+    setCreatingEmpty(false);
+    if (reply.ok) navigate({ name: "editor", montageId: reply.result.montage.montageId, created: true });
+    else setCreateError(reply.error);
+  }
+
+  /** The owner's «do not use» mark, or its restore (`photos.setRejected`): the tile shows the photo as the engine answers it. */
+  async function markPhoto(photo: PhotoSummary, rejected: boolean): Promise<void> {
+    setMarking((prev) => new Set(prev).add(photo.photoId));
+    setMarkError(null);
+    const reply = await client.request("photos.setRejected", { avatarId, photoId: photo.photoId, rejected });
+    if (!mounted.current) return;
+    setMarking((prev) => {
+      const next = new Set(prev);
+      next.delete(photo.photoId);
+      return next;
+    });
+    if (!reply.ok) {
+      setMarkError(reply.error);
+      return;
+    }
+    const updated = reply.result.photo;
+    setGallery((list) => (list === null ? list : { ...list, photos: list.photos.map((p) => (p.photoId === updated.photoId ? updated : p)) }));
+    // A rejected photo no longer goes into a montage: it leaves the selection.
+    if (updated.rejected) {
+      setPicked((current) => {
+        if (!current.has(updated.photoId)) return current;
+        const next = new Set(current);
+        next.delete(updated.photoId);
+        return next;
+      });
+    }
+  }
+
+  const mark: MarkControl = {
+    marking,
+    blocked: avatar.usage.state === "unknown" && avatar.usage.reasons.includes("rejects-unreadable") ? "Журнал отметок повреждён: сначала восстановите отметки" : null,
+    onMark: (photo, rejected) => void markPhoto(photo, rejected),
+  };
+
+  const tabIds: Record<PhotosTab, string> = { photos: photosTabId, videos: videosTabId };
+  // ← and → move between the two tabs that work («История сцен» is not in Stage 3).
+  const onTabKey = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next: PhotosTab = tab === "photos" ? "videos" : "photos";
+    setTab(next);
+    document.getElementById(tabIds[next])?.focus();
+  };
+
   const montageWhy =
     avatar.status !== "active"
       ? "Аватар в архиве — новые ролики для него не создаются"
@@ -206,43 +284,72 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
         </div>
         <div>
           <ScreenTitle>{avatar.name}</ScreenTitle>
-          <p className="mono muted photos-sub">
-            {gallery === null ? "…" : photoCountLabel(gallery)}
-            {avatar.status === "archived" && " · в архиве"}
-          </p>
+          <HeaderCounts avatar={avatar} />
         </div>
         <div className="seg seg-l photos-tabs" role="tablist" aria-label="Разделы аватара">
-          <button type="button" role="tab" id={tabId} aria-selected="true" aria-controls={panelId} className="on">
+          <button
+            type="button"
+            role="tab"
+            id={photosTabId}
+            aria-selected={tab === "photos"}
+            aria-controls={panelId}
+            tabIndex={tab === "photos" ? 0 : -1}
+            className={tab === "photos" ? "on" : undefined}
+            onClick={() => setTab("photos")}
+            onKeyDown={onTabKey}
+          >
             Фото
           </button>
           <button type="button" role="tab" aria-selected="false" disabled title="Скоро">
             История сцен
           </button>
-          <button type="button" role="tab" aria-selected="false" disabled title="Скоро">
+          <button
+            type="button"
+            role="tab"
+            id={videosTabId}
+            aria-selected={tab === "videos"}
+            aria-controls={panelId}
+            tabIndex={tab === "videos" ? 0 : -1}
+            className={tab === "videos" ? "on" : undefined}
+            onClick={() => setTab("videos")}
+            onKeyDown={onTabKey}
+          >
             Видео
           </button>
         </div>
-        <div className="photos-montage">
-          {montageWhy !== null && (
-            <span id={whyId} className="faint photos-montage-why">
-              {montageWhy}
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn btn-p"
-            aria-busy={creating}
-            aria-describedby={montageWhy !== null ? whyId : undefined}
-            disabled={creating || !ready || montageWhy !== null}
-            onClick={() => void createMontage()}
-          >
-            {creating ? <Spin /> : <Icon name="film" size={16} />}
-            Монтаж из выбранных · {picked.size}
-          </button>
-        </div>
+        {tab === "photos" ? (
+          <div className="photos-montage">
+            {montageWhy !== null && (
+              <span id={whyId} className="faint photos-montage-why">
+                {montageWhy}
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn btn-p"
+              aria-busy={creating}
+              aria-describedby={montageWhy !== null ? whyId : undefined}
+              disabled={creating || !ready || montageWhy !== null}
+              onClick={() => void createMontage()}
+            >
+              {creating ? <Spin /> : <Icon name="film" size={16} />}
+              Монтаж из выбранных · {picked.size}
+            </button>
+          </div>
+        ) : (
+          // An archived avatar makes no new content: no «Новый монтаж» (montages.create would answer NOT_FOUND).
+          avatar.status === "active" && (
+            <div className="photos-montage">
+              <button type="button" className="btn btn-p" aria-busy={creatingEmpty} disabled={creatingEmpty || !ready} onClick={() => void createEmpty()}>
+                {creatingEmpty ? <Spin /> : <Icon name="film" size={16} />}
+                Новый монтаж
+              </button>
+            </div>
+          )
+        )}
       </header>
 
-      <div id={panelId} className="photos-panel" role="tabpanel" aria-labelledby={tabId}>
+      <div id={panelId} className="photos-panel" role="tabpanel" aria-labelledby={tabIds[tab]}>
         {view.phase === "offline" ? <EngineOffline view={view} /> : <AccountBanner view={view} />}
         {createError !== null && (
           <ErrorNotice
@@ -254,35 +361,66 @@ function AvatarPhotos({ avatar, view }: { avatar: AvatarSummary; view: EngineVie
             }
           />
         )}
+        <UsageNotice key={avatarId} avatar={avatar} />
 
-        <GenerateCard
-          avatar={avatar}
-          view={view}
-          form={form}
-          onFormChange={setForm}
-          runActive={runActive}
-          onStarted={launched}
-          paidInFlight={paidInFlight}
-          onPaidInFlightChange={setPaidInFlight}
-        />
+        {tab === "photos" ? (
+          <>
+            <GenerateCard
+              avatar={avatar}
+              view={view}
+              form={form}
+              onFormChange={setForm}
+              runActive={runActive}
+              onStarted={launched}
+              paidInFlight={paidInFlight}
+              onPaidInFlightChange={setPaidInFlight}
+            />
 
-        <div className="photos-body">
-          <ScenesColumn
-            view={view}
-            count={form.count}
-            runJob={runJob}
-            activeRunId={activeRunId}
-            watched={runJob !== null && (watched.has(runJob.jobId) || !knownAtOpen.has(runJob.jobId))}
-            runs={runs}
-            runsError={runsError}
-            onRetryRuns={() => setRunsRefresh((n) => n + 1)}
-            paidInFlight={paidInFlight}
-            onPaidInFlightChange={setPaidInFlight}
-            blockedReason={paidBlockedReason(view) ?? (avatar.status !== "active" ? "Аватар в архиве — новые фото для него не создаются." : null)}
-            onResumed={launched}
-          />
-          <Gallery gallery={gallery} error={galleryError} pending={pending} picked={picked} refused={refused} onToggle={togglePick} onRetry={() => setGalleryRetry((n) => n + 1)} />
-        </div>
+            <div className="photos-body">
+              <ScenesColumn
+                view={view}
+                count={form.count}
+                runJob={runJob}
+                activeRunId={activeRunId}
+                watched={runJob !== null && (watched.has(runJob.jobId) || !knownAtOpen.has(runJob.jobId))}
+                runs={runs}
+                runsError={runsError}
+                onRetryRuns={() => setRunsRefresh((n) => n + 1)}
+                paidInFlight={paidInFlight}
+                onPaidInFlightChange={setPaidInFlight}
+                blockedReason={paidBlockedReason(view) ?? (avatar.status !== "active" ? "Аватар в архиве — новые фото для него не создаются." : null)}
+                onResumed={launched}
+              />
+              <div className="photos-gallery-col">
+                {markError !== null && (
+                  <ErrorNotice
+                    error={markError}
+                    actions={
+                      <button type="button" className="btn btn-s" onClick={() => setMarkError(null)}>
+                        Закрыть
+                      </button>
+                    }
+                  />
+                )}
+                <Gallery
+                  gallery={gallery}
+                  error={galleryError}
+                  pending={pending}
+                  picked={picked}
+                  refused={refused}
+                  onToggle={togglePick}
+                  onRetry={() => setGalleryRetry((n) => n + 1)}
+                  filter={filter}
+                  onFilter={setFilter}
+                  usage={avatar.usage}
+                  mark={mark}
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          <VideosTab avatar={avatar} view={view} />
+        )}
       </div>
     </div>
   );
@@ -316,11 +454,12 @@ function NoAvatar() {
 /**
  * T8b: an avatar's photos (Photos.dc.html) — the generation card with its
  * price, the run in progress and the stopped runs to resume, and the gallery
- * with each photo's face similarity. Opened from an avatar's name on the
- * Avatars grid, or from the sidebar's «Фото» (the avatar shown last, else
- * the first active one).
+ * with each photo's face similarity — and (3e.2) its videos (AvatarVideos.dc.html)
+ * on the «Видео» tab. Opened from an avatar's name on the Avatars grid (its
+ * «K видео» opens the «Видео» tab), or from the sidebar's «Фото» (the avatar
+ * shown last, else the first active one).
  */
-export function PhotosScreen({ avatarId }: { avatarId: string | null }) {
+export function PhotosScreen({ avatarId, tab = "photos" }: { avatarId: string | null; tab?: PhotosTab }) {
   const view = useEngineView();
   // L11/N5: once the route names no avatar (the sidebar's own «Фото»), or
   // names one that is no longer present (a library switch, say — N5: a
@@ -367,5 +506,5 @@ export function PhotosScreen({ avatarId }: { avatarId: string | null }) {
     }
     return <NoAvatar />;
   }
-  return <AvatarPhotos key={avatar.avatarId} avatar={avatar} view={view} />;
+  return <AvatarPhotos key={avatar.avatarId} avatar={avatar} view={view} initialTab={tab} />;
 }
