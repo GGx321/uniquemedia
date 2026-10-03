@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startMockFlashapi, type MockFlashapi } from "../../scripts/mockFlashapi";
@@ -298,6 +298,69 @@ describe("every MUSIC_UNAVAILABLE says why (musicReason)", () => {
       const error = await resumeFailure(harness({ sink: resuming(() => Object.assign(new Error("EACCES"), { code: "EACCES" })) }));
       expect(error).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "downloads-failed" });
     });
+  });
+});
+
+// Review round 1 (HIGH): a held result was written only by the next refresh, and the card closes «Обновить» while a line is
+// held, so the owner's only way out was a restart, which forgot the line and with it the server's 0. Asking the status now
+// writes what is held: it is free, nothing leaves.
+describe("a held line is written when the window asks for the status", () => {
+  /** The log turns read-only as the request arrives (a permission the owner later fixes), so the answer's result is held. */
+  const readOnlyOnce = (): FlashapiFetch => {
+    let first = true;
+    return async (url, init) => {
+      if (first) {
+        first = false;
+        await chmod(quotaPath(), 0o444);
+      }
+      return nativeFetch(url, init);
+    };
+  };
+
+  test("held, the disk fixed, the status asked: written, ok, the server's 0 kept, no request; a restart still refuses", async () => {
+    mock = startMockFlashapi({ key: KEY, remaining: 0 });
+    const h = harness({ fetch: readOnlyOnce() });
+    try {
+      await h.service.refresh();
+      await h.service.settled();
+      expect(await h.service.status()).toMatchObject({ quotaLog: "held", serverRemaining: 0 });
+    } finally {
+      await chmod(quotaPath(), 0o644);
+    }
+    const asked = MusicStatus.parse(await h.service.status({ writeHeld: true }));
+    expect(asked).toMatchObject({ quotaLog: "ok", sentLast31d: 1, serverRemaining: 0 });
+    expect((await quotaLines()).map((line) => line.kind)).toEqual(["send", "result"]);
+    expect(mock.requests).toHaveLength(1);
+
+    const restarted = harness();
+    expect(await restarted.service.status()).toMatchObject({ quotaLog: "ok", serverRemaining: 0 });
+    expect(refusal(await restarted.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(mock.requests).toHaveLength(1);
+  });
+
+  test("while the disk is still broken the asked status stays held, and nothing leaves", async () => {
+    mock = startMockFlashapi({ key: KEY, remaining: 0 });
+    const h = harness({ fetch: readOnlyOnce() });
+    try {
+      await h.service.refresh();
+      await h.service.settled();
+      expect((await h.service.status({ writeHeld: true })).quotaLog).toBe("held");
+      expect(mock.requests).toHaveLength(1);
+    } finally {
+      await chmod(quotaPath(), 0o644);
+    }
+  });
+
+  test("a status the service builds for its own events does not write: only the window's ask does", async () => {
+    mock = startMockFlashapi({ key: KEY, remaining: 0 });
+    const h = harness({ fetch: readOnlyOnce() });
+    try {
+      await h.service.refresh();
+      await h.service.settled();
+    } finally {
+      await chmod(quotaPath(), 0o644);
+    }
+    expect((await h.service.status()).quotaLog).toBe("held");
   });
 });
 

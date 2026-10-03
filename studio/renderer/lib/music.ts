@@ -97,7 +97,7 @@ export function refreshGate(key: MusicKeyStatus, status: MusicStatus | null, now
   if (status.quotaLog === "corrupt") return { kind: "blocked", reason: "Журнал запросов повреждён, поэтому запросы не отправляются. Восстановите его ниже.", fix: "recover" };
   if (status.quotaLog === "unreadable") return { kind: "blocked", reason: "Журнал запросов не читается, поэтому запросы не отправляются. Проверьте доступ к файлу и перезапустите Studio.", fix: null };
   if (status.quotaLog === "held") {
-    return { kind: "blocked", reason: "Прошлый ответ ещё не записан в журнал запросов: обновление подождёт, пока запись удастся. Проверьте место на диске.", fix: null };
+    return { kind: "blocked", reason: "Прошлый ответ ещё не записан в журнал запросов: проверьте место на диске, запись повторится, когда вы снова откроете эту карточку.", fix: null };
   }
   const nextFreeAt = status.nextFreeAt === null ? null : Date.parse(status.nextFreeAt);
   const when = nextFreeAt === null ? "позже" : dayLabel(nextFreeAt, timeZone);

@@ -1333,7 +1333,8 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { exportStatus: exportStatusOf(check) } };
       }
       case "music.status":
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#music.status() };
+        // The window's ask writes a held quota-log line first (free, no request): the owner's way out once the disk is fixed.
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#music.status({ writeHeld: true }) };
       case "music.refresh": {
         const answer = await this.#music.refresh();
         if (!answer.ok) return errorResponseFor(command, answer.error);

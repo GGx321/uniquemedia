@@ -252,6 +252,11 @@ describe("EngineError for music that could not be fetched", () => {
     expect(MUSIC_UNAVAILABLE_REASONS_RU["downloads-stopped"]).not.toMatch(/недоступ/);
   });
 
+  test("a held line is written when the «Музыка» card is opened again (review round 1): never «at the next refresh», which waits for it", () => {
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["log-held"]).toMatch(/когда вы снова откроете карточку «Музыка»/);
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["log-held"]).not.toMatch(/при следующем обновлении/);
+  });
+
   test("a corrupt log points at its recovery in Settings and says what it costs", () => {
     expect(MUSIC_UNAVAILABLE_REASONS_RU["log-corrupt"]).toMatch(/Настройк/);
     expect(MUSIC_UNAVAILABLE_REASONS_RU["log-corrupt"]).toMatch(/31 д/);

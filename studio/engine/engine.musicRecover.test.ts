@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startMockFlashapi, type MockFlashapi } from "../scripts/mockFlashapi";
 import { EngineError, MusicStatus } from "../shared/engine";
@@ -44,6 +44,33 @@ const statusOf = async (engine: Awaited<ReturnType<typeof start>>["engine"]) => 
   if (response.type !== "music.status") throw new Error("wrong type");
   return MusicStatus.parse(response.result);
 };
+
+describe("music.status writes a held line (review round 1, HIGH)", () => {
+  test("a result held by a read-only log, the permission fixed: the window's music.status writes it, keeps the server's 0 and sends nothing", async () => {
+    const mock = startMockFlashapi({ key: MUSIC, remaining: 0 });
+    mocks.push(mock);
+    let first = true;
+    const log = join(musicDir(), "quota.jsonl");
+    const readOnlyOnce: FlashapiFetch = async (url, init) => {
+      if (first) {
+        first = false;
+        await chmod(log, 0o444);
+      }
+      return nativeFetch(url.replace(FLASHAPI_BASE, mock.url), init);
+    };
+    const { engine } = await startEngine(dir(), { key: null, init: { musicDir: musicDir() }, deps: { musicFetch: readOnlyOnce, musicSink: new PersistingTestSink() } });
+    await engine.applyControl({ kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" });
+    try {
+      ok(await engine.handle(command("music.refresh", { confirm: true })));
+      await engine.musicSettled();
+    } finally {
+      await chmod(log, 0o644);
+    }
+    expect(await statusOf(engine)).toMatchObject({ quotaLog: "ok", serverRemaining: 0 });
+    expect(failed(await engine.handle(command("music.refresh", { confirm: true }))).error.code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(mock.requests).toHaveLength(1);
+  });
+});
 
 describe("music.recoverQuotaLog", () => {
   test("a damaged log reads as corrupt and 30 of 30, and a refresh says so without a request", async () => {

@@ -1250,10 +1250,19 @@ function QuotaLogNotice({ music }: { music: MusicStatus }) {
   }, [focusNext, asking]);
 
   if (music.quotaLog === "held") {
+    // Asking the status writes what is held (free, nothing leaves): the way out once the disk is fixed (review round 1).
     return (
-      <Notice tone="warn" title="Ответ сервиса ещё не записан в журнал">
-        Studio допишет его в журнал запросов при следующем обновлении, а до этого новый запрос не уйдёт: иначе он обошёл бы учёт квоты. Если так и не
-        проходит, освободите место на диске и проверьте права на папку данных Studio.
+      <Notice
+        tone="warn"
+        title="Ответ сервиса ещё не записан в журнал"
+        actions={
+          <button type="button" className="btn btn-s" onClick={() => void store.refreshMusic()}>
+            Проверить снова
+          </button>
+        }
+      >
+        Пока он не записан, новый запрос не уйдёт: иначе он обошёл бы учёт квоты. Освободите место на диске или проверьте права на папку данных Studio —
+        запись повторится, когда вы снова откроете эту карточку или нажмёте «Проверить снова». Ничего не отправится.
       </Notice>
     );
   }

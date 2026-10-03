@@ -269,9 +269,13 @@ export class MusicService {
    * The status: the list the sink holds, the ledger's count and the refresh state. A log that cannot be read fails
    * CLOSED (the count reads as the limit), so the card never shows room the ledger cannot vouch for.
    */
-  async status(): Promise<MusicStatus> {
+  async status(options: { writeHeld?: boolean } = {}): Promise<MusicStatus> {
     let summary: QuotaSummary | null = null;
     let quotaLog: MusicQuotaLog = "ok";
+    // The window's own ask (`music.status`) first writes what is held (review round 1): the card closes «Обновить» while a
+    // line is held, so this ask is the owner's way out once the disk is fixed. Free: nothing leaves. The statuses the
+    // service builds for its own events do not write, so a broken disk is not retried on every progress step.
+    if (options.writeHeld === true && this.#pending.length > 0) await this.#flush();
     if (this.#ledger !== null) {
       try {
         summary = await this.#summaryNow();

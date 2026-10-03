@@ -120,6 +120,11 @@ describe("refreshGate: «Обновить» is offered only when a request would
     expect(refreshGate(KEY, sent(30, { quotaLog: "corrupt", nextFreeAt: null }), NOW, UTC)).toMatchObject({ kind: "blocked", fix: "recover" });
   });
 
+  test("a held log says the line is written when the card is opened again, never «at the next refresh» (which is closed)", () => {
+    const gate = refreshGate(KEY, sent(4, { quotaLog: "held" }), NOW, UTC);
+    expect(gate.kind === "blocked" ? gate.reason : "").toContain("когда вы снова откроете эту карточку");
+  });
+
   test.each(["unreadable", "held"] as const)("a %s log: blocked, with nothing to click", (quotaLog) => {
     const gate = refreshGate(KEY, sent(quotaLog === "held" ? 4 : 30, { quotaLog }), NOW, UTC);
     expect(gate).toMatchObject({ kind: "blocked", fix: null });

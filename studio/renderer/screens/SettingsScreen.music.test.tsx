@@ -326,6 +326,22 @@ describe("«Обновить» is closed, with its reason on the row", () => {
     expect(within(card()).getByText("Ответ сервиса ещё не записан в журнал")).toBeDefined();
   });
 
+  // Review round 1 (HIGH): «Обновить» is closed while a line is held, so the card must not promise «the next refresh» writes
+  // it: asking the status does (free), when the card opens and by «Проверить снова».
+  test("a held log line says it is written when the card is opened again, and «Проверить снова» asks at once, sending nothing", async () => {
+    const { engine } = await openMusic({ music: { ...TWELVE, quotaLog: "held" } });
+    expect(card().textContent).toContain("запись повторится, когда вы снова откроете эту карточку");
+    expect(card().textContent).not.toContain("при следующем обновлении");
+    const before = callsOf(engine, "music.status").length;
+    act(() => engine.setMusicQuotaLog("ok"));
+    fireEvent.click(button("Проверить снова"));
+    await flush();
+    expect(callsOf(engine, "music.status").length).toBe(before + 1);
+    expect(within(card()).queryByText("Ответ сервиса ещё не записан в журнал")).toBeNull();
+    expect(button("Обновить · 1 запрос").hasAttribute("disabled")).toBe(false);
+    expect(callsOf(engine, "music.refresh")).toHaveLength(0);
+  });
+
   test("an unreadable log: closed, and nothing to recover", async () => {
     await openMusic({ music: { ...TWELVE, quotaLog: "unreadable" } });
     closed();
