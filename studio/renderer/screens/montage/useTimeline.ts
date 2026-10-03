@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Focus, MontageDraft } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
 import { evenOut, totalMs } from "./clipOps";
@@ -124,7 +124,9 @@ export function useSelectionCommands(session: DraftSession, timeline: TimelineSt
  * `FOCUS_FALLBACK`. `pending` names the photos still being judged («ищем лицо…»).
  */
 export function useFocusResolver(client: EngineClient, session: DraftSession, avatarId: string): { pending: ReadonlySet<string>; resolve(photoId: string): void } {
-  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  /** Questions still out, per photo: the same photo may be asked again (placed, undone, placed) before an answer. */
+  const [open, setOpen] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const pending = useMemo<ReadonlySet<string>>(() => new Set(open.keys()), [open]);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -135,14 +137,17 @@ export function useFocusResolver(client: EngineClient, session: DraftSession, av
 
   const resolve = useCallback(
     (photoId: string) => {
-      setPending((now) => new Set(now).add(photoId));
+      setOpen((now) => new Map(now).set(photoId, (now.get(photoId) ?? 0) + 1));
       void client.request("montages.focus", { avatarId, photo: { source: "scene", photoId } }).then((reply) => {
         if (!alive.current) return;
         const focus: Focus | null = reply.ok ? reply.result.focus : null;
         if (focus !== null) session.fillFocus(photoId, focus);
-        setPending((now) => {
-          const next = new Set(now);
-          next.delete(photoId);
+        // This answer closes one question; «ищем лицо…» stays while a later one for the photo is still out.
+        setOpen((now) => {
+          const next = new Map(now);
+          const left = (now.get(photoId) ?? 1) - 1;
+          if (left > 0) next.set(photoId, left);
+          else next.delete(photoId);
           return next;
         });
       });

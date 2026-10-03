@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { MontageDraft } from "../../shared/engine";
 import { freePhotos, PHOTO_IDS, scenePhoto } from "../engine/mockEngine.testkit";
-import { callsOf, flush } from "../testing";
+import { callsOf, flush, tick } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
 
@@ -455,5 +455,27 @@ describe("the playhead and the clock", () => {
     expect(timeline().querySelector<HTMLElement>(".ed-tl-lanes")?.style.width).toBe("200%");
     fireEvent.click(within(timeline()).getByRole("button", { name: "Уместить" }));
     expect(labels()).toHaveLength(16);
+  });
+});
+
+describe("the face judge's answers", () => {
+  test("«ищем лицо…» stays while a later request for the same photo is still out", async () => {
+    const { client, engine, scheduler } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    // P2 has no face score: the mock answers null, so only «ищем лицо…» tells a question is still open.
+    engine.delayNext("montages.focus", 100);
+    await pick(P2);
+    expect(within(props()).getByText("ищем лицо…")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+    engine.delayNext("montages.focus", 300);
+    await pick(P2);
+    // The first answer comes back; the second question is still out.
+    tick(scheduler);
+    await flush();
+    expect(within(props()).getByText("ищем лицо…")).toBeDefined();
+    tick(scheduler);
+    await flush();
+    expect(within(props()).getByText("лицо не найдено")).toBeDefined();
   });
 });
