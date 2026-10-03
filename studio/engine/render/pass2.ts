@@ -2,6 +2,7 @@ import { FRAME_H, FRAME_W } from "../../shared/montage";
 import { clipFrames } from "./durations";
 import { assertAbsolutePath, assertSafeFilterGraph } from "./filterString";
 import { FPS } from "../../shared/montage";
+import { musicInputArgs, musicRenderFilters } from "./musicChain";
 import { clipFileName, CONCAT_LIST_NAME } from "./names";
 import {
   CONTAINER_ARGS,
@@ -26,8 +27,10 @@ import { RenderGraphError, type AudioSource, type OverlayInput, type Pass2Input,
 // `-frames:v`, no output `-t` and no `-shortest`.
 //
 // Inputs, by index: 0 is the concat list, 1..k the overlays in z-order. The
-// audio input slot for music (3c) is the index after the overlays; only the
-// silent source exists in 3a and it needs no input.
+// music track (3c.5), when there is one, is the index after the overlays; the
+// silent source needs no input. Music is mapped explicitly (`-map <i>:a:0`)
+// and filtered by a simple `-af` chain of its own (`musicChain.ts`); the
+// silent source is a source inside the complex graph.
 
 const HEAD_ARGS: readonly string[] = ["-hide_banner", "-nostdin", "-y"];
 /**
@@ -121,13 +124,21 @@ const spansTimeline = (o: OverlayInput, totalFrames: number): boolean => o.start
  */
 const overlayEofAction = (o: OverlayInput, totalFrames: number): string => (spansTimeline(o, totalFrames) ? "endall" : "pass");
 
-/** The audio chain, built to exactly `samples` samples. Only silence exists in 3a; music (3c) adds a variant and its input. */
-function audioChain(source: AudioSource, samples: number): string {
-  // `source.kind` is "silent" for now; the switch is here so 3c adds a case, not a rewrite.
-  switch (source.kind) {
-    case "silent":
-      return `anullsrc=r=48000:cl=stereo,apad,atrim=end_sample=${samples}[a]`;
-  }
+/** The silent audio, built inside the complex graph to exactly `samples` samples (music has its own chain, `musicChain.ts`). */
+function silentAudio(samples: number): string {
+  return `anullsrc=r=48000:cl=stereo,apad,atrim=end_sample=${samples}[a]`;
+}
+
+/** The music track's input group, after the overlays'; nothing for silence. */
+const audioInputArgs = (audio: AudioSource): string[] => (audio.kind === "music" ? musicInputArgs(audio.path) : []);
+
+/** The maps and the audio filter: `[v]` plus the graph's own silence, or `[v]` plus the track's first audio stream, named, with its chain. */
+function audioMapArgs(audio: AudioSource, audioInput: number, samples: number): string[] {
+  if (audio.kind === "silent") return ["-map", "[v]", "-map", "[a]"];
+  // `-map_metadata -1` (METADATA_ARGS) clears only the GLOBAL kind: a mapped stream carries its own tags and handler name along
+  // unless a stream mapping of its own turns that off. A track's handler name is not the engine's, and its tags are the owner's
+  // to keep out (invariant 14), so the output's audio stream starts with none.
+  return ["-map", "[v]", "-map", `${audioInput}:a:0`, "-map_metadata:s:a:0", "-1", "-af", musicRenderFilters(audio.startMs, audio.gainDb, samples)];
 }
 
 /**
@@ -157,7 +168,7 @@ export function buildPass2(input: Pass2Input): Pass2Job {
     filters.push(overlayPrepare(o, k + 1, k, totalFrames));
     filters.push(`[b${k}][s${k}]overlay=x=${o.box.x}:y=${o.box.y}:eof_action=${overlayEofAction(o, totalFrames)}:format=yuv420[${out}]`);
   });
-  filters.push(audioChain(input.audio, audioSamples));
+  if (input.audio.kind === "silent") filters.push(silentAudio(audioSamples));
   const graph = filters.join(";");
   assertSafeFilterGraph(graph);
 
@@ -167,8 +178,9 @@ export function buildPass2(input: Pass2Input): Pass2Job {
     ...FILTER_THREAD_ARGS,
     "-f", "concat", "-protocol_whitelist", "file", "-i", CONCAT_LIST_NAME,
     ...input.overlays.flatMap((o) => overlayInputArgs(o)),
+    ...audioInputArgs(input.audio),
     "-filter_complex", graph,
-    "-map", "[v]", "-map", "[a]",
+    ...audioMapArgs(input.audio, input.overlays.length + 1, audioSamples),
     ...FINAL_VIDEO_ARGS,
     ...FINAL_AUDIO_ARGS,
     ...CONTAINER_ARGS,

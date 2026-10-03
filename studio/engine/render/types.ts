@@ -35,7 +35,8 @@ export type RenderGraphErrorCode =
   | "NO_CLIPS"
   | "BAD_OVERLAY"
   | "BAD_DURATION"
-  | "BAD_PHOTO_SIZE";
+  | "BAD_PHOTO_SIZE"
+  | "BAD_AUDIO";
 
 /** A refusal to build: the spec or the injected inputs cannot produce a valid graph. */
 export class RenderGraphError extends Error {
@@ -92,8 +93,23 @@ export interface OverlayInput {
   readonly endFrame: number;
 }
 
-/** The audio source. Only silence exists in 3a; music (3c) adds a variant and an input slot. */
-export type AudioSource = { readonly kind: "silent" };
+/**
+ * A stored track as the render reads it. `path` comes only from the engine's own track store, by track id (invariant 31),
+ * never from a window; `startMs` is where in the track the montage's first sample is.
+ */
+export interface MusicSource {
+  readonly path: string;
+  readonly startMs: number;
+}
+
+/**
+ * The audio of pass 2: silence, or one track with the gain the true-peak pass chose for its clip segment. The gain is a
+ * whole number of tenths of a dB and never positive (invariant 21).
+ */
+export type AudioSource = { readonly kind: "silent" } | ({ readonly kind: "music"; readonly gainDb: number } & MusicSource);
+
+/** What a render job is asked for: music has no gain yet, the runner measures the segment first and then builds `AudioSource`. */
+export type AudioPlan = { readonly kind: "silent" } | ({ readonly kind: "music" } & MusicSource);
 
 export interface Pass2Input {
   /** The clips as pass 1 rendered them (ids and durations decide the list and the length). */

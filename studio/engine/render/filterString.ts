@@ -36,6 +36,9 @@ export const ALLOWED_FILTERS: ReadonlySet<string> = new Set([
   "scale", "format", "setparams", "crop", "loop", "settb", "setpts", "zoompan", "fade", "color", "overlay", "setsar", "trim", "fps", "anullsrc", "apad", "atrim",
 ]);
 
+/** The audio filters of the music chain (3c.5): the same allowlist rule, kept apart from the video list. */
+export const ALLOWED_AUDIO_FILTERS: ReadonlySet<string> = new Set(["aresample", "aformat", "asetpts", "volume", "ebur128"]);
+
 const fail = (message: string): never => {
   throw new RenderGraphError("UNSAFE_GRAPH", message);
 };
@@ -62,7 +65,7 @@ export function assertSafeFilterGraph(graph: string): void {
   for (const filter of bare.split(/[;,]/)) {
     if (filter === "") continue;
     const name = filter.split("=")[0] ?? "";
-    if (!ALLOWED_FILTERS.has(name)) fail(`the filter graph uses a filter the builder does not emit: ${JSON.stringify(name)}`);
+    if (!ALLOWED_FILTERS.has(name) && !ALLOWED_AUDIO_FILTERS.has(name)) fail(`the filter graph uses a filter the builder does not emit: ${JSON.stringify(name)}`);
   }
   if (bare.replace(/settb=1\/\d+/g, "").includes("/")) fail("the filter graph holds a `/` outside a quoted expression and a settb time base");
 }
