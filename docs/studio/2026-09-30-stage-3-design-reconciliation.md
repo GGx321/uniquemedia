@@ -796,7 +796,9 @@ depend on any of it:
   build draws in 120 ms; the engine in about 10 to 300 ms). The 64 pictures kept and their eviction (a layer's newest last) are the
   same: an old `previewId` can stop being served.
 - **Music list and peaks (3d.1b-rest).** `music.list` answers the stored tracks in list order, at most 100, whatever the key and the
-  quota log say (it is free), with highlights ascending and the `1500` default last (`likelyDefault`), `explicit` always present;
+  quota log say (it is free), with highlights ascending and the `1500` default last (`likelyDefault`), `explicit` always present,
+  and `durationMs` the length the decode PROVED, never the API's claim (3d.3b verify: the two may differ by max(2 s, 5 %); a
+  highlight past the proven end is dropped). Bound a music start and judge «короче ролика» by it, and trust `montages.get`'s verdict;
   `music.peaks` answers `bars` integers 0 to 1000 from the track's 50 ms envelope, silence past its end, `NOT_FOUND` for a track
   that is not stored (an own track too, until 3f). The same shared functions decide both. NOT the same: the dev build's **30 demo
   tracks** (invented names, 20 to 80 s, a synthetic waveform; a mock refresh stores 30 again) and the disk (the mock has no torn or
