@@ -230,15 +230,34 @@ describe("the lock key ignores the case flag, and waits are bounded and abortabl
     await writeIntent(NODE_COMMIT_FS, w.libraryRoot, other);
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => (release = resolve)); // a hung fsync, as far as the lock can tell
-    const first = a.run({ hooks: { reached: async (step) => (step === "name-claimed" ? gate : undefined) } });
-    await sleep(40);
-    const started = performance.now();
-    const report = await recoverVideos({ library: w.library, exportRoot: rootRef(w) }, { lockWaitMs: 60 });
-    expect(performance.now() - started).toBeLessThan(1500);
-    expect(report.deferred).toEqual([{ videoId: other.id, reason: "root-busy" }]);
-    expect(await libraryVideoFiles(w)).toContain(`.pending/${other.id}.json`);
-    release();
-    await first;
+    let holding: () => void = () => undefined;
+    const holdsTheLock = new Promise<void>((resolve) => (holding = resolve));
+    // Ordered by the commit's own hook, never by sleeping: "name-claimed" is past the claim, so inside the root lock.
+    const first = a.run({
+      hooks: {
+        reached: async (step) => {
+          if (step !== "name-claimed") return;
+          holding();
+          await gate;
+        },
+      },
+    });
+    const firstOutcome = first.then(
+      () => "done",
+      (e: unknown) => e,
+    );
+    try {
+      await Promise.race([holdsTheLock, firstOutcome.then((e) => Promise.reject(new Error(`the commit ended before it held the lock: ${String(e)}`)))]);
+      const started = performance.now();
+      const report = await recoverVideos({ library: w.library, exportRoot: rootRef(w) }, { lockWaitMs: 60 });
+      expect(performance.now() - started).toBeLessThan(1500);
+      expect(report.deferred).toEqual([{ videoId: other.id, reason: "root-busy" }]);
+      expect(await libraryVideoFiles(w)).toContain(`.pending/${other.id}.json`);
+    } finally {
+      release();
+      await firstOutcome; // a commit this test started is always settled here, even when an assertion above failed
+    }
+    expect(await firstOutcome).toBe("done");
   });
 
   test("recovery never throws when the root's realpath fails between its check and the lock: it reports skipped and defers", async () => {
