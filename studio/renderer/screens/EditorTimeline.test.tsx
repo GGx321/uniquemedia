@@ -609,6 +609,44 @@ describe("the face judge's answers", () => {
   });
 });
 
+describe("a photo taken by a render while it is being dragged", () => {
+  /** Opens a one-clip draft, starts dragging P3, then queues a render of another draft holding P3. */
+  async function dragThenReserve() {
+    const harness = await studio();
+    await makeDraft(harness.client, MIA.avatarId, [P1]);
+    await openEditor();
+    fireEvent.dragStart(pickButton(P3));
+    const other = await makeDraft(harness.client, MIA.avatarId, [P3]);
+    const queued = await asAnotherWindow(() => harness.client.request("videos.render", { montageId: other.montageId }));
+    expect(queued.ok).toBe(true);
+    await waitFor(() => expect(within(tileOf(P3)).getByText("в рендере")).toBeDefined());
+    return harness;
+  }
+
+  test("dropped on the track, it is not placed", async () => {
+    const { engine } = await dragThenReserve();
+    const lane = timeline().querySelector(".ed-lane-clips");
+    if (lane === null) throw new Error("no clip lane");
+    fireEvent.dragOver(lane, { clientX: 0 });
+    fireEvent.drop(lane, { clientX: 0 });
+    await flush();
+    expect(clipButtons()).toHaveLength(1);
+    expect(callsOf(engine, "montages.focus")).toHaveLength(0);
+  });
+
+  test("dropped on an empty cell, the cell stays empty", async () => {
+    const { engine } = await dragThenReserve();
+    fireEvent.click(clipButtons()[0] ?? document.body);
+    fireEvent.click(within(props()).getByRole("button", { name: "Коллаж 2" }));
+    const cell = within(props()).getByRole("button", { name: "Ячейка 2: пусто" });
+    fireEvent.dragOver(cell);
+    fireEvent.drop(cell);
+    await flush();
+    expect(within(props()).getByRole("button", { name: "Ячейка 2: пусто" })).toBeDefined();
+    expect(callsOf(engine, "montages.focus")).toHaveLength(0);
+  });
+});
+
 describe("the bin's buttons", () => {
   test("each photo's button has its own name: the photo, then what a click does", async () => {
     const photos = [...freePhotos(5), scenePhoto(6, { reserved: true })];
