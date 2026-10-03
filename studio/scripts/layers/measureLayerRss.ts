@@ -9,7 +9,7 @@
  *
  * Needs `/usr/bin/time` with `-l` (macOS) or `-v` (GNU). Run by hand; not part of the test suite.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
@@ -70,9 +70,9 @@ async function main(): Promise<void> {
     const photo = join(dir, "photo.jpg");
     const made = await run([ffmpeg, "-hide_banner", "-y", "-nostdin", "-f", "lavfi", "-i", "testsrc2=s=720x1280,noise=alls=20:allf=t+u:all_seed=7", "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "2", "-pix_fmt", "yuvj420p", photo]);
     if (made.code !== 0) throw new Error(made.stderr);
-    // A caption raster is about 930 x 140 px: a translucent plaque, the shape of the engine's widest text PNG.
+    // A caption raster is about 930 x 140 px: an opaque plaque with two bars of black ink, the shape of the engine's widest text PNG (flat colours, as a real raster is: noise would not compress and would measure the disk, not the render).
     const text = join(dir, "text.png");
-    const textMade = await run([ffmpeg, "-hide_banner", "-y", "-nostdin", "-f", "lavfi", "-i", "color=c=white@0.85:s=930x140,format=rgba,noise=alls=30:allf=t:all_seed=3", "-frames:v", "1", "-c:v", "png", "-pix_fmt", "rgba", text]);
+    const textMade = await run([ffmpeg, "-hide_banner", "-y", "-nostdin", "-f", "lavfi", "-i", "color=c=0xffd166:s=930x140,format=rgba,drawbox=x=36:y=36:w=858:h=24:c=black:t=fill,drawbox=x=36:y=80:w=640:h=24:c=black:t=fill", "-frames:v", "1", "-c:v", "png", "-pix_fmt", "rgba", text]);
     if (textMade.code !== 0) throw new Error(textMade.stderr);
 
     const clips: Clip[] = Array.from({ length: 10 }, (_, i) => ({
@@ -133,6 +133,9 @@ async function main(): Promise<void> {
         worstCall = Math.max(worstCall, m.mib);
         console.log(`  layer call ${job.index}: ${job.layerCount} layers, ${m.mib.toFixed(0)} MiB measured, ${(job.modelledBytes / MIB).toFixed(0)} MiB modelled, ${m.seconds.toFixed(1)} s`);
       }
+      // The job folder's disk at its fullest, before pass 2 ends it: the pass-1 clips (CRF 8) and every layer file (kept until the job ends).
+      const sizeOf = (match: RegExp): number => readdirSync(dir).filter((f) => match.test(f)).reduce((n, f) => n + statSync(join(dir, f)).size, 0) / MIB;
+      if (plan.jobs.length > 0) console.log(`  disk: ${sizeOf(/^clip-\d+\.mkv$/).toFixed(0)} MiB of clips + ${sizeOf(/^layers-\d+\.mkv$/).toFixed(0)} MiB of layer files (${plan.jobs.length} call${plan.jobs.length === 1 ? "" : "s"})`);
       const pass2 = pass2Of(plan.final === null ? [] : [plan.final]);
       prepare(pass2);
       const p = await measured(pass2.argv, pass2.cwd);
