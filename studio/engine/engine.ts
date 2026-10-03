@@ -97,6 +97,7 @@ import { VideoService, type VideoServiceDeps } from "./videos/service";
 import { MontageService, type MontageServiceDeps } from "./montages/service";
 import { DraftStore, type DraftStoreDeps } from "./montages/store";
 import { FLASHAPI_BASE, type FlashapiFetch } from "./music/client";
+import type { RenderTrackSource } from "./music/renderTrack";
 import { MusicService, type MusicListSink } from "./music/service";
 import { createTextPreviewService, TEXT_PREVIEW_DIR, type PreviewGate, type TextPreviewService } from "./text/preview";
 import { RasterError } from "./text/rasterTypes";
@@ -137,6 +138,13 @@ export interface EngineDeps {
    * switch that turns the refresh on.
    */
   musicSink?: MusicListSink;
+  /**
+   * The track store as the render's source of a track's file (3c.5, invariant 31): `videos.render` and `montages.get` judge a
+   * montage's trending track against its record, and a render job opens the file through it, after the store has checked it
+   * again. `main.ts` passes the same `TrackStore` as `musicSink`. Absent: no track is held, and a spec with music is refused
+   * as `track-unavailable`.
+   */
+  musicTracks?: RenderTrackSource;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
   /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
@@ -645,6 +653,7 @@ export class Engine {
       caseProbe: this.#caseProbe,
       focus: deps.videos?.focus ?? ((library) => this.#focusOf(library)),
       renderTmpDir: init.renderTmpDir,
+      ...(deps.musicTracks === undefined ? {} : { tracks: deps.musicTracks }),
       newId: deps.newId,
       now: () => new Date(deps.clock()),
       emit: (event) => this.#emit(event),
@@ -667,6 +676,7 @@ export class Engine {
       withLibrary: (work) => this.#withLiveLibrary(work),
       openLibrary: () => this.library,
       focus: deps.montages?.focus ?? ((library) => this.#focusOf(library)),
+      ...(deps.musicTracks === undefined ? {} : { tracks: deps.musicTracks }),
       newId: deps.newId,
       now: () => new Date(deps.clock()),
       emit: (event) => this.#emit(event),

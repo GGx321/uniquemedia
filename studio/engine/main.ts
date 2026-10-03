@@ -235,7 +235,7 @@ parentPort.once("message", (event) => {
           });
 
     const ready = Engine.start(init.data, {
-      ...(musicSink === undefined ? {} : { musicSink }),
+      ...(musicSink === undefined ? {} : { musicSink, musicTracks: musicSink }),
       bootId: randomUUID(),
       clock: Date.now,
       monotonic: () => performance.now(),
