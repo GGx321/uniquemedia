@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { buildSuite, electronNodeArgs, electronNodeEnv, NODE_TEST_SUITES, nodeTestSummaryProblem } from "./electronNodeTests";
+import { buildSuite, electronNodeArgs, electronNodeEnv, NODE_TEST_SUITES, nodeTestSummaryProblem, suitesForTier } from "./electronNodeTests";
 useNativeGlobals();
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -89,7 +89,18 @@ describe("nodeTestSummaryProblem: `electron --test` exits 0 for runs that tested
 
   test("every registered suite states a positive minimum", () => {
     for (const suite of NODE_TEST_SUITES) expect(suite.minTests).toBeGreaterThan(0);
-    expect(Object.fromEntries(NODE_TEST_SUITES.map((suite) => [suite.name, suite.minTests]))).toEqual({ "text worker": 10, "face worker": 18, "caption rules": 64, "caption worker": 8, "export name claim": 7 });
+    // CI-4 moved two measurements out of the text worker's blocking count (10 -> 9: the event-loop gap and the deadline headroom
+    // went to the perf tier, one plain "the worst shadow caption renders" test came back) and one out of the face worker's (18 -> 17).
+    expect(Object.fromEntries(NODE_TEST_SUITES.map((suite) => [suite.name, suite.minTests]))).toEqual({ "text worker": 9, "face worker": 17, "caption rules": 64, "caption worker": 8, "export name claim": 7 });
+  });
+
+  test("the perf tier's counts: what each suite runs when STUDIO_TEST_TIER=perf", () => {
+    expect(Object.fromEntries(NODE_TEST_SUITES.filter((suite) => suite.tierTests?.perf !== undefined).map((suite) => [suite.name, suite.tierTests?.perf]))).toEqual({
+      "text worker": 3,
+      "face worker": 1,
+      "caption rules": 9,
+      "caption worker": 1,
+    });
   });
 
   test("refuses fewer passes than tests (a cancelled test)", () => {
@@ -146,6 +157,29 @@ describe("electronNodeEnv", () => {
 describe("electronNodeArgs", () => {
   test("runs node's own test runner on the bundle, with the spec reporter the summary check reads named explicitly", () => {
     expect(electronNodeArgs("/out/x.mjs")).toEqual(["--test", "--test-reporter=spec", "/out/x.mjs"]);
+  });
+
+  test("a tier run selects only the tests tagged for it, by name", () => {
+    expect(electronNodeArgs("/out/x.mjs", "perf")).toEqual(["--test", "--test-reporter=spec", "--test-name-pattern=\\[perf\\]", "/out/x.mjs"]);
+  });
+});
+
+describe("suitesForTier", () => {
+  const suites = [
+    { name: "a", entry: "a.node-test.ts", minTests: 5, tierTests: { perf: 2 }, workers: {} },
+    { name: "b", entry: "b.node-test.ts", minTests: 3, workers: {} },
+  ];
+
+  test("the blocking run (no tier) covers every suite, with its blocking count", () => {
+    expect(suitesForTier(suites, undefined).map((s) => [s.suite.name, s.minTests])).toEqual([
+      ["a", 5],
+      ["b", 3],
+    ]);
+  });
+
+  test("a tier run covers only the suites that have tests in it, with that tier's count", () => {
+    expect(suitesForTier(suites, "perf").map((s) => [s.suite.name, s.minTests])).toEqual([["a", 2]]);
+    expect(suitesForTier(suites, "heavy")).toEqual([]);
   });
 });
 

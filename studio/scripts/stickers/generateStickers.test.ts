@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { heavyTest } from "../../testing/bunTiers";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -229,7 +230,9 @@ describe("determinism", () => {
     // own, not Bun's default 5 s, so a loaded shared runner cannot cut it.
   }, 30_000);
 
-  test("running the script in a fresh process reproduces the committed files", async () => {
+  // CI-4: a fresh bun process per run costs about 5 s on the Windows runner, so the scheduled heavy tier runs it; every push still checks
+  // the committed files against a fresh in-process generation (above) and the one-process determinism test.
+  heavyTest("running the script in a fresh process reproduces the committed files", async () => {
     const out = mkdtempSync(join(tmpdir(), "b5-stickers-"));
     try {
       const proc = Bun.spawn([process.execPath, "--no-env-file", GENERATOR, "--out", out, "--only", "heart-pulse,confetti-fall"], { stdout: "pipe", stderr: "pipe" });

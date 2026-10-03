@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { EngineFailure } from "../engineFailure";
@@ -411,7 +413,7 @@ describe("montages.create: the focus, under one budget", () => {
     expect(await draftFiles(w)).toEqual([`${montage.montageId}.json`]);
   });
 
-  test("the budget is ONE for all photos, not one per photo: 20 stuck photos cost the budget once", async () => {
+  perfTest("the budget is ONE for all photos, not one per photo: 20 stuck photos cost the budget once", async () => {
     const w = world();
     const photos = await addScenePhotos(w, 20);
     const r = montageRig(w, { deps: { focusBudgetMs: 80 }, focus: scriptedFocus(() => "never") });
@@ -419,7 +421,8 @@ describe("montages.create: the focus, under one budget", () => {
 
     await r.service.create({ avatarId: w.avatar.id, photoIds: photos });
 
-    expect(performance.now() - started).toBeLessThan(600);
+    // Twenty serial budgets would take 1600 ms: a blocking run bounds it under that, the perf run holds the 600 ms.
+    assertBudget(performance.now() - started, 600, "montage create with 20 stuck photos", { blockingMs: 1200 });
   });
 
   test("when the budget runs out the resolver is told to stop", async () => {
@@ -445,7 +448,7 @@ describe("montages.create: the focus, under one budget", () => {
     expect(focus.signals[0]?.aborted).toBe(false);
   });
 
-  test("the budget is what the command's deadline leaves after the margin, when that is less than the budget", async () => {
+  perfTest("the budget is what the command's deadline leaves after the margin, when that is less than the budget", async () => {
     const w = world();
     const [a = ""] = worldPhotoIds(w);
     const r = montageRig(w, { deps: { commandDeadlineMs: 200, commandMarginMs: 140, focusBudgetMs: 10_000 }, focus: scriptedFocus(() => "never") });
@@ -453,7 +456,7 @@ describe("montages.create: the focus, under one budget", () => {
 
     await r.service.create({ avatarId: w.avatar.id, photoIds: [a] });
 
-    expect(performance.now() - started).toBeLessThan(500);
+    assertBudget(performance.now() - started, 500, "montage create under a 200 ms command deadline");
   });
 
   test("the numbers fit main's 30 s command deadline with room to spare", () => {

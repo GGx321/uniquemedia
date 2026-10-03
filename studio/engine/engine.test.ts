@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { perfTest } from "../testing/bunTiers";
+import { assertBudget } from "../testing/tiers";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -2309,7 +2311,7 @@ describe("the export folder's status (task 3a.8a)", () => {
     }
   });
 
-  test("ten render attempts queued behind a volume that never answers share one check instead of ten hung calls", async () => {
+  perfTest("ten render attempts queued behind a volume that never answers share one check instead of ten hung calls", async () => {
     await mkdir(join(dir, "export"));
     let stats = 0;
     const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, stat: () => (stats++, new Promise<never>(() => undefined)) };
@@ -2321,7 +2323,8 @@ describe("the export folder's status (task 3a.8a)", () => {
       const responses = await Promise.all(Array.from({ length: 10 }, () => engine.handle(command("videos.render", { spec: RENDER_ATTEMPT }))));
       expect(responses.every((r) => !r.ok && r.error.code === "EXPORT_UNAVAILABLE")).toBe(true);
       expect(stats - before).toBe(1);
-      expect(Date.now() - started).toBeLessThan(40 * 8); // ten serial timeouts would take 400
+      // The single shared check is asserted exactly above (`stats - before`); the clock only repeats it: ten serial timeouts would take 400 ms.
+      assertBudget(Date.now() - started, 40 * 8, "ten render attempts behind one hung volume");
     } finally {
       errors.mockRestore();
     }

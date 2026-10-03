@@ -1,4 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { join } from "node:path";
 import { CAPTION_ISSUES, MAX_CAPTION_GRAPHEMES, MAX_CAPTION_UNITS, type CaptionIssue } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -454,11 +456,13 @@ describe("the function is pure", () => {
     ["lines", fill("a\n")],
   ];
 
-  test.each(WORST)("stays fast on the longest text it will read: %s", (_name, text) => {
-    const started = performance.now();
-    issues(text);
-    expect(performance.now() - started).toBeLessThan(250);
-  });
+  for (const [name, text] of WORST) {
+    perfTest(`stays fast on the longest text it will read: ${name}`, () => {
+      const started = performance.now();
+      issues(text);
+      assertBudget(performance.now() - started, 250, `captionRules: ${name}`);
+    });
+  }
 
   test("stays fast on the whole table together", () => {
     const started = performance.now();

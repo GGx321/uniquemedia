@@ -5,6 +5,7 @@ import { graphemeCount, MAX_CAPTION_GRAPHEMES } from "../../shared/engine";
 import { captionIssues, type CaptionContext } from "../../shared/text/captionRules";
 import { GRAPHEME_CASES } from "./captionRules.boundaries";
 import { openEmojiFont } from "./emoji/emojiFont";
+import { assertBudget } from "../../testing/tiers";
 import { loadEmojiFont } from "./fonts";
 
 // The caption rules under ELECTRON'S NODE, the product's own runtime (the engine is an Electron utilityProcess):
@@ -80,12 +81,13 @@ describe("the worst inputs on Electron's Node", () => {
     ["a ZWJ chain", `${"\u{1F469}\u{200D}".repeat(500)}x`],
   ];
   for (const [name, text] of worst) {
-    test(`stays under 250 ms: ${name}`, () => {
+    // Tagged for the perf run, which holds it to 250 ms; every other run still bounds it (generously) against catastrophic backtracking.
+    test(`[perf] stays under 250 ms: ${name}`, () => {
       const started = performance.now();
       captionIssues(text, ctx);
       const ms = performance.now() - started;
       console.log(`caption worst-case ${name}: ${ms.toFixed(1)} ms`);
-      assert.ok(ms < 250, `${name} took ${ms.toFixed(0)} ms`);
+      assertBudget(ms, 250, `caption worst-case ${name}`);
     });
   }
 });

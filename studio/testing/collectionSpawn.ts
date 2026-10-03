@@ -38,7 +38,7 @@ export function collectionTimeCalls(source: string, fileName = "test.ts"): Colle
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const found: CollectionCall[] = [];
   // bun:test's and node:test's own hooks (`before` and `after` are node:test's names for beforeAll and afterAll).
-  const DEFERRED = /^(test|it|beforeAll|beforeEach|afterAll|afterEach|before|after)(\.|\(|$)/;
+  const DEFERRED = /^(test|it|beforeAll|beforeEach|afterAll|afterEach|before|after|perfTest|perfOnlyTest|heavyTest|quarantinedTest)(\.|\(|$)/;
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {

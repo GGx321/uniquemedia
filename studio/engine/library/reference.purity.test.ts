@@ -29,7 +29,8 @@ function allTsFiles(root: string): string[] {
 }
 
 function isTestFile(path: string): boolean {
-  return path.endsWith(".test.ts") || path.endsWith(".test.tsx");
+  // `*.node-test.ts` are tests too (run under Electron's Node by electronNodeTests.ts), so they may use the test tiers (studio/testing/tiers.ts).
+  return path.endsWith(".test.ts") || path.endsWith(".test.tsx") || path.endsWith(".node-test.ts");
 }
 
 /** Inside a folder named exactly "testing", anywhere in the path. */

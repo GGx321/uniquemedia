@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { AdultAge, AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 
 const traits = {
@@ -280,12 +282,12 @@ describe("AvatarDescriptor (invariant 8)", () => {
     expect(AvatarDescriptor.safeParse({ age: 25, text: "" }).success).toBe(false);
   });
 
-  test("refuses a runaway 24,000-char text at once: its checks never block the engine", () => {
+  perfTest("refuses a runaway 24,000-char text at once: its checks never block the engine", () => {
     const text = `25-year-old woman, ${Array.from({ length: 12_000 }, (_, i) => "abcdefghijklmnopqrstuvwxyz"[i % 26]).join(" ")}`;
     const started = performance.now();
 
     expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(false);
-    expect(performance.now() - started).toBeLessThan(20);
+    assertBudget(performance.now() - started, 20, "AvatarDescriptor: a runaway text is refused");
   });
 
   test("rejects a text over 600 chars", () => {

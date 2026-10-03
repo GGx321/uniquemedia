@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { heavyTest } from "../../../testing/bunTiers";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { EmojiFontError, openEmojiFont } from "./emojiFont";
 import { loadPinnedEmojiFont } from "./emojiFont.testkit";
@@ -81,7 +82,9 @@ function newStats(): Stats {
 }
 
 describe("mutated font bytes", () => {
-  test("random byte changes inside the parsed tables never throw anything but a typed error", () => {
+  // CI-4: the two long runs (about 12 s and 9 s on the Windows runner) are the scheduled heavy tier's; the truncation, noise and view
+  // tests below stay in every push, so a push still checks that a bad font is refused with a typed error.
+  heavyTest("random byte changes inside the parsed tables never throw anything but a typed error", () => {
     const random = mulberry32(SEED);
     const stats = newStats();
     const bytes = pristine.slice();
@@ -104,7 +107,7 @@ describe("mutated font bytes", () => {
     console.log(`fuzz random: ${stats.runs} runs, ${stats.opened} opened, refused ${JSON.stringify(Object.fromEntries(stats.refused))}, slowest ${stats.slowestMs.toFixed(1)} ms`);
   }, 120_000);
 
-  test("every byte of the directory, maxp and the CBLC and cmap headers set to 0x00 and to 0xFF", () => {
+  heavyTest("every byte of the directory, maxp and the CBLC and cmap headers set to 0x00 and to 0xFF", () => {
     const stats = newStats();
     const bytes = pristine.slice();
     const swept = spans.filter((s) => ["directory", "maxp"].includes(s.name)).map((s): [number, number] => [s.start, s.start + s.length]);

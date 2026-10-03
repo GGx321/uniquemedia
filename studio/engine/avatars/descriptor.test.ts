@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { adultTextProblems, ageMentions, ageUpperBounds, AvatarDescriptor, AvatarTraits } from "../../shared/engine";
 import {
   DESCRIPTOR_JSON_SCHEMA,
@@ -105,12 +107,12 @@ describe("readDescriptorAnswer", () => {
     if (!read.ok) expect([...read.words].sort()).toEqual(["fresh-faced", "girl", "teen"]);
   });
 
-  test("a runaway answer of 24,000 chars is refused as too long at once, without the other checks", () => {
+  perfTest("a runaway answer of 24,000 chars is refused as too long at once, without the other checks", () => {
     const runaway = `25-year-old woman, ${Array.from({ length: 12_000 }, (_, i) => "abcdefghijklmnopqrstuvwxyz"[i % 26]).join(" ")}`;
     const started = performance.now();
 
     expect(readDescriptorAnswer(answer(runaway), 25)).toEqual({ ok: false, problems: ["too-long"], words: [] });
-    expect(performance.now() - started).toBeLessThan(20);
+    assertBudget(performance.now() - started, 20, "descriptor: a runaway answer is refused");
   });
 });
 

@@ -26,14 +26,24 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse, resolve } from "node:path";
+import { type Tier, tierOf, tierPattern } from "../testing/tiers";
 import { electronBinary } from "./electronBinary";
 
 export interface NodeTestSuite {
   name: string;
   /** Repo-relative path of the `*.node-test.ts` entry. */
   entry: string;
-  /** How many tests the suite has today: a run that reports fewer lost tests (a deleted or unregistered one) and fails. Raise it with the suite. */
+  /**
+   * How many tests the blocking run (STUDIO_TEST_TIER unset) has: a run that reports fewer lost tests (a deleted or
+   * unregistered one) and fails. Raise it with the suite. Tests that only another tier registers are not in this count.
+   */
   minTests: number;
+  /**
+   * How many tests a tier run (STUDIO_TEST_TIER set) of this suite has, by tier: those tagged with the tier's tag in
+   * their name (studio/testing/tiers.ts). A tier absent here means the suite has nothing in that tier and is skipped
+   * by that tier's run. The same loss check as `minTests`, per tier.
+   */
+  tierTests?: Readonly<Partial<Record<Tier, number>>>;
   /** Worker bundles the test spawns next to itself: output file name -> repo-relative source. */
   workers: Readonly<Record<string, string>>;
 }
@@ -73,25 +83,32 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
   {
     name: "text worker",
     entry: "studio/engine/text/worker/textGate.real.node-test.ts",
-    minTests: 10,
+    // 10 before CI-4: the event-loop gap and the deadline-headroom measurements moved to the perf tier, a plain "the worst
+    // shadow caption renders" test took the correctness half. The perf tier has the cut-at-the-deadline test, the gap and the headroom.
+    minTests: 9,
+    tierTests: { perf: 3 },
     workers: { "textWorker.js": "studio/engine/text/worker/textWorker.ts" },
   },
   {
     name: "face worker",
     entry: "studio/engine/face/testing/workerGate.real.node-test.ts",
-    minTests: 18,
+    // 18 before CI-4: the event-loop gap test moved to the perf tier.
+    minTests: 17,
+    tierTests: { perf: 1 },
     workers: { "faceWorker.js": "studio/engine/face/worker/faceWorker.ts" },
   },
   {
     name: "caption rules",
     entry: "studio/engine/text/captionRules.node-test.ts",
     minTests: 64,
+    tierTests: { perf: 9 },
     workers: {},
   },
   {
     name: "caption worker",
     entry: "studio/engine/text/worker/textCaption.real.node-test.ts",
     minTests: 8,
+    tierTests: { perf: 1 },
     workers: { "textWorker.js": "studio/engine/text/worker/textWorker.ts" },
   },
   {
@@ -115,8 +132,18 @@ export function electronNodeEnv(parent: Readonly<Record<string, string | undefin
   return { ...env, ELECTRON_RUN_AS_NODE: "1", STUDIO_ROOT: root };
 }
 
-export function electronNodeArgs(bundle: string): string[] {
-  return ["--test", "--test-reporter=spec", bundle];
+/** `tier` set: only the tests tagged for it run (node leaves the others out of the counts, so the summary check reads the tier's own tests). */
+export function electronNodeArgs(bundle: string, tier?: Tier): string[] {
+  return ["--test", "--test-reporter=spec", ...(tier === undefined ? [] : [`--test-name-pattern=${tierPattern(tier)}`]), bundle];
+}
+
+/** The suites a run of `tier` covers (every suite for the blocking run, undefined), each with the test count its summary must reach. */
+export function suitesForTier(suites: readonly NodeTestSuite[], tier: Tier | undefined): { suite: NodeTestSuite; minTests: number }[] {
+  if (tier === undefined) return suites.map((suite) => ({ suite, minTests: suite.minTests }));
+  return suites.flatMap((suite) => {
+    const minTests = suite.tierTests?.[tier];
+    return minTests === undefined ? [] : [{ suite, minTests }];
+  });
 }
 
 /** `bun build <source> --target=node`, as a child process: the same command a person would run, and it behaves the same under `bun test`. */
@@ -139,9 +166,9 @@ export async function buildSuite(root: string, suite: NodeTestSuite, outDir: str
   return testBundle;
 }
 
-function runElectronNode(electron: string, testBundle: string, env: Record<string, string>): Promise<{ code: number; output: string }> {
+function runElectronNode(electron: string, testBundle: string, env: Record<string, string>, tier?: Tier): Promise<{ code: number; output: string }> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(electron, electronNodeArgs(testBundle), { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(electron, electronNodeArgs(testBundle, tier), { env, stdio: ["ignore", "pipe", "pipe"] });
     // Copied through as it arrives, and kept: the summary is read from it. Decoded per stream, so a multi-byte
     // character (the reporter's `✔`, `ℹ`) split across two chunks is not turned into replacement characters.
     let output = "";
@@ -175,17 +202,20 @@ if (import.meta.main) {
   const root = resolve(import.meta.dirname, "../..");
   const electron = await electronBinary();
   let failed = false;
-  for (const suite of NODE_TEST_SUITES) {
+  const tier = tierOf(process.env);
+  const planned = suitesForTier(NODE_TEST_SUITES, tier);
+  if (tier !== undefined && planned.length === 0) console.log(`::notice::electronNodeTests: no suite has tests in the ${tier} tier, so there is nothing to run`);
+  for (const { suite, minTests } of planned) {
     const out = await mkdtemp(join(tmpdir(), "studio-node-tests-"));
     try {
-      console.log(`\n== ${suite.name} (Electron's Node) ==`);
+      console.log(`\n== ${suite.name} (Electron's Node${tier === undefined ? "" : `, ${tier} tier`}) ==`);
       const testBundle = await buildSuite(root, suite, out);
-      const { code, output } = await runElectronNode(electron, testBundle, electronNodeEnv(process.env, root));
+      const { code, output } = await runElectronNode(electron, testBundle, electronNodeEnv(process.env, root), tier);
       if (code !== 0) {
         console.error(`${suite.name}: exit code ${code}`);
         failed = true;
       } else {
-        const problem = nodeTestSummaryProblem(output, suite.minTests);
+        const problem = nodeTestSummaryProblem(output, minTests);
         if (problem !== undefined) {
           console.error(`${suite.name}: exit code 0, but ${problem}`);
           failed = true;

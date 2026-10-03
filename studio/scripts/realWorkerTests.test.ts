@@ -20,6 +20,7 @@ import {
   slowTests,
   slowTestWarnings,
   testTarget,
+  tierTestArgs,
   WORKER_TEARDOWN_CRASHES,
   withDefaultTimeout,
 } from "./realWorkerTests";
@@ -339,6 +340,49 @@ describe("sharding the suite", () => {
   });
 });
 
+describe("tierTestArgs (STUDIO_TEST_TIER)", () => {
+  const scratch: string[] = [];
+  afterEach(async () => {
+    for (const dir of scratch.splice(0)) await rm(dir, { recursive: true, force: true });
+  });
+
+  async function treeWith(files: Record<string, string>): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "studio-tier-"));
+    scratch.push(root);
+    for (const [path, source] of Object.entries(files)) {
+      await mkdir(join(root, path, ".."), { recursive: true });
+      await writeFile(join(root, path), source);
+    }
+    return root;
+  }
+
+  test("is one process holding the flags, the tier's name pattern and only the files that carry a marker of the tier", async () => {
+    const root = await treeWith({
+      "studio/a.test.ts": 'heavyTest("slow", () => {});',
+      "studio/b.test.ts": 'test("plain", () => {});',
+      "studio/c.test.ts": 'test("[heavy] by hand", () => {});',
+      "studio/d.test.ts": 'perfTest("fast", () => {});',
+    });
+    expect(await tierTestArgs(["./studio", "--randomize"], "heavy", root)).toEqual([["--randomize", "--test-name-pattern=\\[heavy\\]", "./studio/a.test.ts", "./studio/c.test.ts"]]);
+    expect(await tierTestArgs(["./studio"], "perf", root)).toEqual([["--test-name-pattern=\\[perf\\]", "./studio/d.test.ts"]]);
+  });
+
+  test("keeps a name pattern the caller gave", async () => {
+    const root = await treeWith({ "studio/a.test.ts": 'heavyTest("slow", () => {});' });
+    expect(await tierTestArgs(["./studio", "--test-name-pattern=slow"], "heavy", root)).toEqual([["--test-name-pattern=slow", "./studio/a.test.ts"]]);
+  });
+
+  test("is an empty plan when no file carries the tier (the quarantine list is empty most of the time)", async () => {
+    const root = await treeWith({ "studio/a.test.ts": 'test("plain", () => {});' });
+    expect(await tierTestArgs(["./studio"], "quarantine", root)).toEqual([]);
+  });
+
+  test("still refuses a path that does not exist, so a tier run never quietly runs nothing", async () => {
+    const root = await treeWith({ "studio/a.test.ts": "" });
+    await expect(tierTestArgs(["./nope"], "perf", root)).rejects.toThrow(/no such test path/);
+  });
+});
+
 describe("the bounds", () => {
   const ROOT = join(import.meta.dir, "..", "..");
 
@@ -407,8 +451,21 @@ describe("the Electron-Node steps' bounds", () => {
     expect(scripts["test:studio:electron-node"]).toContain("electronNodeTests.ts");
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     const steps = [...workflow.matchAll(/run: bun run test:studio:electron-node\r?\n\s+timeout-minutes: (\d+)/g)];
-    expect(steps).toHaveLength(2); // the build job and the canary
+    expect(steps).toHaveLength(4); // the build job, the canary (scheduled), and the perf and quarantine tier runs (CI-4)
     for (const step of steps) expect(Number(step[1])).toBeGreaterThan((NODE_TEST_SUITES.length * SUITE_TIMEOUT_MS) / 60_000);
+  });
+
+  // A tier run (STUDIO_TEST_TIER, studio/testing/tiers.ts) is one `bun test` process: it may crash and retry like a shard, so its step
+  // needs attempts x bound, and a tier job must set the variable for the steps that run it.
+  test("every workflow step that runs a tier's bun tests has a timeout-minutes above attempts x bound, in a job that sets STUDIO_TEST_TIER", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    const jobs = workflow.split(/^ {2}(?=[\w-]+:\r?\n)/m).filter((block) => /STUDIO_TEST_TIER: \w+/.test(block));
+    expect(jobs.map((job) => /STUDIO_TEST_TIER: (\w+)/.exec(job)?.[1]).sort()).toEqual(["heavy", "perf", "quarantine"]);
+    for (const job of jobs) {
+      const step = /run: bun run test:studio:suite \.\/studio\r?\n\s+timeout-minutes: (\d+)/.exec(job);
+      expect(step).not.toBeNull();
+      expect(Number(step?.[1])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
+    }
   });
 });
 

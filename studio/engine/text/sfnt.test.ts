@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -188,11 +190,11 @@ describe("cmapCoverage on damaged real fonts", () => {
     expect(refused).toBeGreaterThan(0);
   });
 
-  test("a lookup stays fast on the whole Unicode range", () => {
+  perfTest("a lookup stays fast on the whole Unicode range", () => {
     const has = cmapCoverage(real(TEXT_FONTS.manrope.file));
     const started = performance.now();
     for (let cp = 0; cp < 0x30000; cp++) has(cp);
-    expect(performance.now() - started).toBeLessThan(500);
+    assertBudget(performance.now() - started, 500, "cmapCoverage lookup over 0x30000 code points");
   });
 });
 

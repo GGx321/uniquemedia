@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { maskHome, scrubber, scrubStderrTail } from "./scrubber";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -168,7 +170,7 @@ describe("scrubber: Unicode forms and speed", () => {
     expect(scrub(`open ${mixed}.`)).toBe("open <photo>.");
   });
 
-  test("a long run of separators with many registered inputs is scrubbed in linear time", () => {
+  perfTest("a long run of separators with many registered inputs is scrubbed in linear time", () => {
     const inputs = Array.from({ length: 200 }, (_, i) => ({ path: `/Users/mia/Pictures/album-${i}/photo-${i}.jpg`, label: "<photo>" }));
     const scrub = scrubber("/tmp/render-tmp", "/a/Studio", inputs, "/Users/mia");
     const unc = Array.from({ length: 200 }, (_, i) => ({ path: `\\\\nas\\photos\\album-${i}\\photo-${i}.jpg`, label: "<photo>" }));
@@ -186,7 +188,7 @@ describe("scrubber: Unicode forms and speed", () => {
     for (const [run, line] of cases) {
       const started = performance.now();
       run(line);
-      expect(performance.now() - started).toBeLessThan(250);
+      assertBudget(performance.now() - started, 250, "scrubber: a long run of separators");
     }
   });
 });

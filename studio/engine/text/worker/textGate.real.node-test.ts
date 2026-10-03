@@ -6,6 +6,7 @@ import { deadlineHeadroomProblem, HEADROOM_SAMPLES, headroomStats } from "../dea
 import { loadTextRasteriser } from "../load";
 import { RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "../rasterTypes";
 import { SELF_TEST_FINGERPRINT, SELF_TEST_HASHES, selfTestSvg } from "../selfTest";
+import { assertBudget, tierOf } from "../../../testing/tiers";
 import { createTextWorkerSpawner } from "./spawn";
 import { createTextGate, type TextGate } from "./textGate";
 
@@ -126,7 +127,7 @@ describe("the real worker under Electron's Node", () => {
     }
   });
 
-  test("cuts a render that overruns the deadline at the deadline, not at the end of the render, and the next call works on a fresh worker", async () => {
+  test("[perf] cuts a render that overruns the deadline at the deadline, not at the end of the render, and the next call works on a fresh worker", async () => {
     // Hardware-relative: the probe must take at least 3x the bound on THIS machine when nothing interrupts it, or a
     // gate that never interrupted would pass the assertion below. It must also finish under the worker's own tripwire
     // (TEXT_RENDER_DEADLINE_MS), which discards a slower call. So the probe is sized to this runner: the uninterrupted
@@ -163,49 +164,65 @@ describe("the real worker under Electron's Node", () => {
     // Electron's Node interrupts wasm on terminate(): the call ends at the deadline plus the kill, not when the
     // render would have finished (Bun does not interrupt it: 712 ms locally, 2015 ms on CI).
     console.log(`uninterrupted probe (${rects} rects) ${Math.round(full)} ms; cut at a ${DEADLINE_MS} ms deadline after ${Math.round(cut)} ms (bound ${bound} ms) on ${process.platform}`);
-    assert.ok(cut < bound, `the call took ${Math.round(cut)} ms, not under ${bound} ms (the render alone takes ${Math.round(full)} ms)`);
+    // The blocking run asks for the call to end well before the render alone would (Electron's Node interrupts wasm, so the
+    // cut is a few hundred ms; Bun's terminate waits the render out, so there the cut IS about `full`): a ratio that holds
+    // on a slow runner. The perf run also holds it to the absolute `bound`, which is a measurement of the runner.
+    assertBudget(cut, bound, `text render cut at its ${DEADLINE_MS} ms deadline (the render alone takes ${Math.round(full)} ms)`, { blockingMs: Math.floor(full * 0.6) });
     assert.equal((await g.render({ svg: svgOf("after"), font: "manrope" })).width, 240);
     assert.equal(spawned(), 2);
   });
 
-  test("keeps this thread responsive while a heavy render runs", async () => {
-    const { gate: g } = gate({ renderTimeoutMs: 20_000 });
-    await g.render({ svg: svgOf("warm"), font: "manrope" });
-    let last = performance.now();
-    let worstGap = 0;
-    const timer = setInterval(() => {
-      const now = performance.now();
-      worstGap = Math.max(worstGap, now - last);
-      last = now;
-    }, 5);
-    const started = performance.now();
-    await g.render({ svg: blurred(4), font: "manrope" });
-    const took = performance.now() - started;
-    clearInterval(timer);
-    assert.ok(took > 100, `the render took only ${Math.round(took)} ms`);
-    assert.ok(worstGap < Math.max(100, took / 3), `this thread stalled ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render`);
+  test("the worst legitimate shadow caption renders, at the full canvas the caps allow", async () => {
+    // The correctness half of the headroom measurement below: the request it times is a valid render.
+    const { gate: g } = gate({ renderTimeoutMs: 60_000 });
+    const image = await g.render({ svg: worstShadowCaption(), font: "manrope" });
+    assert.equal(image.width, 1080);
+    assert.equal(image.height, 600);
   });
 
-  test("the configured deadline leaves headroom over a legitimate shadow caption's cost on this runner", async () => {
-    // 15 renders after a warm-up, judged against the configured TEXT_RENDER_DEADLINE_MS by robust statistics (see
-    // deadlineHeadroom.ts): the lower quartile is the caption's cost (5x) and the second-slowest of 15 leaves 3x.
-    // A loaded runner only adds time to a render, so one stalled sample cannot fail it, while a deadline that a plain slow
-    // caption could trip (or a slower runner as a whole) still does.
-    const { gate: g } = gate({ renderTimeoutMs: 60_000 });
-    const request = { svg: worstShadowCaption(), font: "manrope" } as const;
-    await g.render(request); // warm
-    const times: number[] = [];
-    for (let i = 0; i < HEADROOM_SAMPLES; i++) {
+  // The two measurements below are perf-only (CI-4): they judge the runner's speed, and a loaded runner fails them without
+  // any defect in the product. They register in the perf run only, which prints the numbers and does not block.
+  if (tierOf() === "perf") {
+    test("[perf] keeps this thread responsive while a heavy render runs", async () => {
+      const { gate: g } = gate({ renderTimeoutMs: 20_000 });
+      await g.render({ svg: svgOf("warm"), font: "manrope" });
+      let last = performance.now();
+      let worstGap = 0;
+      const timer = setInterval(() => {
+        const now = performance.now();
+        worstGap = Math.max(worstGap, now - last);
+        last = now;
+      }, 5);
       const started = performance.now();
-      await g.render(request);
-      times.push(performance.now() - started);
-    }
-    const { lowerQuartile, median, secondSlowest } = headroomStats(times);
-    console.log(
-      `legitimate shadow caption on ${process.platform}: lower quartile ${lowerQuartile.toFixed(0)} / median ${median.toFixed(0)} / second-slowest ${secondSlowest.toFixed(0)} ms of ${HEADROOM_SAMPLES}; deadline ${TEXT_RENDER_DEADLINE_MS} ms`,
-    );
-    assert.equal(deadlineHeadroomProblem(times, TEXT_RENDER_DEADLINE_MS), undefined);
-  });
+      await g.render({ svg: blurred(4), font: "manrope" });
+      const took = performance.now() - started;
+      clearInterval(timer);
+      console.log(`this thread's worst gap ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render on ${process.platform}`);
+      assert.ok(took > 100, `the render took only ${Math.round(took)} ms`);
+      assert.ok(worstGap < Math.max(100, took / 3), `this thread stalled ${Math.round(worstGap)} ms during a ${Math.round(took)} ms render`);
+    });
+
+    test("[perf] the configured deadline leaves headroom over a legitimate shadow caption's cost on this runner", async () => {
+      // 15 renders after a warm-up, judged against the configured TEXT_RENDER_DEADLINE_MS by robust statistics (see
+      // deadlineHeadroom.ts): the lower quartile is the caption's cost (5x) and the second-slowest of 15 leaves 3x.
+      // A loaded runner only adds time to a render, so one stalled sample cannot fail it, while a deadline that a plain slow
+      // caption could trip (or a slower runner as a whole) still does.
+      const { gate: g } = gate({ renderTimeoutMs: 60_000 });
+      const request = { svg: worstShadowCaption(), font: "manrope" } as const;
+      await g.render(request); // warm
+      const times: number[] = [];
+      for (let i = 0; i < HEADROOM_SAMPLES; i++) {
+        const started = performance.now();
+        await g.render(request);
+        times.push(performance.now() - started);
+      }
+      const { lowerQuartile, median, secondSlowest } = headroomStats(times);
+      console.log(
+        `legitimate shadow caption on ${process.platform}: lower quartile ${lowerQuartile.toFixed(0)} / median ${median.toFixed(0)} / second-slowest ${secondSlowest.toFixed(0)} ms of ${HEADROOM_SAMPLES}; deadline ${TEXT_RENDER_DEADLINE_MS} ms`,
+      );
+      assert.equal(deadlineHeadroomProblem(times, TEXT_RENDER_DEADLINE_MS), undefined);
+    });
+  }
 
   test("the loader starts it, and the self-test through the worker gives the pinned fingerprint", async () => {
     const infos: string[] = [];

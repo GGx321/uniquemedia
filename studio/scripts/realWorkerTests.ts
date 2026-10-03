@@ -32,13 +32,16 @@
  * crash retry, and a retry reruns one shard. Shards run one after another, never in parallel (the suite has
  * timing-sensitive tests). Every shard runs even after one has failed, so a red run shows all its failures;
  * the exit code is the first failing shard's, and the failing shard's test files are printed under an `::error::`.
+ * With STUDIO_TEST_TIER set (perf, heavy or quarantine; studio/testing/tiers.ts) the same script runs that tier's
+ * tests instead: only the files that carry its tag, one process, only the tagged tests (see tierTestArgs).
  * A shard that TIMES OUT is different: a hung Bun means the runner is wedged, so the remaining shards are skipped
  * (with an `::error::`) instead of each waiting out its own bound. In this mode the arguments after `--suite` are flags, written as
  * `--flag=value` (a value in its own argument would be read as a path), and paths to test directories or files.
  */
 import { existsSync, statSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
+import { type Tier, tierMarkers, tierOf, tierPattern, tierTag } from "../testing/tiers";
 
 export const MAX_ATTEMPTS = 3;
 /**
@@ -216,6 +219,25 @@ export async function shardedTestArgs(testArgs: readonly string[], shards: numbe
   return plan;
 }
 
+/**
+ * The `bun test` argument lists of a TIER run (STUDIO_TEST_TIER set, see studio/testing/tiers.ts): one list, never
+ * sharded (a tier run is a few files), holding only the test files whose source holds a marker of the tier (tierMarkers), and a
+ * `--test-name-pattern` that selects only the tagged tests inside them. No file carries the tag: an empty plan, which is
+ * a pass (the quarantine list is empty most of the time); tiers.test.ts holds that `perf` and `heavy` are never empty.
+ */
+export async function tierTestArgs(testArgs: readonly string[], tier: Tier, cwd: string): Promise<string[][]> {
+  const flags = testArgs.filter((arg) => arg.startsWith("-"));
+  const paths = testArgs.filter((arg) => !arg.startsWith("-"));
+  const tagged: string[] = [];
+  for (const file of await listTestFiles(paths, cwd)) {
+    const source = await readFile(resolve(cwd, file), "utf8");
+    if (tierMarkers(tier).some((marker) => source.includes(marker))) tagged.push(file);
+  }
+  if (tagged.length === 0) return [];
+  const pattern = flags.some((flag) => flag === "--test-name-pattern" || flag.startsWith("--test-name-pattern=")) ? [] : [`--test-name-pattern=${tierPattern(tier)}`];
+  return [[...flags, ...pattern, ...tagged]];
+}
+
 /** A test slower than this is reported as a `::warning::` (the per-test default above is far higher, so a stall would otherwise pass unseen). */
 export const SLOW_TEST_WARNING_MS = 5_000;
 
@@ -385,7 +407,13 @@ if (import.meta.main) {
   let plan: string[][];
   try {
     target = testTarget(process.argv.slice(2));
-    plan = (await shardedTestArgs(target.testArgs, target.shards, process.cwd())).map(withDefaultTimeout);
+    const tier = tierOf(process.env);
+    const lists = tier === undefined ? await shardedTestArgs(target.testArgs, target.shards, process.cwd()) : await tierTestArgs(target.testArgs, tier, process.cwd());
+    plan = lists.map(withDefaultTimeout);
+    if (tier !== undefined && plan.length === 0) {
+      console.log(`::notice::realWorkerTests: no test carries the ${tierTag(tier)} tag, so there is nothing to run in this tier`);
+      process.exit(0);
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(2);

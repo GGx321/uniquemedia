@@ -1,4 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { perfTest } from "../../../testing/bunTiers";
+import { assertBudget } from "../../../testing/tiers";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { openEmojiFont } from "./emojiFont";
 import { type EmojiTestEntry, keyOf, loadEmojiTest, loadPinnedEmojiFont } from "./emojiFont.testkit";
@@ -186,7 +188,7 @@ describe("against the whole emoji-test.txt", () => {
 });
 
 describe("speed", () => {
-  test("segmenting and checking coverage of a 200-character caption takes under 5 ms", async () => {
+  perfTest("segmenting and checking coverage of a 200-character caption takes under 5 ms", async () => {
     const font = openEmojiFont(await loadPinnedEmojiFont());
     const caption = "Ну что, погнали?! 🔥🔥 Летим в 🇹🇷 с 👨‍👩‍👧‍👦 и 👍🏽, номер 1️⃣ в моём списке ❤️ Лето, море, песок, солнце и никаких забот 😀😀😀 Big news for everyone who reads this caption right now 🎉 ".repeat(2).slice(0, 200);
     expect([...caption].length).toBeLessThanOrEqual(200);
@@ -201,10 +203,10 @@ describe("speed", () => {
     timings.sort((a, b) => a - b);
     const median = timings[100] ?? Infinity;
     console.log(`caption of ${[...caption].length} characters: median ${median.toFixed(3)} ms, worst ${(timings[199] ?? 0).toFixed(3)} ms`);
-    expect(median).toBeLessThan(5);
+    assertBudget(median, 5, "segmenting a 200-character caption (median)", { blockingMs: 50 });
   });
 
-  test("has() on a hostile 32-code-point sequence takes well under a millisecond", async () => {
+  perfTest("has() on a hostile 32-code-point sequence takes well under a millisecond", async () => {
     const font = openEmojiFont(await loadPinnedEmojiFont());
     const hostile = [...Array.from({ length: 16 }, () => [0x1f469, 0x200d]).flat()];
     font.has(hostile);
@@ -212,6 +214,6 @@ describe("speed", () => {
     for (let i = 0; i < 1000; i++) font.has(hostile);
     const perCall = (performance.now() - started) / 1000;
     console.log(`has() on a 32-code-point ZWJ chain: ${perCall.toFixed(4)} ms per call`);
-    expect(perCall).toBeLessThan(1);
+    assertBudget(perCall, 1, "has() on a hostile 32-code-point sequence (per call)", { blockingMs: 20 });
   });
 });

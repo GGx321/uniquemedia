@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { adultTextProblems, ageMentions, ageUpperBounds, DESCRIPTOR_MAX_CHARS, hardYouthWords, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
 
 describe("ageMentions", () => {
@@ -766,20 +768,20 @@ describe("an over-long descriptor is refused at once, whatever it holds", () => 
     expect(adultTextProblems(`25-year-old woman, ${"a".repeat(600)}`, 25, "descriptor")).toEqual(["too-long"]);
   });
 
-  test("24,000 chars of single letters is refused in well under a frame", () => {
+  perfTest("24,000 chars of single letters is refused in well under a frame", () => {
     const text = `25-year-old woman, ${Array.from({ length: 12_000 }, (_, i) => "abcdefghijklmnopqrstuvwxyz"[i % 26]).join(" ")}`;
     const started = performance.now();
 
     expect(adultTextProblems(text, 25, "descriptor")).toEqual(["too-long"]);
-    expect(performance.now() - started).toBeLessThan(20);
+    assertBudget(performance.now() - started, 20, "adultTextProblems: 24,000 chars of single letters");
   });
 
-  test("a 600-char descriptor of spelled-out letters is checked quickly: the join is linear", () => {
+  perfTest("a 600-char descriptor of spelled-out letters is checked quickly: the join is linear", () => {
     const text = `25-year-old woman, ${Array.from({ length: 290 }, (_, i) => "bcdfghjklmnpqrsvwxz"[i % 19]).join(" ")}`.slice(0, 600);
     const started = performance.now();
 
     adultTextProblems(text, 25, "descriptor");
-    expect(performance.now() - started).toBeLessThan(20);
+    assertBudget(performance.now() - started, 20, "adultTextProblems: 600 spelled-out letters");
   });
 });
 

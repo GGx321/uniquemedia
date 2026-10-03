@@ -6,6 +6,7 @@ import { deadlineHeadroomProblem, HEADROOM_SAMPLES, headroomStats } from "../dea
 import { openEmojiFont } from "../emoji/emojiFont";
 import { loadEmojiFont } from "../fonts";
 import { RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "../rasterTypes";
+import { tierOf } from "../../../testing/tiers";
 import { createTextWorkerSpawner } from "./spawn";
 import { createTextGate, type TextGate } from "./textGate";
 
@@ -120,7 +121,9 @@ describe("captions through the real worker under Electron's Node", () => {
     assert.equal(spawned(), 1);
   });
 
-  test("the configured deadline leaves headroom over the worst legitimate \u00ABБез фона\u00BB caption on this runner, for text and for emoji", async () => {
+  test("[perf] the configured deadline leaves headroom over the worst legitimate \u00ABБез фона\u00BB caption on this runner, for text and for emoji", async () => {
+    // Every run draws the two worst captions and checks they ARE the worst case (below); only the perf run takes the timing
+    // samples and judges them against the deadline (CI-4: that judgement is a measurement of the runner, and does not block).
     // The worst the real template can emit, at its largest size (a caption that SHRINKS is not the worst: `fontSize >= 108` is asserted):
     // two lines of the widest text at scale 2 with the shadow filter over the whole box, and the same with two lines of the 7 largest
     // emoji bitmaps (the most to decode, embed and blur).
@@ -146,6 +149,7 @@ describe("captions through the real worker under Electron's Node", () => {
       const first = await g.caption(request); // warm
       assert.ok(first.layout.fontSize >= 108, `${name}: the caption shrank to ${first.layout.fontSize} px, so it is not the worst case`);
       assert.equal(first.layout.lines.length, 2);
+      if (tierOf() !== "perf") continue;
       const times: number[] = [];
       for (let i = 0; i < HEADROOM_SAMPLES; i++) {
         const started = performance.now();
