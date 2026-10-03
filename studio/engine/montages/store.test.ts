@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { lstat, mkdir, readdir, readFile, symlink, utimes, writeFile } from "node:fs/promises";
 import type { BigIntStats } from "node:fs";
 import { NODE_OPEN_OPS, type OpenRegularOptions } from "../library/openRegular";
@@ -578,7 +580,7 @@ describe("DraftStore.remove", () => {
     expect(await storeOf().remove(library, avatarId, "montage-0001")).toBe(false);
   });
 
-  test("a folder or link with a draft's name is refused at once as not a file, and never retried or removed", async () => {
+  perfTest("a folder or link with a draft's name is refused at once as not a file, and never retried or removed", async () => {
     const { library, avatarIds } = await openWithAvatars();
     const [avatarId = ""] = avatarIds;
     const asFolder = library.montageFilePath(avatarId, "montage-0001");
@@ -587,7 +589,8 @@ describe("DraftStore.remove", () => {
 
     await expect(storeOf().remove(library, avatarId, "montage-0001")).rejects.toBeInstanceOf(DraftNotAFileError);
 
-    expect(performance.now() - started).toBeLessThan(500);
+    // On Windows a retried unlink spends 1575 ms (unlinkRetry.ts's delays): the blocking bound is 1 s, the perf run holds 500 ms.
+    assertBudget(performance.now() - started, 500, "refusing a folder at a draft's name", { blockingMs: 1_000 });
     expect(await readdir(asFolder)).toEqual(["inside"]);
   });
 

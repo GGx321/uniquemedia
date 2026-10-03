@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget, tierOf } from "../../testing/tiers";
 import { startMockFlashapi, type MockFlashapi, type MockFlashapiStep } from "../../scripts/mockFlashapi";
 import { captureConsole, expectNoKeyFragment } from "../../testing/keyLeaks";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -346,13 +348,16 @@ describe("a request that fails before an answer", () => {
     expect(error.kind).toBe("network");
   });
 
-  test("an answer slower than the timeout is `timeout`", async () => {
+  // The answer is delayed far longer in every run but the perf one (CI-4): the client must give up at its 60 ms timeout, not wait the answer
+  // out, and the blocking bound sits 1.5 s from each of the two (the perf run keeps 400 ms and 350 ms).
+  perfTest("an answer slower than the timeout is `timeout`", async () => {
     const m = start();
-    m.script({ delayMs: 400 });
+    const delayMs = tierOf() === "perf" ? 400 : 3_000;
+    m.script({ delayMs });
     const started = performance.now();
     const error = await failureOf(clientFor(m, { timeoutMs: 60 }).fetchTrending());
     expect(error.kind).toBe("timeout");
-    expect(performance.now() - started).toBeLessThan(350);
+    assertBudget(performance.now() - started, 350, "a delayed answer cut at the timeout", { blockingMs: delayMs / 2 });
   });
 
   test("a caller's abort is `aborted`, not a timeout", async () => {

@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget, tierOf } from "../../testing/tiers";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -947,15 +949,18 @@ describe("videos.render has its own deadline, under main's 30 s", () => {
     await expectNothingTouched(r);
   });
 
-  test("what the checks cost is taken off the focus budget: a detector that never answers is cut in time for the answer to arrive inside the deadline", async () => {
+  // Every time in this test is scaled by 4 in every run but the perf one (CI-4): the arithmetic (deadline - check - margin) and the bounds
+  // around it keep their ratios, and the scheduling slack they tolerate grows from 110 ms to 440 ms. The perf run keeps the original numbers.
+  perfTest("what the checks cost is taken off the focus budget: a detector that never answers is cut in time for the answer to arrive inside the deadline", async () => {
     const w = world();
+    const scale = tierOf() === "perf" ? 1 : 4;
     let cutAfter = -1;
     const seen: number[] = [];
     const r = serviceRig(w, {
       deps: {
-        commandDeadlineMs: 800,
-        commandMarginMs: 60,
-        checkExport: slowCheck(150, w),
+        commandDeadlineMs: 800 * scale,
+        commandMarginMs: 60 * scale,
+        checkExport: slowCheck(150 * scale, w),
         focus: () => ({
           fillMissingFocus: (spec, signal) =>
             new Promise((_resolve, reject) => {
@@ -973,10 +978,12 @@ describe("videos.render has its own deadline, under main's 30 s", () => {
 
     const { jobId } = await r.service.render({ spec: specFor(w) });
 
-    expect(Date.now() - started).toBeLessThan(800);
+    const took = Date.now() - started;
+    expect(took).toBeLessThan(800 * scale);
     expect(seen).toEqual([1]);
-    expect(cutAfter).toBeGreaterThan(400);
-    expect(cutAfter).toBeLessThan(700); // 800 - 150 (the check) - 60 (the margin) = 590, and a little scheduling
+    expect(cutAfter).toBeGreaterThan(400 * scale);
+    expect(cutAfter).toBeLessThan(700 * scale); // (800 - 150 (the check) - 60 (the margin) = 590, and a little scheduling) x scale
+    assertBudget(took, 800, "render under an 800 ms command deadline", { blockingMs: 800 * scale });
     expect(r.jobs.stateOf(jobId)).toBeDefined(); // it went on with the stand-in point
     await r.queue.idle();
   });

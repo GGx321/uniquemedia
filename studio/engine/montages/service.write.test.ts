@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget } from "../../testing/tiers";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { EngineFailure } from "../engineFailure";
@@ -420,7 +422,7 @@ describe("montages.delete", () => {
     expect(w.library.videoCount(w.avatar.id)).toBe(1);
   });
 
-  test("a disk that will not delete is INTERNAL by code alone, and nothing is announced", async () => {
+  perfTest("a disk that will not delete is INTERNAL by code alone, and nothing is announced", async () => {
     const w = world();
     const r = montageRig(w);
     // a folder named like the draft, with something in it: a plain unlink cannot remove it
@@ -434,7 +436,8 @@ describe("montages.delete", () => {
     expect(error.code).toBe("INTERNAL");
     expect(error.detail ?? "").toMatch(/not a file/);
     expect(error.detail ?? "").not.toContain(w.libraryRoot);
-    expect(performance.now() - started).toBeLessThan(500); // no lock-retry on a folder
+    // No lock-retry on a folder: on Windows a retried unlink spends 1575 ms (unlinkRetry.ts's delays), so the blocking bound is 1 s; the perf run holds 500 ms.
+    assertBudget(performance.now() - started, 500, "deleting a draft that is a folder", { blockingMs: 1_000 });
     expect(r.events).toEqual([]);
   });
 

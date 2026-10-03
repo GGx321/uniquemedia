@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { perfTest } from "../../testing/bunTiers";
+import { assertBudget, tierOf } from "../../testing/tiers";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { MoneyError } from "./errors";
@@ -356,14 +358,17 @@ test("the /models fetch runs while the image endpoints are still loading: one pr
   expect([book.sourceOf(GROK_2), book.sourceOf(GROK_CHAT)]).toEqual(["live", "live"]);
 });
 
-test("two fetches that never answer end together at the one timeout, and both fall back", async () => {
+// The timeout is wide in every run but the perf one (CI-4): two fetches in parallel end at T, in series at 2T, and the blocking bound sits
+// 750 ms from each (1.5 T, between T and 2T) instead of 250 ms. The perf run keeps the original 300 ms / 550 ms.
+perfTest("two fetches that never answer end together at the one timeout, and both fall back", async () => {
+  const timeoutMs = tierOf() === "perf" ? 300 : 1_500;
   const hanging: FetchLike = (_url, init) =>
     new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
   const started = performance.now();
 
-  const book = await loadPriceBook({ fetch: hanging, baseUrl: BASE, imageModels: [GROK_2], chatModels: [GROK_CHAT], timeoutMs: 300 });
+  const book = await loadPriceBook({ fetch: hanging, baseUrl: BASE, imageModels: [GROK_2], chatModels: [GROK_CHAT], timeoutMs });
 
-  expect(performance.now() - started).toBeLessThan(550);
+  assertBudget(performance.now() - started, 550, "two hung price fetches", { blockingMs: 1.5 * timeoutMs });
   expect(book.source).toBe("fallback");
 });
 
