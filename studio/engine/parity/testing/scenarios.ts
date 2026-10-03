@@ -1,7 +1,7 @@
 import { estimateBytesUpper } from "../../../shared/montage";
 import { STICKER_MANIFEST } from "../../../shared/stickers";
 import type { Control, RigOptions, World } from "./rigs";
-import { parityListTracks } from "./tracks";
+import { PARITY_DECODED_APART, parityListTracks } from "./tracks";
 import type { Answer, Transcript } from "./transcript";
 
 // The scenarios of the parity suite (Stage 3, 3d.1b). Each is one story told through the engine's own commands; the suite
@@ -920,7 +920,39 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.settle();
     },
   },
+  // ---------- 3d.3b verify: the proven length of a track ----------
+  {
+    name: "music: a track whose decode proved a shorter length than the list claimed is listed, read and judged by the proven length",
+    async run(t, w, control) {
+      await control.musicTracks("decoded-apart");
+      const track = parityListTracks()[PARITY_DECODED_APART.index];
+      if (track === undefined) throw new Error("the parity list has no such track");
+      const provenMs = track.durationMs - PARITY_DECODED_APART.shortByMs;
+      const ref = { source: "trending", trackId: track.trackId };
+      await t.call("music.list", {});
+      t.note("the waveform across the proven end: silence after it");
+      await t.call("music.peaks", { track: ref, startMs: provenMs - 800, durationMs: 1_600, bars: 16 });
+      const montageId = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      const stored = objectAt(montageOf(await t.call("montages.get", { montageId })), "spec");
+      // One 4.0 s clip: a montage the proven 6.13 s holds from a start of 2.13 s.
+      const clips = clipsOf(stored, 4_000);
+      const music = (startMs: number) => ({ source: "trending", trackId: track.trackId, startMs });
+      t.note("the last start the proven length holds");
+      await t.call("montages.save", { montageId, spec: { ...stored, clips, music: music(provenMs - 4_000) }, name: null });
+      await t.call("montages.get", { montageId });
+      t.note("one ms later: too short, though the list's claim would hold it");
+      await t.call("montages.save", { montageId, spec: { ...stored, clips, music: music(provenMs - 4_000 + 1) }, name: null });
+      await t.call("montages.get", { montageId });
+    },
+  },
 ];
+
+/** A spec's clips, from an answer, each made `durationMs` long. */
+function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {
+  const clips = spec.clips;
+  if (!Array.isArray(clips)) throw new Error("expected clips");
+  return clips.map((clip: unknown) => ({ ...objectAt({ clip }, "clip"), durationMs }));
+}
 
 // ---------- 3d.1b: what the scenarios above share ----------
 

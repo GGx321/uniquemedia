@@ -19,7 +19,7 @@ import { loadPinnedEmojiFont } from "../../text/emoji/emojiFont.testkit";
 import { createTextRasteriser, RASTER_WASM } from "../../text/rasteriser";
 import type { CaptionCallOptions, GateCaption } from "../../text/worker/textGate";
 import type { PreviewGate } from "../../text/preview";
-import { parityListTracks, parityMockSeeds, parityPeaks } from "./tracks";
+import { parityDecodedMs, parityListTracks, parityMockSeeds, parityPeaks } from "./tracks";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, startEngine, TRAITS, until } from "../../testing/engineHarness";
@@ -71,8 +71,11 @@ export interface Control {
   musicKey(): Promise<void>;
   /** 3c.6: the flashapi quota log on disk gets a complete line that cannot be read (`corrupt`), or a folder where the file was (`unreadable`). */
   musicQuotaLog(state: "corrupt" | "unreadable" | "deleted"): Promise<void>;
-  /** 3d.1b: the music store holds the parity tracks (studio/engine/parity/testing/tracks.ts): the real one downloaded them from a fake CDN, the mock was seeded with the same list. Once per scenario. */
-  musicTracks(): Promise<void>;
+  /**
+   * 3d.1b: the music store holds the parity tracks (studio/engine/parity/testing/tracks.ts): the real one downloaded them from a fake CDN, the mock was seeded with the same list. Once per scenario.
+   * `decoded-apart` (3d.3b verify): track one's decode proves a length shorter than the list claims (`PARITY_DECODED_APART`).
+   */
+  musicTracks(variant?: "decoded-apart"): Promise<void>;
   /** 3d.1b: from now a text drawing that has started waits for `releaseText`, so previews can queue behind it; `false` lets go of what waits and stops holding. */
   holdText(held: boolean): void;
   /** 3d.1b: the held drawing ends, and the next one starts (and waits again while held). With nothing held, nothing happens. */
@@ -223,7 +226,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
         await engine.request(CommandMessage.parse({ v: 5, id: `msg-${String(++messages).padStart(6, "0")}`, kind: "command", type: "settings.setMusicKey", payload: { key: PARITY_MUSIC_KEY } }));
       },
       musicQuotaLog: async (state) => engine.setMusicQuotaLog(state === "deleted" ? "missing" : state),
-      musicTracks: async () => engine.seedMusicTracks(parityMockSeeds(parityListTracks())),
+      musicTracks: async (variant) => engine.seedMusicTracks(parityMockSeeds(parityListTracks(), variant === "decoded-apart")),
       holdText: (held) => engine.holdTextDrawing(held),
       releaseText: () => engine.releaseTextDrawing(),
       previewServed: async (previewId) => engine.mockPreviewPng(previewId) !== null,
@@ -413,7 +416,20 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   // asks for `musicTracks`, so a refresh is still never reached and every older story reads what it read with the test sink.
   const cdn = fakeCdn();
   const musicClock = Date.parse("2026-09-27T20:42:00.000Z");
-  const store = await TrackStore.open({ dir: musicDir, transport: cdn.transport, clock: () => musicClock + 1000, log: () => undefined, decode: (options) => Promise.resolve({ decodedMs: options.expectedMs, peaks: peaksForPath(options.path, options.expectedMs) }) });
+  // The decode proves the claimed length, or (a scenario's `decoded-apart`) a shorter one for track one. Its envelope is that
+  // of the track whose staged file it reads (the staged name carries the track's id).
+  let decodedApart = false;
+  const store = await TrackStore.open({
+    dir: musicDir,
+    transport: cdn.transport,
+    clock: () => musicClock + 1000,
+    log: () => undefined,
+    decode: (options) => {
+      const index = Math.max(0, parityListTracks().findIndex((track) => options.path.includes(track.trackId)));
+      const decodedMs = parityDecodedMs(index, options.expectedMs, decodedApart);
+      return Promise.resolve({ decodedMs, peaks: parityPeaks(index, decodedMs) });
+    },
+  });
   const textLane = new HeldTextLane();
   const { engine, events, posted } = await startEngine(dir, {
     init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(), musicDir },
@@ -582,7 +598,8 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       },
       // Main's half of «Сохранить»: the key is stored, then handed to the engine as the owner's (a key line in the quota log).
       musicKey: () => engine.applyControl({ kind: "control", type: "musicKey.set", key: PARITY_MUSIC_KEY, origin: "user" }),
-      musicTracks: async () => {
+      musicTracks: async (variant) => {
+        decodedApart = variant === "decoded-apart";
         const tracks = parityListTracks();
         tracks.forEach((track, i) => {
           cdn.serve(track.downloadUrl, { bytes: excerptOf(i) });
@@ -617,10 +634,4 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       await settle();
     },
   };
-}
-
-/** The envelope the parity decode keeps for the track whose staged file is at `path` (the staged name carries the track's id). */
-function peaksForPath(path: string, durationMs: number): number[] {
-  const index = parityListTracks().findIndex((track) => path.includes(track.trackId));
-  return parityPeaks(Math.max(0, index), durationMs);
 }
