@@ -782,11 +782,30 @@ depend on any of it:
 - **Face focus.** The mock judges a photo only when its `qa.faceCos` is set (focus `{0.5, 0.35}`), else `null`; the engine detects a
   face. Both may answer `null`: the preview draws `FOCUS_FALLBACK` then.
 - **Folder names.** ASCII only in the mock (no Cyrillic transliteration): an avatar named in Cyrillic gets its id as the folder.
+- **Text previews (3d.1b-rest).** The mock answers `montages.textPreview` through one lane like the engine's worker: a preview waiting
+  behind another is answered `TEXT_PREVIEW_SUPERSEDED` at once when a newer one of the same layer arrives (ignore it silently: it is
+  not an error, `requestTextPreview` reports it as `superseded`), a running one is never cancelled, other layers never supersede each
+  other, and `TEXT_INVALID` + `captionIssue` / `RENDER_FAILED` come from the same shared rules and layout. NOT the same: the **box**
+  (an estimate from arithmetic widths, 0.55 em a character: never test or design on its numbers; it is a whole-pixel box inside the
+  frame), the **picture** (a placeholder PNG of the box: a bar per line on the plaque or in the text colour, not the caption; its
+  address is the mock client's `textPreviewUrl`, a data URL, where the engine's is `studio-media://text/<previewId>`), the **emoji**
+  (the mock draws every well-formed one, the engine refuses a cluster its font lacks with `emoji-missing`) and the **time** (the demo
+  build draws in 120 ms; the engine in about 10 to 300 ms). The 64 pictures kept and their eviction (a layer's newest last) are the
+  same: an old `previewId` can stop being served.
+- **Music list and peaks (3d.1b-rest).** `music.list` answers the stored tracks in list order, at most 100, whatever the key and the
+  quota log say (it is free), with highlights ascending and the `1500` default last (`likelyDefault`), `explicit` always present;
+  `music.peaks` answers `bars` integers 0 to 1000 from the track's 50 ms envelope, silence past its end, `NOT_FOUND` for a track
+  that is not stored (an own track too, until 3f). The same shared functions decide both. NOT the same: the dev build's **30 demo
+  tracks** (invented names, 20 to 80 s, a synthetic waveform; a mock refresh stores 30 again) and the disk (the mock has no torn or
+  missing envelope file and no track deleted under a live list). `montages.get` judges a trending track against the stored length
+  (`track-too-short`, `track-unavailable`) as the engine does.
+- **Stickers (3d.1b-rest).** One `stickerIssues` and one `STICKER_MANIFEST` for both: the built-in set, `sticker-unavailable` at the
+  layer's `sticker`, an own sticker still `not-yet-supported`, the issues in the order photos, stickers, track.
 - **What the mock does not model.** A torn or newer-schema draft file, a stale used index (every photo of the avatar refused), a record
-  from a newer Studio (`LIBRARY_TOO_NEW`), a closed library beyond `LIBRARY_UNAVAILABLE`, own media, captions, music and stickers
-  (their parts answer `not-yet-supported` as in the engine until their slices land). Do not build a UI state that can only be reached
-  through one of these and call it tested on the mock.
-- **Test controls are the mock's alone** (`failNextRender`, `setExportDisk`, `moveExportFolder`, `setRenderQueueLimit`, ...). They are
+  from a newer Studio (`LIBRARY_TOO_NEW`), a closed library beyond `LIBRARY_UNAVAILABLE`, own media (their parts answer
+  `not-yet-supported` as in the engine until their slice lands). Do not build a UI state that can only be reached through one of
+  these and call it tested on the mock.
+- **Test controls are the mock's alone** (`failNextRender`, `setExportDisk`, `moveExportFolder`, `setRenderQueueLimit`, `seedMusicTracks`, `holdTextDrawing`, `releaseTextDrawing`, `mockPreviewPng`, ...). They are
   forbidden in every production bundle (`FORBIDDEN_DEBUG_MARKERS`): a renderer test may use them, renderer code never.
 
 What IS the same, and safe to design on: the shapes and codes of every answer, the order of refusals, `PHOTO_UNAVAILABLE` issues at
@@ -827,7 +846,7 @@ finished kept; the saving mark dropped at the job's end), and the photo grid's n
 - **Rows St8–St13.** St8/St10: «Ключ RapidAPI», the mask `••••••••` + last four, «Заменить» / «Удалить» (main's `settings.setMusicKey` / `clearMusicKey`). St9 «Проверить» is not built (Q4). St11: «Запросы flashapi» «N из 30», the bar and «отправлено N из 30 за 31 день · считаются и запросы с ошибкой», then «следующий освободится D» (CF5, not «Сентябрь»). St12: «только вручную · обновлено D, HH:MM · N треков · X МБ» (the track count is added). St13: the first «Обновить · 1 запрос» only asks, in the row; the confirmation names what is left and when the next frees; only its «Обновить · 1 запрос» sends `music.refresh {confirm: true}`, once.
 - **States the artboard does not draw (section 2.2, music):** no key and a rejected key (the button closed with its reason); the server's `remaining = 0` while the local count is low; running («обновляется · P %») and failed (the cause's text, `musicReason`); a refusal at the click; the quota log held, unreadable, or corrupt with «Восстановить журнал…», behind a confirmation that names the day the quota reopens (31 days). The components sheet's near-limit button («· 1 из 2 оставшихся») and the danger bar at 30 of 30 are used.
 - **Contract:** `MusicStatus.quotaLog` (with `missing` after review round 1: the log deleted with the music folder, recovered like a corrupt one), `EngineError.musicReason` (+ `MUSIC_UNAVAILABLE_REASONS_RU`), `music.recoverQuotaLog {confirm: true}`; `SettingsFocus` `music` (the editor's music tab, 3d.5, links here). A held line is written when the window asks `music.status`, so the held notice says «запись повторится, когда вы снова откроете эту карточку» and has «Проверить снова».
-- **Mock:** answers `music.status`, `music.refresh` and `music.recoverQuotaLog` like the engine (parity scenario «music: …»); not `music.list` / `music.peaks` yet (3d.5). Do not design the editor's music tab around the mock's refresh steps (three steps on its clock) or its list (no tracks).
+- **Mock:** answers `music.status`, `music.refresh` and `music.recoverQuotaLog` like the engine (parity scenario «music: …»), and since 3d.1b-rest `music.list` and `music.peaks` too (section 5c). Do not design the editor's music tab around the mock's refresh steps (three steps on its clock) or its 30 invented demo tracks.
 
 ## 6. Per-task UI checklists
 
