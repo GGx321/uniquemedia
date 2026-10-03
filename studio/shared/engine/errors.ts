@@ -247,3 +247,29 @@ export const DRAFT_TOO_NEW_DETAIL = "this draft was written by a newer version o
  * could be read: a retry reads it, so the window retries and never offers to delete the draft.
  */
 export const DRAFT_CHANGING_DETAIL = "the draft was changed just now and could not be read; try again";
+
+/**
+ * `EngineError.detail` of an IN_FLIGHT `videos.render` refused because the export folder is being switched (3e.3): nothing was
+ * queued and a retry a moment later goes through. IN_FLIGHT otherwise means paid requests; the window tells the two apart by this.
+ */
+export const EXPORT_CHANGING_DETAIL = "the export folder is being changed; try the render again in a moment";
+
+/**
+ * `EngineError.detail` of an INTERNAL `videos.render` that ran out of its 25 s command budget BEFORE the job was queued: nothing was
+ * queued, so retrying is safe (unlike main's no answer at all, `NO_ANSWER_DETAIL_PREFIX`, where the job may exist).
+ */
+export const RENDER_NOT_QUEUED_DETAIL = "the render request ran out of time before it could be queued; nothing was queued";
+
+/** The start of the detail main gives a command the engine did not answer in time (`the engine did not answer within 30 s`): the command may still have been carried out. */
+export const NO_ANSWER_DETAIL_PREFIX = "the engine did not answer within ";
+
+/** `RENDER_QUEUE_FULL`'s detail: it names the limit, which `renderQueueLimitOf` reads back for the window's text. */
+export function renderQueueFullDetail(limit: number): string {
+  return `the render queue is full: ${limit} renders are already queued or running`;
+}
+
+/** The limit a `RENDER_QUEUE_FULL` detail names; null for any other text. */
+export function renderQueueLimitOf(detail: string | undefined): number | null {
+  const match = /^the render queue is full: (\d{1,6}) renders are already queued or running$/.exec(detail ?? "");
+  return match?.[1] === undefined ? null : Number(match[1]);
+}

@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import type { FileState, VideoSummary, CommandPayload, EngineError, UnsequencedEvent } from "../../shared/engine";
-import { MAX_LISTED_VIDEOS, PROTOCOL_VERSION } from "../../shared/engine";
+import { EXPORT_CHANGING_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail } from "../../shared/engine";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 import { estimateBytesUpper } from "../../shared/montage";
@@ -267,7 +267,7 @@ export class VideoService {
     const source: RenderSource = "montageId" in payload ? await this.#loadDraft(payload.montageId) : { montageId: null, spec: payload.spec, library: null };
     const { spec } = source;
     // The read waited in the draft's queue: whatever it used of the command's time is gone, so out of time is said as that.
-    if (source.library !== null && remaining() <= marginMs) throw new EngineFailure({ code: "INTERNAL", detail: "the render request ran out of time before it could be queued; nothing was queued" });
+    if (source.library !== null && remaining() <= marginMs) throw new EngineFailure({ code: "INTERNAL", detail: RENDER_NOT_QUEUED_DETAIL });
     const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
@@ -319,7 +319,7 @@ export class VideoService {
     time: { remaining(): number; marginMs: number },
   ): Promise<{ jobId: string; videoId: string }> {
     const deps = this.#deps;
-    const outOfTime = (): EngineFailure => new EngineFailure({ code: "INTERNAL", detail: "the render request ran out of time before it could be queued; nothing was queued" });
+    const outOfTime = (): EngineFailure => new EngineFailure({ code: "INTERNAL", detail: RENDER_NOT_QUEUED_DETAIL });
     if (time.remaining() <= time.marginMs) throw outOfTime();
     const avatar = library.getAvatar(spec.avatarId);
     // Only an ACTIVE avatar renders: a draft has no scene photos, and an archived one is retired: rendering makes new
@@ -360,7 +360,7 @@ export class VideoService {
     // into the old folder after the owner was told «nothing is left behind» would be lost with the folder they then clear out.
     const exportSwitch = deps.exportSwitch;
     if (exportSwitch !== undefined && (exportSwitch.pending() || check.root !== exportSwitch.currentPath())) {
-      throw new EngineFailure({ code: "IN_FLIGHT", detail: "the export folder is being changed; try the render again in a moment" });
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
     }
     const sources = new Map<string, PhotoSource>();
     for (const cell of cells) {
@@ -403,7 +403,7 @@ export class VideoService {
     // ONE number of frames: the queue's total, and the verifier's expectation (execute), come from the same function.
     const result = deps.queue.submit({ jobId, ref: { videoId, avatarId: spec.avatarId, montageId }, totalFrames: totalFramesOf(filled.clips), photoIds: scenePhotoIds(filled.clips), execute: execute(plan) });
     if (!result.ok) {
-      if (result.code === "QUEUE_FULL") throw new EngineFailure({ code: "RENDER_QUEUE_FULL", detail: `the render queue is full: ${result.limit} renders are already queued or running` });
+      if (result.code === "QUEUE_FULL") throw new EngineFailure({ code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(result.limit) });
       const held = new Set(result.photoIds);
       throw unavailable(cells.filter((cell) => held.has(cell.photoId)), "another render that is queued or running holds this photo");
     }

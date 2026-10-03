@@ -2,6 +2,7 @@ import {
   ENGINE_GONE_DETAIL,
   errorResponseFor,
   EventMessage,
+  NO_ANSWER_DETAIL_PREFIX,
   PROTOCOL_VERSION,
   ResponseMessage,
   type EngineCommandMessage,
@@ -198,7 +199,7 @@ export class EngineHost<Transfer> {
       const timeoutMs = COMMAND_DEADLINE_MS[command.type] ?? this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
       const entry: Pending = { command, resolve, deadline: null };
       entry.deadline = this.#timers.set(
-        () => this.#settle(entry, errorResponseFor(command, { code: "INTERNAL", detail: `the engine did not answer within ${timeoutMs / 1000} s` })),
+        () => this.#settle(entry, errorResponseFor(command, { code: "INTERNAL", detail: `${NO_ANSWER_DETAIL_PREFIX}${timeoutMs / 1000} s` })),
         timeoutMs,
       );
       this.#pending.set(command.id, entry);
@@ -261,7 +262,7 @@ export class EngineHost<Transfer> {
       const timeoutMs = boundMs ?? this.#deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
       const entry: PendingCall = { callId, resolve, deadline: null };
       entry.deadline = this.#timers.set(
-        () => this.#settleCall(entry, { error: { code: "INTERNAL", detail: `the engine did not answer within ${timeoutMs / 1000} s` } }),
+        () => this.#settleCall(entry, { error: { code: "INTERNAL", detail: `${NO_ANSWER_DETAIL_PREFIX}${timeoutMs / 1000} s` } }),
         timeoutMs,
       );
       this.#calls.set(callId, entry);

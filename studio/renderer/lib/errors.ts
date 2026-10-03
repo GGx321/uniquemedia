@@ -3,12 +3,17 @@ import {
   DRAFT_CHANGING_DETAIL,
   DRAFT_TOO_NEW_DETAIL,
   ERROR_MESSAGES_RU,
+  EXPORT_CHANGING_DETAIL,
   EXPORT_UNAVAILABLE_REASONS_RU,
+  MONTAGE_ISSUE_MESSAGES_RU,
+  NO_ANSWER_DETAIL_PREFIX,
+  RENDER_NOT_QUEUED_DETAIL,
+  renderQueueLimitOf,
   type EngineError,
   type ErrorCode,
 } from "../../shared/engine";
 import type { SettingsFocus } from "../navigation";
-import { waitLabel } from "./format";
+import { countOf, waitLabel } from "./format";
 
 /**
  * T6c (H2, M2): re-picking a photo already refused by the mandatory
@@ -28,7 +33,23 @@ const AGE_CHECK_ALREADY_REFUSED_RU =
 const DRAFT_TOO_NEW_RU = "Этот черновик сохранён более новой версией Studio. Обновите приложение, чтобы открыть его: сам черновик цел.";
 const DRAFT_CHANGING_RU = "Черновик как раз сохранялся, и его не удалось прочитать. Повторите — он откроется.";
 
+/**
+ * 3d.6: what a render says when it is refused or fails. The general texts of IN_FLIGHT and of an answer that never came are
+ * about paid requests and OpenRouter; a render touches neither, and each of these says what happened to the job.
+ */
+const EXPORT_CHANGING_RU = "Папку «Готовые видео» как раз меняют. Рендер не поставлен в очередь, ничего не потрачено — повторите через секунду.";
+const RENDER_NOT_QUEUED_RU = "Движок не успел поставить рендер в очередь. Ничего не поставлено и не потрачено — повторите.";
+const NO_ANSWER_RU = "Движок не ответил вовремя. Команда могла выполниться: посмотрите на экран и в очередь слева, и повторите, только если ничего не изменилось.";
+const RENDER_FORMS = ["рендер", "рендера", "рендеров"] as const;
+
 function baseText(error: EngineError): string {
+  if (error.code === "IN_FLIGHT" && error.detail === EXPORT_CHANGING_DETAIL) return EXPORT_CHANGING_RU;
+  if (error.code === "INTERNAL" && error.detail === RENDER_NOT_QUEUED_DETAIL) return RENDER_NOT_QUEUED_RU;
+  if (error.code === "INTERNAL" && error.detail?.startsWith(NO_ANSWER_DETAIL_PREFIX) === true) return NO_ANSWER_RU;
+  if (error.code === "RENDER_QUEUE_FULL") {
+    const limit = renderQueueLimitOf(error.detail);
+    if (limit !== null) return `В очереди уже ${countOf(limit, RENDER_FORMS)}: это предел. Дождитесь, пока часть из них соберётся, или отмените лишние, и повторите. Ничего не потрачено и не сохранено.`;
+  }
   if (error.code === "AGE_CHECK_FAILED" && error.detail === AGE_CHECK_ALREADY_REFUSED_DETAIL) return AGE_CHECK_ALREADY_REFUSED_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
@@ -40,6 +61,9 @@ export function errorText(error: EngineError): string {
   let base = baseText(error);
   // 3e.3: an unusable export folder says why (the engine's closed list of reasons), after the general text.
   if (error.code === "EXPORT_UNAVAILABLE" && error.exportReason !== undefined) base = `${base} ${EXPORT_UNAVAILABLE_REASONS_RU[error.exportReason]}`;
+  // 3d.6: a montage the engine refused says what is wrong with it first.
+  const firstIssue = error.code === "MONTAGE_INVALID" ? error.issues?.[0] : undefined;
+  if (firstIssue !== undefined) base = `${base} ${MONTAGE_ISSUE_MESSAGES_RU[firstIssue.code]}`;
   if (error.retryAfterMs !== undefined && error.retryAfterMs > 0) return `${base} Повторите через ${waitLabel(error.retryAfterMs)}.`;
   return base;
 }

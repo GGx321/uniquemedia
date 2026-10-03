@@ -36,6 +36,7 @@ import {
   type ReconcileResult,
   type RenderConcurrency,
   type RenderResult,
+  renderQueueFullDetail,
   type ResponseMessage,
   type RunRequest,
   type RunSummary,
@@ -1715,7 +1716,7 @@ export class MockEngine implements EngineBridge {
     const unavailable = cells.filter((cell) => !this.photoUsable(spec.avatarId, cell.photoId));
     if (unavailable.length > 0) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable" as const, path: cell.path })) });
     if (this.renderJobs.filter(isActive).length >= this.renderQueueLimit) {
-      return this.fail(c, { code: "RENDER_QUEUE_FULL", detail: `the render queue is full: ${this.renderQueueLimit} renders are already queued or running` });
+      return this.fail(c, { code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(this.renderQueueLimit) });
     }
 
     const job: MockRenderJob = {
