@@ -5,7 +5,7 @@ import { useEngine } from "../../engine/react";
 import { Icon } from "../../ui/Icon";
 import { totalMs } from "./clipOps";
 import { DRAG_THRESHOLD_PX, type GestureKit } from "./gesture";
-import { musicAria, trackClock, trackTitle } from "./labels";
+import { musicAria, trackClock, trackName } from "./labels";
 import { atHighlight, clampMusicStart, highlightMarks, setMusicStart, slipStart, waveBars } from "./musicOps";
 import type { DraftSession } from "./session";
 import { TIMELINE_MS } from "./timelineScale";
@@ -69,9 +69,10 @@ interface PeaksAsk {
  * The waveform of `[startMs, startMs + durationMs)` of a trending track, `bars` bars. One ask at a time and the latest one
  * wins: during a drag the start moves faster than the engine answers, so the next ask goes when the one out returns, for
  * wherever the start is by then. The last answer is kept until a newer one comes (the block draws it shifted meanwhile).
- * `missing`: the store does not hold the track (NOT_FOUND).
+ * `missing`: the store does not hold the track (NOT_FOUND). A new `listVersion` (the track list was fetched again) asks
+ * again: a track the store lacked may be stored now.
  */
-export function usePeaks(client: EngineClient, ask: PeaksAsk | null): { peaks: Peaks | null; missing: string | null } {
+export function usePeaks(client: EngineClient, ask: PeaksAsk | null, listVersion: string | null): { peaks: Peaks | null; missing: string | null } {
   const [peaks, setPeaks] = useState<Peaks | null>(null);
   const [missing, setMissing] = useState<string | null>(null);
   const wanted = useRef<PeaksAsk | null>(ask);
@@ -103,7 +104,7 @@ export function usePeaks(client: EngineClient, ask: PeaksAsk | null): { peaks: P
       });
     };
     if (key !== null) pump();
-  }, [client, key]);
+  }, [client, key, listVersion]);
 
   return { peaks: ask !== null && peaks?.trackId === ask.trackId ? peaks : null, missing: ask !== null && missing === ask.trackId ? missing : null };
 }
@@ -119,6 +120,8 @@ export interface MusicTrackProps {
   /** The lanes' scale as laid out now. */
   readonly pxPerMs: number;
   readonly lookup: TrackLookup;
+  /** When the track list was last fetched (`MusicStatus.listFetchedAt`): a new one asks for the waveform again. */
+  readonly listVersion: string | null;
   /** The engine's own verdict on the track (only for the spec it judged). */
   readonly problem: MusicProblem | null;
   readonly onSelect: () => void;
@@ -138,7 +141,7 @@ function Star() {
   );
 }
 
-export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, problem, onSelect, onAddMusic }: MusicTrackProps) {
+export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, listVersion, problem, onSelect, onAddMusic }: MusicTrackProps) {
   const { client } = useEngine();
   const [slip, setSlip] = useState<number | null>(null);
   /** The key holding a keyboard move open: its release ends the undo step. */
@@ -150,7 +153,7 @@ export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, prob
   const widthPx = total * pxPerMs;
   const bars = waveBars(Math.max(0, widthPx - 2 * WAVE_INSET_PX));
   const ask = music?.source === "trending" && total > 0 ? { trackId: music.trackId, startMs, durationMs: total, bars } : null;
-  const { peaks, missing } = usePeaks(client, ask);
+  const { peaks, missing } = usePeaks(client, ask, listVersion);
 
   if (music === null) {
     return (
@@ -173,7 +176,7 @@ export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, prob
   const movable = trackMs !== null && total > 0 && issue !== "unavailable";
   const highlights = track?.highlights ?? [];
   const marks = highlightMarks(highlights, startMs, total);
-  const title = track !== null ? trackTitle(track) : lookup.state === "unlisted" ? "трек из прежнего списка" : lookup.state === "own" ? "свой трек" : "";
+  const title = trackName(lookup);
   // The bars answered for another start are drawn where that music now is, until the answer for this start comes.
   const shiftPx = peaks !== null && peaks.durationMs === total ? (peaks.startMs - startMs) * pxPerMs : 0;
 
@@ -228,7 +231,7 @@ export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, prob
       className={classes}
       style={total > 0 ? { width: `calc(${pct(total)} - 1px)` } : undefined}
       aria-pressed={selected}
-      aria-label={musicAria(music, track, issue)}
+      aria-label={musicAria(music, title, issue)}
       aria-keyshortcuts={movable ? "Alt+ArrowLeft Alt+ArrowRight Delete" : "Delete"}
       title={movable ? "Тяните, чтобы трек начинался с другого места (⌥← ⌥→)" : issue === "unavailable" ? "Трека больше нет в Studio — выберите другой" : lookup.state === "unlisted" ? "Длина трека неизвестна: чтобы сдвинуть начало, выберите его снова во вкладке «Музыка»" : undefined}
       onPointerDown={press}
@@ -264,7 +267,7 @@ export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, prob
         {atHighlight(highlights, startMs) && <Star />}
         {trackClock(startMs)}
       </span>
-      {title !== "" && <span className="ctag ed-music-title">{title}</span>}
+      {title !== null && <span className="ctag ed-music-title">{title}</span>}
       {issue !== null && <span className="ctag ed-music-issue">{issue === "unavailable" ? "⚠ трек недоступен" : "⚠ трек короче ролика"}</span>}
       {selected && (
         <>

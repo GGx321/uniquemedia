@@ -21,6 +21,7 @@ import {
   saveLabel,
   stickerName,
   trackClock,
+  trackName,
   trackTitle,
   whenLabel,
 } from "./labels";
@@ -229,11 +230,21 @@ describe("the music block", () => {
     expect(trackTitle({ ...track, artist: null })).toBe("Espresso");
   });
 
+  test("what the track is called on the block: its title, or what the editor knows of it", () => {
+    expect(trackName({ state: "listed", track })).toBe("Espresso · Sabrina Carpenter");
+    expect(trackName({ state: "unlisted" })).toBe("трек из прежнего списка");
+    expect(trackName({ state: "own" })).toBe("свой трек");
+    expect(trackName({ state: "loading" })).toBe(null);
+    expect(trackName({ state: "none" })).toBe(null);
+  });
+
   test("its name: the track and where it starts, or what is wrong with it", () => {
     const music = { source: "trending", trackId: "track-espresso-01", startMs: 42_000 } as const;
-    expect(musicAria(music, track, null)).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:42");
-    expect(musicAria(music, null, null)).toBe("Музыка: трек из прежнего списка, с 0:42");
-    expect(musicAria(music, track, "too-short")).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:42, трек короче ролика");
+    expect(musicAria(music, "Espresso · Sabrina Carpenter", null)).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:42");
+    expect(musicAria(music, "трек из прежнего списка", null)).toBe("Музыка: трек из прежнего списка, с 0:42");
+    // Still being looked up: no name yet, never a wrong one.
+    expect(musicAria(music, null, null)).toBe("Музыка: трек, с 0:42");
+    expect(musicAria(music, "Espresso · Sabrina Carpenter", "too-short")).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:42, трек короче ролика");
     expect(musicAria(music, null, "unavailable")).toBe("Музыка: трек недоступен");
   });
 });

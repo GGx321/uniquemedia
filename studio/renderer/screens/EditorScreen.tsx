@@ -791,6 +791,7 @@ function DraftEditor({
         highlighted={block?.clips ?? refusedClips}
         flaggedLayers={flaggedLayers}
         musicLookup={musicLookup}
+        musicListVersion={view.music?.listFetchedAt ?? null}
         musicProblem={musicProblem}
         timeline={timeline}
         dragPhoto={dragPhoto}

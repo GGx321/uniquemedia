@@ -201,15 +201,35 @@ export function trackTitle(track: { readonly title: string; readonly artist: str
   return track.artist === null ? track.title : `${track.title} · ${track.artist}`;
 }
 
+/** What the editor knows of the draft's track (`TrackLookup`, MusicTrack.tsx), as far as its name goes. */
+export type TrackNameSource =
+  | { readonly state: "listed"; readonly track: { readonly title: string; readonly artist: string | null } }
+  | { readonly state: "unlisted" | "own" | "loading" | "none" };
+
 /**
- * The music block's accessible name: the track and where it starts («Музыка: Espresso · Sabrina Carpenter, с 0:42»),
- * «трек из прежнего списка» for a stored track the current list no longer offers (so its title is not known), and what
- * is wrong with it.
+ * What the track is called on the block: its title (and artist), «трек из прежнего списка» for a stored track the current
+ * list no longer offers (its title is not known), «свой трек» (3f); null while it is still being looked up.
  */
-export function musicAria(music: NonNullable<MontageDraft["music"]>, track: { readonly title: string; readonly artist: string | null } | null, problem: "unavailable" | "too-short" | null): string {
+export function trackName(lookup: TrackNameSource): string | null {
+  switch (lookup.state) {
+    case "listed":
+      return trackTitle(lookup.track);
+    case "unlisted":
+      return "трек из прежнего списка";
+    case "own":
+      return "свой трек";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The music block's accessible name: the track and where it starts («Музыка: Espresso · Sabrina Carpenter, с 0:42»;
+ * «трек» while its name is not known yet), and what is wrong with it.
+ */
+export function musicAria(music: NonNullable<MontageDraft["music"]>, name: string | null, problem: "unavailable" | "too-short" | null): string {
   if (problem === "unavailable") return "Музыка: трек недоступен";
-  const what = track === null ? "трек из прежнего списка" : trackTitle(track);
-  return `Музыка: ${what}, с ${trackClock(music.startMs)}${problem === "too-short" ? ", трек короче ролика" : ""}`;
+  return `Музыка: ${name ?? "трек"}, с ${trackClock(music.startMs)}${problem === "too-short" ? ", трек короче ролика" : ""}`;
 }
 
 /** The bin's line when a click on a photo cannot add a clip (the components sheet's caps state). */

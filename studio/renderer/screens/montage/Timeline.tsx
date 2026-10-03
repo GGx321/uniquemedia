@@ -78,6 +78,8 @@ export interface TimelineProps {
   readonly flaggedLayers: ReadonlyMap<string, string>;
   /** The draft's track as `music.list` describes it (3d.3b). */
   readonly musicLookup: TrackLookup;
+  /** When the track list was last fetched: a new list asks for the waveform again (a missing track may be stored now). */
+  readonly musicListVersion: string | null;
   /** The engine's verdict on the track, for the spec it judged. */
   readonly musicProblem: MusicProblem | null;
   readonly timeline: TimelineState;
@@ -92,7 +94,7 @@ export interface TimelineProps {
   readonly onSelectClip: (index: number) => void;
 }
 
-export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicProblem, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onSelectClip }: TimelineProps) {
+export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicProblem, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onSelectClip }: TimelineProps) {
   const commands = useSelectionCommands(session, timeline);
   const lanesRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -581,6 +583,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                 kit={kit}
                 pxPerMs={pxPerMs}
                 lookup={musicLookup}
+                listVersion={musicListVersion}
                 problem={musicProblem}
                 onSelect={() => timeline.select({ kind: "music" })}
                 {...(onAddMusic === undefined ? {} : { onAddMusic })}
