@@ -20,7 +20,6 @@ import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
 import { createPdqGate } from "./runs/pdqGate";
 import { productionGateOrder } from "./runs/productionGates";
-import { STUDIO_E2E } from "./buildFlags";
 import { resolveMusicCdnBase } from "./music/cdnOverride";
 import { createHttpsTransport, createLoopbackCdnTransport, createRefusingCdnTransport } from "./music/cdnTransport";
 import { TrackStore } from "./music/trackStore";
