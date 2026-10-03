@@ -987,6 +987,21 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.call("avatars.list", {});
     },
   },
+  {
+    name: "videos.get of a video rendered with a stored trending track: its music names the track (K13), as the list does",
+    async run(t, w, control) {
+      await control.musicTracks();
+      const track = parityListTracks()[0];
+      if (track === undefined) throw new Error("the parity list has no track");
+      const montageId = await draft(t, w, [photo(w, 1), photo(w, 3)]);
+      const stored = objectAt(montageOf(await t.call("montages.get", { montageId })), "spec");
+      await t.call("montages.save", { montageId, spec: { ...stored, music: { source: "trending", trackId: track.trackId, startMs: 0 } }, name: "с музыкой" });
+      const { videoId } = renderedOf(await t.call("videos.render", { montageId }));
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await t.call("videos.get", { videoId });
+    },
+  },
 ];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */

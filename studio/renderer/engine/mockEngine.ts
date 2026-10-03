@@ -1990,8 +1990,12 @@ export class MockEngine implements EngineBridge {
     } else {
       spec = payload.spec;
     }
-    // The engine's order (`videos.render`): structure, what has not landed (N9), the stickers the set lacks, the music track.
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...trackIssues(spec, undefined)].slice(0, MAX_MONTAGE_ISSUES);
+    // The engine's order (`videos.render`): structure, what has not landed (N9), the stickers the set lacks, the music track (judged
+    // against the mock's own store, as `montages.get` does: a stored track renders).
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...trackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId))].slice(
+      0,
+      MAX_MONTAGE_ISSUES,
+    );
     if (issues.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues });
     const reason = this.checkExport(estimateBytesUpper(spec.clips));
     if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
@@ -2121,6 +2125,9 @@ export class MockEngine implements EngineBridge {
     const durationMs = spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
     const bytes = estimateBytes(spec.clips);
     const montageId = this.liveDraft(job.montageId);
+    // The tile's music (K13): the stored track the video was rendered with, as the engine writes it from the track it opened.
+    const trending = spec.music?.source === "trending" ? spec.music.trackId : null;
+    const track = trending === null ? undefined : this.music.tracks.find((t) => t.summary.trackId === trending)?.summary;
     const summary: VideoSummary = {
       videoId: job.videoId,
       avatarId: job.avatarId,
@@ -2132,7 +2139,7 @@ export class MockEngine implements EngineBridge {
       fileState: "present",
       montageId,
       photoCount: job.photoIds.length,
-      music: null,
+      music: track === undefined ? null : { title: track.title, artist: track.artist, trackId: track.trackId },
       hasPoster: false,
       title: job.title,
       // The first clip as it was rendered: the tile's still (3e.2), as the engine reads it from the record.
