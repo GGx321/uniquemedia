@@ -109,6 +109,9 @@ async function wired() {
     exportFolder: async () => {
       throw new Error("not used");
     },
+    reveal: async () => {
+      throw new Error("not used");
+    },
     engine: (c) => engine.handle(c),
   };
   const ask = async (type: string, payload: unknown = {}) => {

@@ -4,6 +4,7 @@ import type { ExportFolderCommand } from "./exportFolderFlow";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
+import type { RevealCommand } from "./revealFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 import { captureConsole, expectNoKeyFragment } from "../testing/keyLeaks";
@@ -29,6 +30,7 @@ function routesSpy() {
   const settings: SettingsCommand[] = [];
   const importPhoto: ImportPhotoCommand[] = [];
   const exportFolder: ExportFolderCommand[] = [];
+  const reveal: RevealCommand[] = [];
   const engine: EngineCommandMessage[] = [];
   const routes: RequestRoutes = {
     mainOnly: async (command) => {
@@ -51,12 +53,16 @@ function routesSpy() {
       exportFolder.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
+    reveal: async (command) => {
+      reveal.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { videoId: command.payload.videoId } };
+    },
     engine: async (command) => {
       engine.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -275,12 +281,28 @@ describe("handleRendererRequest", () => {
     expect(exportFolder).toEqual([]);
   });
 
-  test("videos.reveal is main's alone: until its handler lands (task 3e) it answers a typed refusal and is never forwarded to the engine", async () => {
-    const { routes, mainOnly, settings, importPhoto, engine } = routesSpy();
+  test("videos.reveal is main's alone: it reaches the reveal route and is never forwarded to the engine", async () => {
+    const { routes, mainOnly, settings, importPhoto, exportFolder, reveal, engine } = routesSpy();
     const response = await handleRendererRequest(command("videos.reveal", { videoId: "video-00000001" }), APP_FRAME, PACKAGED, routes);
-    expect(response).toMatchObject({ ok: false, type: "videos.reveal", error: { code: "INTERNAL" } });
+    expect(response).toMatchObject({ ok: true, type: "videos.reveal", result: { videoId: "video-00000001" } });
     expect(ResponseMessage.safeParse(response).success).toBe(true);
-    expect([mainOnly, settings, importPhoto, engine]).toEqual([[], [], [], []]);
+    expect(reveal.map((c) => c.payload)).toEqual([{ videoId: "video-00000001" }]);
+    expect([mainOnly, settings, importPhoto, exportFolder, engine]).toEqual([[], [], [], [], []]);
+  });
+
+  test("videos.reveal carrying a path is refused by the contract before any route runs: the window names no path", async () => {
+    const { routes, reveal, engine } = routesSpy();
+    const response = await handleRendererRequest(command("videos.reveal", { videoId: "video-00000001", path: "/Volumes/Reels/a.mp4" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect([reveal, engine]).toEqual([[], []]);
+  });
+
+  test("videos.reveal from a frame that is not the app's own window is refused before it reaches the route", async () => {
+    const { routes, reveal } = routesSpy();
+    const stranger: SenderFrame = { url: "https://example.com/", isTopFrame: true, isAppWindow: true };
+    const response = await handleRendererRequest(command("videos.reveal", { videoId: "video-00000001" }), stranger, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(reveal).toEqual([]);
   });
 
   test("a Stage 3 engine command (videos.list) is forwarded to the engine", async () => {
@@ -362,6 +384,9 @@ describe("handleRendererRequest", () => {
         throw new Error("unreachable");
       },
       exportFolder: async () => {
+        throw new Error("unreachable");
+      },
+      reveal: async () => {
         throw new Error("unreachable");
       },
       engine: async () => {

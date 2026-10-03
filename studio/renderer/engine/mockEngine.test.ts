@@ -779,11 +779,11 @@ test("runs.list answers an empty list through the validating client before any r
 
 // Stage 3 task 3a.1 added the montage and video commands; 3d.1b gives the mock the engine's behaviour for the montage commands
 // (mockEngine.montages.test.ts) and for the video commands (mockEngine.videos.test.ts). `videos.reveal` is main's own command (it
-// opens the OS file manager), so no engine handles it: the mock answers what a build with no handler for it answers.
-test.each([["videos.reveal", { videoId: "video-00000001" }]] as const)("%s answers the typed INTERNAL refusal the real engine gives, and the mock keeps working", async (type, payload) => {
+// opens the OS file manager, 3d.6): the mock answers it as main does (mockEngine.videos.test.ts), and a real engine refuses it.
+test("videos.reveal of an unknown video is a typed NOT_FOUND from the mock, and the mock keeps working", async () => {
   const { client } = makeMock();
-  const reply = await client.request(type, payload);
-  expect(reply).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+  const reply = await client.request("videos.reveal", { videoId: "video-00000001" });
+  expect(reply).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
   expect((await client.request("settings.get", {})).ok).toBe(true);
 });
 

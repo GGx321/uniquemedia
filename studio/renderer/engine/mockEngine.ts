@@ -456,6 +456,8 @@ function withFocus(spec: MontageDraft, focuses: ReadonlyMap<string, Focus | null
 export class MockEngine implements EngineBridge {
   /** Every command received, in order: tests assert on what the UI sent. */
   readonly calls: CommandMessage[] = [];
+  /** The videos `videos.reveal` was asked to show (3d.6): the demo build has no main to open a file manager, so the mock only remembers. */
+  readonly revealed: string[] = [];
 
   private readonly scheduler: Scheduler;
   private readonly latencyMs: number;
@@ -1318,14 +1320,14 @@ export class MockEngine implements EngineBridge {
       case "videos.delete":
         return this.videosDelete(c, c.payload);
       case "videos.reveal":
+        return this.videosReveal(c, c.payload.videoId);
       case "music.status":
       case "music.refresh":
       case "montages.textPreview":
       case "music.list":
       case "music.peaks":
         // Text preview parity comes with the window's text tab (3d.5): the mock refuses it as the engine does for a command it lacks.
-        // Music parity comes with its engine (3c.4, mock parity 3d.1b); the mock, like main and the engine for `videos.reveal`, has no handler yet.
-        // Main handles `videos.reveal` itself (it opens the OS file manager); no engine does.
+        // Music parity comes with its engine (3c.4, mock parity 3d.1b); the mock has no handler for it yet.
         return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
       case "montages.create":
         return this.montagesCreate(c, c.payload);
@@ -1874,6 +1876,17 @@ export class MockEngine implements EngineBridge {
       job.timers = [this.scheduler.schedule(CANCEL_CONFIRM_DELAY_MS, () => this.endRender(job, "cancelled"))];
     }
     return this.ok(c, { jobId });
+  }
+
+  /** Main's `videos.reveal` (no engine has it): only a video whose file is present in the current export folder is shown. */
+  private videosReveal(c: CommandMessage, videoId: string): ResponseMessage {
+    const video = this.videos.find((v) => v.summary.videoId === videoId);
+    if (video === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no video ${videoId}` });
+    this.checkExport();
+    const state = this.fileStateOf(video);
+    if (state !== "present") return this.fail(c, { code: "NOT_FOUND", detail: `the video's file is not in the export folder (${state})` });
+    this.revealed.push(videoId);
+    return this.ok(c, { videoId });
   }
 
   private videosList(c: CommandMessage, avatarId: string): ResponseMessage {

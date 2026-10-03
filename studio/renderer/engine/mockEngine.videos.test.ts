@@ -685,3 +685,38 @@ describe("the snapshot and a restart", () => {
     expect((await unwrap(mock.client.request("avatars.list", {}))).avatars[0]?.eligibleUnusedCount).toBe(2);
   });
 });
+
+// 3d.6: `videos.reveal` is main's command (it opens the OS file manager, for a video whose file is present). The demo build has no
+// main, so the mock answers as main does and remembers which videos it was asked to show; nothing opens.
+describe("videos.reveal", () => {
+  async function madeVideo(mock: Mock): Promise<string> {
+    const draft = await draftOf(mock, [P1, P2]);
+    const { videoId } = await renderDraft(mock, draft.montageId);
+    mock.scheduler.runAll();
+    return videoId;
+  }
+
+  test("shows a video whose file is present, and says which", async () => {
+    const mock = makeMock();
+    const videoId = await madeVideo(mock);
+    expect(await unwrap(mock.client.request("videos.reveal", { videoId }))).toEqual({ videoId });
+    expect(mock.engine.revealed).toEqual([videoId]);
+  });
+
+  test("an unknown video is NOT_FOUND, and nothing is shown", async () => {
+    const mock = makeMock();
+    const reply = await mock.client.request("videos.reveal", { videoId: "video-00000099" });
+    expect(reply).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(mock.engine.revealed).toEqual([]);
+  });
+
+  test("a video whose file is in another folder is NOT_FOUND, as in main: only a present file is shown", async () => {
+    const mock = makeMock();
+    const videoId = await madeVideo(mock);
+    mock.engine.pickExportFolderNext({ path: "/Users/studio/Elsewhere" });
+    await unwrap(mock.client.request("settings.setExportPath", {}));
+    const reply = await mock.client.request("videos.reveal", { videoId });
+    expect(reply).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(mock.engine.revealed).toEqual([]);
+  });
+});

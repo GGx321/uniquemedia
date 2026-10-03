@@ -7,6 +7,7 @@ import {
   MessageChannelMain,
   protocol,
   safeStorage,
+  shell,
   utilityProcess,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -22,6 +23,7 @@ import { CH } from "../preload/api";
 import { installProcessGuards } from "../engine/processGuards";
 import { engineEnv } from "./engineEnv";
 import { handleExportFolderCommand } from "./exportFolderFlow";
+import { handleRevealCommand } from "./revealFlow";
 import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
@@ -343,6 +345,14 @@ async function startStudio(): Promise<void> {
           musicKeyStatus: () => musicKeyStatusOf(musicKeys.status()),
           newId: randomUUID,
           home: () => app.getPath("home"),
+          platform: process.platform,
+        }),
+      reveal: (command) =>
+        handleRevealCommand(command, {
+          engine,
+          exportPath: () => settings.current.exportPath,
+          show: (path) => shell.showItemInFolder(path),
+          newId: randomUUID,
           platform: process.platform,
         }),
       engine: (command) => engine.request(command),
