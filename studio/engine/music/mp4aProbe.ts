@@ -4,9 +4,10 @@
 // (`mdat`) is never read. Descent follows a fixed schema, never the data: `moov/trak/mdia/minf/stbl/stsd/mp4a/esds` and
 // `minf/dinf/dref`, so the depth is fixed at nine whatever the file claims, and the number of boxes visited is capped.
 //
-// This is the FIRST gate. The bounded decode (`decodeCheck.ts`) is the second: a file that walks clean can still hold
-// garbage samples, and a file that decodes can still carry a video stream or a reference to another file, which is
-// why both exist.
+// This is a PRE-FILTER, the first gate. The authority is the bounded ffmpeg check (`decodeCheck.ts`), run with the same
+// binary the app renders with: ffmpeg must see exactly ONE stream and an audio one (an attached picture is a video
+// stream), and the samples must decode to about the claimed length. A file that walks clean can still hold garbage
+// samples or a picture spelled in a way no walker names; the walker only keeps the cheap and the obvious out.
 
 /** An audio-only `moov` is a few KiB to a few hundred; past this it is not one of ours. */
 export const MOOV_MAX_BYTES = 8 * 1024 * 1024;
@@ -261,18 +262,19 @@ function walk(bytes: Uint8Array): Mp4AudioInfo {
   }
   if (moov === null) throw new Refusal("no-moov");
   if (moov.end - moov.body > MOOV_MAX_BYTES) throw new Refusal("moov-too-large");
-  // Cover art makes ffmpeg show a second stream (an attached picture), and it reads tags wherever a tag holder sits: under
-  // `udta`, `meta` or a bare `ilst`, beside the sample tables, inside a `free`. So the guarantee is not a list of places
-  // but one fact: the type `covr` appears NOWHERE in `moov`. Media bytes are in `mdat`, never here, and with the download
-  // size cap the integers of a sample table cannot spell it, so this fails closed and a false positive costs one track.
+  // A pre-filter for the commonest cover art, NOT the guarantee. Cover art makes ffmpeg show a second stream (an attached
+  // picture) and it can be spelled many ways: `covr`, or `keys` and `mdta` with no `covr` at all. Which streams a file holds
+  // is decided by ffmpeg itself, in `decodeCheck.ts` (exactly one stream, and an audio one); this only turns away the
+  // plain `covr` early and cheaply. The type appearing nowhere in `moov` fails closed: media bytes are in `mdat`, so a
+  // false positive costs one track.
   if (Buffer.from(bytes.buffer, bytes.byteOffset + moov.body, moov.end - moov.body).includes("covr", 0, "latin1")) throw new Refusal("box-not-allowed");
 
   const inMoov = childrenOf(bytes, view, moov.body, moov.end, budget);
   // `cmov` (a compressed moov that ffmpeg inflates: a 1 MB file can claim a gigabyte, and a video track can hide in it)
   // and `mvex` (fragments) are refused here, with anything else a moov does not carry.
   if (inMoov.some((child) => !MOOV_BOXES.has(child.type))) throw new Refusal("box-not-allowed");
-  // Cover art makes ffmpeg show a second stream, an attached picture. Tags without one (the encoder's `©too`) are harmless
-  // and are what a re-cut file carries; only a picture is refused, wherever the file puts it.
+  // Tags without a picture (the encoder's `©too`) are harmless and are what a re-cut file carries. Cover art by `covr` is
+  // refused above and a too-short `meta` here; any other spelling of a picture is ffmpeg's to refuse (`decodeCheck.ts`).
   refuseCoverArt(bytes, view, inMoov, budget, 0);
   const traks = inMoov.filter((child) => child.type === "trak");
   // Counted before any is read: a file of a hundred tracks is refused for that, not for what the first one lacks.

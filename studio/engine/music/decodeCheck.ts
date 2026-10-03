@@ -28,7 +28,7 @@ export const DECODE_TIMEOUT_MS = 30_000;
 /** One allocation may take at most this much: 64 MiB is far above what a real track needs and far below a container bomb. */
 const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
 
-export type DecodeFailureKind = "spawn" | "exit" | "timeout" | "aborted" | "too-long" | "no-audio" | "duration-mismatch";
+export type DecodeFailureKind = "spawn" | "exit" | "timeout" | "aborted" | "too-long" | "no-audio" | "duration-mismatch" | "extra-stream";
 
 /** A decode that did not prove the file is audio of the claimed length. `message` names the kind, never a path or ffmpeg's own text. */
 export class DecodeError extends Error {
@@ -56,6 +56,11 @@ export interface DecodeOptions {
   timeoutMs?: number;
   /** Starts ffmpeg; Node's `spawn` by default (a test injects a scripted one). */
   spawner?: FfmpegSpawner;
+  /**
+   * The kinds of stream ffmpeg sees in the file; `inspectStreams` by default. A test that scripts the decode itself passes
+   * its own, so what is under test is only the decode.
+   */
+  streams?: (path: string, signal: AbortSignal) => Promise<readonly string[]>;
 }
 
 const nodeSpawner: FfmpegSpawner = (command, args, options) => {
@@ -68,7 +73,7 @@ export function durationTolerance(expectedMs: number): number {
   return Math.max(2000, expectedMs * 0.05);
 }
 
-export function decodeAudio(options: DecodeOptions): Promise<DecodeResult> {
+function decodeNow(options: DecodeOptions): Promise<DecodeResult> {
   if (!isAbsolute(options.path)) return Promise.reject(new TypeError("decodeAudio: the path must be absolute"));
   if (options.signal.aborted) return Promise.reject(new DecodeError("aborted"));
   const timeoutMs = options.timeoutMs ?? DECODE_TIMEOUT_MS;
@@ -171,4 +176,100 @@ export function decodeAudio(options: DecodeOptions): Promise<DecodeResult> {
       resolve({ decodedMs, peaks });
     });
   });
+}
+
+// ---------- what ffmpeg says the file holds ----------
+//
+// THE guarantee that a stored track is one audio stream lives here, not in the box walker. Cover art can sit under `covr`,
+// under `keys` and `mdta`, beside the sample tables, in a `free`: any list of places or byte patterns is a list of what
+// someone thought of. The authority is ffmpeg's own reading of the file, by the very binary the app renders with: a file
+// passes only if ffmpeg lists exactly ONE stream and that stream is audio. An attached picture is a video stream to ffmpeg,
+// and a subtitle, data or attachment stream is a refusal like any other. Studio has no ffprobe, so the streams are read
+// from the `Stream #0:N: <Kind>:` lines of ffmpeg's input dump (run with no output, which ends in an error that is ignored).
+// The walker (`mp4aProbe.ts`) stays in front as a pre-filter; this is what the guarantee rests on.
+
+/** The most of ffmpeg's input dump that is read: a few KiB for a real file, and a bound for a hostile one. */
+const MAX_DUMP_BYTES = 256 * 1024;
+const INSPECT_TIMEOUT_MS = 15_000;
+// `Stream #0:1[0x2](und): Audio: ...`: an index, an optional hex id and language in either order, then the kind and a colon.
+const STREAM_LINE = /^\s*Stream #0:\d+(?:\[[^\]\n]*\]|\([^)\n]*\))*:\s*([A-Za-z]+):/;
+
+/** The kind of each stream in ffmpeg's input dump (`Audio`, `Video`, `Subtitle`, `Data`, `Attachment`, ...), in order. */
+export function streamTypesOf(dump: string): string[] {
+  const kinds: string[] = [];
+  for (const line of dump.split("\n")) {
+    const match = STREAM_LINE.exec(line);
+    if (match?.[1] !== undefined) kinds.push(match[1]);
+  }
+  return kinds;
+}
+
+export interface InspectOptions {
+  /** Absolute path of the staged file. */
+  path: string;
+  signal: AbortSignal;
+  timeoutMs?: number;
+  spawner?: FfmpegSpawner;
+}
+
+/**
+ * Asks ffmpeg what streams the file holds, with the same hardening as the decode: the mov demuxer forced, only the file
+ * protocol, a capped allocation, no stdin, the engine's allowlisted environment, a time bound, a bounded dump. Rejects with a
+ * `DecodeError` only when ffmpeg could not be run or ran out of time; a file it cannot read is simply no streams.
+ */
+export function inspectStreams(options: InspectOptions): Promise<string[]> {
+  if (!isAbsolute(options.path)) return Promise.reject(new TypeError("inspectStreams: the path must be absolute"));
+  if (options.signal.aborted) return Promise.reject(new DecodeError("aborted"));
+  const timeoutMs = Math.min(options.timeoutMs ?? INSPECT_TIMEOUT_MS, INSPECT_TIMEOUT_MS);
+  const args = ["-nostdin", "-hide_banner", "-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file", "-f", "mov", "-i", options.path];
+  const spawner = options.spawner ?? nodeSpawner;
+  return new Promise<string[]>((resolve, reject) => {
+    let child: ReturnType<FfmpegSpawner>;
+    try {
+      child = spawner(ffmpegPath(), args, { cwd: undefined, env: configuredFfmpegEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    } catch {
+      return reject(new DecodeError("spawn", "ffmpeg could not be started"));
+    }
+    let failure: DecodeError | null = null;
+    const stop = (error: DecodeError): void => {
+      failure ??= error;
+      if (child.exitCode === null) child.kill("SIGKILL");
+    };
+    const timer = setTimeout(() => stop(new DecodeError("timeout", `no result within ${timeoutMs} ms`)), timeoutMs);
+    const onAbort = (): void => stop(new DecodeError("aborted"));
+    options.signal.addEventListener("abort", onAbort, { once: true });
+    let dump = "";
+    let read = 0;
+    child.stderr?.on("data", (chunk: Uint8Array) => {
+      // Only the head is kept: the stream lines come right after the input header, before anything long.
+      if (read >= MAX_DUMP_BYTES) return;
+      read += chunk.byteLength;
+      dump += Buffer.from(chunk).toString("latin1");
+    });
+    child.stdout?.on("data", () => undefined);
+    child.on("error", () => stop(new DecodeError("spawn", "ffmpeg could not be run")));
+    child.on("close", () => {
+      clearTimeout(timer);
+      options.signal.removeEventListener("abort", onAbort);
+      if (failure !== null) return reject(failure);
+      // ffmpeg ends with an error (no output file was given), so its exit code says nothing: the dump does.
+      resolve(streamTypesOf(dump));
+    });
+  });
+}
+
+/**
+ * Proves the staged file is audio of about the claimed length AND that ffmpeg sees exactly one stream in it, an audio one,
+ * then yields the waveform. See the notes above on why the stream check is the authority.
+ */
+export async function decodeAudio(options: DecodeOptions): Promise<DecodeResult> {
+  if (!isAbsolute(options.path)) throw new TypeError("decodeAudio: the path must be absolute");
+  if (options.signal.aborted) throw new DecodeError("aborted");
+  const kinds = await (options.streams ?? ((path, signal) => inspectStreams({ path, signal, ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }), ...(options.spawner === undefined ? {} : { spawner: options.spawner }) })))(options.path, options.signal);
+  if (kinds.length !== 1 || kinds[0] !== "Audio") {
+    // Fixed words from ffmpeg's dump, bounded: never the file's own text and never a path.
+    const seen = kinds.slice(0, 8).map((kind) => kind.replace(/[^A-Za-z]/g, "").slice(0, 16));
+    throw new DecodeError("extra-stream", `ffmpeg sees ${kinds.length === 0 ? "no stream" : `${kinds.length} stream${kinds.length === 1 ? "" : "s"} (${seen.join(", ")})`}, not exactly one audio stream`);
+  }
+  return decodeNow(options);
 }
