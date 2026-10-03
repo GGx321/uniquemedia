@@ -21,6 +21,8 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "studio-pick-folder",
   // T6c: the import photo dialog's own E2E-only switch (main.ts's pickImportFile).
   "studio-pick-import-file",
+  // 3f.1: the own-media dialog's E2E-only switch (main.ts's pickedMediaForTests). A picked path must never be settable from a shipped build's command line.
+  "studio-pick-media",
   "studio-openrouter-base-url",
   // 3c.3: the flashapi mock's E2E-only switch (main.ts's flashapiBaseUrlForTests).
   "studio-flashapi-base-url",
@@ -31,6 +33,8 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "moveExportFolder",
   // 3e.3: the mock's stand-in for main's folder dialog.
   "pickExportFolderNext",
+  // 3f.1: the mock's stand-in for main's own-media dialog.
+  "pickMediaNext",
   // 3c.6: the mock's scripted music refresh failure and its stand-in for a damaged quota log.
   "failNextMusicRefresh",
   "setMusicQuotaLog",

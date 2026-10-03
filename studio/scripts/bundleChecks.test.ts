@@ -157,11 +157,16 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('const SWITCH = "studio-pick-import-file";')).toEqual(["contains studio-pick-import-file"]);
   });
 
+  // 3f.1: the own-media dialog's E2E-only switch. A picked path would otherwise be settable from the command line of a shipped build.
+  test("flags the own-media dialog's E2E switch leaking anywhere", () => {
+    expect(productionBundleProblems('const SWITCH = "studio-pick-media";')).toEqual(["contains studio-pick-media"]);
+  });
+
   test("flags a debug switch name leaking into the renderer bundle", () => {
     expect(productionBundleProblems('fetch("studio-openrouter-base-url")')).toEqual(["contains studio-openrouter-base-url"]);
   });
 
-  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
+  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
     expect(productionBundleProblems(`engine.${control}(1);`)).toEqual([`contains ${control}`]);
   });
 

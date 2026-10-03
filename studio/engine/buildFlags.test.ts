@@ -151,12 +151,12 @@ describe("debug affordances are compile-time", () => {
 
   test("a production build never reads the test switches and never trusts a renderer URL from the environment", async () => {
     const main = await mainOf(normalDir);
-    expect(found(main, ["studio-pick-folder", "studio-pick-import-file", "studio-openrouter-base-url", "studio-flashapi-base-url", "ELECTRON_RENDERER_URL", "__STUDIO_DEV__", "__STUDIO_E2E__"])).toEqual([]);
+    expect(found(main, ["studio-pick-folder", "studio-pick-import-file", "studio-pick-media", "studio-openrouter-base-url", "studio-flashapi-base-url", "ELECTRON_RENDERER_URL", "__STUDIO_DEV__", "__STUDIO_E2E__"])).toEqual([]);
   });
 
   test("an E2E build keeps DevTools and remote debugging and reads the folder- and import-photo-dialog switches, but trusts no renderer URL", async () => {
     const main = await mainOf(e2eDir);
-    expect(found(main, ["studio-pick-folder", "studio-pick-import-file"])).toEqual(["studio-pick-folder", "studio-pick-import-file"]);
+    expect(found(main, ["studio-pick-folder", "studio-pick-import-file", "studio-pick-media"])).toEqual(["studio-pick-folder", "studio-pick-import-file", "studio-pick-media"]);
     expect(/devTools: (true|!0)\b/.test(main)).toBe(true);
     expect(found(main, ['"remote-debugging-port"', "ELECTRON_RENDERER_URL"])).toEqual([]);
   });
@@ -207,6 +207,8 @@ describe("the smoke test's production bundle checks", () => {
       // build exactly like studio-pick-folder — compiled out of production
       // (see the passing "pass a production build" test above).
       "contains studio-pick-import-file",
+      // 3f.1: the own-media dialog's E2E-only switch, live in an E2E build and compiled out of production.
+      "contains studio-pick-media",
       "contains studio-openrouter-base-url",
       "contains studio-flashapi-base-url",
       // 3c.4: the mock CDN's E2E-only switch, live in an E2E build and compiled out of production.
