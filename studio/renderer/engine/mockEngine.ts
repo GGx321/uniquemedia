@@ -755,7 +755,6 @@ export class MockEngine implements EngineBridge {
     if (mia === undefined) return;
     // The demo draft (3d.3b) holds some of Mia's photos; a video must not take them, or the draft would show them as used.
     const drafted = new Set([...this.montages.values()].flatMap((m) => m.spec.clips.flatMap((c) => (c.kind === "photo" ? [c.cell] : c.kind === "collage" ? c.cells : [])).flatMap((cell) => (cell.photo?.source === "scene" ? [cell.photo.photoId] : []))));
-    const own = this.photos.filter((p) => p.avatarId === mia.avatarId && !drafted.has(p.photoId)).map((p) => p.photoId);
     const track = this.music.tracks[0]?.summary;
     const oldRoot = this.newExportRootId();
     const plan: { title: string; photos: number; state: FileState | null; music: boolean; root?: string; daysAgo: number }[] = [
@@ -765,6 +764,18 @@ export class MockEngine implements EngineBridge {
       { title: "старый город", photos: 1, state: "changed", music: false, daysAgo: 4 },
       { title: "золотой час", photos: 1, state: null, music: false, root: oldRoot, daysAgo: 6 },
     ];
+    // Mia's demo run drew 8 photos and the demo draft holds 6 of them: the videos get photos of their own, older ones from
+    // the same run, so the draft's photos stay free and the run keeps its 8 recent ones (a dev-build convenience only).
+    const needed = plan.reduce((sum, item) => sum + item.photos, 0);
+    const free = this.photos.filter((p) => p.avatarId === mia.avatarId && !drafted.has(p.photoId));
+    const template = this.photos.find((p) => p.avatarId === mia.avatarId);
+    if (template === undefined) return;
+    for (let n = free.length; n < needed; n++) {
+      const photo = { ...template, photoId: `photo-demo-video-${String(n + 1).padStart(4, "0")}`, createdAt: new Date(START_OF_TIME - (30 + n) * 86_400_000).toISOString(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true };
+      this.photos.unshift(photo);
+      free.push(photo);
+    }
+    const own = free.map((p) => p.photoId);
     let next = 0;
     for (const [i, item] of [...plan].reverse().entries()) {
       const photoIds = own.slice(next, next + item.photos);
@@ -795,7 +806,7 @@ export class MockEngine implements EngineBridge {
       this.videos.push({ summary, photoIds, montageId: null, fileState: item.state, rootId: item.root ?? this.exportRootId });
     }
     const usable = this.photos.filter((p) => p.avatarId === mia.avatarId && this.photoUsable(mia.avatarId, p.photoId)).length;
-    this.avatars = this.avatars.map((a) => (a.avatarId === mia.avatarId ? { ...a, videoCount: this.videos.filter((v) => v.summary.avatarId === mia.avatarId).length, eligibleUnusedCount: usable } : a));
+    this.avatars = this.avatars.map((a) => (a.avatarId === mia.avatarId ? { ...a, photoCount: this.photos.filter((p) => p.avatarId === mia.avatarId).length, videoCount: this.videos.filter((v) => v.summary.avatarId === mia.avatarId).length, eligibleUnusedCount: usable } : a));
   }
 
   /** The dev build's Mia: a stopped run of 12 photos, 8 of them drawn, 4 left to resume. */
