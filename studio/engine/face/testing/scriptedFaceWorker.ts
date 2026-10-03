@@ -34,17 +34,10 @@ function leave(): void {
   Atomics.sub(probe, 0, 1);
 }
 
-if (init.startup === "crash") {
-  throw new Error("scripted crash at startup");
-} else if (init.startup === "load-failed") {
-  send({ type: "load-failed", message: "scripted load failure" });
-} else if (init.startup === "ok") {
-  send({ type: "ready" });
-}
-
 const embedding = new Float32Array(EMBEDDING_LENGTH);
 embedding[0] = 1;
 
+// Subscribes BEFORE announcing `ready`, in the real faceWorker.ts's order: a request sent the moment the gate sees `ready` must find a listener.
 port.on("message", (raw: unknown) => {
   const request = FaceWorkerRequestSchema.parse(raw);
   const behaviour = new Uint8Array(request.bytes)[0] ?? Behaviour.ok;
@@ -81,3 +74,12 @@ port.on("message", (raw: unknown) => {
     finish();
   }
 });
+
+if (init.startup === "crash") {
+  throw new Error("scripted crash at startup");
+} else if (init.startup === "load-failed") {
+  send({ type: "load-failed", message: "scripted load failure" });
+} else if (init.startup === "ok") {
+  send({ type: "ready" });
+}
+
