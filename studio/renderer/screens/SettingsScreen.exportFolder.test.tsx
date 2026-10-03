@@ -6,7 +6,7 @@ import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { freePhotos, MIA, PHOTO_IDS } from "../engine/mockEngine.testkit";
 import { ManualScheduler } from "../engine/scheduler";
 import { NBSP } from "../lib/format";
-import { NavigationProvider } from "../navigation";
+import { createNavigation, NavigationProvider } from "../navigation";
 import { ErrorNotice } from "../ui/Notice";
 import { callsOf, describeElement, flush, focusedLabel, openSection, runAll, setup } from "../testing";
 import { SettingsScreen } from "./SettingsScreen";
@@ -356,7 +356,7 @@ describe("the link from an EXPORT_UNAVAILABLE notice", () => {
   test("the notice offers «Открыть папку в Настройках», which goes to Settings with the export card as its focus", () => {
     const visited: unknown[] = [];
     render(
-      <NavigationProvider value={(route) => visited.push(route)}>
+      <NavigationProvider value={createNavigation((route) => { visited.push(route); })}>
         <ErrorNotice error={{ code: "EXPORT_UNAVAILABLE", exportReason: "missing" }} />
       </NavigationProvider>,
     );
