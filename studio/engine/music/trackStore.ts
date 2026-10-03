@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Id, MAX_LISTED_TRACKS, type TrackSummary } from "../../shared/engine";
 import { fsyncDir, isTempName, tempSiblingPath, writeFileAtomic, writeFileDurable, writeJsonAtomic } from "../library/durableFs";
 import { renameWithRetry } from "../library/renameRetry";
 import { checkCdnUrl } from "./cdnPolicy";
 import type { CdnTransport } from "./cdnTransport";
-import { decodeAudio, DecodeError, type DecodeOptions, type DecodeResult, PEAK_STEP_MS } from "./decodeCheck";
+import { decodeAudio, DecodeError, inspectStreams, type DecodeOptions, type DecodeResult, PEAK_STEP_MS } from "./decodeCheck";
 import { downloadCapped, DownloadError } from "./downloadCapped";
 import { probeMp4Audio } from "./mp4aProbe";
 import { withoutLongPathPrefix } from "./quotaLedger";
+import { TrackUnavailableError, type RenderTrack, type RenderTrackSource } from "./renderTrack";
 import { SinkError, type FetchedList, type MusicListSink } from "./service";
+import { trackForbiddenStrings } from "./trackTags";
 import {
   COVER_EXTENSIONS,
   EnvelopeSchema,
@@ -56,6 +58,8 @@ export interface TrackStoreDeps {
   log: (line: string) => void;
   /** The bounded decode; ffmpeg by default (a test passes a fast stand-in). */
   decode?: (options: DecodeOptions) => Promise<DecodeResult>;
+  /** The kinds of stream ffmpeg sees in a file, asked again at every render; `inspectStreams` by default (a test passes a stand-in). */
+  inspect?: (path: string, signal: AbortSignal) => Promise<readonly string[]>;
   /** Removes a file; `fs.rm` by default. A test passes one that fails. */
   removeFile?: (path: string) => Promise<void>;
   /** Lowers the limits in a test; never passed in the app. */
@@ -137,16 +141,20 @@ function reasonOf(error: unknown): string {
   return "write-failed";
 }
 
-export class TrackStore implements MusicListSink {
+export { TrackUnavailableError } from "./renderTrack";
+
+export class TrackStore implements MusicListSink, RenderTrackSource {
   readonly persistent = true;
   readonly #deps: TrackStoreDeps;
   readonly #decode: (options: DecodeOptions) => Promise<DecodeResult>;
+  readonly #inspect: (path: string, signal: AbortSignal) => Promise<readonly string[]>;
   #record: ListRecord | null;
   #busy = false;
 
   private constructor(deps: TrackStoreDeps, record: ListRecord | null) {
     this.#deps = deps;
     this.#decode = deps.decode ?? decodeAudio;
+    this.#inspect = deps.inspect ?? ((path, signal) => inspectStreams({ path, signal }));
     this.#record = record;
   }
 
@@ -306,6 +314,54 @@ export class TrackStore implements MusicListSink {
   /** Whether a track's audio is stored (of any list, not only the current one). */
   hasTrack(trackId: string): boolean {
     return this.#record?.tracks.some((entry) => entry.trackId === trackId && entry.audio.state === "stored") ?? false;
+  }
+
+  /** The proven length of a stored track (of any list), from the record alone: no disk, no ffmpeg. Null for any id that is not stored. */
+  stored(trackId: string): { readonly decodedMs: number } | null {
+    if (!Id.safeParse(trackId).success) return null;
+    const audio = this.#record?.tracks.find((entry) => entry.trackId === trackId)?.audio;
+    return audio?.state === "stored" ? { decodedMs: audio.decodedMs } : null;
+  }
+
+  /**
+   * The track's file for a render (invariant 31): the path is built here from the id, and the track is checked again NOW, at
+   * the render, because the file has sat on disk since the download. A stored entry, a plain file (no link followed) of the
+   * recorded size and sha256, and exactly one audio stream by ffmpeg's own reading. Anything else is a `TrackUnavailableError`
+   * and the render never starts ffmpeg on the file. A cancel is the signal's own reason.
+   */
+  async openForRender(trackId: string, signal: AbortSignal): Promise<RenderTrack> {
+    signal.throwIfAborted();
+    const entry = Id.safeParse(trackId).success ? this.#record?.tracks.find((candidate) => candidate.trackId === trackId) : undefined;
+    const audio = entry?.audio;
+    if (entry === undefined || audio?.state !== "stored") throw new TrackUnavailableError("not-stored");
+    const path = this.#trackPath(trackId);
+    let bytes: Uint8Array;
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || info.size !== audio.bytes || audio.bytes > TRACK_MAX_BYTES) throw new TrackUnavailableError("changed");
+      bytes = new Uint8Array(await readFile(path));
+    } catch {
+      throw new TrackUnavailableError("changed");
+    }
+    if (bytes.byteLength !== audio.bytes || sha256(bytes) !== audio.sha256) throw new TrackUnavailableError("changed");
+    signal.throwIfAborted();
+    let kinds: readonly string[];
+    try {
+      kinds = await this.#inspect(path, signal);
+    } catch {
+      if (signal.aborted) throw signal.reason;
+      throw new TrackUnavailableError("not-audio");
+    }
+    if (kinds.length !== 1 || kinds[0] !== "Audio") throw new TrackUnavailableError("not-audio");
+    return {
+      path,
+      bytes: audio.bytes,
+      sha256: audio.sha256,
+      decodedMs: audio.decodedMs,
+      title: entry.title,
+      artist: entry.artist,
+      forbidden: trackForbiddenStrings(bytes, [entry.title, entry.artist]),
+    };
   }
 
   /** A window of a stored track's waveform (`music.peaks`), or null when the track is not stored or its envelope cannot be trusted. */
