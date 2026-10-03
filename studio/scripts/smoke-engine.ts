@@ -88,7 +88,7 @@ import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
-import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
@@ -575,8 +575,8 @@ async function rendererCssText(target: Target): Promise<string> {
 function checkProductionBundles(where: string, main: string, engine: string, preload: string, renderer: string, rendererCss: string, sharedChunks: string): void {
   const mainProblems = productionMainProblems(main);
   check(`${where}: main has every debug door compiled out (no test switch, no env renderer URL, DevTools off, remote debugging refused)`, mainProblems.length === 0, mainProblems);
-  const engineProblems = productionEngineProblems(engine);
-  check(`${where}: the engine was built without the E2E flag (no base-URL override)`, engineProblems.length === 0, engineProblems);
+  const engineProblems = productionEngineBundleProblems(engine, sharedChunks);
+  check(`${where}: the engine and its shared chunks were built without the E2E flag (no base-URL override, no test-only commit hold)`, engineProblems.length === 0, engineProblems);
   const timingProblems = productionMoneyTimingProblems(sharedChunks);
   check(`${where}: the money timings are the production ones (the E2E build's shortened reconcile wait and request timeout are compiled out)`, timingProblems.length === 0, timingProblems);
   check(`${where}: a preload bundle was read`, preload.length > 0);

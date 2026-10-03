@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import studioViteConfig from "../../electron.studio.vite.config";
-import { productionEngineProblems, productionMainProblems, productionMoneyTimingProblems } from "../scripts/bundleChecks";
+import { productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems } from "../scripts/bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -152,7 +152,7 @@ describe("debug affordances are compile-time", () => {
 describe("the smoke test's production bundle checks", () => {
   test("pass a production build", async () => {
     expect(productionMainProblems(await mainOf(normalDir))).toEqual([]);
-    expect(productionEngineProblems(await engineOf(normalDir))).toEqual([]);
+    expect(productionEngineBundleProblems(await engineOf(normalDir), await chunksOf(normalDir))).toEqual([]);
   });
 
   test("flag an E2E build: every door it keeps open is named", async () => {
@@ -167,7 +167,7 @@ describe("the smoke test's production bundle checks", () => {
       "DevTools are not compiled off",
       "the remote-debugging refusal is missing",
     ]);
-    expect(productionEngineProblems(await engineOf(e2eDir))).toEqual([
+    expect(productionEngineBundleProblems(await engineOf(e2eDir), await chunksOf(e2eDir))).toEqual([
       "the engine takes an OpenRouter base-URL override",
       "the engine takes a flashapi base-URL override",
       "the OpenRouter client is built with a base-URL override allowed",

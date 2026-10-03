@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { faceWorkerProblems, productionBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, relativeImportsOf, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, relativeImportsOf, textWorkerProblems } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -235,6 +235,16 @@ describe("productionEngineProblems", () => {
 
   test("flags the E2E commit hold that made it into the engine bundle: it would stop a real commit at the rename", () => {
     expect(productionEngineProblems(bundle(SHUT, 'const held = "studio-e2e-commit-hold.held";'))).toEqual(["a test-only commit hold is in the engine bundle"]);
+  });
+
+  test("flags the commit hold when the bundler put it in a shared chunk beside the entry, which the entry's own text does not show", () => {
+    const chunk = 'const held = "studio-e2e-commit-hold.held";';
+    expect(productionEngineProblems(SHUT)).toEqual([]);
+    expect(productionEngineBundleProblems(SHUT, chunk)).toEqual(["a test-only commit hold is in the engine bundle"]);
+  });
+
+  test("passes an engine bundle and shared chunks that carry none of it", () => {
+    expect(productionEngineBundleProblems(SHUT, "var RECONCILE_QUIET_MS = 12e4;")).toEqual([]);
   });
 
   test("flags every layer when everything is kept", () => {
