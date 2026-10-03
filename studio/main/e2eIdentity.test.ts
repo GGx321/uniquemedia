@@ -24,7 +24,8 @@ describe("e2eIdentityProblem", () => {
   });
 });
 
-const MAIN_SOURCE = readFileSync(join(import.meta.dirname, "main.ts"), "utf8");
+// CRLF-normalised: a Windows checkout has CRLF line endings.
+const MAIN_SOURCE = readFileSync(join(import.meta.dirname, "main.ts"), "utf8").replace(/\r\n/g, "\n");
 
 describe("main.ts wires the E2E identity", () => {
   test("an unpackaged E2E run keeps its userData in a folder of its own, chosen inline behind the build flag", () => {
