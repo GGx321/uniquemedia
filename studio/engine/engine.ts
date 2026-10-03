@@ -92,6 +92,8 @@ import { maskHome } from "./renderQueue/scrubber";
 import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
 import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
+import { MediaImports, type MediaImporters } from "./media/imports";
+import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
 import { createStickerAssets, StickerAssetError, type StickerAssets } from "./videos/stickerAssets";
@@ -151,6 +153,13 @@ export interface EngineDeps {
    * as `track-unavailable`.
    */
   musicTracks?: RenderTrackSource;
+  /**
+   * The importers of own media, by kind (3f.1): each takes the STAGED copy of a picked file and answers a job id, or turns the file away.
+   * 3f.2 to 3f.5 pass theirs. A kind with none is refused as `not-yet-supported`, before its file is copied.
+   */
+  mediaImporters?: MediaImporters;
+  /** Test knob: the disk calls, `O_NOFOLLOW`, chunk size and caps of the staging copy. */
+  mediaStaging?: Pick<MediaStagingOptions, "ops" | "noFollow" | "chunkBytes" | "caps">;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
   /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
@@ -511,6 +520,10 @@ export class Engine {
   readonly #openRouterBaseUrl: string;
   /** The flashapi list and its quota (3c.3). */
   readonly #music: MusicService;
+  /** Own media's import boundary (3f.1): the staging copy of a picked file and the hand-off to its kind's importer. */
+  readonly #mediaImports: MediaImports;
+  /** Aborted by `shutdown`, so a copy in flight stops with the engine. */
+  readonly #mediaAbort = new AbortController();
   #settings: EngineSettings;
   readonly #money: Money;
   #apiKey: string | null = null;
@@ -634,6 +647,7 @@ export class Engine {
     this.#preflightTimeoutMs = deps.preflightTimeoutMs ?? PREFLIGHT_TIMEOUT_MS;
     this.#liveLibraryIdentityTimeoutMs = deps.liveLibraryIdentityTimeoutMs ?? LIVE_LIBRARY_IDENTITY_TIMEOUT_MS;
     this.#events = new EventLog(EVENT_LOG_CAPACITY, deps.bootId);
+    this.#mediaImports = new MediaImports({ newId: deps.newId, importers: deps.mediaImporters, staging: deps.mediaStaging });
     this.#settings = init.settings;
     this.#renders = new RenderQueue({
       jobs: this.#jobs,
@@ -790,6 +804,7 @@ export class Engine {
   async shutdown(waitMs: number = SHUTDOWN_RENDER_WAIT_MS): Promise<{ idle: boolean }> {
     // The held-back notice announcement is for windows of a running engine: it is dropped, not posted into a stopping one.
     this.#stopping = true;
+    this.#mediaAbort.abort();
     if (this.#internalNoticeTimer !== null) clearTimeout(this.#internalNoticeTimer);
     this.#internalNoticeTimer = null;
     // A music request in flight is aborted (its send stays counted); the renders get their bounded wait.
@@ -959,6 +974,8 @@ export class Engine {
       }
       case "export.choose":
         return { kind: "control", type: "reply", callId: call.callId, ...(await this.#chooseExportFolder(call.path)) };
+      case "media.import":
+        return { kind: "control", type: "reply", callId: call.callId, ...(await this.#importMedia(call)) };
       case "import.stagePhoto": {
         // Free (design constraint 2): media checks, not animated, a readable
         // size — before anything is downscaled or paid for. A rejection here
@@ -1002,6 +1019,23 @@ export class Engine {
         this.#importStaging = { stagingId, mediaType: checked.info.mediaType, width: checked.info.width, height: checked.info.height, rawBytes: call.bytes, sha256, ageJpeg, describeJpeg };
         return { kind: "control", type: "reply", callId: call.callId, stage: { stagingId, width: checked.info.width, height: checked.info.height } };
       }
+    }
+  }
+
+  /**
+   * `media.import` (3f.1, invariant 34): stages the file main's dialog picked and hands the staged copy to its kind's importer. Counted as a
+   * small write of the live library (the staging folder is inside it), so a library switch waits for it, like every library write.
+   * A refusal carries its reason and no path.
+   */
+  async #importMedia(call: Extract<HostCall, { type: "media.import" }>): Promise<Pick<EngineReply, "error" | "mediaJobId" | "mediaReason">> {
+    try {
+      const result = await this.#withLiveLibrary((library) => this.#mediaImports.importFile(library.root, call, this.#mediaAbort.signal));
+      if (result.ok) return { mediaJobId: result.jobId };
+      if (result.reason === "cancelled" || result.reason === "failed") return { error: { code: "INTERNAL", detail: result.detail } };
+      return { error: { code: "VALIDATION", detail: result.detail }, mediaReason: result.reason };
+    } catch (error) {
+      if (error instanceof EngineFailure) return { error: error.error };
+      return { error: { code: "INTERNAL", detail: "the file could not be imported" } };
     }
   }
 

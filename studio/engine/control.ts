@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MusicKey, Settings, type EngineCommandMessage } from "../shared/engine";
+import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MediaFileName, MediaPickKind, MediaUnsupportedReason, MusicKey, Settings, type EngineCommandMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
 import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
@@ -118,6 +118,13 @@ export type HostControl = z.infer<typeof HostControl>;
  */
 export const MAX_IMPORT_PHOTO_BYTES = 20 * 1024 * 1024;
 
+/**
+ * How long main waits for `media.import`: the call answers once the picked file is COPIED into staging, and a 2 GB video from a slow
+ * external drive takes minutes. The copy is bounded by the kind's cap, so the wait is bounded too. The ordinary 30 s would give up on a
+ * healthy copy and leave main telling the owner the import failed while it went on.
+ */
+export const MEDIA_IMPORT_DEADLINE_MS = 10 * 60_000;
+
 /** A question main asks the engine; the engine answers with an `EngineReply` carrying the same `callId`. */
 export const HostCall = z.discriminatedUnion("type", [
   /**
@@ -177,6 +184,24 @@ export const HostCall = z.discriminatedUnion("type", [
    * running (a render commits into the folder it was planned for, and its record must not be left behind by a switch).
    */
   z.strictObject({ kind: z.literal("control"), type: z.literal("export.choose"), callId: Id, path: AbsolutePath }),
+  /**
+   * 3f.1 (invariant 34, K29): the owner picked `path` in main's own dialog as an own file to import. The window never names it. Main has
+   * already looked at the file (a plain file, not a link; within the kind's cap) and sends the identity it saw (`expected`: device and
+   * inode as exact decimal strings), so the engine can tell a file that was replaced since. The engine opens the path ONCE, with no
+   * symlink following, judges the file from its OPEN handle and its first bytes, copies at most the kind's cap into its own staging
+   * area and hands that copy, never the path, to the kind's importer. The reply is `mediaJobId`, or `error` (VALIDATION) with
+   * `mediaReason` for a file the boundary or the importer turned away, or an error of its own (IN_FLIGHT, LIBRARY_UNAVAILABLE, INTERNAL).
+   * `name` is the file's base name, for display only.
+   */
+  z.strictObject({
+    kind: z.literal("control"),
+    type: z.literal("media.import"),
+    callId: Id,
+    pick: MediaPickKind,
+    path: AbsolutePath,
+    name: MediaFileName,
+    expected: z.strictObject({ dev: z.string().regex(/^\d{1,20}$/), ino: z.string().regex(/^\d{1,20}$/) }),
+  }),
 ]);
 export type HostCall = z.infer<typeof HostCall>;
 
@@ -195,6 +220,10 @@ export const EngineReply = z.strictObject({
   stage: z.strictObject({ stagingId: Id, width: Count, height: Count }).optional(),
   /** Set only by a successful `export.choose`: the folder's identity, and how many records resolve in it or stay elsewhere. */
   exportFolder: z.strictObject({ rootId: Id, resolved: Count, elsewhere: Count, incomplete: z.boolean() }).optional(),
+  /** Set only by a successful `media.import`: the job the file's importer started. */
+  mediaJobId: Id.optional(),
+  /** Set with `error` when `media.import` turned the file away: why. */
+  mediaReason: MediaUnsupportedReason.optional(),
 });
 export type EngineReply = z.infer<typeof EngineReply>;
 

@@ -111,3 +111,63 @@ describe("HostCall export.choose and its reply", () => {
     expect(EngineReply.safeParse({ ...reply, exportFolder: { rootId: "../root", resolved: 0, elsewhere: 0, incomplete: false } }).success).toBe(false);
   });
 });
+
+// 3f.1 (invariant 34): main's dialog names a path; it reaches the engine over the control channel only, never from the window.
+describe("HostCall media.import and its reply", () => {
+  const call = {
+    kind: "control" as const,
+    type: "media.import" as const,
+    callId: "call-00000001",
+    pick: "photo" as const,
+    name: "summer.jpg",
+    expected: { dev: "16777234", ino: "9876543210" },
+  };
+  const absolute = process.platform === "win32" ? "C:\\Users\\me\\summer.jpg" : "/Users/me/summer.jpg";
+
+  test("takes an absolute path, a pick kind, a display name and the identity main saw", () => {
+    expect(HostCall.safeParse({ ...call, path: absolute }).success).toBe(true);
+    expect(HostCall.safeParse({ ...call, path: absolute, pick: "any" }).success).toBe(true);
+  });
+
+  test("refuses a relative path, a drive-relative one and a path that climbs out with ..", () => {
+    for (const path of ["summer.jpg", "./summer.jpg", "C:summer.jpg", "/Users/me/../you/summer.jpg", "..\\x.jpg", ""]) {
+      expect(HostCall.safeParse({ ...call, path }).success).toBe(false);
+    }
+  });
+
+  test("takes Windows drive and UNC paths, read by the same rule on every platform", () => {
+    expect(HostCall.safeParse({ ...call, path: "D:\\Reels\\a.jpg" }).success).toBe(true);
+    expect(HostCall.safeParse({ ...call, path: "d:/Reels/a.jpg" }).success).toBe(true);
+    expect(HostCall.safeParse({ ...call, path: "\\\\server\\share\\a.jpg" }).success).toBe(true);
+  });
+
+  test("refuses a path with a NUL byte", () => {
+    expect(HostCall.safeParse({ ...call, path: "/Users/me/a.jpg\0.png" }).success).toBe(false);
+  });
+
+  test("needs the identity, and an identity that is not two decimal numbers is refused", () => {
+    const { expected: _gone, ...without } = call;
+    expect(HostCall.safeParse({ ...without, path: absolute }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: absolute, expected: { dev: "x", ino: "1" } }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: absolute, expected: { dev: "1", ino: "-1" } }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: absolute, expected: { dev: "1", ino: "1", extra: 1 } }).success).toBe(false);
+  });
+
+  test("refuses an unknown pick kind and a field it does not know", () => {
+    expect(HostCall.safeParse({ ...call, path: absolute, pick: "document" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: absolute, bytes: new Uint8Array(1) }).success).toBe(false);
+  });
+
+  test("the name is a display text: no control character, at most 120", () => {
+    expect(HostCall.safeParse({ ...call, path: absolute, name: "a\nb.jpg" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...call, path: absolute, name: "a".repeat(121) }).success).toBe(false);
+  });
+
+  test("the reply carries a job id, or a refusal with its reason, and nothing else", () => {
+    const reply = { kind: "control" as const, type: "reply" as const, callId: "call-00000001" };
+    expect(EngineReply.safeParse({ ...reply, mediaJobId: "job-00000001" }).success).toBe(true);
+    expect(EngineReply.safeParse({ ...reply, error: { code: "VALIDATION", detail: "not a photo" }, mediaReason: "format" }).success).toBe(true);
+    expect(EngineReply.safeParse({ ...reply, mediaReason: "heic?" }).success).toBe(false);
+    expect(EngineReply.safeParse({ ...reply, mediaJobId: "no" }).success).toBe(false);
+  });
+});
