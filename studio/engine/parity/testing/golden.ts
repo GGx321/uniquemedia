@@ -1820,4 +1820,13 @@ export const GOLDEN: Record<string, string[]> = {
     "> photos.rebuildRejected {\"avatarId\":\"avatar#4\"}",
     "< error NOT_FOUND {\"detail\":\"no avatar avatar#4 in the open library\"}",
   ],
+  "avatars.list: every avatar of the grid with its counts and a sound usage (a usage that is not ok would be written); a reject mark moves the unused count": [
+    "> avatars.list {}",
+    "< ok {\"avatars\":[{\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":22},{\"avatarId\":\"avatar#2\",\"name\":\"Sofia\",\"status\":\"active\",\"photoCount\":2,\"videoCount\":0,\"eligibleUnusedCount\":2},{\"avatarId\":\"avatar#3\",\"name\":\"Nora\",\"status\":\"archived\",\"photoCount\":0,\"videoCount\":0,\"eligibleUnusedCount\":0}],\"unreadableTotal\":0}",
+    "> photos.setRejected {\"avatarId\":\"avatar#1\",\"photoId\":\"photo#2\",\"rejected\":true}",
+    "event avatar.changed {\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":21}",
+    "< ok {\"photo\":{\"photoId\":\"photo#2\",\"used\":false,\"usedIn\":[],\"reserved\":false,\"rejected\":true,\"eligible\":false}}",
+    "> avatars.list {}",
+    "< ok {\"avatars\":[{\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":21},{\"avatarId\":\"avatar#2\",\"name\":\"Sofia\",\"status\":\"active\",\"photoCount\":2,\"videoCount\":0,\"eligibleUnusedCount\":2},{\"avatarId\":\"avatar#3\",\"name\":\"Nora\",\"status\":\"archived\",\"photoCount\":0,\"videoCount\":0,\"eligibleUnusedCount\":0}],\"unreadableTotal\":0}",
+  ],
 };

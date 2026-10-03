@@ -978,6 +978,15 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.call("photos.rebuildRejected", { avatarId: "avatar-nobody-0001" });
     },
   },
+  // ---------- 3e.2 review ----------
+  {
+    name: "avatars.list: every avatar of the grid with its counts and a sound usage (a usage that is not ok would be written); a reject mark moves the unused count",
+    async run(t, w) {
+      await t.call("avatars.list", {});
+      await t.call("photos.setRejected", { avatarId: w.avatarId, photoId: photo(w, 2), rejected: true });
+      await t.call("avatars.list", {});
+    },
+  },
 ];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */

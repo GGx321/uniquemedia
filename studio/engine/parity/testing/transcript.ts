@@ -162,10 +162,23 @@ function videoFactsLine(video: unknown): Record<string, unknown> {
   };
 }
 
-/** The avatar as the grid shows it, less what differs by construction (the descriptor text, the date). */
+/**
+ * The avatar as the grid shows it, less what differs by construction (the descriptor text, the date). Its usage (3e.2, K16) is
+ * written only when it is not `ok`, so no older golden line changed, and a mock that calls a sound avatar's usage unknown (or
+ * the reverse) is seen.
+ */
 function avatarLine(avatar: unknown): Record<string, unknown> {
   const a = objectOf(avatar);
-  return { avatarId: a.avatarId, name: a.name, status: a.status, photoCount: a.photoCount, videoCount: a.videoCount, eligibleUnusedCount: a.eligibleUnusedCount };
+  const usage = a.usage === undefined || a.usage === null ? null : objectOf(a.usage);
+  return {
+    avatarId: a.avatarId,
+    name: a.name,
+    status: a.status,
+    photoCount: a.photoCount,
+    videoCount: a.videoCount,
+    eligibleUnusedCount: a.eligibleUnusedCount,
+    ...(usage?.state === "ok" ? {} : { usage: a.usage ?? null }),
+  };
 }
 
 /** One event as a line of the transcript, or null for an event the suite is not about. */
@@ -266,6 +279,11 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
     // The summary as the list writes it, then what 3e.2 added to it (`videoFactsLine`).
     const video = answer.result.video;
     return `< ok ${compact(norm.value({ video: videoLine(video), facts: videoFactsLine(video) }))}`;
+  }
+  if (type === "avatars.list") {
+    // The grid's avatars as `avatarLine` writes them (3e.2: the usage when it is not ok), and how many could not be listed.
+    const listed = Array.isArray(answer.result.avatars) ? answer.result.avatars : [];
+    return `< ok ${compact({ avatars: listed.map((a) => norm.value(avatarLine(a))), unreadableTotal: answer.result.unreadableTotal })}`;
   }
   if (type === "music.status") return `< ok music ${compact(musicLine(answer.result))}`;
   if (type === "music.refresh" || type === "music.recoverQuotaLog") return `< ok music ${compact(musicLine(answer.result.status))}`;
