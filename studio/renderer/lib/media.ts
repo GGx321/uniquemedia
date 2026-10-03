@@ -48,6 +48,15 @@ export function stickerUrl(client: Pick<EngineClient, "kind" | "stickerUrl">, st
   return `studio-media://sticker/${stickerId}`;
 }
 
+/**
+ * The cover of a listed trending track in the editor (3d.5): `coverUrl` when the store holds one (`TrackSummary.hasCover`) and the
+ * client is the real one (the dev mock stores no pictures); null otherwise, and the window draws a placeholder.
+ */
+export function trackCoverUrl(client: Pick<EngineClient, "kind">, track: { readonly trackId: string; readonly hasCover: boolean }): string | null {
+  if (client.kind !== "window" || !track.hasCover) return null;
+  return coverUrl(track.trackId);
+}
+
 // Neutral placeholder gradients (warm and cool greys, as in the mockup) for
 // the mock engine, which has no real images.
 const PLACEHOLDERS = [

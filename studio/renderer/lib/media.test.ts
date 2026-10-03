@@ -3,7 +3,7 @@ import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { EngineClient } from "../engine/client";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { ManualScheduler } from "../engine/scheduler";
-import { coverUrl, photoUrl, posterUrl, stickerUrl, videoUrl } from "./media";
+import { coverUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, videoUrl } from "./media";
 
 // 3d.3b: a built-in sticker's picture is asked for by id, never by a path (invariant 12): main's `studio-media://sticker/<id>`
 // route serves the catalogue, the dev mock a stand-in of its own.
@@ -46,5 +46,29 @@ describe("media addresses by id", () => {
       expect(posterUrl("avatar-0001", bad)).toBeNull();
       expect(coverUrl(bad)).toBeNull();
     }
+  });
+});
+
+// 3d.5: a listed track's cover in the «Музыка» tab and the music card: the cover route, only when the store holds one and only
+// on the real client (the mock stores no pictures).
+describe("trackCoverUrl", () => {
+  const track = (trackId: string, hasCover = true) => ({ trackId, hasCover });
+
+  test("the real client asks main's cover route by the track's id", () => {
+    expect(trackCoverUrl({ kind: "window" }, track("track-espresso-01"))).toBe("studio-media://cover/track-espresso-01");
+  });
+
+  test("no cover stored, no address: the window draws a placeholder", () => {
+    expect(trackCoverUrl({ kind: "window" }, track("track-espresso-01", false))).toBe(null);
+  });
+
+  test("an id that breaks the contract is never put into an address", () => {
+    expect(trackCoverUrl({ kind: "window" }, track("../covers/x"))).toBe(null);
+    expect(trackCoverUrl({ kind: "window" }, track("Track"))).toBe(null);
+  });
+
+  test("the mock and a window with no engine have no pictures to serve", () => {
+    expect(trackCoverUrl({ kind: "mock" }, track("demo-track-0001"))).toBe(null);
+    expect(trackCoverUrl({ kind: "unavailable" }, track("demo-track-0001"))).toBe(null);
   });
 });
