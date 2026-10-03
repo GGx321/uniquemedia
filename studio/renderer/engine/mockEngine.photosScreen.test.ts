@@ -27,6 +27,29 @@ describe("AvatarSummary.usage", () => {
   });
 });
 
+describe("the dev build's demo videos (preset «demo»)", () => {
+  test("the demo without `demoVideos` has none: the older demo facts stand", async () => {
+    const mock = makeMock({ preset: "demo", avatars: undefined, photos: undefined });
+    const mia = (await unwrap(mock.client.request("avatars.list", {}))).avatars.find((a) => a.name === "Mia");
+    expect(mia?.videoCount).toBe(0);
+  });
+
+  test("Mia has videos in every file state the tab draws, their photos used and her counts in step", async () => {
+    const mock = makeMock({ preset: "demo", demoVideos: true, avatars: undefined, photos: undefined });
+    const mia = (await unwrap(mock.client.request("avatars.list", {}))).avatars.find((a) => a.name === "Mia");
+    if (mia === undefined) throw new Error("no demo Mia");
+    const { videos } = await unwrap(mock.client.request("videos.list", { avatarId: mia.avatarId }));
+    expect(videos.map((v) => v.fileState).sort()).toEqual(["changed", "elsewhere", "missing", "present", "present"]);
+    expect(videos.every((v) => v.title !== null && v.firstClip !== null)).toBe(true);
+    expect(videos.some((v) => v.music?.trackId !== null && v.music !== null)).toBe(true);
+    const { photos } = await unwrap(mock.client.request("photos.list", { avatarId: mia.avatarId }));
+    const used = photos.filter((p) => p.used).length;
+    expect(used).toBe(videos.reduce((sum, v) => sum + v.photoCount, 0));
+    expect(mia.videoCount).toBe(videos.length);
+    expect(mia.eligibleUnusedCount).toBe(photos.filter((p) => p.eligible && !p.used && !p.reserved).length);
+  });
+});
+
 describe("videos.quarantineRecords", () => {
   test("clears a broken record: answers 1, and the avatar, trusted again, is announced with its counts back", async () => {
     const mock = withUsage({ state: "unknown", reasons: ["record-unreadable"] });
@@ -129,6 +152,26 @@ describe("a video's title, first clip and track", () => {
     const { videoId } = await renderDraft(mock, (await draftOf(mock, [P1, P2])).montageId);
     mock.scheduler.runAll();
     expect((await unwrap(mock.client.request("videos.get", { videoId }))).video.title).toBeNull();
+  });
+});
+
+describe("a render whose commit finishes late (the engine's stuck commit past its claim)", () => {
+  test("`failNextRender(error, \"late\")`: job.failed, then a step later the record lands anyway: video.changed upserted and the avatar announced, its photos used", async () => {
+    const mock = makeMock();
+    mock.engine.failNextRender({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" }, "late");
+    const { jobId, videoId } = await renderDraft(mock, (await draftOf(mock, [P1, P2])).montageId);
+    for (let i = 0; i < 6; i++) mock.scheduler.next();
+    const failedAt = mock.events.findIndex((e) => e.type === "job.failed" && e.payload.jobId === jobId);
+    expect(failedAt).toBeGreaterThan(-1);
+    expect(mock.events.some((e) => e.type === "video.changed")).toBe(false);
+
+    mock.scheduler.runAll();
+
+    const after = mock.events.slice(failedAt + 1);
+    expect(after.map((e) => e.type)).toEqual(["avatar.changed", "video.changed", "avatar.changed"]);
+    expect(after[1]?.type === "video.changed" && after[1].payload.change === "upserted" ? after[1].payload.video.videoId : null).toBe(videoId);
+    expect((await avatarOf(mock))?.videoCount).toBe(1);
+    expect((await unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }))).photos.filter((p) => p.used).map((p) => p.photoId).sort()).toEqual([P1, P2].sort());
   });
 });
 
