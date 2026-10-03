@@ -222,6 +222,7 @@ describe("layers on real ffmpeg: a sticker follows (t - start) mod loop on the 3
 describe("layers on real ffmpeg: the colour stays BT.709 through both steps (invariant 36)", () => {
   const FRAME = 45; // inside the text layer's window
   const planes = new Map<string, { y: Uint8Array; u: Uint8Array; v: Uint8Array }>();
+  const agreement: number[] = [];
 
   async function planesOf(path: string): Promise<{ y: Uint8Array; u: Uint8Array; v: Uint8Array }> {
     const hit = planes.get(path);
@@ -242,13 +243,20 @@ describe("layers on real ffmpeg: the colour stays BT.709 through both steps (inv
 
   const worst = (got: readonly number[], want: readonly number[]): number => Math.max(...got.map((g, i) => Math.abs(g - (want[i] ?? 0))));
 
+  const opaqueWorst: number[] = [];
+  const alphaWorst: number[] = [];
+
   test.each([0, 1, 2, 3])("an opaque colour (column %d) is within 1 code value of BT.709 limited range", async (column) => {
-    expect(worst(await sample(finalMp4, column, 0), expectedBt709Limited(stickerColour(column)))).toBeLessThanOrEqual(1);
+    const w = worst(await sample(finalMp4, column, 0), expectedBt709Limited(stickerColour(column)));
+    opaqueWorst.push(w);
+    expect(w).toBeLessThanOrEqual(1);
   });
 
   test.each([0, 1, 2, 3])("an alpha-128 colour (column %d) blends with the background within 2 code values", async (column) => {
     const blended = mixRgb(stickerColour(column), GREY_RGB, 128 / 255);
-    expect(worst(await sample(finalMp4, column, 1), expectedBt709Limited(blended))).toBeLessThanOrEqual(2);
+    const w = worst(await sample(finalMp4, column, 1), expectedBt709Limited(blended));
+    alphaWorst.push(w);
+    expect(w).toBeLessThanOrEqual(2);
   });
 
   test("the two-step composite matches pass 2's direct overlay of the same PNG within 1.5 code values on the opaque and the alpha-128 rows", async () => {
@@ -256,6 +264,7 @@ describe("layers on real ffmpeg: the colour stays BT.709 through both steps (inv
       for (const row of [0, 1]) {
         const layered = await sample(finalMp4, column, row);
         const direct = await sample(directMp4, column, row);
+        agreement.push(worst(layered, direct));
         expect(worst(layered, direct)).toBeLessThanOrEqual(1.5);
       }
     }
@@ -275,6 +284,7 @@ describe("layers on real ffmpeg: the colour stays BT.709 through both steps (inv
     const trapMp4 = join(dir, "trap.mp4");
     await renderThrough([textOverlay], trapMp4, (job) => tamperGraph(job.argv, "scale=in_range=full:out_range=tv:out_color_matrix=bt709,", ""));
     const deviations = await Promise.all([0, 1, 2, 3].map(async (column) => worst(await sample(trapMp4, column, 0), expectedBt709Limited(stickerColour(column)))));
+    console.log(`layers, colour through the layer pass (the two-step composite differs from pass 2's direct overlay by at most ${Math.max(...agreement).toFixed(2)}): opaque worst ${Math.max(...opaqueWorst).toFixed(2)} codes, alpha-128 worst ${Math.max(...alphaWorst).toFixed(2)}; without the explicit conversion (the BT.601 trap) ${Math.max(...deviations).toFixed(2)}`);
     expect(Math.max(...deviations)).toBeGreaterThan(5);
   });
 });
