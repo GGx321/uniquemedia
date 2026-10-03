@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { isHeic, mediaKindsOf, resolveMediaKind, unfitReason } from "./sniff";
+useNativeGlobals();
 
 // The boundary never trusts an extension: what a file IS comes from its first bytes. This is a coarse family check (is it a photo, a
 // video, a track or a sticker at all); the per-kind importers (3f.2 to 3f.5) decode and validate the file properly.
