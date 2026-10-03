@@ -85,11 +85,14 @@ function addStart(atMs: number): number {
   return Math.floor(atMs / STEP_MS) * STEP_MS;
 }
 
+/** Where a new layer must end by: the montage's end, and never past 15 s (a draft from elsewhere may run longer). */
+const addLimit = (spec: MontageDraft): number => Math.min(totalMs(spec), MAX_TOTAL_MS);
+
 /** Why no layer of `kind` can be added at the playhead `atMs`, or null. The cap is told first. */
 export function addLayerRefusal(spec: MontageDraft, kind: LayerKind, atMs: number): "layer-cap" | "no-room" | null {
   const start = addStart(atMs);
   if (capReached(spec, kind)) return "layer-cap";
-  if (totalMs(spec) - start < MIN_LAYER_MS) return "no-room";
+  if (addLimit(spec) - start < MIN_LAYER_MS) return "no-room";
   return null;
 }
 
@@ -99,7 +102,7 @@ function addLayer(spec: MontageDraft, kind: LayerKind, atMs: number, make: (base
   if (why !== null) return refuse(why);
   const startMs = addStart(atMs);
   const layerId = nextLayerId(spec);
-  const layer = make({ layerId, startMs, endMs: startMs + Math.min(ADD_LAYER_MS, totalMs(spec) - startMs) });
+  const layer = make({ layerId, startMs, endMs: startMs + Math.min(ADD_LAYER_MS, addLimit(spec) - startMs) });
   return done(withLayers(spec, [...spec.layers, layer]), layerId);
 }
 
@@ -215,6 +218,7 @@ export function lowerLayer(spec: MontageDraft, index: number): LayerEdit {
 /** Splits a layer at `atMs` (snapped to 100 ms); the second part is a new layer right above the first. */
 export function splitLayerAt(spec: MontageDraft, index: number, atMs: number): LayerEdit {
   const layer = layerAt(spec, index);
+  assertTime(atMs, "a split point");
   const at = snap(atMs);
   if (at <= layer.startMs || at >= layer.endMs) return refuse("not-splittable");
   if (at - layer.startMs < MIN_LAYER_MS || layer.endMs - at < MIN_LAYER_MS) return refuse("too-short");

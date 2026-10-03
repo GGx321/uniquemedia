@@ -111,6 +111,16 @@ describe("adding a layer at the playhead (AM7: min(3.0 s, the rest of the montag
     expect(addLayerRefusal(EIGHT, "text", 7_700)).toBeNull();
   });
 
+  test("a draft longer than 15 s (from elsewhere) still gets no layer past 15 s: the contract's end is the limit", () => {
+    // Eight 2.5 s clips: 20 s.
+    const long = draftSpec(draftSpec(8).clips.map((c) => ({ ...c, durationMs: 2_500 })));
+    expect(ranges(ok(addTextLayer(long, 14_000)))).toEqual([["layer-001", 14_000, 15_000]]);
+    expect(addLayerRefusal(long, "text", 14_700)).toBeNull();
+    expect(addLayerRefusal(long, "text", 14_800)).toBe("no-room");
+    expect(addTextLayer(long, 15_000)).toEqual({ ok: false, reason: "no-room" });
+    expect(addStickerLayer(long, 16_000, "heart-pulse")).toEqual({ ok: false, reason: "no-room" });
+  });
+
   test("a sticker the built-in set does not have, or a playhead that is not a time, is a programming error", () => {
     expect(() => addStickerLayer(EIGHT, 0, "sticker-nowhere")).toThrow(RangeError);
     expect(() => addTextLayer(EIGHT, Number.NaN)).toThrow(RangeError);
@@ -280,6 +290,7 @@ describe("split, copy and delete (CF4: a layer may be split and copied)", () => 
     expect(splitLayerAt(spec, 0, 500)).toEqual({ ok: false, reason: "too-short" });
     expect(splitLayerAt(spec, 0, 4_200)).toEqual({ ok: false, reason: "too-short" });
     expect(splitLayerAt(spec, 0, 300)).toEqual({ ok: false, reason: "not-splittable" });
+    expect(() => splitLayerAt(spec, 0, Number.NaN)).toThrow(RangeError);
   });
 
   test("a copy is a new layer over the same range, right above; ten of a kind is the cap", () => {
