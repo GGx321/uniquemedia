@@ -77,6 +77,8 @@ export function usePeaks(client: EngineClient, ask: PeaksAsk | null, listVersion
   const [missing, setMissing] = useState<string | null>(null);
   const wanted = useRef<PeaksAsk | null>(ask);
   const out = useRef(false);
+  /** Asked again (a new list) while an ask was out: its answer may be older than the list, so the ask goes once more. */
+  const again = useRef(false);
   const alive = useRef(true);
   wanted.current = ask;
   useEffect(() => {
@@ -90,8 +92,13 @@ export function usePeaks(client: EngineClient, ask: PeaksAsk | null, listVersion
   useEffect(() => {
     const pump = (): void => {
       const next = wanted.current;
-      if (out.current || next === null) return;
+      if (next === null) return;
+      if (out.current) {
+        again.current = true;
+        return;
+      }
       out.current = true;
+      again.current = false;
       void client.request("music.peaks", { track: { source: "trending", trackId: next.trackId }, startMs: next.startMs, durationMs: next.durationMs, bars: next.bars }).then((reply) => {
         out.current = false;
         if (!alive.current) return;
@@ -100,7 +107,8 @@ export function usePeaks(client: EngineClient, ask: PeaksAsk | null, listVersion
           setMissing(null);
         } else if (reply.error.code === "NOT_FOUND") setMissing(next.trackId);
         const latest = wanted.current;
-        if (latest !== null && (latest.trackId !== next.trackId || latest.startMs !== next.startMs || latest.durationMs !== next.durationMs || latest.bars !== next.bars)) pump();
+        const moved = latest !== null && (latest.trackId !== next.trackId || latest.startMs !== next.startMs || latest.durationMs !== next.durationMs || latest.bars !== next.bars);
+        if (moved || again.current) pump();
       });
     };
     if (key !== null) pump();
