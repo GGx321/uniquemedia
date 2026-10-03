@@ -508,7 +508,7 @@ describe("«Рендер»", () => {
     expect(made.montageId).toMatch(/^montage-/);
   });
 
-  test("when the draft cannot be read after a render ends, the reason shows with «Проверить ещё раз», not an endless «Рендер…»", async () => {
+  test("when the draft cannot be read after a render ends, the reason shows with «Повторить», not an endless «Рендер…»", async () => {
     const { client, engine, scheduler } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1, P2, PHOTO_IDS[2] ?? "", PHOTO_IDS[3] ?? "", PHOTO_IDS[4] ?? ""]);
     await openEditor();
@@ -523,11 +523,20 @@ describe("«Рендер»", () => {
     expect(screen.getByText("Черновик не удалось проверить после рендера")).toBeDefined();
     expect(renderButton().hasAttribute("disabled")).toBe(true);
 
-    // The library is back (the refusals queued for this test are used up), and «Проверить ещё раз» reads the draft again.
+    // The library is back (the refusals queued for this test are used up), and «Повторить» reads the draft again. That
+    // read is slow: while it is out, the old failure is gone and the button waits for the new answer.
     await asAnotherWindow(async () => {
       for (let i = 0; i < 8; i++) if ((await client.request("montages.get", { montageId: made.montageId })).ok) break;
     });
-    fireEvent.click(screen.getByRole("button", { name: "Проверить ещё раз" }));
+    engine.delayNext("montages.get", 60_000);
+    const notice = screen.getByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE).closest(".notice");
+    if (!(notice instanceof HTMLElement)) throw new Error("no notice");
+    fireEvent.click(within(notice).getByRole("button", { name: "Повторить" }));
+    await flush();
+    expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).toBeNull();
+    expect(screen.getByRole("button", { name: "Рендер…" })).toBeDefined();
+
+    runAll(scheduler);
     await screen.findByText("Фото уже в видео из этого черновика — замените их или удалите то видео");
   });
 

@@ -370,6 +370,8 @@ function DraftEditor({
     if (gone) return;
     let alive = true;
     const after = renderKey;
+    // A new read starts: an earlier one's failure is no longer the news (the button waits for this answer instead).
+    setVerdictError(null);
     void client.request("montages.get", { montageId }).then((reply) => {
       if (!alive || !mounted.current) return;
       if (reply.ok) {
@@ -499,7 +501,7 @@ function DraftEditor({
             error={verdictError}
             actions={
               <button type="button" className="btn btn-s" onClick={() => setFocusTick((n) => n + 1)}>
-                Проверить ещё раз
+                Повторить
               </button>
             }
           />
