@@ -7,6 +7,9 @@ import type { JobState } from "../../shared/engine";
 import { JobRegistry } from "../jobs";
 import { openLibrary, type Library } from "../library";
 import { RenderQueue, type SubmitResult } from "../renderQueue/queue";
+import { RasterError } from "../text/rasterTypes";
+import type { PreviewGate } from "../text/preview";
+import { StickerAssetError, type StickerAssets } from "./stickerAssets";
 import type { RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 import { NODE_COMMIT_FS } from "./commitFs";
@@ -407,6 +410,124 @@ describe("the tracker follows the job", () => {
     await r.queue.idle();
     expect(seen).toEqual([true]);
     expect(r.tracker.hasJob("job-00000001")).toBe(false);
+  });
+});
+
+describe("the spec's layers (3b.6)", () => {
+  const textLayer = { layerId: "layer-t1", kind: "text" as const, startMs: 0, endMs: 1000, value: "hello", font: "manrope" as const, style: "plaque" as const, color: "#ffffff", x: 0.5, y: 0.2, scale: 1 };
+  const stickerLayer = { layerId: "layer-s1", kind: "sticker" as const, startMs: 0, endMs: 1000, sticker: { source: "builtin" as const, stickerId: "heart-pulse" }, x: 0.7, y: 0.4, size: 0.2 };
+  const withLayers = (w: World, layers: RenderPlan["spec"]["layers"]): RenderPlan => planOf(w, { spec: { ...specOf(w.avatar.id, [w.photos[0]?.id ?? ""], 1000), layers } });
+
+  /** A text gate that answers a fixed picture and records what it was asked. */
+  function gateOf(over: Partial<{ caption: PreviewGate["caption"] }> = {}): { gate: PreviewGate; asked: string[] } {
+    const asked: string[] = [];
+    return {
+      asked,
+      gate: {
+        caption:
+          over.caption ??
+          (async (request) => {
+            asked.push(request.value);
+            return { png: Uint8Array.from([137, 80, 78, 71]), width: 700, height: 120, layout: { fontSize: 56, lines: [request.value], width: 700, height: 120 }, workerMs: 1 };
+          }),
+      },
+    };
+  }
+  const stickers: StickerAssets = { read: async () => ({ bytes: Uint8Array.from([1, 2, 3]), loopFrames: 24, width: 320, height: 320 }) };
+
+  /** Every ffmpeg call's output, and what the job folder held when it ran. */
+  function recordingRun(dirs: string[][]): NonNullable<VideoRenderDeps["runDeps"]>["run"] {
+    return async (opts) => {
+      const jobDir = dirname(opts.output).endsWith("render-tmp") || !opts.output.includes("job-00000001") ? "" : dirname(opts.output);
+      dirs.push([opts.output, ...(jobDir !== "" && existsSync(jobDir) ? (await readdir(jobDir)).sort() : [])]);
+      await writingRun(opts);
+    };
+  }
+
+  test("draws the text, stages the files into the job's folder before any ffmpeg, runs the layer call, and ends done", async () => {
+    const { gate, asked } = gateOf();
+    const dirs: string[][] = [];
+    const r = rig({ layers: { gate, stickers }, runDeps: { run: recordingRun(dirs) } });
+    r.submit(withLayers(r.w, [textLayer, stickerLayer]));
+    await r.queue.idle();
+
+    expect(r.states()[0]).toMatchObject({ status: "done" });
+    expect(asked).toEqual(["hello"]);
+    const outputs = dirs.map((d) => d[0] ?? "");
+    expect(outputs.map((o) => o.split(/[\\/]/).at(-1))).toEqual(["clip-00.mkv", "layers-00.mkv", ".studio-part-job-00000001.mp4"]);
+    // The very first call already finds both files staged.
+    expect(dirs[0]?.slice(1)).toEqual(expect.arrayContaining(["sticker-01.apng", "text-00.png"]));
+  });
+
+  test("without layers it never touches the gate, stages nothing and runs no layer call", async () => {
+    const { gate, asked } = gateOf();
+    const dirs: string[][] = [];
+    const r = rig({ layers: { gate, stickers }, runDeps: { run: recordingRun(dirs) } });
+    r.submit();
+    await r.queue.idle();
+
+    expect(r.states()[0]).toMatchObject({ status: "done" });
+    expect(asked).toEqual([]);
+    expect(dirs.map((d) => (d[0] ?? "").split(/[\\/]/).at(-1))).toEqual(["clip-00.mkv", ".studio-part-job-00000001.mp4"]);
+  });
+
+  test("a spec with layers and an engine without the layer machinery fails INTERNAL before any ffmpeg and any export file", async () => {
+    let ran = false;
+    const r = rig({ runDeps: { run: async (opts) => ((ran = true), writingRun(opts)) } });
+    r.submit(withLayers(r.w, [textLayer]));
+    await r.queue.idle();
+
+    expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(ran).toBe(false);
+    expect(await exportFiles(r.w)).toEqual([]);
+  });
+
+  test("a caption that breaks a rule fails the job TEXT_INVALID with the rule, before any ffmpeg and any export file", async () => {
+    let ran = false;
+    const { gate } = gateOf({ caption: () => Promise.reject(new RasterError("CAPTION_INVALID", "a character outside the charset", { captionIssue: "charset" })) });
+    const r = rig({ layers: { gate, stickers }, runDeps: { run: async (opts) => ((ran = true), writingRun(opts)) } });
+    r.submit(withLayers(r.w, [textLayer]));
+    await r.queue.idle();
+
+    expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "TEXT_INVALID", captionIssue: "charset" } });
+    expect(ran).toBe(false);
+    expect(await exportFiles(r.w)).toEqual([]);
+    expect(r.queue.reservedPhotos(r.w.avatar.id).size).toBe(0);
+  });
+
+  test("a sticker the verified set cannot vouch for fails the job RENDER_FAILED, naming no path", async () => {
+    const { gate } = gateOf();
+    const bad: StickerAssets = { read: () => Promise.reject(new StickerAssetError("tampered", "sticker heart-pulse is not the file the catalogue lists")) };
+    const r = rig({ layers: { gate, stickers: bad } });
+    r.submit(withLayers(r.w, [stickerLayer]));
+    await r.queue.idle();
+
+    const state = r.states()[0];
+    expect(state).toMatchObject({ status: "failed", error: { code: "RENDER_FAILED" } });
+    expect(JSON.stringify(state)).not.toContain(r.w.dir);
+  });
+
+  test("a cancel while the text is being drawn ends the job cancelled and cleans up", async () => {
+    let asked: () => void = () => undefined;
+    const drawing = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
+    const { gate } = gateOf({
+      caption: (_request, options) =>
+        new Promise((_resolve, reject) => {
+          asked();
+          options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
+        }),
+    });
+    const r = rig({ layers: { gate, stickers } });
+    r.submit(withLayers(r.w, [textLayer]));
+    await drawing;
+    r.queue.cancel("job-00000001");
+    await r.queue.idle();
+
+    expect(r.states()[0]?.status).toBe("cancelled");
+    expect(await exportFiles(r.w)).toEqual([]);
+    expect(r.queue.reservedPhotos(r.w.avatar.id).size).toBe(0);
   });
 });
 

@@ -170,20 +170,29 @@ export class TextPreviewService {
   #answer(error: unknown): EngineFailure {
     if (error instanceof EngineFailure) return error;
     if (error === SUPERSEDED) return new EngineFailure({ code: "TEXT_PREVIEW_SUPERSEDED" });
-    if (error instanceof RasterError) {
-      if (error.code === "CAPTION_INVALID" && error.captionIssue !== undefined) {
-        return new EngineFailure({ code: "TEXT_INVALID", captionIssue: error.captionIssue, detail: detailOf(error.message) });
-      }
-      if (error.code === "RENDER_TIMEOUT") {
-        return new EngineFailure({ code: "RENDER_FAILED", detail: detailOf(`text rendering ran out of time: ${PREVIEW_HINT_RU}`) });
-      }
-      const load = error.code === "WORKER_FAILED" ? this.#deps.loadError?.() : undefined;
-      const why = load === undefined ? "" : ` (the text worker did not load: ${load})`;
-      return new EngineFailure({ code: "RENDER_FAILED", detail: detailOf(`text rendering failed (${error.code}): ${error.message}${why}`) });
-    }
+    const failure = captionFailure(error, this.#deps.loadError);
+    if (failure !== null) return failure;
     this.#deps.log(`a text preview failed unexpectedly (${kindOf(error)})`);
     return new EngineFailure({ code: "INTERNAL", detail: "the text preview failed unexpectedly" });
   }
+}
+
+/**
+ * What a failed caption call is, as the engine answers it: `TEXT_INVALID` with the rule for a caption that breaks one,
+ * `RENDER_FAILED` with the hint to shrink the caption for a timeout and with the cause for anything else the rasteriser
+ * says. The same answer for a preview and for a render (`videos/layers.ts`). Null for an error that is not the rasteriser's.
+ */
+export function captionFailure(error: unknown, loadError?: () => string | undefined): EngineFailure | null {
+  if (!(error instanceof RasterError)) return null;
+  if (error.code === "CAPTION_INVALID" && error.captionIssue !== undefined) {
+    return new EngineFailure({ code: "TEXT_INVALID", captionIssue: error.captionIssue, detail: detailOf(error.message) });
+  }
+  if (error.code === "RENDER_TIMEOUT") {
+    return new EngineFailure({ code: "RENDER_FAILED", detail: detailOf(`text rendering ran out of time: ${PREVIEW_HINT_RU}`) });
+  }
+  const load = error.code === "WORKER_FAILED" ? loadError?.() : undefined;
+  const why = load === undefined ? "" : ` (the text worker did not load: ${load})`;
+  return new EngineFailure({ code: "RENDER_FAILED", detail: detailOf(`text rendering failed (${error.code}): ${error.message}${why}`) });
 }
 
 function kindOf(error: unknown): string {

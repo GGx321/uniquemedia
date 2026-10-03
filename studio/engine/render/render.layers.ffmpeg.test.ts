@@ -11,6 +11,7 @@ import { buildPass1 } from "./pass1";
 import { buildPass2 } from "./pass2";
 import {
   expectedBt709Limited,
+  lumaPerFrame as readLuma,
   makeSolid,
   makeStickerPng,
   makeWorkDir,
@@ -79,24 +80,14 @@ async function renderThrough(layers: readonly OverlayInput[], output: string, ta
   return plan.jobs;
 }
 
-/** The mean luma of `box`'s interior (inset by 24 px) on EVERY frame of `path`. */
+/** `lumaPerFrame` of `path`, read once per region. */
 async function lumaPerFrame(path: string, box: { x: number; y: number; w: number; h: number }): Promise<number[]> {
   const key = `${path}:${box.x},${box.y},${box.w},${box.h}`;
   const hit = lumaCache.get(key);
   if (hit !== undefined) return hit;
-  const inset = 24;
-  const [w, h] = [box.w - 2 * inset, box.h - 2 * inset];
-  // yuv420p, not gray: the gray conversion would stretch the limited range (235 would read 253). Only the Y plane of each frame is read.
-  const r = await runFfmpegOk(["-hide_banner", "-nostdin", "-i", path, "-vf", `crop=${w}:${h}:${box.x + inset}:${box.y + inset},format=yuv420p`, "-fps_mode", "passthrough", "-f", "rawvideo", "-"]);
-  const frameBytes = (w * h * 3) / 2;
-  const out: number[] = [];
-  for (let o = 0; o + frameBytes <= r.stdout.length; o += frameBytes) {
-    let sum = 0;
-    for (let i = 0; i < w * h; i++) sum += r.stdout[o + i] ?? 0;
-    out.push(sum / (w * h));
-  }
-  lumaCache.set(key, out);
-  return out;
+  const luma = await readLuma(path, box);
+  lumaCache.set(key, luma);
+  return luma;
 }
 
 const nearest = (value: number, classes: readonly number[]): number => classes.reduce((best, c, i) => (Math.abs(c - value) < Math.abs((classes[best] ?? 0) - value) ? i : best), 0);

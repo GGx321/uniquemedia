@@ -7,6 +7,7 @@ import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptio
 import { fakeSpawner, outputOf, type SpawnCall } from "../../node/fakeFfmpeg.testkit";
 import { RenderGraphError } from "../render";
 import { renderTimeoutMs } from "./progress";
+import { RenderFailure } from "./queue";
 import { runRenderJob, type RenderRunInput, type RenderRunDeps } from "./runner";
 import { scrubber } from "./scrubber";
 import { __setFfmpegPathOverrideForTests } from "../../node/ffmpegBinary";
@@ -683,6 +684,209 @@ describe("runRenderJob: the timeout", () => {
     if (!(error instanceof FfmpegTimeoutError)) throw error;
     expect(error.timeoutMs).toBe(90_000);
     expect(error.stderrTail).toBe("last words");
+  });
+});
+
+describe("runRenderJob: the layer pass (3b.6)", () => {
+  /** A text PNG over frames [10, 40) and a sticker over the whole 60-frame timeline, with paths inside the job folder as `resolveLayers` makes them. */
+  const layersOf = (jobDir: string): RenderRunInput["overlays"] => [
+    { path: join(jobDir, "text-00.png"), format: "png", box: { x: 100, y: 300, w: 880, h: 200 }, resize: false, startFrame: 10, endFrame: 40 },
+    { path: join(jobDir, "sticker-01.apng"), format: "apng", box: { x: 600, y: 200, w: 216, h: 216 }, resize: true, startFrame: 0, endFrame: 60, loopFrames: 24, sourceSize: { w: 320, h: 320 } },
+  ];
+  /** A good ffmpeg that reports the frames its call makes: a layer call and pass 2 make 60, a clip 30. */
+  function layerAwareFfmpeg(call: SpawnCall): void {
+    writeFileSync(outputOf(call.args), "data");
+    const frames = call.args.includes("concat") || outputOf(call.args).includes("layers-") ? 60 : 30;
+    call.child.report(Math.floor(frames / 2));
+    call.child.report(frames, true);
+    call.child.exit(0);
+  }
+  const inputsOf = (args: readonly string[]): string[] => args.flatMap((a, i) => (a === "-i" ? [args[i + 1] ?? ""] : []));
+
+  test("runs the layer call after every clip and before pass 2, one ffmpeg at a time", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith(layerAwareFfmpeg);
+
+    await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, deps);
+
+    expect(calls.map((c) => outputOf(c.args))).toEqual([join(r.jobDir, "clip-00.mkv"), join(r.jobDir, "clip-01.mkv"), join(r.jobDir, "layers-00.mkv"), r.output]);
+  });
+
+  test("hands pass 2 the layer file as its one overlay, never the layers themselves", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith(layerAwareFfmpeg);
+
+    await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, deps);
+
+    expect(inputsOf(calls.at(-1)?.args ?? [])).toEqual(["list.txt", join(r.jobDir, "layers-00.mkv")]);
+  });
+
+  test("the layer call reads the staged files by their own paths and stops on a broken frame", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith(layerAwareFfmpeg);
+
+    await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, deps);
+
+    const layerCall = calls[2]?.args ?? [];
+    expect(inputsOf(layerCall)).toEqual([join(r.jobDir, "text-00.png"), join(r.jobDir, "sticker-01.apng")]);
+    expect(layerCall).toContain("-xerror");
+  });
+
+  test("stages the layer files once, into the job folder, after it exists and before any ffmpeg starts", async () => {
+    const r = rig();
+    const staged: string[] = [];
+    let folderExistedWhenStaged = false;
+    let callsWhenStaged = -1;
+    const { deps, calls } = depsWith(layerAwareFfmpeg);
+
+    await runRenderJob(
+      {
+        ...r.input,
+        overlays: layersOf(r.jobDir),
+        stageLayers: async (dir) => {
+          staged.push(dir);
+          folderExistedWhenStaged = existsSync(dir);
+          callsWhenStaged = calls.length;
+        },
+      },
+      deps,
+    );
+
+    expect(staged).toEqual([r.jobDir]);
+    expect(folderExistedWhenStaged).toBe(true);
+    expect(callsWhenStaged).toBe(0);
+  });
+
+  test("a job with no layers stages nothing and runs no layer call, exactly the old three calls", async () => {
+    const r = rig();
+    let staged = false;
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await runRenderJob({ ...r.input, stageLayers: async () => void (staged = true) }, deps);
+
+    expect(staged).toBe(false);
+    expect(calls).toHaveLength(3);
+  });
+
+  test("splits heavy layers into chained calls and gives pass 2 the last file", async () => {
+    const r = rig();
+    const heavy = (k: number) => ({ path: join(r.jobDir, `sticker-0${k}.apng`), format: "apng" as const, box: { x: 10 * k, y: 100, w: 648, h: 648 }, resize: true, startFrame: 0, endFrame: 60, loopFrames: 300, sourceSize: { w: 360, h: 360 } });
+    const { deps, calls } = depsWith(layerAwareFfmpeg);
+
+    await runRenderJob({ ...r.input, overlays: [heavy(0), heavy(1), heavy(2)] }, deps);
+
+    const outputs = calls.map((c) => outputOf(c.args));
+    const layerFiles = outputs.filter((o) => o.includes("layers-"));
+    expect(layerFiles.length).toBeGreaterThan(1);
+    expect(layerFiles).toEqual(layerFiles.map((_, i) => join(r.jobDir, `layers-0${i}.mkv`)));
+    expect(inputsOf(calls.at(-1)?.args ?? [])).toEqual(["list.txt", layerFiles.at(-1) ?? ""]);
+  });
+
+  test("reports progress that stays monotonic and below the total, and spends the whole pass-1 share on the clips AND the layer call", async () => {
+    const r = rig();
+    const seenBeforePass2: number[] = [];
+    const { deps } = depsWith((call, index) => {
+      if (index === 3) seenBeforePass2.push(...r.progress);
+      layerAwareFfmpeg(call);
+    });
+
+    await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, deps);
+
+    expect(seenBeforePass2.at(-1)).toBe(21); // floor(60 x 35 / 100): clips and layer call all done
+    for (let i = 1; i < r.progress.length; i++) expect(r.progress[i]).toBeGreaterThan(r.progress[i - 1] ?? 0);
+    expect(Math.max(...r.progress)).toBeLessThan(60);
+  });
+
+  test("halfway through the layer call the share is halfway between the clips' end and its own end", async () => {
+    const r = rig();
+    const beforePass2: number[] = [];
+    const { deps } = depsWith((call, index) => {
+      if (index === 3) beforePass2.push(...r.progress);
+      if (index === 2) {
+        call.child.report(30); // 30 of 60 layer frames: (60 + 30) of (60 + 60) stage frames, which is 45 of the 60 the final video has
+        call.child.report(60, true);
+        writeFileSync(outputOf(call.args), "data");
+        call.child.exit(0);
+        return;
+      }
+      layerAwareFfmpeg(call);
+    });
+
+    await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, deps);
+
+    // The two clips are half of the stage's work (10 = floor(30 x 35 / 100)), the layer call's own half-way is 15, its end 21.
+    expect(beforePass2).toEqual(expect.arrayContaining([10, Math.floor((45 * 35) / 100), 21]));
+  });
+
+  test("a layer call that fails ends the job with its error, runs no pass 2, and leaves nothing", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith((call, index) => {
+      if (index < 2) return goodFfmpeg(call);
+      call.child.complain(`Error opening input file ${join(r.jobDir, "sticker-01.apng")}: Invalid data found\n`);
+      call.child.exit(1);
+    });
+
+    const error = await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof FfmpegError)) throw error;
+    expect(error.stderrTail).toContain("Invalid data found");
+    expect(error.stderrTail).not.toContain(r.tmpRoot);
+    expect(calls).toHaveLength(3);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("a staging failure that is the engine's own answer is thrown unchanged, before any ffmpeg, and leaves nothing", async () => {
+    const r = rig();
+    const failure = new RenderFailure({ code: "RENDER_FAILED", detail: "a built-in sticker could not be used (tampered)" });
+    const { deps, calls } = depsWith(layerAwareFfmpeg);
+
+    const error = await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir), stageLayers: () => Promise.reject(failure) }, deps).catch((e: unknown) => e);
+
+    expect(error).toBe(failure);
+    expect(calls).toHaveLength(0);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+
+  test("a staging failure from the file system names no user folder", async () => {
+    const r = rig();
+    const { deps } = depsWith(layerAwareFfmpeg);
+    const eexist = Object.assign(new Error(`EEXIST: file already exists, open '${join(r.jobDir, "text-00.png")}'`), { code: "EEXIST" });
+
+    const error = await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir), stageLayers: () => Promise.reject(eexist) }, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof Error)) throw new Error("expected the job to fail");
+    expect(error.message).not.toContain(r.tmpRoot);
+    expect(error.message).toBe("EEXIST: file already exists, open '<overlay>'"); // a staged file is one of the job's inputs, so it reads as one
+    expect(Reflect.get(error, "code")).toBe("EEXIST");
+  });
+
+  test("a cancel during the layer call stops it and leaves nothing", async () => {
+    const r = rig();
+    const stop = new AbortController();
+    const reason = new Error("cancelled");
+    const { deps } = depsWith((call, index) => {
+      if (index === 2) {
+        setImmediate(() => stop.abort(reason));
+        return; // the layer call hangs until the kill
+      }
+      goodFfmpeg(call);
+    });
+
+    const error = await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir), signal: stop.signal }, deps).catch((e: unknown) => e);
+
+    expect(error).toBe(reason);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("a layer past the montage's end is refused by the layer pass, before any ffmpeg starts", async () => {
+    const r = rig();
+    const past = { path: join(r.jobDir, "text-00.png"), format: "png" as const, box: { x: 100, y: 300, w: 880, h: 200 }, resize: false, startFrame: 30, endFrame: 61 };
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await expect(runRenderJob({ ...r.input, overlays: [past] }, deps)).rejects.toMatchObject({ code: "BAD_OVERLAY" });
+    expect(calls).toHaveLength(0);
   });
 });
 

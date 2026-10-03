@@ -162,6 +162,24 @@ export function meanAround(plane: Uint8Array, stride: number, cx: number, cy: nu
   return sum / n;
 }
 
+/**
+ * The mean luma of `box`'s interior (inset by `inset` px, an even number) on EVERY frame of `path`, as the video stores it. The frames are read
+ * as yuv420p and only the Y plane is used: the gray conversion would stretch the limited range (235 would read 253).
+ */
+export async function lumaPerFrame(path: string, box: { x: number; y: number; w: number; h: number }, inset = 24): Promise<number[]> {
+  const [w, h] = [box.w - 2 * inset, box.h - 2 * inset];
+  if (w < 2 || h < 2 || w % 2 !== 0 || h % 2 !== 0 || box.x % 2 !== 0 || box.y % 2 !== 0) throw new RangeError("the sampled region must be even-sized on an even offset, at least 2 x 2");
+  const r = await runFfmpegOk(["-hide_banner", "-nostdin", "-i", path, "-vf", `crop=${w}:${h}:${box.x + inset}:${box.y + inset},format=yuv420p`, "-fps_mode", "passthrough", "-f", "rawvideo", "-"]);
+  const frameBytes = (w * h * 3) / 2;
+  const out: number[] = [];
+  for (let o = 0; o + frameBytes <= r.stdout.length; o += frameBytes) {
+    let sum = 0;
+    for (let i = 0; i < w * h; i++) sum += r.stdout[o + i] ?? 0;
+    out.push(sum / (w * h));
+  }
+  return out;
+}
+
 export function writeBytes(path: string, bytes: Uint8Array): void {
   writeFileSync(path, bytes);
 }

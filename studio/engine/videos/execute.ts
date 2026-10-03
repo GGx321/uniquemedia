@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { z } from "zod";
 import type { RenderResult } from "../../shared/engine";
 import type { MontageShape } from "../../shared/engine/montage";
@@ -13,6 +14,7 @@ import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, 
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import { collectForbiddenStrings, combineForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
+import { resolveLayers, type LayerDeps } from "./layers";
 import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
 import type { ExportRootRef } from "./recovery";
@@ -91,6 +93,11 @@ export interface VideoRenderDeps {
   readonly tracker: CommitTracker;
   /** `userData/render-tmp`. Required: there is no `os.tmpdir` fallback. */
   readonly renderTmpDir: string;
+  /**
+   * What the spec's text and sticker layers need (3b.6): the text rasteriser and the verified sticker set. Absent, a spec that has
+   * layers fails INTERNAL before anything is made (an engine built without them must not drop layers silently).
+   */
+  readonly layers?: LayerDeps;
   readonly caseProbe: { isCaseInsensitive(root: string): Promise<boolean> };
   readonly now: () => Date;
   readonly fs?: CommitFs;
@@ -242,6 +249,16 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
   };
 
   return (plan) => async (context) => {
+    // The layers first, before the export volume or the library is touched: the text is drawn by the engine's own rasteriser and the
+    // stickers are checked against the shipped catalogue, so a caption that breaks a rule, or a sticker that is not intact, fails
+    // the job here with nothing made. The files are staged later, by the runner, into the job's folder (`<renderTmpDir>/<jobId>`).
+    const jobDir = join(deps.renderTmpDir, plan.jobId);
+    let layers: Awaited<ReturnType<typeof resolveLayers>> | undefined;
+    if (plan.spec.layers.length > 0) {
+      if (deps.layers === undefined) throw new RenderFailure({ code: "INTERNAL", detail: "this engine cannot render text or sticker layers" });
+      layers = await resolveLayers(plan.spec.layers, jobDir, deps.layers, context.signal);
+    }
+
     const track = await openTrack(plan, context.signal);
     const audio: RunAudio = track === null || plan.track === undefined ? plan.audio : { kind: "music", startMs: plan.track.startMs, data: track.data, check: track.check };
     const tile = track === null ? plan.music : { title: track.title, artist: track.artist };
@@ -297,7 +314,8 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           seed: plan.spec.seed,
           clips: plan.spec.clips,
           resolvePhoto: plan.resolvePhoto,
-          overlays: plan.overlays,
+          overlays: layers === undefined ? plan.overlays : [...plan.overlays, ...layers.overlays],
+          ...(layers === undefined ? {} : { stageLayers: layers.stage }),
           audio,
           output: temp,
           signal: context.signal,

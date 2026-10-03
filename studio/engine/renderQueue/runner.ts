@@ -3,17 +3,21 @@ import { basename, dirname, join } from "node:path";
 import { Id } from "../../shared/engine";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
-import { buildMusicMeasure, buildPass1, buildPass2, musicGainDb, RenderGraphError, type MusicMeasureJob, type OverlayInput, type Pass2Job, type PhotoResolver } from "../render";
+import { totalFrames as framesOfTimeline } from "../../shared/montage";
+import { buildLayerPass, buildMusicMeasure, buildPass1, buildPass2, musicGainDb, RenderGraphError, type MusicMeasureJob, type OverlayInput, type Pass2Job, type PhotoResolver } from "../render";
 import { clipFrames } from "../render/durations";
 import { TRACK_FILE_NAME } from "../render/names";
 import { measureTruePeak } from "./musicMeasure";
 import { ProgressFold, renderTimeoutMs } from "./progress";
+import { RenderFailure } from "./queue";
 import { scrubber, scrubStderrTail, type ScrubInput } from "./scrubber";
 
 // The runner of ONE render job (task 3a.6): pass 1 once per visual clip into
-// the job's own folder, then pass 2 into the temp output it is given, one
-// ffmpeg at a time. It owns the job folder and the temp output's cleanup; it
-// does not know about the queue, the registry or the reserved photos.
+// the job's own folder, then the layer pass (3b.6: the text and sticker layers
+// composited onto one lossless file, in chained calls when they do not fit one),
+// then pass 2 into the temp output it is given, one ffmpeg at a time. It owns
+// the job folder and the temp output's cleanup; it does not know about the
+// queue, the registry or the reserved photos.
 
 /** The music of a job: the verified bytes, where to start, and the store's check of the private copy (ffmpeg sees exactly one audio stream). */
 export type RunAudio =
@@ -38,7 +42,17 @@ export interface RenderRunInput {
    * stored orientation, never an oriented one. The runner passes it on untouched.
    */
   readonly resolvePhoto: PhotoResolver;
+  /**
+   * The text and sticker layers in z-order, later on top, as files INSIDE the job folder (`<tmpRoot>/<jobId>/...`, which is
+   * where `stageLayers` writes them). They go through the layer pass; pass 2 overlays the one file that comes out.
+   */
   readonly overlays: readonly OverlayInput[];
+  /**
+   * Writes the files `overlays` name into the job folder, which the runner has just made (`dir`). Called once, before any ffmpeg,
+   * and only when there are overlays. A `RenderFailure` it throws reaches the job unchanged; any other error is scrubbed of
+   * the user's folders like a file-system error of the runner's own.
+   */
+  readonly stageLayers?: (dir: string) => Promise<void>;
   /**
    * Silence, or one stored track as the VERIFIED BYTES the track store handed over (never a path: a file on disk can change
    * between the store's check and ffmpeg's read). The runner writes them to `<job folder>/track.m4a`, has `check` look at that
@@ -126,9 +140,16 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
 
   const pass1 = buildPass1({ seed: input.seed, clips: input.clips, resolvePhoto, clipDir });
   const finalClips = input.clips.map((c) => ({ clipId: c.clipId, durationMs: c.durationMs }));
+  // The layer pass is planned after pass 1 (which refuses a bad duration first) and before anything runs: a layer past the montage's end is refused here.
+  const timelineFrames = framesOfTimeline(input.clips);
+  const layerPlan = buildLayerPass({ layers: input.overlays, totalFrames: timelineFrames, clipDir });
+  // What pass 2 overlays, silent or with music: the layer pass's ONE file, never the layers themselves (pass 2's memory grows by a constant per overlay input).
+  const layerOverlays = layerPlan.final === null ? [] : [layerPlan.final];
   // Silence is built now, so a refused graph fails before anything is created. Music needs the gain the measurement gives (below).
-  let pass2: Pass2Job | null = input.audio.kind === "silent" ? buildPass2({ clips: finalClips, clipDir, output: input.output, overlays: input.overlays, audio: { kind: "silent" } }) : null;
+  let pass2: Pass2Job | null = input.audio.kind === "silent" ? buildPass2({ clips: finalClips, clipDir, output: input.output, overlays: layerOverlays, audio: { kind: "silent" } }) : null;
   const totalFrames = pass2?.totalFrames ?? finalClips.reduce((sum, c) => sum + clipFrames(c.durationMs), 0);
+  // Everything before pass 2 (the clips, then the layer calls) shares pass 1's slice of the progress, in proportion to its frames.
+  const stageFrames = timelineFrames * (1 + layerPlan.jobs.length);
   const fold = new ProgressFold(totalFrames);
   const budgetMs = renderTimeoutMs(totalFrames);
   const deadline = now() + budgetMs;
@@ -159,6 +180,18 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     const copy = new Error(scrub(error.message), { cause: error });
     if ("code" in error && typeof error.code === "string") Object.assign(copy, { code: error.code });
     return copy;
+  };
+
+  const reportStage = (doneFrames: number): void => report(fold.pass1(Math.floor((doneFrames * timelineFrames) / stageFrames)));
+
+  /** Staging the layers: the engine's own answer (a `RenderFailure`) reaches the job as it is, anything else is scrubbed like a file-system error. */
+  const stage = async (work: Promise<unknown>): Promise<void> => {
+    try {
+      await work;
+    } catch (error) {
+      if (error instanceof Error && !(error instanceof RenderFailure)) throw scrubbedCopy(error);
+      throw error;
+    }
   };
 
   const scrubFs = async (work: Promise<unknown>): Promise<void> => {
@@ -215,6 +248,7 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   let succeeded = false;
   try {
     await scrubFs(mkdir(clipDir, { recursive: true }));
+    if (input.stageLayers !== undefined && input.overlays.length > 0) await stage(input.stageLayers(clipDir));
 
     // Music is measured BEFORE pass 1: a track ffmpeg cannot read ends the job in a second, not after the photos were rendered.
     let music: { gainDb: number; truePeakDb: number } | null = null;
@@ -225,16 +259,24 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
       // The store's own refusal (a `TrackUnavailableError`, whose text names no path) or the cancel comes out as it is.
       await input.audio.check?.(trackCopy, signal);
       music = await measureMusic(input.audio);
-      pass2 = buildPass2({ clips: finalClips, clipDir, output: input.output, overlays: input.overlays, audio: { kind: "music", path: trackCopy, startMs: input.audio.startMs, gainDb: music.gainDb } });
+      pass2 = buildPass2({ clips: finalClips, clipDir, output: input.output, overlays: layerOverlays, audio: { kind: "music", path: trackCopy, startMs: input.audio.startMs, gainDb: music.gainDb } });
     }
     const finalPass = pass2;
     if (finalPass === null) throw new TypeError("runRenderJob: pass 2 was not built");
 
     let framesOfDoneClips = 0;
     for (const job of pass1) {
-      await call(job, { onFrames: (frames) => report(fold.pass1(framesOfDoneClips + Math.min(frames, job.frames))) });
+      await call(job, { onFrames: (frames) => reportStage(framesOfDoneClips + Math.min(frames, job.frames)) });
       framesOfDoneClips += job.frames;
-      report(fold.pass1(framesOfDoneClips));
+      reportStage(framesOfDoneClips);
+    }
+
+    // The layer calls, one after another: each composites its layers onto the file the call before wrote.
+    let framesOfDoneLayers = 0;
+    for (const job of layerPlan.jobs) {
+      await call(job, { onFrames: (frames) => reportStage(timelineFrames + framesOfDoneLayers + Math.min(frames, job.frames)) });
+      framesOfDoneLayers += job.frames;
+      reportStage(timelineFrames + framesOfDoneLayers);
     }
 
     signal.throwIfAborted();
