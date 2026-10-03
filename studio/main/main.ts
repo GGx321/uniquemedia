@@ -15,6 +15,7 @@ import {
   type OpenDialogOptions,
 } from "electron";
 import { randomUUID } from "node:crypto";
+import { lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { EventMessage } from "../shared/engine";
@@ -24,7 +25,7 @@ import { installProcessGuards } from "../engine/processGuards";
 import { e2eIdentityProblem } from "./e2eIdentity";
 import { engineEnv } from "./engineEnv";
 import { handleExportFolderCommand } from "./exportFolderFlow";
-import { handleRevealCommand } from "./revealFlow";
+import { handleRevealCommand, handleRevealFolderCommand } from "./revealFlow";
 import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
@@ -367,6 +368,19 @@ async function startStudio(): Promise<void> {
           engine,
           exportPath: () => settings.current.exportPath,
           show: (path) => shell.showItemInFolder(path),
+          newId: randomUUID,
+          platform: process.platform,
+        }),
+      revealFolder: (command) =>
+        handleRevealFolderCommand(command, {
+          engine,
+          exportPath: () => settings.current.exportPath,
+          openFolder: (path) => shell.openPath(path),
+          // A link is not followed: only a real folder inside the export folder is opened.
+          isFolder: (path) => lstat(path).then(
+            (info) => info.isDirectory(),
+            () => false,
+          ),
           newId: randomUUID,
           platform: process.platform,
         }),

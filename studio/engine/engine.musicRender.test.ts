@@ -99,7 +99,7 @@ describe("videos.render with a trending track, through the engine", () => {
       expect(end.type).toBe("job.done");
 
       const [video] = await listVideos(engine, avatarId);
-      expect(video?.music).toEqual({ title: expect.any(String), artist: expect.anything() });
+      expect(video?.music).toEqual({ title: expect.any(String), artist: expect.anything(), trackId: trackIds[0] });
       const file = join(exportDir(), video?.relPath ?? "missing");
       const probe = await probeVideo(file);
       const audio = probe.streams.find((s) => s.codec_type === "audio");

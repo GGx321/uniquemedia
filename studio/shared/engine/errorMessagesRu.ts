@@ -1,5 +1,6 @@
 import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason } from "./errors";
 import type { MontageIssueCode } from "./montage";
+import type { UsageUnknownReason } from "./state";
 
 /** Russian user-facing text for each error code. Codes never carry text themselves. */
 export const ERROR_MESSAGES_RU = {
@@ -141,3 +142,17 @@ export const MUSIC_UNAVAILABLE_REASONS_RU = {
     "Загрузка остановлена, оставшиеся треки будут докачаны при следующем запуске Studio, без нового запроса к сервису музыки: сервер с треками отказал в скачивании.",
   "downloads-failed": "Не удалось докачать треки прошлого обновления. Запрос к сервису музыки не отправлялся и не засчитан; уже скачанные треки остались.",
 } as const satisfies Record<MusicUnavailableReason, string>;
+
+/**
+ * Why an avatar's usage cannot be trusted (3e.2, K16), for the «использование неизвестно» state that stands instead of its
+ * counts. A newer record and a stale index are never "repaired": the texts say so.
+ */
+export const USAGE_UNKNOWN_REASONS_RU = {
+  "library-too-new":
+    "Часть записей видео этого аватара создана более новой версией Studio. Обновите приложение: до этого Studio не знает, какие фото уже в видео, и не собирает новые видео этого аватара.",
+  "index-stale": "Studio не успела учесть только что сохранённое видео и перечитывает записи сама. Подождите немного: ничего делать не нужно.",
+  "record-unreadable":
+    "Одна из записей о видео этого аватара повреждена, поэтому Studio не знает, какие фото уже в видео. Повреждённую запись можно убрать в карантин библиотеки: файлы видео при этом не трогаются.",
+  "rejects-unreadable":
+    "Журнал ваших отметок «Отклонено» повреждён, поэтому Studio не знает, какие фото вы отклонили. Отметки можно восстановить: всё, что читается, сохранится, а копия журнала останется в карантине библиотеки.",
+} as const satisfies Record<UsageUnknownReason, string>;

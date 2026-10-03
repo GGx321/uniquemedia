@@ -945,6 +945,39 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.call("montages.get", { montageId });
     },
   },
+  // ---------- 3e.2: the Photos screen ----------
+  {
+    name: "videos.get: one video by id as the list shows it, with the title its draft had when it was rendered and its first clip; a rename later does not reach it; an unknown id is NOT_FOUND",
+    async run(t, w) {
+      const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1), photo(w, 3)] });
+      const montageId = montageIdOf(created);
+      await t.call("montages.save", { montageId, spec: specOf(created), name: "утро дома" });
+      const { videoId } = renderedOf(await t.call("videos.render", { montageId }));
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await t.call("videos.get", { videoId });
+      t.note("the draft renamed after the render: the video keeps the name it was rendered under");
+      await t.call("montages.save", { montageId, spec: specOf(created), name: "вечер" });
+      await t.call("videos.get", { videoId });
+      t.note("the draft deleted: the video names no draft, and keeps its title");
+      await t.call("montages.delete", { montageId });
+      await t.call("videos.get", { videoId });
+      await t.call("videos.get", { videoId: "video-0000ffff" });
+    },
+  },
+  {
+    name: "usage recoveries on a sound avatar change nothing: no record is moved, the marks are read as they stand, nothing is announced; an unknown avatar is NOT_FOUND",
+    async run(t, w) {
+      await t.call("photos.setRejected", { avatarId: w.avatarId, photoId: photo(w, 2), rejected: true });
+      await t.call("videos.quarantineRecords", { avatarId: w.avatarId });
+      await t.call("photos.rebuildRejected", { avatarId: w.avatarId });
+      t.note("a repeat is the same");
+      await t.call("videos.quarantineRecords", { avatarId: w.avatarId });
+      await t.call("photos.rebuildRejected", { avatarId: w.avatarId });
+      await t.call("videos.quarantineRecords", { avatarId: "avatar-nobody-0001" });
+      await t.call("photos.rebuildRejected", { avatarId: "avatar-nobody-0001" });
+    },
+  },
 ];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */

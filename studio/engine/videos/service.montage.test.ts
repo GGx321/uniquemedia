@@ -372,6 +372,35 @@ describe("a draft changed or deleted while its render is queued or running", () 
     expect((await readVideoRecordFile(w.libraryRoot, w.avatar.id, videoId))?.montageId).toBe("montage-0000001"); // write-once
   });
 
+  test("the record keeps the draft's name as it was at render time (K12): the event, the list and the record say it, and a rename or a delete later does not reach it", async () => {
+    const w = world();
+    const store = drafts();
+    await store.write(w.library, Montage.parse({ montageId: "montage-0000001", name: "утро дома", spec: specFor(w), updatedAt: "2026-09-30T10:00:00.000Z" }));
+    const r = serviceRig(w, { deps: { drafts: store } });
+
+    const { videoId } = await r.service.render({ montageId: "montage-0000001" });
+    await r.queue.idle();
+
+    expect((await readVideoRecordFile(w.libraryRoot, w.avatar.id, videoId))?.title).toBe("утро дома");
+    expect(videoChanged(r.events).map((v) => v.title)).toEqual(["утро дома"]);
+    await store.write(w.library, Montage.parse({ montageId: "montage-0000001", name: "вечер", spec: specFor(w, 1), updatedAt: "2026-09-30T11:00:00.000Z" }));
+    expect((await r.service.list(w.avatar.id)).map((v) => v.title)).toEqual(["утро дома"]);
+    await store.remove(w.library, w.avatar.id, "montage-0000001");
+    expect((await r.service.list(w.avatar.id)).map((v) => [v.title, v.montageId])).toEqual([["утро дома", null]]);
+  });
+
+  test("an unnamed draft and a headless spec have no title", async () => {
+    const w = world();
+    const store = drafts();
+    await store.write(w.library, montageOf("montage-0000001", specFor(w)));
+    const r = serviceRig(w, { deps: { drafts: store } });
+    await r.service.render({ montageId: "montage-0000001" });
+    await r.service.render({ spec: specFor(w, 1) });
+    await r.queue.idle();
+
+    expect((await r.service.list(w.avatar.id)).map((v) => v.title)).toEqual([null, null]);
+  });
+
   test("a headless spec has no draft, before and after a delete", async () => {
     const w = world();
     const store = drafts();

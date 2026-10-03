@@ -483,6 +483,7 @@ test("picking the library folder again (it was missing at start) refetches the s
     photoCount: 1,
     videoCount: 0,
     eligibleUnusedCount: 0,
+    usage: { state: "ok" },
   });
 
   changeLibraryTo("/Users/studio/Studio/library");

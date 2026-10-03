@@ -534,6 +534,7 @@ test("avatars.archive answers DESCRIPTOR_INVALID for a saved avatar whose descri
         photoCount: 1,
         videoCount: 0,
         eligibleUnusedCount: 0,
+        usage: { state: "ok" },
       },
     ],
   });

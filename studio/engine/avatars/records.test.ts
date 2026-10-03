@@ -6,7 +6,7 @@ import { openLibrary, type QuarantineEntry } from "../library";
 import { AvatarManifestSchema, type AvatarManifest, type PhotoSidecar } from "../library/schemas";
 import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../library/testing/helpers";
 import { sceneSpec, writeVideoRecord } from "../library/testing/videoRecords";
-import { avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./records";
+import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./records";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -186,11 +186,11 @@ describe("draftFrom", () => {
 });
 
 describe("avatarSummaryFrom", () => {
-  const NO_PHOTOS = { photoCount: 0, videoCount: 0, eligibleUnusedCount: 0 };
+  const NO_PHOTOS = { photoCount: 0, videoCount: 0, eligibleUnusedCount: 0, usage: { state: "ok" } } as const;
   const active = manifest({ status: "active", masterPhotoId: "photo-0001", name: "Mia" });
 
   test("builds the contract's summary with the photo, video and eligible-unused counts", () => {
-    const summary = avatarSummaryFrom(active, { photoCount: 3, videoCount: 2, eligibleUnusedCount: 1 });
+    const summary = avatarSummaryFrom(active, { photoCount: 3, videoCount: 2, eligibleUnusedCount: 1, usage: { state: "ok" } });
     expect(summary).toEqual({
       avatarId: "avatar-0001",
       name: "Mia",
@@ -201,8 +201,14 @@ describe("avatarSummaryFrom", () => {
       photoCount: 3,
       videoCount: 2,
       eligibleUnusedCount: 1,
+      usage: { state: "ok" },
     });
     expect(AvatarSummary.safeParse(summary).success).toBe(true);
+  });
+
+  test("carries an unknown usage with its reasons (3e.2, K16)", () => {
+    const summary = avatarSummaryFrom(active, { photoCount: 3, videoCount: 2, eligibleUnusedCount: 0, usage: { state: "unknown", reasons: ["record-unreadable", "rejects-unreadable"] } });
+    expect(summary?.usage).toEqual({ state: "unknown", reasons: ["record-unreadable", "rejects-unreadable"] });
   });
 
   test("keeps an archived avatar archived", () => {
@@ -324,6 +330,17 @@ describe("libraryView over a real library", () => {
     await writeFile(join(root(), "avatars", saved.id, "videos", "video-00000001.json"), "{ not json");
     await library.reloadVideoRecords(saved.id);
     expect(libraryView(library).avatars.map((a) => [a.photoCount, a.videoCount, a.eligibleUnusedCount])).toEqual([[3, 0, 0]]);
+  });
+
+  test("a listed avatar says why its usage is unknown, from the library's own reasons; a sound one says ok (3e.2, K16)", async () => {
+    const { library, saved } = await avatarWithScenes("usg");
+    expect(libraryView(library).avatars.map((a) => a.usage)).toEqual([{ state: "ok" }]);
+    await mkdir(join(root(), "avatars", saved.id, "videos"), { recursive: true });
+    await writeFile(join(root(), "avatars", saved.id, "videos", "video-00000001.json"), "{ not json");
+    await library.reloadVideoRecords(saved.id);
+    library.flagVideoIndexStale(saved.id, "video-00000002");
+    expect(libraryView(library).avatars.map((a) => a.usage)).toEqual([{ state: "unknown", reasons: ["index-stale", "record-unreadable"] }]);
+    expect(avatarCounts(library, saved.id).usage).toEqual({ state: "unknown", reasons: ["index-stale", "record-unreadable"] });
   });
 
   test("names a saved avatar whose stored descriptor no longer fits today's rules with reason descriptor-invalid", async () => {

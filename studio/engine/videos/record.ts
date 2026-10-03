@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { z } from "zod";
-import { Id, RelativePath, VideoKindToken } from "../../shared/engine";
+import { Id, MontageName, RelativePath, VideoKindToken } from "../../shared/engine";
 import { AVATARS_DIR, VIDEOS_DIR, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
 import { RecordSpecShape } from "../library/videoRecords";
 
@@ -61,6 +61,12 @@ export const VideoRecordSchema = z.looseObject({
   frames: z.int().positive(),
   /** The draft it was rendered from; null for a headless spec. */
   montageId: Id.nullable(),
+  /**
+   * The draft's name when it was rendered (3e.2, K12), so the tile keeps it after the draft is renamed or deleted; null for a
+   * draft with no name or a headless spec. Absent from records written before titles; a value that is not a montage name reads
+   * as null and never makes the record unreadable (it is only shown).
+   */
+  title: MontageName.nullable().optional().catch(null),
   music: RecordMusic.nullable(),
   audio: RecordAudio.optional(),
   file: VideoFileRef,

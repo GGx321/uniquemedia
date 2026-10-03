@@ -129,6 +129,8 @@ export interface CommitInput {
   readonly frames: number;
   readonly durationMs: number;
   readonly montageId: string | null;
+  /** The draft's name at render time (K12); absent or null when there is none. */
+  readonly title?: string | null;
   readonly music: VideoRecord["music"];
   /** What the render resolved for the music (start, gain, the track's sha256); absent for a silent video. */
   readonly audio?: VideoRecord["audio"];
@@ -403,6 +405,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
             durationMs: input.durationMs,
             frames: input.frames,
             montageId: input.montageId,
+            title: input.title ?? null,
             music: input.music,
             ...(input.audio === undefined ? {} : { audio: input.audio }),
             file: { rootId: target.rootId, relPath: claim.relPath, bytes, sha256, mtimeMs: Math.floor(before.mtimeMs) },

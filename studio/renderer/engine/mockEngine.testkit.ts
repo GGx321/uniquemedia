@@ -16,6 +16,7 @@ export const MIA: AvatarSummary = {
   photoCount: 0,
   videoCount: 0,
   eligibleUnusedCount: 0,
+  usage: { state: "ok" },
 };
 
 /** A second active avatar, for the drafts of several avatars. */

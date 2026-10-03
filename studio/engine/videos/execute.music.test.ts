@@ -66,6 +66,7 @@ function planOf(w: World, over: Partial<RenderPlan> = {}): RenderPlan {
     audio: { kind: "silent" },
     track: { trackId: TRACK_ID, startMs: 1_500 },
     montageId: null,
+    title: null,
     videoKind: "photo",
     music: null,
     ...over,

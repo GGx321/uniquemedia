@@ -58,6 +58,8 @@ function video(id: number, patch: Partial<VideoSummary> = {}): VideoSummary {
     photoCount: 1,
     music: null,
     hasPoster: false,
+    title: null,
+    firstClip: null,
     ...patch,
   };
 }

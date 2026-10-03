@@ -1,6 +1,7 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { FileState, VideoSummary } from "../../shared/engine";
+import { z } from "zod";
+import { Clip, Id, MontageName, type FileState, type VideoSummary } from "../../shared/engine";
 import { hasErrorCode } from "../library/durableFs";
 import { isFromNewerVersion, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
 import { scenePhotoIds, videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
@@ -96,11 +97,29 @@ export async function readVideoRecordFiles(libraryRoot: string, avatarId: string
   return { records, skipped, truncated };
 }
 
+/** The part of a record's (loose) spec that names a trending track. */
+const TrendingMusic = z.looseObject({ music: z.looseObject({ source: z.literal("trending"), trackId: Id }) });
+
+/** The trending track the spec used, by its id (K13); null for an own track, a silent video, or an id that is not one. */
+function trackIdOf(spec: VideoRecord["spec"]): string | null {
+  const parsed = TrendingMusic.safeParse(spec);
+  return parsed.success ? parsed.data.music.trackId : null;
+}
+
+/** The first clip as the contract's `Clip` (the tile's still, 3e.2), or null for one this build cannot read. */
+function firstClipOf(spec: VideoRecord["spec"]): z.infer<typeof Clip> | null {
+  const parsed = Clip.safeParse(spec.clips[0]);
+  return parsed.success ? parsed.data : null;
+}
+
 /**
- * A record as the windows see it. `hasPoster` is false for every record until the poster frame is made (3e, with the
- * Videos tab): the record does not carry one yet, and saying otherwise would send the tile to a route that has nothing.
+ * A record as the windows see it. `hasPoster` is false for every record until the poster frame is made (not built in 3e.2:
+ * the tile draws `firstClip` instead): the record does not carry one yet, and saying otherwise would send the tile to a
+ * route that has nothing. The title and the first clip are only shown, so a value this build cannot read is null, never
+ * a reason to leave the record out.
  */
 export function videoSummaryOf(record: VideoRecord, fileState: FileState): VideoSummary {
+  const title = MontageName.safeParse(record.title);
   return {
     videoId: record.id,
     avatarId: record.avatarId,
@@ -112,7 +131,9 @@ export function videoSummaryOf(record: VideoRecord, fileState: FileState): Video
     fileState,
     montageId: record.montageId,
     photoCount: scenePhotoIds(record.spec.clips).length,
-    music: record.music,
+    music: record.music === null ? null : { ...record.music, trackId: trackIdOf(record.spec) },
     hasPoster: false,
+    title: title.success ? title.data : null,
+    firstClip: firstClipOf(record.spec),
   };
 }

@@ -1,6 +1,7 @@
-import { mkdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { hasErrorCode } from "./durableFs";
+import { fsyncDir, fsyncFile, hasErrorCode } from "./durableFs";
 import { QUARANTINE_DIR } from "./layout";
 import { renameWithRetry } from "./renameRetry";
 
@@ -10,7 +11,11 @@ export type QuarantineReason =
   | "invalid-sidecar"
   | "invalid-image"
   | "invalid-manifest"
-  | "temp-file";
+  | "temp-file"
+  /** 3e.2: a file among an avatar's video records that cannot be read as one, moved aside by «Убрать повреждённую запись». */
+  | "invalid-video-record"
+  /** 3e.2: a reject log with a line that cannot be read, COPIED aside by «Восстановить отметки» before it is rebuilt. */
+  | "invalid-reject-log";
 
 export interface QuarantineEntry {
   /** Paths relative to the library root. */
@@ -39,6 +44,21 @@ export class Quarantine {
     const target = join(dir, from);
     await mkdir(dirname(target), { recursive: true });
     await renameWithRetry(path, target);
+    this.entries.push({ from, to: relative(this.#root, target), reason, ...(detail === undefined ? {} : { detail }) });
+  }
+
+  /**
+   * COPIES `path` to the same place under the quarantine, durably (the copy and its folder are flushed), and never over an
+   * existing file. For a file that is about to be replaced rather than moved: the original stays until the caller replaces it.
+   */
+  async copy(path: string, reason: QuarantineReason, detail?: string): Promise<void> {
+    const dir = await this.#ensureDir();
+    const from = relative(this.#root, path);
+    const target = join(dir, from);
+    await mkdir(dirname(target), { recursive: true });
+    await copyFile(path, target, constants.COPYFILE_EXCL);
+    await fsyncFile(target);
+    await fsyncDir(dirname(target));
     this.entries.push({ from, to: relative(this.#root, target), reason, ...(detail === undefined ? {} : { detail }) });
   }
 

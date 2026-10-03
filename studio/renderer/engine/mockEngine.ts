@@ -49,6 +49,7 @@ import {
   type Snapshot,
   type UnreadableAvatar,
   type UnsequencedEvent,
+  type UsageUnknownReason,
   type VideoSummary,
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
@@ -432,6 +433,8 @@ interface MockRenderJob {
   avatarId: string;
   /** The draft it was queued from: the job's events keep naming it even if the draft is deleted meanwhile. */
   montageId: string | null;
+  /** The draft's name when the render was asked for (K12): the record keeps it. Null for an unnamed draft or a spec. */
+  title: string | null;
   /** The job keeps the spec it was queued with: a later save or delete of the draft does not reach it. */
   spec: MontageDraft;
   photoIds: string[];
@@ -528,6 +531,7 @@ function demoAvatars(): AvatarSummary[] {
       // The mock has no videos yet (mock parity is task 3d.1b): every demo gallery photo is eligible and unused.
       videoCount: 0,
       eligibleUnusedCount: photoCount,
+      usage: { state: "ok" },
     };
   });
 }
@@ -553,6 +557,8 @@ export class MockEngine implements EngineBridge {
   readonly calls: CommandMessage[] = [];
   /** The videos `videos.reveal` was asked to show (3d.6): the demo build has no main to open a file manager, so the mock only remembers. */
   readonly revealed: string[] = [];
+  /** The avatars whose folder `videos.revealFolder` was asked to open (3e.2), in order: nothing opens in the mock. */
+  readonly revealedFolders: string[] = [];
 
   private readonly scheduler: Scheduler;
   private readonly latencyMs: number;
@@ -1337,6 +1343,7 @@ export class MockEngine implements EngineBridge {
           photoCount: 0,
           videoCount: 0,
           eligibleUnusedCount: 0,
+          usage: { state: "ok" },
         };
         this.drafts = this.drafts.filter((d) => d !== draft);
         this.avatars = [...this.avatars, avatar];
@@ -1414,6 +1421,7 @@ export class MockEngine implements EngineBridge {
           photoCount: 0,
           videoCount: 0,
           eligibleUnusedCount: 0,
+          usage: { state: "ok" },
         };
         this.avatars = [...this.avatars, avatar];
         this.spend(this.importPrice().expectedMicros);
@@ -1519,6 +1527,17 @@ export class MockEngine implements EngineBridge {
         return this.videosDelete(c, c.payload);
       case "videos.reveal":
         return this.videosReveal(c, c.payload.videoId);
+      case "videos.revealFolder":
+        return this.videosRevealFolder(c, c.payload.avatarId);
+      case "videos.get":
+        return this.videosGet(c, c.payload.videoId);
+      case "videos.quarantineRecords":
+        return this.clearUsageReason(c, c.payload.avatarId, "record-unreadable", (cleared) => ({ quarantined: cleared ? 1 : 0 }));
+      case "photos.rebuildRejected": {
+        const { avatarId } = c.payload;
+        const kept = this.photos.filter((p) => p.avatarId === avatarId && p.rejected).length;
+        return this.clearUsageReason(c, avatarId, "rejects-unreadable", (cleared) => ({ rebuilt: cleared, kept, dropped: cleared ? 1 : 0 }));
+      }
       case "music.status":
         return this.ok(c, this.musicStatus());
       case "music.refresh":
@@ -1899,6 +1918,7 @@ export class MockEngine implements EngineBridge {
 
   private videosRender(c: CommandMessage, payload: { montageId: string } | { spec: MontageDraft }): ResponseMessage {
     let montageId: string | null = null;
+    let title: string | null = null;
     let spec: MontageDraft;
     if ("montageId" in payload) {
       // A saved draft is read first: a draft that is gone refuses before anything else is looked at.
@@ -1907,6 +1927,7 @@ export class MockEngine implements EngineBridge {
       const draft = this.montages.get(payload.montageId);
       if (draft === undefined) return this.fail(c, this.unknownDraft(payload.montageId));
       montageId = draft.montageId;
+      title = draft.name;
       spec = draft.spec;
     } else {
       spec = payload.spec;
@@ -1930,6 +1951,7 @@ export class MockEngine implements EngineBridge {
       videoId: this.nextId("video"),
       avatarId: spec.avatarId,
       montageId,
+      title,
       spec,
       photoIds: cells.map((cell) => cell.photoId),
       status: "queued",
@@ -2030,6 +2052,9 @@ export class MockEngine implements EngineBridge {
       photoCount: job.photoIds.length,
       music: null,
       hasPoster: false,
+      title: job.title,
+      // The first clip as it was rendered: the tile's still (3e.2), as the engine reads it from the record.
+      firstClip: spec.clips[0] ?? null,
     };
     this.videos.push({ summary, photoIds: job.photoIds, montageId, fileState: null, rootId: this.exportRootId });
     this.adjustAvatar(job.avatarId, { videoCount: 1 });
@@ -2091,6 +2116,51 @@ export class MockEngine implements EngineBridge {
     if (state !== "present") return this.fail(c, { code: "NOT_FOUND", detail: `the video's file is not in the export folder (${state})` });
     this.revealed.push(videoId);
     return this.ok(c, { videoId });
+  }
+
+  /**
+   * Main's «Папка «Готовые видео»» (3e.2, K17; no engine has it): the export folder is checked, then the avatar's folder is
+   * opened when one of its videos lives in this export folder, else the export folder itself. Nothing opens in the mock: it
+   * remembers the avatar.
+   */
+  private videosRevealFolder(c: CommandMessage, avatarId: string): ResponseMessage {
+    const reason = this.checkExport();
+    if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
+    if (!this.libraryOpen || !this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    const own = this.videos.some((v) => v.summary.avatarId === avatarId && v.rootId === this.exportRootId && this.fileStateOf(v) !== "elsewhere");
+    this.revealedFolders.push(avatarId);
+    return this.ok(c, { opened: own ? "avatar" : "root" });
+  }
+
+  /** One video by id, as `videos.list` shows it, its file looked at now (3e.2). */
+  private videosGet(c: CommandMessage, videoId: string): ResponseMessage {
+    const video = this.libraryOpen ? this.videos.find((v) => v.summary.videoId === videoId) : undefined;
+    if (video === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no video ${videoId}` });
+    this.checkExport();
+    return this.ok(c, { video: { ...video.summary, fileState: this.fileStateOf(video), montageId: this.liveDraft(video.montageId) } });
+  }
+
+  /**
+   * One of the two usage recoveries (3e.2, K16): the mock has no disk, so an avatar's broken records or marks are the reason its
+   * summary was seeded with, and the recovery clears its own reason (the others stay). `answer` builds the result from whether it
+   * cleared one. The avatar is announced only when its summary moved, as the engine does.
+   */
+  private clearUsageReason(c: CommandMessage, avatarId: string, reason: UsageUnknownReason, answer: (cleared: boolean) => Record<string, unknown>): ResponseMessage {
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+    if (avatar === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    const reasons = avatar.usage.state === "unknown" ? avatar.usage.reasons : [];
+    const cleared = reasons.includes(reason);
+    if (cleared) {
+      const [first, ...rest] = reasons.filter((r) => r !== reason);
+      const usage: AvatarSummary["usage"] = first === undefined ? { state: "ok" } : { state: "unknown", reasons: [first, ...rest] };
+      // Trusted again: the photos a montage may use count once more (eligible, in no video and no render).
+      const eligibleUnusedCount = usage.state === "ok" ? this.photos.filter((p) => p.avatarId === avatarId).map((p) => this.photoView(p)).filter((p) => p.eligible && !p.used && !p.reserved).length : 0;
+      this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, usage, eligibleUnusedCount } : a));
+      this.announceAvatar(avatarId);
+    }
+    return this.ok(c, { avatarId, ...answer(cleared) });
   }
 
   private videosList(c: CommandMessage, avatarId: string): ResponseMessage {
@@ -2703,6 +2773,7 @@ export class MockEngine implements EngineBridge {
       photoCount: target.photoCount ?? 0,
       videoCount: 0,
       eligibleUnusedCount: target.photoCount ?? 0,
+      usage: { state: "ok" },
     };
     this.avatars = [...this.avatars, avatar];
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });

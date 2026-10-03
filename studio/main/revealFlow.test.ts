@@ -1,13 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { CommandMessage, EXPORT_CHANGING_DETAIL, PROTOCOL_VERSION, type EngineCommandMessage, type FileState, type ResponseMessage, type VideoSummary } from "../shared/engine";
+import { CommandMessage, EXPORT_CHANGING_DETAIL, PROTOCOL_VERSION, type EngineCommandMessage, type ExportStatus, type FileState, type ResponseMessage, type VideoSummary } from "../shared/engine";
 import { MIA, SOFIA } from "../renderer/engine/mockEngine.testkit";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { handleRevealCommand, isRevealCommand, placeOf, type RevealCommand, type RevealFlowDeps } from "./revealFlow";
+import {
+  handleRevealCommand,
+  handleRevealFolderCommand,
+  isRevealCommand,
+  isRevealFolderCommand,
+  placeOf,
+  type RevealCommand,
+  type RevealFlowDeps,
+  type RevealFolderCommand,
+  type RevealFolderFlowDeps,
+} from "./revealFlow";
 useNativeGlobals();
 
-// 3d.6: «Открыть в папке». The window names a video id and nothing else; main finds the file's place itself and asks the
-// system file manager to show it. The export folder and the record's relative path never come from the window.
+// «Открыть в папке» (3d.6) and «Папка «Готовые видео»» (3e.2, K17). The window names a video id or an avatar id and nothing
+// else; main finds the place itself and asks the system file manager to show it. The export folder and the record's relative
+// path never come from the window.
 
 const EXPORT = join("/Users", "alex", "Reels");
 
@@ -25,43 +36,67 @@ function video(n: number, patch: Partial<VideoSummary> = {}, avatarId = MIA.avat
     photoCount: 1,
     music: null,
     hasPoster: false,
+    title: null,
+    firstClip: null,
     ...patch,
   };
 }
 
+interface Options {
+  videos?: Record<string, VideoSummary[]>;
+  getError?: ResponseMessage & { ok: false };
+  platform?: NodeJS.Platform;
+  exportPath?: string;
+  exportStatus?: ExportStatus;
+  folders?: string[];
+  openError?: string;
+}
+
 interface Harness {
-  deps: RevealFlowDeps;
+  deps: RevealFlowDeps & RevealFolderFlowDeps;
   shown: string[];
+  opened: string[];
   asked: EngineCommandMessage[];
 }
 
-function harness(options: { videos?: Record<string, VideoSummary[]>; failList?: string; failAvatars?: boolean; platform?: NodeJS.Platform; exportPath?: string } = {}): Harness {
+function harness(options: Options = {}): Harness {
   const shown: string[] = [];
+  const opened: string[] = [];
   const asked: EngineCommandMessage[] = [];
   let n = 0;
   const videos = options.videos ?? { [MIA.avatarId]: [video(1), video(2)], [SOFIA.avatarId]: [video(3, {}, SOFIA.avatarId)] };
-  const deps: RevealFlowDeps = {
+  const all = Object.values(videos).flat();
+  const deps: RevealFlowDeps & RevealFolderFlowDeps = {
     engine: {
       request: async (command): Promise<ResponseMessage> => {
         asked.push(command);
         const base = { v: PROTOCOL_VERSION, id: command.id, kind: "response" } as const;
-        if (command.type === "avatars.list") {
-          if (options.failAvatars) return { ...base, type: command.type, ok: false, error: { code: "LIBRARY_UNAVAILABLE" } };
-          return { ...base, type: command.type, ok: true, result: { avatars: [MIA, SOFIA], unreadableAvatars: [], unreadableTotal: 0 } };
+        if (command.type === "videos.get") {
+          if (options.getError !== undefined) return { ...options.getError, id: command.id, type: command.type };
+          const found = all.find((v) => v.videoId === command.payload.videoId);
+          if (found === undefined) return { ...base, type: command.type, ok: false, error: { code: "NOT_FOUND", detail: "no video" } };
+          return { ...base, type: command.type, ok: true, result: { video: found } };
         }
         if (command.type === "videos.list") {
-          if (command.payload.avatarId === options.failList) return { ...base, type: command.type, ok: false, error: { code: "NOT_FOUND" } };
-          return { ...base, type: command.type, ok: true, result: { videos: videos[command.payload.avatarId] ?? [] } };
+          const listed = videos[command.payload.avatarId];
+          if (listed === undefined) return { ...base, type: command.type, ok: false, error: { code: "NOT_FOUND", detail: "no avatar" } };
+          return { ...base, type: command.type, ok: true, result: { videos: listed } };
         }
+        if (command.type === "export.check") return { ...base, type: command.type, ok: true, result: { exportStatus: options.exportStatus ?? { status: "ok" } } };
         return { ...base, type: command.type, ok: false, error: { code: "INTERNAL", detail: "unexpected" } };
       },
     },
     exportPath: () => options.exportPath ?? EXPORT,
     show: (path) => void shown.push(path),
+    openFolder: async (path) => {
+      opened.push(path);
+      return options.openError ?? "";
+    },
+    isFolder: async (path) => (options.folders ?? [join(EXPORT, "Mia")]).includes(path),
     newId: () => `internal-${String(++n).padStart(4, "0")}`,
     platform: options.platform ?? process.platform,
   };
-  return { deps, shown, asked };
+  return { deps, shown, opened, asked };
 }
 
 function reveal(videoId: string): RevealCommand {
@@ -70,18 +105,24 @@ function reveal(videoId: string): RevealCommand {
   return parsed;
 }
 
+function revealFolder(avatarId: string): RevealFolderCommand {
+  const parsed = CommandMessage.parse({ v: PROTOCOL_VERSION, id: "cmd-rev-00002", kind: "command", type: "videos.revealFolder", payload: { avatarId } });
+  if (!isRevealFolderCommand(parsed)) throw new Error("not a revealFolder command");
+  return parsed;
+}
+
 describe("videos.reveal", () => {
-  test("shows the file of a present video, found by its id among every avatar's videos", async () => {
+  test("shows the file of a present video, read by its id", async () => {
     const h = harness();
     const response = await handleRevealCommand(reveal("video-00000003"), h.deps);
     expect(response).toMatchObject({ ok: true, type: "videos.reveal", result: { videoId: "video-00000003" } });
     expect(h.shown).toEqual([join(EXPORT, "Mia", "2026-10-03_photo_003.mp4")]);
   });
 
-  test("asks the engine only with its own read-only commands", async () => {
+  test("asks the engine ONE question, the video by id: never a listing (a video past the list's bound is found too, and fast)", async () => {
     const h = harness();
     await handleRevealCommand(reveal("video-00000001"), h.deps);
-    expect(h.asked.map((c) => c.type).every((t) => t === "avatars.list" || t === "videos.list")).toBe(true);
+    expect(h.asked.map((c) => c.type)).toEqual(["videos.get"]);
   });
 
   test("an unknown video is NOT_FOUND and nothing is shown", async () => {
@@ -91,7 +132,7 @@ describe("videos.reveal", () => {
     expect(h.shown).toEqual([]);
   });
 
-  test.each<FileState>(["missing", "changed", "elsewhere"])("a video whose file is %s is not shown: only a present file is", async (fileState) => {
+  test.each<FileState>(["missing", "changed", "elsewhere", "unchecked"])("a video whose file is %s is not shown: only a present file is", async (fileState) => {
     const h = harness({ videos: { [MIA.avatarId]: [video(1, { fileState })] } });
     const response = await handleRevealCommand(reveal("video-00000001"), h.deps);
     expect(response).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
@@ -99,17 +140,9 @@ describe("videos.reveal", () => {
   });
 
   test("an engine error is the answer, as it is", async () => {
-    const h = harness({ failAvatars: true });
-    expect(await handleRevealCommand(reveal("video-00000001"), h.deps)).toMatchObject({ ok: false, error: { code: "LIBRARY_UNAVAILABLE" } });
+    const h = harness({ getError: { v: PROTOCOL_VERSION, id: "x", kind: "response", type: "videos.get", ok: false, error: { code: "LIBRARY_TOO_NEW" } } });
+    expect(await handleRevealCommand(reveal("video-00000001"), h.deps)).toMatchObject({ ok: false, error: { code: "LIBRARY_TOO_NEW" } });
     expect(h.shown).toEqual([]);
-  });
-
-  test("an avatar whose list fails is skipped when the video is found elsewhere, and is the answer when it is not", async () => {
-    const found = harness({ failList: MIA.avatarId });
-    expect(await handleRevealCommand(reveal("video-00000003"), found.deps)).toMatchObject({ ok: true });
-    const lost = harness({ failList: SOFIA.avatarId });
-    expect(await handleRevealCommand(reveal("video-00000003"), lost.deps)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
-    expect(lost.shown).toEqual([]);
   });
 
   test("a relative path that would leave the export folder is never shown", async () => {
@@ -127,7 +160,7 @@ describe("videos.reveal", () => {
     expect(h.shown).toEqual(["D:\\Reels\\Mia\\2026-10-03_photo_001.mp4"]);
   });
 
-  test("a switch of the export folder while the records were read refuses the reveal: the answer may name the old folder", async () => {
+  test("a switch of the export folder while the record was read refuses the reveal: the answer may name the old folder", async () => {
     const h = harness();
     let calls = 0;
     h.deps.exportPath = () => (++calls === 1 ? EXPORT : join("/Users", "alex", "Elsewhere"));
@@ -139,6 +172,77 @@ describe("videos.reveal", () => {
   test("a payload with a path is refused by the contract before the flow: the window names no path", () => {
     const parsed = CommandMessage.safeParse({ v: PROTOCOL_VERSION, id: "cmd-rev-00002", kind: "command", type: "videos.reveal", payload: { videoId: "video-00000001", path: "/etc/passwd" } });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe("videos.revealFolder (K17)", () => {
+  test("opens the avatar's own folder in the export folder, found from the place of one of its videos", async () => {
+    const h = harness();
+    const response = await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps);
+    expect(response).toMatchObject({ ok: true, type: "videos.revealFolder", result: { opened: "avatar" } });
+    expect(h.opened).toEqual([join(EXPORT, "Mia")]);
+  });
+
+  test("an avatar with no video yet opens the export folder itself", async () => {
+    const h = harness({ videos: { [MIA.avatarId]: [] } });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
+    expect(h.opened).toEqual([EXPORT]);
+  });
+
+  test("a folder named only by videos of another export folder is not trusted: the export folder itself is opened", async () => {
+    const h = harness({ videos: { [MIA.avatarId]: [video(1, { fileState: "elsewhere", relPath: "Old/2026-10-03_photo_001.mp4" })] }, folders: [join(EXPORT, "Old")] });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
+    expect(h.opened).toEqual([EXPORT]);
+  });
+
+  test("the avatar's folder that is gone (or is not a folder) opens the export folder instead", async () => {
+    const h = harness({ folders: [] });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
+    expect(h.opened).toEqual([EXPORT]);
+  });
+
+  test("an export folder that cannot be used is EXPORT_UNAVAILABLE with its reason, and nothing opens", async () => {
+    const h = harness({ exportStatus: { status: "unavailable", reason: "missing" } });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: false, error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
+    expect(h.opened).toEqual([]);
+  });
+
+  test("an unknown avatar is the engine's NOT_FOUND, and nothing opens", async () => {
+    const h = harness();
+    expect(await handleRevealFolderCommand(revealFolder("avatar-nobody"), h.deps)).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(h.opened).toEqual([]);
+  });
+
+  test("a folder name that is not the record shape never becomes a path", async () => {
+    const h = harness({ videos: { [MIA.avatarId]: [video(1, { relPath: "../outside/2026-10-03_photo_001.mp4" })] }, folders: [join(EXPORT, "..", "outside")] });
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: true, result: { opened: "root" } });
+    expect(h.opened).toEqual([EXPORT]);
+  });
+
+  test("on Windows the folder is joined under the export folder with backslashes", async () => {
+    const h = harness({ platform: "win32", exportPath: "D:\\Reels", folders: ["D:\\Reels\\Mia"] });
+    await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps);
+    expect(h.opened).toEqual(["D:\\Reels\\Mia"]);
+  });
+
+  test("a switch of the export folder meanwhile refuses: the answer may name the old folder", async () => {
+    const h = harness();
+    let calls = 0;
+    h.deps.exportPath = () => (++calls === 1 ? EXPORT : join("/Users", "alex", "Elsewhere"));
+    expect(await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps)).toMatchObject({ ok: false, error: { code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL } });
+    expect(h.opened).toEqual([]);
+  });
+
+  test("the file manager refusing to open is INTERNAL with a fixed detail: no path in the answer", async () => {
+    const h = harness({ openError: `Failed to open path ${EXPORT}/Mia` });
+    const response = await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps);
+    expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL", detail: "the folder could not be opened" } });
+  });
+
+  test("asks the engine only its read-only questions: the export check and the avatar's videos", async () => {
+    const h = harness();
+    await handleRevealFolderCommand(revealFolder(MIA.avatarId), h.deps);
+    expect(h.asked.map((c) => c.type)).toEqual(["export.check", "videos.list"]);
   });
 });
 

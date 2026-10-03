@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { CAPTION_ISSUES_RU, ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU, MONTAGE_ISSUE_MESSAGES_RU, MUSIC_UNAVAILABLE_REASONS_RU } from "./errorMessagesRu";
+import { CAPTION_ISSUES_RU, ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU, MONTAGE_ISSUE_MESSAGES_RU, MUSIC_UNAVAILABLE_REASONS_RU, USAGE_UNKNOWN_REASONS_RU } from "./errorMessagesRu";
 import { CAPTION_ISSUES, ERROR_CODES, EXPORT_UNAVAILABLE_REASONS, EngineError, ErrorCode, MUSIC_UNAVAILABLE_REASONS } from "./errors";
 import { MAX_MONTAGE_ISSUES, MONTAGE_ISSUE_CODES } from "./montage";
+import { UsageUnknownReason } from "./state";
 
 const EXPECTED_CODES = [
   "AUTH_INVALID",
@@ -440,5 +441,31 @@ describe("the Stage 3 error messages", () => {
 
   test("PHOTO_UNAVAILABLE says only generated scene photos go into a video", () => {
     expect(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE).toMatch(/сгенерированные сцены/);
+  });
+});
+
+describe("USAGE_UNKNOWN_REASONS_RU (3e.2, K16)", () => {
+  test("has a message for exactly the reasons, no more, no less", () => {
+    const actual: string[] = Object.keys(USAGE_UNKNOWN_REASONS_RU).sort();
+    const expected: string[] = [...UsageUnknownReason.options].sort();
+    expect(actual).toEqual(expected);
+  });
+
+  test.each([...UsageUnknownReason.options])("the %s message is non-empty Russian text", (reason) => {
+    const text = Object.entries(USAGE_UNKNOWN_REASONS_RU).find(([k]) => k === reason)?.[1] ?? "";
+    expect(text).toMatch(/[А-Яа-яЁё]/);
+  });
+
+  test("a record from a newer Studio is fixed by updating the app: the text never suggests removing or repairing anything", () => {
+    expect(USAGE_UNKNOWN_REASONS_RU["library-too-new"]).toMatch(/Обновите/);
+    expect(USAGE_UNKNOWN_REASONS_RU["library-too-new"]).not.toMatch(/(?<!не )(удал|убер|карантин|восстанов)/i);
+  });
+
+  test("a stale index is not a broken file: the text says Studio reads the records again by itself and offers no removal", () => {
+    expect(USAGE_UNKNOWN_REASONS_RU["index-stale"]).not.toMatch(/(?<!не )(удал|убер|карантин)/i);
+  });
+
+  test("the broken-record and broken-marks texts say what is wrong without naming a file", () => {
+    for (const reason of ["record-unreadable", "rejects-unreadable"] as const) expect(USAGE_UNKNOWN_REASONS_RU[reason]).not.toMatch(/\.json|\//);
   });
 });

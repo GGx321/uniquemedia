@@ -17,6 +17,7 @@ function avatar(name: string, n: number, status: AvatarSummary["status"] = "acti
     photoCount: 1,
     videoCount: 0,
     eligibleUnusedCount: 0,
+    usage: { state: "ok" },
   };
 }
 

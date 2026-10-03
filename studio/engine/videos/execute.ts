@@ -81,6 +81,8 @@ export interface RenderPlan {
    */
   readonly track?: { readonly trackId: string; readonly startMs: number };
   readonly montageId: string | null;
+  /** The draft's name when the render was asked for (K12); the record keeps it. Null for an unnamed draft or a headless spec. */
+  readonly title: string | null;
   /** The kind token of the file name. */
   readonly videoKind: string;
   /** The tile's music (title, artist); for a plan with a `track` the job fills it from the track it opened. */
@@ -379,6 +381,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           frames: totalFramesOf(plan.spec.clips),
           durationMs: plan.spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0),
           montageId: plan.montageId !== null && deps.draftRemoved?.(plan.montageId) === true ? null : plan.montageId,
+          title: plan.title,
           music: tile,
           // What the render resolved for the music: where it started, the gain the true-peak pass chose, the file it read.
           ...(track === null || plan.track === undefined || outcome.music === undefined ? {} : { audio: { trackSha: track.sha256, startMs: plan.track.startMs, gainDb: outcome.music.gainDb } }),

@@ -4,7 +4,7 @@ import type { ExportFolderCommand } from "./exportFolderFlow";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
-import type { RevealCommand } from "./revealFlow";
+import type { RevealCommand, RevealFolderCommand } from "./revealFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 import { captureConsole, expectNoKeyFragment } from "../testing/keyLeaks";
@@ -31,6 +31,7 @@ function routesSpy() {
   const importPhoto: ImportPhotoCommand[] = [];
   const exportFolder: ExportFolderCommand[] = [];
   const reveal: RevealCommand[] = [];
+  const revealFolder: RevealFolderCommand[] = [];
   const engine: EngineCommandMessage[] = [];
   const routes: RequestRoutes = {
     mainOnly: async (command) => {
@@ -57,12 +58,16 @@ function routesSpy() {
       reveal.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { videoId: command.payload.videoId } };
     },
+    revealFolder: async (command) => {
+      revealFolder.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { opened: "avatar" } };
+    },
     engine: async (command) => {
       engine.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -305,6 +310,29 @@ describe("handleRendererRequest", () => {
     expect(reveal).toEqual([]);
   });
 
+  test("videos.revealFolder is main's alone (K17): it reaches its route and is never forwarded to the engine", async () => {
+    const { routes, mainOnly, settings, importPhoto, exportFolder, reveal, revealFolder, engine } = routesSpy();
+    const response = await handleRendererRequest(command("videos.revealFolder", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: true, type: "videos.revealFolder", result: { opened: "avatar" } });
+    expect(revealFolder.map((c) => c.payload)).toEqual([{ avatarId: "avatar-0001" }]);
+    expect([mainOnly, settings, importPhoto, exportFolder, reveal, engine]).toEqual([[], [], [], [], [], []]);
+  });
+
+  test("videos.revealFolder carrying a path is refused by the contract before any route runs", async () => {
+    const { routes, revealFolder, engine } = routesSpy();
+    const response = await handleRendererRequest(command("videos.revealFolder", { avatarId: "avatar-0001", path: "/Volumes/Reels" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect([revealFolder, engine]).toEqual([[], []]);
+  });
+
+  test("the new engine commands of 3e.2 are forwarded to the engine: videos.get and the two usage recoveries", async () => {
+    const { routes, engine } = routesSpy();
+    await handleRendererRequest(command("videos.get", { videoId: "video-00000001" }), APP_FRAME, PACKAGED, routes);
+    await handleRendererRequest(command("videos.quarantineRecords", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
+    await handleRendererRequest(command("photos.rebuildRejected", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
+    expect(engine.map((c) => c.type)).toEqual(["videos.get", "videos.quarantineRecords", "photos.rebuildRejected"]);
+  });
+
   test("a Stage 3 engine command (videos.list) is forwarded to the engine", async () => {
     const { routes, engine } = routesSpy();
     await handleRendererRequest(command("videos.list", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
@@ -387,6 +415,9 @@ describe("handleRendererRequest", () => {
         throw new Error("unreachable");
       },
       reveal: async () => {
+        throw new Error("unreachable");
+      },
+      revealFolder: async () => {
         throw new Error("unreachable");
       },
       engine: async () => {

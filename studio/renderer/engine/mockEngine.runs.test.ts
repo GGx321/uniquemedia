@@ -18,6 +18,7 @@ const MIA: AvatarSummary = {
   photoCount: 1,
   videoCount: 0,
   eligibleUnusedCount: 0,
+  usage: { state: "ok" },
 };
 
 const REQUEST: RunRequest = { avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: false } };

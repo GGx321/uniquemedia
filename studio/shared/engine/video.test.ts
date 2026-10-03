@@ -12,8 +12,23 @@ const video = {
   fileState: "present",
   montageId: "montage-00000001",
   photoCount: 3,
-  music: { title: "Espresso", artist: "Sabrina Carpenter" },
+  music: { title: "Espresso", artist: "Sabrina Carpenter", trackId: "4199287736976977" },
   hasPoster: true,
+  title: "утро дома",
+  firstClip: {
+    clipId: "clip-001",
+    durationMs: 4_000,
+    transitionIn: "cut",
+    kind: "collage",
+    layout: "collage3",
+    cells: [
+      { photo: { source: "scene", photoId: "photo-0002" }, focus: { x: 0.5, y: 0.35 } },
+      { photo: { source: "scene", photoId: "photo-0003" }, focus: null },
+      { photo: { source: "own", mediaId: "media-0001" }, focus: null },
+    ],
+    motion: "kenburns",
+    stagger: true,
+  },
 };
 
 const renderResult = {
@@ -31,13 +46,13 @@ describe("VideoSummary", () => {
     expect(VideoSummary.safeParse(video).success).toBe(true);
   });
 
-  test.each(["present", "missing", "changed", "elsewhere"])("accepts the file state %s", (fileState) => {
+  test.each(["present", "missing", "changed", "elsewhere", "unchecked"])("accepts the file state %s", (fileState) => {
     expect(VideoSummary.safeParse({ ...video, fileState }).success).toBe(true);
   });
 
-  test("the file states are exactly present, missing, changed and elsewhere", () => {
+  test("the file states are exactly present, missing, changed, elsewhere and unchecked (3e.2, K15: a look that failed is not «another folder»)", () => {
     const actual: string[] = [...FileState.options].sort();
-    expect(actual).toEqual(["changed", "elsewhere", "missing", "present"]);
+    expect(actual).toEqual(["changed", "elsewhere", "missing", "present", "unchecked"]);
   });
 
   test("rejects an unknown file state", () => {
@@ -90,27 +105,66 @@ describe("VideoSummary", () => {
   });
 
   test("a track with no artist is accepted: an own track's tags are dropped (3f.4), so the artist may be null", () => {
-    expect(VideoSummary.safeParse({ ...video, music: { title: "My track", artist: null } }).success).toBe(true);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "My track", artist: null, trackId: null } }).success).toBe(true);
   });
 
   test("a null title is still refused: the tile always has something to call the track", () => {
-    expect(VideoSummary.safeParse({ ...video, music: { title: null, artist: "a" } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: null, artist: "a", trackId: null } }).success).toBe(false);
   });
 
   test("an artist that is present is still 1 to 120 characters", () => {
-    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "" } }).success).toBe(false);
-    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a".repeat(121) } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "", trackId: null } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a".repeat(121), trackId: null } }).success).toBe(false);
   });
 
   test("the music title and artist are bounded strings", () => {
-    expect(VideoSummary.safeParse({ ...video, music: { title: "t".repeat(120), artist: "a".repeat(120) } }).success).toBe(true);
-    expect(VideoSummary.safeParse({ ...video, music: { title: "t".repeat(121), artist: "a" } }).success).toBe(false);
-    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a".repeat(121) } }).success).toBe(false);
-    expect(VideoSummary.safeParse({ ...video, music: { title: "", artist: "a" } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t".repeat(120), artist: "a".repeat(120), trackId: null } }).success).toBe(true);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t".repeat(121), artist: "a", trackId: null } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a".repeat(121), trackId: null } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "", artist: "a", trackId: null } }).success).toBe(false);
   });
 
   test("the music carries nothing else, so no track URL can ride along", () => {
-    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a", url: "https://x" } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a", trackId: null, url: "https://x" } }).success).toBe(false);
+  });
+
+  test("the music names its trending track by id, for the tile's cover and «E» (K13); an own track has none", () => {
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a", trackId: "4199287736976977" } }).success).toBe(true);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "My track", artist: null, trackId: null } }).success).toBe(true);
+  });
+
+  test("the music's track id is required (null when there is none) and is an id, never a path or a URL", () => {
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a" } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a", trackId: "../tracks/x" } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, music: { title: "t", artist: "a", trackId: "https://cdn/x.m4a" } }).success).toBe(false);
+  });
+
+  test("the title is the draft's name at render time, kept by the record (K12); a video with none reads null", () => {
+    expect(VideoSummary.safeParse({ ...video, title: "кафе и город · 2" }).success).toBe(true);
+    expect(VideoSummary.safeParse({ ...video, title: null }).success).toBe(true);
+  });
+
+  test("the title is a montage name: 1 to 80 characters, no control character, and always present", () => {
+    expect(VideoSummary.safeParse({ ...video, title: "" }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, title: "a".repeat(81) }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, title: "утро\nдома" }).success).toBe(false);
+    const { title: _t, ...rest } = video;
+    expect(VideoSummary.safeParse(rest).success).toBe(false);
+  });
+
+  test("the first clip as rendered is the tile's still until a poster frame exists: a photo, a collage or an own video clip", () => {
+    const photoClip = { clipId: "clip-001", durationMs: 8_000, transitionIn: "cut", kind: "photo", cell: { photo: { source: "scene", photoId: "photo-0002" }, focus: { x: 0.5, y: 0.4 } }, motion: "pan" };
+    const ownVideo = { clipId: "clip-001", durationMs: 2_000, transitionIn: "cut", kind: "video", mediaId: "media-0001", trimStartMs: 0, focus: null };
+    expect(VideoSummary.safeParse({ ...video, firstClip: photoClip }).success).toBe(true);
+    expect(VideoSummary.safeParse({ ...video, firstClip: ownVideo }).success).toBe(true);
+    expect(VideoSummary.safeParse({ ...video, firstClip: null }).success).toBe(true);
+  });
+
+  test("the first clip is a clip of the contract, or null: never a free shape and never left out", () => {
+    expect(VideoSummary.safeParse({ ...video, firstClip: { kind: "photo", photoId: "photo-0002" } }).success).toBe(false);
+    expect(VideoSummary.safeParse({ ...video, firstClip: { ...video.firstClip, path: "/Users/a/photo.jpg" } }).success).toBe(false);
+    const { firstClip: _c, ...rest } = video;
+    expect(VideoSummary.safeParse(rest).success).toBe(false);
   });
 
   test("photoCount is a count", () => {

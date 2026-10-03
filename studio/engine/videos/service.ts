@@ -20,7 +20,7 @@ import { TEXT_PREVIEW_DIR } from "../text/preview";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
 import type { DraftStore } from "../montages/store";
 import type { CommitFs } from "./commitFs";
-import { deleteVideo, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
+import { deleteVideo, findVideoRecord, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
 import { createRenderExecute, totalFramesOf, type RenderPlan, type SettleInput, type VideoRenderDeps } from "./execute";
 import { newHashBudget, type FileStateChecker } from "./fileState";
 import type { LayerDeps } from "./layers";
@@ -120,7 +120,7 @@ export const DEFAULT_STALE_RETRY_DELAYS_MS: readonly number[] = [2_000, 10_000, 
 export const RENDER_COMMAND_DEADLINE_MS = 25_000;
 /** Kept back for eligibility, the sources and `submit` once the focus is done. */
 export const RENDER_COMMAND_MARGIN_MS = 2_000;
-/** One record's file check in a listing; a disk that does not answer reads `elsewhere`. */
+/** One record's file check in a listing or a `videos.get`; a disk that does not answer reads `unchecked` (K15). */
 export const RECORD_CHECK_TIMEOUT_MS = 5_000;
 /** A delete's disk work (a full hash of a file up to 64 MiB, two unlinks, flushes). */
 export const DELETE_TIMEOUT_MS = 60_000;
@@ -166,6 +166,8 @@ export function videoKindOf(clips: readonly { readonly kind: string; readonly la
 /** What a render starts from: a headless spec, or a saved draft's spec with the draft's id and the library it was read from. */
 interface RenderSource {
   readonly montageId: string | null;
+  /** The draft's name as it was read (K12): the record keeps it. Null for an unnamed draft and a headless spec. */
+  readonly title: string | null;
   readonly spec: MontageDraft;
   readonly library: Library | null;
 }
@@ -275,7 +277,7 @@ export class VideoService {
     // A saved draft is read first: its spec is what everything after judges, and a draft that is gone or unreadable
     // refuses before the export folder or anything else is looked at. The job keeps THIS copy: a save or a delete after
     // it does not reach the render.
-    const source: RenderSource = "montageId" in payload ? await this.#loadDraft(payload.montageId) : { montageId: null, spec: payload.spec, library: null };
+    const source: RenderSource = "montageId" in payload ? await this.#loadDraft(payload.montageId) : { montageId: null, title: null, spec: payload.spec, library: null };
     const { spec } = source;
     // The read waited in the draft's queue: whatever it used of the command's time is gone, so out of time is said as that.
     if (source.library !== null && remaining() <= marginMs) throw new EngineFailure({ code: "INTERNAL", detail: RENDER_NOT_QUEUED_DETAIL });
@@ -296,7 +298,7 @@ export class VideoService {
     return this.#deps.withLibrary((library) => {
       // The draft was read from the library that was open then; a render is queued in the one that is open now.
       if (source.library !== null && source.library !== library) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${source.montageId} in the open library` });
-      return this.#render(library, spec, source.montageId, renderTmpDir, check, { remaining, marginMs });
+      return this.#render(library, spec, source, renderTmpDir, check, { remaining, marginMs });
     });
   }
 
@@ -318,7 +320,7 @@ export class VideoService {
         this.#deps.log(`videos.render: a montage draft could not be used (${found.read.reason})`);
         throw new EngineFailure({ code: "INTERNAL", detail: `the montage draft cannot be read (${found.read.reason})` });
       }
-      return { montageId, spec: found.read.montage.spec, library };
+      return { montageId, title: found.read.montage.name, spec: found.read.montage.spec, library };
     });
   }
 
@@ -331,12 +333,13 @@ export class VideoService {
   async #render(
     library: Library,
     spec: MontageDraft,
-    montageId: string | null,
+    source: Pick<RenderSource, "montageId" | "title">,
     renderTmpDir: string,
     check: Extract<ExportRootCheck, { ok: true }>,
     time: { remaining(): number; marginMs: number },
   ): Promise<{ jobId: string; videoId: string }> {
     const deps = this.#deps;
+    const { montageId } = source;
     const outOfTime = (): EngineFailure => new EngineFailure({ code: "INTERNAL", detail: RENDER_NOT_QUEUED_DETAIL });
     if (time.remaining() <= time.marginMs) throw outOfTime();
     const avatar = library.getAvatar(spec.avatarId);
@@ -403,6 +406,7 @@ export class VideoService {
       // The id and the start only: the file's path comes from the track store when the job runs (invariant 31).
       ...(filled.music?.source === "trending" ? { track: { trackId: filled.music.trackId, startMs: filled.music.startMs } } : {}),
       montageId,
+      title: source.title,
       videoKind: videoKindOf(filled.clips),
       music: null,
     };
@@ -507,13 +511,49 @@ export class VideoService {
       try {
         state = await within(checkMs, () => this.#deps.checker.check(record, root, { verify: "cheap", budget }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
       } catch (error) {
-        // A disk that cannot be looked at is "cannot look in the root" (`elsewhere`), not a claim that the file is gone, and not a failed list.
+        // A look that failed is `unchecked` (K15): not a claim that the file is gone or in another folder, and not a failed list.
         this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
-        state = "elsewhere";
+        state = "unchecked";
       }
       summaries.push(videoSummaryOf(await this.#withLiveDraft(library, record, drafts), state));
     }
     return summaries;
+  }
+
+  // ---------- videos.get ----------
+
+  /**
+   * One video by id (3e.2), with its file looked at now, as `videos.list` would show it: main's «Открыть в папке» reads its
+   * place through this, for any video of any avatar, without a listing (which stops at MAX_LISTED_VIDEOS). The record is found
+   * by one look per avatar folder; nothing is written.
+   */
+  async get(videoId: string): Promise<VideoSummary> {
+    const library = this.#deps.openLibrary();
+    if (library === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no video ${videoId}: no library is open` });
+    let record: VideoRecord;
+    try {
+      record = await findVideoRecord(videoId, { library, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }) });
+    } catch (error) {
+      if (error instanceof VideoNotFoundError) throw new EngineFailure({ code: "NOT_FOUND", detail: `no video ${videoId}` });
+      if (error instanceof VideoRecordUnreadableError) throw new EngineFailure({ code: "INTERNAL", detail: "the video's record cannot be read" });
+      if (error instanceof LibraryError && error.code === "library-too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: "this video's record was written by a newer version of Studio" });
+      // A raw Node error names the library's path: only its code is told.
+      this.#deps.log(`videos.get: ${videoId} could not be read (${kindOf(error)})`);
+      throw new EngineFailure({ code: "INTERNAL", detail: `the video's record could not be read (${codeOf(error)})` });
+    }
+    const root = await this.#freshRoot();
+    let state: FileState;
+    try {
+      state = await within(
+        this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS,
+        () => this.#deps.checker.check(record, root, { verify: "cheap", budget: newHashBudget() }),
+        () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }),
+      );
+    } catch (error) {
+      this.#deps.log(`videos.get: the file of ${record.id} could not be checked (${kindOf(error)})`);
+      state = "unchecked";
+    }
+    return videoSummaryOf(await this.#withLiveDraft(library, record, new Map()), state);
   }
 
   /**

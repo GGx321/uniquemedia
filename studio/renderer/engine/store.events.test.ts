@@ -43,6 +43,7 @@ const SAVED: AvatarSummary = {
   photoCount: 1,
   videoCount: 0,
   eligibleUnusedCount: 0,
+  usage: { state: "ok" },
 };
 
 async function flush(): Promise<void> {
@@ -426,6 +427,8 @@ test("video.changed moves lastSeq on and changes nothing else: the video lists a
     photoCount: 1,
     music: null,
     hasPoster: false,
+    title: null,
+    firstClip: null,
   } as const;
   await h.emit({ type: "video.changed", payload: { change: "upserted", video } });
   await h.emit({ type: "video.changed", payload: { change: "removed", videoId: video.videoId, avatarId: video.avatarId } });
@@ -562,6 +565,8 @@ const RENDER_VIDEO = {
   photoCount: 1,
   music: null,
   hasPoster: false,
+  title: null,
+  firstClip: null,
 } as const;
 
 test("a video.changed after its render's job.failed wins: the job is done, with the video's result", async () => {

@@ -115,12 +115,25 @@ async function exists(fs: CommitFs, path: string): Promise<boolean> {
   }
 }
 
-async function locate(deps: DeleteVideoDeps, fs: CommitFs, videoId: string): Promise<{ avatarId: string; paths: VideoPaths } | null> {
+async function locate(deps: { readonly library: Pick<Library, "root" | "listAvatars"> }, fs: CommitFs, videoId: string): Promise<{ avatarId: string; paths: VideoPaths } | null> {
   for (const avatar of deps.library.listAvatars()) {
     const paths = videoPaths(deps.library.root, avatar.id);
     if (await exists(fs, paths.record(videoId))) return { avatarId: avatar.id, paths };
   }
   return null;
+}
+
+/**
+ * One video's record by id, whichever avatar's folder holds it (3e.2, `videos.get`): one `lstat` per avatar, never a listing,
+ * so a video past `videos.list`'s bound is found too. Throws what a delete would: `VideoNotFoundError` for an id that is not a
+ * record's (or not an id at all), `VideoRecordUnreadableError` for a record this build cannot read, `library-too-new` for a
+ * record from a newer Studio, a disk's own error otherwise.
+ */
+export async function findVideoRecord(videoId: string, deps: { readonly library: Pick<Library, "root" | "listAvatars">; readonly fs?: CommitFs }): Promise<VideoRecord> {
+  if (!Id.safeParse(videoId).success) throw new VideoNotFoundError(videoId);
+  const found = await locate(deps, deps.fs ?? NODE_COMMIT_FS, videoId);
+  if (found === null) throw new VideoNotFoundError(videoId);
+  return readRecord(found.paths, found.avatarId, videoId);
 }
 
 async function readRecord(paths: VideoPaths, avatarId: string, videoId: string): Promise<VideoRecord> {
@@ -149,10 +162,10 @@ export async function deleteVideo(videoId: string, deps: DeleteVideoDeps): Promi
     const record = await readRecord(found.paths, found.avatarId, videoId);
 
     const recordOnly = deps.mode === "record";
-    // «Удалить запись» only reports what the file is (a cheap look; a disk that cannot be looked at reads `elsewhere`); «Удалить» judges it in full.
+    // «Удалить запись» only reports what the file is (a cheap look; a look that fails reads `unchecked`, K15); «Удалить» judges it in full.
     let fileState: FileState;
     if (recordOnly) {
-      fileState = await deps.checker.check(record, deps.exportRoot, { verify: "cheap" }).catch(() => "elsewhere" as const);
+      fileState = await deps.checker.check(record, deps.exportRoot, { verify: "cheap" }).catch(() => "unchecked" as const);
     } else {
       fileState = await deps.checker.check(record, deps.exportRoot, { verify: "full" });
       // The file cannot be reached: the record alone would orphan it. Nothing has been removed yet.

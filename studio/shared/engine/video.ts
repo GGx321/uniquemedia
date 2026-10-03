@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Clip, MontageName } from "./montage";
 import { Count, Id } from "./primitives";
 
 // Rendered videos as the contract shows them (Stage 3 plan, "Outputs and
@@ -55,12 +56,19 @@ export const RelativePath = z
  * - `present`: the root matches and the size matches;
  * - `missing`: the root matches but there is no file («файл удалён»);
  * - `changed`: the size or sha256 differs («файл изменён вне Studio»); still playable, still used;
- * - `elsewhere`: the record's root is not the current export root («файл в другой папке»).
+ * - `elsewhere`: the record's root is not the current export root, or no export root can be looked in («файл в другой папке»);
+ * - `unchecked` (3e.2, K15): the look at this file failed or did not answer on this read («не удалось проверить файл»). It
+ *   claims nothing about the file: it is neither gone nor in another folder, and the next read may know.
+ * Every state keeps the video's photos used: only the record decides that.
  */
-export const FileState = z.enum(["present", "missing", "changed", "elsewhere"]);
+export const FileState = z.enum(["present", "missing", "changed", "elsewhere", "unchecked"]);
 
-/** What the tile says about the music: bounded text, never a URL. An own track drops its tags (3f.4), so it has a title and no artist. */
-const VideoMusic = z.strictObject({ title: z.string().min(1).max(120), artist: z.string().min(1).max(120).nullable() });
+/**
+ * What the tile says about the music: bounded text, never a URL. An own track drops its tags (3f.4), so it has a title and no
+ * artist. `trackId` (K13) names a trending track, for its cover (`studio-media://cover/<trackId>`) and its «E» from `music.list`;
+ * null for an own track.
+ */
+const VideoMusic = z.strictObject({ title: z.string().min(1).max(120), artist: z.string().min(1).max(120).nullable(), trackId: Id.nullable() });
 
 /** A video record as `videos.list` and `video.changed` show it. */
 export const VideoSummary = z.strictObject({
@@ -83,6 +91,13 @@ export const VideoSummary = z.strictObject({
    * it even when the file is `missing`; served by `videoId`. False when none was made.
    */
   hasPoster: z.boolean(),
+  /** The draft's name when it was rendered, kept by the record (K12), so the tile keeps it after the draft is gone; null when it had none. */
+  title: MontageName.nullable(),
+  /**
+   * The first clip as it was rendered (focus resolved): the tile draws it as its still where there is no poster frame
+   * (3e.2). Null when the record's clip is not one this build can read.
+   */
+  firstClip: Clip.nullable(),
 });
 
 /**

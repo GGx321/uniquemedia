@@ -110,6 +110,9 @@ async function harness() {
         reveal: async () => {
           throw new Error("not used");
         },
+        revealFolder: async () => {
+          throw new Error("not used");
+        },
         engine: (c) => {
           if (engine === null) throw new Error("the engine is not started");
           return engine.handle(c);

@@ -125,6 +125,7 @@ const avatar: AvatarSummary = {
   photoCount: 0,
   videoCount: 0,
   eligibleUnusedCount: 0,
+  usage: { state: "ok" },
 };
 
 const job: JobState = {
@@ -198,6 +199,8 @@ const video: VideoSummary = {
   photoCount: 1,
   music: null,
   hasPoster: true,
+  title: null,
+  firstClip: null,
 };
 
 const montageDraft: MontageDraft = {
@@ -302,6 +305,10 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "videos.list": { payload: { avatarId: "avatar-0001" }, result: { videos: [video] } },
   "videos.delete": { payload: { videoId: "video-00000001", mode: "video" }, result: { videoId: "video-00000001", fileDeleted: true, fileState: "present" } },
   "videos.reveal": { payload: { videoId: "video-00000001" }, result: { videoId: "video-00000001" } },
+  "videos.get": { payload: { videoId: "video-00000001" }, result: { video } },
+  "videos.revealFolder": { payload: { avatarId: "avatar-0001" }, result: { opened: "avatar" } },
+  "videos.quarantineRecords": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", quarantined: 1 } },
+  "photos.rebuildRejected": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", rebuilt: true, kept: 12, dropped: 1 } },
   "settings.setExportPath": { payload: {}, result: { picked: true, settings, rootId: "root-00000001", resolved: 3, elsewhere: 1, incomplete: false } },
   "settings.exportDisplay": { payload: {}, result: { display: "~/Studio/export" } },
   "export.check": { payload: {}, result: { exportStatus: { status: "unavailable", reason: "missing" } } },
@@ -467,11 +474,15 @@ describe("contract surface", () => {
         "runs.list",
         "photos.list",
         "photos.setRejected",
+        "photos.rebuildRejected",
         "videos.render",
         "videos.cancel",
         "videos.list",
         "videos.delete",
         "videos.reveal",
+        "videos.revealFolder",
+        "videos.get",
+        "videos.quarantineRecords",
         "music.status",
         "music.refresh",
         "music.recoverQuotaLog",
@@ -526,7 +537,7 @@ describe("contract surface", () => {
     expect(covered).toEqual(all);
   });
 
-  test("only the key commands, the dialogs («import photo», «export folder») and «show in folder» are handled by main alone", () => {
+  test("only the key commands, the dialogs («import photo», «export folder») and «show in folder» (a video's file, an avatar's folder) are handled by main alone", () => {
     const actual: string[] = [...MAIN_ONLY_COMMANDS].sort();
     expect(actual).toEqual([
       "avatars.pickImportPhoto",
@@ -537,6 +548,7 @@ describe("contract surface", () => {
       "settings.setExportPath",
       "settings.setMusicKey",
       "videos.reveal",
+      "videos.revealFolder",
     ]);
   });
 
@@ -1294,6 +1306,60 @@ describe("Stage 3 payloads", () => {
     expect(send("settings.exportDisplay", { path: "/tmp" })).toBe(false);
     expect(send("export.check", {})).toBe(true);
     expect(send("export.check", { force: true })).toBe(false);
+  });
+
+  test("videos.get names one video by id, and nothing else (3e.2: «Открыть в папке» for a video past the list's bound)", () => {
+    expect(send("videos.get", { videoId: "video-00000001" })).toBe(true);
+    expect(send("videos.get", {})).toBe(false);
+    expect(send("videos.get", { videoId: "../video" })).toBe(false);
+    expect(send("videos.get", { videoId: "video-00000001", avatarId: "avatar-0001" })).toBe(false);
+  });
+
+  test("videos.get answers one video summary", () => {
+    const ok = (result: unknown) => parseMessage({ v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "videos.get", ok: true, result }).ok;
+    expect(ok({ video })).toBe(true);
+    expect(ok({ video: { ...video, fileState: "unchecked" } })).toBe(true);
+    expect(ok({ videos: [video] })).toBe(false);
+    expect(ok({ video, path: "/Users/a/Studio/export/Mia/2026-09-29_photo_001.mp4" })).toBe(false);
+  });
+
+  test("videos.revealFolder names an avatar, never a folder: main finds the place itself (K17)", () => {
+    expect(send("videos.revealFolder", { avatarId: "avatar-0001" })).toBe(true);
+    expect(send("videos.revealFolder", {})).toBe(false);
+    expect(send("videos.revealFolder", { avatarId: "avatar-0001", path: "/Volumes/Reels" })).toBe(false);
+  });
+
+  test("videos.revealFolder answers which folder it opened: the avatar's own, or the export folder when the avatar has none yet", () => {
+    const ok = (result: unknown) => parseMessage({ v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "videos.revealFolder", ok: true, result }).ok;
+    expect(ok({ opened: "avatar" })).toBe(true);
+    expect(ok({ opened: "root" })).toBe(true);
+    expect(ok({ opened: "/Users/a/Studio/export/Mia" })).toBe(false);
+    expect(ok({ opened: "avatar", path: "/x" })).toBe(false);
+  });
+
+  test("the usage recoveries name only the avatar: what to quarantine or keep is the engine's own reading of the disk (K16)", () => {
+    for (const type of ["videos.quarantineRecords", "photos.rebuildRejected"]) {
+      expect(send(type, { avatarId: "avatar-0001" })).toBe(true);
+      expect(send(type, {})).toBe(false);
+      expect(send(type, { avatarId: "../avatar" })).toBe(false);
+      expect(send(type, { avatarId: "avatar-0001", file: "videos/x.json" })).toBe(false);
+    }
+  });
+
+  test("videos.quarantineRecords answers how many record files it moved to quarantine", () => {
+    const ok = (result: unknown) => parseMessage({ v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "videos.quarantineRecords", ok: true, result }).ok;
+    expect(ok({ avatarId: "avatar-0001", quarantined: 0 })).toBe(true);
+    expect(ok({ avatarId: "avatar-0001", quarantined: -1 })).toBe(false);
+    expect(ok({ avatarId: "avatar-0001", quarantined: 1, files: ["videos/x.json"] })).toBe(false);
+  });
+
+  test("photos.rebuildRejected answers whether the log was rebuilt, and how many marks it kept and lines it dropped", () => {
+    const ok = (result: unknown) => parseMessage({ v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "photos.rebuildRejected", ok: true, result }).ok;
+    expect(ok({ avatarId: "avatar-0001", rebuilt: false, kept: 3, dropped: 0 })).toBe(true);
+    expect(ok({ avatarId: "avatar-0001", rebuilt: true, kept: 0, dropped: 2 })).toBe(true);
+    expect(ok({ avatarId: "avatar-0001", rebuilt: true, kept: 0 })).toBe(false);
+    expect(ok({ avatarId: "avatar-0001", rebuilt: "yes", kept: 0, dropped: 0 })).toBe(false);
+    expect(ok({ avatarId: "avatar-0001", rebuilt: true, kept: 1.5, dropped: 0 })).toBe(false);
   });
 
   test("videos.list names an avatar", () => {

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { EngineFailure } from "../engineFailure";
-import { VideoSummary, type EngineError, type FileState } from "../../shared/engine";
+import { MAX_LISTED_VIDEOS, VideoSummary, type EngineError, type FileState } from "../../shared/engine";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { FileStateChecker, type HashBudget } from "./fileState";
 import { commitIntent, writeIntent } from "./intents";
@@ -125,7 +125,7 @@ describe("videos.list", () => {
     expect(budgets[0]).not.toBe(budgets[2]);
   });
 
-  test("a record whose check fails does not fail the list: it reads `elsewhere`, and the others keep their own state", async () => {
+  test("a record whose check fails does not fail the list: it reads `unchecked` (K15: not «another folder»), and the others keep their own state", async () => {
     const w = world();
     const checker = new FileStateChecker();
     const flaky: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, {
@@ -142,7 +142,7 @@ describe("videos.list", () => {
 
     expect(new Map(videos.map((v) => [v.videoId, v.fileState]))).toEqual(
       new Map([
-        ["video-0000000a", "elsewhere"],
+        ["video-0000000a", "unchecked"],
         ["video-0000000b", "present"],
       ]),
     );
@@ -179,7 +179,7 @@ describe("videos.list, what can go wrong around it", () => {
     expect(error.detail).not.toContain("/var/");
   });
 
-  test("a record whose file check never answers reads `elsewhere` after the per-record bound, and the listing goes on", async () => {
+  test("a record whose file check never answers reads `unchecked` after the per-record bound (K15), and the listing goes on", async () => {
     const w = world();
     const checker = new FileStateChecker();
     const stuck: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, {
@@ -193,7 +193,7 @@ describe("videos.list, what can go wrong around it", () => {
 
     expect(new Map(videos.map((v) => [v.videoId, v.fileState]))).toEqual(
       new Map([
-        ["video-0000000a", "elsewhere"],
+        ["video-0000000a", "unchecked"],
         ["video-0000000b", "present"],
       ]),
     );
@@ -215,6 +215,94 @@ describe("videos.list, what can go wrong around it", () => {
 
     expect(reloads).toBe(1);
     expect(w.library.videoIndexStale(w.avatar.id)).toEqual([]);
+  });
+});
+
+describe("videos.get: one video by id (3e.2: «Открыть в папке» for any video, without listing them)", () => {
+  test("answers the record as `videos.list` shows it, its file looked at now, whichever avatar it belongs to", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const { record } = await committed(w);
+
+    const video = await r.service.get(record.id);
+
+    expect(VideoSummary.safeParse(video).success).toBe(true);
+    expect(video).toEqual((await r.service.list(w.avatar.id))[0] ?? null);
+    expect(video.fileState).toBe("present");
+  });
+
+  test("finds a video the list cannot show any more: the listing stops at its bound, a read by id does not", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const { record } = await committed(w, { videoId: "video-00000000", jobId: "job-00000000" });
+    // 500 newer records: the listing answers those, and the first one is past its bound.
+    const dir = videoPaths(w.libraryRoot, w.avatar.id).videosDir;
+    for (let i = 1; i <= MAX_LISTED_VIDEOS; i++) {
+      const id = `video-${String(i).padStart(8, "0")}`;
+      writeFileSync(join(dir, `${id}.json`), JSON.stringify({ ...record, id, jobId: `job-${String(i).padStart(8, "0")}`, createdAt: "2026-09-30T10:00:00.000Z" }));
+    }
+    expect((await r.service.list(w.avatar.id)).some((v) => v.videoId === record.id)).toBe(false);
+
+    expect((await r.service.get(record.id)).videoId).toBe(record.id);
+  });
+
+  test("an unknown video, and an id that breaks the pattern, are NOT_FOUND", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    await committed(w);
+    expect((await failureOf(r.service.get("video-0000ffff"))).code).toBe("NOT_FOUND");
+    expect((await failureOf(r.service.get("../video"))).code).toBe("NOT_FOUND");
+  });
+
+  test("with no library open it is NOT_FOUND", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { openLibrary: () => null } });
+    expect((await failureOf(r.service.get("video-00000001"))).code).toBe("NOT_FOUND");
+  });
+
+  test("a record that cannot be read is INTERNAL with a fixed detail; one from a newer Studio is LIBRARY_TOO_NEW", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const dir = videoPaths(w.libraryRoot, w.avatar.id).videosDir;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "video-0000000b.json"), "{ not json");
+    writeFileSync(join(dir, "video-0000000c.json"), JSON.stringify({ schemaVersion: 2, id: "video-0000000c", avatarId: w.avatar.id }));
+
+    const unreadable = await failureOf(r.service.get("video-0000000b"));
+    expect(unreadable).toEqual({ code: "INTERNAL", detail: "the video's record cannot be read" });
+    expect((await failureOf(r.service.get("video-0000000c"))).code).toBe("LIBRARY_TOO_NEW");
+  });
+
+  test("a file check that fails reads `unchecked` and names the code in the log, never the path", async () => {
+    const w = world();
+    const checker = new FileStateChecker();
+    const flaky: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, {
+      check: (): Promise<FileState> => Promise.reject(Object.assign(new Error(`EIO: i/o error, lstat '${w.exportRoot}/Mia'`), { code: "EIO" })),
+    });
+    const r = serviceRig(w, { deps: { checker: flaky } });
+    const { record } = await committed(w);
+
+    expect((await r.service.get(record.id)).fileState).toBe("unchecked");
+    expect(r.logs.join("\n")).toContain("EIO");
+    expect(r.logs.join("\n")).not.toContain(w.exportRoot);
+  });
+
+  test("a file check that never answers reads `unchecked` after the per-record bound", async () => {
+    const w = world();
+    const checker = new FileStateChecker();
+    const stuck: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, { check: (): Promise<FileState> => new Promise<FileState>(() => undefined) });
+    const r = serviceRig(w, { deps: { checker: stuck, recordCheckTimeoutMs: 40 } });
+    const { record } = await committed(w);
+
+    expect((await r.service.get(record.id)).fileState).toBe("unchecked");
+  });
+
+  test("an unusable export root reads `elsewhere`, as the list does", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { checkExport: async () => ({ ok: false, reason: "missing" }) } });
+    const { record } = await committed(w);
+
+    expect((await r.service.get(record.id)).fileState).toBe("elsewhere");
   });
 });
 
@@ -285,6 +373,22 @@ describe("videos.delete", () => {
     expect(error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "missing" });
     expect(existsSync(path)).toBe(true);
     expect(existsSync(videoPaths(w.libraryRoot, w.avatar.id).record(record.id))).toBe(true);
+  });
+
+  test("«Удалить запись» whose look at the file fails says so (`unchecked`, K15), removes the record and leaves the file", async () => {
+    const w = world();
+    const checker = new FileStateChecker();
+    const flaky: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, {
+      check: (): Promise<FileState> => Promise.reject(Object.assign(new Error("EIO: i/o error"), { code: "EIO" })),
+    });
+    const r = serviceRig(w, { deps: { checker: flaky } });
+    const { record, path } = await committed(w);
+
+    const answer = await r.service.delete(record.id, "record");
+
+    expect(answer).toEqual({ videoId: record.id, fileDeleted: false, fileState: "unchecked" });
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(videoPaths(w.libraryRoot, w.avatar.id).record(record.id))).toBe(false);
   });
 
   test("«Удалить запись» with the export root unavailable still removes the record and leaves the file", async () => {
