@@ -228,6 +228,15 @@ describe("the «Музыка» tab: the trending list, the «E» badge, a free p
     expect(callsOf(engine, "music.list").length).toBe(lists + 1);
   });
 
+  test("while the list's status is not known, an empty list is not called empty", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    engine.failNext("music.status", { code: "INTERNAL", detail: "the quota log is being read" });
+    fireEvent.click(tab("Музыка"));
+    await within(media()).findByText("Проверяем список трендов…");
+    expect(within(media()).queryByText(/пока нет треков/) === null).toBe(true);
+  });
+
   test("an empty store says the list is loaded in Settings", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client);

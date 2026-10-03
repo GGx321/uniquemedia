@@ -129,7 +129,12 @@ export function MusicTab({ spec, status, onPick }: MusicTabProps) {
         </div>
       ) : tracks.length === 0 ? (
         <div className="ed-music-empty">
-          <p className="muted">{status?.listFetchedAt === null ? "Список трендов ещё не загружен." : "В списке трендов пока нет треков."} Его загружают в Настройках: каждый раз это 1 запрос из 30.</p>
+          {/* Until the status says whether a list was ever fetched, an empty answer may be a store not read yet: say nothing more. */}
+          {status === null ? (
+            <p className="muted">Проверяем список трендов…</p>
+          ) : (
+            <p className="muted">{status.listFetchedAt === null ? "Список трендов ещё не загружен." : "В списке трендов пока нет треков."} Его загружают в Настройках: каждый раз это 1 запрос из 30.</p>
+          )}
         </div>
       ) : (
         <ul className="ed-tracks" aria-label="Треки в тренде">
