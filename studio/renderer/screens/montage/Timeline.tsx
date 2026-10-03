@@ -31,7 +31,10 @@ const SNAP_PX = 8;
 
 const pct = (ms: number): string => `${(ms / TIMELINE_MS) * 100}%`;
 
-/** Window-wide pointer tracking from a press: the gesture keeps going wherever the pointer goes. */
+/**
+ * Window-wide pointer tracking from a press: the gesture keeps going wherever the pointer goes. `onEnd` gets the
+ * release, or null when the gesture was cancelled (`pointercancel`, a new gesture, the timeline closing).
+ */
 function trackPointer(press: ReactPointerEvent, onMove: (event: PointerEvent) => void, onEnd: (event: PointerEvent | null) => void): () => void {
   const id = press.pointerId;
   const move = (event: PointerEvent): void => {
@@ -40,16 +43,22 @@ function trackPointer(press: ReactPointerEvent, onMove: (event: PointerEvent) =>
   const stop = (): void => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
-    window.removeEventListener("pointercancel", up);
+    window.removeEventListener("pointercancel", cancel);
   };
   const up = (event: PointerEvent): void => {
     if (event.pointerId !== id) return;
     stop();
     onEnd(event);
   };
+  // The system took the pointer (a gesture, a lost capture): the gesture is cancelled, never dropped where it stood.
+  const cancel = (event: PointerEvent): void => {
+    if (event.pointerId !== id) return;
+    stop();
+    onEnd(null);
+  };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
-  window.addEventListener("pointercancel", up);
+  window.addEventListener("pointercancel", cancel);
   return () => {
     stop();
     onEnd(null);

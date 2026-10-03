@@ -523,28 +523,6 @@ describe("undo steps of a gesture (one gesture, one step)", () => {
   });
 });
 
-describe("the face judge's answers", () => {
-  test("«ищем лицо…» stays while a later request for the same photo is still out", async () => {
-    const { client, engine, scheduler } = await studio();
-    await makeDraft(client, MIA.avatarId, [P1]);
-    await openEditor();
-    // P2 has no face score: the mock answers null, so only «ищем лицо…» tells a question is still open.
-    engine.delayNext("montages.focus", 100);
-    await pick(P2);
-    expect(within(props()).getByText("ищем лицо…")).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
-    engine.delayNext("montages.focus", 300);
-    await pick(P2);
-    // The first answer comes back; the second question is still out.
-    tick(scheduler);
-    await flush();
-    expect(within(props()).getByText("ищем лицо…")).toBeDefined();
-    tick(scheduler);
-    await flush();
-    expect(within(props()).getByText("лицо не найдено")).toBeDefined();
-  });
-});
-
 describe("keys that belong to a control", () => {
   test("⌘Z and ⇧⌘Z work while a slider has the focus («Длительность», the zoom): a slider keeps no undo of its own", async () => {
     const { client } = await studio();
@@ -586,5 +564,47 @@ describe("keys that belong to a control", () => {
     fireEvent.keyDown(clip, { key: "Escape", isComposing: true });
     expect(clipButtons()).toHaveLength(1);
     expect(clipButtons()[0]?.getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("a cancelled pointer", () => {
+  test("a reorder drag whose pointer is cancelled (the system took it) moves nothing", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1, P2, P3, PHOTO_IDS[3] ?? "", PHOTO_IDS[4] ?? ""]);
+    await openEditor();
+    const third = clipButtons()[2];
+    if (third === undefined) throw new Error("no clip 3");
+    fireEvent.pointerDown(third, { pointerId: 9, button: 0, clientX: 300 });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 9, clientX: 200 }));
+      window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 9 }));
+    });
+    await flush();
+    expect(timeline().querySelector(".ed-clip-lifted")).toBeNull();
+    expect(clipButtons().map((b) => b.getAttribute("data-clip-id"))).toEqual(["clip-001", "clip-002", "clip-003", "clip-004", "clip-005"]);
+    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
+    expect(callsOf(engine, "montages.save")).toHaveLength(0);
+  });
+});
+
+describe("the face judge's answers", () => {
+  test("«ищем лицо…» stays while a later request for the same photo is still out", async () => {
+    const { client, engine, scheduler } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    // P2 has no face score: the mock answers null, so only «ищем лицо…» tells a question is still open.
+    engine.delayNext("montages.focus", 100);
+    await pick(P2);
+    expect(within(props()).getByText("ищем лицо…")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+    engine.delayNext("montages.focus", 300);
+    await pick(P2);
+    // The first answer comes back; the second question is still out.
+    tick(scheduler);
+    await flush();
+    expect(within(props()).getByText("ищем лицо…")).toBeDefined();
+    tick(scheduler);
+    await flush();
+    expect(within(props()).getByText("лицо не найдено")).toBeDefined();
   });
 });
