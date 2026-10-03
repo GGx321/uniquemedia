@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startMockFlashapi, type MockFlashapi } from "../../scripts/mockFlashapi";
@@ -41,6 +41,21 @@ afterEach(async () => {
 });
 
 const quotaPath = () => join(dir, "music", "quota.jsonl");
+
+/**
+ * Puts a FOLDER where the quota file is, so no line can be appended: the disk breaks. The file's lines are kept aside, not
+ * deleted, since a log that is gone while its marker says it existed now reads `missing` (review round 1).
+ */
+async function moveTheLogAway(): Promise<void> {
+  await rename(quotaPath(), `${quotaPath()}.away`).catch(() => undefined);
+  await mkdir(quotaPath());
+}
+
+/** The disk works again: the folder goes, and the log comes back with its lines. */
+async function bringTheLogBack(): Promise<void> {
+  await rm(quotaPath(), { recursive: true, force: true });
+  await rename(`${quotaPath()}.away`, quotaPath()).catch(() => undefined);
+}
 const NO_CATALOGUE = { list: (): [] => [], peaks: (): Promise<null> => Promise.resolve(null) };
 const EMPTY = { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 };
 
@@ -127,8 +142,7 @@ describe("the status says whether its count can be trusted (quotaLog)", () => {
     const breakingTheLog: FlashapiFetch = async (url, init) => {
       if (first) {
         first = false;
-        await rm(quotaPath(), { force: true });
-        await mkdir(quotaPath());
+        await moveTheLogAway();
       }
       return nativeFetch(url, init);
     };
@@ -138,13 +152,13 @@ describe("the status says whether its count can be trusted (quotaLog)", () => {
     await h.service.refresh();
     await h.service.settled();
     expect((await h.service.status()).quotaLog).toBe("unreadable");
-    await rm(quotaPath(), { recursive: true, force: true });
-    // The folder is gone: the log reads again, and the line it could not take waits to be written.
+    await bringTheLogBack();
+    // The log is back: it reads again, and the line it could not take waits to be written.
     expect((await h.service.status()).quotaLog).toBe("held");
-    await mkdir(quotaPath());
+    await moveTheLogAway();
     expect(refusal(await h.service.refresh())).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-held" });
     expect(mock.requests).toHaveLength(1);
-    await rm(quotaPath(), { recursive: true, force: true });
+    await bringTheLogBack();
     await h.service.refresh();
     await h.service.settled();
     expect((await h.service.status()).quotaLog).toBe("ok");
@@ -361,6 +375,72 @@ describe("a held line is written when the window asks for the status", () => {
       await chmod(quotaPath(), 0o644);
     }
     expect((await h.service.status()).quotaLog).toBe("held");
+  });
+});
+
+// Review round 1 (MEDIUM, money): deleting the music folder (its tracks are ~100 MB) took the quota log and the count with it.
+describe("a quota log that is gone while its marker says it existed: missing", () => {
+  /** A log with one send of this service's, then the music folder deleted (the marker beside it stays). */
+  async function deletedAfterASend(h: Harness): Promise<void> {
+    mock ??= startMockFlashapi({ key: KEY });
+    await h.service.refresh();
+    await h.service.settled();
+    await rm(join(dir, "music"), { recursive: true, force: true });
+  }
+
+  test("reads 30 of 30, and a refresh is refused as log-missing without a request", async () => {
+    const h = harness();
+    await deletedAfterASend(h);
+    expect(MusicStatus.parse(await h.service.status())).toMatchObject({ quotaLog: "missing", sentLast31d: 30, nextFreeAt: null });
+    expect(refusal(await h.service.refresh())).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-missing" });
+    expect(mock?.requests).toHaveLength(1);
+  });
+
+  test("re-entering the key does not start a fresh log: still missing, still refused for it (never «held»)", async () => {
+    const h = harness();
+    await deletedAfterASend(h);
+    await h.service.noteKeyChange(LAST4);
+    expect((await h.service.status({ writeHeld: true })).quotaLog).toBe("missing");
+    expect(refusal(await h.service.refresh())).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-missing" });
+    expect(mock?.requests).toHaveLength(1);
+  });
+
+  test("a fresh install (no marker) is not missing: the first refresh goes", async () => {
+    const h = harness();
+    expect((await h.service.status()).quotaLog).toBe("ok");
+    mock ??= startMockFlashapi({ key: KEY });
+    expect((await h.service.refresh()).ok).toBe(true);
+  });
+
+  test("recovering it closes the quota for 31 days, and what was held meanwhile is written behind it", async () => {
+    const h = harness();
+    await deletedAfterASend(h);
+    await h.service.noteKeyChange(LAST4);
+    const answer = await h.service.recoverQuotaLog();
+    expect(answer.ok ? MusicStatus.parse(answer.status) : answer.error).toMatchObject({ quotaLog: "ok", sentLast31d: 30, nextFreeAt: new Date(NOW + QUOTA_WINDOW_MS).toISOString() });
+    expect((await quotaLines()).map((line) => line.kind)).toEqual(["recovered", "key"]);
+    expect(refusal(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(mock?.requests).toHaveLength(1);
+  });
+});
+
+describe("recoverQuotaLog while the downloads of a list run (review round 1, LOW)", () => {
+  test("is refused IN_FLIGHT, and the damaged log is left as it is", async () => {
+    await seedText(DAMAGED);
+    let release: () => void = () => undefined;
+    const sink: MusicListSink = {
+      ...failingSink(() => new Error("unused")),
+      pendingCount: () => 1,
+      resume: () => new Promise<void>((resolve) => (release = resolve)),
+    };
+    const h = harness({ sink });
+    await h.service.resumePending();
+    const answer = await h.service.recoverQuotaLog();
+    expect(answer.ok ? null : answer.error.code).toBe("IN_FLIGHT");
+    expect(await readFile(quotaPath(), "utf8")).toBe(DAMAGED);
+    release();
+    await h.service.settled();
+    expect((await h.service.recoverQuotaLog()).ok).toBe(true);
   });
 });
 

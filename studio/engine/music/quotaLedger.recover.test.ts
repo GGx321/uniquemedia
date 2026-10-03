@@ -84,7 +84,7 @@ describe("recover", () => {
     const answer = await ledger().recover({ rejectedKey: null });
     if (!answer.ok) throw new Error(`expected a recovery, got ${answer.refusal}`);
     expect(answer.quarantined).toBe("quota.jsonl.corrupt-20261003T101500Z");
-    expect(await readFile(join(dir, "music", answer.quarantined), "utf8")).toBe(DAMAGED);
+    expect(await readFile(join(dir, "music", answer.quarantined ?? "(none)"), "utf8")).toBe(DAMAGED);
     const lines = (await readFile(path, "utf8")).split("\n").filter((line) => line !== "");
     expect(lines.map((line) => JSON.parse(line))).toEqual([{ v: 1, kind: "recovered", at: NOW, sends: QUOTA_LIMIT, quarantined: answer.quarantined, rejectedKey: null }]);
     expect(answer.summary).toMatchObject({ sentInWindow: 30, refusal: "quota", nextFreeAt: NOW + QUOTA_WINDOW_MS });
@@ -189,5 +189,66 @@ describe("recover", () => {
     await seedText(DAMAGED);
     await ledger().recover({ rejectedKey: LAST4 });
     expectNoKeyFragment(await readFile(path, "utf8"), KEY);
+  });
+});
+
+// Review round 1 (LOW): what the damaged log still says, the sync after the swap, and the temps a crash leaves.
+describe("recover keeps what the damaged log can still tell", () => {
+  const lineOf = (line: QuotaLine): string => `${JSON.stringify(line)}\n`;
+  const rejected: QuotaLine = { v: 1, kind: "result", id: "send-1", at: NOW - HOUR, key: "9z9z", outcome: "rejected", status: 401 };
+
+  test("the last 401 its readable lines name is kept (an engine started on a damaged log knew of none): it only adds a refusal", async () => {
+    await seedText(`${lineOf({ v: 1, kind: "send", id: "send-1", at: NOW - 2 * HOUR, key: "9z9z" })}${lineOf(rejected)}not json at all\n`);
+    await ledger().recover({ rejectedKey: null });
+    expect((await ledger().summary()).rejectedKey).toBe("9z9z");
+  });
+
+  test("the engine's own rejected key wins over the damaged log's", async () => {
+    await seedText(`${lineOf(rejected)}not json at all\n`);
+    await ledger().recover({ rejectedKey: LAST4 });
+    expect((await ledger().summary()).rejectedKey).toBe(LAST4);
+  });
+
+  test("a key change after the 401 in the damaged log clears it there too", async () => {
+    await seedText(`${lineOf(rejected)}${lineOf({ v: 1, kind: "key", at: NOW - HOUR + 1, key: "9z9z" })}not json at all\n`);
+    await ledger().recover({ rejectedKey: null });
+    expect((await ledger().summary()).rejectedKey).toBeNull();
+  });
+
+  test("a damaged log with a send dated after now (the clock stepped back) closes the quota from that send, not from now", async () => {
+    const later = NOW + 10 * 24 * HOUR;
+    await seedText(`${lineOf({ v: 1, kind: "send", id: "send-1", at: later, key: LAST4 })}not json at all\n`);
+    const answer = await ledger().recover({ rejectedKey: null });
+    expect(answer.ok ? answer.summary.nextFreeAt : null).toBe(later + QUOTA_WINDOW_MS);
+    now = later + QUOTA_WINDOW_MS - 1;
+    expect((await ledger().summary()).refusal).toBe("quota");
+  });
+});
+
+describe("the swap itself", () => {
+  test("a folder sync that fails after the new log is in place does not report the recovery failed: the new log IS the log", async () => {
+    await seedText(DAMAGED);
+    const seen: string[] = [];
+    const flaky = new QuotaLedger(path, {
+      clock: () => now,
+      syncDir: async () => {
+        seen.push(await readFile(path, "utf8").catch(() => ""));
+        throw Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+      },
+    });
+    const answer = await flaky.recover({ rejectedKey: null });
+    expect(answer.ok).toBe(true);
+    // The sync after the rename went through the best-effort seam: the log it saw was already the new one.
+    expect(seen.some((text) => text.includes('"kind":"recovered"'))).toBe(true);
+    expect((await ledger().summary()).sentInWindow).toBe(QUOTA_LIMIT);
+  });
+
+  test("a temp file a crash left beside the log is swept when the log is first read; nothing else is touched", async () => {
+    await seedText(`${JSON.stringify({ v: 1, kind: "send", id: "send-1", at: NOW - HOUR, key: LAST4 })}\n`);
+    await writeFile(join(dir, "music", ".quota.jsonl.a1b2c3d4e5f6.tmp"), "half a log");
+    await writeFile(join(dir, "music", ".other.json.a1b2c3d4e5f6.tmp"), "not ours");
+    await writeFile(join(dir, "music", "quota.jsonl.corrupt-20261003T101500Z"), "kept");
+    await ledger().summary();
+    expect(await asides()).toEqual([".other.json.a1b2c3d4e5f6.tmp", "quota.jsonl.corrupt-20261003T101500Z"]);
   });
 });

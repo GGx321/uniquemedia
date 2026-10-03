@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startMockFlashapi, type MockFlashapi } from "../scripts/mockFlashapi";
 import { EngineError, MusicStatus } from "../shared/engine";
@@ -69,6 +69,37 @@ describe("music.status writes a held line (review round 1, HIGH)", () => {
     expect(await statusOf(engine)).toMatchObject({ quotaLog: "ok", serverRemaining: 0 });
     expect(failed(await engine.handle(command("music.refresh", { confirm: true }))).error.code).toBe("MUSIC_QUOTA_EXHAUSTED");
     expect(mock.requests).toHaveLength(1);
+  });
+});
+
+describe("a quota log deleted with the music folder (review round 1, MEDIUM)", () => {
+  test("reads missing and 30 of 30, refuses a refresh without a request, and its recovery closes the quota for 31 days", async () => {
+    const { engine, mock } = await start({ damaged: false });
+    // The key line the owner's «Сохранить» wrote is the log's first line: the marker beside music/ now says it existed.
+    expect(await statusOf(engine)).toMatchObject({ quotaLog: "ok" });
+    await engine.applyControl({ kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" });
+    await rm(musicDir(), { recursive: true, force: true });
+    expect(await statusOf(engine)).toMatchObject({ quotaLog: "missing", sentLast31d: 30 });
+    expect(EngineError.parse(failed(await engine.handle(command("music.refresh", { confirm: true }))).error)).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-missing" });
+    const recovered = ok(await engine.handle(command("music.recoverQuotaLog", { confirm: true })));
+    if (recovered.type !== "music.recoverQuotaLog") throw new Error("wrong type");
+    expect(recovered.result.status).toMatchObject({ quotaLog: "ok", sentLast31d: 30 });
+    expect(failed(await engine.handle(command("music.refresh", { confirm: true }))).error.code).toBe("MUSIC_QUOTA_EXHAUSTED");
+    expect(mock.requests).toEqual([]);
+  });
+});
+
+describe("a 401 the damaged log still names (review round 1, LOW)", () => {
+  test("an engine started on the damaged log knew nothing of it; recovery keeps it, so the next refresh says the key is rejected", async () => {
+    const rejected = { v: 1, kind: "result", id: "send-1", at: Date.UTC(2026, 9, 1), key: MUSIC.slice(-4), outcome: "rejected", status: 401 };
+    await mkdir(musicDir(), { recursive: true });
+    await writeFile(join(musicDir(), "quota.jsonl"), `${JSON.stringify(rejected)}\nnot json at all\n`);
+    const { engine, mock } = await start({ damaged: false });
+    ok(await engine.handle(command("music.recoverQuotaLog", { confirm: true })));
+    expect(failed(await engine.handle(command("music.refresh", { confirm: true }))).error.code).toBe("MUSIC_KEY_REJECTED");
+    const settings = ok(await engine.handle(command("settings.get")));
+    expect(settings.type === "settings.get" ? settings.result.musicKey.rejected : null).toBe(true);
+    expect(mock.requests).toEqual([]);
   });
 });
 

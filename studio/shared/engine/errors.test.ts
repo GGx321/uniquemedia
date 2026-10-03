@@ -187,7 +187,7 @@ describe("EngineError for an unusable export folder", () => {
 // yet» and a shutting-down engine, and «Попробуйте позже» was true for only some. The cause now travels as `musicReason`.
 describe("EngineError for music that could not be fetched", () => {
   /** Nothing left: no request was sent. */
-  const NOTHING_SENT = ["shutting-down", "not-available", "no-music-folder", "clock", "config", "log-held", "log-unwritable", "log-unreadable", "log-corrupt"];
+  const NOTHING_SENT = ["shutting-down", "not-available", "no-music-folder", "clock", "config", "log-held", "log-unwritable", "log-unreadable", "log-corrupt", "log-missing"];
   /** The one request left, and it counts. */
   const SENT = ["network", "forbidden", "rate-limited", "server", "bad-answer", "store-failed"];
   /** The downloads of a list fetched earlier: no request to flashapi at all. */
@@ -255,6 +255,12 @@ describe("EngineError for music that could not be fetched", () => {
   test("a held line is written when the «Музыка» card is opened again (review round 1): never «at the next refresh», which waits for it", () => {
     expect(MUSIC_UNAVAILABLE_REASONS_RU["log-held"]).toMatch(/когда вы снова откроете карточку «Музыка»/);
     expect(MUSIC_UNAVAILABLE_REASONS_RU["log-held"]).not.toMatch(/при следующем обновлении/);
+  });
+
+  test("a missing log (review round 1) says the count was lost, points at its recovery and says what it costs", () => {
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["log-missing"]).toMatch(/пропал/);
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["log-missing"]).toMatch(/Настройк/);
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["log-missing"]).toMatch(/31 д/);
   });
 
   test("a corrupt log points at its recovery in Settings and says what it costs", () => {

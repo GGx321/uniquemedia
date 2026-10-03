@@ -1,11 +1,11 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { Count, MUSIC_QUOTA_LIMIT, MUSIC_QUOTA_WINDOW_DAYS } from "../../shared/engine";
-import { appendJsonLine, fsyncDir, readJsonl, writeFileAtomic, writeFileDurable } from "../library/durableFs";
+import { appendJsonLine, fsyncDir, isTempName, readJsonl, tempSiblingPath, writeFileDurable } from "../library/durableFs";
 import { LibraryError } from "../library/errors";
 import { runExclusive } from "../library/keyedMutex";
-import { errorCode } from "../library/renameRetry";
+import { errorCode, renameWithRetry } from "../library/renameRetry";
 
 // The flashapi quota ledger (invariant 30): an append-only JSONL file in `userData/music/`. A request costs one of 30
 // per rolling 31 days on the owner's RapidAPI account, so the count is kept on disk, ahead of the request:
@@ -31,10 +31,17 @@ import { errorCode } from "../library/renameRetry";
 // Each step fails closed: the copy is made first, and the new log replaces the old one in one atomic rename, so a crash
 // leaves either the damaged log (still closed) or the new one (closed for 31 days), never an empty one.
 //
-// Deleting the log by hand resets the local count to 0: the ledger cannot tell a deleted log from a first start. What
-// still holds is the server's own count. The first request after a deletion leaves, and if flashapi answers that no
-// requests remain (`remaining` 0, a 429 above all) the floor closes the next 31 days again. So a deletion costs at most
-// one request beyond what the account allows, per deletion; on a plan with overage that one request may be billed.
+// A deleted log (review round 1). The log sits in `userData/music/` beside ~100 MB of tracks, so deleting that folder is
+// a plausible way to free space, and it would reset the local count. So the first line ever written also leaves a marker
+// OUTSIDE `music/` (`quotaMarkerPath`, `userData/.music-quota-started`); a log from an older Studio gets it when read.
+// While the marker is there, a log that is gone or holds no complete line is `missing`: it fails closed like a corrupt one,
+// no write starts a new log behind the owner's back, and `recover` is the same way out (30 sends at now, 31 days closed).
+// Only with no marker (a real first start) does no log read as an empty one.
+//
+// What deleting the marker as well still costs: the local count starts again from 0, and the only guard left is the
+// server's floor. That floor is set ONLY by an answer whose `x-ratelimit-requests-remaining` says 0 (a negative counts as 0);
+// a 429 without that header sets none. So with the header the loss is at most one request beyond what the account allows,
+// per deletion; without it, nothing local bounds it. On a plan with overage such a request may be billed.
 
 export const QUOTA_LIMIT = MUSIC_QUOTA_LIMIT;
 export const QUOTA_WINDOW_MS = MUSIC_QUOTA_WINDOW_DAYS * 24 * 3600 * 1000;
@@ -51,6 +58,14 @@ const QuarantineName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 export const CLOCK_MIN_MS = 946_684_800_000;
 export const CLOCK_MAX_MS = 4_102_444_800_000;
 const EpochMs = Count.min(CLOCK_MIN_MS).max(CLOCK_MAX_MS);
+
+/**
+ * The marker that the quota log has existed (review round 1): `userData/.music-quota-started`, OUTSIDE `music/`, so deleting
+ * the music folder (100 MB of tracks, a plausible thing to free) does not also forget that requests were sent.
+ */
+export function quotaMarkerPath(quotaPath: string): string {
+  return join(dirname(dirname(quotaPath)), ".music-quota-started");
+}
 
 /** Whether a clock reading is a real date the ledger can write (2000 to 2100). NaN, 1970 (a dead RTC battery) and 2101 are not. */
 export function clockInRange(at: number): boolean {
@@ -83,7 +98,8 @@ const QuotaLineSchema = z.discriminatedUnion("kind", [
     kind: z.literal("recovered"),
     at: EpochMs,
     sends: Count.min(1).max(1000),
-    quarantined: QuarantineName,
+    // Null when there was no file to put aside (a log that is missing, review round 1).
+    quarantined: QuarantineName.nullable(),
     rejectedKey: KeyTag.nullable(),
   }),
 ]);
@@ -104,9 +120,12 @@ export interface QuotaSummary {
   readonly hadOkResult: boolean;
 }
 
-/** The ledger cannot be read, trusted or written, so no request may leave. `code` never carries a key. */
+/**
+ * The ledger cannot be read, trusted or written, so no request may leave. `code` never carries a key. `missing`: the log
+ * is gone (or holds no complete line) although its marker says Studio wrote it before (review round 1).
+ */
 export class QuotaLogError extends Error {
-  readonly code: "unreadable" | "corrupt" | "unwritable";
+  readonly code: "unreadable" | "corrupt" | "unwritable" | "missing";
   constructor(code: QuotaLogError["code"], message: string) {
     super(message);
     this.name = "QuotaLogError";
@@ -165,11 +184,32 @@ export function summarize(lines: readonly QuotaLine[], now: number): QuotaSummar
 export type Admission = { ok: true; summary: QuotaSummary; at: number } | { ok: false; refusal: "quota" | "floor"; summary: QuotaSummary };
 
 /**
- * What `recover` did: the damaged log was put aside (`quarantined`, a name in the log's folder) and the new one counts as
- * the limit spent now; or why nothing changed: the log is sound (or absent), cannot be read at all, or the clock is not
- * a real date the new log could be dated with.
+ * What `recover` did: the damaged log was put aside (`quarantined`, a name in the log's folder; null for a missing log with
+ * no file to keep) and the new one counts as the limit spent now; or why nothing changed: the log is sound (or a fresh,
+ * absent one), cannot be read at all, or the clock is not a real date the new log could be dated with.
  */
-export type Recovery = { ok: true; summary: QuotaSummary; quarantined: string } | { ok: false; refusal: "not-corrupt" | "unreadable" | "clock" };
+export type Recovery = { ok: true; summary: QuotaSummary; quarantined: string | null } | { ok: false; refusal: "not-corrupt" | "unreadable" | "clock" };
+
+/** A crash in the swap leaves the new log's temp beside it (`.quota.jsonl.<hex>.tmp`, durableFs `tempSiblingPath`). */
+function isLogTemp(name: string, log: string): boolean {
+  return name.startsWith(`.${log}.`) && isTempName(name);
+}
+
+/** What a damaged log's readable lines still say: the last 401's key tag, and its latest time (a clock that stepped back). */
+function stillReadable(bytes: Uint8Array, now: number): { rejectedKey: string | null; latestAt: number | null } {
+  const lines: QuotaLine[] = [];
+  const complete = new TextDecoder().decode(bytes).split("\n").slice(0, -1);
+  for (const raw of complete) {
+    try {
+      const parsed = QuotaLineSchema.safeParse(JSON.parse(raw));
+      if (parsed.success) lines.push(parsed.data);
+    } catch {
+      // A line that does not parse says nothing.
+    }
+  }
+  const latestAt = lines.reduce<number | null>((latest, line) => (latest === null || line.at > latest ? line.at : latest), null);
+  return { rejectedKey: summarize(lines, now).rejectedKey, latestAt };
+}
 
 export interface QuotaLedgerOptions {
   clock: () => number;
@@ -202,23 +242,88 @@ function assertKeyTag(key: string | null): void {
 
 export class QuotaLedger {
   readonly #path: string;
+  readonly #marker: string;
   readonly #clock: () => number;
   readonly #syncDir: (dir: string) => Promise<void>;
   readonly #beforeReplace: (() => Promise<void>) | undefined;
+  /** The marker is known to be on disk: it is never removed by Studio, so it is not looked for again. */
+  #markerSeen = false;
+  /** The temps a crashed swap left were swept (once, at the first read). */
+  #swept = false;
 
   constructor(path: string, options: QuotaLedgerOptions) {
     this.#path = path;
+    this.#marker = quotaMarkerPath(path);
     this.#clock = options.clock;
     this.#syncDir = options.syncDir ?? fsyncDir;
     this.#beforeReplace = options.beforeReplace;
   }
 
-  async #load(): Promise<QuotaLine[]> {
+  /** Whether the marker says the log existed. A marker that cannot be looked at counts as there: the money side fails closed. */
+  async #markerExists(): Promise<boolean> {
+    if (this.#markerSeen) return true;
     try {
-      return (await readJsonl(this.#path, QuotaLineSchema)).entries;
+      await stat(this.#marker);
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return false;
+    }
+    this.#markerSeen = true;
+    return true;
+  }
+
+  /** Leaves the marker once a log line is on disk (or a log from an older Studio was read). Best effort: a failure only weakens the check. */
+  async #ensureMarker(): Promise<void> {
+    if (this.#markerSeen) return;
+    try {
+      await writeFileDurable(this.#marker, `${JSON.stringify({ v: 1, since: new Date(this.#clock()).toISOString() })}\n`);
+      // Not through the `syncDir` seam: that one is the log's own folders, and the marker is best effort anyway.
+      await fsyncDir(dirname(this.#marker)).catch(() => undefined);
+      this.#markerSeen = true;
+    } catch (error) {
+      if (errorCode(error) === "EEXIST") this.#markerSeen = true;
+    }
+  }
+
+  /** Removes the temps a crash in `recover`'s swap left beside the log (only the log's own: `.quota.jsonl.<hex>.tmp`). Best effort. */
+  async #sweepTemps(): Promise<void> {
+    if (this.#swept) return;
+    this.#swept = true;
+    const folder = dirname(this.#path);
+    const names = await readdir(folder).catch(() => [] as string[]);
+    for (const name of names) if (isLogTemp(name, basename(this.#path))) await rm(join(folder, name), { force: true }).catch(() => undefined);
+  }
+
+  async #load(): Promise<QuotaLine[]> {
+    await this.#sweepTemps();
+    let entries: QuotaLine[];
+    try {
+      entries = (await readJsonl(this.#path, QuotaLineSchema)).entries;
     } catch (error) {
       if (error instanceof LibraryError) throw new QuotaLogError("corrupt", "the quota log has a line that cannot be read, so the request count cannot be trusted");
       throw new QuotaLogError("unreadable", `the quota log could not be read (${errorCode(error) ?? "unknown"})`);
+    }
+    if (entries.length === 0) {
+      // No line, and yet the marker says Studio wrote one: the log (or the music folder) was deleted or emptied, and its
+      // count with it. Never read as a fresh start.
+      if (await this.#markerExists()) throw new QuotaLogError("missing", "the quota log is gone although requests were sent before, so the request count cannot be trusted");
+      return entries;
+    }
+    await this.#ensureMarker();
+    return entries;
+  }
+
+  /** Makes the log's folder (and every level it had to create) durable in its parent. A folder that cannot be synced only weakens this. */
+  async #makeFolder(): Promise<void> {
+    const folder = dirname(this.#path);
+    const made = await mkdir(folder, { recursive: true });
+    // Every folder this call created made its parent gain an entry: make each durable, or a power loss could take a
+    // folder (and the send line inside it) although the file itself was fsynced. `made` is the FIRST one created, so
+    // the levels are walked from `folder` up to it.
+    if (made === undefined) return;
+    const first = withoutLongPathPrefix(made);
+    for (let level = folder; ; level = dirname(level)) {
+      await this.#syncDir(dirname(level)).catch(() => undefined);
+      if (level === first || dirname(level) === level) break;
     }
   }
 
@@ -226,23 +331,19 @@ export class QuotaLedger {
     // Read back through the very schema the ledger loads with: a line this code could write but not read would close
     // the ledger for good (a complete unreadable line is corruption), so it is never written.
     const line = QuotaLineSchema.parse(candidate);
+    // A log that is gone while its marker is there is not started again by a write (a re-entered key, a held result):
+    // that would be a fresh count behind the owner's back. Only `recover` starts a new one.
+    const text = await readFile(this.#path, "utf8").catch((error: unknown) => (errorCode(error) === "ENOENT" ? "" : null));
+    if (text !== null && !text.includes("\n") && (await this.#markerExists())) {
+      throw new QuotaLogError("missing", "the quota log is gone although requests were sent before; nothing was written");
+    }
     try {
-      const folder = dirname(this.#path);
-      const made = await mkdir(folder, { recursive: true });
-      // Every folder this call created made its parent gain an entry: make each durable, or a power loss could take a
-      // folder (and the send line inside it) although the file itself was fsynced. `made` is the FIRST one created, so
-      // the levels are walked from `folder` up to it. A folder that cannot be synced only weakens this.
-      if (made !== undefined) {
-        const first = withoutLongPathPrefix(made);
-        for (let level = folder; ; level = dirname(level)) {
-          await this.#syncDir(dirname(level)).catch(() => undefined);
-          if (level === first || dirname(level) === level) break;
-        }
-      }
+      await this.#makeFolder();
       await appendJsonLine(this.#path, line);
     } catch (error) {
       throw new QuotaLogError("unwritable", `the quota log could not be written (${errorCode(error) ?? "unknown"})`);
     }
+    await this.#ensureMarker();
   }
 
   /**
@@ -321,11 +422,14 @@ export class QuotaLedger {
 
   /**
    * The way out of a damaged log (3c.6), for the owner's confirmed request only. When, and only when, the log holds a
-   * complete line that cannot be read: copies the file aside, byte for byte, to `<file>.corrupt-<time>` (fsynced, a name
-   * of its own), then replaces the log in one atomic rename with a new one whose only line counts as the limit spent NOW,
-   * carrying `rejectedKey` (the last four chars of a key the caller knows to be rejected, or null). A sound or absent log,
-   * one that cannot be read at all, and a clock that is not a real date change nothing. A write that fails throws
-   * `QuotaLogError("unwritable")` and leaves the damaged log as the log: still closed, and the copy may stay behind.
+   * complete line that cannot be read, or is `missing` (gone or empty while its marker says it existed, review round 1):
+   * copies the file (if there is one) aside, byte for byte, to `<file>.corrupt-<time>` (fsynced, a name of its own), then
+   * puts in its place, in one atomic rename, a new log whose only line counts as the limit spent at the later of now and
+   * the latest time a readable line of the damaged log names (a clock that stepped back must not reopen early). The line
+   * carries `rejectedKey` (the last four chars of a key the caller knows to be rejected), else the last 401 the readable
+   * lines name: it can only add a refusal. A sound or fresh log, one that cannot be read at all, and a clock that is not a
+   * real date change nothing. A write that fails before the rename throws `QuotaLogError("unwritable")` and leaves the
+   * damaged log as the log (still closed); the folder's sync after the rename is best effort, like every folder sync here.
    */
   async recover(input: { rejectedKey: string | null }): Promise<Recovery> {
     assertKeyTag(input.rejectedKey);
@@ -334,25 +438,38 @@ export class QuotaLedger {
         await this.#load();
         return { ok: false, refusal: "not-corrupt" };
       } catch (error) {
-        if (!(error instanceof QuotaLogError) || error.code !== "corrupt") return { ok: false, refusal: "unreadable" };
+        if (!(error instanceof QuotaLogError) || (error.code !== "corrupt" && error.code !== "missing")) return { ok: false, refusal: "unreadable" };
       }
       const now = this.#clock();
       if (!clockInRange(now)) return { ok: false, refusal: "clock" };
-      let damaged: Buffer;
+      let damaged: Buffer | null;
       try {
         damaged = await readFile(this.#path);
-      } catch {
-        return { ok: false, refusal: "unreadable" };
-      }
-      try {
-        const quarantined = await this.#copyAside(damaged, now);
-        const line = QuotaLineSchema.parse({ v: 1, kind: "recovered", at: now, sends: QUOTA_LIMIT, quarantined, rejectedKey: input.rejectedKey });
-        await this.#beforeReplace?.();
-        await writeFileAtomic(this.#path, `${JSON.stringify(line)}\n`);
-        return { ok: true, quarantined, summary: summarize([line], now) };
       } catch (error) {
+        // A missing log may have no file at all (the music folder deleted): there is nothing to put aside.
+        if (errorCode(error) !== "ENOENT") return { ok: false, refusal: "unreadable" };
+        damaged = null;
+      }
+      const readable = damaged === null ? { rejectedKey: null, latestAt: null } : stillReadable(damaged, now);
+      const at = Math.max(now, readable.latestAt ?? now);
+      const folder = dirname(this.#path);
+      const temp = tempSiblingPath(this.#path);
+      let line: QuotaLine;
+      try {
+        await this.#makeFolder();
+        const quarantined = damaged === null ? null : await this.#copyAside(damaged, now);
+        line = QuotaLineSchema.parse({ v: 1, kind: "recovered", at, sends: QUOTA_LIMIT, quarantined, rejectedKey: input.rejectedKey ?? readable.rejectedKey });
+        await this.#beforeReplace?.();
+        await writeFileDurable(temp, `${JSON.stringify(line)}\n`);
+        await renameWithRetry(temp, this.#path);
+      } catch (error) {
+        await rm(temp, { force: true }).catch(() => undefined);
         throw new QuotaLogError("unwritable", `the quota log could not be recovered (${errorCode(error) ?? "unknown"})`);
       }
+      // The new log IS the log from here on: the rename's entry is synced, and a folder that cannot be synced only weakens it.
+      await this.#syncDir(folder).catch(() => undefined);
+      await this.#ensureMarker();
+      return { ok: true, quarantined: line.kind === "recovered" ? line.quarantined : null, summary: summarize([line], now) };
     });
   }
 

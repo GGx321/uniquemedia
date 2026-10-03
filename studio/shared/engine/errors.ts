@@ -189,6 +189,7 @@ export type CaptionIssue = z.infer<typeof CaptionIssue>;
  * - log-unwritable: the quota log could not be written now.
  * - log-unreadable: the quota log could not be read.
  * - log-corrupt: the quota log has a complete line that cannot be read (`music.recoverQuotaLog` is the way out).
+ * - log-missing: the quota log is gone although requests were sent before (its marker says so): the same way out.
  *
  * The request left and counts:
  * - network: no answer (network, timeout).
@@ -212,6 +213,7 @@ export const MUSIC_UNAVAILABLE_REASONS = [
   "log-unwritable",
   "log-unreadable",
   "log-corrupt",
+  "log-missing",
   "network",
   "forbidden",
   "rate-limited",

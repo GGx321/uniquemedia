@@ -194,7 +194,16 @@ function unavailable(musicReason: MusicUnavailableReason, detail: string): { ok:
 /** The cause of a quota log that could not be read, trusted or written. */
 function logReason(error: unknown, fallback: "log-unreadable" | "log-unwritable"): MusicUnavailableReason {
   if (!(error instanceof QuotaLogError)) return fallback;
-  return error.code === "corrupt" ? "log-corrupt" : error.code === "unreadable" ? "log-unreadable" : "log-unwritable";
+  switch (error.code) {
+    case "corrupt":
+      return "log-corrupt";
+    case "missing":
+      return "log-missing";
+    case "unreadable":
+      return "log-unreadable";
+    case "unwritable":
+      return "log-unwritable";
+  }
 }
 
 /** The cause of a request that left and did not end in a usable list; a 401 is MUSIC_KEY_REJECTED and never asks this. */
@@ -256,6 +265,8 @@ export class MusicService {
    */
   readonly #pending: PendingLine[] = [];
   #flushing: Promise<unknown> = Promise.resolve();
+  /** Why the last flush stopped (the ledger's own error), so a refusal can name it; cleared when one writes everything. */
+  #flushFailure: QuotaLogError | null = null;
   /** Refreshes that are still inside admission (before their request is started), so `stop()` can wait for them. */
   readonly #admissions = new Set<Promise<unknown>>();
 
@@ -282,10 +293,10 @@ export class MusicService {
         // Lines still waiting to be written count already; no refresh leaves until they are on disk (3c.6).
         if (this.#pending.length > 0) quotaLog = "held";
       } catch (error) {
-        quotaLog = error instanceof QuotaLogError && error.code === "corrupt" ? "corrupt" : "unreadable";
+        quotaLog = error instanceof QuotaLogError && (error.code === "corrupt" || error.code === "missing") ? error.code : "unreadable";
       }
     }
-    const unreadable = quotaLog === "corrupt" || quotaLog === "unreadable";
+    const unreadable = quotaLog === "corrupt" || quotaLog === "unreadable" || quotaLog === "missing";
     // A sink that cannot say what it holds must not take the status (and a refresh's answer) down with it.
     let list: ReturnType<MusicListSink["summary"]>;
     try {
@@ -365,6 +376,8 @@ export class MusicService {
    */
   async recoverQuotaLog(): Promise<RefreshAnswer> {
     if (this.#closing) return unavailable("shutting-down", "the engine is shutting down, so the quota log was not changed");
+    // A refresh or the downloads it left are running (review round 1): the log is not swapped under them.
+    if (this.#busy) return fail("IN_FLIGHT", "a music refresh is running; recover the quota log once it has ended");
     const ledger = this.#ledger;
     if (ledger === null) return unavailable("no-music-folder", "the music folder is not available, so there is no quota log to recover");
     const key = this.#deps.key();
@@ -388,6 +401,8 @@ export class MusicService {
       }
     }
     this.#say(`studio engine: a damaged quota log was put aside as ${recovery.quarantined}; it counts as ${MUSIC_QUOTA_LIMIT} requests now, so the next may leave in 31 days`);
+    // Lines held while the log was gone or damaged (a re-entered key, a late answer) can now be written, behind the new line.
+    await this.#flush();
     this.#changed();
     await this.#emitting;
     return { ok: true, status: await this.status() };
@@ -434,6 +449,7 @@ export class MusicService {
         // Only the log's own failure (I/O) is worth retrying. A line the schema or the tag rule refuses will be refused
         // again, and left in front it would block every line and refresh behind it for good, so it is dropped.
         if (error instanceof QuotaLogError) {
+          this.#flushFailure = error;
           this.#say(`studio engine: ${what} (${errorKind(error)})`);
           return false;
         }
@@ -441,6 +457,7 @@ export class MusicService {
       }
       this.#pending.shift();
     }
+    this.#flushFailure = null;
     return true;
   }
 
@@ -480,6 +497,8 @@ export class MusicService {
       // What an earlier failed write held goes to the log FIRST: a 401 or a 0 that was never recorded must count before
       // this request is admitted. If it still cannot be written, nothing is sent.
       if (!(await this.#flush())) {
+        // A log that is gone takes no line until it is recovered: that, not a write that may work later, is why nothing left.
+        if (this.#flushFailure?.code === "missing") return unavailable("log-missing", `${this.#flushFailure.message}; nothing was sent`);
         return unavailable("log-held", "the quota log could not be written (a result or key change is still held), so nothing was sent; try again later");
       }
       // Built before anything is written: a base URL or key the client refuses must never cost a send.

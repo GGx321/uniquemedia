@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startMockFlashapi, type MockFlashapi } from "../../scripts/mockFlashapi";
@@ -41,6 +41,21 @@ afterEach(async () => {
 });
 
 const quotaPath = () => join(dir, "music", "quota.jsonl");
+
+/**
+ * Puts a FOLDER where the quota file is, so no line can be appended: the disk breaks. The file's lines are kept aside, not
+ * deleted, since a log that is gone while its marker says it existed now reads `missing` (review round 1).
+ */
+async function moveTheLogAway(): Promise<void> {
+  await rename(quotaPath(), `${quotaPath()}.away`).catch(() => undefined);
+  await mkdir(quotaPath());
+}
+
+/** The disk works again: the folder goes, and the log comes back with its lines. */
+async function bringTheLogBack(): Promise<void> {
+  await rm(quotaPath(), { recursive: true, force: true });
+  await rename(`${quotaPath()}.away`, quotaPath()).catch(() => undefined);
+}
 
 /** What a sink that stores nothing answers to music.list and music.peaks. */
 const NO_CATALOGUE = { list: (): [] => [], peaks: (): Promise<null> => Promise.resolve(null) };
@@ -570,8 +585,7 @@ describe("the server's remaining = 0 on an ERROR answer is the floor (the real e
 describe("a result that could not be written", () => {
   /** A fetch that, when the request arrives, puts a FOLDER where the quota file is, so the result line cannot be appended. */
   const breakingTheLog: FlashapiFetch = async (url, init) => {
-    await rm(quotaPath(), { force: true });
-    await mkdir(quotaPath());
+    await moveTheLogAway();
     return nativeFetch(url, init);
   };
 
@@ -605,11 +619,11 @@ describe("a result that could not be written", () => {
     const h = harness({ fetch: breakingTheLog });
     await h.service.refresh();
     await h.service.settled();
-    await rm(quotaPath(), { recursive: true, force: true });
+    await bringTheLogBack();
     expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
     expect(mock.requests).toHaveLength(1);
-    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result"]);
-    expect((await quotaLines())[0]).toMatchObject({ outcome: "http-error", status: 429, remaining: 0 });
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["send", "result"]);
+    expect((await quotaLines())[1]).toMatchObject({ outcome: "http-error", status: 429, remaining: 0 });
   });
 
   test("keeps its own time: the line is written with the moment the answer came, not the moment the log recovered", async () => {
@@ -618,10 +632,10 @@ describe("a result that could not be written", () => {
     const h = harness({ fetch: breakingTheLog });
     await h.service.refresh();
     await h.service.settled();
-    await rm(quotaPath(), { recursive: true, force: true });
+    await bringTheLogBack();
     now += 5 * HOUR;
     await h.service.refresh();
-    expect((await quotaLines())[0]).toMatchObject({ kind: "result", at: NOW });
+    expect((await quotaLines())[1]).toMatchObject({ kind: "result", at: NOW });
   });
 
   test("a re-entered key does not lose it: the unwritten 429 goes to the log BEFORE the key line, and the next refresh is still refused", async () => {
@@ -630,9 +644,9 @@ describe("a result that could not be written", () => {
     const h = harness({ fetch: breakingTheLog });
     await h.service.refresh();
     await h.service.settled();
-    await rm(quotaPath(), { recursive: true, force: true });
+    await bringTheLogBack();
     await h.service.noteKeyChange("0000");
-    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result", "key"]);
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["send", "result", "key"]);
     expect(refused(await h.service.refresh()).code).toBe("MUSIC_QUOTA_EXHAUSTED");
     expect(mock.requests).toHaveLength(1);
   });
@@ -642,10 +656,10 @@ describe("a result that could not be written", () => {
     const h = harness({ fetch: breakingTheLog });
     await h.service.refresh();
     await h.service.settled();
-    await rm(quotaPath(), { recursive: true, force: true });
+    await bringTheLogBack();
     await h.service.noteKeyChange("0000");
     // The owner stored a key: the 401 is older than that, so the new key is not held rejected by it.
-    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result", "key"]);
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["send", "result", "key"]);
     expect(await h.service.keyRejected("0000")).toBe(false);
   });
 
@@ -657,10 +671,10 @@ describe("a result that could not be written", () => {
     await h.service.settled();
     await h.service.noteKeyChange("0000");
     expect(refused(await h.service.refresh()).code).toBe("MUSIC_UNAVAILABLE");
-    await rm(quotaPath(), { recursive: true, force: true });
+    await bringTheLogBack();
     expect((await h.service.refresh()).ok).toBe(true);
     await h.service.settled();
-    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result", "key", "send", "result"]);
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["send", "result", "key", "send", "result"]);
   });
 
   test("clears once the line is written: a refresh that had no zero and no 401 to keep goes through", async () => {
@@ -669,11 +683,11 @@ describe("a result that could not be written", () => {
     const h = harness({ fetch: breakingOnce() });
     await h.service.refresh();
     await h.service.settled();
-    await rm(quotaPath(), { recursive: true, force: true });
+    await bringTheLogBack();
     now += HOUR;
     expect((await h.service.refresh()).ok).toBe(true);
     await h.service.settled();
-    expect((await quotaLines()).map((l) => l.kind)).toEqual(["result", "send", "result"]);
+    expect((await quotaLines()).map((l) => l.kind)).toEqual(["send", "result", "send", "result"]);
   });
 
   test("names the kind of error in the log, not `unknown`, and never the key", async () => {
@@ -1186,8 +1200,7 @@ describe("the flush chain survives a failure of its own", () => {
     const breaking: FlashapiFetch = async (url, init) => {
       if (first) {
         first = false;
-        await rm(quotaPath(), { force: true });
-        await mkdir(quotaPath());
+        await moveTheLogAway();
       }
       return nativeFetch(url, init);
     };
@@ -1201,7 +1214,7 @@ describe("the flush chain survives a failure of its own", () => {
     await h.service.refresh();
     await h.service.settled();
     armed = false;
-    await rm(quotaPath(), { recursive: true, force: true });
+    await bringTheLogBack();
     const answer = await h.service.refresh();
     expect(answer.ok || answer.error.code !== "INTERNAL").toBe(true);
     await h.service.settled();

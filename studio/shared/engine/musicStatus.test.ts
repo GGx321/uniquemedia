@@ -68,8 +68,8 @@ describe("MusicStatus", () => {
 // Stage 3, task 3c.6: the quota log's own state, so the card can say why «Обновить» is closed before a click, and offer the
 // recovery of a damaged log.
 describe("MusicStatus.quotaLog", () => {
-  test("the states are exactly: ok, held (a result or key line waits to be written), corrupt and unreadable", () => {
-    expect([...MUSIC_QUOTA_LOG_STATES]).toEqual(["ok", "held", "corrupt", "unreadable"]);
+  test("the states are exactly: ok, held (a result or key line waits to be written), corrupt, unreadable and missing (gone after requests were sent)", () => {
+    expect([...MUSIC_QUOTA_LOG_STATES]).toEqual(["ok", "held", "corrupt", "unreadable", "missing"]);
   });
 
   test("is required: a status that does not say whether its count can be trusted is refused", () => {
@@ -85,7 +85,7 @@ describe("MusicStatus.quotaLog", () => {
     expect(MusicStatus.safeParse({ ...idle, quotaLog: "held", sentLast31d: 4 }).success).toBe(true);
   });
 
-  test.each(["corrupt", "unreadable"] as const)("a %s log reads 30 of 30: it can never show room the log cannot vouch for", (quotaLog) => {
+  test.each(["corrupt", "unreadable", "missing"] as const)("a %s log reads 30 of 30: it can never show room the log cannot vouch for", (quotaLog) => {
     expect(MusicStatus.safeParse({ ...idle, quotaLog, sentLast31d: 30, serverRemaining: null, nextFreeAt: null }).success).toBe(true);
     expect(MusicStatus.safeParse({ ...idle, quotaLog, sentLast31d: 29, serverRemaining: null, nextFreeAt: null }).success).toBe(false);
     expect(MusicStatus.safeParse({ ...idle, quotaLog, sentLast31d: 0, serverRemaining: null, nextFreeAt: null }).success).toBe(false);

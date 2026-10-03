@@ -706,9 +706,12 @@ export const MusicRefreshState = z.discriminatedUnion("state", [
  *   status, and no refresh leaves until it is written;
  * - `corrupt`: the log has a complete line that cannot be read, so the count cannot be trusted. `music.recoverQuotaLog`
  *   puts the file aside and closes the quota for 31 days;
- * - `unreadable`: the log could not be read at all (no access to the file).
+ * - `unreadable`: the log could not be read at all (no access to the file);
+ * - `missing`: the log is gone (or holds no line) although Studio wrote one before: a marker beside the music folder
+ *   says so (the owner deleted the folder to free space, say). The count is lost, so it is handled like `corrupt`,
+ *   with the same recovery (review round 1). A fresh install has no marker and reads `ok`.
  */
-export const MUSIC_QUOTA_LOG_STATES = ["ok", "held", "corrupt", "unreadable"] as const;
+export const MUSIC_QUOTA_LOG_STATES = ["ok", "held", "corrupt", "unreadable", "missing"] as const;
 export const MusicQuotaLog = z.enum(MUSIC_QUOTA_LOG_STATES);
 
 /**
@@ -717,7 +720,7 @@ export const MusicQuotaLog = z.enum(MUSIC_QUOTA_LOG_STATES);
  * days, a request that left and got no answer included; `serverRemaining` is flashapi's own count from its last answer
  * within that window. `nextFreeAt` is when a refused refresh may leave (the oldest send leaving the window, or the
  * server's zero lifting), else when the oldest send leaves the window; null with nothing in the window. A log that is
- * `corrupt` or `unreadable` reads as the whole quota spent: the status never shows room the log cannot vouch for.
+ * `corrupt`, `unreadable` or `missing` reads as the whole quota spent: the status never shows room the log cannot vouch for.
  */
 export const MusicStatus = z
   .strictObject({
@@ -731,7 +734,7 @@ export const MusicStatus = z
     refresh: MusicRefreshState,
     quotaLog: MusicQuotaLog,
   })
-  .refine((s) => (s.quotaLog !== "corrupt" && s.quotaLog !== "unreadable") || s.sentLast31d === MUSIC_QUOTA_LIMIT, {
+  .refine((s) => (s.quotaLog !== "corrupt" && s.quotaLog !== "unreadable" && s.quotaLog !== "missing") || s.sentLast31d === MUSIC_QUOTA_LIMIT, {
     message: "a log that cannot be read counts as the whole quota spent",
     path: ["sentLast31d"],
   });
