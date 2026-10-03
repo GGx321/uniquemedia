@@ -822,6 +822,13 @@ finished kept; the saving mark dropped at the job's end), and the photo grid's n
 - **Not built.** Highlights of single collage cells (the timeline marks the whole frame; cells come with 3d.3a/3d.4). The caption reason by `captionIssue` (K19; the button says `Текст N: надпись не проходит проверку` from the engine's `caption-invalid` until 3b/3d.5). A timer re-check of the export folder (3e.3 left it). The videos tab's job cards (3e.2).
 - **Deviations from the artboards.** Queued, `Сохранение…` and failed are not drawn: they use the busy button of `Рендер · 42 %`, the green `Готово` row and the same row in the danger tone. The no-folder `Настройки` link opens the export card (`focus: "export"`). The artboard's enabled `Рендер` next to `Готово` is disabled with its reason (Q1).
 
+## 5f. 3c.6 as built (the Settings «Музыка · flashapi» card)
+
+- **Rows St8–St13.** St8/St10: «Ключ RapidAPI», the mask `••••••••` + last four, «Заменить» / «Удалить» (main's `settings.setMusicKey` / `clearMusicKey`). St9 «Проверить» is not built (Q4). St11: «Запросы flashapi» «N из 30», the bar and «отправлено N из 30 за 31 день · считаются и запросы с ошибкой», then «следующий освободится D» (CF5, not «Сентябрь»). St12: «только вручную · обновлено D, HH:MM · N треков · X МБ» (the track count is added). St13: the first «Обновить · 1 запрос» only asks, in the row; the confirmation names what is left and when the next frees; only its «Обновить · 1 запрос» sends `music.refresh {confirm: true}`, once.
+- **States the artboard does not draw (section 2.2, music):** no key and a rejected key (the button closed with its reason); the server's `remaining = 0` while the local count is low; running («обновляется · P %») and failed (the cause's text, `musicReason`); a refusal at the click; the quota log held, unreadable, or corrupt with «Восстановить журнал…», behind a confirmation that names the day the quota reopens (31 days). The components sheet's near-limit button («· 1 из 2 оставшихся») and the danger bar at 30 of 30 are used.
+- **Contract:** `MusicStatus.quotaLog`, `EngineError.musicReason` (+ `MUSIC_UNAVAILABLE_REASONS_RU`), `music.recoverQuotaLog {confirm: true}`; `SettingsFocus` `music` (the editor's music tab, 3d.5, links here).
+- **Mock:** answers `music.status`, `music.refresh` and `music.recoverQuotaLog` like the engine (parity scenario «music: …»); not `music.list` / `music.peaks` yet (3d.5). Do not design the editor's music tab around the mock's refresh steps (three steps on its clock) or its list (no tracks).
+
 ## 6. Per-task UI checklists
 
 What each of the next UI tasks must implement from the artboards. «Скоро» means disabled with
