@@ -106,7 +106,7 @@ export type SubmitOutcome =
   /** The engine queued it. */
   | { readonly kind: "queued"; readonly jobId: string; readonly videoId: string }
   /** No answer in time: the job may exist. It is looked for by the draft among the jobs the events and snapshot bring (`foundAfterSubmit`). */
-  | { readonly kind: "unknown" }
+  | { readonly kind: "unknown"; readonly error: EngineError }
   /** A refusal: nothing was queued, and asking again is safe. `clips` are the frames the engine named. */
   | { readonly kind: "refused"; readonly error: EngineError; readonly clips: readonly number[] };
 
@@ -127,7 +127,7 @@ function clipsOf(error: EngineError): number[] {
  */
 export function classifyAnswer(reply: EngineReply<"videos.render">): SubmitOutcome {
   if (reply.ok) return { kind: "queued", jobId: reply.result.jobId, videoId: reply.result.videoId };
-  if (reply.error.code === "INTERNAL" && reply.error.detail?.startsWith(NO_ANSWER_DETAIL_PREFIX) === true) return { kind: "unknown" };
+  if (reply.error.code === "INTERNAL" && reply.error.detail?.startsWith(NO_ANSWER_DETAIL_PREFIX) === true) return { kind: "unknown", error: reply.error };
   return { kind: "refused", error: reply.error, clips: clipsOf(reply.error) };
 }
 

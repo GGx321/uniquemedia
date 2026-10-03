@@ -1,6 +1,7 @@
 import type { Clip, Montage, MontageDraft } from "../../../shared/engine";
 import { estimateBytes, FPS, FRAME_H, FRAME_W, FRAMES_PER_STEP, staggerStepFrames } from "../../../shared/montage";
 import { countOf, NBSP } from "../../lib/format";
+import type { RenderControl } from "../../engine/renderJobs";
 import type { SaveState } from "./autosave";
 import type { AddRefusal } from "./clipOps";
 import type { PhotoProblem } from "./renderBlock";
@@ -167,6 +168,21 @@ export function whenLabel(iso: string, now: Date, timeZone?: string): string {
   if (ago === 1) return `вчера, ${time}`;
   const dayMonth = `${day.day}${NBSP}${MONTHS[day.month - 1] ?? ""}`;
   return day.year === today.year ? `${dayMonth}, ${time}` : `${dayMonth} ${day.year}, ${time}`;
+}
+
+/** The render button's label while a render is on its way (3d.6): «Рендер…», «В очереди · после 2», «Рендер · 42 %», «Сохранение…». */
+export function renderButtonLabel(control: Extract<RenderControl, { kind: "submitting" | "queued" | "running" | "saving" }>): string {
+  switch (control.kind) {
+    case "submitting":
+      return "Рендер…";
+    case "queued":
+      if (control.cancelling) return "Отменяем…";
+      return control.after === 0 ? "В очереди" : `В очереди · после ${control.after}`;
+    case "running":
+      return control.cancelling ? "Отменяем…" : `Рендер · ${control.percent}${NBSP}%`;
+    case "saving":
+      return "Сохранение…";
+  }
 }
 
 /**

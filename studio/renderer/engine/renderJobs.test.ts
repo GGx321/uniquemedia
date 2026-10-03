@@ -272,7 +272,8 @@ describe("what a `videos.render` answer means", () => {
   });
 
   test("no answer in time (main's deadline) is NOT a refusal: the job may exist and is looked for by the draft", () => {
-    expect(classifyAnswer({ ok: false, error: { code: "INTERNAL", detail: `${NO_ANSWER_DETAIL_PREFIX}30 s` } })).toEqual({ kind: "unknown" });
+    const error: EngineError = { code: "INTERNAL", detail: `${NO_ANSWER_DETAIL_PREFIX}30 s` };
+    expect(classifyAnswer({ ok: false, error })).toEqual({ kind: "unknown", error });
   });
 
   test("the engine's own out-of-time before `submit` queued nothing: a refusal, safe to retry", () => {

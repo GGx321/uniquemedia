@@ -3,19 +3,20 @@ import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type E
 import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
 import { onFlushRequest, quitWithoutSaving } from "../engine/windowStudio";
+import { classifyAnswer, foundAfterSubmit, latestRenderOf, renderControl, type RenderControl } from "../engine/renderJobs";
 import { isActiveJob, type EngineView } from "../engine/store";
 import { errorText } from "../lib/errors";
-import { NBSP } from "../lib/format";
 import { type Route, useLeaveGuard, useNavigate } from "../navigation";
 import { EngineOffline } from "../ui/EngineOffline";
-import { Icon, PlayIcon, Spin } from "../ui/Icon";
+import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { ClipProperties } from "./montage/ClipProperties";
 import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto } from "./montage/clipOps";
 import { isFreePhoto, MediaPanel, PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
 import { draftTitle, outputLabel, outputParts, saveLabel } from "./montage/labels";
-import { photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type RenderBlock, type UsedVideo } from "./montage/renderBlock";
+import { RenderControls } from "./montage/RenderControls";
+import { photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
 import { isTextEntry } from "./montage/keys";
 import { resolveSelection, selectClip } from "./montage/selection";
@@ -41,6 +42,8 @@ type Load =
 const CHANGING_RETRIES = 2;
 /** The pause before such a retry: the save that was replacing the file is done by then. */
 const CHANGING_PAUSE_MS = 150;
+/** How long a render whose answer never came waits for its job to show up in the events and the snapshot before the owner is told. */
+const NO_ANSWER_GRACE_MS = 2_000;
 
 /** «2026-09-30_collage3_001»: a video's file name without its folder and extension, as the owner sees it in «Готовые видео». */
 function fileLabel(video: VideoSummary): string {
@@ -52,26 +55,31 @@ function EditorHeader({
   session,
   title,
   fresh,
-  block,
-  busy,
+  control,
+  revealing,
   leaving,
   onBack,
   onDrafts,
   onRender,
+  onCancel,
+  onReveal,
 }: {
   session: DraftSession;
   title: { avatar: string | null };
   /** Opened right after `montages.create`: «создан только что» until the first save lands. */
   fresh: boolean;
-  block: RenderBlock | null;
-  busy: { label: string } | null;
+  /** The render button's state (3d.6): from the job model. */
+  control: RenderControl;
+  /** «Открыть в папке» was asked and is not answered yet. */
+  revealing: boolean;
   /** The way out is waiting for the unsaved edit to be saved. */
   leaving: boolean;
   onBack: () => void;
   onDrafts: () => void;
   onRender: () => void;
+  onCancel: () => void;
+  onReveal: (videoId: string) => void;
 }) {
-  const navigate = useNavigate();
   const state = useSyncExternalStore(
     useCallback((listener: () => void) => session.subscribe(listener), [session]),
     () => session.state,
@@ -80,7 +88,6 @@ function EditorHeader({
   /** Why the typed name was refused; the field stays open with it. */
   const [nameError, setNameError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const whyId = useId();
   const nameErrorId = useId();
   const gone = state.save.kind === "gone";
 
@@ -171,36 +178,7 @@ function EditorHeader({
           {leaving ? <Spin /> : <Icon name="list" size={15} />}
           Черновики
         </button>
-        {/* SLOT 3d.6: the queue position, the saving phase, Cancel, done («Готово · Открыть в папке») and failed states. */}
-        {busy !== null ? (
-          <button type="button" className="btn btn-p ed-render-busy" aria-busy="true" aria-disabled="true">
-            <Spin />
-            {busy.label}
-          </button>
-        ) : block !== null ? (
-          <>
-            <span id={whyId} className="faint ed-render-why" title={block.text}>
-              {block.text}
-              {block.settings && (
-                <>
-                  {" · "}
-                  <button type="button" className="ed-link" onClick={() => navigate({ name: "settings" })}>
-                    Настройки
-                  </button>
-                </>
-              )}
-            </span>
-            <button type="button" className="btn btn-p" disabled aria-describedby={whyId}>
-              <PlayIcon />
-              Рендер
-            </button>
-          </>
-        ) : (
-          <button type="button" className="btn btn-p" disabled={gone} onClick={onRender}>
-            <PlayIcon />
-            Рендер
-          </button>
-        )}
+        <RenderControls control={control} gone={gone} revealing={revealing} onRender={onRender} onCancel={onCancel} onReveal={onReveal} />
       </div>
     </header>
   );
@@ -240,7 +218,7 @@ function DraftEditor({
     () => session.state,
   );
   // This draft's latest render as the store knows it; its key moves with the job's status.
-  const renderJob = view.jobs.filter((j) => j.kind === "render" && j.montageId === montageId).at(-1) ?? null;
+  const renderJob = latestRenderOf(view.jobs, montageId);
   const renderKey = renderJob === null ? "none" : `${renderJob.jobId}:${renderJob.status}`;
   /** The engine's verdict, and the render state it was read AFTER: a verdict older than a render's end is stale. */
   const [verdict, setVerdict] = useState<EngineVerdict & { after: string }>(() => ({ spec: initial.spec, issues: initialIssues, after: renderKey }));
@@ -250,9 +228,20 @@ function DraftEditor({
   const [verdictError, setVerdictError] = useState<EngineError | null>(null);
   const [focusTick, setFocusTick] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-  /** The render this window just queued, until the store knows how it ended: no second submit in between. */
-  const [submittedJob, setSubmittedJob] = useState<string | null>(null);
+  /**
+   * The render this window just submitted, until the store has heard of its job: no second submit in between. `jobId` is the
+   * one the answer named; an answer that never came names none, and the job is looked for by this draft among the jobs the
+   * window did not know (`known`).
+   */
+  const [pending, setPending] = useState<{ jobId: string | null; known: ReadonlySet<string>; silent: EngineError | null } | null>(null);
   const [renderError, setRenderError] = useState<EngineError | null>(null);
+  /** The frames a refused render named (`PHOTO_UNAVAILABLE` / `MONTAGE_INVALID` issues), highlighted until the next try. */
+  const [refusedClips, setRefusedClips] = useState<readonly number[]>([]);
+  /** The failed render whose notice the owner closed. */
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<EngineError | null>(null);
   const [leaving, setLeaving] = useState(false);
   /** Why the previous editor's last edit of this draft was not saved (told once, on this open). */
   const [lost, setLost] = useState<EngineError | null>(lostEdit);
@@ -494,43 +483,92 @@ function DraftEditor({
     photos: photoIndex,
     usedVideo,
   });
-  const activeJob = renderJob !== null && isActiveJob(renderJob) ? renderJob : null;
   // A render of this draft that just ended moved its photos (one photo, one video): until a verdict read after that
   // end answers, the old one cannot be trusted, so «Рендер» stays busy instead of flashing ready.
   const verdictBehind = renderJob !== null && !isActiveJob(renderJob) && verdict.after !== renderKey;
   // ...unless that read failed: then the button is blocked with the reason, and «Повторить» reads it again.
   const verdictFailed = verdictBehind && verdictError !== null;
-  // The answer may come before the job's first event (only the events and the snapshot promise it): until the store
-  // has heard of the submitted job, the button stays busy.
-  const submittedUnheard = submittedJob !== null && !view.jobs.some((j) => j.jobId === submittedJob);
+  // The answer may come before the job's first event (only the events and the snapshot promise it): until the store has
+  // heard of the job the answer named, or, when no answer came, of a new render of this draft, the button stays busy.
+  const heard = pending === null || (pending.jobId !== null ? view.jobs.some((j) => j.jobId === pending.jobId) : foundAfterSubmit(view.jobs, montageId, pending.known) !== null);
   useEffect(() => {
-    if (submittedJob !== null && !submittedUnheard) setSubmittedJob(null);
-  }, [submittedJob, submittedUnheard]);
-  const busy = submitting || submittedUnheard || (verdictBehind && !verdictFailed)
-    ? { label: "Рендер…" }
-    : activeJob === null
-      ? null
-      : { label: activeJob.status === "queued" ? "В очереди" : `Рендер · ${activeJob.total > 0 ? Math.floor((activeJob.done / activeJob.total) * 100) : 0}${NBSP}%` };
+    if (pending !== null && heard) setPending(null);
+  }, [pending, heard]);
+  // An answer that never came: the job may exist. It is waited for a moment (the events and snapshot name it), and when none
+  // shows, the owner is told it may have been queued; nothing is sent again on its own.
+  useEffect(() => {
+    if (pending === null || pending.jobId !== null || heard) return;
+    return realScheduler.schedule(NO_ANSWER_GRACE_MS, () => {
+      setPending(null);
+      setRenderError(pending.silent);
+    });
+  }, [pending, heard]);
+
+  const cancelling = cancelBusy || (renderJob !== null && view.cancellingJobs.has(renderJob.jobId));
+  const control = renderControl({
+    block: gone ? null : verdictFailed ? { text: "Черновик не удалось проверить после рендера", settings: false } : block,
+    job: renderJob,
+    jobs: view.jobs,
+    submitting: submitting || !heard,
+    verdictPending: verdictBehind && !verdictFailed,
+    dismissed,
+    cancelling,
+  });
+
+  // The window's own lock: a click that lands before React shows the busy button still cannot send a second render.
+  const submitLock = useRef(false);
+  // The frames a refusal named describe the spec that was refused: an edit retires them.
+  useEffect(() => setRefusedClips([]), [state.spec]);
 
   async function submitRender(): Promise<void> {
+    if (submitLock.current) return;
+    submitLock.current = true;
     setSubmitting(true);
     setRenderError(null);
+    setRefusedClips([]);
+    const known = new Set(view.jobs.map((j) => j.jobId));
     // The engine renders the draft as STORED: the newest edit must be there first.
     const flushed = await session.flush();
     if (!mounted.current) return;
     if (!flushed.ok) {
+      submitLock.current = false;
       setSubmitting(false);
       setRenderError(flushed.error);
       return;
     }
     const reply = await client.request("videos.render", { montageId });
     if (!mounted.current) return;
+    submitLock.current = false;
     setSubmitting(false);
-    if (reply.ok) setSubmittedJob(reply.result.jobId);
+    const outcome = classifyAnswer(reply);
+    if (outcome.kind === "queued") setPending({ jobId: outcome.jobId, known, silent: null });
+    else if (outcome.kind === "unknown") setPending({ jobId: null, known, silent: outcome.error });
     else {
-      setRenderError(reply.error);
+      // A refusal queued nothing: asking again is safe. The engine's verdict is read again (it may name what changed).
+      setRenderError(outcome.error);
+      setRefusedClips(outcome.clips);
       setFocusTick((n) => n + 1);
     }
+  }
+
+  async function cancelRender(): Promise<void> {
+    if (renderJob === null || cancelBusy) return;
+    setCancelBusy(true);
+    const reply = await client.request("videos.cancel", { jobId: renderJob.jobId });
+    // The store is window-wide: it waits for the job's real end even if this editor is gone by now.
+    if (reply.ok) store.markCancelling(renderJob.jobId);
+    if (!mounted.current) return;
+    setCancelBusy(false);
+    if (!reply.ok) setRenderError(reply.error);
+  }
+
+  async function revealVideo(videoId: string): Promise<void> {
+    setRevealing(true);
+    setRevealError(null);
+    const reply = await client.request("videos.reveal", { videoId });
+    if (!mounted.current) return;
+    setRevealing(false);
+    if (!reply.ok) setRevealError(reply.error);
   }
 
   return (
@@ -539,12 +577,14 @@ function DraftEditor({
         session={session}
         title={{ avatar: avatar?.name ?? null }}
         fresh={created && state.saved.updatedAt === initial.updatedAt && renderJob === null}
-        block={gone ? null : verdictFailed ? { text: "Черновик не удалось проверить после рендера", settings: false } : block}
-        busy={busy}
+        control={control}
+        revealing={revealing}
         leaving={leaving}
         onBack={() => navigate({ name: "photos", avatarId })}
         onDrafts={() => navigate({ name: "montages" })}
         onRender={() => void submitRender()}
+        onCancel={() => void cancelRender()}
+        onReveal={(videoId) => void revealVideo(videoId)}
       />
       {lost !== null && (
         <div className="ed-notices">
@@ -661,6 +701,42 @@ function DraftEditor({
           )}
         </div>
       )}
+      {(control.kind === "failed" || revealError !== null) && (
+        <div className="ed-notices">
+          {control.kind === "failed" && renderJob !== null && (
+            <ErrorNotice
+              error={control.error}
+              actions={
+                <button type="button" className="btn btn-s" onClick={() => setDismissed(renderJob.jobId)}>
+                  Закрыть
+                </button>
+              }
+            />
+          )}
+          {revealError !== null &&
+            (revealError.code === "NOT_FOUND" ? (
+              <Notice
+                tone="warn"
+                actions={
+                  <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                    Закрыть
+                  </button>
+                }
+              >
+                Файла нет в папке «Готовые видео»: его удалили или переместили.
+              </Notice>
+            ) : (
+              <ErrorNotice
+                error={revealError}
+                actions={
+                  <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                    Закрыть
+                  </button>
+                }
+              />
+            ))}
+        </div>
+      )}
       <div className="ed-body">
         <MediaPanel
           avatarName={avatar?.name ?? "Аватар"}
@@ -695,7 +771,7 @@ function DraftEditor({
         spec={state.spec}
         avatarId={avatarId}
         flagged={clipProblems}
-        highlighted={block?.clips ?? []}
+        highlighted={block?.clips ?? refusedClips}
         timeline={timeline}
         dragPhoto={dragPhoto}
         onInsertPhoto={(photoId, boundary) => {

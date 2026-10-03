@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Montage } from "../../../shared/engine";
 import { NBSP } from "../../lib/format";
-import { clockLabel, draftMeta, draftName, draftTitle, outputLabel, outputParts, saveLabel, whenLabel } from "./labels";
+import { clockLabel, draftMeta, draftName, draftTitle, outputLabel, outputParts, renderButtonLabel, saveLabel, whenLabel } from "./labels";
 import { draftSpec, montageOf, photoClip } from "./testkit";
 
 // The words the drafts screen and the editor header show (EditorEmpty, Editor, EditorNew artboards).
@@ -103,5 +103,23 @@ describe("the save state under the draft's name", () => {
   test("a refused save and a deleted draft", () => {
     expect(saveLabel({ kind: "failed", error: { code: "INTERNAL" } }, saved, { fresh: false, timeZone: "UTC" })).toBe("черновик · не сохранён");
     expect(saveLabel({ kind: "gone" }, saved, { fresh: false, timeZone: "UTC" })).toBe("черновик удалён");
+  });
+});
+
+// 3d.6: the words on the render button while a render is on its way.
+describe("renderButtonLabel", () => {
+  test("submitting, queued (with how many renders are ahead), running (floor percent), saving", () => {
+    expect(renderButtonLabel({ kind: "submitting" })).toBe("Рендер…");
+    expect(renderButtonLabel({ kind: "queued", after: 0, cancelling: false })).toBe("В очереди");
+    expect(renderButtonLabel({ kind: "queued", after: 2, cancelling: false })).toBe("В очереди · после 2");
+    expect(renderButtonLabel({ kind: "running", percent: 42, cancelling: false })).toBe(`Рендер · 42${NBSP}%`);
+    expect(renderButtonLabel({ kind: "running", percent: 0, cancelling: false })).toBe(`Рендер · 0${NBSP}%`);
+    expect(renderButtonLabel({ kind: "running", percent: 100, cancelling: false })).toBe(`Рендер · 100${NBSP}%`);
+    expect(renderButtonLabel({ kind: "saving" })).toBe("Сохранение…");
+  });
+
+  test("a cancel that is out says so instead of the progress", () => {
+    expect(renderButtonLabel({ kind: "running", percent: 42, cancelling: true })).toBe("Отменяем…");
+    expect(renderButtonLabel({ kind: "queued", after: 1, cancelling: true })).toBe("Отменяем…");
   });
 });

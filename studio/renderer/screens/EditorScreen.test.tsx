@@ -496,9 +496,11 @@ describe("«Рендер»", () => {
     fireEvent.click(renderButton());
     await screen.findByRole("button", { name: /Рендер · \d+\s%|В очереди/ });
 
-    for (let i = 0; i < 30 && screen.queryByRole("button", { name: /Рендер · \d+\s%|В очереди/ }) !== null; i++) tick(scheduler);
+    // 3d.6: the saving phase has its own label now, and is still the render on its way.
+    const onItsWay = /Рендер · \d+\s%|В очереди|Сохранение…/;
+    for (let i = 0; i < 30 && screen.queryByRole("button", { name: onItsWay }) !== null; i++) tick(scheduler);
     await flush();
-    expect(screen.queryByRole("button", { name: /Рендер · \d+\s%|В очереди/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: onItsWay })).toBeNull();
     const button = screen.getByRole("button", { name: /^Рендер/ });
     expect(button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true").toBe(true);
 
