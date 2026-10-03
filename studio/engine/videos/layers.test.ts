@@ -100,7 +100,7 @@ describe("resolveLayers: a text layer", () => {
   test("is a PNG overlay in the job folder, never scaled, over the layer's own frames", async () => {
     const layer = text(1, { startMs: 300, endMs: 2_100 });
     const { overlays } = await resolveLayers([layer], JOB, rig().deps, signal);
-    expect(overlays).toEqual([{ path: `${JOB}/text-00.png`, format: "png", box: textBox(layer, { w: 701, h: 121 }), resize: false, startFrame: 9, endFrame: 63 }]);
+    expect(overlays).toEqual([{ path: join(JOB, "text-00.png"), format: "png", box: textBox(layer, { w: 701, h: 121 }), resize: false, startFrame: 9, endFrame: 63 }]);
     expect(layerRange(layer)).toMatchObject({ startFrame: 9, endFrame: 63 });
   });
 
@@ -162,7 +162,7 @@ describe("resolveLayers: a built-in sticker", () => {
     const { overlays } = await resolveLayers([layer], JOB, rig().deps, signal);
     expect(overlays).toEqual([
       {
-        path: `${JOB}/sticker-00.apng`,
+        path: join(JOB, "sticker-00.apng"),
         format: "apng",
         box: stickerBox(layer),
         resize: true,
@@ -209,7 +209,7 @@ describe("resolveLayers: a built-in sticker", () => {
 describe("resolveLayers: z-order and names", () => {
   test("keeps the spec's order, and names each file after its layer's place in it", async () => {
     const { overlays } = await resolveLayers([text(1), sticker(2), text(3)], JOB, rig().deps, signal);
-    expect(overlays.map((o) => o.path)).toEqual([`${JOB}/text-00.png`, `${JOB}/sticker-01.apng`, `${JOB}/text-02.png`]);
+    expect(overlays.map((o) => o.path)).toEqual([join(JOB, "text-00.png"), join(JOB, "sticker-01.apng"), join(JOB, "text-02.png")]);
   });
 
   test("draws the text layers one after another in order", async () => {

@@ -285,6 +285,12 @@ describe("layers on real ffmpeg: the colour stays BT.709 through both steps (inv
     await renderThrough([textOverlay], trapMp4, (job) => tamperGraph(job.argv, "scale=in_range=full:out_range=tv:out_color_matrix=bt709,", ""));
     const deviations = await Promise.all([0, 1, 2, 3].map(async (column) => worst(await sample(trapMp4, column, 0), expectedBt709Limited(stickerColour(column)))));
     console.log(`layers, colour through the layer pass (the two-step composite differs from pass 2's direct overlay by at most ${Math.max(...agreement).toFixed(2)}): opaque worst ${Math.max(...opaqueWorst).toFixed(2)} codes, alpha-128 worst ${Math.max(...alphaWorst).toFixed(2)}; without the explicit conversion (the BT.601 trap) ${Math.max(...deviations).toFixed(2)}`);
+    // macOS 6.0 and Windows 6.1.1 (the builds Studio ships) convert an untagged RGBA layer with BT.601 and drift 14.6 codes. The Linux
+    // ffmpeg of the CI canary does not drift that far (2 codes in this graph, 0.4 in the colour suite's), so there is no trap to catch there.
+    if (process.platform === "linux") {
+      console.log("layers: this Linux ffmpeg's auto scaler does not drift as the shipped builds' do; the layer trap control does not apply");
+      return;
+    }
     expect(Math.max(...deviations)).toBeGreaterThan(5);
   });
 });

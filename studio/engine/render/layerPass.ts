@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { MAX_LAYERS } from "../../shared/engine/montage";
 import { FPS, FRAME_H, FRAME_W } from "../../shared/montage";
 import { assertAbsolutePath, assertSafeFilterGraph } from "./filterString";
@@ -131,7 +132,7 @@ function layersFile(path: string, total: number): OverlayInput {
 function buildJob(index: number, batch: readonly OverlayInput[], costs: readonly number[], input: LayerPassInput): LayerPassJob {
   const total = input.totalFrames;
   const fileName = layerFileName(index);
-  const output = `${input.clipDir}/${fileName}`;
+  const output = join(input.clipDir, fileName);
   const chained = index > 0;
   const filters: string[] = [];
   filters.push(
@@ -146,7 +147,7 @@ function buildJob(index: number, batch: readonly OverlayInput[], costs: readonly
   });
   const graph = filters.join(";");
   assertSafeFilterGraph(graph);
-  const earlier = chained ? overlayInputArgs(layersFile(`${input.clipDir}/${layerFileName(index - 1)}`, total)) : [];
+  const earlier = chained ? overlayInputArgs(layersFile(join(input.clipDir, layerFileName(index - 1)), total)) : [];
   const argv = [
     "-hide_banner", "-nostdin", "-y", "-xerror",
     ...FILTER_THREAD_ARGS,

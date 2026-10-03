@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MAX_LAYERS, MAX_STICKER_LAYERS, MAX_TEXT_LAYERS } from "../../shared/engine/montage";
 import { FRAME_H, FRAME_W } from "../../shared/montage";
 import { mulberry32, randInt } from "../../shared/montage/random.testkit";
+import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { assertSafeFilterGraph } from "./filterString";
 import {
@@ -111,14 +112,14 @@ describe("buildLayerPass: one text layer", () => {
       "-map", "[v]",
       ...LAYER_VIDEO_ARGS,
       ...METADATA_ARGS,
-      `${CLIP_DIR}/layers-00.mkv`,
+      join(CLIP_DIR, "layers-00.mkv"),
     ]);
   });
 
   test("names its file layers-00.mkv in the job folder, and hands that file to pass 2 as a full-frame stream over the whole timeline", () => {
     expect(job?.fileName).toBe("layers-00.mkv");
-    expect(job?.output).toBe(`${CLIP_DIR}/layers-00.mkv`);
-    expect(final).toEqual({ path: `${CLIP_DIR}/layers-00.mkv`, format: "layers", box: { x: 0, y: 0, w: FRAME_W, h: FRAME_H }, resize: false, startFrame: 0, endFrame: TOTAL });
+    expect(job?.output).toBe(join(CLIP_DIR, "layers-00.mkv"));
+    expect(final).toEqual({ path: join(CLIP_DIR, "layers-00.mkv"), format: "layers", box: { x: 0, y: 0, w: FRAME_W, h: FRAME_H }, resize: false, startFrame: 0, endFrame: TOTAL });
   });
 });
 
@@ -405,7 +406,7 @@ describe("buildLayerPass: several calls", () => {
     expect(graphOf(jobs[0]?.argv ?? [])).toStartWith("color=c=0x00000000:");
     const second = jobs[1];
     expect(second?.fileName).toBe("layers-01.mkv");
-    expect(inputsOf(second?.argv ?? [])[0]).toBe(`${CLIP_DIR}/layers-00.mkv`);
+    expect(inputsOf(second?.argv ?? [])[0]).toBe(join(CLIP_DIR, "layers-00.mkv"));
   });
 
   test("reads the earlier file by the matroska demuxer with only the file protocol, and re-times it on the 30 fps grid before overlaying", () => {
@@ -507,7 +508,7 @@ describe("buildLayerPass: invariants 15, 16 and the metadata rule", () => {
 
   test("writes its file last, lossless with alpha, on 30 fps", () => {
     const argv = plan([text(0)]).jobs[0]?.argv ?? [];
-    expect(argv.at(-1)).toBe(`${CLIP_DIR}/layers-00.mkv`);
+    expect(argv.at(-1)).toBe(join(CLIP_DIR, "layers-00.mkv"));
     expect(LAYER_VIDEO_ARGS).toEqual(expect.arrayContaining(["-c:v", "ffv1", "-pix_fmt", "yuva420p", "-r", "30", "-fps_mode", "cfr"]));
   });
 
