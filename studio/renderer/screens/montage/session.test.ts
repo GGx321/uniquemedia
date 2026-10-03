@@ -209,6 +209,60 @@ describe("the engine's clock (3d.2 re-review, HIGH)", () => {
   });
 });
 
+describe("the focus found for a placed photo (3d.3a, K6)", () => {
+  const FACE = { x: 0.5, y: 0.35 } as const;
+  const one = draftSpec([photoClip(0, "photo-mia-0005")]);
+  const two = draftSpec([photoClip(0, "photo-mia-0005"), photoClip(1, "photo-mia-0006")]);
+  const focusOf = (spec: ReturnType<typeof draftSpec>, i: number) => {
+    const clip = spec.clips[i];
+    return clip?.kind === "photo" ? clip.cell.focus : undefined;
+  };
+
+  test("fills the photo's cell in the present and is saved, without an undo step of its own", () => {
+    const { scheduler, saves, session } = rig();
+    session.edit(one);
+    expect(session.fillFocus("photo-mia-0005", FACE)).toBe(true);
+    expect(focusOf(session.state.spec, 0)).toEqual(FACE);
+    scheduler.runAll();
+    expect(saves.sent().at(-1)?.spec.clips[0]).toMatchObject({ cell: { focus: FACE } });
+    // One undo goes back past the placing itself: the focus is not a step of its own.
+    session.undo();
+    expect(session.state.spec).toEqual(version(0));
+  });
+
+  test("the placed photo's later versions get it too, and a redo brings the photo back resolved", () => {
+    const { session } = rig();
+    session.edit(one);
+    session.edit(two);
+    session.undo();
+    session.undo();
+    expect(session.fillFocus("photo-mia-0005", FACE)).toBe(false);
+    session.redo();
+    expect(focusOf(session.state.spec, 0)).toEqual(FACE);
+    session.redo();
+    expect(focusOf(session.state.spec, 0)).toEqual(FACE);
+  });
+
+  test("a photo no longer in the present sends no save", () => {
+    const { scheduler, saves, session } = rig();
+    session.edit(one);
+    session.undo();
+    scheduler.runAll();
+    const sent = saves.calls.length;
+    session.fillFocus("photo-mia-0005", FACE);
+    scheduler.runAll();
+    expect(saves.calls).toHaveLength(sent);
+  });
+
+  test("after the draft is gone, nothing changes", () => {
+    const { session } = rig();
+    session.edit(one);
+    session.receive({ change: "removed", montageId: MONTAGE_ID, avatarId: one.avatarId });
+    expect(session.fillFocus("photo-mia-0005", FACE)).toBe(false);
+    expect(focusOf(session.state.spec, 0)).toBeNull();
+  });
+});
+
 describe("the state React reads", () => {
   test("the state object changes exactly when something changed, and listeners hear each change", async () => {
     const { scheduler, saves, session } = rig();

@@ -1,8 +1,9 @@
-import { MontageDraft, MontageName, type Montage } from "../../../shared/engine";
+import { MontageDraft, MontageName, type Focus, type Montage } from "../../../shared/engine";
 import type { Scheduler } from "../../engine/scheduler";
 import type { MontageChange } from "../../engine/store";
 import { DraftAutosave, type FlushResult, type SaveState, type SendSave } from "./autosave";
-import { canRedo, canUndo, commitVersion, type CommitOptions, type History, redoVersion, sealVersion, startHistory, undoVersion } from "./history";
+import { fillFocus } from "./clipOps";
+import { canRedo, canUndo, commitVersion, type CommitOptions, type History, redoVersion, rewriteVersions, sealVersion, startHistory, undoVersion } from "./history";
 
 // One open draft in the editor (3d.2): the undo/redo history of its spec (at most 100 versions, renderer only)
 // in front of the serialised autosave. Every task that edits the draft (the timeline 3d.3a/3d.3b, the preview
@@ -82,6 +83,27 @@ export class DraftSession {
     if (this.#state.save.kind === "gone") return false;
     if (next.avatarId !== this.#avatarId || !MontageDraft.safeParse(next).success) return false;
     this.#history = commitVersion(this.#history, next, options);
+    this.#push();
+    return true;
+  }
+
+  /**
+   * The face focus `montages.focus` found for a photo placed earlier (K6): written into every version that holds
+   * the photo unresolved, past and undone ones too, so an undo or a redo never brings the photo back without it.
+   * Not an undo step. True when the draft on screen changed (it is then saved like an edit).
+   */
+  fillFocus(photoId: string, focus: Focus): boolean {
+    if (this.#state.save.kind === "gone") return false;
+    const before = this.#history.present;
+    const next = rewriteVersions(this.#history, (spec) => fillFocus(spec, photoId, focus));
+    // Like an edit: a version the contract would refuse never enters (a focus outside the frame cannot come from
+    // the engine's validated answer, but the session does not rely on that).
+    if (next === this.#history || !MontageDraft.safeParse(next.present).success) return false;
+    this.#history = next;
+    if (next.present === before) {
+      this.#refresh();
+      return false;
+    }
     this.#push();
     return true;
   }

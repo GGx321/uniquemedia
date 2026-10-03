@@ -56,6 +56,21 @@ export function sealVersion<T>(h: History<T>): History<T> {
   return h.mergeKey === null ? h : { ...h, mergeKey: null };
 }
 
+/**
+ * Every version, undone ones included, passed through `rewrite` in its place: for a fact learned after the edit
+ * that needed it (3d.3a: the face focus of a placed photo, which `montages.focus` answers later). It is not an
+ * edit: no version is added, undo and redo walk the same steps, an open gesture stays open. `rewrite` returns its
+ * argument for a version it leaves alone; when it leaves them all alone, the history itself is returned.
+ */
+export function rewriteVersions<T>(h: History<T>, rewrite: (version: T) => T): History<T> {
+  const past = h.past.map(rewrite);
+  const present = rewrite(h.present);
+  const future = h.future.map(rewrite);
+  const same = (a: readonly T[], b: readonly T[]): boolean => a.every((version, i) => version === b[i]);
+  if (present === h.present && same(past, h.past) && same(future, h.future)) return h;
+  return { past, present, future, mergeKey: h.mergeKey };
+}
+
 export function undoVersion<T>(h: History<T>): History<T> {
   const previous = h.past.at(-1);
   if (previous === undefined || h.past.length === 0) return h;

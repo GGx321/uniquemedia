@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { canRedo, canUndo, commitVersion, MAX_SPEC_VERSIONS, redoVersion, sealVersion, startHistory, undoVersion, type History } from "./history";
+import { canRedo, canUndo, commitVersion, MAX_SPEC_VERSIONS, redoVersion, rewriteVersions, sealVersion, startHistory, undoVersion, type History } from "./history";
 
 // The editor's undo/redo (3d.2): at most 100 spec versions are kept in the renderer, a new edit drops the redo
 // branch, and an edit that changes nothing is not a version.
@@ -145,6 +145,40 @@ describe("merged edits: one version for a burst of the same edit (a slider drag)
 
   test("the first keyed edit is its own version: the state before it stays reachable", () => {
     const h = commitVersion(startHistory(v(1)), v(2), { mergeKey: "a" });
+    expect(undoVersion(h).present).toEqual(v(1));
+  });
+});
+
+describe("rewriting every version (3d.3a: a fact found later, like a placed photo's face focus)", () => {
+  const bump = (version: ReturnType<typeof v>): ReturnType<typeof v> => {
+    const first = version.clips[0];
+    return first !== undefined && first.durationMs === 200 ? { clips: [{ durationMs: 250 }] } : version;
+  };
+
+  test("every version, undone ones too, is rewritten in its place; undo and redo still walk the same steps", () => {
+    const h = undoVersion(commitMany(startHistory(v(1)), 2, 3));
+    const rewritten = rewriteVersions(h, bump);
+    expect(rewritten.past).toEqual([v(1)]);
+    expect(rewritten.present).toEqual({ clips: [{ durationMs: 250 }] });
+    expect(rewritten.future).toEqual([v(3)]);
+    expect(undoVersion(rewritten).present).toEqual(v(1));
+    expect(redoVersion(rewritten).present).toEqual(v(3));
+  });
+
+  test("a version the rewrite leaves alone stays the very same object; nothing changed is the same history", () => {
+    const h = commitMany(startHistory(v(1)), 2, 3);
+    const rewritten = rewriteVersions(h, bump);
+    expect(rewritten.present).toBe(h.present);
+    expect(rewritten.past[0]).toBe(h.past[0]);
+    expect(rewritten.past[1]).toEqual({ clips: [{ durationMs: 250 }] });
+    const untouched = commitMany(startHistory(v(5)), 6, 7);
+    expect(rewriteVersions(untouched, bump)).toBe(untouched);
+  });
+
+  test("an open gesture stays open: the next keyed edit still merges into it", () => {
+    let h = commitVersion(startHistory(v(1)), v(2), { mergeKey: "drag" });
+    h = rewriteVersions(h, bump);
+    h = commitVersion(h, v(4), { mergeKey: "drag" });
     expect(undoVersion(h).present).toEqual(v(1));
   });
 });
