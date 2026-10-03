@@ -6,7 +6,7 @@ import { photoUrl, placeholderGradient } from "../../lib/media";
 import { NBSP } from "../../lib/format";
 import { Icon, type IconName, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { addRefusal, cellsOf, clipStartMs, isEven, maxDurationMs, moveClip, setDuration, totalMs } from "./clipOps";
-import { ownsKeys } from "./keys";
+import { isTextEntry, ownsKeys } from "./keys";
 import { actionWhyLabel, clipAria, clockLabel, PHOTO_PROBLEM_TAGS, secondsLabel } from "./labels";
 import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
@@ -301,16 +301,19 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
     );
   }
 
-  function onHandleKey(event: KeyboardEvent<HTMLSpanElement>, clipId: string): void {
+  function onHandleKey(event: KeyboardEvent<HTMLSpanElement>, clipId: string, edge: "start" | "end"): void {
     const current = session.state.spec;
     const index = current.clips.findIndex((c) => c.clipId === clipId);
     const clip = current.clips[index];
     if (clip === undefined || event.altKey || event.metaKey || event.ctrlKey) return;
     const step = event.shiftKey ? 1_000 : 100;
+    // ←/→ follow the edge the way a drag does: the left edge pulled left makes the clip longer. ↑/↓ follow the value.
+    const outward = edge === "start" ? "ArrowLeft" : "ArrowRight";
+    const inward = edge === "start" ? "ArrowRight" : "ArrowLeft";
     const targets: Record<string, number> = {
-      ArrowRight: clip.durationMs + step,
+      [outward]: clip.durationMs + step,
       ArrowUp: clip.durationMs + step,
-      ArrowLeft: clip.durationMs - step,
+      [inward]: clip.durationMs - step,
       ArrowDown: clip.durationMs - step,
       Home: MIN_CLIP_MS,
       End: maxDurationMs(current, index),
@@ -345,8 +348,15 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
   // ---------- the keyboard ----------
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>): void {
-    // A control (the zoom slider) keeps its own keys, and a key ending a composition is the composition's (keys.ts).
-    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.nativeEvent.isComposing || ownsKeys(event.target)) return;
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.nativeEvent.isComposing) return;
+    // Escape clears the selection from anywhere but text entry: a slider (the zoom) has no Escape of its own.
+    if (event.key === "Escape" && selection !== null && !isTextEntry(event.target)) {
+      event.preventDefault();
+      timeline.select(null);
+      return;
+    }
+    // A control (the zoom slider) keeps its own keys (keys.ts).
+    if (ownsKeys(event.target)) return;
     const target = event.target;
     if (event.key === "Delete" || event.key === "Backspace") {
       if (resolved === null || !actions.remove.enabled) return;
@@ -501,7 +511,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
                         aria-valuenow={clip.durationMs}
                         aria-valuetext={secondsLabel(clip.durationMs)}
                         onPointerDown={(e) => pressHandle(e, clip.clipId, edge)}
-                        onKeyDown={(e) => onHandleKey(e, clip.clipId)}
+                        onKeyDown={(e) => onHandleKey(e, clip.clipId, edge)}
                         onKeyUp={(e) => {
                           if (e.key !== heldKey.current) return;
                           heldKey.current = null;

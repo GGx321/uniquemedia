@@ -567,6 +567,35 @@ describe("keys that belong to a control", () => {
   });
 });
 
+describe("3d.3a's known limits, settled with 3d.3b", () => {
+  test("the left clip handle follows the edge: ← makes the clip longer, as dragging it left does; ↑/↓ follow the value", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    fireEvent.click(clipButtons()[0] ?? document.body);
+    const left = within(timeline()).getByRole("slider", { name: "Длительность кадра 1: левый край" });
+    fireEvent.keyDown(left, { key: "ArrowLeft" });
+    fireEvent.keyUp(left, { key: "ArrowLeft" });
+    expect(left.getAttribute("aria-valuenow")).toBe("8100");
+    fireEvent.keyDown(left, { key: "ArrowRight" });
+    fireEvent.keyDown(left, { key: "ArrowRight" });
+    fireEvent.keyUp(left, { key: "ArrowRight" });
+    expect(left.getAttribute("aria-valuenow")).toBe("7900");
+    fireEvent.keyDown(left, { key: "ArrowUp" });
+    fireEvent.keyUp(left, { key: "ArrowUp" });
+    expect(left.getAttribute("aria-valuenow")).toBe("8000");
+  });
+
+  test("Escape on the zoom slider clears the selection: a slider has no Escape of its own", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    fireEvent.click(clipButtons()[0] ?? document.body);
+    fireEvent.keyDown(within(timeline()).getByRole("slider", { name: "Масштаб таймлайна" }), { key: "Escape" });
+    expect(clipButtons()[0]?.getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
 describe("a cancelled pointer", () => {
   test("a reorder drag whose pointer is cancelled (the system took it) moves nothing", async () => {
     const { client, engine } = await studio();
