@@ -7,6 +7,9 @@
  * 768 MiB `peakRSS` the render pool is sized by, and the disk the layer files take. The cheap way to see how much memory the layers
  * cost WITHOUT the layer pass is gone with the path (3b.5 measured it: ten default stickers took pass 2 to 816 MiB).
  *
+ * `--music` adds a 20 s stored track (AAC in a mov, as the track store keeps them) to every pass-2 call, which also puts the process under
+ * the track input's `-max_alloc 64 MiB`, so the FFV1 layer file is measured decoding under it.
+ *
  * Needs `/usr/bin/time` with `-l` (macOS) or `-v` (GNU). Run by hand; not part of the test suite.
  */
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -56,7 +59,8 @@ async function main(): Promise<void> {
   type OverlayInput = import("../../engine/render/types").OverlayInput;
   const ffmpeg = ffmpegPath();
   // An optional argument keeps only the scenarios whose name contains it: `bun measureLayerRss.ts "REAL"`.
-  const only = process.argv[2];
+  const only = process.argv.slice(2).find((a) => !a.startsWith("--"));
+  const withMusic = process.argv.includes("--music");
   const timeFlag = process.platform === "darwin" ? "-l" : "-v";
   const dir = mkdtempSync(join(tmpdir(), "b6-rss-"));
 
@@ -111,13 +115,20 @@ async function main(): Promise<void> {
       const r = await run([ffmpeg, ...job.argv]);
       if (r.code !== 0) throw new Error(r.stderr.slice(-800));
     }
-    const pass2Of = (overlays: readonly OverlayInput[]) => buildPass2({ clips, clipDir: dir, output: join(dir, "final.mp4"), overlays, audio: { kind: "silent" } });
+    // A stored track is AAC in a mov (the track store's own shape); 20 s is longer than the 15 s timeline.
+    const track = join(dir, "track.m4a");
+    if (withMusic) {
+      const made = await run([ffmpeg, "-hide_banner", "-y", "-nostdin", "-f", "lavfi", "-i", "sine=frequency=440:duration=20,aformat=channel_layouts=stereo:sample_rates=48000", "-c:a", "aac", "-b:a", "192k", "-f", "mov", track]);
+      if (made.code !== 0) throw new Error(made.stderr);
+    }
+    const pass2Of = (overlays: readonly OverlayInput[]) =>
+      buildPass2({ clips, clipDir: dir, output: join(dir, "final.mp4"), overlays, audio: withMusic ? { kind: "music", path: track, startMs: 0, gainDb: 0 } : { kind: "silent" } });
     const prepare = (job: { cwd: string; listFileName: string; listFileContents: string }): void => {
       mkdirSync(job.cwd, { recursive: true });
       writeFileSync(join(job.cwd, job.listFileName), job.listFileContents);
     };
 
-    console.log(`15 s, ${TOTAL_FRAMES} frames, peakRSS budget ${PEAK_RSS_BUDGET_MIB} MiB, a layer call's modelled budget ${LAYER_CALL_BUDGET_BYTES / MIB} MiB\n`);
+    console.log(`15 s${withMusic ? " with a 20 s track" : ""}, ${TOTAL_FRAMES} frames, peakRSS budget ${PEAK_RSS_BUDGET_MIB} MiB, a layer call's modelled budget ${LAYER_CALL_BUDGET_BYTES / MIB} MiB\n`);
     for (const sc of SCENARIOS.filter((s) => only === undefined || s.name.includes(only))) {
       const layers: OverlayInput[] = [];
       for (let k = 0; k < sc.text; k++) {

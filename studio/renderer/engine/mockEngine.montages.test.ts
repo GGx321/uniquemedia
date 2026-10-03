@@ -170,7 +170,7 @@ describe("montages.get", () => {
     const mock = makeMock();
     const montage = await create(mock, [PHOTO_IDS[0] ?? ""]);
     const sticker = { layerId: "layer-0002", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId: "no-such-sticker" }, x: 0.5, y: 0.5, size: 0.2 };
-    await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, layers: [sticker], music: { source: "trending", trackId: "track-0000001", startMs: 0 } }, name: null }));
+    await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, layers: [sticker], music: { source: "own", mediaId: "media-0000009", startMs: 0 } }, name: null }));
 
     const got = await unwrap(mock.client.request("montages.get", { montageId: montage.montageId }));
 

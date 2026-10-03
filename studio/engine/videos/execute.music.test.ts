@@ -63,7 +63,6 @@ function planOf(w: World, over: Partial<RenderPlan> = {}): RenderPlan {
     exportRoot: { root: w.exportRoot, rootId: w.rootId },
     spec: { ...specOf(w.avatar.id, [w.photos[0]?.id ?? ""], 4_000), music: { source: "trending", trackId: TRACK_ID, startMs: 1_500 } },
     resolvePhoto: () => ({ path: "/photos/p.jpg", width: 720, height: 1280 }),
-    overlays: [],
     audio: { kind: "silent" },
     track: { trackId: TRACK_ID, startMs: 1_500 },
     montageId: null,

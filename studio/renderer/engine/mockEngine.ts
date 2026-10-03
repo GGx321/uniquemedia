@@ -1708,7 +1708,8 @@ export class MockEngine implements EngineBridge {
     } else {
       spec = payload.spec;
     }
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...trackIssues(spec, undefined)].slice(0, MAX_MONTAGE_ISSUES);
+    // The engine's order (`videos.render`): structure, what has not landed (N9), the stickers the set lacks, the music track.
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...trackIssues(spec, undefined)].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues });
     const reason = this.checkExport(estimateBytesUpper(spec.clips));
     if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });

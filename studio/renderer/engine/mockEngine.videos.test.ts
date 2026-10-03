@@ -199,6 +199,22 @@ describe("videos.render", () => {
     expect(reply).toEqual({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "not-yet-supported", path: ["layers", 0] }] } });
   });
 
+  test("refuses a built-in sticker the set lacks and an unstored track together, in the engine's order: structure, N9, stickers, track", async () => {
+    const mock = makeMock();
+    const draft = await draftOf(mock, [P1]);
+    const pastEnd = { layerId: "layer-0001", kind: "text" as const, startMs: 0, endMs: 9_000, value: "Hi", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+    const own = { layerId: "layer-0002", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "own" as const, mediaId: "media-0000001" }, x: 0.5, y: 0.5, size: 0.2 };
+    const gone = { layerId: "layer-0003", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId: "no-such-sticker" }, x: 0.5, y: 0.5, size: 0.2 };
+    const spec = { ...draft.spec, layers: [pastEnd, own, gone], music: { source: "trending" as const, trackId: "track-0000001", startMs: 0 } };
+    await unwrap(mock.client.request("montages.save", { montageId: draft.montageId, spec, name: null }));
+
+    const reply = await mock.client.request("videos.render", { montageId: draft.montageId });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "MONTAGE_INVALID" } });
+    const issues = reply.ok ? [] : (reply.error.issues ?? []);
+    expect(issues.map((i) => i.code)).toEqual(["layer-outside-timeline", "not-yet-supported", "sticker-unavailable", "track-unavailable"]);
+  });
+
   test("refuses a draft that is not there with NOT_FOUND", async () => {
     const mock = makeMock();
 

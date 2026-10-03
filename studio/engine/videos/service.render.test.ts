@@ -191,6 +191,18 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
     await expectNothingTouched(r);
   });
 
+  test("every kind of refusal at once comes in one order: structure, N9, the stickers the set lacks, the music track", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const pastEnd = { ...textLayer(1), startMs: 3_000, endMs: SPEC_MS + 100 };
+    const spec = { ...specFor(w), layers: [pastEnd, ownStickerLayer(2), stickerLayer(3)], music: { source: "trending" as const, trackId: "track-0000001", startMs: 0 } };
+
+    const error = await failureOf(r.service.render({ spec }));
+
+    expect(error.code).toBe("MONTAGE_INVALID");
+    expect(error.issues?.map((i) => i.code)).toEqual(["layer-outside-timeline", "not-yet-supported", "sticker-unavailable", "track-unavailable"]);
+  });
+
   test("a layer that ends after the clips do is refused, never clamped: MONTAGE_INVALID layer-outside-timeline at its end", async () => {
     const w = world();
     const r = serviceRig(w);

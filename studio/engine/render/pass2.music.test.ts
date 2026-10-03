@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { totalFrames } from "../../shared/montage";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { assertSafeFilterGraph } from "./filterString";
 import { MUSIC_INPUT_ARGS, musicRenderFilters } from "./musicChain";
@@ -31,7 +32,8 @@ const flag = (argv: readonly string[], name: string): string | undefined => {
 const maps = (argv: readonly string[]): string[] => argv.flatMap((a, i) => (a === "-map" ? [argv[i + 1] ?? ""] : []));
 const inputsOf = (argv: readonly string[]): string[] => argv.flatMap((a, i) => (a === "-i" ? [argv[i + 1] ?? ""] : []));
 
-const sticker = (over: Partial<OverlayInput> = {}): OverlayInput => ({ path: "/work/overlays/text-1.png", format: "png", box: { x: 100, y: 300, w: 880, h: 200 }, resize: false, startFrame: 30, endFrame: 90, ...over });
+/** The layer pass's file, the only overlay pass 2 takes (3b.6): the whole frame over the whole timeline. */
+const layerFile = (over: Partial<OverlayInput> = {}): OverlayInput => ({ path: "/work/render-tmp/job-1/layers-00.mkv", format: "layers", box: { x: 0, y: 0, w: 1080, h: 1920 }, resize: false, startFrame: 0, endFrame: totalFrames(CLIPS), ...over });
 
 /** The flags in front of input number `n`'s `-i`, back to the previous input. */
 function optionsBeforeInput(argv: readonly string[], n: number): string[] {
@@ -147,21 +149,28 @@ describe("buildPass2 with music that starts late", () => {
   });
 });
 
-describe("buildPass2 with music and overlays: the audio input follows the overlay inputs' indices", () => {
-  test("is input 3 after two overlays, and is the one mapped", () => {
-    const job = build({ overlays: [sticker(), sticker({ path: "/work/overlays/sticker-1.png" })], audio: music() });
-    expect(inputsOf(job.argv)).toEqual(["list.txt", "/work/overlays/text-1.png", "/work/overlays/sticker-1.png", TRACK]);
-    expect(maps(job.argv)).toEqual(["[v]", "3:a:0"]);
-    expect(optionsBeforeInput(job.argv, 3)).toEqual([...MUSIC_INPUT_ARGS]);
+describe("buildPass2 with music and the layer file: the audio input follows the layer file's index", () => {
+  test("is input 2 after the layer file, and is the one mapped", () => {
+    const job = build({ overlays: [layerFile()], audio: music() });
+    expect(inputsOf(job.argv)).toEqual(["list.txt", "/work/render-tmp/job-1/layers-00.mkv", TRACK]);
+    expect(maps(job.argv)).toEqual(["[v]", "2:a:0"]);
+    expect(optionsBeforeInput(job.argv, 2)).toEqual([...MUSIC_INPUT_ARGS]);
   });
 
-  test("is input 1 with no overlay", () => {
+  test("is input 1 with no layer file", () => {
     expect(maps(build({ audio: music() }).argv)).toEqual(["[v]", "1:a:0"]);
   });
 
-  test("leaves the overlays' own input flags alone", () => {
-    const job = build({ overlays: [sticker()], audio: music() });
-    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-protocol_whitelist", "file", "-f", "image2", "-pattern_type", "none"]);
+  test("leaves the layer file's own input flags alone", () => {
+    const job = build({ overlays: [layerFile()], audio: music() });
+    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-protocol_whitelist", "file", "-f", "matroska", "-threads", "4"]);
+  });
+
+  test("overlays the layer file in both builds' graph: the music one's video graph is the silent one's", () => {
+    const silent = build({ overlays: [layerFile()] }).argv;
+    const withMusic = build({ overlays: [layerFile()], audio: music() }).argv;
+    const graph = (argv: readonly string[]): string => argv[argv.indexOf("-filter_complex") + 1] ?? "";
+    expect(graph(withMusic)).toContain(graph(silent).split(";anullsrc")[0] ?? "never");
   });
 });
 
