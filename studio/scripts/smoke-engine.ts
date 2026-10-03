@@ -419,6 +419,43 @@ async function quit(running: Running): Promise<void> {
   killTree(running.child);
 }
 
+/** Windows only: the processes whose command line names `dir`, which is the app under test and everything it started (every Chromium child carries --user-data-dir). */
+function processesUsing(dir: string): number[] {
+  const script = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -ne $null -and $_.CommandLine.Contains('${dir.replaceAll("'", "''")}') } | ForEach-Object { $_.ProcessId }`;
+  const out = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" }).stdout;
+  return out.split(/\r?\n/).filter((line) => /^\d+$/.test(line.trim())).map(Number);
+}
+
+/**
+ * Removes a scenario's temp folder. `taskkill /T` returns before every process of the app is gone, and one that is still on its way
+ * out holds files of userData or the library (a Windows EBUSY on the folder was seen here, right after the app was killed). So the
+ * cleanup first waits until no process names the folder any more, ends and reports any that will not go, and only then removes it;
+ * if the folder still will not go, it says which processes were holding it.
+ */
+async function removeTemp(dir: string): Promise<void> {
+  if (process.platform === "win32") {
+    const started = Date.now();
+    let users = processesUsing(dir);
+    while (users.length > 0 && Date.now() - started < 15_000) {
+      await Bun.sleep(300);
+      users = processesUsing(dir);
+    }
+    if (users.length > 0) {
+      console.log(`CLEANUP  ${users.length} process(es) still name ${basename(dir)} after 15 s and are ended: ${users.join(", ")}`);
+      for (const pid of users) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+      await Bun.sleep(1_000);
+    } else if (Date.now() - started > 600) {
+      console.log(`CLEANUP  the app's processes took ${Date.now() - started} ms to be gone after the kill`);
+    }
+  }
+  try {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  } catch (error) {
+    if (process.platform === "win32") console.log(`CLEANUP  ${basename(dir)} could not be removed; processes naming it: ${processesUsing(dir).join(", ") || "none"}`);
+    throw error;
+  }
+}
+
 function req(cdp: Cdp, type: string, payload: unknown = {}): Promise<unknown> {
   return cdp.evaluate(`window.__req(${JSON.stringify(type)}, ${JSON.stringify(payload)})`);
 }
@@ -704,7 +741,7 @@ async function productionCheck(target: Target): Promise<void> {
     await Bun.sleep(1000);
     killTree(child);
     await Bun.sleep(500);
-    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    await removeTemp(tmp);
   }
 }
 
@@ -1041,7 +1078,7 @@ async function runAvatarScenario(target: Target): Promise<void> {
   } finally {
     await quit(running);
     await mock.stop();
-    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    await removeTemp(tmp);
   }
 }
 
@@ -1233,7 +1270,7 @@ async function runImportScenario(target: Target): Promise<void> {
   } finally {
     await quit(running);
     await mock.stop();
-    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    await removeTemp(tmp);
   }
 }
 
@@ -1720,7 +1757,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
   } finally {
     await quit(running);
     await mock.stop();
-    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    await removeTemp(tmp);
   }
 }
 
@@ -2097,7 +2134,7 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
     sampler.stop();
     await quit(running);
     if (keep) console.log(`\nkept ${tmp}`);
-    else await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    else await removeTemp(tmp);
   }
 }
 
@@ -2517,7 +2554,7 @@ async function main(): Promise<void> {
     // (userData, the library); bounded retries ride that out instead of
     // failing the cleanup outright.
     if (keep) console.log(`\nkept ${tmp}`);
-    else await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    else await removeTemp(tmp);
   }
 
   await runAvatarScenario(target);
