@@ -411,7 +411,7 @@ describe("buildLayerPass: several calls", () => {
   test("reads the earlier file by the matroska demuxer with only the file protocol, and re-times it on the 30 fps grid before overlaying", () => {
     const second = jobs[1];
     const options = optionsBeforeInput(second?.argv ?? [], 0);
-    expect(options.slice(-4)).toEqual(["-protocol_whitelist", "file", "-f", "matroska"]);
+    expect(options.slice(-6)).toEqual(["-protocol_whitelist", "file", "-f", "matroska", "-threads", "4"]);
     expect(graphOf(second?.argv ?? [])).toStartWith("[0:v]settb=1/30,setpts=N[b0];[1:v]");
   });
 

@@ -81,7 +81,10 @@ export function validateOverlay(o: OverlayInput, index: number, total: number): 
  */
 export function overlayInputArgs(o: OverlayInput): string[] {
   const demuxer = o.format === "png" ? ["-f", "image2", "-pattern_type", "none"] : o.format === "layers" ? ["-f", "matroska"] : ["-f", o.format];
-  return ["-protocol_whitelist", "file", ...demuxer, "-i", o.path];
+  // The layer pass's FFV1 file is decoded on 4 threads, not the decoder's default of one per core: measured with the largest
+  // layer set, that default cost pass 2 about 100 MiB more (777 against 670 MiB), while 1 or 2 threads halved the speed.
+  const decode = o.format === "layers" ? ["-threads", "4"] : [];
+  return ["-protocol_whitelist", "file", ...demuxer, ...decode, "-i", o.path];
 }
 
 /**

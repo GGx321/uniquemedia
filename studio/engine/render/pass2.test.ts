@@ -335,7 +335,11 @@ describe("buildPass2: the layer pass's file (3b.6)", () => {
   test("is one more input, read by the matroska demuxer with only the file protocol", () => {
     const job = build({ overlays: [layers()] });
     expect(inputsOf(job.argv)).toEqual(["list.txt", `${CLIP_DIR}/layers-00.mkv`]);
-    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-protocol_whitelist", "file", "-f", "matroska"]);
+    expect(optionsBeforeInput(job.argv, 1).slice(0, 4)).toEqual(["-protocol_whitelist", "file", "-f", "matroska"]);
+  });
+
+  test("is decoded on 4 threads: measured at the largest layer set, the decoder's default (one thread per core) cost pass 2 about 100 MiB more, and 1 or 2 threads made it twice as slow", () => {
+    expect(optionsBeforeInput(build({ overlays: [layers()] }).argv, 1).slice(-2)).toEqual(["-threads", "4"]);
   });
 
   test("is overlaid whole at the frame's origin and lets the main input carry the output's length, in the graph below", () => {

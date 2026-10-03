@@ -33,21 +33,22 @@ import { RenderGraphError, type LayerPassInput, type LayerPassJob, type LayerPas
 
 const MIB = 1024 * 1024;
 
-// The cost model. Measured on macOS arm64 with ffmpeg-static 6.0 (`studio/scripts/layers/measureLayerRss.ts`), 450 frames:
-// a call with one still 344 MiB and with ten 457 MiB (12.5 MiB per still), with one animation 364 MiB and with ten
-// 645 MiB at 219 px / 675 MiB at 648 px (about 31 to 34 MiB per animation); the loop cache is frames x w x h x 2.5 bytes
-// on top (yuva420p). Reading the earlier call's file as the main input costs one more decoded stream.
+// The cost model. Measured on macOS arm64 with ffmpeg-static 6.0 (`studio/scripts/layers/measureLayerRss.ts`), 450 frames,
+// peak RSS of one call: with one still 344 MiB and with ten 457 MiB (12.5 MiB per still); with one animation 364 MiB and with ten
+// 645 MiB at 219 px / 675 MiB at 648 px (31 to 34 MiB per animation); the loop cache is frames x w x h x 2.5 bytes on top
+// (yuva420p). A call that also reads the earlier call's file costs about 100 MiB more (one animation: 489 and 498 MiB, six:
+// 668 and 673), and the constants below sit above every measured call, which varies by up to 50 MiB between runs.
 /** What an ffmpeg call with the lossless encoder and a transparent base costs before any layer. */
 export const LAYER_CALL_BASE_BYTES = 340 * MIB;
 /** What reading the earlier call's file as the main input adds. */
-export const LAYER_CHAINED_INPUT_BYTES = 40 * MIB;
+export const LAYER_CHAINED_INPUT_BYTES = 120 * MIB;
 export const LAYER_STILL_BYTES = 14 * MIB;
 export const LAYER_ANIMATED_BYTES = 34 * MIB;
 /**
- * What the model lets one call reach. Under the 768 MiB `peakRSS` the render pool is sized by, with the headroom the plan
- * keeps for other content and the Windows build (about 17%).
+ * What the model lets one call reach: under the 768 MiB `peakRSS` the render pool is sized by, leaving the plan's ~10% for other
+ * content and the Windows build. The model is above every measured call, so a measured call is under it too.
  */
-export const LAYER_CALL_BUDGET_BYTES = 640 * MIB;
+export const LAYER_CALL_BUDGET_BYTES = 700 * MIB;
 
 function bad(message: string): never {
   throw new RenderGraphError("BAD_OVERLAY", message);
