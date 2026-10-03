@@ -36,7 +36,14 @@ export interface JobView {
    * `job.done` (the result names no draft).
    */
   readonly montageId: string | null;
+  /** The video a render job makes (every `job.*` event of a render names it); null for every other kind. */
+  readonly videoId: string | null;
   readonly status: JobStatus;
+  /**
+   * A render past the point of no return (the commit has claimed the video's name): a cancel is ignored from here and
+   * the job ends `done` (or `failed` if saving then fails). False for every other kind and before that point.
+   */
+  readonly saving: boolean;
   readonly done: number;
   readonly total: number;
   readonly result: JobResult | null;
@@ -127,7 +134,9 @@ export function jobFromState(j: JobState): JobView {
     avatarId: j.avatarId,
     runId: j.kind === "run" ? j.runId : null,
     montageId: j.kind === "render" ? j.montageId : null,
+    videoId: j.kind === "render" ? j.videoId : null,
     status: j.status,
+    saving: j.kind === "render" && j.saving === true && j.status === "running",
     done: j.done,
     total: j.total,
     result: j.result ?? null,
@@ -139,7 +148,7 @@ export function jobFromState(j: JobState): JobView {
 type JobRef = { readonly jobId: string; readonly avatarId: string } & (
   | { readonly kind: "avatar.candidates" }
   | { readonly kind: "run"; readonly runId: string }
-  | { readonly kind: "render"; readonly montageId: string | null }
+  | { readonly kind: "render"; readonly montageId: string | null; readonly videoId: string | null }
 );
 
 function newJob(ref: JobRef): JobView {
@@ -149,7 +158,9 @@ function newJob(ref: JobRef): JobView {
     avatarId: ref.avatarId,
     runId: ref.kind === "run" ? ref.runId : null,
     montageId: ref.kind === "render" ? ref.montageId : null,
+    videoId: ref.kind === "render" ? ref.videoId : null,
     status: "queued",
+    saving: false,
     done: 0,
     total: 0,
     result: null,
@@ -387,7 +398,7 @@ export class EngineStore {
 
   markJobCancelled(jobId: string): void {
     const job = this.view.jobs.find((j) => j.jobId === jobId);
-    if (job !== undefined && isActiveJob(job)) this.replaceJob({ ...job, status: "cancelled" });
+    if (job !== undefined && isActiveJob(job)) this.replaceJob({ ...job, status: "cancelled", saving: false });
   }
 
   /**
@@ -571,7 +582,7 @@ export class EngineStore {
     this.update({
       phase: "offline",
       failure,
-      jobs: goneForGood ? this.view.jobs.map((job) => (isActiveJob(job) ? { ...job, status: "failed", error: failure } : job)) : this.view.jobs,
+      jobs: goneForGood ? this.view.jobs.map((job) => (isActiveJob(job) ? { ...job, status: "failed", saving: false, error: failure } : job)) : this.view.jobs,
     });
     this.held = [];
     this.unconfirmedBoots.clear();
@@ -700,7 +711,8 @@ export class EngineStore {
         const { done, total } = event.payload;
         // The event names its job (kind, avatar, runId): a window that never
         // started it, or hears of it first here, still knows exactly whose it is.
-        this.patchJob(event.payload, (job) => (isFinished(job) ? job : { ...job, status: "running", done, total }), lastSeq);
+        const saving = event.payload.kind === "render" && event.payload.saving === true;
+        this.patchJob(event.payload, (job) => (isFinished(job) ? job : { ...job, status: "running", done, total, saving: job.saving || saving }), lastSeq);
         return;
       }
       case "job.done": {
@@ -722,7 +734,7 @@ export class EngineStore {
             ? { kind: "run", jobId, runId: result.runId, avatarId: result.avatarId }
             : result.kind === "render"
               ? // The result names no draft: a render first heard of here keeps none (one already known keeps its own).
-                { kind: "render", jobId, avatarId: result.avatarId, montageId: null }
+                { kind: "render", jobId, avatarId: result.avatarId, montageId: null, videoId: result.videoId }
               : { kind: "avatar.candidates", jobId, avatarId: result.avatarId };
         this.patchJob(
           ref,
@@ -731,6 +743,7 @@ export class EngineStore {
             return {
               ...job,
               status: "done",
+              saving: false,
               total,
               done: Math.max(job.done, total),
               result,
@@ -746,7 +759,7 @@ export class EngineStore {
       }
       case "job.failed": {
         const { error } = event.payload;
-        this.patchJob(event.payload, (job) => ({ ...job, status: "failed", error }), lastSeq);
+        this.patchJob(event.payload, (job) => ({ ...job, status: "failed", saving: false, error }), lastSeq);
         this.afterError(error);
         return;
       }
@@ -769,7 +782,7 @@ export class EngineStore {
         this.afterError(event.payload.error);
         return;
       case "job.cancelled":
-        this.patchJob(event.payload, (job) => (isActiveJob(job) ? { ...job, status: "cancelled" } : job), lastSeq);
+        this.patchJob(event.payload, (job) => (isActiveJob(job) ? { ...job, status: "cancelled", saving: false } : job), lastSeq);
         return;
       case "settings.changed": {
         const { settings, librarySwitchGeneration } = event.payload;

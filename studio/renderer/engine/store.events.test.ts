@@ -210,7 +210,7 @@ test("job.progress alone gives a candidates job its kind and avatarId, and no ru
   const h = await host();
   await h.emit({ type: "job.progress", payload: { kind: "avatar.candidates", jobId: "job-00000009", avatarId: DRAFT.avatarId, done: 1, total: 4 } });
 
-  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: "avatar.candidates", avatarId: DRAFT.avatarId, runId: null, montageId: null, status: "running", done: 1, total: 4, result: null, error: null }]);
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000009", kind: "avatar.candidates", avatarId: DRAFT.avatarId, runId: null, montageId: null, videoId: null, saving: false, status: "running", done: 1, total: 4, result: null, error: null }]);
   h.stop();
 });
 
@@ -218,7 +218,7 @@ test("job.progress alone gives a run job its kind, runId and avatarId", async ()
   const h = await host();
   await h.emit({ type: "job.progress", payload: { kind: "run", jobId: "job-00000010", runId: "run-00000010", avatarId: SAVED.avatarId, done: 3, total: 20 } });
 
-  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000010", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000010", montageId: null, status: "running", done: 3, total: 20, result: null, error: null }]);
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000010", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000010", montageId: null, videoId: null, saving: false, status: "running", done: 3, total: 20, result: null, error: null }]);
   h.stop();
 });
 
@@ -228,7 +228,7 @@ test("a run's launch announcement (done 0) makes it a running, cancellable job i
   const h = await host();
   await h.emit({ type: "job.progress", payload: { kind: "run", jobId: "job-00000013", runId: "run-00000013", avatarId: SAVED.avatarId, done: 0, total: 20 } });
 
-  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000013", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000013", montageId: null, status: "running", done: 0, total: 20, result: null, error: null }]);
+  expect(h.store.getView().jobs).toEqual([{ jobId: "job-00000013", kind: "run", avatarId: SAVED.avatarId, runId: "run-00000013", montageId: null, videoId: null, saving: false, status: "running", done: 0, total: 20, result: null, error: null }]);
   h.stop();
 });
 
@@ -357,7 +357,7 @@ test("a snapshot that lists a queued render restores it as a render job with no 
   const queued: Snapshot["jobs"][number] = { ...RENDER_REF, status: "queued", done: 0, total: 240 };
   const h = await host({ jobs: [queued] });
   expect(h.store.getView().jobs).toEqual([
-    { jobId: "job-render-0001", kind: "render", avatarId: "avatar-draft-0001", runId: null, montageId: "montage-0000001", status: "queued", done: 0, total: 240, result: null, error: null },
+    { jobId: "job-render-0001", kind: "render", avatarId: "avatar-draft-0001", runId: null, montageId: "montage-0000001", videoId: "video-0000001", saving: false, status: "queued", done: 0, total: 240, result: null, error: null },
   ]);
   h.stop();
 });
@@ -384,7 +384,7 @@ test("a headless render names no draft, and neither does a render first heard of
   await h.emit({ type: "job.done", payload: { jobId: RENDER_REF.jobId, result: RENDER_RESULT } });
   expect(h.store.getView().jobs).toMatchObject([
     { jobId: "job-render-0002", montageId: null },
-    { jobId: "job-render-0001", montageId: null, status: "done" },
+    { jobId: "job-render-0001", montageId: null, videoId: "video-0000001", saving: false, status: "done" },
   ]);
   h.stop();
 });
@@ -519,5 +519,32 @@ test("four export.status changes, each followed by another event, never resync a
   expect(h.snapshots()).toBe(1);
   expect(h.store.getView().phase).toBe("ready");
   expect(h.store.getView().lastSeq).toBe(8);
+  h.stop();
+});
+
+// 3d.6: the «сохранение» phase and the video a render makes.
+test("a render's job.progress with saving: true marks the job saving; the end clears it, and a snapshot restores it", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 119, total: 120 } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ videoId: "video-0000001", saving: false });
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 119, total: 120, saving: true } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "running", saving: true });
+  // Never back: a later progress without the flag does not reopen the cancel.
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 119, total: 120 } });
+  expect(h.store.getView().jobs[0]?.saving).toBe(true);
+  await h.emit({ type: "job.done", payload: { jobId: RENDER_REF.jobId, result: RENDER_RESULT } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "done", saving: false });
+  h.stop();
+
+  const restored = await host({ jobs: [{ ...RENDER_REF, status: "running", done: 119, total: 120, saving: true }] });
+  expect(restored.store.getView().jobs[0]).toMatchObject({ status: "running", saving: true, videoId: "video-0000001" });
+  restored.stop();
+});
+
+test("a saving render that fails is no longer saving", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 119, total: 120, saving: true } });
+  await h.emit({ type: "job.failed", payload: { ...RENDER_REF, error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "failed", saving: false });
   h.stop();
 });
