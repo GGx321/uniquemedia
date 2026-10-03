@@ -5,6 +5,7 @@ import { NBSP } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
 import { Portrait } from "../../ui/Portrait";
 import { type ClipLayout, cellsOf, type Edit, clipStartMs, layoutOf, maxDurationMs, roomMs, setDuration, setLayout, setMotion, setStagger, totalMs } from "./clipOps";
+import { ownsKeys } from "./keys";
 import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerStepLabel } from "./labels";
 import { selectClip, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
@@ -90,9 +91,9 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
   const liveIndex = (): number => session.state.spec.clips.findIndex((c) => c.clipId === clip.clipId);
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>): void {
-    const target = event.target;
-    const field = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
-    if ((event.key === "Delete" || event.key === "Backspace") && !field && !event.metaKey && !event.ctrlKey) {
+    // Delete on a control (the «Длительность» slider) or ending a composition is not the clip's (keys.ts).
+    if (ownsKeys(event.target) || event.nativeEvent.isComposing) return;
+    if ((event.key === "Delete" || event.key === "Backspace") && !event.metaKey && !event.ctrlKey) {
       event.preventDefault();
       commands.remove();
     }

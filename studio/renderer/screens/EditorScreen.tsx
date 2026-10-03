@@ -17,6 +17,7 @@ import { isFreePhoto, MediaPanel, PreviewSlot, PropertiesSlot } from "./montage/
 import { draftTitle, outputLabel, outputParts, saveLabel } from "./montage/labels";
 import { photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type RenderBlock, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
+import { isTextEntry } from "./montage/keys";
 import { resolveSelection, selectClip } from "./montage/selection";
 import { DraftSession } from "./montage/session";
 import { Timeline } from "./montage/Timeline";
@@ -40,12 +41,6 @@ type Load =
 const CHANGING_RETRIES = 2;
 /** The pause before such a retry: the save that was replacing the file is done by then. */
 const CHANGING_PAUSE_MS = 150;
-
-/** A key that is the owner typing: text undo belongs to the field, not to the draft. */
-function isTyping(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
-}
 
 /** «2026-09-30_collage3_001»: a video's file name without its folder and extension, as the owner sees it in «Готовые видео». */
 function fileLabel(video: VideoSummary): string {
@@ -352,7 +347,8 @@ function DraftEditor({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented || isTyping(event.target) || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+      // Text undo belongs to a text field; a slider or a button keeps none, so ⌘Z there is the draft's (keys.ts).
+      if (event.defaultPrevented || isTextEntry(event.target) || !(event.metaKey || event.ctrlKey) || event.altKey) return;
       const key = event.key.toLowerCase();
       const redo = (key === "z" && event.shiftKey) || (key === "y" && event.ctrlKey && !event.metaKey && !event.shiftKey);
       const undo = key === "z" && !event.shiftKey;

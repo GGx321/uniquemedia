@@ -479,3 +479,47 @@ describe("the face judge's answers", () => {
     expect(within(props()).getByText("лицо не найдено")).toBeDefined();
   });
 });
+
+describe("keys that belong to a control", () => {
+  test("⌘Z and ⇧⌘Z work while a slider has the focus («Длительность», the zoom): a slider keeps no undo of its own", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    fireEvent.click(clipButtons()[0] ?? document.body);
+    const slider = within(props()).getByRole("slider", { name: "Длительность" });
+    fireEvent.change(slider, { target: { value: "32" } });
+    fireEvent.pointerUp(slider);
+    slider.focus();
+    fireEvent.keyDown(slider, { key: "z", metaKey: true });
+    expect(plain(clipButtons()[0]?.getAttribute("aria-label"))).toBe("Кадр 1: 1 фото, 8.0 с");
+    const zoom = within(timeline()).getByRole("slider", { name: "Масштаб таймлайна" });
+    zoom.focus();
+    fireEvent.keyDown(zoom, { key: "z", metaKey: true, shiftKey: true });
+    expect(plain(clipButtons()[0]?.getAttribute("aria-label"))).toBe("Кадр 1: 1 фото, 3.2 с");
+  });
+
+  test("Delete on the «Длительность» or the zoom slider does not delete the clip", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    fireEvent.click(clipButtons()[0] ?? document.body);
+    fireEvent.keyDown(within(props()).getByRole("slider", { name: "Длительность" }), { key: "Delete" });
+    fireEvent.keyDown(within(timeline()).getByRole("slider", { name: "Масштаб таймлайна" }), { key: "Backspace" });
+    expect(clipButtons()).toHaveLength(1);
+    expect(clipButtons()[0]?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("Delete and Escape that end an input method's composition change nothing", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    const clip = clipButtons()[0];
+    if (clip === undefined) throw new Error("no clip");
+    fireEvent.click(clip);
+    fireEvent.keyDown(clip, { key: "Delete", isComposing: true });
+    fireEvent.keyDown(within(props()).getByRole("button", { name: "Удалить" }), { key: "Backspace", isComposing: true });
+    fireEvent.keyDown(clip, { key: "Escape", isComposing: true });
+    expect(clipButtons()).toHaveLength(1);
+    expect(clipButtons()[0]?.getAttribute("aria-pressed")).toBe("true");
+  });
+});

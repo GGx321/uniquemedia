@@ -6,6 +6,7 @@ import { photoUrl, placeholderGradient } from "../../lib/media";
 import { NBSP } from "../../lib/format";
 import { Icon, type IconName, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { addRefusal, cellsOf, clipStartMs, isEven, maxDurationMs, moveClip, setDuration, totalMs } from "./clipOps";
+import { ownsKeys } from "./keys";
 import { actionWhyLabel, clipAria, clockLabel, PHOTO_PROBLEM_TAGS, secondsLabel } from "./labels";
 import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
@@ -332,10 +333,10 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
   // ---------- the keyboard ----------
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>): void {
-    if (event.defaultPrevented || event.metaKey || event.ctrlKey) return;
+    // A control (the zoom slider) keeps its own keys, and a key ending a composition is the composition's (keys.ts).
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.nativeEvent.isComposing || ownsKeys(event.target)) return;
     const target = event.target;
-    const field = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
-    if ((event.key === "Delete" || event.key === "Backspace") && !field) {
+    if (event.key === "Delete" || event.key === "Backspace") {
       if (resolved === null || !actions.remove.enabled) return;
       event.preventDefault();
       const neighbour = resolved.kind === "clip" ? (spec.clips[resolved.index + 1] ?? spec.clips[resolved.index - 1]) : undefined;
@@ -347,7 +348,6 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
       timeline.select(null);
       return;
     }
-    if (field) return;
     const clipId = target instanceof HTMLElement ? target.dataset.clipId : undefined;
     if (event.altKey && clipId !== undefined && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
