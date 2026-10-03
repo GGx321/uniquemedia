@@ -3,8 +3,8 @@ import { MUSIC_QUOTA_WINDOW_DAYS, MusicStatus, type EngineError, type EventMessa
 import { makeMock, unwrap, type Mock } from "./mockEngine.testkit";
 
 // 3c.6: the dev mock answers the music status, the confirmed refresh and the recovery of a damaged quota log as the engine
-// does (studio/engine/music/service.ts), so the Settings card can be built and tested on it. What it does not model: the
-// list's tracks (`music.list` and `music.peaks` stay unanswered until the editor's music tab, 3d.5), and real downloads.
+// does (studio/engine/music/service.ts), so the Settings card can be built and tested on it. What it does not model: real
+// downloads (the tracks `music.list` answers are in mockEngine.musicStore.test.ts).
 
 const DAY = 24 * 3600 * 1000;
 const WINDOW = MUSIC_QUOTA_WINDOW_DAYS * DAY;

@@ -28,6 +28,12 @@ export interface EngineClient {
   readonly kind: EngineClientKind;
   request<T extends CommandType>(type: T, payload: CommandPayload<T>): Promise<EngineReply<T>>;
   subscribe(listener: (event: EventMessage) => void): () => void;
+  /**
+   * Where the window gets the picture of a text preview the engine answered: the mock's own address for it (a data URL, since the dev
+   * build has no `studio-media://`). Absent on the real client, whose pictures are `studio-media://text/<previewId>` (lib/media.ts).
+   * Null for an id the mock does not hold (never given, or evicted).
+   */
+  textPreviewUrl?(previewId: string): string | null;
 }
 
 /** The wire: what `window.studio` exposes, and what the mock engine implements. */

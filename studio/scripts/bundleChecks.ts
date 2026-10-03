@@ -34,6 +34,12 @@ const FORBIDDEN_DEBUG_MARKERS = [
   // 3c.6: the mock's scripted music refresh failure and its stand-in for a damaged quota log.
   "failNextMusicRefresh",
   "setMusicQuotaLog",
+  // 3d.1b: the mock's stored tracks, its held text drawing (a queued preview becomes TEXT_PREVIEW_SUPERSEDED) and the picture
+  // it serves for a preview id (the dev build's stand-in for `studio-media://text/<previewId>`).
+  "seedMusicTracks",
+  "holdTextDrawing",
+  "releaseTextDrawing",
+  "mockPreviewPng",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",

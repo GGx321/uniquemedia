@@ -14,7 +14,7 @@ export function chooseEngineClient(dev: boolean, makeMock: () => EngineClient): 
 
 /** The demo mock with real timers, so progress is visible in the dev build. */
 function demoMock(): EngineClient {
-  return mockEngineClient(new MockEngine({ preset: "demo", scheduler: realScheduler, latencyMs: 160, stepMs: 900 }));
+  return mockEngineClient(new MockEngine({ preset: "demo", scheduler: realScheduler, latencyMs: 160, stepMs: 900, textDrawMs: 120 }));
 }
 
 /**

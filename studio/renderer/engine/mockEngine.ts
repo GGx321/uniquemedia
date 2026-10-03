@@ -52,10 +52,12 @@ import {
   type VideoSummary,
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
-import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
+import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue, type TextLayer } from "../../shared/engine/montage";
 import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, totalFrames, trackIssues } from "../../shared/montage";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
+import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
+import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -213,6 +215,8 @@ export interface MockEngineOptions {
   music?: MockMusicOptions;
   /** How many renders run at once (the setting's own values); «auto» is ONE in the mock, so a second render is visibly queued. */
   renderConcurrency?: RenderConcurrency;
+  /** How long one text drawing takes on the mock's clock (the engine's worker draws one preview at a time); 0 draws in the next microtask. */
+  textDrawMs?: number;
   eventCapacity?: number;
   avatars?: AvatarSummary[];
   drafts?: Draft[];
@@ -248,6 +252,8 @@ interface MockRunSlot {
 export interface MockMusicOptions {
   sendsDaysAgo?: readonly number[];
   list?: { fetchedAt: string; trackCount: number; bytesOnDisk: number };
+  /** The tracks the store holds (3d.1b): what `music.list` lists and `music.peaks` reads. With no `list`, the status counts them. */
+  tracks?: readonly MockTrackSeed[];
   serverRemaining?: { value: number; daysAgo: number };
   quotaLog?: MusicQuotaLog;
 }
@@ -258,6 +264,8 @@ interface MockMusic {
   serverRemaining: { value: number; at: number } | null;
   quotaLog: MusicQuotaLog;
   list: { fetchedAt: number; trackCount: number; bytesOnDisk: number } | null;
+  /** The stored tracks, in list order. */
+  tracks: MockTrack[];
   refresh: MusicStatus["refresh"];
   /** How a scripted refresh ends instead of with a new list (`failNextMusicRefresh`). */
   nextFailure: EngineError | null;
@@ -270,11 +278,14 @@ const MOCK_MUSIC_TOTAL = 61;
 const MOCK_MUSIC_STEPS = [1, 31, 61] as const;
 /** What a mock refresh stores: 30 tracks of about 1.7 MB each. */
 const MOCK_MUSIC_LIST = { trackCount: 30, bytesOnDisk: 52_400_000 } as const;
+/** What one stored track weighs on disk, in the list a seed makes. */
+const MOCK_TRACK_BYTES = 1_700_000;
 
 /** The dev build's music: a list fetched three days before the mock's start, 12 requests in the window, flashapi's own 18 left. */
 const DEMO_MUSIC: MockMusicOptions = {
   sendsDaysAgo: [22, 19, 17, 15, 12, 10, 9, 7, 5, 4, 3, 1],
   list: { fetchedAt: "2026-09-21T11:02:00.000Z", trackCount: 30, bytesOnDisk: 94_000_000 },
+  tracks: demoTracks(30),
   serverRemaining: { value: 18, daysAgo: 1 },
 };
 
@@ -284,7 +295,13 @@ function mockMusic(options: MockMusicOptions, now: number): MockMusic {
     sends: (options.sendsDaysAgo ?? []).map((days) => now - days * DAY_MS),
     serverRemaining: options.serverRemaining === undefined ? null : { value: options.serverRemaining.value, at: now - options.serverRemaining.daysAgo * DAY_MS },
     quotaLog: options.quotaLog ?? "ok",
-    list: options.list === undefined ? null : { fetchedAt: Date.parse(options.list.fetchedAt), trackCount: options.list.trackCount, bytesOnDisk: options.list.bytesOnDisk },
+    list:
+      options.list !== undefined
+        ? { fetchedAt: Date.parse(options.list.fetchedAt), trackCount: options.list.trackCount, bytesOnDisk: options.list.bytesOnDisk }
+        : options.tracks === undefined || options.tracks.length === 0
+          ? null
+          : { fetchedAt: now, trackCount: options.tracks.length, bytesOnDisk: options.tracks.length * MOCK_TRACK_BYTES },
+    tracks: (options.tracks ?? []).map(mockTrack),
     refresh: { state: "idle" },
     nextFailure: null,
   };
@@ -628,9 +645,11 @@ export class MockEngine implements EngineBridge {
   private unscriptedPicks = 0;
   private nextRenderFailure: { error: EngineError; at: "encode" | "saving" } | null = null;
   private music: MockMusic;
+  private readonly textPreviews: MockTextPreviews;
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
+    this.textPreviews = new MockTextPreviews({ scheduler: this.scheduler, drawMs: options.textDrawMs ?? 0, newId: () => this.nextId("preview") });
     this.latencyMs = options.latencyMs ?? 0;
     this.stepMs = options.stepMs ?? 700;
     this.capacity = options.eventCapacity ?? 256;
@@ -678,6 +697,8 @@ export class MockEngine implements EngineBridge {
     const delay = this.delayed.get(command.type)?.shift() ?? (this.latencyMs > 0 ? this.latencyMs : null);
     if (delay !== null) await new Promise<void>((resolve) => this.scheduler.schedule(delay, resolve));
     else await Promise.resolve();
+    // A text preview is answered when the worker's lane has drawn it (or dropped it), not at once: the one command that waits.
+    if (command.type === "montages.textPreview") return this.forcedFailure(command) ?? this.textPreview(command, command.payload.layer);
     return this.handle(command);
   }
 
@@ -764,6 +785,32 @@ export class MockEngine implements EngineBridge {
    */
   setMusicQuotaLog(state: MusicQuotaLog): void {
     this.music = { ...this.music, quotaLog: state };
+  }
+
+  /**
+   * 3d.1b: the store holds exactly these tracks now, as if a refresh had stored them (the list, its time and its count follow).
+   * Nothing is announced, as the engine announces nothing when a track is stored by another route.
+   */
+  seedMusicTracks(seeds: readonly MockTrackSeed[]): void {
+    this.music = { ...this.music, tracks: seeds.map(mockTrack), list: { fetchedAt: this.clock, trackCount: seeds.length, bytesOnDisk: seeds.length * MOCK_TRACK_BYTES } };
+  }
+
+  /**
+   * 3d.1b: while held, a text drawing that has started waits for `releaseTextDrawing`, so a test can queue previews behind it.
+   * Letting go (false) also ends the drawing that waits.
+   */
+  holdTextDrawing(held: boolean): void {
+    this.textPreviews.hold(held);
+  }
+
+  /** 3d.1b: the held text drawing ends now, and the next one starts (and waits again while held). */
+  releaseTextDrawing(): void {
+    this.textPreviews.release();
+  }
+
+  /** 3d.1b: the PNG the mock serves for a text preview id, or null for an id it never gave or has evicted: the dev build's stand-in for `studio-media://text/<previewId>`. */
+  mockPreviewPng(previewId: string): Uint8Array | null {
+    return this.textPreviews.picture(previewId);
   }
 
   setEncryptionAvailable(available: boolean): void {
@@ -1080,9 +1127,15 @@ export class MockEngine implements EngineBridge {
 
   // ---------- command handling ----------
 
-  private handle(c: CommandMessage): ResponseMessage {
+  /** A failure a test forced for this command (`failNext`), consumed. */
+  private forcedFailure(c: CommandMessage): ResponseMessage | null {
     const forced = this.forced.get(c.type)?.shift();
-    if (forced) return this.fail(c, forced);
+    return forced === undefined ? null : this.fail(c, forced);
+  }
+
+  private handle(c: CommandMessage): ResponseMessage {
+    const forced = this.forcedFailure(c);
+    if (forced) return forced;
 
     switch (c.type) {
       case "settings.get":
@@ -1420,12 +1473,13 @@ export class MockEngine implements EngineBridge {
         return this.musicRefresh(c);
       case "music.recoverQuotaLog":
         return this.musicRecover(c);
-      case "montages.textPreview":
       case "music.list":
+        return this.ok(c, { tracks: listedTracks(this.music.tracks) });
       case "music.peaks":
-        // Text preview parity comes with the window's text tab (3d.5): the mock refuses it as the engine does for a command it lacks.
-        // The list's tracks and their waveforms come with the editor's music tab (3d.5); the mock holds no track yet.
-        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
+        return this.musicPeaks(c, c.payload);
+      case "montages.textPreview":
+        // Answered by `request`, which waits for the worker's lane; `handle` is never given it.
+        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is answered by the lane` });
       case "montages.create":
         return this.montagesCreate(c, c.payload);
       case "montages.get":
@@ -1595,8 +1649,8 @@ export class MockEngine implements EngineBridge {
     });
     // The set is in the build: the engine's own function, so the mock and the engine name the same stickers.
     referential.push(...stickerIssues(spec));
-    // The mock holds no tracks, like an engine with no track store: a trending track is never held (the engine's own function).
-    referential.push(...trackIssues(spec, undefined));
+    // The store's tracks are the mock's own: the engine's function judges a trending track against what is held.
+    referential.push(...trackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId)));
     return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referential].slice(0, MAX_MONTAGE_ISSUES);
   }
 
@@ -2671,6 +2725,21 @@ export class MockEngine implements EngineBridge {
     return { ...list, sentLast31d: Math.min(MUSIC_QUOTA_LIMIT, quota.sent), limit: MUSIC_QUOTA_LIMIT, serverRemaining: quota.serverRemaining, nextFreeAt: iso(quota.nextFreeAt), refresh: m.refresh, quotaLog: m.quotaLog };
   }
 
+  /** `music.peaks`: an own track is not available until 3f; a trending track must be stored. The engine's wording. */
+  private musicPeaks(c: CommandMessage, payload: { track: { source: "trending"; trackId: string } | { source: "own"; mediaId: string }; startMs: number; durationMs: number; bars: number }): ResponseMessage {
+    const { track, startMs, durationMs, bars } = payload;
+    if (track.source === "own") return this.fail(c, { code: "NOT_FOUND", detail: "own music is not available yet" });
+    const peaks = peaksOfTrack(this.music.tracks, track.trackId, startMs, durationMs, bars);
+    if (peaks === null) return this.fail(c, { code: "NOT_FOUND", detail: `track ${track.trackId} is not stored` });
+    return this.ok(c, { peaks });
+  }
+
+  /** `montages.textPreview`, answered when the lane has drawn it: the picture, or the engine's refusal. */
+  private async textPreview(c: CommandMessage, layer: TextLayer): Promise<ResponseMessage> {
+    const outcome = await this.textPreviews.preview(layer);
+    return outcome.ok ? this.ok(c, outcome.result) : this.fail(c, outcome.error);
+  }
+
   /** `music.refresh {confirm: true}`, refused at no cost in the engine's order, else counted and answered running at once. */
   private musicRefresh(c: CommandMessage): ResponseMessage {
     const m = this.music;
@@ -2711,7 +2780,7 @@ export class MockEngine implements EngineBridge {
       }
       const done = MOCK_MUSIC_STEPS[step];
       if (done === undefined) {
-        this.music = { ...m, list: { fetchedAt: this.clock, ...MOCK_MUSIC_LIST }, refresh: { state: "idle" } };
+        this.music = { ...m, list: { fetchedAt: this.clock, ...MOCK_MUSIC_LIST }, tracks: demoTracks(MOCK_MUSIC_LIST.trackCount).map(mockTrack), refresh: { state: "idle" } };
         this.emitMusic();
         return;
       }
@@ -2786,5 +2855,14 @@ export class MockEngine implements EngineBridge {
 /** The mock as an `EngineClient`, through the same validating adapter as the real one; message ids count per client. */
 export function mockEngineClient(engine: MockEngine = new MockEngine()): EngineClient {
   let messageCounter = 0;
-  return createEngineClient(engine, "mock", () => `msg-${String(++messageCounter).padStart(6, "0")}`);
+  const client = createEngineClient(engine, "mock", () => `msg-${String(++messageCounter).padStart(6, "0")}`);
+  // The dev build has no `studio-media://`: a text preview's PNG is handed to the window as a data URL.
+  return { ...client, textPreviewUrl: (previewId) => pngDataUrl(engine.mockPreviewPng(previewId)) };
+}
+
+function pngDataUrl(bytes: Uint8Array | null): string | null {
+  if (bytes === null) return null;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:image/png;base64,${btoa(binary)}`;
 }
