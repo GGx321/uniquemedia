@@ -2,8 +2,9 @@ import { Focus, MontageDraft, MontageName, type Montage } from "../../../shared/
 import type { Scheduler } from "../../engine/scheduler";
 import type { MontageChange } from "../../engine/store";
 import { DraftAutosave, type FlushResult, type SaveState, type SendSave } from "./autosave";
-import { fillFocus } from "./clipOps";
+import { cellsOf, fillFocus } from "./clipOps";
 import { canRedo, canUndo, commitVersion, type CommitOptions, type History, redoVersion, rewriteVersions, sealVersion, startHistory, undoVersion } from "./history";
+import { sameJson } from "./json";
 
 // One open draft in the editor (3d.2): the undo/redo history of its spec (at most 100 versions, renderer only)
 // in front of the serialised autosave. Every task that edits the draft (the timeline 3d.3a/3d.3b, the preview
@@ -41,6 +42,19 @@ export interface SessionOptions {
 }
 
 const sameSave = (a: SaveState, b: SaveState): boolean => a.kind === b.kind && (a.kind !== "failed" || (b.kind === "failed" && a.error === b.error));
+
+/**
+ * The focuses `remote` filled in, when filling them is ALL that tells it from `present` (each scene photo's focus, null
+ * here, found there); null when anything else differs, or nothing does.
+ */
+function focusFills(present: MontageDraft, remote: MontageDraft): [string, Focus][] | null {
+  const fills: [string, Focus][] = [];
+  for (const clip of remote.clips) {
+    for (const cell of cellsOf(clip)) if (cell.photo?.source === "scene" && cell.focus !== null) fills.push([cell.photo.photoId, cell.focus]);
+  }
+  const filled = fills.reduce((at, [photoId, focus]) => fillFocus(at, photoId, focus), present);
+  return filled !== present && sameJson(filled, remote) ? fills : null;
+}
 
 export class DraftSession {
   readonly #montageId: string;
@@ -160,7 +174,10 @@ export class DraftSession {
       this.#refresh();
       return "kept";
     }
-    this.#history = commitVersion(this.#history, montage.spec);
+    // A save that only filled in face focuses (another window's `montages.focus` answers) is written into every version,
+    // as this window's own would be: never an undo step that ⌘Z here would silently take back.
+    const fills = focusFills(this.#history.present, montage.spec);
+    this.#history = fills === null ? commitVersion(this.#history, montage.spec) : rewriteVersions(this.#history, (spec) => fills.reduce((at, [photoId, focus]) => fillFocus(at, photoId, focus), spec));
     this.#refresh();
     return "adopted";
   }

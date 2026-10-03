@@ -270,6 +270,36 @@ describe("the focus found for a placed photo (3d.3a, K6)", () => {
     expect(session.fillFocus("photo-mia-0005", FACE)).toBe(false);
     expect(focusOf(session.state.spec, 0)).toBeNull();
   });
+
+  // 3d.3a's known limit, settled in 3d.3b: the same draft open in two windows.
+  const resolved = draftSpec([{ ...photoClip(0, "photo-mia-0005"), cell: { photo: { source: "scene", photoId: "photo-mia-0005" }, focus: FACE } }]);
+
+  test("a focus another window filled in is written into this window's versions, never an undo step of its own", async () => {
+    const { scheduler, saves, session } = rig();
+    session.edit(one);
+    scheduler.runAll();
+    saves.ok();
+    await settle();
+    expect(session.receive({ change: "upserted", montage: montageOf(resolved, null, "2026-09-30T11:00:00.000Z") })).toBe("adopted");
+    expect(focusOf(session.state.spec, 0)).toEqual(FACE);
+    // One undo goes back past the placing itself, and a redo brings the photo back resolved.
+    session.undo();
+    expect(session.state.spec).toEqual(version(0));
+    session.redo();
+    expect(focusOf(session.state.spec, 0)).toEqual(FACE);
+  });
+
+  test("a save from elsewhere that changes more than a focus is still a version of its own", async () => {
+    const { scheduler, saves, session } = rig();
+    session.edit(one);
+    scheduler.runAll();
+    saves.ok();
+    await settle();
+    const longer = draftSpec([{ ...photoClip(0, "photo-mia-0005", 3_000), cell: { photo: { source: "scene", photoId: "photo-mia-0005" }, focus: FACE } }]);
+    expect(session.receive({ change: "upserted", montage: montageOf(longer, null, "2026-09-30T11:00:00.000Z") })).toBe("adopted");
+    session.undo();
+    expect(session.state.spec).toEqual(one);
+  });
 });
 
 describe("the state React reads", () => {
