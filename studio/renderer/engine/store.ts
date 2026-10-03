@@ -15,6 +15,7 @@ import {
   type UnreadableAvatar,
 } from "../../shared/engine";
 import type { EngineClient } from "./client";
+import { applyVideoChanged, nextRenderBatch } from "./renderJobs";
 
 export type JobStatus = JobState["status"];
 
@@ -69,6 +70,11 @@ export interface EngineView {
   /** How many there really are; can exceed `unreadableAvatars.length` when the list was cut at its bound (L1). */
   readonly unreadableTotal: number;
   readonly jobs: readonly JobView[];
+  /**
+   * The renders the sidebar's «Рендер a / b» counts: those submitted since the queue was last empty (AM4). Empty while no render is
+   * queued or running. Kept by `update()` from the jobs (`nextRenderBatch`).
+   */
+  readonly renderBatch: ReadonlySet<string>;
   /** The last `engine.error` event, e.g. a SETTLE_ABOVE_WORST halt. Cleared by a fresh snapshot. */
   readonly engineError: EngineError | null;
   /** The engine's pending notices (a restart, a settings reset), oldest first: from the snapshot, then `engine.notice`. */
@@ -109,6 +115,7 @@ const INITIAL: EngineView = {
   unreadableAvatars: [],
   unreadableTotal: 0,
   jobs: [],
+  renderBatch: new Set(),
   engineError: null,
   notices: [],
   cancellingJobs: new Set(),
@@ -806,8 +813,9 @@ export class EngineStore {
         this.update({ notices: mergeNotice(this.view.notices, event.payload.notice), lastSeq });
         return;
       case "video.changed":
-        // Video records are listed on demand (videos.list, the Photos «Видео» tab); the event only has to keep the seq moving.
-        this.update({ lastSeq });
+        // Video records are listed on demand (videos.list, the Photos «Видео» tab). The event keeps the seq moving, and a record that
+        // lands after its render's `job.failed` makes that job done (the video exists).
+        this.update(event.payload.change === "upserted" ? { lastSeq, jobs: applyVideoChanged(this.view.jobs, event.payload.video) } : { lastSeq });
         return;
       case "montage.changed":
         // Drafts are listed on demand (montages.list): the view keeps only the seq, and the listeners hear the change.
@@ -854,7 +862,9 @@ export class EngineStore {
     const requested = patch.cancellingJobs ?? this.view.cancellingJobs;
     const active = new Set(jobs.filter(isActiveJob).map((j) => j.jobId));
     const cancellingJobs = [...requested].every((id) => active.has(id)) ? requested : new Set([...requested].filter((id) => active.has(id)));
-    this.view = { ...this.view, ...patch, jobs, cancellingJobs };
+    const batch = nextRenderBatch(patch.renderBatch ?? this.view.renderBatch, jobs);
+    const renderBatch = batch.size === this.view.renderBatch.size && [...batch].every((id) => this.view.renderBatch.has(id)) ? this.view.renderBatch : batch;
+    this.view = { ...this.view, ...patch, jobs, cancellingJobs, renderBatch };
     for (const listener of [...this.listeners]) listener();
   }
 }

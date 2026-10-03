@@ -548,3 +548,62 @@ test("a saving render that fails is no longer saving", async () => {
   expect(h.store.getView().jobs[0]).toMatchObject({ status: "failed", saving: false });
   h.stop();
 });
+
+const RENDER_VIDEO = {
+  videoId: RENDER_REF.videoId,
+  avatarId: "avatar-draft-0001",
+  kind: "photo",
+  durationMs: 8_000,
+  bytes: 3_100_000,
+  createdAt: "2026-10-03T12:00:00.000Z",
+  relPath: "Lena/2026-09-29_photo_001.mp4",
+  fileState: "present",
+  montageId: "montage-0000001",
+  photoCount: 1,
+  music: null,
+  hasPoster: false,
+} as const;
+
+test("a video.changed after its render's job.failed wins: the job is done, with the video's result", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 239, total: 240, saving: true } });
+  await h.emit({ type: "job.failed", payload: { ...RENDER_REF, error: { code: "INTERNAL", detail: "the save was reported lost" } } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "failed" });
+  await h.emit({ type: "video.changed", payload: { change: "upserted", video: RENDER_VIDEO } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "done", error: null, saving: false, done: 240, total: 240, result: { kind: "render", videoId: RENDER_REF.videoId, relPath: RENDER_VIDEO.relPath } });
+  expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("a video.changed before its render's end leaves the job to its own job.done", async () => {
+  const h = await host();
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 239, total: 240, saving: true } });
+  await h.emit({ type: "video.changed", payload: { change: "upserted", video: RENDER_VIDEO } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "running", saving: true });
+  await h.emit({ type: "job.done", payload: { jobId: RENDER_REF.jobId, result: RENDER_RESULT } });
+  expect(h.store.getView().jobs[0]).toMatchObject({ status: "done" });
+  h.stop();
+});
+
+// 3d.6: the sidebar's «Рендер a / b» (AM4) counts what was submitted since the queue was last empty.
+test("the render batch grows with each submit, keeps a render that ended while others run, and empties with the queue", async () => {
+  const h = await host();
+  const second = { ...RENDER_REF, jobId: "job-render-0002", videoId: "video-0000002" };
+  await h.emit({ type: "job.progress", payload: { ...RENDER_REF, done: 0, total: 240 } });
+  expect([...h.store.getView().renderBatch]).toEqual(["job-render-0001"]);
+  await h.emit({ type: "job.progress", payload: { ...second, done: 0, total: 240 } });
+  expect([...h.store.getView().renderBatch]).toEqual(["job-render-0001", "job-render-0002"]);
+  await h.emit({ type: "job.done", payload: { jobId: RENDER_REF.jobId, result: RENDER_RESULT } });
+  expect([...h.store.getView().renderBatch]).toEqual(["job-render-0001", "job-render-0002"]);
+  await h.emit({ type: "job.cancelled", payload: second });
+  expect(h.store.getView().renderBatch.size).toBe(0);
+  h.stop();
+});
+
+test("a snapshot's batch starts at its oldest active render", async () => {
+  const done: Snapshot["jobs"][number] = { ...RENDER_REF, jobId: "job-render-0001", status: "done", done: 240, total: 240, result: RENDER_RESULT };
+  const running: Snapshot["jobs"][number] = { ...RENDER_REF, jobId: "job-render-0002", videoId: "video-0000002", status: "running", done: 10, total: 240 };
+  const h = await host({ jobs: [done, running] });
+  expect([...h.store.getView().renderBatch]).toEqual(["job-render-0002"]);
+  h.stop();
+});
