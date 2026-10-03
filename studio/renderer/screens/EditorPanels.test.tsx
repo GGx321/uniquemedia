@@ -476,6 +476,51 @@ describe("a text's properties: the caption with the engine's verdict inline, the
     expect(caption().value).toBe("sunday reset");
   });
 
+  test("a new size, font, style or colour asks the engine about the caption again, with it", async () => {
+    const { engine } = await openText();
+    const last = () => callsOf(engine, "montages.textPreview").at(-1)?.payload.layer;
+    fireEvent.click(within(props()).getByRole("button", { name: "Caveat" }));
+    await waitFor(() => expect(last()?.font).toBe("caveat"));
+    fireEvent.click(within(props()).getByRole("button", { name: "Без фона" }));
+    await waitFor(() => expect(last()?.style).toBe("none"));
+    fireEvent.click(within(props()).getByRole("button", { name: "Голубой" }));
+    await waitFor(() => expect(last()?.color).toBe("#9ad9ff"));
+    const size = within(props()).getByRole("slider", { name: "Размер" });
+    fireEvent.pointerDown(size, { pointerId: 17 });
+    fireEvent.change(size, { target: { value: "150" } });
+    fireEvent.pointerUp(size, { pointerId: 17 });
+    await waitFor(() => expect(last()?.scale).toBe(1.5));
+  });
+
+  // Review round 1: while a newer ask is out, the verdict shown is about the text before; it is neither the field's error nor news.
+  test("a verdict older than the field's text is shown dimmed, not as the field's error and not announced", async () => {
+    const { engine } = await openText();
+    const live = (): string => plain(props().querySelector('[aria-live="polite"]')?.textContent);
+    fireEvent.change(caption(), { target: { value: "утро" } });
+    await waitFor(() => expect(live()).toBe(CAPTION_ISSUES_RU.charset));
+    expect(caption().getAttribute("aria-invalid")).toBe("true");
+    act(() => engine.holdTextDrawing(true));
+    fireEvent.change(caption(), { target: { value: "утро!" } });
+    await flush();
+    expect(caption().getAttribute("aria-invalid")).toBe(null);
+    expect(live()).toBe("");
+    expect(plain(props().querySelector(".ed-caption-stale")?.textContent)).toBe(CAPTION_ISSUES_RU.charset);
+    await act(async () => {
+      engine.releaseTextDrawing();
+      engine.holdTextDrawing(false);
+    });
+    await waitFor(() => expect(live()).toBe(CAPTION_ISSUES_RU.charset));
+    expect(caption().getAttribute("aria-invalid")).toBe("true");
+    expect(props().querySelector(".ed-caption-stale") === null).toBe(true);
+  });
+
+  test("text far past the limit is not counted grapheme by grapheme: the counter says >60", async () => {
+    await openText();
+    fireEvent.change(caption(), { target: { value: "a".repeat(1_025) } });
+    expect(plain(props().querySelector(".ed-caption-count")?.textContent)).toBe(">60/60");
+    expect(notice()).toBe(`${CAPTION_ISSUES_RU["too-long"]} Пока так, в черновике остаётся прежняя надпись.`);
+  });
+
   test("a caption the engine refuses shows its rule inline (TEXT_INVALID + captionIssue, the shared words), and clears when fixed", async () => {
     const { engine } = await openText();
     fireEvent.change(caption(), { target: { value: "утро в Лиссабоне" } });

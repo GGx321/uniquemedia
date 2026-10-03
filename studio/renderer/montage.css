@@ -2873,7 +2873,11 @@
   color: var(--warn);
 }
 
+/* A verdict about the text before the newest ask: dimmed, and outside the live region (never announced as news). */
 .ed-caption-stale {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
   opacity: 0.6;
 }
 

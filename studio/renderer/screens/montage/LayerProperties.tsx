@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useId, useRef, useState } from "react";
-import { graphemeCount, MAX_CAPTION_GRAPHEMES, type MontageDraft, type TextFont, type TextLayer, type TextStyle } from "../../../shared/engine";
+import { graphemeCount, MAX_CAPTION_GRAPHEMES, MAX_CAPTION_UNITS, type MontageDraft, type TextFont, type TextLayer, type TextStyle } from "../../../shared/engine";
 import { STICKER_CATEGORIES, stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
 import { NBSP } from "../../lib/format";
@@ -180,7 +180,9 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
   useEffect(() => setTyped(null), [layer.value]);
   const value = typed?.text ?? layer.value;
   const notice = captionNotice(typed?.reason ?? null, check);
-  const count = graphemeCount(value);
+  // Text far past the contract's bound is never segmented (review round 1): it is over the limit, whatever it holds.
+  const huge = value.length > MAX_CAPTION_UNITS;
+  const count = huge ? null : graphemeCount(value);
   const captionKey = `caption:${layer.layerId}`;
   /** When the last keystroke of the open typing burst came (null: none is open): the burst is one undo step. */
   const lastTyped = useRef<number | null>(null);
@@ -233,8 +235,10 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
     type(text, captionKey);
   }
 
-  const describedBy = [hintId, notice.text !== null ? noticeId : null].filter(Boolean).join(" ");
-  const over = count > MAX_CAPTION_GRAPHEMES;
+  // A verdict about the text BEFORE the newest ask is shown dimmed, outside the live region, and is not the field's error.
+  const fresh = notice.text !== null && !notice.pending;
+  const describedBy = [hintId, fresh ? noticeId : null].filter(Boolean).join(" ");
+  const over = huge || (count ?? 0) > MAX_CAPTION_GRAPHEMES;
 
   return (
     <>
@@ -243,8 +247,8 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
           <label htmlFor={fieldId} className="lbl">
             Текст
           </label>
-          <span className={over ? "mono ed-caption-count ed-caption-over" : "mono faint ed-caption-count"} aria-label={`${count} из ${MAX_CAPTION_GRAPHEMES} символов`}>
-            {count}/{MAX_CAPTION_GRAPHEMES}
+          <span className={over ? "mono ed-caption-count ed-caption-over" : "mono faint ed-caption-count"} aria-label={count === null ? `больше ${MAX_CAPTION_GRAPHEMES} символов` : `${count} из ${MAX_CAPTION_GRAPHEMES} символов`}>
+            {count === null ? `>${MAX_CAPTION_GRAPHEMES}` : count}/{MAX_CAPTION_GRAPHEMES}
           </span>
         </div>
         <textarea
@@ -254,7 +258,7 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
           lang="en"
           rows={2}
           spellCheck={false}
-          aria-invalid={notice.tone === "error" ? true : undefined}
+          aria-invalid={notice.tone === "error" && !notice.pending ? true : undefined}
           aria-describedby={describedBy}
           aria-busy={notice.pending || undefined}
           value={value}
@@ -267,9 +271,10 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
         <span id={hintId} className="faint ed-caption-hint">
           только английский · эмодзи можно · до 2 строк
         </span>
-        <p id={noticeId} className={notice.tone === null ? "ed-caption-notice" : `ed-caption-notice ed-caption-${notice.tone}${notice.pending ? " ed-caption-stale" : ""}`} aria-live="polite">
-          {notice.text ?? ""}
+        <p id={noticeId} className={fresh ? `ed-caption-notice ed-caption-${notice.tone ?? "error"}` : "ed-caption-notice"} aria-live="polite">
+          {fresh ? notice.text : ""}
         </p>
+        {notice.text !== null && notice.pending && <p className={`ed-caption-stale ed-caption-${notice.tone ?? "error"}`}>{notice.text}</p>}
         <div className="ed-emoji" role="group" aria-label="Вставить эмодзи">
           {EMOJI.map((emoji) => (
             <button key={emoji} type="button" className="chip emo ed-emoji-chip" aria-label={`Вставить ${emoji}`} onMouseDown={(e) => e.preventDefault()} onClick={() => insertEmoji(emoji)}>
