@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { deadlineHeadroomProblem, HEADROOM_SAMPLES, headroomStats } from "./deadlineHeadroom";
+useNativeGlobals();
 
 const DEADLINE = 3_000;
 const flat = (ms: number, n = HEADROOM_SAMPLES): number[] => Array.from({ length: n }, () => ms);
