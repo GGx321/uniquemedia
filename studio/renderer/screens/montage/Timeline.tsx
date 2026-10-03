@@ -11,7 +11,8 @@ import { isTextEntry, ownsKeys } from "./keys";
 import { actionWhyLabel, clipAria, clockLabel, layerAddLabel, PHOTO_PROBLEM_TAGS, secondsLabel } from "./labels";
 import { addLayerRefusal, layerCap, layerCount } from "./layerOps";
 import { laneHeight, laneLayout, LayerTracks } from "./LayerTracks";
-import { type MusicProblem, MusicTrack, type TrackLookup } from "./MusicTrack";
+import type { TrackVerdict } from "./musicOps";
+import { MusicTrack, type TrackLookup } from "./MusicTrack";
 import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
@@ -80,8 +81,8 @@ export interface TimelineProps {
   readonly musicLookup: TrackLookup;
   /** When the track list was last fetched: a new list asks for the waveform again (a missing track may be stored now). */
   readonly musicListVersion: string | null;
-  /** The engine's verdict on the track, for the spec it judged. */
-  readonly musicProblem: MusicProblem | null;
+  /** The engine's verdict on the track for the spec on screen, or `judged: false` while it has not judged that spec. */
+  readonly musicVerdict: TrackVerdict;
   readonly timeline: TimelineState;
   /** A bin photo being dragged, or null. */
   readonly dragPhoto: string | null;
@@ -94,7 +95,7 @@ export interface TimelineProps {
   readonly onSelectClip: (index: number) => void;
 }
 
-export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicProblem, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onSelectClip }: TimelineProps) {
+export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicVerdict, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onSelectClip }: TimelineProps) {
   const commands = useSelectionCommands(session, timeline);
   const lanesRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -590,7 +591,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                 pxPerMs={pxPerMs}
                 lookup={musicLookup}
                 listVersion={musicListVersion}
-                problem={musicProblem}
+                verdict={musicVerdict}
                 onSelect={() => timeline.select({ kind: "music" })}
                 {...(onAddMusic === undefined ? {} : { onAddMusic })}
               />

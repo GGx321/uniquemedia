@@ -6,7 +6,7 @@ import { Icon } from "../../ui/Icon";
 import { totalMs } from "./clipOps";
 import { DRAG_THRESHOLD_PX, type GestureKit } from "./gesture";
 import { musicAria, trackClock, trackName } from "./labels";
-import { atHighlight, clampMusicStart, highlightMarks, setMusicStart, slipStart, waveBars } from "./musicOps";
+import { atHighlight, clampMusicStart, highlightMarks, setMusicStart, slipStart, trackProblem, type TrackVerdict, waveBars } from "./musicOps";
 import type { DraftSession } from "./session";
 import { TIMELINE_MS } from "./timelineScale";
 import type { TimelineState } from "./useTimeline";
@@ -117,9 +117,6 @@ export function usePeaks(client: EngineClient, ask: PeaksAsk | null, listVersion
   return { peaks: ask !== null && peaks?.trackId === ask.trackId ? peaks : null, missing: ask !== null && missing === ask.trackId ? missing : null };
 }
 
-/** What is wrong with the draft's track, as the engine judged it (`track-unavailable`, `track-too-short`). */
-export type MusicProblem = "unavailable" | "too-short";
-
 export interface MusicTrackProps {
   readonly session: DraftSession;
   readonly spec: MontageDraft;
@@ -130,8 +127,8 @@ export interface MusicTrackProps {
   readonly lookup: TrackLookup;
   /** When the track list was last fetched (`MusicStatus.listFetchedAt`): a new one asks for the waveform again. */
   readonly listVersion: string | null;
-  /** The engine's own verdict on the track (only for the spec it judged). */
-  readonly problem: MusicProblem | null;
+  /** The engine's verdict on the track for the spec on screen, or `judged: false` while it has not judged that spec. */
+  readonly verdict: TrackVerdict;
   readonly onSelect: () => void;
   /** «Добавить музыку»: the media panel's «Музыка» tab (SLOT 3d.5); absent, the button is «Скоро». */
   readonly onAddMusic?: () => void;
@@ -149,7 +146,7 @@ function Star() {
   );
 }
 
-export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, listVersion, problem, onSelect, onAddMusic }: MusicTrackProps) {
+export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, listVersion, verdict, onSelect, onAddMusic }: MusicTrackProps) {
   const { client } = useEngine();
   const [slip, setSlip] = useState<number | null>(null);
   /** The key holding a keyboard move open: its release ends the undo step. */
@@ -178,7 +175,8 @@ export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, list
     );
   }
 
-  const issue: MusicProblem | null = missing !== null ? "unavailable" : (problem ?? (track !== null && startMs + total > track.durationMs ? "too-short" : null));
+  // The engine judged the committed start; while a drag slides it, the window's guess (the listed length is the proven one) stands.
+  const issue = trackProblem({ missing: missing !== null, verdict: slip === null ? verdict : { judged: false }, guessTooShort: track !== null && startMs + total > track.durationMs });
   const selected = timeline.selection?.kind === "music";
   const trackMs = track?.durationMs ?? null;
   const movable = trackMs !== null && total > 0 && issue !== "unavailable";

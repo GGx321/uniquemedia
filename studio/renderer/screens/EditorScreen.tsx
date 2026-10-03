@@ -14,7 +14,8 @@ import { ScreenTitle } from "../ui/ScreenTitle";
 import { ClipProperties } from "./montage/ClipProperties";
 import { sameJson } from "./montage/json";
 import { LayerProperties, MusicProperties } from "./montage/LayerProperties";
-import { type MusicProblem, useTrackSummary } from "./montage/MusicTrack";
+import type { TrackVerdict } from "./montage/musicOps";
+import { useTrackSummary } from "./montage/MusicTrack";
 import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto } from "./montage/clipOps";
 import { isFreePhoto, MediaPanel, PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
 import { draftTitle, outputLabel, outputParts, saveLabel } from "./montage/labels";
@@ -405,8 +406,12 @@ function DraftEditor({
   const timeline = useTimeline(state.spec);
   const musicLookup = useTrackSummary(client, state.spec.music, view.music?.listFetchedAt ?? null);
   // The engine's referential verdict on the layers and the track counts only for the spec it judged (as renderBlock reads it).
-  const judged = sameJson(verdict.spec, state.spec) ? verdict.issues : [];
-  const musicProblem: MusicProblem | null = judged.some((i) => i.code === "track-unavailable") ? "unavailable" : judged.some((i) => i.code === "track-too-short") ? "too-short" : null;
+  const judgedNow = sameJson(verdict.spec, state.spec);
+  const judged = judgedNow ? verdict.issues : [];
+  // The track: judged (by the length the engine's decode proved) or not yet; the block trusts only a verdict on the spec on screen.
+  const musicVerdict: TrackVerdict = judgedNow
+    ? { judged: true, problem: judged.some((i) => i.code === "track-unavailable") ? "unavailable" : judged.some((i) => i.code === "track-too-short") ? "too-short" : null }
+    : { judged: false };
   const flaggedLayers = layerProblems(verdict.spec, judged);
   const focus = useFocusResolver(client, session, avatarId);
   /** A free photo dragged out of the bin. */
@@ -792,7 +797,7 @@ function DraftEditor({
         flaggedLayers={flaggedLayers}
         musicLookup={musicLookup}
         musicListVersion={view.music?.listFetchedAt ?? null}
-        musicProblem={musicProblem}
+        musicVerdict={musicVerdict}
         timeline={timeline}
         dragPhoto={dragPhoto}
         onInsertPhoto={(photoId, boundary) => {

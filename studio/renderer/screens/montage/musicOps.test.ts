@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_PEAK_BARS, MAX_SOURCE_OFFSET_MS, MIN_PEAK_BARS, MontageDraft } from "../../../shared/engine";
-import { atHighlight, clampMusicStart, highlightMarks, type MusicEdit, musicStartRange, setMusicStart, slipStart, waveBars } from "./musicOps";
+import { atHighlight, clampMusicStart, highlightMarks, type MusicEdit, musicStartRange, setMusicStart, slipStart, trackProblem, waveBars } from "./musicOps";
 import { draftSpec } from "./testkit";
 
 // 3d.3b: the music track on the timeline. The block always spans the whole montage (the render cuts and pads the audio to
@@ -75,6 +75,29 @@ describe("setting the start", () => {
     expect(setMusicStart(draftSpec(4), 0, TRACK_MS)).toEqual({ ok: false, reason: "no-music" });
     const own = draftSpec(4, { music: { source: "own", mediaId: "media-own-0002", startMs: 0 } });
     expect(ok(setMusicStart(own, 1_234, TRACK_MS)).music).toEqual({ source: "own", mediaId: "media-own-0002", startMs: 1_234 });
+  });
+});
+
+// 3d.3b verify: the engine judges a track by the length its decode PROVED; the window's own guess (from the listed length)
+// stands only until the engine has judged the spec on screen, then its verdict wins both ways.
+describe("what the block says is wrong with the track", () => {
+  const judged = (problem: "unavailable" | "too-short" | null) => ({ judged: true, problem }) as const;
+  const unjudged = { judged: false } as const;
+
+  test("the engine's verdict on the spec on screen wins over the window's guess, both ways", () => {
+    expect(trackProblem({ missing: false, verdict: judged(null), guessTooShort: true })).toBe(null);
+    expect(trackProblem({ missing: false, verdict: judged("too-short"), guessTooShort: false })).toBe("too-short");
+    expect(trackProblem({ missing: false, verdict: judged("unavailable"), guessTooShort: false })).toBe("unavailable");
+  });
+
+  test("not judged yet (an edit the engine has not seen): the window's guess, at once", () => {
+    expect(trackProblem({ missing: false, verdict: unjudged, guessTooShort: true })).toBe("too-short");
+    expect(trackProblem({ missing: false, verdict: unjudged, guessTooShort: false })).toBe(null);
+  });
+
+  test("a track the store does not hold (music.peaks NOT_FOUND) is unavailable, whatever else is known", () => {
+    expect(trackProblem({ missing: true, verdict: judged(null), guessTooShort: false })).toBe("unavailable");
+    expect(trackProblem({ missing: true, verdict: unjudged, guessTooShort: true })).toBe("unavailable");
   });
 });
 

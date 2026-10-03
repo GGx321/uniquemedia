@@ -511,6 +511,45 @@ describe("the music track", () => {
     expect(within(timeline()).getByRole("button", { name: /^Музыка: Espresso/ }).getAttribute("aria-label")).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:50, трек короче ролика");
   });
 
+  test("a track whose decode proved less than the list claimed: the start never goes past the PROVEN end (3d.3b verify)", async () => {
+    // The list claimed 30.0 s, the decode proved 29.1 s: an 8 s montage may start at 21.1 s at the latest, never 22.0 s.
+    const apart: MockTrackSeed = { ...TRACK, durationMs: 29_100, declaredMs: 30_000, peaks: TRACK.peaks.slice(0, 582) };
+    const { client, engine } = await studio({ music: { tracks: [apart] } });
+    await openDraft(engine, client, music(12_000));
+    const target = await within(timeline()).findByRole("button", { name: /^Музыка: Espresso/ });
+    drag(target, -100 * ONE_SECOND_PX, 15);
+    expect(plain(target.getAttribute("aria-label"))).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:21.1");
+    const saved = await nextSave(engine);
+    expect(saved.music).toEqual({ source: "trending", trackId: TRACK.trackId, startMs: 21_100 });
+    // The engine, judging by the same proven length, finds nothing wrong.
+    await waitFor(() => expect(target.querySelectorAll(".ed-music-issue").length).toBe(0));
+  });
+
+  test("once the engine has judged the spec on screen, its verdict wins over the window's guess: no false «короче ролика»", async () => {
+    const { client, engine } = await studio({ music: { tracks: [{ ...TRACK, durationMs: 15_000, peaks: TRACK.peaks.slice(0, 300) }] } });
+    // 10 s + 8 s: past the 15 s the window was told.
+    await openDraft(engine, client, music(10_000));
+    const target = await within(timeline()).findByRole("button", { name: /трек короче ролика$/ });
+    // The store now holds the track at 20 s (the list the window read is older); the engine reads the draft again and finds it fine.
+    engine.seedMusicTracks([{ ...TRACK, durationMs: 20_000, peaks: TRACK.peaks.slice(0, 400) }]);
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(plain(target.getAttribute("aria-label"))).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:10"));
+    expect(target.querySelectorAll(".ed-music-issue").length).toBe(0);
+  });
+
+  test("music.peaks NOT_FOUND alone says «трек недоступен», before the engine has judged the edited draft", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, music(12_000));
+    await within(timeline()).findByRole("button", { name: "Музыка: трек недоступен" });
+    // An edit the engine has not judged yet: only the waveform's NOT_FOUND still knows the track is gone.
+    fireEvent.click(within(screen.getByRole("list", { name: "Кадры" })).getAllByRole("button")[0] ?? document.body);
+    fireEvent.keyDown(within(timeline()).getByRole("slider", { name: "Длительность кадра 1: правый край" }), { key: "ArrowRight" });
+    await flush();
+    expect(within(timeline()).queryAllByRole("button", { name: "Музыка: трек недоступен" }).length).toBe(1);
+  });
+
   test("a track shorter than the montage from its start says so", async () => {
     const { client, engine } = await studio({ music: { tracks: [{ ...TRACK, durationMs: 15_000, peaks: TRACK.peaks.slice(0, 300) }] } });
     await openDraft(engine, client, music(10_000));

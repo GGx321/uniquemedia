@@ -80,6 +80,24 @@ export function highlightMarks(highlights: readonly Highlight[], startMs: number
   return highlights.filter((h) => !h.likelyDefault && h.ms > startMs && h.ms < startMs + totalMs).map((h) => ({ ms: h.ms, at: (h.ms - startMs) / totalMs }));
 }
 
+/** What is wrong with the draft's track (`track-unavailable`, `track-too-short`). */
+export type MusicProblem = "unavailable" | "too-short";
+
+/** The engine's verdict on the track for the spec on screen, or `judged: false` while it has not judged that spec. */
+export type TrackVerdict = { readonly judged: false } | { readonly judged: true; readonly problem: MusicProblem | null };
+
+/**
+ * What the music block says is wrong with the track (3d.3b verify). A track the store does not hold (`music.peaks` answered
+ * NOT_FOUND) is unavailable. Otherwise the engine's verdict on the spec on screen wins, both ways: it judges by the length the
+ * decode proved, which the window may not know. Only while the engine has not judged that spec (an edit it has not seen yet)
+ * does the window's own guess from the listed length stand, so an edit that outgrows the track says so at once.
+ */
+export function trackProblem(facts: { readonly missing: boolean; readonly verdict: TrackVerdict; readonly guessTooShort: boolean }): MusicProblem | null {
+  if (facts.missing) return "unavailable";
+  if (facts.verdict.judged) return facts.verdict.problem;
+  return facts.guessTooShort ? "too-short" : null;
+}
+
 /** Whether the music starts exactly on one of the track's quick picks (the ★ on the block's tag). */
 export function atHighlight(highlights: readonly Highlight[], startMs: number): boolean {
   return highlights.some((h) => h.ms === startMs);
