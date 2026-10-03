@@ -72,7 +72,7 @@ describe("the music key is never an argument of the render's ffmpeg", () => {
         clips: [clip("a"), clip("b")],
         resolvePhoto: (ref) => ({ path: join(root, `${ref.source === "scene" ? ref.photoId : ref.mediaId}.jpg`), width: 720, height: 1280 }),
         overlays: [],
-        audio: { kind: "music", path: join(root, "music", "tracks", "4199287736976977.m4a"), startMs: 0 },
+        audio: { kind: "music", data: new Uint8Array([1, 2, 3]), startMs: 0 },
         output: join(root, "export", ".studio-part-job-00000001.mp4"),
         signal: new AbortController().signal,
         onProgress: () => undefined,
