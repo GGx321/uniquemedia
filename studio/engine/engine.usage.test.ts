@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AvatarSummary, EventMessage, PhotoSummary } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
@@ -139,6 +139,29 @@ describe("videos.quarantineRecords («Убрать повреждённую за
     expect((await summaryOf(engine, avatarId))?.usage).toEqual({ state: "unknown", reasons: ["library-too-new"] });
     expect(await quarantineFiles()).toEqual([]);
   });
+
+  // chmod 000 means nothing on Windows, and root reads through it; the library's own tests cover every platform with EBUSY.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a sound record the disk will not open is record-inaccessible: the answer is 0, the file stays, and no photo is counted unused",
+    async () => {
+      const { avatarId, photoIds } = await seedAvatar();
+      const record = await writeVideoRecord(libraryRoot(), "video-00000001", sceneSpec(avatarId, [photoIds[0] ?? ""]));
+      await chmod(record, 0o000);
+      try {
+        const { engine } = await startEngine(dir());
+        expect((await summaryOf(engine, avatarId))?.usage).toEqual({ state: "unknown", reasons: ["record-inaccessible"] });
+
+        expect(ok(await engine.handle(command("videos.quarantineRecords", { avatarId }))).result).toEqual({ avatarId, quarantined: 0 });
+
+        expect(await quarantineFiles()).toEqual([]);
+        const summary = await summaryOf(engine, avatarId);
+        expect(summary?.usage).toEqual({ state: "unknown", reasons: ["record-inaccessible"] });
+        expect(summary?.eligibleUnusedCount).toBe(0);
+      } finally {
+        await chmod(record, 0o644);
+      }
+    },
+  );
 
   test("an unknown avatar is NOT_FOUND", async () => {
     await seedAvatar();

@@ -335,10 +335,13 @@ export const Draft = z
  *   its own, and nothing on disk is broken;
  * - `record-unreadable`: a file among the video records cannot be read as one (broken, foreign or misfiled), so a video
  *   may hide in it: «Убрать повреждённую запись» (`videos.quarantineRecords`) moves it to the library's quarantine;
+ * - `record-inaccessible` (3e.2 review): a record file the disk would not open (no access, held by another program, a cloud
+ *   placeholder not downloaded). Its bytes may be sound, so nothing moves it: the owner gives Studio access, and the records
+ *   are read again (at the next open, or with the next «Убрать повреждённую запись»);
  * - `rejects-unreadable`: the owner's reject marks (`rejected.jsonl`) have a line that cannot be read, so a mark may hide
  *   in it: «Восстановить отметки» (`photos.rebuildRejected`) keeps every line that reads and sets the file aside.
  */
-export const UsageUnknownReason = z.enum(["library-too-new", "index-stale", "record-unreadable", "rejects-unreadable"]);
+export const UsageUnknownReason = z.enum(["library-too-new", "index-stale", "record-unreadable", "record-inaccessible", "rejects-unreadable"]);
 
 /** Whether the avatar's usage can be trusted; when it cannot, every reason that holds, each once (the window offers each one's way out). */
 export const AvatarUsage = z.discriminatedUnion("state", [

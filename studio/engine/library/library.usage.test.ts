@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { openLibrary, type LibraryDeps } from "./library";
 import type { PhotoQa, PhotoSidecar } from "./schemas";
@@ -69,6 +69,32 @@ async function reopen() {
   return (await openLibrary(root(), deps())).library;
 }
 
+/** A read error the disk gives for a file it holds but will not hand over now (Windows: another program has it open). */
+const busy = (): Error => Object.assign(new Error("EBUSY: resource busy or locked, open"), { code: "EBUSY" });
+
+/**
+ * A library whose disk will not open the files `locked` names (a read of them throws EBUSY, as the read itself would): the
+ * stand-in, on every platform, for a record with no read permission, held by another program, or a cloud placeholder. The
+ * open's own read does not take the hook, so the avatar's records are read again through it.
+ */
+async function reopenWithLocked(avatarId: string, locked: Set<string>) {
+  const { library } = await openLibrary(
+    root(),
+    deps({
+      testHooks: {
+        beforeReadVideoRecord: (path) => {
+          if (locked.has(path)) throw busy();
+        },
+      },
+    }),
+  );
+  await library.reloadVideoRecords(avatarId);
+  return library;
+}
+
+/** chmod 000 means nothing on Windows, and root reads through it. */
+const cannotDenyReads = process.platform === "win32" || process.getuid?.() === 0;
+
 describe("usageReasons: why an avatar's usage cannot be trusted", () => {
   test("a sound avatar has none, and its unused photos are listed", async () => {
     const { library, avatar } = await savedAvatar();
@@ -82,6 +108,16 @@ describe("usageReasons: why an avatar's usage cannot be trusted", () => {
     await mkdir(videosDir(avatar.id), { recursive: true });
     await writeFile(join(videosDir(avatar.id), "video-00000002.json"), "{ not json");
     expect((await reopen()).usageReasons(avatar.id)).toEqual(["record-unreadable"]);
+  });
+
+  test("a record the disk would not open is record-inaccessible, not record-unreadable: its bytes may be sound", async () => {
+    const { library: first, avatar } = await savedAvatar();
+    const photo = await first.addPhoto(avatar.id, PNG_1X1, scene());
+    const record = await writeVideoRecord(root(), "video-00000001", sceneSpec(avatar.id, [photo.id]));
+    const library = await reopenWithLocked(avatar.id, new Set([record]));
+    expect(library.usageReasons(avatar.id)).toEqual(["record-inaccessible"]);
+    expect(() => library.eligibleUnusedPhotos(avatar.id)).toThrow();
+    expect(library.eligibleUnusedCount(avatar.id)).toBe(0);
   });
 
   test("a reject log with a bad complete line: rejects-unreadable", async () => {
@@ -124,15 +160,17 @@ describe("usageReasons: why an avatar's usage cannot be trusted", () => {
     expect(reopened.usageReasons(avatar.id)).toEqual(["record-unreadable"]);
   });
 
-  test("every reason that holds is named, the decisive first: a newer record, a stale index, a broken record, broken marks", async () => {
-    const { avatar } = await savedAvatar();
+  test("every reason that holds is named, the decisive first: a newer record, a stale index, a broken record, a locked one, broken marks", async () => {
+    const { library: first, avatar } = await savedAvatar();
+    const photo = await first.addPhoto(avatar.id, PNG_1X1, scene());
     await mkdir(videosDir(avatar.id), { recursive: true });
     await writeFile(join(videosDir(avatar.id), "video-00000002.json"), "{ not json");
     await writeFile(join(videosDir(avatar.id), "video-00000003.json"), JSON.stringify({ schemaVersion: 2, id: "video-00000003", avatarId: avatar.id }));
+    const locked = await writeVideoRecord(root(), "video-00000005", sceneSpec(avatar.id, [photo.id]));
     await writeFile(rejectsPath(avatar.id), "not json\n");
-    const library = await reopen();
+    const library = await reopenWithLocked(avatar.id, new Set([locked]));
     library.flagVideoIndexStale(avatar.id, "video-00000004");
-    expect(library.usageReasons(avatar.id)).toEqual(["library-too-new", "index-stale", "record-unreadable", "rejects-unreadable"]);
+    expect(library.usageReasons(avatar.id)).toEqual(["library-too-new", "index-stale", "record-unreadable", "record-inaccessible", "rejects-unreadable"]);
   });
 
   test("it says exactly when eligibleUnusedPhotos refuses: no reason, no refusal; a reason, a refusal and a count of 0", async () => {
@@ -356,6 +394,95 @@ describe("quarantineBrokenRecords: «Убрать повреждённую за�
     expect(await quarantined()).toEqual(new Map());
     expect(library.usageReasons(avatar.id)).toEqual([]);
     expect(library.photoStates(avatar.id).get(photo.id)?.usedIn).toEqual(["video-00000002"]);
+  });
+
+  test("never moves an intact record the disk would not open (EBUSY): it stays, the avatar stays closed, and its photos are never offered", async () => {
+    const { library: first, avatar } = await savedAvatar();
+    const used = await first.addPhoto(avatar.id, PNG_1X1, scene());
+    const record = await writeVideoRecord(root(), "video-00000001", sceneSpec(avatar.id, [used.id]));
+    const bytes = await readFile(record, "utf8");
+    const locked = new Set([record]);
+    const library = await reopenWithLocked(avatar.id, locked);
+
+    const outcome = await library.quarantineBrokenRecords(avatar.id);
+
+    expect(outcome.quarantined).toBe(0);
+    expect(await readFile(record, "utf8")).toBe(bytes);
+    expect(await quarantined()).toEqual(new Map());
+    expect(library.usageReasons(avatar.id)).toEqual(["record-inaccessible"]);
+    expect(() => library.eligibleUnusedPhotos(avatar.id)).toThrow();
+
+    // The disk lets go: the next read finds the record, and its photo is used, never free.
+    locked.clear();
+    expect((await library.quarantineBrokenRecords(avatar.id)).quarantined).toBe(0);
+    expect(library.usageReasons(avatar.id)).toEqual([]);
+    expect(library.photoStates(avatar.id).get(used.id)?.usedIn).toEqual(["video-00000001"]);
+    expect(ids(library.eligibleUnusedPhotos(avatar.id))).toEqual([]);
+  });
+
+  test.skipIf(cannotDenyReads)("never moves an intact record with no read permission (chmod 000), and its photos stay used", async () => {
+    const { library: first, avatar } = await savedAvatar();
+    const used = await first.addPhoto(avatar.id, PNG_1X1, scene());
+    const record = await writeVideoRecord(root(), "video-00000001", sceneSpec(avatar.id, [used.id]));
+    await chmod(record, 0o000);
+    try {
+      const library = await reopen();
+      expect(library.usageReasons(avatar.id)).toEqual(["record-inaccessible"]);
+
+      expect((await library.quarantineBrokenRecords(avatar.id)).quarantined).toBe(0);
+
+      expect(await exists(record)).toBe(true);
+      expect(await quarantined()).toEqual(new Map());
+      expect(() => library.eligibleUnusedPhotos(avatar.id)).toThrow();
+
+      await chmod(record, 0o644);
+      await library.quarantineBrokenRecords(avatar.id);
+      expect(library.photoStates(avatar.id).get(used.id)?.usedIn).toEqual(["video-00000001"]);
+      expect(ids(library.eligibleUnusedPhotos(avatar.id))).toEqual([]);
+    } finally {
+      await chmod(record, 0o644).catch(() => undefined);
+    }
+  });
+
+  test("beside a locked record, a broken one is still moved: only what reads as broken goes", async () => {
+    const { avatar, free } = await withBrokenRecord();
+    const locked = await writeVideoRecord(root(), "video-00000003", sceneSpec(avatar.id, [free.id]));
+    const library = await reopenWithLocked(avatar.id, new Set([locked]));
+    expect(library.usageReasons(avatar.id)).toEqual(["record-unreadable", "record-inaccessible"]);
+
+    expect((await library.quarantineBrokenRecords(avatar.id)).quarantined).toBe(1);
+
+    expect(await exists(join(videosDir(avatar.id), "video-00000002.json"))).toBe(false);
+    expect(await exists(locked)).toBe(true);
+    expect(library.usageReasons(avatar.id)).toEqual(["record-inaccessible"]);
+  });
+
+  test("a broken record the disk stops opening between the folder's read and its move stays where it is", async () => {
+    const { library: first, avatar } = await savedAvatar();
+    await first.addPhoto(avatar.id, PNG_1X1, scene());
+    await mkdir(videosDir(avatar.id), { recursive: true });
+    const broken = join(videosDir(avatar.id), "video-00000002.json");
+    await writeFile(broken, "{ not json");
+    let reads = 0;
+    const { library } = await openLibrary(
+      root(),
+      deps({
+        testHooks: {
+          beforeReadVideoRecord: (path) => {
+            if (path !== broken) return;
+            reads++;
+            // The quarantine's folder read (1) finds it broken; the look right before the move (2) cannot open it.
+            if (reads === 2) throw busy();
+          },
+        },
+      }),
+    );
+    expect(library.usageReasons(avatar.id)).toEqual(["record-unreadable"]);
+
+    expect((await library.quarantineBrokenRecords(avatar.id)).quarantined).toBe(0);
+
+    expect(await readFile(broken, "utf8")).toBe("{ not json");
+    expect(await quarantined()).toEqual(new Map());
   });
 
   test("a videos folder that is a file is moved aside, and the avatar has no videos and a trusted usage", async () => {

@@ -76,7 +76,8 @@ export interface LibraryDeps {
    *  before it is renamed into place. Throwing simulates a crash there. */
   testHooks?: {
     beforeRename?: (finalPath: string) => void | Promise<void>;
-    /** Called before each video record file is read by `reloadVideoRecords`. */
+    /** Called before each video record file is read by `reloadVideoRecords` and the quarantine, as part of the read: what it
+     *  throws is what the read threw. */
     beforeReadVideoRecord?: (path: string) => void | Promise<void>;
   };
   /**
@@ -161,12 +162,14 @@ function toJson(value: unknown): string {
 }
 
 /** Why an avatar's usage cannot be trusted (the contract's `UsageUnknownReason`, K16), in the order `usageReasons` names them. */
-export type UsageReason = "library-too-new" | "index-stale" | "record-unreadable" | "rejects-unreadable";
+export type UsageReason = "library-too-new" | "index-stale" | "record-unreadable" | "record-inaccessible" | "rejects-unreadable";
 
 /**
  * Whether the file behind `problem` still cannot be read as a record of `avatarId`, looked at once more right before it is moved
  * aside: a file that reads as sound now (fixed by hand, or replaced) stays, and so does one that is gone or was written by a
- * newer Studio meanwhile. `videos/` that is not a folder is checked as that.
+ * newer Studio meanwhile. A file the disk would not open now (`io`: no access, held, a cloud placeholder) stays too: its bytes
+ * may be a sound record, and moving it would free its photos for a second video. `videos/` that is not a folder is checked as
+ * that.
  */
 async function stillUnreadable(avatarDir: string, avatarId: string, problem: VideoRecordProblem, options: ReadVideoRecordsOptions): Promise<boolean> {
   if (problem.file === VIDEOS_NOT_A_FOLDER.file) {
@@ -179,7 +182,7 @@ async function stillUnreadable(avatarDir: string, avatarId: string, problem: Vid
   }
   const name = problem.file.slice(`${VIDEOS_DIR}/`.length);
   const again = await readVideoRecordFile(avatarDir, avatarId, name, options);
-  return again.kind === "problem" && again.problem.reason === "unreadable";
+  return again.kind === "problem" && again.problem.reason === "unreadable" && again.problem.io !== true;
 }
 
 /** One complete line of rejected.jsonl as a mark, or null when it is not one (the reader's own rule: JSON, then the schema). */
@@ -763,7 +766,8 @@ export class Library {
     const reasons: UsageReason[] = [];
     if (found.some((p) => p.reason === "too-new")) reasons.push("library-too-new");
     if ((this.#videoIndexStale.get(avatarId)?.size ?? 0) > 0) reasons.push("index-stale");
-    if (found.some((p) => p.reason === "unreadable")) reasons.push("record-unreadable");
+    if (found.some((p) => p.reason === "unreadable" && p.io !== true)) reasons.push("record-unreadable");
+    if (found.some((p) => p.reason === "unreadable" && p.io === true)) reasons.push("record-inaccessible");
     if (this.#brokenRejectLogs.has(avatarId)) reasons.push("rejects-unreadable");
     return reasons;
   }

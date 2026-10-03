@@ -74,6 +74,12 @@ export interface VideoRecordProblem {
   reason: "unreadable" | "too-new";
   detail: string;
   otherAvatarId?: string;
+  /**
+   * The disk would not open the file (any read error but ENOENT: no access, held by another program, a cloud placeholder,
+   * a network volume's error). Nothing is known about its bytes, so it may be a sound record: it is never moved aside, and
+   * its avatar stays closed until a read gets through (3e.2 review).
+   */
+  io?: true;
 }
 
 export interface VideoRecordsRead {
@@ -83,7 +89,7 @@ export interface VideoRecordsRead {
 
 /** Test seam. */
 export interface ReadVideoRecordsOptions {
-  /** Called before each record file is read. */
+  /** Called before each record file is read, as part of the read: what it throws is what the read threw (a disk error). */
   beforeRead?: (path: string) => void | Promise<void>;
 }
 
@@ -104,14 +110,15 @@ export async function readVideoRecordFile(avatarDir: string, avatarId: string, n
   if (!isRecordFileName(name)) throw new TypeError("readVideoRecordFile: not a record's file name");
   const file = `${VIDEOS_DIR}/${name}`;
   const path = join(avatarDir, VIDEOS_DIR, name);
-  await options.beforeRead?.(path);
   let text: string;
   try {
+    await options.beforeRead?.(path);
     text = await readFile(path, "utf8");
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return { kind: "gone" };
-    // Anything else (EACCES, EISDIR, a network volume's error) is this file's problem, never the library's: it must still open.
-    return { kind: "problem", problem: { file, reason: "unreadable", detail: "could not be read" } };
+    // Anything else (EACCES, EBUSY, a cloud placeholder, a network volume's error) is this file's problem, never the library's:
+    // it must still open. It says nothing about the bytes, so it is marked `io`: a sound record may be behind it.
+    return { kind: "problem", problem: { file, reason: "unreadable", detail: "could not be read", io: true } };
   }
   let value: unknown;
   try {

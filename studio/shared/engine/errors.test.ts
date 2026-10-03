@@ -466,6 +466,11 @@ describe("USAGE_UNKNOWN_REASONS_RU (3e.2, K16)", () => {
   });
 
   test("the broken-record and broken-marks texts say what is wrong without naming a file", () => {
-    for (const reason of ["record-unreadable", "rejects-unreadable"] as const) expect(USAGE_UNKNOWN_REASONS_RU[reason]).not.toMatch(/\.json|\//);
+    for (const reason of ["record-unreadable", "record-inaccessible", "rejects-unreadable"] as const) expect(USAGE_UNKNOWN_REASONS_RU[reason]).not.toMatch(/\.json|\//);
+  });
+
+  test("a record the disk would not open may be sound: the text says Studio cannot open it, and never offers to remove it", () => {
+    expect(USAGE_UNKNOWN_REASONS_RU["record-inaccessible"]).toMatch(/не может открыть/);
+    expect(USAGE_UNKNOWN_REASONS_RU["record-inaccessible"]).not.toMatch(/(?<!не )(удал|убер|убрать|карантин|восстанов)/i);
   });
 });

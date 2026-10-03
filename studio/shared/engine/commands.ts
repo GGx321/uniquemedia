@@ -386,7 +386,8 @@ const ENGINE_SPECS = [
   // «Убрать повреждённую запись» (3e.2, K16): every file among the avatar's video records that cannot be read as a record (and
   // every record misfiled under another avatar that names this one) is MOVED to the library's quarantine, never deleted, and the
   // records are read again. The engine decides from the disk as it is now: a file that reads as a sound record is never moved,
-  // a record from a newer Studio is never moved (updating the app is its fix), and a stale used index alone moves nothing.
+  // a record from a newer Studio is never moved (updating the app is its fix), a file the disk would not open is never moved (its
+  // bytes may be a sound record: `record-inaccessible`), and a stale used index alone moves nothing.
   // Safe to repeat: with nothing broken it moves nothing. `avatar.changed` follows when the avatar's usage moved.
   // NOT_FOUND for an unknown avatar; INTERNAL (detail names no path) when a file could not be moved (those moved stay moved).
   defineCommand("videos.quarantineRecords", z.strictObject({ avatarId: Id }), z.strictObject({ avatarId: Id, quarantined: Count })),

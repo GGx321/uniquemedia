@@ -601,17 +601,19 @@ describe("AvatarSummary.usage (3e.2, K16)", () => {
     expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "ok" } }).success).toBe(true);
   });
 
-  test.each(["record-unreadable", "rejects-unreadable", "index-stale", "library-too-new"])("an unknown usage names why: %s", (reason) => {
+  test.each(["record-unreadable", "record-inaccessible", "rejects-unreadable", "index-stale", "library-too-new"])("an unknown usage names why: %s", (reason) => {
     expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: [reason] } }).success).toBe(true);
   });
 
   test("an unknown usage may name every reason at once, so the window offers both recoveries", () => {
-    expect(AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: ["library-too-new", "index-stale", "record-unreadable", "rejects-unreadable"] } }).success).toBe(true);
+    expect(
+      AvatarSummary.safeParse({ ...avatar, usage: { state: "unknown", reasons: ["library-too-new", "index-stale", "record-unreadable", "record-inaccessible", "rejects-unreadable"] } }).success,
+    ).toBe(true);
   });
 
-  test("the reasons are exactly the four the library can close an avatar for", () => {
+  test("the reasons are exactly the five the library can close an avatar for", () => {
     const actual: string[] = [...UsageUnknownReason.options].sort();
-    expect(actual).toEqual(["index-stale", "library-too-new", "record-unreadable", "rejects-unreadable"]);
+    expect(actual).toEqual(["index-stale", "library-too-new", "record-inaccessible", "record-unreadable", "rejects-unreadable"]);
   });
 
   test("a summary always says how its usage stands: it is never left out", () => {

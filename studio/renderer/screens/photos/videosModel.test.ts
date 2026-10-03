@@ -97,6 +97,12 @@ describe("usageActions: what the «использование неизвестн
     expect(usageActions({ state: "unknown", reasons: ["library-too-new", "index-stale"] })).toEqual([]);
     expect(usageActions({ state: "ok" })).toEqual([]);
   });
+
+  test("a record the disk would not open offers nothing to press: its bytes may be sound, and only access fixes it", () => {
+    expect(usageActions({ state: "unknown", reasons: ["record-inaccessible"] })).toEqual([]);
+    // Beside a broken record, the quarantine is offered for that one (the engine never moves the one it could not open).
+    expect(usageActions({ state: "unknown", reasons: ["record-unreadable", "record-inaccessible"] }).map((a) => a.command)).toEqual(["videos.quarantineRecords"]);
+  });
 });
 
 describe("galleryPhotos: the gallery's «Все / Неиспользованные / Отклонённые»", () => {
