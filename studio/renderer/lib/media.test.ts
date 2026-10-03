@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { EngineClient } from "../engine/client";
-import { mockEngineClient } from "../engine/mockEngine";
+import { MockEngine, mockEngineClient } from "../engine/mockEngine";
+import { ManualScheduler } from "../engine/scheduler";
 import { stickerUrl } from "./media";
 
 // 3d.3b: a built-in sticker's picture is asked for by id, never by a path (invariant 12): main's `studio-media://sticker/<id>`
@@ -20,7 +21,8 @@ describe("stickerUrl", () => {
   });
 
   test("the mock draws a stand-in for every sticker of the built-in set, and none for one it lacks", () => {
-    const client = mockEngineClient();
+    // A manual clock: the test leaves nothing that could keep the process alive.
+    const client = mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() }));
     for (const sticker of STICKER_MANIFEST) expect(stickerUrl(client, sticker.id)?.startsWith("data:image/svg+xml,")).toBe(true);
     expect(stickerUrl(client, "sticker-nowhere")).toBe(null);
   });
