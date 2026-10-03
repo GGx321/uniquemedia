@@ -58,6 +58,42 @@ describe("a render that ends out of sight", () => {
     expect(screen.getByText(/Файла нет в папке «Готовые видео»/)).toBeDefined();
   });
 
+  test("another refusal of «Открыть в папке» is told by its own text, not as a missing file", async () => {
+    const { client, engine, scheduler } = await studio();
+    await renderOf(client, [P(0), P(1)]);
+    await openDrafts();
+    runAll(scheduler);
+    await flush();
+    await screen.findByText("Видео готово");
+    engine.failNext("videos.reveal", { code: "LIBRARY_UNAVAILABLE" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Открыть в папке" }));
+    await flush();
+    expect(screen.getByText(/Папка библиотеки недоступна/)).toBeDefined();
+    expect(screen.queryByText(/Файла нет в папке/)).toBeNull();
+  });
+
+  test("«Открыть в папке» is disabled while its request is out: one click, one request", async () => {
+    const { client, engine, scheduler } = await studio();
+    await renderOf(client, [P(0), P(1)]);
+    await openDrafts();
+    runAll(scheduler);
+    await flush();
+    await screen.findByText("Видео готово");
+    engine.delayNext("videos.reveal", 1_000);
+
+    const button = screen.getByRole("button", { name: "Открыть в папке" });
+    fireEvent.click(button);
+    await flush();
+    expect(screen.getByRole("button", { name: "Открыть в папке" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Открыть в папке" }));
+    await flush();
+    expect(callsOf(engine, "videos.reveal")).toHaveLength(1);
+    runAll(scheduler);
+    await flush();
+    expect(screen.getByRole("button", { name: "Открыть в папке" }).hasAttribute("disabled")).toBe(false);
+  });
+
   test("failed: the error by its code, and the notice closes", async () => {
     const { client, engine, scheduler } = await studio();
     engine.failNextRender({ code: "RENDER_FAILED" });

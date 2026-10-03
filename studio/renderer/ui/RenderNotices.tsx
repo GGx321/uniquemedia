@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { EngineError } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { dismissNotice, NO_NOTICES, trackNotices, type RenderNotice, type RenderNoticeState } from "../engine/renderJobs";
 import { isActiveJob, type JobView } from "../engine/store";
@@ -21,8 +22,9 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
   const navigate = useNavigate();
   const [state, setState] = useState<RenderNoticeState>(NO_NOTICES);
   const [tick, setTick] = useState(0);
-  /** Videos «Открыть в папке» could not show: their file is not there. */
-  const [lost, setLost] = useState<ReadonlySet<string>>(new Set());
+  /** Why «Открыть в папке» could not show a video, by video; and the videos whose request is out. */
+  const [refused, setRefused] = useState<ReadonlyMap<string, EngineError>>(new Map());
+  const [revealing, setRevealing] = useState<ReadonlySet<string>>(new Set());
   const saving = view.jobs.some((job) => job.kind === "render" && job.saving && isActiveJob(job));
 
   useEffect(() => {
@@ -44,8 +46,20 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
     );
 
   async function reveal(videoId: string): Promise<void> {
+    if (revealing.has(videoId)) return;
+    setRevealing((prev) => new Set(prev).add(videoId));
+    setRefused((prev) => {
+      const next = new Map(prev);
+      next.delete(videoId);
+      return next;
+    });
     const reply = await client.request("videos.reveal", { videoId });
-    if (!reply.ok) setLost((prev) => new Set(prev).add(videoId));
+    setRevealing((prev) => {
+      const next = new Set(prev);
+      next.delete(videoId);
+      return next;
+    });
+    if (!reply.ok) setRefused((prev) => new Map(prev).set(videoId, reply.error));
   }
 
   return (
@@ -101,7 +115,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
             actions={
               <>
                 {videoId !== null && (
-                  <button type="button" className="btn btn-s" onClick={() => void reveal(videoId)}>
+                  <button type="button" className="btn btn-s" aria-busy={revealing.has(videoId)} disabled={revealing.has(videoId)} onClick={() => void reveal(videoId)}>
                     Открыть в папке
                   </button>
                 )}
@@ -111,7 +125,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
             }
           >
             {whose}видео собрано и лежит в «Готовых видео».
-            {videoId !== null && lost.has(videoId) && " Файла нет в папке «Готовые видео»: его удалили или переместили."}
+            {videoId !== null && refused.has(videoId) && ` ${refused.get(videoId)?.code === "NOT_FOUND" ? "Файла нет в папке «Готовые видео»: его удалили или переместили." : errorText(refused.get(videoId) ?? { code: "INTERNAL" })}`}
           </Notice>
         );
       })}
