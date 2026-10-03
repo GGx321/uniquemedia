@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { fakeSpawner, outputOf, type SpawnCall } from "../../node/fakeFfmpeg.testkit";
-import { RenderGraphError } from "../render";
+import { LAYER_FILE_BYTES_PER_FRAME, RenderGraphError } from "../render";
 import { renderTimeoutMs } from "./progress";
 import { RenderFailure } from "./queue";
 import { runRenderJob, type RenderRunInput, type RenderRunDeps } from "./runner";
@@ -876,6 +876,106 @@ describe("runRenderJob: the layer pass (3b.6)", () => {
     const error = await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir), signal: stop.signal }, deps).catch((e: unknown) => e);
 
     expect(error).toBe(reason);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("removes each layer file once the next call has written its own, so at most two exist at once", async () => {
+    const r = rig();
+    const heavy = (k: number) => ({ path: join(r.jobDir, `sticker-0${k}.apng`), format: "apng" as const, box: { x: 10 * k, y: 100, w: 648, h: 648 }, resize: true, startFrame: 0, endFrame: 60, loopFrames: 300, sourceSize: { w: 360, h: 360 } });
+    const seen: string[][] = [];
+    const { deps, calls } = depsWith((call) => {
+      if (outputOf(call.args).includes("layers-")) seen.push(readdirSync(r.jobDir).filter((f) => f.startsWith("layers-")).sort());
+      layerAwareFfmpeg(call);
+    });
+
+    await runRenderJob({ ...r.input, overlays: [heavy(0), heavy(1), heavy(2), heavy(3)] }, deps);
+
+    const layerCalls = calls.filter((c) => outputOf(c.args).includes("layers-")).length;
+    expect(layerCalls).toBeGreaterThan(2);
+    // When call n starts, layers-(n-1) is there (it is the call's main input) and everything older is already gone: with call n's own file
+    // that is two files at the most.
+    seen.forEach((files, n) => expect(files).toEqual(n === 0 ? [] : [`layers-0${n - 1}.mkv`]));
+  });
+
+  test("keeps the last layer file for pass 2, which reads it", async () => {
+    const r = rig();
+    let atPass2: string[] = [];
+    const { deps } = depsWith((call) => {
+      if (call.args.includes("concat")) atPass2 = readdirSync(r.jobDir).filter((f) => f.startsWith("layers-"));
+      layerAwareFfmpeg(call);
+    });
+
+    await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, deps);
+
+    expect(atPass2).toEqual(["layers-00.mkv"]);
+  });
+
+  test("refuses, before any ffmpeg and with no path, when the render folder's volume has less room than the layer files can take", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith(layerAwareFfmpeg);
+    const asked: string[] = [];
+
+    const error = await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, { ...deps, freeBytes: async (dir) => (asked.push(dir), 1024 * 1024) }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RenderFailure);
+    expect((error as RenderFailure).engineError.code).toBe("RENDER_FAILED");
+    expect((error as RenderFailure).engineError.detail).toContain("free space");
+    expect((error as RenderFailure).engineError.detail).not.toContain(r.tmpRoot);
+    expect(calls).toHaveLength(0);
+    expect(asked).toEqual([r.jobDir]);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+
+  test("goes on when the room is exactly what the layer files can take", async () => {
+    const r = rig();
+    const { deps } = depsWith(layerAwareFfmpeg);
+    const need = 60 * LAYER_FILE_BYTES_PER_FRAME; // one call over 60 frames
+
+    await expect(runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, { ...deps, freeBytes: async () => need })).resolves.toEqual({ totalFrames: 60 });
+  });
+
+  test("refuses when it is one byte short", async () => {
+    const r = rig();
+    const { deps } = depsWith(layerAwareFfmpeg);
+
+    await expect(runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, { ...deps, freeBytes: async () => 60 * LAYER_FILE_BYTES_PER_FRAME - 1 })).rejects.toBeInstanceOf(RenderFailure);
+  });
+
+  test("goes on when the free space cannot be read: a volume that does not say is not refused", async () => {
+    const r = rig();
+    const { deps } = depsWith(layerAwareFfmpeg);
+
+    await expect(runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, { ...deps, freeBytes: async () => null })).resolves.toEqual({ totalFrames: 60 });
+  });
+
+  test("never asks for the free space when there are no layers", async () => {
+    const r = rig();
+    const { deps } = depsWith(goodFfmpeg);
+    let asked = false;
+
+    await runRenderJob(r.input, { ...deps, freeBytes: async () => ((asked = true), 0) });
+
+    expect(asked).toBe(false);
+  });
+
+  test("a layer call that wrote fewer frames than the timeline has stops the job before pass 2: a layer file is checked, not trusted", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith((call) => {
+      if (outputOf(call.args).includes("layers-")) {
+        writeFileSync(outputOf(call.args), "data");
+        call.child.report(59, true); // one frame short
+        call.child.exit(0);
+        return;
+      }
+      goodFfmpeg(call);
+    });
+
+    const error = await runRenderJob({ ...r.input, overlays: layersOf(r.jobDir) }, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("layer");
+    expect(calls.some((c) => c.args.includes("concat"))).toBe(false);
     expect(existsSync(r.jobDir)).toBe(false);
     expect(existsSync(r.output)).toBe(false);
   });

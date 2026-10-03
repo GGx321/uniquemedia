@@ -179,4 +179,9 @@ export interface LayerPassPlan {
   readonly jobs: readonly LayerPassJob[];
   /** What pass 2 overlays instead of the layers themselves: the last call's file, or null when there are no layers. */
   readonly final: OverlayInput | null;
+  /**
+   * The most disk the layer files can hold at once, in bytes: one file for one call, two for more (the runner removes an earlier file
+   * once the next call has written its own). Sized from `LAYER_FILE_BYTES_PER_FRAME`; the runner checks the render folder's volume against it.
+   */
+  readonly peakDiskBytes: number;
 }

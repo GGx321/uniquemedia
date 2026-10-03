@@ -4,8 +4,8 @@
  * It builds a 15 s timeline of ten 1.5 s photo clips through the real pass-1 builder, then, for each scenario, plans the
  * layer pass with the real planner and runs every call and then pass 2 under `/usr/bin/time`, with the real argv. Prints
  * each call's measured peak against what the cost model said (`LAYER_CALL_BUDGET_BYTES`) and pass 2's against the
- * 768 MiB `peakRSS` the render pool is sized by. For comparison it also runs pass 2 with the same layers as direct overlays
- * (the 3a.5 path): the numbers that decided the layer pass.
+ * 768 MiB `peakRSS` the render pool is sized by, and the disk the layer files take. The cheap way to see how much memory the layers
+ * cost WITHOUT the layer pass is gone with the path (3b.5 measured it: ten default stickers took pass 2 to 816 MiB).
  *
  * Needs `/usr/bin/time` with `-l` (macOS) or `-v` (GNU). Run by hand; not part of the test suite.
  */
@@ -27,6 +27,8 @@ interface Scenario {
   readonly stickers: number;
   /** The sticker box's width as a fraction of the frame width. */
   readonly stickerSize: number;
+  /** Text layers are REAL captions drawn by the engine's rasteriser («Без фона», emoji, scale 1.6) and last the whole timeline: the heaviest on disk. */
+  readonly real?: boolean;
 }
 
 const SCENARIOS: readonly Scenario[] = [
@@ -36,6 +38,7 @@ const SCENARIOS: readonly Scenario[] = [
   { name: "10 stickers, 0.6 (648 px)", text: 0, stickers: 10, stickerSize: 0.6 },
   { name: "10 text + 10 stickers, 0.203: the cap", text: 10, stickers: 10, stickerSize: 0.203 },
   { name: "10 text + 10 stickers, 0.6 (648 px): the cap at the largest size", text: 10, stickers: 10, stickerSize: 0.6 },
+  { name: "10 REAL captions (shadow, emoji, 1.6, whole timeline) + 10 stickers, 0.6 (648 px)", text: 10, stickers: 10, stickerSize: 0.6, real: true },
 ];
 
 async function run(argv: readonly string[], cwd?: string): Promise<{ code: number; stderr: string }> {
@@ -52,6 +55,8 @@ async function main(): Promise<void> {
   const { STICKER_ASSET_DIR } = await import("../stickers/generateStickers");
   type OverlayInput = import("../../engine/render/types").OverlayInput;
   const ffmpeg = ffmpegPath();
+  // An optional argument keeps only the scenarios whose name contains it: `bun measureLayerRss.ts "REAL"`.
+  const only = process.argv[2];
   const timeFlag = process.platform === "darwin" ? "-l" : "-v";
   const dir = mkdtempSync(join(tmpdir(), "b6-rss-"));
 
@@ -75,6 +80,25 @@ async function main(): Promise<void> {
     const textMade = await run([ffmpeg, "-hide_banner", "-y", "-nostdin", "-f", "lavfi", "-i", "color=c=0xffd166:s=930x140,format=rgba,drawbox=x=36:y=36:w=858:h=24:c=black:t=fill,drawbox=x=36:y=80:w=640:h=24:c=black:t=fill", "-frames:v", "1", "-c:v", "png", "-pix_fmt", "rgba", text]);
     if (textMade.code !== 0) throw new Error(textMade.stderr);
 
+    // Real captions: the engine's own renderer (resvg-wasm, the bundled fonts and emoji), «Без фона» (the shadow), scale 1.6, emoji at both ends.
+    const realCaptions: { path: string; w: number; h: number }[] = [];
+    if (SCENARIOS.some((sc) => sc.real === true && (only === undefined || sc.name.includes(only)))) {
+      const { createTextRasteriser, RASTER_WASM } = await import("../../engine/text/rasteriser");
+      const { createCaptionRenderer } = await import("../../engine/text/caption/renderer");
+      const { openEmojiFont } = await import("../../engine/text/emoji/emojiFont");
+      const { loadPinnedEmojiFont } = await import("../../engine/text/emoji/emojiFont.testkit");
+      const root = join(import.meta.dir, "..", "..", "..");
+      const rasteriser = createTextRasteriser({ wasmPath: join(root, "node_modules", "@resvg", "resvg-wasm", RASTER_WASM.file), fontDir: join(root, "studio", "assets", "fonts") });
+      await rasteriser.init();
+      const renderer = createCaptionRenderer({ rasteriser, emoji: openEmojiFont(await loadPinnedEmojiFont()) });
+      for (let k = 0; k < 10; k++) {
+        const image = await renderer.render({ value: `\u2600\uFE0F slow morning in lisbon ${k} \u2615`, font: "manrope", style: "none", color: "#ffffff", scale: 1.6 });
+        const path = join(dir, `real-${k}.png`);
+        writeFileSync(path, image.png);
+        realCaptions.push({ path, w: image.width, h: image.height });
+      }
+    }
+
     const clips: Clip[] = Array.from({ length: 10 }, (_, i) => ({
       clipId: `c${i}`,
       durationMs: 1500,
@@ -94,12 +118,19 @@ async function main(): Promise<void> {
     };
 
     console.log(`15 s, ${TOTAL_FRAMES} frames, peakRSS budget ${PEAK_RSS_BUDGET_MIB} MiB, a layer call's modelled budget ${LAYER_CALL_BUDGET_BYTES / MIB} MiB\n`);
-    // An optional argument keeps only the scenarios whose name contains it: `bun measureLayerRss.ts "the cap"`.
-    const only = process.argv[2];
     for (const sc of SCENARIOS.filter((s) => only === undefined || s.name.includes(only))) {
       const layers: OverlayInput[] = [];
       for (let k = 0; k < sc.text; k++) {
-        layers.push({ path: text, format: "png", box: textBox({ x: 0.5, y: 0.05 + 0.04 * k }, { w: 930, h: 140 }), resize: false, startFrame: 3 * k, endFrame: TOTAL_FRAMES - 3 * k });
+        const real = sc.real === true ? realCaptions[k] : undefined;
+        if (sc.real === true && real === undefined) throw new Error("the real captions were not made");
+        layers.push({
+          path: real?.path ?? text,
+          format: "png",
+          box: textBox({ x: 0.5, y: 0.05 + 0.04 * k }, { w: real?.w ?? 930, h: real?.h ?? 140 }),
+          resize: false,
+          startFrame: sc.real === true ? 0 : 3 * k,
+          endFrame: sc.real === true ? TOTAL_FRAMES : TOTAL_FRAMES - 3 * k,
+        });
       }
       for (let k = 0; k < sc.stickers; k++) {
         const entry = STICKER_MANIFEST[k % STICKER_MANIFEST.length];
@@ -116,13 +147,6 @@ async function main(): Promise<void> {
         });
       }
       console.log(sc.name);
-
-      if (layers.length > 0) {
-        const direct = pass2Of(layers);
-        prepare(direct);
-        const d = await measured(direct.argv, direct.cwd);
-        console.log(`  direct overlays in pass 2 (the 3a.5 path): ${d.mib.toFixed(0)} MiB, ${d.seconds.toFixed(1)} s, ${d.mib <= PEAK_RSS_BUDGET_MIB ? "within" : "OVER"}`);
-      }
 
       const plan = buildLayerPass({ layers, totalFrames: TOTAL_FRAMES, clipDir: dir });
       let layerSeconds = 0;

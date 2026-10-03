@@ -51,6 +51,12 @@ export const LAYER_ANIMATED_BYTES = 34 * MIB;
  */
 export const LAYER_CALL_BUDGET_BYTES = 700 * MIB;
 
+/**
+ * What a layer file can take on disk, per frame of the timeline: measured with real «Без фона» captions (emoji, scale 1.6, the whole
+ * timeline) and ten 648 px stickers, a 15 s FFV1 file is 300 MiB, 0.66 MiB per frame; a flat caption is a few MiB. 1 MiB per frame is the bound.
+ */
+export const LAYER_FILE_BYTES_PER_FRAME = 1 * MIB;
+
 function bad(message: string): never {
   throw new RenderGraphError("BAD_OVERLAY", message);
 }
@@ -168,7 +174,7 @@ function buildJob(index: number, batch: readonly OverlayInput[], costs: readonly
  * montage's end, an empty window, a box off the frame, an animation without its stored period, more than `MAX_LAYERS`.
  */
 export function buildLayerPass(input: LayerPassInput): LayerPassPlan {
-  if (input.layers.length === 0) return { jobs: [], final: null };
+  if (input.layers.length === 0) return { jobs: [], final: null, peakDiskBytes: 0 };
   assertAbsolutePath(input.clipDir, "the job folder");
   const total = input.totalFrames;
   if (!Number.isSafeInteger(total) || total < 1) throw new RenderGraphError("BAD_DURATION", `the timeline must have a whole number of frames, at least one, got ${total}`);
@@ -190,5 +196,5 @@ export function buildLayerPass(input: LayerPassInput): LayerPassPlan {
     ),
   );
   const last = jobs.at(-1);
-  return { jobs, final: last === undefined ? null : layersFile(last.output, total) };
+  return { jobs, final: last === undefined ? null : layersFile(last.output, total), peakDiskBytes: Math.min(jobs.length, 2) * total * LAYER_FILE_BYTES_PER_FRAME };
 }

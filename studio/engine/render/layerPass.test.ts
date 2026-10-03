@@ -10,6 +10,7 @@ import {
   LAYER_CALL_BASE_BYTES,
   LAYER_CALL_BUDGET_BYTES,
   LAYER_CHAINED_INPUT_BYTES,
+  LAYER_FILE_BYTES_PER_FRAME,
   LAYER_STILL_BYTES,
   buildLayerPass,
   layerCost,
@@ -78,7 +79,30 @@ const BASE = `color=c=0x00000000:s=1080x1920:r=30,format=yuva420p,trim=end_frame
 
 describe("buildLayerPass: no layers", () => {
   test("plans no call and nothing for pass 2 to overlay", () => {
-    expect(plan([])).toEqual({ jobs: [], final: null });
+    expect(plan([])).toEqual({ jobs: [], final: null, peakDiskBytes: 0 });
+  });
+});
+
+describe("buildLayerPass: the disk its files can take at their peak", () => {
+  // Measured with real «Без фона» captions (emoji, scale 1.6, the whole timeline) and ten 648 px stickers, a 15 s file is 300 MiB (0.66 MiB per
+  // frame); a call deletes nothing, but the runner removes `layers-(n-1)` once call n has written its own, so at most TWO files exist at once.
+  test("one call writes one file: the frames times the per-frame bound", () => {
+    expect(plan([text(0)]).peakDiskBytes).toBe(TOTAL * LAYER_FILE_BYTES_PER_FRAME);
+  });
+
+  test("several calls hold two files at once, never more: the earlier one goes when the next has been written", () => {
+    const heavy = [0, 1, 2, 3].map((k) => sticker(k, { loopFrames: 300, sourceSize: { w: 360, h: 360 }, box: { x: 10 * k, y: 100, w: 648, h: 648 } }));
+    const { jobs, peakDiskBytes } = plan(heavy);
+    expect(jobs.length).toBeGreaterThan(2);
+    expect(peakDiskBytes).toBe(2 * TOTAL * LAYER_FILE_BYTES_PER_FRAME);
+  });
+
+  test("the per-frame bound is above the measured 0.66 MiB, so a render that needs it still fits", () => {
+    expect(LAYER_FILE_BYTES_PER_FRAME).toBeGreaterThanOrEqual(0.7 * 1024 * 1024);
+  });
+
+  test("scales with the timeline", () => {
+    expect(plan([text(0, { startFrame: 0, endFrame: 30 })], 30).peakDiskBytes).toBe(30 * LAYER_FILE_BYTES_PER_FRAME);
   });
 });
 
@@ -107,7 +131,7 @@ describe("buildLayerPass: one text layer", () => {
     expect(job?.argv).toEqual([
       "-hide_banner", "-nostdin", "-y", "-xerror",
       ...FILTER_THREAD_ARGS,
-      "-protocol_whitelist", "file", "-f", "image2", "-pattern_type", "none", "-i", `${CLIP_DIR}/text-00.png`,
+      "-protocol_whitelist", "file", "-f", "image2", "-pattern_type", "none", "-threads", "1", "-i", `${CLIP_DIR}/text-00.png`,
       "-filter_complex", graphOf(job?.argv ?? []),
       "-map", "[v]",
       ...LAYER_VIDEO_ARGS,
@@ -126,7 +150,7 @@ describe("buildLayerPass: one text layer", () => {
 describe("buildLayerPass: one sticker", () => {
   test("reads the APNG once with the apng demuxer", () => {
     const job = plan([sticker(0)]).jobs[0];
-    expect(optionsBeforeInput(job?.argv ?? [], 0)).toEqual(["-hide_banner", "-nostdin", "-y", "-xerror", ...FILTER_THREAD_ARGS, "-protocol_whitelist", "file", "-f", "apng"]);
+    expect(optionsBeforeInput(job?.argv ?? [], 0)).toEqual(["-hide_banner", "-nostdin", "-y", "-xerror", ...FILTER_THREAD_ARGS, "-protocol_whitelist", "file", "-f", "apng", "-threads", "1"]);
   });
 
   test("converts the colour once, loops the converted frames at the STORED period, and only then scales them to the box", () => {
@@ -141,7 +165,7 @@ describe("buildLayerPass: one sticker", () => {
 
   test("a GIF is read with the gif demuxer", () => {
     const job = plan([sticker(0, { format: "gif", path: `${CLIP_DIR}/sticker-00.gif` })]).jobs[0];
-    expect(optionsBeforeInput(job?.argv ?? [], 0).slice(-2)).toEqual(["-f", "gif"]);
+    expect(optionsBeforeInput(job?.argv ?? [], 0).slice(-4)).toEqual(["-f", "gif", "-threads", "1"]);
   });
 
   test("a still scaled to its box is scaled once, before the colour conversion and the loop", () => {

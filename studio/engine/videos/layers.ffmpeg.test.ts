@@ -7,6 +7,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { extractFrames, runFfmpegOk, videoFrames } from "../render/ffmpeg.testkit";
 import { buildLayerPass } from "../render";
 import { expectedBt709Limited, lumaPerFrame, makeSolid, makeWorkDir, meanAround, removeDir, splitYuv420, writeBytes } from "../render/render.testkit";
+import { runFfmpegArgv } from "../../node/runFfmpeg";
 import { runRenderJob } from "../renderQueue/runner";
 import { createCaptionRenderer } from "../text/caption/renderer";
 import { decodePng, type Rgba } from "../text/caption/png.testkit";
@@ -55,6 +56,7 @@ let box: Box;
 let sigA: Uint8Array[];
 let sigB: Uint8Array[];
 let stagedFiles: string[] = [];
+let layerFramesReported = 0;
 
 const SIG = 16;
 /** Every frame of `path` inside `region`, shrunk to 16 x 16 gray: a picture's signature, which tells two phases of an animation apart where a mean luma cannot. */
@@ -112,6 +114,16 @@ beforeAll(async () => {
     output,
     signal: new AbortController().signal,
     onProgress: () => undefined,
+  }, {
+    // The real ffmpeg, watched: what it reports for the layer call is what the runner's frame check reads.
+    run: (opts) =>
+      runFfmpegArgv({
+        ...opts,
+        onFrames: (frames) => {
+          if (opts.output.includes("layers-")) layerFramesReported = Math.max(layerFramesReported, frames);
+          opts.onFrames?.(frames);
+        },
+      }),
   });
   framesOut = await videoFrames(output);
   sigA = await signatures(output, stickerA);
@@ -124,6 +136,10 @@ describe("real captions and real stickers through the runner on real ffmpeg", ()
   test("the job runs to a finished file of exactly the timeline's 90 frames, from three staged files", () => {
     expect(framesOut).toBe(90);
     expect(stagedFiles).toHaveLength(3);
+  });
+
+  test("the real ffmpeg reports every frame of the layer file, so the runner's check that it has the timeline's frames is not vacuous", () => {
+    expect(layerFramesReported).toBe(90);
   });
 
   test("the caption raster is placed by textBox: its box is centred where the layer says, inside the frame", () => {

@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, statfs, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Id } from "../../shared/engine";
 import type { Clip } from "../../shared/engine/montage";
@@ -80,6 +80,11 @@ export interface RenderRunDeps {
   readonly run?: (opts: RunFfmpegArgvOptions) => Promise<void>;
   /** Measures the true peak of a music segment (dBTP); `measureTruePeak` (ffmpeg's ebur128) unless a test scripts it. */
   readonly measure?: (job: MusicMeasureJob, options: { readonly signal: AbortSignal; readonly timeoutMs: number }) => Promise<number>;
+  /**
+   * Free bytes on the volume of `dir` (the job's folder), or null when it cannot be read; `statfs` unless a test scripts it. The layer pass
+   * checks it against what its files can take, and a volume that does not say is not refused.
+   */
+  readonly freeBytes?: (dir: string) => Promise<number | null>;
   /** Monotonic ms for the job's deadline. */
   readonly now?: () => number;
   /** Removes the job folder, tolerating one that is not there. A rejection is reported, never thrown. */
@@ -101,6 +106,18 @@ export interface RenderRunOutcome {
 
 /** The name of the temp output a job may write and, on failure, remove; nothing else. */
 const partName = (jobId: string): string => `.studio-part-${jobId}.mp4`;
+
+const defaultFreeBytes = async (dir: string): Promise<number | null> => {
+  try {
+    const info = await statfs(dir);
+    const free = info.bavail * info.bsize;
+    return Number.isFinite(free) ? free : null;
+  } catch {
+    return null;
+  }
+};
+
+const MIB = 1024 * 1024;
 
 const defaultRemoveTree = (path: string): Promise<void> => rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 const defaultRemoveFile = (path: string): Promise<void> => rm(path, { force: true, maxRetries: 5, retryDelay: 100 });
@@ -249,6 +266,14 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   try {
     await scrubFs(mkdir(clipDir, { recursive: true }));
     if (input.stageLayers !== undefined && input.overlays.length > 0) await stage(input.stageLayers(clipDir));
+    // The layer files can take real room (a 15 s file with heavy captions and stickers is 300 MiB, and two exist at once): ask the volume
+    // BEFORE anything is rendered, and refuse cleanly rather than fail an ffmpeg half way with a full disk.
+    if (layerPlan.jobs.length > 0) {
+      const free = await (deps.freeBytes ?? defaultFreeBytes)(clipDir);
+      if (free !== null && free < layerPlan.peakDiskBytes) {
+        throw new RenderFailure({ code: "RENDER_FAILED", detail: `not enough free space for the render's temporary files: about ${Math.ceil(layerPlan.peakDiskBytes / MIB)} MiB are needed` });
+      }
+    }
 
     // Music is measured BEFORE pass 1: a track ffmpeg cannot read ends the job in a second, not after the photos were rendered.
     let music: { gainDb: number; truePeakDb: number } | null = null;
@@ -274,9 +299,22 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     // The layer calls, one after another: each composites its layers onto the file the call before wrote.
     let framesOfDoneLayers = 0;
     for (const job of layerPlan.jobs) {
-      await call(job, { onFrames: (frames) => reportStage(timelineFrames + framesOfDoneLayers + Math.min(frames, job.frames)) });
+      // null: ffmpeg reported nothing (only a scripted ffmpeg in a test does; the real one always reports its frames, which a real-ffmpeg test pins).
+      let wrote: number | null = null;
+      await call(job, {
+        onFrames: (frames) => {
+          wrote = Math.max(wrote ?? 0, frames);
+          reportStage(timelineFrames + framesOfDoneLayers + Math.min(frames, job.frames));
+        },
+      });
+      // A layer file is checked, not trusted: `-xerror` and a constant frame rate should make it exact, and a file with the wrong number of frames would
+      // put the layers out of step with the video without a sound.
+      if (wrote !== null && wrote !== job.frames) throw new RenderFailure({ code: "RENDER_FAILED", detail: `a layer file has ${wrote} frames, the timeline has ${job.frames}` });
       framesOfDoneLayers += job.frames;
       reportStage(timelineFrames + framesOfDoneLayers);
+      // The call before this one wrote the file this one read: it is not needed any more, so at most two layer files exist at once.
+      const earlier = layerPlan.jobs[job.index - 1];
+      if (earlier !== undefined) await removeFile(earlier.output).catch((error: unknown) => warn("job folder", error));
     }
 
     signal.throwIfAborted();

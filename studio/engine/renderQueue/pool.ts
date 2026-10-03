@@ -4,6 +4,12 @@ import type { RenderConcurrency } from "../../shared/engine";
  * One number for every job: what a render job holds at its peak (pass 2 was
  * measured at 640-688 MiB, SP1), plus about 10% for other content and the
  * Windows build. Never 0, so the pool's division below is safe.
+ *
+ * It is the peak of ANY one ffmpeg call of a job, which are one at a time: a pass-1
+ * clip (540 MiB), a layer-pass call (at most 700 MiB by the cost model in
+ * `render/layerPass.ts`, 600 measured at the worst) and pass 2 over the one layer
+ * file (at most 676 measured). The layers never reach pass 2 directly: as direct
+ * overlays ten default stickers took it to 816 MiB, so the layer pass exists.
  */
 export const PEAK_RSS_BYTES = 768 * 1024 * 1024;
 

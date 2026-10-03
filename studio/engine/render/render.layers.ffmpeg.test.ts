@@ -5,7 +5,8 @@ import type { Clip } from "../../shared/engine/montage";
 import { encodeApng } from "../../scripts/stickers/apngWriter";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { verifyRenderedMp4 } from "../verify";
-import { extractFrames, probeVideo, runFfmpegOk, videoFrames } from "./ffmpeg.testkit";
+import { ffmpegPath } from "../../node/ffmpegBinary";
+import { extractFrames, probeVideo, runBinary, runFfmpegOk, videoFrames } from "./ffmpeg.testkit";
 import { buildLayerPass } from "./layerPass";
 import { buildPass1 } from "./pass1";
 import { buildPass2 } from "./pass2";
@@ -18,11 +19,13 @@ import {
   meanAround,
   mixRgb,
   removeDir,
+  runLayersAndPass2,
   runPass1,
   runPass2,
   splitYuv420,
   stickerColour,
   tamperGraph,
+  withDirectStill,
   writeBytes,
   type RGB,
 } from "./render.testkit";
@@ -124,7 +127,7 @@ beforeAll(async () => {
 
   // The same text PNG through pass 2's direct overlay, with no layer pass: what the two-step composite is compared with.
   directMp4 = join(dir, "direct.mp4");
-  await runPass2(buildPass2({ clips, clipDir: dir, output: directMp4, overlays: [textOverlay], audio: { kind: "silent" } }));
+  await runPass2(withDirectStill(buildPass2({ clips, clipDir: dir, output: directMp4, overlays: [], audio: { kind: "silent" } }), textOverlay));
 }, 240_000);
 
 afterAll(() => removeDir(dir));
@@ -292,5 +295,77 @@ describe("layers on real ffmpeg: the colour stays BT.709 through both steps (inv
       return;
     }
     expect(Math.max(...deviations)).toBeGreaterThan(5);
+  });
+});
+
+describe("layers on real ffmpeg: a COLOURED animation keeps BT.709 through both steps", () => {
+  // The golden string alone would let the colour chain slip out of the ANIMATED branch unnoticed: the pixels of a four-colour APNG are what pin it.
+  const COLOURS: readonly (readonly [number, number, number])[] = [[220, 40, 40], [40, 180, 60], [40, 80, 220], [250, 180, 30]];
+  const BOX = { x: 100, y: 1400, w: 128, h: 128 };
+  let animMp4: string;
+  let trapMp4: string;
+
+  const layer = (path: string): OverlayInput => ({ path, format: "apng", box: BOX, resize: true, startFrame: 0, endFrame: TOTAL, loopFrames: COLOURS.length, sourceSize: { w: 64, h: 64 } });
+
+  async function deviations(path: string): Promise<number[]> {
+    const frames = await extractFrames(path, [0, 1, 2, 3], "yuv420p", { w: 1080, h: 1920 });
+    return frames.map((f, i) => {
+      const { y, u, v } = splitYuv420(f, 1080, 1920);
+      const cx = BOX.x + BOX.w / 2;
+      const cy = BOX.y + BOX.h / 2;
+      const want = expectedBt709Limited(COLOURS[i] ?? [0, 0, 0]);
+      return Math.max(Math.abs(meanAround(y, 1080, cx, cy, 20) - want[0]), Math.abs(meanAround(u, 540, cx / 2, cy / 2, 10) - want[1]), Math.abs(meanAround(v, 540, cx / 2, cy / 2, 10) - want[2]));
+    });
+  }
+
+  beforeAll(async () => {
+    const frames = COLOURS.map(([r, g, b]) => {
+      const px = new Uint8Array(64 * 64 * 4);
+      for (let p = 0; p < 64 * 64; p++) px.set([r, g, b, 255], p * 4);
+      return px;
+    });
+    writeBytes(join(dir, "colour.apng"), encodeApng({ width: 64, height: 64, frames }));
+    animMp4 = join(dir, "anim.mp4");
+    await runLayersAndPass2({ clips, clipDir: dir, output: animMp4, layers: [layer(join(dir, "colour.apng"))] });
+    trapMp4 = join(dir, "anim-trap.mp4");
+    await runLayersAndPass2({ clips, clipDir: dir, output: trapMp4, layers: [layer(join(dir, "colour.apng"))], tamper: (argv) => tamperGraph(argv, "scale=in_range=full:out_range=tv:out_color_matrix=bt709,", "") });
+  }, 120_000);
+
+  test("each of the four colours of the loop is within 1.5 code values of BT.709 limited range", async () => {
+    expect(Math.max(...(await deviations(animMp4)))).toBeLessThanOrEqual(1.5);
+  });
+
+  test("NEGATIVE CONTROL: with the explicit conversion cut out of the animated branch the same check fails (the BT.601 trap)", async () => {
+    if (process.platform === "linux") return; // that ffmpeg's auto scaler does not drift as the shipped builds' do (see the control above)
+    expect(Math.max(...(await deviations(trapMp4)))).toBeGreaterThan(5);
+  });
+});
+
+describe("layers on real ffmpeg: -xerror stops a layer call on a corrupt sticker", () => {
+  // ffmpeg exits 0 on a broken frame and silently shortens the loop: without `-xerror` a corrupt copy would render with a different loop.
+  let argv: readonly string[];
+
+  beforeAll(async () => {
+    const good = new Uint8Array(await Bun.file(join(import.meta.dir, "../../assets/stickers/heart-pulse.apng")).arrayBuffer());
+    const bad = good.slice();
+    // Inside a later frame's compressed data, well past the header and the first frame: the CRC no longer matches and the zlib stream is broken.
+    const at = Math.floor(bad.length * 0.6);
+    for (let i = 0; i < 40; i++) bad[at + i] = (bad[at + i] ?? 0) ^ 0xa5;
+    const corrupt = join(dir, "corrupt.apng");
+    writeBytes(corrupt, bad);
+    const layer: OverlayInput = { path: corrupt, format: "apng", box: { x: 100, y: 200, w: 320, h: 320 }, resize: true, startFrame: 0, endFrame: TOTAL, loopFrames: 24, sourceSize: { w: 320, h: 320 } };
+    const [job] = buildLayerPass({ layers: [layer], totalFrames: TOTAL, clipDir: dir }).jobs;
+    if (job === undefined) throw new Error("expected one layer call");
+    argv = job.argv;
+  });
+
+  test("the layer call fails", async () => {
+    const r = await runBinary(ffmpegPath(), argv);
+    expect(r.code).not.toBe(0);
+  });
+
+  test("the same call without -xerror exits 0: the flag is what catches it, so dropping it would be seen", async () => {
+    const r = await runBinary(ffmpegPath(), argv.filter((a) => a !== "-xerror"));
+    expect(r.code).toBe(0);
   });
 });
