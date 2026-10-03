@@ -10,6 +10,8 @@ import {
   type JobResult,
   type JobState,
   type MoneyStatus,
+  type MusicKeyStatus,
+  type MusicStatus,
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
@@ -53,6 +55,9 @@ export interface JobView {
 
 export type SyncPhase = "connecting" | "ready" | "offline";
 
+/** What a confirmed music command came to: done (the store shows the status it answered), or the engine's refusal. */
+export type MusicCommandReply = { ok: true } | { ok: false; error: EngineError };
+
 export interface EngineView {
   readonly phase: SyncPhase;
   /** Why the last snapshot request failed (phase `offline`). */
@@ -63,6 +68,11 @@ export interface EngineView {
   readonly money: MoneyStatus | null;
   /** The export folder's status: from the snapshot, then `export.status`; null before the first snapshot. */
   readonly exportStatus: ExportStatus | null;
+  /**
+   * The music list and the flashapi quota (3c.6, K24): null until a screen asks for it (`refreshMusic`; the snapshot does
+   * not carry it), then moved by `music.changed` and by the answers of the confirmed music commands.
+   */
+  readonly music: MusicStatus | null;
   readonly avatars: readonly AvatarSummary[];
   readonly drafts: readonly Draft[];
   /** Avatar records the engine could not read into the lists (from the snapshot and avatars.list); UI shows their count via `.length`. */
@@ -110,6 +120,7 @@ const INITIAL: EngineView = {
   settings: null,
   money: null,
   exportStatus: null,
+  music: null,
   avatars: [],
   drafts: [],
   unreadableAvatars: [],
@@ -273,6 +284,10 @@ export class EngineStore {
   private lastExportCheck: number | null = null;
   /** How many `export.status` events came: an answer to a check that began before one is older than it. */
   private exportStatusEvents = 0;
+  /** How many `music.changed` events came: an answer to an ask or a command that began before one is older than it (3c.6). */
+  private musicEvents = 0;
+  /** The confirmed music commands on their way, by type: asked again meanwhile, they are not sent again (a double click). */
+  private readonly musicSending = new Map<"music.refresh" | "music.recoverQuotaLog", Promise<MusicCommandReply>>();
   /**
    * The library-switch generation the avatar and draft lists came from (the
    * last snapshot's). Compared instead of the path string: two spellings of
@@ -358,6 +373,10 @@ export class EngineStore {
 
   setApiKey(apiKey: ApiKeyStatus): void {
     if (this.view.settings) this.update({ settings: { ...this.view.settings, apiKey } });
+  }
+
+  setMusicKey(musicKey: MusicKeyStatus): void {
+    if (this.view.settings) this.update({ settings: { ...this.view.settings, musicKey } });
   }
 
   setMoney(money: MoneyStatus): void {
@@ -473,6 +492,51 @@ export class EngineStore {
     })();
     this.exportCheck = check;
     return check;
+  }
+
+  /**
+   * Asks the engine for the music status (`music.status`, free: it reads the quota log and the list on disk). Never throws: a
+   * failed ask changes nothing. An answer is dropped when a `music.changed` arrived after the ask began: that event is newer.
+   */
+  async refreshMusic(): Promise<void> {
+    const generation = this.generation;
+    const eventsBefore = this.musicEvents;
+    // The client answers every failure (a broken bridge included) as an error: a failed ask leaves what is shown.
+    const reply = await this.client.request("music.status", {});
+    if (reply.ok && generation === this.generation && eventsBefore === this.musicEvents) this.update({ music: reply.result });
+  }
+
+  /**
+   * Sends `music.refresh {confirm: true}`: one of the 30 requests per 31 days. Only the owner's confirmation in the window
+   * calls this. Asked again while it is on its way, it is not sent again: the same answer comes back.
+   */
+  confirmMusicRefresh(): Promise<MusicCommandReply> {
+    return this.sendMusic("music.refresh");
+  }
+
+  /** Sends `music.recoverQuotaLog {confirm: true}`, which closes the quota for 31 days; the owner confirmed it. Sent once, like a refresh. */
+  confirmQuotaLogRecovery(): Promise<MusicCommandReply> {
+    return this.sendMusic("music.recoverQuotaLog");
+  }
+
+  private sendMusic(type: "music.refresh" | "music.recoverQuotaLog"): Promise<MusicCommandReply> {
+    const sending = this.musicSending.get(type);
+    if (sending !== undefined) return sending;
+    const generation = this.generation;
+    const eventsBefore = this.musicEvents;
+    const sent = (async (): Promise<MusicCommandReply> => {
+      try {
+        const reply = await this.client.request(type, { confirm: true });
+        if (!reply.ok) return { ok: false, error: reply.error };
+        // The answer's status is the one at its start; a `music.changed` that came meanwhile (a fast refresh's progress) is newer.
+        if (generation === this.generation && eventsBefore === this.musicEvents) this.update({ music: reply.result.status });
+        return { ok: true };
+      } finally {
+        this.musicSending.delete(type);
+      }
+    })();
+    this.musicSending.set(type, sent);
+    return sent;
   }
 
   async refreshSettings(): Promise<void> {
@@ -709,6 +773,9 @@ export class EngineStore {
     });
     // Not for the first load: nothing was shown, so nothing was missed.
     if (again) for (const listener of [...this.montageListeners]) listener({ change: "resynced" });
+    // The snapshot carries no music status: one that was shown may have missed its events, or describe a refresh of an engine
+    // that has since restarted (no event will ever end it), so it is asked again.
+    if (again && this.view.music !== null) void this.refreshMusic();
   }
 
   private apply(event: EventMessage): void {
@@ -834,8 +901,9 @@ export class EngineStore {
         this.update({ exportStatus: event.payload.exportStatus, lastSeq });
         return;
       case "music.changed":
-        // The music status is read on demand (music.status) until the Settings card of 3c.6; the event only has to keep the seq moving.
-        this.update({ lastSeq });
+        // 3c.6: the status is kept whole, for the Settings «Музыка» card (and 3d.5's music tab).
+        this.musicEvents += 1;
+        this.update({ music: event.payload.status, lastSeq });
         return;
       default: {
         // A new event type without a branch above is a compile error here, not a silent gap in `lastSeq`.
