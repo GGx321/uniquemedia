@@ -1,8 +1,8 @@
 import { type MontageDraft, type PhotoSummary, SceneCategory } from "../../../shared/engine";
+import { type AddRefusal, cellsOf } from "./clipOps";
 
 /** A scene photo's category (the contract's `SceneCategory`). */
 export type PhotoCategory = PhotoSummary["category"];
-import { type AddRefusal, cellsOf } from "./clipOps";
 
 // 3d.5: the «Фото» tab's bin (Editor.dc.html; the reconciliation's P6–P15), as pure data. Eligible scene photos only, numbered
 // in the list's order (the numbers name the tiles and stay put while the chips filter). Each photo is placed in this draft (its
