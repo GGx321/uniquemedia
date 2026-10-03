@@ -1109,6 +1109,12 @@ function MusicTrendsRow({ musicKey, music }: { musicKey: MusicKeyStatus; music: 
   const gate = refreshGate(musicKey, music, Date.now());
   // The confirmation is for a request the engine would let leave: a status that closed meanwhile closes it too.
   const confirming = asking && (gate.kind === "ready" || sending);
+  // The gate left `ready` while the owner was asked and nothing is being sent: the question is over (review round 1), so it
+  // cannot come back on its own when the gate opens again.
+  const stale = asking && !sending && gate.kind !== "ready";
+  useEffect(() => {
+    if (stale) setAsking(false);
+  }, [stale]);
   const label = refreshLabel(music);
 
   useEffect(() => {
@@ -1229,6 +1235,13 @@ function MusicTrendsRow({ musicKey, music }: { musicKey: MusicKeyStatus; music: 
   );
 }
 
+/** Why the recovery was refused: a sound log, a refresh running (not the paid requests IN_FLIGHT's own text speaks of), else the error. */
+function recoveryRefusalText(error: EngineError): string {
+  if (error.code === "VALIDATION") return "Журнал уже в порядке: ничего не изменено.";
+  if (error.code === "IN_FLIGHT") return "Сейчас идёт обновление списка: восстановите журнал, когда оно закончится.";
+  return errorText(error);
+}
+
 /**
  * The quota log's own trouble, under the rows: a line still waiting to be written (`held`), a log that cannot be read, and a
  * damaged log, the only one with a way out (3c.6): put aside, and the quota closed for exactly 31 days, behind a confirmation
@@ -1274,9 +1287,12 @@ function QuotaLogNotice({ music }: { music: MusicStatus }) {
       </Notice>
     );
   }
-  if (music.quotaLog !== "corrupt") return null;
+  if (music.quotaLog !== "corrupt" && music.quotaLog !== "missing") return null;
 
   const text = recoveryText(Date.now());
+  const gone = music.quotaLog === "missing";
+  // A refresh, or the downloads it left, is running: the engine does not swap the log under it (review round 1).
+  const running = music.refresh.state === "running";
 
   async function recover(): Promise<void> {
     setSending(true);
@@ -1292,7 +1308,7 @@ function QuotaLogNotice({ music }: { music: MusicStatus }) {
   return (
     <Notice
       tone="danger"
-      title="Журнал запросов повреждён"
+      title={gone ? "Журнал запросов пропал" : "Журнал запросов повреждён"}
       actions={
         asking ? (
           <div
@@ -1318,7 +1334,7 @@ function QuotaLogNotice({ music }: { music: MusicStatus }) {
             >
               Отмена
             </button>
-            <button type="button" className="btn btn-s btn-p" disabled={sending} aria-busy={sending} onClick={() => void recover()}>
+            <button type="button" className="btn btn-s btn-p" disabled={sending || running} aria-busy={sending} onClick={() => void recover()}>
               {sending ? (
                 <>
                   <Spin />
@@ -1334,6 +1350,7 @@ function QuotaLogNotice({ music }: { music: MusicStatus }) {
             ref={askRef}
             type="button"
             className="btn btn-s"
+            disabled={running}
             onClick={() => {
               setError(null);
               setAsking(true);
@@ -1345,9 +1362,17 @@ function QuotaLogNotice({ music }: { music: MusicStatus }) {
         )
       }
     >
-      <p>Studio не может посчитать, сколько запросов ушло за 31{NBSP}день, поэтому новые не отправляются, пока журнал не начат заново.</p>
+      {gone ? (
+        <p>
+          Studio уже отправляла запросы, но журнала с их счётом больше нет — например, удалили папку с музыкой. Пока счёт неизвестен, новые запросы не
+          отправляются; журнал можно начать заново.
+        </p>
+      ) : (
+        <p>Studio не может посчитать, сколько запросов ушло за 31{NBSP}день, поэтому новые не отправляются, пока журнал не начат заново.</p>
+      )}
+      {running && !asking && <p>Сейчас идёт обновление списка: восстановить журнал можно, когда оно закончится.</p>}
       {asking && <p className="music-confirm">{text.confirm}</p>}
-      {error && <p>{error.code === "VALIDATION" ? "Журнал уже в порядке: ничего не изменено." : errorText(error)}</p>}
+      {error && <p>{recoveryRefusalText(error)}</p>}
     </Notice>
   );
 }

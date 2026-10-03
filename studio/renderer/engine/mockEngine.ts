@@ -760,7 +760,7 @@ export class MockEngine implements EngineBridge {
 
   /**
    * 3c.6: the quota log as the disk left it: a damaged line (`corrupt`), a file that cannot be read (`unreadable`), a line
-   * waiting to be written (`held`), or sound again (`ok`). Nothing is announced: the engine finds out when it reads the log.
+   * waiting to be written (`held`), gone with the music folder while its marker remains (`missing`), or sound again (`ok`). Nothing is announced: the engine finds out when it reads the log.
    */
   setMusicQuotaLog(state: MusicQuotaLog): void {
     this.music = { ...this.music, quotaLog: state };
@@ -2664,7 +2664,7 @@ export class MockEngine implements EngineBridge {
     const iso = (at: number | null): string | null => (at === null ? null : new Date(at).toISOString());
     const list = m.list === null ? { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 } : { listFetchedAt: iso(m.list.fetchedAt), trackCount: m.list.trackCount, bytesOnDisk: m.list.bytesOnDisk };
     // A log that cannot be read or trusted counts as the whole quota spent, as the engine's does.
-    if (m.quotaLog === "corrupt" || m.quotaLog === "unreadable") {
+    if (m.quotaLog === "corrupt" || m.quotaLog === "unreadable" || m.quotaLog === "missing") {
       return { ...list, sentLast31d: MUSIC_QUOTA_LIMIT, limit: MUSIC_QUOTA_LIMIT, serverRemaining: null, nextFreeAt: null, refresh: m.refresh, quotaLog: m.quotaLog };
     }
     const quota = mockQuota(m, this.clock);
@@ -2681,6 +2681,7 @@ export class MockEngine implements EngineBridge {
     if (m.quotaLog === "held") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-held", detail: "the quota log could not be written (a result or key change is still held), so nothing was sent; try again later" });
     if (m.quotaLog === "corrupt") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-corrupt", detail: "the quota log has a line that cannot be read, so the request count cannot be trusted; nothing was sent" });
     if (m.quotaLog === "unreadable") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-unreadable", detail: "the quota log could not be read; nothing was sent" });
+    if (m.quotaLog === "missing") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-missing", detail: "the quota log is gone although requests were sent before, so the request count cannot be trusted; nothing was sent" });
     const now = this.clock;
     const quota = mockQuota(m, now);
     if (quota.refusal !== null) {
@@ -2722,11 +2723,12 @@ export class MockEngine implements EngineBridge {
     });
   }
 
-  /** `music.recoverQuotaLog {confirm: true}`: only a damaged log, which becomes 30 sends made now. */
+  /** `music.recoverQuotaLog {confirm: true}`: only a damaged or missing log, which becomes 30 sends made now. */
   private musicRecover(c: CommandMessage): ResponseMessage {
     const m = this.music;
+    if (m.refresh.state === "running") return this.fail(c, { code: "IN_FLIGHT", detail: "a music refresh is running; recover the quota log once it has ended" });
     if (m.quotaLog === "unreadable") return this.fail(c, { code: "MUSIC_UNAVAILABLE", musicReason: "log-unreadable", detail: "the quota log could not be read, so nothing was changed" });
-    if (m.quotaLog !== "corrupt") return this.fail(c, { code: "VALIDATION", detail: "the quota log is not damaged, so nothing was changed" });
+    if (m.quotaLog !== "corrupt" && m.quotaLog !== "missing") return this.fail(c, { code: "VALIDATION", detail: "the quota log is not damaged, so nothing was changed" });
     const now = this.clock;
     this.music = { ...m, quotaLog: "ok", sends: Array.from({ length: MUSIC_QUOTA_LIMIT }, () => now), serverRemaining: null };
     this.emitMusic();

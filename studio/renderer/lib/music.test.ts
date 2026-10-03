@@ -116,6 +116,16 @@ describe("refreshGate: «Обновить» is offered only when a request would
     expect(gate.kind === "blocked" ? gate.reason : "").toMatch(/отклонил ключ/);
   });
 
+  test("a missing log (deleted with the music folder): blocked, pointing at its recovery, saying the log is gone", () => {
+    const gate = refreshGate(KEY, sent(30, { quotaLog: "missing", nextFreeAt: null }), NOW, UTC);
+    expect(gate).toMatchObject({ kind: "blocked", fix: "recover" });
+    expect(gate.kind === "blocked" ? gate.reason : "").toMatch(/пропал/);
+  });
+
+  test("a missing log reads 30 of 30 in the danger tone, with no date", () => {
+    expect(quotaView(sent(30, { quotaLog: "missing", nextFreeAt: null }), UTC)).toMatchObject({ tone: "danger", share: 100, nextFree: null });
+  });
+
   test("a corrupt log: blocked, pointing at its recovery", () => {
     expect(refreshGate(KEY, sent(30, { quotaLog: "corrupt", nextFreeAt: null }), NOW, UTC)).toMatchObject({ kind: "blocked", fix: "recover" });
   });

@@ -41,7 +41,7 @@ function megabytes(bytes: number): string {
 
 /** A log that cannot be read or trusted counts as the whole quota spent (the engine's rule, pinned by the contract). */
 function logClosed(status: MusicStatus): boolean {
-  return status.quotaLog === "corrupt" || status.quotaLog === "unreadable";
+  return status.quotaLog === "corrupt" || status.quotaLog === "unreadable" || status.quotaLog === "missing";
 }
 
 export interface QuotaView {
@@ -95,6 +95,9 @@ export function refreshGate(key: MusicKeyStatus, status: MusicStatus | null, now
   if (!key.stored) return { kind: "blocked", reason: "Сначала добавьте ключ RapidAPI: без него запрос не отправится.", fix: "key" };
   if (key.rejected) return { kind: "blocked", reason: "RapidAPI отклонил ключ: замените его, и обновление снова станет доступно.", fix: "key" };
   if (status.quotaLog === "corrupt") return { kind: "blocked", reason: "Журнал запросов повреждён, поэтому запросы не отправляются. Восстановите его ниже.", fix: "recover" };
+  if (status.quotaLog === "missing") {
+    return { kind: "blocked", reason: "Журнал запросов пропал (например, удалили папку с музыкой), поэтому запросы не отправляются. Восстановите его ниже.", fix: "recover" };
+  }
   if (status.quotaLog === "unreadable") return { kind: "blocked", reason: "Журнал запросов не читается, поэтому запросы не отправляются. Проверьте доступ к файлу и перезапустите Studio.", fix: null };
   if (status.quotaLog === "held") {
     return { kind: "blocked", reason: "Прошлый ответ ещё не записан в журнал запросов: проверьте место на диске, запись повторится, когда вы снова откроете эту карточку.", fix: null };

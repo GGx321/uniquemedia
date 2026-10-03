@@ -61,7 +61,7 @@ describe("the card", () => {
 
   test("never offers «Проверить»: a check would spend one of the 30 requests (Q4)", async () => {
     await openMusic();
-    expect(queryButton(/Проверить/)).toBeNull();
+    expect(queryButton(/Проверить/)?.textContent ?? null).toBeNull();
   });
 });
 
@@ -199,7 +199,7 @@ describe("«Обновить» confirms before it spends", () => {
     const { engine } = await openMusic();
     fireEvent.click(button("Обновить · 1 запрос"));
     fireEvent.keyDown(button("Отмена"), { key: "Escape" });
-    expect(queryButton("Отмена")).toBeNull();
+    expect(queryButton("Отмена")?.textContent ?? null).toBeNull();
     expect(callsOf(engine, "music.refresh")).toHaveLength(0);
   });
 
@@ -260,7 +260,7 @@ describe("«Обновить» confirms before it spends", () => {
     fireEvent.click(button("Обновить · 1 запрос"));
     await flush();
     expect(within(card()).getByText(MUSIC_UNAVAILABLE_REASONS_RU["log-held"])).toBeDefined();
-    expect(queryButton("Отмена")).toBeNull();
+    expect(queryButton("Отмена")?.textContent ?? null).toBeNull();
   });
 
   test("an IN_FLIGHT refusal is a refresh already running, not paid requests", async () => {
@@ -337,7 +337,7 @@ describe("«Обновить» is closed, with its reason on the row", () => {
     fireEvent.click(button("Проверить снова"));
     await flush();
     expect(callsOf(engine, "music.status").length).toBe(before + 1);
-    expect(within(card()).queryByText("Ответ сервиса ещё не записан в журнал")).toBeNull();
+    expect(within(card()).queryByText("Ответ сервиса ещё не записан в журнал")?.textContent ?? null).toBeNull();
     expect(button("Обновить · 1 запрос").hasAttribute("disabled")).toBe(false);
     expect(callsOf(engine, "music.refresh")).toHaveLength(0);
   });
@@ -346,7 +346,7 @@ describe("«Обновить» is closed, with its reason on the row", () => {
     await openMusic({ music: { ...TWELVE, quotaLog: "unreadable" } });
     closed();
     expect(within(card()).getByText("Журнал запросов не читается")).toBeDefined();
-    expect(queryButton(/Восстановить/)).toBeNull();
+    expect(queryButton(/Восстановить/)?.textContent ?? null).toBeNull();
   });
 });
 
@@ -377,9 +377,52 @@ describe("a damaged quota log", () => {
     fireEvent.click(confirm);
     await flush();
     expect(callsOf(engine, "music.recoverQuotaLog").map((c) => c.payload)).toEqual([{ confirm: true }]);
-    expect(within(card()).queryByText("Журнал запросов повреждён")).toBeNull();
+    expect(within(card()).queryByText("Журнал запросов повреждён")?.textContent ?? null).toBeNull();
     expect(rowOf("Тренды Instagram").textContent).toMatch(/Квота кончилась: следующий запрос — \d+ \S+/);
     expect(callsOf(engine, "music.refresh")).toHaveLength(0);
+  });
+});
+
+describe("a quota log deleted with the music folder (review round 1)", () => {
+  test("says the log is gone and the count with it, closes «Обновить», and offers the same recovery", async () => {
+    const { engine } = await openMusic({ music: { ...TWELVE, quotaLog: "missing" } });
+    expect(rowOf("Запросы flashapi").textContent).toContain("отправлено 30 из 30");
+    closedRefresh();
+    expect(within(card()).getByText("Журнал запросов пропал")).toBeDefined();
+    fireEvent.click(button("Восстановить журнал…"));
+    expect(callsOf(engine, "music.recoverQuotaLog")).toHaveLength(0);
+    fireEvent.click(button("Восстановить и закрыть на 31 день"));
+    await flush();
+    expect(callsOf(engine, "music.recoverQuotaLog").map((c) => c.payload)).toEqual([{ confirm: true }]);
+    expect(within(card()).queryByText("Журнал запросов пропал")?.textContent ?? null).toBeNull();
+  });
+
+  test("a recovery refused because a refresh runs says so, not «paid requests»", async () => {
+    const { engine } = await openMusic({ music: { ...TWELVE, quotaLog: "corrupt" } });
+    engine.failNext("music.recoverQuotaLog", { code: "IN_FLIGHT" });
+    fireEvent.click(button("Восстановить журнал…"));
+    fireEvent.click(button("Восстановить и закрыть на 31 день"));
+    await flush();
+    expect(card().textContent).toContain("Сейчас идёт обновление списка: восстановите журнал, когда оно закончится.");
+    expect(card().textContent).not.toContain("платных");
+  });
+});
+
+describe("the confirmation never comes back on its own (review round 1, LOW)", () => {
+  test("asked, then the refresh starts elsewhere and ends: the row shows «Обновить» again, not the old confirmation", async () => {
+    const { engine, client, scheduler } = await openMusic();
+    fireEvent.click(button("Обновить · 1 запрос"));
+    expect(queryButton("Отмена")?.textContent ?? null).not.toBeNull();
+    await act(async () => {
+      await client.request("music.refresh", { confirm: true });
+    });
+    await flush();
+    expect(queryButton("Отмена")?.textContent ?? null).toBeNull();
+    runAll(scheduler);
+    await flush();
+    expect(queryButton("Отмена")?.textContent ?? null).toBeNull();
+    expect(button("Обновить · 1 запрос").hasAttribute("disabled")).toBe(false);
+    expect(callsOf(engine, "music.refresh")).toHaveLength(1);
   });
 });
 

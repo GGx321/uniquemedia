@@ -151,6 +151,21 @@ describe("music.recoverQuotaLog", () => {
     expect(await refused(recover(makeMock({ music: { quotaLog: "unreadable" } })))).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-unreadable" });
   });
 
+  // Review round 1: a log deleted with the music folder (its marker outside says it existed) reads missing, like the engine's.
+  test("a missing log reads 30 of 30, refuses a refresh as log-missing, and is recovered like a corrupt one", async () => {
+    const mock = makeMock({ musicKey: KEY, music: { quotaLog: "missing" } });
+    expect(await status(mock)).toMatchObject({ quotaLog: "missing", sentLast31d: 30, nextFreeAt: null });
+    expect(await refused(refresh(mock))).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-missing" });
+    expect((await unwrap(recover(mock))).status).toMatchObject({ quotaLog: "ok", sentLast31d: 30 });
+  });
+
+  test("while a refresh runs the recovery is refused IN_FLIGHT, as the engine's", async () => {
+    const mock = makeMock({ musicKey: KEY });
+    await unwrap(refresh(mock));
+    mock.engine.setMusicQuotaLog("corrupt");
+    expect((await refused(recover(mock))).code).toBe("IN_FLIGHT");
+  });
+
   test("the log can be damaged by a test control while the app runs", async () => {
     const mock = makeMock({ musicKey: KEY });
     mock.engine.setMusicQuotaLog("corrupt");
