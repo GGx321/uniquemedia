@@ -654,10 +654,13 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    name: "music: a quota log deleted with the music folder reads missing, a re-entered key does not start a fresh count, and its recovery closes the quota for 31 days",
+    // Only a log that counted a request leaves the marker (a send, a result, a recovered log; round-2 verify): here a recovery
+    // makes it one, since no story of the suite sends a request.
+    name: "music: a quota log that counted requests, deleted with the music folder, reads missing, a re-entered key does not start a fresh count, and its recovery closes the quota for 31 days",
     async run(t, _w, control) {
       await control.musicKey();
-      await t.call("music.status", {});
+      await control.musicQuotaLog("corrupt");
+      await t.call("music.recoverQuotaLog", { confirm: true });
       await control.musicQuotaLog("deleted");
       await t.call("music.status", {});
       await t.call("music.refresh", { confirm: true });

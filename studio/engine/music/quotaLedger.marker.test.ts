@@ -69,6 +69,40 @@ describe("the marker", () => {
     await ledger().summary();
     expect(await exists(marker())).toBe(true);
   });
+
+  // Round-2 verify (MEDIUM): only a line that counts a request may leave the marker. A log of key lines alone (a key saved,
+  // no request ever sent) cannot undercount anything, so deleting it must not cost a 31-day lockout.
+  test("key lines alone leave no marker, written or read: deleting music/ then reads ok, a request may leave, and still no marker", async () => {
+    await ledger().recordKeyChange(LAST4);
+    await ledger().recordKeyChange(null);
+    expect(await exists(marker())).toBe(false);
+    await ledger().summary();
+    expect(await exists(marker())).toBe(false);
+    await rm(join(dir, "music"), { recursive: true });
+    expect(await ledger().summary()).toMatchObject({ sentInWindow: 0, refusal: null });
+    expect(await exists(marker())).toBe(false);
+  });
+
+  test("a send written through the ledger leaves it, and the log deleted after it reads missing", async () => {
+    await ledger().recordKeyChange(LAST4);
+    expect((await ledger().reserve({ id: "refresh-0001", key: LAST4 })).ok).toBe(true);
+    expect(await exists(marker())).toBe(true);
+    await rm(join(dir, "music"), { recursive: true });
+    await missing(ledger().summary());
+  });
+
+  test("a result read from an older log leaves it too: an answer means a request left", async () => {
+    await seed([{ v: 1, kind: "key", at: NOW - 2 * HOUR, key: LAST4 }, zero(NOW - HOUR)]);
+    await ledger().summary();
+    expect(await exists(marker())).toBe(true);
+  });
+
+  test("a recovered log leaves it", async () => {
+    await seed([{ v: 1, kind: "key", at: NOW - HOUR, key: LAST4 }]);
+    await writeFile(path, `${await readFile(path, "utf8")}not json at all\n`);
+    expect((await ledger().recover({ rejectedKey: null })).ok).toBe(true);
+    expect(await exists(marker())).toBe(true);
+  });
 });
 
 describe("a log that is gone while the marker says it existed: missing", () => {

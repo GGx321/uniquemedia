@@ -32,8 +32,9 @@ import { errorCode, renameWithRetry } from "../library/renameRetry";
 // leaves either the damaged log (still closed) or the new one (closed for 31 days), never an empty one.
 //
 // A deleted log (review round 1). The log sits in `userData/music/` beside ~100 MB of tracks, so deleting that folder is
-// a plausible way to free space, and it would reset the local count. So the first line ever written also leaves a marker
-// OUTSIDE `music/` (`quotaMarkerPath`, `userData/.music-quota-started`); a log from an older Studio gets it when read.
+// a plausible way to free space, and it would reset the local count. So the first line that counts a request (a `send`,
+// a `result`, a `recovered` log) also leaves a marker OUTSIDE `music/` (`quotaMarkerPath`, `userData/.music-quota-started`),
+// after the line; a log from an older Studio gets it when read. Key lines alone leave none: nothing to undercount.
 // While the marker is there, a log that is gone or holds no complete line is `missing`: it fails closed like a corrupt one,
 // no write starts a new log behind the owner's back, and `recover` is the same way out (30 sends at now, 31 days closed).
 // Only with no marker (a real first start) does no log read as an empty one.
@@ -190,6 +191,15 @@ export type Admission = { ok: true; summary: QuotaSummary; at: number } | { ok: 
  */
 export type Recovery = { ok: true; summary: QuotaSummary; quarantined: string | null } | { ok: false; refusal: "not-corrupt" | "unreadable" | "clock" };
 
+/**
+ * Whether a line counts a request (round-2 verify): a `send`, the `result` that always follows one, or a `recovered` log's
+ * closed quota. Only such a line leaves the marker: a log of key lines alone cannot undercount anything, so losing it
+ * must not cost a 31-day lockout.
+ */
+function countsRequests(line: QuotaLine): boolean {
+  return line.kind === "send" || line.kind === "result" || line.kind === "recovered";
+}
+
 /** A crash in the swap leaves the new log's temp beside it (`.quota.jsonl.<hex>.tmp`, durableFs `tempSiblingPath`). */
 function isLogTemp(name: string, log: string): boolean {
   return name.startsWith(`.${log}.`) && isTempName(name);
@@ -308,7 +318,8 @@ export class QuotaLedger {
       if (await this.#markerExists()) throw new QuotaLogError("missing", "the quota log is gone although requests were sent before, so the request count cannot be trusted");
       return entries;
     }
-    await this.#ensureMarker();
+    // A log from an older Studio gets its marker here, once it holds a line that counts a request.
+    if (entries.some(countsRequests)) await this.#ensureMarker();
     return entries;
   }
 
@@ -343,7 +354,8 @@ export class QuotaLedger {
     } catch (error) {
       throw new QuotaLogError("unwritable", `the quota log could not be written (${errorCode(error) ?? "unknown"})`);
     }
-    await this.#ensureMarker();
+    // The line first, then the marker, and only for a line that counts a request.
+    if (countsRequests(line)) await this.#ensureMarker();
   }
 
   /**

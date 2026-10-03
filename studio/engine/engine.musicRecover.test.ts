@@ -72,12 +72,12 @@ describe("music.status writes a held line (review round 1, HIGH)", () => {
   });
 });
 
-describe("a quota log deleted with the music folder (review round 1, MEDIUM)", () => {
-  test("reads missing and 30 of 30, refuses a refresh without a request, and its recovery closes the quota for 31 days", async () => {
+describe("a quota log deleted with the music folder (review round 1, MEDIUM; round-2 verify)", () => {
+  test("after a request was sent: reads missing and 30 of 30, refuses a refresh without a request, and its recovery closes the quota for 31 days", async () => {
     const { engine, mock } = await start({ damaged: false });
-    // The key line the owner's «Сохранить» wrote is the log's first line: the marker beside music/ now says it existed.
-    expect(await statusOf(engine)).toMatchObject({ quotaLog: "ok" });
-    await engine.applyControl({ kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" });
+    // One refresh against the loopback mock: its send (and result) leave the marker beside music/.
+    ok(await engine.handle(command("music.refresh", { confirm: true })));
+    await engine.musicSettled();
     await rm(musicDir(), { recursive: true, force: true });
     expect(await statusOf(engine)).toMatchObject({ quotaLog: "missing", sentLast31d: 30 });
     expect(EngineError.parse(failed(await engine.handle(command("music.refresh", { confirm: true }))).error)).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-missing" });
@@ -85,7 +85,17 @@ describe("a quota log deleted with the music folder (review round 1, MEDIUM)", (
     if (recovered.type !== "music.recoverQuotaLog") throw new Error("wrong type");
     expect(recovered.result.status).toMatchObject({ quotaLog: "ok", sentLast31d: 30 });
     expect(failed(await engine.handle(command("music.refresh", { confirm: true }))).error.code).toBe("MUSIC_QUOTA_EXHAUSTED");
-    expect(mock.requests).toEqual([]);
+    expect(mock.requests).toHaveLength(1);
+  });
+
+  test("with key lines alone (a key saved, no request ever sent) a deleted log is a fresh one: ok, and a refresh may leave", async () => {
+    const { engine, mock } = await start({ damaged: false });
+    await engine.applyControl({ kind: "control", type: "musicKey.set", key: MUSIC, origin: "user" });
+    await rm(musicDir(), { recursive: true, force: true });
+    expect(await statusOf(engine)).toMatchObject({ quotaLog: "ok", sentLast31d: 0 });
+    ok(await engine.handle(command("music.refresh", { confirm: true })));
+    await engine.musicSettled();
+    expect(mock.requests).toHaveLength(1);
   });
 });
 
