@@ -51,6 +51,7 @@ const musicStatus: MusicStatus = {
   serverRemaining: 28,
   nextFreeAt: "2026-10-28T20:42:44.190Z",
   refresh: { state: "idle" },
+  quotaLog: "ok",
 };
 
 const settings: Settings = {

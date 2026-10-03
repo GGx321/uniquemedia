@@ -84,7 +84,7 @@ import { Count, SafeText } from "./primitives";
  *   requests remained; nothing is sent (`MusicStatus.nextFreeAt` says when the next request may leave).
  * - MUSIC_UNAVAILABLE: the request was made or could not be made, and no usable list came of it (network, timeout,
  *   an HTTP error other than 401, an answer that is too large or has no usable track, or the quota log cannot be
- *   written so nothing was sent). `detail` says which, redacted of the key.
+ *   written so nothing was sent). `musicReason` says which (3c.6), `detail` says more, redacted of the key.
  */
 export const ERROR_CODES = [
   "AUTH_INVALID",
@@ -176,12 +176,62 @@ export const CaptionIssue = z.enum(CAPTION_ISSUES);
 export type CaptionIssue = z.infer<typeof CaptionIssue>;
 
 /**
+ * Why music could not be fetched (3c.6): the cause behind MUSIC_UNAVAILABLE, so the window says what the owner can do
+ * («позже» is true for only a few). Grouped by what was spent.
+ *
+ * Nothing was sent:
+ * - shutting-down: the engine is stopping.
+ * - not-available: this build has no persisting list store (the 3c.3 switch).
+ * - no-music-folder: the engine was given no music folder, so there is no quota log.
+ * - clock: the system clock is not a real date, so the 31-day window cannot be counted.
+ * - config: the client could not be set up (a base URL or key the client refuses).
+ * - log-held: a result or key-change line from earlier still waits to be written to the quota log.
+ * - log-unwritable: the quota log could not be written now.
+ * - log-unreadable: the quota log could not be read.
+ * - log-corrupt: the quota log has a complete line that cannot be read (`music.recoverQuotaLog` is the way out).
+ *
+ * The request left and counts:
+ * - network: no answer (network, timeout).
+ * - forbidden: 403, most likely no subscription to the API on the key.
+ * - rate-limited: 429 (`retryAfterMs` when the server named a wait).
+ * - server: another HTTP error.
+ * - bad-answer: an answer too large, not a list, or with no usable track.
+ * - store-failed: the list came, and storing it or its tracks failed.
+ *
+ * The downloads of a list fetched earlier (no request to flashapi):
+ * - downloads-stopped: the CDN refused the sampled downloads alike, so the run stopped and kept every URL for the next start.
+ * - downloads-failed: finishing an earlier refresh's downloads failed.
+ */
+export const MUSIC_UNAVAILABLE_REASONS = [
+  "shutting-down",
+  "not-available",
+  "no-music-folder",
+  "clock",
+  "config",
+  "log-held",
+  "log-unwritable",
+  "log-unreadable",
+  "log-corrupt",
+  "network",
+  "forbidden",
+  "rate-limited",
+  "server",
+  "bad-answer",
+  "store-failed",
+  "downloads-stopped",
+  "downloads-failed",
+] as const;
+export const MusicUnavailableReason = z.enum(MUSIC_UNAVAILABLE_REASONS);
+export type MusicUnavailableReason = z.infer<typeof MusicUnavailableReason>;
+
+/**
  * An error as it travels between processes: a code plus optional diagnostics,
- * never user text. Four codes must say more than their name: MONTAGE_INVALID
+ * never user text. Five codes must say more than their name: MONTAGE_INVALID
  * carries the `issues` (a closed list of codes and paths, never values),
  * PHOTO_UNAVAILABLE the same list with only `photo-unavailable` issues (which
- * cells), EXPORT_UNAVAILABLE its `exportReason` and TEXT_INVALID its
- * `captionIssue`; no other code carries any.
+ * cells), EXPORT_UNAVAILABLE its `exportReason`, TEXT_INVALID its
+ * `captionIssue` and MUSIC_UNAVAILABLE its `musicReason`; no other code
+ * carries any.
  */
 export const EngineError = z
   .strictObject({
@@ -191,6 +241,7 @@ export const EngineError = z
     issues: z.array(MontageIssue).min(1).max(MAX_MONTAGE_ISSUES).optional(),
     exportReason: ExportUnavailableReason.optional(),
     captionIssue: CaptionIssue.optional(),
+    musicReason: MusicUnavailableReason.optional(),
   })
   .refine((e) => (e.code === "MONTAGE_INVALID" || e.code === "PHOTO_UNAVAILABLE") === (e.issues !== undefined), {
     message: "issues must be present exactly on MONTAGE_INVALID and PHOTO_UNAVAILABLE",
@@ -207,6 +258,10 @@ export const EngineError = z
   .refine((e) => (e.code === "TEXT_INVALID") === (e.captionIssue !== undefined), {
     message: "captionIssue must be present exactly on TEXT_INVALID",
     path: ["captionIssue"],
+  })
+  .refine((e) => (e.code === "MUSIC_UNAVAILABLE") === (e.musicReason !== undefined), {
+    message: "musicReason must be present exactly on MUSIC_UNAVAILABLE",
+    path: ["musicReason"],
   });
 
 export type ErrorCode = z.infer<typeof ErrorCode>;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CAPTION_ISSUES_RU, ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU, MONTAGE_ISSUE_MESSAGES_RU } from "./errorMessagesRu";
-import { CAPTION_ISSUES, ERROR_CODES, EXPORT_UNAVAILABLE_REASONS, EngineError, ErrorCode } from "./errors";
+import { CAPTION_ISSUES_RU, ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU, MONTAGE_ISSUE_MESSAGES_RU, MUSIC_UNAVAILABLE_REASONS_RU } from "./errorMessagesRu";
+import { CAPTION_ISSUES, ERROR_CODES, EXPORT_UNAVAILABLE_REASONS, EngineError, ErrorCode, MUSIC_UNAVAILABLE_REASONS } from "./errors";
 import { MAX_MONTAGE_ISSUES, MONTAGE_ISSUE_CODES } from "./montage";
 
 const EXPECTED_CODES = [
@@ -47,8 +47,8 @@ const EXPECTED_CODES = [
   "MUSIC_UNAVAILABLE",
 ];
 
-/** The codes that must say more than their code: what is wrong with the montage, which cells, why the folder is unusable, which caption rule broke. */
-const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE", "TEXT_INVALID"];
+/** The codes that must say more than their code: what is wrong with the montage, which cells, why the folder is unusable, which caption rule broke, why music could not be fetched. */
+const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE", "TEXT_INVALID", "MUSIC_UNAVAILABLE"];
 
 describe("ErrorCode", () => {
   test("is exactly the closed set of forty-one codes", () => {
@@ -180,6 +180,81 @@ describe("EngineError for an unusable export folder", () => {
 
   test("a reason on any other code is refused", () => {
     expect(EngineError.safeParse({ code: "NOT_FOUND", exportReason: "missing" }).success).toBe(false);
+  });
+});
+
+// Stage 3, task 3c.6: one MUSIC_UNAVAILABLE text covered a network failure, a held log write, a corrupt log, «not available
+// yet» and a shutting-down engine, and «Попробуйте позже» was true for only some. The cause now travels as `musicReason`.
+describe("EngineError for music that could not be fetched", () => {
+  /** Nothing left: no request was sent. */
+  const NOTHING_SENT = ["shutting-down", "not-available", "no-music-folder", "clock", "config", "log-held", "log-unwritable", "log-unreadable", "log-corrupt"];
+  /** The one request left, and it counts. */
+  const SENT = ["network", "forbidden", "rate-limited", "server", "bad-answer", "store-failed"];
+  /** The downloads of a list fetched earlier: no request to flashapi at all. */
+  const DOWNLOADS = ["downloads-stopped", "downloads-failed"];
+
+  test("the causes are exactly these, grouped by whether a request was spent", () => {
+    const actual: string[] = [...MUSIC_UNAVAILABLE_REASONS];
+    expect(actual).toEqual([...NOTHING_SENT, ...SENT, ...DOWNLOADS]);
+  });
+
+  test.each([...MUSIC_UNAVAILABLE_REASONS])("MUSIC_UNAVAILABLE says why: %s", (musicReason) => {
+    expect(EngineError.safeParse({ code: "MUSIC_UNAVAILABLE", musicReason }).success).toBe(true);
+  });
+
+  test("MUSIC_UNAVAILABLE without a cause is refused: the owner could not be told whether to wait, fix or retry", () => {
+    expect(EngineError.safeParse({ code: "MUSIC_UNAVAILABLE", detail: "the request failed" }).success).toBe(false);
+  });
+
+  test("an unknown cause is refused", () => {
+    expect(EngineError.safeParse({ code: "MUSIC_UNAVAILABLE", musicReason: "later" }).success).toBe(false);
+  });
+
+  test("a cause on any other code is refused", () => {
+    expect(EngineError.safeParse({ code: "MUSIC_QUOTA_EXHAUSTED", musicReason: "network" }).success).toBe(false);
+    expect(EngineError.safeParse({ code: "EXPORT_UNAVAILABLE", exportReason: "missing", musicReason: "network" }).success).toBe(false);
+  });
+
+  test("MUSIC_UNAVAILABLE_REASONS_RU has a distinct Russian text for exactly the causes", () => {
+    expect(Object.keys(MUSIC_UNAVAILABLE_REASONS_RU).sort()).toEqual([...MUSIC_UNAVAILABLE_REASONS].sort());
+    const texts = Object.values(MUSIC_UNAVAILABLE_REASONS_RU);
+    expect(new Set(texts).size).toBe(texts.length);
+    for (const text of texts) expect(text).toMatch(/[А-Яа-яЁё]/);
+  });
+
+  test.each(NOTHING_SENT)("%s says the request was not sent, and never says it counted", (reason) => {
+    const text = Object.entries(MUSIC_UNAVAILABLE_REASONS_RU).find(([k]) => k === reason)?.[1] ?? "";
+    expect(text).toMatch(/не отправлен/);
+    expect(text).not.toMatch(/засчитан в лимит|запрос засчитан/i);
+  });
+
+  test.each(SENT)("%s says the request counted", (reason) => {
+    const text = Object.entries(MUSIC_UNAVAILABLE_REASONS_RU).find(([k]) => k === reason)?.[1] ?? "";
+    expect(text).toMatch(/засчитан/);
+  });
+
+  test.each(DOWNLOADS)("%s says no new request was spent", (reason) => {
+    const text = Object.entries(MUSIC_UNAVAILABLE_REASONS_RU).find(([k]) => k === reason)?.[1] ?? "";
+    expect(text).toMatch(/без нового запроса|не отправлялся/);
+  });
+
+  test("only the causes where waiting helps say to try later", () => {
+    const later = Object.entries(MUSIC_UNAVAILABLE_REASONS_RU)
+      .filter(([, text]) => /позже|подождать|подождите/i.test(text))
+      .map(([reason]) => reason)
+      .sort();
+    expect(later).toEqual(["network", "rate-limited", "server"]);
+  });
+
+  test("the stopped downloads say the rest is fetched at the next start, not that the list is unavailable (the 3c.4 breaker)", () => {
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["downloads-stopped"]).toMatch(/загрузка остановлена/i);
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["downloads-stopped"]).toMatch(/оставшиеся треки будут докачаны при следующем запуске/);
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["downloads-stopped"]).not.toMatch(/недоступ/);
+  });
+
+  test("a corrupt log points at its recovery in Settings and says what it costs", () => {
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["log-corrupt"]).toMatch(/Настройк/);
+    expect(MUSIC_UNAVAILABLE_REASONS_RU["log-corrupt"]).toMatch(/31 д/);
   });
 });
 

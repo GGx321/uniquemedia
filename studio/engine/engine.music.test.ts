@@ -71,7 +71,7 @@ async function refreshed(engine: Started["engine"]) {
 describe("music.status", () => {
   test("of an engine that never refreshed", async () => {
     const { engine } = await start();
-    expect(await statusOf(engine)).toEqual({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0, sentLast31d: 0, limit: 30, serverRemaining: null, nextFreeAt: null, refresh: { state: "idle" } });
+    expect(await statusOf(engine)).toEqual({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0, sentLast31d: 0, limit: 30, serverRemaining: null, nextFreeAt: null, refresh: { state: "idle" }, quotaLog: "ok" });
   });
 
   test("works without a music folder: the never-refreshed status", async () => {

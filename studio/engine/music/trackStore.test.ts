@@ -9,6 +9,7 @@ import { CdnBlockedError } from "./cdnTransport";
 import { DecodeError, type DecodeOptions, type DecodeResult } from "./decodeCheck";
 import type { MusicTrack } from "./listSchema";
 import { ListRecordSchema, type ListRecord } from "./trackRecord";
+import { SinkError } from "./service";
 import { TrackStore, type TrackStoreDeps } from "./trackStore";
 import { EXCERPTS, excerptOf, fakeCdn, JPEG_1X1, listTracks, PNG_1X1_BYTES, sha256Hex, WEBP_1X1, type FakeCdn } from "./testing/storeKit";
 useNativeGlobals();
@@ -1016,6 +1017,32 @@ describe("the circuit breaker", () => {
     expect(error?.message).toContain("status-403");
     expect(error?.message).toMatch(/kept/);
     expect(error?.message).not.toMatch(/https?:|oh=|oe=/);
+  });
+
+  // 3c.6: the window must say «загрузка остановлена, оставшиеся треки будут докачаны при следующем запуске», not «список
+  // недоступен», so the stop carries its cause; with fewer than three pending tracks it FAILS the refresh, and says the same.
+  test.each([10, 2, 1])("the stop carries its cause, downloads-stopped, with %i pending", async (count) => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(count);
+    for (const track of tracks) h.cdn.serve(track.downloadUrl, { status: 403 });
+    const error = await refresh(h, tracks).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(SinkError);
+    expect(error instanceof SinkError ? error.reason : null).toBe("downloads-stopped");
+  });
+
+  test("a refresh that stored nothing for other reasons is not a stop: no cause", async () => {
+    const h = await harness({ decode: fastDecode });
+    const tracks = listTracks(3);
+    for (const track of tracks) h.cdn.serve(track.downloadUrl, { status: 404 });
+    const error = await refresh(h, tracks).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(SinkError);
+    expect(error instanceof SinkError ? error.reason : "none").toBeNull();
   });
 
   test("every entry stays pending WITH its URL, the record incomplete, so the next start can retry them all", async () => {

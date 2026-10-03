@@ -700,22 +700,41 @@ export const MusicRefreshState = z.discriminatedUnion("state", [
 ]);
 
 /**
+ * The quota log's own state (3c.6), so the card can say why «Обновить» is closed before a click:
+ * - `ok`: the log was read and nothing waits to be written;
+ * - `held`: a result or key-change line could not be written yet (a full disk, no permission). It already counts in the
+ *   status, and no refresh leaves until it is written;
+ * - `corrupt`: the log has a complete line that cannot be read, so the count cannot be trusted. `music.recoverQuotaLog`
+ *   puts the file aside and closes the quota for 31 days;
+ * - `unreadable`: the log could not be read at all (no access to the file).
+ */
+export const MUSIC_QUOTA_LOG_STATES = ["ok", "held", "corrupt", "unreadable"] as const;
+export const MusicQuotaLog = z.enum(MUSIC_QUOTA_LOG_STATES);
+
+/**
  * Everything the «Музыка» card and the tab know about the list and the quota (K24). The quota lives here and nowhere
  * else (`Settings.musicKey` keeps the key's state only). `sentLast31d` counts what the local log holds for the last 31
  * days, a request that left and got no answer included; `serverRemaining` is flashapi's own count from its last answer
  * within that window. `nextFreeAt` is when a refused refresh may leave (the oldest send leaving the window, or the
- * server's zero lifting), else when the oldest send leaves the window; null with nothing in the window.
+ * server's zero lifting), else when the oldest send leaves the window; null with nothing in the window. A log that is
+ * `corrupt` or `unreadable` reads as the whole quota spent: the status never shows room the log cannot vouch for.
  */
-export const MusicStatus = z.strictObject({
-  listFetchedAt: IsoDateTime.nullable(),
-  trackCount: Count,
-  bytesOnDisk: Count,
-  sentLast31d: Count.max(MUSIC_QUOTA_LIMIT),
-  limit: z.literal(MUSIC_QUOTA_LIMIT),
-  serverRemaining: Count.nullable(),
-  nextFreeAt: IsoDateTime.nullable(),
-  refresh: MusicRefreshState,
-});
+export const MusicStatus = z
+  .strictObject({
+    listFetchedAt: IsoDateTime.nullable(),
+    trackCount: Count,
+    bytesOnDisk: Count,
+    sentLast31d: Count.max(MUSIC_QUOTA_LIMIT),
+    limit: z.literal(MUSIC_QUOTA_LIMIT),
+    serverRemaining: Count.nullable(),
+    nextFreeAt: IsoDateTime.nullable(),
+    refresh: MusicRefreshState,
+    quotaLog: MusicQuotaLog,
+  })
+  .refine((s) => (s.quotaLog !== "corrupt" && s.quotaLog !== "unreadable") || s.sentLast31d === MUSIC_QUOTA_LIMIT, {
+    message: "a log that cannot be read counts as the whole quota spent",
+    path: ["sentLast31d"],
+  });
 
 /** `music.list` answers at most this many tracks (K23); the list schema and the store keep the same bound. */
 export const MAX_LISTED_TRACKS = 100;
@@ -764,6 +783,7 @@ export type MusicPeaksResult = z.infer<typeof MusicPeaksResult>;
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatus>;
 export type MusicKeyStatus = z.infer<typeof MusicKeyStatus>;
 export type MusicStatus = z.infer<typeof MusicStatus>;
+export type MusicQuotaLog = z.infer<typeof MusicQuotaLog>;
 export type ImageAgeCheck = z.infer<typeof ImageAgeCheck>;
 export type Settings = z.infer<typeof Settings>;
 export type RenderConcurrency = z.infer<typeof RenderConcurrency>;

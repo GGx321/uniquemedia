@@ -104,7 +104,7 @@ function refused(answer: Awaited<ReturnType<MusicService["refresh"]>>): EngineEr
 describe("status", () => {
   test("of a service that never refreshed: nothing yet, an idle refresh, the limit", async () => {
     const { service } = harness();
-    expect(await service.status()).toEqual({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0, sentLast31d: 0, limit: 30, serverRemaining: null, nextFreeAt: null, refresh: { state: "idle" } });
+    expect(await service.status()).toEqual({ listFetchedAt: null, trackCount: 0, bytesOnDisk: 0, sentLast31d: 0, limit: 30, serverRemaining: null, nextFreeAt: null, refresh: { state: "idle" }, quotaLog: "ok" });
   });
 
   test("reads the count from the ledger: 7 sends, the oldest one's leaving as nextFreeAt", async () => {

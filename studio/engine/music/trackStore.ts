@@ -518,7 +518,7 @@ export class TrackStore implements MusicListSink, RenderTrackSource {
           for (const probe of probes) handled.delete(probe.trackId);
           await this.#persist({ ...record(), breaker: { ids, signature: first } });
           this.#say(`studio engine: the ${probes.length} sampled downloads were all refused (${first}); the run was stopped and its downloads kept`);
-          throw new SinkError(`the CDN refused the ${probes.length} sampled downloads (${first}); nothing more was requested, and the ${countPending(record())} downloads that remain are kept to retry at the next start`);
+          throw new SinkError(`the CDN refused the ${probes.length} sampled downloads (${first}); nothing more was requested, and the ${countPending(record())} downloads that remain are kept to retry at the next start`, "downloads-stopped");
         }
         this.#say(`studio engine: the same ${probes.length} downloads were refused again (${first}); they are given up on, and a new sample is taken`);
       }

@@ -1,0 +1,309 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { startMockFlashapi, type MockFlashapi } from "../../scripts/mockFlashapi";
+import { EngineError, MusicStatus, type MusicUnavailableReason } from "../../shared/engine";
+import { captureConsole, expectNoKeyFragment } from "../../testing/keyLeaks";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { nativeFetch, useNativeHttp } from "../../testing/nativeHttp";
+import type { FlashapiFetch } from "./client";
+import { QUOTA_WINDOW_MS, type QuotaLine } from "./quotaLedger";
+import { MusicService, SinkError, type MusicListSink } from "./service";
+import { PersistingTestSink } from "./testing/testSink";
+useNativeGlobals();
+useNativeHttp();
+
+// Stage 3, task 3c.6. What the Settings «Музыка» card needs from the service:
+//  - the quota log's own state in the status (`quotaLog`), so «Обновить» can say why it is closed before a click;
+//  - the cause of every MUSIC_UNAVAILABLE (`musicReason`): «Попробуйте позже» was true for only some of them;
+// No real network: flashapi is a loopback mock (studio/scripts/mockFlashapi.ts) or a fake fetch.
+
+const KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
+const LAST4 = "0000";
+const NOW = Date.UTC(2026, 9, 3, 10, 15, 0);
+const HOUR = 3600 * 1000;
+
+let dir = "";
+let mock: MockFlashapi | null = null;
+let now = NOW;
+let ids = 0;
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "studio-music-causes-"));
+  now = NOW;
+  ids = 0;
+});
+afterEach(async () => {
+  await mock?.stop();
+  mock = null;
+  await rm(dir, { recursive: true, force: true });
+});
+
+const quotaPath = () => join(dir, "music", "quota.jsonl");
+const NO_CATALOGUE = { list: (): [] => [], peaks: (): Promise<null> => Promise.resolve(null) };
+const EMPTY = { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0 };
+
+async function seedText(text: string): Promise<void> {
+  await mkdir(join(dir, "music"), { recursive: true });
+  await writeFile(quotaPath(), text);
+}
+
+const DAMAGED = `${JSON.stringify({ v: 1, kind: "send", id: "send-1", at: NOW - HOUR, key: LAST4 })}\nnot json at all\n`;
+
+async function quotaLines(): Promise<QuotaLine[]> {
+  const text = await readFile(quotaPath(), "utf8").catch(() => "");
+  return text
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as QuotaLine);
+}
+
+function harness(options: { fetch?: FlashapiFetch; sink?: MusicListSink; quota?: string | null; baseUrl?: string; timeoutMs?: number; maxBodyBytes?: number } = {}) {
+  mock ??= startMockFlashapi({ key: KEY });
+  const events: MusicStatus[] = [];
+  const logs: string[] = [];
+  const holder = { key: KEY as string | null, rejected: false };
+  const service = new MusicService({
+    quotaPath: options.quota === undefined ? quotaPath() : options.quota,
+    baseUrl: options.baseUrl ?? mock.url,
+    allowBaseUrlOverride: true,
+    fetch: options.fetch ?? ((url, init) => nativeFetch(url, init)),
+    clock: () => now,
+    newId: () => `refresh-${String(++ids).padStart(4, "0")}`,
+    key: () => holder.key,
+    keyRejected: () => holder.rejected,
+    markKeyRejected: () => undefined,
+    emit: (status) => void events.push(status),
+    log: (line) => void logs.push(line),
+    sink: options.sink ?? new PersistingTestSink(),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.maxBodyBytes === undefined ? {} : { maxBodyBytes: options.maxBodyBytes }),
+  });
+  return { service, events, logs, holder };
+}
+
+type Harness = ReturnType<typeof harness>;
+
+/** A refusal's error, checked against the contract (a MUSIC_UNAVAILABLE without its cause would not parse). */
+function refusal(answer: Awaited<ReturnType<MusicService["refresh"]>>): EngineError {
+  if (answer.ok) throw new Error("expected a refusal");
+  return EngineError.parse(answer.error);
+}
+
+/** Runs one refresh to its end and answers the error it ended with, checked against the contract. */
+async function failureOf(h: Harness): Promise<EngineError> {
+  const answer = await h.service.refresh();
+  if (!answer.ok) return refusal(answer);
+  await h.service.settled();
+  const status = MusicStatus.parse(await h.service.status());
+  if (status.refresh.state !== "failed") throw new Error(`expected the refresh to fail, it is ${status.refresh.state}`);
+  return status.refresh.error;
+}
+
+/** A sink that fails the way `error` says. */
+const failingSink = (error: () => unknown): MusicListSink => ({ persistent: true, ...NO_CATALOGUE, accept: () => Promise.reject(error()), summary: () => EMPTY });
+
+describe("the status says whether its count can be trusted (quotaLog)", () => {
+  test("a fresh log is ok", async () => {
+    expect((await harness().service.status()).quotaLog).toBe("ok");
+  });
+
+  test("a damaged log is corrupt, and reads 30 of 30", async () => {
+    await seedText(DAMAGED);
+    const status = MusicStatus.parse(await harness().service.status());
+    expect(status).toMatchObject({ quotaLog: "corrupt", sentLast31d: 30, nextFreeAt: null, serverRemaining: null });
+  });
+
+  test("a log that cannot be read at all is unreadable, and reads 30 of 30", async () => {
+    await mkdir(quotaPath(), { recursive: true });
+    const status = MusicStatus.parse(await harness().service.status());
+    expect(status).toMatchObject({ quotaLog: "unreadable", sentLast31d: 30 });
+  });
+
+  test("a result that could not be written is held: the status says so until a write succeeds, and the refresh says why it waits", async () => {
+    // The first request puts a FOLDER where the log is, so its result cannot be written; later ones are served plainly.
+    let first = true;
+    const breakingTheLog: FlashapiFetch = async (url, init) => {
+      if (first) {
+        first = false;
+        await rm(quotaPath(), { force: true });
+        await mkdir(quotaPath());
+      }
+      return nativeFetch(url, init);
+    };
+    mock = startMockFlashapi({ key: KEY });
+    mock.script({ status: 500, body: "boom" });
+    const h = harness({ fetch: breakingTheLog });
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await h.service.status()).quotaLog).toBe("unreadable");
+    await rm(quotaPath(), { recursive: true, force: true });
+    // The folder is gone: the log reads again, and the line it could not take waits to be written.
+    expect((await h.service.status()).quotaLog).toBe("held");
+    await mkdir(quotaPath());
+    expect(refusal(await h.service.refresh())).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "log-held" });
+    expect(mock.requests).toHaveLength(1);
+    await rm(quotaPath(), { recursive: true, force: true });
+    await h.service.refresh();
+    await h.service.settled();
+    expect((await h.service.status()).quotaLog).toBe("ok");
+  });
+
+  test("without a music folder there is no log to distrust: ok, and a refresh names the missing folder", async () => {
+    const h = harness({ quota: null });
+    expect((await h.service.status()).quotaLog).toBe("ok");
+    expect(refusal(await h.service.refresh())).toMatchObject({ musicReason: "no-music-folder" });
+  });
+});
+
+describe("every MUSIC_UNAVAILABLE says why (musicReason)", () => {
+  describe("nothing was sent", () => {
+    const nothingSent = async (h: Harness, reason: MusicUnavailableReason): Promise<void> => {
+      const error = refusal(await h.service.refresh());
+      expect(error).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: reason });
+      expect(mock?.requests ?? []).toEqual([]);
+    };
+
+    test("shutting-down", async () => {
+      const h = harness();
+      await h.service.stop();
+      await nothingSent(h, "shutting-down");
+    });
+
+    test("not-available: a sink that does not persist", async () => {
+      await nothingSent(harness({ sink: { persistent: false, ...NO_CATALOGUE, accept: () => Promise.resolve(), summary: () => EMPTY } }), "not-available");
+    });
+
+    test("no-music-folder", async () => {
+      await nothingSent(harness({ quota: null }), "no-music-folder");
+    });
+
+    test("clock", async () => {
+      now = 0;
+      await nothingSent(harness(), "clock");
+    });
+
+    test("config: a base URL the client refuses", async () => {
+      await nothingSent(harness({ baseUrl: "https://evil.example" }), "config");
+    });
+
+    test("log-unwritable: the send line cannot be written", async () => {
+      await mkdir(join(dir, "music"), { recursive: true });
+      await mkdir(`${quotaPath()}.torn`, { recursive: true });
+      await writeFile(quotaPath(), '{"v":1,"kind":"send"');
+      await nothingSent(harness(), "log-unwritable");
+    });
+
+    test("log-unreadable", async () => {
+      await mkdir(quotaPath(), { recursive: true });
+      await nothingSent(harness(), "log-unreadable");
+    });
+
+    test("log-corrupt", async () => {
+      await seedText(DAMAGED);
+      await nothingSent(harness(), "log-corrupt");
+    });
+  });
+
+  describe("the request left, and it counts", () => {
+    const counted = async (h: Harness, reason: MusicUnavailableReason): Promise<EngineError> => {
+      const error = await failureOf(h);
+      expect(error).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: reason });
+      expect((await quotaLines()).filter((line) => line.kind === "send")).toHaveLength(1);
+      return error;
+    };
+
+    test("network: no answer at all", async () => {
+      await counted(harness({ fetch: () => Promise.reject(new TypeError("connect failed")) }), "network");
+    });
+
+    test("network: no answer in time", async () => {
+      mock = startMockFlashapi({ key: KEY });
+      mock.script({ delayMs: 400 });
+      await counted(harness({ timeoutMs: 50 }), "network");
+    });
+
+    test("forbidden: a 403 (no subscription on the key)", async () => {
+      mock = startMockFlashapi({ key: KEY });
+      mock.script({ status: 403, body: { message: "You are not subscribed to this API." } });
+      await counted(harness(), "forbidden");
+    });
+
+    test("rate-limited: a 429, with the wait the server named", async () => {
+      mock = startMockFlashapi({ key: KEY });
+      mock.script({ status: 429, body: "slow down", headers: { "retry-after": "120" } });
+      const error = await counted(harness(), "rate-limited");
+      expect(error.retryAfterMs).toBe(120_000);
+    });
+
+    test("server: another HTTP error", async () => {
+      mock = startMockFlashapi({ key: KEY });
+      mock.script({ status: 502, body: "bad gateway" });
+      await counted(harness(), "server");
+    });
+
+    test("bad-answer: an answer that is not JSON", async () => {
+      mock = startMockFlashapi({ key: KEY });
+      mock.script({ status: 200, body: "<html>maintenance</html>" });
+      await counted(harness(), "bad-answer");
+    });
+
+    test("bad-answer: an answer too large", async () => {
+      mock = startMockFlashapi({ key: KEY });
+      mock.script({ status: 200, oversize: { bytes: 4096, contentLength: true } });
+      await counted(harness({ maxBodyBytes: 1024 }), "bad-answer");
+    });
+
+    test("bad-answer: a list with no usable track", async () => {
+      mock = startMockFlashapi({ key: KEY });
+      mock.script({ status: 200, body: { data: { items: [] } } });
+      await counted(harness(), "bad-answer");
+    });
+
+    test("store-failed: the list came and the sink could not store it", async () => {
+      await counted(harness({ sink: failingSink(() => Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" })) }), "store-failed");
+    });
+
+    test("store-failed: a sink's own error with no cause of its own", async () => {
+      await counted(harness({ sink: failingSink(() => new SinkError("none of the 3 tracks could be stored (decode-failed x3)")) }), "store-failed");
+    });
+
+    test("downloads-stopped: the CDN refused the sampled downloads alike (the 3c.4 breaker), and every URL is kept", async () => {
+      const stopped = () => new SinkError("the CDN refused the 2 sampled downloads (status-403); nothing more was requested", "downloads-stopped");
+      const error = await counted(harness({ sink: failingSink(stopped) }), "downloads-stopped");
+      expect(error.detail).toContain("status-403");
+    });
+  });
+
+  describe("the downloads of a list fetched earlier: no request at all", () => {
+    const resuming = (error: () => unknown): MusicListSink => ({ ...failingSink(error), pendingCount: () => 2, resume: () => Promise.reject(error()) });
+
+    const resumeFailure = async (h: Harness): Promise<EngineError> => {
+      await h.service.resumePending();
+      await h.service.settled();
+      const status = MusicStatus.parse(await h.service.status());
+      if (status.refresh.state !== "failed") throw new Error("expected the resume to fail");
+      expect(mock?.requests ?? []).toEqual([]);
+      expect(await quotaLines()).toEqual([]);
+      return status.refresh.error;
+    };
+
+    test("downloads-stopped: the breaker tripped again with URLs pending", async () => {
+      const error = await resumeFailure(harness({ sink: resuming(() => new SinkError("the CDN refused the 3 sampled downloads (status-429)", "downloads-stopped")) }));
+      expect(error).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "downloads-stopped" });
+    });
+
+    test("downloads-failed: anything else", async () => {
+      const error = await resumeFailure(harness({ sink: resuming(() => Object.assign(new Error("EACCES"), { code: "EACCES" })) }));
+      expect(error).toMatchObject({ code: "MUSIC_UNAVAILABLE", musicReason: "downloads-failed" });
+    });
+  });
+});
+
+describe("SinkError", () => {
+  test("has no cause unless it is given one", () => {
+    expect(new SinkError("x").reason).toBeNull();
+    expect(new SinkError("x", "downloads-stopped").reason).toBe("downloads-stopped");
+  });
+});
+

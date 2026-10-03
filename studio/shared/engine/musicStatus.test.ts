@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseEngineCommand, parseMessage } from "./messages";
 import { ENGINE_COMMAND_TYPES } from "./commands";
-import { MusicListResult, MusicPeaksResult, MusicStatus, TrackSummary } from "./state";
+import { MUSIC_QUOTA_LOG_STATES, MusicListResult, MusicPeaksResult, MusicStatus, TrackSummary } from "./state";
 import { PROTOCOL_VERSION } from ".";
 
 // Stage 3, task 3c.3: the music status (K24) and the commands and event around it (K25).
@@ -15,6 +15,7 @@ const idle = {
   serverRemaining: 28,
   nextFreeAt: "2026-10-28T20:42:44.190Z",
   refresh: { state: "idle" },
+  quotaLog: "ok",
 };
 
 describe("MusicStatus", () => {
@@ -61,6 +62,33 @@ describe("MusicStatus", () => {
   test("rejects a nextFreeAt that is not an ISO time, and an unknown field", () => {
     expect(MusicStatus.safeParse({ ...idle, nextFreeAt: "tomorrow" }).success).toBe(false);
     expect(MusicStatus.safeParse({ ...idle, apiKey: "x" }).success).toBe(false);
+  });
+});
+
+// Stage 3, task 3c.6: the quota log's own state, so the card can say why «Обновить» is closed before a click, and offer the
+// recovery of a damaged log.
+describe("MusicStatus.quotaLog", () => {
+  test("the states are exactly: ok, held (a result or key line waits to be written), corrupt and unreadable", () => {
+    expect([...MUSIC_QUOTA_LOG_STATES]).toEqual(["ok", "held", "corrupt", "unreadable"]);
+  });
+
+  test("is required: a status that does not say whether its count can be trusted is refused", () => {
+    const { quotaLog: _quotaLog, ...without } = idle;
+    expect(MusicStatus.safeParse(without).success).toBe(false);
+  });
+
+  test("an unknown state is refused", () => {
+    expect(MusicStatus.safeParse({ ...idle, quotaLog: "fine" }).success).toBe(false);
+  });
+
+  test("a held line keeps the count it has: the held lines already count", () => {
+    expect(MusicStatus.safeParse({ ...idle, quotaLog: "held", sentLast31d: 4 }).success).toBe(true);
+  });
+
+  test.each(["corrupt", "unreadable"] as const)("a %s log reads 30 of 30: it can never show room the log cannot vouch for", (quotaLog) => {
+    expect(MusicStatus.safeParse({ ...idle, quotaLog, sentLast31d: 30, serverRemaining: null, nextFreeAt: null }).success).toBe(true);
+    expect(MusicStatus.safeParse({ ...idle, quotaLog, sentLast31d: 29, serverRemaining: null, nextFreeAt: null }).success).toBe(false);
+    expect(MusicStatus.safeParse({ ...idle, quotaLog, sentLast31d: 0, serverRemaining: null, nextFreeAt: null }).success).toBe(false);
   });
 });
 

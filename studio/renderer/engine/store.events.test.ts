@@ -491,7 +491,7 @@ test("the first snapshot is not a resync: nothing was missed before it", async (
 test("music.changed moves lastSeq on and changes nothing else: the music status is read on demand until the card of 3c.6", async () => {
   const h = await host();
   const before = h.store.getView();
-  const status = { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0, sentLast31d: 1, limit: 30 as const, serverRemaining: null, nextFreeAt: null, refresh: { state: "running" as const, done: 0, total: 1 } };
+  const status = { listFetchedAt: null, trackCount: 0, bytesOnDisk: 0, sentLast31d: 1, limit: 30 as const, serverRemaining: null, nextFreeAt: null, refresh: { state: "running" as const, done: 0, total: 1 }, quotaLog: "ok" as const };
   await h.emit({ type: "music.changed", payload: { status } });
   await h.emit({ type: "music.changed", payload: { status: { ...status, refresh: { state: "idle" as const } } } });
   expect(h.store.getView()).toEqual({ ...before, lastSeq: before.lastSeq + 2 });

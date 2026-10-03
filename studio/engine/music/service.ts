@@ -1,4 +1,4 @@
-import { MUSIC_QUOTA_LIMIT, redactSecrets, type EngineError, type MusicStatus, type TrackSummary } from "../../shared/engine";
+import { MUSIC_QUOTA_LIMIT, redactSecrets, type EngineError, type MusicQuotaLog, type MusicStatus, type MusicUnavailableReason, type TrackSummary } from "../../shared/engine";
 import { createFlashapiClient, FlashapiConfigError, FlashapiError, type FlashapiFetch, type FlashapiResponseInfo } from "./client";
 import type { ListParse, MusicTrack } from "./listSchema";
 import { CLOCK_MIN_MS, clockInRange, QuotaLedger, QuotaLogError, type QuotaLine, type QuotaOutcome, type QuotaSummary } from "./quotaLedger";
@@ -49,13 +49,22 @@ export interface MusicListSink {
 
 /**
  * An error a sink wrote to be SHOWN: its message names no path, URL or key. Anything else a sink throws (a filesystem
- * error carries the userData path in its text) is shown by its code or its kind alone (review F5).
+ * error carries the userData path in its text) is shown by its code or its kind alone (review F5). `reason` is the
+ * one cause the window must tell apart (3c.6): `downloads-stopped`, the track store's breaker stopping a run with every
+ * URL kept for the next start, which must not read as «список недоступен».
  */
 export class SinkError extends Error {
-  constructor(message: string) {
+  readonly reason: "downloads-stopped" | null;
+  constructor(message: string, reason: "downloads-stopped" | null = null) {
     super(message);
     this.name = "SinkError";
+    this.reason = reason;
   }
+}
+
+/** The cause of a sink's failure for MUSIC_UNAVAILABLE: the breaker's stop, else `fallback`. */
+function sinkReason(error: unknown, fallback: "store-failed" | "downloads-failed"): MusicUnavailableReason {
+  return error instanceof SinkError && error.reason !== null ? error.reason : fallback;
 }
 
 /** What a sink's failure may say in the status, the events and the log: its own message, else a code, else a kind. Never a path. */
@@ -161,6 +170,7 @@ const NEVER_REFRESHED: Omit<MusicStatus, "refresh"> = {
   limit: MUSIC_QUOTA_LIMIT,
   serverRemaining: null,
   nextFreeAt: null,
+  quotaLog: "ok",
 };
 
 const MAX_DETAIL = 400;
@@ -172,8 +182,39 @@ function errorKind(error: unknown): string {
   return error instanceof Error ? error.name : "unknown";
 }
 
-function fail(code: EngineError["code"], detail: string): { ok: false; error: EngineError } {
+function fail(code: Exclude<EngineError["code"], "MUSIC_UNAVAILABLE">, detail: string): { ok: false; error: EngineError } {
   return { ok: false, error: { code, detail: detail.slice(0, MAX_DETAIL) } };
+}
+
+/** MUSIC_UNAVAILABLE always says why (3c.6): the window picks its text by the cause, never by the detail. */
+function unavailable(musicReason: MusicUnavailableReason, detail: string): { ok: false; error: EngineError } {
+  return { ok: false, error: { code: "MUSIC_UNAVAILABLE", musicReason, detail: detail.slice(0, MAX_DETAIL) } };
+}
+
+/** The cause of a quota log that could not be read, trusted or written. */
+function logReason(error: unknown, fallback: "log-unreadable" | "log-unwritable"): MusicUnavailableReason {
+  if (!(error instanceof QuotaLogError)) return fallback;
+  return error.code === "corrupt" ? "log-corrupt" : error.code === "unreadable" ? "log-unreadable" : "log-unwritable";
+}
+
+/** The cause of a request that left and did not end in a usable list; a 401 is MUSIC_KEY_REJECTED and never asks this. */
+function requestReason(error: FlashapiError): MusicUnavailableReason {
+  switch (error.kind) {
+    case "network":
+    case "timeout":
+    case "aborted":
+    case "rejected":
+      return "network";
+    case "forbidden":
+      return "forbidden";
+    case "rate-limited":
+      return "rate-limited";
+    case "http":
+      return "server";
+    case "too-large":
+    case "invalid":
+      return "bad-answer";
+  }
 }
 
 function outcomeOf(error: FlashapiError): QuotaOutcome {
@@ -230,14 +271,17 @@ export class MusicService {
    */
   async status(): Promise<MusicStatus> {
     let summary: QuotaSummary | null = null;
-    let unreadable = false;
+    let quotaLog: MusicQuotaLog = "ok";
     if (this.#ledger !== null) {
       try {
         summary = await this.#summaryNow();
-      } catch {
-        unreadable = true;
+        // Lines still waiting to be written count already; no refresh leaves until they are on disk (3c.6).
+        if (this.#pending.length > 0) quotaLog = "held";
+      } catch (error) {
+        quotaLog = error instanceof QuotaLogError && error.code === "corrupt" ? "corrupt" : "unreadable";
       }
     }
+    const unreadable = quotaLog === "corrupt" || quotaLog === "unreadable";
     // A sink that cannot say what it holds must not take the status (and a refresh's answer) down with it.
     let list: ReturnType<MusicListSink["summary"]>;
     try {
@@ -255,6 +299,7 @@ export class MusicService {
       serverRemaining: summary?.serverRemaining ?? null,
       nextFreeAt: iso(summary?.nextFreeAt ?? null),
       refresh: this.#refresh,
+      quotaLog,
     };
   }
 
@@ -373,9 +418,9 @@ export class MusicService {
   }
 
   async #admit(): Promise<RefreshAnswer> {
-    if (this.#closing) return fail("MUSIC_UNAVAILABLE", "the engine is shutting down, so nothing was sent");
+    if (this.#closing) return unavailable("shutting-down", "the engine is shutting down, so nothing was sent");
     // Before anything else and at no cost: a list that would be lost at the next restart is not worth one of the 30.
-    if (!this.#sink.persistent) return fail("MUSIC_UNAVAILABLE", "the music list is not available yet, so nothing was sent");
+    if (!this.#sink.persistent) return unavailable("not-available", "the music list is not available yet, so nothing was sent");
     if (this.#busy) return fail("IN_FLIGHT", "a music refresh is already running");
     this.#busy = true;
     let admitted = false;
@@ -383,17 +428,17 @@ export class MusicService {
       const key = this.#deps.key();
       if (key === null) return fail("MUSIC_KEY_MISSING", "no RapidAPI key is stored");
       if (this.#deps.keyRejected()) return fail("MUSIC_KEY_REJECTED", "the stored RapidAPI key was rejected; replace it");
-      if (this.#ledger === null) return fail("MUSIC_UNAVAILABLE", "the music folder is not available, so nothing was sent");
+      if (this.#ledger === null) return unavailable("no-music-folder", "the music folder is not available, so nothing was sent");
       // A clock that is not a real date cannot date a send line (the ledger refuses one, and a window counted from 1970
       // is nonsense): nothing leaves until it is set right, and the owner is told why.
       const clockNow = this.#deps.clock();
       if (!clockInRange(clockNow)) {
-        return fail("MUSIC_UNAVAILABLE", `the system clock reads ${describeClock(clockNow)}, which is not a real date, so nothing was sent; set the date and time and try again`);
+        return unavailable("clock", `the system clock reads ${describeClock(clockNow)}, which is not a real date, so nothing was sent; set the date and time and try again`);
       }
       // What an earlier failed write held goes to the log FIRST: a 401 or a 0 that was never recorded must count before
       // this request is admitted. If it still cannot be written, nothing is sent.
       if (!(await this.#flush())) {
-        return fail("MUSIC_UNAVAILABLE", "the quota log could not be written (a result or key change is still held), so nothing was sent; try again later");
+        return unavailable("log-held", "the quota log could not be written (a result or key change is still held), so nothing was sent; try again later");
       }
       // Built before anything is written: a base URL or key the client refuses must never cost a send.
       let client;
@@ -407,13 +452,13 @@ export class MusicService {
           ...(this.#deps.maxBodyBytes === undefined ? {} : { maxBodyBytes: this.#deps.maxBodyBytes }),
         });
       } catch (error) {
-        return fail("MUSIC_UNAVAILABLE", error instanceof FlashapiConfigError ? error.message : "the music client could not be set up");
+        return unavailable("config", error instanceof FlashapiConfigError ? error.message : "the music client could not be set up");
       }
       let before: QuotaSummary;
       try {
         before = await this.#ledger.summary();
       } catch (error) {
-        return fail("MUSIC_UNAVAILABLE", error instanceof QuotaLogError ? `${error.message}; nothing was sent` : "the quota log could not be read; nothing was sent");
+        return unavailable(logReason(error, "log-unreadable"), error instanceof QuotaLogError ? `${error.message}; nothing was sent` : "the quota log could not be read; nothing was sent");
       }
       if (before.rejectedKey === last4(key)) {
         // The engine must show the key as rejected too, so the settings say so without another request.
@@ -425,7 +470,7 @@ export class MusicService {
       try {
         admission = await this.#ledger.reserve({ id, key: last4(key) });
       } catch (error) {
-        return fail("MUSIC_UNAVAILABLE", error instanceof QuotaLogError ? `${error.message}; nothing was sent` : "the quota log could not be written; nothing was sent");
+        return unavailable(logReason(error, "log-unwritable"), error instanceof QuotaLogError ? `${error.message}; nothing was sent` : "the quota log could not be written; nothing was sent");
       }
       if (!admission.ok) {
         const when = admission.summary.nextFreeAt === null ? "later" : new Date(admission.summary.nextFreeAt).toISOString();
@@ -438,7 +483,7 @@ export class MusicService {
       }
       // `stop()` may have come while this refresh waited in the ledger: nothing may leave after it. The send line is
       // already on disk and stays counted (the conservative side: a request that never left costs a slot, not the reverse).
-      if (this.#closing) return fail("MUSIC_UNAVAILABLE", "the engine is shutting down, so nothing was sent");
+      if (this.#closing) return unavailable("shutting-down", "the engine is shutting down, so nothing was sent");
       admitted = true;
       const controller = new AbortController();
       this.#abort = controller;
@@ -476,20 +521,17 @@ export class MusicService {
           response = error.response;
           await record({ id, key, outcome: outcomeOf(error), ...(error.status === null ? {} : { status: error.status }), ...this.#figures(error.response) });
           if (error.kind === "rejected") this.#deps.markKeyRejected(key);
-          failure = fail(
-            error.kind === "rejected" ? "MUSIC_KEY_REJECTED" : "MUSIC_UNAVAILABLE",
-            error.detail,
-          );
+          failure = error.kind === "rejected" ? fail("MUSIC_KEY_REJECTED", error.detail) : unavailable(requestReason(error), error.detail);
           if (error.retryAfterMs !== null) failure.error.retryAfterMs = error.retryAfterMs;
         } else {
           await record({ id, key, outcome: "network-error" });
-          failure = fail("MUSIC_UNAVAILABLE", redact(error instanceof Error ? error.message : "the request failed"));
+          failure = unavailable("network", redact(error instanceof Error ? error.message : "the request failed"));
         }
       }
       if (failure === null && response !== null && list !== null) {
         await record({ id, key, outcome: "ok", status: response.status, ...this.#figures(response) });
         if (list.tracks.length === 0) {
-          failure = fail("MUSIC_UNAVAILABLE", `flashapi returned no usable track (${list.observed.itemCount} items, ${list.dropped.length} dropped)`);
+          failure = unavailable("bad-answer", `flashapi returned no usable track (${list.observed.itemCount} items, ${list.dropped.length} dropped)`);
         }
       }
       await this.#logFirst(job, response, list);
@@ -497,7 +539,7 @@ export class MusicService {
         try {
           await this.#sink.accept({ fetchedAt: this.#deps.clock(), tracks: list.tracks }, (done, total) => this.#progress(done, total), job.signal);
         } catch (error) {
-          failure = fail("MUSIC_UNAVAILABLE", redact(`the list could not be stored (${sinkErrorText(error)})`));
+          failure = unavailable(sinkReason(error, "store-failed"), redact(`the list could not be stored (${sinkErrorText(error)})`));
         }
       }
     } finally {
@@ -537,7 +579,7 @@ export class MusicService {
         // Redacted of the key like a refresh's, whatever the sink's own text says: the key may be in memory here too.
         const text = `the downloads could not be finished (${sinkErrorText(error)})`;
         const key = this.#deps.key();
-        failure = fail("MUSIC_UNAVAILABLE", redactSecrets(key === null ? text : redactKnown(text, key)));
+        failure = unavailable(sinkReason(error, "downloads-failed"), redactSecrets(key === null ? text : redactKnown(text, key)));
       } finally {
         this.#refresh = failure === null ? { state: "idle" } : { state: "failed", error: failure.error };
         this.#abort = null;
