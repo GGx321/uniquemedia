@@ -5,10 +5,12 @@ import { totalFrames } from "../../shared/montage";
 import { ffmpegPath } from "../../node/ffmpegBinary";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { musicTracks } from "../music/fixtures";
+import { trackForbiddenStrings } from "../music/trackTags";
 import { makeTaggedTrack, TAG_ARTIST, TAG_HANDLER, TAG_TITLE, tagForms } from "../music/testing/taggedTrack";
 import { measureTruePeak } from "../renderQueue/musicMeasure";
 import { verifyAndHashMp4 } from "../verify";
-import { runBinary, probeVideo, type Probed, type ProbedStream } from "./ffmpeg.testkit";
+import { runBinary, probeJson, probeVideo, type Probed, type ProbedStream } from "./ffmpeg.testkit";
+import { sampleEntryVendors, walkBoxes } from "./mp4Boxes.testkit";
 import { buildMusicMeasure, musicGainDb, parseTruePeak } from "./musicChain";
 import { buildPass1 } from "./pass1";
 import { buildPass2 } from "./pass2";
@@ -205,7 +207,9 @@ describe("invariant 20 on real ffmpeg: exact A/V length, 48 kHz stereo", () => {
 });
 
 describe("invariant 14 on real ffmpeg: a track that carries title and artist tags", () => {
-  const forbidden = [TAG_TITLE, TAG_ARTIST, TAG_HANDLER];
+  const tagTexts = [TAG_TITLE, TAG_ARTIST, TAG_HANDLER];
+  // What the render itself hands the verifier for this track: built from the file's own bytes, not from a list written here.
+  const forbidden = (): string[] => trackForbiddenStrings(taggedSource, []);
 
   test("the source file really holds the tags: UTF-8 in its ilst, and UTF-16 in its ID3v2 frames (so the search below is not vacuous)", () => {
     const has = (bytes: Uint8Array, needle: Uint8Array): boolean => Buffer.from(bytes).includes(Buffer.from(needle));
@@ -217,12 +221,42 @@ describe("invariant 14 on real ffmpeg: a track that carries title and artist tag
     expect(has(taggedSource, Uint8Array.from(Buffer.from(TAG_HANDLER)))).toBe(true);
   });
 
-  test.each(forbidden.flatMap((text) => tagForms(text).map((form) => [form.label, form.bytes] as const)))("the output holds none of %s", (_label, bytes) => {
+  test.each(tagTexts.flatMap((text) => tagForms(text).map((form) => [form.label, form.bytes] as const)))("the output holds none of %s", (_label, bytes) => {
     expect(Buffer.from(tagged.bytes).includes(Buffer.from(bytes))).toBe(false);
   });
 
+  test("the forbidden list the render builds from the track's own bytes holds its title, its artist and its handler name", () => {
+    expect(forbidden()).toEqual(expect.arrayContaining(tagTexts));
+  });
+
+  test("the full tag set of the output, read by ffprobe, is the allowlist exactly: nothing of the track's, nothing added", async () => {
+    const probed = await probeJson(tagged.output, ["-show_entries", "format_tags:stream_tags"]);
+    // The container: the brand tags and the Lavf encoder, as for a silent video.
+    expect(Object.keys(probed.format.tags ?? {}).sort()).toEqual(["compatible_brands", "encoder", "major_brand", "minor_version"]);
+    expect(probed.format.tags?.encoder).toMatch(/^Lavf\d+\.\d+\.\d+$/);
+    // The streams: a handler name that is the engine's own, an undefined language, a zero vendor id or none, and the x264 signature on the video only.
+    const [video, audio] = probed.streams;
+    expect(video?.tags?.handler_name).toBe("VideoHandler");
+    expect(audio?.tags?.handler_name).toBe("SoundHandler");
+    expect(video?.tags?.encoder).toMatch(/^Lavc\d+\.\d+\.\d+ libx264$/);
+    expect(audio?.tags?.encoder).toBeUndefined();
+    const allowedKeys = new Set(["language", "handler_name", "vendor_id", "encoder"]);
+    for (const stream of probed.streams) {
+      expect(Object.keys(stream.tags ?? {}).filter((key) => !allowedKeys.has(key))).toEqual([]);
+      expect(stream.tags?.language).toBe("und");
+      expect([undefined, "[0][0][0][0]"]).toContain(stream.tags?.vendor_id);
+    }
+    // And every value in the whole tag set is one of the allowlist's, none of it a string of the track's.
+    const everyValue = [...Object.values(probed.format.tags ?? {}), ...probed.streams.flatMap((s) => Object.values(s.tags ?? {}))];
+    for (const text of forbidden()) expect(everyValue.some((value) => value.includes(text))).toBe(false);
+  });
+
+  test("the box walker agrees: the sample entries' vendor fields are zero", () => {
+    expect(sampleEntryVendors(tagged.bytes, walkBoxes(tagged.bytes))).toEqual(["\\0\\0\\0\\0", "\\0\\0\\0\\0"]);
+  });
+
   test("the production verifier, given the tags as forbiddenStrings (it searches UTF-8 and both UTF-16 orders), finds nothing", async () => {
-    const { result } = await verifyAndHashMp4(tagged.output, { frames: FRAMES, forbiddenStrings: forbidden });
+    const { result } = await verifyAndHashMp4(tagged.output, { frames: FRAMES, forbiddenStrings: forbidden() });
     expect(result).toEqual({ ok: true });
   });
 
@@ -239,13 +273,13 @@ describe("invariant 14 on real ffmpeg: a track that carries title and artist tag
 
   test("control: a handler name forced into the output stream IS found by the byte search, and the verifier refuses the file", async () => {
     expect(Buffer.from(leaky.bytes).includes(Buffer.from(TAG_HANDLER))).toBe(true);
-    const { result } = await verifyAndHashMp4(leaky.output, { frames: FRAMES, forbiddenStrings: forbidden });
+    const { result } = await verifyAndHashMp4(leaky.output, { frames: FRAMES, forbiddenStrings: forbidden() });
     expect(result.ok).toBe(false);
   });
 
   test("without the stream-metadata guard, whatever ffmpeg copies from the track, the verifier refuses the file exactly when its text got through", async () => {
     const leaked = Buffer.from(unguardedOut.bytes).includes(Buffer.from(TAG_HANDLER));
-    const { result } = await verifyAndHashMp4(unguardedOut.output, { frames: FRAMES, forbiddenStrings: forbidden });
+    const { result } = await verifyAndHashMp4(unguardedOut.output, { frames: FRAMES, forbiddenStrings: forbidden() });
     expect(result.ok).toBe(!leaked);
   });
 });
