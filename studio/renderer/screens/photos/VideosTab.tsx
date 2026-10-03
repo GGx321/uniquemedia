@@ -141,7 +141,7 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
       return;
     }
     // The card goes with the `video.changed` that follows; what happened to the file is said here, as the answer says it.
-    const text = deleteOutcomeText(mode, reply.result);
+    const text = deleteOutcomeText(mode, reply.result, view.exportStatus);
     if (text !== null) setNotice({ tone: reply.result.fileDeleted || mode === "record" ? "ok" : "info", text });
   }
 

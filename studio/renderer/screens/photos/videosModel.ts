@@ -131,6 +131,8 @@ export interface VideoCardView {
 
 /** The owner's own wording for «Удалить запись» of a video whose file lives in another folder (Q6, 2026-09-30). */
 const ELSEWHERE_CONFIRM = "Удалить запись? Файл останется в прежней папке, а фото снова станут свободными.";
+/** «Удалить запись» of a video whose file nobody could look at: it stays wherever it is (an `unchecked` file, or any file while the export folder is unavailable). */
+const UNKNOWN_PLACE_CONFIRM = "Удалить запись? Файл останется там, где он есть, а фото снова станут свободными.";
 
 /**
  * A record's card in its file state. `exportStatus` tells an `elsewhere` that only means "the export folder cannot be looked in"
@@ -156,7 +158,7 @@ export function videoCardView(video: VideoSummary, exportStatus: ExportStatus | 
       };
     case "elsewhere":
       if (exportStatus?.status === "unavailable") {
-        return { ...none, pill: { text: "Не проверен", tone: "muted" }, dim: true, status: { text: `Не удалось проверить файл: папка «Готовые видео» сейчас недоступна. Пока есть запись, ${held}.`, tone: "faint" }, recordDelete: { confirm: ELSEWHERE_CONFIRM } };
+        return { ...none, pill: { text: "Не проверен", tone: "muted" }, dim: true, status: { text: `Не удалось проверить файл: папка «Готовые видео» сейчас недоступна. Пока есть запись, ${held}.`, tone: "faint" }, recordDelete: { confirm: UNKNOWN_PLACE_CONFIRM } };
       }
       return { ...none, pill: { text: "Другая папка", tone: "muted" }, dim: true, status: { text: `Файл в другой папке «Готовые видео». Пока есть запись, ${held}.`, tone: "faint" }, recordDelete: { confirm: ELSEWHERE_CONFIRM } };
     case "unchecked":
@@ -166,7 +168,7 @@ export function videoCardView(video: VideoSummary, exportStatus: ExportStatus | 
         pill: { text: "Не проверен", tone: "muted" },
         dim: true,
         status: { text: `Не удалось проверить файл. Пока есть запись, ${held}.`, tone: "faint" },
-        recordDelete: { confirm: "Удалить запись? Файл останется там, где он есть, а фото снова станут свободными." },
+        recordDelete: { confirm: UNKNOWN_PLACE_CONFIRM },
       };
   }
 }
@@ -176,8 +178,12 @@ export function deleteConfirmText(photoCount: number): string {
   return `Удалить видео? Файл в «Готовых видео» тоже удалится, ${freedLabel(photoCount)}.`;
 }
 
-/** What a delete did, as its answer says (`fileDeleted`, `fileState` as found); null when there is nothing to add (the card just goes). */
-export function deleteOutcomeText(mode: "video" | "record", answer: { fileDeleted: boolean; fileState: FileState }): string | null {
+/**
+ * What a delete did, as its answer says (`fileDeleted`, `fileState` as found); null when there is nothing to add (the card just
+ * goes). `exportStatus` tells an `elsewhere` that only means the export folder could not be looked in (nobody knows where the
+ * file is) from one in another folder, as the card does.
+ */
+export function deleteOutcomeText(mode: "video" | "record", answer: { fileDeleted: boolean; fileState: FileState }, exportStatus: ExportStatus | null): string | null {
   if (mode === "video") {
     if (answer.fileDeleted) return null;
     if (answer.fileState === "changed") return "Запись удалена, а файл оставлен в «Готовых видео»: он изменён вне Studio, и Studio его не трогает. Фото снова свободны.";
@@ -188,6 +194,7 @@ export function deleteOutcomeText(mode: "video" | "record", answer: { fileDelete
     case "missing":
       return "Запись удалена, фото снова свободны.";
     case "elsewhere":
+      if (exportStatus?.status === "unavailable") return "Запись удалена, фото снова свободны. Файл, если он есть, остался на месте.";
       return "Запись удалена, фото снова свободны. Файл остался в прежней папке.";
     case "unchecked":
       return "Запись удалена, фото снова свободны. Файл, если он есть, остался на месте.";

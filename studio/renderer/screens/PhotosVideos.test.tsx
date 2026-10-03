@@ -242,6 +242,26 @@ describe("the «Видео» tab", () => {
     expect(await screen.findByText("Запись удалена, фото снова свободны.")).toBeDefined();
   });
 
+  test("while the export folder cannot be looked in, «Удалить запись» and its outcome never say «в прежней папке»", async () => {
+    const h = await openMia({ tab: "videos" });
+    await act(async () => {
+      await rendered(h, [scenePhoto(1).photoId], "пляж");
+    });
+    h.engine.setExportDisk({ status: "unavailable", reason: "missing" });
+    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Видео" }));
+    await flush();
+
+    const video = await screen.findByRole("article", { name: "пляж" });
+    expect(within(video).getByText("Не проверен")).toBeDefined();
+    fireEvent.click(within(video).getByRole("button", { name: "Удалить запись" }));
+    expect(within(video).getByRole("alert").textContent).toBe("Удалить запись? Файл останется там, где он есть, а фото снова станут свободными.");
+    fireEvent.click(within(video).getAllByRole("button", { name: "Удалить запись" }).at(-1) ?? document.body);
+    await flush();
+    expect(await screen.findByText("Запись удалена, фото снова свободны. Файл, если он есть, остался на месте.")).toBeDefined();
+    expect(screen.queryByText(/прежней папке/) === null).toBe(true);
+  });
+
   test("a video in another export folder: «Удалить запись» only behind the owner's confirmation (Q6)", async () => {
     const h = await openMia({ tab: "videos" });
     let videoId = "";

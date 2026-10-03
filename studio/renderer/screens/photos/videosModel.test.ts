@@ -199,7 +199,8 @@ describe("videoCardView: a record's card in each file state", () => {
     expect(view.pill).toEqual({ text: "Не проверен", tone: "muted" });
     expect(view.status.text).toMatch(/^Не удалось проверить файл: папка «Готовые видео» сейчас недоступна/);
     expect(view.status.text).not.toMatch(/другой папке/);
-    expect(view.recordDelete?.confirm).toBe("Удалить запись? Файл останется в прежней папке, а фото снова станут свободными.");
+    // Nobody knows where the file is while the folder cannot be looked in: the confirmation never says «в прежней папке».
+    expect(view.recordDelete?.confirm).toBe("Удалить запись? Файл останется там, где он есть, а фото снова станут свободными.");
   });
 
   test("unchecked (K15): «не удалось проверить файл», a way to look again, and «Удалить запись» confirms the file stays where it is", () => {
@@ -223,13 +224,19 @@ describe("the words around a delete", () => {
   });
 
   test("the outcome says what the answer says: a file deleted needs no word, a file kept is told why", () => {
-    expect(deleteOutcomeText("video", { fileDeleted: true, fileState: "present" })).toBeNull();
-    expect(deleteOutcomeText("video", { fileDeleted: false, fileState: "changed" })).toMatch(/файл оставлен.*изменён вне Studio/);
-    expect(deleteOutcomeText("video", { fileDeleted: false, fileState: "missing" })).toMatch(/файла .*уже не было/);
-    expect(deleteOutcomeText("video", { fileDeleted: false, fileState: "present" })).toMatch(/файл оставлен/);
-    expect(deleteOutcomeText("record", { fileDeleted: false, fileState: "missing" })).toBe("Запись удалена, фото снова свободны.");
-    expect(deleteOutcomeText("record", { fileDeleted: false, fileState: "elsewhere" })).toBe("Запись удалена, фото снова свободны. Файл остался в прежней папке.");
-    expect(deleteOutcomeText("record", { fileDeleted: false, fileState: "unchecked" })).toBe("Запись удалена, фото снова свободны. Файл, если он есть, остался на месте.");
+    const ok = { status: "ok" } as const;
+    expect(deleteOutcomeText("video", { fileDeleted: true, fileState: "present" }, ok)).toBeNull();
+    expect(deleteOutcomeText("video", { fileDeleted: false, fileState: "changed" }, ok)).toMatch(/файл оставлен.*изменён вне Studio/);
+    expect(deleteOutcomeText("video", { fileDeleted: false, fileState: "missing" }, ok)).toMatch(/файла .*уже не было/);
+    expect(deleteOutcomeText("video", { fileDeleted: false, fileState: "present" }, ok)).toMatch(/файл оставлен/);
+    expect(deleteOutcomeText("record", { fileDeleted: false, fileState: "missing" }, ok)).toBe("Запись удалена, фото снова свободны.");
+    expect(deleteOutcomeText("record", { fileDeleted: false, fileState: "elsewhere" }, ok)).toBe("Запись удалена, фото снова свободны. Файл остался в прежней папке.");
+    expect(deleteOutcomeText("record", { fileDeleted: false, fileState: "unchecked" }, ok)).toBe("Запись удалена, фото снова свободны. Файл, если он есть, остался на месте.");
+  });
+
+  test("an `elsewhere` answered while the export folder cannot be looked in is not «в прежней папке»: nobody knows where the file is", () => {
+    const unavailable = { status: "unavailable", reason: "missing" } as const;
+    expect(deleteOutcomeText("record", { fileDeleted: false, fileState: "elsewhere" }, unavailable)).toBe("Запись удалена, фото снова свободны. Файл, если он есть, остался на месте.");
   });
 });
 
