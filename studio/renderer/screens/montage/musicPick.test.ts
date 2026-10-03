@@ -53,6 +53,14 @@ describe("where a picked track starts (U9: the first highlight that fits, else 0
   test("an empty montage takes the first highlight", () => {
     expect(pickStartMs(TRACK, 0)).toBe(12_000);
   });
+
+  // Review round 1: a montage under 4 s cannot be rendered yet; it will be at least 4 s, so a start must leave room for that.
+  test("a montage shorter than 4 s is judged as 4 s: a highlight no valid montage fits is not taken", () => {
+    const late: TrackFacts = { trackId: "track-late-0002", durationMs: 20_000, highlights: [hl(16_000), hl(17_000)] };
+    expect(pickStartMs(late, 2_000)).toBe(16_000);
+    expect(pickStartMs({ ...late, highlights: [hl(17_000)] }, 2_000)).toBe(0);
+    expect(pickStartMs({ ...late, highlights: [hl(16_001)] }, 0)).toBe(0);
+  });
 });
 
 describe("picking a track (U9, U10)", () => {
@@ -118,6 +126,14 @@ describe("the highlight picks of the music card (R47, CF6: ascending, the likely
   test("no highlights: no picks", () => {
     expect(highlightPicks([], 0, TOTAL, 60_000)).toEqual([]);
   });
+
+  test("under 4 s the montage is judged as 4 s: a pick fits only if a valid montage would", () => {
+    const picks = highlightPicks([hl(16_000), hl(16_001)], 0, 2_000, 20_000);
+    expect(picks.map((p) => [p.ms, p.fits])).toEqual([
+      [16_000, true],
+      [16_001, false],
+    ]);
+  });
 });
 
 describe("the montage's window over the whole waveform (R46)", () => {
@@ -148,6 +164,18 @@ describe("the «Музыка» tab's rows (U4–U10: the E badge, no trending-on
       ["track-c-000001", false, true, null],
       ["track-d-000001", false, false, null],
     ]);
+  });
+
+  test("the star is where a pick would really start: a highlight the montage does not fit after is no star", () => {
+    const rows = trackRows(
+      [summary("track-e-000001", { durationMs: 20_000, highlights: [hl(15_000)] }), summary("track-f-000001", { durationMs: 20_000, highlights: [hl(9_000), hl(15_000)] })],
+      null,
+      TOTAL,
+      { hideExplicit: false },
+    );
+    expect(rows.map((r) => r.star)).toEqual([null, 9_000]);
+    // A montage under 4 s is judged as 4 s here too.
+    expect(trackRows([summary("track-g-000001", { durationMs: 20_000, highlights: [hl(17_000)] })], null, 2_000, { hideExplicit: false })[0]?.star).toBe(null);
   });
 
   test("explicit tracks are listed and pickable by default; hiding them never hides the draft's own track", () => {

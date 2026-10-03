@@ -1,5 +1,5 @@
 import { MAX_PEAK_BARS, MAX_SOURCE_OFFSET_MS, MIN_PEAK_BARS, type MontageDraft, type TrackSummary } from "../../../shared/engine";
-import { STEP_MS } from "../../../shared/montage";
+import { MIN_TOTAL_MS, STEP_MS } from "../../../shared/montage";
 import { totalMs } from "./clipOps";
 import type { Range } from "./layerOps";
 
@@ -112,16 +112,25 @@ export function atHighlight(highlights: readonly Highlight[], startMs: number): 
 /** What a pick needs of a listed track. */
 export type TrackFacts = Pick<TrackSummary, "trackId" | "durationMs" | "highlights">;
 
-/** A start that keeps the whole montage inside the track and that a draft may hold (≤ 10 min into the track). */
-const startFits = (ms: number, totalMs: number, trackMs: number): boolean => ms + totalMs <= trackMs && ms <= MAX_SOURCE_OFFSET_MS;
+/**
+ * A start that keeps the whole montage inside the track and that a draft may hold (≤ 10 min into the track). A montage under 4 s
+ * is judged as 4 s (review round 1): it cannot be rendered shorter, so a start that only fits the montage as it is now would turn
+ * into `track-too-short` once it is long enough to render.
+ */
+const startFits = (ms: number, totalMs: number, trackMs: number): boolean => ms + Math.max(totalMs, MIN_TOTAL_MS) <= trackMs && ms <= MAX_SOURCE_OFFSET_MS;
+
+/** The track's earliest REAL highlight a pick can start at (`startFits`), or null; never the likely `1500` default. */
+function pickHighlight(track: TrackFacts, totalMs: number): number | null {
+  const fitting = track.highlights.filter((h) => !h.likelyDefault && startFits(h.ms, totalMs, track.durationMs)).map((h) => h.ms);
+  return fitting.length === 0 ? null : Math.min(...fitting);
+}
 
 /**
  * Where a picked track starts (U9): its earliest highlight that leaves the whole montage inside the track, else 0. The likely
  * `1500` default is a guess at "the start of the track", not a part anyone chose (the timeline does not mark it either): never.
  */
 export function pickStartMs(track: TrackFacts, totalMs: number): number {
-  const fitting = track.highlights.filter((h) => !h.likelyDefault && startFits(h.ms, totalMs, track.durationMs)).map((h) => h.ms);
-  return fitting.length === 0 ? 0 : Math.min(...fitting);
+  return pickHighlight(track, totalMs) ?? 0;
 }
 
 /**
@@ -167,7 +176,7 @@ export interface TrackRow {
   readonly inDraft: boolean;
   /** «короче ролика»: shorter than the montage, so it cannot be picked (U10). */
   readonly tooShort: boolean;
-  /** «★ 1:02»: the earliest real highlight (never the likely default), or null. */
+  /** «★ 1:02»: the highlight a pick would start at (`pickStartMs`'s), or null when it would start at 0 for want of one. */
   readonly star: number | null;
 }
 
@@ -181,7 +190,6 @@ export function trackRows(tracks: readonly TrackSummary[], music: MontageDraft["
   return tracks
     .filter((track) => !options.hideExplicit || !track.explicit || track.trackId === current)
     .map((track) => {
-      const real = track.highlights.filter((h) => !h.likelyDefault).map((h) => h.ms);
-      return { track, inDraft: track.trackId === current, tooShort: track.durationMs < totalMs, star: real.length === 0 ? null : Math.min(...real) };
+      return { track, inDraft: track.trackId === current, tooShort: track.durationMs < totalMs, star: pickHighlight(track, totalMs) };
     });
 }
