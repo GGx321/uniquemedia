@@ -1,5 +1,7 @@
 import { estimateBytesUpper } from "../../../shared/montage";
+import { STICKER_MANIFEST } from "../../../shared/stickers";
 import type { Control, RigOptions, World } from "./rigs";
+import { parityListTracks } from "./tracks";
 import type { Answer, Transcript } from "./transcript";
 
 // The scenarios of the parity suite (Stage 3, 3d.1b). Each is one story told through the engine's own commands; the suite
@@ -671,7 +673,232 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.call("music.refresh", { confirm: true });
     },
   },
+  // ---------- 3d.1b: text previews, the music list and its peaks, stickers ----------
+  {
+    name: "text preview: a drawn caption answers an id and a box inside the frame, each answer is a new id, and the id is served",
+    async run(t, w, control) {
+      const first = previewIdOf(await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer() }));
+      const second = previewIdOf(await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ value: "two\r\nlines", style: "outline", color: "#9ad9ff", font: "caveat", scale: 1.5 }) }));
+      await served(t, control, first);
+      await served(t, control, second);
+      t.note("the avatar is accepted and never read: an archived one, and one nobody knows");
+      await t.call("montages.textPreview", { avatarId: w.archivedAvatarId, layer: textLayer() });
+      await t.call("montages.textPreview", { avatarId: "avatar-nobody-0009", layer: textLayer() });
+      t.note("an emoji the font draws is a picture, not an issue");
+      await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ value: "hi \u{2728}" }) });
+    },
+  },
+  {
+    name: "text preview: the caption rules name the first rule broken, a caption with nothing to draw is RENDER_FAILED, and a payload that breaks the contract is VALIDATION",
+    async run(t, w, control) {
+      const ask = (over: Record<string, unknown>) => t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer(over) });
+      await ask({ value: "привет" });
+      await ask({ value: "a\nb\nc" });
+      await ask({ value: "a\r\nb\r\nc" });
+      await ask({ value: "\u{1F1FA}" });
+      await ask({ value: "\u{2764}\u{FE0E}" });
+      await ask({ value: "привет\na\nb" });
+      await ask({ value: "\u{00A9} 2026" });
+      t.note("no picture to draw: a caption of spaces, and one of line breaks");
+      await ask({ value: "   " });
+      await ask({ value: "\n\n" });
+      t.note("the contract refuses it before anything is drawn");
+      await ask({ color: "white" });
+      await ask({ scale: 2.5 });
+      await ask({ font: "comic" });
+      t.note("a refused caption leaves no picture, and the next one is drawn as if nothing happened");
+      await served(t, control, previewIdOf(await ask({})));
+    },
+  },
+  {
+    name: "text preview: a queued preview of the same layer is superseded at once, a drawing that runs is never cancelled, other layers are untouched",
+    async run(t, w, control) {
+      const ask = (layerId: string, value: string) => t.start("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ layerId, value }) });
+      control.holdText(true);
+      ask("layer-00000001", "first");
+      await t.quiesce();
+      t.note("one drawing runs; the second of the layer waits, and the third replaces it");
+      ask("layer-00000001", "second");
+      await t.quiesce();
+      ask("layer-00000001", "third");
+      await t.quiesce();
+      await t.untilAnswered(1);
+      t.note("another layer waits behind them, and is replaced by its own newer one");
+      ask("layer-00000002", "other");
+      await t.quiesce();
+      ask("layer-00000002", "other again");
+      await t.quiesce();
+      await t.untilAnswered(2);
+      t.note("the lane lets go one drawing at a time, in the order asked");
+      control.releaseText();
+      await t.untilAnswered(3);
+      control.releaseText();
+      await t.untilAnswered(4);
+      control.releaseText();
+      await t.untilAnswered(5);
+      control.holdText(false);
+    },
+  },
+  {
+    name: "text preview: a refused caption holds the lane like a drawing, so the one waiting behind it is still replaced by a newer one",
+    async run(t, w, control) {
+      const ask = (value: string) => t.start("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ value }) });
+      control.holdText(true);
+      ask("привет");
+      await t.quiesce();
+      ask("waiting");
+      await t.quiesce();
+      ask("newest");
+      await t.quiesce();
+      await t.untilAnswered(1);
+      control.releaseText();
+      await t.untilAnswered(2);
+      control.releaseText();
+      await t.untilAnswered(3);
+      control.holdText(false);
+    },
+  },
+  {
+    name: "text preview: past 64 pictures the oldest that is not a layer's newest goes first, so each layer's newest stays served",
+    async run(t, w, control) {
+      const ids: string[] = [];
+      await t.quiet(async () => {
+        for (let i = 0; i < 64; i++) ids.push(previewIdOf(await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ value: `a${i}` }) })));
+      });
+      const other = previewIdOf(await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ layerId: "layer-00000002", value: "other" }) }));
+      t.note("one over the bound: the first picture of the first layer is gone, and the second is not");
+      await served(t, control, ids[0] ?? "");
+      await served(t, control, ids[1] ?? "");
+      await served(t, control, ids[63] ?? "");
+      await served(t, control, other);
+      t.note("the first layer is dragged on: its own older pictures go, the other layer's newest stays");
+      for (let i = 0; i < 3; i++) await t.quiet(async () => void (await t.call("montages.textPreview", { avatarId: w.avatarId, layer: textLayer({ value: `b${i}` }) })));
+      await served(t, control, ids[1] ?? "");
+      await served(t, control, ids[2] ?? "");
+      await served(t, control, ids[3] ?? "");
+      await served(t, control, ids[4] ?? "");
+      await served(t, control, other);
+    },
+  },
+  {
+    name: "music list and peaks: with nothing stored the list is empty and no track is found, own or trending, and a payload that breaks the contract is VALIDATION",
+    async run(t) {
+      await t.call("music.list", {});
+      await t.call("music.peaks", { track: { source: "trending", trackId: "4199287736976977" }, startMs: 0, durationMs: 4_000, bars: 16 });
+      await t.call("music.peaks", { track: { source: "own", mediaId: "media-0000001" }, startMs: 0, durationMs: 4_000, bars: 16 });
+      await t.call("music.peaks", { track: { source: "trending", trackId: "4199287736976977" }, startMs: 0, durationMs: 4_000, bars: 15 });
+      await t.call("music.peaks", { track: { source: "trending", trackId: "4199287736976977" }, startMs: 0, durationMs: 4_000, bars: 257 });
+      await t.call("music.peaks", { track: { source: "trending", trackId: "4199287736976977" }, startMs: 0, durationMs: 0, bars: 16 });
+      await t.call("music.status", {});
+    },
+  },
+  {
+    name: "music list and peaks: the stored tracks in list order, highlights ascending with the 1500 default last, and the waveform windows of each",
+    async run(t, _w, control) {
+      await control.musicTracks();
+      await t.call("music.list", {});
+      await t.call("music.status", {});
+      const tracks = parityListTracks();
+      for (const [i, track] of tracks.entries()) {
+        const ref = { source: "trending", trackId: track.trackId };
+        t.note(`track ${i + 1}: the whole length in 72 bars, a window from the middle, one past the end, and the limits of the bars`);
+        await t.call("music.peaks", { track: ref, startMs: 0, durationMs: track.durationMs, bars: 72 });
+        await t.call("music.peaks", { track: ref, startMs: 1_000, durationMs: 800, bars: 16 });
+        await t.call("music.peaks", { track: ref, startMs: track.durationMs + 5_000, durationMs: 800, bars: 16 });
+        await t.call("music.peaks", { track: ref, startMs: 0, durationMs: 1, bars: 256 });
+      }
+      t.note("a track the store does not hold, and an own one");
+      await t.call("music.peaks", { track: { source: "trending", trackId: "4199287736976977" }, startMs: 0, durationMs: 4_000, bars: 16 });
+      await t.call("music.peaks", { track: { source: "own", mediaId: "media-0000001" }, startMs: 0, durationMs: 4_000, bars: 16 });
+    },
+  },
+  {
+    name: "music list and peaks: free and independent of the key and the quota log",
+    async run(t, _w, control) {
+      await control.musicTracks();
+      const track = parityListTracks()[0];
+      if (track === undefined) throw new Error("the parity list has no track");
+      const peaks = { track: { source: "trending", trackId: track.trackId }, startMs: 0, durationMs: 2_000, bars: 16 };
+      t.note("no key");
+      await t.call("music.list", {});
+      await t.call("music.peaks", peaks);
+      t.note("a stored key, and a log that cannot be trusted");
+      await control.musicKey();
+      await control.musicQuotaLog("corrupt");
+      await t.call("music.status", {});
+      await t.call("music.list", {});
+      await t.call("music.peaks", peaks);
+      t.note("a log that cannot be read");
+      await control.musicQuotaLog("unreadable");
+      await t.call("music.status", {});
+      await t.call("music.list", {});
+      await t.call("music.peaks", peaks);
+    },
+  },
+  {
+    name: "music: a stored trending track is judged against its length by get, and a track the store does not hold is track-unavailable",
+    async run(t, w, control) {
+      await control.musicTracks();
+      const track = parityListTracks()[0];
+      if (track === undefined) throw new Error("the parity list has no track");
+      const montageId = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      const stored = objectAt(montageOf(await t.call("montages.get", { montageId })), "spec");
+      const music = (trackId: string, startMs: number) => ({ source: "trending", trackId, startMs });
+      t.note("held, and long enough");
+      await t.call("montages.save", { montageId, spec: { ...stored, music: music(track.trackId, 0) }, name: null });
+      await t.call("montages.get", { montageId });
+      t.note("held, and one start too late for its length");
+      await t.call("montages.save", { montageId, spec: { ...stored, music: music(track.trackId, track.durationMs - 1) }, name: null });
+      await t.call("montages.get", { montageId });
+      t.note("not held");
+      await t.call("montages.save", { montageId, spec: { ...stored, music: music("4199287736976977", 0) }, name: null });
+      await t.call("montages.get", { montageId });
+    },
+  },
+  {
+    name: "stickers: a built-in sticker of the set is no issue, one it lacks is sticker-unavailable at its layer, an own sticker is not yet supported, and the issues come photos, stickers, track",
+    async run(t, w) {
+      const known = STICKER_MANIFEST[0]?.id;
+      if (known === undefined) throw new Error("the sticker manifest is empty");
+      const sticker = (layerId: string, stickerId: string) => ({ layerId, kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "builtin", stickerId }, x: 0.5, y: 0.5, size: 0.2 });
+      const montageId = await draft(t, w, [photo(w, 1)]);
+      const stored = objectAt(montageOf(await t.call("montages.get", { montageId })), "spec");
+      t.note("a sticker of the set");
+      await t.call("montages.save", { montageId, spec: { ...stored, layers: [sticker("layer-00000001", known)] }, name: null });
+      await t.call("montages.get", { montageId });
+      t.note("a sticker the set does not have, between two that it has");
+      await t.call("montages.save", { montageId, spec: { ...stored, layers: [sticker("layer-00000001", known), sticker("layer-00000002", "no-such-sticker"), sticker("layer-00000003", known)] }, name: null });
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      t.note("an own sticker is not judged against the set");
+      await t.call("montages.save", { montageId, spec: { ...stored, layers: [ownStickerLayer, sticker("layer-00000002", "no-such-sticker")] }, name: null });
+      await t.call("montages.get", { montageId });
+      t.note("a photo that is taken, a sticker the set lacks and a track the store lacks: the order of the issues");
+      const taken = await draft(t, w, [photo(w, 2)]);
+      const clash = await draft(t, w, [photo(w, 2)]);
+      await t.call("videos.render", { montageId: taken });
+      const clashSpec = objectAt(montageOf(await t.call("montages.get", { montageId: clash })), "spec");
+      await t.call("montages.save", { montageId: clash, spec: { ...clashSpec, layers: [sticker("layer-00000001", "no-such-sticker")], music: { source: "trending", trackId: "4199287736976977", startMs: 0 } }, name: null });
+      await t.call("montages.get", { montageId: clash });
+      await t.settle();
+    },
+  },
 ];
+
+// ---------- 3d.1b: what the scenarios above share ----------
+
+/** A text layer as the editor makes one, with what a scenario says changed. */
+function textLayer(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { kind: "text", layerId: "layer-00000001", startMs: 0, endMs: 3_000, value: "sunday reset", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.195, scale: 1, ...over };
+}
+
+/** The `previewId` a `montages.textPreview` answered. */
+const previewIdOf = (answer: Answer): string => stringAt(resultOf(answer), "previewId");
+
+/** Writes whether a preview id is still served, under the alias the transcript knows it by. */
+async function served(t: Transcript, control: Control, previewId: string): Promise<void> {
+  t.note(`${String(t.norm.value(previewId, "previewId"))} is served: ${await control.previewServed(previewId)}`);
+}
 
 /** `estimateBytesUpper` of the clips of the draft a `montages.create` answered: what a render of it asks the export folder to have twice over. */
 function upperBytesOf(answer: Answer): number {

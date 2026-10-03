@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CommandMessage, EventMessage, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
@@ -11,7 +11,15 @@ import { ManualScheduler } from "../../../renderer/engine/scheduler";
 import { manifestTraits } from "../../avatars/records";
 import { EXPORT_MARKER_FILE, NODE_EXPORT_ROOT_FS, type ExportRootFs } from "../../exportRoot";
 import { openLibrary } from "../../library";
-import { PersistingTestSink } from "../../music/testing/testSink";
+import { TrackStore } from "../../music/trackStore";
+import { excerptOf, fakeCdn, JPEG_1X1 } from "../../music/testing/storeKit";
+import { createCaptionRenderer, type CaptionRequest } from "../../text/caption/renderer";
+import { openEmojiFont } from "../../text/emoji/emojiFont";
+import { loadPinnedEmojiFont } from "../../text/emoji/emojiFont.testkit";
+import { createTextRasteriser, RASTER_WASM } from "../../text/rasteriser";
+import type { CaptionCallOptions, GateCaption } from "../../text/worker/textGate";
+import type { PreviewGate } from "../../text/preview";
+import { parityListTracks, parityMockSeeds, parityPeaks } from "./tracks";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, startEngine, TRAITS, until } from "../../testing/engineHarness";
@@ -63,6 +71,14 @@ export interface Control {
   musicKey(): Promise<void>;
   /** 3c.6: the flashapi quota log on disk gets a complete line that cannot be read (`corrupt`), or a folder where the file was (`unreadable`). */
   musicQuotaLog(state: "corrupt" | "unreadable" | "deleted"): Promise<void>;
+  /** 3d.1b: the music store holds the parity tracks (studio/engine/parity/testing/tracks.ts): the real one downloaded them from a fake CDN, the mock was seeded with the same list. Once per scenario. */
+  musicTracks(): Promise<void>;
+  /** 3d.1b: from now a text drawing that has started waits for `releaseText`, so previews can queue behind it; `false` lets go of what waits and stops holding. */
+  holdText(held: boolean): void;
+  /** 3d.1b: the held drawing ends, and the next one starts (and waits again while held). With nothing held, nothing happens. */
+  releaseText(): void;
+  /** 3d.1b: whether the picture of a text preview id is still served (the engine's file is on disk, the mock still holds the PNG). */
+  previewServed(previewId: string): Promise<boolean>;
 }
 
 /** The RapidAPI key the rigs store: obviously fake (studio/testing/keyLeaks.ts). No request is ever sent with it. */
@@ -207,8 +223,13 @@ export function mockRig(options: RigOptions = {}): ParityRig {
         await engine.request(CommandMessage.parse({ v: 5, id: `msg-${String(++messages).padStart(6, "0")}`, kind: "command", type: "settings.setMusicKey", payload: { key: PARITY_MUSIC_KEY } }));
       },
       musicQuotaLog: async (state) => engine.setMusicQuotaLog(state === "deleted" ? "missing" : state),
+      musicTracks: async () => engine.seedMusicTracks(parityMockSeeds(parityListTracks())),
+      holdText: (held) => engine.holdTextDrawing(held),
+      releaseText: () => engine.releaseTextDrawing(),
+      previewServed: async (previewId) => engine.mockPreviewPng(previewId) !== null,
     },
     async stop() {
+      engine.holdTextDrawing(false);
       scheduler.runAll();
     },
   };
@@ -271,6 +292,82 @@ async function seedAvatar(library: Awaited<ReturnType<typeof openLibrary>>["libr
   return avatar.id;
 }
 
+// ---------- the real engine's text lane ----------
+
+const STUDIO_DIR = join(import.meta.dir, "..", "..", "..");
+let captionRenderer: Promise<ReturnType<typeof createCaptionRenderer>> | null = null;
+
+/** The REAL caption renderer (resvg-wasm, the five fonts, the emoji font) in this process, made once: the rules, the layout and the PNG are the engine's own. */
+function realCaptionRenderer(): Promise<ReturnType<typeof createCaptionRenderer>> {
+  captionRenderer ??= (async () => {
+    const rasteriser = createTextRasteriser({ wasmPath: join(STUDIO_DIR, "..", "node_modules", "@resvg", "resvg-wasm", RASTER_WASM.file), fontDir: join(STUDIO_DIR, "assets", "fonts") });
+    await rasteriser.init();
+    return createCaptionRenderer({ rasteriser, emoji: openEmojiFont(await loadPinnedEmojiFont()) });
+  })();
+  return captionRenderer;
+}
+
+/**
+ * The text worker's lane as the engine's preview service sees it (`PreviewGate`): one drawing at a time in the order asked; a call
+ * still queued is dropped when its signal aborts, one that started is never aborted; `onStart` marks the start. The drawing is the real
+ * renderer's. A scenario can hold a started drawing and let it go, which a real worker's timing never lets a test do.
+ */
+class HeldTextLane implements PreviewGate {
+  #held = false;
+  #running = false;
+  #waiting: { start: () => void; call: object }[] = [];
+  #letGo: (() => void) | null = null;
+
+  hold(held: boolean): void {
+    this.#held = held;
+    if (!held) this.release();
+  }
+
+  release(): void {
+    const letGo = this.#letGo;
+    this.#letGo = null;
+    letGo?.();
+  }
+
+  caption(request: CaptionRequest, options: CaptionCallOptions = {}): Promise<GateCaption> {
+    const { signal, onStart } = options;
+    if (signal?.aborted === true) return Promise.reject(signal.reason);
+    return new Promise<GateCaption>((resolve, reject) => {
+      const call = {};
+      const finish = async (): Promise<void> => {
+        try {
+          const image = await (await realCaptionRenderer()).render(request);
+          resolve({ ...image, workerMs: 0 });
+        } catch (error) {
+          reject(error);
+        } finally {
+          this.#running = false;
+          this.#next();
+        }
+      };
+      const start = (): void => {
+        this.#running = true;
+        signal?.removeEventListener("abort", onAbort);
+        onStart?.();
+        if (this.#held) this.#letGo = () => void finish();
+        else void finish();
+      };
+      const onAbort = (): void => {
+        const at = this.#waiting.findIndex((entry) => entry.call === call);
+        if (at >= 0) this.#waiting.splice(at, 1);
+        reject(signal?.reason);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (this.#running) this.#waiting.push({ start, call });
+      else start();
+    });
+  }
+
+  #next(): void {
+    this.#waiting.shift()?.start();
+  }
+}
+
 /** The real engine over a library and an export folder in `dir` (a fresh temp dir per scenario). */
 export async function realRig(dir: string, options: RigOptions = {}): Promise<ParityRig> {
   const exportDir = join(dir, "export");
@@ -312,10 +409,18 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   // 3c.6: the music service over a real quota log, a sink that persists (so a refresh is not refused as «not available yet»)
   // and a flashapi that must never be reached: every music story of the suite is told without a request.
   const musicDir = join(dir, "userData", "music");
+  // 3d.1b: the track store is the real one, over a fake CDN that serves the 3c.4 excerpts (no network). It is empty until a scenario
+  // asks for `musicTracks`, so a refresh is still never reached and every older story reads what it read with the test sink.
+  const cdn = fakeCdn();
+  const musicClock = Date.parse("2026-09-27T20:42:00.000Z");
+  const store = await TrackStore.open({ dir: musicDir, transport: cdn.transport, clock: () => musicClock + 1000, log: () => undefined, decode: (options) => Promise.resolve({ decodedMs: options.expectedMs, peaks: peaksForPath(options.path, options.expectedMs) }) });
+  const textLane = new HeldTextLane();
   const { engine, events, posted } = await startEngine(dir, {
     init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(), musicDir },
     deps: {
-      musicSink: new PersistingTestSink(),
+      musicSink: store,
+      musicTracks: store,
+      text: { gate: textLane },
       musicFetch: () => Promise.reject(new Error("the parity suite never sends a flashapi request")),
       exportRootFs,
       // No face models in a test: the resolver judges the scored photos and none of the rest, as the mock does.
@@ -477,6 +582,21 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       },
       // Main's half of «Сохранить»: the key is stored, then handed to the engine as the owner's (a key line in the quota log).
       musicKey: () => engine.applyControl({ kind: "control", type: "musicKey.set", key: PARITY_MUSIC_KEY, origin: "user" }),
+      musicTracks: async () => {
+        const tracks = parityListTracks();
+        tracks.forEach((track, i) => {
+          cdn.serve(track.downloadUrl, { bytes: excerptOf(i) });
+          if (track.coverUrl !== null) cdn.serve(track.coverUrl, { bytes: JPEG_1X1 });
+        });
+        await store.accept({ fetchedAt: musicClock, tracks }, () => undefined, new AbortController().signal);
+      },
+      holdText: (held) => textLane.hold(held),
+      releaseText: () => textLane.release(),
+      previewServed: async (previewId) =>
+        stat(join(dir, "userData", "render-tmp", "text", `${previewId}.png`)).then(
+          (info) => info.isFile(),
+          () => false,
+        ),
       musicQuotaLog: async (state) => {
         const log = join(musicDir, "quota.jsonl");
         // Review round 1: the owner deletes the whole music folder; the marker beside it, in userData, stays.
@@ -492,6 +612,15 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         }
       },
     },
-    stop: settle,
+    stop: async () => {
+      textLane.hold(false);
+      await settle();
+    },
   };
+}
+
+/** The envelope the parity decode keeps for the track whose staged file is at `path` (the staged name carries the track's id). */
+function peaksForPath(path: string, durationMs: number): number[] {
+  const index = parityListTracks().findIndex((track) => path.includes(track.trackId));
+  return parityPeaks(Math.max(0, index), durationMs);
 }

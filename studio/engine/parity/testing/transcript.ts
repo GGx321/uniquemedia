@@ -1,4 +1,5 @@
 import type { EngineError, EventMessage } from "../../../shared/engine";
+import { FRAME_H, FRAME_W } from "../../../shared/montage";
 import { ProgressInvariants } from "./progress";
 
 // The parity harness's record of a scenario (Stage 3, 3d.1b): what was asked, what was answered and every event, in the order
@@ -44,6 +45,8 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "bursts: commands sent together are answered in the order sent by both, and each echo comes before its answer; how the echoes of one burst interleave with the answers of others is not compared (the engine writes a file per save, the mock answers at once)",
   "the export folder's dialog: main's own flow runs over the real engine in the real rig, and the mock plays both; the settings a pick answers carry the rig's own paths and are not written (the folder's identity as `root#N`, and the counts, are). In the app the engine's export.status after a switch may land just after main's answer; the rig applies it first, so the transcript has it before the answer. `settings.exportDisplay` is main's own string and is tested in main",
   "the mock keeps the drafts, the videos and the last 50 finished renders in memory: a restart keeps the first two and drops the renders, like the engine's; nothing else of the disk is modelled (no torn draft files, no stale used index, no record from a newer Studio, no closed library): those refusals are the engine's own unit tests' business",
+  "text previews (3d.1b): the engine draws a caption with its rasteriser, the mock does not: its box is the engine's own layout over an arithmetic width (0.55 em a character, no font) and its picture a placeholder PNG of that box. So `width` and `height` are written as `<px>` after checking they are whole pixels inside the frame, and the picture's bytes are not compared (that they are a PNG of the answered box is the mock's own test). The mock draws every well-formed emoji; the engine refuses a cluster its font lacks (`emoji-missing`), so no story uses one it cannot draw. The time one drawing takes is not modelled by the suite: a rig's text lane is held and let go by the scenario",
+  "music list and peaks (3d.1b): the real rig's store holds tracks it downloaded from a fake CDN, the mock's are seeded from the same fixture list; both answer through the track store's own highlight and waveform rules (studio/shared/music/trackShape.ts). The mock models no disk for a track: no torn envelope file, no track deleted under a live record (the engine's `peaks` is then NOT_FOUND while `list` still lists it, until a restart), no cover file: those are the store's own unit tests' business, and no story deletes the music folder after storing tracks",
   "music (3c.6): the mock keeps its quota log and its list as numbers on its own clock, so the times a status carries (`listFetchedAt`, `nextFreeAt`) are written as set or null, a refresh's steps are not written, and a music error's detail (it names a time) is not compared: its code and its `musicReason` are. No story sends a flashapi request: the real rig's flashapi refuses every call",
 ];
 
@@ -71,6 +74,7 @@ const ID_KINDS: Readonly<Record<string, string>> = {
   montageId: "montage",
   videoId: "video",
   jobId: "job",
+  previewId: "preview",
   clipId: "clip",
   layerId: "layer",
 };
@@ -197,7 +201,7 @@ function snapshotLine(result: Record<string, unknown>, norm: Normalizer): string
 /** An answer as a line. */
 export function answerLine(type: string, answer: Answer, norm: Normalizer): string {
   if (!answer.ok) {
-    const { code, detail, issues, exportReason, musicReason } = answer.error;
+    const { code, detail, issues, exportReason, musicReason, captionIssue } = answer.error;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
     const text = code === "VALIDATION" || code.startsWith("MUSIC_") ? undefined : detail;
@@ -207,8 +211,17 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
         ...(issues === undefined ? {} : { issues }),
         ...(exportReason === undefined ? {} : { exportReason }),
         ...(musicReason === undefined ? {} : { musicReason }),
+        ...(captionIssue === undefined ? {} : { captionIssue }),
       }),
     )}`;
+  }
+  if (type === "montages.textPreview") {
+    // The box is the rasteriser's in the engine and an estimate in the mock: only that it is a box inside the frame is compared.
+    const { previewId, width, height } = answer.result;
+    if (!Number.isInteger(width) || !Number.isInteger(height) || Number(width) < 1 || Number(height) < 1 || Number(width) > FRAME_W || Number(height) > FRAME_H) {
+      throw new Error(`a text preview's box is not whole pixels inside the frame: ${String(width)}x${String(height)}`);
+    }
+    return `< ok ${compact(norm.value({ previewId, width: "<px>", height: "<px>" }))}`;
   }
   if (type === "music.status") return `< ok music ${compact(musicLine(answer.result))}`;
   if (type === "music.refresh" || type === "music.recoverQuotaLog") return `< ok music ${compact(musicLine(answer.result.status))}`;
@@ -256,6 +269,9 @@ export class Transcript {
   /** The renders announced as waiting for a slot, in order (as aliases): what the window shows as «В очереди». */
   readonly #queued: string[] = [];
   #seen: number;
+  /** The commands sent with `start`, and how many of them have answered. */
+  #started = 0;
+  #answered = 0;
 
   constructor(rig: Recorded, norm: Normalizer) {
     this.#rig = rig;
@@ -321,6 +337,37 @@ export class Transcript {
     });
     this.#lines.push(`~ answers arrived in order ${arrival.join(",")}`);
     return answers;
+  }
+
+  /**
+   * Sends a command and does NOT wait for its answer (a text preview held in the lane): the command is written now, its answer
+   * where it ARRIVES, in the order of arrival, which is what a story about a stale preview is bound to. Returns its number.
+   */
+  start(type: string, payload: unknown): number {
+    this.#drain();
+    const n = this.#started++;
+    this.#lines.push(`> [${n}] ${type} ${compact(this.norm.value(payload))}`);
+    void this.#rig.send(type, payload).then((answer) => {
+      this.#drain();
+      this.#answered++;
+      this.#lines.push(`< [${n}] ${answerLine(type, answer, this.norm).slice(2)}`);
+    });
+    return n;
+  }
+
+  /** Lets everything that can happen without time or the disk happen: every promise already settled has run its continuations. */
+  async quiesce(): Promise<void> {
+    for (let i = 0; i < 4; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+
+  /** Waits until `count` of the commands sent with `start` have answered (real I/O may be between a release and an answer). */
+  async untilAnswered(count: number, ms = 15_000): Promise<void> {
+    const from = Date.now();
+    while (this.#answered < count) {
+      if (Date.now() - from > ms) throw new Error(`timed out waiting for ${count} answers, got ${this.#answered}`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 2));
+    }
+    this.#drain();
   }
 
   async advance(step: "progress" | "saving" | "end"): Promise<void> {
