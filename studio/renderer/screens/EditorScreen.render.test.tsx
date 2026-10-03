@@ -267,14 +267,14 @@ describe("what a refusal says (nothing was queued: the button is ready again)", 
     await screen.findByText(/Это фото нельзя использовать в видео/);
     expect(screen.queryByText(/unreadable video record/)).toBeNull();
     expect(screen.queryByText(/photo_001/)).toBeNull();
-    const clips = document.querySelectorAll(".ed-clip");
-    expect(clips[0]?.className).toContain("ed-clip-flagged");
+    const clips = document.querySelectorAll(".ed-clip-slot");
+    expect(clips[0]?.className).toContain("ed-clip-warn");
   });
 
   test("MONTAGE_INVALID says what the engine found wrong, and highlights its frames", async () => {
     await refused({ code: "MONTAGE_INVALID", issues: [{ code: "cell-empty", path: ["clips", 0, "cell"] }] });
     await screen.findByText(/Монтаж не готов к рендеру: исправьте отмеченные проблемы\. В кадре есть пустая ячейка/);
-    expect(document.querySelectorAll(".ed-clip")[0]?.className).toContain("ed-clip-flagged");
+    expect(document.querySelectorAll(".ed-clip-slot")[0]?.className).toContain("ed-clip-warn");
   });
 
   test("NOT_FOUND is a refusal the owner can read, and the notice closes", async () => {
