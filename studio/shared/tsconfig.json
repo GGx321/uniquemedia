@@ -11,6 +11,6 @@
     "isolatedModules": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["engine/**/*", "montage/**/*", "text/**/*"],
-  "exclude": ["engine/**/*.test.ts", "engine/**/*.test.tsx", "montage/**/*.test.ts", "montage/**/*.testkit.ts", "text/**/*.test.ts"]
+  "include": ["engine/**/*", "montage/**/*", "text/**/*", "music/**/*"],
+  "exclude": ["engine/**/*.test.ts", "engine/**/*.test.tsx", "montage/**/*.test.ts", "montage/**/*.testkit.ts", "text/**/*.test.ts", "music/**/*.test.ts"]
 }

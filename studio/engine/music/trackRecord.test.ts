@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { TrackSummary } from "../../shared/engine";
-import { expiresAtFor, EXPIRY_CEILING_MS, EXPIRY_FALLBACK_MS, normaliseHighlights, toSummary, windowPeaks, type TrackEntry } from "./trackRecord";
+import { normaliseHighlights, windowPeaks } from "../../shared/music/trackShape";
+import { expiresAtFor, EXPIRY_CEILING_MS, EXPIRY_FALLBACK_MS, toSummary, type TrackEntry } from "./trackRecord";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 

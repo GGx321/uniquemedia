@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { Id, MAX_LISTED_TRACKS, type TrackSummary } from "../../shared/engine";
 import { fsyncDir, isTempName, tempSiblingPath, writeFileAtomic, writeFileDurable, writeJsonAtomic } from "../library/durableFs";
 import { renameWithRetry } from "../library/renameRetry";
+import { normaliseHighlights, windowPeaks } from "../../shared/music/trackShape";
 import { checkCdnUrl } from "./cdnPolicy";
 import type { CdnTransport } from "./cdnTransport";
 import { decodeAudio, DecodeError, inspectStreams, type DecodeOptions, type DecodeResult, PEAK_STEP_MS } from "./decodeCheck";
@@ -19,9 +20,7 @@ import {
   expiresAtFor,
   ListRecordSchema,
   MAX_RECORDED_TRACKS,
-  normaliseHighlights,
   toSummary,
-  windowPeaks,
   type CoverExtension,
   type ListRecord,
   type TrackEntry,
