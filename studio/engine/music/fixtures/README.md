@@ -47,4 +47,4 @@ true peaks and loudness were measured on the excerpts themselves with ffmpeg
 | `he-aac-48k-1644648520025224.mp4` | 1644648520025224 | 24 s, 6 s long | -5.5 dBTP | the 48 kHz input variant (the rest are 44.1 kHz) |
 
 Not here: the audio file that carries title and artist tags (invariant 14). The API tracks
-have no tags, so 3c.5 makes that file itself.
+have no tags, so 3c.5 makes that file itself, at test time, from the hot excerpt (`../testing/taggedTrack.ts`).
