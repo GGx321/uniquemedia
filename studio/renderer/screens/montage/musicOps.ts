@@ -102,3 +102,86 @@ export function trackProblem(facts: { readonly missing: boolean; readonly verdic
 export function atHighlight(highlights: readonly Highlight[], startMs: number): boolean {
   return highlights.some((h) => h.ms === startMs);
 }
+
+// ---------- choosing a track and its start (3d.5: the «Музыка» tab and the music card) ----------
+//
+// All free: the tab reads `music.list` and the card `music.peaks`; nothing here can lead to `music.refresh`, which spends one of
+// the 30 flashapi requests and lives in Settings only, behind its confirmation (3c.6). Every length is the one the store's decode
+// PROVED (`TrackSummary.durationMs`), the one the engine judges `track-too-short` by.
+
+/** What a pick needs of a listed track. */
+export type TrackFacts = Pick<TrackSummary, "trackId" | "durationMs" | "highlights">;
+
+/** A start that keeps the whole montage inside the track and that a draft may hold (≤ 10 min into the track). */
+const startFits = (ms: number, totalMs: number, trackMs: number): boolean => ms + totalMs <= trackMs && ms <= MAX_SOURCE_OFFSET_MS;
+
+/**
+ * Where a picked track starts (U9): its earliest highlight that leaves the whole montage inside the track, else 0. The likely
+ * `1500` default is a guess at "the start of the track", not a part anyone chose (the timeline does not mark it either): never.
+ */
+export function pickStartMs(track: TrackFacts, totalMs: number): number {
+  const fitting = track.highlights.filter((h) => !h.likelyDefault && startFits(h.ms, totalMs, track.durationMs)).map((h) => h.ms);
+  return fitting.length === 0 ? 0 : Math.min(...fitting);
+}
+
+/**
+ * The draft's music as the trending `track`, at `pickStartMs` (one undo step: it replaces the track there). The track already in
+ * the draft is the same draft, so the start the owner chose stays. Refused when the track is shorter than the montage (U10).
+ */
+export function pickTrack(spec: MontageDraft, track: TrackFacts): MusicEdit | { readonly ok: false; readonly reason: "too-short" } {
+  if (spec.music?.source === "trending" && spec.music.trackId === track.trackId) return { ok: true, spec };
+  const total = totalMs(spec);
+  if (track.durationMs < total) return { ok: false, reason: "too-short" };
+  return { ok: true, spec: { ...spec, music: { source: "trending", trackId: track.trackId, startMs: pickStartMs(track, total) } } };
+}
+
+/** A quick pick of the music card (R47): where it would start the music, whether the montage then fits, and whether it starts there now. */
+export interface HighlightPick {
+  readonly ms: number;
+  readonly likelyDefault: boolean;
+  readonly fits: boolean;
+  readonly on: boolean;
+}
+
+/** The card's picks: ascending, with the likely `1500` default last (CF6, K23), whatever order they come in. */
+export function highlightPicks(highlights: readonly Highlight[], startMs: number, totalMs: number, trackMs: number): HighlightPick[] {
+  const ordered = [...highlights].sort((a, b) => Number(a.likelyDefault) - Number(b.likelyDefault) || a.ms - b.ms);
+  return ordered.map((h) => ({ ms: h.ms, likelyDefault: h.likelyDefault, fits: startFits(h.ms, totalMs, trackMs), on: h.ms === startMs }));
+}
+
+/**
+ * The montage's window over the whole track's waveform (R46), as parts of the track. It always starts where the music does; a
+ * montage that outgrew the track runs off its end, so the window is cut there (never slid back to look as if it fit).
+ */
+export function musicWindow(startMs: number, totalMs: number, trackMs: number): { from: number; width: number } {
+  if (!(trackMs > 0)) return { from: 0, width: 0 };
+  const start = Math.min(trackMs, Math.max(0, startMs));
+  // In ms first, then one division each: the window's end lands exactly on the track's.
+  return { from: start / trackMs, width: Math.max(0, Math.min(totalMs, trackMs - start)) / trackMs };
+}
+
+/** A row of the «Музыка» tab (U4–U10). */
+export interface TrackRow {
+  readonly track: TrackSummary;
+  /** «✓ в ролике». */
+  readonly inDraft: boolean;
+  /** «короче ролика»: shorter than the montage, so it cannot be picked (U10). */
+  readonly tooShort: boolean;
+  /** «★ 1:02»: the earliest real highlight (never the likely default), or null. */
+  readonly star: number | null;
+}
+
+/**
+ * The tab's rows in the list's own order. There is no "trending only" filter (`is_trending_in_clips` is always false): every
+ * stored track is listed. Explicit tracks carry «E» and stay pickable; «Скрыть E» (the artboard's chip, off by default) hides them,
+ * except the draft's own track, which is always shown.
+ */
+export function trackRows(tracks: readonly TrackSummary[], music: MontageDraft["music"], totalMs: number, options: { readonly hideExplicit: boolean }): TrackRow[] {
+  const current = music?.source === "trending" ? music.trackId : null;
+  return tracks
+    .filter((track) => !options.hideExplicit || !track.explicit || track.trackId === current)
+    .map((track) => {
+      const real = track.highlights.filter((h) => !h.likelyDefault).map((h) => h.ms);
+      return { track, inDraft: track.trackId === current, tooShort: track.durationMs < totalMs, star: real.length === 0 ? null : Math.min(...real) };
+    });
+}
