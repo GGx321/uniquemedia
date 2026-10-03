@@ -384,16 +384,26 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
 
   const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds) };
   const gate = new Gate();
+  /** Renders standing at the gate now: their ffmpeg held, or their commit held at its claim. */
+  let parked = 0;
+  const atGate = async (level: number, signal?: AbortSignal): Promise<void> => {
+    parked++;
+    try {
+      await gate.wait(level, signal);
+    } finally {
+      parked--;
+    }
+  };
   let failArmed: "encode" | "saving" | null = null;
   // The ffmpeg that is not there: it reports progress once the gate lets it, and writes its output once the gate lets it finish.
   const run = async (opts: RunFfmpegArgvOptions): Promise<void> => {
-    await gate.wait(1, opts.signal);
+    await atGate(1, opts.signal);
     if (failArmed === "encode") {
       failArmed = null;
       throw new FfmpegError("ffmpeg failed", 1, "boom");
     }
     opts.onFrames?.(1_000_000);
-    await gate.wait(2, opts.signal);
+    await atGate(2, opts.signal);
     await writingRun(opts);
   };
   // The export folder's volume, through the engine's own seam: what it says is free, and whether it takes the probe file.
@@ -453,7 +463,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
           hooks: {
             reached: async (step) => {
               if (step !== "name-claimed") return;
-              await gate.wait(3);
+              await atGate(3);
               if (failArmed === "saving") {
                 failArmed = null;
                 throw new RenderFailure({ ...SAVING_FAILURE });
@@ -525,6 +535,13 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         const response = await handleExportFolderCommand(asked.data, mainDeps);
         await Promise.all(told.splice(0));
         return answerOf(ResponseMessage.parse(response));
+      }
+      // A cancel lands only on renders held at the gate, as the mock's renders are between its steps. A render still in its
+      // export-folder prep (\`guarded\`) ends on the abort through promises alone, before the answer is back and before
+      // \`advance("end")\` takes its starting point: its end would be missed (a timeout) or written early (a diff).
+      if (type === "videos.cancel") {
+        const running = (): number => engine.renders.states().filter((s) => s.status === "running").length;
+        await until(() => parked >= running(), "every running render at the gate", 10_000);
       }
       return answerOf(ResponseMessage.parse(await engine.handle(command(type, payload))));
     },
