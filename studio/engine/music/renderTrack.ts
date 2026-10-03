@@ -27,8 +27,13 @@ export class TrackUnavailableError extends Error {
 
 /** A stored track that passed the render-time checks. */
 export interface RenderTrack {
-  /** Absolute, built by the store from the id and a fixed name. */
-  readonly path: string;
+  /**
+   * The bytes the store verified (size, sha256), never a path: a file on disk can change between the store's check and ffmpeg's
+   * read, so the render writes these to a private copy in its job folder and works on that.
+   */
+  readonly data: Uint8Array;
+  /** ffmpeg's own check of that COPY: exactly one audio stream. Rejects `TrackUnavailableError("not-audio")`, or the signal's reason for a cancel. */
+  readonly check: (path: string, signal: AbortSignal) => Promise<void>;
   readonly bytes: number;
   readonly sha256: string;
   /** The length the store's decode proved, in ms: what a montage's `startMs` plus its length is measured against. */

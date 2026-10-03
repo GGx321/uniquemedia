@@ -3,3 +3,6 @@ export const clipFileName = (index: number): string => `clip-${String(index).pad
 
 /** The concat list's name, relative to the job folder (ffmpeg's `cwd`). */
 export const CONCAT_LIST_NAME = "list.txt";
+
+/** The private copy of a stored track, in the job folder (3c.5): the measurement and pass 2 read this, never the stored file. */
+export const TRACK_FILE_NAME = "track.m4a";

@@ -29,7 +29,7 @@ async function failureOf(work: Promise<unknown>): Promise<EngineError> {
   throw new Error("expected the call to fail");
 }
 
-const trackOf = (decodedMs: number): RenderTrack => ({ path: "/userdata/music/tracks/x.m4a", bytes: 1, sha256: "c".repeat(64), decodedMs, title: "A Song Title", artist: null, forbidden: [] });
+const trackOf = (decodedMs: number): RenderTrack => ({ data: new Uint8Array([1, 2, 3]), check: async () => undefined, bytes: 1, sha256: "c".repeat(64), decodedMs, title: "A Song Title", artist: null, forbidden: [] });
 
 function store(decodedMs: number | null, opened: string[] = []): RenderTrackSource {
   return {

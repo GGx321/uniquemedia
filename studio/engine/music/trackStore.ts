@@ -324,10 +324,10 @@ export class TrackStore implements MusicListSink, RenderTrackSource {
   }
 
   /**
-   * The track's file for a render (invariant 31): the path is built here from the id, and the track is checked again NOW, at
+   * The track for a render (invariant 31): the path is built here from the id, and the track is checked again NOW, at
    * the render, because the file has sat on disk since the download. A stored entry, a plain file (no link followed) of the
-   * recorded size and sha256, and exactly one audio stream by ffmpeg's own reading. Anything else is a `TrackUnavailableError`
-   * and the render never starts ffmpeg on the file. A cancel is the signal's own reason.
+   * recorded size and sha256. It hands over the VERIFIED BYTES, not the path, with `check` for ffmpeg to confirm that the render's private
+   * copy is exactly one audio stream. Anything else is a `TrackUnavailableError`, and ffmpeg never reads the stored file. A cancel is the signal's own reason.
    */
   async openForRender(trackId: string, signal: AbortSignal): Promise<RenderTrack> {
     signal.throwIfAborted();
@@ -345,16 +345,22 @@ export class TrackStore implements MusicListSink, RenderTrackSource {
     }
     if (bytes.byteLength !== audio.bytes || sha256(bytes) !== audio.sha256) throw new TrackUnavailableError("changed");
     signal.throwIfAborted();
-    let kinds: readonly string[];
-    try {
-      kinds = await this.#inspect(path, signal);
-    } catch {
-      if (signal.aborted) throw signal.reason;
-      throw new TrackUnavailableError("not-audio");
-    }
-    if (kinds.length !== 1 || kinds[0] !== "Audio") throw new TrackUnavailableError("not-audio");
+    // The stream check is deferred to the render's private copy of these bytes: the file on disk may change after this read,
+    // so what ffmpeg is asked about, measures and renders is the copy, and the copy is a write of exactly the verified bytes.
+    const inspect = this.#inspect;
+    const check = async (copy: string, checkSignal: AbortSignal): Promise<void> => {
+      let kinds: readonly string[];
+      try {
+        kinds = await inspect(copy, checkSignal);
+      } catch {
+        if (checkSignal.aborted) throw checkSignal.reason;
+        throw new TrackUnavailableError("not-audio");
+      }
+      if (kinds.length !== 1 || kinds[0] !== "Audio") throw new TrackUnavailableError("not-audio");
+    };
     return {
-      path,
+      data: bytes,
+      check,
       bytes: audio.bytes,
       sha256: audio.sha256,
       decodedMs: audio.decodedMs,

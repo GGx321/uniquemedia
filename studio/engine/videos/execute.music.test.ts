@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { JobState } from "../../shared/engine";
@@ -30,7 +30,8 @@ const writingRun = (calls: string[][]) => async (opts: RunFfmpegArgvOptions): Pr
 };
 
 const trackOf = (over: Partial<RenderTrack> = {}): RenderTrack => ({
-  path: "/userdata/music/tracks/4199287736976977.m4a",
+  data: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
+  check: async () => undefined,
   bytes: 93_509,
   sha256: "b".repeat(64),
   decodedMs: 8_000,
@@ -72,7 +73,7 @@ function planOf(w: World, over: Partial<RenderPlan> = {}): RenderPlan {
   };
 }
 
-function rig(options: { open?: (trackId: string, signal: AbortSignal) => Promise<RenderTrack>; peak?: number; withStore?: boolean } = {}): Rig {
+function rig(options: { open?: (trackId: string, signal: AbortSignal) => Promise<RenderTrack>; peak?: number; withStore?: boolean; onPass2?: (argv: readonly string[]) => Promise<void> } = {}): Rig {
   const w = world();
   const tracker = new CommitTracker();
   const ffmpeg: string[][] = [];
@@ -93,7 +94,7 @@ function rig(options: { open?: (trackId: string, signal: AbortSignal) => Promise
     caseProbe: { isCaseInsensitive: async () => false },
     now: () => new Date(2026, 8, 29, 10, 0, 0),
     verify: async (path, expected) => (verified.push(expected), acceptingVerify(path)),
-    runDeps: { run: writingRun(ffmpeg), measure: async () => options.peak ?? 3.0 },
+    runDeps: { run: async (opts) => (opts.argv.includes("concat") ? await options.onPass2?.(opts.argv) : undefined, writingRun(ffmpeg)(opts)), measure: async () => options.peak ?? 3.0 },
     onCommitted: (record) => void records.push(record),
     ...(options.withStore === false ? {} : { tracks: store }),
   };
@@ -145,7 +146,7 @@ describe("a render job with music: a track that passes", () => {
     const state = await r.run();
     expect(state).toMatchObject({ status: "done" });
     const argv = pass2Of(r.ffmpeg);
-    expect(argv).toContain("/userdata/music/tracks/4199287736976977.m4a");
+    expect(argv).toContain(join(r.w.renderTmp, "job-00000001", "track.m4a"));
     expect(afOf(argv)).toContain("atrim=start_sample=72000:end_sample=264000");
     expect(afOf(argv)).toContain("volume=-4.5dB");
   });
@@ -186,11 +187,41 @@ describe("a render job with music: a track that passes", () => {
 });
 
 describe("a render job with music: a track that does not pass, and nothing is touched", () => {
-  test.each(["not-stored", "changed", "not-audio"] as const)("a track the store refuses as %s ends the job MONTAGE_INVALID track-unavailable", async (kind) => {
+  test.each(["not-stored", "changed"] as const)("a track the store refuses as %s ends the job MONTAGE_INVALID track-unavailable", async (kind) => {
     const r = rig({ open: async () => Promise.reject(new TrackUnavailableError(kind)) });
     const state = await r.run();
     expect(state).toMatchObject({ status: "failed", error: { code: "MONTAGE_INVALID", issues: [{ code: "track-unavailable", path: ["music"] }] } });
     await expectNothingTouched(r);
+  });
+
+  test("a copy ffmpeg does not see as one audio stream ends the job MONTAGE_INVALID track-unavailable, with no ffmpeg run and nothing left behind", async () => {
+    const r = rig({ open: async () => trackOf({ check: async () => Promise.reject(new TrackUnavailableError("not-audio")) }) });
+    const state = await r.run();
+    expect(state).toMatchObject({ status: "failed", error: { code: "MONTAGE_INVALID", issues: [{ code: "track-unavailable", path: ["music"] }] } });
+    expect(r.ffmpeg).toEqual([]);
+    expect(r.records).toEqual([]);
+    expect(await readdir(r.w.renderTmp)).toEqual([]);
+    expect(await libraryVideoFiles(r.w)).toEqual([]);
+    expect(r.tracker.liveJobIds().size).toBe(0);
+  });
+
+  test("replacing the stored file after the store opened the track does not change what pass 2 reads", async () => {
+    const original = Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    const stored = join(world().renderTmp, "..", "stored-track.m4a");
+    await writeFile(stored, original);
+    const readByPass2: Uint8Array[] = [];
+    const r = rig({
+      open: async () => {
+        const track = trackOf({ data: new Uint8Array(await readFile(stored)) });
+        // The stored file changes the moment the store has handed its bytes over.
+        await writeFile(stored, new Uint8Array(original.byteLength).fill(255));
+        return track;
+      },
+      onPass2: async (argv) => void readByPass2.push(new Uint8Array(await readFile(argv[argv.indexOf("-i", argv.indexOf("-max_alloc")) + 1] ?? ""))),
+    });
+    await r.run();
+    expect(readByPass2).toHaveLength(1);
+    expect([...(readByPass2[0] ?? [])]).toEqual([...original]);
   });
 
   test("a track too short for startMs plus the montage, at this render, is track-too-short", async () => {

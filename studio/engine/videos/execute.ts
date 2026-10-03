@@ -4,10 +4,10 @@ import type { MontageShape } from "../../shared/engine/montage";
 import { totalFrames } from "../../shared/montage";
 import { ExportFolderError, formatExportDate, NODE_EXPORT_FOLDER_FS, prepareExportFolder, type ExportFolderFs, type PreparedFolder } from "../exportName";
 import type { Library } from "../library";
-import type { AudioPlan, OverlayInput, PhotoResolver } from "../render";
+import type { OverlayInput, PhotoResolver } from "../render";
 import { TrackUnavailableError, type RenderTrack, type RenderTrackSource } from "../music/renderTrack";
 import { RenderFailure, type RenderContext } from "../renderQueue/queue";
-import { runRenderJob, type RenderRunDeps } from "../renderQueue/runner";
+import { runRenderJob, type RenderRunDeps, type RunAudio } from "../renderQueue/runner";
 import type { VerifiedFile, VerifyExpected } from "../verify";
 import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
@@ -243,7 +243,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
 
   return (plan) => async (context) => {
     const track = await openTrack(plan, context.signal);
-    const audio: AudioPlan = track === null || plan.track === undefined ? plan.audio : { kind: "music", path: track.path, startMs: plan.track.startMs };
+    const audio: RunAudio = track === null || plan.track === undefined ? plan.audio : { kind: "music", startMs: plan.track.startMs, data: track.data, check: track.check };
     const tile = track === null ? plan.music : { title: track.title, artist: track.artist };
     const { root, rootId } = plan.exportRoot;
     // Everything up to pass 2 touches the export volume, which may be a network drive that has dropped: one bound for the
@@ -322,7 +322,14 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
             }),
         },
         deps.runDeps,
-      );
+      ).catch((error: unknown) => {
+        // ffmpeg's own check of the private copy found the track is not one audio stream: the same refusal as the store's.
+        if (error instanceof TrackUnavailableError) {
+          log(`render ${plan.jobId}: the music track was refused (${error.kind})`);
+          throw new RenderFailure({ code: "MONTAGE_INVALID", issues: [{ code: "track-unavailable", path: ["music"] }] });
+        }
+        throw error;
+      });
 
       const now = deps.now();
       const deadlineTimers = deps.deadlineTimers ?? realDeadlineTimer();

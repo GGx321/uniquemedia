@@ -3,8 +3,9 @@ import { basename, dirname, join } from "node:path";
 import { Id } from "../../shared/engine";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
-import { buildMusicMeasure, buildPass1, buildPass2, musicGainDb, RenderGraphError, type AudioPlan, type MusicMeasureJob, type OverlayInput, type Pass2Job, type PhotoResolver } from "../render";
+import { buildMusicMeasure, buildPass1, buildPass2, musicGainDb, RenderGraphError, type MusicMeasureJob, type OverlayInput, type Pass2Job, type PhotoResolver } from "../render";
 import { clipFrames } from "../render/durations";
+import { TRACK_FILE_NAME } from "../render/names";
 import { measureTruePeak } from "./musicMeasure";
 import { ProgressFold, renderTimeoutMs } from "./progress";
 import { scrubber, scrubStderrTail, type ScrubInput } from "./scrubber";
@@ -13,6 +14,16 @@ import { scrubber, scrubStderrTail, type ScrubInput } from "./scrubber";
 // the job's own folder, then pass 2 into the temp output it is given, one
 // ffmpeg at a time. It owns the job folder and the temp output's cleanup; it
 // does not know about the queue, the registry or the reserved photos.
+
+/** The music of a job: the verified bytes, where to start, and the store's check of the private copy (ffmpeg sees exactly one audio stream). */
+export type RunAudio =
+  | { readonly kind: "silent" }
+  | {
+      readonly kind: "music";
+      readonly startMs: number;
+      readonly data: Uint8Array;
+      readonly check?: (path: string, signal: AbortSignal) => Promise<void>;
+    };
 
 export interface RenderRunInput {
   /** Names the job folder `<tmpRoot>/<jobId>`; letters, digits, `-` and `_` only. */
@@ -29,10 +40,12 @@ export interface RenderRunInput {
   readonly resolvePhoto: PhotoResolver;
   readonly overlays: readonly OverlayInput[];
   /**
-   * Silence, or one stored track (`path` from the engine's track store, never from a window). A track's gain is not known
-   * yet: the runner measures the clip segment first and builds pass 2 with the gain the rule gives.
+   * Silence, or one stored track as the VERIFIED BYTES the track store handed over (never a path: a file on disk can change
+   * between the store's check and ffmpeg's read). The runner writes them to `<job folder>/track.m4a`, has `check` look at that
+   * copy, and runs the measurement and pass 2 on it. The gain is not known yet: the runner measures the clip segment first
+   * and builds pass 2 with the gain the rule gives.
    */
-  readonly audio: AudioPlan;
+  readonly audio: RunAudio;
   /** Absolute: the temp output on the export volume (`.studio-part-<jobId>.mp4`). Removed here when the job does not succeed. */
   readonly output: string;
   readonly signal: AbortSignal;
@@ -108,7 +121,8 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     return source;
   };
   for (const overlay of input.overlays) scrubInputs.push({ path: overlay.path, label: "<overlay>" });
-  if (input.audio.kind === "music") scrubInputs.push({ path: input.audio.path, label: "<audio>" });
+  const trackCopy = join(clipDir, TRACK_FILE_NAME);
+  if (input.audio.kind === "music") scrubInputs.push({ path: trackCopy, label: "<audio>" });
 
   const pass1 = buildPass1({ seed: input.seed, clips: input.clips, resolvePhoto, clipDir });
   const finalClips = input.clips.map((c) => ({ clipId: c.clipId, durationMs: c.durationMs }));
@@ -184,11 +198,11 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
    * The true-peak pass over the music's clip segment, on what is left of the job's budget (invariant 21): the gain is the
    * rule's, `min(0, -1.5 - TP)`. A failure reaches the job as any ffmpeg failure does; a peak that is not a number is BAD_AUDIO.
    */
-  const measureMusic = async (music: Extract<AudioPlan, { kind: "music" }>): Promise<{ gainDb: number; truePeakDb: number }> => {
+  const measureMusic = async (music: { readonly startMs: number }): Promise<{ gainDb: number; truePeakDb: number }> => {
     signal.throwIfAborted();
     const remaining = deadline - now();
     if (remaining <= 0) throw new FfmpegTimeoutError(budgetMs, "");
-    const job = buildMusicMeasure({ path: music.path, startMs: music.startMs, durationMs: finalClips.reduce((sum, c) => sum + c.durationMs, 0) });
+    const job = buildMusicMeasure({ path: trackCopy, startMs: music.startMs, durationMs: finalClips.reduce((sum, c) => sum + c.durationMs, 0) });
     let truePeakDb: number;
     try {
       truePeakDb = await measure(job, { signal, timeoutMs: remaining });
@@ -205,8 +219,13 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     // Music is measured BEFORE pass 1: a track ffmpeg cannot read ends the job in a second, not after the photos were rendered.
     let music: { gainDb: number; truePeakDb: number } | null = null;
     if (input.audio.kind === "music") {
+      // The private copy: the store verified THESE bytes, and nothing that happens to the stored file from here on reaches the
+      // render. `wx`: the job folder is new, so a file already there is not ours.
+      await scrubFs(writeFile(trackCopy, input.audio.data, { flag: "wx" }));
+      // The store's own refusal (a `TrackUnavailableError`, whose text names no path) or the cancel comes out as it is.
+      await input.audio.check?.(trackCopy, signal);
       music = await measureMusic(input.audio);
-      pass2 = buildPass2({ clips: finalClips, clipDir, output: input.output, overlays: input.overlays, audio: { kind: "music", path: input.audio.path, startMs: input.audio.startMs, gainDb: music.gainDb } });
+      pass2 = buildPass2({ clips: finalClips, clipDir, output: input.output, overlays: input.overlays, audio: { kind: "music", path: trackCopy, startMs: input.audio.startMs, gainDb: music.gainDb } });
     }
     const finalPass = pass2;
     if (finalPass === null) throw new TypeError("runRenderJob: pass 2 was not built");

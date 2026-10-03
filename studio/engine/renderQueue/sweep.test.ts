@@ -34,6 +34,18 @@ describe("sweepRenderTmp", () => {
     expect(result.skipped).toEqual([]);
   });
 
+  test("removes the private copy of a music track a crashed job left in its folder", async () => {
+    const root = join(tempDir(), "render-tmp");
+    mkdirSync(join(root, "job-00000001"), { recursive: true });
+    writeFileSync(join(root, "job-00000001", "track.m4a"), "a stored track's verified bytes");
+
+    const result = await sweepRenderTmp(root);
+
+    expect(existsSync(join(root, "job-00000001", "track.m4a"))).toBe(false);
+    expect(readdirSync(root)).toEqual([]);
+    expect(result.skipped).toEqual([]);
+  });
+
   test("leaves the folder of a job that is running now (`keep`), so the sweep may run beside renders", async () => {
     const root = join(tempDir(), "render-tmp");
     mkdirSync(join(root, "job-00000001"), { recursive: true });

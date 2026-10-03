@@ -100,20 +100,30 @@ describe("TrackStore.stored: what the record says, with no disk", () => {
 });
 
 describe("TrackStore.openForRender: a track the render may read", () => {
-  test("gives the store's own path for the id, its size, sha256 and proven length", async () => {
+  test("gives the verified BYTES of the track, never a path, with its size, sha256 and proven length", async () => {
     const rig = await stored();
     const track = await rig.store.openForRender(idOf(rig, 0), signal());
-    expect(track.path).toBe(fileOf(rig, 0));
+    expect(Buffer.from(track.data).equals(Buffer.from(excerptOf(0)))).toBe(true);
+    expect("path" in track).toBe(false);
     expect(track.bytes).toBe(excerptOf(0).byteLength);
     expect(track.sha256).toBe(sha256Hex(excerptOf(0)));
     expect(track.decodedMs).toBe((EXCERPTS[0]?.durationMs ?? 0) - 20);
   });
 
-  test("has ffmpeg itself confirm the file holds exactly one audio stream, at this render, on the path it returns", async () => {
+  test("the bytes are the ones that were verified, whatever happens to the stored file afterwards", async () => {
+    const rig = await stored();
+    const track = await rig.store.openForRender(idOf(rig, 0), signal());
+    await writeFile(fileOf(rig, 0), new Uint8Array(excerptOf(0).byteLength));
+    expect(Buffer.from(track.data).equals(Buffer.from(excerptOf(0)))).toBe(true);
+  });
+
+  test("has ffmpeg itself confirm that the COPY it is given holds exactly one audio stream, when the render asks", async () => {
     const rig = await stored();
     rig.inspected.length = 0;
     const track = await rig.store.openForRender(idOf(rig, 2), signal());
-    expect(rig.inspected).toEqual([track.path]);
+    expect(rig.inspected).toEqual([]);
+    await track.check("/job/track.m4a", signal());
+    expect(rig.inspected).toEqual(["/job/track.m4a"]);
   });
 
   test("lists the list's title and artist as strings the output must not carry", async () => {
@@ -206,17 +216,33 @@ describe("TrackStore.openForRender: a clean refusal, and never an ffmpeg run on 
 
   test("a file ffmpeg now sees as more than one stream (cover art spelled in a way the walker did not know)", async () => {
     const rig = await stored({ inspect: async () => ["Audio", "Video"] });
-    expect((await refusal(rig.store.openForRender(idOf(rig, 0), signal()))).kind).toBe("not-audio");
+    const track = await rig.store.openForRender(idOf(rig, 0), signal());
+    expect((await refusal(track.check("/job/track.m4a", signal()))).kind).toBe("not-audio");
   });
 
   test("a file ffmpeg sees as no audio stream", async () => {
     const rig = await stored({ inspect: async () => [] });
-    expect((await refusal(rig.store.openForRender(idOf(rig, 0), signal()))).kind).toBe("not-audio");
+    const track = await rig.store.openForRender(idOf(rig, 0), signal());
+    expect((await refusal(track.check("/job/track.m4a", signal()))).kind).toBe("not-audio");
   });
 
   test("a file ffmpeg cannot be asked about in time", async () => {
     const rig = await stored({ inspect: async () => Promise.reject(new DecodeError("timeout")) });
-    expect((await refusal(rig.store.openForRender(idOf(rig, 0), signal()))).kind).toBe("not-audio");
+    const track = await rig.store.openForRender(idOf(rig, 0), signal());
+    expect((await refusal(track.check("/job/track.m4a", signal()))).kind).toBe("not-audio");
+  });
+
+  test("a cancel during the check is the abort reason", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled mid-check");
+    const rig = await stored({
+      inspect: async () => {
+        controller.abort(reason);
+        throw new DecodeError("aborted");
+      },
+    });
+    const track = await rig.store.openForRender(idOf(rig, 0), controller.signal);
+    expect(await track.check("/job/track.m4a", controller.signal).catch((e: unknown) => e)).toBe(reason);
   });
 
   test("a cancel is the abort reason, not a refusal of the track", async () => {
@@ -229,7 +255,8 @@ describe("TrackStore.openForRender: a clean refusal, and never an ffmpeg run on 
 
   test("the refusal's text names no path", async () => {
     const rig = await stored({ inspect: async () => ["Audio", "Video"] });
-    const error = await refusal(rig.store.openForRender(idOf(rig, 0), signal()));
+    const track = await rig.store.openForRender(idOf(rig, 0), signal());
+    const error = await refusal(track.check(join(root, "job", "track.m4a"), signal()));
     expect(error.message).not.toContain(musicDir);
     expect(error.message).not.toContain(root);
   });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
@@ -22,7 +22,7 @@ afterEach(() => {
 const scene = (id: string) => ({ photo: { source: "scene" as const, photoId: id }, focus: { x: 0.5, y: 0.5 } });
 const clip = (clipId: string, durationMs: number): Clip => ({ clipId, durationMs, transitionIn: "cut", kind: "photo", cell: scene(`photo-${clipId}`), motion: "static" });
 const CLIPS: Clip[] = [clip("a", 1000), clip("b", 1000)]; // 2 s, 60 frames
-const TRACK_NAME = "4199287736976977.m4a";
+const TRACK_BYTES = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
 
 function rig(over: Partial<RenderRunInput> = {}) {
   const root = mkdtempSync(join(tmpdir(), "studio-runner-music-"));
@@ -30,7 +30,7 @@ function rig(over: Partial<RenderRunInput> = {}) {
   const tmpRoot = join(root, "render-tmp");
   const exportDir = join(root, "export");
   mkdirSync(exportDir, { recursive: true });
-  const track = join(root, "music", "tracks", TRACK_NAME);
+  const track = join(tmpRoot, "job-00000001", "track.m4a");
   const output = join(exportDir, ".studio-part-job-00000001.mp4");
   const input: RenderRunInput = {
     jobId: "job-00000001",
@@ -39,7 +39,7 @@ function rig(over: Partial<RenderRunInput> = {}) {
     clips: CLIPS,
     resolvePhoto: (ref) => ({ path: join(root, `${ref.source === "scene" ? ref.photoId : ref.mediaId}.jpg`), width: 720, height: 1280 }),
     overlays: [],
-    audio: { kind: "music", path: track, startMs: 1500 },
+    audio: { kind: "music", startMs: 1500, data: TRACK_BYTES },
     output,
     signal: new AbortController().signal,
     onProgress: () => undefined,
@@ -245,6 +245,65 @@ describe("runRenderJob with music: a measurement that fails", () => {
 
     expect(error).toBeInstanceOf(FfmpegError);
     expect(existsSync(r.output)).toBe(false);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+});
+
+describe("runRenderJob with music: the render works on a private copy of the verified bytes", () => {
+  const copyOf = (r: ReturnType<typeof rig>): string => join(r.jobDir, "track.m4a");
+  const same = (bytes: Uint8Array | null): boolean => bytes !== null && bytes.join() === TRACK_BYTES.join();
+
+  test("writes the bytes to <job folder>/track.m4a before the measurement, and the measurement and pass 2 read that copy", async () => {
+    const r = rig();
+    const seen: Array<Uint8Array | null> = [];
+    const base = scripted(3.0, (call) => {
+      if (call.args.includes("concat")) seen.push(existsSync(copyOf(r)) ? new Uint8Array(readFileSync(copyOf(r))) : null);
+      goodFfmpeg(call);
+    });
+    const measure: Measure = async (job, options) => {
+      seen.push(new Uint8Array(readFileSync(job.argv[job.argv.indexOf("-i") + 1] ?? "")));
+      return base.deps.measure(job, options);
+    };
+
+    await runRenderJob(r.input, { ...base.deps, measure });
+
+    expect(base.measured[0]?.job.argv).toContain(copyOf(r));
+    expect(base.calls.find((c) => c.args.includes("concat"))?.args).toContain(copyOf(r));
+    expect(seen).toHaveLength(2);
+    expect(seen.every(same)).toBe(true);
+  });
+
+  test("removes the copy with the job folder, on success and on failure", async () => {
+    const ok = rig();
+    await runRenderJob(ok.input, scripted(3.0).deps);
+    expect(existsSync(copyOf(ok))).toBe(false);
+    const bad = rig();
+    await runRenderJob(bad.input, scripted(() => Promise.reject(new FfmpegError("failed", 1, ""))).deps).catch(() => undefined);
+    expect(existsSync(bad.jobDir)).toBe(false);
+  });
+
+  test("has the store's check run on the copy first, before the measurement and any ffmpeg", async () => {
+    const checked: string[] = [];
+    const r = rig();
+    const audio = { kind: "music" as const, startMs: 1500, data: TRACK_BYTES, check: async (path: string) => void checked.push(path, existsSync(path) ? "present" : "absent") };
+    const { deps, events } = scripted(3.0);
+
+    await runRenderJob({ ...r.input, audio }, deps);
+
+    expect(checked).toEqual([copyOf(r), "present"]);
+    expect(events[0]).toBe("measure");
+  });
+
+  test("a check that refuses the copy stops the job before the measurement, with nothing left", async () => {
+    const r = rig();
+    const refusal = new Error("not one audio stream");
+    const audio = { kind: "music" as const, startMs: 1500, data: TRACK_BYTES, check: async () => Promise.reject(refusal) };
+    const { deps, events } = scripted(3.0);
+
+    const error = await runRenderJob({ ...r.input, audio }, deps).catch((e: unknown) => e);
+
+    expect(error).toBe(refusal);
+    expect(events).toEqual([]);
     expect(existsSync(r.jobDir)).toBe(false);
   });
 });
