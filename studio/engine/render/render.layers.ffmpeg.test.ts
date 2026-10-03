@@ -348,9 +348,17 @@ describe("layers on real ffmpeg: -xerror stops a layer call on a corrupt sticker
   beforeAll(async () => {
     const good = new Uint8Array(await Bun.file(join(import.meta.dir, "../../assets/stickers/heart-pulse.apng")).arrayBuffer());
     const bad = good.slice();
-    // Inside a later frame's compressed data, well past the header and the first frame: the CRC no longer matches and the zlib stream is broken.
-    const at = Math.floor(bad.length * 0.6);
-    for (let i = 0; i < 40; i++) bad[at + i] = (bad[at + i] ?? 0) ^ 0xa5;
+    // The zlib data of three later frames (their fdAT chunks, found by walking the chunk list, so the damage is in the compressed bytes on every
+    // build and never in a header): 40 bytes each, the CRC no longer matches and the deflate stream is broken.
+    const view = new DataView(bad.buffer);
+    let seen = 0;
+    for (let pos = 8; pos + 12 <= bad.length; ) {
+      const length = view.getUint32(pos);
+      const type = String.fromCharCode(...bad.subarray(pos + 4, pos + 8));
+      if (type === "fdAT" && ++seen % 3 === 0) for (let i = 8; i < Math.min(48, length); i++) bad[pos + 8 + i] = (bad[pos + 8 + i] ?? 0) ^ 0xa5;
+      pos += 12 + length;
+    }
+    expect(seen).toBeGreaterThanOrEqual(3);
     const corrupt = join(dir, "corrupt.apng");
     writeBytes(corrupt, bad);
     const layer: OverlayInput = { path: corrupt, format: "apng", box: { x: 100, y: 200, w: 320, h: 320 }, resize: true, startFrame: 0, endFrame: TOTAL, loopFrames: 24, sourceSize: { w: 320, h: 320 } };

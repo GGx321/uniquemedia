@@ -32,8 +32,8 @@
  *   the snapshot; after an app restart the key is decrypted and sent again;
  *   clearApiKey removes it;
  * - packaged: the engine entry lives inside app.asar, not unpacked; the fuses are set;
- * - the render scenario (plan 3a.9 and 3e.1, `runPackagedRenderScenario`): six real renders by `videos.render {spec}` with no
- *   window work (five pairwise 4 s specs and a mixed 15 s timeline, renderSmokeSpecs.ts) into a test export root, each file
+ * - the render scenario (plan 3a.9 and 3e.1, `runPackagedRenderScenario`): seven real renders by `videos.render {spec}` with no
+ *   window work (five pairwise 4 s specs, a mixed 15 s timeline and a layered 15 s one with a real caption and a built-in sticker, renderSmokeSpecs.ts) into a test export root, each file
  *   checked by the engine's verifier again, by ffprobe and by a box reader (invariants 14 and 20); the engine killed ALONE (Windows
  *   without /T) in the middle of a render (nothing is left: no file, record or used mark) and, through the E2E-only commit hold
  *   (studio/engine/videos/e2eCommitHold.ts), between the rename and the record (the restart adopts the video with its record and
@@ -2362,9 +2362,9 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
 
     // 7. Everything that was rendered is still there, and nothing else is.
     const finalList = await listVideos(cdp, avatarId);
-    check("render scenario: at the end every committed video is present, six of them", finalList.length === 6 && finalList.every((v) => v.fileState === "present"), finalList);
+    check("render scenario: at the end every committed video is present, seven of them", finalList.length === 7 && finalList.every((v) => v.fileState === "present"), finalList);
     const endNames = await namesIn(mia);
-    check("render scenario: the avatar's export folder holds exactly those videos and no temp file", endNames.length === 6 && finalVideos(endNames).length === 6, endNames);
+    check("render scenario: the avatar's export folder holds exactly those videos and no temp file", endNames.length === 7 && finalVideos(endNames).length === 7, endNames);
     fact("renders", renders.map((r) => ({ name: r.plan.name, seconds: Math.round(r.ms / 100) / 10, bytes: r.bytes })));
     fact("largest output", Math.max(...renders.map((r) => r.bytes)));
   } finally {
