@@ -6,6 +6,7 @@ import {
   EXPORT_CHANGING_DETAIL,
   EXPORT_UNAVAILABLE_REASONS_RU,
   MONTAGE_ISSUE_MESSAGES_RU,
+  MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
   renderQueueLimitOf,
@@ -53,6 +54,8 @@ function baseText(error: EngineError): string {
   if (error.code === "AGE_CHECK_FAILED" && error.detail === AGE_CHECK_ALREADY_REFUSED_DETAIL) return AGE_CHECK_ALREADY_REFUSED_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
+  // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.
+  if (error.code === "MUSIC_UNAVAILABLE" && error.musicReason !== undefined) return MUSIC_UNAVAILABLE_REASONS_RU[error.musicReason];
   return ERROR_MESSAGES_RU[error.code];
 }
 
@@ -82,6 +85,11 @@ export function errorSettingsFocus(code: ErrorCode): SettingsFocus | null {
       return "money";
     case "EXPORT_UNAVAILABLE":
       return "export";
+    case "MUSIC_KEY_MISSING":
+    case "MUSIC_KEY_REJECTED":
+    case "MUSIC_QUOTA_EXHAUSTED":
+    case "MUSIC_UNAVAILABLE":
+      return "music";
     default:
       return null;
   }
@@ -91,6 +99,7 @@ const SETTINGS_LINK_LABELS: Record<SettingsFocus, string> = {
   key: "Открыть ключ в Настройках",
   money: "Открыть деньги в Настройках",
   export: "Открыть папку в Настройках",
+  music: "Открыть музыку в Настройках",
 };
 
 export function settingsLinkLabel(focus: SettingsFocus): string {

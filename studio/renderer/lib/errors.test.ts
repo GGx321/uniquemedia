@@ -6,6 +6,7 @@ import {
   ERROR_MESSAGES_RU,
   EXPORT_CHANGING_DETAIL,
   EXPORT_UNAVAILABLE_REASONS_RU,
+  MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
   renderQueueFullDetail,
@@ -123,6 +124,21 @@ test("PHOTO_UNAVAILABLE never shows the engine's detail", () => {
   const text = errorText({ code: "PHOTO_UNAVAILABLE", detail: "an unreadable video record: Lena/2026-09-29_photo_001.mp4", issues: [{ code: "photo-unavailable", path: ["clips", 0, "cell"] }] });
   expect(text).toBe(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE);
   expect(text).not.toContain("Lena");
+});
+
+// 3c.6: music that could not be fetched says its cause, and every music refusal is fixed on the Settings «Музыка» card.
+test("MUSIC_UNAVAILABLE with its cause says the cause's own text, not the general «Попробуйте позже»", () => {
+  expect(errorText({ code: "MUSIC_UNAVAILABLE", musicReason: "log-corrupt" })).toBe(MUSIC_UNAVAILABLE_REASONS_RU["log-corrupt"]);
+  expect(errorText({ code: "MUSIC_UNAVAILABLE", musicReason: "shutting-down" })).not.toContain("позже");
+});
+
+test("a 429's wait is added to its cause's text", () => {
+  expect(errorText({ code: "MUSIC_UNAVAILABLE", musicReason: "rate-limited", retryAfterMs: 90_000 })).toBe(`${MUSIC_UNAVAILABLE_REASONS_RU["rate-limited"]} Повторите через 1${NBSP}мин 30${NBSP}с.`);
+});
+
+test.each(["MUSIC_KEY_MISSING", "MUSIC_KEY_REJECTED", "MUSIC_QUOTA_EXHAUSTED", "MUSIC_UNAVAILABLE"] as const)("%s is fixed in Settings, on the music card", (code) => {
+  expect(errorSettingsFocus(code)).toBe("music");
+  expect(settingsLinkLabel("music")).toBe("Открыть музыку в Настройках");
 });
 
 test("MONTAGE_INVALID adds the first issue's own text to the general one", () => {

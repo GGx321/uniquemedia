@@ -1614,6 +1614,61 @@ input[type="range"]::-webkit-slider-thumb {
   text-align: center;
 }
 
+/* «Музыка · flashapi» (3c.6): the quota bar's three tones (the components sheet: accent, #f4b957 near the limit,
+   the danger colour once spent), the row's confirmation and its reasons. */
+.bar-warn > span {
+  background: var(--warn);
+}
+
+.bar-danger > span {
+  background: var(--danger);
+}
+
+.music-meter {
+  padding: 8px 0;
+}
+
+/* The bar keeps the artboard's 300 px; the hints below it take the row's width. */
+.music-meter .bar {
+  max-width: 300px;
+  margin: 6px 0 4px;
+}
+
+.music-key-mask {
+  width: 120px;
+}
+
+.rl > .music-confirm,
+.notice-text .music-confirm {
+  color: var(--accent-text);
+}
+
+.rl > .music-failure {
+  color: var(--danger);
+}
+
+.rl > .music-reason {
+  color: var(--faint);
+}
+
+.music-progress {
+  max-width: 300px;
+  margin-top: 4px;
+}
+
+.music-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.music-loading {
+  margin: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
 /* ── Photos (Photos.dc.html) ── */
 
 .photos-page {

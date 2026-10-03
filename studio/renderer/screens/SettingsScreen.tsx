@@ -3,10 +3,13 @@ import {
   AbsolutePath,
   ApiKey,
   IMPORT_FALLBACK_PRICE,
+  MusicKey,
   NetworkConcurrency,
   type ApiKeyStatus,
   type EngineError,
   type MoneyStatus,
+  type MusicKeyStatus,
+  type MusicStatus,
   type OpenMoneyStatus,
   type ReconcileReason,
   type ReconcileResult,
@@ -14,9 +17,11 @@ import {
 } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type SyncPhase } from "../engine/store";
+import { errorText } from "../lib/errors";
 import { EXPORT_UNAVAILABLE_TITLE, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText, type PickedNotice } from "../lib/exportFolder";
 import { countOf, monthName, NBSP, waitLabel } from "../lib/format";
 import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars, type DollarsParse } from "../lib/money";
+import { listLine, musicFailureText, quotaView, recoveryText, refreshGate, refreshLabel, refusalText } from "../lib/music";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { bound } from "../lib/traits";
 import type { SettingsFocus } from "../navigation";
@@ -874,6 +879,497 @@ function ExportFolderRow({ settings }: { settings: Settings }) {
   );
 }
 
+// ---------- music (3c.6, Settings.dc.html «Музыка · flashapi») ----------
+
+/** The artboard's mask: eight dots, then the last four chars, the only part of the key that ever reaches the window. */
+const MUSIC_KEY_MASK = "••••••••";
+
+function musicKeyState(status: MusicKeyStatus, encryptionAvailable: boolean): KeyState {
+  if (status.rejected) {
+    return {
+      tone: "danger",
+      icon: "alert",
+      hint: "RapidAPI отклонил ключ (401)",
+      notice: { text: "Обновление списка остановлено и само не повторяется: с этим ключом запросы не отправляются и не тратятся. Замените ключ — например, если старый отозван." },
+    };
+  }
+  if (status.stored) return { tone: "ok", icon: "lock", hint: "зашифрован системой", notice: null };
+  if (!encryptionAvailable) return { tone: "danger", icon: "alert", hint: "шифрование недоступно — ключ не сохраняется", notice: null };
+  return { tone: null, icon: null, hint: "не сохранён · X-RapidAPI-Key из кабинета RapidAPI, с подпиской на flashapi", notice: null };
+}
+
+/**
+ * «Ключ RapidAPI»: the same component as the OpenRouter key (the artboard's note), with «Заменить» and «Удалить» and no
+ * «Проверить» (Q4: a check would spend one of the 30 requests). The key goes through main's own flow
+ * (`settings.setMusicKey`): the typed text leaves React state before the request does, and only its status comes back.
+ */
+function MusicKeyRow({ status, encryptionAvailable }: { status: MusicKeyStatus; encryptionAvailable: boolean }) {
+  const { client, store } = useEngine();
+  const inputId = useId();
+  const issueId = useId();
+  const [editing, setEditing] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [issue, setIssue] = useState<string | null>(null);
+  const [error, setError] = useState<EngineError | null>(null);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const replaceRef = useRef<HTMLButtonElement>(null);
+  // Set when a user action removes the focused control; the effect moves focus to its successor.
+  const [focusNext, setFocusNext] = useState<"input" | "replace" | null>(null);
+  const showInput = editing || !status.stored;
+  const state = musicKeyState(status, encryptionAvailable);
+
+  useEffect(() => {
+    if (focusNext === null) return;
+    (focusNext === "input" ? inputRef.current : replaceRef.current)?.focus();
+    setFocusNext(null);
+  }, [focusNext, showInput]);
+
+  async function save(): Promise<void> {
+    const parsed = MusicKey.safeParse(typed);
+    if (!parsed.success) {
+      setIssue("Ключ — от 8 печатных символов без пробелов: X-RapidAPI-Key из кабинета RapidAPI.");
+      return;
+    }
+    // The typed key leaves React state before the request goes out; only its status comes back.
+    setTyped("");
+    setIssue(null);
+    setError(null);
+    setBusy(true);
+    const reply = await client.request("settings.setMusicKey", { key: parsed.data });
+    setBusy(false);
+    if (reply.ok) {
+      store.setMusicKey(reply.result);
+      setEditing(false);
+      setFocusNext(reply.result.stored ? "replace" : "input");
+    } else setError(reply.error);
+  }
+
+  async function clear(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    const reply = await client.request("settings.clearMusicKey", {});
+    setBusy(false);
+    if (reply.ok) {
+      store.setMusicKey(reply.result);
+      setFocusNext("input");
+    } else setError(reply.error);
+  }
+
+  return (
+    <>
+      <Row
+        label="Ключ RapidAPI"
+        labelFor={showInput ? inputId : undefined}
+        hintRole="status"
+        hintTone={state.tone === "ok" ? undefined : (state.tone ?? undefined)}
+        hint={
+          <span className={state.tone === "ok" ? "key-hint key-hint-ok" : "key-hint"}>
+            {state.icon && <Icon name={state.icon} size={12} strokeWidth={2.2} />}
+            {state.hint}
+          </span>
+        }
+      >
+        {status.stored && !showInput && (
+          <>
+            <input className="in in-s music-key-mask" type="text" readOnly value={`${MUSIC_KEY_MASK}${status.last4 ?? ""}`} aria-label={`Ключ RapidAPI, последние символы ${status.last4 ?? ""}`} />
+            <button
+              ref={replaceRef}
+              type="button"
+              className="btn btn-s"
+              aria-label="Заменить ключ RapidAPI"
+              onClick={() => {
+                setEditing(true);
+                setFocusNext("input");
+              }}
+              disabled={busy}
+            >
+              Заменить
+            </button>
+            <button type="button" className="btn btn-s" aria-label="Удалить ключ RapidAPI" onClick={() => void clear()} disabled={busy} aria-busy={busy}>
+              {busy ? (
+                <>
+                  <Spin />
+                  Удаляем…
+                </>
+              ) : (
+                "Удалить"
+              )}
+            </button>
+          </>
+        )}
+        {showInput && (
+          <form
+            className="inline-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void save();
+            }}
+          >
+            <input
+              ref={inputRef}
+              id={inputId}
+              className="in in-s key-field"
+              type="password"
+              value={typed}
+              placeholder="X-RapidAPI-Key"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={!encryptionAvailable || busy}
+              aria-invalid={issue !== null}
+              aria-describedby={issue ? issueId : undefined}
+              onChange={(e) => setTyped(e.currentTarget.value)}
+            />
+            <button type="submit" className="btn btn-s btn-p" aria-label="Сохранить ключ RapidAPI" aria-busy={busy} disabled={!encryptionAvailable || busy || typed.trim() === ""}>
+              {busy ? (
+                <>
+                  <Spin />
+                  Сохраняем…
+                </>
+              ) : (
+                "Сохранить"
+              )}
+            </button>
+            {status.stored && (
+              <button
+                type="button"
+                className="btn btn-s"
+                aria-label="Отменить замену ключа RapidAPI"
+                onClick={() => {
+                  setEditing(false);
+                  setTyped("");
+                  setIssue(null);
+                  setFocusNext("replace");
+                }}
+              >
+                Отмена
+              </button>
+            )}
+          </form>
+        )}
+      </Row>
+      {state.notice && <Notice tone="danger">{state.notice.text}</Notice>}
+      {issue && (
+        <p id={issueId} className="field-error" role="alert">
+          {issue}
+        </p>
+      )}
+      {error && <Notice tone="danger">{errorText(error)}</Notice>}
+    </>
+  );
+}
+
+/** «Запросы flashapi»: «отправлено N из 30 за 31 день», the bar, the figure as the artboard sets it, and when the next frees. */
+function MusicQuotaRow({ music }: { music: MusicStatus }) {
+  const labelId = useId();
+  const view = quotaView(music);
+  // Two lines: the count and what counts, then when the next request frees (and flashapi's own lower figure).
+  const when = [view.nextFree, view.server].filter((part): part is string => part !== null).join(" · ");
+  return (
+    <div className="row">
+      <div className="rl music-meter">
+        <b id={labelId}>Запросы flashapi</b>
+        <div
+          className={`bar bar-${view.tone}`}
+          role="progressbar"
+          aria-labelledby={labelId}
+          aria-valuemin={0}
+          aria-valuemax={view.figure.limit}
+          aria-valuenow={view.figure.sent}
+          aria-valuetext={view.line}
+        >
+          <span style={{ width: `${view.share}%` }} />
+        </div>
+        <span>{view.line} · считаются и запросы с ошибкой</span>
+        {when !== "" && <span>{when}</span>}
+      </div>
+      <span className="mono money-figure">
+        {view.figure.sent} <span className="faint">из {view.figure.limit}</span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * «Тренды Instagram»: the list's age and «Обновить · 1 запрос». A request costs one of 30 per 31 days, so the first click only
+ * asks, in the row itself (the artboard's confirm state), saying what is left and when the next frees; only the confirmation
+ * sends `music.refresh {confirm: true}`, once. A closed refresh says why on the row; a refresh in flight shows how far it is.
+ */
+function MusicTrendsRow({ musicKey, music }: { musicKey: MusicKeyStatus; music: MusicStatus }) {
+  const { store } = useEngine();
+  const labelId = useId();
+  const hintId = useId();
+  const reasonId = useId();
+  const [asking, setAsking] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [refusal, setRefusal] = useState<EngineError | null>(null);
+  const askRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const [focusNext, setFocusNext] = useState<"ask" | "cancel" | null>(null);
+  const gate = refreshGate(musicKey, music, Date.now());
+  // The confirmation is for a request the engine would let leave: a status that closed meanwhile closes it too.
+  const confirming = asking && (gate.kind === "ready" || sending);
+  const label = refreshLabel(music);
+
+  useEffect(() => {
+    if (focusNext === null) return;
+    (focusNext === "cancel" ? cancelRef.current : askRef.current)?.focus();
+    setFocusNext(null);
+  }, [focusNext, confirming]);
+
+  function ask(): void {
+    setRefusal(null);
+    setAsking(true);
+    setFocusNext("cancel");
+  }
+
+  function cancel(): void {
+    setAsking(false);
+    setFocusNext("ask");
+  }
+
+  async function confirm(): Promise<void> {
+    setSending(true);
+    const reply = await store.confirmMusicRefresh();
+    setSending(false);
+    setAsking(false);
+    if (reply.ok) return;
+    setRefusal(reply.error);
+    // A refusal means the window's picture was behind the engine's: ask for the status again, so the row says why it is closed.
+    void store.refreshMusic();
+  }
+
+  const reason = gate.kind === "blocked" ? gate.reason : null;
+  const failure = music.refresh.state === "failed" ? music.refresh.error : null;
+  return (
+    <>
+      <div className="row">
+        <div className="rl">
+          <b id={labelId}>Тренды Instagram</b>
+          {confirming && gate.kind === "ready" ? (
+            <span id={hintId} role="status" className="music-confirm">
+              {gate.confirm}
+            </span>
+          ) : gate.kind === "running" ? (
+            <span id={hintId} role="status">
+              обновляется · {gate.percent}
+              {NBSP}%
+            </span>
+          ) : (
+            <span id={hintId}>{listLine(music)}</span>
+          )}
+          {gate.kind === "running" && (
+            <div className="bar music-progress" aria-hidden="true">
+              <span style={{ width: `${gate.percent}%` }} />
+            </div>
+          )}
+          {!confirming && failure !== null && (
+            <span role="alert" className="music-failure">
+              {musicFailureText(failure)}
+            </span>
+          )}
+          {!confirming && reason !== null && (
+            <span id={reasonId} className="music-reason">
+              {reason}
+            </span>
+          )}
+        </div>
+        <div className="row-control">
+          {confirming ? (
+            <div
+              className="music-confirm-actions"
+              role="group"
+              aria-labelledby={labelId}
+              aria-describedby={hintId}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && !sending) cancel();
+              }}
+            >
+              <button ref={cancelRef} type="button" className="btn btn-s" onClick={cancel} disabled={sending}>
+                Отмена
+              </button>
+              <button type="button" className="btn btn-s btn-p" onClick={() => void confirm()} disabled={sending} aria-busy={sending}>
+                {sending ? (
+                  <>
+                    <Spin />
+                    Отправляем…
+                  </>
+                ) : (
+                  label
+                )}
+              </button>
+            </div>
+          ) : (
+            <button
+              ref={askRef}
+              type="button"
+              className="btn btn-s"
+              onClick={ask}
+              disabled={gate.kind !== "ready"}
+              aria-busy={gate.kind === "running"}
+              aria-describedby={reason !== null ? `${hintId} ${reasonId}` : hintId}
+            >
+              {gate.kind === "running" ? (
+                <>
+                  <Spin />
+                  Обновляется…
+                </>
+              ) : (
+                <>
+                  <Icon name="reload" size={14} />
+                  {label}
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+      {refusal && <Notice tone="danger">{refusalText(refusal)}</Notice>}
+    </>
+  );
+}
+
+/**
+ * The quota log's own trouble, under the rows: a line still waiting to be written (`held`), a log that cannot be read, and a
+ * damaged log, the only one with a way out (3c.6): put aside, and the quota closed for exactly 31 days, behind a confirmation
+ * that names the day it reopens. Nothing is sent.
+ */
+function QuotaLogNotice({ music }: { music: MusicStatus }) {
+  const { store } = useEngine();
+  const [asking, setAsking] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<EngineError | null>(null);
+  const askRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const [focusNext, setFocusNext] = useState<"ask" | "cancel" | null>(null);
+
+  useEffect(() => {
+    if (focusNext === null) return;
+    (focusNext === "cancel" ? cancelRef.current : askRef.current)?.focus();
+    setFocusNext(null);
+  }, [focusNext, asking]);
+
+  if (music.quotaLog === "held") {
+    return (
+      <Notice tone="warn" title="Ответ сервиса ещё не записан в журнал">
+        Studio допишет его в журнал запросов при следующем обновлении, а до этого новый запрос не уйдёт: иначе он обошёл бы учёт квоты. Если так и не
+        проходит, освободите место на диске и проверьте права на папку данных Studio.
+      </Notice>
+    );
+  }
+  if (music.quotaLog === "unreadable") {
+    return (
+      <Notice tone="danger" title="Журнал запросов не читается">
+        Без журнала Studio не знает, сколько запросов ушло за 31{NBSP}день, поэтому новые не отправляются. Проверьте доступ к файлу журнала в папке данных
+        Studio и перезапустите приложение.
+      </Notice>
+    );
+  }
+  if (music.quotaLog !== "corrupt") return null;
+
+  const text = recoveryText(Date.now());
+
+  async function recover(): Promise<void> {
+    setSending(true);
+    setError(null);
+    const reply = await store.confirmQuotaLogRecovery();
+    setSending(false);
+    setAsking(false);
+    if (reply.ok) return;
+    setError(reply.error);
+    void store.refreshMusic();
+  }
+
+  return (
+    <Notice
+      tone="danger"
+      title="Журнал запросов повреждён"
+      actions={
+        asking ? (
+          <div
+            className="music-confirm-actions"
+            role="group"
+            aria-label="Восстановить журнал запросов"
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && !sending) {
+                setAsking(false);
+                setFocusNext("ask");
+              }
+            }}
+          >
+            <button
+              ref={cancelRef}
+              type="button"
+              className="btn btn-s"
+              disabled={sending}
+              onClick={() => {
+                setAsking(false);
+                setFocusNext("ask");
+              }}
+            >
+              Отмена
+            </button>
+            <button type="button" className="btn btn-s btn-p" disabled={sending} aria-busy={sending} onClick={() => void recover()}>
+              {sending ? (
+                <>
+                  <Spin />
+                  Восстанавливаем…
+                </>
+              ) : (
+                "Восстановить и закрыть на 31 день"
+              )}
+            </button>
+          </div>
+        ) : (
+          <button
+            ref={askRef}
+            type="button"
+            className="btn btn-s"
+            onClick={() => {
+              setError(null);
+              setAsking(true);
+              setFocusNext("cancel");
+            }}
+          >
+            Восстановить журнал…
+          </button>
+        )
+      }
+    >
+      <p>Studio не может посчитать, сколько запросов ушло за 31{NBSP}день, поэтому новые не отправляются, пока журнал не начат заново.</p>
+      {asking && <p className="music-confirm">{text.confirm}</p>}
+      {error && <p>{error.code === "VALIDATION" ? "Журнал уже в порядке: ничего не изменено." : errorText(error)}</p>}
+    </Notice>
+  );
+}
+
+/** «Музыка · flashapi»: the key, the quota and the trends list (3c.6). The status is asked when the card opens and after a restart. */
+function MusicCard({ settings, headingRef }: { settings: Settings; headingRef: Ref<HTMLHeadingElement> }) {
+  const { store } = useEngine();
+  const view = useEngineView();
+  const ready = view.phase === "ready";
+
+  useEffect(() => {
+    if (ready) void store.refreshMusic();
+  }, [ready, view.bootId, store]);
+
+  const { music } = view;
+  return (
+    <Card title="Музыка · flashapi" id="settings-music" headingRef={headingRef}>
+      <MusicKeyRow status={settings.musicKey} encryptionAvailable={settings.apiKey.encryptionAvailable} />
+      {music === null ? (
+        <p className="muted music-loading">Загружаем квоту…</p>
+      ) : (
+        <>
+          <MusicQuotaRow music={music} />
+          <MusicTrendsRow musicKey={settings.musicKey} music={music} />
+          <QuotaLogNotice music={music} />
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
   const { store } = useEngine();
   const view = useEngineView();
@@ -881,6 +1377,8 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
   const openRouterHeading = useRef<HTMLHeadingElement>(null);
   // An EXPORT_UNAVAILABLE link lands on the folders card, where the export folder is fixed.
   const foldersHeading = useRef<HTMLHeadingElement>(null);
+  // A music error (the editor's music tab) lands on the «Музыка» card.
+  const musicHeading = useRef<HTMLHeadingElement>(null);
   const ready = view.phase === "ready";
 
   useEffect(() => {
@@ -889,7 +1387,7 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
 
   useEffect(() => {
     if (!ready || !focus) return;
-    const target = focus === "export" ? foldersHeading.current : openRouterHeading.current;
+    const target = focus === "export" ? foldersHeading.current : focus === "music" ? musicHeading.current : openRouterHeading.current;
     target?.scrollIntoView?.({ block: "start", behavior: "smooth" });
     target?.focus({ preventScroll: true });
   }, [ready, focus]);
@@ -956,6 +1454,7 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
               <LibraryRow settings={settings} />
               <ExportFolderRow settings={settings} />
             </Card>
+            <MusicCard settings={settings} headingRef={musicHeading} />
           </div>
         </div>
       )}

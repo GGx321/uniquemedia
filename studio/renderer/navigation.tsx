@@ -16,7 +16,7 @@ export type Route =
   | { name: "editor"; montageId: string; created?: boolean }
   | { name: "section"; id: "autopilot" };
 
-export type SettingsFocus = "key" | "money" | "export";
+export type SettingsFocus = "key" | "money" | "export" | "music";
 
 export interface NavigateOptions {
   /** Skips the leave guard: the owner chose to leave without saving. */
