@@ -8,7 +8,7 @@ export const AVATAR_ID = "avatar-mia-0001";
 export const MONTAGE_ID = "montage-0000001";
 
 /** A photo clip of `photoId` lasting `durationMs`, at `index` (for its id). */
-export function photoClip(index: number, photoId: string, durationMs = 2_000): MontageDraft["clips"][number] {
+export function photoClip(index: number, photoId: string, durationMs = 2_000): Extract<MontageDraft["clips"][number], { kind: "photo" }> {
   return {
     clipId: `clip-${String(index + 1).padStart(3, "0")}`,
     durationMs,
@@ -17,6 +17,41 @@ export function photoClip(index: number, photoId: string, durationMs = 2_000): M
     cell: { photo: { source: "scene", photoId }, focus: null },
     motion: "kenburns",
   };
+}
+
+/** A collage clip at `index` of `photoIds` (null = an empty cell); its layout follows the cell count. */
+export function collageClip(index: number, photoIds: readonly (string | null)[], durationMs = 3_000, stagger = true): Extract<MontageDraft["clips"][number], { kind: "collage" }> {
+  const layout = photoIds.length === 2 ? "collage2" : photoIds.length === 3 ? "collage3" : "collage4";
+  return {
+    clipId: `clip-${String(index + 1).padStart(3, "0")}`,
+    durationMs,
+    transitionIn: "cut",
+    kind: "collage",
+    layout,
+    cells: photoIds.map((photoId) => ({ photo: photoId === null ? null : { source: "scene", photoId }, focus: null })),
+    motion: "kenburns",
+    stagger,
+  };
+}
+
+/** An own video clip (3f) at `index`, from `trimStartMs` into its source. */
+export function videoClip(index: number, durationMs = 2_000, trimStartMs = 0): Extract<MontageDraft["clips"][number], { kind: "video" }> {
+  return { clipId: `clip-${String(index + 1).padStart(3, "0")}`, durationMs, transitionIn: "cut", kind: "video", mediaId: "media-own-0001", trimStartMs, focus: null };
+}
+
+/** A text layer over `[startMs, endMs)`. */
+export function textLayer(index: number, startMs: number, endMs: number): MontageDraft["layers"][number] {
+  return { layerId: `layer-${String(index + 1).padStart(3, "0")}`, startMs, endMs, kind: "text", value: "sunday reset", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.2, scale: 1 };
+}
+
+/** A built-in sticker layer over `[startMs, endMs)`. */
+export function stickerLayer(index: number, startMs: number, endMs: number): MontageDraft["layers"][number] {
+  return { layerId: `layer-${String(index + 1).padStart(3, "0")}`, startMs, endMs, kind: "sticker", sticker: { source: "builtin", stickerId: "sticker-heart" }, x: 0.6, y: 0.5, size: 0.2 };
+}
+
+/** `n` photo clips of `durationMs` each, photos `photo-mia-0001…`. */
+export function photoClips(n: number, durationMs = 2_000): MontageDraft["clips"] {
+  return Array.from({ length: n }, (_, i) => photoClip(i, `photo-mia-${String(i + 1).padStart(4, "0")}`, durationMs));
 }
 
 /** A valid draft of `clips` for MIA; `n` photo clips of 2 s when a number is given. */
