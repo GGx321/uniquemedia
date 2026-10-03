@@ -370,6 +370,22 @@ describe("the z-order («Слой выше» / «Слой ниже»)", () => {
     expect(saved.layers.map((l) => l.layerId)).toEqual(["layer-002", "layer-001"]);
   });
 
+  test("a held ⌥↑ (autorepeat) is one step up the z-order, and one undo step", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [textLayer(0, 0, 3_000), textLayer(1, 500, 3_000), textLayer(2, 1_000, 3_000)] });
+    const first = block(/^Текст 1:/);
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowUp", altKey: true });
+    fireEvent.keyDown(first, { key: "ArrowUp", altKey: true, repeat: true });
+    fireEvent.keyDown(first, { key: "ArrowUp", altKey: true, repeat: true });
+    fireEvent.keyUp(first, { key: "ArrowUp" });
+    const saved = await nextSave(engine);
+    expect(saved.layers.map((l) => l.layerId)).toEqual(["layer-002", "layer-001", "layer-003"]);
+    undo();
+    expect(document.activeElement?.getAttribute("data-layer-id")).toBe("layer-001");
+    expect(blockNames(texts())[0]).toBe("Текст 1: «sunday reset», 0.0–3.0 с");
+  });
+
   test("a clip or nothing selected: the z-order steps are off", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client);
