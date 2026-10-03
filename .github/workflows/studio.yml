@@ -6,14 +6,16 @@
 #   blocking    `build` (macOS + Windows, every push to main and every tag): the whole suite, correctness only. A wall-clock
 #               budget in it has a generous bound that only a runaway trips (assertBudget in studio/testing/tiers.ts).
 #   perf        `perf` (every push to main, never blocks): the `[perf]` tests with their tight wall-clock budgets enforced and
-#               the numbers printed: deadline headroom, the event-loop gap, "stays fast on the worst input". ubuntu and Windows.
+#               the numbers printed: deadline headroom, the event-loop gap, "stays fast on the worst input". ubuntu per push;
+#               Windows joins in the scheduled tier.
 #   quarantine  `quarantine` (every push to main, never blocks, skipped while the list is empty): the `[quarantine]` tests.
 #               A test that flakes ONCE is added to studio/testing/quarantine.ts with the failing run id and the date, and
 #               tagged in the same change, so main stops going red on it and the signal stays. It leaves the list when it
 #               is fixed. Quarantine is never a fix.
-#   scheduled   `heavy` and `canary` (the weekly cron, or a manual run with tier "scheduled"; ubuntu only): the `[heavy]`
-#               tests (the font byte-mutation fuzz, the sticker script in a fresh process) and the randomized suite on
-#               `bun latest`. Not per push: they cost minutes and say nothing a push could have changed.
+#   scheduled   `heavy`, `canary` and the Windows leg of `perf` (the weekly cron, or a manual run with tier "scheduled"; ubuntu
+#               except that leg): the `[heavy]` tests (the font byte-mutation fuzz, the sticker script in a fresh process),
+#               the randomized suite on `bun latest`, and the perf numbers on Windows's coarse timers. Not per push: they cost
+#               minutes and say nothing a push could have changed.
 name: studio
 on:
   workflow_dispatch:
@@ -142,6 +144,10 @@ jobs:
           }
           process.exit(failed ? 1 : 0)'
       - run: bunx tsc --noEmit -p studio/tsconfig.json
+      # studio/shared is the contract the engine, the main process and the renderer all import: it must typecheck with NO Node,
+      # Bun or DOM types (its own tsconfig sets `types: []`), which the step above (Node types included) does not prove. Moved
+      # here from two tests that each spawned this same tsc (CI-4: 4 and 3 s on Windows).
+      - run: bunx tsc --noEmit -p studio/shared/tsconfig.json
       # Bounded so a future hang (like the Windows one an unref'd
       # AbortSignal.timeout() timer caused here — fixed by timeoutSignal.ts's
       # ref'd replacement) fails in minutes, not by holding a runner for
@@ -281,17 +287,19 @@ jobs:
   # measurements of the runner as much as of the code (deadline headroom, the
   # event-loop gap, "stays fast on the worst input"), so they must not decide
   # whether a push is red: `continue-on-error` keeps the workflow green and the
-  # numbers stay in the log. Windows is here because its coarse timers are the
-  # reason these bounds flaked; ubuntu because it is the quiet reference (and
-  # 1x, not 10x, of the private-repo minutes macOS costs). The blocking `build`
-  # job still runs every one of these tests, with a generous bound.
+  # numbers stay in the log. Per push it runs on ubuntu only, the quiet
+  # reference (1x, not the 2x of Windows or the 10x of macOS in the private
+  # repo's minutes). On the weekly schedule (and a manual run of the scheduled
+  # tier) Windows joins: its coarse timers are why these bounds flaked, so its
+  # numbers are worth having, just not on every push. The blocking `build` job
+  # still runs every one of these tests, with a generous bound.
   perf:
     name: perf (${{ matrix.os }})
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.tier != 'scheduled')
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON((github.event_name == 'schedule' || inputs.tier == 'scheduled') && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     continue-on-error: true
     permissions:
@@ -472,6 +480,8 @@ jobs:
       - name: Fetch face gate models
         run: bun run models:face
       - run: bunx tsc --noEmit -p studio/tsconfig.json
+      # The shared contract's own typecheck (no Node, Bun or DOM types), as in the build job, here under `bun latest`'s tsc resolution.
+      - run: bunx tsc --noEmit -p studio/shared/tsconfig.json
       # Same bounds as the build job's own step above, but the retry is narrower: the canary exists to catch
       # a `bun latest` regression, so only the known worker-teardown segfaults (at 0x18 and at
       # 0xFFFFFFFFFFFFFFF8) are retried, and any other crash fails the job. That holds for BOTH steps below (the

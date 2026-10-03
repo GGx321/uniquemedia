@@ -42,16 +42,8 @@ function allowedImport(specifier: string, fromFile: string): boolean {
 const FORBIDDEN = /\b(?:process|Buffer|Bun|require)\b|globalThis\s*\[/g;
 
 describe("shared engine contract", () => {
-  test(
-    "typechecks with no Node or Bun types (studio/shared/tsconfig.json)",
-    () => {
-      const r = spawnSync(process.execPath, [TSC, "-p", SHARED_TSCONFIG], { encoding: "utf8" });
-      // One assertion that names the cause: a type error (output), a crash (signal), or tsc never ran (error).
-      const output = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-      expect({ status: r.status, signal: r.signal, error: r.error?.message, output }).toEqual({ status: 0, signal: null, error: undefined, output: "" });
-    },
-    60_000,
-  );
+  // The typecheck of studio/shared/tsconfig.json (no Node, Bun or DOM types) is a blocking step of the CI build and canary jobs
+  // (`bunx tsc --noEmit -p studio/shared/tsconfig.json`), moved there from a test that spawned the same tsc (CI-4).
 
   // Each probe must fail under the shared tsconfig: DOM globals would crash the
   // engine (a utilityProcess has no window), Node and Bun globals the renderer.

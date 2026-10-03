@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
@@ -10,8 +9,6 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 // montage types.
 const MONTAGE_DIR = import.meta.dir;
 const ENGINE_MONTAGE = resolve(MONTAGE_DIR, "../engine/montage.ts");
-const SHARED_TSCONFIG = resolve(MONTAGE_DIR, "../tsconfig.json");
-const TSC = resolve(MONTAGE_DIR, "../../../node_modules/typescript/bin/tsc");
 
 const productionFiles = readdirSync(MONTAGE_DIR, { withFileTypes: true })
   .filter((e) => e.isFile() && /\.ts$/.test(e.name) && !/\.(test|testkit)\.ts$/.test(e.name))
@@ -111,15 +108,8 @@ describe("studio/shared/montage is pure", () => {
     expect(productionFiles.length).toBeGreaterThanOrEqual(14);
   });
 
-  test(
-    "typechecks with no DOM, Node or Bun types (studio/shared/tsconfig.json)",
-    () => {
-      const r = spawnSync(process.execPath, [TSC, "-p", SHARED_TSCONFIG], { encoding: "utf8" });
-      const output = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-      expect({ status: r.status, signal: r.signal, error: r.error?.message, output }).toEqual({ status: 0, signal: null, error: undefined, output: "" });
-    },
-    60_000,
-  );
+  // The typecheck of studio/shared/tsconfig.json (no Node, Bun or DOM types) is a blocking step of the CI build and canary jobs
+  // (`bunx tsc --noEmit -p studio/shared/tsconfig.json`), moved there from a test that spawned the same tsc (CI-4).
 
   describe.each(productionFiles.map((f) => [relative(MONTAGE_DIR, f), f]))("%s", (_name, file) => {
     test("imports only sibling modules and the contract's montage types", () => {

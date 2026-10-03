@@ -455,6 +455,13 @@ describe("the Electron-Node steps' bounds", () => {
     for (const step of steps) expect(Number(step[1])).toBeGreaterThan((NODE_TEST_SUITES.length * SUITE_TIMEOUT_MS) / 60_000);
   });
 
+  // The shared contract's typecheck used to be two tests that each spawned tsc on studio/shared/tsconfig.json; it is a workflow step now (CI-4).
+  test("the build and the canary jobs typecheck studio/shared/tsconfig.json, the tsconfig the removed purity tests ran", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    expect([...workflow.matchAll(/^ {6}- run: bunx tsc --noEmit -p studio\/shared\/tsconfig\.json\r?$/gm)]).toHaveLength(2);
+    expect(await readFile(join(ROOT, "studio", "shared", "tsconfig.json"), "utf8")).toContain('"types": []');
+  });
+
   // A tier run (STUDIO_TEST_TIER, studio/testing/tiers.ts) is one `bun test` process: it may crash and retry like a shard, so its step
   // needs attempts x bound, and a tier job must set the variable for the steps that run it.
   test("every workflow step that runs a tier's bun tests has a timeout-minutes above attempts x bound, in a job that sets STUDIO_TEST_TIER", async () => {
