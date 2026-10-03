@@ -17,6 +17,7 @@
     "dist:win": "electron-vite build && electron-builder --win",
     "dev:studio": "electron-vite dev -c electron.studio.vite.config.ts --entry out-studio/main/main.js",
     "models:face": "bun run studio/scripts/faceModelCache.ts",
+    "typecheck:studio": "tsc --noEmit -p studio/tsconfig.json && tsc --noEmit -p studio/shared/tsconfig.json",
     "test:studio:electron-node": "bun studio/scripts/electronNodeTests.ts",
     "test:studio:suite": "bun studio/scripts/realWorkerTests.ts --shards=3 --suite",
     "test:studio:suite:canary": "bun studio/scripts/realWorkerTests.ts --known-crashes-only --shards=3 --suite",

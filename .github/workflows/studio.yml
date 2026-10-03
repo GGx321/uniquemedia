@@ -57,7 +57,7 @@ permissions:
 # (run_id), not just non-cancelling: with a shared group and cancel-in-progress off, GitHub still drops an older
 # PENDING run when a newer one queues behind the running one, and that would skip a main commit's check.
 concurrency:
-  group: ${{ github.workflow }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.run_id || github.ref }}
+  group: ${{ github.workflow }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.run_id || format('{0}-{1}', github.ref, inputs.tier) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 jobs:
   build:
@@ -175,8 +175,8 @@ jobs:
       # measure Bun: 2015 ms on CI against 202 ms in Electron's Node), and terminating a wasm worker segfaults Bun in
       # a few percent of runs (`Segmentation fault at address 0x3C`; `mprotect failed: 487` on Windows). There is no
       # Bun crash to retry here, so no retry: any failure is real. The face tests need the models fetched above, and
-      # a run without them fails, it never skips. The step also prints the worst legitimate shadow caption on this
-      # runner, which the text test holds to at most a fifth of the deadline (median) and a third of it (second-slowest of 7).
+      # a run without them fails, it never skips. The deadline headroom of the worst legitimate shadow caption (a fifth of
+      # the deadline at the median, a third at the second-slowest) is measured by the perf tier, not here (CI-4).
       - name: Real worker tests (Electron's Node)
         run: bun run test:studio:electron-node
         timeout-minutes: 30
@@ -295,13 +295,15 @@ jobs:
   # still runs every one of these tests, with a generous bound.
   perf:
     name: perf (${{ matrix.os }})
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name == 'schedule' || inputs.tier == 'scheduled') && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name == 'schedule' || inputs.tier == 'scheduled' || startsWith(github.ref, 'refs/tags/')) && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: true
+    # Never blocks a push or a manual run, but BLOCKS on a release tag: a release must not ship a regression that came in since the
+    # last weekly run (the same goes for the heavy job below).
+    continue-on-error: ${{ !startsWith(github.ref, 'refs/tags/') }}
     permissions:
       contents: read
     env:
@@ -351,7 +353,12 @@ jobs:
       - name: Count the quarantined tests
         id: count
         shell: bash
-        run: echo "count=$(bun -e 'import { QUARANTINE } from "./studio/testing/quarantine"; console.log(QUARANTINE.length)')" >> "$GITHUB_OUTPUT"
+        run: |
+          # Assigned and validated first: a failing `bun -e` inside `echo "count=$(...)"` would leave an empty count, which is not '0' and
+          # would start the macOS (10x) and Windows quarantine matrix on every push.
+          count=$(bun -e 'import { QUARANTINE } from "./studio/testing/quarantine"; console.log(QUARANTINE.length)')
+          [[ "$count" =~ ^[0-9]+$ ]] || { echo "::error::the quarantine count is not a number: '$count'"; exit 1; }
+          echo "count=$count" >> "$GITHUB_OUTPUT"
 
   quarantine:
     name: quarantine (${{ matrix.os }})
@@ -391,14 +398,15 @@ jobs:
   # The heavy tier (see TEST TIERS at the top): `[heavy]` tests, the slow ones a
   # push does not need: the font byte-mutation fuzz and the sticker script run
   # in a fresh process. Platform-independent, so ubuntu only (1x of the private
-  # repo's minutes; macOS bills 10x, Windows 2x). On the weekly schedule a
-  # failure turns the run red (GitHub only emails a failed scheduled run); on a
-  # manual run of the scheduled tier it does not.
+  # repo's minutes; macOS bills 10x, Windows 2x). On the weekly schedule and on a
+  # release tag a failure turns the run red (GitHub only emails a failed scheduled
+  # run, and a release must not ship a regression); on a manual run of the
+  # scheduled tier it does not.
   heavy:
     name: heavy
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'scheduled')
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'scheduled') || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    continue-on-error: ${{ github.event_name != 'schedule' }}
+    continue-on-error: ${{ github.event_name != 'schedule' && !startsWith(github.ref, 'refs/tags/') }}
     permissions:
       contents: read
     env:
@@ -493,3 +501,8 @@ jobs:
       - name: Real worker tests (Electron's Node)
         run: bun run test:studio:electron-node
         timeout-minutes: 30
+      # The heavy tier (the font fuzz, the sticker script in a fresh process) on `bun latest` too: it is exactly the kind of test a Bun
+      # regression shows in, and it runs nowhere else on this Bun. The tier is chosen on the command line, so this job's env stays untiered.
+      - name: Heavy tests (bun latest)
+        run: STUDIO_TEST_TIER=heavy bun run test:studio:suite ./studio
+        timeout-minutes: 60
