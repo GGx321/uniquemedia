@@ -602,6 +602,24 @@ export const SCENARIOS: readonly Scenario[] = [
       }
     },
   },
+  {
+    name: "music: a trending track the store does not hold is track-unavailable for get and for render, and an own track is still not yet supported",
+    async run(t, w) {
+      const trending = { source: "trending", trackId: "4199287736976977", startMs: 1_500 };
+      const own = { source: "own", mediaId: "media-0000001", startMs: 0 };
+      const withTrack = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      const withOwn = await draft(t, w, [photo(w, 3), photo(w, 4)]);
+      const stored = objectAt(montageOf(await t.call("montages.get", { montageId: withTrack })), "spec");
+      await t.call("montages.save", { montageId: withTrack, spec: { ...stored, music: trending }, name: null });
+      await t.call("montages.get", { montageId: withTrack });
+      await t.call("videos.render", { montageId: withTrack });
+      await t.call("videos.render", { spec: { ...stored, music: trending } });
+      await t.call("montages.save", { montageId: withOwn, spec: { ...objectAt(montageOf(await t.call("montages.get", { montageId: withOwn })), "spec"), music: own }, name: null });
+      await t.call("montages.get", { montageId: withOwn });
+      await t.call("videos.render", { montageId: withOwn });
+      await t.call("engine.snapshot", {});
+    },
+  },
 ];
 
 /** `estimateBytesUpper` of the clips of the draft a `montages.create` answered: what a render of it asks the export folder to have twice over. */

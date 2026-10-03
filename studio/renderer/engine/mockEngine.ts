@@ -49,7 +49,7 @@ import {
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
-import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, totalFrames } from "../../shared/montage";
+import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, totalFrames, trackIssues } from "../../shared/montage";
 import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
@@ -1500,6 +1500,8 @@ export class MockEngine implements EngineBridge {
     spec.layers.forEach((layer, i) => {
       if (layer.kind === "sticker" && layer.sticker.source === "builtin" && !stickers.has(layer.sticker.stickerId)) referential.push({ code: "sticker-unavailable", path: ["layers", i, "sticker"] });
     });
+    // The mock holds no tracks, like an engine with no track store: a trending track is never held (the engine's own function).
+    referential.push(...trackIssues(spec, undefined));
     return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referential].slice(0, MAX_MONTAGE_ISSUES);
   }
 
@@ -1708,7 +1710,7 @@ export class MockEngine implements EngineBridge {
     } else {
       spec = payload.spec;
     }
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...trackIssues(spec, undefined)].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues });
     const reason = this.checkExport(estimateBytesUpper(spec.clips));
     if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
