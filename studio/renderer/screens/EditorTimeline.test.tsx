@@ -458,6 +458,71 @@ describe("the playhead and the clock", () => {
   });
 });
 
+describe("undo steps of a gesture (one gesture, one step)", () => {
+  /** Opens a one-clip draft (8.0 s) with its clip selected; the right trim handle. */
+  async function oneClipSelected() {
+    const harness = await studio();
+    await makeDraft(harness.client, MIA.avatarId, [P1]);
+    await openEditor();
+    fireEvent.click(clipButtons()[0] ?? document.body);
+    return { ...harness, handle: within(timeline()).getByRole("slider", { name: "Длительность кадра 1: правый край" }) };
+  }
+  const undo = (): void => {
+    fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+  };
+  const firstLength = (): string => plain(clipButtons()[0]?.getAttribute("aria-label"));
+
+  test("a held arrow key on a handle is one step: five repeats, then one undo is back at 8.0 s", async () => {
+    const { handle } = await oneClipSelected();
+    for (let i = 0; i < 5; i++) fireEvent.keyDown(handle, { key: "ArrowRight", repeat: i > 0 });
+    fireEvent.keyUp(handle, { key: "ArrowRight" });
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 8.5 с");
+    undo();
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 8.0 с");
+  });
+
+  test("letting go of Shift mid-gesture does not end it: only the held key's release does", async () => {
+    const { handle } = await oneClipSelected();
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    fireEvent.keyUp(handle, { key: "Shift" });
+    fireEvent.keyDown(handle, { key: "ArrowRight", repeat: true });
+    fireEvent.keyUp(handle, { key: "ArrowRight" });
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 8.2 с");
+    undo();
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 8.0 с");
+  });
+
+  test("two pointer drags of a handle are two undo steps, however many moves each has", async () => {
+    const { handle } = await oneClipSelected();
+    // Without layout the lanes measure 1048 px for 15 s: 70 px is about 1 s.
+    const drag = (pointerId: number): void => {
+      fireEvent.pointerDown(handle, { pointerId, button: 0, clientX: 500 });
+      act(() => {
+        window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 535 }));
+        window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 570 }));
+        window.dispatchEvent(new PointerEvent("pointerup", { pointerId, clientX: 570 }));
+      });
+    };
+    drag(21);
+    drag(22);
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 10.0 с");
+    undo();
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 9.0 с");
+    undo();
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 8.0 с");
+  });
+
+  test("a drag of «Длительность» is one step", async () => {
+    await oneClipSelected();
+    const slider = within(props()).getByRole("slider", { name: "Длительность" });
+    for (const value of ["32", "33", "34"]) fireEvent.change(slider, { target: { value } });
+    fireEvent.pointerUp(slider);
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 3.4 с");
+    undo();
+    expect(firstLength()).toBe("Кадр 1: 1 фото, 8.0 с");
+  });
+});
+
 describe("the face judge's answers", () => {
   test("«ищем лицо…» stays while a later request for the same photo is still out", async () => {
     const { client, engine, scheduler } = await studio();

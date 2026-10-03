@@ -116,6 +116,8 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
   const pendingFocus = useRef<string | "playhead" | null>(null);
   const suppressClick = useRef(false);
   const gesture = useRef<(() => void) | null>(null);
+  /** The key holding a keyboard trim open: its release (not a modifier's) ends the undo step. */
+  const heldKey = useRef<string | null>(null);
   const [lanesPx, setLanesPx] = useState(0);
   const [scrubbing, setScrubbing] = useState(false);
   const [lift, setLift] = useState<{ clipId: string; dx: number; boundary: number } | null>(null);
@@ -310,6 +312,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
     event.stopPropagation();
     const next = setDuration(current, index, wanted);
     // Held keys repeat: one undo step until the key is let go.
+    heldKey.current = event.key;
     if (next !== current) session.edit(next, { mergeKey: `trim-key:${clipId}` });
   }
 
@@ -490,7 +493,15 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, timeli
                         aria-valuetext={secondsLabel(clip.durationMs)}
                         onPointerDown={(e) => pressHandle(e, clip.clipId, edge)}
                         onKeyDown={(e) => onHandleKey(e, clip.clipId)}
-                        onKeyUp={() => session.endMerge()}
+                        onKeyUp={(e) => {
+                          if (e.key !== heldKey.current) return;
+                          heldKey.current = null;
+                          session.endMerge();
+                        }}
+                        onBlur={() => {
+                          heldKey.current = null;
+                          session.endMerge();
+                        }}
                       />
                     );
                     return (
