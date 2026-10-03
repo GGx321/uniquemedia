@@ -250,6 +250,14 @@ describe("a failure of the transport", () => {
     expect((await failureOf(download(failing(new CdnBlockedError("address"))))).kind).toBe("blocked-address");
   });
 
+  test("a build that has no mock CDN says so: `no-mock`, not a blocked address", async () => {
+    expect((await failureOf(download(failing(new CdnBlockedError("no-mock"))))).kind).toBe("no-mock");
+  });
+
+  test("a URL the transport itself refused is `refused`, not a blocked address", async () => {
+    expect((await failureOf(download(failing(new CdnBlockedError("url"))))).kind).toBe("refused");
+  });
+
   test("any other error is `network`, and its text (which may carry the signed URL) is not kept", async () => {
     const error = await failureOf(download(failing(new TypeError(`connect failed for ${URL_OK}`))));
     expect(error.kind).toBe("network");

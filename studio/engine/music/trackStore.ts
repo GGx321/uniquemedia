@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Id, MAX_LISTED_TRACKS, type TrackSummary } from "../../shared/engine";
 import { fsyncDir, isTempName, tempSiblingPath, writeFileAtomic, writeFileDurable, writeJsonAtomic } from "../library/durableFs";
 import { renameWithRetry } from "../library/renameRetry";
@@ -216,7 +216,8 @@ export class TrackStore implements MusicListSink {
       // An original that will not go is met again at every open: one copy of the same content is enough.
       const names = await readdir(dirname(path)).catch(() => [] as string[]);
       let already = false;
-      for (const name of names.filter((candidate) => candidate.startsWith("current.json."))) {
+      // The copies of THIS file: named like it, then a dot and a time.
+      for (const name of names.filter((candidate) => candidate.startsWith(`${basename(path)}.`))) {
         if ((await readFile(join(dirname(path), name), "utf8").catch(() => null)) === scrubbed) already = true;
       }
       if (!already) await writeFileAtomic(aside, scrubbed);

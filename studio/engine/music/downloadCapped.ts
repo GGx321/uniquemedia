@@ -10,6 +10,7 @@ import { checkCdnUrl, hostForLog } from "./cdnPolicy";
 export type DownloadFailureKind =
   | "refused"
   | "blocked-address"
+  | "no-mock"
   | "redirect"
   | "status"
   | "encoding"
@@ -101,7 +102,8 @@ export async function downloadCapped(options: DownloadOptions): Promise<Download
       response = await Promise.race([options.transport({ url: checked.url, signal: controller.signal }), stopped]);
     } catch (error) {
       if (error instanceof DownloadError) throw error;
-      if (error instanceof CdnBlockedError) throw new DownloadError("blocked-address", host, error.reason);
+      // The transport's own reason, not one label for all: only an address refusal is a blocked address.
+      if (error instanceof CdnBlockedError) throw new DownloadError(error.reason === "address" ? "blocked-address" : error.reason === "no-mock" ? "no-mock" : "refused", host, error.reason);
       const code = codeOf(error);
       throw new DownloadError("network", host, code === "" ? "the request failed" : `the request failed (${code})`);
     }
