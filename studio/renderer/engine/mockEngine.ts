@@ -205,6 +205,8 @@ function slotOutcome(step: number, total: number, ageRejected: number, failedCou
 export interface MockEngineOptions {
   /** `demo` seeds a small library for the dev build; `empty` is a fresh install. */
   preset?: "empty" | "demo";
+  /** 3e.2: with the `demo` preset, Mia also has videos in every file state (the dev build's «Видео» tab); off unless asked. */
+  demoVideos?: boolean;
   scheduler?: Scheduler;
   /** Delay before each response; 0 answers on the next microtask. */
   latencyMs?: number;
@@ -652,7 +654,7 @@ export class MockEngine implements EngineBridge {
   /** What main's folder dialog answers next: a pick, `null` for a cancel, `undefined` for an unscripted one. */
   private exportPick: MockExportPick | null | undefined = undefined;
   private unscriptedPicks = 0;
-  private nextRenderFailure: { error: EngineError; at: "encode" | "saving" } | null = null;
+  private nextRenderFailure: { error: EngineError; at: "encode" | "saving" | "late" } | null = null;
   private music: MockMusic;
   private readonly textPreviews: MockTextPreviews;
 
@@ -690,6 +692,59 @@ export class MockEngine implements EngineBridge {
     this.skippedPhotos = { ...options.skippedPhotos };
     if (options.preset === "demo" && options.photos === undefined) this.seedDemoRun();
     this.music = mockMusic(options.music ?? (options.preset === "demo" ? demoMusic() : {}), this.clock);
+    if (options.preset === "demo" && options.demoVideos === true && options.photos === undefined) this.seedDemoVideos();
+  }
+
+  /**
+   * 3e.2: the dev build's Mia has videos, so the Photos «Видео» tab shows its cards as the artboard does: two in the export folder
+   * (one with a track), one whose file the owner deleted, one changed outside Studio, one in a folder chosen before. Their photos
+   * are used, and Mia's counts follow; one of her photos stays free, so a render can be tried. A dev-build convenience only: no
+   * test of the engine's behaviour reads it.
+   */
+  private seedDemoVideos(): void {
+    const mia = this.avatars.find((a) => a.name === "Mia");
+    if (mia === undefined) return;
+    const own = this.photos.filter((p) => p.avatarId === mia.avatarId).map((p) => p.photoId);
+    const track = this.music.tracks[0]?.summary;
+    const oldRoot = this.newExportRootId();
+    const plan: { title: string; photos: number; state: FileState | null; music: boolean; root?: string; daysAgo: number }[] = [
+      { title: "кухня и кофе", photos: 2, state: null, music: true, daysAgo: 1 },
+      { title: "пляж", photos: 1, state: null, music: false, daysAgo: 2 },
+      { title: "в дороге", photos: 2, state: "missing", music: false, daysAgo: 3 },
+      { title: "старый город", photos: 1, state: "changed", music: false, daysAgo: 4 },
+      { title: "золотой час", photos: 1, state: null, music: false, root: oldRoot, daysAgo: 6 },
+    ];
+    let next = 0;
+    for (const [i, item] of [...plan].reverse().entries()) {
+      const photoIds = own.slice(next, next + item.photos);
+      next += item.photos;
+      if (photoIds.length < item.photos) return;
+      const spec = defaultSpec(mia.avatarId, photoIds, 7 + i);
+      const focused = withFocus(spec, new Map(photoIds.map((id) => [id, { x: 0.5, y: 0.35 }])));
+      const kind = videoKindOf(spec.clips);
+      const createdAt = new Date(START_OF_TIME - item.daysAgo * 86_400_000).toISOString();
+      const relPath = mockRelPath(mockFolderName(mia.name, mia.avatarId), createdAt.slice(0, 10), kind, this.exportFiles);
+      this.exportFiles.add(relPath);
+      const summary: VideoSummary = {
+        videoId: this.nextId("video"),
+        avatarId: mia.avatarId,
+        kind,
+        durationMs: spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0),
+        bytes: estimateBytes(spec.clips),
+        createdAt,
+        relPath,
+        fileState: "present",
+        montageId: null,
+        photoCount: photoIds.length,
+        music: item.music && track !== undefined ? { title: track.title, artist: track.artist, trackId: track.trackId } : null,
+        hasPoster: false,
+        title: item.title,
+        firstClip: focused.clips[0] ?? null,
+      };
+      this.videos.push({ summary, photoIds, montageId: null, fileState: item.state, rootId: item.root ?? this.exportRootId });
+    }
+    const usable = this.photos.filter((p) => p.avatarId === mia.avatarId && this.photoUsable(mia.avatarId, p.photoId)).length;
+    this.avatars = this.avatars.map((a) => (a.avatarId === mia.avatarId ? { ...a, videoCount: this.videos.filter((v) => v.summary.avatarId === mia.avatarId).length, eligibleUnusedCount: usable } : a));
   }
 
   /** The dev build's Mia: a stopped run of 12 photos, 8 of them drawn, 4 left to resume. */
@@ -974,9 +1029,10 @@ export class MockEngine implements EngineBridge {
   /**
    * The next render fails with `error`: no video, and its photos leave the reservation. `encode` (the default) is ffmpeg failing at the
    * job's first step, before any progress or saving phase; `saving` is the commit failing after the point of no return (the window
-   * has seen the saving step).
+   * has seen the saving step). `late` (3e.2) is the engine's commit that outlived its deadline: the job reports failed at the saving
+   * step, and one step later its record lands anyway (`video.changed` after `job.failed`, which the window shows as the video).
    */
-  failNextRender(error: EngineError, at: "encode" | "saving" = "encode"): void {
+  failNextRender(error: EngineError, at: "encode" | "saving" | "late" = "encode"): void {
     this.nextRenderFailure = { error, at };
   }
 
@@ -1982,6 +2038,30 @@ export class MockEngine implements EngineBridge {
       this.endRender(job, "failed", failure.error);
       return;
     }
+    if (failure?.at === "late") {
+      // The engine's commit that outlived its deadline past the claim: the job reports failed, and the record lands later anyway.
+      this.nextRenderFailure = null;
+      this.endRender(job, "failed", failure.error);
+      this.scheduler.schedule(this.stepMs, () => {
+        this.movingUsage(job.avatarId, job.photoIds, () => this.recordVideo(job));
+        this.announceAvatar(job.avatarId);
+      });
+      return;
+    }
+    const { relPath, bytes, durationMs, kind } = this.recordVideo(job);
+    this.announceAvatar(job.avatarId);
+
+    job.status = "done";
+    job.done = job.total;
+    job.result = { kind: "render", videoId: job.videoId, avatarId: job.avatarId, bytes, durationMs, videoKind: kind, relPath };
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: job.result } });
+    this.announceAvatar(job.avatarId);
+    this.trimFinishedRenders();
+    this.pumpRenders();
+  }
+
+  /** The record of `job`'s video lands: the file is named, the record kept, `video.changed` sent (the caller announces the avatar). */
+  private recordVideo(job: MockRenderJob): { relPath: string; bytes: number; durationMs: number; kind: string } {
     const { spec } = job;
     const avatar = this.avatars.find((a) => a.avatarId === job.avatarId);
     const kind = videoKindOf(spec.clips);
@@ -2010,15 +2090,7 @@ export class MockEngine implements EngineBridge {
     this.videos.push({ summary, photoIds: job.photoIds, montageId, fileState: null, rootId: this.exportRootId });
     this.adjustAvatar(job.avatarId, { videoCount: 1 });
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "upserted", video: summary } });
-    this.announceAvatar(job.avatarId);
-
-    job.status = "done";
-    job.done = job.total;
-    job.result = { kind: "render", videoId: job.videoId, avatarId: job.avatarId, bytes, durationMs, videoKind: kind, relPath };
-    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: job.result } });
-    this.announceAvatar(job.avatarId);
-    this.trimFinishedRenders();
-    this.pumpRenders();
+    return { relPath, bytes, durationMs, kind };
   }
 
   /** A render that ends without a video: its photos leave the reservation, then the window is told, then the next queued render starts. */
