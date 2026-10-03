@@ -62,7 +62,7 @@ export interface Control {
   /** 3c.6: the owner stored a RapidAPI key (the engine is told as main tells it after «Сохранить»). */
   musicKey(): Promise<void>;
   /** 3c.6: the flashapi quota log on disk gets a complete line that cannot be read (`corrupt`), or a folder where the file was (`unreadable`). */
-  musicQuotaLog(state: "corrupt" | "unreadable"): Promise<void>;
+  musicQuotaLog(state: "corrupt" | "unreadable" | "deleted"): Promise<void>;
 }
 
 /** The RapidAPI key the rigs store: obviously fake (studio/testing/keyLeaks.ts). No request is ever sent with it. */
@@ -206,7 +206,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
       musicKey: async () => {
         await engine.request(CommandMessage.parse({ v: 5, id: `msg-${String(++messages).padStart(6, "0")}`, kind: "command", type: "settings.setMusicKey", payload: { key: PARITY_MUSIC_KEY } }));
       },
-      musicQuotaLog: async (state) => engine.setMusicQuotaLog(state),
+      musicQuotaLog: async (state) => engine.setMusicQuotaLog(state === "deleted" ? "missing" : state),
     },
     async stop() {
       scheduler.runAll();
@@ -479,6 +479,11 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       musicKey: () => engine.applyControl({ kind: "control", type: "musicKey.set", key: PARITY_MUSIC_KEY, origin: "user" }),
       musicQuotaLog: async (state) => {
         const log = join(musicDir, "quota.jsonl");
+        // Review round 1: the owner deletes the whole music folder; the marker beside it, in userData, stays.
+        if (state === "deleted") {
+          await rm(musicDir, { recursive: true, force: true });
+          return;
+        }
         await mkdir(musicDir, { recursive: true });
         if (state === "corrupt") await appendFile(log, "not json at all\n");
         else {

@@ -653,6 +653,21 @@ export const SCENARIOS: readonly Scenario[] = [
       await t.call("music.recoverQuotaLog", { confirm: true });
     },
   },
+  {
+    name: "music: a quota log deleted with the music folder reads missing, a re-entered key does not start a fresh count, and its recovery closes the quota for 31 days",
+    async run(t, _w, control) {
+      await control.musicKey();
+      await t.call("music.status", {});
+      await control.musicQuotaLog("deleted");
+      await t.call("music.status", {});
+      await t.call("music.refresh", { confirm: true });
+      await control.musicKey();
+      await t.call("music.status", {});
+      await t.call("music.refresh", { confirm: true });
+      await t.call("music.recoverQuotaLog", { confirm: true });
+      await t.call("music.refresh", { confirm: true });
+    },
+  },
 ];
 
 /** `estimateBytesUpper` of the clips of the draft a `montages.create` answered: what a render of it asks the export folder to have twice over. */
