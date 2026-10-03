@@ -20,6 +20,19 @@ const EMBEDDING = new Float32Array(EMBEDDING_LENGTH);
 EMBEDDING[0] = 1;
 /** A generous bound for "promptly": a terminate is milliseconds; CI machines are slow, not seconds-slow. */
 const PROMPTLY_MS = 1_000;
+/** How long a lane test waits for something that must happen: well under the 30 s per-test timeout, far over any scripted answer (80 ms). */
+const LANE_WAIT_MS = 12_000;
+
+/** `work`, or a rejection naming `what` when it has not settled after `ms`. The rejection of `work` itself is marked observed, so it can never surface as an unhandled error later. */
+function settleWithin<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} within ${ms} ms`)), ms);
+  });
+  const settled = Promise.race([work, bound]).finally(() => clearTimeout(timer));
+  settled.catch(() => undefined);
+  return settled;
+}
 
 type Startup = "ok" | "load-failed" | "never-ready" | "crash";
 
@@ -224,17 +237,28 @@ describe("the lane: one computation at a time, FIFO, cancellable while queued", 
 
   test("a waiter cancelled while queued rejects at once and leaves the running check untouched", async () => {
     const h = harness();
-    const holder = h.gate.check(checkInput(Behaviour.slow), live());
+    // Both waits are bounded below the per-test timeout. This test once hit the 30 s timeout on a Windows runner (run 37112152411) with the
+    // holder still waiting on its worker's answer when the gate was disposed; a bound names which of the two never settled, and the
+    // holder's own rejection is observed so a late one cannot surface as an unhandled error after the test is over.
+    const holder = settleWithin(h.gate.check(checkInput(Behaviour.slow), live()), LANE_WAIT_MS, "the holding check never got its worker's answer");
     const controller = new AbortController();
     const waiter = h.gate.check(checkInput(), controller.signal);
-    const outcome = waiter.then(
-      () => "resolved",
-      (error: unknown) => (error instanceof Error ? error.message : "not an error"),
+    const outcome = settleWithin(
+      waiter.then(
+        () => "resolved",
+        (error: unknown) => (error instanceof Error ? error.message : "not an error"),
+      ),
+      LANE_WAIT_MS,
+      "the cancelled waiter never rejected",
     );
     controller.abort(new Error("gave up waiting"));
-    expect(await outcome).toBe("gave up waiting");
-    expect((await holder).kind).toBe("match");
-    expect(h.spawned()).toBe(1);
+    try {
+      expect(await outcome).toBe("gave up waiting");
+      expect((await holder).kind).toBe("match");
+      expect(h.spawned()).toBe(1);
+    } finally {
+      await holder.catch(() => undefined);
+    }
   });
 
   test("B1: a waiter cancelled BEHIND the holder never lets the waiter behind it overlap the holder", async () => {
