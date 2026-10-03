@@ -685,6 +685,54 @@ export class MockEngine implements EngineBridge {
     this.skippedPhotos = { ...options.skippedPhotos };
     if (options.preset === "demo" && options.photos === undefined) this.seedDemoRun();
     this.music = mockMusic(options.music ?? (options.preset === "demo" ? demoMusic() : {}), this.clock);
+    if (options.preset === "demo" && options.photos === undefined) this.seedDemoMontage();
+  }
+
+  /**
+   * The dev build's draft as the Editor artboard draws it (3d.3b): four clips of Mia's demo photos, three texts on two rows,
+   * two stickers and a track of the demo list started on one of its highlights. Choosing a track is the media panel's
+   * (3d.5), so until then this is the one way the dev build shows the music track. Built in a method, never at module load:
+   * the mock's demo data must not reach a release bundle.
+   */
+  private seedDemoMontage(): void {
+    const mia = this.avatars.find((a) => a.name === "Mia");
+    const photoIds = this.photos.filter((p) => p.avatarId === mia?.avatarId).map((p) => p.photoId);
+    // The montage is 9.6 s: a highlight that leaves that much of the track.
+    const fits = (h: { ms: number; likelyDefault: boolean }, durationMs: number): boolean => !h.likelyDefault && h.ms + 9_600 <= durationMs;
+    const track = this.music.tracks.find((t) => t.summary.artist !== null && t.summary.highlights.some((h) => fits(h, t.summary.durationMs)));
+    const [p1, p2, p3, p4, p5, p6] = photoIds;
+    if (mia === undefined || p1 === undefined || p2 === undefined || p3 === undefined || p4 === undefined || p5 === undefined || p6 === undefined || track === undefined) return;
+    const focus = (photoId: string) => ({ photo: { source: "scene" as const, photoId }, focus: this.focusOf(mia.avatarId, photoId) });
+    const clip = { transitionIn: "cut" as const, motion: "kenburns" as const };
+    const text = { kind: "text" as const, color: "#ffffff", x: 0.5, scale: 1 };
+    const sticker = (layerId: string, stickerId: string, startMs: number, endMs: number) => ({ layerId, startMs, endMs, kind: "sticker" as const, sticker: { source: "builtin" as const, stickerId }, x: 0.741, y: 0.333, size: 0.203 });
+    const highlight = track.summary.highlights.find((h) => fits(h, track.summary.durationMs))?.ms ?? 0;
+    // Its own id and the clock's start, so no id or time the demo hands out afterwards moves.
+    const montage = Montage.parse({
+      montageId: "montage-demo-0001",
+      name: "кафе и город",
+      updatedAt: new Date(this.clock).toISOString(),
+      spec: {
+        schemaVersion: 1,
+        avatarId: mia.avatarId,
+        clips: [
+          { ...clip, clipId: "clip-001", durationMs: 2_400, kind: "photo", cell: focus(p1) },
+          { ...clip, clipId: "clip-002", durationMs: 3_200, kind: "collage", layout: "collage3", cells: [focus(p2), focus(p3), focus(p4)], stagger: true },
+          { ...clip, clipId: "clip-003", durationMs: 2_000, kind: "photo", cell: focus(p5) },
+          { ...clip, clipId: "clip-004", durationMs: 2_000, kind: "photo", cell: focus(p6) },
+        ],
+        layers: [
+          { ...text, layerId: "layer-001", startMs: 300, endMs: 4_400, value: "sunday reset ☀️", font: "manrope", style: "plaque", y: 0.08 },
+          { ...text, layerId: "layer-002", startMs: 1_000, endMs: 4_400, value: "slow morning in lisbon", font: "caveat", style: "none", y: 0.3 },
+          sticker("layer-003", "sparkle-twinkle", 1_200, 4_900),
+          { ...text, layerId: "layer-004", startMs: 5_800, endMs: 9_600, value: "coffee first ☕", font: "oswald", style: "outline", y: 0.45 },
+          sticker("layer-005", "heart-pulse", 6_000, 9_600),
+        ],
+        music: { source: "trending", trackId: track.summary.trackId, startMs: highlight },
+        seed: 1,
+      },
+    });
+    this.montages.set(montage.montageId, montage);
   }
 
   /** The dev build's Mia: a stopped run of 12 photos, 8 of them drawn, 4 left to resume. */

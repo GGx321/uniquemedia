@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { EventMessage } from "../../shared/engine";
 import { MAX_LISTED_MONTAGES, type Montage, type MontageDraft } from "../../shared/engine/montage";
 import { defaultSpec } from "../../shared/montage";
-import { MOCK_FOCUS } from "./mockEngine";
+import { MOCK_FOCUS, MockEngine, mockEngineClient } from "./mockEngine";
 import { freePhotos, makeMock, MIA, NORA, PHOTO_IDS, scene, scenePhoto, SOFIA, unwrap, type Mock } from "./mockEngine.testkit";
+import { ManualScheduler } from "./scheduler";
 
 // Stage 3, 3d.1b: the mock's montage drafts (`montages.create / get / list / save / delete / focus`) answer what the real
 // engine answers: the same shapes, the same refusals in the same order, and the same `montage.changed` events. The
@@ -431,6 +432,31 @@ describe("montages.focus", () => {
     const answer = await unwrap(mock.client.request("montages.focus", { avatarId: MIA.avatarId, photo: scene(PHOTO_IDS[0] ?? "") }));
 
     expect(answer).toEqual({ focus: null });
+  });
+});
+
+describe("the dev build's demo draft (3d.3b)", () => {
+  test("the demo preset holds one draft as the Editor artboard draws it: texts, stickers, and a stored track started on a highlight", async () => {
+    const client = mockEngineClient(new MockEngine({ preset: "demo", scheduler: new ManualScheduler() }));
+    const { items } = await unwrap(client.request("montages.list", {}));
+    expect(items).toHaveLength(1);
+    const item = items[0];
+    if (item === undefined) throw new Error("no demo draft");
+    const { spec } = item.montage;
+    expect(spec.clips.map((c) => c.durationMs)).toEqual([2_400, 3_200, 2_000, 2_000]);
+    expect(spec.layers.map((l) => l.kind)).toEqual(["text", "text", "sticker", "text", "sticker"]);
+    // Nothing in it refuses a render: every photo is free, the stickers are in the set, the track holds the montage.
+    expect(item.issues).toEqual([]);
+    const music = spec.music;
+    if (music?.source !== "trending") throw new Error("the demo draft has no trending track");
+    const { tracks } = await unwrap(client.request("music.list", {}));
+    const track = tracks.find((t) => t.trackId === music.trackId);
+    expect(track?.highlights.some((h) => h.ms === music.startMs && !h.likelyDefault)).toBe(true);
+  });
+
+  test("a mock with its own photos (every test's) has no demo draft", async () => {
+    const mock = makeMock({ preset: "demo" });
+    expect((await unwrap(mock.client.request("montages.list", {}))).items).toEqual([]);
   });
 });
 
