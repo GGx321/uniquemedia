@@ -11,17 +11,24 @@ import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, PlayIcon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
-import { MediaPanel, PreviewSlot, PropertiesSlot, TimelineSlot } from "./montage/EditorSlots";
+import { ClipProperties } from "./montage/ClipProperties";
+import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto } from "./montage/clipOps";
+import { isFreePhoto, MediaPanel, PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
 import { draftTitle, outputLabel, outputParts, saveLabel } from "./montage/labels";
-import { photoProblems, renderBlock, type EngineVerdict, type RenderBlock, type UsedVideo } from "./montage/renderBlock";
+import { photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type RenderBlock, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
+import { resolveSelection, selectClip } from "./montage/selection";
 import { DraftSession } from "./montage/session";
+import { Timeline } from "./montage/Timeline";
+import { seekInto } from "./montage/timelineScale";
+import { useFocusResolver, useTimeline } from "./montage/useTimeline";
 import { useMounted } from "./photos/shared";
 
 // 3d.2: the montage editor's shell (Editor.dc.html, EditorNew.dc.html). It opens a draft by `montages.get`, keeps
 // it in a `DraftSession` (undo/redo of up to 100 spec versions, the serialised autosave), and lays out the header
-// and the four slots the next tasks fill: the timeline (3d.3a, 3d.3b), the preview (3d.4), the media and
-// properties panels (3d.5). The «Рендер» button shows why it is disabled; its queue and job states are 3d.6's.
+// and the regions: the timeline (3d.3a: the clip track; 3d.3b: layers and music), the preview (3d.4), the media
+// and properties panels (3d.3a places photos and edits a clip; 3d.5 the rest). The «Рендер» button shows why it is
+// disabled; its queue and job states are 3d.6's. Every edit goes through the session: one undo step, autosaved.
 
 type Load =
   | { kind: "loading" }
@@ -402,6 +409,69 @@ function DraftEditor({
   const photoIndex = useMemo(() => (photos === null ? null : new Map(photos.map((p) => [p.photoId, p]))), [photos]);
   const flagged = photoProblems(state.spec, verdict, photoIndex ?? new Map());
   const usedVideoId = flagged.find((f) => f.problem === "used")?.videoId ?? null;
+  // The first unusable photo of each clip: the timeline's «⚠ фото отклонено» tags.
+  const clipProblems = new Map<number, PhotoProblem>();
+  for (const cell of flagged) if (!clipProblems.has(cell.clip)) clipProblems.set(cell.clip, cell.problem);
+
+  // ---------- the timeline (3d.3a) ----------
+  const timeline = useTimeline(state.spec);
+  const focus = useFocusResolver(client, session, avatarId);
+  /** A free photo dragged out of the bin. */
+  const [dragPhoto, setDragPhoto] = useState<string | null>(null);
+  const selected = resolveSelection(state.spec, timeline.selection);
+  const selectedCell = selected?.kind === "clip" ? cellsOf(selected.clip)[selected.cell] : undefined;
+  const fillTarget = selected?.kind === "clip" && selectedCell !== undefined && selectedCell.photo === null ? { clip: selected.index, cell: selected.cell } : null;
+
+  /** Selects clip `index` of the current draft (and its cell), bringing the playhead into it. */
+  function selectClipAt(index: number, cell = 0): void {
+    const spec = session.state.spec;
+    const clip = spec.clips[index];
+    if (clip === undefined) return;
+    timeline.select(selectClip(spec, index, cell));
+    const start = clipStartMs(spec, index);
+    const into = seekInto(timeline.playheadMs, start, start + clip.durationMs);
+    if (into !== timeline.playheadMs) timeline.seek(into);
+  }
+
+  /** A free scene photo as a new clip at `boundary` (the end by default); its face focus is asked for at once (K6). */
+  function placePhoto(photoId: string, boundary?: number): void {
+    const photo = photoIndex?.get(photoId);
+    if (photo === undefined || !isFreePhoto(photo)) return;
+    const spec = session.state.spec;
+    const result = boundary === undefined ? appendPhotoClip(spec, photoId) : insertPhotoClip(spec, boundary, photoId);
+    if (!result.ok || result.id === undefined || !session.edit(result.spec)) return;
+    focus.resolve(photoId);
+    const index = result.spec.clips.findIndex((c) => c.clipId === result.id);
+    if (index >= 0) selectClipAt(index);
+  }
+
+  /** A free scene photo into a cell; the selection moves on to the clip's next empty cell, if any. */
+  function fillCell(clipIndex: number, cell: number, photoId: string): void {
+    const photo = photoIndex?.get(photoId);
+    if (photo === undefined || !isFreePhoto(photo)) return;
+    const result = setCellPhoto(session.state.spec, clipIndex, cell, photoId);
+    if (!result.ok || !session.edit(result.spec)) return;
+    focus.resolve(photoId);
+    const clip = result.spec.clips[clipIndex];
+    const cells = clip === undefined ? [] : cellsOf(clip);
+    const next = cells.findIndex((c, i) => i > cell && c.photo === null);
+    const anyEmpty = cells.findIndex((c) => c.photo === null);
+    timeline.select(selectClip(result.spec, clipIndex, next >= 0 ? next : anyEmpty >= 0 ? anyEmpty : cell));
+  }
+
+  /** A click on a bin photo: a placed one selects its clip; a free one fills the selected empty cell or is appended. */
+  function pickPhoto(photoId: string): void {
+    const spec = session.state.spec;
+    for (const [i, clip] of spec.clips.entries()) {
+      const cell = cellsOf(clip).findIndex((c) => c.photo?.source === "scene" && c.photo.photoId === photoId);
+      if (cell >= 0) {
+        selectClipAt(i, cell);
+        return;
+      }
+    }
+    if (fillTarget !== null) fillCell(fillTarget.clip, fillTarget.cell, photoId);
+    else placePhoto(photoId);
+  }
 
   // Only when a photo is already in a video: its title for «Фото уже в видео «…»».
   useEffect(() => {
@@ -596,11 +666,49 @@ function DraftEditor({
         </div>
       )}
       <div className="ed-body">
-        <MediaPanel avatarName={avatar?.name ?? "Аватар"} avatarId={avatarId} spec={state.spec} photos={photos} tabRef={photosTab} />
-        <PreviewSlot spec={state.spec} />
-        <PropertiesSlot empty={state.spec.clips.length === 0} />
+        <MediaPanel
+          avatarName={avatar?.name ?? "Аватар"}
+          avatarId={avatarId}
+          spec={state.spec}
+          photos={photos}
+          tabRef={photosTab}
+          onPick={pickPhoto}
+          fillTarget={fillTarget}
+          addBlock={addRefusal(state.spec)}
+          onDragPhoto={setDragPhoto}
+        />
+        <PreviewSlot spec={state.spec} playheadMs={timeline.playheadMs} />
+        {selected?.kind === "clip" ? (
+          <ClipProperties
+            session={session}
+            spec={state.spec}
+            index={selected.index}
+            cell={selected.cell}
+            avatarId={avatarId}
+            timeline={timeline}
+            focusPending={focus.pending}
+            dragPhoto={dragPhoto}
+            onFillCell={fillCell}
+          />
+        ) : (
+          <PropertiesSlot empty={state.spec.clips.length === 0} />
+        )}
       </div>
-      <TimelineSlot spec={state.spec} flagged={block?.clips ?? []} onAddClip={() => photosTab.current?.focus()} />
+      <Timeline
+        session={session}
+        spec={state.spec}
+        avatarId={avatarId}
+        flagged={clipProblems}
+        highlighted={block?.clips ?? []}
+        timeline={timeline}
+        dragPhoto={dragPhoto}
+        onInsertPhoto={(photoId, boundary) => {
+          setDragPhoto(null);
+          placePhoto(photoId, boundary);
+        }}
+        onAddClip={() => photosTab.current?.focus()}
+        onSelectClip={(index) => selectClipAt(index)}
+      />
     </div>
   );
 }

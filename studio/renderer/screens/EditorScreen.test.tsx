@@ -634,7 +634,8 @@ describe("the shell's slots", () => {
     await openEditor();
     for (const name of ["Медиа", "Свойства"]) expect(screen.getByRole("complementary", { name })).toBeDefined();
     for (const name of ["Превью", "Таймлайн"]) expect(screen.getByRole("region", { name })).toBeDefined();
-    expect(within(screen.getByRole("list", { name: "Кадры" })).getByRole("listitem", { name: /^Кадр 1, 8\.0\sс$/ })).toBeDefined();
+    // 3d.3a: a clip is a button named as the artboard names it («Кадр 1: 1 фото, 8.0 с»).
+    expect(within(screen.getByRole("list", { name: "Кадры" })).getByRole("button", { name: /^Кадр 1: 1 фото, 8\.0\sс$/ })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Добавить кадр" }));
     expect(document.activeElement?.textContent).toBe("Фото");
   });

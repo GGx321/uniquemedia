@@ -109,6 +109,25 @@ const PATHS = {
   sparkle: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />,
   text: <path d="M5 6h14M12 6v13" />,
   chevronDown: <path d="M6 9l6 6 6-6" />,
+  scissors: (
+    <>
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1" />
+    </>
+  ),
+  face: (
+    <>
+      <path d="M4 8V6a2 2 0 012-2h2M16 4h2a2 2 0 012 2v2M20 16v2a2 2 0 01-2 2h-2M8 20H6a2 2 0 01-2-2v-2" />
+      <circle cx="12" cy="11" r="3" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;
@@ -138,6 +157,15 @@ export function PlayIcon({ size = 15 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M8 5v14l11-7z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Two filled bars: «Пауза» on the timeline's play button while it plays. */
+export function PauseIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" />
     </svg>
   );
 }

@@ -90,6 +90,12 @@
   --tick-after: #4a4a5a;
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
   --shadow-frame: 0 24px 60px rgba(0, 0, 0, 0.5);
+  /* the timeline's clip track (3d.3a): the seams of a clip's film strip, a handle's grip, a lifted clip, the
+     hatching of a clip whose photo is refused */
+  --scrim-35: rgba(9, 9, 12, 0.35);
+  --scrim-60: rgba(9, 9, 12, 0.6);
+  --shadow-lift: 0 10px 24px rgba(0, 0, 0, 0.55);
+  --warn-04: rgba(244, 185, 87, 0.04);
 
   /* other */
   --uniq: #7c6cff;

@@ -785,6 +785,7 @@
 
 .ed-bin {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-content: start;
   gap: 8px;
@@ -810,16 +811,54 @@
   height: 70%;
 }
 
+/* The whole tile is the button: a click places the photo (or selects its clip), a drag carries it. */
+.ed-bin-pick {
+  position: absolute;
+  inset: 0;
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ed-bin-pick[draggable="true"] {
+  cursor: grab;
+}
+
+.ed-bin-pick:disabled {
+  cursor: not-allowed;
+}
+
+.ed-bin-tile:hover .ed-bin-pick:not(:disabled) {
+  box-shadow: inset 0 0 0 1.5px var(--accent-ring);
+}
+
 .ed-bin-dim {
   position: absolute;
   inset: 0;
   background: var(--scrim-50);
+  pointer-events: none;
+}
+
+.ed-bin-hint {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* The clips are full: the hint says why a click adds nothing (the components sheet's caps). */
+.ed-bin-hint-full {
+  color: var(--warn);
 }
 
 .ed-bin-used {
   position: absolute;
   bottom: 5px;
   left: 5px;
+  pointer-events: none;
   height: 20px;
   padding: 0 6px;
   color: var(--muted);
@@ -831,6 +870,7 @@
   position: absolute;
   top: 6px;
   left: 6px;
+  pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -992,7 +1032,7 @@
   font-size: 11.5px;
 }
 
-/* timeline (SLOT 3d.3a / 3d.3b) */
+/* timeline (3d.3a: the toolbar, ruler, playhead and the clip track; SLOT 3d.3b: layer blocks and the music block) */
 
 .ed-timeline {
   display: flex;
@@ -1011,18 +1051,99 @@
   gap: 10px;
   height: 40px;
   flex-shrink: 0;
+  min-width: 0;
+}
+
+/* «Воспроизвести»: the round accent button that moved here from under the preview. */
+.ed-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+
+.ed-play:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.ed-play:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ed-play:focus-visible,
+.ed-clip:focus-visible,
+.ed-bin-pick:focus-visible,
+.ed-add-end:focus-visible,
+.ed-cell:focus-visible,
+.tb:focus-visible .tbox {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
 }
 
 .ed-tl-clock {
+  margin-left: 4px;
   color: var(--text);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .ed-tl-sep {
   width: 1px;
   height: 22px;
+  flex-shrink: 0;
   margin: 0 4px;
   background: var(--border);
+}
+
+.ed-tl-bar > .ibtn {
+  flex-shrink: 0;
+}
+
+.ed-tl-even {
+  flex-shrink: 0;
+  height: 28px;
+  margin-left: 2px;
+  font-size: 11.5px;
+}
+
+.ed-tl-even:disabled,
+.ed-tl-zoom .chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ed-tl-length {
+  min-width: 0;
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ed-tl-zoom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.ed-tl-zoom input[type="range"] {
+  width: 96px;
+  margin: 0;
+}
+
+.ed-tl-zoom .chip {
+  margin-left: 4px;
 }
 
 .ed-tl-body {
@@ -1060,6 +1181,11 @@
 
 .th .mono {
   font-weight: 400;
+}
+
+/* A track at its cap: the count turns amber and «+» is off with the reason (the components sheet's caps). */
+.th .ed-th-full {
+  color: var(--warn);
 }
 
 .ed-th-text {
@@ -1105,19 +1231,32 @@
   cursor: not-allowed;
 }
 
+/* The lanes scroll sideways once zoomed; at «Уместить» they fit the width exactly and nothing scrolls. */
+.ed-tl-scroll {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
 .ed-tl-lanes {
   position: relative;
   display: flex;
-  flex: 1;
+  min-width: 100%;
+  height: 100%;
   flex-direction: column;
   gap: 4px;
-  min-width: 0;
 }
 
 .ed-ruler {
   position: relative;
   height: 18px;
   flex-shrink: 0;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
 }
 
 .ed-tick {
@@ -1162,27 +1301,106 @@
   height: 44px;
 }
 
+/* A photo dragged from the bin over the track. */
+.ed-lane-clips-drop {
+  box-shadow: inset 0 0 0 1.5px var(--accent-ring);
+}
+
 .ed-clips {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.ed-clip {
+.ed-clip-slot {
   position: absolute;
   top: 0;
   bottom: 0;
+  z-index: 1;
+}
+
+.ed-clip-on {
+  z-index: 2;
+}
+
+.ed-clip-lifted {
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* A clip: its film strip of 24 px frames, the layout tag above, the length below (the components sheet's .clip). */
+.ed-clip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  padding: 0;
   overflow: hidden;
   border: 1px solid var(--accent-45);
   border-radius: 6px;
+  background: var(--panel-2);
+  color: inherit;
+  font: inherit;
+  cursor: grab;
+  touch-action: none;
 }
 
-.ed-clip-flagged {
+.ed-clip-on .ed-clip {
+  border: 2px solid var(--accent);
+}
+
+.ed-clip-lifted .ed-clip {
+  border: 2px solid var(--accent);
+  box-shadow: var(--shadow-lift);
+  cursor: grabbing;
+}
+
+.ed-clip-warn .ed-clip {
   border: 1.5px solid var(--warn);
+}
+
+/* A photo the engine refuses: amber hatching over the dimmed strip, «⚠ фото отклонено» on top. */
+.ed-clip-flagged .ed-clip {
+  border: 1px solid var(--warn-45);
+}
+
+.ed-clip-flagged.ed-clip-on .ed-clip {
+  border: 2px solid var(--warn);
+}
+
+.ed-clip-flagged .ed-strip {
+  opacity: 0.35;
+}
+
+.ed-clip-flagged .ed-clip::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(135deg, var(--warn-16) 0 6px, var(--warn-04) 6px 12px);
+}
+
+.ed-clip-flagged .ed-ctag-top {
+  color: var(--warn);
+}
+
+.ed-strip {
+  display: flex;
+  height: 100%;
+  pointer-events: none;
+}
+
+.ed-strip-frame {
+  flex: 0 0 24px;
+  height: 100%;
+  border-right: 1px solid var(--scrim-35);
+}
+
+.ed-strip-frame-empty {
+  background: repeating-linear-gradient(135deg, var(--input) 0 5px, var(--inset) 5px 10px);
 }
 
 .ctag {
   position: absolute;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1195,6 +1413,7 @@
   font-size: 9.5px;
   letter-spacing: -0.02em;
   white-space: nowrap;
+  pointer-events: none;
 }
 
 .ed-ctag-top {
@@ -1205,6 +1424,94 @@
 .ed-ctag-bottom {
   bottom: 4px;
   left: 5px;
+}
+
+/* The tags step aside for the 9 px handles of a selected clip. */
+.ed-clip-on .ed-ctag-top,
+.ed-clip-on .ed-ctag-bottom {
+  left: 13px;
+}
+
+/* The trim handles: 9 px accent bars on a selected clip's edges, each a slider. */
+.hd {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  background: var(--accent);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.hd::after {
+  content: "";
+  width: 2px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--scrim-60);
+}
+
+.hd-l {
+  left: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.hd-r {
+  right: 0;
+  border-radius: 0 6px 6px 0;
+}
+
+.hd:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.ed-clip-flagged .hd {
+  background: var(--warn);
+}
+
+/* «Добавить кадр в конец»: the dashed «+» after the last clip. */
+.ed-add-end {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.ed-add-end:hover:not(:disabled) {
+  border-color: var(--accent-ring);
+  color: var(--accent-text);
+}
+
+.ed-add-end:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Where a dragged clip or photo goes: a 2 px accent line on the boundary. */
+.ed-insert {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  z-index: 4;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
 }
 
 .ed-lane-drop {
@@ -1256,11 +1563,11 @@
   pointer-events: none;
 }
 
+/* The playhead: a 2 px line over every lane; its 12 px head is the slider (drag it, or ←/→). */
 .ed-playhead {
   position: absolute;
   top: 2px;
-  bottom: -4px;
-  left: 0;
+  bottom: 0;
   z-index: 5;
   width: 2px;
   margin-left: -1px;
@@ -1268,8 +1575,7 @@
   pointer-events: none;
 }
 
-.ed-playhead::before {
-  content: "";
+.ed-playhead-head {
   position: absolute;
   top: 0;
   left: -5px;
@@ -1277,6 +1583,252 @@
   height: 12px;
   border-radius: 3px;
   background: var(--accent);
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* A larger target than the 12 px square it draws. */
+.ed-playhead-head::before {
+  content: "";
+  position: absolute;
+  inset: -4px -6px;
+}
+
+.ed-playhead-head:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* «4.1 с» while the playhead is dragged, beside its head (above it would leave the scrolling lanes). */
+.ed-playhead-time {
+  position: absolute;
+  top: -1px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+/* the clip's properties (3d.3a; Editor.dc.html, sel = c2) */
+
+.ed-props-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.ed-props-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.ed-pgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ed-pgroup-tight {
+  gap: 7px;
+}
+
+.ed-prow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ed-props-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ed-layouts {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 6px;
+}
+
+/* «Раскладка»: a miniature of each layout over its name. */
+.tb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tb:hover {
+  color: var(--text);
+}
+
+.tb-on,
+.tb-on:hover {
+  color: var(--accent-text);
+}
+
+.tb:focus-visible {
+  outline: none;
+}
+
+.tbox {
+  display: grid;
+  gap: 3px;
+  width: 48px;
+  height: 76px;
+  padding: 4px;
+  border: 2px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--input);
+}
+
+.tb-on .tbox {
+  border-color: var(--accent);
+}
+
+.tbox span {
+  border-radius: 3px;
+  background: var(--dashed);
+}
+
+.tbox-photo {
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+
+.tbox-collage2 {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.tbox-collage3 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: 58% minmax(0, 1fr);
+}
+
+.tbox-collage3 span:first-child {
+  grid-column: span 2;
+}
+
+.tbox-collage4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+/* «кадр по лицу» / «ищем лицо…» / «лицо не найдено» (R8, AM9). */
+.ed-face {
+  gap: 5px;
+}
+
+.ed-face-found {
+  background: var(--ok-14);
+  color: var(--ok);
+}
+
+.ed-face-pending {
+  color: var(--faint);
+}
+
+.ed-face-none {
+  background: var(--warn-12);
+  color: var(--warn);
+}
+
+.ed-cells {
+  display: flex;
+  gap: 8px;
+}
+
+/* «Ячейки»: 52 × 72 thumbs, numbered; an empty one dashed; a bin photo can be dropped on any of them. */
+.ed-cell {
+  width: 52px;
+  height: 72px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--input);
+  cursor: pointer;
+}
+
+.ed-cell .portrait-silhouette {
+  height: 80%;
+}
+
+.ed-cell-empty {
+  border: 2px dashed var(--dashed);
+}
+
+.ed-cell-on,
+.ed-cell-empty.ed-cell-on {
+  border-color: var(--accent);
+}
+
+.ed-cell-target {
+  box-shadow: 0 0 0 1px var(--accent-ring);
+}
+
+.ed-cell-n {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: var(--scrim);
+  color: var(--text);
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.ed-cell-on .ed-cell-n {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.ed-motion {
+  align-self: flex-start;
+}
+
+.ed-stagger {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.ed-stagger-off {
+  color: var(--faint);
+}
+
+.ed-duration label {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.ed-duration input[type="range"] {
+  flex-grow: 1;
+  margin: 0;
+}
+
+.ed-duration-value {
+  color: var(--text);
 }
 
 /* the problem and loading states */

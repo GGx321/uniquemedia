@@ -1,17 +1,16 @@
 import { type Ref, useId } from "react";
 import type { MontageDraft, PhotoSummary } from "../../../shared/engine";
-import { MAX_CLIPS, MAX_TOTAL_MS } from "../../../shared/montage";
-import { useEngine } from "../../engine/react";
-import { photoUrl, placeholderGradient } from "../../lib/media";
+import { MAX_CLIPS } from "../../../shared/montage";
 import { Icon, type IconName } from "../../ui/Icon";
 import { Portrait } from "../../ui/Portrait";
+import type { AddRefusal } from "./clipOps";
 import { ClipPoster } from "./ClipPoster";
-import { clockLabel, secondsLabel } from "./labels";
+import { addBlockedLabel } from "./labels";
 
-// The editor's four regions (Editor.dc.html), each a SLOT a later task fills. 3d.2 draws what is already true:
-// the tabs and the avatar's photos read-only, a still of the first clip, the «nothing selected» properties, and
-// the timeline's frame with its tracks. Every control that needs a later task is either left out or disabled with
-// «Скоро» (N9: text, stickers and music until their slices lift it; own media until 3f).
+// The editor's regions (Editor.dc.html), each a SLOT a later task fills. 3d.2 drew what was already true; 3d.3a
+// places photos from the «Фото» tab, shows the clip under the playhead, and the timeline (Timeline.tsx) and the
+// clip properties (ClipProperties.tsx) are their own files. Every control that needs a later task is either left
+// out or disabled with «Скоро» (N9: text, stickers and music until their slices lift it; own media until 3f).
 
 const MEDIA_TABS: readonly { id: string; label: string; icon: IconName; soon?: string }[] = [
   { id: "photos", label: "Фото", icon: "image" },
@@ -33,14 +32,44 @@ function slotsOf(spec: MontageDraft): ReadonlyMap<string, number> {
 
 const VIDEO_FORMS = (n: number): string => `в ${n} видео`;
 
+/** A photo that may go into the montage: eligible, and in no video and no render (one photo → one video, Q1). */
+export function isFreePhoto(photo: PhotoSummary): boolean {
+  return photo.eligible && !photo.used && !photo.reserved && photo.usedIn.length === 0;
+}
+
+export interface MediaPanelProps {
+  readonly avatarName: string;
+  readonly avatarId: string;
+  readonly spec: MontageDraft;
+  readonly photos: readonly PhotoSummary[] | null;
+  readonly tabRef?: Ref<HTMLButtonElement>;
+  /** A click on a photo: select its clip when it is placed, else fill `fillTarget` or add a clip at the end. */
+  readonly onPick: (photoId: string) => void;
+  /** An empty cell of the selected clip, which a click fills instead of adding a clip. */
+  readonly fillTarget: { readonly clip: number; readonly cell: number } | null;
+  /** Why a click cannot add a clip (20 clips, or no 0.5 s left of 15 s). */
+  readonly addBlock: AddRefusal | null;
+  /** A free photo dragged out of the bin (onto the track or a cell), or null when the drag ends. */
+  readonly onDragPhoto: (photoId: string | null) => void;
+}
+
+/** The bin's line under the photos: what a click does now. */
+function binHint(fillTarget: MediaPanelProps["fillTarget"], addBlock: AddRefusal | null): string {
+  if (fillTarget !== null) return `Клик — фото в ячейку ${fillTarget.cell + 1} кадра ${fillTarget.clip + 1}. Перетащите фото на дорожку «Кадры», чтобы вставить новый кадр.`;
+  if (addBlock !== null) return addBlockedLabel(addBlock);
+  return "Клик — кадр в конец ролика. Перетащите фото на дорожку «Кадры», чтобы вставить его между кадрами.";
+}
+
 /**
- * SLOT 3d.5 (media panel: filters, the «Мои» / «Музыка» / «GIF» / «Текст» tabs) and 3d.3a (a click or a drag
- * places a photo). Here: the tabs, the draft's avatar as a read-only chip (CF15), and the avatar's eligible
- * photos with their slot badges; a photo already in a video is dimmed (one photo → one video, Q1).
+ * The «Фото» tab (3d.3a places photos; SLOT 3d.5: the filters, the «Мои» / «Музыка» / «GIF» / «Текст» tabs): the
+ * tabs, the draft's avatar as a read-only chip (CF15), and the avatar's eligible photos with their slot badges. A
+ * click places a free photo (or selects the clip holding a placed one); a free photo can be dragged onto the track
+ * or onto a cell. A photo in a video or a render is dimmed and cannot be added (one photo → one video, Q1).
  */
-export function MediaPanel({ avatarName, avatarId, spec, photos, tabRef }: { avatarName: string; avatarId: string; spec: MontageDraft; photos: readonly PhotoSummary[] | null; tabRef?: Ref<HTMLButtonElement> }) {
+export function MediaPanel({ avatarName, avatarId, spec, photos, tabRef, onPick, fillTarget, addBlock, onDragPhoto }: MediaPanelProps) {
   const panelId = useId();
   const tabId = useId();
+  const hintId = useId();
   const slots = slotsOf(spec);
   const bin = (photos ?? []).filter((p) => p.eligible);
   return (
@@ -88,11 +117,35 @@ export function MediaPanel({ avatarName, avatarId, spec, photos, tabRef }: { ava
             {bin.map((photo, i) => {
               const slot = slots.get(photo.photoId);
               const inVideos = photo.usedIn.length;
-              const busy = slot === undefined && (inVideos > 0 || photo.used || photo.reserved);
+              const busy = slot === undefined && !isFreePhoto(photo);
               const state = slot !== undefined ? ` · в кадре ${slot}` : inVideos > 0 ? ` · использовано ${VIDEO_FORMS(inVideos)}` : photo.reserved ? " · в рендере" : " · не использовано";
+              // A free photo is placed by a click (unless the clips are full and no cell waits for it); a placed one selects its clip.
+              const blocked = busy || (slot === undefined && fillTarget === null && addBlock !== null);
+              const action = slot !== undefined ? `Выбрать кадр ${slot}` : busy ? "Фото уже занято" : fillTarget !== null ? `В ячейку ${fillTarget.cell + 1} кадра ${fillTarget.clip + 1}` : "Добавить кадр в конец ролика";
+              const draggable = slot === undefined && !busy;
               return (
                 <li key={photo.photoId} className={slot !== undefined ? "ph ed-bin-tile ed-bin-tile-in" : "ph ed-bin-tile"} aria-label={`Фото ${i + 1}${state}`}>
-                  <Portrait avatarId={avatarId} photoId={photo.photoId} label={`Фото ${i + 1}`} />
+                  <button
+                    type="button"
+                    className="ed-bin-pick"
+                    aria-label={action}
+                    aria-describedby={hintId}
+                    disabled={blocked}
+                    draggable={draggable}
+                    onClick={() => onPick(photo.photoId)}
+                    onDragStart={(e) => {
+                      if (!draggable) return;
+                      if (e.dataTransfer) {
+                        e.dataTransfer.effectAllowed = "copy";
+                        // Chromium needs some data to start a drag; the photo itself travels in renderer state.
+                        e.dataTransfer.setData("text/plain", `Фото ${i + 1}`);
+                      }
+                      onDragPhoto(photo.photoId);
+                    }}
+                    onDragEnd={() => onDragPhoto(null)}
+                  >
+                    <Portrait avatarId={avatarId} photoId={photo.photoId} label={`Фото ${i + 1}`} />
+                  </button>
                   {busy && (
                     <>
                       <span className="ed-bin-dim" aria-hidden="true" />
@@ -105,17 +158,34 @@ export function MediaPanel({ avatarName, avatarId, spec, photos, tabRef }: { ava
             })}
           </ul>
         )}
+        {bin.length > 0 && (
+          <p id={hintId} className={addBlock !== null && fillTarget === null ? "ed-bin-hint ed-bin-hint-full" : "faint ed-bin-hint"}>
+            {binHint(fillTarget, addBlock)}
+          </p>
+        )}
       </div>
     </aside>
   );
 }
 
+/** The clip on screen at `ms` (half-open ranges); at or past the end, the last clip. Null for an empty draft. */
+export function clipIndexAt(spec: MontageDraft, ms: number): number | null {
+  if (spec.clips.length === 0) return null;
+  let start = 0;
+  for (const [i, clip] of spec.clips.entries()) {
+    if (ms < start + clip.durationMs) return i;
+    start += clip.durationMs;
+  }
+  return spec.clips.length - 1;
+}
+
 /**
  * SLOT 3d.4 (the live preview: motion, the focus drag, text and stickers, «Зоны Reels» and «Полоски слайдов»).
- * Here: the 9:16 frame at the artboard's 306 × 544 with a still of the first clip, or «Ролик пока пуст».
+ * Here: the 9:16 frame at the artboard's 306 × 544 with a still of the clip under the playhead, or «Ролик пока пуст».
  */
-export function PreviewSlot({ spec }: { spec: MontageDraft }) {
-  const first = spec.clips[0];
+export function PreviewSlot({ spec, playheadMs }: { spec: MontageDraft; playheadMs: number }) {
+  const at = clipIndexAt(spec, playheadMs);
+  const first = at === null ? undefined : spec.clips[at];
   return (
     <section className="ed-preview" aria-label="Превью" data-slot="preview 3d.4">
       <div className="ed-frame">
@@ -163,134 +233,5 @@ export function PropertiesSlot({ empty }: { empty: boolean }) {
         ))}
       </ul>
     </aside>
-  );
-}
-
-const pctOfMax = (ms: number): string => `${(ms / MAX_TOTAL_MS) * 100}%`;
-
-/** A clip's film strip: its photos repeated along the block, as the artboard draws the main track. */
-function stripOf(kind: string, avatarId: string, photoId: string | null): string {
-  if (photoId === null) return "var(--photo-queued)";
-  const url = kind === "mock" ? null : photoUrl(avatarId, photoId);
-  // The mock has no images: its placeholder gradient is tiled in the artboard's 24 px frames instead.
-  return url === null ? `${placeholderGradient(photoId)} 0 0 / 24px 100% repeat-x` : `url("${url}") 0 0 / auto 100% repeat-x`;
-}
-
-const LAYOUT_TAG = { collage2: "коллаж 2", collage3: "коллаж 3", collage4: "коллаж 4" } as const;
-
-/**
- * SLOT 3d.3a (toolbar, selection, trim, reorder, split, the playhead) and 3d.3b (text and sticker blocks, the music
- * block). Here: the clock and the length, the track headers with their counts, the ruler, the clips read-only,
- * and the empty draft's dashed «Перетащите фото или видео сюда» and «Добавить музыку» (EditorNew).
- */
-export function TimelineSlot({ spec, flagged, onAddClip }: { spec: MontageDraft; flagged: readonly number[]; onAddClip: () => void }) {
-  const { client } = useEngine();
-  const totalMs = spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
-  const texts = spec.layers.filter((l) => l.kind === "text").length;
-  const stickers = spec.layers.filter((l) => l.kind === "sticker").length;
-  const empty = spec.clips.length === 0;
-  let start = 0;
-  return (
-    <section className="ed-timeline" aria-label="Таймлайн" data-slot="timeline 3d.3a 3d.3b">
-      <div className="ed-tl-bar">
-        <span className="mono ed-tl-clock">
-          {clockLabel(0)} <span className="faint">/ {clockLabel(totalMs)}</span>
-        </span>
-        <span className="ed-tl-sep" aria-hidden="true" />
-        <span className="mono faint">
-          ролик {secondsLabel(totalMs)} · от 4 до 15 с
-        </span>
-      </div>
-      <div className="ed-tl-body">
-        <div className="ed-tl-heads">
-          <div className="ed-tl-ruler-gap" />
-          <div className="th ed-th-text">
-            <Icon name="text" size={14} />
-            Текст <span className="mono faint">{texts}</span>
-            <button type="button" className="tadd" aria-label="Добавить текст" disabled title="Текст — скоро">
-              <Icon name="plus" size={11} strokeWidth={2.6} />
-            </button>
-          </div>
-          <div className="th ed-th-sticker">
-            <Icon name="sparkle" size={14} />
-            Стикеры <span className="mono faint">{stickers}</span>
-            <button type="button" className="tadd" aria-label="Добавить стикер" disabled title="Стикеры — скоро">
-              <Icon name="plus" size={11} strokeWidth={2.6} />
-            </button>
-          </div>
-          <div className="th ed-th-clips">
-            <Icon name="film" size={14} />
-            Кадры <span className="mono faint">{spec.clips.length}</span>
-            <button type="button" className="tadd" aria-label="Добавить кадр" onClick={onAddClip}>
-              <Icon name="plus" size={11} strokeWidth={2.6} />
-            </button>
-          </div>
-          <div className="th ed-th-music">
-            <Icon name="music" size={14} />
-            Музыка
-          </div>
-        </div>
-        <div className="ed-tl-lanes">
-          <div className="ed-ruler" aria-hidden="true">
-            {Array.from({ length: 31 }, (_, i) => (
-              <span key={i} className={i % 2 === 0 ? "ed-tick ed-tick-major" : "ed-tick"} style={{ left: pctOfMax(i * 500) }} />
-            ))}
-            {Array.from({ length: 16 }, (_, s) => (
-              <span
-                key={`l${s}`}
-                className={s * 1000 > totalMs ? "mono ed-tick-label ed-tick-label-after" : "mono ed-tick-label"}
-                // The first label starts at its tick, the last ends at it, the rest are centred on theirs.
-                style={{ left: pctOfMax(s * 1000), transform: s === 0 ? "none" : s === 15 ? "translateX(-100%)" : "translateX(-50%)" }}
-              >
-                {s === 0 ? "0 с" : s === 15 ? "15 с" : s}
-              </span>
-            ))}
-          </div>
-          <div className="trk ed-lane-text" />
-          <div className="trk ed-lane-text" />
-          <div className="trk ed-lane-sticker" />
-          <div className="trk ed-lane-clips">
-            {empty ? (
-              <button type="button" className="ed-lane-drop" onClick={onAddClip}>
-                <Icon name="plus" size={13} strokeWidth={2.4} />
-                Перетащите фото или видео сюда
-              </button>
-            ) : (
-              <ol className="ed-clips" aria-label="Кадры">
-                {spec.clips.map((clip, i) => {
-                  const left = start;
-                  start += clip.durationMs;
-                  const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
-                  const first = cells.find((c) => c.photo?.source === "scene")?.photo;
-                  const photoId = first?.source === "scene" ? first.photoId : null;
-                  const tag = clip.kind === "collage" ? LAYOUT_TAG[clip.layout] : clip.kind === "video" ? "▶ видео" : null;
-                  return (
-                    <li
-                      key={clip.clipId}
-                      className={flagged.includes(i) ? "ed-clip ed-clip-flagged" : "ed-clip"}
-                      style={{ left: `calc(${pctOfMax(left)} + 1px)`, width: `calc(${pctOfMax(clip.durationMs)} - 2px)`, background: stripOf(client.kind, spec.avatarId, photoId) }}
-                      aria-label={`Кадр ${i + 1}${tag === null ? "" : `, ${tag}`}, ${secondsLabel(clip.durationMs)}`}
-                    >
-                      {tag !== null && <span className="ctag ed-ctag-top">{tag}</span>}
-                      <span className="ctag ed-ctag-bottom">{secondsLabel(clip.durationMs)}</span>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-          </div>
-          <div className="trk ed-lane-music">
-            {empty && (
-              <button type="button" className="ed-lane-music-add" disabled title="Музыка — скоро">
-                <Icon name="plus" size={13} strokeWidth={2.4} />
-                Добавить музыку
-              </button>
-            )}
-          </div>
-          {!empty && <div className="ed-tl-after" style={{ left: pctOfMax(totalMs) }} aria-hidden="true" />}
-          <div className="ed-playhead" aria-hidden="true" />
-        </div>
-      </div>
-    </section>
   );
 }

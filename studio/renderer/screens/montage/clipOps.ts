@@ -77,8 +77,11 @@ export function clipStartMs(spec: MontageDraft, index: number): number {
   return spec.clips.slice(0, index).reduce((sum, clip) => sum + clip.durationMs, 0);
 }
 
+/** Why no clip can be added now. */
+export type AddRefusal = Extract<Refusal, "clip-cap" | "no-room">;
+
 /** Why no clip can be added now, or null. */
-export function addRefusal(spec: MontageDraft): Refusal | null {
+export function addRefusal(spec: MontageDraft): AddRefusal | null {
   if (spec.clips.length >= MAX_CLIPS) return "clip-cap";
   if (roomMs(spec) < MIN_CLIP_MS) return "no-room";
   return null;

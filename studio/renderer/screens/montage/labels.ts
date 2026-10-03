@@ -1,7 +1,10 @@
-import type { Montage, MontageDraft } from "../../../shared/engine";
-import { estimateBytes, FPS, FRAME_H, FRAME_W } from "../../../shared/montage";
+import type { Clip, Montage, MontageDraft } from "../../../shared/engine";
+import { estimateBytes, FPS, FRAME_H, FRAME_W, FRAMES_PER_STEP, staggerStepFrames } from "../../../shared/montage";
 import { countOf, NBSP } from "../../lib/format";
 import type { SaveState } from "./autosave";
+import type { AddRefusal } from "./clipOps";
+import type { PhotoProblem } from "./renderBlock";
+import type { ActionBlock } from "./selection";
 
 // The words the drafts screen and the editor header show, as the EditorEmpty, Editor and EditorNew artboards set
 // them. Lengths and sizes are written with a dot and one decimal («9.6 с», «≈ 4.2 МБ»), in mono, as drawn.
@@ -62,6 +65,71 @@ export function clockLabel(ms: number): string {
   const seconds = Math.floor((whole % 60_000) / 1000);
   const tenths = Math.floor((whole % 1000) / 100);
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
+
+// ---------- the timeline (3d.3a) ----------
+
+/** «2.4–5.6 с»: a range on the timeline. */
+export function rangeLabel(startMs: number, endMs: number): string {
+  return `${(startMs / 1000).toFixed(1)}–${(endMs / 1000).toFixed(1)}${NBSP}с`;
+}
+
+const LAYOUT_NAMES = { photo: "1 фото", collage2: "коллаж 2", collage3: "коллаж 3", collage4: "коллаж 4" } as const;
+
+/** «1 фото», «коллаж 3», «видео»: what a clip is, as the properties header and the clip's name say it. */
+export function clipKindLabel(clip: Clip): string {
+  return clip.kind === "video" ? "видео" : clip.kind === "collage" ? LAYOUT_NAMES[clip.layout] : LAYOUT_NAMES.photo;
+}
+
+/** The tag on a clip block whose photo the engine refused, as the components sheet writes it. */
+export const PHOTO_PROBLEM_TAGS: Record<PhotoProblem, string> = {
+  rejected: "⚠ фото отклонено",
+  used: "⚠ фото уже в видео",
+  reserved: "⚠ фото в рендере",
+  unavailable: "⚠ фото недоступно",
+};
+
+/** A clip block's accessible name: «Кадр 2: коллаж 3, 3.2 с», «Кадр 1: фото отклонено, 2.4 с». */
+export function clipAria(index: number, clip: Clip, problem: PhotoProblem | null): string {
+  const what = problem === null ? clipKindLabel(clip) : PHOTO_PROBLEM_TAGS[problem].replace(/^⚠\s*/, "");
+  return `Кадр ${index + 1}: ${what}, ${secondsLabel(clip.durationMs)}`;
+}
+
+/** Why a toolbar action is off, in its tooltip. */
+export function actionWhyLabel(why: ActionBlock): string {
+  switch (why) {
+    case "nothing-selected":
+      return "Сначала выберите кадр на таймлайне";
+    case "photo-split":
+      return "Фото и коллаж не режутся: одно фото — один раз в ролике";
+    case "playhead-outside":
+      return "Поставьте плейхед внутрь выбранного";
+    case "too-short":
+      return "Слишком близко к краю: части выйдут короче минимума";
+    case "clip-cap":
+      return "Не больше 20 кадров в одном видео";
+    case "no-room":
+      return "До 15 с осталось меньше 0.5 с — укоротите кадр";
+    case "layer-cap":
+      return "Не больше 10 слоёв одного вида";
+    case "music":
+      return "Трек в ролике один — его можно только убрать";
+  }
+}
+
+/** The bin's line when a click on a photo cannot add a clip (the components sheet's caps state). */
+export function addBlockedLabel(why: AddRefusal): string {
+  return why === "clip-cap"
+    ? "Не больше 20 кадров в одном видео. Клик по фото в панели ничего не добавит."
+    : "Ролик почти 15 с: на новый кадр нет и 0.5 с. Укоротите кадр, чтобы добавить фото.";
+}
+
+/** «0.3 с»: a collage's stagger step (`staggerStepFrames`), with two decimals when it is not a whole 100 ms. */
+export function staggerStepLabel(durationMs: number, cellCount: number): string {
+  const frames = staggerStepFrames(durationMs, cellCount);
+  const seconds = frames / FPS;
+  // Three frames are exactly 100 ms; anything else is a third of a step and needs the second decimal.
+  return `${frames % FRAMES_PER_STEP === 0 ? seconds.toFixed(1) : seconds.toFixed(2)}${NBSP}с`;
 }
 
 const MONTHS = ["янв.", "февр.", "марта", "апр.", "мая", "июня", "июля", "авг.", "сент.", "окт.", "нояб.", "дек."] as const;
