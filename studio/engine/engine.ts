@@ -789,6 +789,7 @@ export class Engine {
    */
   async shutdown(waitMs: number = SHUTDOWN_RENDER_WAIT_MS): Promise<{ idle: boolean }> {
     // The held-back notice announcement is for windows of a running engine: it is dropped, not posted into a stopping one.
+    this.#stopping = true;
     if (this.#internalNoticeTimer !== null) clearTimeout(this.#internalNoticeTimer);
     this.#internalNoticeTimer = null;
     // A music request in flight is aborted (its send stays counted); the renders get their bounded wait.
@@ -3040,6 +3041,8 @@ export class Engine {
   #internalNoticeEmittedId: string | null = null;
   /** The trailing edge of a window in which notices were held back: one timer, so the windows end up seeing the real count. */
   #internalNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set by `shutdown()`: a rejection that arrives after it is still counted, but no trailing announcement is armed for a stopping engine. */
+  #stopping = false;
 
   /**
    * A promise rejection nobody handled was logged and swallowed (processGuards.ts) and the engine goes on: the windows are told,
@@ -3063,7 +3066,7 @@ export class Engine {
     const window = this.#deps.internalNoticeWindowMs ?? Engine.#INTERNAL_NOTICE_WINDOW_MS;
     const now = this.#deps.monotonic();
     if (this.#internalNoticeEmittedAt !== null && now - this.#internalNoticeEmittedAt < window) {
-      if (this.#internalNoticeTimer === null) {
+      if (this.#internalNoticeTimer === null && !this.#stopping) {
         this.#internalNoticeTimer = setTimeout(() => {
           this.#internalNoticeTimer = null;
           const pending = this.#notices.find((n) => n.code === "engine-internal-error");
@@ -3074,9 +3077,9 @@ export class Engine {
             this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice: pending } });
           } catch (error) {
             // A timer callback has no caller to throw to: an exception here would end the engine for a notice. The pending notice stays in the snapshot.
-            console.warn(`studio engine: the trailing engine-internal-error notice could not be announced (${messageOf(error, "unknown error")})`);
+            console.error(`studio engine: the trailing engine-internal-error notice could not be announced (${errorKind(error)})`);
           }
-        },Math.max(0, window - (now - this.#internalNoticeEmittedAt)));
+        }, Math.max(0, window - (now - this.#internalNoticeEmittedAt)));
         this.#internalNoticeTimer.unref();
       }
       return;
