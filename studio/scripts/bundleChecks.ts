@@ -42,6 +42,9 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "mockPreviewPng",
   // 3d.1b review: the mock's invented demo tracks (ids `demo-track-NNNN`) were built at module load, so they shipped.
   "demo-track-",
+  // 3e.2: the dev build's demo videos (Mia's records in every file state): the mock's option and the method that seeds them.
+  "demoVideos",
+  "seedDemoVideos",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",
