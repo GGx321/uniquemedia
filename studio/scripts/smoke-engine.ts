@@ -419,13 +419,24 @@ async function quit(running: Running): Promise<void> {
   killTree(running.child);
 }
 
+/** The folder of the app under test (its executable's), set once the target is known: what a process must run from to count as the app's. */
+let appExecutableDir = "";
+
 /**
- * Windows only: the processes whose command line names `dir`, which is the app under test and everything it started (every Chromium
- * child carries --user-data-dir). Not the query's own PowerShell (`$PID`), whose command line names the folder too: counting it made
- * every cleanup wait out its 15 s.
+ * Windows only: the processes that hold `dir` for the app under test: whose command line names the folder at a path boundary
+ * (`<dir>\`, so a sibling folder with the same prefix is not matched) and which run from the app's own folder or are the bundled
+ * ffmpeg (every Chromium child carries --user-data-dir, and ffmpeg is handed the folder's paths). Not the query's own PowerShell
+ * (`$PID`), whose command line names the folder too: counting it made every cleanup wait out its 15 s.
  */
 function processesUsing(dir: string): number[] {
-  const script = `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -ne $null -and $_.CommandLine.Contains('${dir.replaceAll("'", "''")}') } | ForEach-Object { $_.ProcessId }`;
+  const quote = (text: string): string => `'${text.replaceAll("'", "''")}'`;
+  const script = [
+    `$dir = ${quote(`${dir}\\`)}; $app = ${quote(`${appExecutableDir}\\`)}`,
+    "Get-CimInstance Win32_Process | Where-Object {",
+    "  $_.ProcessId -ne $PID -and $_.CommandLine -ne $null -and $_.ExecutablePath -ne $null -and $_.CommandLine.Contains($dir) -and",
+    "  ($_.ExecutablePath.StartsWith($app, [StringComparison]::OrdinalIgnoreCase) -or $_.ExecutablePath -like '*ffmpeg-static*')",
+    "} | ForEach-Object { $_.ProcessId }",
+  ].join("\n");
   const out = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" }).stdout;
   return out.split(/\r?\n/).filter((line) => /^\d+$/.test(line.trim())).map(Number);
 }
@@ -433,8 +444,8 @@ function processesUsing(dir: string): number[] {
 /**
  * Removes a scenario's temp folder. `taskkill /T` returns before every process of the app is gone, and one that is still on its way
  * out holds files of userData or the library (a Windows EBUSY on the folder was seen here, right after the app was killed). So the
- * cleanup first waits until no process names the folder any more, ends and reports any that will not go, and only then removes it;
- * if the folder still will not go, it says which processes were holding it.
+ * cleanup first waits until no process of the app holds the folder any more, ends (each by its own pid, never its tree) and reports
+ * any that will not go, and only then removes it; if the folder still will not go, it says which processes were holding it.
  */
 async function removeTemp(dir: string): Promise<void> {
   if (process.platform === "win32") {
@@ -446,7 +457,7 @@ async function removeTemp(dir: string): Promise<void> {
     }
     if (users.length > 0) {
       console.log(`CLEANUP  ${users.length} process(es) still name ${basename(dir)} after 15 s and are ended: ${users.join(", ")}`);
-      for (const pid of users) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+      for (const pid of users) spawnSync("taskkill", ["/PID", String(pid), "/F"]);
       await Bun.sleep(1_000);
     } else if (Date.now() - started > 600) {
       console.log(`CLEANUP  the app's processes took ${Date.now() - started} ms to be gone after the kill`);
@@ -2150,6 +2161,7 @@ function finish(): void {
 
 async function main(): Promise<void> {
   const target = await resolveTarget();
+  appExecutableDir = dirname(target.executable);
   console.log(`Studio engine smoke test — ${production ? "production check, " : ""}${target.label}\n`);
   if (production) {
     await productionCheck(target);
