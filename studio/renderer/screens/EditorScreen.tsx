@@ -515,6 +515,11 @@ function DraftEditor({
     cancelling,
   });
 
+  // A new engine process (a new bootId) knows nothing of a submit made to the old one: an ok answer whose job event never came
+  // would hold the button in «Рендер…» for ever. The jobs the new process has come with its snapshot.
+  const { bootId } = view;
+  useEffect(() => setPending(null), [bootId]);
+
   // The window's own lock: a click that lands before React shows the busy button still cannot send a second render.
   const submitLock = useRef(false);
   // The frames a refusal named describe the spec that was refused: an edit retires them.

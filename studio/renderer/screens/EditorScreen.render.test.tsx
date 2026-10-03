@@ -196,6 +196,23 @@ describe("a render's life on the button", () => {
   });
 });
 
+describe("an engine that restarts under a submit", () => {
+  test("an ok answer whose job event never came does not leave the button in «Рендер…» when the engine restarts", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P(0), P(1)]);
+    await openEditor();
+    engine.setDelivery(false);
+    await submit();
+    expect(screen.getByRole("button", { name: "Рендер…" })).toBeDefined();
+
+    engine.setDelivery(true);
+    engine.restart();
+    await flush();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Рендер…" })).toBeNull());
+    expect(screen.getAllByRole("button", { name: /^Рендер/ }).length).toBeGreaterThan(0);
+  });
+});
+
 describe("what a refusal says (nothing was queued: the button is ready again)", () => {
   async function refused(error: EngineError): Promise<void> {
     const { client, engine } = await studio();
