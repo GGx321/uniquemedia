@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { EngineClient } from "./engine/client";
 import { EngineProvider, useEngineView } from "./engine/react";
-import { isActiveJob } from "./engine/store";
+import { sidebarCounts } from "./engine/renderJobs";
 import { readStudioVersion } from "./engine/windowStudio";
 import { createNavigation, NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
 import { AvatarImport } from "./screens/AvatarImport";
@@ -145,40 +145,50 @@ function EngineNoticesBar() {
 const TASK_FORMS = ["задача", "задачи", "задач"] as const;
 
 /**
- * The sidebar's foot boxes, from what the engine actually reports: the paid
- * jobs still running (their summed progress) and this month's spend against
- * the budget. The sheet's render row and OpenRouter balance have no data in
- * the contract yet, so they are not drawn at all rather than drawn with
- * made-up numbers.
+ * The sidebar's foot boxes, from what the engine actually reports: the queue (every job still queued or
+ * running, renders included) with a row per kind, «Генерация» for photo runs and candidate batches and
+ * «Рендер a / b» for renders (AM4), and this month's spend against the budget. The counts are the render job
+ * model's (`sidebarCounts`). The sheet's OpenRouter balance has no data in the contract yet, so it is not
+ * drawn at all rather than drawn with made-up numbers.
  */
 function SidebarStatus() {
   const view = useEngineView();
   if (view.phase !== "ready") return null;
-  const active = view.jobs.filter(isActiveJob);
-  const done = active.reduce((sum, j) => sum + j.done, 0);
-  // A job just tracked from its command answer has no total yet (store.ts's
-  // emptyJob): the same "|| 4" fallback AvatarsScreen's draftState and
-  // CandidatesCard already use, so the queue never reads "0 / 0".
-  const total = active.reduce((sum, j) => sum + (j.total || 4), 0);
+  // A photo job just tracked from its command answer has no total yet (store.ts's emptyJob): `sidebarCounts`
+  // counts its 4 slots, as AvatarsScreen's draftState and CandidatesCard do, so the queue never reads "0 / 0".
+  const counts = sidebarCounts(view.jobs, view.renderBatch);
   const money = view.money?.ledger === "open" ? view.money : null;
   return (
     <>
       <section className="side-box" aria-label="Очередь">
         <div className="side-box-head">
           <span className="side-box-title">Очередь</span>
-          <span className="mono">{active.length > 0 ? countOf(active.length, TASK_FORMS) : "пусто"}</span>
+          <span className="mono">{counts.queue > 0 ? countOf(counts.queue, TASK_FORMS) : "пусто"}</span>
         </div>
-        {active.length > 0 && (
+        {counts.generation !== null && (
           <div className="side-meter">
             <div className="side-meter-row">
               <span>Генерация</span>
               <span className="mono link-text">
-                {done} / {total}
+                {counts.generation.done} / {counts.generation.total}
               </span>
             </div>
             {/* The numbers above already say it; the screen's own job card carries the real progressbar. */}
             <div className="bar" aria-hidden="true">
-              <span style={{ width: `${total > 0 ? (done / total) * 100 : 0}%` }} />
+              <span style={{ width: `${(counts.generation.done / counts.generation.total) * 100}%` }} />
+            </div>
+          </div>
+        )}
+        {counts.render !== null && (
+          <div className="side-meter">
+            <div className="side-meter-row">
+              <span>Рендер</span>
+              <span className="mono side-render-count">
+                {counts.render.ended} / {counts.render.size}
+              </span>
+            </div>
+            <div className="bar side-render-bar" aria-hidden="true">
+              <span style={{ width: `${counts.render.fraction * 100}%` }} />
             </div>
           </div>
         )}

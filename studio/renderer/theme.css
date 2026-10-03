@@ -296,6 +296,15 @@ a:hover {
   color: var(--muted);
 }
 
+/* The sheet draws the render row in green (the generation row is in the accent). */
+.side-box .side-render-count {
+  color: var(--ok);
+}
+
+.side-render-bar > span {
+  background: var(--ok);
+}
+
 .side-spend {
   gap: 4px;
 }
