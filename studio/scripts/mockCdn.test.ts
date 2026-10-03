@@ -4,7 +4,8 @@ import { musicLists } from "../engine/music/fixtures";
 import { EXCERPTS, excerptOf, JPEG_1X1 } from "../engine/music/testing/storeKit";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { nativeFetch, useNativeHttp } from "../testing/nativeHttp";
-import { startMockCdn, withExcerptDurations, type MockCdn } from "./mockCdn";
+import { signedUrlExpiresAtMs } from "../engine/music/signedUrl";
+import { startMockCdn, withExcerptDurations, withFutureExpiry, type MockCdn } from "./mockCdn";
 useNativeGlobals();
 useNativeHttp();
 
@@ -19,6 +20,9 @@ const pathOf = (href: string): string => {
   const url = new URL(href);
   return `${url.pathname}${url.search}`;
 };
+
+/** A path and query without the signature's expiry: the mock keys on everything else. */
+const plain = (path: string): string => path.replace(/([?&])oe=[^&]*&?/, "$1").replace(/[?&]$/, "");
 
 let cdn: MockCdn | null = null;
 afterEach(async () => {
@@ -68,6 +72,23 @@ describe("the mock CDN", () => {
     expect(cdn.unexpected).toEqual(["GET /somewhere/else.m4a"]);
   });
 
+  // The fixtures' signed URLs expire 104 to 108 hours after 2026-09-27, so a run on the real clock after that would find
+  // every URL expired (the E2E scenario did, on 2026-10-01). The run rewrites `oe` into the future; the mock ignores it.
+  test("serves a known path whatever its `oe` says", async () => {
+    cdn = startMockCdn({});
+    const known = pathOf(listOf("kyiv").response.items[0]?.track.progressive_download_url ?? "");
+    const later = known.replace(/oe=[0-9A-Fa-f]+/, "oe=FFFFFFFF");
+    expect(later).not.toBe(known);
+    expect((await get(later)).status).toBe(200);
+  });
+
+  test("an override given with any `oe` applies to the same path", async () => {
+    cdn = startMockCdn({});
+    const known = pathOf(listOf("kyiv").response.items[0]?.track.progressive_download_url ?? "");
+    cdn.override(known, { status: 410, body: "gone" });
+    expect((await get(known.replace(/oe=[0-9A-Fa-f]+/, "oe=FFFFFFFF"))).status).toBe(410);
+  });
+
   test("a different query on a known path is another path", async () => {
     cdn = startMockCdn({});
     const known = pathOf(listOf("kyiv").response.items[0]?.track.progressive_download_url ?? "");
@@ -79,7 +100,7 @@ describe("the mock CDN", () => {
     const known = pathOf(listOf("kyiv").response.items[0]?.track.progressive_download_url ?? "");
     await get(known, { "x-marker": "hello" });
     expect(cdn.requests).toHaveLength(1);
-    expect(cdn.requests[0]).toMatchObject({ method: "GET", path: known });
+    expect(cdn.requests[0]).toMatchObject({ method: "GET", path: plain(known) });
     expect(cdn.requests[0]?.headers["x-marker"]).toBe("hello");
   });
 
@@ -98,8 +119,39 @@ describe("the mock CDN", () => {
   test("is listed by index so a scenario can name the track it spoils", () => {
     cdn = startMockCdn({});
     const { items } = listOf("kyiv").response;
-    expect(cdn.downloadPath(2)).toBe(pathOf(items[2]?.track.progressive_download_url ?? ""));
-    expect(cdn.coverPath(2)).toBe(pathOf(items[2]?.track.cover_artwork_uri ?? ""));
+    expect(cdn.downloadPath(2)).toBe(plain(pathOf(items[2]?.track.progressive_download_url ?? "")));
+    expect(cdn.coverPath(2)).toBe(plain(pathOf(items[2]?.track.cover_artwork_uri ?? "")));
+  });
+});
+
+describe("withFutureExpiry", () => {
+  const UNTIL = Date.parse("2030-01-01T00:00:00Z");
+  const oeOf = (url: string): string | null => new URL(url).searchParams.get("oe");
+
+  test("sets every download and cover URL's oe to the given time, as hex seconds, and keeps the rest of the URL", () => {
+    const { response } = listOf("kyiv");
+    const changed = withFutureExpiry(response, UNTIL) as { items: Item[] };
+    changed.items.forEach((item, index) => {
+      const before = new URL(response.items[index]?.track.progressive_download_url ?? "");
+      const after = new URL(item.track.progressive_download_url);
+      expect(oeOf(item.track.progressive_download_url)).toBe(Math.floor(UNTIL / 1000).toString(16).toUpperCase());
+      expect(after.host + after.pathname).toBe(before.host + before.pathname);
+      expect(after.searchParams.get("oh")).toBe(before.searchParams.get("oh"));
+      if (item.track.cover_artwork_uri !== undefined) expect(oeOf(item.track.cover_artwork_uri)).toBe(Math.floor(UNTIL / 1000).toString(16).toUpperCase());
+    });
+  });
+
+  test("makes the URLs live for the store's expiry reader", () => {
+    const changed = withFutureExpiry(listOf("kyiv").response, UNTIL) as { items: Item[] };
+    expect(signedUrlExpiresAtMs(changed.items[0]?.track.progressive_download_url ?? "")).toBe(Math.floor(UNTIL / 1000) * 1000);
+  });
+
+  test("does not modify what it was given, and leaves a body that is not a list as it is", () => {
+    const { response } = listOf("kyiv");
+    const before = JSON.stringify(response);
+    withFutureExpiry(response, UNTIL);
+    expect(JSON.stringify(response)).toBe(before);
+    expect(withFutureExpiry({ nope: 1 }, UNTIL)).toEqual({ nope: 1 });
   });
 });
 

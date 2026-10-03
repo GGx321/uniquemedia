@@ -49,11 +49,23 @@ interface ListFile {
   response: { items?: { track?: { progressive_download_url?: string; cover_artwork_uri?: string } }[] };
 }
 
+/**
+ * A path and query WITHOUT the signature's expiry (`oe`): the mock keys on the rest. The fixtures' URLs expire 104 to 108
+ * hours after 2026-09-27, and a run on the real clock after that finds every URL expired; the run rewrites `oe` into the
+ * future (`withFutureExpiry`), so what the engine asks for differs from the fixture only there.
+ */
+function keyOf(pathname: string, search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete("oe");
+  const rest = params.toString();
+  return rest === "" ? pathname : `${pathname}?${rest}`;
+}
+
 function pathOf(href: string | undefined): string | null {
   if (href === undefined) return null;
   try {
     const url = new URL(href);
-    return `${url.pathname}${url.search}`;
+    return keyOf(url.pathname, url.search);
   } catch {
     return null;
   }
@@ -75,7 +87,7 @@ export function startMockCdn(options: MockCdnOptions): MockCdn {
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      const path = `${url.pathname}${url.search}`;
+      const path = keyOf(url.pathname, url.search);
       const headers: Record<string, string> = {};
       req.headers.forEach((value, name) => {
         headers[name.toLowerCase()] = value;
@@ -96,7 +108,11 @@ export function startMockCdn(options: MockCdnOptions): MockCdn {
     url: `http://127.0.0.1:${server.port}`,
     requests,
     unexpected,
-    override: (pathAndQuery, served) => void table.set(pathAndQuery, served),
+    override: (pathAndQuery, served) => {
+      // Given with any `oe` (or none): it names the same path.
+      const target = new URL(pathAndQuery, "http://mock.invalid");
+      table.set(keyOf(target.pathname, target.search), served);
+    },
     downloadPath: (index) => downloads[index] ?? "",
     coverPath: (index) => covers[index] ?? "",
     stop: async () => {
@@ -118,5 +134,37 @@ export function withExcerptDurations(response: unknown): unknown {
   copy.items.forEach((item, index) => {
     if (item.track !== undefined) item.track.duration_in_ms = EXCERPTS[index % EXCERPTS.length]?.durationMs ?? 8000;
   });
+  return copy;
+}
+
+/**
+ * The flashapi mock's `transformResponse` for a run on the real clock: every download and cover URL's `oe` (hex seconds)
+ * becomes `untilMs`, so the signed URLs are live when the engine reads them. The fixtures' own expire 104 to 108 hours
+ * after 2026-09-27, which made the E2E scenario fail once that had passed. The mock CDN ignores `oe`, so the rest of each
+ * URL is what it matches on. Works on a copy; anything that is not a list is returned as it is.
+ */
+export function withFutureExpiry(response: unknown, untilMs: number): unknown {
+  if (typeof response !== "object" || response === null) return response;
+  const items: unknown = Reflect.get(response, "items");
+  if (!Array.isArray(items)) return response;
+  const oe = Math.floor(untilMs / 1000).toString(16).toUpperCase();
+  const renew = (raw: string | undefined): string | undefined => {
+    if (raw === undefined) return raw;
+    try {
+      const url = new URL(raw);
+      url.searchParams.set("oe", oe);
+      return url.href;
+    } catch {
+      return raw;
+    }
+  };
+  const copy = structuredClone(response) as { items: { track?: { progressive_download_url?: string; cover_artwork_uri?: string } }[] };
+  for (const item of copy.items) {
+    if (item.track === undefined) continue;
+    const download = renew(item.track.progressive_download_url);
+    if (download !== undefined) item.track.progressive_download_url = download;
+    const cover = renew(item.track.cover_artwork_uri);
+    if (cover !== undefined) item.track.cover_artwork_uri = cover;
+  }
   return copy;
 }

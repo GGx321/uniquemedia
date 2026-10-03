@@ -91,7 +91,7 @@ import { ffmpegPath } from "../node/ffmpegBinary";
 import { musicLists } from "../engine/music/fixtures";
 import { parseFlashapiList } from "../engine/music/listSchema";
 import { EXCERPTS, excerptOf } from "../engine/music/testing/storeKit";
-import { startMockCdn, withExcerptDurations } from "./mockCdn";
+import { startMockCdn, withExcerptDurations, withFutureExpiry } from "./mockCdn";
 import { startMockFlashapi } from "./mockFlashapi";
 import { faceWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
@@ -1337,7 +1337,8 @@ async function runMusicScenario(target: Target): Promise<void> {
   const parsed = parseFlashapiList(listFile.response);
   if (!parsed.ok) throw new Error("the Kyiv fixture does not parse");
   const SPOILED = [3, 4];
-  const flashapi = startMockFlashapi({ key: SMOKE_MUSIC_KEY, transformResponse: withExcerptDurations });
+  // The fixtures' URLs expire after 2026-10-01: the list the mock serves gets URLs that live for the whole run.
+  const flashapi = startMockFlashapi({ key: SMOKE_MUSIC_KEY, transformResponse: (response) => withFutureExpiry(withExcerptDurations(response), Date.now() + 100 * 3600 * 1000) });
   const cdn = startMockCdn({});
   cdn.override(cdn.downloadPath(3), { status: 302, headers: { location: "https://scontent-fra3-2.cdninstagram.com/elsewhere.m4a" } });
   cdn.override(cdn.downloadPath(4), { body: "<html>not audio</html>", headers: { "content-type": "audio/mp4" } });
