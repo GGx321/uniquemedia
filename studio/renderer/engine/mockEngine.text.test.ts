@@ -95,7 +95,7 @@ describe("a caption that breaks a technical rule", () => {
     const error = await refused(preview(makeMock(), { value: "привет" }));
     expect(error.code).toBe("TEXT_INVALID");
     expect(error.captionIssue).toBe("charset");
-    expect(error.detail).toBe('the caption breaks the rule "charset"');
+    expect(error.detail).toBe('text rasteriser: the caption breaks the rule "charset"');
   });
 
   test("three lines are TEXT_INVALID: too-many-lines", async () => {
@@ -124,7 +124,7 @@ describe("a caption that breaks a technical rule", () => {
   test("a caption of only spaces breaks no rule, and has no picture: RENDER_FAILED, nothing to draw", async () => {
     const error = await refused(preview(makeMock(), { value: "   " }));
     expect(error.code).toBe("RENDER_FAILED");
-    expect(error.detail).toBe("text rendering failed (RENDER_FAILED): the caption has nothing to draw");
+    expect(error.detail).toBe("text rendering failed (RENDER_FAILED): text rasteriser: the caption has nothing to draw");
   });
 
   test("a payload that breaks the contract is VALIDATION before anything is drawn", async () => {

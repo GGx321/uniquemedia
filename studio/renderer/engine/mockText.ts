@@ -32,6 +32,12 @@ export interface MockTextDeps {
 /** The engine's bound on the pictures it keeps (`TextPreviewDeps.maxFiles`): past it the oldest that is not a layer's newest goes. */
 const KEPT_PICTURES = 64;
 
+/**
+ * What the engine's `RasterError` puts before every message it carries (studio/engine/text/rasterTypes.ts: it imports node:crypto,
+ * so the renderer cannot). A refusal's `detail` is that message, so the mock says it the same way; the parity suite binds the two.
+ */
+const RASTER_MESSAGE_PREFIX = "text rasteriser: ";
+
 /** The advance of a character at 100 px: 0.55 em, the width of an average Latin letter. */
 const ADVANCE_PER_CHAR = 55;
 /** The plaque's padding in ems (template.ts): across, above, below. Every style gets the plaque's, so the mock's box is never smaller than the engine's. */
@@ -137,12 +143,12 @@ export class MockTextPreviews {
   #draw(layer: TextLayer): MockPreviewOutcome {
     // The mock has no font: every well-formed emoji is drawable. A cluster the real font lacks is still `emoji-missing` there.
     const issue = captionIssue(layer.value, { hasEmoji: () => true });
-    if (issue !== null) return { ok: false, error: { code: "TEXT_INVALID", captionIssue: issue, detail: `the caption breaks the rule "${issue}"` } };
+    if (issue !== null) return { ok: false, error: { code: "TEXT_INVALID", captionIssue: issue, detail: `${RASTER_MESSAGE_PREFIX}the caption breaks the rule "${issue}"` } };
     let box: Box;
     try {
       box = boxOf(layer);
     } catch (error) {
-      if (error instanceof CaptionLayoutError) return { ok: false, error: { code: "RENDER_FAILED", detail: `text rendering failed (RENDER_FAILED): ${error.message}` } };
+      if (error instanceof CaptionLayoutError) return { ok: false, error: { code: "RENDER_FAILED", detail: `text rendering failed (RENDER_FAILED): ${RASTER_MESSAGE_PREFIX}${error.message}` } };
       throw error;
     }
     const previewId = this.#deps.newId();
