@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { MediaLookup } from "../media/service";
 import { RenderFailure } from "../renderQueue/queue";
 
 // The render's private copy of each own photo (Stage 3, 3f.2). `MediaService.lookup` answers where a stored photo is and what it must
@@ -19,6 +20,14 @@ export interface OwnPhotoSource {
   /** The STORED size (the importer's JPEG, already upright): what the render builder crops from. */
   readonly width: number;
   readonly height: number;
+}
+
+/** What the render keeps of a `MediaService.lookup` answer: where the file is, what it must be, and its stored size. */
+export function ownPhotoSourceOf(found: MediaLookup): OwnPhotoSource | null {
+  const { width, height } = found.summary;
+  // A photo's record always has its size (the contract's refinement); one that does not is not a photo the render can place.
+  if (width === null || height === null) return null;
+  return { mediaId: found.summary.mediaId, path: found.path, sha256: found.sha256, bytes: found.bytes, width, height };
 }
 
 /** The copy's name inside the job folder. The media id is a safe id (letters, digits, `-` and `_`), so the name is a plain file name. */

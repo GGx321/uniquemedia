@@ -1,8 +1,10 @@
 import { lstat } from "node:fs/promises";
+import { join } from "node:path";
 import type { FileState, VideoSummary, CommandPayload, EngineError, UnsequencedEvent } from "../../shared/engine";
 import { EXPORT_CHANGING_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail } from "../../shared/engine";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
+import { ownPhotoCells, ownPhotoIssues } from "../../shared/montage/ownPhotos";
 import { trackIssues } from "../../shared/montage/trackIssues";
 import type { RenderTrackSource } from "../music/renderTrack";
 import { estimateBytesUpper } from "../../shared/montage";
@@ -11,6 +13,7 @@ import { EngineFailure } from "../engineFailure";
 import { safeName } from "../exportName";
 import type { ExportRootCheck } from "../exportRoot";
 import type { FocusResolver } from "../focus/focusResolver";
+import type { MediaLookup } from "../media/service";
 import { LibraryError, type Library } from "../library";
 import { hasErrorCode } from "../library/durableFs";
 import type { PhotoSource } from "../render";
@@ -22,6 +25,7 @@ import type { DraftStore } from "../montages/store";
 import type { CommitFs } from "./commitFs";
 import { deleteVideo, findVideoRecord, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
 import { createRenderExecute, totalFramesOf, type RenderPlan, type SettleInput, type VideoRenderDeps } from "./execute";
+import { ownPhotoCopyName, ownPhotoSourceOf, type OwnPhotoSource } from "./ownPhotos";
 import { newHashBudget, type FileStateChecker } from "./fileState";
 import type { LayerDeps } from "./layers";
 import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
@@ -49,7 +53,7 @@ import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery"
 // must never go on to queue a job the window does not know about.
 
 /** Renders the queue holds and the window may be told about; see `RenderQueueEvent`. */
-export type VideoQueue = Pick<RenderQueue, "submit" | "cancel" | "states" | "idle">;
+export type VideoQueue = Pick<RenderQueue, "submit" | "cancel" | "states" | "idle" | "holdMedia">;
 
 /** Timers the background work uses, injected so tests control time. */
 export interface ServiceTimers {
@@ -90,6 +94,12 @@ export interface VideoServiceDeps {
    * opens it through it when it starts. Absent: no track is held, so a spec with music is refused as `track-unavailable`.
    */
   readonly tracks?: RenderTrackSource;
+  /**
+   * The own media (3f.2): `videos.render` looks each own photo of a spec up as a PHOTO (`MediaService.lookup`) and reserves it on the queue in
+   * the same step; the job copies it, verified, into its own folder. Absent: no own media is held, so a spec that names an own photo is
+   * refused as `media-unavailable`.
+   */
+  readonly media?: { lookup(mediaId: string, kind: "photo", onFound?: (found: MediaLookup) => void): Promise<MediaLookup | undefined> };
   readonly newId: () => string;
   readonly now: () => Date;
   readonly emit: (event: UnsequencedEvent) => void;
@@ -286,20 +296,70 @@ export class VideoService {
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
     if (renderTmpDir === undefined) throw new EngineFailure({ code: "INTERNAL", detail: "no render folder is configured, so nothing can be rendered" });
-    // Invariant 35: the export folder, checked NOW, before anything else about the render is looked at (a spec that is
-    // valid in shape gets this answer whatever else is wrong with it); its marker's id is the one the job commits against.
-    // Asked in the same tick as the validation, so attempts made together share one check (a mute drive costs one timeout).
-    const check = await within(
-      remaining(),
-      () => this.#deps.checkExport(estimateBytesUpper(spec.clips)),
-      () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time" }),
-    );
-    if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
-    return this.#deps.withLibrary((library) => {
-      // The draft was read from the library that was open then; a render is queued in the one that is open now.
-      if (source.library !== null && source.library !== library) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${source.montageId} in the open library` });
-      return this.#render(library, spec, source, renderTmpDir, check, { remaining, marginMs });
-    });
+    // 3f.2: the own photos the spec names are looked up and RESERVED here, each in the step that finds it (MediaService.lookup's onFound), so
+    // `media.delete` of one is refused IN_FLIGHT from that moment. The holds are given back whatever happens below: `submit` takes over
+    // with the queue's own reservation, and a refusal leaves nothing held.
+    const admission = await this.#admitOwnPhotos(spec);
+    try {
+      // Invariant 35: the export folder, checked NOW, before anything else about the render is looked at (a spec that is
+      // valid in shape gets this answer whatever else is wrong with it); its marker's id is the one the job commits against.
+      // Asked in the same tick as the validation, so attempts made together share one check (a mute drive costs one timeout).
+      const check = await within(
+        remaining(),
+        () => this.#deps.checkExport(estimateBytesUpper(spec.clips)),
+        () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time" }),
+      );
+      if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
+      return await this.#deps.withLibrary((library) => {
+        // The draft was read from the library that was open then; a render is queued in the one that is open now.
+        if (source.library !== null && source.library !== library) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${source.montageId} in the open library` });
+        // The own photos were found in the library that was open when they were looked up: another one now holds none of them.
+        if (admission.sources.size > 0 && admission.library !== library) throw new EngineFailure({ code: "IN_FLIGHT", detail: "the library was switched while the render was being prepared" });
+        return this.#render(library, spec, source, renderTmpDir, check, admission.sources, { remaining, marginMs });
+      });
+    } finally {
+      admission.release();
+    }
+  }
+
+  /**
+   * The own photos of `spec`, each looked up as a PHOTO and held on the queue in the same step that finds it (`onFound` runs inside the
+   * lookup, so there is no await between the two, and `media.delete` takes a media out of lookup in its first tick before it asks the
+   * reserved provider: a media is either found here and then refused to the delete, or not found). A media that two cells use is looked up
+   * once. One that is not there (or is another kind) is `media-unavailable` at each of its cells: every hold already made is given back
+   * and the render is refused. `release` gives the holds back; calling it again changes nothing.
+   */
+  async #admitOwnPhotos(spec: MontageDraft): Promise<{ sources: Map<string, OwnPhotoSource>; library: Library | null; release: () => void }> {
+    const sources = new Map<string, OwnPhotoSource>();
+    const holds: (() => void)[] = [];
+    const release = (): void => {
+      for (const hold of holds.splice(0)) hold();
+    };
+    const cells = ownPhotoCells(spec);
+    if (cells.length === 0) return { sources, library: null, release };
+    const library = this.#deps.openLibrary();
+    const media = this.#deps.media;
+    const asked = new Set<string>();
+    try {
+      for (const { mediaId } of cells) {
+        if (asked.has(mediaId)) continue;
+        asked.add(mediaId);
+        if (media === undefined) continue;
+        await media.lookup(mediaId, "photo", (found) => {
+          // Synchronously, in the lookup's own step: the hold and the record it is a hold of.
+          const source = ownPhotoSourceOf(found);
+          if (source === null) return;
+          holds.push(this.#deps.queue.holdMedia(mediaId));
+          sources.set(mediaId, source);
+        });
+      }
+      const issues = ownPhotoIssues(spec, (mediaId) => sources.has(mediaId));
+      if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues: issues.slice(0, MAX_MONTAGE_ISSUES) });
+    } catch (error) {
+      release();
+      throw error;
+    }
+    return { sources, library, release };
   }
 
   /**
@@ -336,6 +396,7 @@ export class VideoService {
     source: Pick<RenderSource, "montageId" | "title">,
     renderTmpDir: string,
     check: Extract<ExportRootCheck, { ok: true }>,
+    ownPhotos: ReadonlyMap<string, OwnPhotoSource>,
     time: { remaining(): number; marginMs: number },
   ): Promise<{ jobId: string; videoId: string }> {
     const deps = this.#deps;
@@ -401,7 +462,14 @@ export class VideoService {
       safeName: safeName(avatar.name, avatar.id),
       exportRoot: { root: check.root, rootId: check.rootId },
       spec: filled,
-      resolvePhoto: (ref) => (ref.source === "scene" ? sources.get(ref.photoId) : undefined),
+      // An own photo resolves to its PRIVATE COPY in this job's folder (the runner writes it, checked, before any ffmpeg): the library file is
+      // never an ffmpeg input. The size is the stored JPEG's own (already upright).
+      resolvePhoto: (ref) => {
+        if (ref.source === "scene") return sources.get(ref.photoId);
+        const own = ownPhotos.get(ref.mediaId);
+        return own === undefined ? undefined : { path: join(renderTmpDir, jobId, ownPhotoCopyName(own.mediaId)), width: own.width, height: own.height };
+      },
+      ownPhotos: [...ownPhotos.values()],
       audio: { kind: "silent" },
       // The id and the start only: the file's path comes from the track store when the job runs (invariant 31).
       ...(filled.music?.source === "trending" ? { track: { trackId: filled.music.trackId, startMs: filled.music.startMs } } : {}),
@@ -426,7 +494,7 @@ export class VideoService {
       ...deps.renderOverrides,
     });
     // ONE number of frames: the queue's total, and the verifier's expectation (execute), come from the same function.
-    const result = deps.queue.submit({ jobId, ref: { videoId, avatarId: spec.avatarId, montageId }, totalFrames: totalFramesOf(filled.clips), photoIds: scenePhotoIds(filled.clips), execute: execute(plan) });
+    const result = deps.queue.submit({ jobId, ref: { videoId, avatarId: spec.avatarId, montageId }, totalFrames: totalFramesOf(filled.clips), photoIds: scenePhotoIds(filled.clips), mediaIds: [...ownPhotos.keys()], execute: execute(plan) });
     if (!result.ok) {
       if (result.code === "QUEUE_FULL") throw new EngineFailure({ code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(result.limit) });
       const held = new Set(result.photoIds);

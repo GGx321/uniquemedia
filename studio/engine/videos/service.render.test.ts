@@ -127,33 +127,8 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
       (w) => ({ ...specFor(w), clips: [{ clipId: "clip-00000001", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: SPEC_MS, transitionIn: "cut" as const }] }),
       ["clips", "0"],
     ],
-    [
-      "an own photo in a photo clip",
-      (w) => ({ ...specFor(w), clips: [{ clipId: "clip-00000001", kind: "photo" as const, cell: { photo: { source: "own" as const, mediaId: "media-0000001" }, focus: null }, motion: "static" as const, durationMs: SPEC_MS, transitionIn: "cut" as const }] }),
-      ["clips", "0", "cell"],
-    ],
-    [
-      "an own photo in a collage cell",
-      (w) => ({
-        ...specFor(w),
-        clips: [
-          {
-            clipId: "clip-00000001",
-            kind: "collage" as const,
-            layout: "collage2" as const,
-            cells: [
-              { photo: { source: "scene" as const, photoId: photoId(w, 0) }, focus: null },
-              { photo: { source: "own" as const, mediaId: "media-0000001" }, focus: null },
-            ],
-            motion: "static" as const,
-            stagger: false,
-            durationMs: SPEC_MS,
-            transitionIn: "cut" as const,
-          },
-        ],
-      }),
-      ["clips", "0", "cells", "1"],
-    ],
+    // An own photo in a photo clip or a collage cell is NOT here since 3f.2 lifted N9 for it: a missing one is `media-unavailable`
+    // (service.ownPhotos.test.ts), and one that is held renders.
   ];
 
   test.each(cases)("%s answers MONTAGE_INVALID with not-yet-supported at its path, before anything else is looked at", async (_name, build, path) => {
@@ -563,7 +538,7 @@ describe("videos.render: what submit answers", () => {
   test("PHOTOS_RESERVED becomes PHOTO_UNAVAILABLE with the cells that hold those photos, and nothing is left behind", async () => {
     const w = world();
     const r = serviceRig(w);
-    const service = new VideoService({ ...r.deps, queue: { ...r.queue, submit: refusingQueue({ ok: false, code: "PHOTOS_RESERVED", photoIds: [photoId(w, 1)] }).submit, cancel: () => false, states: () => [], idle: async () => undefined } });
+    const service = new VideoService({ ...r.deps, queue: { ...r.queue, submit: refusingQueue({ ok: false, code: "PHOTOS_RESERVED", photoIds: [photoId(w, 1)] }).submit, cancel: () => false, states: () => [], idle: async () => undefined, holdMedia: () => () => undefined } });
     const spec: MontageDraft = { ...specOf(w.avatar.id, [photoId(w, 0), photoId(w, 1)], SPEC_MS / 2) };
 
     const error = await failureOf(service.render({ spec }));
@@ -576,7 +551,7 @@ describe("videos.render: what submit answers", () => {
   test("QUEUE_FULL becomes RENDER_QUEUE_FULL with the limit in its detail, and nothing is left behind", async () => {
     const w = world();
     const r = serviceRig(w);
-    const service = new VideoService({ ...r.deps, queue: { submit: () => ({ ok: false, code: "QUEUE_FULL", limit: 20 }), cancel: () => false, states: () => [], idle: async () => undefined } });
+    const service = new VideoService({ ...r.deps, queue: { submit: () => ({ ok: false, code: "QUEUE_FULL", limit: 20 }), cancel: () => false, states: () => [], idle: async () => undefined, holdMedia: () => () => undefined } });
 
     const error = await failureOf(service.render({ spec: specFor(w) }));
 

@@ -14,6 +14,7 @@ import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, 
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import { collectForbiddenStrings, combineForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
+import { copyOwnPhotos, type OwnPhotoSource } from "./ownPhotos";
 import { resolveLayers, type LayerDeps } from "./layers";
 import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
@@ -73,6 +74,11 @@ export interface RenderPlan {
   readonly spec: z.infer<typeof MontageShape>;
   /** photoId to its file and STORED size; resolved up front so a missing photo answers PHOTO_UNAVAILABLE, never a builder error. */
   readonly resolvePhoto: PhotoResolver;
+  /**
+   * The own photos the spec names (3f.2), each as the admission found it: the library file, its size and sha256. The job copies each, checked,
+   * into its own folder; `resolvePhoto` points at the copy (`ownPhotoCopyName`), never at the library file. Absent: none.
+   */
+  readonly ownPhotos?: readonly OwnPhotoSource[];
   /** Silence, by type (invariant 31): a plan cannot name a track file. A track comes only through `track`, opened from the store when the job starts. */
   readonly audio: { readonly kind: "silent" };
   /**
@@ -317,6 +323,8 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           resolvePhoto: plan.resolvePhoto,
           overlays: layers === undefined ? [] : layers.overlays,
           ...(layers === undefined ? {} : { stageLayers: layers.stage }),
+          // 3f.2: each own photo is copied, verified, into the job folder; `resolvePhoto` already names the copies.
+          ...(plan.ownPhotos === undefined || plan.ownPhotos.length === 0 ? {} : { stageOwnPhotos: (dir: string) => copyOwnPhotos(dir, plan.ownPhotos ?? [], context.signal) }),
           audio,
           output: temp,
           signal: context.signal,
