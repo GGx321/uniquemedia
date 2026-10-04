@@ -62,8 +62,18 @@ export interface FocusCacheStore {
   remember(path: string, photoId: string, entry: FocusCacheEntry, isLive: (photoId: string) => boolean): Promise<void>;
 }
 
+/**
+ * An own photo as the resolver judges it (3f.2): the stored photo's VERIFIED bytes (size and sha256 checked against its record) and the size
+ * the record gives, or undefined when the library does not hold it as a photo. A rejection is read as "nothing was judged".
+ */
+export interface OwnPhotoReader {
+  read(mediaId: string, signal: AbortSignal): Promise<{ bytes: Uint8Array; width: number; height: number } | undefined>;
+}
+
 export interface FocusDeps {
   library: FocusLibrary;
+  /** Where an own photo's bytes come from (3f.2). Absent: an own photo cannot be read, so it falls back, unresolved. */
+  ownMedia?: OwnPhotoReader;
   /** The face worker gate, or null when the face models did not load (`faceGateLoadError`): everything then falls back, unresolved. */
   faceGate: FocusFaceGate | null;
   /** `FOCUS_DETECT_TIMEOUT_MS` unless a test overrides it. */
@@ -105,6 +115,13 @@ export interface FocusResolver {
    * for any other caller waiting on it).
    */
   focusFor(avatarId: string, photoId: string, signal?: AbortSignal): Promise<FocusResult>;
+  /**
+   * The focus for an OWN photo (3f.2): the face detector looks at the stored photo, or `resolved: false` says nothing was judged (no gate, a
+   * photo the library does not hold, a read or a detection that failed or ran past its bound, a detection on another size than the record's).
+   * Never an error for a caller, except the signal's reason when `signal` aborts. Not cached: an own photo is judged when it is placed and
+   * once more by a render that finds its focus empty.
+   */
+  focusForOwn(mediaId: string, signal?: AbortSignal): Promise<FocusResult>;
   /**
    * `spec` with every null focus filled (a scene photo's from `focusFor`, the fallback for the rest),
    * and the scene-photo cells that could not be judged. A focus that is already set is returned
@@ -201,6 +218,34 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     return signal === undefined ? entry.promise : untilAborted(entry.promise, signal);
   }
 
+  /** One own photo's judgement: the bytes the reader verified, looked at by the face detector, all under ONE bound. */
+  async function computeOwn(mediaId: string): Promise<FocusResult> {
+    const own = deps.ownMedia;
+    const bound = timeoutSignal(detectTimeoutMs);
+    const startedAt = performance.now();
+    try {
+      if (own === undefined || faceGate === null || faceGate.isBroken()) return { focus: fallback(), resolved: false };
+      const photo = await untilAborted(own.read(mediaId, bound.signal), bound.signal);
+      if (photo === undefined) return { focus: fallback(), resolved: false };
+      if (detectTimeoutMs - (performance.now() - startedAt) < minStartMs(detectTimeoutMs)) return { focus: fallback(), resolved: false };
+      const detection = await untilAborted(faceGate.detect(photo.bytes, bound.signal), bound.signal);
+      // The record's own size is the cross-check: a detection made on a picture of another size is not this photo's answer.
+      if (detection.width !== photo.width || detection.height !== photo.height) return { focus: fallback(), resolved: false };
+      return { focus: resolveFocus(detection.face === null ? null : focusFromFace(detection.face, detection)), resolved: true };
+    } catch {
+      // A dead or wedged worker, a timeout, a file that is gone or fails its record, a picture the decoder cannot read: nothing was judged.
+      return { focus: fallback(), resolved: false };
+    } finally {
+      bound.clear();
+    }
+  }
+
+  async function focusForOwn(mediaId: string, signal?: AbortSignal): Promise<FocusResult> {
+    signal?.throwIfAborted();
+    const judged = computeOwn(mediaId);
+    return signal === undefined ? judged : untilAborted(judged, signal);
+  }
+
   async function fillMissingFocus(spec: MontageDraft, signal?: AbortSignal, options: { budgetMs?: number } = {}): Promise<FilledSpec> {
     signal?.throwIfAborted();
     // A caller with less time than the resolver's own budget (a command with a deadline) can only shorten it.
@@ -208,24 +253,35 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     const budget = timeoutSignal(fillBudgetMs);
     const startedAt = performance.now();
     const left: UnresolvedCell[] = [];
+    /** An own photo that two cells use is judged once per fill. */
+    const ownJudged = new Map<string, Promise<FocusResult>>();
 
-    /** A scene photo's result, or null when the budget is (nearly) spent or runs out while it works — the computation itself is not cancelled. */
-    async function withinBudget(avatarId: string, photoId: string): Promise<FocusResult | null> {
+    /** A photo's result, or null when the budget is (nearly) spent or runs out while it works — the computation itself is not cancelled. */
+    async function withinBudget(judge: () => Promise<FocusResult>): Promise<FocusResult | null> {
       if (fillBudgetMs - (performance.now() - startedAt) < minStartMs(fillBudgetMs)) return null;
       try {
-        return await untilAborted(focusFor(avatarId, photoId, signal), budget.signal);
+        return await untilAborted(judge(), budget.signal);
       } catch (error) {
         if (budget.signal.aborted && error === budget.signal.reason && signal?.aborted !== true) return null;
         throw error;
       }
     }
 
+    function judgeOwn(mediaId: string): Promise<FocusResult> {
+      let judged = ownJudged.get(mediaId);
+      if (judged === undefined) {
+        judged = focusForOwn(mediaId, signal);
+        ownJudged.set(mediaId, judged);
+      }
+      return judged;
+    }
+
     async function fillCell(clipId: string, cellIndex: number, cell: Cell): Promise<Cell> {
       if (cell.focus !== null) return cell;
       signal?.throwIfAborted();
       const photo = cell.photo;
-      if (photo?.source !== "scene") return { ...cell, focus: fallback() };
-      const result = await withinBudget(spec.avatarId, photo.photoId);
+      if (photo === null) return { ...cell, focus: fallback() };
+      const result = await withinBudget(photo.source === "scene" ? () => focusFor(spec.avatarId, photo.photoId, signal) : () => judgeOwn(photo.mediaId));
       if (result === null || !result.resolved) left.push({ clipId, cellIndex });
       return { ...cell, focus: result === null ? fallback() : result.focus };
     }
@@ -257,5 +313,5 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     while (saves.size > 0) await Promise.allSettled([...saves]);
   }
 
-  return { focusFor, fillMissingFocus, flush };
+  return { focusFor, focusForOwn, fillMissingFocus, flush };
 }

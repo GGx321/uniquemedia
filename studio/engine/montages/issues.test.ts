@@ -122,11 +122,52 @@ describe("draftIssues: a scene photo that cannot be used", () => {
     expect(issuesOf(w, spec).map((i) => i.code)).toEqual(["cell-empty"]);
   });
 
-  test("an own upload is not judged for its media here (the store comes with slice 3f): only the render's own not-yet-supported", () => {
-    const w = world();
-    const own = { ...photoClip(1, "x"), cell: { photo: { source: "own" as const, mediaId: "media-0000001" }, focus: null } };
+  const ownClip = (n: number, mediaId: string) => ({ ...photoClip(n, "x"), cell: { photo: { source: "own" as const, mediaId }, focus: null } });
+  const withMedia = (w: World, spec: MontageDraft, holds: (mediaId: string) => boolean) => draftIssues(w.library, spec, () => undefined, undefined, undefined, holds);
 
-    expect(issuesOf(w, draftOf(w, { clips: [own] }))).toEqual([{ code: "not-yet-supported", path: ["clips", 0, "cell"] }]);
+  test("an own photo that the media store holds is no issue (3f.2 lifted N9 for it)", () => {
+    const w = world();
+
+    expect(withMedia(w, draftOf(w, { clips: [ownClip(1, "media-0000001")] }), (mediaId) => mediaId === "media-0000001")).toEqual([]);
+  });
+
+  test("an own photo that the media store does not hold is media-unavailable at its cell", () => {
+    const w = world();
+
+    expect(withMedia(w, draftOf(w, { clips: [ownClip(1, "media-0000001")] }), () => false)).toEqual([{ code: "media-unavailable", path: ["clips", 0, "cell"] }]);
+  });
+
+  test("with no media store wired no own photo is held, as a render with none says", () => {
+    const w = world();
+
+    expect(issuesOf(w, draftOf(w, { clips: [ownClip(1, "media-0000001")] }))).toEqual([{ code: "media-unavailable", path: ["clips", 0, "cell"] }]);
+  });
+
+  test("scene photos and own photos are judged in clip order, each in its own words", async () => {
+    const w = world();
+    await w.library.setRejected(w.avatar.id, photoId(w, 0), true);
+    const spec = draftOf(w, { clips: [ownClip(1, "media-0000001"), photoClip(2, photoId(w, 0)), ownClip(3, "media-0000002")] });
+
+    expect(withMedia(w, spec, (mediaId) => mediaId === "media-0000001")).toEqual([
+      { code: "photo-unavailable", path: ["clips", 1, "cell"] },
+      { code: "media-unavailable", path: ["clips", 2, "cell"] },
+    ]);
+  });
+
+  test("an own photo in a collage cell is judged at that cell", () => {
+    const w = world();
+    const collage = {
+      clipId: "clip-001",
+      kind: "collage" as const,
+      layout: "collage2" as const,
+      cells: [cell(photoId(w, 0)), { photo: { source: "own" as const, mediaId: "media-0000001" }, focus: null }],
+      motion: "static" as const,
+      stagger: false,
+      durationMs: 4_000,
+      transitionIn: "cut" as const,
+    };
+
+    expect(withMedia(w, draftOf(w, { clips: [collage] }), () => false)).toEqual([{ code: "media-unavailable", path: ["clips", 0, "cells", 1] }]);
   });
 
   test("when the avatar's usage cannot be trusted every photo is unavailable, as a render would refuse them, and the log says so", async () => {
@@ -175,15 +216,13 @@ describe("draftIssues: what a render refuses for a part whose slice has not land
     expect(issuesOf(w, spec)).toEqual([{ code: "not-yet-supported", path: ["layers", 1] }]);
   });
 
-  test("an own track, an own video clip and an own photo are too (a trending track no longer is: 3c.5)", () => {
+  test("an own track and an own video clip are too (a trending track no longer is: 3c.5; an own photo no longer is: 3f.2)", () => {
     const w = world();
-    const own = { ...photoClip(2, "x"), cell: { photo: { source: "own" as const, mediaId: "media-0000001" }, focus: null } };
     const video = { clipId: "clip-003", kind: "video" as const, mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
-    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), own, video], music: { source: "own", mediaId: "media-0000003", startMs: 0 } });
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), video], music: { source: "own", mediaId: "media-0000003", startMs: 0 } });
 
     expect(issuesOf(w, spec).map((i) => [i.code, i.path])).toEqual([
-      ["not-yet-supported", ["clips", 1, "cell"]],
-      ["not-yet-supported", ["clips", 2]],
+      ["not-yet-supported", ["clips", 1]],
       ["not-yet-supported", ["music"]],
     ]);
   });

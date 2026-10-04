@@ -24,7 +24,9 @@ export interface FocusRecorder {
   maxInFlight: number;
   /** The abort signals the calls were handed. */
   readonly signals: AbortSignal[];
-  resolver: Pick<FocusResolver, "focusFor">;
+  /** `focusForOwn` calls started, in order: [mediaId] (3f.2). */
+  readonly ownStarted: string[];
+  resolver: Pick<FocusResolver, "focusFor" | "focusForOwn">;
 }
 
 /** A resolver that answers by `script(photoId)`: the default is a point that depends on the photo's position in `order`. */
@@ -32,9 +34,19 @@ export function scriptedFocus(script: (photoId: string) => FocusScript = () => "
   let inFlight = 0;
   const recorder: FocusRecorder = {
     started: [],
+    ownStarted: [],
     maxInFlight: 0,
     signals: [],
     resolver: {
+      focusForOwn: async (mediaId, signal): Promise<FocusResult> => {
+        recorder.ownStarted.push(mediaId);
+        if (signal !== undefined) recorder.signals.push(signal);
+        const answer = script(mediaId);
+        if (answer === "never") return await new Promise<FocusResult>(() => undefined);
+        if (answer === "throws") throw new Error("the face worker broke");
+        if (answer === "unresolved" || answer === "not-found") return { focus: { x: 0.5, y: 0.38 }, resolved: false };
+        return { focus: answer.resolved, resolved: true };
+      },
       focusFor: async (_avatarId, photoId, signal): Promise<FocusResult> => {
         recorder.started.push(photoId);
         if (signal !== undefined) recorder.signals.push(signal);

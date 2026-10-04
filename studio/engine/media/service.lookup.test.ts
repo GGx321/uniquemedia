@@ -139,3 +139,28 @@ describe("the admission and media.delete cannot both win (fix round 3 M1)", () =
     }
   });
 });
+
+describe("MediaService.holding: which of these ids the library holds as a kind", () => {
+  test("answers the ids it holds as that kind and leaves out the rest", async () => {
+    const { service, mediaId } = await rigWithOneMedia();
+    expect(await service.holding([mediaId, "media-00000404"], "photo")).toEqual(new Set([mediaId]));
+  });
+
+  test("leaves out an id held as another kind", async () => {
+    const { service, mediaId } = await rigWithOneMedia();
+    expect(await service.holding([mediaId], "video")).toEqual(new Set());
+  });
+
+  test("answers nothing for no ids, and nothing for ids of a library with no media", async () => {
+    const { service } = await rigWithOneMedia();
+    expect(await service.holding([], "photo")).toEqual(new Set());
+    expect(await service.holding(["media-00000001"], "sticker")).toEqual(new Set());
+  });
+
+  test("does not hold a media that is being deleted, from the delete's first tick", async () => {
+    const { service, mediaId } = await rigWithOneMedia();
+    const removal = service.delete(mediaId);
+    expect(await service.holding([mediaId], "photo")).toEqual(new Set());
+    await removal;
+  });
+});

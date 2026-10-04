@@ -311,6 +311,17 @@ export class MediaService {
     });
   }
 
+  /** Which of `mediaIds` the library holds as `kind` (a draft's referential check): one pass under one hold. A media being deleted is not held. */
+  async holding(mediaIds: readonly string[], kind: MediaKind): Promise<Set<string>> {
+    return this.#deps.withLibrary(async (library) => {
+      const area = this.#areaOf(library.root);
+      await area.ready;
+      const held = new Set<string>();
+      for (const mediaId of mediaIds) if (area.records.get(mediaId)?.kind === kind) held.add(mediaId);
+      return held;
+    });
+  }
+
   /**
    * Removes the file and its record. `not-found` for an id the library does not hold; `in-use` while a queued or running render uses it
    * (the reserved provider: the plan keeps a draft's reference and reads it as `media-unavailable`, but a render in flight reads the file);
