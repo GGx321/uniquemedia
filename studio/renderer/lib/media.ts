@@ -57,6 +57,15 @@ export function trackCoverUrl(client: Pick<EngineClient, "kind">, track: { reado
   return coverUrl(track.trackId);
 }
 
+/**
+ * A stored trending track's audio (3d.4: the preview's music), served by main as `studio-media://track/<trackId>`. Only on the real
+ * client: the dev mock stores no audio, so its preview is silent. Null for an id that breaks the contract.
+ */
+export function trackUrl(client: Pick<EngineClient, "kind">, trackId: string): string | null {
+  if (client.kind !== "window" || !Id.safeParse(trackId).success) return null;
+  return `studio-media://track/${trackId}`;
+}
+
 // Neutral placeholder gradients (warm and cool greys, as in the mockup) for
 // the mock engine, which has no real images.
 const PLACEHOLDERS = [

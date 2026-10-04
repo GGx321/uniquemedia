@@ -3,7 +3,7 @@ import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { EngineClient } from "../engine/client";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { ManualScheduler } from "../engine/scheduler";
-import { coverUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, videoUrl } from "./media";
+import { coverUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
 
 // 3d.3b: a built-in sticker's picture is asked for by id, never by a path (invariant 12): main's `studio-media://sticker/<id>`
 // route serves the catalogue, the dev mock a stand-in of its own.
@@ -70,5 +70,22 @@ describe("trackCoverUrl", () => {
   test("the mock and a window with no engine have no pictures to serve", () => {
     expect(trackCoverUrl({ kind: "mock" }, track("demo-track-0001"))).toBe(null);
     expect(trackCoverUrl({ kind: "unavailable" }, track("demo-track-0001"))).toBe(null);
+  });
+});
+
+// 3d.4: the preview plays the montage's music from main's track route, by the stored track's id. The dev mock stores no audio, so it
+// has none and the preview stays silent there.
+describe("trackUrl", () => {
+  test("the real client asks main's track route by the track's id", () => {
+    expect(trackUrl({ kind: "window" }, "track-espresso-01")).toBe("studio-media://track/track-espresso-01");
+  });
+
+  test("the mock and an unavailable engine have no audio", () => {
+    expect(trackUrl({ kind: "mock" }, "track-espresso-01")).toBe(null);
+    expect(trackUrl({ kind: "unavailable" }, "track-espresso-01")).toBe(null);
+  });
+
+  test("an id that breaks the contract never becomes an address", () => {
+    for (const bad of ["../x", "a/b", "", "TRACK"]) expect(trackUrl({ kind: "window" }, bad) === null).toBe(true);
   });
 });
