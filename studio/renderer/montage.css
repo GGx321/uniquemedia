@@ -1243,28 +1243,46 @@
   background: var(--pv-bar-fill);
 }
 
-/* «Подсказки»: bottom left of the preview area (CHANGES.md) */
+/* «Подсказки»: bottom left of the preview area (CHANGES.md), beside the 306 px frame; where the area is too narrow for the words
+   beside the frame, only the switches stay (each keeps its name for a screen reader and as a tooltip). */
+.ed-preview {
+  container: preview / inline-size;
+}
+
 .pv-hints {
   position: absolute;
   bottom: 14px;
-  left: 16px;
+  left: 14px;
   display: flex;
-  width: 150px;
+  width: 128px;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .pv-hint {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.25;
 }
 
 .pv-hints-note {
   font-size: 10.5px;
   line-height: 1.35;
+}
+
+@container preview (max-width: 559px) {
+  .pv-hints {
+    width: auto;
+  }
+
+  .pv-hints > .lbl,
+  .pv-hint > span,
+  .pv-hints-note {
+    display: none;
+  }
 }
 
 .pv-audio {

@@ -163,7 +163,7 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
 function HintSwitch({ label, on, onChange }: { label: string; on: boolean; onChange: (on: boolean) => void }) {
   return (
     <span className="pv-hint">
-      <button type="button" role="switch" className={on ? "sw sw-on pv-sw" : "sw pv-sw"} aria-checked={on} aria-label={label} onClick={() => onChange(!on)} />
+      <button type="button" role="switch" className={on ? "sw sw-on pv-sw" : "sw pv-sw"} aria-checked={on} aria-label={label} title={`${label} · только в превью`} onClick={() => onChange(!on)} />
       <span aria-hidden="true">{label}</span>
     </span>
   );
