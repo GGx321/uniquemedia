@@ -1,0 +1,71 @@
+name: landing-downloads
+# Copies the uniquifier installers from a GitHub Release to the public Vercel
+# Blob store that the landing page downloads from.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, e.g. v0.6.0"
+        required: true
+        type: string
+      force:
+        description: "Allow publishing a version older than the current latest.json"
+        required: false
+        type: boolean
+        default: false
+  workflow_run:
+    workflows: ["build"]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: landing-downloads
+  cancel-in-progress: false
+jobs:
+  upload:
+    # Manual runs only from main. workflow_run always uses the default branch's
+    # file; it acts only on a successful build of a v* tag push (head_branch is
+    # the tag name for tag pushes).
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.workflow_run.head_branch }}
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned via .bun-version, like studio.yml.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Download installers from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p installers
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir installers --pattern '*.dmg' --pattern '*.exe'
+          ls -l installers
+      # No repo-wide `bun install`: only the one dependency the script needs,
+      # in a temp dir, with install scripts disabled. No secrets in this step.
+      - name: Install @vercel/blob only
+        run: |
+          VERSION="$(bun -e "console.log(require('./package.json').devDependencies['@vercel/blob'])")"
+          mkdir -p "$RUNNER_TEMP/uploader"
+          cp scripts/landing/downloads.ts scripts/landing/upload.ts "$RUNNER_TEMP/uploader/"
+          cd "$RUNNER_TEMP/uploader"
+          echo '{"private":true}' > package.json
+          bun add "@vercel/blob@$VERSION" --ignore-scripts
+      # The only step that sees the Blob token.
+      - name: Upload to Vercel Blob
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}
+        run: |
+          if [ -z "$BLOB_READ_WRITE_TOKEN" ]; then
+            echo "::error::Secret BLOB_READ_WRITE_TOKEN is not set for this repository."
+            exit 1
+          fi
+          bun "$RUNNER_TEMP/uploader/upload.ts" "$TAG" "$GITHUB_WORKSPACE/installers"
