@@ -171,13 +171,16 @@ describe("montages.get", () => {
     const mock = makeMock();
     const montage = await create(mock, [PHOTO_IDS[0] ?? ""]);
     const sticker = { layerId: "layer-0002", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId: "no-such-sticker" }, x: 0.5, y: 0.5, size: 0.2 };
-    await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, layers: [sticker], music: { source: "own", mediaId: "media-0000009", startMs: 0 } }, name: null }));
+    // An own video clip is still not-yet-supported; an own track no longer is (3f.4): it is judged with the other references, after the stickers.
+    const video = { clipId: "clip-00000099", kind: "video" as const, mediaId: "media-0000008", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
+    await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, clips: [...montage.spec.clips, video], layers: [sticker], music: { source: "own", mediaId: "media-0000009", startMs: 0 } }, name: null }));
 
     const got = await unwrap(mock.client.request("montages.get", { montageId: montage.montageId }));
 
     expect(got.issues).toEqual([
-      { code: "not-yet-supported", path: ["music"] },
+      { code: "not-yet-supported", path: ["clips", 1] },
       { code: "sticker-unavailable", path: ["layers", 0, "sticker"] },
+      { code: "media-unavailable", path: ["music"] },
     ]);
   });
 

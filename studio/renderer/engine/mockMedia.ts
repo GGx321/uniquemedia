@@ -30,6 +30,33 @@ export interface MockMediaAccept {
   face?: boolean;
   /** The kind's importer turns the file away INSIDE the job (3f.2: `too-small`, `dimensions`, `animated-webp`, `format`...): the job fails with MEDIA_UNSUPPORTED and stores nothing. */
   failWith?: MediaUnsupportedReason;
+  /**
+   * A track's waveform (3f.4): one value per 50 ms, each 0 to 1000, as the importer's record keeps it. The record carries no such field in the contract; the
+   * mock keeps it beside the record. With none, the mock makes a stable one of the track's own length (`defaultWaveform`).
+   */
+  waveform?: number[];
+}
+
+/** A file already in the library, for the dev build and for a test that starts with media (`MockEngine.seedOwnMedia`). */
+export interface MockOwnSeed {
+  kind: MediaKind;
+  name: string;
+  bytes: number;
+  facts?: Partial<MockMediaFacts>;
+  waveform?: number[];
+  /** When it was imported; the mock's clock ticks for it when absent. */
+  createdAt?: string;
+}
+
+/** What the dev build's library holds: one own track (a function, not a constant: a release bundle that drops the mock must not keep it). */
+export function demoOwnMedia(): MockOwnSeed[] {
+  return [{ kind: "audio", name: "demo-voiceover.mp3", bytes: 2_350_000, facts: { durationMs: 74_000 }, createdAt: "2026-09-20T09:00:00.000Z" }];
+}
+
+/** The envelope of a track of `durationMs`, 0 to 1000 per 50 ms: stable (the same length gives the same values), and never flat, so the editor has a waveform to draw. */
+export function defaultWaveform(durationMs: number): number[] {
+  const steps = Math.max(1, Math.ceil(durationMs / 50));
+  return Array.from({ length: steps }, (_, i) => Math.min(1000, 140 + Math.round(620 * Math.abs(Math.sin(i / 11) * Math.cos(i / 37))) + ((i * 41) % 90)));
 }
 
 const NO_FACTS: MockMediaFacts = { width: null, height: null, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null };
@@ -78,6 +105,10 @@ export class MockOwnMedia {
   #records: MediaSummary[] = [];
   /** The own photos the script says have a face (3f.2). */
   readonly #faces = new Set<string>();
+  /** Each stored track's waveform (3f.4), kept beside its record as the engine keeps it in the record. */
+  readonly #waveforms = new Map<string, readonly number[]>();
+  /** How many files were seeded: the number in the next seed's id. */
+  #seeded = 0;
   #jobs: ImportJob[] = [];
   /** Jobs that started while imports were held and wait for the let-go. */
   #waiting: ImportJob[] = [];
@@ -182,6 +213,7 @@ export class MockOwnMedia {
     };
     this.#records.push(summary);
     if (job.accept.face === true) this.#faces.add(summary.mediaId);
+    if (summary.kind === "audio") this.#waveforms.set(summary.mediaId, job.accept.waveform ?? defaultWaveform(summary.durationMs ?? 0));
     this.#event("media.changed", { change: "upserted", media: summary });
     job.status = "done";
     job.mediaId = summary.mediaId;
@@ -224,6 +256,38 @@ export class MockOwnMedia {
     return this.#records.some((r) => r.mediaId === mediaId && r.kind === "photo");
   }
 
+  /** Whether the library holds this media as a TRACK a render can read, and how long it is (3f.4): what a render's admission and a draft's referential check ask. */
+  holdsTrack(mediaId: string): { readonly durationMs: number } | null {
+    const record = this.#records.find((r) => r.mediaId === mediaId && r.kind === "audio");
+    return record === undefined || record.durationMs === null ? null : { durationMs: record.durationMs };
+  }
+
+  /** A stored track's waveform (3f.4), or undefined for a media that is not there or is not a track. */
+  waveformOf(mediaId: string): readonly number[] | undefined {
+    return this.holdsTrack(mediaId) === null ? undefined : this.#waveforms.get(mediaId);
+  }
+
+  /**
+   * Puts files in the library as if they had been imported (the dev build's demo, a test that starts with media). Nothing is announced: it was there before
+   * the window opened. A seed takes NO id from the mock's shared counter and (with a `createdAt` of its own) no tick of its clock, so the demo shifts none of
+   * the ids and times the other stories name.
+   */
+  seed(seeds: readonly MockOwnSeed[]): void {
+    for (const seed of seeds) {
+      const summary: MediaSummary = {
+        mediaId: `media-seed-${String(++this.#seeded).padStart(4, "0")}`,
+        kind: seed.kind,
+        name: seed.name,
+        bytes: seed.bytes,
+        createdAt: seed.createdAt ?? this.#deps.nowIso(),
+        ...DEFAULT_FACTS[seed.kind],
+        ...seed.facts,
+      };
+      this.#records.push(summary);
+      if (seed.kind === "audio") this.#waveforms.set(summary.mediaId, seed.waveform ?? defaultWaveform(summary.durationMs ?? 0));
+    }
+  }
+
   /** Whether the library holds this media, of any kind (`media.delete` answers NOT_FOUND before it asks the reserved set). */
   has(mediaId: string): boolean {
     return this.#records.some((r) => r.mediaId === mediaId);
@@ -239,6 +303,7 @@ export class MockOwnMedia {
     const at = this.#records.findIndex((r) => r.mediaId === mediaId);
     if (at < 0) return false;
     this.#faces.delete(mediaId);
+    this.#waveforms.delete(mediaId);
     this.#records.splice(at, 1);
     this.#event("media.changed", { change: "removed", mediaId });
     return true;

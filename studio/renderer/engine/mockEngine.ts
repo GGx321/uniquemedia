@@ -34,6 +34,7 @@ import {
   type MusicQuotaLog,
   type MusicStatus,
   OkResponse,
+  OWN_MUSIC_NOT_FOUND_DETAIL,
   OWN_PHOTO_NOT_FOUND_DETAIL,
   type PhotoQaSummary,
   type PhotoSummary,
@@ -56,14 +57,15 @@ import {
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue, type TextLayer } from "../../shared/engine/montage";
-import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, totalFrames, trackIssues } from "../../shared/montage";
+import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, ownTrackIssues, totalFrames, trackIssues, trendingTrackIssues } from "../../shared/montage";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
+import { windowPeaks } from "../../shared/music/trackShape";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
 import { mockStickerBytes, mockStickerUrl } from "./mockStickers";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
-import { MockOwnMedia, type MockMediaAccept } from "./mockMedia";
+import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
 
 // An in-memory engine that speaks the T0 wire protocol. It exists so the
@@ -711,6 +713,8 @@ export class MockEngine implements EngineBridge {
     this.skippedPhotos = { ...options.skippedPhotos };
     if (options.preset === "demo" && options.photos === undefined) this.seedDemoRun();
     this.music = mockMusic(options.music ?? (options.preset === "demo" ? demoMusic() : {}), this.clock);
+    // 3f.4: the dev build holds one own track, so the editor's music card, timeline and preview have an «own» track to show.
+    if (options.preset === "demo") this.seedOwnMedia(demoOwnMedia());
     if (options.preset === "demo" && options.photos === undefined) this.seedDemoMontage();
     if (options.preset === "demo" && options.demoVideos === true && options.photos === undefined) this.seedDemoVideos();
   }
@@ -929,6 +933,14 @@ export class MockEngine implements EngineBridge {
    */
   setMusicQuotaLog(state: MusicQuotaLog): void {
     this.music = { ...this.music, quotaLog: state };
+  }
+
+  /**
+   * 3f.4: the library holds these own files too, as if they had been imported before the window opened (the dev build's demo, a test that starts with
+   * media). Nothing is announced.
+   */
+  seedOwnMedia(seeds: readonly MockOwnSeed[]): void {
+    this.ownMedia.seed(seeds);
   }
 
   /**
@@ -1859,7 +1871,8 @@ export class MockEngine implements EngineBridge {
     // The set is in the build: the engine's own function, so the mock and the engine name the same stickers.
     referential.push(...stickerIssues(spec));
     // The store's tracks are the mock's own: the engine's function judges a trending track against what is held.
-    referential.push(...trackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId)));
+    // An own track (3f.4) is judged against the mock's own library, by the same function.
+    referential.push(...trackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId), (mediaId) => this.ownMedia.holdsTrack(mediaId)));
     return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referential].slice(0, MAX_MONTAGE_ISSUES);
   }
 
@@ -2077,14 +2090,15 @@ export class MockEngine implements EngineBridge {
     }
     // The engine's order (`videos.render`): structure, what has not landed (N9), the stickers the set lacks, the music track (judged
     // against the mock's own store, as `montages.get` does: a stored track renders).
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...trackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId))].slice(
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...trendingTrackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId))].slice(
       0,
       MAX_MONTAGE_ISSUES,
     );
     if (issues.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues });
-    // 3f.2: then each own photo is looked up (and held) before the export folder is asked: one that is not there is `media-unavailable`
-    // at each of its cells, through the same function the engine's admission uses.
-    const missing = ownPhotoIssues(spec, (mediaId) => this.ownMedia.holdsPhoto(mediaId)).slice(0, MAX_MONTAGE_ISSUES);
+    // 3f.2, 3f.4: then each own photo and the own track are looked up (and held) before the export folder is asked: one that is not there is
+    // `media-unavailable` (at each of its cells, or at the music), a track too short is `track-too-short`, through the same functions the engine's
+    // admission uses, the photos first.
+    const missing = [...ownPhotoIssues(spec, (mediaId) => this.ownMedia.holdsPhoto(mediaId)), ...ownTrackIssues(spec, (mediaId) => this.ownMedia.holdsTrack(mediaId))].slice(0, MAX_MONTAGE_ISSUES);
     if (missing.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues: missing });
     const reason = this.checkExport(estimateBytesUpper(spec.clips));
     if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
@@ -2105,7 +2119,7 @@ export class MockEngine implements EngineBridge {
       title,
       spec,
       photoIds: cells.map((cell) => cell.photoId),
-      mediaIds: [...new Set(ownPhotoCells(spec).map((cell) => cell.mediaId))],
+      mediaIds: [...new Set([...ownPhotoCells(spec).map((cell) => cell.mediaId), ...(spec.music?.source === "own" ? [spec.music.mediaId] : [])])],
       status: "queued",
       done: 0,
       total: totalFrames(spec.clips),
@@ -3019,10 +3033,14 @@ export class MockEngine implements EngineBridge {
     return { ...list, sentLast31d: Math.min(MUSIC_QUOTA_LIMIT, quota.sent), limit: MUSIC_QUOTA_LIMIT, serverRemaining: quota.serverRemaining, nextFreeAt: iso(quota.nextFreeAt), refresh: m.refresh, quotaLog: m.quotaLog };
   }
 
-  /** `music.peaks`: an own track is not available until 3f; a trending track must be stored. The engine's wording. */
+  /** `music.peaks`: an own track answers the waveform its record keeps (3f.4) and is NOT_FOUND when the library does not hold it as a track; a trending track must be stored. The engine's wording. */
   private musicPeaks(c: CommandMessage, payload: { track: { source: "trending"; trackId: string } | { source: "own"; mediaId: string }; startMs: number; durationMs: number; bars: number }): ResponseMessage {
     const { track, startMs, durationMs, bars } = payload;
-    if (track.source === "own") return this.fail(c, { code: "NOT_FOUND", detail: "own music is not available yet" });
+    if (track.source === "own") {
+      const waveform = this.ownMedia.waveformOf(track.mediaId);
+      if (waveform === undefined) return this.fail(c, { code: "NOT_FOUND", detail: OWN_MUSIC_NOT_FOUND_DETAIL });
+      return this.ok(c, { peaks: windowPeaks({ stepMs: 50, peaks: waveform }, startMs, durationMs, bars) });
+    }
     const peaks = peaksOfTrack(this.music.tracks, track.trackId, startMs, durationMs, bars);
     if (peaks === null) return this.fail(c, { code: "NOT_FOUND", detail: `track ${track.trackId} is not stored` });
     return this.ok(c, { peaks });
