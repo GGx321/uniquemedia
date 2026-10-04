@@ -1,0 +1,2 @@
+# Music fixtures are byte-exact test inputs (sha256-pinned); Git must never rewrite their line endings.
+* -text
