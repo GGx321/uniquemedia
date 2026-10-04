@@ -85,6 +85,22 @@ describe("own media and the photo counts", () => {
     expect(reopened.photoStates(avatar.id).get(photo.id)?.usedIn).toEqual([]);
   });
 
+  test("an own media a rendered video's record names can be deleted: the plan keeps the reference, the video's record reads as before", async () => {
+    const { library, avatar } = await savedAvatar();
+    const photo = await library.addPhoto(avatar.id, PNG_1X1, scene());
+    await storeOwnPhoto("media-00000001");
+    await writeVideoRecord(root(), "video-00000001", sceneSpec(avatar.id, [photo.id], { ownMediaId: "media-00000001" }));
+    const records = new MediaRecords({ root: root(), newId: sequentialIds("media"), now: () => new Date(), warn: () => undefined });
+    await records.recover();
+
+    expect(await records.remove("media-00000001")).toBe(true);
+
+    const reopened = (await openLibrary(root(), deps())).library;
+    expect(reopened.videoCount(avatar.id)).toBe(1);
+    expect(reopened.photoStates(avatar.id).get(photo.id)?.usedIn).toEqual(["video-00000001"]);
+    expect(reopened.usageReasons(avatar.id)).toEqual([]);
+  });
+
   test("deleting the own media changes no photo count", async () => {
     const { library, avatar } = await savedAvatar();
     await library.addPhoto(avatar.id, PNG_1X1, scene());

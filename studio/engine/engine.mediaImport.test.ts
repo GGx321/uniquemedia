@@ -351,11 +351,10 @@ describe("media.list and media.delete", () => {
     expect(removed).toHaveLength(1);
   });
 
-  test("deleting an unknown id is NOT_FOUND, and a delete is never refused because a draft or a video uses the media", async () => {
+  test("deleting an unknown id is NOT_FOUND, and a known one is deleted", async () => {
     const started = await start({ mediaImporters: { photo: asIs } });
     expect(failed(await started.engine.handle(command("media.delete", { mediaId: "media-00000404" }))).error.code).toBe("NOT_FOUND");
-    const { jobId } = await imported(started);
-    void jobId;
+    await imported(started);
     const listed = ok(await started.engine.handle(command("media.list", {}))).result as { media: { mediaId: string }[] };
     const id = listed.media[0]?.mediaId ?? "";
     expect(ok(await started.engine.handle(command("media.delete", { mediaId: id }))).result).toEqual({ mediaId: id });

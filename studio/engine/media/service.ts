@@ -10,6 +10,7 @@ import {
 import type { JobRegistry } from "../jobs";
 import { MediaCommitError, MediaDiskError, MediaRecords, type MediaRecordsOptions } from "../library/mediaRecords";
 import type { MediaImportCall, MediaImporters, MediaImportResult } from "./imports";
+import type { MediaFormat } from "./sniff";
 import { MediaStaging, type MediaStagingOptions, type OpenedMedia, type StagedMedia, type WorkFile } from "./staging";
 
 // The own-media import JOB (Stage 3, 3f.1b; K29) and the records' commands (K28).
@@ -196,6 +197,24 @@ export class MediaService {
       const area = this.#areaOf(library.root);
       await area.ready;
       return area.records.list(kind);
+    });
+  }
+
+  /**
+   * One stored media as the engine itself reads it (never a window): its summary, the file's path, and what the record holds to check the
+   * file against (size, sha256, container). Undefined for an id the library does not hold, or holds as another kind than the one asked for.
+   * This is the seam of the per-kind tasks: 3f.2's referential check («own media exists and has the right kind»), and the render's copy of
+   * a stored file, which checks it again before it reads (3f.3b, 3f.4, 3f.5).
+   */
+  async lookup(mediaId: string, kind?: MediaKind): Promise<{ summary: MediaSummary; path: string; sha256: string; bytes: number; format: MediaFormat } | undefined> {
+    return this.#deps.withLibrary(async (library) => {
+      const area = this.#areaOf(library.root);
+      await area.ready;
+      const summary = area.records.get(mediaId);
+      const path = area.records.filePath(mediaId);
+      const integrity = area.records.integrityOf(mediaId);
+      if (summary === undefined || path === undefined || integrity === undefined || (kind !== undefined && summary.kind !== kind)) return undefined;
+      return { summary, path, ...integrity };
     });
   }
 

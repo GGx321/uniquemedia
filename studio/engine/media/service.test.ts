@@ -735,6 +735,32 @@ describe("the records through the service", () => {
     expect(r.events[0]?.type === "media.changed" && r.events[0].payload).toEqual({ change: "removed", mediaId: target.mediaId });
   });
 
+  test("lookup says whether the library holds a media, of the kind that is asked for, and where the engine reads it", async () => {
+    const r = rig();
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    const [media] = (await r.service.list()).media;
+    if (media === undefined) throw new Error("nothing stored");
+
+    const found = await r.service.lookup(media.mediaId);
+    expect(found?.summary).toEqual(media);
+    expect(found?.path).toBe(join(mediaDir(), `${media.mediaId}.jpg`));
+    expect(found).toMatchObject({ format: "jpeg", bytes: 300 });
+    expect(found?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(await r.service.lookup(media.mediaId, "photo")).toBeDefined();
+    expect(await r.service.lookup(media.mediaId, "video")).toBeUndefined();
+    expect(await r.service.lookup("media-00000404")).toBeUndefined();
+  });
+
+  test("lookup of a media that was deleted is nothing", async () => {
+    const r = rig();
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    const [media] = (await r.service.list()).media;
+    await r.service.delete(media?.mediaId ?? "");
+    expect(await r.service.lookup(media?.mediaId ?? "")).toBeUndefined();
+  });
+
   test("deleting an id the library does not hold is false and tells nothing", async () => {
     const r = rig();
     expect(await r.service.delete("media-00000404")).toBe(false);
