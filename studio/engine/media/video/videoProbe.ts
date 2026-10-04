@@ -64,6 +64,9 @@ export type ProbeRefusal =
   | "bad-header"
   | "no-video-track"
   | "several-video-tracks"
+  | "stray-track"
+  | "duplicate-box"
+  | "sample-count-mismatch"
   | "several-sample-entries"
   | "dimension-mismatch"
   | "unsupported-codec"
@@ -152,6 +155,16 @@ const CODECS: Readonly<Record<string, VideoCodec>> = {
   ap4h: "prores",
 };
 
+/**
+ * Sample entries that are certainly NOT pictures: sound, timecode and the timed metadata a phone or an action camera writes. A track whose entry
+ * is anything else is a video candidate whatever its `hdlr` says, because ffmpeg decides a track's kind by its entry's four characters, not by
+ * its handler. (A name missing here only makes a file with that track refused.)
+ */
+const NON_VIDEO_ENTRIES: ReadonlySet<string> = new Set([
+  "mp4a", "ac-3", "ec-3", "alac", "sowt", "twos", "lpcm", "ipcm", "fpcm", ".mp3", "samr", "sawb", "Opus", "fLaC", "in24", "in32", "fl32", "fl64", "raw ", "ulaw", "alaw",
+  "mebx", "tmcd", "text", "tx3g", "c608", "c708", "clcp", "gpmd", "camm", "sbtl", "stpp", "wvtt", "priv", "fdsc", "rtmd", "mett", "metx",
+]);
+
 const latin1 = (bytes: Uint8Array, from: number, to: number): string => String.fromCharCode(...bytes.subarray(from, to));
 
 /** The box whose header is in `bytes` at `at` (as the file's offset `offset + at`), checked against `limit` (what the parent holds). */
@@ -186,10 +199,10 @@ function childrenOf(m: Uint8Array, view: DataView, start: number, end: number, b
   return found;
 }
 
-/** The one box of `type` in a parent; a repeat is refused (the walker reads one, and another reader may read the other). */
+/** The one box of `type` in a parent; a repeat is refused: the walker would read the first and ffmpeg the last (it keeps overwriting). */
 function onlyOf(boxes: readonly BoxRef[], type: string): BoxRef | undefined {
   const found = boxes.filter((box) => box.type === type);
-  if (found.length > 1) throw new Refusal("bad-box");
+  if (found.length > 1) throw new Refusal("duplicate-box");
   return found[0];
 }
 
@@ -325,9 +338,20 @@ function readStts(view: DataView, box: BoxRef): SampleTimes {
   const entries = view.getUint32(box.body + 4);
   // The table must be in the box: a count that is larger than what the box holds is a lie, and is never iterated.
   if (entries > (payloadLength(box) - 8) / 8) throw new Refusal("bad-box");
-  const runs: { count: number; delta: number }[] = [];
   let samples = 0;
   let durationTicks = 0;
+  let min = Number.POSITIVE_INFINITY;
+  let max = 0;
+  // The last sample's length is the muxer's choice (often what is left to the end of the track), so it is left out of the spread: each run is
+  // folded into the spread when the NEXT one arrives, and the last one, one sample short, after the loop. No array, no spread: a 16 MiB moov
+  // holds two million runs, and `Math.min(...runs)` throws long before that.
+  let pendingCount = 0;
+  let pendingDelta = 0;
+  const fold = (count: number, delta: number): void => {
+    if (count <= 0) return;
+    if (delta < min) min = delta;
+    if (delta > max) max = delta;
+  };
   for (let i = 0; i < entries; i++) {
     const count = view.getUint32(box.body + 8 + i * 8);
     const delta = view.getUint32(box.body + 12 + i * 8);
@@ -336,23 +360,19 @@ function readStts(view: DataView, box: BoxRef): SampleTimes {
     samples += count;
     durationTicks += ticks;
     if (!Number.isSafeInteger(ticks) || !Number.isSafeInteger(durationTicks) || !Number.isSafeInteger(samples)) throw new Refusal("bad-header");
-    runs.push({ count, delta });
+    fold(pendingCount, pendingDelta);
+    pendingCount = count;
+    pendingDelta = delta;
   }
   if (samples === 0 || durationTicks === 0) throw new Refusal("bad-header");
-  // The last sample's length is the muxer's choice (often what is left to the end of the track), so it is left out of the spread.
-  const last = runs[runs.length - 1];
-  if (last !== undefined) last.count -= 1;
-  const deltas = runs.filter((run) => run.count > 0).map((run) => run.delta);
-  const min = Math.min(...deltas);
-  const max = Math.max(...deltas);
+  fold(pendingCount - 1, pendingDelta);
   // Rounding a 30 fps clip to milliseconds gives 33 and 34: a spread of a tick, or a tenth of the shortest, is not a variable rate.
-  return { samples, durationTicks, variableFrameRate: deltas.length > 0 && max > min && max - min > Math.max(1, min * 0.1) };
+  return { samples, durationTicks, variableFrameRate: Number.isFinite(min) && max > min && max - min > Math.max(1, min * 0.1) };
 }
 
 /** Every `dref` entry of a track must be the file itself: a reference to another file is a way to make ffmpeg open one. */
-function checkDataReferences(m: Uint8Array, view: DataView, minf: BoxRef | undefined, budget: { visited: number }): void {
-  if (minf === undefined) return;
-  const dinf = onlyOf(childrenOf(m, view, minf.body, minf.end, budget), "dinf");
+function checkDataReferences(m: Uint8Array, view: DataView, inMinf: readonly BoxRef[], budget: { visited: number }): void {
+  const dinf = onlyOf(inMinf, "dinf");
   if (dinf === undefined) return;
   const dref = onlyOf(childrenOf(m, view, dinf.body, dinf.end, budget), "dref");
   if (dref === undefined) return;
@@ -363,11 +383,10 @@ function checkDataReferences(m: Uint8Array, view: DataView, minf: BoxRef | undef
   }
 }
 
-function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined, mdhd: BoxRef | undefined, stbl: BoxRef | undefined, budget: { visited: number }): VideoTrackInfo {
-  if (tkhd === undefined || mdhd === undefined || stbl === undefined) throw new Refusal("bad-header");
+function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined, mdhd: BoxRef | undefined, tables: readonly BoxRef[] | undefined, budget: { visited: number }): VideoTrackInfo {
+  if (tkhd === undefined || mdhd === undefined || tables === undefined) throw new Refusal("bad-header");
   const { rotation, width: tkhdWidth, height: tkhdHeight } = readTkhd(m, view, tkhd);
   const { timescale } = readTimes(m, view, mdhd);
-  const tables = childrenOf(m, view, stbl.body, stbl.end, budget);
   const stsd = onlyOf(tables, "stsd");
   const stts = onlyOf(tables, "stts");
   if (stsd === undefined || stts === undefined) throw new Refusal("bad-header");
@@ -398,6 +417,13 @@ function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined,
   const { colour, range } = resolveColour(readColr(m, view, inside), dolby, width, height);
 
   const times = readStts(view, stts);
+  // ffmpeg counts the samples of a track from its size table, not from `stts`: a file whose two disagree could be 1 s by the one and 3 h by the other.
+  const sizes = onlyOf(tables, "stsz");
+  const compact = onlyOf(tables, "stz2");
+  if (sizes !== undefined && compact !== undefined) throw new Refusal("duplicate-box");
+  const sizeTable = sizes ?? compact;
+  if (sizeTable === undefined || payloadLength(sizeTable) < 12) throw new Refusal("bad-header");
+  if (view.getUint32(sizeTable.body + 8) !== times.samples) throw new Refusal("sample-count-mismatch");
   const sourceFps = Math.round((times.samples * timescale * 1000) / times.durationTicks) / 1000;
   if (sourceFps > MAX_FPS) throw new Refusal("bad-header");
   return {
@@ -438,6 +464,8 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
     const box = boxAt(header, new DataView(header.buffer, header.byteOffset, header.byteLength), 0, remaining, at, true);
     if (at === 0 && box.type !== "ftyp") throw new Refusal("no-ftyp");
     if (box.type === "moof" || box.type === "sidx" || box.type === "mfra") throw new Refusal("fragmented");
+    // ffmpeg reads a `trak` wherever it finds one, so a track outside `moov` is a stream the walker would never judge.
+    if (box.type === "trak") throw new Refusal("stray-track");
     if (box.type === "ftyp") {
       if (box.end - box.body < 8 || box.end - box.body > 4096) throw new Refusal("bad-box");
       const ftyp = await readExactly(source, box.body, 4);
@@ -473,14 +501,19 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
     const hdlr = onlyOf(inMdia, "hdlr");
     const minf = onlyOf(inMdia, "minf");
     const handler = hdlr !== undefined && payloadLength(hdlr) >= 12 ? latin1(m, hdlr.body + 8, hdlr.body + 12) : "";
-    checkDataReferences(m, view, minf, budget);
+    const inMinf = minf === undefined ? [] : childrenOf(m, view, minf.body, minf.end, budget);
+    checkDataReferences(m, view, inMinf, budget);
+    const stbl = onlyOf(inMinf, "stbl");
+    const tables = stbl === undefined ? undefined : childrenOf(m, view, stbl.body, stbl.end, budget);
+    const stsd = tables === undefined ? undefined : onlyOf(tables, "stsd");
+    const entryType = stsd !== undefined && payloadLength(stsd) >= 16 ? latin1(m, stsd.body + 12, stsd.body + 16) : undefined;
     if (handler === "soun") audioTracks++;
-    if (handler !== "vide") continue;
+    // A video track by its handler OR by its sample entry (see NON_VIDEO_ENTRIES).
+    if (handler !== "vide" && (entryType === undefined || NON_VIDEO_ENTRIES.has(entryType))) continue;
     // ONE video track only. ffmpeg silently drops a track it cannot use (no samples, a broken table), so with two the stream it maps as the
     // first video could be the one this walker never judged.
     if (video !== undefined) throw new Refusal("several-video-tracks");
-    const stbl = minf === undefined ? undefined : onlyOf(childrenOf(m, view, minf.body, minf.end, budget), "stbl");
-    video = readVideoTrack(m, view, onlyOf(parts, "tkhd"), onlyOf(inMdia, "mdhd"), stbl, budget);
+    video = readVideoTrack(m, view, onlyOf(parts, "tkhd"), onlyOf(inMdia, "mdhd"), tables, budget);
   }
   if (video === undefined) throw new Refusal("no-video-track");
 

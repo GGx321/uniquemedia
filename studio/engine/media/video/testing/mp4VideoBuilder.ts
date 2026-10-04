@@ -8,6 +8,17 @@ import { box, concat, fullBox, largeBox, u16, u32 } from "../../../music/testing
 
 export { box, concat, fullBox, largeBox, u16, u32 };
 
+/** `concat` for a long list (a rest parameter holds a few hundred thousand arguments at most). */
+function concatList(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.byteLength, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.byteLength;
+  }
+  return out;
+}
+
 const ascii = (text: string): Uint8Array => Uint8Array.from([...text].map((c) => c.charCodeAt(0)));
 const u8 = (...values: number[]): Uint8Array => Uint8Array.from(values);
 const word = (value: number): Uint8Array => u32(value >>> 0);
@@ -75,6 +86,17 @@ export interface TrackSpec {
   /** Write `tkhd` and `mdhd` in their 64-bit form. */
   version1?: boolean;
   noStts?: boolean;
+  /** `stsz`'s own sample count (default: what `stts` sums to), or leave `stsz` out. */
+  stszCount?: number;
+  noStsz?: boolean;
+  /** Write the compact `stz2` (16-bit sizes) instead of `stsz`. */
+  stz2?: boolean;
+  /** Write a compact `stz2` as well as the `stsz`. */
+  alsoStz2?: boolean;
+  /** Which kind of sample entry to write, whatever the handler says (default: a video entry for `vide`, an audio one otherwise). */
+  sampleEntry?: "video" | "audio";
+  /** Repeat one box of the track inside its parent. */
+  duplicate?: "hdlr" | "stts" | "stsd" | "stsz" | "tkhd";
   noTkhd?: boolean;
   /** Extra boxes at the end of `trak`. */
   trakExtra?: readonly Uint8Array[];
@@ -160,12 +182,17 @@ export function trackBox(spec: TrackSpec): Uint8Array {
   const hdlr = fullBox("hdlr", 0, concat(u32(0), ascii(spec.handler.padEnd(4, " ").slice(0, 4)), new Uint8Array(12), u8(0)));
   const drefFlags = spec.drefFlags ?? [1];
   const dref = fullBox("dref", 0, concat(u32(drefFlags.length), ...drefFlags.map((flags) => fullBox("url ", flags))));
-  const sampleEntry = spec.handler === "vide" ? videoEntry(entry) : audioEntry();
-  const stsd = fullBox("stsd", 0, concat(u32(spec.entries ?? 1), ...Array.from({ length: spec.entries ?? 1 }, () => sampleEntry)));
-  const sttsBox = fullBox("stts", 0, concat(u32(spec.sttsDeclaredCount ?? stts.length), ...stts.map(([count, delta]) => concat(u32(count), u32(delta)))));
-  const stbl = box("stbl", concat(stsd, ...(spec.noStts === true ? [] : [sttsBox])));
-  const mdia = box("mdia", concat(mdhd, hdlr, box("minf", concat(box("dinf", dref), stbl))));
-  return box("trak", concat(...(spec.noTkhd === true ? [] : [tkhd]), mdia, ...(spec.trakExtra ?? [])));
+  const sampleEntry = (spec.sampleEntry ?? (spec.handler === "vide" ? "video" : "audio")) === "video" ? videoEntry(entry) : audioEntry();
+  const twice = (type: string, one: Uint8Array): Uint8Array => (spec.duplicate === type ? concat(one, one) : one);
+  const stsd0 = fullBox("stsd", 0, concat(u32(spec.entries ?? 1), ...Array.from({ length: spec.entries ?? 1 }, () => sampleEntry)));
+  const stsd = twice("stsd", stsd0);
+  const sttsBox = twice("stts", fullBox("stts", 0, concat(u32(spec.sttsDeclaredCount ?? stts.length), concatList(stts.map(([count, delta]) => concat(u32(count), u32(delta)))))));
+  const samples = stts.reduce((sum, [count]) => sum + count, 0);
+  const count = spec.stszCount ?? samples;
+  const stszBox = twice("stsz", spec.stz2 === true ? fullBox("stz2", 0, concat(u8(0, 0, 0, 16), u32(count))) : fullBox("stsz", 0, concat(u32(0), u32(count))));
+  const stbl = box("stbl", concat(stsd, ...(spec.noStts === true ? [] : [sttsBox]), ...(spec.noStsz === true ? [] : [stszBox]), ...(spec.alsoStz2 === true ? [fullBox("stz2", 0, concat(u8(0, 0, 0, 16), u32(count)))] : [])));
+  const mdia = box("mdia", concat(mdhd, twice("hdlr", hdlr), box("minf", concat(box("dinf", dref), stbl))));
+  return box("trak", concat(...(spec.noTkhd === true ? [] : [twice("tkhd", tkhd)]), mdia, ...(spec.trakExtra ?? [])));
 }
 
 export function moovBox(spec: Mp4Spec): Uint8Array {
