@@ -67,6 +67,8 @@ interface Source {
   readonly width: number;
   readonly height: number;
   readonly durations: readonly FrameDuration[];
+  /** The delays a GIF is played with, where they sit in the file: the decoder is shown a copy with exactly these (see `run`). Empty for an APNG. */
+  readonly delayEdits: readonly { readonly offset: number; readonly cs: number }[];
 }
 
 function reasonOfCode(code: GifRejectCode | ApngRejectCode): MediaUnsupportedReason {
@@ -92,13 +94,14 @@ function judge(bytes: Uint8Array, format: string): Source {
     const result = inspectGif(bytes);
     if (!result.ok) throw new Refused(reasonOfCode(result.code));
     const { info } = result;
-    return { container: "gif", width: info.width, height: info.height, durations: info.frames.map((frame) => ({ num: frame.playedCs, den: 100 })) };
+    const delayEdits = info.frames.flatMap((frame) => (frame.delayOffset !== null && frame.delayCs !== frame.playedCs ? [{ offset: frame.delayOffset, cs: frame.playedCs }] : []));
+    return { container: "gif", width: info.width, height: info.height, durations: info.frames.map((frame) => ({ num: frame.playedCs, den: 100 })), delayEdits };
   }
   if (format === "apng") {
     const result = inspectApngRaw(bytes);
     if (!result.ok) throw new Refused(reasonOfCode(result.code));
     const { info } = result;
-    return { container: "apng", width: info.width, height: info.height, durations: info.frames.map((frame) => ({ num: frame.delayNum, den: frame.delayDen })) };
+    return { container: "apng", width: info.width, height: info.height, durations: info.frames.map((frame) => ({ num: frame.delayNum, den: frame.delayDen })), delayEdits: [] };
   }
   throw new Refused("format");
 }
@@ -159,9 +162,25 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
     const keptSlots = slots.filter((n) => n > 0);
     if (keptSlots.length < 2) throw new Refused("not-animated");
 
+    // The decoder is shown the delays the loop is PLAYED with. What a GIF demuxer does with a delay of 0 or 1 cs depends on its version (the macOS and the
+    // Windows ffmpeg differ), and the loop is judged by the rule browsers use; so a GIF whose delays need it is given to ffmpeg as a copy with those delays
+    // rewritten, in a file of the job's own, made new. The owner's file and the library's staged copy are never touched.
+    let inputPath = staged.path;
+    if (source.delayEdits.length > 0) {
+      const copy = new Uint8Array(bytes);
+      for (const { offset, cs } of source.delayEdits) {
+        copy[offset] = cs & 255;
+        copy[offset + 1] = cs >> 8;
+      }
+      const normalised = await request.workFile();
+      signal.throwIfAborted();
+      await writeFile(normalised.path, copy, { flag: "wx", signal });
+      inputPath = normalised.path;
+    }
+
     // 3. CROSS-CHECK: what ffmpeg makes of the file at 30 fps is the loop the quantiser promised.
     let counted = 0;
-    await ffmpeg([...inputOf(source.container, staged.path), "-vf", `fps=${STICKER_FPS}`, "-f", "null"], "-", signal, (frames) => (counted = Math.max(counted, frames)));
+    await ffmpeg([...inputOf(source.container, inputPath), "-vf", `fps=${STICKER_FPS}`, "-f", "null"], "-", signal, (frames) => (counted = Math.max(counted, frames)));
     signal.throwIfAborted();
     if (counted !== loopFrames) throw new Refused("format");
 
@@ -173,7 +192,7 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
       () => false,
     );
     if (taken) throw new Refused("failed");
-    await ffmpeg([...inputOf(source.container, staged.path), "-fps_mode", "passthrough", "-pix_fmt", "rgba", "-n", "-f", "rawvideo"], raw.path, signal);
+    await ffmpeg([...inputOf(source.container, inputPath), "-fps_mode", "passthrough", "-pix_fmt", "rgba", "-n", "-f", "rawvideo"], raw.path, signal);
     signal.throwIfAborted();
     // What was decoded is exactly the frames the reader counted, at the canvas it saw.
     const frameBytes = source.width * source.height * 4;

@@ -45,6 +45,8 @@ export interface GifFrameInfo {
   readonly delayCs: number;
   /** The delay the frame is played for: 0 and 1 cs become 10 cs. */
   readonly playedCs: number;
+  /** Where the two bytes (little-endian) of the delay sit in the file, or null when the frame has no graphic control extension. */
+  readonly delayOffset: number | null;
   readonly disposal: number;
   readonly transparent: boolean;
   readonly interlaced: boolean;
@@ -174,7 +176,7 @@ export function inspectGif(bytes: Uint8Array, limits: StickerLimits = STICKER_LI
 
   const frames: GifFrameInfo[] = [];
   let loopCount: number | null = null;
-  let pending: { delayCs: number; disposal: number; transparent: boolean } | undefined;
+  let pending: { delayCs: number; delayOffset: number; disposal: number; transparent: boolean } | undefined;
   let blocks = 0;
 
   for (;;) {
@@ -199,7 +201,7 @@ export function inspectGif(bytes: Uint8Array, limits: StickerLimits = STICKER_LI
         const packed = bytes[pos + 3] ?? 0;
         const disposal = (packed >> 2) & 7;
         if (disposal > 3) return fail("BAD_BLOCK", `a reserved disposal method (${disposal})`);
-        pending = { delayCs: u16(pos + 4), disposal, transparent: (packed & 1) !== 0 };
+        pending = { delayCs: u16(pos + 4), delayOffset: pos + 4, disposal, transparent: (packed & 1) !== 0 };
         pos += 8;
       } else if (label === 0xff) {
         // Application extension: an 11-byte header block, then sub-blocks.
@@ -266,6 +268,7 @@ export function inspectGif(bytes: Uint8Array, limits: StickerLimits = STICKER_LI
         height,
         delayCs,
         playedCs: clampGifDelayCs(delayCs),
+        delayOffset: pending?.delayOffset ?? null,
         disposal: pending?.disposal ?? 0,
         transparent: pending?.transparent ?? false,
         interlaced: (packed & 0x40) !== 0,

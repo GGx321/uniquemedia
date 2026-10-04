@@ -4,6 +4,7 @@ import { readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MEDIA_BYTE_CAPS, MediaSummary, type MediaUnsupportedReason } from "../../shared/engine";
 import { inspectApng, STICKER_LIMITS } from "../../shared/stickers/apng";
+import { inspectGif } from "../../shared/stickers/gif";
 import { createApngEncoder, encodeApng } from "../../shared/stickers/apngWriter";
 import { buildGif, concatBytes, framesOf, gifHeader } from "../../shared/stickers/gif.testkit";
 import { decodeFrames } from "../../scripts/stickers/apngDecode.testkit";
@@ -124,6 +125,27 @@ describe("the sticker importer: a GIF", () => {
   test("a delay of 0 or 1 cs, or no delay at all, is played for 10 cs, as browsers and ffmpeg do", async () => {
     const stored = await accepted(await runWith(flatGif([0, 1, 2], [0, 1, null]), "gif"));
     expect(stored.delayFrames).toEqual([3, 3, 3]);
+  });
+
+  test("ffmpeg is given the delays as they are played: no frame reaches it with 0 or 1 cs, whatever its version does with those", async () => {
+    const seen: number[][] = [];
+    const spawner = recordingSpawner([], (argv) => {
+      const result = inspectGif(new Uint8Array(readFileSync(argv[argv.indexOf("-i") + 1] ?? "")));
+      if (!result.ok) throw new Error(result.code);
+      seen.push(result.info.frames.map((f) => f.delayCs));
+      return argv;
+    });
+    await accepted(await runWith(flatGif([0, 1, 2, 3], [0, 1, 7, null]), "gif", { spawner }));
+    // The frame with no graphic control extension has no delay to rewrite: it stays 0 and ffmpeg's own default (10 cs) plays it.
+    expect(seen).toEqual([
+      [10, 10, 7, 0],
+      [10, 10, 7, 0],
+    ]);
+  });
+
+  test("the file the owner gave is not touched by the rewrite of the delays: the stored picture and loop are the same", async () => {
+    const stored = await accepted(await runWith(flatGif([0, 1, 2], [1, 1, 1]), "gif"));
+    expect([stored.loopFrames, stored.delayFrames]).toEqual([9, [3, 3, 3]]);
   });
 
   test("a delay of 2 cs is kept as it is, and a frame too short for any slot is left out of the loop", async () => {

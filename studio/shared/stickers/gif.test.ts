@@ -46,6 +46,13 @@ describe("inspectGif: what it reports", () => {
     ]);
   });
 
+  test("reports where each frame's delay is written: the two bytes of its graphic control extension, or null when it has none", () => {
+    const bytes = buildGif({ frames: [{ delayCs: 7 }, { delayCs: 300 }, { delayCs: null }] });
+    const info = accepted(inspectGif(bytes));
+    const written = info.frames.map((f) => (f.delayOffset === null ? null : (bytes[f.delayOffset] ?? 0) | ((bytes[f.delayOffset + 1] ?? 0) << 8)));
+    expect(written).toEqual([7, 300, null]);
+  });
+
   test("reports a frame's own region and flags", () => {
     const info = accepted(inspectGif(buildGif({ width: 8, height: 8, frames: [{ width: 8, height: 8 }, { x: 2, y: 3, width: 4, height: 2, disposal: 2, transparent: 1, interlaced: true }] })));
     expect(info.frames[1]).toMatchObject({ x: 2, y: 3, width: 4, height: 2, disposal: 2, transparent: true, interlaced: true });
