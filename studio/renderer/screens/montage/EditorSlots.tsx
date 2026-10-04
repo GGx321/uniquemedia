@@ -1,51 +1,10 @@
-import type { MontageDraft } from "../../../shared/engine";
 import { MAX_CLIPS } from "../../../shared/montage";
 import { Icon, type IconName } from "../../ui/Icon";
-import { ClipPoster } from "./ClipPoster";
-import type { PlayheadStore } from "./playhead";
-import { usePlayheadStep } from "./usePlayhead";
 
-// The editor's regions (Editor.dc.html), each a SLOT a later task fills. 3d.2 drew what was already true; 3d.3a showed the clip
-// under the playhead; the timeline (Timeline.tsx), the media panel (MediaPanel.tsx and its tabs, 3d.5) and the properties
-// (ClipProperties.tsx, LayerProperties.tsx, MusicCard.tsx) are their own files. What is left here: the preview (3d.4 fills it)
-// and the properties panel with nothing selected.
-
-/** The clip on screen at `ms` (half-open ranges); at or past the end, the last clip. Null for an empty draft. */
-export function clipIndexAt(spec: MontageDraft, ms: number): number | null {
-  if (spec.clips.length === 0) return null;
-  let start = 0;
-  for (const [i, clip] of spec.clips.entries()) {
-    if (ms < start + clip.durationMs) return i;
-    start += clip.durationMs;
-  }
-  return spec.clips.length - 1;
-}
-
-/**
- * SLOT 3d.4 (the live preview: motion, the focus drag, text and stickers, «Зоны Reels» and «Полоски слайдов»).
- * Here: the 9:16 frame at the artboard's 306 × 544 with a still of the clip under the playhead, or «Ролик пока пуст».
- */
-export function PreviewSlot({ spec, playhead }: { spec: MontageDraft; playhead: PlayheadStore }) {
-  const at = clipIndexAt(spec, usePlayheadStep(playhead));
-  const first = at === null ? undefined : spec.clips[at];
-  return (
-    <section className="ed-preview" aria-label="Превью" data-slot="preview 3d.4">
-      <div className="ed-frame">
-        {first === undefined ? (
-          <div className="ed-frame-empty">
-            <span className="tile-icon ed-frame-empty-icon" aria-hidden="true">
-              <Icon name="image" size={20} />
-            </span>
-            <span className="ed-frame-empty-title">Ролик пока пуст</span>
-            <span className="faint ed-frame-empty-text">Кликните фото слева — оно станет первым кадром. Длина ролика — от 4 до 15 с.</span>
-          </div>
-        ) : (
-          <ClipPoster clip={first} avatarId={spec.avatarId} emptyCells />
-        )}
-      </div>
-    </section>
-  );
-}
+// The editor's regions (Editor.dc.html), each a SLOT a later task fills. 3d.2 drew what was already true; the timeline
+// (Timeline.tsx), the media panel (MediaPanel.tsx and its tabs, 3d.5), the properties (ClipProperties.tsx, LayerProperties.tsx,
+// MusicCard.tsx) and the preview (Preview.tsx, 3d.4) are their own files. What is left here: the properties panel with nothing
+// selected.
 
 const COMPOSITION: readonly { icon: IconName; title: string; sub: string; tone: string }[] = [
   { icon: "film", title: "Кадры", sub: `фото, коллаж 2–4 или своё видео · до ${MAX_CLIPS}`, tone: "clip" },

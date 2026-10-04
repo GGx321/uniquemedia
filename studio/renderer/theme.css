@@ -123,6 +123,13 @@
   --pre-car: linear-gradient(170deg, #8d8790 0%, #57525a 55%, #2f2b31 100%);
   --ok-16: rgba(79, 224, 176, 0.16);
   --ok-30: rgba(79, 224, 176, 0.3);
+  /* the live preview (3d.4), over the video's own pixels: the slide bars' track and fill (Instagram's white story bars), the Reels
+     zones' hatching and dashed edge, and the face point's inner light ring */
+  --pv-bar-track: rgba(255, 255, 255, 0.35);
+  --pv-bar-fill: #ffffff;
+  --pv-zone-fill: rgba(9, 9, 12, 0.3);
+  --pv-zone-edge: rgba(255, 255, 255, 0.45);
+  --pv-ring-inner: rgba(255, 255, 255, 0.6);
 
   /* other */
   --uniq: #7c6cff;

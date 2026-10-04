@@ -973,6 +973,304 @@
   line-height: 1.45;
 }
 
+/* the live preview (3d.4): the frame at the playhead, drawn in percent of the 1080 × 1920 frame so it scales with .ed-frame */
+
+.pv-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--frame-black);
+}
+
+.pv-cell {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: var(--sketch-cell);
+  cursor: pointer;
+}
+
+.pv-cell:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.pv-cell-on {
+  cursor: grab;
+}
+
+.pv-cell-on:active {
+  cursor: grabbing;
+}
+
+/* The photo at its STORED size (the render reads it with -noautorotate), placed so the cell shows the render's window of it. */
+.pv-photo {
+  position: absolute;
+  display: block;
+  max-width: none;
+  image-orientation: none;
+  pointer-events: none;
+  user-select: none;
+}
+
+.pv-photo-mock {
+  overflow: hidden;
+}
+
+.pv-photo-mock .portrait-silhouette {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  height: 62%;
+  transform: translateX(-50%);
+}
+
+.pv-own {
+  position: absolute;
+  inset: 0;
+  background: var(--photo-dim);
+}
+
+.pv-empty {
+  position: absolute;
+  inset: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 6px;
+  color: var(--faint);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.pv-cell-drop .pv-empty {
+  border-color: var(--accent);
+  background: var(--accent-08);
+  color: var(--accent-text);
+}
+
+/* the selected cell (V13): a dashed frame, the face point and «по лицу · тяните» */
+.pv-cell-frame {
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed var(--accent);
+  pointer-events: none;
+}
+
+.pv-face {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 3px var(--scrim-35),
+    inset 0 0 0 1px var(--pv-ring-inner);
+}
+
+.pv-face::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.pv-face-pill {
+  position: absolute;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 10px;
+  transform: translate(-50%, 18px);
+}
+
+.pv-face-pill-up {
+  transform: translate(-50%, -38px);
+}
+
+/* layers (V6–V10): the engine's caption picture or the sticker's canvas in the layer's box, the selection drawn around it */
+.pv-layer {
+  position: absolute;
+}
+
+.pv-layer-hit {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.pv-layer-hit:active {
+  cursor: grabbing;
+}
+
+.pv-layer-hit:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.pv-text,
+.pv-sticker-pic {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.pv-layer-on::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1.5px dashed var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+/* V10: the selected layer reaches a Reels zone — the frame turns yellow (a warning, never a refusal) */
+.pv-layer-zone::before {
+  border-color: var(--warn);
+}
+
+.pv-corner {
+  position: absolute;
+  z-index: 2;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--text);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.pv-corner-tl {
+  top: -8px;
+  left: -8px;
+}
+
+.pv-corner-br {
+  right: -8px;
+  bottom: -8px;
+}
+
+.pv-layer-zone .pv-corner {
+  border-color: var(--warn);
+}
+
+/* a caption the engine refused: the last good picture stays, dimmed and outlined (the panel says why) */
+.pv-text-refused .pv-text {
+  opacity: 0.45;
+}
+
+.pv-text-refused::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1.5px dashed var(--danger);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.pv-sticker-missing .pv-layer-hit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px dashed var(--dashed);
+  border-radius: 6px;
+  color: var(--faint);
+}
+
+/* «Зоны Reels» (V12) and «Полоски слайдов» (V5): preview only, never in the video */
+.pv-zones,
+.pv-bars {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pv-zone {
+  position: absolute;
+  border: 1px dashed var(--pv-zone-edge);
+  background: repeating-linear-gradient(135deg, var(--pv-zone-fill) 0 6px, transparent 6px 12px);
+}
+
+.pv-zone-bottom {
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+}
+
+.pv-zone-right {
+  border-right: 0;
+}
+
+.pv-zone-pill {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 10px;
+  transform: translate(-50%, -50%);
+}
+
+.pv-bar {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--pv-bar-track);
+}
+
+.pv-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--pv-bar-fill);
+}
+
+/* «Подсказки»: bottom left of the preview area (CHANGES.md) */
+.pv-hints {
+  position: absolute;
+  bottom: 14px;
+  left: 16px;
+  display: flex;
+  width: 150px;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pv-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.pv-hints-note {
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.pv-audio {
+  display: none;
+}
+
 /* properties (SLOT 3d.5) */
 
 .ed-props {

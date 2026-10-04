@@ -50,8 +50,8 @@ const FACE_TAGS: Record<Exclude<FaceState, "empty">, { text: string; tone: strin
 const FACE_HINTS: Record<FaceState, string> = {
   empty: "Ячейка пуста: кликните фото слева или перетащите его на ячейку.",
   pending: "Ищем лицо на фото — кадр подстроится под него сам.",
-  found: "Фото кадрировано по лицу.",
-  none: "Лицо не найдено: фото стоит по центру, чуть выше середины.",
+  found: "Фото уже кадрировано по лицу. Тяните его в превью, чтобы сдвинуть.",
+  none: "Лицо не найдено: фото стоит по центру, чуть выше середины. Тяните его в превью, чтобы сдвинуть.",
 };
 
 export interface ClipPropertiesProps {

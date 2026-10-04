@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { coverCrop, FOCUS_FALLBACK, FRAME_H, FRAME_W, type Size } from "../../../shared/montage";
-import { dragFocus, dragLayerCentre, resizeFactor, setCellFocus } from "./previewDrag";
-import { collageClip, draftSpec, photoClip, videoClip } from "./testkit";
+import { dragFocus, dragLayerCentre, placeLayer, resizeFactor, setCellFocus } from "./previewDrag";
+import { collageClip, draftSpec, photoClip, stickerLayer, textLayer, videoClip } from "./testkit";
 
 /** Four decimals, as the drags keep them. */
 const r4 = (v: number): number => Math.round(v * 10_000) / 10_000;
@@ -78,19 +78,38 @@ describe("dragging a cell's crop by its face point", () => {
   });
 
   test("a moved axis starts from where the crop really is: a focus stored past the edge does not hold the drag back", () => {
-    // x = 0.95 crops at the right edge, as x = 1 - 432 / 1024 does: one pixel to the right moves the crop at once.
-    const moved = dragFocus({ x: 0.95, y: 0.5 }, { dx: 1, dy: 0 }, FULL, PHOTO);
-    expect(moved.x).toBeLessThan(1 - 432 / 1024);
+    // x = 0.95 crops at the right edge, as x = 1 - 432 / 1024 does: ten frame pixels to the right move the crop at once.
+    const moved = dragFocus({ x: 0.95, y: 0.5 }, { dx: 10, dy: 0 }, FULL, PHOTO);
+    expect(coverCrop(PHOTO, FULL, moved).x).toBeLessThan(coverCrop(PHOTO, FULL, { x: 0.95, y: 0.5 }).x);
     expect(moved.y).toBe(0.5);
   });
 
   test("an axis the pointer did not move keeps its stored focus exactly (the motion still anchors on the face)", () => {
-    const moved = dragFocus({ x: 0.5, y: 0.03 }, { dx: 20, dy: 0 }, { w: 534, h: 954 }, PHOTO);
+    // A wide cell: the crop has room up and down, and y = 0.03 is past where it stops; only x was dragged.
+    const moved = dragFocus({ x: 0.5, y: 0.03 }, { dx: 20, dy: 0 }, { w: 1080, h: 954 }, PHOTO);
     expect(moved.y).toBe(0.03);
   });
 
   test("a photo with no focus (unresolved) starts from the fallback point", () => {
     expect(dragFocus(null, { dx: 0, dy: 0 }, FULL, PHOTO)).toEqual(FOCUS_FALLBACK);
+  });
+});
+
+describe("placeLayer", () => {
+  test("puts layer `index` at the centre, everything else kept, its id and z-order included", () => {
+    const spec = draftSpec(2, { layers: [textLayer(0, 0, 1_000), stickerLayer(1, 0, 2_000)] });
+    const moved = placeLayer(spec, 1, { x: 0.25, y: 0.75 });
+    expect(moved.layers).toEqual([spec.layers[0], { ...stickerLayer(1, 0, 2_000), x: 0.25, y: 0.75 }]);
+    expect(moved.layers[0]).toBe(spec.layers[0]);
+  });
+
+  test("the same draft when the layer is already there", () => {
+    const spec = draftSpec(2, { layers: [textLayer(0, 0, 1_000)] });
+    expect(placeLayer(spec, 0, { x: 0.5, y: 0.2 })).toBe(spec);
+  });
+
+  test("refuses a layer that is not there", () => {
+    expect(() => placeLayer(draftSpec(1), 0, { x: 0.5, y: 0.5 })).toThrow(RangeError);
   });
 });
 

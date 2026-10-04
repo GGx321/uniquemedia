@@ -27,7 +27,8 @@ import { StickerTab, type StickerTabProps } from "./montage/StickerTab";
 import { TextPreviewsProvider } from "./montage/textPreviews";
 import { TextTab, type TextTabProps } from "./montage/TextTab";
 import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto, totalMs } from "./montage/clipOps";
-import { PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
+import { PropertiesSlot } from "./montage/EditorSlots";
+import { Preview } from "./montage/Preview";
 import { draftTitle, layerAddLabel, layerName, outputLabel, outputParts, saveLabel } from "./montage/labels";
 import { RenderControls } from "./montage/RenderControls";
 import { layerProblems, photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
@@ -43,7 +44,7 @@ import { useMounted } from "./photos/shared";
 
 // 3d.2: the montage editor's shell (Editor.dc.html, EditorNew.dc.html). It opens a draft by `montages.get`, keeps
 // it in a `DraftSession` (undo/redo of up to 100 spec versions, the serialised autosave), and lays out the header
-// and the regions: the timeline (3d.3a: the clip track; 3d.3b: layers and music), the preview (3d.4), the media
+// and the regions: the timeline (3d.3a: the clip track; 3d.3b: layers and music), the live preview (3d.4), the media
 // and properties panels (3d.3a places photos and edits a clip; 3d.5: the «Фото», «Музыка», «GIF» and «Текст» tabs and
 // the text, sticker and music properties). The «Рендер» button shows why it is disabled; its queue and job states are
 // 3d.6's. Every edit goes through the session: one undo step, autosaved.
@@ -880,7 +881,18 @@ function DraftEditor({
               />
             )}
           </MediaPanel>
-          <PreviewSlot spec={state.spec} playhead={timeline.playhead} />
+          <Preview
+            session={session}
+            spec={state.spec}
+            timeline={timeline}
+            focusPending={focus.pending}
+            dragPhoto={dragPhoto}
+            onFillCell={(clip, cell, photoId) => {
+              setDragPhoto(null);
+              fillCell(clip, cell, photoId);
+            }}
+            onSelectCell={(clip, cell) => selectClipAt(clip, cell)}
+          />
           {selected?.kind === "clip" ? (
             <ClipProperties
               session={session}

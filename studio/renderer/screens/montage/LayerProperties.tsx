@@ -402,7 +402,7 @@ function StickerFields({ session, layer, onReplace }: { session: DraftSession; l
           </span>
         </div>
         <TimeFields session={session} layer={layer} />
-        <span className="faint ed-props-note">Анимация идёт по кругу весь отрезок. Позицию в кадре можно будет менять в превью.</span>
+        <span className="faint ed-props-note">Анимация идёт по кругу весь отрезок. Позицию и размер меняйте и в превью.</span>
       </div>
 
       {zone !== null && (

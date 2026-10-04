@@ -62,6 +62,14 @@ export function dragFocus(start: Focus | null, travel: Travel, cell: Size, sourc
   return { x: focusAlong(from.x, travel.dx, crop.w, cell.w, source.w), y: focusAlong(from.y, travel.dy, crop.h, cell.h, source.h) };
 }
 
+/** Layer `index` centred at `centre` (fractions of the frame), all else kept; the same draft when it already is there. */
+export function placeLayer(spec: MontageDraft, index: number, centre: Point): MontageDraft {
+  const layer = spec.layers[index];
+  if (layer === undefined) throw new RangeError(`layer index must be 0..${spec.layers.length - 1}, got ${index}`);
+  if (layer.x === centre.x && layer.y === centre.y) return spec;
+  return { ...spec, layers: spec.layers.map((l, i) => (i === index ? { ...l, x: centre.x, y: centre.y } : l)) };
+}
+
 /** Cell `cell` of clip `clipIndex` with its face focus set to `focus`; the same draft when it already is. Only a cell with a photo has one. */
 export function setCellFocus(spec: MontageDraft, clipIndex: number, cell: number, focus: Focus): MontageDraft {
   const clip = spec.clips[clipIndex];
