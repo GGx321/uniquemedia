@@ -223,23 +223,60 @@ describe("draftIssues: what a render refuses for a part whose slice has not land
     expect(draftIssues(w.library, spec, () => undefined, undefined, undefined, undefined, (mediaId) => mediaId === "media-0000001")).toEqual([]);
   });
 
-  test("an own video clip is too (a trending track no longer is: 3c.5; an own photo no longer is: 3f.2; an own track no longer is: 3f.4)", () => {
+  test("an own video clip is no longer not-yet-supported (3f.3b): with no media store wired it is media-unavailable at its clip", () => {
     const w = world();
     const video = { clipId: "clip-003", kind: "video" as const, mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
     const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), video] });
 
-    expect(issuesOf(w, spec).map((i) => [i.code, i.path])).toEqual([["not-yet-supported", ["clips", 1]]]);
+    expect(issuesOf(w, spec).map((i) => [i.code, i.path])).toEqual([["media-unavailable", ["clips", 1]]]);
   });
 
-  test("an own track is no longer not-yet-supported: with no media store wired it is media-unavailable at the music, after the clip's own refusal", () => {
+  test("an own track is no longer not-yet-supported: with no media store wired it is media-unavailable at the music, after the clip's own verdict", () => {
     const w = world();
     const video = { clipId: "clip-003", kind: "video" as const, mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
     const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), video], music: { source: "own", mediaId: "media-0000003", startMs: 0 } });
 
     expect(issuesOf(w, spec).map((i) => [i.code, i.path])).toEqual([
-      ["not-yet-supported", ["clips", 1]],
+      ["media-unavailable", ["clips", 1]],
       ["media-unavailable", ["music"]],
     ]);
+  });
+
+  describe("an own video clip, with the library's answer", () => {
+    const video = (over: { mediaId?: string; trimStartMs?: number; durationMs?: number } = {}) => ({ clipId: "clip-003", kind: "video" as const, mediaId: over.mediaId ?? "media-0000002", trimStartMs: over.trimStartMs ?? 0, focus: null, durationMs: over.durationMs ?? 1_000, transitionIn: "cut" as const });
+    const withVideo = (stored: (mediaId: string) => { readonly durationMs: number } | null, spec: MontageDraft, w: World) =>
+      draftIssues(w.library, spec, () => undefined, undefined, undefined, undefined, undefined, undefined, stored);
+
+    test("a video the library holds, long enough, is no issue", () => {
+      const w = world();
+      const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), video({ trimStartMs: 500, durationMs: 1_000 })] });
+
+      expect(withVideo((id) => (id === "media-0000002" ? { durationMs: 5_000 } : null), spec, w)).toEqual([]);
+    });
+
+    test("a clip that asks past the video's end is video-too-short at its clip; one that ends exactly at it is not", () => {
+      const w = world();
+      const spec = (durationMs: number) => draftOf(w, { clips: [photoClip(1, photoId(w, 0)), video({ trimStartMs: 1_000, durationMs })] });
+
+      expect(withVideo(() => ({ durationMs: 1_999 }), spec(1_000), w)).toEqual([{ code: "video-too-short", path: ["clips", 1] }]);
+      expect(withVideo(() => ({ durationMs: 2_000 }), spec(1_000), w)).toEqual([]);
+    });
+
+    test("is judged after the photos and before the stickers and the music", () => {
+      const w = world();
+      const spec = draftOf(w, {
+        clips: [photoClip(1, photoId(w, 0)), { ...photoClip(2, "photo-0000999"), cell: { photo: { source: "own" as const, mediaId: "media-0000007" }, focus: null } }, video()],
+        layers: [{ layerId: "layer-001", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "own" as const, mediaId: "media-0000008" }, x: 0.5, y: 0.5, size: 0.2 }],
+        music: { source: "own", mediaId: "media-0000009", startMs: 0 },
+      });
+
+      expect(withVideo(() => null, spec, w).map((i) => [i.code, i.path])).toEqual([
+        ["media-unavailable", ["clips", 1, "cell"]],
+        ["media-unavailable", ["clips", 2]],
+        ["media-unavailable", ["layers", 0, "sticker"]],
+        ["media-unavailable", ["music"]],
+      ]);
+    });
   });
 
   test("for the same spec, get's issues cover everything a render would refuse for its structure", () => {

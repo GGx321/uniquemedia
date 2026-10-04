@@ -102,6 +102,7 @@ import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { ownPhotoSourceOf, readVerifiedOwnPhoto } from "./videos/ownPhotos";
 import { ownTrackFactsOf } from "./videos/ownTrack";
+import { ownVideoFactsOf } from "./videos/ownVideos";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
 import { createStickerAssets, StickerAssetError, type StickerAssets } from "./videos/stickerAssets";
 import { MontageService, type MontageServiceDeps } from "./montages/service";
@@ -741,6 +742,16 @@ export class Engine {
           const found = await this.#media.lookup(mediaId, "audio");
           const facts = found === undefined ? null : ownTrackFactsOf(found);
           if (facts !== null) held.set(mediaId, facts);
+        }
+        return held;
+      },
+      // 3f.3b: the own videos a draft names, with their stored lengths: what `ownVideoFactsOf` says a render could read (video, with a size and a length, stored as the importer's MP4).
+      ownVideos: async (mediaIds) => {
+        const held = new Map<string, { readonly durationMs: number }>();
+        for (const mediaId of mediaIds) {
+          const found = await this.#media.lookup(mediaId, "video");
+          const facts = found === undefined ? null : ownVideoFactsOf(found);
+          if (facts !== null) held.set(mediaId, { durationMs: facts.durationMs });
         }
         return held;
       },

@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
 import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, OWN_PHOTO_NOT_FOUND_DETAIL, PROTOCOL_VERSION, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
-import { defaultSpec, ownPhotoCells, ownStickerCells } from "../../shared/montage";
+import { defaultSpec, ownPhotoCells, ownStickerCells, ownVideoClips } from "../../shared/montage";
 import { EngineFailure } from "../engineFailure";
 import type { FocusResolver } from "../focus/focusResolver";
 import type { Library } from "../library";
@@ -53,6 +53,11 @@ export interface MontageServiceDeps {
    * against it (`media-unavailable`, `track-too-short`). One question per `get` and per `list`. Absent: no own track is held, as a render with none says.
    */
   readonly ownTracks?: (mediaIds: readonly string[]) => Promise<ReadonlyMap<string, { readonly durationMs: number }>>;
+  /**
+   * Which of these media ids the library holds as own VIDEOS a render can read (3f.3b), with each one's stored length in ms: a draft's own video clips are judged against it
+   * (`media-unavailable`, `video-too-short`). One question per `get` and per `list`. Absent: no own video is held, as a render with none says.
+   */
+  readonly ownVideos?: (mediaIds: readonly string[]) => Promise<ReadonlyMap<string, { readonly durationMs: number }>>;
   /** The same for own STICKERS (3f.5): a draft's own-sticker layers are judged against it (`media-unavailable` at the layer's sticker). Absent: none is held. */
   readonly ownStickers?: (mediaIds: readonly string[]) => Promise<ReadonlySet<string>>;
   /** What the track store holds (3c.5): a draft's trending track is judged against it. Absent: no track is held. */
@@ -233,6 +238,7 @@ export class MontageService {
     const held = await this.#heldOwnPhotos([montage.spec]);
     const heldStickers = await this.#heldOwnStickers([montage.spec]);
     const tracks = await this.#heldOwnTracks([montage.spec]);
+    const videos = await this.#heldOwnVideos([montage.spec]);
     return {
       montage,
       issues: draftIssues(
@@ -244,8 +250,24 @@ export class MontageService {
         (mediaId) => held.has(mediaId),
         (mediaId) => heldStickers.has(mediaId),
         (mediaId) => tracks.get(mediaId) ?? null,
+        (mediaId) => videos.get(mediaId) ?? null,
       ),
     };
+  }
+
+  /**
+   * The own videos of `specs` that the library holds, with their stored lengths, from ONE question to the media store (3f.3b). Nothing is asked when no draft names an own
+   * video; with no store wired, or one that fails, nothing is held (the draft is still answered, and the log says why).
+   */
+  async #heldOwnVideos(specs: readonly MontageDraft[]): Promise<ReadonlyMap<string, { readonly durationMs: number }>> {
+    const ids = [...new Set(specs.flatMap((spec) => ownVideoClips(spec).map((clip) => clip.mediaId)))];
+    if (ids.length === 0 || this.#deps.ownVideos === undefined) return new Map();
+    try {
+      return await this.#deps.ownVideos(ids);
+    } catch (error) {
+      this.#deps.log(`the own videos of a draft could not be looked up (${kindOf(error)})`);
+      return new Map();
+    }
   }
 
   /**
@@ -310,6 +332,7 @@ export class MontageService {
     const held = await this.#heldOwnPhotos(shown.map((montage) => montage.spec));
     const heldStickers = await this.#heldOwnStickers(shown.map((montage) => montage.spec));
     const tracks = await this.#heldOwnTracks(shown.map((montage) => montage.spec));
+    const videos = await this.#heldOwnVideos(shown.map((montage) => montage.spec));
     const items = shown.map((montage) => {
       const owner = montage.spec.avatarId;
       let known = availability.get(owner);
@@ -319,7 +342,7 @@ export class MontageService {
       }
       return {
         montage,
-        issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks, (mediaId) => held.has(mediaId), (mediaId) => heldStickers.has(mediaId), (mediaId) => tracks.get(mediaId) ?? null),
+        issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks, (mediaId) => held.has(mediaId), (mediaId) => heldStickers.has(mediaId), (mediaId) => tracks.get(mediaId) ?? null, (mediaId) => videos.get(mediaId) ?? null),
         videoCount: library.videoCountForMontage(owner, montage.montageId),
       };
     });

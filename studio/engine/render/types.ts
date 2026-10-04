@@ -21,13 +21,28 @@ export interface PhotoSource {
   readonly height: number;
 }
 
+/**
+ * An own video the engine has resolved (3f.3b): the render's PRIVATE COPY of the stored mezzanine in the job folder (never the library file), and the
+ * mezzanine's STORED size, which is what the cover-crop is computed from. The mezzanine is upright, square-pixel, BT.709 limited and constant 30 fps (3f.3a),
+ * so nothing is converted, only cropped and scaled.
+ */
+export interface VideoSource {
+  /** Absolute. It goes to ffmpeg as `-i <path>`, never into a filter string. */
+  readonly path: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Looks an own video clip's media up. `undefined` means "not resolved", which the builder refuses. */
+export type VideoResolver = (mediaId: string) => VideoSource | undefined;
+
 export type PhotoRef = NonNullable<Cell["photo"]>;
 
 /** Looks a cell's photo up. `undefined` means "not resolved", which the builder refuses. */
 export type PhotoResolver = (ref: PhotoRef) => PhotoSource | undefined;
 
 export type RenderGraphErrorCode =
-  | "VIDEO_CLIP_UNSUPPORTED"
+  | "VIDEO_UNRESOLVED"
   | "CELL_EMPTY"
   | "PHOTO_UNRESOLVED"
   | "PATH_NOT_ABSOLUTE"
@@ -36,6 +51,7 @@ export type RenderGraphErrorCode =
   | "BAD_OVERLAY"
   | "BAD_DURATION"
   | "BAD_PHOTO_SIZE"
+  | "BAD_VIDEO_SIZE"
   | "BAD_AUDIO";
 
 /** A refusal to build: the spec or the injected inputs cannot produce a valid graph. */
@@ -53,6 +69,8 @@ export interface Pass1Input {
   readonly seed: number;
   readonly clips: readonly Clip[];
   readonly resolvePhoto: PhotoResolver;
+  /** Where each own video clip's private copy is and how large it is stored (3f.3b). Absent: a video clip is refused (`VIDEO_UNRESOLVED`). */
+  readonly resolveVideo?: VideoResolver;
   /** Absolute: `userData/render-tmp/<jobId>`. */
   readonly clipDir: string;
 }

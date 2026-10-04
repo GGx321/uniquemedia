@@ -4,7 +4,7 @@ import { Id } from "../../shared/engine";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { totalFrames as framesOfTimeline } from "../../shared/montage";
-import { buildLayerPass, buildMusicMeasure, buildPass1, buildPass2, musicGainDb, RenderGraphError, type MusicMeasureJob, type OverlayInput, type Pass2Job, type PhotoResolver } from "../render";
+import { buildLayerPass, buildMusicMeasure, buildPass1, buildPass2, musicGainDb, RenderGraphError, type MusicMeasureJob, type OverlayInput, type Pass2Job, type PhotoResolver, type VideoResolver } from "../render";
 import { clipFrames } from "../render/durations";
 import { TRACK_FILE_NAME } from "../render/names";
 import { measureTruePeak } from "./musicMeasure";
@@ -43,6 +43,11 @@ export interface RenderRunInput {
    */
   readonly resolvePhoto: PhotoResolver;
   /**
+   * Where each own video clip's private copy is (in the job folder, where `stageOwnVideos` writes it) and the mezzanine's STORED size (3f.3b). Absent: a spec with a
+   * video clip is refused by the builder (`VIDEO_UNRESOLVED`).
+   */
+  readonly resolveVideo?: VideoResolver;
+  /**
    * The text and sticker layers in z-order, later on top, as files INSIDE the job folder (`<tmpRoot>/<jobId>/...`, which is
    * where `stageLayers` writes them). They go through the layer pass; pass 2 overlays the one file that comes out.
    */
@@ -60,6 +65,11 @@ export interface RenderRunInput {
    * user's folders like a file-system error of the runner's own.
    */
   readonly stageOwnPhotos?: (dir: string) => Promise<void>;
+  /**
+   * Writes the private copies of the own videos the clips name into the job folder (3f.3b; `resolveVideo` already points at those names): each mezzanine is STREAMED
+   * in, checked against its record as it goes. Called once, after `stageOwnPhotos` and before the layers are staged or anything is run; the same rules for what it throws.
+   */
+  readonly stageOwnVideos?: (dir: string) => Promise<void>;
   /**
    * Silence, or one stored track as the VERIFIED BYTES the track store handed over (never a path: a file on disk can change
    * between the store's check and ffmpeg's read). The runner writes them to `<job folder>/track.m4a`, has `check` look at that
@@ -158,11 +168,19 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     if (source !== undefined) scrubInputs.push({ path: source.path, label: "<photo>" });
     return source;
   };
+  const resolveVideo: VideoResolver | undefined =
+    input.resolveVideo === undefined
+      ? undefined
+      : (mediaId) => {
+          const source = input.resolveVideo?.(mediaId);
+          if (source !== undefined) scrubInputs.push({ path: source.path, label: "<video>" });
+          return source;
+        };
   for (const overlay of input.overlays) scrubInputs.push({ path: overlay.path, label: "<overlay>" });
   const trackCopy = join(clipDir, TRACK_FILE_NAME);
   if (input.audio.kind === "music") scrubInputs.push({ path: trackCopy, label: "<audio>" });
 
-  const pass1 = buildPass1({ seed: input.seed, clips: input.clips, resolvePhoto, clipDir });
+  const pass1 = buildPass1({ seed: input.seed, clips: input.clips, resolvePhoto, ...(resolveVideo === undefined ? {} : { resolveVideo }), clipDir });
   const finalClips = input.clips.map((c) => ({ clipId: c.clipId, durationMs: c.durationMs }));
   // The layer pass is planned after pass 1 (which refuses a bad duration first) and before anything runs: a layer past the montage's end is refused here.
   const timelineFrames = framesOfTimeline(input.clips);
@@ -274,6 +292,7 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   try {
     await scrubFs(mkdir(clipDir, { recursive: true }));
     if (input.stageOwnPhotos !== undefined) await stage(input.stageOwnPhotos(clipDir));
+    if (input.stageOwnVideos !== undefined) await stage(input.stageOwnVideos(clipDir));
     if (input.stageLayers !== undefined && input.overlays.length > 0) await stage(input.stageLayers(clipDir));
     // The layer files can take real room (a 15 s file with heavy captions and stickers is 300 MiB, and two exist at once): ask the volume
     // BEFORE anything is rendered, and refuse cleanly rather than fail an ffmpeg half way with a full disk.
@@ -300,7 +319,19 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
 
     let framesOfDoneClips = 0;
     for (const job of pass1) {
-      await call(job, { onFrames: (frames) => reportStage(framesOfDoneClips + Math.min(frames, job.frames)) });
+      // The frames ffmpeg reports for this clip's file (null: it reported none, which only a scripted ffmpeg in a test does).
+      let wrote: number | null = null;
+      await call(job, {
+        onFrames: (frames) => {
+          wrote = Math.max(wrote ?? 0, frames);
+          reportStage(framesOfDoneClips + Math.min(frames, job.frames));
+        },
+      });
+      // An own video clip is checked, not trusted: its length comes from the file it is cut from, and a mezzanine that gave fewer (or more) frames than the clip asks
+      // for would make a SHORTER clip without a sound. `-xerror` and a constant rate should make it exact; a file that is not is refused here, before it is joined to the rest.
+      if (input.clips[job.index]?.kind === "video" && wrote !== null && wrote !== job.frames) {
+        throw new RenderFailure({ code: "RENDER_FAILED", detail: `an own video's clip file has ${wrote} frames, the clip is ${job.frames}` });
+      }
       framesOfDoneClips += job.frames;
       reportStage(framesOfDoneClips);
     }

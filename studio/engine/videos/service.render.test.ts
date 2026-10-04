@@ -117,25 +117,18 @@ describe("videos.render: the answer", () => {
   });
 });
 
-describe("videos.render: N9, what is not supported yet is refused, never dropped", () => {
-  const cases: Array<[string, (w: World) => MontageDraft, string[]]> = [
-    [
-      "an own video clip",
-      (w) => ({ ...specFor(w), clips: [{ clipId: "clip-00000001", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: SPEC_MS, transitionIn: "cut" as const }] }),
-      ["clips", "0"],
-    ],
-    // An own photo in a photo clip or a collage cell is NOT here since 3f.2 lifted N9 for it, and an own track since 3f.4: a missing one is
-    // `media-unavailable` (service.ownPhotos.test.ts, service.ownMusic.test.ts), and one that is held renders.
-  ];
-
-  test.each(cases)("%s answers MONTAGE_INVALID with not-yet-supported at its path, before anything else is looked at", async (_name, build, path) => {
+describe("videos.render: N9 refuses nothing any more (3f.3b lifted the last part)", () => {
+  // An own photo (3f.2), an own track (3f.4), an own sticker (3f.5) and an own video clip (3f.3b) are judged against the library: a missing one is
+  // `media-unavailable` (service.ownPhotos.test.ts, service.ownMusic.test.ts, service.ownStickers.test.ts, service.ownVideos.test.ts), and one that is held renders.
+  test("an own video clip the engine holds no media store for is media-unavailable at its clip, never not-yet-supported, and nothing is touched", async () => {
     const w = world();
     const r = serviceRig(w);
+    const ownVideo = { clipId: "clip-00000001", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: SPEC_MS, transitionIn: "cut" as const };
 
-    const error = await failureOf(r.service.render({ spec: build(w) }));
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), clips: [ownVideo] } }));
 
     expect(error.code).toBe("MONTAGE_INVALID");
-    expect(error.issues).toContainEqual({ code: "not-yet-supported", path: path.map((p) => (/^\d+$/.test(p) ? Number(p) : p)) });
+    expect(error.issues).toEqual([{ code: "media-unavailable", path: ["clips", 0] }]);
     expect(r.checks).toHaveLength(0);
     await expectNothingTouched(r);
   });
@@ -165,7 +158,7 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
     await expectNothingTouched(r);
   });
 
-  test("every kind of refusal at once comes in one order: structure, N9, the stickers the set lacks, the music track", async () => {
+  test("every kind of refusal at once comes in one order: structure, the stickers the set lacks, the music track", async () => {
     const w = world();
     const r = serviceRig(w);
     const pastEnd = { ...textLayer(1), startMs: 3_000, endMs: SPEC_MS + 100 };
@@ -175,7 +168,7 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
     const error = await failureOf(r.service.render({ spec }));
 
     expect(error.code).toBe("MONTAGE_INVALID");
-    expect(error.issues?.map((i) => i.code)).toEqual(["layer-outside-timeline", "not-yet-supported", "sticker-unavailable", "track-unavailable"]);
+    expect(error.issues?.map((i) => i.code)).toEqual(["layer-outside-timeline", "sticker-unavailable", "track-unavailable"]);
   });
 
   test("a layer that ends after the clips do is refused, never clamped: MONTAGE_INVALID layer-outside-timeline at its end", async () => {
@@ -238,7 +231,7 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
     await expectNothingTouched(r);
   });
 
-  test("a structurally invalid spec gets its issue list too, together with the unsupported parts", async () => {
+  test("a structurally invalid spec is refused for its structure alone: the own video's media is never looked at", async () => {
     const w = world();
     const r = serviceRig(w);
 
@@ -246,7 +239,7 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
     const error = await failureOf(r.service.render({ spec: { ...specFor(w), clips: [shortOwnVideo] } }));
 
     expect(error.code).toBe("MONTAGE_INVALID");
-    expect(error.issues?.map((i) => i.code)).toEqual(expect.arrayContaining(["duration-too-short", "not-yet-supported"]));
+    expect(error.issues?.map((i) => i.code)).toEqual(["duration-too-short"]);
   });
 
   test("a spec that is too short is MONTAGE_INVALID duration-too-short", async () => {

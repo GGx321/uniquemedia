@@ -344,6 +344,142 @@ describe("an own track plays in the editor's preview by its media id: audio with
   });
 });
 
+describe("an own video plays in the editor's preview by its media id: video/mp4 with byte ranges (3f.3b)", () => {
+  // The preview's `<video>` loads `studio-media://media/<mediaId>` (the SAME mezzanine the render cuts from) and seeks by Range; main resolves the id THROUGH ITS RECORD, never a
+  // path. The stored file is the importer's MP4 (brand `isom`), as long as a few read chunks so a seek lands in the middle of it. The scheme keeps its privileges: no
+  // `corsEnabled`, no CSP change (the block above pins both).
+  const VIDEO_ID = "media-000009";
+  const MEZZANINE = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from("ftypisom"), Buffer.from(fakeVideoBytes(CHUNK_BYTES * 2 + 1000, 13))]);
+  const mediaUrl = (id = VIDEO_ID): string => `studio-media://media/${id}`;
+  const record = (patch: Record<string, unknown> = {}): string =>
+    JSON.stringify({ schemaVersion: 1, id: VIDEO_ID, kind: "video", name: "holiday.mov", createdAt: "2026-10-04T10:00:00.000Z", bytes: MEZZANINE.length, sha256: "a".repeat(64), format: "mp4", file: `${VIDEO_ID}.mp4`, width: 1080, height: 570, durationMs: 9_000, sourceFps: 29.97, hdrToSdr: false, loopFrames: null, delayFrames: null, ...patch });
+  const fileOf = (name = `${VIDEO_ID}.mp4`): string => join(w.libraryRoot, "media", name);
+
+  beforeEach(async () => {
+    await mkdir(join(w.libraryRoot, "media"), { recursive: true });
+    await writeFile(fileOf(), MEZZANINE);
+    await writeFile(fileOf(`${VIDEO_ID}.json`), record());
+  });
+
+  test("answers 200 with the whole file as video/mp4 (not audio/mp4: the same container, another kind), ranges on offer, and nosniff", async () => {
+    const response = await get(mediaUrl());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("video/mp4");
+    expect(response.headers.get("Accept-Ranges")).toBe("bytes");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("Content-Length")).toBe(String(MEZZANINE.length));
+    expect(Buffer.from(await response.arrayBuffer()).equals(MEZZANINE)).toBe(true);
+  });
+
+  test("a seek into the middle: 206 with the bytes asked for, their Content-Range and the video type", async () => {
+    const response = await get(mediaUrl(), { range: `bytes=${CHUNK_BYTES - 5}-${CHUNK_BYTES + 5}` });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("Content-Type")).toBe("video/mp4");
+    expect(response.headers.get("Content-Range")).toBe(`bytes ${CHUNK_BYTES - 5}-${CHUNK_BYTES + 5}/${MEZZANINE.length}`);
+    expect(Buffer.from(await response.arrayBuffer()).equals(MEZZANINE.subarray(CHUNK_BYTES - 5, CHUNK_BYTES + 6))).toBe(true);
+  });
+
+  test("a SUFFIX range, as a player asks for the index at the end of a file: the last bytes", async () => {
+    const response = await get(mediaUrl(), { range: "bytes=-100" });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("Content-Range")).toBe(`bytes ${MEZZANINE.length - 100}-${MEZZANINE.length - 1}/${MEZZANINE.length}`);
+    expect(Buffer.from(await response.arrayBuffer()).equals(MEZZANINE.subarray(MEZZANINE.length - 100))).toBe(true);
+  });
+
+  test("an OPEN-ENDED range, as a video element asks to play on from a position (and `bytes=0-` for the first request)", async () => {
+    const tail = await get(mediaUrl(), { range: `bytes=${MEZZANINE.length - 100}-` });
+    expect(tail.status).toBe(206);
+    expect(Buffer.from(await tail.arrayBuffer()).equals(MEZZANINE.subarray(MEZZANINE.length - 100))).toBe(true);
+    const whole = await get(mediaUrl(), { range: "bytes=0-" });
+    expect(whole.status).toBe(206);
+    expect(whole.headers.get("Content-Range")).toBe(`bytes 0-${MEZZANINE.length - 1}/${MEZZANINE.length}`);
+    expect(Buffer.from(await whole.arrayBuffer()).equals(MEZZANINE)).toBe(true);
+  });
+
+  test("the first bytes: what the element asks for to read the header", async () => {
+    const response = await get(mediaUrl(), { range: "bytes=0-1" });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("Content-Range")).toBe(`bytes 0-1/${MEZZANINE.length}`);
+  });
+
+  test("a range past the end is 416 with the size and no body", async () => {
+    const response = await get(mediaUrl(), { range: `bytes=${MEZZANINE.length}-` });
+    expect(response.status).toBe(416);
+    expect(response.headers.get("Content-Range")).toBe(`bytes */${MEZZANINE.length}`);
+    expect(await response.text()).toBe("");
+  });
+
+  test("a video whose record is gone is a 404: a media whose delete has begun, or an orphan, is never played", async () => {
+    await rm(fileOf(`${VIDEO_ID}.json`));
+    const response = await get(mediaUrl());
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Content-Range")).toBeNull();
+  });
+
+  test("an id the library has no record for is a 404, and so is one that is not an id at all", async () => {
+    expect((await get(mediaUrl("media-000404"))).status).toBe(404);
+    expect((await get("studio-media://media/..%2Fx")).status).toBe(404);
+    expect((await get("studio-media://media/media-000009.mp4")).status).toBe(404);
+    expect((await get(`studio-media://media/${VIDEO_ID}/extra-segment`)).status).toBe(404);
+  });
+
+  test("a stored file that grew past the size its record was written for is a 404", async () => {
+    await writeFile(fileOf(), Buffer.concat([MEZZANINE, Buffer.from([0])]));
+    expect((await get(mediaUrl())).status).toBe(404);
+  });
+
+  test("a stored file that is SHORTER than its record says (cut off, partly written) is a 404", async () => {
+    await writeFile(fileOf(), MEZZANINE.subarray(0, MEZZANINE.length - 1));
+    expect((await get(mediaUrl())).status).toBe(404);
+  });
+
+  test("a stored file that does not start like an MP4 is a 404, whatever its record says", async () => {
+    await writeFile(fileOf(), Buffer.concat([Buffer.from("not an mp4 at all"), Buffer.alloc(MEZZANINE.length - 17)]));
+    expect((await get(mediaUrl())).status).toBe(404);
+  });
+
+  test("a record that names another file than its own is a 404: the route opens only <id>.<ext>", async () => {
+    // The other name EXISTS and is a good mezzanine of the right size: only the route's refusal to open any name but `<id>.<ext>` can keep it from being served.
+    await writeFile(fileOf("media-000010.mp4"), MEZZANINE);
+    await writeFile(fileOf(`${VIDEO_ID}.json`), record({ file: "media-000010.mp4" }));
+    expect((await get(mediaUrl())).status).toBe(404);
+  });
+
+  test("a record that makes the video a photo, a track or a sticker is not served as a video: the kind's own containers only", async () => {
+    for (const patch of [
+      { kind: "photo", width: 10, height: 10, durationMs: null, sourceFps: null },
+      { kind: "audio", width: null, height: null },
+      { kind: "sticker", loopFrames: 3, delayFrames: [1, 1, 1], durationMs: null, sourceFps: null },
+    ]) {
+      await writeFile(fileOf(`${VIDEO_ID}.json`), record(patch));
+      expect([patch.kind, (await get(mediaUrl())).status]).toEqual([patch.kind, 404]);
+    }
+  });
+
+  test("a video record in a container the preview has no type for (a MOV) is not served", async () => {
+    await writeFile(fileOf(`${VIDEO_ID}.mov`), MEZZANINE);
+    await writeFile(fileOf(`${VIDEO_ID}.json`), record({ format: "mov", file: `${VIDEO_ID}.mov` }));
+    expect((await get(mediaUrl())).status).toBe(404);
+  });
+
+  test("a media's file is never served under a path: no path, file name, id or folder is in any answer's headers or body", async () => {
+    const ok = await get(mediaUrl(), { range: "bytes=0-9" });
+    const refused = await get(mediaUrl("media-000404"));
+    for (const response of [ok, refused]) {
+      const headers = JSON.stringify([...response.headers.entries()]);
+      for (const secret of [w.libraryRoot, w.dir, `${VIDEO_ID}.mp4`, "holiday.mov"]) expect(headers).not.toContain(secret);
+    }
+    expect(await refused.text()).toBe("");
+  });
+
+  test("an own video and an own track of one library are told apart by their records: the same bytes are video/mp4 for the first and audio/mp4 for the second", async () => {
+    await writeFile(fileOf("media-000011.m4a"), MEZZANINE);
+    await writeFile(fileOf("media-000011.json"), record({ id: "media-000011", kind: "audio", format: "m4a", file: "media-000011.m4a", width: null, height: null, sourceFps: null }));
+    expect((await get(mediaUrl())).headers.get("Content-Type")).toBe("video/mp4");
+    expect((await get(mediaUrl("media-000011"))).headers.get("Content-Type")).toBe("audio/mp4");
+  });
+});
+
 describe("every refusal looks the same", () => {
   const plain = async (response: Response): Promise<unknown> => ({
     status: response.status,

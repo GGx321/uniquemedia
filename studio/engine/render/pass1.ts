@@ -8,6 +8,8 @@ import {
   FPS,
   FRAME_H,
   FRAME_W,
+  videoClipCrop,
+  videoClipWindow,
   type MotionPlan,
   type Rect,
 } from "../../shared/montage";
@@ -15,7 +17,7 @@ import { assertAbsolutePath, assertSafeFilterGraph } from "./filterString";
 import { clipFrames } from "./durations";
 import { clipFileName } from "./names";
 import { FILTER_THREAD_ARGS, FRAME_TAGS, INTERMEDIATE_VIDEO_ARGS, PHOTO_COLOUR_CHAIN } from "./profile";
-import { RenderGraphError, type Pass1Input, type Pass1Job, type PhotoResolver, type PhotoSource } from "./types";
+import { RenderGraphError, type Pass1Input, type Pass1Job, type PhotoResolver, type PhotoSource, type VideoResolver, type VideoSource } from "./types";
 import { zoompanFilter } from "./zoompan";
 
 // Pass 1: each visual clip is rendered on its own to a near-lossless
@@ -48,6 +50,13 @@ const HEAD_ARGS: readonly string[] = ["-hide_banner", "-nostdin", "-y"];
  */
 export const PHOTO_INPUT_ARGS: readonly string[] = ["-protocol_whitelist", "file", "-f", "image2", "-pattern_type", "none", "-noautorotate"];
 
+/**
+ * In front of an own video's `-i` (3f.3b), the way the importer held ffmpeg to the file it judged: only the file protocol, the MP4 demuxer named outright
+ * (neither the extension nor the content picks another), the one decoder the mezzanine needs (it is always H.264) and nothing else opened, and the STORED
+ * orientation (`-noautorotate`; the mezzanine is upright already and carries an identity matrix, so this changes nothing but also lets nothing turn it).
+ */
+export const VIDEO_INPUT_ARGS: readonly string[] = ["-protocol_whitelist", "file", "-codec_whitelist", "h264", "-noautorotate", "-c:v", "h264", "-f", "mov"];
+
 function refKey(ref: NonNullable<Cell["photo"]>): string {
   return ref.source === "scene" ? `scene:${ref.photoId}` : `own:${ref.mediaId}`;
 }
@@ -75,6 +84,58 @@ function cellChain(inputIndex: number, outLabel: string, source: PhotoSource, ce
     return `${head},scale=${rect.w}:${rect.h}:flags=lanczos,loop=loop=${frames - 1}:size=1,settb=1/${FPS},setpts=N[${outLabel}]`;
   }
   return `${head},scale=${g.canvas.w}:${g.canvas.h}:flags=lanczos,${zoompanFilter(plan, g.canvas, g.anchor, frames, { w: rect.w, h: rect.h })}[${outLabel}]`;
+}
+
+function resolveVideoSource(mediaId: string, resolve: VideoResolver | undefined): VideoSource {
+  const source = resolve?.(mediaId);
+  if (source === undefined) throw new RenderGraphError("VIDEO_UNRESOLVED", `the own video ${mediaId} was not resolved`);
+  assertAbsolutePath(source.path, "the video path");
+  for (const side of [source.width, source.height]) {
+    if (!Number.isSafeInteger(side) || side < 1) throw new RenderGraphError("BAD_VIDEO_SIZE", `the own video ${mediaId} must have a whole positive size, got ${source.width}x${source.height}`);
+  }
+  return source;
+}
+
+/**
+ * The `-ss` of an own video clip that starts at `startFrame` (not 0): HALF A FRAME before that frame, in whole microseconds, so ffmpeg's accurate seek
+ * (decode from the keyframe before, drop what is earlier) drops frames up to `startFrame - 1` and keeps `startFrame` whatever rounding a build does.
+ * The mezzanine is constant 30 fps, so frame `n` is on screen from `n / 30` s; the target is `(2n - 1) / 60` s. The graph then COUNTS frames
+ * (`trim=end_frame`), so the length never depends on timestamps.
+ */
+function seekArgs(startFrame: number): string[] {
+  if (startFrame === 0) return [];
+  return ["-ss", `${Math.floor(((2 * startFrame - 1) * 1_000_000) / (2 * FPS))}us`];
+}
+
+/**
+ * An own video clip's graph: stop after the clip's frames, restart the clock at 0 on a 1/30 base (the output is `-r 30 -fps_mode cfr`), cover-crop the stored
+ * picture onto the whole frame around the clip's focus, scale it, and tag it. Static: no motion. No colour conversion: the mezzanine is BT.709 limited 4:2:0.
+ */
+function buildVideoGraph(clip: Clip & { kind: "video" }, source: VideoSource, frames: number): string {
+  const crop = videoClipCrop({ w: source.width, h: source.height }, clip.focus);
+  return `[0:v:0]trim=end_frame=${frames},settb=1/${FPS},setpts=N,crop=${crop.w}:${crop.h}:${crop.x}:${crop.y}:exact=1,scale=${FRAME_W}:${FRAME_H}:flags=lanczos,setsar=1,${FRAME_TAGS}[v]`;
+}
+
+function buildVideoJob(clip: Clip & { kind: "video" }, index: number, input: Pass1Input): Pass1Job {
+  const frames = clipFrames(clip.durationMs);
+  const source = resolveVideoSource(clip.mediaId, input.resolveVideo);
+  const { startFrame } = videoClipWindow(clip);
+  const graph = buildVideoGraph(clip, source, frames);
+  assertSafeFilterGraph(graph);
+  const fileName = clipFileName(index);
+  const output = join(input.clipDir, fileName);
+  const argv = [
+    ...HEAD_ARGS,
+    ...FILTER_THREAD_ARGS,
+    ...VIDEO_INPUT_ARGS,
+    ...seekArgs(startFrame),
+    "-i", source.path,
+    "-filter_complex", graph,
+    "-map", "[v]",
+    ...INTERMEDIATE_VIDEO_ARGS,
+    output,
+  ];
+  return { index, clipId: clip.clipId, frames, fileName, output, argv };
 }
 
 function buildClipGraph(clip: Clip & { kind: "photo" | "collage" }, seed: number, sources: readonly PhotoSource[]): string {
@@ -128,9 +189,7 @@ export function buildPass1(input: Pass1Input): Pass1Job[] {
   assertAbsolutePath(input.clipDir, "the job folder");
 
   return input.clips.map((clip, index) => {
-    if (clip.kind === "video") {
-      throw new RenderGraphError("VIDEO_CLIP_UNSUPPORTED", "an own video clip is not supported yet (slice 3f)");
-    }
+    if (clip.kind === "video") return buildVideoJob(clip, index, input);
     clipFrames(clip.durationMs);
     const cells = clip.kind === "photo" ? [clip.cell] : clip.cells;
     const sources = cells.map((cell) => resolveCell(cell, input.resolvePhoto));

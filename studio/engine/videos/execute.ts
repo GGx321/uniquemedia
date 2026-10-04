@@ -2,7 +2,8 @@ import { join } from "node:path";
 import type { z } from "zod";
 import type { RenderResult } from "../../shared/engine";
 import type { MontageShape } from "../../shared/engine/montage";
-import { totalFrames } from "../../shared/montage";
+import { MAX_MONTAGE_ISSUES } from "../../shared/engine/montage";
+import { ownVideoClips, ownVideoIssues, totalFrames } from "../../shared/montage";
 import { ExportFolderError, formatExportDate, NODE_EXPORT_FOLDER_FS, prepareExportFolder, type ExportFolderFs, type PreparedFolder } from "../exportName";
 import type { Library } from "../library";
 import type { PhotoResolver } from "../render";
@@ -16,7 +17,9 @@ import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import { collectForbiddenStrings, combineForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { copyOwnPhotos, type OwnPhotoSource } from "./ownPhotos";
+import type { StreamCopyIo } from "./ownMedia";
 import { openOwnTrack, OwnTrackUnavailableError, type OwnTrackSource } from "./ownTrack";
+import { copyOwnVideos, ownVideoCopyName, OwnVideoUnavailableError, type OwnVideoSource } from "./ownVideos";
 import type { OwnStickerSource } from "./ownStickers";
 import { resolveLayers, type LayerDeps } from "./layers";
 import { CommitTracker } from "./live";
@@ -87,6 +90,12 @@ export interface RenderPlan {
    * each when it resolves the layers and writes the verified bytes into its own folder (`layers.ts`); ffmpeg never reads the library file. Absent: none.
    */
   readonly ownStickers?: readonly OwnStickerSource[];
+  /**
+   * The own videos the spec's video clips name (3f.3b), each as the admission found it: the library file, its stored size, length and sha256. The job STREAMS each into its
+   * own folder, verified as it goes (`ownVideos.ts`), and `resolveVideo` points at the copy (`ownVideoCopyName`), never at the library file. A spec with a video clip and a
+   * plan with no source for it is refused (`media-unavailable`), never rendered as something else. Absent: none.
+   */
+  readonly ownVideos?: readonly OwnVideoSource[];
   /** Silence, by type (invariant 31): a plan cannot name a track file. A track comes only through `track`, opened from the store when the job starts. */
   readonly audio: { readonly kind: "silent" };
   /**
@@ -134,6 +143,8 @@ export interface VideoRenderDeps {
   readonly tracks?: Pick<RenderTrackSource, "openForRender">;
   /** The kinds of stream ffmpeg sees in a file, for the check of an own track's private copy (3f.4); `inspectStreams` by default (a test passes a stand-in). */
   readonly inspectStreams?: (path: string, signal: AbortSignal) => Promise<readonly string[]>;
+  /** The disk calls of the own videos' streamed copy (how the library file is opened, how the copy is created, the free-space question, the chunk size); the real ones unless a test plays a disk. */
+  readonly ownVideoIo?: StreamCopyIo;
   /** Codes, ids and box paths only. */
   readonly log?: (line: string) => void;
   /** Test seams of the commit. */
@@ -291,7 +302,40 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     return { track: opened, startMs: wanted.startMs };
   };
 
+  /**
+   * The own videos of a plan, judged FIRST (before the layers, the export folder or any copy): a spec with a video clip needs a source for each, long enough for its
+   * `trimStartMs` plus its length. A plan that brought none is never rendered as something else: `media-unavailable` at the clip (N9's rule); a mezzanine too short at
+   * THIS render is `video-too-short`, the same function the admission and `montages.get` use.
+   */
+  const checkOwnVideos = (plan: RenderPlan): Map<string, OwnVideoSource> => {
+    const held = new Map((plan.ownVideos ?? []).map((own) => [own.mediaId, own]));
+    const issues = ownVideoIssues(plan.spec, (mediaId) => {
+      const own = held.get(mediaId);
+      return own === undefined ? null : { durationMs: own.durationMs };
+    });
+    if (issues.length > 0) throw new RenderFailure({ code: "MONTAGE_INVALID", issues: issues.slice(0, MAX_MONTAGE_ISSUES) });
+    return held;
+  };
+
+  /**
+   * Streams the plan's own videos into the job folder, then maps what only the owner can fix: a mezzanine that is gone or changed is the contract's `media-unavailable`
+   * at each clip that uses it (`OwnVideoUnavailableError` names the media, never a path). A full disk, a failed write and a cancel come out as they are.
+   */
+  const stageOwnVideos = async (plan: RenderPlan, sources: readonly OwnVideoSource[], dir: string, signal: AbortSignal): Promise<void> => {
+    try {
+      await copyOwnVideos(dir, sources, signal, deps.ownVideoIo);
+    } catch (error) {
+      if (!(error instanceof OwnVideoUnavailableError)) throw error;
+      log(`render ${plan.jobId}: an own video was refused (changed or gone)`);
+      const issues = ownVideoClips(plan.spec)
+        .filter((clip) => clip.mediaId === error.mediaId)
+        .map((clip) => ({ code: "media-unavailable" as const, path: clip.path }));
+      throw new RenderFailure({ code: "MONTAGE_INVALID", issues: issues.slice(0, MAX_MONTAGE_ISSUES) });
+    }
+  };
+
   return (plan) => async (context) => {
+    const ownVideos = checkOwnVideos(plan);
     // The layers first, before the export volume or the library is touched: the text is drawn by the engine's own rasteriser and the
     // stickers are checked against the shipped catalogue, so a caption that breaks a rule, or a sticker that is not intact, fails
     // the job here with nothing made. The files are staged later, by the runner, into the job's folder (`<renderTmpDir>/<jobId>`).
@@ -358,6 +402,16 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           seed: plan.spec.seed,
           clips: plan.spec.clips,
           resolvePhoto: plan.resolvePhoto,
+          // 3f.3b: each own video is STREAMED, verified, into the job folder; `resolveVideo` names the copies and the stored size the cover-crop starts from.
+          ...(ownVideos.size === 0
+            ? {}
+            : {
+                resolveVideo: (mediaId: string) => {
+                  const own = ownVideos.get(mediaId);
+                  return own === undefined ? undefined : { path: join(jobDir, ownVideoCopyName(mediaId)), width: own.width, height: own.height };
+                },
+                stageOwnVideos: (dir: string) => stageOwnVideos(plan, [...ownVideos.values()], dir, context.signal),
+              }),
           overlays: layers === undefined ? [] : layers.overlays,
           ...(layers === undefined ? {} : { stageLayers: layers.stage }),
           // 3f.2: each own photo is copied, verified, into the job folder; `resolvePhoto` already names the copies.

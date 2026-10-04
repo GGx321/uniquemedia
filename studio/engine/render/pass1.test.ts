@@ -358,16 +358,9 @@ describe("buildPass1: a collage clip", () => {
 });
 
 describe("buildPass1: refusals", () => {
-  test("refuses an own video clip with a clear pointer to slice 3f", () => {
+  test("refuses an own video clip when no video resolver was given: it is never rendered as something else (the builder's own floor; `pass1.video.test.ts` has the clip)", () => {
     const clip: Clip = { clipId: "v", durationMs: 2000, transitionIn: "cut", kind: "video", mediaId: "media-1", trimStartMs: 0, focus: null };
-    try {
-      build([clip]);
-      throw new Error("expected a throw");
-    } catch (e) {
-      expect(e).toBeInstanceOf(RenderGraphError);
-      expect(e instanceof RenderGraphError && e.code).toBe("VIDEO_CLIP_UNSUPPORTED");
-      expect(String(e)).toContain("3f");
-    }
+    expect(() => build([clip])).toThrow(expect.objectContaining({ code: "VIDEO_UNRESOLVED" }));
   });
 
   test("refuses an empty cell", () => {

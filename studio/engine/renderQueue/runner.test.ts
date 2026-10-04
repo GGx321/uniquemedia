@@ -1071,6 +1071,173 @@ describe("runRenderJob: the private copies of own photos (3f.2)", () => {
   });
 });
 
+describe("runRenderJob: own video clips (3f.3b)", () => {
+  const videoClip = (clipId: string, durationMs: number, trimStartMs = 0): Clip => ({ clipId, durationMs, transitionIn: "cut", kind: "video", mediaId: "media-0000001", trimStartMs, focus: null });
+  /** One own video of one second and a photo of one second: the final video is 60 frames. */
+  const videoRig = (over: Partial<RenderRunInput> = {}): Rig => {
+    const r = rig();
+    const copy = join(r.jobDir, "own-media-0000001.mp4");
+    return { ...r, input: { ...r.input, clips: [videoClip("v", 1000, 300), clip("b", 1000)], resolveVideo: () => ({ path: copy, width: 1080, height: 570 }), ...over } };
+  };
+
+  test("stages the videos once, after the folder exists and the own photos are staged, and before any ffmpeg starts", async () => {
+    const r = videoRig();
+    const order: string[] = [];
+    let callsWhenStaged = -1;
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await runRenderJob(
+      {
+        ...r.input,
+        stageOwnPhotos: async () => void order.push("photos"),
+        stageOwnVideos: async (dir) => {
+          order.push(`videos:${existsSync(dir)}:${dir === r.jobDir}`);
+          callsWhenStaged = calls.length;
+        },
+      },
+      deps,
+    );
+
+    expect(order).toEqual(["photos", "videos:true:true"]);
+    expect(callsWhenStaged).toBe(0);
+  });
+
+  test("builds the video clip from the copy: the first ffmpeg reads the copy in the job folder", async () => {
+    const r = videoRig();
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await runRenderJob(r.input, deps);
+
+    expect(calls[0]?.args[calls[0].args.indexOf("-i") + 1]).toBe(join(r.jobDir, "own-media-0000001.mp4"));
+  });
+
+  test("a staging failure that is the engine's own answer is thrown unchanged, before any ffmpeg, and leaves nothing", async () => {
+    const r = videoRig();
+    const failure = new RenderFailure({ code: "RENDER_FAILED", detail: "an own video of this montage is no longer available: it was removed or changed" });
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    const error = await runRenderJob({ ...r.input, stageOwnVideos: () => Promise.reject(failure) }, deps).catch((e: unknown) => e);
+
+    expect(error).toBe(failure);
+    expect(calls).toHaveLength(0);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("a staging failure from the file system names no user folder", async () => {
+    const r = videoRig();
+    const { deps } = depsWith(goodFfmpeg);
+    const eio = Object.assign(new Error(`EIO: i/o error, write '${join(r.jobDir, "own-media-0000001.mp4")}'`), { code: "EIO" });
+
+    const error = await runRenderJob({ ...r.input, stageOwnVideos: () => Promise.reject(eio) }, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof Error)) throw new Error("expected the job to fail");
+    expect(error.message).not.toContain(r.tmpRoot);
+  });
+
+  test("a cancel that fires while the videos are copied ends the job with the cancel's reason and leaves nothing", async () => {
+    const controller = new AbortController();
+    const r = videoRig({ signal: controller.signal });
+    const { deps, calls } = depsWith(goodFfmpeg);
+    const stop = new Error("cancelled by the owner");
+
+    const error = await runRenderJob(
+      {
+        ...r.input,
+        stageOwnVideos: async () => {
+          controller.abort(stop);
+          throw stop;
+        },
+      },
+      deps,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBe(stop);
+    expect(calls).toHaveLength(0);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+
+  test("the copy's path in ffmpeg's error reaches the job as <video>", async () => {
+    const r = videoRig();
+    const copy = join(r.jobDir, "own-media-0000001.mp4");
+    const { deps } = depsWith((call) => {
+      call.child.complain(`Error opening input file ${copy}: Invalid data found when processing input\n`);
+      call.child.exit(1);
+    });
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof FfmpegError)) throw new Error("expected an FfmpegError");
+    expect(error.stderrTail).toBe("Error opening input file <video>: Invalid data found when processing input\n");
+  });
+
+  test("a video clip whose ffmpeg wrote FEWER frames than the clip is long fails the job (never a silent shorter clip), naming no path", async () => {
+    const r = videoRig();
+    const { deps, calls } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "data");
+      // The video clip's file holds 29 frames, not 30.
+      const frames = call.args.includes("concat") ? 60 : call.args.includes("-ss") ? 29 : 30;
+      call.child.report(frames, true);
+      call.child.exit(0);
+    });
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RenderFailure);
+    expect(error instanceof RenderFailure && error.engineError.code).toBe("RENDER_FAILED");
+    expect(String(error)).toContain("29");
+    expect(String(error)).not.toContain(r.tmpRoot);
+    // It stops at the first bad clip: pass 1 of the photo and pass 2 never run.
+    expect(calls).toHaveLength(1);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+
+  test("a video clip whose ffmpeg wrote MORE frames than the clip is long fails the job the same way", async () => {
+    const r = videoRig();
+    const { deps } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "data");
+      call.child.report(call.args.includes("-ss") ? 31 : 30, true);
+      call.child.exit(0);
+    });
+
+    await expect(runRenderJob(r.input, deps)).rejects.toMatchObject({ engineError: { code: "RENDER_FAILED" } });
+  });
+
+  test("a video clip with exactly its frames passes, and so does the whole job", async () => {
+    const r = videoRig();
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await runRenderJob(r.input, deps);
+
+    expect(calls).toHaveLength(3);
+  });
+
+  test("a scripted ffmpeg that reports no frames at all is not judged (only a real ffmpeg always reports them)", async () => {
+    const r = videoRig();
+    const { deps, calls } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "data");
+      call.child.exit(0);
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(calls).toHaveLength(3);
+  });
+
+  test("a photo clip is not judged this way: its frames are checked by pass 2 and the verifier, as before", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "data");
+      call.child.report(call.args.includes("concat") ? 60 : 29, true);
+      call.child.exit(0);
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(calls).toHaveLength(3);
+  });
+});
+
 describe("scrubber", () => {
   const scrub = scrubber("C:\\Users\\mia\\AppData\\Local\\Temp\\render-tmp", "D:\\Videos\\Reels");
 

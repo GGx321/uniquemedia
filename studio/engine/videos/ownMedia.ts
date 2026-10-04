@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { open, rm, statfs, type FileHandle } from "node:fs/promises";
+import { dirname } from "node:path";
+import { MEDIA_BYTE_CAPS } from "../../shared/engine";
 import { NODE_OPEN_OPS, openRegularNoFollow, type OpenRegularOps } from "../library/openRegular";
 import { RenderFailure } from "../renderQueue/queue";
 
@@ -15,8 +18,19 @@ export interface StoredFile {
   readonly bytes: number;
 }
 
-/** What a failed read says: no path, and no more than the owner can act on. `what` is "photo" or "sticker". */
-export const ownMediaUnavailable = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `an own ${what} of this montage is no longer available: it was removed or changed` });
+/**
+ * A stored own file that is gone or is not the file its record describes. A `RenderFailure` in its own right (so every reader that only catches that keeps working);
+ * a subclass so that a caller which maps it to the contract's `media-unavailable` (an own video, 3f.3b) can tell it from a full disk or a failed write.
+ */
+export class OwnMediaUnavailableError extends RenderFailure {
+  constructor(what: string) {
+    super({ code: "RENDER_FAILED", detail: `an own ${what} of this montage is no longer available: it was removed or changed` });
+    this.name = "OwnMediaUnavailableError";
+  }
+}
+
+/** What a failed read says: no path, and no more than the owner can act on. `what` is "photo", "sticker", "track" or "video". */
+export const ownMediaUnavailable = (what: string): OwnMediaUnavailableError => new OwnMediaUnavailableError(what);
 
 /**
  * The bytes of a stored file, read ONCE and checked against its record. A `RenderFailure` (no path in it) when it is gone or is not that file;
@@ -50,4 +64,138 @@ export async function readVerifiedOwnMedia(source: StoredFile, what: string, sig
   }
   if (createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw ownMediaUnavailable(what);
   return bytes;
+}
+
+// ---------- the streaming variant (3f.3b: an own video's mezzanine) ----------
+//
+// `readVerifiedOwnMedia` holds the whole file in memory, which is right for a photo, a sticker or a track (a few MiB) and wrong for a mezzanine (up to three minutes
+// of 1080 x 1920 at CRF 16: hundreds of MiB). `copyVerifiedOwnMedia` is the same verification made a CHUNK at a time, straight into the render's own copy:
+//   1. the record's size is judged first (a whole positive number within the largest file the library takes), and the volume of the job folder is asked
+//      for room (`statfs`): the file plus a margin for the render's own files, or the render is refused before a byte is read or a file made;
+//   2. the library file is opened as every stored file is (`openRegularNoFollow`: no link followed, a plain file only, the handle must be the file the name
+//      led to) and the handle's OWN size must be the record's;
+//   3. the copy is created with `wx` (nothing already at the name is ever written through or removed) and filled one chunk at a time while the same bytes are
+//      hashed with sha256; a read never goes past the record's size plus one byte (to see growth), so a file that keeps growing cannot make it run on;
+//   4. the signal is looked at before every chunk and once more at the end, so a cancel stops the copy within one chunk;
+//   5. at the END the size read must be the record's and the sha256 must be its: on any failure of any step (and on a cancel) the copy is closed and REMOVED,
+//      so no partial or unverified file is ever left for ffmpeg to find.
+// ffmpeg then reads the copy only.
+
+/** What the copy asks the volume to keep free beyond the file itself: room for the render's own files (pass-1 intermediates, the layer pass). */
+export const OWN_COPY_FREE_MARGIN_BYTES = 256 * 1024 * 1024;
+/** One read and one write: the most the copy ever holds in memory. */
+export const OWN_COPY_CHUNK_BYTES = 1024 * 1024;
+
+/** The copy being written: what `copyVerifiedOwnMedia` needs of an open file. */
+export interface DestFile {
+  write(buffer: Uint8Array, offset: number, length: number): Promise<{ bytesWritten: number }>;
+  close(): Promise<void>;
+}
+
+/** The disk calls of the streamed copy, injectable so a test can play a swap, a full disk, a growing file or a cancel at a chosen chunk. */
+export interface StreamCopyIo {
+  /** How the library file is opened; `NODE_OPEN_OPS` by default. */
+  readonly open?: OpenRegularOps;
+  /** Creates the copy EXCLUSIVELY (`wx`); a name already there must reject (EEXIST). */
+  readonly openDest?: (path: string) => Promise<DestFile>;
+  /** Free bytes on the volume of a folder, or null when it cannot be read (a volume that does not say is not refused); `statfs` by default. */
+  readonly freeBytes?: (dir: string) => Promise<number | null>;
+  /** Removes a file this copy made; `rm` with `force` by default. */
+  readonly remove?: (path: string) => Promise<void>;
+  /** The chunk size; `OWN_COPY_CHUNK_BYTES` by default. */
+  readonly chunkBytes?: number;
+}
+
+const defaultOpenDest = (path: string): Promise<DestFile> => open(path, "wx", 0o600);
+const defaultRemove = (path: string): Promise<void> => rm(path, { force: true });
+const defaultFreeBytes = async (dir: string): Promise<number | null> => {
+  try {
+    const info = await statfs(dir);
+    const free = info.bavail * info.bsize;
+    return Number.isFinite(free) ? free : null;
+  } catch {
+    return null;
+  }
+};
+
+const noSpace = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `not enough free space for the render's temporary files: the own ${what} cannot be copied` });
+const copyFailed = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `the copy of an own ${what} could not be written to the render's folder` });
+
+/** What a failed write or create of the copy is: a full disk is told as that, anything else without its text (it names the folder). */
+function destFailure(error: unknown, what: string): RenderFailure {
+  const code = error instanceof Error ? Reflect.get(error, "code") : undefined;
+  return code === "ENOSPC" || code === "EDQUOT" ? noSpace(what) : copyFailed(what);
+}
+
+async function writeAll(file: DestFile, buffer: Uint8Array, length: number): Promise<void> {
+  let done = 0;
+  while (done < length) {
+    const { bytesWritten } = await file.write(buffer, done, length - done);
+    if (!(bytesWritten > 0)) throw new Error("a write wrote nothing");
+    done += bytesWritten;
+  }
+}
+
+/**
+ * Copies a stored file to `dest` (which must not exist) in chunks, verified against its record as it goes (see the header). A `RenderFailure` (no path, no id) when it is
+ * gone or is not that file, or when the volume has no room; the signal's reason when `signal` fires. When it rejects nothing is left at `dest`
+ * unless something not ours was already there, which is never touched.
+ */
+export async function copyVerifiedOwnMedia(source: StoredFile, what: string, dest: string, signal: AbortSignal, io: StreamCopyIo = {}): Promise<void> {
+  signal.throwIfAborted();
+  if (!Number.isSafeInteger(source.bytes) || source.bytes < 1 || source.bytes > MEDIA_BYTE_CAPS.video) throw ownMediaUnavailable(what);
+  const free = await (io.freeBytes ?? defaultFreeBytes)(dirname(dest));
+  signal.throwIfAborted();
+  if (free !== null && free < source.bytes + OWN_COPY_FREE_MARGIN_BYTES) throw noSpace(what);
+
+  const remove = io.remove ?? defaultRemove;
+  let reader: FileHandle | undefined;
+  let writer: DestFile | undefined;
+  let created = false;
+  try {
+    reader = await openRegularNoFollow(source.path, { ops: io.open ?? NODE_OPEN_OPS });
+    if ((await reader.stat()).size !== source.bytes) throw ownMediaUnavailable(what);
+    try {
+      writer = await (io.openDest ?? defaultOpenDest)(dest);
+    } catch (error) {
+      throw destFailure(error, what);
+    }
+    created = true;
+
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(Math.max(1, Math.min(io.chunkBytes ?? OWN_COPY_CHUNK_BYTES, source.bytes + 1)));
+    let total = 0;
+    for (;;) {
+      signal.throwIfAborted();
+      // Never past the record's size plus one byte: the one more is only to SEE that the file grew.
+      const { bytesRead } = await reader.read(buffer, 0, Math.min(buffer.length, source.bytes + 1 - total), total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > source.bytes) throw ownMediaUnavailable(what);
+      hash.update(buffer.subarray(0, bytesRead));
+      try {
+        await writeAll(writer, buffer, bytesRead);
+      } catch (error) {
+        throw destFailure(error, what);
+      }
+    }
+    signal.throwIfAborted();
+    if (total !== source.bytes) throw ownMediaUnavailable(what);
+    const finished = writer;
+    writer = undefined;
+    try {
+      await finished.close();
+    } catch (error) {
+      throw destFailure(error, what);
+    }
+    if (hash.digest("hex") !== source.sha256) throw ownMediaUnavailable(what);
+  } catch (error) {
+    await writer?.close().catch(() => undefined);
+    if (created) await remove(dest).catch(() => undefined);
+    if (signal.aborted) throw signal.reason;
+    if (error instanceof RenderFailure) throw error;
+    throw ownMediaUnavailable(what);
+  } finally {
+    await reader?.close().catch(() => undefined);
+  }
 }

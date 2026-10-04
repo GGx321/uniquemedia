@@ -257,7 +257,7 @@ describe("RenderQueue: a job's life", () => {
     expect(jobs.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
   });
 
-  test.each(["PHOTO_UNRESOLVED", "BAD_OVERLAY", "UNSAFE_GRAPH", "VIDEO_CLIP_UNSUPPORTED", "CELL_EMPTY"] as const)(
+  test.each(["PHOTO_UNRESOLVED", "BAD_OVERLAY", "UNSAFE_GRAPH", "VIDEO_UNRESOLVED", "CELL_EMPTY"] as const)(
     "a graph the builder refused (%s) ends the job as RENDER_FAILED and names the builder's code",
     async (code) => {
       const { queue, jobs, events } = setup();
