@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, readdir, readFile, realpath } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { Id, MAX_LISTED_MEDIA, MediaFileName, MediaKind, MediaSummary } from "../../shared/engine";
@@ -125,14 +125,6 @@ export class MediaDiskError extends Error {
   }
 }
 
-/** Test seam: a crash. A commit does not clean up after it, because a crash cannot: the disk is left as it is. */
-export class SimulatedCrash extends Error {
-  constructor() {
-    super("simulated crash");
-    this.name = "SimulatedCrash";
-  }
-}
-
 export interface MediaRecordsOptions {
   /** The library's root: records live in `<root>/media`. */
   readonly root: string;
@@ -143,6 +135,8 @@ export interface MediaRecordsOptions {
   /** The disk calls of removal and the platform their retries are for, for a test that plays Windows' held handles. */
   readonly fs?: {
     readonly unlink?: (path: string) => Promise<void>;
+    /** How a record's file is looked at when a library opens; `lstat` by default. */
+    readonly lstat?: (path: string) => Promise<{ isFile(): boolean; size: number }>;
     readonly rename?: (from: string, to: string) => Promise<void>;
     readonly platform?: string;
     readonly sleep?: (ms: number) => Promise<void>;
@@ -154,6 +148,8 @@ export interface MediaRecordsOptions {
     readonly afterFileStored?: () => void | Promise<void>;
     /** After the record's temp file is durable and before it is renamed into place (`writeFileAtomic`'s own seam). */
     readonly beforeRecordRename?: (finalPath: string) => void | Promise<void>;
+    /** Says that an error is a crash: the commit then does not clean up after it, because a crash cannot (the disk is left as it is). Never set in the app. */
+    readonly treatAsCrash?: (error: unknown) => boolean;
   };
 }
 
@@ -322,7 +318,8 @@ export class MediaRecords {
     for (const entry of entries) {
       if (!entry.isFile() || !ORPHAN_NAME.test(entry.name)) continue;
       const id = entry.name.slice(0, entry.name.lastIndexOf("."));
-      if (recordIds.has(id) || this.#inFlight.has(id)) continue;
+      // Judged AFTER the listing: a commit that ended since has its record in the index now, and its file is no orphan.
+      if (recordIds.has(id) || this.#inFlight.has(id) || this.#index.has(id)) continue;
       if (await this.#removeQuietly(join(this.#dir, entry.name))) removedOrphans++;
     }
     return { listed: this.#index.size, removedOrphans, removedDangling, problems, unusable: false };
@@ -347,8 +344,9 @@ export class MediaRecords {
     const record = parsed.data;
     let info;
     try {
-      info = await lstat(join(this.#dir, record.file));
+      info = await (this.#options.fs?.lstat ?? lstat)(join(this.#dir, record.file));
     } catch (error) {
+      // Only a file that is NOT THERE makes a record dangling; any other error says nothing about the file (a cloud placeholder, a drive).
       if (hasErrorCode(error, "ENOENT")) return { kind: "dangling" };
       return { kind: "problem", reason: "damaged" };
     }
@@ -488,9 +486,9 @@ export class MediaRecords {
       return this.#summaryOf(record);
     } catch (error) {
       // A crash cannot clean up after itself: the disk is left as the crash left it, and the next open settles it.
-      if (!(error instanceof SimulatedCrash)) await this.#takeBack(id, stored ? target : null);
+      if (this.#options.hooks?.treatAsCrash?.(error) === true) throw error;
+      await this.#takeBack(id, stored ? target : null);
       if (error instanceof MediaCommitError) throw error;
-      if (error instanceof SimulatedCrash) throw error;
       throw new MediaCommitError("disk", `the media could not be stored (${errorCodeOf(error) ?? "error"})`);
     } finally {
       this.#inFlight.delete(id);
@@ -549,9 +547,4 @@ async function hashFile(path: string): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
   return hash.digest("hex");
-}
-
-/** Used by the engine to make the media folder before the first import (the staging makes it too; this is for a library with neither). */
-export async function ensureMediaDir(root: string): Promise<void> {
-  await mkdir(join(root, MEDIA_DIR), { recursive: true });
 }

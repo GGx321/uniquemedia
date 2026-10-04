@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { MAX_LISTED_MEDIA, MediaSummary } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
-import { MediaCommitError, MediaRecords, SimulatedCrash, type MediaCommitInput, type MediaRecordsOptions } from "./mediaRecords";
+import { MediaCommitError, MediaRecords, type MediaCommitInput, type MediaRecordsOptions } from "./mediaRecords";
+import { SimulatedCrash, treatSimulatedCrash } from "./testing/mediaCrash";
 useNativeGlobals();
 
 // 3f.1b: the own-media records, `<library>/media/<mediaId>.json` beside the stored file `<mediaId>.<ext>`. Write-once, written atomically,
@@ -191,6 +192,7 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
   test("a crash after the file is stored and before the record: the next open removes the file, nothing is listed", async () => {
     const crashing = records({
       hooks: {
+        treatAsCrash: treatSimulatedCrash,
         beforeRecordRename: () => {
           throw new SimulatedCrash();
         },
@@ -249,6 +251,25 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     expect(report.removedDangling).toBe(1);
   });
 
+  // L-3 (review M10): only a file that is NOT THERE makes a record dangling; any other disk error says nothing about the file.
+  test.each(["EIO", "EACCES", "EBUSY"])("a record whose file cannot be looked at (%s) is kept: the disk's error is not the file's absence", async (code) => {
+    const first = records();
+    const summary = await first.commit(await photoInput());
+    const reopened = records({
+      fs: {
+        lstat: async (path) => {
+          if (path.endsWith(".jpg")) throw Object.assign(new Error("disk"), { code });
+          const { lstat } = await import("node:fs/promises");
+          return lstat(path);
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.removedDangling).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+    expect(report.problems).toHaveLength(1);
+  });
+
   test("a record whose file changed size is not listed, and nothing is removed: it may be the owner's tool at work", async () => {
     const first = records();
     const summary = await first.commit(await photoInput());
@@ -277,6 +298,57 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     controller.abort();
     expect(store.get(summary.mediaId)).toEqual(summary);
     expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+  });
+
+  // M-1 of the 3f.1b review (probe P1): a cleanup whose listing saw the stored file but not yet its record, and whose orphan pass runs
+  // after the commit has ended, must not take the file of a record that is now in the index.
+  test("a cleanup that listed the file before its record existed, and judges it after the commit ended, keeps it", async () => {
+    await writeFile(join(mediaDir(), ".media-00000099.json.abcdef123456.tmp"), "half a record");
+    let reachedTemp: () => void = () => undefined;
+    const atTemp = new Promise<void>((resolve) => {
+      reachedTemp = resolve;
+    });
+    let letTemp: () => void = () => undefined;
+    const tempGate = new Promise<void>((resolve) => {
+      letTemp = resolve;
+    });
+    let stored: () => void = () => undefined;
+    const fileStored = new Promise<void>((resolve) => {
+      stored = resolve;
+    });
+    let letCommit: () => void = () => undefined;
+    const commitGate = new Promise<void>((resolve) => {
+      letCommit = resolve;
+    });
+    const store = records({
+      fs: {
+        unlink: async (path) => {
+          if (path.includes("media-00000099")) {
+            reachedTemp();
+            await tempGate;
+          }
+          const { unlink } = await import("node:fs/promises");
+          await unlink(path);
+        },
+        platform: "linux",
+      },
+      hooks: {
+        afterFileStored: async () => {
+          stored();
+          await commitGate;
+        },
+      },
+    });
+    const commit = store.commit(await photoInput());
+    await fileStored;
+    const recovering = store.recover();
+    await atTemp;
+    letCommit();
+    const summary = await commit;
+    letTemp();
+    await recovering;
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+    expect(store.list().total).toBe(1);
   });
 
   test("a commit that is in flight is not an orphan: a cleanup running meanwhile leaves its file", async () => {
@@ -368,6 +440,15 @@ describe("what open will not judge for itself", () => {
     await mkdir(join(mediaDir(), "media-00000063.jpg"));
     await records().recover();
     expect(await names(mediaDir())).toEqual(["MEDIA-00000061.jpg", "media-00000062.exe", "media-00000063.jpg", "notes.txt"]);
+  });
+
+  // L-4 (review M14): a temp file that is not a record's own is the owner's or another program's.
+  test("a foreign temp file in media/ survives a cleanup, and so does one that only looks like a record's temp", async () => {
+    await planted(".foo.tmp", "someone else's");
+    await planted(".media-00000009.json.tmp", "no random part, not ours");
+    await planted(".media-00000009.json.0123456789ab.bak", "not a temp");
+    await records().recover();
+    expect(await names(mediaDir())).toEqual([".foo.tmp", ".media-00000009.json.0123456789ab.bak", ".media-00000009.json.tmp"]);
   });
 
   test("the staging folder is not the records' business: its files are left", async () => {

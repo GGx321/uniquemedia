@@ -6,7 +6,7 @@ import { JobProgress, JobResult, JobState, MediaSummary, type EngineError, type 
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
 import { JobRegistry } from "../jobs";
-import { SimulatedCrash } from "../library/mediaRecords";
+import { SimulatedCrash, treatSimulatedCrash } from "../library/testing/mediaCrash";
 import { pickedIdentityOf } from "./identity";
 import type { MediaImporter, MediaImportCall } from "./imports";
 import { MediaService, type MediaServiceDeps } from "./service";
@@ -662,7 +662,7 @@ describe("stopping the engine", () => {
 
 describe("a restart settles what a crash left, and cleans up rather than resumes", () => {
   test("a crash at the record leaves a file and a temp that the next life removes; nothing is listed", async () => {
-    const crashing = rig({ records: { hooks: { beforeRecordRename: () => { throw new SimulatedCrash(); } } } });
+    const crashing = rig({ records: { hooks: { treatAsCrash: treatSimulatedCrash, beforeRecordRename: () => { throw new SimulatedCrash(); } } } });
     const jobId = await started(crashing, await callFor("a.jpg", jpeg(300)));
     await crashing.service.settled();
     expect(crashing.jobs.stateOf(jobId)).toMatchObject({ status: "failed" });
