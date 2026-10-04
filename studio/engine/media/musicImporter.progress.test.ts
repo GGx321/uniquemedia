@@ -109,9 +109,12 @@ describe("the progress of a track's encode", () => {
   });
 
   test("the total is never more than the encode is cut at: a header that claims a day does not make a bar that never moves", async () => {
-    // The WAV's data chunk claims 10 hours (and holds 5 s): the encode is cut at the limit plus a margin, and so is the plan's total.
+    // A FLAC whose STREAMINFO claims 10 hours of samples (and holds 5 s): the container states its length exactly, so the probe reports the claim, and the plan's total is
+    // clamped to the limit plus the margin the encode is cut at. (A WAV's claim would not do: its demuxer clips the size to the file.)
     const begins: number[] = [];
-    await run(wavOf(5 * 8000, 8000, 10 * 3600 * 8000), { maxDurationMs: 6000 }, { begin: (total) => void begins.push(total), report: () => undefined });
-    expect(begins.length === 0 || (begins[0] ?? 0) <= 6000 + 2000).toBe(true);
+    const claimed = flacClaiming(await flacOfSeconds(tmp(), 5), 8000 * 3600 * 10);
+    await run(claimed, { maxDurationMs: 6000 }, { begin: (total) => void begins.push(total), report: () => undefined }, "flac");
+    expect(begins).toHaveLength(1);
+    expect(begins[0]).toBe(6000 + 2000);
   });
 });

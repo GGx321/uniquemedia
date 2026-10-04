@@ -175,6 +175,20 @@ describe("the prepare stage of an import job", () => {
     expect(preparing(progress)).toEqual([]);
   });
 
+  test("what the probe judged that the contract refuses (a source rate of 5000 fps) is dropped at the seam: the stage still begins, without `prepare`, and every event parses", async () => {
+    const { progress } = await run(
+      reporting((prepare) => {
+        prepare.begin(10, { hdrToSdr: true, fromFps: 5000 });
+        prepare.report(5);
+      }),
+    );
+    const steps = preparing(progress);
+    expect(steps.map((p) => p.done)).toEqual([0, 5]);
+    expect(steps.every((p) => p.prepare === undefined)).toBe(true);
+    // `progressOf` parses each event with the contract's schema, and `importOnly` keeps them all: nothing was thrown away on the way.
+    expect(importOnly(progress).length).toBeGreaterThan(steps.length);
+  });
+
   test("an importer that never reports leaves the job as it was: a copy, and done", async () => {
     const { jobId, progress, r } = await run(async () => ({ ok: true, facts: FACTS }));
     expect(preparing(progress)).toEqual([]);

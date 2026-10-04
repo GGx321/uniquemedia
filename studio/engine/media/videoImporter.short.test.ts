@@ -79,6 +79,13 @@ describe("a video shorter than the shortest clip", () => {
     expect((await importWith(source(14), source(14))).calls).toBe(1);
   });
 
+  test("the pre-check's bound is exact: a source whose range tops out at exactly 15 frames is the encode's to decide (calls 1), `<` and not `<=`", async () => {
+    // 25 samples at 60 fps (500 ticks of 30000) are 0.4167 s: 12.5 frames at 30 fps, so the walker's range tops out at ceil(12.5) + 2 = 15. The encode makes 13 and is told too-short.
+    const done = await importWith(source(25, 500), source(13));
+    expect(done.calls).toBe(1);
+    expect(done.outcome).toEqual({ ok: false, reason: "too-short" });
+  });
+
   test("is judged from the output's own samples, whatever the source's header claims: a source of 40 frames whose encode made 10 is refused as failed by the plan's range, never taken", async () => {
     const done = await importWith(source(40), source(10));
     expect(done.outcome.ok).toBe(false);
