@@ -88,7 +88,7 @@ type RecordShape = z.infer<typeof RecordShape>;
 const Waveform = z.array(z.number().int().min(0).max(1000)).min(1).max(MAX_ENVELOPE_STEPS);
 
 /** The largest record file `waveformOf` reads: a record is a few KiB of JSON, plus a waveform of up to 20000 values (about 100 KiB). */
-const MAX_RECORD_FILE_BYTES = 1024 * 1024;
+export const MAX_RECORD_FILE_BYTES = 1024 * 1024;
 
 /** What `waveformOf` needs of a record on disk: whose it is, what it is, and the waveform. */
 const RecordWaveform = z.looseObject({ id: Id, kind: z.literal("audio"), waveform: Waveform });

@@ -46,6 +46,16 @@ export const musicFixtures = {
   m4aWithVideo: fixture("m4a-with-video.m4a", { bytes: 4297, sha256: "d4a270880c7f6e144a821b3192a6d8f5fe245c93168fd25bb9fabe2792276d68", format: "m4a", codec: "aac", sampleRate: 44100, channels: 2, durationMs: 400 }),
   /** A WAV in a codec the importer does not take (MS ADPCM). */
   adpcmWav: fixture("adpcm.wav", { bytes: 2138, sha256: "e086efc8f4d4356a725250e229127a72675f1004e283ffab30fb53615c41a5c7", format: "wav", codec: "adpcm_ms", sampleRate: 8000, channels: 1, durationMs: 300 }),
+  /** An mp3 with no Xing/LAME header, at 8 kHz: 111 frames (7.992 s of audio) that decode as about 8.13 s, the encoder's delay included. */
+  nolameMp3: fixture("nolame-8k.mp3", { bytes: 16292, sha256: "716b3eb2d16d78f2d691bc4f7cc3873e4e2a718953a8cc771670df6b590838a8", format: "mp3", codec: "mp3", sampleRate: 8000, channels: 1, durationMs: 7_992 }),
+  /** Twelve seconds of 8 kHz AAC in an m4a whose `stts` says every sample lasts 1 tick but the last, which lasts 602 s: the header says 10:02, the timestamps stay near 0. */
+  sttsLie: fixture("stts-lie.m4a", { bytes: 13121, sha256: "9b244da2a55e675934f5880dcdf76aed02af734b2d02d900ac5e860d557a0849", format: "m4a", codec: "aac", sampleRate: 8000, channels: 1, durationMs: 12_000 }),
+  /** Two Vorbis streams: stream 0 (a 440 Hz tone) has a language that forges a cover-art line, stream 1 is a 3000 Hz tone. The probe must not judge #0:1 and decode #0:0. */
+  spoofTwoVorbis: fixture("spoof-two-vorbis.ogg", { bytes: 8439, sha256: "40d56d013b9939e05881b037996226663825e28a6de3d11665394a7b2e5080eb", format: "ogg", codec: "vorbis", sampleRate: 44100, channels: 1, durationMs: 400 }),
+  /** The same two streams in Opus. */
+  spoofTwoOpus: fixture("spoof-two-opus.opus", { bytes: 4207, sha256: "3979f675907b795643f5e759321c40777f375b618192f6b6e2dde1ec280a972f", format: "ogg", codec: "opus", sampleRate: 48000, channels: 1, durationMs: 410 }),
+  /** A Vorbis stream whose language forges a cover-art line, and a REAL Theora video behind it. */
+  spoofTheora: fixture("spoof-theora.ogg", { bytes: 8688, sha256: "08f1ddc6299f02dd8fc33aef2161709d4ad0f2eb9559db7017bc66b2a5d9d167", format: "ogg", codec: "vorbis", sampleRate: 44100, channels: 1, durationMs: 400 }),
 } as const satisfies Record<string, MusicFixture>;
 
 export type MusicFixtureName = keyof typeof musicFixtures;

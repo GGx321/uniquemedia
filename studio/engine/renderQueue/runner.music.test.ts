@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
@@ -292,6 +292,36 @@ describe("runRenderJob with music: the render works on a private copy of the ver
 
     expect(checked).toEqual([copyOf(r), "present"]);
     expect(events[0]).toBe("measure");
+  });
+
+  // 3f.4 review L3: the bytes of an own track (a file the owner picked, imported and stored) now go through this write too. The job folder is the job's own and
+  // new, so a name already in it is not ours: it is never written through (`wx`).
+  test("a `track.m4a` that is already in the job folder is not written over: the job fails before the check, the measurement and any ffmpeg", async () => {
+    const r = rig();
+    mkdirSync(r.jobDir, { recursive: true });
+    writeFileSync(r.track, "planted");
+    const checked: string[] = [];
+    const audio = { kind: "music" as const, startMs: 1500, data: TRACK_BYTES, check: async (path: string) => void checked.push(path) };
+    const { deps, events } = scripted(3.0);
+
+    const error = await runRenderJob({ ...r.input, audio }, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(checked).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
+  test.skipIf(process.platform === "win32")("a `track.m4a` that is a link to a file elsewhere is not written through", async () => {
+    const r = rig();
+    mkdirSync(r.jobDir, { recursive: true });
+    const elsewhere = join(r.tmpRoot, "..", "elsewhere.bin");
+    writeFileSync(elsewhere, "keep me");
+    symlinkSync(elsewhere, r.track);
+    const { deps } = scripted(3.0);
+
+    await runRenderJob({ ...r.input }, deps).catch(() => undefined);
+
+    expect(readFileSync(elsewhere, "utf8")).toBe("keep me");
   });
 
   test("a check that refuses the copy stops the job before the measurement, with nothing left", async () => {

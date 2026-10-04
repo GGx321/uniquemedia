@@ -10,7 +10,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,9 @@ import { ffmpegPath } from "../../../../node/ffmpegBinary";
 const here = dirname(fileURLToPath(import.meta.url));
 const COMMON = ["-hide_banner", "-y", "-v", "error", "-nostdin"];
 const BITEXACT = ["-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact", "-flags:v", "+bitexact"];
+
+/** The language of stream 0 that closes the stream line's own parenthesis and opens a second, forged one: `Stream #0:0(x): Video: png (attached pic): Audio: ...`. */
+const SPOOF_LANGUAGE = ["-metadata:s:a:0", "language=x): Video: png (attached pic"];
 
 const sine = (hz: number, rate: number, seconds: number): string[] => ["-f", "lavfi", "-i", `sine=frequency=${hz}:sample_rate=${rate}:duration=${seconds}`];
 
@@ -38,6 +41,57 @@ function cover(scratch: string): string {
   const path = join(scratch, "cover.jpg");
   ffmpeg(["-f", "lavfi", "-i", "color=c=red:s=16x16:d=1", "-frames:v", "1", "-flags:v", "+bitexact", path]);
   return path;
+}
+
+const CONTAINERS: ReadonlySet<string> = new Set(["moov", "trak", "mdia", "minf", "stbl"]);
+
+/**
+ * The m4a with its time-to-sample table rewritten: every sample but the last lasts 1 tick, and the last lasts `tailSeconds`. The file's sample data is
+ * untouched; only what the container SAYS about when each sample plays is a lie.
+ */
+export function lieAboutTimestamps(file: Uint8Array, tailSeconds: number): Uint8Array {
+  const bytes = Uint8Array.from(file);
+  const view = new DataView(bytes.buffer);
+  const text = (at: number): string => String.fromCharCode(...bytes.subarray(at, at + 4));
+  let mediaScale = 0;
+  let movieScale = 0;
+  let patched = false;
+  const durations: { at: number; scale: "movie" | "media" }[] = [];
+  const walk = (start: number, end: number): void => {
+    for (let at = start; at + 8 <= end; ) {
+      const size = view.getUint32(at);
+      const type = text(at + 4);
+      if (size < 8) return;
+      if (type === "mvhd") {
+        movieScale = view.getUint32(at + 20);
+        durations.push({ at: at + 24, scale: "movie" });
+      }
+      if (type === "tkhd") durations.push({ at: at + 28, scale: "movie" });
+      if (type === "mdhd") {
+        mediaScale = view.getUint32(at + 20);
+        durations.push({ at: at + 24, scale: "media" });
+      }
+      // The edit list would cut the lie off; as a `free` box it says nothing.
+      if (type === "edts") bytes.set([0x66, 0x72, 0x65, 0x65], at + 4);
+      if (CONTAINERS.has(type)) walk(at + 8, at + size);
+      if (type === "stts") {
+        const runs = view.getUint32(at + 12);
+        let samples = 0;
+        for (let i = 0; i < runs; i++) samples += view.getUint32(at + 16 + i * 8);
+        view.setUint32(at + 12, 2);
+        view.setUint32(at + 16, samples - 1);
+        view.setUint32(at + 20, 1);
+        view.setUint32(at + 24, 1);
+        view.setUint32(at + 28, Math.round(tailSeconds * mediaScale));
+        patched = true;
+      }
+      at += size;
+    }
+  };
+  walk(0, bytes.length);
+  if (!patched || mediaScale === 0 || movieScale === 0) throw new Error("no stts to lie about");
+  for (const { at, scale } of durations) view.setUint32(at, Math.round(tailSeconds * (scale === "movie" ? movieScale : mediaScale)));
+  return bytes;
 }
 
 export const ENTRIES: readonly Entry[] = [
@@ -70,6 +124,21 @@ export const ENTRIES: readonly Entry[] = [
     file: "m4a-with-video.m4a",
     make: (out) => ffmpeg([...sine(440, 44100, 0.4), "-f", "lavfi", "-i", "testsrc=s=32x32:r=5:d=0.4", "-map", "0:a", "-map", "1:v", "-ac", "2", "-c:a", "aac", "-b:a", "48k", "-c:v", "mpeg4", "-q:v", "10", ...BITEXACT, "-brand", "M4A ", "-f", "ipod", out]),
   },
+  // An mp3 with NO Xing/LAME header (3f.4 review L4): a decoder cannot know the encoder's delay, so it emits about 1105 samples of priming (138 ms at 8 kHz)
+  // before the tone. 111 frames of 576 samples at 8 kHz are 7.992 s of audio, which decodes as about 8.13 s.
+  { file: "nolame-8k.mp3", make: (out) => ffmpeg([...sine(440, 8000, 7.99), "-ac", "1", "-c:a", "libmp3lame", "-b:a", "16k", "-write_xing", "0", ...BITEXACT, out]) },
+  // An m4a whose timestamps LIE (3f.4 review M1): twelve seconds of audio, but every `stts` delta is 1 tick except the last, which is 602 s. The header says ten
+  // minutes and two seconds, every sample but the last sits at a timestamp near 0, and so an input `-t` never fires: only a count of samples bounds the work.
+  { file: "stts-lie.m4a", make: (out) => {
+      ffmpeg([...sine(440, 8000, 12), "-ac", "1", "-c:a", "aac", "-b:a", "8k", ...BITEXACT, "-f", "ipod", out]);
+      writeFileSync(out, lieAboutTimestamps(readFileSync(out), 602));
+    } },
+  // Spoofs of the probe's reading (3f.4 review H1): an Ogg stream's language comes from the FILE's own comment and ffmpeg prints it verbatim, so a language of
+  // `x): Video: png (attached pic` makes stream 0's line read as a cover picture. Stream 0 is a 440 Hz tone, the stream behind it a 3000 Hz one (or a real
+  // Theora video), so a test can tell which one an import decoded.
+  { file: "spoof-two-vorbis.ogg", make: (out) => ffmpeg([...sine(440, 44100, 0.4), ...sine(3000, 44100, 0.4), "-map", "0:a", "-map", "1:a", "-ac", "1", "-c:a", "libvorbis", "-q:a", "0", ...SPOOF_LANGUAGE, ...BITEXACT, out]) },
+  { file: "spoof-two-opus.opus", make: (out) => ffmpeg([...sine(440, 48000, 0.4), ...sine(3000, 48000, 0.4), "-map", "0:a", "-map", "1:a", "-ac", "1", "-c:a", "libopus", "-b:a", "32k", ...SPOOF_LANGUAGE, ...BITEXACT, out]) },
+  { file: "spoof-theora.ogg", make: (out) => ffmpeg([...sine(440, 44100, 0.4), "-f", "lavfi", "-i", "testsrc=s=64x64:r=5:d=0.4", "-map", "0:a", "-map", "1:v", "-ac", "1", "-c:a", "libvorbis", "-q:a", "0", "-c:v", "libtheora", "-q:v", "3", ...SPOOF_LANGUAGE, ...BITEXACT, out]) },
   { file: "adpcm.wav", make: (out) => ffmpeg([...sine(440, 8000, 0.3), "-ac", "1", "-c:a", "adpcm_ms", ...BITEXACT, out]) },
 ];
 

@@ -376,6 +376,37 @@ describe("reading the streams out of ffmpeg's own dump", () => {
     expect(streamTypesOf(dump("  Stream #0:0: Weird: x"))).toEqual(["Weird"]);
   });
 
+  // 3f.4 review H1: the track store and the render rely on this reading, and it is safe today only because they force `-f mov` (a three-letter language
+  // from `mdhd`). An Ogg's language is the file's own text, printed verbatim: a grammar that accepts any parenthesis lets it forge a stream line.
+  test("a language that closes the parenthesis and forges a second description makes the line no stream at all", () => {
+    const forged = "  Stream #0:0(x): Video: png (attached pic): Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s";
+    expect(streamTypesOf(dump(forged, "  Stream #0:1: Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s"))).toEqual(["Audio"]);
+    expect(streamTypesOf(dump("  Stream #0:0(x): Audio: aac: Video: png"))).toEqual([]);
+  });
+
+  test("a language with a bracket, a colon or a space in it is no language", () => {
+    for (const language of ["x): Video: png (attached pic", "a b", "a:b", "x)(y"]) expect(streamTypesOf(dump(`  Stream #0:0(${language}): Audio: aac`))).toEqual([]);
+    for (const language of ["und", "eng", "en", "zh-Hans"]) expect(streamTypesOf(dump(`  Stream #0:0(${language}): Audio: aac`))).toEqual(["Audio"]);
+  });
+
+  test("a dump that carries a forged stream line cannot pass inspectStreams as one audio stream: the forged line leaves a gap in the numbering", async () => {
+    const forged = ["  Stream #0:0(x): Video: png (attached pic): Audio: vorbis, 44100 Hz, mono", "  Stream #0:1: Audio: vorbis, 44100 Hz, mono"];
+    const spawner: FfmpegSpawner = () => {
+      const child = new EventEmitter() as EventEmitter & FfmpegChild & { exitCode: number | null; stdout: PassThrough; stderr: PassThrough };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.exitCode = null;
+      child.kill = () => true;
+      queueMicrotask(() => {
+        child.stderr.write(`${forged.join("\n")}\n`);
+        child.exitCode = 1;
+        child.emit("close", 1, null);
+      });
+      return child;
+    };
+    await expect(inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).rejects.toMatchObject({ kind: "bad-dump" });
+  });
+
   test("nothing in the dump is no streams", () => {
     expect(streamTypesOf("")).toEqual([]);
     expect(streamTypesOf("garbage\nStream without the number\n")).toEqual([]);

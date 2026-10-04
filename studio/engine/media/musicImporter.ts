@@ -34,7 +34,7 @@ export const MAX_TRACK_MS = 600_000;
 /** How far past the limit the decode is let run, so that a track a little over is told apart from one that is just at it. */
 const CUT_MARGIN_MS = 2_000;
 /** The most a stored file may take: ten minutes at 256 kbit/s is about 19 MB. */
-const MAX_STORED_BYTES = 40 * 1024 * 1024;
+export const MAX_STORED_BYTES = 40 * 1024 * 1024;
 /** One allocation of ffmpeg may take at most this much: far above what a track needs and far below a container bomb. */
 const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
 
@@ -44,6 +44,9 @@ const ENCODE_CEILING_MS = 5 * 60_000;
 const ENCODE_MS_PER_MS = 0.5;
 
 /** How long an encode may run before it is killed: the floor, plus half the length the header states, never more than a few minutes (a header can lie). */
+// STUB (red step): replaced below.
+export const MP3_PRIMING_MS = 0;
+
 export function encodeTimeoutFor(headerMs: number | null): number {
   const stated = headerMs === null || !Number.isFinite(headerMs) || headerMs < 0 ? MAX_TRACK_MS : headerMs;
   return Math.min(ENCODE_CEILING_MS, ENCODE_FLOOR_MS + Math.round(stated * ENCODE_MS_PER_MS));

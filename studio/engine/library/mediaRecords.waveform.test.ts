@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MediaSummary } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
-import { MediaCommitError, MediaRecords, type MediaCommitInput } from "./mediaRecords";
+import { lyingHandle } from "../videos/testing/handleKit";
+import { MediaCommitError, MAX_RECORD_FILE_BYTES, MediaRecords, type MediaCommitInput } from "./mediaRecords";
+import { NODE_OPEN_OPS, type OpenRegularOps } from "./openRegular";
 useNativeGlobals();
 
 // 3f.4: a track's waveform is kept in its record (one value per 50 ms, 0 to 1000) for `music.peaks`. It is the engine's own data, but a record is a file on
@@ -186,6 +188,65 @@ describe("the read judges what it finds", () => {
   test("a record that is larger than any record is read as nothing, not parsed", async () => {
     const { store, mediaId } = await tampered((record) => ({ ...record, padding: "x".repeat(2 * 1024 * 1024) }));
     expect(await store.waveformOf(mediaId)).toBeUndefined();
+  });
+
+  // 3f.4 review L1: `lstat` then `readFile` by path is a check and a use with a gap between them, and an unbounded read. The record is opened as the staging
+  // opens a file (`openRegularNoFollow`: the handle must be the file the name led to) and read FROM THE HANDLE, at most its bound plus one byte.
+  describe("the record is read from an open handle within its bound (3f.4 review L1)", () => {
+    const withOps = (ops: OpenRegularOps): MediaRecords => new MediaRecords({ root: root(), newId: () => `media-${String(++ids).padStart(8, "0")}`, now: () => new Date((clock += 1000)), warn: () => undefined, ops });
+
+    test("a record whose handle keeps giving bytes is read for at most the bound plus one byte, and answers nothing", async () => {
+      const store = withOps(NODE_OPEN_OPS);
+      const { mediaId } = await store.commit(await track());
+      const real = await open(recordPath(mediaId), "r");
+      const growing = lyingHandle(real, { fill: "all" });
+      const reading = withOps({ ...NODE_OPEN_OPS, open: async () => growing.handle });
+      await reading.recover();
+      expect(await reading.waveformOf(mediaId)).toBeUndefined();
+      expect(growing.asked()).toBeGreaterThan(0);
+      expect(growing.asked()).toBeLessThanOrEqual(MAX_RECORD_FILE_BYTES + 1);
+      await real.close().catch(() => undefined);
+    });
+
+    test("a handle that says it is larger than the bound is refused without a byte of it being read", async () => {
+      const store = withOps(NODE_OPEN_OPS);
+      const { mediaId } = await store.commit(await track());
+      const real = await open(recordPath(mediaId), "r");
+      const huge = lyingHandle(real, { lyingSize: MAX_RECORD_FILE_BYTES + 1, fill: "none" });
+      const reading = withOps({ ...NODE_OPEN_OPS, open: async () => huge.handle });
+      await reading.recover();
+      expect(await reading.waveformOf(mediaId)).toBeUndefined();
+      expect(huge.reads()).toBe(0);
+      await real.close().catch(() => undefined);
+    });
+
+    test("a record swapped for another file between the name and the open is refused: the handle must be the file the name led to", async () => {
+      const store = records();
+      const { mediaId } = await store.commit(await track());
+      const other = join(tmp(), "other.json");
+      await writeFile(other, await readFile(recordPath(mediaId)));
+      let first = true;
+      const swapping: OpenRegularOps = {
+        lstat: (path) => NODE_OPEN_OPS.lstat(path),
+        // The name is looked at, then another file is opened in its place.
+        open: async (path, flags) => {
+          if (first) {
+            first = false;
+            return NODE_OPEN_OPS.open(other, flags);
+          }
+          return NODE_OPEN_OPS.open(path, flags);
+        },
+      };
+      const reading = withOps(swapping);
+      await reading.recover();
+      expect(await reading.waveformOf(mediaId)).toBeUndefined();
+    });
+
+    test("an honest record is still read, whole, through the handle", async () => {
+      const store = withOps(NODE_OPEN_OPS);
+      const { mediaId } = await store.commit(await track());
+      expect(await store.waveformOf(mediaId)).toEqual(WAVE);
+    });
   });
 
   test.skipIf(process.platform === "win32")("a record that is a symlink is not followed", async () => {

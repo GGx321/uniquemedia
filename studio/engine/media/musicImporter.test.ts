@@ -9,7 +9,7 @@ import { judgeStoredDump, probeDump } from "./audioProbe";
 import { FIXTURE_TAGS, fixtureBytes, musicFixtures, type MusicFixtureName } from "./fixtures/music";
 import type { MediaImportOutcome } from "./imports";
 import { flacClaiming, flacOfSeconds, hangingChild, isAlive, oneAacFrame, printingChild, recordingSpawner, wavOf } from "./musicFixtures.testkit";
-import { createMusicImporter, MAX_TRACK_MS, type MusicImporterDeps } from "./musicImporter";
+import { createMusicImporter, encodeArgv, encodeTimeoutFor, MAX_STORED_BYTES, MAX_TRACK_MS, MP3_PRIMING_MS, type MusicImporterDeps } from "./musicImporter";
 import { handoff, type Handoff } from "./photoFixtures.testkit";
 import type { MediaFormat } from "./sniff";
 useNativeGlobals();
@@ -467,5 +467,131 @@ describe("a cancel and the clock", () => {
     const { outcome } = await run(fixtureBytes("mp3"), "mp3", { spawner });
     expect(outcome).toEqual({ ok: false, reason: "format" });
     expect(JSON.stringify(outcome)).not.toContain("secret");
+  });
+});
+
+// 3f.4 review H1: the probe's verdict is "exactly one audio stream", and the encode maps `0:a:0`. A file whose stream 0 forges a cover-art line in its own
+// language comment used to be judged by the stream BEHIND it and decoded as stream 0 (identified by its 440 Hz tone). Now it is refused, and nothing is encoded.
+describe("a file that forges the probe's reading is refused (3f.4 review H1)", () => {
+  const encodes = (argvs: readonly (readonly string[])[]): number => argvs.filter((argv) => argv.includes("-map") && argv.includes("aac")).length;
+
+  test.each<MusicFixtureName>(["spoofTwoVorbis", "spoofTwoOpus", "spoofTheora"])("%s is a format, and no encode is started", async (name) => {
+    const recorded = recordingSpawner();
+    const { outcome } = await runFixture(name, { spawner: recorded.spawner });
+    expect(outcome).toEqual({ ok: false, reason: "format" });
+    expect(encodes(recorded.argvs)).toBe(0);
+  });
+
+  test("a file with a second audio stream the TEXT of the dump does not show is refused by ffmpeg's own stream selection, with no encode", async () => {
+    // The dump says one audio stream: only ffmpeg's `-map 0:a:1` can tell there are two. The scripted probe answers the honest-looking dump of a mono Vorbis file.
+    const real = recordingSpawner();
+    let calls = 0;
+    const spawner: FfmpegSpawner = (command, args, options) =>
+      calls++ === 0 ? printingChild(1, "  Duration: 00:00:00.40, start: 0.000000, bitrate: 48 kb/s\n  Stream #0:0: Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s\n") : real.spawner(command, args, options);
+    const { outcome } = await run(fixtureBytes("spoofTwoVorbis"), "ogg", { spawner });
+    expect(outcome).toEqual({ ok: false, reason: "format" });
+    expect(encodes(real.argvs)).toBe(0);
+    // The first real process was the selection check for the second audio stream, and it found one.
+    expect(real.argvs[0]?.[real.argvs[0].indexOf("-map") + 1]).toBe("0:a:1");
+  });
+
+  test.each<MusicFixtureName>(["ogg", "opus", "mp3", "m4a", "flac", "wav", "taggedMp3", "taggedM4a"])("an honest %s passes the selection check and is imported", async (name) => {
+    const recorded = recordingSpawner();
+    await accepted(await runFixture(name, { spawner: recorded.spawner }));
+    const maps = recorded.argvs.filter((argv) => argv.includes("-t") && argv.includes("null")).map((argv) => argv[argv.indexOf("-map") + 1]);
+    expect(maps).toEqual(["0:a:1", "0:V", "0:s", "0:d", "0:t"]);
+  });
+
+  test("a cover picture is no extra stream: ffmpeg's 0:V is a REAL video only", async () => {
+    await accepted(await runFixture("taggedMp3"));
+    await accepted(await runFixture("taggedM4a"));
+  });
+
+  test("a real video behind the audio is refused by the dump and, were the dump forged, by 0:V", async () => {
+    expect(reasonOf((await runFixture("m4aWithVideo")).outcome)).toBe("format");
+  });
+});
+
+// 3f.4 review M1: an input `-t` is a bound on TIMESTAMPS, and a mov's `stts` can say that every sample but the last plays at a timestamp near 0 (and the last
+// at 10:02). The header then says ten minutes, the timestamps never reach the cut, and the encode runs to its time limit. The work is bounded by SAMPLES.
+describe("the encode is bounded by what it writes, not by what the file says (3f.4 review M1)", () => {
+  const LIMIT = 2_000;
+  const frames = (ms: number): number => Math.ceil(((ms + 2_000) * 48_000) / 1000 / 1024);
+
+  test("the encode's argv carries the frame count of the limit plus its margin, and a size ceiling a little over what the library keeps", () => {
+    const argv = encodeArgv({ path: "/p/a.m4a", demuxer: "mov", decoder: "aac", maxDurationMs: MAX_TRACK_MS });
+    expect(argv.slice(argv.indexOf("-frames:a"), argv.indexOf("-frames:a") + 2)).toEqual(["-frames:a", "28219"]);
+    expect(argv.slice(argv.indexOf("-fs"), argv.indexOf("-fs") + 2)).toEqual(["-fs", String(MAX_STORED_BYTES + 1)]);
+    // Both are OUTPUT options: after the input, so they bound what is written and not what is read.
+    expect(argv.indexOf("-frames:a")).toBeGreaterThan(argv.indexOf("-i"));
+    expect(argv.indexOf("-fs")).toBeGreaterThan(argv.indexOf("-i"));
+  });
+
+  test("the frame count follows the limit: a test's 2 s limit bounds at 188 frames", () => {
+    const argv = encodeArgv({ path: "/p/a.m4a", demuxer: "mov", decoder: "aac", maxDurationMs: LIMIT });
+    expect(argv[argv.indexOf("-frames:a") + 1]).toBe(String(frames(LIMIT)));
+    expect(frames(LIMIT)).toBe(188);
+  });
+
+  test("twelve seconds of audio under lying timestamps are cut at the limit: refused as too-long, and the work file is the cut's size, not the whole's", async () => {
+    const { outcome, hand } = await runFixture("sttsLie", { maxDurationMs: LIMIT });
+    expect(reasonOf(outcome)).toBe("too-long");
+    const size = (await stat(hand.works[0]?.path ?? "")).size;
+    // 4 s at 256 kbit/s is about 128 KB at most (this file's audio is sparser: about 75 KB); the whole 12 s is about 220 KB.
+    expect(size).toBeLessThan(120_000);
+  });
+
+  test("the file really does lie: its header says ten minutes and two seconds", async () => {
+    const dump = await probeDump({ path: musicFixtures.sttsLie.file, demuxer: "mov", signal: new AbortController().signal });
+    expect(dump).toContain("Duration: 00:10:02.00");
+  });
+
+  test("the timeout a lying header buys is still the ceiling, never more", () => {
+    expect(encodeTimeoutFor(602_000)).toBeLessThanOrEqual(5 * 60_000);
+  });
+});
+
+describe("a stored file has a size ceiling of its own (3f.4 review M1)", () => {
+  test("a track that would store larger than the ceiling is refused as too-large, and the encode stopped at it (-fs)", async () => {
+    // Eight seconds of audio is about 256 KB at 256 kbit/s; the ceiling here is 30 KB and the length limit is far away.
+    const ceiling = 30_000;
+    const hand = await handoff(tmp(), wavOf(8 * 8000), { format: "wav", kind: "audio" });
+    const outcome = await importerWith({ maxDurationMs: 60_000, maxStoredBytes: ceiling })(hand.request);
+    expect(reasonOf(outcome)).toBe("too-large");
+    const size = (await stat(hand.works[0]?.path ?? "")).size;
+    // `-fs` ends the write after the ceiling is passed: a little over it, never the 256 KB.
+    expect(size).toBeLessThan(ceiling + 40_000);
+  });
+
+  test("a track under the ceiling is stored", async () => {
+    await accepted(await runFixture("mp3", { maxStoredBytes: 200_000 }));
+  });
+
+  test("the ceiling the library keeps is 40 MiB: ten minutes at 256 kbit/s is about 19 MiB", () => {
+    expect(MAX_STORED_BYTES).toBe(40 * 1024 * 1024);
+  });
+});
+
+// 3f.4 review L4: an mp3 with no Xing/LAME header carries no encoder delay, so a decoder emits about 1105 samples of priming before the tone. An mp3 of exactly
+// ten minutes then decoded to 10:00.13 at 8 kHz and was refused as too-long. The limit is allowed that priming, for an mp3 only.
+describe("an mp3's decoder priming does not make a track of the limit too long (3f.4 review L4)", () => {
+  test("seven point nine nine seconds of audio, with the limit at 8 s, is accepted though it decodes to about 8.13 s", async () => {
+    const stored = await accepted(await runFixture("nolameMp3", { maxDurationMs: 8_000 }));
+    expect(stored.durationMs).toBeGreaterThan(8_000);
+    expect(stored.durationMs).toBeLessThanOrEqual(8_000 + MP3_PRIMING_MS);
+  });
+
+  test("an mp3 that is really longer is still too-long: the allowance is the priming and no more", async () => {
+    expect(reasonOf((await runFixture("nolameMp3", { maxDurationMs: 7_800 })).outcome)).toBe("too-long");
+  });
+
+  test("the allowance is an mp3's alone: a WAV of the limit plus the same milliseconds is too-long", async () => {
+    const samples = 8 * 8000 + Math.round((MP3_PRIMING_MS * 8000) / 1000);
+    expect(reasonOf((await run(wavOf(samples, 8000), "wav", { maxDurationMs: 8_000 })).outcome)).toBe("too-long");
+  });
+
+  test("the allowance covers the worst priming there is: 1105 samples at the lowest sample rate an mp3 has (8 kHz)", () => {
+    expect(MP3_PRIMING_MS).toBeGreaterThanOrEqual(Math.ceil((1105 * 1000) / 8000));
+    expect(MP3_PRIMING_MS).toBeLessThanOrEqual(200);
   });
 });

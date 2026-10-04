@@ -165,6 +165,11 @@ const PROBE_TIMEOUT_MS = 15_000;
 /** One allocation may take at most this much: far above what a real track needs and far below a container bomb. */
 const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
 
+// STUB (red step): replaced below.
+export async function selectionHasNoExtraStreams(_options: ProbeOptions): Promise<boolean> {
+  return true;
+}
+
 export type ProbeFailureKind = "spawn" | "timeout" | "aborted" | "dump-too-large";
 
 /** The probe could not give a dump. `message` names the kind, never a path or ffmpeg's own text. */

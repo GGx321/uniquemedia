@@ -211,3 +211,59 @@ describe("judging the file the importer made", () => {
     expect(judgeStoredDump(stored.replace("  Duration: 00:00:00.60,", "  Duration: N/A,"))).toEqual({ ok: false, empty: false });
   });
 });
+
+// 3f.4 review H1. An Ogg stream's language comes from the FILE's own comment and ffmpeg prints it verbatim, so `LANGUAGE=x): Video: png (attached pic` turns
+// stream 0's line into `Stream #0:0(x): Video: png (attached pic): Audio: vorbis, ...`. The reading of such a dump must not call that a cover picture and
+// judge the stream behind it: the stream line has a strict grammar, and a line that breaks it is no stream at all (so the numbering has a gap and the file is refused).
+describe("the stream line's grammar (3f.4 review H1)", () => {
+  const FORGED = "  Stream #0:0(x): Video: png (attached pic): Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s";
+  const twoVorbis = dump("  Duration: 00:00:00.40, start: 0.000000, bitrate: 168 kb/s", FORGED, "  Stream #0:1: Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s");
+  const theora = dump("  Duration: 00:00:00.40, start: 0.000000, bitrate: 173 kb/s", FORGED, "  Stream #0:1: Video: theora, yuv444p, 64x64 [SAR 1:1 DAR 1:1], 5 tbr, 5 tbn");
+  const twoOpus = dump("  Duration: 00:00:00.41, start: 0.000000, bitrate: 82 kb/s", FORGED.replace("vorbis, 44100 Hz, mono, fltp, 48 kb/s", "opus, 48000 Hz, mono, fltp"), "  Stream #0:1: Audio: opus, 48000 Hz, mono, fltp");
+
+  test("the forged line is no stream: it is not read as a cover picture, and the stream behind it is not judged in its place", () => {
+    expect(streamLinesOf(twoVorbis).map((s) => s.index)).toEqual([1]);
+  });
+
+  test.each<[string, string, AudioDemuxer]>([
+    ["two Vorbis streams, the first disguised", twoVorbis, "ogg"],
+    ["a real Theora video behind a disguised Vorbis stream", theora, "ogg"],
+    ["two Opus streams, the first disguised", twoOpus, "ogg"],
+  ])("%s is refused as a format, not accepted as one audio stream plus a picture", (_label, text, demuxer) => {
+    expect(judgeDump(text, demuxer)).toEqual({ ok: false, reason: "format" });
+  });
+
+  test("a line with a second `: <Kind>:` in it is no stream, whatever the first says", () => {
+    expect(streamLinesOf(dump("  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 48 kb/s: Video: png"))).toEqual([]);
+    expect(streamLinesOf(dump("  Stream #0:0: Video: mjpeg (attached pic) comment: Audio: x"))).toEqual([]);
+  });
+
+  test("a language is a short word: letters, digits, `_` and `-`, never a bracket, a colon or a space", () => {
+    for (const language of ["und", "eng", "en", "x", "zh-Hans", "en_US"]) expect(streamLinesOf(dump(`  Stream #0:0(${language}): Audio: mp3, 44100 Hz`)).map((s) => s.index)).toEqual([0]);
+    for (const language of ["x): Video: png (attached pic", "a b", "a:b", "x)(y", ""]) expect(streamLinesOf(dump(`  Stream #0:0(${language}): Audio: mp3, 44100 Hz`))).toEqual([]);
+  });
+
+  test("a stream id and a language in either order are still a stream", () => {
+    expect(streamLinesOf(dump("  Stream #0:0[0x1](und): Audio: aac (LC)", "  Stream #0:1(eng)[0x2]: Audio: aac (LC)")).map((s) => s.index)).toEqual([0, 1]);
+  });
+
+  test("`(attached pic)` marks a cover picture only at the END of the line (a few parenthesised words may follow)", () => {
+    const real = (tail: string): string => dump("  Stream #0:0: Audio: mp3, 44100 Hz, stereo", `  Stream #0:1: Video: mjpeg, none, 90k tbr, 90k tbn${tail}`);
+    expect(judgeDump(real(" (attached pic)"), "mp3")).toMatchObject({ ok: true });
+    expect(judgeDump(real(" (attached pic) (comment)"), "mp3")).toMatchObject({ ok: true });
+    // In the middle of the line it is just text of a real video's description.
+    expect(judgeDump(real(" (attached pic), 25 fps"), "mp3")).toEqual({ ok: false, reason: "format" });
+    expect(judgeDump(real(" (attached pic) and more words"), "mp3")).toEqual({ ok: false, reason: "format" });
+  });
+
+  test("an attached picture counts only for a VIDEO line: a subtitle that says it is one is a subtitle", () => {
+    expect(judgeDump(dump("  Stream #0:0: Audio: mp3, 44100 Hz, stereo", "  Stream #0:1: Subtitle: mov_text (attached pic)"), "mp3")).toEqual({ ok: false, reason: "format" });
+    expect(judgeDump(dump("  Stream #0:0: Audio: mp3, 44100 Hz, stereo", "  Stream #0:1: Data: none (attached pic)"), "mp3")).toEqual({ ok: false, reason: "format" });
+  });
+
+  test("the lines real ffmpeg prints for the fixtures' own files all still read", () => {
+    expect(streamLinesOf(dump("  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 48 kb/s", "  Stream #0:1: Video: mjpeg, none(bt470bg/unknown/unknown), 90k tbr, 90k tbn (attached pic)")).map((s) => s.kind)).toEqual(["Audio", "Video"]);
+    expect(streamLinesOf(dump("  Stream #0:0[0x1](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 45 kb/s (default)")).map((s) => s.kind)).toEqual(["Audio"]);
+    expect(streamLinesOf(dump("  Stream #0:0: Video: theora, yuv444p, 64x64 [SAR 1:1 DAR 1:1], 5 tbr, 5 tbn")).map((s) => s.kind)).toEqual(["Video"]);
+  });
+});

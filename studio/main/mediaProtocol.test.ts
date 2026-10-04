@@ -327,6 +327,8 @@ describe("an own track plays in the editor's preview by its media id: audio with
   });
 
   test("a record that names another file than its own is a 404: the route opens only <id>.<ext>", async () => {
+    // The other name EXISTS and is a good M4A of the right size: only the route's refusal to open any name but `<id>.<ext>` can keep it from being served.
+    await writeFile(join(w.libraryRoot, "media", "media-000008.m4a"), M4A);
     await writeFile(join(w.libraryRoot, "media", `${TRACK_ID}.json`), record({ file: "media-000008.m4a" }));
     expect((await get(trackUrl())).status).toBe(404);
   });
