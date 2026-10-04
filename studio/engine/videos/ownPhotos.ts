@@ -37,24 +37,34 @@ export const ownPhotoCopyName = (mediaId: string): string => `own-${mediaId}.jpg
 const UNAVAILABLE = (): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: "an own photo of this montage is no longer available: it was removed or changed" });
 
 /**
+ * The bytes of a stored photo, read ONCE and checked against its record: a plain file (not a link), of the recorded size, hashing to the
+ * recorded sha256. A `RenderFailure` (no path in it) when it is gone or is not that file; the signal's reason when `signal` fires. The
+ * copy for a render and the face detector's input both come from here, so what is judged is what is rendered.
+ */
+export async function readVerifiedOwnPhoto(source: OwnPhotoSource, signal: AbortSignal): Promise<Uint8Array> {
+  signal.throwIfAborted();
+  let bytes: Uint8Array;
+  try {
+    const facts = await lstat(source.path);
+    if (facts.isSymbolicLink() || !facts.isFile() || facts.size !== source.bytes) throw UNAVAILABLE();
+    bytes = new Uint8Array(await readFile(source.path, { signal }));
+  } catch (error) {
+    if (signal.aborted) throw signal.reason;
+    if (error instanceof RenderFailure) throw error;
+    throw UNAVAILABLE();
+  }
+  if (bytes.length !== source.bytes || createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw UNAVAILABLE();
+  return bytes;
+}
+
+/**
  * Copies each photo into `dir` (the job folder, which exists) as `own-<mediaId>.jpg`, after checking its bytes. Throws a `RenderFailure`
  * when a file is not a plain file, is gone, or is not the size and hash its record gave; the signal's reason when `signal` fires.
  * Nothing is written for a photo that fails.
  */
 export async function copyOwnPhotos(dir: string, sources: readonly OwnPhotoSource[], signal: AbortSignal): Promise<void> {
   for (const source of sources) {
-    signal.throwIfAborted();
-    let bytes: Uint8Array;
-    try {
-      const facts = await lstat(source.path);
-      if (facts.isSymbolicLink() || !facts.isFile() || facts.size !== source.bytes) throw UNAVAILABLE();
-      bytes = new Uint8Array(await readFile(source.path, { signal }));
-    } catch (error) {
-      if (signal.aborted) throw signal.reason;
-      if (error instanceof RenderFailure) throw error;
-      throw UNAVAILABLE();
-    }
-    if (bytes.length !== source.bytes || createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw UNAVAILABLE();
+    const bytes = await readVerifiedOwnPhoto(source, signal);
     signal.throwIfAborted();
     try {
       // `wx`: the job folder is new, so a name already there is not ours and is never written through.

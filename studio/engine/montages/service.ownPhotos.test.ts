@@ -164,20 +164,20 @@ describe("montages.focus: an own photo", () => {
     expect(await r.service.focus({ avatarId: w.avatar.id, photo })).toEqual({ focus: null });
   });
 
-  test("a media the library does not hold is PHOTO_UNAVAILABLE with media-unavailable at the photo, and the detector is never asked", async () => {
+  test("a media the library does not hold is NOT_FOUND, and the detector is never asked", async () => {
     const w = world();
     const focus = scriptedFocus(() => ({ resolved: { x: 0.3, y: 0.3 } }));
     const r = montageRig(w, { focus, deps: { ownPhotos: holding().ownPhotos } });
 
-    expect(await failureOf(r.service.focus({ avatarId: w.avatar.id, photo }))).toMatchObject({ code: "PHOTO_UNAVAILABLE", issues: [{ code: "media-unavailable", path: ["photo"] }] });
+    expect(await failureOf(r.service.focus({ avatarId: w.avatar.id, photo }))).toMatchObject({ code: "NOT_FOUND" });
     expect(focus.ownStarted).toEqual([]);
   });
 
-  test("with no media store wired, an own photo is PHOTO_UNAVAILABLE", async () => {
+  test("with no media store wired, an own photo is NOT_FOUND", async () => {
     const w = world();
     const r = montageRig(w);
 
-    expect(await failureOf(r.service.focus({ avatarId: w.avatar.id, photo }))).toMatchObject({ code: "PHOTO_UNAVAILABLE", issues: [{ code: "media-unavailable", path: ["photo"] }] });
+    expect(await failureOf(r.service.focus({ avatarId: w.avatar.id, photo }))).toMatchObject({ code: "NOT_FOUND" });
   });
 
   test("an avatar that is not active is NOT_FOUND before the media is looked at", async () => {

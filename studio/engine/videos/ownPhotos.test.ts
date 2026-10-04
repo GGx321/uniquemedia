@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
 import { RenderFailure } from "../renderQueue/queue";
-import { copyOwnPhotos, ownPhotoCopyName, type OwnPhotoSource } from "./ownPhotos";
+import { copyOwnPhotos, ownPhotoCopyName, readVerifiedOwnPhoto, type OwnPhotoSource } from "./ownPhotos";
 useNativeGlobals();
 
 // The render reads a VERIFIED COPY of each own photo (3f.2), as it does for a built-in sticker (sha-checked, copied with `wx` into the job
@@ -132,5 +132,29 @@ describe("copyOwnPhotos", () => {
     controller.abort(new Error("stopped"));
     await expect(copyOwnPhotos(jobDir(), [a, b], controller.signal)).rejects.toThrow("stopped");
     expect(await readdir(jobDir())).toEqual([]);
+  });
+});
+
+describe("readVerifiedOwnPhoto (what the focus is judged from)", () => {
+  test("answers the bytes of a file that is the size and hash its record gave", async () => {
+    const a = await stored("media-0000001", Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3]));
+    expect(await readVerifiedOwnPhoto(a, new AbortController().signal)).toEqual(Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3]));
+  });
+
+  test("refuses a file whose bytes changed, a file that is gone and a link", async () => {
+    const a = await stored("media-0000001", Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3]));
+    await writeFile(a.path, Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 4]));
+    await failureOf(readVerifiedOwnPhoto(a, new AbortController().signal));
+    await failureOf(readVerifiedOwnPhoto({ ...a, path: join(libraryDir(), "nothing.jpg") }, new AbortController().signal));
+    const link = join(libraryDir(), "link.jpg");
+    await symlink(a.path, link);
+    await failureOf(readVerifiedOwnPhoto({ ...a, path: link }, new AbortController().signal));
+  });
+
+  test("a cancel rejects with the signal's reason", async () => {
+    const a = await stored("media-0000001", Uint8Array.from([0xff, 0xd8, 0xff, 1]));
+    const controller = new AbortController();
+    controller.abort(new Error("stopped"));
+    await expect(readVerifiedOwnPhoto(a, controller.signal)).rejects.toThrow("stopped");
   });
 });

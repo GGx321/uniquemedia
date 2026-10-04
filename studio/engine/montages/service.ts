@@ -371,12 +371,12 @@ export class MontageService {
 
   /**
    * The focus of an own photo the owner has just placed (3f.2): the media must be one the library holds as a photo (else
-   * PHOTO_UNAVAILABLE with `media-unavailable` at the photo), then the face detector judges the STORED photo, under the same budget as a
+   * NOT_FOUND: PHOTO_UNAVAILABLE lists scene photos only), then the face detector judges the STORED photo, under the same budget as a
    * scene photo. `null` when it was not judged (the draft stores null; a render tries again).
    */
   async #focusOwn(library: Library, mediaId: string, entered: number): Promise<CommandResult<"montages.focus">> {
     if (!(await this.#heldMedia([mediaId])).has(mediaId)) {
-      throw new EngineFailure({ code: "PHOTO_UNAVAILABLE", issues: [{ code: "media-unavailable", path: ["photo"] }] });
+      throw new EngineFailure({ code: "NOT_FOUND", detail: `no own photo ${mediaId} in the open library` });
     }
     const resolver = this.#deps.focus(library);
     const stop = new AbortController();
