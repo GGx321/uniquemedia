@@ -279,6 +279,9 @@ describe("the filter graph", () => {
       "format=gbrpf32le",
       "zscale=p=bt709",
       "tonemap=tonemap=hable:desat=0",
+      // Light outside BT.709's gamut is NEGATIVE linear light after the primaries conversion; the gamma step must never see it (below).
+      "zscale=t=linear:p=bt709:m=bt709:r=pc",
+      "format=gbrp16le",
       "zscale=t=bt709:m=bt709:r=tv",
       "format=yuv420p",
     ];
@@ -288,6 +291,14 @@ describe("the filter graph", () => {
       expect(found).toBeGreaterThan(at);
       at = found;
     }
+  });
+
+  test("the HDR chain clamps linear light to 16-bit integers (so no negative value reaches the gamma step) between the tone map and the gamma", async () => {
+    // A colour outside BT.709's gamut is negative in one channel after the primaries conversion. zimg's gamma step on a negative float is not
+    // defined, and ONE Windows runner's CPU made garbage of it (a chart patch 47 codes off) where others did not. An integer in between clips at zero.
+    const graph = await graphOf(hlg);
+    expect(graph.indexOf("format=gbrp16le")).toBeGreaterThan(graph.indexOf("tonemap="));
+    expect(graph.indexOf("format=gbrp16le")).toBeLessThan(graph.lastIndexOf("zscale=t=bt709"));
   });
 
   test("PQ is tagged as PQ", async () => {

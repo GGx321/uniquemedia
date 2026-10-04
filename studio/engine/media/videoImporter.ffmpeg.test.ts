@@ -64,7 +64,9 @@ describe("HEVC HLG, BT.2020, 10-bit: what an iPhone records", () => {
     const { path, info } = await importedOk("hevc-hlg-chart.mp4");
     const measured = chartMeans(decodeFirstFrame(path), info.video.width, info.video.height);
     const worst = worstDistance(measured, hlgCodes);
-    expect(worst.distance, `patch ${worst.patch}, plane ${worst.plane}`).toBeLessThanOrEqual(TOLERANCE);
+    // The whole table is in the message: a failure on another ffmpeg build or CPU says which patches moved, and by how much.
+    const table = measured.map((means, i) => `${i}: ${means.map((v, k) => (v - (hlgCodes[i]?.[k] ?? 0)).toFixed(1)).join(" ")}`).join(" | ");
+    expect(worst.distance, `patch ${worst.patch}, plane ${worst.plane}; deltas ${table}`).toBeLessThanOrEqual(TOLERANCE);
   });
 
   test("keeps every grey grey: no colour cast (Cb and Cr within a code of 128)", async () => {

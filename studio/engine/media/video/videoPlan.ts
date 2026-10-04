@@ -164,7 +164,10 @@ export function videoFilterGraph(plan: VideoPlan): string {
     `setparams=colorspace=${nameOf(MATRICES, colour.matrix)}:color_primaries=${nameOf(PRIMARIES, colour.primaries)}:color_trc=${nameOf(TRANSFERS, colour.transfer)}:range=${colour.fullRange ? "pc" : "tv"}`,
   );
   if (plan.hdrToSdr) {
-    chain.push("zscale=t=linear:npl=100", "format=gbrpf32le", "zscale=p=bt709", "tonemap=tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv");
+    // `zscale=t=linear ... format=gbrp16le` clips the light to 0..1 as 16-bit integers BEFORE the gamma step: a colour outside BT.709's gamut is
+    // negative in one channel after the primaries conversion, and the gamma of a negative float is undefined (on one CI runner's CPU it made
+    // garbage, 47 codes off, where the others clipped at zero). Same result as the clip where it worked, and the same on every CPU.
+    chain.push("zscale=t=linear:npl=100", "format=gbrpf32le", "zscale=p=bt709", "tonemap=tonemap=hable:desat=0", "zscale=t=linear:p=bt709:m=bt709:r=pc", "format=gbrp16le", "zscale=t=bt709:m=bt709:r=tv");
   } else if (colour.primaries !== 1 || colour.transfer !== 1 || colour.matrix !== 1 || colour.fullRange) {
     chain.push("zscale=p=bt709:t=bt709:m=bt709:r=tv");
   }
