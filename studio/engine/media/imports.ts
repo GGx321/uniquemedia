@@ -30,6 +30,32 @@ export interface PrepareReporter {
   report(done: number): void;
 }
 
+const NO_PREPARE: PrepareReporter = { begin: () => undefined, report: () => undefined };
+
+/**
+ * A reporter an importer may call without a thought (3f.6): a throw of the job's reporter is absorbed here, once, for every importer (a reporter is an observer: its
+ * failure is never the import's, and in an ffmpeg's `onFrames` it would kill the encode), and no reporter at all is one that does nothing.
+ */
+export function observer(prepare: PrepareReporter | undefined): PrepareReporter {
+  if (prepare === undefined) return NO_PREPARE;
+  return {
+    begin: (total, judged) => {
+      try {
+        prepare.begin(total, judged);
+      } catch {
+        // Ignored: see above.
+      }
+    },
+    report: (done) => {
+      try {
+        prepare.report(done);
+      } catch {
+        // Ignored: see above.
+      }
+    },
+  };
+}
+
 export interface MediaImportRequest {
   readonly staged: StagedMedia;
   /** The picked file's base name, for display; the library stores it as the record's name. */

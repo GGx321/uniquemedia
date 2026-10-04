@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import { fromFpsOf, MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, MIN_CLIP_MS } from "../../shared/engine";
-import type { MediaImporter } from "./imports";
+import { observer, type MediaImporter } from "./imports";
 import { openFileSource } from "./video/fileSource";
 import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
 import { probeVideo, type VideoInfo } from "./video/videoProbe";
@@ -105,21 +105,12 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
       return { ok: false, reason };
     };
     // The job's progress (3f.6): the output's frames as ffmpeg writes them, against the frames the walker planned (the middle of its range), and what the probe judged.
-    // A reporter is an observer: a throw of its is not the encode's failure.
-    try {
-      prepare?.begin(Math.max(1, Math.round((planned.min + planned.max) / 2)), { hdrToSdr: plan.hdrToSdr, fromFps: fromFpsOf(plan.info.video.sourceFps) });
-    } catch {
-      // Ignored: see above.
-    }
+    // A reporter is an observer (`observer`): a throw of its is not the encode's failure, and in `onFrames` it would kill the encode.
+    const progress = observer(prepare);
+    progress.begin(Math.max(1, Math.round((planned.min + planned.max) / 2)), { hdrToSdr: plan.hdrToSdr, fromFps: fromFpsOf(plan.info.video.sourceFps) });
     try {
       await run({
-        onFrames: (frames) => {
-          try {
-            prepare?.report(frames);
-          } catch {
-            // Ignored: a throw here would make `runFfmpegArgv` kill the encode.
-          }
-        },
+        onFrames: (frames) => progress.report(frames),
         argv: videoArgs(staged.path, plan, work.path, maxStoredBytes, options.stopSlackBytes),
         output: work.path,
         signal,

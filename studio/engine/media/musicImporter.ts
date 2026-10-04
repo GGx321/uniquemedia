@@ -5,7 +5,7 @@ import { MEDIA_BYTE_CAPS, MIN_TOTAL_MS, type MediaUnsupportedReason } from "../.
 import { FfmpegTimeoutError, runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import { decodeAudio, DecodeError } from "../music/decodeCheck";
 import { demuxerOf, judgeDump, judgeStoredDump, ProbeError, probeDump, selectionHasNoExtraStreams, type AudioDemuxer } from "./audioProbe";
-import type { MediaImporter, MediaImportRequest } from "./imports";
+import { observer, type MediaImporter, type MediaImportRequest } from "./imports";
 
 // The own-music importer (Stage 3, 3f.4). One staged file in, one M4A out: AAC-LC, 48 kHz, stereo, 256 kbit/s, with no tag, no cover art and no
 // other stream, at most ten minutes long.
@@ -206,13 +206,9 @@ export function createMusicImporter(deps: MusicImporterDeps = {}): MediaImporter
     // What ffmpeg SAID, not only how it ended: an Ogg chain whose later link adds a stream makes the demux say so and go on with the first (3f.4 review, round 2).
     const chain = chainWatch();
     // The job's progress (3f.6): the output's time against the length the probe verified, which is also the most the encode is cut at; a container that states no length
-    // is a stage of one unit (the bar waits for the end). A reporter is an observer: a throw of its is not the encode's failure.
-    const { prepare } = request;
-    try {
-      prepare?.begin(verdict.headerMs === null ? 1 : Math.max(1, Math.min(Math.round(verdict.headerMs), maxMs + CUT_MARGIN_MS)));
-    } catch {
-      // Ignored: see above.
-    }
+    // is a stage of one unit (the bar waits for the end). A reporter is an observer (`observer`): a throw of its is not the encode's failure.
+    const progress = observer(request.prepare);
+    progress.begin(verdict.headerMs === null ? 1 : Math.max(1, Math.min(Math.round(verdict.headerMs), maxMs + CUT_MARGIN_MS)));
     try {
       await runFfmpegArgv({
         argv,
@@ -220,13 +216,7 @@ export function createMusicImporter(deps: MusicImporterDeps = {}): MediaImporter
         signal,
         timeoutMs: deps.encodeTimeoutMs ?? encodeTimeoutFor(verdict.headerMs),
         onStderr: chain.see,
-        onOutTimeMs: (ms) => {
-          try {
-            prepare?.report(ms);
-          } catch {
-            // Ignored: a throw here would make `runFfmpegArgv` kill the encode.
-          }
-        },
+        onOutTimeMs: (ms) => progress.report(ms),
         ...spawnerOption,
       });
     } catch (error) {
