@@ -8,7 +8,8 @@ import { FIXTURES, type VideoFixtureName } from "./video/testing/fixtures/index"
 import { withEditList, withHiddenVideoHandler } from "./video/testing/mp4Patch";
 import { openFileSource } from "./video/fileSource";
 import { bytesSource, probeVideo, type VideoInfo } from "./video/videoProbe";
-import { createVideoImporter } from "./videoImporter";
+// The committed clips are a few frames long, shorter than the shortest clip (3f.6): these tests are about what the importer does with the file, so they take any length.
+import { createVideoImporterForShortClips as createVideoImporter } from "./video/testing/importKit";
 useNativeGlobals();
 setDefaultTimeout(60_000);
 

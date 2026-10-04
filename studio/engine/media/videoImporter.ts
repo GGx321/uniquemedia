@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
-import { MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS } from "../../shared/engine";
+import { fromFpsOf, MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, MIN_CLIP_MS } from "../../shared/engine";
 import type { MediaImporter } from "./imports";
 import { openFileSource } from "./video/fileSource";
 import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
@@ -33,6 +33,12 @@ export interface VideoImporterOptions {
   readonly run?: typeof runFfmpegArgv;
   /** Overrides the plan's wall-clock limit (a test). */
   readonly timeoutMs?: number;
+  /**
+   * The shortest clip taken, in ms; `MIN_CLIP_MS` (0.5 s) by default. A clip shorter than this can never be put in a montage, so it is refused `too-short`: before the
+   * encode when the walker's own count of the samples (and the edit) says it cannot reach it, and after it from the frames the encode MADE. A test knob: most committed
+   * fixtures are a few frames, and 0 takes any length.
+   */
+  readonly minDurationMs?: number;
   /** The largest mezzanine stored; `MAX_STORED_VIDEO_BYTES` by default (a test lowers it). */
   readonly maxStoredBytes?: number;
   /** How far above the cap the encode's `-fs` stops it; `STORED_STOP_SLACK_BYTES` (64 MiB) by default (a test makes it small so that a real encode reaches it quickly). */
@@ -68,7 +74,8 @@ function isPlannedOutput(info: VideoInfo, plan: VideoPlan): boolean {
 
 export function createVideoImporter(options: VideoImporterOptions = {}): MediaImporter {
   const run = options.run ?? runFfmpegArgv;
-  return async ({ staged, signal, workFile }) => {
+  const minFrames = Math.ceil(((options.minDurationMs ?? MIN_CLIP_MS) * VIDEO_LIMITS.fps) / 1000);
+  return async ({ staged, signal, workFile, prepare }) => {
     if (signal.aborted) return { ok: false, reason: "cancelled" };
     // The container is the BYTES' (the staging sniffed it); only MP4 and MOV walk here. A WebM never gets this far: its bytes are no MP4.
     if (staged.format !== "mp4" && staged.format !== "mov") return { ok: false, reason: "format" };
@@ -85,16 +92,34 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
     }
     if (!judged.ok) return { ok: false, reason: judged.reason };
     const { plan } = judged;
+    // Too short for any montage, judged from the walker's count of the SAMPLES and the edit (`expectedFrames`), never a header's claimed length: even with its two frames of
+    // slack the clip cannot reach the shortest clip. Nothing is encoded, announced or made. The one that is close is the encode's to decide, below.
+    const planned = expectedFrames(plan.info);
+    if (planned.max < minFrames) return { ok: false, reason: "too-short" };
     const maxStoredBytes = options.maxStoredBytes ?? MAX_STORED_VIDEO_BYTES;
     if (signal.aborted) return { ok: false, reason: "cancelled" };
 
     const work = await workFile();
-    const fail = async (reason: "failed" | "cancelled" | "too-large"): Promise<{ ok: false; reason: "failed" | "cancelled" | "too-large" }> => {
+    const fail = async (reason: "failed" | "cancelled" | "too-large" | "too-short"): Promise<{ ok: false; reason: "failed" | "cancelled" | "too-large" | "too-short" }> => {
       await work.release();
       return { ok: false, reason };
     };
+    // The job's progress (3f.6): the output's frames as ffmpeg writes them, against the frames the walker planned (the middle of its range), and what the probe judged.
+    // A reporter is an observer: a throw of its is not the encode's failure.
+    try {
+      prepare?.begin(Math.max(1, Math.round((planned.min + planned.max) / 2)), { hdrToSdr: plan.hdrToSdr, fromFps: fromFpsOf(plan.info.video.sourceFps) });
+    } catch {
+      // Ignored: see above.
+    }
     try {
       await run({
+        onFrames: (frames) => {
+          try {
+            prepare?.report(frames);
+          } catch {
+            // Ignored: a throw here would make `runFfmpegArgv` kill the encode.
+          }
+        },
         argv: videoArgs(staged.path, plan, work.path, maxStoredBytes, options.stopSlackBytes),
         output: work.path,
         signal,
@@ -127,6 +152,9 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
       await written.close();
     }
     if (made === undefined || !isPlannedOutput(made, plan)) return fail("failed");
+    // The frames the encode MADE are the clip's length (30 fps, constant): under the shortest clip it is of no use to a montage. The plan's range let it through because it
+    // is within two frames of the bound.
+    if (made.video.samples < minFrames) return fail("too-short");
     if (!(writtenBytes > 0)) return fail("failed");
 
     return {
