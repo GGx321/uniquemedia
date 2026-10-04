@@ -224,6 +224,24 @@ export class MockOwnMedia {
     return this.#records.some((r) => r.mediaId === mediaId && r.kind === "photo");
   }
 
+  /** Whether the library holds this media as a STICKER: what a render's admission and a draft's referential check ask for an own sticker (3f.5). */
+  holdsSticker(mediaId: string): boolean {
+    return this.#records.some((r) => r.mediaId === mediaId && r.kind === "sticker");
+  }
+
+  /** The stored sticker's record, or undefined for an id that is not an own sticker here (what `media.stickerBytes` resolves through, 3f.5). */
+  stickerOf(mediaId: string): MediaSummary | undefined {
+    return this.#records.find((r) => r.mediaId === mediaId && r.kind === "sticker");
+  }
+
+  /**
+   * Seeds a stored record with no job and no event: the dev build's own sticker (3f.5), there from the start as one stored on disk would be.
+   * Its ids are the mock's own and its time is the one the mock keeps, so the ids and times handed out later do not move.
+   */
+  seed(summary: MediaSummary): void {
+    this.#records.push(summary);
+  }
+
   /** Whether the library holds this media, of any kind (`media.delete` answers NOT_FOUND before it asks the reserved set). */
   has(mediaId: string): boolean {
     return this.#records.some((r) => r.mediaId === mediaId);

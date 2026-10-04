@@ -1,9 +1,10 @@
 import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
 import { handleMediaPickCommand, isMediaPickCommand, type MediaImportFlowDeps } from "../../../main/mediaImportFlow";
 import { SettingsStore } from "../../../main/settingsStore";
+import { createApngEncoder } from "../../../shared/stickers/apngWriter";
 import { EngineReply } from "../../control";
 import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg";
 import { MockEngine, type MockExportPick, type MockMediaPick } from "../../../renderer/engine/mockEngine";
@@ -107,7 +108,7 @@ export type ExportDialog = "cancel" | "fresh" | "first" | "moved" | "missing" | 
  * The owner's pick in main's own-media dialog (3f.1): nothing (`cancel`), or seven files at once, each a different way for the boundary to
  * turn it away (`mixed`, see MIXED_MEDIA). The real rig makes the files on disk; the mock is told the verdict for each name, and holds no path.
  */
-export type MediaDialog = "cancel" | "mixed" | "good" | "tiny";
+export type MediaDialog = "cancel" | "mixed" | "good" | "tiny" | "sticker" | "stillSticker";
 
 /** The one good photo of the `good` pick (3f.1b): accepted by the rigs' importer, and `PARITY_PHOTO_BYTES` long. */
 const GOOD_PHOTO = "lake.jpg";
@@ -117,6 +118,33 @@ export const PARITY_PHOTO_FACTS = { width: 100, height: 200, durationMs: null, s
 
 /** The one picture of the `tiny` pick (3f.2): the boundary takes it (its bytes are a photo's) and the photo importer refuses it inside the job. */
 const TINY_PHOTO = "dot.jpg";
+
+/**
+ * The own sticker of the `sticker` pick (3f.5): a GIF the boundary takes, which the rigs' sticker importer stores as a real two-frame APNG (12 x 8, 3
+ * slots a frame, a loop of 6), because a render reads the stored file back and checks it against its record. The `stillSticker` pick is a PNG the
+ * boundary takes (a PNG may be a sticker) and the importer turns away inside the job as `not-animated`.
+ */
+const GOOD_STICKER = "party.gif";
+const STILL_STICKER = "still.png";
+export const PARITY_STICKER_BYTES = 120;
+export const PARITY_STICKER_FACTS = { width: 12, height: 8, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: 6, delayFrames: [3, 3] } as const;
+
+/** The APNG the rigs' sticker importer stores: deterministic, valid for the strict reader, and what the record says it is. */
+function parityStickerApng(): Uint8Array {
+  const encoder = createApngEncoder({ width: PARITY_STICKER_FACTS.width, height: PARITY_STICKER_FACTS.height, frameCount: 2 });
+  encoder.add(new Uint8Array(12 * 8 * 4).fill(60), 3);
+  encoder.add(new Uint8Array(12 * 8 * 4).fill(200), 3);
+  return encoder.finish();
+}
+
+/** Writes the `sticker` or `stillSticker` pick's file into `folder` and returns its path. */
+async function writeStickerMedia(folder: string, still: boolean): Promise<string[]> {
+  await mkdir(folder, { recursive: true });
+  const name = still ? STILL_STICKER : GOOD_STICKER;
+  const head = still ? Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) : Buffer.from("GIF89a");
+  await writeFile(join(folder, name), Buffer.concat([head, Buffer.alloc(PARITY_STICKER_BYTES - head.length, 5)]));
+  return [join(folder, name)];
+}
 
 /** Writes the `tiny` pick's file into `folder` and returns its path. */
 async function writeTinyMedia(folder: string): Promise<string[]> {
@@ -298,7 +326,11 @@ export function mockRig(options: RigOptions = {}): ParityRig {
                 [options.ownMedia === true ? { name: GOOD_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, facts: PARITY_PHOTO_FACTS } } : { name: GOOD_PHOTO, reason: "not-yet-supported" }]
               : answer === "tiny"
                 ? [options.ownMedia === true ? { name: TINY_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, failWith: "too-small" } } : { name: TINY_PHOTO, reason: "not-yet-supported" }]
-                : MIXED_MEDIA,
+                : answer === "sticker"
+                  ? [options.ownMedia === true ? { name: GOOD_STICKER, accept: { kind: "sticker", bytes: PARITY_STICKER_BYTES, facts: { ...PARITY_STICKER_FACTS, delayFrames: [...PARITY_STICKER_FACTS.delayFrames] } } } : { name: GOOD_STICKER, reason: "not-yet-supported" }]
+                  : answer === "stillSticker"
+                    ? [options.ownMedia === true ? { name: STILL_STICKER, accept: { kind: "sticker", bytes: PARITY_STICKER_BYTES, failWith: "not-animated" } } : { name: STILL_STICKER, reason: "not-yet-supported" }]
+                    : MIXED_MEDIA,
         ),
       holdImports: (held) => engine.holdImports(held),
       // The mock answers main's own key command itself, as the dev build does.
@@ -482,7 +514,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       failArmed = null;
       throw new FfmpegError("ffmpeg failed", 1, "boom");
     }
-    opts.onFrames?.(1_000_000);
+    // A layer file (3f.5: the first parity render with a layer) is checked against the timeline's frames; this ffmpeg is not there to count them, so it
+    // reports none for it, which the runner reads as a scripted ffmpeg that said nothing. Every other call reports far more than it has, as before.
+    if (!basename(opts.output).startsWith("layers-")) opts.onFrames?.(1_000_000);
     await atGate(2, opts.signal);
     await writingRun(opts);
   };
@@ -537,13 +571,20 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   };
   // The importer takes every photo, except the 1 px picture of the `tiny` pick (3f.2: the real importer refuses it as `too-small`, inside its job).
   const parityPhotoImporter: MediaImporter = async ({ name }) => (name === TINY_PHOTO ? { ok: false, reason: "too-small" } : { ok: true, facts: PARITY_PHOTO_FACTS });
+  // The sticker importer (3f.5) stores a real APNG, which the render reads back; the still file of the `stillSticker` pick is refused inside the job.
+  const parityStickerImporter: MediaImporter = async ({ name, workFile }) => {
+    if (name === STILL_STICKER) return { ok: false, reason: "not-animated" };
+    const file = await workFile();
+    await writeFile(file.path, parityStickerApng(), { flag: "wx" });
+    return { ok: true, facts: { ...PARITY_STICKER_FACTS, delayFrames: [...PARITY_STICKER_FACTS.delayFrames] }, output: { file, format: "apng" } };
+  };
   const { engine, events, posted } = await startEngine(dir, {
     init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(), musicDir },
     deps: {
       musicSink: store,
       musicTracks: store,
       text: { gate: textLane },
-      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter } } : {}),
+      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, sticker: parityStickerImporter } } : {}),
       mediaStaging: {
         fs: {
           openOut: async (path) => {
@@ -746,7 +787,16 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       },
       mediaDialog: async (answer) => {
         const folder = join(dir, `picked-media-${++dialogs}`);
-        nextMedia = answer === "cancel" ? null : answer === "good" ? await writeGoodMedia(folder) : answer === "tiny" ? await writeTinyMedia(folder) : await writeMixedMedia(folder);
+        nextMedia =
+          answer === "cancel"
+            ? null
+            : answer === "good"
+              ? await writeGoodMedia(folder)
+              : answer === "tiny"
+                ? await writeTinyMedia(folder)
+                : answer === "sticker" || answer === "stillSticker"
+                  ? await writeStickerMedia(folder, answer === "stillSticker")
+                  : await writeMixedMedia(folder);
       },
       holdImports,
       // Main's half of «Сохранить»: the key is stored, then handed to the engine as the owner's (a key line in the quota log).

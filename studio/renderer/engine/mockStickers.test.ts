@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { inspectApng } from "../../shared/stickers/apng";
 import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
-import { mockStickerBytes, mockStickerUrl } from "./mockStickers";
+import { mockOwnStickerBytes, mockStickerBytes, mockStickerUrl } from "./mockStickers";
 import { MockEngine, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 
@@ -48,5 +48,35 @@ describe("the mock's stickers.bytes", () => {
   test("an id the set does not hold is NOT_FOUND", async () => {
     const reply = await client().request("stickers.bytes", { stickerId: "sticker-nowhere" });
     expect(reply.ok ? "ok" : reply.error.code).toBe("NOT_FOUND");
+  });
+});
+
+// 3f.5: the stand-in of an OWN sticker is an APNG on its record's canvas, loop and delays, so the preview decodes and loops it as it would the stored one.
+describe("the mock's own sticker stand-in", () => {
+  const record = (over: Partial<Parameters<typeof mockOwnStickerBytes>[0]> = {}) => ({ mediaId: "media-00000001", width: 12, height: 8, loopFrames: 6, delayFrames: [3, 3], ...over });
+
+  test("is an APNG the strict validator takes, with the record's canvas, loop and per-frame delays", () => {
+    const inspected = inspectApng(mockOwnStickerBytes(record()));
+    if (!inspected.ok) throw new Error(`${inspected.code}: ${inspected.detail}`);
+    expect([inspected.info.width, inspected.info.height, inspected.info.loopFrames, inspected.info.frames.map((f) => f.delayFrames)]).toEqual([12, 8, 6, [3, 3]]);
+  });
+
+  test("a canvas that is not square is drawn on that canvas", () => {
+    const inspected = inspectApng(mockOwnStickerBytes(record({ width: 30, height: 10, delayFrames: [1, 1, 1], loopFrames: 3 })));
+    if (!inspected.ok) throw new Error(inspected.code);
+    expect([inspected.info.width, inspected.info.height]).toEqual([30, 10]);
+  });
+
+  test("a record with more frames than the stand-in can hold keeps its loop, with fewer and longer frames", () => {
+    const delays = Array.from({ length: 100 }, () => 3);
+    const inspected = inspectApng(mockOwnStickerBytes(record({ width: 720, height: 720, loopFrames: 300, delayFrames: delays })));
+    if (!inspected.ok) throw new Error(`${inspected.code}: ${inspected.detail}`);
+    expect(inspected.info.loopFrames).toBe(300);
+    expect(inspected.info.frameCount).toBeLessThan(100);
+    expect(inspected.info.frames.every((f) => f.delayFrames >= 1)).toBe(true);
+  });
+
+  test("the same bytes every time for the same record", () => {
+    expect(mockOwnStickerBytes(record())).toEqual(mockOwnStickerBytes(record()));
   });
 });
