@@ -18,6 +18,8 @@ export const FIXTURES = {
   "prores-hq-chart.mov": fixture("prores-hq-chart.mov", 2714, "6e79b610a0af0df6516cd28e611b5fdaeeb83396c66cdd63fbec716b6b3c0012"),
   "hevc-hlg-rotated-vfr.mov": fixture("hevc-hlg-rotated-vfr.mov", 3999, "79b9bd061fa4d881024852192a8740767db16b02f15b98ad05327928178bb87d"),
   "hevc-hlg-flat-4k.mp4": fixture("hevc-hlg-flat-4k.mp4", 5983, "cca26cc6ff4d78ce63b3d7a83a11f03abcac1de721f38fe5742e3812d78e7cdf"),
+  "mpeg4-then-h264-two-video-tracks.mp4": fixture("mpeg4-then-h264-two-video-tracks.mp4", 3924, "9a281d28d592ef285bc019cf02bf4132732286b064cc2c9d1e04116c9a18653f"),
+  "h264-sps-4224x2176-claims-1080p.mp4": fixture("h264-sps-4224x2176-claims-1080p.mp4", 28457, "26af94abd05c71677b38862f851e75159b84fd581cc1b007ad3e38873ea10f65"),
 } as const satisfies Record<string, VideoFixture>;
 
 export type VideoFixtureName = keyof typeof FIXTURES;

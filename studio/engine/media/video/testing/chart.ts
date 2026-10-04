@@ -130,7 +130,7 @@ export function hable(x: number): number {
 
 /**
  * What the importer's HDR chain (`zscale=t=linear:npl=100`, BT.709 primaries, `tonemap=hable:desat=0`, BT.709 matrix and range) must make of
- * an HLG R'G'B' signal (BT.2020), as limited-range 8-bit BT.709 Y'CbCr: written from the standards and the filters' constants, not from
+ * an HLG R'G'B' signal (BT.2020), as limited-range 8-bit BT.709 Y'CbCr: written from the standards (BT.2100, BT.2087, Hable, BT.1886), with three constants that were FITTED to
  * ffmpeg's output. The constants that are facts of the chain rather than of the standards were found by measuring it stage by stage on
  * macOS ffmpeg 6.0 (see the fixtures' README):
  * - zimg lights HLG per channel: display = 10 x E^1.2 (a nominal 1000 nit peak over the 100 nit reference, the BT.2100 system gamma);

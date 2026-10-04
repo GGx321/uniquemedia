@@ -21,7 +21,10 @@ setDefaultTimeout(60_000);
 // 3f.3a on REAL ffmpeg, in the default suite: these are the only proof that the mezzanine is what the plan says, that the rotation goes the
 // right way, that a variable-rate clip becomes a constant one, and that an HLG clip keeps its colours (invariant 36). The fixtures are a few
 // frames of a 24-patch chart (`video/testing/fixtures/README.md`); the colour tests read the decoded planes with no conversion but the pixel
-// format and compare each patch with a model written from the standards, not from ffmpeg's output.
+// format and compare each patch with a model (`hlgToSdrBt709`). The model's formulas are the standards' (BT.2100, BT.2087, Hable, BT.1886), but three of
+// its constants (zimg's per-channel 10 x E^1.2, tonemap's default peak of 10, the plain 1/2.4 output power) were FITTED to ffmpeg 6.0's own output,
+// stage by stage: so the test proves that the chain does what a model with those constants says, on every patch, and that the hue and the
+// neutrals are right; it is not a proof from first principles that the constants themselves are the right look.
 
 const tmp = tempDirFor({ beforeEach, afterEach }, "studio-video-import-");
 
@@ -57,7 +60,7 @@ const sdrCodes = CHART_PATCHES.map((rgb) => rgbToYcbcr(rgb, "bt709", 8));
 const hlgCodes = CHART_PATCHES.map((rgb) => hlgToSdrBt709(rgb));
 
 describe("HEVC HLG, BT.2020, 10-bit: what an iPhone records", () => {
-  test("becomes SDR whose every chart patch is within invariant 36's tolerance of an independent model of the chain", async () => {
+  test("becomes SDR whose every chart patch is within invariant 36's tolerance of a model of the chain (constants fitted to ffmpeg)", async () => {
     const { path, info } = await importedOk("hevc-hlg-chart.mp4");
     const measured = chartMeans(decodeFirstFrame(path), info.video.width, info.video.height);
     const worst = worstDistance(measured, hlgCodes);

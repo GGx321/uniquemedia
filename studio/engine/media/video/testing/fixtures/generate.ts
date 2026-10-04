@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ffmpegPath } from "../../../../../node/ffmpegBinary";
 import { CHART, chartFrame } from "../chart";
-import { withRotation } from "../mp4Patch";
+import { withClaimedSize, withRotation } from "../mp4Patch";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const work = mkdtempSync(join(tmpdir(), "studio-video-fixtures-"));
@@ -115,6 +115,17 @@ try {
   // 6. A flat 4096 x 2160 HEVC HLG picture (two frames, a few KB): the largest size the importer takes, to prove a real decode fits the allocation cap.
   ffmpeg(["-f", "lavfi", "-i", "color=c=0x808080:s=4096x2160:r=30:d=0.0667", "-vf", "format=yuv420p10le", ...x265().slice(0, -1), "crf=24:pools=1:frame-threads=1:log-level=error", "-pix_fmt", "yuv420p10le", ...hlgTags, "-an", join(work, "4k.mp4")]);
   emit("hevc-hlg-flat-4k.mp4", join(work, "4k.mp4"));
+
+  // 7. Two video streams: MPEG-4 Part 2 (a codec the importer does not take) first, H.264 second. The review's track-bypass tests hide the first
+  // from the walker by patching its `hdlr` or moving it out of `moov`; ffmpeg still sees it. moov after mdat, so tracks can be moved.
+  ffmpeg(["-f", "lavfi", "-i", "color=red:s=320x240:r=30:d=0.2", "-f", "lavfi", "-i", "color=blue:s=64x64:r=30:d=0.2", "-map", "0", "-map", "1", "-c:v:0", "mpeg4", "-c:v:1", "libx264", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", "-fflags", "+bitexact", join(work, "two.mp4")]);
+  emit("mpeg4-then-h264-two-video-tracks.mp4", join(work, "two.mp4"));
+
+  // 8. H.264 whose bitstream is 4224 x 2176 (9.2 MP, past 4K) while `tkhd` and the sample entry claim 1920 x 1080: the walker is lied to, and
+  // `-max_pixels` has to be what stops the decode.
+  ffmpeg(["-f", "lavfi", "-i", "color=gray:s=4224x2176:r=30:d=0.1", "-c:v", "libx264", "-preset", "ultrafast", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", "-fflags", "+bitexact", join(work, "big.mp4")]);
+  writeFileSync(join(work, "big-claims-1080p.mp4"), withClaimedSize(readFileSync(join(work, "big.mp4")), 1920, 1080));
+  emit("h264-sps-4224x2176-claims-1080p.mp4", join(work, "big-claims-1080p.mp4"));
 
   console.log(JSON.stringify(out, null, 2));
 } finally {

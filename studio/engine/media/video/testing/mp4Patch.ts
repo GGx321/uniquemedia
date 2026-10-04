@@ -104,6 +104,49 @@ export function withCoverArt(source: Uint8Array, picture: Uint8Array): Uint8Arra
   return out;
 }
 
+/** The first track of the file (whatever its kind) and the moov it is in; the file must have its moov after its mdat. */
+function firstTrak(source: Uint8Array): { moov: Box; trak: Box } {
+  const moov = child(source, top(source), "moov");
+  const mdat = children(source, 0, source.byteLength).find((box) => box.type === "mdat");
+  if (mdat === undefined || mdat.start > moov.start) throw new Error("this helper needs a file with its moov after its mdat");
+  const trak = children(source, moov.body, moov.end).find((box) => box.type === "trak");
+  if (trak === undefined) throw new Error("no track");
+  return { moov, trak };
+}
+
+/** A copy whose FIRST track's `hdlr` says `handler` (four characters), in place: the track is what it was, but is no longer called what it was. */
+export function withFirstTrackHandler(source: Uint8Array, handler: string): Uint8Array {
+  const bytes = Uint8Array.from(source);
+  const { trak } = firstTrak(bytes);
+  const hdlr = child(bytes, child(bytes, trak, "mdia"), "hdlr");
+  bytes.set(Uint8Array.from([...handler].map((c) => c.charCodeAt(0))), hdlr.body + 8);
+  return bytes;
+}
+
+/** A copy whose FIRST track is moved out of `moov`, to the top level just before it. */
+export function withFirstTrackAtTopLevel(source: Uint8Array): Uint8Array {
+  const { moov, trak } = firstTrak(source);
+  const rest = concat(source.subarray(moov.body, trak.start), source.subarray(trak.end, moov.end));
+  return concat(source.subarray(0, moov.start), source.subarray(trak.start, trak.end), u32(rest.byteLength + 8), Uint8Array.from([0x6d, 0x6f, 0x6f, 0x76]), rest, source.subarray(moov.end));
+}
+
+/** A copy that CLAIMS another picture size in `tkhd` and the sample entry (the bitstream is untouched, and says what it said). */
+export function withClaimedSize(source: Uint8Array, width: number, height: number): Uint8Array {
+  const bytes = Uint8Array.from(source);
+  const path = videoPath(bytes);
+  const trak = path[1];
+  const entry = path[path.length - 1];
+  if (trak === undefined || entry === undefined) throw new Error("no video track");
+  const view = new DataView(bytes.buffer);
+  const tkhd = child(bytes, trak, "tkhd");
+  const sizeAt = tkhd.body + ((bytes[tkhd.body] ?? 0) === 1 ? 52 : 40) + 36;
+  view.setUint32(sizeAt, width * 0x10000);
+  view.setUint32(sizeAt + 4, height * 0x10000);
+  view.setUint16(entry.body + 24, width);
+  view.setUint16(entry.body + 26, height);
+  return bytes;
+}
+
 /** A copy whose `colr` says another transfer (the pixels are untouched). */
 export function withTransfer(source: Uint8Array, transfer: number): Uint8Array {
   const bytes = Uint8Array.from(source);

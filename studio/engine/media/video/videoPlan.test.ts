@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../../shared/engine";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { judgeVideo, VIDEO_LIMITS, videoArgs, videoFilterGraph, type VideoPlan } from "./videoPlan";
-import { buildMp4, MATRIX, type ColrSpec, type Mp4Spec, type TrackSpec, type VideoEntrySpec } from "./testing/mp4VideoBuilder";
+import { buildMp4, MATRIX, trackBox, type ColrSpec, type Mp4Spec, type TrackSpec, type VideoEntrySpec } from "./testing/mp4VideoBuilder";
 import { bytesSource, probeVideo } from "./videoProbe";
 useNativeGlobals();
 
@@ -90,12 +90,22 @@ describe("what the walker refused becomes a reason", () => {
   test.each([
     ["a file with no moov", { layout: "no-moov" } as Mp4Spec],
     ["a moov with no video track", { tracks: [{ handler: "soun" }] } as Mp4Spec],
-    ["a quarter-turn-less matrix", withVideo({ matrix: [0, 1, 1, 0] })],
+  ])("%s is not a clip: a format the importer does not take", async (_name, spec) => {
+    expect(await refusal(spec)).toBe("format");
+  });
+
+  test.each([
+    ["a matrix that is not a quarter turn", withVideo({ matrix: [0, 1, 1, 0] })],
     ["an odd colour tag", withVideo({ entry: entry({ colr: nclx(1, 8, 1) }) })],
     ["non-square pixels", withVideo({ entry: entry({ pasp: [4, 3] }) })],
     ["a fragmented file", { topExtra: [new Uint8Array([0, 0, 0, 8, 0x6d, 0x6f, 0x6f, 0x66])] } as Mp4Spec],
-  ])("%s is a format the importer does not take", async (_name, spec) => {
-    expect(await refusal(spec)).toBe("format");
+    ["two video tracks", { tracks: [{ handler: "vide" }, { handler: "vide" }] } as Mp4Spec],
+    ["a track outside moov", { topExtra: [trackBox({ handler: "vide" })] } as Mp4Spec],
+    ["a repeated box", withVideo({ duplicate: "stts" })],
+    ["a data reference to another file", withVideo({ drefFlags: [0] })],
+    ["a sample count that two tables disagree on", withVideo({ stszCount: 99 })],
+  ])("%s is a structure the importer does not take, and is told so (not as a format: a MOV owner would not understand that)", async (_name, spec) => {
+    expect(await refusal(spec)).toBe("structure");
   });
 
   test("the size of the file is judged first: a file over the cap is too large whatever its boxes say", async () => {
@@ -307,6 +317,20 @@ describe("the ffmpeg arguments", () => {
     expect(Number(valueAfter(args, "-max_alloc"))).toBeLessThanOrEqual(512 * 1024 * 1024);
   });
 
+  test.each([
+    ["avc1", "h264"],
+    ["hvc1", "hevc"],
+    ["apch", "prores"],
+  ])("the decoder is pinned from the walker's verdict (%s is %s): only it is allowed, and only it is used, before the input", async (fourcc, decoder) => {
+    const args = videoArgs(INPUT, await planOf(withVideo({ entry: entry({ fourcc }) })), OUTPUT);
+    const i = args.indexOf("-i");
+    expect(valueAfter(args, "-codec_whitelist")).toBe(decoder);
+    expect(args.indexOf("-codec_whitelist")).toBeLessThan(i);
+    expect(valueAfter(args, "-c:v")).toBe(decoder);
+    expect(args.indexOf("-c:v")).toBeLessThan(i);
+    expect(args.filter((a) => a === "-c:v")).toHaveLength(2);
+  });
+
   test("the input's display matrix is not carried to the output (the clip is turned here, so it must not be marked turned again)", async () => {
     const args = await argsOf();
     expect(valueAfter(args, "-display_rotation")).toBe("0");
@@ -337,7 +361,7 @@ describe("the ffmpeg arguments", () => {
 
   test("the encode is H.264 at CRF 16 in 4:2:0 at a constant 30 fps, tagged BT.709, capped at three minutes", async () => {
     const args = await argsOf();
-    expect(valueAfter(args, "-c:v")).toBe("libx264");
+    expect(args[args.lastIndexOf("-c:v") + 1]).toBe("libx264");
     expect(valueAfter(args, "-crf")).toBe("16");
     expect(valueAfter(args, "-pix_fmt")).toBe("yuv420p");
     expect(valueAfter(args, "-fps_mode")).toBe("cfr");

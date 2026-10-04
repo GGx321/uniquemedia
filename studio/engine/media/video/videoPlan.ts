@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../../shared/engine";
-import { longerThan, type VideoColour, type VideoInfo, type VideoProbe } from "./videoProbe";
+import { longerThan, type ProbeRefusal, type VideoCodec, type VideoColour, type VideoInfo, type VideoProbe } from "./videoProbe";
 
 // From what the walker read (`videoProbe.ts`) to what is refused and what ffmpeg is asked to do (Stage 3 plan, 3f.3a). Pure: it starts nothing
 // and reads no file. The importer (`videoImporter.ts`) runs the arguments built here.
@@ -12,8 +12,9 @@ import { longerThan, type VideoColour, type VideoInfo, type VideoProbe } from ".
 // THE COLOUR. Every frame is TAGGED from what the walker read (`setparams`) before anything converts it: `zscale` fails on untagged input
 // (SP3), and ffmpeg's own reading of a clip's tags is a second opinion nobody asked for. Then:
 // - HDR (PQ or HLG, Dolby Vision 8.x by its base layer): `zscale` to linear light (`npl=100`), to BT.709 primaries, `tonemap=hable` with
-//   `desat=0` (a hue-preserving curve), then BT.709 matrix and range. Measured on the HLG chart fixture against an independent model of
-//   this chain: every patch within 1 code value (invariant 36 allows 2; see `videoImporter.ffmpeg.test.ts`);
+//   `desat=0` (a hue-preserving curve), then BT.709 matrix and range. Measured on the HLG chart fixture against a model of this chain
+//   (its formulas the standards', its three constants fitted to ffmpeg's output): every patch within 1 code value (invariant 36 allows 2; see
+//   `videoImporter.ffmpeg.test.ts`);
 // - SDR that is already BT.709 limited range: tagged and put in 4:2:0, nothing else;
 // - any other SDR (BT.601, Display P3, full range, sRGB): converted to BT.709 limited by `zscale`.
 //
@@ -60,13 +61,33 @@ function fit(width: number, height: number): { width: number; height: number } {
   return { width: Math.min(VIDEO_LIMITS.fitWidth, even(width * scale)), height: Math.min(VIDEO_LIMITS.fitHeight, even(height * scale)) };
 }
 
+/** A file that is not a clip at all or is damaged is a `format`; a codec is a `codec`; a clip put together in a way the importer will not take is a `structure`. */
+function reasonOf(refusal: ProbeRefusal): MediaUnsupportedReason {
+  switch (refusal) {
+    case "unsupported-codec":
+      return "codec";
+    case "bad-box":
+    case "no-ftyp":
+    case "no-moov":
+    case "moov-too-large":
+    case "bad-header":
+    case "no-video-track":
+      return "format";
+    default:
+      return "structure";
+  }
+}
+
+/** The decoder ffmpeg is allowed to use for each codec the walker names; the argument of `-codec_whitelist` and of the input's `-c:v`. */
+const DECODERS: Readonly<Record<VideoCodec, string>> = { h264: "h264", hevc: "hevc", prores: "prores" };
+
 /**
  * What to do with a file the walker read, or why not. `bytes` is the size of the staged copy. The order is the size of the file, then what
  * the boxes said, then the picture's smallest side, its largest, and its length.
  */
 export function judgeVideo(probe: VideoProbe, bytes: number): VideoJudgement {
   if (bytes > MEDIA_BYTE_CAPS.video) return { ok: false, reason: "too-large" };
-  if (!probe.ok) return { ok: false, reason: probe.reason === "unsupported-codec" ? "codec" : "format" };
+  if (!probe.ok) return { ok: false, reason: reasonOf(probe.reason) };
   const { info } = probe;
   const { width, height } = info.video;
   if (Math.min(width, height) < VIDEO_LIMITS.minSide) return { ok: false, reason: "too-small" };
@@ -154,6 +175,13 @@ export function videoArgs(input: string, plan: VideoPlan, output: string): strin
     "0",
     "-max_pixels",
     String(VIDEO_LIMITS.maxLongSide * VIDEO_LIMITS.maxShortSide),
+    // The walker's verdict is what ffmpeg is held to: it may open one decoder, the codec read in the one video track. ffmpeg decides a track's
+    // kind by its sample entry and opens a decoder for EVERY track while it probes the streams (even with `-an`), so without this a track the
+    // walker did not judge could be decoded, or the one it judged be decoded as something else.
+    "-codec_whitelist",
+    DECODERS[plan.info.video.codec],
+    "-c:v",
+    DECODERS[plan.info.video.codec],
     "-f",
     "mov",
     "-i",

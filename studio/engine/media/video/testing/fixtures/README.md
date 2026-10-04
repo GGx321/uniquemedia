@@ -30,14 +30,23 @@ HEVC fixture without any conversion gives every patch's mean to the code.
 | `hevc-hlg-rotated-vfr.mov` | HEVC HLG chart, variable rate (as above), a quarter turn in `tkhd` (an iPhone held upright) | the all-in-one proof, and the packaged smoke's clip |
 | `hevc-hlg-flat-4k.mp4` | HEVC HLG, flat grey, 4096 x 2160, 3 frames | a real 4K decode under `-max_alloc` and `-max_pixels`, and the fit to 1080 wide |
 
+Two more are hostile layouts made with a real encoder:
+
+| File | What | Used for |
+| --- | --- | --- |
+| `mpeg4-then-h264-two-video-tracks.mp4` | MPEG-4 Part 2 320 x 240 first, H.264 64 x 64 second, moov after mdat | the track-bypass tests: a test patches the first track's `hdlr` or moves it out of `moov`, and ffmpeg still sees it |
+| `h264-sps-4224x2176-claims-1080p.mp4` | H.264 whose bitstream is 4224 x 2176 (past 4K) under a `tkhd` and sample entry that say 1920 x 1080 | that `-max_pixels` stops a decode the headers lied about |
+
 Hostile and truncated box trees are not files: the tests build them byte by byte (`../mp4VideoBuilder.ts`) and fuzz them.
 
 ## What the HLG clip proves (invariant 36, "where the chart allows")
 
 SP1 did not cover an iPhone HEVC HLG clip, so this one is the first proof of that path. The mezzanine's chart is decoded to raw planes (no
-conversion but the pixel format) and each patch's mean is compared with `hlgToSdrBt709` (`../chart.ts`), a model of the chain written from the
-standards (the BT.2100 inverse OETF, BT.2087's primaries matrix, Hable's curve, BT.1886) and from three constants of the chain itself that were
-found by measuring it stage by stage on macOS ffmpeg 6.0:
+conversion but the pixel format) and each patch's mean is compared with `hlgToSdrBt709` (`../chart.ts`), a model of the chain whose formulas are the
+standards' (the BT.2100 inverse OETF, BT.2087's primaries matrix, Hable's curve, BT.1886) but whose three constants were FITTED to ffmpeg's own
+output, found by measuring the chain stage by stage on macOS ffmpeg 6.0. So the check proves that the chain does what a model with those
+constants says on every patch (the neutrals stay neutral, the hue is kept, the order and the gamut clip are right); it is not a proof from first
+principles that the constants are the right look:
 
 - zimg lights HLG **per channel**, display = 10 x E^1.2 (a 1000 nit peak over the 100 nit reference, the BT.2100 system gamma), not with a
   luminance-weighted gain: the second reading is wrong by up to 7 codes on the colour patches;

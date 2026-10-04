@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { copyFile, writeFile } from "node:fs/promises";
-import { buildMp4, MATRIX, type TrackSpec, type VideoEntrySpec } from "./video/testing/mp4VideoBuilder";
+import { buildMp4, MATRIX, type ColrSpec, type TrackSpec, type VideoEntrySpec } from "./video/testing/mp4VideoBuilder";
 import { FfmpegError, type runFfmpegArgv } from "../../node/runFfmpeg";
 import { tempDirFor } from "../../testing/tempDir";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -128,6 +128,38 @@ describe("what it checks of the file ffmpeg wrote, one property at a time", () =
 
   test("a file of more frames than three minutes holds is refused", async () => {
     expect(await outcomeOf(good({ stts: [[5402, 1000]] }))).toEqual({ ok: false, reason: "failed" });
+  });
+
+  test("a file that is only the wrong width is refused (everything else as planned)", async () => {
+    expect(await outcomeOf(good({}, { width: 194 }))).toEqual({ ok: false, reason: "failed" });
+  });
+
+  test("a file that is only the wrong height is refused", async () => {
+    expect(await outcomeOf(good({}, { height: 98 }))).toEqual({ ok: false, reason: "failed" });
+  });
+
+  test("a file at the right constant average rate that is not constant is refused", async () => {
+    // 5 samples averaging 1000 ticks of 30000: 30.0 fps by the average, but the lengths swing between 500 and 1500.
+    const stts: [number, number][] = [[1, 1500], [1, 500], [1, 1500], [1, 500], [1, 1000]];
+    expect(await outcomeOf(good({ stts }))).toEqual({ ok: false, reason: "failed" });
+  });
+
+  test("a picture of 1280 or more on its long side with no colour tags is refused (the walker's default for it is BT.709, and only `tagged` says it was not written)", async () => {
+    // The input is 1080 x 1920, so the plan is 1080 x 1920 and every property of the fake output is as planned, bar its tags.
+    const input = buildMp4({ tracks: [{ handler: "vide", entry: { fourcc: "avc1", width: 1080, height: 1920, colr: colour }, mdhdTimescale: 30000, stts: [[5, 1000]] }] });
+    const output = (colourBoxes: ColrSpec[]): Uint8Array => buildMp4({ tracks: [{ handler: "vide", entry: { fourcc: "avc1", width: 1080, height: 1920, colr: colourBoxes }, mdhdTimescale: 30000, stts: [[5, 1000]] }] });
+    const run = (bytes: Uint8Array): Run => async (options) => writeFile(options.output, bytes);
+    const outcomeFor = async (bytes: Uint8Array) => createVideoImporter({ run: run(bytes) })(requestFor(tmp(), await stage(tmp(), input)).request);
+    expect((await outcomeFor(output([colour]))).ok).toBe(true);
+    expect(await outcomeFor(output([]))).toEqual({ ok: false, reason: "failed" });
+  });
+
+  test("the frame count must be the plan's length at 30 fps, within two frames: a decode of another stream than the one judged is caught here", async () => {
+    // The plan is 5 samples over 5/30 s: 5 frames expected.
+    expect((await outcomeOf(good({ stts: [[7, 1000]] }))).ok).toBe(true);
+    expect((await outcomeOf(good({ stts: [[3, 1000]] }))).ok).toBe(true);
+    expect(await outcomeOf(good({ stts: [[8, 1000]] }))).toEqual({ ok: false, reason: "failed" });
+    expect(await outcomeOf(good({ stts: [[2, 1000]] }))).toEqual({ ok: false, reason: "failed" });
   });
 
   test("a file with a sound track is refused", async () => {

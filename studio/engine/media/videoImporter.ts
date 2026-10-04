@@ -25,6 +25,8 @@ import { probeVideo, type VideoInfo } from "./video/videoProbe";
 const MAX_OUTPUT_FRAMES = VIDEO_LIMITS.maxSeconds * VIDEO_LIMITS.fps + 1;
 /** The rate the mezzanine is written at; its own `stts` may round it a little. */
 const RATE_TOLERANCE = 0.05;
+/** How far the mezzanine's frame count may be from the source's length at 30 fps: the rounding of the first and the last frame. */
+const FRAME_TOLERANCE = 2;
 
 export interface VideoImporterOptions {
   /** Starts ffmpeg; Node's `spawn` by default (a test injects a wrapper). */
@@ -53,6 +55,9 @@ function isPlannedOutput(info: VideoInfo, plan: VideoPlan): boolean {
     Math.abs(video.sourceFps - VIDEO_LIMITS.fps) <= RATE_TOLERANCE &&
     video.samples >= 1 &&
     video.samples <= MAX_OUTPUT_FRAMES &&
+    // The decode must be the clip that was judged: its length at 30 fps is the source's length (by the track's own clock, which `stsz` was
+    // checked against), give or take the rounding of the first and last frame. A different stream, or a table that lied, lands elsewhere.
+    Math.abs(video.samples - Math.round((plan.info.video.durationTicks / plan.info.video.timescale) * VIDEO_LIMITS.fps)) <= FRAME_TOLERANCE &&
     info.audioTracks === 0
   );
 }

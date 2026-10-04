@@ -61,6 +61,25 @@ describe("what each fixture is", () => {
     expect([video.fourcc, video.dynamicRange, video.variableFrameRate, video.rotation]).toEqual(["hvc1", "hlg", true, 90]);
   });
 
+  test("mpeg4-then-h264-two-video-tracks.mp4: two video tracks the walker refuses, MPEG-4 first, moov after mdat", async () => {
+    const opened = await openFileSource(FIXTURES["mpeg4-then-h264-two-video-tracks.mp4"].file);
+    try {
+      expect((await probeVideo(opened.source)).ok).toBe(false);
+    } finally {
+      await opened.close();
+    }
+    const bytes = await readFile(FIXTURES["mpeg4-then-h264-two-video-tracks.mp4"].file);
+    expect(bytes.indexOf("mdat")).toBeLessThan(bytes.indexOf("moov"));
+    const moov = bytes.indexOf("moov");
+    expect(bytes.indexOf("mp4v", moov)).toBeGreaterThan(moov);
+    expect(bytes.indexOf("mp4v", moov)).toBeLessThan(bytes.indexOf("avc1", moov));
+  });
+
+  test("h264-sps-4224x2176-claims-1080p.mp4: the headers say 1920 x 1080", async () => {
+    const { video } = await infoOf("h264-sps-4224x2176-claims-1080p.mp4");
+    expect([video.width, video.height]).toEqual([1920, 1080]);
+  });
+
   test("hevc-hlg-flat-4k.mp4: 4096 x 2160 HEVC HLG", async () => {
     const { video } = await infoOf("hevc-hlg-flat-4k.mp4");
     expect([video.width, video.height, video.dynamicRange]).toEqual([4096, 2160, "hlg"]);
