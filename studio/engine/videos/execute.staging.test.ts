@@ -67,6 +67,8 @@ interface Options {
   readonly plan?: Partial<RenderPlan>;
   readonly deps?: Partial<VideoRenderDeps>;
   readonly stagingTimeoutMs?: (bytes: number) => number;
+  /** Keeps the job folder when the job ends, so a test can see what an abandoned copy does after it. */
+  readonly keepJobFolder?: boolean;
 }
 
 async function run(options: Options) {
@@ -88,6 +90,7 @@ async function run(options: Options) {
         await writeFile(opts.output, OUT);
       },
       stagingTimeoutMs: (bytes) => (asked.push(bytes), (options.stagingTimeoutMs ?? (() => 60_000))(bytes)),
+      ...(options.keepJobFolder === true ? { removeTree: async () => undefined } : {}),
     },
     ownVideoIo: { freeBytes: async () => null },
     ...options.deps,
@@ -121,6 +124,24 @@ const videoClip = (n: number, durationMs: number): MontageDraft["clips"][number]
 const base = (w: World): MontageDraft => specOf(w.avatar.id, [w.photos[0]?.id ?? ""], 4_000);
 
 describe("every staging read is under the bound", () => {
+  test("the abandoned photo copy is TOLD to stop: when its read returns it writes nothing (the job folder is kept here so that a write would show)", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+
+    const { state, w } = await run({
+      spec: (world) => ({ ...base(world), clips: [ownPhotoClip(1, 4_000)] }),
+      plan: { ownPhotos: [photoSource()] },
+      deps: { ownPhotoOps: hangingOps(".jpg", gate) },
+      stagingTimeoutMs: () => 100,
+      keepJobFolder: true,
+    });
+    expect(state).toMatchObject({ status: "failed", error: { code: "TIMEOUT" } });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(await readdir(join(w.renderTmp, "job-00000001"))).toEqual([]);
+  });
+
   test("a hung own-PHOTO read ends the job TIMEOUT within the bound, frees the slot, and leaves nothing once the read returns", async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => (release = resolve));
@@ -200,6 +221,18 @@ describe("the bound is sized from the SUM of every staged byte (B8)", () => {
 
     expect(state).toMatchObject({ status: "done" });
     expect(asked).toEqual([PHOTO.length + MEZZANINE.length]);
+  });
+
+  test("an own track's bytes are in the sum too", async () => {
+    const { asked } = await run({
+      spec: (w) => ({ ...base(w), clips: [ownPhotoClip(1, 4_000)], music: { source: "own", mediaId: "media-0000009", startMs: 0 } }),
+      plan: {
+        ownPhotos: [photoSource()],
+        ownTrack: { source: { mediaId: "media-0000009", path: join(libDir, "nothing.m4a"), sha256: "a".repeat(64), bytes: 777, durationMs: 9_000, name: "song.mp3" }, startMs: 0 },
+      },
+    });
+
+    expect(asked).toEqual([PHOTO.length + 777]);
   });
 
   test("a bigger copy gets a bigger bound: the answer follows the bytes handed over, so a slow multi-GB copy is not cut at the minimum", async () => {

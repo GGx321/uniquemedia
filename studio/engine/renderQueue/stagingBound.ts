@@ -53,7 +53,8 @@ export function stagingBound(ms: number, cancel: AbortSignal, timers: StagingTim
       });
       ended.catch(() => undefined);
       const working = work(signal);
-      // The race forgets the work once it has lost; its late failure must still be handled.
+      // The race forgets the work once it has lost; its late failure must still be handled. (`Promise.race` itself subscribes to both promises, so today these two
+      // `catch`es are belt and braces, and removing one cannot be seen from outside; they keep the guarantee if the race is ever rewritten. The tests pin the guarantee.)
       working.catch(() => undefined);
       return Promise.race([working, ended]);
     },
