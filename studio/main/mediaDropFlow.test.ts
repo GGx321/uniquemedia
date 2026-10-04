@@ -178,6 +178,89 @@ describe("what main does with the dropped paths: a pick's own checks", () => {
     expect((await drop({ paths: [path], more: 0 }, h.deps)).ok).toBe(true);
   });
 
+  test("on Windows a network path from a drop (\\\\host, //host, \\\\?\\UNC) is refused before the disk is touched; a long local one (\\\\?\\C:) is looked at (review LOW-1)", async () => {
+    // Opening a share would make Windows authenticate to the host (NTLM). The dialog may still pick from a share; a drop may not.
+    const winTrusted: TrustedRenderer = { fileUrl: "file:///C:/Program%20Files/Studio/resources/app.asar/out-studio/renderer/index.html" };
+    const opened: string[] = [];
+    const ops = {
+      lstat: async (path: string) => {
+        opened.push(path);
+        throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+      },
+      open: async (path: string) => {
+        opened.push(path);
+        throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+      },
+    };
+    const h = harness();
+    const reply = await handleDroppedMedia(
+      { paths: ["\\\\fileserver\\share\\beach.jpg", "//fileserver/share/walk.mov", "\\\\?\\UNC\\fileserver\\share\\a.jpg", "\\/fileserver/share/b.jpg", "\\\\?\\C:\\Users\\me\\local.jpg"], more: 0 },
+      { url: winTrusted.fileUrl, isTopFrame: true, isAppWindow: true },
+      winTrusted,
+      { ...h.deps, platform: "win32", ops, noFollow: 0 },
+    );
+    if (!reply.ok) throw new Error(reply.error.code);
+    expect(reply.result.picked && reply.result.refused.map((r) => [r.name, r.reason])).toEqual([
+      ["beach.jpg", "not-a-file"],
+      ["walk.mov", "not-a-file"],
+      ["a.jpg", "not-a-file"],
+      ["b.jpg", "not-a-file"],
+      ["local.jpg", "not-a-file"],
+    ]);
+    // Only the local one was ever opened.
+    expect(opened.every((path) => path.includes("local.jpg"))).toBe(true);
+    expect(opened.length).toBeGreaterThan(0);
+    expect(h.imported).toEqual([]);
+  });
+
+  test("off Windows a path that starts with two slashes is a plain local path (POSIX reads // as /)", async () => {
+    const path = await put("beach.jpg");
+    if (process.platform === "win32") return;
+    const h = harness();
+    expect(await dropped({ paths: [`/${path}`], more: 0 }, h.deps)).toEqual({ picked: true, jobIds: ["job-00000001"], refused: [], skipped: 0 });
+  });
+
+  test("the payload's bounds (review LOW-3): an empty path, a path of 32 768 characters, a count past a million are refused whole", async () => {
+    for (const payload of [{ paths: [""], more: 0 }, { paths: ["/" + "a".repeat(32_767)], more: 0 }, { paths: [], more: 1_000_001 }]) {
+      const h = harness();
+      const reply = await drop(payload, h.deps);
+      expect(reply.ok ? "ok" : reply.error.code).toBe("VALIDATION");
+      expect(h.imported).toEqual([]);
+    }
+    expect((await drop({ paths: [], more: 1_000_000 }, harness().deps)).ok).toBe(true);
+  });
+
+  test("one at a time (review LOW-3): a drop while another drop runs, and main's dialog while a drop runs, are refused IN_FLIGHT", async () => {
+    const path = await put("beach.jpg");
+    let release: () => void = () => undefined;
+    const slow = harness();
+    const held: DropDeps = {
+      ...slow.deps,
+      engine: {
+        importMedia: (call) =>
+          new Promise<MediaImportReply>((resolve) => {
+            release = () => resolve({ error: null, mediaJobId: "job-00000001" });
+            void call;
+          }),
+      },
+    };
+    const first = drop({ paths: [path], more: 0 }, held);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const second = await drop({ paths: [path], more: 0 }, harness().deps);
+    expect(second.ok ? "ok" : second.error.code).toBe("IN_FLIGHT");
+    const command = CommandMessage.parse({ v: PROTOCOL_VERSION, id: "msg-000002", kind: "command", type: "media.pickImport", payload: { kind: "any" } });
+    if (!isMediaPickCommand(command)) throw new Error("not a pick");
+    const asked: string[] = [];
+    const dialog = await handleMediaPickCommand(command, { ...harness().deps, pickFiles: async () => {
+      asked.push("dialog");
+      return [];
+    } });
+    expect(dialog.ok ? "ok" : dialog.error.code).toBe("IN_FLIGHT");
+    expect(asked).toEqual([]);
+    release();
+    expect((await first).ok).toBe(true);
+  });
+
   test("the answer carries no path", async () => {
     const path = await put("beach.jpg");
     const text = JSON.stringify(await drop({ paths: [path, join(dir, "gone.jpg")], more: 0 }, harness().deps));

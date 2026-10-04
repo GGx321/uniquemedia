@@ -147,7 +147,7 @@ export type PickedOutcome = { ok: true; result: MediaPickResult } | { ok: false;
  * one after another: the ONE place both go through. `beyond` counts files no path was ever looked at for (a drop's files past what the
  * preload maps), reported as `skipped` with the ones past what the answer lists. See `handleMediaPickCommand` for the rules.
  */
-async function importPickedPaths(kind: MediaPickKind, picked: readonly string[], beyond: number, deps: Omit<MediaImportFlowDeps, "pickFiles">): Promise<PickedOutcome> {
+async function importPickedPaths(kind: MediaPickKind, picked: readonly string[], beyond: number, deps: Omit<MediaImportFlowDeps, "pickFiles">, refuseUnopened: (path: string) => boolean = () => false): Promise<PickedOutcome> {
   const jobIds: string[] = [];
   const refused: MediaRefusal[] = [];
   let taken = 0;
@@ -166,6 +166,11 @@ async function importPickedPaths(kind: MediaPickKind, picked: readonly string[],
       continue;
     }
     taken++;
+    // A path the caller refuses before the disk is touched (a drop's network path on Windows) is not a file it will open.
+    if (refuseUnopened(path)) {
+      refused.push({ name, reason: "not-a-file" });
+      continue;
+    }
     const look = await preflightPickedFile(path, kind, deps);
     if (!look.ok) {
       refused.push({ name, reason: look.reason });
@@ -196,8 +201,19 @@ async function importPickedPaths(kind: MediaPickKind, picked: readonly string[],
 /** What the preload sends for a drop (preload/dropped.ts): the dropped files' paths (as many as a pick's answer lists), and how many more were dropped. */
 const DroppedPayload = z.strictObject({
   paths: z.array(z.string().min(1).max(32_767)).max(MAX_REFUSED_FILES),
-  more: Count,
+  more: Count.max(1_000_000),
 });
+
+/**
+ * A Windows path that names another machine: `\\host\share`, `//host/share`, `\\?\UNC\host\share` (and a device's `\\.\`). Opening one
+ * would make Windows connect to the host and authenticate to it (NTLM), so a DROP never reaches the disk with one (review LOW-1); main's own
+ * dialog may still pick from a share the owner browses to. A long local path (`\\?\C:\…`) is local. Off Windows, `//` is a plain `/`.
+ */
+export function isWindowsRemotePath(path: string, platform: NodeJS.Platform): boolean {
+  if (platform !== "win32") return false;
+  const normal = path.replace(/\//g, "\\");
+  return normal.startsWith("\\\\") && !/^\\\\\?\\[A-Za-z]:\\/.test(normal);
+}
 
 const DROP_NOT_TRUSTED: EngineError = { code: "VALIDATION", detail: "the drop did not come from the app's own window" };
 
@@ -214,7 +230,7 @@ export async function handleDroppedMedia(raw: unknown, frame: SenderFrame, trust
   if (pickInProgress) return { ok: false, error: { code: "IN_FLIGHT", detail: "another import is being picked" } };
   pickInProgress = true;
   try {
-    return await importPickedPaths("any", paths, more, deps);
+    return await importPickedPaths("any", paths, more, deps, (path) => isWindowsRemotePath(path, deps.platform));
   } catch {
     return { ok: false, error: { code: "INTERNAL", detail: "main failed to import the dropped files" } };
   } finally {
