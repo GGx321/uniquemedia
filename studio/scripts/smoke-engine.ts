@@ -2909,8 +2909,8 @@ async function main(): Promise<void> {
     };
     const videosLayered = await req(cdp, "videos.render", { spec: layered });
     check(
-      "videos.render refuses a spec with an own sticker layer as not-yet-supported (N9, own media come in 3f), before touching anything",
-      field(videosLayered, "ok") === false && field(videosLayered, "error", "code") === "MONTAGE_INVALID" && JSON.stringify(field(videosLayered, "error", "issues")).includes("not-yet-supported"),
+      "videos.render refuses a spec whose own sticker is not in the library as media-unavailable, before touching anything",
+      field(videosLayered, "ok") === false && field(videosLayered, "error", "code") === "MONTAGE_INVALID" && JSON.stringify(field(videosLayered, "error", "issues")).includes("media-unavailable"),
       videosLayered,
     );
     const engineJobs = await req(cdp, "engine.snapshot");

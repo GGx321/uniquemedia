@@ -244,7 +244,7 @@ describe("resolveLayers: an own sticker", () => {
   test("the overlay names a file in the job folder, never the library file", async () => {
     const own = stored("media-0000001");
     const { overlays } = await resolveLayers([ownLayer(1, "media-0000001")], JOB, rig().deps, signal, sourcesOf(own));
-    expect(overlays[0]?.path.startsWith(JOB)).toBe(true);
+    expect(overlays[0]?.path.startsWith(join(JOB))).toBe(true);
     expect(overlays[0]?.path).not.toBe(own.path);
   });
 
