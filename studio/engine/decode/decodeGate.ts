@@ -45,6 +45,7 @@ export interface DecodeGate {
 }
 
 const DEFAULT_BIG_RESULT_BYTES = 64 * 1024 * 1024;
+const TERMINATE_WAIT_MS = 5_000;
 
 interface Pending {
   readonly id: number;
@@ -60,13 +61,18 @@ export function createDecodeGate(options: DecodeGateOptions): DecodeGate {
   let nextId = 0;
   /** The tail of the queue: a decode starts when the one before it has ended, however it ended. */
   let tail: Promise<unknown> = Promise.resolve();
+  /** The worker that is being ended, if any: the next one is spawned after it, never beside it. */
+  let ending: Promise<unknown> = Promise.resolve();
 
   function endWorker(): void {
     clearTimeout(idleTimer);
-    const ending = worker;
+    const going = worker;
     worker = null;
-    // A worker that does not end cleanly is not waited for: it is gone from the gate's point of view, and the next decode gets another.
-    void ending?.terminate().catch(() => undefined);
+    if (going === null) return;
+    // The abort path never waits for this. The NEXT decode does, but at most `TERMINATE_WAIT_MS`: a thread ended while its script is still
+    // compiling prints a V8 error under Electron, and a worker that does not end must not hold every later decode.
+    const done = going.terminate().then(() => undefined, () => undefined);
+    ending = Promise.race([done, new Promise<void>((resolve) => (setTimeout(resolve, TERMINATE_WAIT_MS) as { unref?: () => void }).unref?.())]);
   }
 
   function start(): DecodeWorkerLike {
@@ -180,8 +186,12 @@ export function createDecodeGate(options: DecodeGateOptions): DecodeGate {
   return {
     decode(bytes, signal) {
       // Queued: a decode waits for the one before it; an abort while it waits rejects it without touching the worker that is busy.
-      const turn = tail.then(() => run(bytes, signal));
-      tail = turn.catch(() => undefined);
+      const turn = tail.then(async () => {
+        await ending;
+        return run(bytes, signal);
+      });
+      // `then(.., ..)` and not `catch`: `catch` passes a success through, and the tail would hold the last picture (up to 200 MB) until the next decode.
+      tail = turn.then(() => undefined, () => undefined);
       return abortableWait(turn, signal);
     },
     async dispose() {

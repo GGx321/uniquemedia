@@ -264,3 +264,86 @@ describe("createDecodeGate: giving the memory back", () => {
     expect(workers[0]?.terminated).toBe(1);
   });
 });
+
+describe("createDecodeGate: what it does not keep (fix round 2)", () => {
+  test("the last decoded picture is not kept alive by the gate once the caller has dropped it", async () => {
+    const { gate, workers } = gateWith();
+    // The picture lives only inside this function: what outlives it is a weak reference to its pixel buffer.
+    const reference = await (async () => {
+      const decoding = gate.decode(bytes(), signal());
+      await tick();
+      workers[0]?.answer(512, 512);
+      const image = await decoding;
+      return new WeakRef(image.data.buffer);
+    })();
+    for (let turn = 0; turn < 5; turn++) {
+      await tick();
+      Bun.gc(true);
+    }
+    expect(reference.deref()).toBeUndefined();
+  });
+
+  test("a worker that was already replaced says nothing about the present: its message is ignored", async () => {
+    const { gate, workers } = gateWith();
+    const controller = new AbortController();
+    const first = gate.decode(bytes(), controller.signal);
+    await tick();
+    controller.abort(new Error("stop"));
+    await first.catch(() => undefined);
+    const second = gate.decode(bytes(), signal());
+    await tick();
+    const id = (workers[1]?.posted[0]?.message as { id: number }).id;
+    workers[0]?.say({ type: "failed", id, message: "from the stale worker" });
+    workers[1]?.answer(1, 1);
+    expect((await second).width).toBe(1);
+    expect(workers[1]?.terminated).toBe(0);
+  });
+
+  test("a replaced worker that fails or exits later does not fail the decode that is running now", async () => {
+    const { gate, workers } = gateWith();
+    const controller = new AbortController();
+    const first = gate.decode(bytes(), controller.signal);
+    await tick();
+    controller.abort(new Error("stop"));
+    await first.catch(() => undefined);
+    const second = gate.decode(bytes(), signal());
+    await tick();
+    workers[0]?.crash();
+    workers[1]?.answer(1, 1);
+    expect((await second).width).toBe(1);
+  });
+
+  test("the next worker is spawned only after the one that was ended has finished ending (a thread ended while it loads prints an error otherwise)", async () => {
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const workers: FakeWorker[] = [];
+    const order: string[] = [];
+    const gate = createDecodeGate({
+      spawnWorker: () => {
+        const worker = new FakeWorker();
+        const index = workers.length;
+        if (index === 0) worker.terminate = async () => (order.push("ending"), await slow, order.push("ended"), 1);
+        order.push(`spawn ${index}`);
+        workers.push(worker);
+        return worker;
+      },
+      idleRecycleMs: 60_000,
+      timeoutMs: 60_000,
+    });
+    const controller = new AbortController();
+    const first = gate.decode(bytes(), controller.signal);
+    await tick();
+    controller.abort(new Error("stop"));
+    // The abort itself does not wait for the worker to end.
+    await expect(first).rejects.toThrow("stop");
+    const second = gate.decode(bytes(), signal());
+    for (let turn = 0; turn < 5; turn++) await tick();
+    expect(order).toEqual(["spawn 0", "ending"]);
+    release();
+    await tick();
+    await tick();
+    expect(order).toEqual(["spawn 0", "ending", "ended", "spawn 1"]);
+    workers[1]?.answer(1, 1);
+    await second;
+  });
+});
