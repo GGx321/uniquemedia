@@ -127,6 +127,8 @@ describe("refusal reasons", () => {
       "not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported",
       // 3f.3a, the video importer's:
       "too-long", "codec", "dimensions", "too-small",
+      // 3f.3a review round 1: a file whose boxes are put together in a way the importer will not take.
+      "structure",
     ]);
   });
 });

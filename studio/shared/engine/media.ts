@@ -50,7 +50,10 @@ export const MAX_PICKED_FILES = 20;
  * - `too-long`: a video longer than three minutes (3f.3a);
  * - `codec`: a video whose codec the importer does not take: H.264, HEVC (HDR and Dolby Vision 8.x included) and ProRes are taken, VP9, AV1 and the rest are not (3f.3a);
  * - `dimensions`: a picture past 4K, 4096 on its long side or 2160 on its short one (3f.3a);
- * - `too-small`: a picture with a side under 2 pixels (3f.3a).
+ * - `too-small`: a picture with a side under 2 pixels (3f.3a);
+ * - `structure`: the file's boxes are put together in a way the importer will not take (two video tracks, a track outside its container, a repeated
+ *   box, a mirrored or oddly turned picture, an unusual colour tag, non-square pixels, a fragmented file, two tables that disagree): not a wrong
+ *   file TYPE, so not `format` (3f.3a).
  */
 export const MediaUnsupportedReason = z.enum([
   "not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported",
@@ -59,6 +62,8 @@ export const MediaUnsupportedReason = z.enum([
   "codec",
   "dimensions",
   "too-small",
+  // 3f.3a review round 1:
+  "structure",
 ]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
 

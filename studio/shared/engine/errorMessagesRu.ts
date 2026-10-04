@@ -1,5 +1,5 @@
 import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason } from "./errors";
-import type { MediaUnsupportedReason } from "./media";
+import type { MediaKind, MediaUnsupportedReason } from "./media";
 import type { MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
 
@@ -78,12 +78,32 @@ export const MEDIA_REASONS_RU = {
   failed: "Не удалось добавить файл. Попробуйте ещё раз.",
   cancelled: "Добавление отменено, в «Мои» ничего не попало.",
   "not-yet-supported": "Файлы такого типа пока нельзя добавить.",
-  // 3f.3a (видео):
-  "too-long": "Видео длиннее трёх минут. Обрежьте его и добавьте снова.",
-  codec: "Такой видеокодек не поддерживается. Подойдут видео H.264, HEVC (в том числе HDR) и ProRes: сохраните ролик в одном из них.",
-  dimensions: "Видео больше 4K. Уменьшите разрешение до 4096 × 2160 и добавьте снова.",
+  // 3f.3a: the codes below are shared by every kind, so these are the NEUTRAL texts; a kind that has more to say has it in MEDIA_REASONS_BY_KIND_RU.
+  "too-long": "Файл слишком длинный для этого типа. Сократите его и добавьте снова.",
+  codec: "Файл закодирован в формате, который не поддерживается. Сохраните его в другом формате и добавьте снова.",
+  dimensions: "Картинка слишком большого размера. Уменьшите разрешение и добавьте снова.",
   "too-small": "Изображение слишком маленькое: каждая сторона должна быть не меньше 2 пикселей.",
+  structure: "Файл устроен необычно, и добавить его нельзя: например, в нём несколько изображений, нестандартный поворот или цвет, или он собран из частей. Пересохраните его обычным способом и добавьте снова.",
 } as const satisfies Record<MediaUnsupportedReason, string>;
+
+/**
+ * The texts a kind says in its own words, over the neutral ones above (3f.3a review M2): the reason CODES are shared by every kind, the text
+ * depends on the kind of the file that was turned away. 3f.2 (photo) and 3f.4 (music) add theirs here.
+ */
+export const MEDIA_REASONS_BY_KIND_RU: Partial<Record<MediaKind, Partial<Record<MediaUnsupportedReason, string>>>> = {
+  video: {
+    "too-long": "Видео длиннее трёх минут. Обрежьте его и добавьте снова.",
+    codec: "Такой видеокодек не поддерживается. Подойдут видео H.264, HEVC (в том числе HDR) и ProRes: сохраните ролик в одном из них.",
+    dimensions: "Видео больше 4K. Уменьшите разрешение до 4096 × 2160 и добавьте снова.",
+    "too-small": "Кадр видео слишком маленький: каждая сторона должна быть не меньше 2 пикселей.",
+    structure: "Видео устроено необычно, и добавить его нельзя: например, в нём несколько видеодорожек, нестандартный поворот или цвет, или оно собрано из частей. Пересохраните ролик обычным способом и добавьте снова.",
+  },
+};
+
+/** The Russian text for a refusal: the kind's own when it has one, else the neutral one. `kind` is the kind of the file that was turned away, when known. */
+export function mediaReasonRu(reason: MediaUnsupportedReason, kind?: MediaKind): string {
+  return (kind === undefined ? undefined : MEDIA_REASONS_BY_KIND_RU[kind]?.[reason]) ?? MEDIA_REASONS_RU[reason];
+}
 
 /**
  * Why a caption is refused (the `captionIssue` behind TEXT_INVALID). The charset text names © ® ™ on purpose:
