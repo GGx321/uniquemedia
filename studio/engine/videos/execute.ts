@@ -6,6 +6,7 @@ import { totalFrames } from "../../shared/montage";
 import { ExportFolderError, formatExportDate, NODE_EXPORT_FOLDER_FS, prepareExportFolder, type ExportFolderFs, type PreparedFolder } from "../exportName";
 import type { Library } from "../library";
 import type { PhotoResolver } from "../render";
+import { inspectStreams } from "../music/decodeCheck";
 import { TrackUnavailableError, type RenderTrack, type RenderTrackSource } from "../music/renderTrack";
 import { RenderFailure, type RenderContext } from "../renderQueue/queue";
 import { runRenderJob, type RenderRunDeps, type RunAudio } from "../renderQueue/runner";
@@ -15,6 +16,7 @@ import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import { collectForbiddenStrings, combineForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { copyOwnPhotos, type OwnPhotoSource } from "./ownPhotos";
+import { openOwnTrack, OwnTrackUnavailableError, type OwnTrackSource } from "./ownTrack";
 import { resolveLayers, type LayerDeps } from "./layers";
 import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
@@ -86,6 +88,12 @@ export interface RenderPlan {
    * the plan. The job asks the track store for it when it starts, and the store checks it again before handing it over.
    */
   readonly track?: { readonly trackId: string; readonly startMs: number };
+  /**
+   * The own track the montage uses (3f.4), as the admission found it: the stored file, its size and sha256, its decoded length and name. Never a
+   * path ffmpeg reads: the job reads the file's VERIFIED BYTES when it starts and the runner writes them to the job's own `track.m4a`. A spec whose
+   * `music` is an own track and a plan with none here is refused (`media-unavailable`), never rendered without its music.
+   */
+  readonly ownTrack?: { readonly source: OwnTrackSource; readonly startMs: number };
   readonly montageId: string | null;
   /** The draft's name when the render was asked for (K12); the record keeps it. Null for an unnamed draft or a headless spec. */
   readonly title: string | null;
@@ -118,6 +126,8 @@ export interface VideoRenderDeps {
    * is held, and a plan with a track is refused as `track-unavailable`.
    */
   readonly tracks?: Pick<RenderTrackSource, "openForRender">;
+  /** The kinds of stream ffmpeg sees in a file, for the check of an own track's private copy (3f.4); `inspectStreams` by default (a test passes a stand-in). */
+  readonly inspectStreams?: (path: string, signal: AbortSignal) => Promise<readonly string[]>;
   /** Codes, ids and box paths only. */
   readonly log?: (line: string) => void;
   /** Test seams of the commit. */
@@ -231,10 +241,31 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
    * checks the stored file again, and anything but a pass is the contract's refusal for it, `MONTAGE_INVALID` with
    * `track-unavailable` (or `track-too-short` when it cannot hold `startMs` plus the montage). A cancel comes out as itself.
    */
-  const openTrack = async (plan: RenderPlan, signal: AbortSignal): Promise<RenderTrack | null> => {
+  const openTrack = async (plan: RenderPlan, signal: AbortSignal): Promise<{ track: RenderTrack; startMs: number } | null> => {
+    const refuse = (code: "track-unavailable" | "track-too-short" | "media-unavailable"): RenderFailure => new RenderFailure({ code: "MONTAGE_INVALID", issues: [{ code, path: ["music"] }] });
+    const montageMs = plan.spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
+    // 3f.4: an own track is read by its VERIFIED BYTES (`openOwnTrack`), the same moment and with the same refusals as a trending one. A spec that names
+    // an own track and a plan that brought no source for it is never rendered without its music (N9's rule): it is refused.
+    if (plan.spec.music?.source === "own" || plan.ownTrack !== undefined) {
+      const own = plan.ownTrack;
+      if (own === undefined) throw refuse("media-unavailable");
+      let opened: RenderTrack;
+      try {
+        opened = await openOwnTrack(own.source, signal, deps.inspectStreams ?? ((path, checkSignal) => inspectStreams({ path, signal: checkSignal })));
+      } catch (error) {
+        if (error instanceof OwnTrackUnavailableError) {
+          log(`render ${plan.jobId}: the own track was refused (changed or gone)`);
+          throw refuse("media-unavailable");
+        }
+        if (signal.aborted) throw error;
+        log(`render ${plan.jobId}: the own track could not be checked (${codeOf(error)})`);
+        throw new RenderFailure({ code: "INTERNAL", detail: "the music track could not be checked" });
+      }
+      if (opened.decodedMs < own.startMs + montageMs) throw refuse("track-too-short");
+      return { track: opened, startMs: own.startMs };
+    }
     const wanted = plan.track;
     if (wanted === undefined) return null;
-    const refuse = (code: "track-unavailable" | "track-too-short"): RenderFailure => new RenderFailure({ code: "MONTAGE_INVALID", issues: [{ code, path: ["music"] }] });
     if (deps.tracks === undefined) throw refuse("track-unavailable");
     let opened: RenderTrack;
     try {
@@ -250,9 +281,8 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       throw new RenderFailure({ code: "INTERNAL", detail: "the music track could not be checked" });
     }
     // The length the store PROVED, against what this montage needs of it: the same rule `videos.render` applied up front.
-    const montageMs = plan.spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
     if (opened.decodedMs < wanted.startMs + montageMs) throw refuse("track-too-short");
-    return opened;
+    return { track: opened, startMs: wanted.startMs };
   };
 
   return (plan) => async (context) => {
@@ -266,8 +296,9 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       layers = await resolveLayers(plan.spec.layers, jobDir, deps.layers, context.signal);
     }
 
-    const track = await openTrack(plan, context.signal);
-    const audio: RunAudio = track === null || plan.track === undefined ? plan.audio : { kind: "music", startMs: plan.track.startMs, data: track.data, check: track.check };
+    const music = await openTrack(plan, context.signal);
+    const track = music?.track ?? null;
+    const audio: RunAudio = music === null ? plan.audio : { kind: "music", startMs: music.startMs, data: music.track.data, check: music.track.check };
     const tile = track === null ? plan.music : { title: track.title, artist: track.artist };
     const { root, rootId } = plan.exportRoot;
     // Everything up to pass 2 touches the export volume, which may be a network drive that has dropped: one bound for the
@@ -353,7 +384,8 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         // ffmpeg's own check of the private copy found the track is not one audio stream: the same refusal as the store's.
         if (error instanceof TrackUnavailableError) {
           log(`render ${plan.jobId}: the music track was refused (${error.kind})`);
-          throw new RenderFailure({ code: "MONTAGE_INVALID", issues: [{ code: "track-unavailable", path: ["music"] }] });
+          // An own track is a media of the library: the code every own media gets when it is not there or not what it was.
+          throw new RenderFailure({ code: "MONTAGE_INVALID", issues: [{ code: plan.ownTrack === undefined ? "track-unavailable" : "media-unavailable", path: ["music"] }] });
         }
         throw error;
       });
@@ -392,7 +424,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           title: plan.title,
           music: tile,
           // What the render resolved for the music: where it started, the gain the true-peak pass chose, the file it read.
-          ...(track === null || plan.track === undefined || outcome.music === undefined ? {} : { audio: { trackSha: track.sha256, startMs: plan.track.startMs, gainDb: outcome.music.gainDb } }),
+          ...(track === null || music === null || outcome.music === undefined ? {} : { audio: { trackSha: track.sha256, startMs: music.startMs, gainDb: outcome.music.gainDb } }),
           spec: plan.spec,
           forbiddenStrings,
         },
