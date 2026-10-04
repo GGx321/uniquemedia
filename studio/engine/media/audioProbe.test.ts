@@ -186,6 +186,10 @@ describe("judging the file the importer made", () => {
     expect(judgeStoredDump(stored)).toEqual({ ok: true, headerMs: 600 });
   });
 
+  test("a dump with Windows line ends (CRLF) is judged as the same dump with `\\n`", () => {
+    expect(judgeStoredDump(stored.replaceAll("\n", "\r\n"))).toEqual({ ok: true, headerMs: 600 });
+  });
+
   test.each([
     ["44100 Hz", stored.replace("48000 Hz", "44100 Hz")],
     ["mono", stored.replace("stereo", "mono")],
@@ -231,6 +235,17 @@ describe("the stream line's grammar (3f.4 review H1)", () => {
     ["two Opus streams, the first disguised", twoOpus, "ogg"],
   ])("%s is refused as a format, not accepted as one audio stream plus a picture", (_label, text, demuxer) => {
     expect(judgeDump(text, demuxer)).toEqual({ ok: false, reason: "format" });
+  });
+
+  test("a dump with Windows line ends is judged as the same dump with `\\n` (ffmpeg writes CRLF there: 3f.4 round 1, found by the Windows CI)", () => {
+    for (const [text, demuxer] of [[MP3, "mp3"], [M4A_AAC, "mov"], [COVER_MP3, "mp3"]] as const) {
+      expect(judgeDump(text.replaceAll("\n", "\r\n"), demuxer)).toEqual(judgeDump(text, demuxer));
+      expect(judgeDump(text, demuxer).ok).toBe(true);
+    }
+  });
+
+  test("a bare `\\r` inside a line still makes no stream of a forged line", () => {
+    expect(streamLinesOf(dump("  Stream #0:0: Audio: mp3, 44100 Hz\rcomment: Video: png"))).toEqual([]);
   });
 
   test("a line with a second `: <Kind>:` in it is no stream, whatever the first says", () => {

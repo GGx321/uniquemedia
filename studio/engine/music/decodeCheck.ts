@@ -207,7 +207,8 @@ const SECOND_KIND = /:\s*(?:Audio|Video|Subtitle|Data|Attachment)\s*:/;
 
 /** One stream line of ffmpeg's dump: its number, its kind, and what follows the kind's colon. Null for a line that is not exactly this grammar. */
 export function parseStreamLine(line: string): { index: number; kind: string; rest: string } | null {
-  const match = STREAM_LINE.exec(line);
+  // The dump is split at `\n`; ffmpeg ends its lines with `\r\n` on Windows, so ONE trailing `\r` is the line's end and no more (a `\r` inside the line is the file's text).
+  const match = STREAM_LINE.exec(line.endsWith("\r") ? line.slice(0, -1) : line);
   if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return null;
   if (SECOND_KIND.test(match[3])) return null;
   return { index: Number(match[1]), kind: match[2], rest: match[3] };
