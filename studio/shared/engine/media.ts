@@ -49,7 +49,9 @@ export const MAX_PICKED_FILES = 20;
  * - `not-yet-supported`: the kind has no importer yet;
  * - `too-small` (3f.2): a photo with a side under 2 px (`coverCrop` cannot make a 1 px side even);
  * - `dimensions` (3f.2): a photo with more pixels than the importer takes (50 megapixels, so a 48 megapixel camera picture is taken), judged from its header;
- * - `animated-webp` (3f.2): a WebP that animates; only still pictures are taken.
+ * - `animated-webp` (3f.2): a WebP that animates; only still pictures are taken;
+ * - `too-long` (3f.4, music; shared by the kinds that have a length limit): the file runs longer than its kind allows (music: ten minutes, judged from the DECODED length);
+ * - `codec` (3f.4, music; shared by the kinds that name codecs): the file's audio or video is in a codec the kind's importer does not take.
  */
 export const MediaUnsupportedReason = z.enum([
   "not-a-file",
@@ -69,6 +71,9 @@ export const MediaUnsupportedReason = z.enum([
   "too-small",
   "dimensions",
   "animated-webp",
+  // 3f.4 (music), one per line and at the END:
+  "too-long",
+  "codec",
 ]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
 

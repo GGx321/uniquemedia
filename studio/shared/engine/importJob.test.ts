@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, MEDIA_REASONS_RU } from "./errorMessagesRu";
+import { ERROR_MESSAGES_RU, MEDIA_REASONS_AUDIO_RU, MEDIA_REASONS_RU } from "./errorMessagesRu";
 import { EngineError, ERROR_CODES } from "./errors";
 import { EVENT_TYPES, EventMessage } from "./events";
 import { MediaUnsupportedReason } from "./media";
@@ -128,6 +128,20 @@ describe("the Russian text of each refusal reason (CF10)", () => {
     expect(MEDIA_REASONS_RU["too-small"]).toContain("2 пиксел");
     expect(MEDIA_REASONS_RU.dimensions).toContain("мегапиксел");
     expect(MEDIA_REASONS_RU["animated-webp"]).toContain("WebP");
+  });
+
+  test("music that is too long or in a codec Studio does not read says so in its own words (3f.4)", () => {
+    expect(MEDIA_REASONS_AUDIO_RU["too-long"]).toContain("10 минут");
+    expect(MEDIA_REASONS_AUDIO_RU.codec).toMatch(/mp3|AAC|FLAC/);
+    expect(MEDIA_REASONS_AUDIO_RU.format).toContain("музык");
+  });
+
+  test("the music texts are a separate per-kind map that only holds reasons of the contract", () => {
+    for (const reason of Object.keys(MEDIA_REASONS_AUDIO_RU)) expect(MediaUnsupportedReason.safeParse(reason).success).toBe(true);
+    for (const text of Object.values(MEDIA_REASONS_AUDIO_RU)) {
+      expect(text).toMatch(/[А-Яа-яЁё]/);
+      expect(text).not.toMatch(/[\\/]/);
+    }
   });
 
   test("no text holds a path or a file name placeholder", () => {

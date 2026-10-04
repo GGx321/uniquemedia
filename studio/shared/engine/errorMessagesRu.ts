@@ -81,7 +81,21 @@ export const MEDIA_REASONS_RU = {
   "too-small": "Фото слишком маленькое: каждая сторона должна быть не короче 2 пикселей.",
   dimensions: "У фото слишком много пикселей: допустимо до 50 мегапикселей (например, 8000 × 6000). Уменьшите его и добавьте снова.",
   "animated-webp": "Анимированный WebP не подходит для фото. Сохраните один кадр как JPEG или PNG и добавьте снова.",
+  // 3f.4: shared by every kind, so these are the NEUTRAL texts; a kind that has more to say has it in its own per-kind map (MEDIA_REASONS_AUDIO_RU).
+  "too-long": "Файл слишком длинный для этого типа. Сократите его и добавьте снова.",
+  codec: "Файл закодирован в формате, который не поддерживается. Сохраните его в другом формате и добавьте снова.",
 } as const satisfies Record<MediaUnsupportedReason, string>;
+
+/**
+ * The texts for a refused TRACK (3f.4), over the neutral ones above: the codes are shared by every kind, the words depend on the kind of the file.
+ * Kept as a map of its own so that it can be folded into a per-kind table (`MEDIA_REASONS_BY_KIND_RU`, which the video import adds) without
+ * rewriting the shared texts: it is `audio`'s share of that table.
+ */
+export const MEDIA_REASONS_AUDIO_RU: Partial<Record<MediaUnsupportedReason, string>> = {
+  "too-long": "Трек длиннее 10 минут. Обрежьте его и добавьте снова.",
+  codec: "Такой звук не поддерживается. Подойдут mp3, AAC, ALAC, FLAC, WAV, Ogg Vorbis и Opus: сохраните трек в одном из них.",
+  format: "Это не музыкальный файл, который Studio читает: нужен один звуковой трек (mp3, m4a, aac, wav, flac, ogg или opus), без видео и нескольких дорожек.",
+};
 
 /**
  * Why a caption is refused (the `captionIssue` behind TEXT_INVALID). The charset text names © ® ™ on purpose:

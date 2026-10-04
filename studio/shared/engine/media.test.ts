@@ -122,7 +122,7 @@ describe("byte caps", () => {
 });
 
 describe("refusal reasons", () => {
-  test("name the boundary's own reasons, then the photo importer's (3f.2)", () => {
+  test("name the boundary's own reasons, then the photo importer's (3f.2), then the music importer's (3f.4)", () => {
     expect(MediaUnsupportedReason.options).toEqual([
       "not-a-file",
       "empty",
@@ -139,6 +139,9 @@ describe("refusal reasons", () => {
       "too-small",
       "dimensions",
       "animated-webp",
+      // 3f.4 (music), one per line:
+      "too-long",
+      "codec",
     ]);
   });
 });
