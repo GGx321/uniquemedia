@@ -234,6 +234,35 @@ describe("captions as the engine draws them", () => {
     expect(ours.length).toBe(2);
   });
 
+  test("giving up after another window keeps superseding the ask is no refusal: the picture is not marked", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [textLayer(0, 0, 4_000)] });
+    await flush();
+    fireEvent.click(within(timeline()).getByRole("button", { name: /^Текст 1:/ }));
+    await flush();
+    act(() => engine.holdTextDrawing(true));
+    // Another layer's drawing holds the lane, so this window's asks wait in it...
+    const other = client.request("montages.textPreview", { avatarId: MIA.avatarId, layer: { ...textLayer(5, 0, 1_000), layerId: "layer-other" } });
+    await flush();
+    fireEvent.change(within(props()).getByRole("textbox", { name: "Текст" }), { target: { value: "morning" } });
+    await flush();
+    // ...and another window asks for the same layer again and again: each of its asks supersedes this window's waiting one.
+    const elsewhere: Promise<unknown>[] = [];
+    for (let i = 0; i <= 3; i++) {
+      elsewhere.push(client.request("montages.textPreview", { avatarId: MIA.avatarId, layer: { ...textLayer(0, 0, 4_000), value: `elsewhere ${i}` } }));
+      await flush();
+    }
+    await act(async () => {
+      engine.holdTextDrawing(false);
+      engine.releaseTextDrawing();
+      await other;
+      await Promise.all(elsewhere);
+    });
+    await flush();
+    expect(preview().querySelector(".pv-text") !== null).toBe(true);
+    expect(preview().querySelector(".pv-text-refused") === null).toBe(true);
+  });
+
   test("a caption the engine refuses keeps its last good picture, marked", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { layers: [textLayer(0, 0, 4_000)] });
