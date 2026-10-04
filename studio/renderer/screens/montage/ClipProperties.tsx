@@ -1,21 +1,23 @@
 import { type DragEvent, type KeyboardEvent, useId } from "react";
 import type { Clip, MontageDraft, Motion } from "../../../shared/engine";
 import { MAX_TOTAL_MS } from "../../../shared/montage";
-import { NBSP } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
 import { Portrait } from "../../ui/Portrait";
 import { type ClipLayout, cellsOf, type Edit, clipStartMs, layoutOf, maxDurationMs, roomMs, setDuration, setLayout, setMotion, setStagger, totalMs } from "./clipOps";
 import { ownsKeys } from "./keys";
 import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerStepLabel } from "./labels";
+import { type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
 import { selectClip, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
 import { usePlayheadRest } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
+import { VideoClipBody } from "./VideoProperties";
 
 // 3d.3a: the selected clip's properties (Editor.dc.html, `sel = c2`; the reconciliation's R3–R14). «Раскладка»
 // switches one photo ↔ a collage (cells cut or padded empty), «Ячейки» picks a cell (and takes a bin photo dropped
 // on it), «Анимация» and «Ячейки по очереди», «Длительность» on the 100 ms grid within the 15 s. No «Масштаб» (Q3).
-// SLOT 3d.4: the focus drag in the preview. SLOT 3f: an own video's «Обрезка» strip and its source facts (R16–R20).
+// 3d.4: the focus drag is the preview's. 3f.3b: an own video clip has, under the same head, its «Обрезка» strip, «Кадр»
+// and its source facts instead (EditorMine.dc.html, R15–R20: VideoProperties.tsx); its length is the strip's.
 
 const LAYOUTS: readonly { id: ClipLayout; label: string }[] = [
   { id: "photo", label: "1 фото" },
@@ -65,9 +67,12 @@ export interface ClipPropertiesProps {
   readonly focusPending: ReadonlySet<string>;
   readonly dragPhoto: string | null;
   readonly onFillCell: (clip: number, cell: number, photoId: string) => void;
+  /** 3f.3b: the own videos the draft's clips play, and what the render refuses each video clip for (by clip id). */
+  readonly videos: OwnVideos;
+  readonly videoProblems: ReadonlyMap<string, VideoProblem>;
 }
 
-export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell }: ClipPropertiesProps) {
+export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems }: ClipPropertiesProps) {
   const commands = useSelectionCommands(session, timeline);
   const durationId = useId();
   // Where the playhead rests (3d.4): a playback does not re-render the panel.
@@ -242,35 +247,37 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
         </>
       )}
 
-      <div className="ed-pgroup ed-pgroup-tight">
-        <div className="ed-prow ed-duration">
-          <label htmlFor={durationId}>Длительность</label>
-          <input
-            id={durationId}
-            type="range"
-            min={5}
-            max={Math.max(5, max / 100)}
-            step={1}
-            value={clip.durationMs / 100}
-            aria-valuetext={secondsLabel(clip.durationMs)}
-            onChange={(e) => {
-              const at = liveIndex();
-              if (at >= 0) apply(setDuration(session.state.spec, at, Number(e.target.value) * 100), durationKey);
-            }}
-            onPointerUp={() => session.endMerge()}
-            onKeyUp={() => session.endMerge()}
-            onBlur={() => session.endMerge()}
-          />
-          <span className="mono ed-duration-value">{secondsLabel(clip.durationMs)}</span>
+      {clip.kind === "video" ? (
+        <VideoClipBody session={session} spec={spec} index={index} video={videoLookup(videos, clip.mediaId)} problem={videoProblems.get(clip.clipId) ?? null} />
+      ) : (
+        <div className="ed-pgroup ed-pgroup-tight">
+          <div className="ed-prow ed-duration">
+            <label htmlFor={durationId}>Длительность</label>
+            <input
+              id={durationId}
+              type="range"
+              min={5}
+              max={Math.max(5, max / 100)}
+              step={1}
+              value={clip.durationMs / 100}
+              aria-valuetext={secondsLabel(clip.durationMs)}
+              onChange={(e) => {
+                const at = liveIndex();
+                if (at >= 0) apply(setDuration(session.state.spec, at, Number(e.target.value) * 100), durationKey);
+              }}
+              onPointerUp={() => session.endMerge()}
+              onKeyUp={() => session.endMerge()}
+              onBlur={() => session.endMerge()}
+            />
+            <span className="mono ed-duration-value">{secondsLabel(clip.durationMs)}</span>
+          </div>
+          <span className="faint ed-props-note">
+            {room > 0
+              ? `ролик ${secondsLabel(totalMs(spec))} из ${MAX_TOTAL_MS / 1000} · кадр можно удлинить ещё на ${secondsLabel(room)}`
+              : `ролик ${secondsLabel(totalMs(spec))} из ${MAX_TOTAL_MS / 1000} · длиннее кадр уже не станет`}
+          </span>
         </div>
-        <span className="faint ed-props-note">
-          {room > 0
-            ? `ролик ${secondsLabel(totalMs(spec))} из ${MAX_TOTAL_MS / 1000} · кадр можно удлинить ещё на ${secondsLabel(room)}`
-            : `ролик ${secondsLabel(totalMs(spec))} из ${MAX_TOTAL_MS / 1000} · длиннее кадр уже не станет`}
-        </span>
-      </div>
-
-      {clip.kind === "video" && <p className="faint ed-props-note">Своё видео: обрезка и кадр{NBSP}— скоро. Звук видео не используется — в ролике только музыка.</p>}
+      )}
     </aside>
   );
 }

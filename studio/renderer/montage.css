@@ -1034,6 +1034,106 @@
   background: var(--photo-dim);
 }
 
+/* an own video clip (3f.3b, V4): the `<video>` of its mezzanine, the whole video placed so the frame shows the render's crop; under it, the ground
+   that stands in until its first frame (and wherever there is no picture), cut from the same place; the cell's button lies over both */
+.pv-cell-video {
+  background: transparent;
+}
+
+.pv-video-wrap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.pv-video-ground {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 30% 46% at 50% 46%, var(--pv-video-glow) 0%, transparent 72%),
+    repeating-linear-gradient(90deg, var(--pv-video-grid) 0 1px, transparent 1px 10%),
+    repeating-linear-gradient(180deg, var(--pv-video-grid) 0 1px, transparent 1px 12.5%),
+    var(--pv-video-ground);
+}
+
+.pv-video {
+  position: absolute;
+  display: block;
+  max-width: none;
+  object-fit: fill;
+  background: transparent;
+}
+
+/* Below the middle: the focus point and its pill sit at the face-less fallback (38 % down), above the zones' band (80 %). */
+.pv-video-card {
+  position: absolute;
+  top: 64%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 76%;
+  padding: 14px 12px 12px;
+  border-radius: 14px;
+  background: var(--scrim-60);
+  box-shadow: inset 0 0 0 1px var(--pv-video-edge);
+  text-align: center;
+  backdrop-filter: blur(6px);
+  transform: translate(-50%, -50%);
+}
+
+.pv-video-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 3px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.pv-video-card-warn .pv-video-badge {
+  background: var(--warn-16);
+  color: var(--warn);
+}
+
+.pv-video-title {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-video-facts {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-video-note {
+  color: var(--faint);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+/* an own video already 9:16 has nowhere to move: its pill sits in the middle, without a point */
+.pv-video-pill {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
 .pv-empty {
   position: absolute;
   inset: 6px;
@@ -3530,4 +3630,172 @@
   flex-shrink: 0;
   margin-top: 2px;
   color: var(--ok);
+}
+
+/* an own video clip's properties (3f.3b; EditorMine.dc.html, sel = c3, R16–R20) */
+
+/* «Обрезка»: the whole stored video as a film strip, the parts the clip does not play dimmed, the clip's part as a window with two edges */
+.ed-trim {
+  position: relative;
+  height: 48px;
+  border-radius: 7px;
+  background: var(--inset);
+  touch-action: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ed-trim-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 11.5px;
+  cursor: default;
+}
+
+.ed-trim-film {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+  border-radius: 7px;
+  pointer-events: none;
+}
+
+/* A frame of film: sprocket holes along both edges, over the stand-in ground (the strip never reads a frame's pixels). */
+.ed-trim-frame {
+  flex: 1 1 0;
+  border-right: 1px solid var(--scrim-50);
+  background:
+    radial-gradient(circle at 50% 5px, var(--trim-sprocket) 0 1.6px, transparent 2.2px),
+    radial-gradient(circle at 50% calc(100% - 5px), var(--trim-sprocket) 0 1.6px, transparent 2.2px),
+    radial-gradient(ellipse 70% 42% at 50% 52%, var(--pv-video-glow) 0%, transparent 78%),
+    var(--trim-frame);
+}
+
+.ed-trim-frame:last-child {
+  border-right: 0;
+}
+
+.ed-trim-dim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--scrim-72);
+  pointer-events: none;
+}
+
+.ed-trim-dim:first-of-type {
+  border-radius: 7px 0 0 7px;
+}
+
+.ed-trim-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 4px;
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+  cursor: grab;
+}
+
+.ed-trim-window:active,
+.ed-trim-moving,
+.ed-trim-moving .ed-trim-window {
+  cursor: grabbing;
+}
+
+.ed-trim-window:focus-visible,
+.ed-trim-hd:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+/* The edges sit on the window's border, inside it, as the artboard's .hd do. */
+.ed-trim-hd {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  background: var(--accent);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.ed-trim-hd::after {
+  content: "";
+  width: 2px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--scrim-60);
+}
+
+.ed-trim-hd-l {
+  border-radius: 6px 0 0 6px;
+}
+
+.ed-trim-hd-r {
+  border-radius: 0 6px 6px 0;
+  transform: translateX(-100%);
+}
+
+/* A window too narrow for both edges inside it (a short clip of a long video): they stand just outside it, each still grabbable. */
+.ed-trim-narrow .ed-trim-hd-l {
+  transform: translateX(-100%);
+}
+
+.ed-trim-narrow .ed-trim-hd-r {
+  transform: none;
+}
+
+.ed-trim-range {
+  color: var(--text);
+}
+
+/* the source facts and the V4 note (R19, R20) */
+.ed-video-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--inset);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.ed-video-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ed-video-facts {
+  font-size: 10.5px;
+}
+
+.ed-video-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.ed-video-mute {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.ed-video-mute svg {
+  flex-shrink: 0;
 }

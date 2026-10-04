@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type Montage, type MontageIssue, type PhotoSummary, type VideoSummary } from "../../shared/engine";
+import { ownVideoClips } from "../../shared/montage";
 import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
 import { onFlushRequest, quitWithoutSaving } from "../engine/windowStudio";
@@ -21,6 +22,7 @@ import { MusicProperties } from "./montage/MusicCard";
 import { musicVerdictOf, pickTrack, type TrackVerdict } from "./montage/musicOps";
 import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
+import { useOwnVideos, videoProblems } from "./montage/ownVideos";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
 import { StickerTab, type StickerTabProps } from "./montage/StickerTab";
@@ -441,6 +443,10 @@ function DraftEditor({
   // The track: judged (by the length the engine's decode proved) or not yet; the block trusts only a verdict on the spec on screen.
   const musicVerdict: TrackVerdict = musicVerdictOf(judgedNow, judged);
   const flaggedLayers = layerProblems(verdict.spec, judged);
+  // 3f.3b: the own videos the clips play (their records, by id), and what the render refuses each video clip for: the engine's verdict on the spec on
+  // screen, else the window's guess from the records.
+  const ownVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId));
+  const clipVideoProblems = videoProblems(state.spec, verdict, ownVideos);
   const focus = useFocusResolver(client, session, avatarId);
   /** A free photo dragged out of the bin. */
   const [dragPhoto, setDragPhoto] = useState<string | null>(null);
@@ -890,6 +896,7 @@ function DraftEditor({
               fillCell(clip, cell, photoId);
             }}
             onSelectCell={(clip, cell) => selectClipAt(clip, cell)}
+            videos={ownVideos}
           />
           {selected?.kind === "clip" ? (
             <ClipProperties
@@ -902,6 +909,8 @@ function DraftEditor({
               focusPending={focus.pending}
               dragPhoto={dragPhoto}
               onFillCell={fillCell}
+              videos={ownVideos}
+              videoProblems={clipVideoProblems}
             />
           ) : selected?.kind === "layer" ? (
             <LayerProperties
@@ -940,6 +949,8 @@ function DraftEditor({
           onAddMusic={() => openTab("music")}
           onAddSticker={() => openTab("gif")}
           onSelectClip={(index) => selectClipAt(index)}
+          videos={ownVideos}
+          videoProblems={clipVideoProblems}
         />
       </div>
     </TextPreviewsProvider>

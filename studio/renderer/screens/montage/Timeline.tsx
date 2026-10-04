@@ -8,17 +8,19 @@ import { Icon, type IconName, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { addRefusal, cellsOf, clipStartMs, isEven, maxDurationMs, moveClip, setDuration, totalMs } from "./clipOps";
 import { DRAG_THRESHOLD_PX, type GestureKit, SNAP_PX, trackPointer } from "./gesture";
 import { isTextEntry, ownsKeys } from "./keys";
-import { actionWhyLabel, clipAria, clockLabel, layerAddLabel, PHOTO_PROBLEM_TAGS, secondsLabel } from "./labels";
+import { actionWhyLabel, clipAria, clockLabel, layerAddLabel, PHOTO_PROBLEM_TAGS, secondsLabel, VIDEO_PROBLEM_TAGS } from "./labels";
 import { addLayerRefusal, layerCap, layerCount } from "./layerOps";
 import { laneHeight, laneLayout, LayerTracks } from "./LayerTracks";
 import type { TrackVerdict } from "./musicOps";
 import { MusicTrack, type TrackLookup } from "./MusicTrack";
+import { type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
 import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
 import { boundaryAt, boundaryMs, clockMs, MAX_ZOOM, MIN_ZOOM, msAtFraction, rulerMarks, seekInto, snapEdge, snapTargets, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
 import { usePlayheadRest, usePlayheadStep, usePlaying } from "./usePlayhead";
 import { playheadStep, type TimelineState, useSelectionCommands } from "./useTimeline";
+import { durationLimitMs } from "./videoTrim";
 
 // 3d.3a: the timeline (Editor.dc.html's bottom band; the components sheet's «Линейка · плейхед · масштаб» and «Кадр на
 // главном треке»). The toolbar, the ruler and a scrubbable playhead, the track headers with their caps, and the
@@ -44,9 +46,9 @@ function ToolButton({ label, icon, size, state, onClick }: { label: string; icon
   );
 }
 
-/** One 24 px frame of a clip's strip: the photo, a stand-in in the mock, a dark cell when empty or own media. */
+/** One 24 px frame of a clip's strip: the photo, a stand-in in the mock, a dark cell when empty, an own video's film (3f.3b: the strip never reads its pixels). */
 function frameStyle(mock: boolean, avatarId: string, photoId: string | null, video: boolean): { background: string } | undefined {
-  if (video) return { background: "var(--photo-drawing)" };
+  if (video) return { background: "var(--trim-frame)" };
   if (photoId === null) return undefined;
   const url = mock ? null : photoUrl(avatarId, photoId);
   return { background: url === null ? placeholderGradient(photoId) : `url("${url}") center / cover no-repeat` };
@@ -157,9 +159,12 @@ export interface TimelineProps {
   readonly onAddSticker: () => void;
   /** Selects clip `index` and brings the playhead into it. */
   readonly onSelectClip: (index: number) => void;
+  /** 3f.3b: the own videos the clips play (a clip's name and how long its video lets it get), and what the render refuses each video clip for. */
+  readonly videos: OwnVideos;
+  readonly videoProblems: ReadonlyMap<string, VideoProblem>;
 }
 
-export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicVerdict, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onAddSticker, onSelectClip }: TimelineProps) {
+export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicVerdict, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onAddSticker, onSelectClip, videos, videoProblems }: TimelineProps) {
   const commands = useSelectionCommands(session, timeline);
   const lanesRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -218,6 +223,13 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     else if (typeof target === "string") clipButtons.current.get(target)?.focus();
     else lanesRef.current?.querySelector<HTMLButtonElement>(`button[data-layer-id="${CSS.escape(target.layerId)}"]`)?.focus();
   });
+
+  /** How long an own video clip's video lets it get from its trim (3f.3b); none for any other clip, or a video not known yet. */
+  function limitOf(clip: Clip): number | undefined {
+    if (clip.kind !== "video") return undefined;
+    const known = videoLookup(videos, clip.mediaId);
+    return known.state === "known" ? durationLimitMs(clip, known.video.durationMs) : undefined;
+  }
 
   /** A layer the header's «+» just added: selected, and the focus goes to its block. */
   function focusAdded(layerId: string | null): void {
@@ -360,8 +372,9 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
         if (edge === "end") wanted = snapEdge(start + wanted, [playhead], SNAP_PX / perMs) - start;
         const current = session.state.spec;
         const now = current.clips.findIndex((c) => c.clipId === clipId);
-        if (now < 0) return;
-        const next = setDuration(current, now, wanted);
+        const clipNow = current.clips[now];
+        if (clipNow === undefined) return;
+        const next = setDuration(current, now, wanted, limitOf(clipNow));
         if (next !== current) session.edit(next, { mergeKey });
       },
       () => session.endMerge(),
@@ -377,19 +390,20 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     // ←/→ follow the edge the way a drag does: the left edge pulled left makes the clip longer. ↑/↓ follow the value.
     const outward = edge === "start" ? "ArrowLeft" : "ArrowRight";
     const inward = edge === "start" ? "ArrowRight" : "ArrowLeft";
+    const limit = limitOf(clip);
     const targets: Record<string, number> = {
       [outward]: clip.durationMs + step,
       ArrowUp: clip.durationMs + step,
       [inward]: clip.durationMs - step,
       ArrowDown: clip.durationMs - step,
       Home: MIN_CLIP_MS,
-      End: maxDurationMs(current, index),
+      End: maxDurationMs(current, index, limit),
     };
     const wanted = targets[event.key];
     if (wanted === undefined) return;
     event.preventDefault();
     event.stopPropagation();
-    const next = setDuration(current, index, wanted);
+    const next = setDuration(current, index, wanted, limit);
     // Held keys repeat: one undo step until the key is let go.
     heldKey.current = event.key;
     if (next !== current) session.edit(next, { mergeKey: `trim-key:${clipId}` });
@@ -565,10 +579,23 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                     const start = boundaryMs(durations, i);
                     const selected = resolved?.kind === "clip" && resolved.index === i;
                     const problem = flagged.get(i) ?? null;
+                    // 3f.3b: an own video clip the render refuses (its video gone, or shorter than the clip asks) is flagged as a refused photo is.
+                    const videoProblem = clip.kind === "video" ? (videoProblems.get(clip.clipId) ?? null) : null;
+                    const known = clip.kind === "video" ? videoLookup(videos, clip.mediaId) : null;
                     const lifted = lift?.clipId === clip.clipId;
-                    const tag = problem !== null ? PHOTO_PROBLEM_TAGS[problem] : clip.kind === "collage" ? `коллаж ${clip.cells.length}` : clip.kind === "video" ? "▶ видео" : null;
-                    const classes = ["ed-clip-slot", selected ? "ed-clip-on" : "", problem !== null ? "ed-clip-flagged" : highlighted.includes(i) ? "ed-clip-warn" : "", lifted ? "ed-clip-lifted" : ""].filter(Boolean).join(" ");
-                    const max = maxDurationMs(spec, i);
+                    const tag =
+                      problem !== null
+                        ? PHOTO_PROBLEM_TAGS[problem]
+                        : videoProblem !== null
+                          ? VIDEO_PROBLEM_TAGS[videoProblem]
+                          : clip.kind === "collage"
+                            ? `коллаж ${clip.cells.length}`
+                            : clip.kind === "video"
+                              ? "▶ видео"
+                              : null;
+                    const refused = problem !== null || videoProblem !== null;
+                    const classes = ["ed-clip-slot", selected ? "ed-clip-on" : "", refused ? "ed-clip-flagged" : highlighted.includes(i) ? "ed-clip-warn" : "", lifted ? "ed-clip-lifted" : ""].filter(Boolean).join(" ");
+                    const max = maxDurationMs(spec, i, limitOf(clip));
                     const handle = (edge: "start" | "end") => (
                       <span
                         role="slider"
@@ -603,7 +630,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                           className="ed-clip"
                           data-clip-id={clip.clipId}
                           aria-pressed={selected}
-                          aria-label={clipAria(i, clip, problem)}
+                          aria-label={clipAria(i, clip, problem ?? videoProblem, known?.state === "known" ? known.video.name : null)}
                           aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Delete"
                           onPointerDown={(e) => pressClip(e, clip.clipId)}
                           onClick={() => {

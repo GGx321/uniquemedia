@@ -142,6 +142,13 @@ const PATHS = {
       <path d="M12 21V11M8 17l4 4 4-4" />
     </>
   ),
+  /** «Звук видео не используется» (3f.3b, EditorMine): a speaker struck out. */
+  soundOff: (
+    <>
+      <path d="M4 10v4h4l5 4V6L8 10z" />
+      <path d="M17 9l4 6M21 9l-4 6" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;
