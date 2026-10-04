@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { fakeSpawner } from "../../node/fakeFfmpeg.testkit";
 import { PROBE_CODEC_WHITELIST, ProbeError, probeArgv, probeDump } from "./audioProbe";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // The probe's child process (3f.4): hardened argv, a bounded dump, and a child that is killed on a cancel and on a time-out.
 

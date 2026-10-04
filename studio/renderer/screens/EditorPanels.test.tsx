@@ -416,8 +416,8 @@ describe("the music card: the whole track, the window, the highlight picks", () 
       selectBlock(/^Музыка:/);
       expect(await within(props()).findByText("my mix.mp3")).toBeDefined();
       expect(plain(props().querySelector(".ed-music-facts .mono")?.textContent)).toBe("0:40 · свой файл");
-      expect(within(props()).queryByRole("group", { name: "Выбрать лучшую часть" })).toBeNull();
-      expect(within(props()).queryByText(/от Instagram/)).toBeNull();
+      expect(within(props()).queryByRole("group", { name: "Выбрать лучшую часть" }) === null).toBe(true);
+      expect(within(props()).queryByText(/от Instagram/) === null).toBe(true);
       expect(within(props()).getByText("свой трек")).toBeDefined();
     });
 

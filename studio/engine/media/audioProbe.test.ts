@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { demuxerOf, durationMsOf, judgeDump, judgeStoredDump, streamLinesOf, type AudioDemuxer } from "./audioProbe";
 import type { MediaFormat } from "./sniff";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // What ffmpeg's input dump says of a file, read as text (3f.4). The dump is TEXT THE FILE PARTLY WRITES (a tag, a handler name), so the reader
 // is held to the rules of `decodeCheck.inspectStreams`: the stream numbers are 0..n-1 in order, and a line a tag printed cannot pass for a stream.

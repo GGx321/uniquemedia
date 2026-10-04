@@ -228,7 +228,7 @@ describe("the 100 MB cap, by the file's size and not by reading it", () => {
     expect(await staged()).toEqual([]);
   });
 
-  heavyTest("[heavy] a file of exactly the cap passes the door (the importer then judges its bytes)", async () => {
+  heavyTest("a file of exactly the cap passes the door (the importer then judges its bytes)", async () => {
     const r = rig();
     const call = await callFor("exact.mp3", ID3);
     await truncate(call.path, MEDIA_BYTE_CAPS.audio);

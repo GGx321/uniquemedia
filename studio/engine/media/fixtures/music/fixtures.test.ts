@@ -5,6 +5,8 @@ import { describe, expect, test } from "bun:test";
 import { formatOf } from "../../sniff";
 import { ENTRIES } from "./generate";
 import { FIXTURE_TAGS, fixtureBytes, musicFixtures } from "./index";
+import { useNativeGlobals } from "../../../../testing/nativeGlobals";
+useNativeGlobals();
 
 // The own-music fixtures are byte-exact inputs: pinned by size and sha256 (a new encoder build that changes a byte must be a deliberate regeneration),
 // small (a few KB, never a real recording), and each is the container it is pinned as.

@@ -290,13 +290,13 @@ describe("the length is judged from the decoded output, against the limit", () =
     expect(reasonOf((await run(wavOf(0, RATE), "wav")).outcome)).toBe("format");
   });
 
-  heavyTest("[exactly 10:00] a ten minute track is accepted", async () => {
+  heavyTest("exactly 10:00: a ten minute track is accepted", async () => {
     const stored = await accepted(await run(wavOf(600 * RATE, RATE), "wav"));
     expect(stored.durationMs).toBeLessThanOrEqual(MAX_TRACK_MS);
     expect(stored.durationMs).toBeGreaterThan(MAX_TRACK_MS - 30);
   }, 240_000);
 
-  heavyTest("[10:00 and one frame] a track one frame over ten minutes is too-long", async () => {
+  heavyTest("10:00 and one frame: a track one frame over ten minutes is too-long", async () => {
     expect(reasonOf((await run(wavOf(600 * RATE + oneAacFrame(RATE), RATE), "wav")).outcome)).toBe("too-long");
   }, 240_000);
 });
