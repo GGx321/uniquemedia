@@ -6,6 +6,7 @@ import { EventMessage } from "./events";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
 import { MediaPickImportPayload, MediaPickResult } from "./media";
+import { StickerBytes, StickerBytesPayload } from "./stickerBytes";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
   ApiKeyStatus,
@@ -225,6 +226,11 @@ const MAIN_ONLY_SPECS = [
   // with none there yet it opens the export folder itself (`opened` says which). EXPORT_UNAVAILABLE (`exportReason`) when the
   // export folder cannot be used, NOT_FOUND for an unknown avatar.
   defineCommand("videos.revealFolder", z.strictObject({ avatarId: Id }), z.strictObject({ opened: z.enum(["avatar", "root"]) })),
+  // Stage 3 (3d.4, review round 1): a built-in sticker's bytes for the preview's ImageDecoder. The media scheme stays closed to
+  // script reads (never corsEnabled), so main answers from the verified built-in catalogue (the catalogue's sha256, the APNG
+  // re-inspected, the manifest agreeing): the window names an id, and is told the file and never a path. NOT_FOUND for an id the
+  // set does not hold.
+  defineCommand("stickers.bytes", StickerBytesPayload, StickerBytes),
 ] as const;
 
 /** Commands main forwards to the engine. */

@@ -58,7 +58,7 @@ import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIss
 import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, totalFrames, trackIssues } from "../../shared/montage";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
-import { mockStickerUrl } from "./mockStickers";
+import { mockStickerBytes, mockStickerUrl } from "./mockStickers";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
@@ -1336,6 +1336,14 @@ export class MockEngine implements EngineBridge {
       }
       case "settings.exportDisplay":
         return this.ok(c, { display: displayPath(this.settings.exportPath) });
+      case "stickers.bytes": {
+        // Main's answer from the verified built-in set (3d.4 review round 1); the mock's is its own stand-in, the picture it shows.
+        const bytes = mockStickerBytes(c.payload.stickerId);
+        if (bytes === null) return this.fail(c, { code: "NOT_FOUND", detail: "no such built-in sticker" });
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        return this.ok(c, { stickerId: c.payload.stickerId, apngBase64: btoa(binary) });
+      }
       case "export.check": {
         this.checkExport();
         return this.ok(c, { exportStatus: this.exportReported });

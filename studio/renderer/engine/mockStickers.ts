@@ -21,7 +21,7 @@ const SIDE = 64;
 /** A 2-bit palette: transparent, the colour at the soft edge, the colour. */
 const EDGE_ALPHA = 120;
 
-const made = new Map<string, string>();
+const made = new Map<string, { bytes: Uint8Array; url: string }>();
 
 /** The four-pointed star of outer radius `r`, turned by `turn` radians, centred on the picture: its eight corners. */
 function star(r: number, turn: number): [number, number][] {
@@ -101,13 +101,27 @@ function standIn(category: StickerCategoryId, frames: number): Uint8Array {
   return concatBytes(parts);
 }
 
-/** An animated data URL standing in for built-in sticker `stickerId` (made once), or null when the set does not have it. */
-export function mockStickerUrl(stickerId: string): string | null {
+function standInOf(stickerId: string): { bytes: Uint8Array; url: string } | null {
   const sticker = stickerById(stickerId);
   if (sticker === undefined) return null;
   const known = made.get(sticker.id);
   if (known !== undefined) return known;
-  const url = pngBase64Url(standIn(sticker.category, sticker.loopFrames));
-  made.set(sticker.id, url);
-  return url;
+  const bytes = standIn(sticker.category, sticker.loopFrames);
+  const entry = { bytes, url: pngBase64Url(bytes) };
+  made.set(sticker.id, entry);
+  return entry;
+}
+
+/** An animated data URL standing in for built-in sticker `stickerId` (made once), or null when the set does not have it. */
+export function mockStickerUrl(stickerId: string): string | null {
+  return standInOf(stickerId)?.url ?? null;
+}
+
+/**
+ * The bytes of that stand-in (a copy): what the mock answers `stickers.bytes` with, as main answers with the verified file
+ * (3d.4 review round 1: the preview's decoder never reads the media scheme). Null when the set does not have the sticker.
+ */
+export function mockStickerBytes(stickerId: string): Uint8Array | null {
+  const entry = standInOf(stickerId);
+  return entry === null ? null : new Uint8Array(entry.bytes);
 }

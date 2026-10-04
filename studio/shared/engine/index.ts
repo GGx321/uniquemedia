@@ -14,4 +14,5 @@ export * from "./messages";
 export * from "./montage";
 export * from "./primitives";
 export * from "./state";
+export * from "./stickerBytes";
 export * from "./video";
