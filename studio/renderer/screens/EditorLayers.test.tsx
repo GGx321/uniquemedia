@@ -141,7 +141,7 @@ describe("adding a text or a sticker at the playhead (the track headers' «+», 
     expect(tiles).toHaveLength(10);
     fireEvent.click(screen.getByRole("button", { name: "Сердце: в плейхед" }));
     expect(blockNames(stickers())).toEqual(["Стикер 1: Сердце, 0.0–3.0 с, петля 0.8 с"]);
-    expect(block(/^Стикер 1:/).querySelector("img")?.getAttribute("src")?.startsWith("data:image/svg+xml,")).toBe(true);
+    expect(block(/^Стикер 1:/).querySelector("img")?.getAttribute("src")?.startsWith("data:image/png;base64,")).toBe(true);
     expect(within(props()).getByText("Стикер 1 из 1")).toBeDefined();
     const saved = await nextSave(engine);
     expect(saved.layers).toEqual([expect.objectContaining({ kind: "sticker", sticker: { source: "builtin", stickerId: "heart-pulse" }, startMs: 0, endMs: 3_000 })]);

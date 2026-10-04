@@ -23,7 +23,7 @@ describe("stickerUrl", () => {
   test("the mock draws a stand-in for every sticker of the built-in set, and none for one it lacks", () => {
     // A manual clock: the test leaves nothing that could keep the process alive.
     const client = mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() }));
-    for (const sticker of STICKER_MANIFEST) expect(stickerUrl(client, sticker.id)?.startsWith("data:image/svg+xml,")).toBe(true);
+    for (const sticker of STICKER_MANIFEST) expect(stickerUrl(client, sticker.id)?.startsWith("data:image/png;base64,")).toBe(true);
     expect(stickerUrl(client, "sticker-nowhere")).toBe(null);
   });
 });

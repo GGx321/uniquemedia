@@ -1,8 +1,8 @@
 import type { EngineError, TextLayer } from "../../shared/engine";
 import { FRAME_H, FRAME_W } from "../../shared/montage";
-import { crc32 } from "../../shared/stickers/crc32";
 import { captionIssue } from "../../shared/text/captionRules";
 import { CaptionLayoutError, layoutCaption, type CaptionLayout } from "../../shared/text/layout";
+import { concatBytes, PNG_SIGNATURE, pngChunk, zlibStored } from "./mockPng";
 import type { Scheduler } from "./scheduler";
 
 // The dev mock's text previews (3d.1b): `montages.textPreview` as the engine answers it (studio/engine/text/preview.ts), over a
@@ -197,49 +197,6 @@ export class MockTextPreviews {
 
 // ---------- the placeholder picture ----------
 
-const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-
-function chunk(type: string, data: Uint8Array): Uint8Array {
-  const out = new Uint8Array(12 + data.length);
-  const view = new DataView(out.buffer);
-  view.setUint32(0, data.length);
-  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
-  out.set(data, 8);
-  view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
-  return out;
-}
-
-function adler32(bytes: Uint8Array): number {
-  let a = 1;
-  let b = 0;
-  for (const byte of bytes) {
-    a = (a + byte) % 65521;
-    b = (b + a) % 65521;
-  }
-  return ((b << 16) | a) >>> 0;
-}
-
-/** A zlib stream of stored (uncompressed) blocks: no deflate in the renderer, and the picture is a few KB of flat colour. */
-function zlibStored(raw: Uint8Array): Uint8Array {
-  const blocks = Math.max(1, Math.ceil(raw.length / 65535));
-  const out = new Uint8Array(2 + raw.length + blocks * 5 + 4);
-  out[0] = 0x78;
-  out[1] = 0x01;
-  let at = 2;
-  for (let b = 0; b < blocks; b++) {
-    const part = raw.subarray(b * 65535, (b + 1) * 65535);
-    out[at++] = b === blocks - 1 ? 1 : 0;
-    out[at++] = part.length & 255;
-    out[at++] = part.length >>> 8;
-    out[at++] = ~part.length & 255;
-    out[at++] = (~part.length >>> 8) & 255;
-    out.set(part, at);
-    at += part.length;
-  }
-  new DataView(out.buffer).setUint32(at, adler32(raw));
-  return out;
-}
-
 function rgb(color: string): [number, number, number] {
   return [parseInt(color.slice(1, 3), 16), parseInt(color.slice(3, 5), 16), parseInt(color.slice(5, 7), 16)];
 }
@@ -282,12 +239,12 @@ function placeholderPng(layer: TextLayer, box: Box): Uint8Array {
   header[9] = 3; // colour type: palette
   const [pr, pg, pb] = rgb(layer.color);
   const palette = Uint8Array.from([0, 0, 0, pr, pg, pb, ...(plaque ? inkFor(layer.color) : [pr, pg, pb]), 0, 0, 0]);
-  const parts = [Uint8Array.from(SIGNATURE), chunk("IHDR", header), chunk("PLTE", palette), chunk("tRNS", Uint8Array.from([0, 255, 255, 255])), chunk("IDAT", zlibStored(raw)), chunk("IEND", new Uint8Array(0))];
-  const png = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-  let at = 0;
-  for (const part of parts) {
-    png.set(part, at);
-    at += part.length;
-  }
-  return png;
+  return concatBytes([
+    Uint8Array.from(PNG_SIGNATURE),
+    pngChunk("IHDR", header),
+    pngChunk("PLTE", palette),
+    pngChunk("tRNS", Uint8Array.from([0, 255, 255, 255])),
+    pngChunk("IDAT", zlibStored(raw)),
+    pngChunk("IEND", new Uint8Array(0)),
+  ]);
 }
