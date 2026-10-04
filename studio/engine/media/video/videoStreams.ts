@@ -38,6 +38,14 @@ export interface VideoStreamsOptions {
 /** `ok`: one video stream, the judged one. `several`: ffmpeg has more than one (or cannot be shown to have only one). `mismatch`: its one stream is not the judged clip, or its dump is no plain list. */
 export type VideoStreamsVerdict = "ok" | "several" | "mismatch";
 
+/**
+ * How many pixels a side the CODED size of the stream may exceed the size the boxes say (3f.6 review, round 3). A codec crops to its own alignment: HEVC 4:2:0 only to even sizes,
+ * so Apple writes the display size (459 x 940) in `stsd` and `tkhd` while the bitstream, and ffmpeg's line, say 460 x 940; a 16-pixel macroblock is the widest alignment a codec
+ * here has, so up to 15. A crop only removes pixels, so a stream SMALLER than the boxes is no crop. A larger one is a bitstream that does not match its boxes (the lie that
+ * `-max_pixels` was added for: 4224 x 2176 under 1920 x 1080).
+ */
+export const DISPLAY_CROP_SLACK_PX = 15;
+
 const CODEC_OF_REST = /^\s*([a-z0-9_]+)/;
 /** The picture's size in a video stream line: `, 1920x1080` after the pixel format (a hex number such as `0x31637661` follows a slash, never a comma). */
 const SIZE_OF_REST = /,\s*(\d{1,5})x(\d{1,5})(?=[\s,[]|$)/;
@@ -65,5 +73,7 @@ export async function checkVideoStreams(options: VideoStreamsOptions): Promise<V
   const codec = CODEC_OF_REST.exec(only.rest)?.[1];
   const size = SIZE_OF_REST.exec(only.rest);
   if (codec !== options.expected.codec || size?.[1] === undefined || size[2] === undefined) return "mismatch";
-  return Number(size[1]) === options.expected.width && Number(size[2]) === options.expected.height ? "ok" : "mismatch";
+  // The coded size may exceed the boxes' by a codec's alignment (`DISPLAY_CROP_SLACK_PX`), never fall short of them.
+  const within = (coded: number, judged: number): boolean => coded >= judged && coded <= judged + DISPLAY_CROP_SLACK_PX;
+  return within(Number(size[1]), options.expected.width) && within(Number(size[2]), options.expected.height) ? "ok" : "mismatch";
 }

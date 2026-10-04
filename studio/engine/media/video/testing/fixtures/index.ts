@@ -31,6 +31,7 @@ export const FIXTURES = {
   "hevc-hlg-entry-terminator.mov": fixture("hevc-hlg-entry-terminator.mov", 3586, "e097840f931cbe322773844306c5c7d1e8f86170a4eb70c0a9b04274ce0d9f81"),
   "h264-entry-terminator.mov": fixture("h264-entry-terminator.mov", 1890, "6dba53396f2c0717cb59cb69a7f4bf24625224749b7d786dabd8eed214ad427e"),
   "h264-track-meta-mdta.mp4": fixture("h264-track-meta-mdta.mp4", 2054, "b73ede340b9c567a3761ff2c9300b36dee04d4c0e2a178c22beeac7f80cc54f8"),
+  "hevc-sdr-460x940.mp4": fixture("hevc-sdr-460x940.mp4", 3773, "2939b907bf4d4d769da90bfd2fb62cb9ffe318edffa76609afcb5dfa6cd8e38b"),
 } as const satisfies Record<string, VideoFixture>;
 
 export type VideoFixtureName = keyof typeof FIXTURES;
