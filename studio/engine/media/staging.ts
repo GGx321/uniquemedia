@@ -63,6 +63,34 @@ export interface StageRequest {
   readonly onProgress?: ((copied: number, total: number) => void) | undefined;
 }
 
+/** What `open` needs: the picked file and the identity main saw. The copy's own signal and progress belong to `copy`. */
+export type OpenRequest = Omit<StageRequest, "signal" | "onProgress">;
+
+export interface CopyOptions {
+  readonly signal?: AbortSignal | undefined;
+  /** After each chunk: the bytes copied so far and the size the file had when it was opened. */
+  readonly onProgress?: ((copied: number, total: number) => void) | undefined;
+}
+
+/**
+ * A picked file that was opened ONCE and judged from the open handle (identity, size, the kind its first bytes name, the kind's cap,
+ * whether the kind has an importer): everything the window may be told at once. Nothing is copied yet. `copy` makes the staged copy
+ * from this same handle (never from the path again); `close` lets the handle go. The import job owns both: it copies, hands the copy
+ * to the importer, and closes the handle at its end whichever way it ended.
+ */
+export interface OpenedMedia {
+  /** The kind the BYTES are. */
+  readonly kind: MediaKind;
+  readonly bytes: number;
+  /** The first bytes of the opened file (at most `SNIFF_HEAD_BYTES`). */
+  readonly head: Uint8Array;
+  /** Copies the opened file into the staging folder. A refusal (`cancelled`, `changed`, `no-space`, `unreadable`) leaves nothing behind. */
+  copy(options?: CopyOptions): Promise<StageResult>;
+  /** Releases the handle; harmless when repeated, never throws. */
+  close(): Promise<void>;
+}
+export type OpenResult = { ok: true; opened: OpenedMedia } | { ok: false; reason: StageRefusal; detail: string };
+
 /** The disk calls of the copy's own files, injectable for a test that plays Windows' held handles or a disk that writes short. */
 export interface StagingFs {
   readonly rename?: (from: string, to: string) => Promise<void>;
@@ -104,7 +132,8 @@ const DEFAULT_FREE_MARGIN_BYTES = 64 * 1024 * 1024;
 /** The shape of a name this module makes: `.<id>.part` while it is copied, `<id>.media` when it is whole. Nothing else is ever removed. */
 const STAGED_NAME = /^\.?[a-z0-9-]{8,64}\.(part|media)$/;
 
-const refuse = (reason: StageRefusal, detail: string): StageResult => ({ ok: false, reason, detail });
+type Refused = { ok: false; reason: StageRefusal; detail: string };
+const refuse = (reason: StageRefusal, detail: string): Refused => ({ ok: false, reason, detail });
 
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error && typeof Reflect.get(error, "code") === "string" ? String(Reflect.get(error, "code")) : undefined;
@@ -119,7 +148,7 @@ class UnsafeStagingError extends Error {
 }
 
 /** What opening the picked path said, as a refusal. */
-function refusalOfOpen(error: unknown): StageResult {
+function refusalOfOpen(error: unknown): Refused {
   if (error instanceof UnsafeOpenError) {
     if (error.code === "ECHANGED") return refuse("changed", "the file at the path changed while it was being opened");
     return refuse("not-a-file", "the picked path is not a regular file");
@@ -127,6 +156,12 @@ function refusalOfOpen(error: unknown): StageResult {
   const code = errorCode(error);
   if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") return refuse("not-a-file", "nothing is at the picked path");
   return refuse("unreadable", `the picked file could not be opened${code === undefined ? "" : ` (${code})`}`);
+}
+
+/** What a thrown disk or folder error is, as a refusal (never with a path). */
+function refusalOfError(error: unknown): Refused {
+  if (error instanceof UnsafeStagingError) return refuse("unreadable", "the library's staging folder cannot be used");
+  return refuse("unreadable", `the picked file could not be read${errorCode(error) === undefined ? "" : ` (${errorCode(error)})`}`);
 }
 
 async function defaultFreeBytes(dir: string): Promise<number | null> {
@@ -140,6 +175,8 @@ export class MediaStaging {
   readonly #mediaDir: string;
   readonly #dir: string;
   #ready: Promise<void> | null = null;
+  /** Names of the files a copy of this staging is writing or an importer still holds: the cleanup never removes them. */
+  readonly #owned = new Set<string>();
 
   constructor(options: MediaStagingOptions) {
     this.#options = options;
@@ -220,7 +257,7 @@ export class MediaStaging {
     if (dir === null) return;
     let failed = 0;
     for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
-      if (!entry.isFile() || !STAGED_NAME.test(entry.name)) continue;
+      if (!entry.isFile() || !STAGED_NAME.test(entry.name) || this.#owned.has(entry.name)) continue;
       try {
         await this.#unlink(join(dir, entry.name));
       } catch (error) {
@@ -242,8 +279,9 @@ export class MediaStaging {
     return this.#ready;
   }
 
-  async stage(request: StageRequest): Promise<StageResult> {
-    if (request.signal?.aborted === true) return refuse("cancelled", "the import was cancelled");
+  /** Opens the picked path once and judges it; the copy is a separate step (`OpenedMedia.copy`). */
+  async open(request: OpenRequest, signal?: AbortSignal): Promise<OpenResult> {
+    if (signal?.aborted === true) return refuse("cancelled", "the import was cancelled");
     if (isUnsafePickedPath(request.path, this.#options.platform ?? process.platform)) return refuse("not-a-file", "the picked path is not a regular file");
     let handle: FileHandle;
     try {
@@ -254,17 +292,46 @@ export class MediaStaging {
     } catch (error) {
       return refusalOfOpen(error);
     }
-    try {
-      return await this.#stageOpen(handle, request);
-    } catch (error) {
-      if (error instanceof UnsafeStagingError) return refuse("unreadable", "the library's staging folder cannot be used");
-      return refuse("unreadable", `the picked file could not be read${errorCode(error) === undefined ? "" : ` (${errorCode(error)})`}`);
-    } finally {
+    const close = async (): Promise<void> => {
       await handle.close().catch(() => undefined);
+    };
+    try {
+      const judged = await this.#judge(handle, request);
+      if (!judged.ok) {
+        await close();
+        return judged;
+      }
+      const { kind, size, cap, head } = judged;
+      const opened: OpenedMedia = {
+        kind,
+        bytes: size,
+        head,
+        copy: (options = {}) => this.#guardedCopy(handle, request, kind, size, cap, options),
+        close,
+      };
+      return { ok: true, opened };
+    } catch (error) {
+      await close();
+      return refusalOfError(error);
     }
   }
 
-  async #stageOpen(handle: FileHandle, request: StageRequest): Promise<StageResult> {
+  /** Opens, copies and closes: the whole staging of one file, for a caller that has no use for the step between. */
+  async stage(request: StageRequest): Promise<StageResult> {
+    const { signal, onProgress, ...open } = request;
+    const result = await this.open(open, signal);
+    if (!result.ok) return result;
+    try {
+      return await result.opened.copy({ signal, onProgress });
+    } finally {
+      await result.opened.close();
+    }
+  }
+
+  async #judge(
+    handle: FileHandle,
+    request: OpenRequest,
+  ): Promise<{ ok: true; kind: MediaKind; size: number; cap: number; head: Uint8Array } | { ok: false; reason: StageRefusal; detail: string }> {
     const info = await handle.stat({ bigint: true });
     if (!sameIdentity(pickedIdentityOf(info), request.expected)) return refuse("changed", "the file is not the one the dialog showed");
     if (info.size === 0n) return refuse("empty", "the file has no bytes");
@@ -275,7 +342,7 @@ export class MediaStaging {
     // The start of the file names its kind: read from the OPEN handle, before anything is copied.
     const probe = Buffer.alloc(Math.min(SNIFF_HEAD_BYTES, size));
     const { bytesRead } = await handle.read(probe, 0, probe.length, 0);
-    const head = probe.subarray(0, bytesRead);
+    const head = Uint8Array.from(probe.subarray(0, bytesRead));
     const kind = resolveMediaKind(request.kind, head);
     if (kind === null) {
       const reason = unfitReason(request.kind, head);
@@ -284,14 +351,27 @@ export class MediaStaging {
     if (this.#options.supports?.(kind) === false) return refuse("not-yet-supported", `${kind} files cannot be imported yet`);
     const cap = this.#caps[kind];
     if (size > cap) return refuse("too-large", `the file is larger than ${cap} bytes`);
-
-    return this.#copy(handle, request, kind, size, cap);
+    return { ok: true, kind, size, cap, head };
   }
 
-  async #copy(handle: FileHandle, request: StageRequest, kind: MediaKind, size: number, cap: number): Promise<StageResult> {
+  async #guardedCopy(handle: FileHandle, request: OpenRequest, kind: MediaKind, size: number, cap: number, options: CopyOptions): Promise<StageResult> {
+    try {
+      return await this.#copy(handle, request, kind, size, cap, options);
+    } catch (error) {
+      return refusalOfError(error);
+    }
+  }
+
+  async #copy(handle: FileHandle, request: OpenRequest, kind: MediaKind, size: number, cap: number, options: CopyOptions): Promise<StageResult> {
+    const { signal, onProgress } = options;
+    // A function, so that TypeScript does not read the first answer as the answer for the whole copy.
+    const aborted = (): boolean => signal?.aborted === true;
+    if (aborted()) return refuse("cancelled", "the import was cancelled");
     const stagingId = this.#options.newId();
     if (!Id.safeParse(stagingId).success) return refuse("unreadable", "no staging name could be made");
     await this.#prepare();
+    // Before EVERY copy, not only the first: a folder swapped for a link after an earlier import must not take this one (probe P4d).
+    await this.#safeDir(true);
 
     // Room first: a 2 GiB copy onto a nearly full disk would fill it and fail late.
     const free = await (this.#options.freeBytes ?? defaultFreeBytes)(this.#dir).catch(() => null);
@@ -299,12 +379,26 @@ export class MediaStaging {
       return refuse("no-space", "the library's disk has too little free room for the copy");
     }
 
-    const part = join(this.#dir, `.${stagingId}.part`);
-    const target = join(this.#dir, `${stagingId}.media`);
-    const out = await (this.#options.fs?.openOut ?? ((path: string) => open(path, "wx")))(part);
+    const partName = `.${stagingId}.part`;
+    const targetName = `${stagingId}.media`;
+    const part = join(this.#dir, partName);
+    const target = join(this.#dir, targetName);
+    // Owned from before the first byte is written: a cleanup running meanwhile (a library opening) must leave both names alone.
+    this.#owned.add(partName);
+    this.#owned.add(targetName);
+    let out: FileHandle;
+    try {
+      out = await (this.#options.fs?.openOut ?? ((path: string) => open(path, "wx")))(part);
+    } catch (error) {
+      this.#owned.delete(partName);
+      this.#owned.delete(targetName);
+      throw error;
+    }
     const abandon = async (result: StageResult): Promise<StageResult> => {
       await out.close().catch(() => undefined);
       await this.#removeQuietly(part);
+      this.#owned.delete(partName);
+      this.#owned.delete(targetName);
       return result;
     };
     try {
@@ -314,7 +408,7 @@ export class MediaStaging {
       const limit = Math.min(cap, size);
       let total = 0;
       for (;;) {
-        if (request.signal?.aborted === true) return await abandon(refuse("cancelled", "the import was cancelled"));
+        if (aborted()) return await abandon(refuse("cancelled", "the import was cancelled"));
         const want = Math.min(chunk.length, limit + 1 - total);
         const { bytesRead } = await handle.read(chunk, 0, want, total);
         if (bytesRead === 0) break;
@@ -323,28 +417,42 @@ export class MediaStaging {
         const { bytesWritten } = await out.write(chunk, 0, bytesRead);
         if (bytesWritten !== bytesRead) return await abandon(refuse("unreadable", "the copy could not be written whole"));
         hash.update(chunk.subarray(0, bytesRead));
-        request.onProgress?.(total, size);
+        onProgress?.(total, size);
       }
       if (total !== size) return await abandon(refuse("changed", "the file changed while it was being copied"));
       if ((await out.stat()).size !== total) return await abandon(refuse("unreadable", "the copy on disk is not the size of what was read"));
+      // Durable before it is renamed into its name: a record is only ever written for a copy that is on disk.
+      await out.sync();
       await out.close();
 
       // What the importers get is what is judged: the staged copy's own start must still be this kind.
       const stagedHead = await readHead(part, Math.min(SNIFF_HEAD_BYTES, total));
       const format = formatOf(stagedHead);
       if (resolveMediaKind(request.kind, stagedHead) !== kind || format === null) {
-        await this.#removeQuietly(part);
-        return refuse("changed", "the file's start changed while it was being copied");
+        return await abandon(refuse("changed", "the file's start changed while it was being copied"));
       }
       try {
         await this.#rename(part, target);
       } catch {
-        await this.#removeQuietly(part);
-        return refuse("unreadable", "the copy could not be put in place");
+        return await abandon(refuse("unreadable", "the copy could not be put in place"));
       }
+      this.#owned.delete(partName);
       return {
         ok: true,
-        staged: { stagingId, kind, format, bytes: total, sha256: hash.digest("hex"), path: target, head: stagedHead, dispose: () => this.#removeQuietly(target) },
+        staged: {
+          stagingId,
+          kind,
+          format,
+          bytes: total,
+          sha256: hash.digest("hex"),
+          path: target,
+          head: stagedHead,
+          dispose: async () => {
+            await this.#removeQuietly(target);
+            // Released only now: until the importer has let go, the cleanup leaves the copy alone.
+            this.#owned.delete(targetName);
+          },
+        },
       };
     } catch (error) {
       await abandon(refuse("unreadable", "the copy failed"));

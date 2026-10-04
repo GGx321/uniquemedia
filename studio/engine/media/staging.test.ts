@@ -791,3 +791,171 @@ describe("the handle the open gives is the file that is read, not the path", () 
     expect(await readFile(result.staged.path)).toEqual(bytes);
   });
 });
+
+// ---------- 3f.1b: what the 3f.1 verify left ----------
+
+describe("the staging folder is looked at again before EVERY copy (probe P4d)", () => {
+  test("a .staging swapped for a link after the first import gets nothing: the next copy is refused and the linked folder is untouched", async () => {
+    const other = await victim();
+    const s = staging();
+    expect((await s.stage({ path: await put("one.jpg", jpeg()), kind: "photo" })).ok).toBe(true);
+    await rm(stagingDir(), { recursive: true });
+    if (!(await tryLink(other, stagingDir()))) return;
+    const result = await s.stage({ path: await put("two.jpg", jpeg()), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+    expect((await readdir(other)).sort()).toEqual([".owner-00000001.part", "keep-me.txt"]);
+  });
+
+  test("the same swap on the media folder is refused too", async () => {
+    const other = await victim();
+    // The link's target has a `.staging` of its own, so a copy that followed the link would land in it.
+    await mkdir(join(other, ".staging"));
+    const s = staging();
+    expect((await s.stage({ path: await put("one.jpg", jpeg()), kind: "photo" })).ok).toBe(true);
+    await rm(join(libraryRoot(), "media"), { recursive: true });
+    if (!(await tryLink(other, join(libraryRoot(), "media")))) return;
+    const result = await s.stage({ path: await put("two.jpg", jpeg()), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+    expect(await readdir(join(other, ".staging"))).toEqual([]);
+    expect((await readdir(other)).sort()).toEqual([".owner-00000001.part", ".staging", "keep-me.txt"]);
+  });
+});
+
+describe("a Windows junction is not a plain folder either", () => {
+  /** `symlink(target, path, "junction")` needs no privilege on Windows; elsewhere the type is ignored and it is a plain symlink. */
+  async function junction(target: string, path: string): Promise<void> {
+    await symlink(target, path, "junction");
+  }
+
+  test("a .staging that is a junction is refused: nothing is written into the folder it points at", async () => {
+    const other = await victim();
+    await mkdir(join(libraryRoot(), "media"), { recursive: true });
+    await junction(other, stagingDir());
+    const result = await staging().stage({ path: await put("p.jpg", jpeg()), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+    expect((await readdir(other)).sort()).toEqual([".owner-00000001.part", "keep-me.txt"]);
+  });
+
+  test("the cleanup does not follow a junction at .staging", async () => {
+    const other = await victim();
+    await mkdir(join(libraryRoot(), "media"), { recursive: true });
+    await junction(other, stagingDir());
+    await staging().sweep();
+    expect((await readdir(other)).sort()).toEqual([".owner-00000001.part", "keep-me.txt"]);
+  });
+
+  test("a picked path that is a junction to a folder is not a file", async () => {
+    const folder = join(tmp(), "album");
+    await mkdir(folder, { recursive: true });
+    const path = join(sourceDir(), "album.jpg");
+    await junction(folder, path);
+    expect(refusal(await staging().stage({ path, kind: "photo" }))).toBe("not-a-file");
+  });
+});
+
+describe("the cleanup never removes a copy this staging still owns", () => {
+  test("a cleanup that runs while a copy is half done leaves its .part, and the copy lands whole", async () => {
+    const s = staging({ chunkBytes: 16 });
+    let sweeping: Promise<void> | null = null;
+    const result = await s.stage({
+      path: await put("big.jpg", jpeg(200)),
+      kind: "photo",
+      onProgress: (copied) => {
+        if (sweeping === null && copied >= 32) sweeping = s.sweep();
+      },
+    });
+    await sweeping;
+    expect(sweeping).not.toBeNull();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(await readFile(result.staged.path)).toEqual(jpeg(200));
+  });
+
+  test("a staged copy an importer has not disposed of yet survives a later cleanup, and goes when it is disposed of", async () => {
+    const s = staging();
+    const result = await s.stage({ path: await put("a.jpg", jpeg()), kind: "photo" });
+    if (!result.ok) throw new Error("refused");
+    await s.sweep();
+    expect(await leftovers()).toEqual([`${result.staged.stagingId}.media`]);
+    await result.staged.dispose();
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("a copy left by an earlier life of the engine is still removed", async () => {
+    await mkdir(stagingDir(), { recursive: true });
+    await writeFile(join(stagingDir(), "gone-00000001.media"), "left by a crash");
+    await staging().sweep();
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("a copy that is cancelled mid-way leaves nothing behind, with or without a cleanup after it", async () => {
+    const s = staging({ chunkBytes: 16 });
+    const controller = new AbortController();
+    const result = await s.stage({ path: await put("big.jpg", jpeg(200)), kind: "photo", signal: controller.signal, onProgress: () => controller.abort() });
+    expect(refusal(result)).toBe("cancelled");
+    await s.sweep();
+    expect(await leftovers()).toEqual([]);
+  });
+});
+
+describe("open and copy are two steps over one handle", () => {
+  async function opened(s: TestStaging, name: string, bytes: Buffer, extra: Partial<Parameters<TestStaging["open"]>[0]> = {}): Promise<Awaited<ReturnType<TestStaging["open"]>>> {
+    const path = await put(name, bytes);
+    return s.open({ path, kind: "photo", expected: await identityOf(path), ...extra });
+  }
+
+  test("opening judges the file and copies nothing: no staging folder is made, and the answer has the kind, the size and the first bytes", async () => {
+    const result = await opened(staging(), "a.jpg", jpeg(300));
+    if (!result.ok) throw new Error(`refused: ${result.reason}`);
+    expect(result.opened.kind).toBe("photo");
+    expect(result.opened.bytes).toBe(300);
+    expect([...result.opened.head.subarray(0, 4)]).toEqual([0xff, 0xd8, 0xff, 0xe0]);
+    expect(await readdir(libraryRoot())).toEqual([]);
+    await result.opened.close();
+  });
+
+  test("opening refuses what staging refuses, with the same reasons, and holds no handle after a refusal", async () => {
+    const s = staging();
+    const empty = await opened(s, "e.jpg", Buffer.alloc(0));
+    const script = await opened(s, "s.jpg", SCRIPT);
+    const big = await opened(staging({ caps: { ...MEDIA_BYTE_CAPS, photo: 10 } }), "big.jpg", jpeg(40));
+    expect([empty, script, big].map((r) => (r.ok ? "ok" : r.reason))).toEqual(["empty", "format", "too-large"]);
+  });
+
+  test("copying later makes the staged copy from the handle that was opened", async () => {
+    const bytes = jpeg(400);
+    const result = await opened(staging(), "a.jpg", bytes);
+    if (!result.ok) throw new Error("refused");
+    const progress: number[] = [];
+    const copy = await result.opened.copy({ onProgress: (copied) => progress.push(copied) });
+    await result.opened.close();
+    if (!copy.ok) throw new Error(`refused: ${copy.reason}`);
+    expect(await readFile(copy.staged.path)).toEqual(bytes);
+    expect(progress.at(-1)).toBe(400);
+  });
+
+  test("a copy asked for after the cancel is refused as cancelled and writes nothing", async () => {
+    const result = await opened(staging(), "a.jpg", jpeg(400));
+    if (!result.ok) throw new Error("refused");
+    const controller = new AbortController();
+    controller.abort();
+    expect(refusal(await result.opened.copy({ signal: controller.signal }))).toBe("cancelled");
+    await result.opened.close();
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("closing twice is harmless, and a copy after the close is an unreadable refusal that leaves nothing", async () => {
+    const result = await opened(staging(), "a.jpg", jpeg(400));
+    if (!result.ok) throw new Error("refused");
+    await result.opened.close();
+    await result.opened.close();
+    expect(refusal(await result.opened.copy())).toBe("unreadable");
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("an open that is already cancelled is refused before the file is touched", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const path = await put("a.jpg", jpeg());
+    expect((await staging().open({ path, kind: "photo", expected: await identityOf(path) }, controller.signal)).ok).toBe(false);
+  });
+});
