@@ -141,6 +141,8 @@ function VideoElement({ url, spec, playhead, mediaId, frames, peekFrame, style, 
     /** How long the last seek made while playing took, in seconds: the next one is led by as much (a slow decoder, `MAX_SEEK_LEAD_SEC`). */
     let lead = 0;
     let seekStarted: number | null = null;
+    /** A led seek is out (fix round 2): the first look after it lands may settle once; a settling seek never arms it again. */
+    let armed = false;
     const seeking = (): void => {
       seekStarted = element.paused ? null : performance.now();
     };
@@ -159,6 +161,8 @@ function VideoElement({ url, spec, playhead, mediaId, frames, peekFrame, style, 
         if (!element.paused) element.pause();
         return;
       }
+      // The first look after a led seek has landed may settle it, once.
+      const settle = armed && !element.seeking;
       const action = videoCorrection(
         target,
         {
@@ -171,7 +175,10 @@ function VideoElement({ url, spec, playhead, mediaId, frames, peekFrame, style, 
         },
         anchor,
         lead,
+        settle,
       );
+      if (settle) armed = false;
+      else if (target.play && action.seekSec !== null && lead > 0) armed = true;
       anchor = action.anchorMs;
       if (action.play === false) element.pause();
       if (refused) return;

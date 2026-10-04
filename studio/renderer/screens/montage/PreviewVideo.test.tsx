@@ -324,6 +324,71 @@ describe("playing", () => {
     }
   });
 
+  test("a led seek that turns out quick lands ahead of the clock: once landed, ONE settling seek puts it back on the clock, never a second (fix round 2)", () => {
+    let now = 1_000;
+    const clock = spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const fake = fakeFrameClock();
+      const playhead = new PlayheadStore(fake.clock);
+      const split: MontageDraft = draftSpec([{ ...videoClip(0, 2_000, 0), mediaId: MEDIA }, { ...videoClip(1, 2_000, 2_200), mediaId: MEDIA }]);
+      const { element } = mount({ playhead, spec: split });
+      const target = videoOf(element);
+      const video = recordVideo(target);
+      const seekTakes = (ms: number, landsAt: number): void => {
+        video.hold();
+        act(() => {
+          target.dispatchEvent(new Event("seeking"));
+        });
+        now += ms;
+        video.at(landsAt);
+        video.land();
+      };
+      act(() => playhead.seek(1_500));
+      act(() => playhead.toggle());
+      // The start's seek takes 200 ms: the lead is 0.2 s.
+      seekTakes(200, 1.5);
+      // At B's first frame the jump is sought 0.2 s ahead of 2.2 s…
+      video.at(2.0);
+      act(() => fake.advance(500));
+      expect(video.calls.at(-1)).toBe("seek 72f");
+      // …but takes only 40 ms: the element is 0.2 s ahead, which the nudge alone would take seconds over. One settling seek, led by the 40 ms just measured.
+      seekTakes(40, 2.4);
+      expect(video.calls.at(-1)).toBe("seek 67.2f");
+      // Even if the settling seek lands 0.1 s off too, it is never settled again: the rest is the nudge's.
+      seekTakes(40, 2.3);
+      expect(video.calls.at(-1)).toBe("rate 0.95");
+      expect(video.calls.filter((call) => call.startsWith("seek"))).toHaveLength(4);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("a seek at rest (a scrub) is never measured into the lead: the next start is sought to its exact time (fix round 2)", () => {
+    let now = 1_000;
+    const clock = spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const fake = fakeFrameClock();
+      const playhead = new PlayheadStore(fake.clock);
+      const { element } = mount({ playhead });
+      const target = videoOf(element);
+      const video = recordVideo(target);
+      act(() => playhead.seek(2_000));
+      // The scrub's seek, paused, takes half a second.
+      video.hold();
+      act(() => {
+        target.dispatchEvent(new Event("seeking"));
+      });
+      now += 500;
+      video.at(54.5 / 30);
+      video.land();
+      act(() => playhead.toggle());
+      // Started at 1.8 s in the video, not 2.3.
+      expect(video.calls.slice(-2)).toEqual(["seek 54f", "play"]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test("the start of a slide or an edge being dragged in «Обрезка» is shown at once, whatever the playhead; let go, the playhead's frame is back (fix round 1, L8)", () => {
     const playhead = new PlayheadStore(fakeFrameClock().clock);
     const { view, element } = mount({ playhead });

@@ -1,6 +1,6 @@
 import type { MontageDraft } from "../../../shared/engine";
 import { clipAtFrame, clipRanges, FPS, FRAMES_PER_STEP, msToFrameFloor, STEP_MS, totalFrames, videoClipWindow } from "../../../shared/montage";
-import { type AudioAction, type AudioState, audioCorrection } from "./audioSync";
+import { type AudioAction, type AudioState, audioCorrection, NUDGE_ON_MS } from "./audioSync";
 
 // 3f.3b: an own video clip in the preview. A `<video>` of the clip's mezzanine (the very file the render cuts from, a constant 30 fps) follows the playhead
 // clock, which stays the master (3d.4):
@@ -29,6 +29,8 @@ export interface VideoTarget {
    * in the video, or a trim edited while playing.
    */
   readonly offsetMs: number;
+  /** Where the clip ends in the stored video, in seconds (`trimStartMs` plus its length; for a peek, its own clip's, else unbounded): a led seek stops short of it. */
+  readonly endSec: number;
   /** The stored video's frame on screen. */
   readonly frame: number;
   /** Where the element should be, in seconds of the stored video: the middle of `frame` at rest, the continuous time while playing. */
@@ -79,7 +81,7 @@ export function videoTarget(spec: MontageDraft, playhead: { readonly ms: number;
   const play = playhead.playing && ms < totalMs;
   // The clip's start on the timeline is a whole number of 100 ms steps: no float creeps into the time.
   const clipStartMs = (at.range.startFrame / FRAMES_PER_STEP) * STEP_MS;
-  const base = { clipId: clip.clipId, mediaId: clip.mediaId, offsetMs: clip.trimStartMs - clipStartMs, frame };
+  const base = { clipId: clip.clipId, mediaId: clip.mediaId, offsetMs: clip.trimStartMs - clipStartMs, endSec: (clip.trimStartMs + clip.durationMs) / 1000, frame };
   if (!play) return { ...base, play: false, atSec: (frame + 0.5) / FPS };
   return { ...base, play: true, atSec: (clip.trimStartMs + (ms - clipStartMs)) / 1000 };
 }
@@ -90,7 +92,7 @@ export function videoTarget(spec: MontageDraft, playhead: { readonly ms: number;
  */
 export function peekTarget(onScreen: VideoTarget | null, mediaId: string, frame: number): VideoTarget {
   const same = onScreen !== null && onScreen.mediaId === mediaId;
-  return { clipId: same ? onScreen.clipId : "", mediaId, play: false, offsetMs: same ? onScreen.offsetMs : 0, frame, atSec: (frame + 0.5) / FPS };
+  return { clipId: same ? onScreen.clipId : "", mediaId, play: false, offsetMs: same ? onScreen.offsetMs : 0, endSec: same ? onScreen.endSec : Number.POSITIVE_INFINITY, frame, atSec: (frame + 0.5) / FPS };
 }
 
 /**
@@ -98,19 +100,27 @@ export function peekTarget(onScreen: VideoTarget | null, mediaId: string, frame:
  * first): while playing, a different offset is a JUMP in the video's time (fix round 1, M2), and the element is moved there at once when it is more than
  * half a frame off, as the render cuts; it waits (keeping the old anchor, so the jump is seen again) while a seek is under way. Without a jump the
  * music's discipline holds: nudged with hysteresis for genuine drift, moved only when far off.
+ *
+ * A seek while playing is led by `leadSec` (how long the last one took, a slow decoder), but never past the clip's own end in the video nor into the
+ * file's last half frame (fix round 2: its very end is `ended`, and a `play()` there starts the video over at 0), and never behind the time itself.
+ * `settle` is the first look after a LED seek has landed: one seek more puts an element the lead overshot (or undershot) more than the nudge's own
+ * threshold back on the clock, led by the seek just measured; the caller arms it only for a led seek that is not itself a settling one, so it never
+ * chains.
  */
-export function videoCorrection(target: VideoTarget, video: VideoState, anchorMs: number | null = null, leadSec = 0): VideoAction {
+export function videoCorrection(target: VideoTarget, video: VideoState, anchorMs: number | null = null, leadSec = 0, settle = false): VideoAction {
   const anchored = (action: AudioAction): VideoAction => ({ ...action, anchorMs: target.offsetMs });
   if (target.play) {
-    // A seek while playing lands where the clock will be once it is done (`leadSec`: how long the last one took), never past the file's end.
+    const limit = Math.min(target.endSec, Number.isFinite(video.durationSec) ? video.durationSec : Number.POSITIVE_INFINITY) - HALF_FRAME_SEC;
     const led = (action: AudioAction): AudioAction => {
       if (action.seekSec === null) return action;
       const ahead = action.seekSec + Math.min(Math.max(0, leadSec), MAX_SEEK_LEAD_SEC);
-      return { ...action, seekSec: Number.isFinite(video.durationSec) ? Math.min(ahead, video.durationSec) : ahead };
+      return { ...action, seekSec: Math.max(action.seekSec, Math.min(ahead, limit)) };
     };
     const jumped = anchorMs !== null && anchorMs !== target.offsetMs && !video.paused;
     if (jumped && video.seeking) return { seekSec: null, rate: video.rate, play: null, anchorMs };
     if (jumped && Math.abs(video.currentTimeSec - target.atSec) > HALF_FRAME_SEC) return anchored(led({ seekSec: target.atSec, rate: 1, play: null }));
+    const off = Math.abs(video.currentTimeSec - target.atSec) * 1000;
+    if (settle && !video.paused && !video.seeking && off > NUDGE_ON_MS) return anchored(led({ seekSec: target.atSec, rate: 1, play: null }));
     return anchored(led(audioCorrection({ play: true, atSec: target.atSec }, video)));
   }
   const play = video.paused ? null : false;
