@@ -324,11 +324,9 @@ describe("every refusal looks the same", () => {
 });
 
 describe("the scheme's privileges and the renderer's policy", () => {
-  test("the scheme is registered standard, secure, fetch, stream and CORS, and nothing more", () => {
+  test("the scheme is registered standard, secure, fetch and stream, and nothing more", () => {
     expect(MEDIA_SCHEME).toBe("studio-media");
-    // corsEnabled (3d.4): the preview reads a built-in sticker's bytes for ImageDecoder, and Chromium refuses a script's request to a
-    // scheme that is not CORS-enabled. Which routes script may read is the CSP's connect-src (below): the stickers' route only.
-    expect(MEDIA_SCHEME_PRIVILEGES).toEqual({ standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true });
+    expect(MEDIA_SCHEME_PRIVILEGES).toEqual({ standard: true, secure: true, supportFetchAPI: true, stream: true });
   });
 
   test("main registers exactly those privileges and never bypasses the CSP", async () => {
@@ -338,15 +336,22 @@ describe("the scheme's privileges and the renderer's policy", () => {
     expect(MEDIA_SCHEME_PRIVILEGES).not.toHaveProperty("bypassCSP");
   });
 
-  test("the renderer CSP lets script read the built-in stickers' route and no other part of the scheme", async () => {
+  // 3d.4 review (HIGH, verified on Electron 43.1.1): with `corsEnabled` the WHOLE scheme opens: an `<img crossorigin>` drawn on a
+  // canvas reads any route from the app page (connect-src does not cover it), and any other page in the session (a data: page, a
+  // foreign origin) fetches photos with type=basic, since Electron checks no CORS on protocol.handle answers and the handler sees no
+  // Origin to refuse by. The preview's sticker bytes come over IPC instead (`stickers.bytes`, main/stickerBytesFlow.ts).
+  test("the scheme is never CORS-enabled: no script, in the app or any other page, reads a route's bytes", async () => {
+    expect(MEDIA_SCHEME_PRIVILEGES).not.toHaveProperty("corsEnabled");
+    const source = await readFile(resolve(import.meta.dirname, "main.ts"), "utf8");
+    expect(source).not.toMatch(/corsEnabled\s*:/);
+  });
+
+  test("the renderer CSP names no route of the scheme anywhere (connect-src stays the page's own)", async () => {
     const html = await readFile(resolve(import.meta.dirname, "../renderer/index.html"), "utf8");
     const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)?.[1] ?? "";
     const directives = Object.fromEntries(csp.split(";").map((part) => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
-    // A photo, a video, a track, a text picture, own media: shown by an element, never read by script.
-    expect(directives["connect-src"]).toEqual(["'self'", "studio-media://sticker"]);
-    for (const [name, values] of Object.entries(directives)) {
-      if (name !== "connect-src") expect([name, values.some((v) => v.startsWith("studio-media://"))]).toEqual([name, false]);
-    }
+    for (const [name, values] of Object.entries(directives)) expect([name, values.some((v) => v.startsWith("studio-media://"))]).toEqual([name, false]);
+    expect(directives["connect-src"] ?? ["'self'"]).toEqual(["'self'"]);
   });
 
   test("the renderer CSP lets the whole scheme into img-src and media-src only", async () => {

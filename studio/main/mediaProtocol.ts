@@ -8,13 +8,15 @@ export type { MediaDeps } from "./media/resolve";
 /**
  * The scheme's privileges, registered before `ready` (main.ts). `standard` + `secure` give it an origin and a secure
  * context, `supportFetchAPI` lets the scheme be used with the Fetch API, and `stream` lets `<video>` and `<audio>` play
- * from it with Range. `corsEnabled` (3d.4) lets the window's script read a response at all: the preview decodes a built-in
- * sticker's frames with `ImageDecoder`, which takes bytes, and Chromium refuses a script's request from the `file://` page
- * to a scheme that is not CORS-enabled (measured in Electron 43). WHICH routes script may read is the renderer's CSP:
- * `connect-src 'self' studio-media://sticker`, the built-in set only; a photo, a video, a track or a text picture is still
- * only shown by an element (`img-src` / `media-src`), never read. Nothing else: no `bypassCSP`, no `codeCache`.
+ * from it with Range. Nothing else: no `bypassCSP` (the renderer's CSP names the scheme in `img-src` and `media-src` and
+ * nowhere else), no `codeCache`, and NEVER `corsEnabled`: with it (measured on Electron 43.1.1, the 3d.4 review) an
+ * `<img crossorigin>` drawn on a canvas reads any route from the app page, and any other page in the session (a `data:`
+ * page, a foreign origin) fetches a photo whole, because Electron runs no CORS check on a `protocol.handle` answer and the
+ * handler is shown no Origin or Sec-Fetch-* to refuse by. So elements (`<img>`, `<video>`, `<audio>`) load from the scheme
+ * and no script reads its bytes; the one thing that needs bytes, the preview's sticker decoder, gets them over IPC from main
+ * (`stickers.bytes`, stickerBytesFlow.ts).
  */
-export const MEDIA_SCHEME_PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } as const;
+export const MEDIA_SCHEME_PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true, stream: true } as const;
 
 /** What a `protocol.handle` request has of the `Request`: the URL, the method, the headers (for `Range`) and the abort signal. */
 export interface MediaRequest {
