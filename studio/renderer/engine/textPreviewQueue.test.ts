@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { TextLayer } from "../../shared/engine";
 import type { TextPreviewOutcome } from "./textPreview";
-import { NO_PREVIEW, type PictureAnswer, type PreviewAnswer, previewLook, TextPreviewQueue } from "./textPreviewQueue";
+import { isEngineRefusal, NO_PREVIEW, OUTSIDE_RETRIES, type PictureAnswer, type PreviewAnswer, previewLook, refusedNow, TextPreviewQueue } from "./textPreviewQueue";
 
 // 3d.4: ONE per-layer queue of `montages.textPreview` asks in the window, shared by everything that shows a caption: the preview
 // (every text layer's picture) and the properties panel (the caption's verdict, 3d.5). The engine keeps one queue per layer too and
-// answers a waiting ask TEXT_PREVIEW_SUPERSEDED when a newer ask of the same layer arrives. With two consumers asking on their own,
-// one's ask could supersede the other's, and the other would wait for ever for an answer to an ask nobody draws (the 3d.5 note).
-// Here a consumer never waits for ITS ask: each reads the layer's state, which the newest answer decides; an ask the same look is
-// already asked for is not sent again; a superseded answer is dropped silently; and nothing is left pending for ever.
+// answers a waiting ask TEXT_PREVIEW_SUPERSEDED when a newer ask of the same layer arrives. Here a consumer never waits for ITS ask:
+// each reads the layer's state, which the newest answer decides; an ask of the look already asked for is not sent again; and
+// nothing is left pending for ever. Review round 1: at most ONE ask per layer is out at a time and only the newest look waits behind
+// it, so typing sends one ask while the engine draws, then the last text, never an ask per key (and the window's own asks never
+// supersede each other in the engine).
 
 const layer = (over: Partial<TextLayer> = {}): TextLayer => ({
   kind: "text",
@@ -82,7 +83,7 @@ describe("one ask serves every consumer", () => {
     expect(pending(queue)).toBe(false);
   });
 
-  test("a new look is asked for; while it is out the older answer still shows, and the state says a newer one is coming", async () => {
+  test("with nothing out, a new look is asked for at once; the older answer still shows meanwhile, the state says a newer one is coming", async () => {
     const { queue, asks, answer } = engine();
     queue.request(layer());
     await answer(0, picture("preview-0001"));
@@ -94,15 +95,7 @@ describe("one ask serves every consumer", () => {
     expect(queue.get("layer-001").shown).toEqual({ ask: 2, look: previewLook(layer({ value: "sunday reset ☀️" })), answer: picture("preview-0002") });
   });
 
-  test("going back to a look asked for before asks again (only the newest ask's look is shared)", () => {
-    const { queue, asks } = engine();
-    queue.request(layer());
-    queue.request(layer({ value: "b" }));
-    queue.request(layer());
-    expect(asks.map((a) => a.layer.value)).toEqual(["sunday reset", "b", "sunday reset"]);
-  });
-
-  test("different layers never touch each other", async () => {
+  test("different layers never touch each other: each has its own ask out", async () => {
     const { queue, asks, answer } = engine();
     queue.request(layer());
     queue.request(layer({ layerId: "layer-002" }));
@@ -113,64 +106,92 @@ describe("one ask serves every consumer", () => {
   });
 });
 
-describe("superseded answers and stale answers", () => {
-  test("an older ask the engine superseded is dropped silently: nothing changes, nothing is asked again", async () => {
+describe("one ask out per layer, the newest look waiting behind it", () => {
+  test("typing while an ask is out sends nothing more until it answers, then only the newest text", async () => {
     const { queue, asks, answer } = engine();
-    queue.request(layer({ value: "a" }));
-    queue.request(layer({ value: "ab" }));
-    const before = queue.get("layer-001");
-    await answer(0, SUPERSEDED);
-    expect(queue.get("layer-001")).toBe(before);
-    expect(asks).toHaveLength(2);
+    queue.request(layer({ value: "s" }));
+    for (const value of ["su", "sun", "sund", "sunday"]) queue.request(layer({ value }));
+    expect(asks.map((a) => a.layer.value)).toEqual(["s"]);
+    expect(pending(queue)).toBe(true);
+    await answer(0, picture("preview-0001"));
+    expect(asks.map((a) => a.layer.value)).toEqual(["s", "sunday"]);
+    // The answer to the old text is shown meanwhile, marked pending.
+    expect(queue.get("layer-001").shown?.answer).toEqual(picture("preview-0001"));
+    expect(pending(queue)).toBe(true);
     await answer(1, picture("preview-0002"));
+    expect(pending(queue)).toBe(false);
+    expect(queue.get("layer-001").shown?.look).toBe(previewLook(layer({ value: "sunday" })));
+  });
+
+  test("going back to the look that is out cancels the waiting one: its answer is the newest, nothing more is sent", async () => {
+    const { queue, asks, answer } = engine();
+    queue.request(layer());
+    queue.request(layer({ value: "b" }));
+    queue.request(layer());
+    await answer(0, picture("preview-0001"));
+    expect(asks.map((a) => a.layer.value)).toEqual(["sunday reset"]);
     expect(pending(queue)).toBe(false);
   });
 
-  test("an answer older than the one shown is dropped (the newer look was judged already)", async () => {
-    const { queue, answer } = engine();
-    queue.request(layer({ value: "a" }));
-    queue.request(layer({ value: "ab" }));
-    await answer(1, picture("preview-0002"));
-    await answer(0, charset);
-    expect(queue.get("layer-001").shown?.answer).toEqual(picture("preview-0002"));
+  test("a failed answer still sends the newest look waiting behind it", async () => {
+    const { queue, asks, answer } = engine();
+    queue.request(layer());
+    queue.request(layer({ value: "b" }));
+    await answer(0, { kind: "failed", error: { code: "RENDER_FAILED", detail: "timeout" } });
+    expect(asks.map((a) => a.layer.value)).toEqual(["sunday reset", "b"]);
   });
 
-  test("an older ask answered while the newest is still out is shown, marked pending", async () => {
-    const { queue, answer } = engine();
-    queue.request(layer({ value: "a" }));
-    queue.request(layer({ value: "ab" }));
-    await answer(0, charset);
-    expect(queue.get("layer-001").shown?.answer).toEqual(charset);
-    expect(pending(queue)).toBe(true);
+  test("a rejected ask (the promise failed) ends as failed, never pending, and the waiting look is sent", async () => {
+    const { queue, asks, fail } = engine();
+    queue.request(layer());
+    queue.request(layer({ value: "b" }));
+    await fail(0, new Error("the bridge went away"));
+    expect(queue.get("layer-001").shown?.answer).toEqual({ kind: "failed", error: { code: "INTERNAL", detail: "the text preview could not be asked for" } });
+    expect(asks.map((a) => a.layer.value)).toEqual(["sunday reset", "b"]);
   });
+});
 
-  test("the NEWEST ask superseded from outside (another window asked for the layer) is asked again, so nobody waits for ever", async () => {
+describe("superseded from outside (another window asked for the layer)", () => {
+  test("the newest ask superseded is asked again, so nobody waits for ever", async () => {
     const { queue, asks, answer } = engine();
     queue.request(layer());
     await answer(0, SUPERSEDED);
-    expect(asks).toHaveLength(2);
-    expect(asks[1]?.layer.value).toBe("sunday reset");
+    expect(asks.map((a) => a.layer.value)).toEqual(["sunday reset", "sunday reset"]);
     expect(pending(queue)).toBe(true);
     await answer(1, picture("preview-0002"));
     expect(queue.get("layer-001").shown?.answer).toEqual(picture("preview-0002"));
     expect(pending(queue)).toBe(false);
   });
 
-  test("superseded again and again from outside, it gives up after a few asks with an answer, never pending for ever", async () => {
+  test(`asked again exactly ${OUTSIDE_RETRIES} times, then settled as failed, never pending`, async () => {
+    expect(OUTSIDE_RETRIES).toBe(3);
     const { queue, asks, answer } = engine();
     queue.request(layer());
-    for (let i = 0; i < 10 && pending(queue); i++) await answer(i, SUPERSEDED);
-    expect(asks.length).toBeLessThanOrEqual(4);
+    for (let i = 0; i <= OUTSIDE_RETRIES; i++) await answer(i, SUPERSEDED);
+    expect(asks).toHaveLength(OUTSIDE_RETRIES + 1);
     expect(pending(queue)).toBe(false);
     expect(queue.get("layer-001").shown?.answer.kind).toBe("failed");
   });
 
-  test("an ask whose answer never parsed (the promise failed) ends as failed, never pending", async () => {
-    const { queue, fail } = engine();
+  test("a new look starts its retries afresh", async () => {
+    const { queue, asks, answer } = engine();
     queue.request(layer());
-    await fail(0, new Error("the bridge went away"));
-    expect(pending(queue)).toBe(false);
-    expect(queue.get("layer-001").shown?.answer).toEqual({ kind: "failed", error: { code: "INTERNAL", detail: "the text preview could not be asked for" } });
+    await answer(0, SUPERSEDED);
+    await answer(1, SUPERSEDED);
+    queue.request(layer({ value: "b" }));
+    // The "b" waits behind the third ask of the old look; when that one is superseded too, "b" is sent, with all of its retries.
+    await answer(2, SUPERSEDED);
+    for (let i = 3; i < 3 + OUTSIDE_RETRIES; i++) await answer(i, SUPERSEDED);
+    expect(asks.filter((a) => a.layer.value === "b")).toHaveLength(OUTSIDE_RETRIES + 1);
+    expect(pending(queue)).toBe(true);
+  });
+
+  test("superseded with a newer look waiting, the newer look is sent instead of the old one again", async () => {
+    const { queue, asks, answer } = engine();
+    queue.request(layer());
+    queue.request(layer({ value: "b" }));
+    await answer(0, SUPERSEDED);
+    expect(asks.map((a) => a.layer.value)).toEqual(["sunday reset", "b"]);
   });
 });
 
@@ -200,6 +221,41 @@ describe("the picture", () => {
     const { queue, asks } = engine();
     queue.reload("layer-001");
     expect(asks).toHaveLength(0);
+  });
+});
+
+describe("what counts as the engine refusing a caption (the preview's «refused» mark)", () => {
+  test("a caption rule (TEXT_INVALID) and a drawing that failed (RENDER_FAILED) are the engine's refusals", () => {
+    expect(isEngineRefusal(charset)).toBe(true);
+    expect(isEngineRefusal({ kind: "failed", error: { code: "RENDER_FAILED", detail: "timeout" } })).toBe(true);
+  });
+
+  test("a picture, a transport failure and giving up after outside supersedes are not", async () => {
+    expect(isEngineRefusal(picture("preview-0001"))).toBe(false);
+    expect(isEngineRefusal({ kind: "failed", error: { code: "INTERNAL", detail: "the text preview could not be asked for" } })).toBe(false);
+    const { queue, answer } = engine();
+    queue.request(layer());
+    for (let i = 0; i <= OUTSIDE_RETRIES; i++) await answer(i, SUPERSEDED);
+    const gaveUp = queue.get("layer-001").shown?.answer;
+    expect(gaveUp === undefined ? true : isEngineRefusal(gaveUp)).toBe(false);
+  });
+});
+
+describe("refusedNow: the preview marks the picture only when the engine refused the caption as it is now", () => {
+  test("a refusal of the newest look marks it; a refusal of an older look, a picture or giving up does not", async () => {
+    const { queue, answer } = engine();
+    queue.request(layer({ value: "привет" }));
+    await answer(0, charset);
+    expect(refusedNow(queue.get("layer-001"), previewLook(layer({ value: "привет" })))).toBe(true);
+    expect(refusedNow(queue.get("layer-001"), previewLook(layer({ value: "hello" })))).toBe(false);
+    queue.request(layer({ value: "hello" }));
+    await answer(1, picture("preview-0002"));
+    expect(refusedNow(queue.get("layer-001"), previewLook(layer({ value: "hello" })))).toBe(false);
+    queue.request(layer({ value: "elsewhere" }));
+    for (let i = 2; i <= 2 + OUTSIDE_RETRIES; i++) await answer(i, SUPERSEDED);
+    expect(queue.get("layer-001").shown?.answer.kind).toBe("failed");
+    expect(refusedNow(queue.get("layer-001"), previewLook(layer({ value: "elsewhere" })))).toBe(false);
+    expect(refusedNow(NO_PREVIEW, previewLook(layer()))).toBe(false);
   });
 });
 

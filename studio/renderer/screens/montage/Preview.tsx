@@ -3,7 +3,7 @@ import type { Focus, Layer, MontageDraft, TextLayer } from "../../../shared/engi
 import { FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, zonesHit } from "../../../shared/montage";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
-import { previewLook } from "../../engine/textPreviewQueue";
+import { previewLook, refusedNow } from "../../engine/textPreviewQueue";
 import { photoUrl, placeholderGradient, stickerUrl } from "../../lib/media";
 import { Icon } from "../../ui/Icon";
 import { Silhouette } from "../../ui/Portrait";
@@ -613,9 +613,9 @@ function TextLayerView({ layer, factor, onReload, ...view }: LayerViewProps & { 
   if (picture === null || picture.answer.url === null) return null;
   const { width, height, url } = picture.answer;
   const box = textLayerBox(layer, { width: Math.min(FRAME_W, Math.max(1, Math.round(width * factor))), height: Math.min(FRAME_H, Math.max(1, Math.round(height * factor))) });
-  // The newest verdict on THIS caption refused it: the last good picture stays, marked (the panel says why).
-  const shown = preview.shown;
-  const refused = shown !== null && shown.look === previewLook(layer) && shown.answer.kind !== "picture";
+  // The ENGINE refused this caption as it is now (a rule, or a drawing that failed): the last good picture stays, marked (the
+  // panel says why). Giving up after asks from another window is no refusal and marks nothing.
+  const refused = refusedNow(preview, previewLook(layer));
   return (
     <LayerBox box={box} kind="text" extra={refused ? "pv-text-refused" : undefined} {...view}>
       <img className="pv-text" src={url} alt="" draggable={false} onError={reload} />
