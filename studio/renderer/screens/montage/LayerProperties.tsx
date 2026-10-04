@@ -16,6 +16,7 @@ import { moveInside, setStickerSize, type StickerLayer, stickerPercent, stickerZ
 import { type CaptionRefusal, insertAt, MAX_TEXT_SCALE, MIN_TEXT_SCALE, setCaption, setTextColor, setTextFont, setTextScale, setTextStyle, TEXT_COLORS, textSize, typingGoesOn } from "./textOps";
 import { setLayerTime, timeRefusalLabel } from "./timeInput";
 import { useCaptionCheck } from "./useCaptionCheck";
+import { usePlayheadRest } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 
 // The properties panel for a selected text or sticker (EditorText and EditorGif artboards; R21–R41). 3d.3b drew the head («Текст ·
@@ -440,9 +441,11 @@ export interface LayerPropertiesProps {
 export function LayerProperties({ session, spec, index, timeline, avatarId, onReplaceSticker }: LayerPropertiesProps) {
   const commands = useSelectionCommands(session, timeline);
   const onKeyDown = deleteKeyHandler(commands.remove);
+  // Where the playhead rests (3d.4): a playback does not re-render the panel.
+  const restMs = usePlayheadRest(timeline.playhead);
   const layer = spec.layers[index];
   if (layer === undefined) return null;
-  const actions = selectionActions(spec, timeline.selection, timeline.playheadMs);
+  const actions = selectionActions(spec, timeline.selection, restMs);
   const ofKind = spec.layers.filter((l) => l.kind === layer.kind);
   const place = spec.layers.slice(0, index + 1).filter((l) => l.kind === layer.kind).length;
   const loop = layer.kind === "sticker" ? loopLabel(layer) : null;

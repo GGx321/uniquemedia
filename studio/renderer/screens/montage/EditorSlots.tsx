@@ -2,6 +2,8 @@ import type { MontageDraft } from "../../../shared/engine";
 import { MAX_CLIPS } from "../../../shared/montage";
 import { Icon, type IconName } from "../../ui/Icon";
 import { ClipPoster } from "./ClipPoster";
+import type { PlayheadStore } from "./playhead";
+import { usePlayheadStep } from "./usePlayhead";
 
 // The editor's regions (Editor.dc.html), each a SLOT a later task fills. 3d.2 drew what was already true; 3d.3a showed the clip
 // under the playhead; the timeline (Timeline.tsx), the media panel (MediaPanel.tsx and its tabs, 3d.5) and the properties
@@ -23,8 +25,8 @@ export function clipIndexAt(spec: MontageDraft, ms: number): number | null {
  * SLOT 3d.4 (the live preview: motion, the focus drag, text and stickers, «Зоны Reels» and «Полоски слайдов»).
  * Here: the 9:16 frame at the artboard's 306 × 544 with a still of the clip under the playhead, or «Ролик пока пуст».
  */
-export function PreviewSlot({ spec, playheadMs }: { spec: MontageDraft; playheadMs: number }) {
-  const at = clipIndexAt(spec, playheadMs);
+export function PreviewSlot({ spec, playhead }: { spec: MontageDraft; playhead: PlayheadStore }) {
+  const at = clipIndexAt(spec, usePlayheadStep(playhead));
   const first = at === null ? undefined : spec.clips[at];
   return (
     <section className="ed-preview" aria-label="Превью" data-slot="preview 3d.4">

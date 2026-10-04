@@ -1,4 +1,4 @@
-import { type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Clip, MontageDraft } from "../../../shared/engine";
 import { MAX_CLIPS, MIN_CLIP_MS } from "../../../shared/montage";
 import { useEngine } from "../../engine/react";
@@ -17,7 +17,8 @@ import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
 import { boundaryAt, boundaryMs, clockMs, MAX_ZOOM, MIN_ZOOM, msAtFraction, rulerMarks, seekInto, snapEdge, snapTargets, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
-import { type TimelineState, useSelectionCommands } from "./useTimeline";
+import { usePlayheadRest, usePlayheadStep, usePlaying } from "./usePlayhead";
+import { playheadStep, type TimelineState, useSelectionCommands } from "./useTimeline";
 
 // 3d.3a: the timeline (Editor.dc.html's bottom band; the components sheet's «Линейка · плейхед · масштаб» and «Кадр на
 // главном треке»). The toolbar, the ruler and a scrubbable playhead, the track headers with their caps, and the
@@ -64,6 +65,67 @@ function Strip({ clip, avatarId, widthPx }: { clip: Clip; avatarId: string; widt
         return <span key={j} className={style === undefined ? "ed-strip-frame ed-strip-frame-empty" : "ed-strip-frame"} style={style} />;
       })}
     </span>
+  );
+}
+
+/** «Воспроизвести» / «Пауза»: re-renders when a playback starts or stops, nothing else. */
+function PlayButton({ timeline, empty }: { timeline: TimelineState; empty: boolean }) {
+  const playing = usePlaying(timeline.playhead);
+  return (
+    <button type="button" className="ed-play" aria-label={playing ? "Пауза" : "Воспроизвести"} disabled={empty} onClick={timeline.togglePlay}>
+      {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
+    </button>
+  );
+}
+
+/** «00:04.1 / 00:09.6»: follows the playing playhead a 100 ms step at a time. */
+function TimelineClock({ timeline, total }: { timeline: TimelineState; total: number }) {
+  const step = usePlayheadStep(timeline.playhead);
+  return (
+    <span className="mono ed-tl-clock">
+      {clockLabel(step)} <span className="faint">/ {clockLabel(total)}</span>
+    </span>
+  );
+}
+
+interface PlayheadLineProps {
+  readonly timeline: TimelineState;
+  readonly total: number;
+  readonly zoom: number;
+  readonly scrollRef: RefObject<HTMLDivElement | null>;
+  readonly headRef: RefObject<HTMLDivElement | null>;
+  readonly scrubbing: boolean;
+  readonly onPointerDown: (press: ReactPointerEvent<HTMLElement>) => void;
+  readonly onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+}
+
+/** The playhead's line and its head (a slider), a 100 ms step at a time while playing; zoomed in, it keeps itself in view. */
+function PlayheadLine({ timeline, total, zoom, scrollRef, headRef, scrubbing, onPointerDown, onKeyDown }: PlayheadLineProps) {
+  const ph = usePlayheadStep(timeline.playhead);
+  // The playhead stays in view when zoomed in: while playing, scrubbing or after a seek.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (scroller === null || zoom === MIN_ZOOM || scroller.clientWidth === 0) return;
+    const x = (ph / TIMELINE_MS) * scroller.scrollWidth;
+    if (x < scroller.scrollLeft + 24 || x > scroller.scrollLeft + scroller.clientWidth - 24) scroller.scrollLeft = Math.max(0, x - scroller.clientWidth / 2);
+  }, [ph, zoom, scrollRef]);
+  return (
+    <div className="ed-playhead" style={{ left: pct(ph) }}>
+      <div
+        ref={headRef}
+        role="slider"
+        tabIndex={0}
+        className="ed-playhead-head"
+        aria-label="Плейхед"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={ph}
+        aria-valuetext={`${(ph / 1000).toFixed(1)}${NBSP}с`}
+        onPointerDown={onPointerDown}
+        onKeyDown={onKeyDown}
+      />
+      {scrubbing && <span className="mono ed-playhead-time">{secondsLabel(ph)}</span>}
+    </div>
   );
 }
 
@@ -114,7 +176,10 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
   const [lift, setLift] = useState<{ clipId: string; dx: number; boundary: number } | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
 
-  const { zoom, playheadMs, selection } = timeline;
+  const { zoom, selection } = timeline;
+  // Where the playhead rests (3d.4): it moves on a seek, a pause and the end, never while playing, so a playback does not
+  // re-render the timeline; the line and the clock follow the playing playhead on their own (`PlayheadLine`, `TimelineClock`).
+  const playheadMs = usePlayheadRest(timeline.playhead);
   const total = totalMs(spec);
   const durations = spec.clips.map((c) => c.durationMs);
   const empty = spec.clips.length === 0;
@@ -159,14 +224,6 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     if (layerId !== null) pendingFocus.current = { layerId };
   }
 
-  // The playhead stays in view when zoomed in: while playing, scrubbing or after a seek.
-  useEffect(() => {
-    const scroller = scrollRef.current;
-    if (scroller === null || zoom === MIN_ZOOM || scroller.clientWidth === 0) return;
-    const x = (playheadMs / TIMELINE_MS) * scroller.scrollWidth;
-    if (x < scroller.scrollLeft + 24 || x > scroller.scrollLeft + scroller.clientWidth - 24) scroller.scrollLeft = Math.max(0, x - scroller.clientWidth / 2);
-  }, [playheadMs, zoom]);
-
   /** The time under a pointer, on the whole 15 s scale. */
   function msAt(clientX: number): number {
     const rect = lanesRef.current?.getBoundingClientRect();
@@ -202,8 +259,9 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     const layer = session.state.spec.layers.find((l) => l.layerId === layerId);
     if (layer === undefined) return;
     timeline.select({ kind: "layer", layerId });
-    const into = seekInto(timeline.playheadMs, layer.startMs, Math.min(layer.endMs, totalMs(session.state.spec)));
-    if (into !== timeline.playheadMs) timeline.seek(into);
+    const now = playheadStep(timeline);
+    const into = seekInto(now, layer.startMs, Math.min(layer.endMs, totalMs(session.state.spec)));
+    if (into !== now) timeline.seek(into);
   }
 
   // ---------- the playhead ----------
@@ -223,11 +281,12 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
 
   function onHeadKey(event: KeyboardEvent<HTMLElement>): void {
     const step = event.shiftKey ? 1_000 : 100;
+    const now = playheadStep(timeline);
     const moves: Record<string, () => number> = {
-      ArrowLeft: () => stepPlayhead(playheadMs, total, -step),
-      ArrowDown: () => stepPlayhead(playheadMs, total, -step),
-      ArrowRight: () => stepPlayhead(playheadMs, total, step),
-      ArrowUp: () => stepPlayhead(playheadMs, total, step),
+      ArrowLeft: () => stepPlayhead(now, total, -step),
+      ArrowDown: () => stepPlayhead(now, total, -step),
+      ArrowRight: () => stepPlayhead(now, total, step),
+      ArrowUp: () => stepPlayhead(now, total, step),
       Home: () => 0,
       End: () => total,
     };
@@ -289,7 +348,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     const startX = press.clientX;
     const from = clip.durationMs;
     const start = clipStartMs(at, index);
-    const playhead = clockMs(playheadMs);
+    const playhead = playheadStep(timeline);
     // One gesture, one undo step: a key unique to this press, sealed on release.
     const mergeKey = `trim:${clipId}:${edge}:${press.pointerId}:${press.timeStamp}`;
     startGesture(
@@ -383,9 +442,10 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     }
     if (event.altKey) return;
     const step = event.shiftKey ? 1_000 : 100;
+    const now = playheadStep(timeline);
     const moves: Record<string, () => number> = {
-      ArrowLeft: () => stepPlayhead(playheadMs, total, -step),
-      ArrowRight: () => stepPlayhead(playheadMs, total, step),
+      ArrowLeft: () => stepPlayhead(now, total, -step),
+      ArrowRight: () => stepPlayhead(now, total, step),
       Home: () => 0,
       End: () => total,
     };
@@ -396,7 +456,6 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
   }
 
   const insertAt = lift !== null ? lift.boundary : dropAt;
-  const ph = clockMs(playheadMs);
   const clipCap = spec.clips.length >= MAX_CLIPS;
   const addLabel = addBlock === null ? "Добавить кадр" : addBlock === "clip-cap" ? `Добавить кадр: не больше ${MAX_CLIPS}` : "Добавить кадр: ролик уже почти 15 с";
   const evenTitle = spec.clips.length < 2 ? "Нужно хотя бы два кадра" : isEven(spec) ? "Кадры уже одной длины" : "Разделить длину ролика между кадрами поровну";
@@ -404,12 +463,8 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
   return (
     <section className="ed-timeline" aria-label="Таймлайн" onKeyDown={onKeyDown}>
       <div className="ed-tl-bar">
-        <button type="button" className="ed-play" aria-label={timeline.playing ? "Пауза" : "Воспроизвести"} disabled={empty} onClick={timeline.togglePlay}>
-          {timeline.playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
-        </button>
-        <span className="mono ed-tl-clock">
-          {clockLabel(ph)} <span className="faint">/ {clockLabel(total)}</span>
-        </span>
+        <PlayButton timeline={timeline} empty={empty} />
+        <TimelineClock timeline={timeline} total={total} />
         <span className="ed-tl-sep" aria-hidden="true" />
         <ToolButton label="Разрезать по плейхеду" icon="scissors" size={15} state={actions.split} onClick={() => void commands.split()} />
         <ToolButton label="Дублировать выбранное" icon="copy" size={14} state={actions.duplicate} onClick={() => void commands.duplicate()} />
@@ -601,22 +656,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
               />
             </div>
             {!empty && <div className="ed-tl-after" style={{ left: pct(total) }} aria-hidden="true" />}
-            <div className="ed-playhead" style={{ left: pct(ph) }}>
-              <div
-                ref={headRef}
-                role="slider"
-                tabIndex={0}
-                className="ed-playhead-head"
-                aria-label="Плейхед"
-                aria-valuemin={0}
-                aria-valuemax={total}
-                aria-valuenow={ph}
-                aria-valuetext={`${(ph / 1000).toFixed(1)}${NBSP}с`}
-                onPointerDown={startScrub}
-                onKeyDown={onHeadKey}
-              />
-              {scrubbing && <span className="mono ed-playhead-time">{secondsLabel(ph)}</span>}
-            </div>
+            <PlayheadLine timeline={timeline} total={total} zoom={zoom} scrollRef={scrollRef} headRef={headRef} scrubbing={scrubbing} onPointerDown={startScrub} onKeyDown={onHeadKey} />
           </div>
         </div>
       </div>

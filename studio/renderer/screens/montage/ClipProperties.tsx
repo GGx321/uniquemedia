@@ -9,6 +9,7 @@ import { ownsKeys } from "./keys";
 import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerStepLabel } from "./labels";
 import { selectClip, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
+import { usePlayheadRest } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 
 // 3d.3a: the selected clip's properties (Editor.dc.html, `sel = c2`; the reconciliation's R3–R14). «Раскладка»
@@ -69,12 +70,14 @@ export interface ClipPropertiesProps {
 export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell }: ClipPropertiesProps) {
   const commands = useSelectionCommands(session, timeline);
   const durationId = useId();
+  // Where the playhead rests (3d.4): a playback does not re-render the panel.
+  const restMs = usePlayheadRest(timeline.playhead);
   const clip = spec.clips[index];
   if (clip === undefined) return null;
   const start = clipStartMs(spec, index);
   const layout = layoutOf(clip);
   const cells = cellsOf(clip);
-  const actions = selectionActions(spec, timeline.selection, timeline.playheadMs);
+  const actions = selectionActions(spec, timeline.selection, restMs);
   const face = layout === null ? null : faceState(clip, cell, focusPending);
   const max = maxDurationMs(spec, index);
   const room = roomMs(spec);

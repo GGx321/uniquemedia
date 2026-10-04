@@ -23,8 +23,8 @@ import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
-import { StickerTab } from "./montage/StickerTab";
-import { TextTab } from "./montage/TextTab";
+import { StickerTab, type StickerTabProps } from "./montage/StickerTab";
+import { TextTab, type TextTabProps } from "./montage/TextTab";
 import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto, totalMs } from "./montage/clipOps";
 import { PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
 import { draftTitle, layerAddLabel, layerName, outputLabel, outputParts, saveLabel } from "./montage/labels";
@@ -36,7 +36,8 @@ import { resolveSelection, selectClip } from "./montage/selection";
 import { DraftSession } from "./montage/session";
 import { Timeline } from "./montage/Timeline";
 import { seekInto } from "./montage/timelineScale";
-import { useFocusResolver, useSelectionCommands, useTimeline } from "./montage/useTimeline";
+import { usePlayheadRest } from "./montage/usePlayhead";
+import { playheadStep, type TimelineState, useFocusResolver, useSelectionCommands, useTimeline } from "./montage/useTimeline";
 import { useMounted } from "./photos/shared";
 
 // 3d.2: the montage editor's shell (Editor.dc.html, EditorNew.dc.html). It opens a draft by `montages.get`, keeps
@@ -196,6 +197,24 @@ function EditorHeader({
       </div>
     </header>
   );
+}
+
+/**
+ * The «Текст» tab where the playhead rests: «Добавить текст в X с» and why it cannot (3d.4: the tab follows the playhead on its own,
+ * so a playback re-renders neither it nor the editor).
+ */
+function TextTabAtPlayhead({ timeline, spec, ...props }: { timeline: TimelineState; spec: Montage["spec"] } & Omit<TextTabProps, "spec" | "playheadMs" | "addWhy">) {
+  const restMs = usePlayheadRest(timeline.playhead);
+  const why = layerAddLabel("text", addLayerRefusal(spec, "text", restMs), totalMs(spec)).why;
+  return <TextTab spec={spec} playheadMs={restMs} addWhy={why} {...props} />;
+}
+
+/** The «GIF» tab, and why no sticker can be added where the playhead rests (G10: at the cap it says what to do about it). */
+function StickerTabAtPlayhead({ timeline, spec, ...props }: { timeline: TimelineState; spec: Montage["spec"] } & Omit<StickerTabProps, "spec" | "addWhy">) {
+  const restMs = usePlayheadRest(timeline.playhead);
+  const refusal = addLayerRefusal(spec, "sticker", restMs);
+  const why = refusal === "layer-cap" ? "Не больше 10 стикеров в одном видео — уберите один, чтобы добавить другой." : layerAddLabel("sticker", refusal, totalMs(spec)).why;
+  return <StickerTab spec={spec} addWhy={why} {...props} />;
 }
 
 function DraftEditor({
@@ -456,8 +475,9 @@ function DraftEditor({
     const layer = spec.layers.find((l) => l.layerId === layerId);
     if (layer === undefined) return;
     timeline.select({ kind: "layer", layerId });
-    const into = seekInto(timeline.playheadMs, layer.startMs, Math.min(layer.endMs, totalMs(spec)));
-    if (into !== timeline.playheadMs) timeline.seek(into);
+    const now = playheadStep(timeline);
+    const into = seekInto(now, layer.startMs, Math.min(layer.endMs, totalMs(spec)));
+    if (into !== now) timeline.seek(into);
   }
 
   /** A track from the «Музыка» tab: into the montage at its first highlight that fits (free: no request leaves), then selected. */
@@ -484,12 +504,6 @@ function DraftEditor({
     commands.addSticker(stickerId);
   }
 
-  const total = totalMs(state.spec);
-  const textRefusal = addLayerRefusal(state.spec, "text", timeline.playheadMs);
-  const stickerRefusal = addLayerRefusal(state.spec, "sticker", timeline.playheadMs);
-  const textAddWhy = layerAddLabel("text", textRefusal, total).why;
-  // G10: at the cap the «GIF» tab says what to do about it.
-  const stickerAddWhy = stickerRefusal === "layer-cap" ? "Не больше 10 стикеров в одном видео — уберите один, чтобы добавить другой." : layerAddLabel("sticker", stickerRefusal, total).why;
   const currentSticker = selectedLayer?.kind === "sticker" && selectedLayer.sticker.source === "builtin" ? selectedLayer.sticker.stickerId : null;
 
   /** Selects clip `index` of the current draft (and its cell), bringing the playhead into it. */
@@ -499,8 +513,9 @@ function DraftEditor({
     if (clip === undefined) return;
     timeline.select(selectClip(spec, index, cell));
     const start = clipStartMs(spec, index);
-    const into = seekInto(timeline.playheadMs, start, start + clip.durationMs);
-    if (into !== timeline.playheadMs) timeline.seek(into);
+    const now = playheadStep(timeline);
+    const into = seekInto(now, start, start + clip.durationMs);
+    if (into !== now) timeline.seek(into);
   }
 
   /** A free scene photo as a new clip at `boundary` (the end by default); its face focus is asked for at once (K6). */
@@ -845,19 +860,25 @@ function DraftEditor({
           ) : tab === "music" ? (
             <MusicTab spec={state.spec} status={view.music} onPick={pickMusic} />
           ) : tab === "gif" ? (
-            <StickerTab
+            <StickerTabAtPlayhead
+              timeline={timeline}
               spec={state.spec}
               current={currentSticker}
               replacing={replaceLive ? layerName(state.spec, replacingIndex) : null}
               onCancelReplace={() => setReplacing(null)}
-              addWhy={stickerAddWhy}
               onPick={pickSticker}
             />
           ) : (
-            <TextTab spec={state.spec} playheadMs={timeline.playheadMs} selected={selectedLayer?.kind === "text" ? selectedLayer.layerId : null} addWhy={textAddWhy} onAdd={(preset) => void commands.addText(preset)} onSelect={selectLayer} />
+            <TextTabAtPlayhead
+              timeline={timeline}
+              spec={state.spec}
+              selected={selectedLayer?.kind === "text" ? selectedLayer.layerId : null}
+              onAdd={(preset) => void commands.addText(preset)}
+              onSelect={selectLayer}
+            />
           )}
         </MediaPanel>
-        <PreviewSlot spec={state.spec} playheadMs={timeline.playheadMs} />
+        <PreviewSlot spec={state.spec} playhead={timeline.playhead} />
         {selected?.kind === "clip" ? (
           <ClipProperties
             session={session}
