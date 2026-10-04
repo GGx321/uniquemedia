@@ -53,8 +53,26 @@ And the two of the colour follow-up (review round 4): colour outside what the ch
 | `hevc-hlg-out-of-cube.mp4` | HEVC Main 10 HLG, BT.2020, lossless, 24 patches of 10-bit Y'CbCr codes whose R'G'B' is OUTSIDE the 0..1 cube (`HLG_OUT_OF_CUBE_CODES`, `../chart.ts`): negative in one or two channels (down to about -0.9), over 1 (up to about 1.6), or both | the first stage of the HDR chain clips the signal in 16-bit integers before the inverse HLG curve: every patch within 2 codes of `hlgOutOfCubeToSdrBt709` (a clipped signal through the HLG model) |
 | `h264-p3-saturated.mp4` | H.264 SDR in Display P3 (primaries `smpte432`, sRGB transfer, BT.709 matrix, limited), 24 patches: 12 greys, 6 colours at the edge of P3's gamut (`P3_SDR_PATCHES`), which are outside BT.709's (a negative BT.709 channel of linear light after the primaries conversion), and 6 Y'CbCr codes outside the RGB cube (`P3_OUT_OF_CUBE_CODES`) | the SDR path for non-BT.709 primaries is split at the signal and at the linear light: every patch within 2 codes of `p3SdrToSdrBt709` (a clipped signal, clipped light); the one-zscale chain it replaced is 72 codes off on the out-of-cube patches |
 
-Regenerate only these with `bun generate.ts hevc-hlg-out-of-cube.mp4 h264-p3-saturated.mp4` (the generator writes only the files it is given names of, and
-all 16 come out byte for byte the same as the committed ones on the machine that made them, macOS arm64 ffmpeg 6.0).
+And the three of the Apple-writer follow-up (review round 5). ffmpeg writes none of this, so they are real ffmpeg output PATCHED to look like what real Apple files do (`../mp4Patch.ts`); the real files are Apple's and are not committed.
+
+| File | What | Used for |
+| --- | --- | --- |
+| `hevc-hlg-entry-terminator.mov` | HEVC HLG chart in a QuickTime file, with a 32-bit zero (QuickTime's old list terminator) at the end of the `hvc1` sample entry | 168 of 222 macOS system videos were refused as `bad-box` for those four bytes; the walker takes an all-zero remainder shorter than a box header as the end of a list |
+| `h264-entry-terminator.mov` | the same for `avc1` | the same |
+| `h264-track-meta-mdta.mp4` | H.264 SDR with a `trak/meta` box holding an `mdta` handler and a `keys` box at the end of the video track (AVFoundation's per-track metadata: a lens model, a focal length) | a metadata handler is not a media handler: it is taken |
+
+### Where real phone clips go
+
+When the owner supplies real short clips (an iPhone HEVC HLG MOV, an Android H.264 or HEVC MP4), commit them HERE, small (a second or two, under 200 KB), and:
+
+1. add each to `FIXTURES` in `index.ts` (size and sha256), a row to the table above saying what phone and what mode made it, and a "what it is" test in `fixtures.test.ts`;
+2. strip personal data first (location, serial numbers, the person's name in any `udta` or `meta` text), and say in the row that it was done and how;
+3. add the import to `videoImporter.ffmpeg.test.ts` (or a file of its own) as a plain real-file test: it must import, and keep its colours;
+4. `videoImporter.realfiles.heavy.test.ts` documents what the walker does with whatever real files a developer's machine has (macOS system videos); it skips elsewhere and never copies a file.
+
+### Regenerating
+
+`bun generate.ts [name ...]` writes only the files it is given names of (all of them with none); every generated file comes out byte for byte the same as the committed one on the machine that made them (macOS arm64 ffmpeg 6.0).
 
 What ffmpeg 6.0 does with them, measured: it honours the edit list (the trims come out at 90 frames, not 105, 120 or 147; with a `ctts` and its
 compensating edit the count is the samples'; an empty edit before the segment adds no frames; an edit longer than the samples plays all the

@@ -82,6 +82,25 @@ describe("D and E: a sound-labelled track with a video handler hidden inside a c
   );
 });
 
+describe("F: a video handler hidden inside a sample entry", () => {
+  // Measured on ffmpeg 6.0 (macOS): an hdlr in a sample entry changes nothing, so the walker does not look there. Unverified on Windows' 6.1.1: if
+  // that build lets an entry's hdlr win, this test fails there and the walk must descend into sample entries. It asserts what must hold on every
+  // build: the file imports and the pixels are the JUDGED track's (blue), never the hidden one's (red).
+  test("the importer takes the judged (blue) track, never the hidden (red) one", async () => {
+    const { outcome, started } = await importBytes(withHiddenVideoHandler(await redThenBlue(), "entry"));
+    if (!outcome.ok || outcome.output === undefined) throw new Error(`the import did not finish: ${JSON.stringify(outcome)}; ffmpeg started: ${started.length}`);
+    expect(crOfFirstFrame(outcome.output.file.path)).toBeLessThan(150);
+  });
+});
+
+describe("what Apple's writers make (review round 5): the files import", () => {
+  test.each(["hevc-hlg-entry-terminator.mov", "h264-entry-terminator.mov", "h264-track-meta-mdta.mp4"] as const)("%s", async (name) => {
+    const { outcome, started } = await importBytes(await bytesOf(name));
+    expect(outcome.ok).toBe(true);
+    expect(started).toEqual(["ffmpeg"]);
+  });
+});
+
 describe("an ordinary QuickTime camera file keeps importing under the one rule", () => {
   /** What a camera or an editor writes: H.264, PCM audio (`sowt`), a chapter track (`text`), a timecode track (`tmcd`) and `mdta` metadata. */
   async function cameraMov(): Promise<Uint8Array> {

@@ -129,12 +129,23 @@ export function withFirstTrackHandler(source: Uint8Array, handler: string): Uint
  * the `trak`, or directly at the end of the `trak`. ffmpeg lets the last handler it reads win, so it sees the track as video. The file needs its
  * moov after its mdat.
  */
-export function withHiddenVideoHandler(source: Uint8Array, where: "minf" | "stbl" | "dinf" | "meta" | "trak"): Uint8Array {
+export function withHiddenVideoHandler(source: Uint8Array, where: "minf" | "stbl" | "dinf" | "meta" | "trak" | "entry"): Uint8Array {
   const labelled = withFirstTrackHandler(source, "soun");
   const { moov, trak } = firstTrak(labelled);
   const hdlr = fullBox("hdlr", 0, concat(u32(0), Uint8Array.from([0x76, 0x69, 0x64, 0x65]), new Uint8Array(13)));
   const mdia = child(labelled, trak, "mdia");
   const minf = child(labelled, mdia, "minf");
+  if (where === "entry") {
+    // At the END of the first track's sample entry, after its codec box: where ffmpeg reads an entry's extension atoms.
+    const stbl = child(labelled, minf, "stbl");
+    const stsd = child(labelled, stbl, "stsd");
+    const entry = children(labelled, stsd.body + 8, stsd.end)[0];
+    if (entry === undefined) throw new Error("no sample entry");
+    const out = concat(labelled.subarray(0, entry.end), hdlr, labelled.subarray(entry.end));
+    const view = new DataView(out.buffer);
+    for (const b of [moov, trak, mdia, minf, stbl, stsd, entry]) view.setUint32(b.start, view.getUint32(b.start) + hdlr.byteLength);
+    return out;
+  }
   const inner = where === "stbl" || where === "dinf" ? child(labelled, minf, where) : undefined;
   const added = where === "meta" ? box("meta", concat(u32(0), hdlr)) : hdlr;
   const at = where === "minf" ? minf.body : inner !== undefined ? inner.body : trak.end;
@@ -142,6 +153,25 @@ export function withHiddenVideoHandler(source: Uint8Array, where: "minf" | "stbl
   const out = concat(labelled.subarray(0, at), added, labelled.subarray(at));
   const view = new DataView(out.buffer);
   for (const b of parents) view.setUint32(b.start, view.getUint32(b.start) + added.byteLength);
+  return out;
+}
+
+/**
+ * A copy whose video track carries per-track metadata the way AVFoundation writes it: a `trak/meta` box (version and flags, an `hdlr` of this
+ * subtype, a `keys` box naming a key) at the end of the `trak`. The file needs its moov after its mdat.
+ */
+export function withTrackMeta(source: Uint8Array, subtype = "mdta"): Uint8Array {
+  const path = videoPath(source);
+  const moov = path[0];
+  const trak = path[1];
+  if (moov === undefined || trak === undefined) throw new Error("no video track");
+  const ascii = (text: string): Uint8Array => Uint8Array.from([...text].map((c) => c.charCodeAt(0)));
+  const hdlr = fullBox("hdlr", 0, concat(u32(0), ascii(subtype.padEnd(4, " ").slice(0, 4)), new Uint8Array(13)));
+  const keys = fullBox("keys", 0, concat(u32(1), box("mdta", ascii("com.apple.quicktime.camera.lens_model"))));
+  const added = box("meta", concat(u32(0), hdlr, keys, box("ilst", new Uint8Array(0))));
+  const out = concat(source.subarray(0, trak.end), added, source.subarray(trak.end));
+  const view = new DataView(out.buffer);
+  for (const b of [moov, trak]) view.setUint32(b.start, view.getUint32(b.start) + added.byteLength);
   return out;
 }
 

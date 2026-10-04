@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ffmpegPath } from "../../../../../node/ffmpegBinary";
 import { CHART, chartFrame, HLG_OUT_OF_CUBE_CODES, P3_SDR_CODES } from "../chart";
-import { withClaimedSize, withRotation } from "../mp4Patch";
+import { withClaimedSize, withEntryBox, withRotation, withTrackMeta } from "../mp4Patch";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const work = mkdtempSync(join(tmpdir(), "studio-video-fixtures-"));
@@ -162,6 +162,21 @@ try {
   const p3Tags = ["-color_primaries", "smpte432", "-color_trc", "iec61966-2-1", "-colorspace", "bt709", "-color_range", "tv"];
   ffmpeg([...rawIn("yuv420p"), "-c:v", "libx264", "-preset", "medium", "-crf", "4", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", ...p3Tags, "-an", join(work, "p3.mp4")], repeat(chartFrame({ matrix: "bt709", bits: 8, chroma: "420", codes: p3Codes }), 5));
   emit("h264-p3-saturated.mp4", join(work, "p3.mp4"));
+
+  // 14, 15. What Apple's writer does (review round 5): a 32-bit zero, QuickTime's old list terminator, at the END of the video sample entry. HEVC HLG
+  // and H.264 SDR, both in a QuickTime file with moov after mdat. They are real ffmpeg output with four zero bytes added inside the entry (the sizes
+  // of the boxes above it grow), because no encoder here writes them; the real Apple files cannot be committed (they are Apple's).
+  ffmpeg([...rawIn("yuv420p10le"), ...x265(), "-pix_fmt", "yuv420p10le", ...hlgTags, "-an", "-f", "mov", join(work, "hevc.mov")], repeat(hlg420, 3));
+  writeFileSync(join(work, "hevc-term.mov"), withEntryBox(readFileSync(join(work, "hevc.mov")), new Uint8Array(4)));
+  emit("hevc-hlg-entry-terminator.mov", join(work, "hevc-term.mov"));
+  ffmpeg([...rawIn("yuv420p"), "-c:v", "libx264", "-preset", "medium", "-crf", "4", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", ...sdrTags, "-an", "-f", "mov", join(work, "avc.mov")], repeat(sdr420, 5));
+  writeFileSync(join(work, "avc-term.mov"), withEntryBox(readFileSync(join(work, "avc.mov")), new Uint8Array(4)));
+  emit("h264-entry-terminator.mov", join(work, "avc-term.mov"));
+
+  // 16. Per-track metadata the way AVFoundation writes it: a `trak/meta` box with an `mdta` handler at the end of the video track. H.264 SDR MP4.
+  ffmpeg([...rawIn("yuv420p"), "-c:v", "libx264", "-preset", "medium", "-crf", "4", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", ...sdrTags, "-an", join(work, "plain.mp4")], repeat(sdr420, 5));
+  writeFileSync(join(work, "track-meta.mp4"), withTrackMeta(readFileSync(join(work, "plain.mp4")), "mdta"));
+  emit("h264-track-meta-mdta.mp4", join(work, "track-meta.mp4"));
 
   console.log(JSON.stringify(out, null, 2));
 } finally {

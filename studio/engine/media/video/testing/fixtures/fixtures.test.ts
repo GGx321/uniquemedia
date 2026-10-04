@@ -91,6 +91,30 @@ describe("what each fixture is", () => {
     expect(video.colour).toEqual({ tagged: true, primaries: 9, transfer: 18, matrix: 9, fullRange: false });
   });
 
+  test.each([
+    ["hevc-hlg-entry-terminator.mov", "hvc1"],
+    ["h264-entry-terminator.mov", "avc1"],
+  ] as const)("%s: the %s sample entry ends in four zero bytes, QuickTime's list terminator, and the walker reads the clip", async (name, fourcc) => {
+    const { video } = await infoOf(name);
+    expect(video.fourcc).toBe(fourcc);
+    const bytes = await readFile(FIXTURES[name].file);
+    const start = bytes.indexOf(fourcc, bytes.indexOf("stsd")) - 4;
+    const end = start + bytes.readUInt32BE(start);
+    expect([...bytes.subarray(end - 4, end)]).toEqual([0, 0, 0, 0]);
+    expect(bytes.indexOf("mdat")).toBeLessThan(bytes.indexOf("moov"));
+  });
+
+  test("h264-track-meta-mdta.mp4: a trak/meta box with an mdta handler at the end of the video track", async () => {
+    const { video } = await infoOf("h264-track-meta-mdta.mp4");
+    expect([video.fourcc, video.samples]).toEqual(["avc1", 5]);
+    const bytes = await readFile(FIXTURES["h264-track-meta-mdta.mp4"].file);
+    const meta = bytes.indexOf("meta");
+    expect(meta).toBeGreaterThan(bytes.indexOf("trak"));
+    // After the tag: version and flags (4), the component type (4), then the subtype.
+    const tag = bytes.indexOf("hdlr", meta);
+    expect(bytes.toString("latin1", tag + 12, tag + 16)).toBe("mdta");
+  });
+
   test("h264-p3-saturated.mp4: H.264 SDR, Display P3 primaries, sRGB transfer, BT.709 matrix, limited range, five frames", async () => {
     const { video } = await infoOf("h264-p3-saturated.mp4");
     expect([video.fourcc, video.dynamicRange, video.width, video.height, video.samples]).toEqual(["avc1", "sdr", 192, 96, 5]);

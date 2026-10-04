@@ -370,17 +370,19 @@ describe("the filter graph", () => {
   });
 
   test("a clip whose primaries ARE BT.709's is never put through the 16-bit linear step: it keeps the single zscale (no negative light can come of the primaries)", async () => {
-    for (const colr of [nclx(1, 13, 1), nclx(1, 1, 5), nclx(1, 1, 1, true)]) {
+    for (const colr of [nclx(1, 1, 5), nclx(1, 1, 1, true), nclx(1, 6, 1)]) {
       const graph = await graphOf(withVideo({ entry: entry({ width: 1080, height: 1920, colr }) }));
       expect(graph).not.toContain("gbrp16le");
       expect(graph).toContain("zscale=p=bt709:t=bt709:m=bt709:r=tv");
     }
   });
 
-  test("an sRGB transfer is converted to the BT.709 one", async () => {
-    const graph = await graphOf(withVideo({ entry: entry({ width: 1080, height: 1920, colr: nclx(1, 13, 1) }) }));
-    expect(graph).toContain("color_trc=iec61966-2-1");
-    expect(graph).toContain("zscale=p=bt709:t=bt709:m=bt709:r=tv");
+  test("an sRGB transfer is converted to the BT.709 one in the split chain, whatever its primaries (review round 5: a curve that is not BT.709's meets the same negatives)", async () => {
+    for (const primaries of [1, 12]) {
+      const graph = await graphOf(withVideo({ entry: entry({ width: 1080, height: 1920, colr: nclx(primaries, 13, 1) }) }));
+      expect(graph).toContain("color_trc=iec61966-2-1");
+      expect(colourSteps(graph).slice(1)).toEqual(SDR_PRIMARIES_CONVERSION);
+    }
   });
 
   test("a clip that must shrink is scaled once, with the accurate rounding SP1 measured", async () => {

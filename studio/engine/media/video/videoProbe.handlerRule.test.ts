@@ -83,6 +83,48 @@ describe("an hdlr anywhere in the trak subtree except mdia's and minf's data han
       expect((await infoOf({ tracks: [video(), sound({ trakExtra: [odd] })] })).video.width).toBe(1920);
     });
 
+    // Round 5 (H-1): AVFoundation writes per-track metadata (lens model, focal length) as `trak/meta` with an `mdta` handler. A metadata handler
+    // names no media type, so it changes nothing about what the track is; only a MEDIA subtype is refused inside a meta box.
+    describe("a meta box holding a metadata handler is taken, as every Apple writer makes one", () => {
+      const withKeys = (subtype: string, version = true): Uint8Array => box("meta", concat(...(version ? [u32(0)] : []), hdlrBox(subtype), box("keys", new Uint8Array(8)), box("ilst", new Uint8Array(0))));
+
+      test.each(["mdta", "mdir", "mhlr", "\0\0\0\0"])("trak/meta with a %s handler imports", async (subtype) => {
+        expect((await infoOf({ tracks: [video({ trakExtra: [withKeys(subtype)] })] })).video.width).toBe(1920);
+      });
+
+      test("trak/udta/meta with an mdta handler imports", async () => {
+        expect((await infoOf({ tracks: [video({ trakExtra: [box("udta", withKeys("mdta"))] })] })).video.width).toBe(1920);
+      });
+
+      test("a QuickTime meta box without version and flags in front of its children imports", async () => {
+        expect((await infoOf({ tracks: [video({ trakExtra: [withKeys("mdta", false)] })] })).video.width).toBe(1920);
+      });
+
+      test("on a sound track and on the video track alike", async () => {
+        expect((await infoOf({ tracks: [video({ trakExtra: [withKeys("mdta")] }), sound({ trakExtra: [withKeys("mdta")] })] })).video.width).toBe(1920);
+      });
+
+      test.each(["vide", "soun", "subp", "clcp", "m1a "])("a %s handler AFTER the metadata handler in the same meta box is still refused (the last one wins)", async (subtype) => {
+        const both = box("meta", concat(u32(0), hdlrBox("mdta"), hdlrBox(subtype)));
+        expect(await refusalOf({ tracks: [video(), sound({ trakExtra: [both] })] })).toBe("hidden-handler");
+      });
+
+      test("a media handler that comes after another box in the meta box is found", async () => {
+        const later = box("meta", concat(u32(0), hdlrBox("mdta"), box("keys", new Uint8Array(8)), hdlrBox("vide")));
+        expect(await refusalOf({ tracks: [video(), sound({ trakExtra: [later] })] })).toBe("hidden-handler");
+      });
+
+      test("a metadata handler in a container of a meta box is taken, as the meta box's own is", async () => {
+        const nested = box("meta", concat(u32(0), hdlrBox("mdta"), box("udta", hdlrBox("mdir"))));
+        expect((await infoOf({ tracks: [video({ trakExtra: [nested] })] })).video.width).toBe(1920);
+      });
+
+      test("a media handler in a container of a meta box is found", async () => {
+        const nested = box("meta", concat(u32(0), hdlrBox("mdta"), box("udta", hdlrBox("vide"))));
+        expect(await refusalOf({ tracks: [video(), sound({ trakExtra: [nested] })] })).toBe("hidden-handler");
+      });
+    });
+
     test("a meta box with no handler in it is not refused", async () => {
       const plain = box("meta", concat(u32(0), box("keys", new Uint8Array(8))));
       expect((await infoOf({ tracks: [video({ trakExtra: [plain] })] })).video.width).toBe(1920);
