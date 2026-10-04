@@ -774,7 +774,8 @@ describe("the handle the open gives is the file that is read, not the path", () 
       lstat: (p) => lstat(p, { bigint: true }),
       open: async (p, flags) => {
         const handle = await open(p, flags);
-        await rename(replacement, path);
+        // Windows may refuse to replace a file that is open: the swap is then not made, and the test has nothing to say there.
+        await rename(replacement, path).catch(() => undefined);
         return handle;
       },
     };
@@ -785,14 +786,7 @@ describe("the handle the open gives is the file that is read, not the path", () 
     const path = await put("a.jpg", bytes);
     const expected = await identityOf(path);
     const other = await put("b.jpg", jpeg(300));
-    let result: StageResult;
-    try {
-      result = await staging({ ops: swappingAfterOpen(path, other) }).stage({ path, kind: "photo", expected });
-    } catch (error) {
-      // Windows may refuse to replace a file that is open.
-      if (process.platform === "win32") return;
-      throw error;
-    }
+    const result = await staging({ ops: swappingAfterOpen(path, other) }).stage({ path, kind: "photo", expected });
     if (!result.ok) throw new Error(`refused: ${result.reason}`);
     expect(await readFile(result.staged.path)).toEqual(bytes);
   });
