@@ -188,8 +188,9 @@ export function videoFilterGraph(plan: VideoPlan): string {
       "format=gbrp16le",
       "zscale=t=bt709:m=bt709:r=tv",
     );
-  } else if (colour.primaries !== 1) {
-    // SDR in other primaries (BT.601, Display P3, BT.2020): the same two places, the same two splits. The signal is clipped to the cube, then
+  } else if (colour.primaries !== 1 || colour.transfer === 13) {
+    // SDR in other primaries (BT.601, Display P3, BT.2020), or in the sRGB curve (its inverse and the BT.709 gamma differ, so linear light is
+    // reached and left, and a negative can come of either): the same two places, the same two splits. The signal is clipped to the cube, then
     // taken to linear light in BT.709's primaries and clipped to 0..1 (what is outside BT.709's gamut), then the BT.709 gamma.
     chain.push("zscale", "format=gbrp16le", "zscale=t=linear:p=bt709:m=bt709:r=pc", "format=gbrp16le", "zscale=t=bt709:m=bt709:r=tv");
   } else if (colour.transfer !== 1 || colour.matrix !== 1 || colour.fullRange) {
