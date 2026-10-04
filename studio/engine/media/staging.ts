@@ -6,6 +6,8 @@ import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOps } from "../li
 import { renameWithRetry } from "../library/renameRetry";
 import { unlinkWithRetry } from "../library/unlinkRetry";
 import { pickedIdentityOf, sameIdentity } from "./identity";
+import { isIsoFamily, routeIsoFile } from "./isoRoute";
+import { handleSource } from "./video/fileSource";
 import { formatOf, resolveMediaKind, SNIFF_HEAD_BYTES, unfitReason, type MediaFormat } from "./sniff";
 
 // The engine's half of the own-media hand-off (3f.1, invariant 34). Main's native dialog names a path; this opens it ONCE and turns it
@@ -379,10 +381,16 @@ export class MediaStaging {
     const probe = Buffer.alloc(Math.min(SNIFF_HEAD_BYTES, size));
     const { bytesRead } = await handle.read(probe, 0, probe.length, 0);
     const head = Uint8Array.from(probe.subarray(0, bytesRead));
-    const kind = resolveMediaKind(request.kind, head);
+    let kind = resolveMediaKind(request.kind, head);
     if (kind === null) {
       const reason = unfitReason(request.kind, head);
       return refuse(reason, reason === "heic" ? "a HEIC picture cannot be imported" : "the file's bytes are not of the kind that was asked for");
+    }
+    // The one drop zone (3f.6): the head of an MP4 or MOV cannot tell a video from a voice note, so the tracks decide (`isoRoute.ts`), read from THIS handle, never the path.
+    if (request.kind === "any" && kind === "video" && isIsoFamily(head)) {
+      const route = await routeIsoFile(handleSource(handle, size));
+      if (route === "audio") kind = "audio";
+      if (route === "neither") return refuse("format", "the file holds neither a video nor a sound track");
     }
     if (this.#options.supports?.(kind) === false) return refuse("not-yet-supported", `${kind} files cannot be imported yet`);
     const cap = this.#caps[kind];
@@ -464,7 +472,10 @@ export class MediaStaging {
       // What the importers get is what is judged: the staged copy's own start must still be this kind.
       const stagedHead = await readHead(part, Math.min(SNIFF_HEAD_BYTES, total));
       const format = formatOf(stagedHead);
-      if (resolveMediaKind(request.kind, stagedHead) !== kind || format === null) {
+      const again = resolveMediaKind(request.kind, stagedHead);
+      // A file the drop zone routed to the audio importer (`isoRoute.ts`) is still an MP4 or MOV by its head, which the sniff alone calls a video: that is the same file.
+      const routed = request.kind === "any" && kind === "audio" && again === "video" && isIsoFamily(stagedHead);
+      if ((again !== kind && !routed) || format === null) {
         return await abandon(refuse("changed", "the file's start changed while it was being copied"));
       }
       try {

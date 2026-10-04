@@ -131,7 +131,13 @@ export interface VideoInfo {
   readonly audioTracks: number;
 }
 
-export type VideoProbe = { readonly ok: true; readonly info: VideoInfo } | { readonly ok: false; readonly reason: ProbeRefusal };
+/**
+ * What the walker made of a file. A refusal for `no-video-track` also says how many sound tracks the file has (`audioTracks`, 3f.6: the one drop zone routes an
+ * audio-only MP4 to the audio importer); no other refusal has the count, since only this one means the whole file was read.
+ */
+export type VideoProbe =
+  | { readonly ok: true; readonly info: VideoInfo }
+  | { readonly ok: false; readonly reason: ProbeRefusal; readonly audioTracks?: number };
 
 /** True when the picture (the edit's length, else the samples') is longer than `seconds`: exact, in ticks, never rounded. */
 export function longerThan(info: VideoInfo, seconds: number): boolean {
@@ -140,9 +146,12 @@ export function longerThan(info: VideoInfo, seconds: number): boolean {
 
 class Refusal extends Error {
   readonly reason: ProbeRefusal;
-  constructor(reason: ProbeRefusal) {
+  /** For `no-video-track` only: how many sound tracks the walker counted. */
+  readonly audioTracks: number | undefined;
+  constructor(reason: ProbeRefusal, audioTracks?: number) {
     super(reason);
     this.reason = reason;
+    this.audioTracks = audioTracks;
   }
 }
 
@@ -686,7 +695,7 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
     if (video !== undefined) throw new Refusal("several-video-tracks");
     video = readVideoTrack(m, view, onlyOf(parts, "tkhd"), onlyOf(parts, "edts"), onlyOf(inMdia, "mdhd"), tables, movieTimes.timescale, budget);
   }
-  if (video === undefined) throw new Refusal("no-video-track");
+  if (video === undefined) throw new Refusal("no-video-track", audioTracks);
 
   return { brand, durationMs: Math.round((video.presentation.ticks * 1000) / video.presentation.timescale), mvhd: movieTimes, video, audioTracks };
 }
@@ -696,7 +705,7 @@ export async function probeVideo(source: ByteSource): Promise<VideoProbe> {
   try {
     return { ok: true, info: await walk(source) };
   } catch (error) {
-    if (error instanceof Refusal) return { ok: false, reason: error.reason };
+    if (error instanceof Refusal) return { ok: false, reason: error.reason, ...(error.audioTracks === undefined ? {} : { audioTracks: error.audioTracks }) };
     // A read past the end of a buffer the checks above should have prevented is still a malformed file, not a crash.
     if (error instanceof RangeError) return { ok: false, reason: "bad-box" };
     throw error;
