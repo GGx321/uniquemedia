@@ -1,5 +1,5 @@
 import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason } from "./errors";
-import type { MediaUnsupportedReason } from "./media";
+import type { MediaKind, MediaUnsupportedReason } from "./media";
 import type { MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
 
@@ -78,12 +78,51 @@ export const MEDIA_REASONS_RU = {
   failed: "Не удалось добавить файл. Попробуйте ещё раз.",
   cancelled: "Добавление отменено, в «Мои» ничего не попало.",
   "not-yet-supported": "Файлы такого типа пока нельзя добавить.",
-  "too-small": "Фото слишком маленькое: каждая сторона должна быть не короче 2 пикселей.",
-  dimensions: "У фото слишком много пикселей: допустимо до 50 мегапикселей (например, 8000 × 6000). Уменьшите его и добавьте снова.",
+  // 3f.2 and 3f.3a: the codes below are shared by every kind, so these are the NEUTRAL texts; a kind that has more to say has it in
+  // MEDIA_REASONS_BY_KIND_RU. `animated-webp` is only ever a photo's.
+  "too-small": "Изображение слишком маленькое: каждая сторона должна быть не меньше 2 пикселей.",
+  dimensions: "Картинка слишком большого размера. Уменьшите разрешение и добавьте снова.",
   "animated-webp": "Анимированный WebP не подходит для фото. Сохраните один кадр как JPEG или PNG и добавьте снова.",
-  "not-animated": "Файл не анимирован: нужен GIF или APNG минимум с двумя разными кадрами.",
+  "too-long": "Файл слишком длинный для этого типа. Сократите его и добавьте снова.",
+  codec: "Файл закодирован в формате, который не поддерживается. Сохраните его в другом формате и добавьте снова.",
+  structure: "Файл устроен необычно, и добавить его нельзя: например, в нём несколько изображений, нестандартный поворот или цвет, или он собран из частей. Пересохраните его обычным способом и добавьте снова.",
+  "not-animated": "Файл не анимирован: нужен GIF или APNG минимум с двумя кадрами.",
   "loop-too-long": "Анимация слишком длинная: до 300 кадров, то есть 10 секунд при 30 кадрах в секунду. Сократите её и добавьте снова.",
 } as const satisfies Record<MediaUnsupportedReason, string>;
+
+/**
+ * The texts a kind says in its own words, over the neutral ones above (3f.3a review M2): the reason CODES are shared by every kind, the text
+ * depends on the kind of the file that was turned away. 3f.2 (photo) and 3f.4 (music) add theirs here.
+ */
+export const MEDIA_REASONS_BY_KIND_RU: Partial<Record<MediaKind, Partial<Record<MediaUnsupportedReason, string>>>> = {
+  photo: {
+    "too-small": "Фото слишком маленькое: каждая сторона должна быть не короче 2 пикселей.",
+    dimensions: "У фото слишком много пикселей: допустимо до 50 мегапикселей (например, 8000 × 6000). Уменьшите его и добавьте снова.",
+  },
+  video: {
+    "too-long": "Видео длиннее трёх минут. Обрежьте его и добавьте снова.",
+    codec: "Такой видеокодек не поддерживается. Подойдут видео H.264, HEVC (в том числе HDR) и ProRes: сохраните ролик в одном из них.",
+    dimensions: "Видео больше 4K. Уменьшите разрешение до 4096 × 2160 и добавьте снова.",
+    "too-small": "Кадр видео слишком маленький: каждая сторона должна быть не меньше 2 пикселей.",
+    structure: "Видео устроено необычно, и добавить его нельзя: например, в нём несколько видеодорожек, нестандартный поворот или цвет, или оно собрано из частей. Пересохраните ролик обычным способом и добавьте снова.",
+  },
+  // 3f.5: what an own sticker is turned away for, in the sticker's own words (it takes a GIF or an APNG, not a photo).
+  sticker: {
+  format:
+    "Для стикера нужен GIF или APNG. Если это APNG, перед анимацией не должно быть отдельной картинки-заставки, а сам файл должен читаться целиком: сохраните анимацию заново и добавьте снова.",
+  "too-large": "Стикер слишком тяжёлый: исходный файл и готовая анимация не должны быть больше 5 МБ. Уменьшите размер картинки или число кадров.",
+  "too-small": "Стикер слишком маленький: каждая сторона должна быть не короче 2 пикселей.",
+  dimensions: "Стикер слишком большой: каждая сторона — не длиннее 720 пикселей, а размер кадра, умноженный на длину анимации, ограничен (166 кадров при 720 × 720, 300 кадров при 480 × 480). Уменьшите стикер или сократите анимацию и добавьте снова.",
+  "not-animated": "Это не анимация: нужен GIF или APNG минимум с двумя кадрами. Обычную картинку (PNG, JPEG) стикером сделать нельзя.",
+  "loop-too-long": "Анимация слишком длинная: стикер — это петля до 300 кадров, то есть 10 секунд при 30 кадрах в секунду. Сократите анимацию и добавьте снова.",
+  failed: "Не удалось добавить стикер. Попробуйте ещё раз или сохраните анимацию заново.",
+  },
+};
+
+/** The Russian text for a refusal: the kind's own when it has one, else the neutral one. `kind` is the kind of the file that was turned away, when known. */
+export function mediaReasonRu(reason: MediaUnsupportedReason, kind?: MediaKind): string {
+  return (kind === undefined ? undefined : MEDIA_REASONS_BY_KIND_RU[kind]?.[reason]) ?? MEDIA_REASONS_RU[reason];
+}
 
 /**
  * Why a caption is refused (the `captionIssue` behind TEXT_INVALID). The charset text names © ® ™ on purpose:

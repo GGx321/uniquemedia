@@ -122,7 +122,7 @@ describe("byte caps", () => {
 });
 
 describe("refusal reasons", () => {
-  test("name the boundary's own reasons, then the photo importer's (3f.2) and the sticker importer's (3f.5)", () => {
+  test("name the boundary's own reasons, then the photo importer's (3f.2), the video importer's (3f.3a) and the sticker importer's (3f.5)", () => {
     expect(MediaUnsupportedReason.options).toEqual([
       "not-a-file",
       "empty",
@@ -139,6 +139,9 @@ describe("refusal reasons", () => {
       "too-small",
       "dimensions",
       "animated-webp",
+      "too-long",
+      "codec",
+      "structure",
       "not-animated",
       "loop-too-long",
     ]);

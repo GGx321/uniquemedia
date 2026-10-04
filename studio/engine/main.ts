@@ -33,6 +33,7 @@ import { createDecodeWorkerSpawner } from "./decode/spawn";
 import { createPhotoImporter, MAX_PHOTO_PIXELS } from "./media/photoImporter";
 import { createStickerImporter } from "./media/stickerImporter";
 import { createStickerEncodeGate, createStickerEncodeSpawner } from "./stickers/encodeGate";
+import { createVideoImporter } from "./media/videoImporter";
 import { createCommitHold } from "./videos/e2eCommitHold";
 
 const parentPort = process.parentPort;
@@ -268,8 +269,10 @@ parentPort.once("message", (event) => {
       // 3f.2: the own-photo importer. JPEG and PNG are decoded by the WASM codecs in their own worker thread (fix round 1: ended on a
       // cancel, a time limit and when idle, so the engine thread stays free and the memory goes back); a WebP is decoded by ffmpeg in a child
       // process; the stored file is a JPEG without metadata.
+      // 3f.3a: the own-video importer, beside it: ffmpeg in a child process under the walker's verdict, a mezzanine H.264 clip out.
       mediaImporters: {
         photo: createPhotoImporter({ decode: createDecodeGate({ spawnWorker: createDecodeWorkerSpawner(PHOTO_DECODE_WORKER_URL, { nodeModulesDir: NODE_MODULES_DIR, maxPixels: MAX_PHOTO_PIXELS }), idleRecycleMs: PHOTO_DECODE_IDLE_RECYCLE_MS, timeoutMs: PHOTO_DECODE_TIMEOUT_MS }).decode }),
+        video: createVideoImporter(),
         // 3f.5: the own-sticker importer. A GIF or APNG is judged by bounded pure readers, decoded by ffmpeg in a child process and re-encoded
         // as an APNG on the 30 fps grid by the writer, in its own worker thread.
         sticker: createStickerImporter({ encode: createStickerEncodeGate({ spawnWorker: createStickerEncodeSpawner(STICKER_ENCODE_WORKER_URL), timeoutMs: STICKER_ENCODE_TIMEOUT_MS }).encode }),

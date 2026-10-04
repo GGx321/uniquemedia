@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, MEDIA_REASONS_RU } from "./errorMessagesRu";
+import { ERROR_MESSAGES_RU, MEDIA_REASONS_RU, mediaReasonRu } from "./errorMessagesRu";
 import { EngineError, ERROR_CODES } from "./errors";
 import { EVENT_TYPES, EventMessage } from "./events";
 import { MediaUnsupportedReason } from "./media";
@@ -125,8 +125,10 @@ describe("the Russian text of each refusal reason (CF10)", () => {
   });
 
   test("a photo that is too small, too large in pixels or an animated WebP says so in its own words (3f.2)", () => {
-    expect(MEDIA_REASONS_RU["too-small"]).toContain("2 пиксел");
-    expect(MEDIA_REASONS_RU.dimensions).toContain("мегапиксел");
+    // The codes are shared by the kinds, so the photo's words are the photo's own (`MEDIA_REASONS_BY_KIND_RU.photo`); the neutral ones name no kind.
+    expect(mediaReasonRu("too-small", "photo")).toContain("Фото");
+    expect(mediaReasonRu("too-small", "photo")).toContain("2 пиксел");
+    expect(mediaReasonRu("dimensions", "photo")).toContain("мегапиксел");
     expect(MEDIA_REASONS_RU["animated-webp"]).toContain("WebP");
   });
 

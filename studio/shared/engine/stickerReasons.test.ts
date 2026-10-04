@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { MEDIA_REASONS_RU } from "./errorMessagesRu";
+import { MEDIA_REASONS_BY_KIND_RU, MEDIA_REASONS_RU, mediaReasonRu } from "./errorMessagesRu";
 import { MediaUnsupportedReason } from "./media";
-import { STICKER_REASONS_RU, stickerReasonRu } from "./stickerReasonsRu";
+
+const STICKER_REASONS_RU = MEDIA_REASONS_BY_KIND_RU.sticker ?? {};
+const stickerReasonRu = (reason: MediaUnsupportedReason): string => mediaReasonRu(reason, "sticker");
 
 // 3f.5: the refusal reasons of an own sticker, and the words an owner is told them in.
 
