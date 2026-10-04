@@ -60,9 +60,10 @@ function tinyWav(samples: number): Uint8Array {
 
 /**
  * The own TRACK of the packaged run (3f.4): a real file the music importer takes, in the packaged engine with the packaged ffmpeg (probe, pinned encode,
- * check of the output). A quarter of a second of tone as a WAV is 2 KB; the stored file is an AAC M4A (a whole number of 1024-sample frames: 0.256 s).
+ * check of the output). 4.5 s of tone as a WAV is 36 KB (the shortest track the library keeps is the shortest montage, 4 s: `MIN_TRACK_MS`, 3f.6); the stored file is
+ * an AAC M4A (a whole number of 1024-sample frames, about 4.5 s).
  */
-export const MEDIA_SMOKE_TRACK = { kind: "audio", extension: "m4a", minMs: 200, maxMs: 300, bytes: tinyWav(2_000) } as const;
+export const MEDIA_SMOKE_TRACK = { kind: "audio", extension: "m4a", minMs: 4_400, maxMs: 4_700, bytes: tinyWav(36_000) } as const;
 
 /** The markers of a JPEG's metadata segments (APPn: JFIF, EXIF, XMP, ICC; COM: a comment) before its scan. The stored photo must have none. */
 export function jpegMetadataMarkers(jpeg: Uint8Array): number[] {

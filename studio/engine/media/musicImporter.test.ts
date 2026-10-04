@@ -24,7 +24,9 @@ const signal = (): AbortSignal => new AbortController().signal;
 /** Which child (0-based) is the encode: the probe is the first, then five selection checks (one per kind of stream that must be absent); the check of the output comes after. */
 const ENCODE_AT = 6;
 
-const importerWith = (extra: MusicImporterDeps = {}): ReturnType<typeof createMusicImporter> => createMusicImporter(extra);
+// The committed tones are a fraction of a second, under the shortest track the library keeps (3f.6): these tests are about what the importer does with the
+// file, so they take any length. The bound is in musicImporter.progress.test.ts, with the real default.
+const importerWith = (extra: MusicImporterDeps = {}): ReturnType<typeof createMusicImporter> => createMusicImporter({ minDurationMs: 0, ...extra });
 
 async function run(bytes: Uint8Array, format: MediaFormat, extra: MusicImporterDeps = {}): Promise<{ outcome: MediaImportOutcome; hand: Handoff }> {
   const hand = await handoff(tmp(), bytes, { format, kind: "audio" });

@@ -72,7 +72,7 @@ async function startWith(ffmpeg: { run: (opts: RunFfmpegArgvOptions) => Promise<
   const started = await startEngine(dir(), {
     init: { renderTmpDir: renderTmp(), settings: settingsOf() },
     deps: {
-      mediaImporters: { audio: createMusicImporter() },
+      mediaImporters: { audio: createMusicImporter({ minDurationMs: 0 }) },
       ...(ffmpeg === null ? {} : { videos: { renderOverrides: { verify: acceptingVerify, runDeps: { run: ffmpeg.run, measure: async () => -5.7 } } } }),
       ...extraDeps,
     },
@@ -153,7 +153,7 @@ describe("music.peaks of an own track", () => {
   });
 
   test("a media that is not a track is NOT_FOUND too", async () => {
-    const started = await startWith(null, { mediaImporters: { audio: createMusicImporter(), photo: async () => ({ ok: true, facts: { width: 10, height: 10, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null } }) } });
+    const started = await startWith(null, { mediaImporters: { audio: createMusicImporter({ minDurationMs: 0 }), photo: async () => ({ ok: true, facts: { width: 10, height: 10, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null } }) } });
     const photo = await importTrack(started, new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8]), "p.jpg", "photo");
 
     expect(failed(await peaksOf(started.engine, photo, 0, 4_000, 16)).error.code).toBe("NOT_FOUND");
@@ -313,7 +313,7 @@ describe("an own track in a draft and a render, through the engine", () => {
 
   test("a track that is a photo is media-unavailable, never held", async () => {
     const { avatarId, photoIds } = await seedAvatar();
-    const started = await startWith(gatedFfmpeg(), { mediaImporters: { audio: createMusicImporter(), photo: async () => ({ ok: true, facts: { width: 10, height: 10, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null } }) } });
+    const started = await startWith(gatedFfmpeg(), { mediaImporters: { audio: createMusicImporter({ minDurationMs: 0 }), photo: async () => ({ ok: true, facts: { width: 10, height: 10, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null } }) } });
     const photo = await importTrack(started, new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8]), "p.jpg", "photo");
 
     const refusal = failed(await started.engine.handle(command("videos.render", { spec: trackSpec(avatarId, photoIds.slice(0, 2), photo) })));
@@ -325,7 +325,7 @@ describe("an own track in a draft and a render, through the engine", () => {
     "a real render with an own track: the importer's M4A is read by the real chain, the file holds 48 kHz stereo AAC of the video's exact length, and the verifier is content",
     async () => {
       const { avatarId, photoIds } = await seedAvatar();
-      const started = await startEngine(dir(), { init: { renderTmpDir: renderTmp(), settings: settingsOf() }, deps: { mediaImporters: { audio: createMusicImporter() } } });
+      const started = await startEngine(dir(), { init: { renderTmpDir: renderTmp(), settings: settingsOf() }, deps: { mediaImporters: { audio: createMusicImporter({ minDurationMs: 0 }) } } });
       await mkdir(exportDir(), { recursive: true });
       await started.engine.settled();
       const mediaId = await importTrack(started, LONG(), "long.wav");
