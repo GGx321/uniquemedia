@@ -1344,6 +1344,10 @@ export class MockEngine implements EngineBridge {
         for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
         return this.ok(c, { stickerId: c.payload.stickerId, apngBase64: btoa(binary) });
       }
+      case "media.list":
+      case "media.delete":
+      case "media.cancelImport":
+        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not played by the mock yet` });
       case "export.check": {
         this.checkExport();
         return this.ok(c, { exportStatus: this.exportReported });

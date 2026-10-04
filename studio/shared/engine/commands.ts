@@ -5,7 +5,7 @@ import { EngineError } from "./errors";
 import { EventMessage } from "./events";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
-import { MediaPickImportPayload, MediaPickResult } from "./media";
+import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult } from "./media";
 import { StickerBytes, StickerBytesPayload } from "./stickerBytes";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
@@ -490,6 +490,14 @@ const ENGINE_SPECS = [
     z.strictObject({ avatarId: Id, layer: TextLayer }),
     z.strictObject({ previewId: Id, width: z.number().int().positive(), height: z.number().int().positive() }),
   ),
+  // Stage 3 (3f.1b, K28, K29): the own-media records and the import job. `media.list` is newest first (`total` says when a listing was cut);
+  // `media.delete` removes the stored file and its record and is never refused for a use: a draft that names the media keeps the
+  // reference and reads it as `media-unavailable`, and a rendered video is a file of its own. NOT_FOUND for an unknown id.
+  // `media.cancelImport` stops a running import job at whatever phase it is in (the copy, the importer, the record) and leaves
+  // nothing behind; NOT_FOUND for a job that is not an import of this engine, and a job that already ended is answered as it is.
+  defineCommand("media.list", MediaListPayload, MediaListResult),
+  defineCommand("media.delete", MediaDeletePayload, MediaDeleteResult),
+  defineCommand("media.cancelImport", MediaCancelImportPayload, MediaCancelImportResult),
   // A fresh look at the export folder (3e.3, K9): the same check a render attempt makes, without a render. Free. The answer is the
   // status as the check found it, and `export.status` follows when it CHANGED, so a window that asks on focus shows an
   // unplugged drive, and a plugged one, without a render attempt.

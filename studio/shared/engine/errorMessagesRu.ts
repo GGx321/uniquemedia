@@ -1,4 +1,5 @@
 import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason } from "./errors";
+import type { MediaUnsupportedReason } from "./media";
 import type { MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
 
@@ -56,8 +57,28 @@ export const ERROR_MESSAGES_RU = {
   MUSIC_KEY_REJECTED: "RapidAPI не принял ключ (401). Замените ключ в Настройках: до этого запросы за музыкой не отправляются и не тратятся.",
   MUSIC_QUOTA_EXHAUSTED:
     "Запросы за музыкой сейчас недоступны: отправлено 30 за 31 день, или сервис музыки ответил, что запросов не осталось. Ничего не отправлено; когда можно снова, показывает Studio.",
+  MEDIA_UNSUPPORTED: "Этот файл не удалось добавить. Причина указана рядом; в «Мои» ничего не попало.",
   MUSIC_UNAVAILABLE: "Не удалось получить список музыки; предыдущий список остался как был. Если запрос был отправлен, он засчитан в лимит. Попробуйте позже.",
 } as const satisfies Record<ErrorCode, string>;
+
+/**
+ * Why an own file was turned away (the `mediaReason` behind MEDIA_UNSUPPORTED, K30, CF10). One text per reason, each saying what to do.
+ * `satisfies Record<MediaUnsupportedReason, string>`: the per-kind tasks (3f.2 to 3f.5) that append a reason must append its text here.
+ */
+export const MEDIA_REASONS_RU = {
+  "not-a-file": "Это не файл: выберите обычный файл, а не папку, ярлык или устройство.",
+  empty: "Файл пустой.",
+  "too-large": "Файл слишком большой для этого типа: фото — до 30 МБ, видео — до 2 ГБ, музыка — до 100 МБ, стикер — до 5 МБ.",
+  format: "Формат не подходит. Фото — JPEG, PNG или WebP; видео — MP4 или MOV; музыка — mp3, m4a, aac, wav, flac, alac, ogg или opus; стикер — GIF или APNG.",
+  heic: "Формат HEIC не читается — сохраните как JPEG и добавьте снова.",
+  changed: "Файл изменился, пока его копировали. Выберите его ещё раз.",
+  unreadable: "Не удалось прочитать файл или записать его копию. Проверьте доступ к файлу и место на диске.",
+  "no-space": "На диске библиотеки не хватает места для копии файла. Освободите место и повторите.",
+  "too-many": "За один раз можно добавить не больше 20 файлов. Остальные выберите отдельно.",
+  failed: "Не удалось добавить файл. Попробуйте ещё раз.",
+  cancelled: "Добавление отменено, в «Мои» ничего не попало.",
+  "not-yet-supported": "Файлы такого типа пока нельзя добавить.",
+} as const satisfies Record<MediaUnsupportedReason, string>;
 
 /**
  * Why a caption is refused (the `captionIssue` behind TEXT_INVALID). The charset text names © ® ™ on purpose:

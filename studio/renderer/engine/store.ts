@@ -29,7 +29,8 @@ export type JobStatus = JobState["status"];
  */
 export interface JobView {
   readonly jobId: string;
-  readonly kind: JobState["kind"];
+  /** An own-media import (3f.1b) is not an avatar's job: the store keeps it out of this list (3f.6's «Мои» tab brings its own view of imports). */
+  readonly kind: Exclude<JobState["kind"], "import">;
   readonly avatarId: string;
   /** A run job's own run; null exactly for a candidates job. */
   readonly runId: string | null;
@@ -142,7 +143,7 @@ function isFinished(job: JobView): boolean {
   return job.status === "cancelled" || job.status === "done" || job.status === "failed";
 }
 
-export function jobFromState(j: JobState): JobView {
+export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView {
   // Both JobState branches carry their own avatarId (T6: a run's does too,
   // not only avatar.candidates') — read straight off the state, never
   // guessed, matching job.progress's own avatarId (below).
@@ -786,7 +787,7 @@ export class EngineStore {
       drafts: s.drafts,
       unreadableAvatars: s.unreadableAvatars,
       unreadableTotal: s.unreadableTotal,
-      jobs: s.jobs.map(jobFromState),
+      jobs: s.jobs.flatMap((j) => (j.kind === "import" ? [] : [jobFromState(j)])),
       engineError: null,
       notices: s.notices.reduce(mergeNotice, [] as readonly EngineNotice[]),
     });
@@ -802,6 +803,11 @@ export class EngineStore {
     const lastSeq = event.seq;
     switch (event.type) {
       case "job.progress": {
+        // An import (3f.1b) is no avatar's job and has no row in `jobs`: the seq moves and nothing else does.
+        if (event.payload.kind === "import") {
+          this.update({ lastSeq });
+          return;
+        }
         const { done, total } = event.payload;
         // The event names its job (kind, avatar, runId): a window that never
         // started it, or hears of it first here, still knows exactly whose it is.
@@ -818,6 +824,10 @@ export class EngineStore {
       }
       case "job.done": {
         const { jobId, result } = event.payload;
+        if (result.kind === "import") {
+          this.update({ lastSeq });
+          return;
+        }
         // L9: total from the result itself when nothing (no job.progress,
         // no trackRunJob/trackCandidatesJob) told the store one yet —
         // otherwise a job whose first-ever event is its own job.done would
@@ -860,6 +870,10 @@ export class EngineStore {
       }
       case "job.failed": {
         const { error } = event.payload;
+        if (event.payload.kind === "import") {
+          this.update({ lastSeq });
+          return;
+        }
         this.patchJob(event.payload, (job) => ({ ...job, status: "failed", saving: false, error }), lastSeq);
         this.afterError(error);
         return;
@@ -883,6 +897,10 @@ export class EngineStore {
         this.afterError(event.payload.error);
         return;
       case "job.cancelled":
+        if (event.payload.kind === "import") {
+          this.update({ lastSeq });
+          return;
+        }
         this.patchJob(event.payload, (job) => (isActiveJob(job) ? { ...job, status: "cancelled", saving: false } : job), lastSeq);
         return;
       case "settings.changed": {
@@ -911,6 +929,10 @@ export class EngineStore {
         // lands after its render's `job.failed` makes that job done (the video exists).
         this.update(event.payload.change === "upserted" ? { lastSeq, jobs: applyVideoChanged(this.view.jobs, event.payload.video) } : { lastSeq });
         for (const listener of [...this.videoListeners]) listener(event.payload);
+        return;
+      case "media.changed":
+        // Own media are listed on demand (`media.list`, 3f.6's «Мои» tab): the view keeps only the seq.
+        this.update({ lastSeq });
         return;
       case "montage.changed":
         // Drafts are listed on demand (montages.list): the view keeps only the seq, and the listeners hear the change.

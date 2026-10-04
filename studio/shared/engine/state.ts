@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { EngineError, ExportUnavailableReason } from "./errors";
+import { MediaFileName, MediaKind, MediaSummary } from "./media";
 import { AbsolutePath, Count, Id, Micros, ModelId, SafeText } from "./primitives";
 import { RenderResult } from "./video";
 
@@ -425,7 +426,7 @@ export const UnreadableAvatar = z.strictObject({
 
 // ---------- jobs ----------
 
-export const JobKind = z.enum(["avatar.candidates", "run", "render"]);
+export const JobKind = z.enum(["avatar.candidates", "run", "render", "import"]);
 export const JobStatus = z.enum(["queued", "running", "done", "failed", "cancelled"]);
 
 const doneWithinTotal = {
@@ -452,6 +453,13 @@ const runJobRef = { kind: z.literal("run"), jobId: Id, runId: Id, avatarId: Id }
  * same way when it never heard a progress.
  */
 const renderJobRef = { kind: z.literal("render"), jobId: Id, videoId: Id, avatarId: Id, montageId: Id.nullable() };
+/**
+ * An own-media import's identity (3f.1b, K29): the kind of media (what the BYTES are), the file's display name (its base name, never a
+ * path), and the media id, which is null until the record is stored (the job's `done` state, and its result, carry it). `done` and
+ * `total` count BYTES of the picked file copied, of the size it had when it was opened; a phase after the copy (the importer's
+ * normalisation, the record) holds `done` at `total`.
+ */
+const importJobRef = { kind: z.literal("import"), jobId: Id, mediaKind: MediaKind, name: MediaFileName, mediaId: Id.nullable() };
 const progressCounts = { done: Count, total: Count };
 /**
  * The «сохранение» phase of a render: the commit has passed its point of no return (the video's name is claimed),
@@ -471,6 +479,7 @@ export const JobProgress = z
     z.strictObject({ ...candidatesJobRef, ...progressCounts }),
     z.strictObject({ ...runJobRef, ...progressCounts }),
     z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving, ...renderQueued }),
+    z.strictObject({ ...importJobRef, ...progressCounts }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
   .refine((p) => !(p.kind === "render" && p.queued === true) || (p.done === 0 && p.saving !== true), {
@@ -483,10 +492,11 @@ export const JobFailed = z.discriminatedUnion("kind", [
   z.strictObject({ ...candidatesJobRef, error: EngineError }),
   z.strictObject({ ...runJobRef, error: EngineError }),
   z.strictObject({ ...renderJobRef, error: EngineError }),
+  z.strictObject({ ...importJobRef, error: EngineError }),
 ]);
 
 /** `job.cancelled`'s payload: the job's identity (see `JobProgress`). */
-export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(runJobRef), z.strictObject(renderJobRef)]);
+export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(runJobRef), z.strictObject(renderJobRef), z.strictObject(importJobRef)]);
 
 /** A batch's slot, 1 to 4. */
 const CandidateSlot = z.number().int().min(1).max(4);
@@ -541,7 +551,12 @@ export const RunResult = z.strictObject({
   failedSlots: Count,
 });
 
-export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, RunResult, RenderResult]);
+/** An import's outcome (3f.1b): the record that was stored, whole, so the window shows the new tile without a listing. */
+export const ImportResult = z
+  .strictObject({ kind: z.literal("import"), mediaId: Id, media: MediaSummary })
+  .refine((r) => r.media.mediaId === r.mediaId, { message: "the media must be the one the result names", path: ["media"] });
+
+export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, RunResult, RenderResult, ImportResult]);
 
 const jobCommon = {
   jobId: Id,
@@ -578,6 +593,11 @@ export const JobState = z
       ...jobCommon,
       result: RenderResult.optional(),
     }),
+    z.strictObject({
+      ...importJobRef,
+      ...jobCommon,
+      result: ImportResult.optional(),
+    }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
   .refine((j) => (j.status === "done") === (j.result !== undefined), {
@@ -593,10 +613,15 @@ export const JobState = z
       if (j.result === undefined) return true;
       if (j.kind === "avatar.candidates") return j.result.kind === "avatar.candidates" && j.result.avatarId === j.avatarId;
       if (j.kind === "run") return j.result.kind === "run" && j.result.runId === j.runId && j.result.avatarId === j.avatarId;
+      if (j.kind === "import") return j.result.kind === "import" && j.result.mediaId === j.mediaId;
       return j.result.kind === "render" && j.result.videoId === j.videoId && j.result.avatarId === j.avatarId;
     },
     { message: "result must belong to this job", path: ["result"] },
-  );
+  )
+  .refine((j) => j.kind !== "import" || (j.status === "done") === (j.mediaId !== null), {
+    message: "an import has a media id exactly when it is done",
+    path: ["mediaId"],
+  });
 
 // ---------- photos (2b placeholders) ----------
 
@@ -848,6 +873,7 @@ export const UNREADABLE_REASON_DETAIL: Record<UnreadableReason, UnreadableDetail
 };
 export type JobState = z.infer<typeof JobState>;
 export type JobResult = z.infer<typeof JobResult>;
+export type ImportResult = z.infer<typeof ImportResult>;
 export type JobProgress = z.infer<typeof JobProgress>;
 export type FailedCandidateSlot = z.infer<typeof FailedCandidateSlot>;
 export type RunRequest = z.infer<typeof RunRequest>;

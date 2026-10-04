@@ -235,6 +235,21 @@ const progressEvent: EventMessage = {
 
 type CommandCase<T extends CommandType> = { payload: CommandPayload<T>; result: CommandResult<T> };
 
+const ownMedia = {
+  mediaId: "media-00000001",
+  kind: "photo" as const,
+  name: "summer.jpg",
+  bytes: 120_000,
+  createdAt: "2026-10-04T10:00:00.000Z",
+  width: 3024,
+  height: 4032,
+  durationMs: null,
+  sourceFps: null,
+  hdrToSdr: false,
+  loopFrames: null,
+  delayFrames: null,
+};
+
 const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "settings.get": { payload: {}, result: settings },
   "settings.setApiKey": { payload: { key: API_KEY }, result: keyStatus },
@@ -283,6 +298,9 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "avatars.pickImportPhoto": { payload: {}, result: { picked: true, stagingId: "staging-0001", width: 1024, height: 1365 } },
   "media.pickImport": { payload: { kind: "photo" }, result: { picked: true, jobIds: ["job-00000001"], refused: [{ name: "notes.txt", reason: "format" }], skipped: 0 } },
   "stickers.bytes": { payload: { stickerId: "heart-pulse" }, result: { stickerId: "heart-pulse", apngBase64: "iVBORw0KGgo=" } },
+  "media.list": { payload: { kind: "photo" }, result: { media: [ownMedia], total: 1 } },
+  "media.delete": { payload: { mediaId: "media-00000001" }, result: { mediaId: "media-00000001" } },
+  "media.cancelImport": { payload: { jobId: "job-00000001" }, result: { jobId: "job-00000001" } },
   "avatars.estimateImport": { payload: { stagingId: "staging-0001" }, result: { ...estimate, expectedMicros: 6_500, worstMicros: 42_000 } },
   "avatars.importAvatar": {
     payload: { stagingId: "staging-0001", name: "Лиза", confirmedAiPersona: true, acceptedWorstMicros: 42_000 },
@@ -398,6 +416,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "montage.changed": { change: "upserted", montage: { montageId: "montage-00000001", name: null, spec: montageDraft, updatedAt: "2026-09-29T12:00:00.000Z" } },
   "export.status": { exportStatus: { status: "unavailable", reason: "missing" } },
   "music.changed": { status: { ...musicStatus, refresh: { state: "running", done: 1, total: 31 } } },
+  "media.changed": { change: "upserted", media: ownMedia },
 };
 
 // ---------- helpers ----------
@@ -468,6 +487,9 @@ describe("contract surface", () => {
         "avatars.pickImportPhoto",
         "media.pickImport",
         "stickers.bytes",
+        "media.list",
+        "media.delete",
+        "media.cancelImport",
         "avatars.estimateImport",
         "avatars.importAvatar",
         "runs.estimate",
@@ -525,6 +547,7 @@ describe("contract surface", () => {
         "montage.changed",
         "export.status",
         "music.changed",
+        "media.changed",
       ].sort(),
     );
   });

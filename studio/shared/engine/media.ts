@@ -94,3 +94,77 @@ const Decimal64 = z.string().regex(/^\d{1,20}$/, "must be an unsigned decimal nu
  */
 export const PickedFileIdentity = z.strictObject({ dev: Decimal64, ino: Decimal64, size: Decimal64, mtimeNs: Decimal64, birthtimeNs: Decimal64 });
 export type PickedFileIdentity = z.infer<typeof PickedFileIdentity>;
+
+// ---------- the records (3f.1b, K28) ----------
+
+/** A sticker's loop is quantised to the 30 fps grid and held to the built-in set's own cap (3b.6's memory rule), in frames. */
+export const MAX_STICKER_LOOP_FRAMES = 300;
+
+/** `media.list` answers at most this many records (newest first); `total` says how many there are. */
+export const MAX_LISTED_MEDIA = 500;
+
+const PositiveInt = z.number().int().positive();
+
+/**
+ * One own file as the window sees it (K28): what it is and what the editor needs to place it. There is NO path and no hash here: the file
+ * lives in the library's `media/` folder under a name the engine made, and is reached by its id only (`studio-media://`, 3f.3b). Which
+ * fields a kind has is part of the contract, so a window never has to guess:
+ * - `photo`, `video`, `sticker`: `width` and `height` in pixels (of the STORED file, after the importer's normalisation); a track has none;
+ * - `video`, `audio`: `durationMs`; a photo has none (a sticker's length is its `loopFrames`);
+ * - `video` only: `sourceFps` (what the owner's file had, before the 30 fps constant rate) and `hdrToSdr` (it was tone-mapped);
+ * - `sticker` only: `loopFrames` (≤ 300 frames at 30 fps) and `delayFrames` (each frame's delay in 30 fps frames; they add up to `loopFrames`).
+ */
+export const MediaSummary = z
+  .strictObject({
+    mediaId: Id,
+    kind: MediaKind,
+    /** The picked file's base name, for display only. */
+    name: MediaFileName,
+    /** The size of the STORED file. */
+    bytes: PositiveInt,
+    createdAt: z.iso.datetime(),
+    width: PositiveInt.nullable(),
+    height: PositiveInt.nullable(),
+    durationMs: PositiveInt.nullable(),
+    sourceFps: z.number().positive().max(1000).nullable(),
+    hdrToSdr: z.boolean(),
+    loopFrames: PositiveInt.max(MAX_STICKER_LOOP_FRAMES).nullable(),
+    delayFrames: z.array(PositiveInt.max(MAX_STICKER_LOOP_FRAMES)).min(1).max(MAX_STICKER_LOOP_FRAMES).nullable(),
+  })
+  .superRefine((media, ctx) => {
+    const fail = (path: string, message: string): void => void ctx.addIssue({ code: "custom", path: [path], message });
+    const pixels = media.kind !== "audio";
+    if (pixels !== (media.width !== null)) fail("width", pixels ? `a ${media.kind} has a width` : "a track has no width");
+    if (pixels !== (media.height !== null)) fail("height", pixels ? `a ${media.kind} has a height` : "a track has no height");
+    const timed = media.kind === "video" || media.kind === "audio";
+    if (timed && media.durationMs === null) fail("durationMs", `a ${media.kind} has a length`);
+    if (media.kind === "photo" && media.durationMs !== null) fail("durationMs", "a photo has no length");
+    if ((media.kind === "video") !== (media.sourceFps !== null)) fail("sourceFps", "only a video has a source frame rate, and every video has one");
+    if (media.kind !== "video" && media.hdrToSdr) fail("hdrToSdr", "only a video is tone-mapped");
+    if ((media.kind === "sticker") !== (media.loopFrames !== null)) fail("loopFrames", "only a sticker has a loop, and every sticker has one");
+    if ((media.kind === "sticker") !== (media.delayFrames !== null)) fail("delayFrames", "only a sticker has frame delays, and every sticker has them");
+    if (media.loopFrames !== null && media.delayFrames !== null && media.delayFrames.reduce((sum, d) => sum + d, 0) !== media.loopFrames) {
+      fail("delayFrames", "the frame delays must add up to the loop's length");
+    }
+  });
+export type MediaSummary = z.infer<typeof MediaSummary>;
+
+/** `media.list`: every own file, or those of one kind. */
+export const MediaListPayload = z.strictObject({ kind: MediaKind.optional() });
+export const MediaListResult = z
+  .strictObject({
+    /** Newest first, at most `MAX_LISTED_MEDIA`. */
+    media: z.array(MediaSummary).max(MAX_LISTED_MEDIA),
+    /** How many records match in all: more than `media.length` when the listing was cut. */
+    total: Count,
+  })
+  .refine((r) => r.total >= r.media.length, { message: "total must not be below what is listed", path: ["total"] });
+export type MediaListResult = z.infer<typeof MediaListResult>;
+
+/** `media.delete`: removes the file and its record. A draft that names it keeps the reference and reads it as `media-unavailable`. */
+export const MediaDeletePayload = z.strictObject({ mediaId: Id });
+export const MediaDeleteResult = z.strictObject({ mediaId: Id });
+
+/** `media.cancelImport`: stops a running import job (the copy, the importer or the record), leaving nothing behind. */
+export const MediaCancelImportPayload = z.strictObject({ jobId: Id });
+export const MediaCancelImportResult = z.strictObject({ jobId: Id });

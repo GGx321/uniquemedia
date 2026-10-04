@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MAX_MONTAGE_ISSUES, MontageIssue } from "./montage";
+import { MediaUnsupportedReason } from "./media";
 import { Count, SafeText } from "./primitives";
 
 /**
@@ -76,6 +77,11 @@ import { Count, SafeText } from "./primitives";
  *   `videos.render` refuses for an avatar that has such a record (its usage cannot be trusted), `videos.delete` refuses
  *   that record, and `videos.list` leaves it out. The owner updates the app.
  *
+ * Stage 3 own media (3f.1b, K30):
+ * - MEDIA_UNSUPPORTED: an own file was turned away (at the pick, or by the import job); `mediaReason` says why and carries the
+ *   Russian text (`MEDIA_REASONS_RU`): `heic` is «сохраните как JPEG», `too-large` and `no-space` say what to change, `changed` that
+ *   the file may be picked again. A reason never carries a path.
+ *
  * Stage 3 music (the flashapi list; a request costs one of 30 per 31 days):
  * - MUSIC_KEY_MISSING: no RapidAPI key is stored, so nothing is sent and no quota is spent.
  * - MUSIC_KEY_REJECTED: flashapi answered 401 to this key (now or on an earlier refresh, remembered across restarts), or
@@ -128,6 +134,7 @@ export const ERROR_CODES = [
   "MUSIC_KEY_REJECTED",
   "MUSIC_QUOTA_EXHAUSTED",
   "MUSIC_UNAVAILABLE",
+  "MEDIA_UNSUPPORTED",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -228,12 +235,12 @@ export type MusicUnavailableReason = z.infer<typeof MusicUnavailableReason>;
 
 /**
  * An error as it travels between processes: a code plus optional diagnostics,
- * never user text. Five codes must say more than their name: MONTAGE_INVALID
+ * never user text. Six codes must say more than their name: MONTAGE_INVALID
  * carries the `issues` (a closed list of codes and paths, never values),
  * PHOTO_UNAVAILABLE the same list with only `photo-unavailable` issues (which
  * cells), EXPORT_UNAVAILABLE its `exportReason`, TEXT_INVALID its
- * `captionIssue` and MUSIC_UNAVAILABLE its `musicReason`; no other code
- * carries any.
+ * `captionIssue`, MUSIC_UNAVAILABLE its `musicReason` and MEDIA_UNSUPPORTED its
+ * `mediaReason`; no other code carries any.
  */
 export const EngineError = z
   .strictObject({
@@ -244,6 +251,7 @@ export const EngineError = z
     exportReason: ExportUnavailableReason.optional(),
     captionIssue: CaptionIssue.optional(),
     musicReason: MusicUnavailableReason.optional(),
+    mediaReason: MediaUnsupportedReason.optional(),
   })
   .refine((e) => (e.code === "MONTAGE_INVALID" || e.code === "PHOTO_UNAVAILABLE") === (e.issues !== undefined), {
     message: "issues must be present exactly on MONTAGE_INVALID and PHOTO_UNAVAILABLE",
@@ -264,6 +272,10 @@ export const EngineError = z
   .refine((e) => (e.code === "MUSIC_UNAVAILABLE") === (e.musicReason !== undefined), {
     message: "musicReason must be present exactly on MUSIC_UNAVAILABLE",
     path: ["musicReason"],
+  })
+  .refine((e) => (e.code === "MEDIA_UNSUPPORTED") === (e.mediaReason !== undefined), {
+    message: "mediaReason must be present exactly on MEDIA_UNSUPPORTED",
+    path: ["mediaReason"],
   });
 
 export type ErrorCode = z.infer<typeof ErrorCode>;

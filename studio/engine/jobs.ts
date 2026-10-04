@@ -1,4 +1,4 @@
-import type { EngineError, FailedCandidateSlot, JobProgress, JobState, RenderResult } from "../shared/engine";
+import type { EngineError, FailedCandidateSlot, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
 // The engine's jobs as `Snapshot.jobs` lists them. In memory only: avatar
@@ -16,6 +16,18 @@ export type RenderJobEnd =
   | { status: "done"; result: RenderResult }
   | { status: "failed"; error: EngineError }
   | { status: "cancelled" };
+
+/** How an import job ends; `done` carries the record that was stored. */
+export type ImportJobEnd =
+  | { status: "done"; result: ImportResult }
+  | { status: "failed"; error: EngineError }
+  | { status: "cancelled" };
+
+/** An import's identity: what the bytes are and the file's display name (its base name, never a path). */
+export interface ImportJobRef {
+  readonly mediaKind: MediaKind;
+  readonly name: MediaFileName;
+}
 
 /** A render's identity: the video it makes, its avatar and the draft it came from (null for a headless spec). */
 export interface RenderJobRef {
@@ -68,6 +80,22 @@ export class JobRegistry {
     return true;
   }
 
+  /**
+   * Registers a running own-media import (3f.1b). `total` is the size of the opened file in bytes and `done` counts the bytes copied; the
+   * signal fires on `cancel`. The media id is null until the job is done.
+   */
+  startImport(jobId: string, ref: ImportJobRef, total: number): AbortSignal {
+    if (!Number.isSafeInteger(total) || total < 0) throw new Error("an import's size must be a count of bytes");
+    return this.#start({ kind: "import", jobId, mediaKind: ref.mediaKind, name: ref.name, mediaId: null, status: "running", done: 0, total });
+  }
+
+  /** How many imports are running: what a library switch must wait for (the copy and the record write into the library). */
+  activeImports(): number {
+    let n = 0;
+    for (const { state } of this.#jobs.values()) if (state.kind === "import" && state.status === "running") n++;
+    return n;
+  }
+
   /** A job's state as the snapshot lists it, or undefined for an unknown (or long-forgotten) job. */
   stateOf(jobId: string): JobState | undefined {
     return this.#jobs.get(jobId)?.state;
@@ -104,7 +132,7 @@ export class JobRegistry {
     if (entry === undefined || entry.state.status !== "running") return null;
     // A count that is not a number changes nothing (it would poison `done` for good); a fraction is floored.
     const counted = Number.isFinite(reported) ? Math.floor(reported) : entry.state.done;
-    const done = entry.state.kind === "render" ? Math.min(entry.state.total, Math.max(entry.state.done, counted)) : counted;
+    const done = entry.state.kind === "render" || entry.state.kind === "import" ? Math.min(entry.state.total, Math.max(entry.state.done, counted)) : counted;
     entry.state = { ...entry.state, done };
     const { total } = entry.state;
     switch (entry.state.kind) {
@@ -114,6 +142,8 @@ export class JobRegistry {
         return { kind: "render", jobId, videoId: entry.state.videoId, avatarId: entry.state.avatarId, montageId: entry.state.montageId, done, total, ...(entry.state.saving === true ? { saving: true } : {}) };
       case "avatar.candidates":
         return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
+      case "import":
+        return { kind: "import", jobId, mediaKind: entry.state.mediaKind, name: entry.state.name, mediaId: null, done, total };
     }
   }
 
@@ -178,6 +208,27 @@ export class JobRegistry {
         break;
       case "cancelled":
         entry.state = { ...common, status: "cancelled", done };
+        break;
+    }
+    this.#dropOldFinished(jobId);
+    return entry.state;
+  }
+
+  /** Ends a running import job; its final state, or null for any other job or one that already ended. A done import takes its media id from its result. */
+  finishImport(jobId: string, end: ImportJobEnd): JobState | null {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.status !== "running" || entry.state.kind !== "import") return null;
+    const { kind, mediaKind, name, done, total } = entry.state;
+    const common = { kind, jobId, mediaKind, name, total };
+    switch (end.status) {
+      case "done":
+        entry.state = { ...common, mediaId: end.result.mediaId, status: "done", done: total, result: end.result };
+        break;
+      case "failed":
+        entry.state = { ...common, mediaId: null, status: "failed", done, error: end.error };
+        break;
+      case "cancelled":
+        entry.state = { ...common, mediaId: null, status: "cancelled", done };
         break;
     }
     this.#dropOldFinished(jobId);

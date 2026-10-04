@@ -2,6 +2,7 @@ import { z } from "zod";
 import { nonEmpty, ProtocolVersion, Seq } from "./envelope";
 import { EngineError } from "./errors";
 import { Montage } from "./montage";
+import { MediaSummary } from "./media";
 import { Count, Id, Micros } from "./primitives";
 import { VideoSummary } from "./video";
 import { AvatarSummary, Draft, EngineNotice, ExportStatus, JobCancelled, JobFailed, JobProgress, JobResult, MoneyStatus, MusicStatus, ReconcileReasons, Settings } from "./state";
@@ -35,6 +36,7 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
  * - `video.changed`: a video record was committed or changed (`upserted`, with its record and current file state), or is gone (`removed`).
  * - `montage.changed`: a montage draft was created or saved (`upserted`, with the draft), or deleted (`removed`).
  * - `export.status`: the export folder's status changed (not on every check): the Render button follows the disk live.
+ * - `media.changed`: an own-media record was stored (`upserted`, with its summary) or is gone (`removed`).
  * - `music.changed`: the music status changed (a refresh started, progressed, ended or failed; the quota moved), whole.
  */
 const EVENT_SPECS = [
@@ -66,6 +68,13 @@ const EVENT_SPECS = [
   ),
   defineEvent("export.status", z.strictObject({ exportStatus: ExportStatus })),
   defineEvent("music.changed", z.strictObject({ status: MusicStatus })),
+  defineEvent(
+    "media.changed",
+    z.discriminatedUnion("change", [
+      z.strictObject({ change: z.literal("upserted"), media: MediaSummary }),
+      z.strictObject({ change: z.literal("removed"), mediaId: Id }),
+    ]),
+  ),
 ] as const;
 
 type EventSpec = (typeof EVENT_SPECS)[number];
