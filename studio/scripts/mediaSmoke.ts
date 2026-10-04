@@ -39,7 +39,8 @@ export const MEDIA_SMOKE_FILES: readonly MediaSmokeFile[] = [
   { label: "tiny", bytes: PNG_1X1, expect: { failed: "too-small" } },
   { label: "animated-webp", bytes: animatedWebpHeaders(), expect: { failed: "animated-webp" } },
   { label: "video", bytes: ftyp("isom"), expect: { refused: "not-yet-supported" } },
-  { label: "audio", bytes: ftyp("M4A "), expect: { refused: "not-yet-supported" } },
+  // 3f.4: an M4A head with no stream in it is audio by its bytes, so the music importer takes it into a job and turns it away inside, as a format.
+  { label: "audio", bytes: ftyp("M4A "), expect: { failed: "format" } },
   { label: "sticker", bytes: Uint8Array.from([...ascii("GIF89a"), 1, 0, 1, 0, 0, 0, 0]), expect: { refused: "not-yet-supported" } },
   { label: "text", bytes: Uint8Array.from(ascii("just some notes, not a media file\n")), expect: { refused: "format" } },
   { label: "heic", bytes: ftyp("heic"), expect: { refused: "heic" } },
@@ -47,6 +48,18 @@ export const MEDIA_SMOKE_FILES: readonly MediaSmokeFile[] = [
 
 /** The name the dialog stand-in's one path has, and what the stored photo's record must say of it: the importer's own JPEG (its size is the ffmpeg build's, so it is not pinned). */
 export const MEDIA_SMOKE_STORED = { kind: "photo", name: "smoke-media.png", width: 2, height: 2, extension: "jpg" } as const;
+
+/** A mono 8-bit PCM WAV of `samples` samples at 8 kHz: a quiet square wave, so it is audio and not silence. */
+function tinyWav(samples: number): Uint8Array {
+  const body = Array.from({ length: samples }, (_, i) => (Math.floor(i / 20) % 2 === 0 ? 150 : 106));
+  return Uint8Array.from([...ascii("RIFF"), ...u32le(36 + samples), ...ascii("WAVE"), ...ascii("fmt "), ...u32le(16), 1, 0, 1, 0, ...u32le(8000), ...u32le(8000), 1, 0, 8, 0, ...ascii("data"), ...u32le(samples), ...body]);
+}
+
+/**
+ * The own TRACK of the packaged run (3f.4): a real file the music importer takes, in the packaged engine with the packaged ffmpeg (probe, pinned encode,
+ * check of the output). A quarter of a second of tone as a WAV is 2 KB; the stored file is an AAC M4A (a whole number of 1024-sample frames: 0.256 s).
+ */
+export const MEDIA_SMOKE_TRACK = { kind: "audio", extension: "m4a", minMs: 200, maxMs: 300, bytes: tinyWav(2_000) } as const;
 
 /** The markers of a JPEG's metadata segments (APPn: JFIF, EXIF, XMP, ICC; COM: a comment) before its scan. The stored photo must have none. */
 export function jpegMetadataMarkers(jpeg: Uint8Array): number[] {

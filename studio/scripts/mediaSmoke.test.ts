@@ -4,7 +4,12 @@ import { SMOKE_TEST_PNG } from "../engine/decode/realBackend";
 import { webpInfo } from "../engine/media/webp";
 import { formatOf, resolveMediaKind, unfitReason } from "../engine/media/sniff";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { jpegMetadataMarkers, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createMusicImporter } from "../engine/media/musicImporter";
+import { handoff } from "../engine/media/photoFixtures.testkit";
+import { jpegMetadataMarkers, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, MEDIA_SMOKE_TRACK, mediaRecordFileProblems } from "./mediaSmoke";
 useNativeGlobals();
 
 // The packaged smoke's own-media files (3f.1b): one tiny file per kind, picked through `--studio-pick-media` with `any`. The table is
@@ -38,10 +43,17 @@ describe("the smoke's own-media files", () => {
     expect(animated?.expect).toEqual({ failed: "animated-webp" });
   });
 
-  test("a video, a track and a sticker are what their kind says, and no importer takes them yet", () => {
+  test("a video and a sticker are what their kind says, and no importer takes them yet", () => {
     const kinds = Object.fromEntries(MEDIA_SMOKE_FILES.map((f) => [f.label, resolveMediaKind("any", f.bytes)]));
-    expect(kinds).toMatchObject({ video: "video", audio: "audio", sticker: "sticker" });
-    for (const label of ["video", "audio", "sticker"]) expect(MEDIA_SMOKE_FILES.find((f) => f.label === label)?.expect).toEqual({ refused: "not-yet-supported" });
+    expect(kinds).toMatchObject({ video: "video", sticker: "sticker" });
+    for (const label of ["video", "sticker"]) expect(MEDIA_SMOKE_FILES.find((f) => f.label === label)?.expect).toEqual({ refused: "not-yet-supported" });
+  });
+
+  test("an M4A head with no stream in it is audio by its bytes; the music importer (3f.4) takes it into a job and turns it away inside, as a format", () => {
+    const audio = MEDIA_SMOKE_FILES.find((f) => f.label === "audio");
+    expect(resolveMediaKind("any", audio?.bytes ?? new Uint8Array())).toBe("audio");
+    expect(formatOf(audio?.bytes ?? new Uint8Array())).toBe("m4a");
+    expect(audio?.expect).toEqual({ failed: "format" });
   });
 
   test("a text file is a format refusal and a HEIC picture its own reason, by the bytes and not the name", () => {
@@ -62,6 +74,34 @@ describe("the smoke's own-media files", () => {
 
   test("what the stored photo is expected to be: a 2x2 JPEG the importer made, under the name it was picked by", () => {
     expect(MEDIA_SMOKE_STORED).toEqual({ kind: "photo", name: "smoke-media.png", width: 2, height: 2, extension: "jpg" });
+  });
+});
+
+describe("the smoke's own track (3f.4)", () => {
+  test("is a WAV of a quarter of a second that the boundary takes for audio by its bytes, and is small", () => {
+    expect(resolveMediaKind("any", MEDIA_SMOKE_TRACK.bytes)).toBe("audio");
+    expect(resolveMediaKind("audio", MEDIA_SMOKE_TRACK.bytes)).toBe("audio");
+    expect(formatOf(MEDIA_SMOKE_TRACK.bytes)).toBe("wav");
+    expect(MEDIA_SMOKE_TRACK.bytes.length).toBeLessThan(4 * 1024);
+  });
+
+  test("the music importer turns it into an M4A of the length the smoke expects, with its waveform", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "studio-smoke-track-"));
+    try {
+      const hand = await handoff(dir, MEDIA_SMOKE_TRACK.bytes, { format: "wav", kind: "audio" });
+      const outcome = await createMusicImporter()(hand.request);
+      if (!outcome.ok) throw new Error(`refused: ${outcome.reason}`);
+      expect(outcome.output?.format).toBe("m4a");
+      expect(outcome.facts.durationMs).toBeGreaterThanOrEqual(MEDIA_SMOKE_TRACK.minMs);
+      expect(outcome.facts.durationMs).toBeLessThanOrEqual(MEDIA_SMOKE_TRACK.maxMs);
+      expect((outcome.waveform ?? []).length).toBeGreaterThanOrEqual(4);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("what the stored track is expected to be: an M4A under its own name, an audio record", () => {
+    expect(MEDIA_SMOKE_TRACK).toMatchObject({ kind: "audio", extension: "m4a" });
   });
 });
 

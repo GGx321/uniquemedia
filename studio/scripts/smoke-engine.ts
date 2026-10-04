@@ -84,7 +84,7 @@ import { openLibrary } from "../engine/library";
 import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library/testing/sampleData";
 import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
 import { probeVideo } from "../engine/render/ffmpeg.testkit";
-import { jpegMetadataMarkers, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
+import { jpegMetadataMarkers, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, MEDIA_SMOKE_TRACK, mediaRecordFileProblems } from "./mediaSmoke";
 import { PEAK_RSS_BYTES } from "../engine/renderQueue/pool";
 import { verifyRenderedMp4 } from "../engine/verify";
 import { commitHoldPaths } from "../engine/videos/e2eCommitHold";
@@ -1390,8 +1390,9 @@ async function runImportScenario(target: Target): Promise<void> {
  * The own-media import in the real build, on both operating systems: main's dialog stand-in (`--studio-pick-media`) names ONE path; the
  * file there is rewritten between picks. A PNG goes through the whole job in the packaged engine (copy into `media/.staging`, the E2E
  * build's real photo importer (3f.2: WASM decode, upright, re-encoded as a JPEG without metadata), the stored file and its record, written with the Windows retries and the fsyncs of the library's own
- * helpers), then the record is listed, survives an app restart and is deleted with its file. A 1x1 picture and an animated WebP fail inside their jobs (too-small, animated-webp). The other kinds are refused where the
- * engine says: no importer yet. Nothing is sent to the network.
+ * helpers), then the record is listed, survives an app restart and is deleted with its file. A 1x1 picture and an animated WebP fail inside their jobs (too-small, animated-webp), and so does an M4A head
+ * with no stream in it (format, 3f.4). A video and a sticker are refused where the engine says: no importer yet. At the end (3f.4) a real WAV is imported as an own TRACK by the packaged music importer
+ * (the packaged ffmpeg: probe, pinned encode, check of the output), its waveform is answered by `music.peaks`, and it is deleted. Nothing is sent to the network.
  */
 async function runPackagedMediaScenario(target: Target): Promise<void> {
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-media-"));
@@ -1522,6 +1523,42 @@ async function runPackagedMediaScenario(target: Target): Promise<void> {
     const twice = await req(running.cdp, "media.delete", { mediaId });
     check("media scenario: deleting the same id again is NOT_FOUND", field(twice, "ok") === false && field(twice, "error", "code") === "NOT_FOUND", twice);
     check("media scenario: the picked file itself was never touched by any of it", existsSync(pickedPath));
+
+    // 7. An own TRACK (3f.4): a real WAV through the packaged music importer (probe, pinned encode and check of the output by the packaged ffmpeg), then its
+    // waveform through `music.peaks` and its delete. Nothing else is in the library by now, so every count here is the track's own.
+    await Bun.write(pickedPath, MEDIA_SMOKE_TRACK.bytes);
+    const trackStarted = await pick("any");
+    const trackJobIds = field(trackStarted, "result", "jobIds");
+    check(
+      "media scenario: picking a WAV starts one import job, and refuses nothing",
+      field(trackStarted, "ok") === true && Array.isArray(trackJobIds) && trackJobIds.length === 1 && JSON.stringify(field(trackStarted, "result", "refused")) === "[]",
+      trackStarted,
+    );
+    const trackJobId = Array.isArray(trackJobIds) ? String(trackJobIds[0]) : "";
+    const trackEnded = await waitFor("the track's import job to end", async () => (await snapshotJobs()).find((job) => field(job, "jobId") === trackJobId && field(job, "status") !== "running" && field(job, "status") !== "queued") ?? null, 60_000, 100);
+    check("media scenario: the track's import job is done, and it is an import of audio", field(trackEnded, "status") === "done" && field(trackEnded, "mediaKind") === MEDIA_SMOKE_TRACK.kind, trackEnded);
+    const trackId = String(field(trackEnded, "mediaId"));
+    const trackListed = await req(running.cdp, "media.list", { kind: "audio" });
+    const trackRecord = field(trackListed, "result", "media", "0");
+    const trackMs = Number(field(trackRecord, "durationMs"));
+    check(
+      "media scenario: media.list has the track: its name, its decoded length, no picture size, and no waveform and no path in the answer",
+      field(trackListed, "result", "total") === 1 && field(trackRecord, "mediaId") === trackId && field(trackRecord, "kind") === MEDIA_SMOKE_TRACK.kind && field(trackRecord, "name") === MEDIA_SMOKE_STORED.name && field(trackRecord, "width") === null && trackMs >= MEDIA_SMOKE_TRACK.minMs && trackMs <= MEDIA_SMOKE_TRACK.maxMs && !JSON.stringify(trackListed).includes("waveform") && !JSON.stringify(trackListed).includes(tmp),
+      trackListed,
+    );
+    const trackProblems = mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), trackId, MEDIA_SMOKE_TRACK.extension);
+    check("media scenario: media/ holds the stored M4A and its record and nothing else, and the staging folder is empty", trackProblems.length === 0 && (await names(stagingDir)).length === 0, { trackProblems, staging: await names(stagingDir) });
+    const trackBytes = new Uint8Array(await readFile(join(mediaDir, `${trackId}.${MEDIA_SMOKE_TRACK.extension}`)));
+    check("media scenario: the stored track is an M4A the importer made (brand M4A), with no encoder string and none of the picked file's bytes", Buffer.from(trackBytes.subarray(4, 12)).toString("latin1") === "ftypM4A " && !Buffer.from(trackBytes).includes(Buffer.from("Lavf")) && !Buffer.from(trackBytes).includes(Buffer.from("Lavc")) && createHash("sha256").update(trackBytes).digest("hex") !== createHash("sha256").update(MEDIA_SMOKE_TRACK.bytes).digest("hex"));
+    const trackRecordText = await readFile(join(mediaDir, `${trackId}.json`), "utf8");
+    check("media scenario: the track's record on disk keeps its waveform, names its file by its own name and the picked path nowhere", trackRecordText.includes('"waveform"') && trackRecordText.includes(`"file": "${trackId}.${MEDIA_SMOKE_TRACK.extension}"`) && !trackRecordText.includes(pickedDir), trackRecordText.slice(0, 400));
+    const peaks = await req(running.cdp, "music.peaks", { track: { source: "own", mediaId: trackId }, startMs: 0, durationMs: trackMs, bars: 16 });
+    const peaksList = field(peaks, "result", "peaks");
+    check("media scenario: music.peaks of the own track answers a waveform of 16 integers from 0 to 1000 with sound in it", field(peaks, "ok") === true && Array.isArray(peaksList) && peaksList.length === 16 && peaksList.every((p) => Number.isInteger(p) && p >= 0 && p <= 1000) && peaksList.some((p) => Number(p) > 0), peaks);
+    const trackGone = await req(running.cdp, "media.delete", { mediaId: trackId });
+    check("media scenario: the track is deleted with its file, its record and its waveform", field(trackGone, "ok") === true && (await names(mediaDir)).filter((n) => n !== ".staging").length === 0, await names(mediaDir));
+    const peaksAfter = await req(running.cdp, "music.peaks", { track: { source: "own", mediaId: trackId }, startMs: 0, durationMs: trackMs, bars: 16 });
+    check("media scenario: music.peaks of a deleted track is NOT_FOUND", field(peaksAfter, "ok") === false && field(peaksAfter, "error", "code") === "NOT_FOUND", peaksAfter);
   } finally {
     await quit(running);
     await removeTemp(tmp);
