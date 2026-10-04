@@ -162,15 +162,6 @@ function photoText(first: FlaggedCell, usedVideo: UsedVideo | null): string {
   }
 }
 
-/** «скоро» for a part whose slice has not landed (N9), by where the engine would refuse it. */
-function notYetText(spec: MontageDraft, issue: MontageIssue): string {
-  const [root, i] = issue.path;
-  // Music is never here since 3f.4 (a trending track since 3c.5): the engine judges it (`track-unavailable`, `media-unavailable`, `track-too-short`).
-  // Text, built-in stickers (3b.6) and own stickers (3f.5) render: no layer is refused by N9 any more.
-  if (root === "clips" && typeof i === "number" && spec.clips[i]?.kind === "video") return "Своё видео — скоро";
-  return "Свои фото — скоро";
-}
-
 function engineText(spec: MontageDraft, issue: MontageIssue): string {
   switch (issue.code) {
     case "caption-invalid":
@@ -179,6 +170,8 @@ function engineText(spec: MontageDraft, issue: MontageIssue): string {
       return "Трек больше недоступен";
     case "track-too-short":
       return "Трек короче ролика с выбранного места";
+    case "video-too-short":
+      return `${clipName(numberAt(issue.path, 1))}: видео короче нужного фрагмента`;
     case "sticker-unavailable":
       return `${layerName(spec, numberAt(issue.path, 1))} больше недоступен`;
     case "media-unavailable": {
@@ -237,11 +230,12 @@ export function renderBlock(input: RenderBlockInput): RenderBlock | null {
   }
   const track = engine("track-unavailable", "track-too-short");
   if (track) return reason(engineText(spec, track));
-  const missing = engine("sticker-unavailable", "media-unavailable");
+  const missing = engine("sticker-unavailable", "media-unavailable", "video-too-short");
   if (missing) return reason(engineText(spec, missing));
 
+  // N9 refuses nothing since 3f.3b lifted the last part (an own video clip); the one place stays, with the contract's own text.
   const notYet = notYetSupportedIssues(spec)[0];
-  if (notYet) return reason(notYetText(spec, notYet));
+  if (notYet) return reason(plainMessage(notYet.code));
 
   const rest = structural[0] ?? current.find((issue) => issue.code !== "photo-unavailable");
   return rest ? reason(engineText(spec, rest)) : null;

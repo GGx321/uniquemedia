@@ -266,6 +266,11 @@ describe("clips", () => {
     expect(MontageDraft.safeParse(spec({ clips: [{ ...videoClip(1), trimStartMs: 10.5 }] })).success).toBe(false);
   });
 
+  test("an own video clip's trim start is a whole number of 100 ms steps, so it is a whole number of frames", () => {
+    expect(MontageDraft.safeParse(spec({ clips: [{ ...videoClip(1), trimStartMs: 100 }] })).success).toBe(true);
+    expect(MontageDraft.safeParse(spec({ clips: [{ ...videoClip(1), trimStartMs: 150 }] })).success).toBe(false);
+  });
+
   test("an own video clip has no motion: the field is refused", () => {
     expect(MontageDraft.safeParse(spec({ clips: [{ ...videoClip(1), motion: "static" }] })).success).toBe(false);
   });
@@ -905,13 +910,13 @@ describe("MontageIssue", () => {
 // ---------- the engine-only issue codes (K7) ----------
 
 describe("the engine-only issue codes", () => {
-  const ENGINE_ONLY = ["photo-unavailable", "not-yet-supported", "caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short"] as const;
+  const ENGINE_ONLY = ["photo-unavailable", "not-yet-supported", "caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short", "video-too-short"] as const;
 
   test.each([...ENGINE_ONLY])("%s is a known code", (code) => {
     expect(MontageIssue.safeParse({ code, path: [] }).success).toBe(true);
   });
 
-  test.each(["caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short"] as const)("the shared checks never produce %s", (code) => {
+  test.each(["caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short", "video-too-short"] as const)("the shared checks never produce %s", (code) => {
     const busy = spec({
       clips: [photoClip(1, 8_000), videoClip(2, 5_000)],
       layers: [textLayer(1), stickerLayer(1)],

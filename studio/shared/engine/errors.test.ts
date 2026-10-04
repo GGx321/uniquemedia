@@ -389,7 +389,7 @@ describe("MONTAGE_ISSUE_MESSAGES_RU", () => {
     expect(MONTAGE_ISSUE_MESSAGES_RU["duplicate-clip-id"]).toMatch(/кадр/);
   });
 
-  test.each(["caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short"] as const)("the engine-only code %s has its own text", (code) => {
+  test.each(["caption-invalid", "media-unavailable", "sticker-unavailable", "track-unavailable", "track-too-short", "video-too-short"] as const)("the engine-only code %s has its own text", (code) => {
     expect(MONTAGE_ISSUE_MESSAGES_RU[code]).toMatch(/[А-Яа-яЁё]/);
   });
 

@@ -142,14 +142,29 @@ describe("the reasons, each on its own", () => {
     expect(renderBlock(input({ spec: withOwnSticker, verdict: { spec: withOwnSticker, issues: gone } }))?.text).toBe("Стикер 1: файла больше нет");
   });
 
-  test("a part whose slice has not landed yet says «скоро» for that part", () => {
-    // A trending track is supported since 3c.5 and an own track since 3f.4: neither waits for a slice any more, and the engine's verdict says what is wrong.
+  test("nothing waits for a slice any more: the engine's verdict says what is wrong with an own track, a trending track and an own video clip", () => {
+    // A trending track is supported since 3c.5, an own track since 3f.4 and an own video clip since 3f.3b: none waits for a slice any more.
     const withMusic = draftSpec(4, { music: { source: "own", mediaId: "media-0000001", startMs: 0 } });
     expect(renderBlock(input({ spec: withMusic, verdict: null }))).toBeNull();
     const withTrack = draftSpec(4, { music: { source: "trending", trackId: "track-0000001", startMs: 0 } });
     expect(renderBlock(input({ spec: withTrack, verdict: null }))).toBeNull();
     const withVideo = draftSpec([photoClip(0, "photo-mia-0001", 2_000), { clipId: "clip-002", durationMs: 3_000, transitionIn: "cut", kind: "video", mediaId: "media-0000001", trimStartMs: 0, focus: null }]);
-    expect(renderBlock(input({ spec: withVideo, verdict: null }))?.text).toBe("Своё видео — скоро");
+    expect(renderBlock(input({ spec: withVideo, verdict: null }))).toBeNull();
+  });
+
+  test("an own video clip the library lost, and one that asks past the end of its video (3f.3b): the button names the clip, and a good one blocks nothing", () => {
+    const withVideo = draftSpec([photoClip(0, "photo-mia-0001", 2_000), { clipId: "clip-002", durationMs: 3_000, transitionIn: "cut", kind: "video", mediaId: "media-0000001", trimStartMs: 0, focus: null }]);
+    const gone: MontageIssue[] = [{ code: "media-unavailable", path: ["clips", 1] }];
+    expect(renderBlock(input({ spec: withVideo, verdict: { spec: withVideo, issues: gone } }))?.text).toBe("Кадр 2: файла больше нет");
+    const tooShort: MontageIssue[] = [{ code: "video-too-short", path: ["clips", 1] }];
+    expect(renderBlock(input({ spec: withVideo, verdict: { spec: withVideo, issues: tooShort } }))?.text).toBe("Кадр 2: видео короче нужного фрагмента");
+    expect(renderBlock(input({ spec: withVideo, verdict: { spec: withVideo, issues: [] } }))).toBeNull();
+  });
+
+  test("a verdict on ANOTHER spec says nothing of an own video clip the owner has just trimmed", () => {
+    const judged = draftSpec([photoClip(0, "photo-mia-0001", 2_000), { clipId: "clip-002", durationMs: 3_000, transitionIn: "cut", kind: "video", mediaId: "media-0000001", trimStartMs: 0, focus: null }]);
+    const trimmed = draftSpec([photoClip(0, "photo-mia-0001", 2_000), { clipId: "clip-002", durationMs: 3_000, transitionIn: "cut", kind: "video", mediaId: "media-0000001", trimStartMs: 500, focus: null }]);
+    expect(renderBlock(input({ spec: trimmed, verdict: { spec: judged, issues: [{ code: "video-too-short", path: ["clips", 1] }] } }))).toBeNull();
   });
 });
 

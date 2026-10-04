@@ -164,6 +164,7 @@ export const MONTAGE_ISSUE_MESSAGES_RU = {
   "sticker-unavailable": "Этого стикера больше нет: выберите другой.",
   "track-unavailable": "Этого трека больше нет: выберите другой.",
   "track-too-short": "Трек короче монтажа с выбранного места: сдвиньте начало или выберите другой трек.",
+  "video-too-short": "Своё видео короче, чем нужно этому кадру: сдвиньте начало фрагмента или сократите кадр.",
 } as const satisfies Record<MontageIssueCode, string>;
 
 /** Why the «Готовые видео» folder cannot be used, for the notice behind EXPORT_UNAVAILABLE. */

@@ -109,7 +109,8 @@ export const VideoClip = z.strictObject({
   ...clipBase,
   kind: z.literal("video"),
   mediaId: Id,
-  trimStartMs: z.number().int().min(0).max(MAX_SOURCE_OFFSET_MS),
+  /** Where in the stored video the clip starts: whole 100 ms steps (3 frames each at the mezzanine's constant 30 fps), so the start is always a whole frame. */
+  trimStartMs: z.number().int().min(0).max(MAX_SOURCE_OFFSET_MS).multipleOf(TIME_STEP_MS),
   focus: Focus.nullable(),
 });
 
@@ -240,10 +241,11 @@ type Shape = z.infer<typeof MontageShape>;
  * - `photo-unavailable`: the engine's answer for a cell whose scene photo is not eligible (PHOTO_UNAVAILABLE carries these); never produced here;
  * - `not-yet-supported`: the engine's own answer for a part whose slice has not landed (N9); never produced here.
  *
- * The last five are engine-only too (the referential half, never produced by `montageIssues`); `montages.get` and
+ * The last six are engine-only too (the referential half, never produced by `montageIssues`); `montages.get` and
  * `montages.list` report them next to the structural ones:
  * - `caption-invalid`: a text layer's caption breaks the engine's caption rules (`layers.i.value`);
  * - `media-unavailable`: an own media id is missing or of the wrong kind (`clips.i`, `clips.i.cells.j`, `music`, `layers.i.sticker`);
+ * - `video-too-short`: an own video clip asks for more than its stored video has, `trimStartMs` plus the clip's length past the video's end (`clips.i`);
  * - `sticker-unavailable`: a sticker that is no longer available (`layers.i.sticker`);
  * - `track-unavailable`: the music track is gone (`music`);
  * - `track-too-short`: the track is shorter than its `startMs` plus the montage's total (`music`).
@@ -268,6 +270,7 @@ export const MONTAGE_ISSUE_CODES = [
   "sticker-unavailable",
   "track-unavailable",
   "track-too-short",
+  "video-too-short",
 ] as const;
 
 export const MontageIssueCode = z.enum(MONTAGE_ISSUE_CODES);

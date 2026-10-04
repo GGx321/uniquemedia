@@ -3,7 +3,7 @@ import type { MontageDraft } from "../engine/montage";
 import { notYetSupportedIssues } from "./notYetSupported";
 
 // N9: the parts of a montage whose slice has not landed are REFUSED, never rendered without them. 3f.2 lifted it for an own photo in a photo or
-// collage cell (`source: "own"`), 3f.4 for an own track and 3f.5 for an own sticker. An own video stays refused until its slice.
+// collage cell (`source: "own"`), 3f.4 for an own track and 3f.5 for an own sticker. 3f.3b lifted it for an own video clip: nothing is refused by N9 any more.
 
 type Clip = MontageDraft["clips"][number];
 type Cell = Extract<Clip, { kind: "photo" }>["cell"];
@@ -40,8 +40,8 @@ describe("notYetSupportedIssues: an own track is supported (3f.4)", () => {
     expect(notYetSupportedIssues(spec([photoClip(1, own(1))], { music: { source: "own", mediaId: "media-4", startMs: 0 } }))).toEqual([]);
   });
 
-  test("an own track next to an own video clip leaves only the clip refused", () => {
-    expect(notYetSupportedIssues(spec([videoClip(1)], { music: { source: "own", mediaId: "media-4", startMs: 0 } }))).toEqual([{ code: "not-yet-supported", path: ["clips", 0] }]);
+  test("an own track next to an own video clip is no issue either", () => {
+    expect(notYetSupportedIssues(spec([videoClip(1)], { music: { source: "own", mediaId: "media-4", startMs: 0 } }))).toEqual([]);
   });
 });
 
@@ -72,8 +72,12 @@ describe("notYetSupportedIssues: own stickers are supported (3f.5)", () => {
   });
 });
 
-describe("notYetSupportedIssues: the rest of own media stays refused", () => {
-  test("an own video clip is refused where it is, even next to an own photo", () => {
-    expect(notYetSupportedIssues(spec([photoClip(1, own(1)), videoClip(2)]))).toEqual([{ code: "not-yet-supported", path: ["clips", 1] }]);
+describe("notYetSupportedIssues: an own video clip is supported (3f.3b)", () => {
+  test("an own video clip is no issue (the engine then judges it with `media-unavailable` and `video-too-short`, and a render holds it until it ends)", () => {
+    expect(notYetSupportedIssues(spec([videoClip(1)]))).toEqual([]);
+  });
+
+  test("an own video clip next to an own photo is no issue either", () => {
+    expect(notYetSupportedIssues(spec([photoClip(1, own(1)), videoClip(2)]))).toEqual([]);
   });
 });
