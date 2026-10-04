@@ -116,14 +116,9 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
     // 3a.9: what each OS's disk answers when something is already at the export name (a folder, a link), under the product's runtime.
     name: "export name claim",
     entry: "studio/engine/exportClaim.node-test.ts",
-    minTests: 7,
-    workers: {},
-  },
-  {
-    // 3f.2 fix round 2: the decode gate does not keep the last decoded picture alive. Needs V8's precise GC; Bun's conservative one made it flaky.
-    name: "decode gate",
-    entry: "studio/engine/decode/decodeGate.node-test.ts",
-    minTests: 1,
+    // 7 claim tests plus 1 from decode/decodeGate.retention.node-cases.ts (the entry imports it: a suite of its own would exceed the workflow steps'
+    // timeout-minutes, which are bound to the number of suites).
+    minTests: 8,
     workers: {},
   },
 ];

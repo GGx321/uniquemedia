@@ -7,7 +7,8 @@ import { createDecodeGate, type DecodeWorkerLike } from "./decodeGate";
 // What the own-photo decode gate does not keep (3f.2 fix round 2), under ELECTRON'S NODE (V8, precise GC). The same check under Bun
 // was flaky by construction: JavaScriptCore scans the stack conservatively, so a stale pointer can keep a dropped buffer alive
 // (it failed on Windows CI). V8 does not, so a retained buffer here is the gate's doing and nothing else.
-// Bundled and run by studio/scripts/electronNodeTests.ts; named `.node-test.ts` so `bun test` never loads it.
+// Imported by exportClaim.node-test.ts, so it runs in that suite under studio/scripts/electronNodeTests.ts (a suite of its own would need a
+// longer timeout-minutes in the workflow); not named `.node-test.ts`, which the registry reserves for a suite's entry; `bun test` never loads it.
 
 class FakeWorker implements DecodeWorkerLike {
   #message: ((value: unknown) => void)[] = [];

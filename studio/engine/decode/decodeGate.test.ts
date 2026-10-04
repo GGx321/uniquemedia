@@ -266,7 +266,7 @@ describe("createDecodeGate: giving the memory back", () => {
 });
 
 describe("createDecodeGate: what it does not keep (fix round 2)", () => {
-  // That the gate does not keep the last decoded picture alive needs a precise GC, which Bun's is not: it is decodeGate.node-test.ts, under Electron's Node.
+  // That the gate does not keep the last decoded picture alive needs a precise GC, which Bun's is not: it is decodeGate.retention.node-cases.ts, under Electron's Node.
 
   test("a worker that was already replaced says nothing about the present: its message is ignored", async () => {
     const { gate, workers } = gateWith();
