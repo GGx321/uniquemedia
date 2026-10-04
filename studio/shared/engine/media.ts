@@ -108,7 +108,7 @@ export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
 export const MEZZANINE_FPS = 30;
 
 /** How far a source's rate may be from `MEZZANINE_FPS` and still be told as no conversion: the rounding of a 30 000 / 1001 camera (29.97) and of a `stts` table. */
-const SAME_RATE_TOLERANCE = 0.05;
+export const SAME_RATE_TOLERANCE = 0.05;
 
 /**
  * What an import's `prepare.fromFps` says (3f.6): the source's rate when it differs from the mezzanine's 30, else null. «60 → 30 fps» is worth saying; «29.97 → 30 fps»

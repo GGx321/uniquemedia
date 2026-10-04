@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
-import { fromFpsOf, MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, MIN_CLIP_MS } from "../../shared/engine";
+import { fromFpsOf, MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, MIN_CLIP_MS, SAME_RATE_TOLERANCE } from "../../shared/engine";
 import { observer, type MediaImporter } from "./imports";
 import { openFileSource } from "./video/fileSource";
 import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
@@ -23,8 +23,6 @@ import { probeVideo, type VideoInfo } from "./video/videoProbe";
 
 /** A 30 fps clip of this many frames is the longest the mezzanine can be; a bit over, for the rounding of the last frame. */
 const MAX_OUTPUT_FRAMES = VIDEO_LIMITS.maxSeconds * VIDEO_LIMITS.fps + 1;
-/** The rate the mezzanine is written at; its own `stts` may round it a little. */
-const RATE_TOLERANCE = 0.05;
 
 export interface VideoImporterOptions {
   /** Starts ffmpeg; Node's `spawn` by default (a test injects a wrapper). */
@@ -61,7 +59,7 @@ function isPlannedOutput(info: VideoInfo, plan: VideoPlan): boolean {
     video.colour.matrix === 1 &&
     !video.colour.fullRange &&
     !video.variableFrameRate &&
-    Math.abs(video.sourceFps - VIDEO_LIMITS.fps) <= RATE_TOLERANCE &&
+    Math.abs(video.sourceFps - VIDEO_LIMITS.fps) <= SAME_RATE_TOLERANCE &&
     video.samples >= 1 &&
     video.samples <= MAX_OUTPUT_FRAMES &&
     // The decode must be the clip that was judged: its frame count is what ffmpeg makes of the samples AND the edit list the walker read (see
