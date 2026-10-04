@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { PNG_1X1 } from "../engine/library/testing/sampleData";
+import { SMOKE_TEST_PNG } from "../engine/decode/realBackend";
 import { openFileSource } from "../engine/media/video/fileSource";
 import { FIXTURES } from "../engine/media/video/testing/fixtures/index";
 import { judgeVideo } from "../engine/media/video/videoPlan";
 import { probeVideo } from "../engine/media/video/videoProbe";
+import { webpInfo } from "../engine/media/webp";
 import { formatOf, resolveMediaKind, unfitReason } from "../engine/media/sniff";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
+import { jpegMetadataMarkers, MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
 useNativeGlobals();
 
 // The packaged smoke's own-media files (3f.1b): one tiny file per kind, picked through `--studio-pick-media` with `any`. The table is
@@ -18,12 +20,27 @@ describe("the smoke's own-media files", () => {
     for (const file of MEDIA_SMOKE_FILES) expect(file.bytes.length).toBeLessThan(200);
   });
 
-  test("the photo is a real PNG that the engine takes for a photo and the stand-in importer takes", () => {
+  test("the photo is a real 2x2 PNG that the engine takes for a photo, and the photo importer takes", () => {
     const photo = MEDIA_SMOKE_FILES.find((f) => f.label === "photo");
-    expect(photo?.bytes).toEqual(PNG_1X1);
-    expect(resolveMediaKind("any", PNG_1X1)).toBe("photo");
-    expect(formatOf(PNG_1X1)).toBe("png");
+    expect(photo?.bytes).toEqual(SMOKE_TEST_PNG);
+    expect(resolveMediaKind("any", SMOKE_TEST_PNG)).toBe("photo");
+    expect(formatOf(SMOKE_TEST_PNG)).toBe("png");
     expect(photo?.expect).toEqual({ job: true });
+  });
+
+  test("a 1x1 PNG is a photo by its bytes and is refused as too small by the importer (3f.2)", () => {
+    const tiny = MEDIA_SMOKE_FILES.find((f) => f.label === "tiny");
+    expect(tiny?.bytes).toEqual(PNG_1X1);
+    expect(resolveMediaKind("any", PNG_1X1)).toBe("photo");
+    expect(tiny?.expect).toEqual({ failed: "too-small" });
+  });
+
+  test("an animated WebP is a photo by its bytes, animated by its own header, and refused as such (3f.2)", () => {
+    const animated = MEDIA_SMOKE_FILES.find((f) => f.label === "animated-webp");
+    expect(resolveMediaKind("any", animated?.bytes ?? new Uint8Array())).toBe("photo");
+    expect(formatOf(animated?.bytes ?? new Uint8Array())).toBe("webp");
+    expect(webpInfo(animated?.bytes ?? new Uint8Array())?.animated).toBe(true);
+    expect(animated?.expect).toEqual({ failed: "animated-webp" });
   });
 
   test("a video, a track and a sticker are what their kind says", () => {
@@ -36,7 +53,7 @@ describe("the smoke's own-media files", () => {
   });
 
   test("a video has an importer (3f.3a): a bare header is accepted into a job that fails as a format", () => {
-    expect(MEDIA_SMOKE_FILES.find((f) => f.label === "video")?.expect).toEqual({ failsAs: "format" });
+    expect(MEDIA_SMOKE_FILES.find((f) => f.label === "video")?.expect).toEqual({ failed: "format" });
   });
 
   test("a text file is a format refusal and a HEIC picture its own reason, by the bytes and not the name", () => {
@@ -55,8 +72,24 @@ describe("the smoke's own-media files", () => {
     expect(new Set(labels).size).toBe(labels.length);
   });
 
-  test("what the stored photo is expected to be: the 1x1 PNG, under the name it was picked by", () => {
-    expect(MEDIA_SMOKE_STORED).toMatchObject({ kind: "photo", name: "smoke-media.png", width: 1, height: 1, bytes: PNG_1X1.length });
+  test("what the stored photo is expected to be: a 2x2 JPEG the importer made, under the name it was picked by", () => {
+    expect(MEDIA_SMOKE_STORED).toEqual({ kind: "photo", name: "smoke-media.png", width: 2, height: 2, extension: "jpg" });
+  });
+});
+
+describe("jpegMetadataMarkers", () => {
+  const jpeg = (...markers: number[]): Uint8Array => Uint8Array.from([0xff, 0xd8, ...markers.flatMap((m) => [0xff, m, 0, 4, 0, 0]), 0xff, 0xda, 0, 2, 0xff, 0xd9]);
+
+  test("a JPEG with only its tables, frame and scan has no metadata marker", () => {
+    expect(jpegMetadataMarkers(jpeg(0xdb, 0xc0, 0xc4))).toEqual([]);
+  });
+
+  test("names an APP segment (JFIF, EXIF, XMP) and a comment", () => {
+    expect(jpegMetadataMarkers(jpeg(0xe0, 0xdb, 0xe1, 0xfe))).toEqual([0xe0, 0xe1, 0xfe]);
+  });
+
+  test("a buffer that is not a JPEG has no markers to name", () => {
+    expect(jpegMetadataMarkers(Uint8Array.from([1, 2, 3]))).toEqual([]);
   });
 });
 

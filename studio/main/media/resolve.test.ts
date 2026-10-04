@@ -425,48 +425,151 @@ describe("text/<previewId>", () => {
   });
 });
 
-describe("media/<mediaId>", () => {
+describe("media/<mediaId>: an own upload, resolved through its RECORD (3f.2)", () => {
   const mediaFile = (ext: string, id = MEDIA): string => join(w.libraryRoot, "media", `${id}.${ext}`);
+  const recordFile = (id = MEDIA): string => join(w.libraryRoot, "media", `${id}.json`);
 
-  test("an own upload is served from <library>/media in the type of its extension", async () => {
-    const cases: [string, Buffer, string][] = [
-      ["jpg", JPEG, "image/jpeg"],
-      ["png", PNG, "image/png"],
-      ["webp", WEBP, "image/webp"],
-      ["gif", GIF, "image/gif"],
-      ["apng", PNG, "image/apng"],
-      ["mp4", MP4, "video/mp4"],
-      ["m4a", MP4, "audio/mp4"],
+  /** What the engine's `MediaRecords` writes for a stored file: the fields the protocol reads and the ones the contract requires. */
+  const recordOf = (id: string, kind: string, format: string, ext: string, bytes: number, patch: Record<string, unknown> = {}): Record<string, unknown> => ({
+    schemaVersion: 1,
+    id,
+    kind,
+    name: "own.file",
+    createdAt: "2026-10-04T10:00:00.000Z",
+    bytes,
+    sha256: "a".repeat(64),
+    format,
+    file: `${id}.${ext}`,
+    width: kind === "audio" ? null : 100,
+    height: kind === "audio" ? null : 200,
+    durationMs: kind === "photo" || kind === "sticker" ? null : 1000,
+    sourceFps: kind === "video" ? 30 : null,
+    hdrToSdr: false,
+    loopFrames: null,
+    delayFrames: null,
+    ...patch,
+  });
+
+  /** A stored file and its record, as the engine leaves them. */
+  async function store(ext: string, bytes: Buffer, kind: string, format: string, id = MEDIA, patch: Record<string, unknown> = {}): Promise<void> {
+    await put(mediaFile(ext, id), bytes);
+    await put(recordFile(id), JSON.stringify(recordOf(id, kind, format, ext, bytes.length, patch)));
+  }
+
+  test("an own upload is served from <library>/media in the type its record's container says", async () => {
+    const cases: [string, Buffer, string, string, string][] = [
+      ["jpg", JPEG, "photo", "jpeg", "image/jpeg"],
+      ["png", PNG, "photo", "png", "image/png"],
+      ["webp", WEBP, "photo", "webp", "image/webp"],
+      ["gif", GIF, "sticker", "gif", "image/gif"],
+      ["mp4", MP4, "video", "mp4", "video/mp4"],
+      ["m4a", MP4, "audio", "m4a", "audio/mp4"],
     ];
-    for (const [i, [ext, bytes, type]] of cases.entries()) {
+    for (const [i, [ext, bytes, kind, format, type]] of cases.entries()) {
       const id = `media-0000${i}0`;
-      await put(mediaFile(ext, id), bytes);
+      await store(ext, bytes, kind, format, id);
       expect(await get({ route: "media", mediaId: id })).toEqual({ type, bytes });
     }
   });
 
-  test("the sidecar next to an upload is never served, and neither is any other extension", async () => {
-    await put(mediaFile("json"), '{"kind":"photo"}');
-    await put(mediaFile("svg"), "<svg/>");
-    await put(mediaFile("html"), "<html/>");
-    await put(mediaFile("exe"), "MZ");
-    await put(mediaFile("txt"), "hello");
+  test("a stored file with NO record is not served: an orphan from a crash, or a media whose delete has begun", async () => {
+    await put(mediaFile("jpg"), JPEG);
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
   });
 
-  test("a file that is not what its extension claims is not served", async () => {
-    await put(mediaFile("mp4"), PNG);
+  test("a record with no file is not served", async () => {
+    await put(recordFile(), JSON.stringify(recordOf(MEDIA, "photo", "jpeg", "jpg", JPEG.length)));
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
   });
 
-  test.skipIf(!canSymlink)("a symlink in place of an upload is not served", async () => {
-    await put(join(outside, "secret.png"), PNG);
-    await symlink(join(outside, "secret.png"), mediaFile("png"), "file");
+  test("the file's name comes from the record, never from the extension a scan finds: a stray file of another extension is not served", async () => {
+    await store("jpg", JPEG, "photo", "jpeg");
+    await put(mediaFile("png", "media-000002"), PNG);
+    await put(recordFile("media-000002"), JSON.stringify(recordOf("media-000002", "photo", "jpeg", "jpg", PNG.length)));
+    expect(await get({ route: "media", mediaId: "media-000002" })).toBeNull();
+  });
+
+  test("a record whose file is not <its id>.<the extension of its format> is not served", async () => {
+    // The file the record names EXISTS in each case, with the right size and bytes, so a null can only come from the name check.
+    await put(mediaFile("jpg", "elsewhere"), JPEG);
+    await store("jpg", JPEG, "photo", "jpeg", MEDIA, { file: "elsewhere.jpg" });
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+    await put(join(w.libraryRoot, "secret.jpg"), JPEG);
+    await store("jpg", JPEG, "photo", "jpeg", MEDIA, { file: "../secret.jpg" });
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test("a record filed under another media id than its own is not served", async () => {
+    // The record under MEDIA's name is media-000009's own, and the file it names (media-000009.jpg) exists: only the id check can refuse.
+    await put(mediaFile("jpg", "media-000009"), JPEG);
+    await put(recordFile(), JSON.stringify(recordOf("media-000009", "photo", "jpeg", "jpg", JPEG.length)));
+    await put(mediaFile("jpg"), JPEG);
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+    // The same record under its own name is served: the file, the size and the shape were all good.
+    await put(recordFile("media-000009"), JSON.stringify(recordOf("media-000009", "photo", "jpeg", "jpg", JPEG.length)));
+    expect(await get({ route: "media", mediaId: "media-000009" })).toEqual({ type: "image/jpeg", bytes: JPEG });
+  });
+
+  test("a record that cannot be read, from a newer Studio, or of the wrong shape is not served", async () => {
+    await put(mediaFile("jpg"), JPEG);
+    for (const text of ["{ not json", JSON.stringify({ ...recordOf(MEDIA, "photo", "jpeg", "jpg", JPEG.length), schemaVersion: 2 }), JSON.stringify({ id: MEDIA }), "[]", ""]) {
+      await put(recordFile(), text);
+      expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+    }
+  });
+
+  test("a file of another size than its record says is not served: it was replaced", async () => {
+    await store("jpg", JPEG, "photo", "jpeg");
+    await put(mediaFile("jpg"), Buffer.concat([JPEG, Buffer.from([0])]));
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test("a file SHORTER than its record says is not served either", async () => {
+    await store("jpg", JPEG, "photo", "jpeg");
+    await put(mediaFile("jpg"), JPEG.subarray(0, JPEG.length - 1));
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test("a container the protocol has no type for (a WAV, an OGG, a MOV) is not served", async () => {
+    await store("wav", Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(60)]), "audio", "wav");
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test("a record that says photo but names a format a photo cannot be is not served", async () => {
+    await store("mp4", MP4, "photo", "mp4");
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test("a file that is not what its record's container claims is not served", async () => {
+    await store("mp4", PNG, "video", "mp4");
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test("the sidecar is never served as the media, whatever the record says", async () => {
+    await put(recordFile(), JSON.stringify(recordOf(MEDIA, "photo", "jpeg", "jpg", 10, { file: `${MEDIA}.json` })));
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test.skipIf(!canSymlink)("a symlink in place of the upload, or of its record, is not served", async () => {
+    await put(join(outside, "secret.jpg"), JPEG);
+    await put(recordFile(), JSON.stringify(recordOf(MEDIA, "photo", "jpeg", "jpg", JPEG.length)));
+    await symlink(join(outside, "secret.jpg"), mediaFile("jpg"), "file");
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+    await rm(mediaFile("jpg"));
+    await rm(recordFile());
+    await put(mediaFile("jpg"), JPEG);
+    await put(join(outside, "record.json"), JSON.stringify(recordOf(MEDIA, "photo", "jpeg", "jpg", JPEG.length)));
+    await symlink(join(outside, "record.json"), recordFile(), "file");
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
   });
 
   test("the media route reads only <library>/media: a photo of the same id is not an upload", async () => {
     await put(join(photosDir(), `${MEDIA}.png`), PNG);
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test("an unknown media id, and a library root that is not there", async () => {
+    expect(await get({ route: "media", mediaId: "media-000404" })).toBeNull();
+    expect(await get({ route: "media", mediaId: MEDIA }, { libraryRoot: () => join(w.dir, "nowhere") })).toBeNull();
   });
 });

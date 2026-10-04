@@ -1120,6 +1120,99 @@ const OWN_MEDIA_RECORD_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
+// ---------- 3f.2: own photos in a draft and a render ----------
+
+/** A spec of two 2 s photo clips, each an own photo of `mediaId`: the shortest a spec may be (4 s). */
+function ownPhotoSpec(avatarId: string, mediaId: string): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    avatarId,
+    layers: [],
+    music: null,
+    seed: 7,
+    clips: [1, 2].map((n) => ({ clipId: `clip-000000${n}`, kind: "photo", cell: { photo: { source: "own", mediaId }, focus: null }, motion: "static", durationMs: 2_000, transitionIn: "cut" })),
+  };
+}
+
+/** Imports the one good photo and answers its media id. */
+async function importedPhotoId(t: Transcript, control: Control): Promise<string> {
+  await control.mediaDialog("good");
+  await t.call("media.pickImport", { kind: "photo" });
+  await t.settle();
+  const [mediaId] = listedMediaIds(await t.call("media.list", {}));
+  if (mediaId === undefined) throw new Error("the photo was not stored");
+  return mediaId;
+}
+
+/** Appended after the 3f.1b scenarios: the golden transcripts above are append-only. */
+const OWN_PHOTO_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "own photos: a render holds its media against media.delete until it ends, and a deleted media is media-unavailable in the draft, the render and the focus",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedPhotoId(t, control);
+      t.note("a draft with the own photo in both cells: the engine finds nothing wrong, and the detector sees no face in it");
+      const montageId = montageIdOf(await t.call("montages.create", { avatarId: w.avatarId, photoIds: [] }));
+      await t.call("montages.save", { montageId, spec: ownPhotoSpec(w.avatarId, mediaId), name: "Свои фото" });
+      await t.call("montages.get", { montageId });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      await t.call("montages.focus", { avatarId: w.avatarId, photo: { source: "own", mediaId } });
+      t.note("the render is queued: the media is held, so deleting it is refused and it stays listed");
+      await t.call("videos.render", { montageId });
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", {});
+      t.note("the render ends: the same delete goes through");
+      await t.settle();
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", {});
+      t.note("the draft still names the media: it reads unavailable at each cell, a render of it is refused for that, and so is its focus");
+      await t.call("montages.get", { montageId });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      await t.call("videos.render", { montageId });
+      await t.call("montages.focus", { avatarId: w.avatarId, photo: { source: "own", mediaId } });
+    },
+  },
+  {
+    name: "own photos: a render that fails lets its media go, and a spec that names a media nobody holds is refused before the export folder is asked",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedPhotoId(t, control);
+      t.note("the first render's ffmpeg fails: while it runs the media is held, and when it has failed the delete goes through");
+      control.failNextRender("encode");
+      await t.call("videos.render", { spec: ownPhotoSpec(w.avatarId, mediaId) });
+      await t.call("media.delete", { mediaId });
+      await t.settle();
+      await t.call("media.delete", { mediaId });
+      t.note("a media that is not there, in a spec that is otherwise good");
+      await t.call("videos.render", { spec: ownPhotoSpec(w.avatarId, "media-00000404") });
+      t.note("a spec with a structural issue is refused for that alone, whatever its media");
+      await t.call("videos.render", { spec: { ...ownPhotoSpec(w.avatarId, "media-00000404"), clips: [{ ...(clipsOf(ownPhotoSpec(w.avatarId, "media-00000404"), 1_000)[0] ?? {}) }] } });
+      t.note("an own video clip is still not supported yet");
+      await t.call("videos.render", {
+        spec: { schemaVersion: 1, avatarId: w.avatarId, layers: [], music: null, seed: 7, clips: [{ clipId: "clip-0000001", kind: "video", mediaId: "media-00000404", trimStartMs: 0, focus: null, durationMs: 4_000, transitionIn: "cut" }] },
+      });
+    },
+  },
+  {
+    name: "own photos: the photo importer refuses a picture inside its job, and the job fails with its reason",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      t.note("the boundary takes the file (its bytes are a photo's); the importer turns it away: one progress step at the total, then job.failed");
+      await control.mediaDialog("tiny");
+      await t.call("media.pickImport", { kind: "photo" });
+      await t.settle();
+      t.note("nothing is stored, and the failed job is in a window's snapshot");
+      await t.call("media.list", {});
+      await t.call("engine.snapshot", {});
+      t.note("the next photo takes its turn as if nothing happened");
+      await control.mediaDialog("good");
+      await t.call("media.pickImport", { kind: "photo" });
+      await t.settle();
+      await t.call("media.list", {});
+    },
+  },
+];
+
 // ---------- 3f.3a: own video, and an importer that refuses after the copy ----------
 
 /** Appended after the 3f.1b scenarios: the golden transcripts above are append-only. */
@@ -1150,7 +1243,7 @@ const OWN_VIDEO_SCENARIOS: readonly Scenario[] = [
 ];
 
 /** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_VIDEO_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

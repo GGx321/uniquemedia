@@ -305,3 +305,20 @@ test("the walk from the focus resolver reaches its cache and the montage geometr
 test("every module reachable from the focus resolver uses only node:* APIs and never reads the environment", () => {
   expect(walkFromEntry(FOCUS_ENTRY).problems).toEqual([]);
 });
+
+// 3f.2 (fix round 1): the own-photo decode worker, reached by URL only (main.ts's PHOTO_DECODE_WORKER_URL), holding the same rules.
+const PHOTO_DECODE_WORKER_ENTRY = join(ENGINE_DIR, "decode", "photoDecodeWorker.ts");
+
+test("the walk from the photo decode worker entry reaches its codecs and protocol, and only there does the WASM decode come in", () => {
+  const { files } = walkFromEntry(PHOTO_DECODE_WORKER_ENTRY);
+  expect(files).toContain(join("engine", "decode", "realBackend.ts"));
+  expect(files).toContain(join("engine", "decode", "wasmDecode.ts"));
+  expect(files).toContain(join("engine", "decode", "decodeProtocol.ts"));
+  // The engine's own graph holds the gate that talks to the worker, never the codecs.
+  expect(walkFromEntry().files).toContain(join("engine", "decode", "decodeGate.ts"));
+  expect(walkFromEntry().files).not.toContain(join("engine", "decode", "realBackend.ts"));
+});
+
+test("every module reachable from the photo decode worker entry uses only node:* APIs and never reads the environment", () => {
+  expect(walkFromEntry(PHOTO_DECODE_WORKER_ENTRY).problems).toEqual([]);
+});

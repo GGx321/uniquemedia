@@ -49,23 +49,38 @@ export const MAX_PICKED_FILES = 20;
  * - `not-yet-supported`: the kind has no importer yet;
  * The codes below are SHARED by every kind: each kind's importer uses the ones that apply to it, and the text a window shows depends on the kind of
  * the file (`mediaReasonRu(reason, kind)`, errorMessagesRu.ts), so a code names the problem and not the kind.
- * - `too-long`: the file runs longer than its kind allows (video: three minutes; music has its own limit);
- * - `codec`: the file is encoded with a codec the kind's importer does not take (video: H.264, HEVC with HDR and Dolby Vision 8.x included, and
- *   ProRes are taken; VP9, AV1 and the rest are not);
- * - `dimensions`: the picture is larger than the kind allows (video: past 4K, 4096 on the long side or 2160 on the short one);
- * - `too-small`: the picture has a side under 2 pixels;
- * - `structure`: the file's parts are put together in a way the importer will not take (video: two video tracks, a track outside its container, a
- *   repeated box, an edit list it cannot follow, a mirrored or oddly turned picture, an unusual colour tag, non-square pixels, a fragmented file,
- *   two tables that disagree): not a wrong file TYPE, so not `format`.
+ * - `too-small` (3f.2, 3f.3a): a picture with a side under 2 px (`coverCrop` cannot make a 1 px side even);
+ * - `dimensions` (3f.2, 3f.3a): a picture larger than the kind allows (photo: more than 50 megapixels, judged from its header, so a 48 megapixel
+ *   camera picture is taken; video: past 4K, 4096 on the long side or 2160 on the short one);
+ * - `animated-webp` (3f.2): a WebP that animates; only still pictures are taken;
+ * - `too-long` (3f.3a): the file runs longer than its kind allows (video: three minutes; music has its own limit);
+ * - `codec` (3f.3a): the file is encoded with a codec the kind's importer does not take (video: H.264, HEVC with HDR and Dolby Vision 8.x
+ *   included, and ProRes are taken; VP9, AV1 and the rest are not);
+ * - `structure` (3f.3a): the file's parts are put together in a way the importer will not take (video: two video tracks, a track outside its
+ *   container, a repeated box, an edit list it cannot follow, a mirrored or oddly turned picture, an unusual colour tag, non-square pixels, a
+ *   fragmented file, two tables that disagree): not a wrong file TYPE, so not `format`.
  */
 export const MediaUnsupportedReason = z.enum([
-  "not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported",
-  // 3f.3a (video):
+  "not-a-file",
+  "empty",
+  "too-large",
+  "format",
+  "heic",
+  "changed",
+  "unreadable",
+  "no-space",
+  "too-many",
+  "failed",
+  "cancelled",
+  "not-yet-supported",
+  // 3f.2, one per line and at the END: the codes are neutral and shared by the kinds (the video import adds its own beside them);
+  // the texts are per kind (`MEDIA_REASONS_BY_KIND_RU`, with the neutral ones in `MEDIA_REASONS_RU`).
+  "too-small",
+  "dimensions",
+  "animated-webp",
+  // 3f.3a (video), after the photo's:
   "too-long",
   "codec",
-  "dimensions",
-  "too-small",
-  // 3f.3a review round 1:
   "structure",
 ]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;

@@ -79,6 +79,31 @@ const RecordShape = z.looseObject({
 });
 type RecordShape = z.infer<typeof RecordShape>;
 
+/** What main's `studio-media://media/<mediaId>` route reads of a record: which stored file to open, and what it must be. */
+export interface ServedMediaRecord {
+  readonly id: string;
+  readonly kind: MediaKind;
+  readonly format: MediaFormat;
+  /** The stored file's size: a file of another size is not the one this record was written for. */
+  readonly bytes: number;
+  /** `<id>.<extension of the format>`, inside `<library>/media/`: the only name the route may open. */
+  readonly file: string;
+}
+
+/**
+ * A record's JSON, judged for SERVING (the preview route, 3f.2): the record's schema (a newer Studio's, or a damaged one, is not served), a
+ * container the kind may be, and a `file` that is exactly `<its id>.<the extension of its format>`, so a record can never make the route open
+ * another name. Null for anything else. It is the same shape check the records' own recovery applies; a file with no record is never served.
+ */
+export function servedMediaRecord(json: unknown): ServedMediaRecord | null {
+  const parsed = RecordShape.safeParse(json);
+  if (!parsed.success) return null;
+  const record = parsed.data;
+  if (!FORMATS_OF_KIND[record.kind].includes(record.format)) return null;
+  if (record.file !== `${record.id}.${MEDIA_EXTENSIONS[record.format]}`) return null;
+  return { id: record.id, kind: record.kind, format: record.format, bytes: record.bytes, file: record.file };
+}
+
 /** What an importer learned of the file it made; which fields a kind has is the contract's (`MediaSummary`). */
 export interface MediaFacts {
   readonly width: number | null;

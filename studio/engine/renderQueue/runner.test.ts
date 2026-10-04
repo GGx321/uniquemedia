@@ -990,6 +990,87 @@ describe("runRenderJob: the layer pass (3b.6)", () => {
   });
 });
 
+describe("runRenderJob: the private copies of own photos (3f.2)", () => {
+  test("stages the copies once, into the job folder, after it exists and before any ffmpeg starts", async () => {
+    const r = rig();
+    const staged: string[] = [];
+    let folderExistedWhenStaged = false;
+    let callsWhenStaged = -1;
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await runRenderJob(
+      {
+        ...r.input,
+        stageOwnPhotos: async (dir) => {
+          staged.push(dir);
+          folderExistedWhenStaged = existsSync(dir);
+          callsWhenStaged = calls.length;
+        },
+      },
+      deps,
+    );
+
+    expect(staged).toEqual([r.jobDir]);
+    expect(folderExistedWhenStaged).toBe(true);
+    expect(callsWhenStaged).toBe(0);
+  });
+
+  test("a job with no own photos stages nothing and runs the same three calls", async () => {
+    const r = rig();
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    await runRenderJob(r.input, deps);
+
+    expect(calls).toHaveLength(3);
+  });
+
+  test("a staging failure that is the engine's own answer is thrown unchanged, before any ffmpeg, and leaves nothing", async () => {
+    const r = rig();
+    const failure = new RenderFailure({ code: "RENDER_FAILED", detail: "an own photo of this montage is no longer available: it was removed or changed" });
+    const { deps, calls } = depsWith(goodFfmpeg);
+
+    const error = await runRenderJob({ ...r.input, stageOwnPhotos: () => Promise.reject(failure) }, deps).catch((e: unknown) => e);
+
+    expect(error).toBe(failure);
+    expect(calls).toHaveLength(0);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(existsSync(r.output)).toBe(false);
+  });
+
+  test("a staging failure from the file system names no user folder", async () => {
+    const r = rig();
+    const { deps } = depsWith(goodFfmpeg);
+    const eexist = Object.assign(new Error(`EEXIST: file already exists, open '${join(r.tmpRoot, "job-00000001", "own-media-0000001.jpg")}'`), { code: "EEXIST" });
+
+    const error = await runRenderJob({ ...r.input, stageOwnPhotos: () => Promise.reject(eexist) }, deps).catch((e: unknown) => e);
+
+    if (!(error instanceof Error)) throw new Error("expected the job to fail");
+    expect(error.message).not.toContain(r.tmpRoot);
+  });
+
+  test("a cancel that fires while the copies are made ends the job with the cancel's reason and leaves nothing", async () => {
+    const controller = new AbortController();
+    const r = rig({ signal: controller.signal });
+    const { deps, calls } = depsWith(goodFfmpeg);
+    const stop = new Error("cancelled by the owner");
+
+    const error = await runRenderJob(
+      {
+        ...r.input,
+        stageOwnPhotos: async () => {
+          controller.abort(stop);
+          throw stop;
+        },
+      },
+      deps,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBe(stop);
+    expect(calls).toHaveLength(0);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+});
+
 describe("scrubber", () => {
   const scrub = scrubber("C:\\Users\\mia\\AppData\\Local\\Temp\\render-tmp", "D:\\Videos\\Reels");
 

@@ -78,11 +78,13 @@ export const MEDIA_REASONS_RU = {
   failed: "Не удалось добавить файл. Попробуйте ещё раз.",
   cancelled: "Добавление отменено, в «Мои» ничего не попало.",
   "not-yet-supported": "Файлы такого типа пока нельзя добавить.",
-  // 3f.3a: the codes below are shared by every kind, so these are the NEUTRAL texts; a kind that has more to say has it in MEDIA_REASONS_BY_KIND_RU.
+  // 3f.2 and 3f.3a: the codes below are shared by every kind, so these are the NEUTRAL texts; a kind that has more to say has it in
+  // MEDIA_REASONS_BY_KIND_RU. `animated-webp` is only ever a photo's.
+  "too-small": "Изображение слишком маленькое: каждая сторона должна быть не меньше 2 пикселей.",
+  dimensions: "Картинка слишком большого размера. Уменьшите разрешение и добавьте снова.",
+  "animated-webp": "Анимированный WebP не подходит для фото. Сохраните один кадр как JPEG или PNG и добавьте снова.",
   "too-long": "Файл слишком длинный для этого типа. Сократите его и добавьте снова.",
   codec: "Файл закодирован в формате, который не поддерживается. Сохраните его в другом формате и добавьте снова.",
-  dimensions: "Картинка слишком большого размера. Уменьшите разрешение и добавьте снова.",
-  "too-small": "Изображение слишком маленькое: каждая сторона должна быть не меньше 2 пикселей.",
   structure: "Файл устроен необычно, и добавить его нельзя: например, в нём несколько изображений, нестандартный поворот или цвет, или он собран из частей. Пересохраните его обычным способом и добавьте снова.",
 } as const satisfies Record<MediaUnsupportedReason, string>;
 
@@ -91,6 +93,10 @@ export const MEDIA_REASONS_RU = {
  * depends on the kind of the file that was turned away. 3f.2 (photo) and 3f.4 (music) add theirs here.
  */
 export const MEDIA_REASONS_BY_KIND_RU: Partial<Record<MediaKind, Partial<Record<MediaUnsupportedReason, string>>>> = {
+  photo: {
+    "too-small": "Фото слишком маленькое: каждая сторона должна быть не короче 2 пикселей.",
+    dimensions: "У фото слишком много пикселей: допустимо до 50 мегапикселей (например, 8000 × 6000). Уменьшите его и добавьте снова.",
+  },
   video: {
     "too-long": "Видео длиннее трёх минут. Обрежьте его и добавьте снова.",
     codec: "Такой видеокодек не поддерживается. Подойдут видео H.264, HEVC (в том числе HDR) и ProRes: сохраните ролик в одном из них.",

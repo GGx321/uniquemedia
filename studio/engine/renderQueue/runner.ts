@@ -54,6 +54,13 @@ export interface RenderRunInput {
    */
   readonly stageLayers?: (dir: string) => Promise<void>;
   /**
+   * Writes the private copies of the own photos the clips name into the job folder (3f.2; `resolvePhoto` already points at those names),
+   * after checking each against its record. Called once, right after the folder is made and before anything else is staged or run. A
+   * `RenderFailure` it throws reaches the job unchanged; the cancel's reason comes out as it is; any other error is scrubbed of the
+   * user's folders like a file-system error of the runner's own.
+   */
+  readonly stageOwnPhotos?: (dir: string) => Promise<void>;
+  /**
    * Silence, or one stored track as the VERIFIED BYTES the track store handed over (never a path: a file on disk can change
    * between the store's check and ffmpeg's read). The runner writes them to `<job folder>/track.m4a`, has `check` look at that
    * copy, and runs the measurement and pass 2 on it. The gain is not known yet: the runner measures the clip segment first
@@ -206,7 +213,8 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     try {
       await work;
     } catch (error) {
-      if (error instanceof Error && !(error instanceof RenderFailure)) throw scrubbedCopy(error);
+      // The cancel's own reason is not a file-system error and comes out as it is (the queue ends the job as cancelled).
+      if (error instanceof Error && !(error instanceof RenderFailure) && !(signal.aborted && error === signal.reason)) throw scrubbedCopy(error);
       throw error;
     }
   };
@@ -265,6 +273,7 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   let succeeded = false;
   try {
     await scrubFs(mkdir(clipDir, { recursive: true }));
+    if (input.stageOwnPhotos !== undefined) await stage(input.stageOwnPhotos(clipDir));
     if (input.stageLayers !== undefined && input.overlays.length > 0) await stage(input.stageLayers(clipDir));
     // The layer files can take real room (a 15 s file with heavy captions and stickers is 300 MiB, and two exist at once): ask the volume
     // BEFORE anything is rendered, and refuse cleanly rather than fail an ffmpeg half way with a full disk.

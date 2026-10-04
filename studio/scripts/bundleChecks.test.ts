@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { faceWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, relativeImportsOf, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, relativeImportsOf, textWorkerProblems } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -269,14 +269,6 @@ describe("productionEngineProblems", () => {
     expect(productionEngineProblems(bundle(SHUT, 'const held = "studio-e2e-commit-hold.held";'))).toEqual(["a test-only commit hold is in the engine bundle"]);
   });
 
-  test("flags the E2E photo importer that made it into the engine bundle: it would accept a picture without decoding it", () => {
-    expect(productionEngineProblems(bundle(SHUT, 'Object.defineProperty(importer, "name", { value: "studio-e2e-photo-importer" });'))).toEqual(["a test-only photo importer is in the engine bundle"]);
-  });
-
-  test("flags the photo importer too when the bundler put it in a shared chunk beside the entry", () => {
-    expect(productionEngineBundleProblems(SHUT, 'const MARKER = "studio-e2e-photo-importer";')).toEqual(["a test-only photo importer is in the engine bundle"]);
-  });
-
   test("flags the commit hold when the bundler put it in a shared chunk beside the entry, which the entry's own text does not show", () => {
     const chunk = 'const held = "studio-e2e-commit-hold.held";';
     expect(productionEngineProblems(SHUT)).toEqual([]);
@@ -389,6 +381,36 @@ describe("faceWorkerProblems", () => {
   test("fails when the worker imports electron (the engine must stay Electron-free)", () => {
     const problems = faceWorkerProblems(ENGINE_WITH_WORKER, `${WORKER}\nimport { app } from "electron";`, ALL_PRESENT);
     expect(problems).toContain("faceWorker.js imports electron");
+  });
+});
+
+// 3f.2 (fix round 1): the own-photo decode worker is the same kind of entry. A build that dropped it would fail only at the first photo the
+// owner imports; and the WASM decode must not come back into the engine's own bundle.
+describe("photoDecodeWorkerProblems", () => {
+  const ENGINE = 'const PHOTO_DECODE_WORKER_URL = new URL("./photoDecodeWorker.js", import.meta.url);';
+  const PHOTO_WORKER = 'import { parentPort, workerData } from "node:worker_threads";\nimport { z } from "../shared-Abc123.js";';
+  const PRESENT = (path: string): boolean => ["engine/photoDecodeWorker.js", "shared-Abc123.js"].includes(path);
+
+  test("passes a build whose engine spawns the decode worker by file URL and whose worker is a worker thread with its chunks present", () => {
+    expect(photoDecodeWorkerProblems(ENGINE, PHOTO_WORKER, PRESENT)).toEqual([]);
+  });
+
+  test("fails when the decode worker entry was not built", () => {
+    expect(photoDecodeWorkerProblems(ENGINE, null, PRESENT)).toContain("out-studio/engine/photoDecodeWorker.js is missing");
+  });
+
+  test("fails when the engine no longer spawns it by that file URL", () => {
+    expect(photoDecodeWorkerProblems("spawn();", PHOTO_WORKER, PRESENT)).toContain('the engine does not resolve "./photoDecodeWorker.js" against its own import.meta.url');
+  });
+
+  test("fails when a chunk the worker imports is missing, and when it imports electron", () => {
+    expect(photoDecodeWorkerProblems(ENGINE, PHOTO_WORKER, () => false)).toEqual(["photoDecodeWorker.js imports ../shared-Abc123.js, which is not in the build"]);
+    expect(photoDecodeWorkerProblems(ENGINE, `${PHOTO_WORKER}\nimport { app } from "electron";`, PRESENT)).toContain("photoDecodeWorker.js imports electron");
+  });
+
+  test("fails when the engine bundle carries the WASM decode itself: it must run only inside the worker", () => {
+    const engine = `${ENGINE}\nthrow new Error("decode/wasmDecode: unsupported image format for the engine own decoder");`;
+    expect(photoDecodeWorkerProblems(engine, PHOTO_WORKER, PRESENT)).toContain("the engine bundle contains the WASM image decoder; it must run only inside the decode worker");
   });
 });
 

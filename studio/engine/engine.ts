@@ -98,6 +98,7 @@ import { MediaService } from "./media/service";
 import { MediaDiskError } from "./library/mediaRecords";
 import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
+import { ownPhotoSourceOf, readVerifiedOwnPhoto } from "./videos/ownPhotos";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
 import { createStickerAssets, StickerAssetError, type StickerAssets } from "./videos/stickerAssets";
 import { MontageService, type MontageServiceDeps } from "./montages/service";
@@ -163,9 +164,9 @@ export interface EngineDeps {
    */
   mediaImporters?: MediaImporters;
   /**
-   * Whether a queued or running render uses an own media (3f.1b review M-3): `media.delete` is refused with IN_FLIGHT while it does. The
-   * render queue's reserved set, as photos have. Nothing passes one until N9 is lifted for a kind of own media: 3f.2 (photos), 3f.3b
-   * (video), 3f.4 (music) and 3f.5 (stickers) each wire the real one and test it.
+   * Whether a queued or running render uses an own media (3f.1b review M-3): `media.delete` is refused with IN_FLIGHT while it does. Absent,
+   * the engine's own render queue provides it, as it does `reservedPhotos` (3f.2 wired it for photos; 3f.3b video, 3f.4 music and 3f.5
+   * stickers add their media to the same set). A test passes its own.
    */
   reservedMedia?: (mediaId: string) => boolean;
   /** Test knob: the disk calls, `O_NOFOLLOW`, chunk size and caps of the staging copy. */
@@ -668,7 +669,8 @@ export class Engine {
       newId: deps.newId,
       now: () => new Date(deps.clock()),
       importers: deps.mediaImporters,
-      reservedMedia: deps.reservedMedia,
+      // The render queue's reserved set, as photos have (3f.2); a test may pass its own.
+      reservedMedia: (mediaId) => (deps.reservedMedia ?? ((id: string) => this.#renders.reservesMedia(id)))(mediaId),
       staging: deps.mediaStaging,
       log: (line) => console.warn(`studio engine: ${line}`),
     });
@@ -696,6 +698,8 @@ export class Engine {
       exportSwitch: { pending: () => this.#exportSwitchPending(), currentPath: () => this.#settings.exportPath },
       caseProbe: this.#caseProbe,
       focus: deps.videos?.focus ?? ((library) => this.#focusOf(library)),
+      // 3f.2: the render looks each own photo up as a photo and holds it on the queue in the same step (MediaService.lookup's onFound).
+      media: { lookup: (mediaId, kind, onFound) => this.#media.lookup(mediaId, kind, onFound) },
       renderTmpDir: init.renderTmpDir,
       // The layers of a spec (3b.6): the same text gate `montages.textPreview` draws through, and the verified built-in sticker set.
       layers: {
@@ -726,6 +730,7 @@ export class Engine {
       withLibrary: (work) => this.#withLiveLibrary(work),
       openLibrary: () => this.library,
       focus: deps.montages?.focus ?? ((library) => this.#focusOf(library)),
+      ownPhotos: (mediaIds) => this.#media.holding(mediaIds, "photo"),
       ...(deps.musicTracks === undefined ? {} : { tracks: deps.musicTracks }),
       newId: deps.newId,
       now: () => new Date(deps.clock()),
@@ -1509,10 +1514,23 @@ export class Engine {
   }
 
   /** The focus resolver of a library, kept for its life (it holds the in-flight computations and the cache), with a fill budget that fits main's command deadline. */
-  #focusOf(library: Library): Pick<FocusResolver, "fillMissingFocus" | "focusFor"> {
+  #focusOf(library: Library): Pick<FocusResolver, "fillMissingFocus" | "focusFor" | "focusForOwn"> {
     let resolver = this.#focusResolvers.get(library);
     if (resolver === undefined) {
-      resolver = createFocusResolver({ library, faceGate: this.#deps.faceGate ?? null, fillBudgetMs: this.#deps.videos?.focusBudgetMs ?? RENDER_FOCUS_BUDGET_MS });
+      resolver = createFocusResolver({
+        library,
+        faceGate: this.#deps.faceGate ?? null,
+        fillBudgetMs: this.#deps.videos?.focusBudgetMs ?? RENDER_FOCUS_BUDGET_MS,
+        // 3f.2: an own photo is judged from the stored file's VERIFIED bytes (size and hash against its record), the same bytes a render copies.
+        ownMedia: {
+          read: async (mediaId, signal) => {
+            const found = await this.#media.lookup(mediaId, "photo");
+            const source = found === undefined ? null : ownPhotoSourceOf(found);
+            if (source === null) return undefined;
+            return { bytes: await readVerifiedOwnPhoto(source, signal), width: source.width, height: source.height };
+          },
+        },
+      });
       this.#focusResolvers.set(library, resolver);
     }
     return resolver;

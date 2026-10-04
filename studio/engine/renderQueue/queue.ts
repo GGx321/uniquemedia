@@ -49,6 +49,11 @@ export interface RenderSubmission {
   readonly totalFrames: number;
   /** The scene photos the spec names. They stay reserved until the job ends (see `beforeRelease`). */
   readonly photoIds: readonly string[];
+  /**
+   * The own media (3f.2: photos) the spec names. Held against their DELETION until the job ends (`reservesMedia`, which `media.delete` asks);
+   * unlike a scene photo they never conflict with another render, so many renders may name the same media.
+   */
+  readonly mediaIds?: readonly string[];
   readonly execute: (context: RenderContext) => Promise<RenderResult>;
 }
 
@@ -142,6 +147,7 @@ function renderErrorUnmasked(error: unknown): EngineError {
 interface Held {
   readonly submission: RenderSubmission;
   readonly photos: ReadonlySet<string>;
+  readonly media: ReadonlySet<string>;
   readonly signal: AbortSignal;
 }
 
@@ -153,6 +159,8 @@ export class RenderQueue {
   /** Jobs waiting for a slot, first in, first out. They carry their own `Held`, so starting one needs no lookup that could miss. */
   #waiting: Held[] = [];
   #running = 0;
+  /** Admission holds on own media, by id: a count, so two renders being admitted together hold it twice. */
+  readonly #holds = new Map<string, number>();
   #idleWaiters: Array<() => void> = [];
 
   constructor(deps: RenderQueueDeps) {
@@ -177,7 +185,7 @@ export class RenderQueue {
     if (conflicts.length > 0) return { ok: false, code: "PHOTOS_RESERVED", photoIds: conflicts };
 
     const signal = this.#deps.jobs.queueRender(submission.jobId, submission.ref, submission.totalFrames);
-    const held: Held = { submission, photos, signal };
+    const held: Held = { submission, photos, media: new Set(submission.mediaIds ?? []), signal };
     this.#held.set(submission.jobId, held);
     this.#waiting.push(held);
     signal.addEventListener("abort", () => this.#onAbort(submission.jobId), { once: true });
@@ -199,6 +207,32 @@ export class RenderQueue {
   /** The scene photos of `avatarId` that queued and running specs hold: the library's reserved-set provider. A fresh copy each time. */
   reservedPhotos(avatarId: string): ReadonlySet<string> {
     return this.#heldBy(avatarId);
+  }
+
+  /**
+   * Whether a queued or running render names this own media: the provider `media.delete` asks (`EngineDeps.reservedMedia`). A job gives its
+   * media back in the same step as its photos, when it ends (a queued job that is cancelled, at once).
+   */
+  reservesMedia(mediaId: string): boolean {
+    if ((this.#holds.get(mediaId) ?? 0) > 0) return true;
+    for (const held of this.#held.values()) if (held.media.has(mediaId)) return true;
+    return false;
+  }
+
+  /**
+   * The render's ADMISSION holds an own media from the moment it found it (`MediaService.lookup`'s `onFound`) until `submit` has taken over
+   * (or the render was refused): the media is reserved before any job names it. Returns the release; calling it again releases nothing more.
+   */
+  holdMedia(mediaId: string): () => void {
+    this.#holds.set(mediaId, (this.#holds.get(mediaId) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.#holds.get(mediaId) ?? 1) - 1;
+      if (left <= 0) this.#holds.delete(mediaId);
+      else this.#holds.set(mediaId, left);
+    };
   }
 
   /** The render jobs as the snapshot lists them: queued, running, and the latest finished. */

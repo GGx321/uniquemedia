@@ -6,7 +6,7 @@ import { makeMock, typesOf, unwrap, type Mock } from "./mockEngine.testkit";
 // MEDIA_UNSUPPORTED and the importer's reason, and stores nothing. The mock plays that as the engine does (the parity suite holds the two
 // side by side): the same events in the same order, with no record and no `media.changed`.
 
-const refused = { name: "clip.mov", accept: { kind: "video", bytes: 5000, refuse: "codec" } } as const;
+const refused = { name: "clip.mov", accept: { kind: "video", bytes: 5000, failWith: "codec" } } as const;
 const photo = { name: "lake.jpg", accept: { kind: "photo", bytes: 120 } } as const;
 
 async function pick(mock: Mock, files: Parameters<Mock["engine"]["pickMediaNext"]>[0]) {

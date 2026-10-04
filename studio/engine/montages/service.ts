@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, PROTOCOL_VERSION, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
-import { MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, type Focus, type MontageIssue } from "../../shared/engine/montage";
-import { defaultSpec } from "../../shared/montage";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, OWN_PHOTO_NOT_FOUND_DETAIL, PROTOCOL_VERSION, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
+import { MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
+import { defaultSpec, ownPhotoCells } from "../../shared/montage";
 import { EngineFailure } from "../engineFailure";
 import type { FocusResolver } from "../focus/focusResolver";
 import type { Library } from "../library";
@@ -42,7 +42,12 @@ export interface MontageServiceDeps {
   /** The open library, unchecked (reads only); null when none. */
   readonly openLibrary: () => Library | null;
   /** The focus resolver of `library`. */
-  readonly focus: (library: Library) => Pick<FocusResolver, "focusFor">;
+  readonly focus: (library: Library) => Pick<FocusResolver, "focusFor"> & Partial<Pick<FocusResolver, "focusForOwn">>;
+  /**
+   * Which of these media ids the library holds as own PHOTOS (3f.2): a draft's own-photo cells are judged against it (`media-unavailable`),
+   * and `montages.focus` of an own photo asks it first. Absent: no own media is held, as a render with none says.
+   */
+  readonly ownPhotos?: (mediaIds: readonly string[]) => Promise<ReadonlySet<string>>;
   /** What the track store holds (3c.5): a draft's trending track is judged against it. Absent: no track is held. */
   readonly tracks?: TrackLookup;
   readonly newId: () => string;
@@ -218,7 +223,28 @@ export class MontageService {
     if (found === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${montageId}` });
     if (found.read.kind !== "ok") throw unreadable(found.read, montageId);
     const { montage } = found.read;
-    return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, this.#availabilityOf(library, montage.spec.avatarId), this.#deps.tracks) };
+    const held = await this.#heldOwnPhotos([montage.spec]);
+    return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, this.#availabilityOf(library, montage.spec.avatarId), this.#deps.tracks, (mediaId) => held.has(mediaId)) };
+  }
+
+  /**
+   * The own photos of `specs` that the library holds, from ONE question to the media store (a list judges every draft against the same
+   * answer). Nothing is asked when no draft names an own photo; with no store wired nothing is held.
+   */
+  async #heldOwnPhotos(specs: readonly MontageDraft[]): Promise<ReadonlySet<string>> {
+    return this.#heldMedia([...new Set(specs.flatMap((spec) => ownPhotoCells(spec).map((cell) => cell.mediaId)))]);
+  }
+
+  /** Which of `ids` the library holds as own photos; nothing is asked for no ids or with no store wired. */
+  async #heldMedia(ids: readonly string[]): Promise<ReadonlySet<string>> {
+    if (ids.length === 0 || this.#deps.ownPhotos === undefined) return new Set();
+    try {
+      return await this.#deps.ownPhotos(ids);
+    } catch (error) {
+      // A media store that fails reads as "holds nothing" for a read: the draft is still answered, and the log says why.
+      this.#deps.log(`the own photos of a draft could not be looked up (${kindOf(error)})`);
+      return new Set();
+    }
   }
 
   // ---------- montages.list ----------
@@ -239,14 +265,16 @@ export class MontageService {
       throw error;
     }
     const availability = new Map<string, Availability>();
-    const items = listing.montages.slice(0, MAX_LISTED_MONTAGES).map((montage) => {
+    const shown = listing.montages.slice(0, MAX_LISTED_MONTAGES);
+    const held = await this.#heldOwnPhotos(shown.map((montage) => montage.spec));
+    const items = shown.map((montage) => {
       const owner = montage.spec.avatarId;
       let known = availability.get(owner);
       if (known === undefined) {
         known = this.#availabilityOf(library, owner);
         availability.set(owner, known);
       }
-      return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks), videoCount: library.videoCountForMontage(owner, montage.montageId) };
+      return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks, (mediaId) => held.has(mediaId)), videoCount: library.videoCountForMontage(owner, montage.montageId) };
     });
     return { items, total: listing.montages.length, skippedTotal: listing.skipped };
   }
@@ -335,11 +363,35 @@ export class MontageService {
     const { avatarId, photo } = payload;
     const avatar = library.getAvatar(avatarId);
     if (avatar === undefined || avatar.status !== "active") throw new EngineFailure({ code: "NOT_FOUND", detail: `no active avatar ${avatarId} in the open library` });
-    // TODO(3f.2): an own photo's focus, from the media store, once there is one.
-    if (photo.source === "own") throw new EngineFailure({ code: "NOT_FOUND", detail: "own photos are not available yet" });
+    if (photo.source === "own") return this.#focusOwn(library, photo.mediaId, entered);
     if (!library.isEligible(avatarId, photo.photoId)) throw new EngineFailure({ code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] });
     const [focus = null] = await this.#focusAll(library, avatarId, [photo.photoId], this.#focusBudget(entered), "montages.focus");
     return { focus };
+  }
+
+  /**
+   * The focus of an own photo the owner has just placed (3f.2): the media must be one the library holds as a photo (else
+   * NOT_FOUND: PHOTO_UNAVAILABLE lists scene photos only), then the face detector judges the STORED photo, under the same budget as a
+   * scene photo. `null` when it was not judged (the draft stores null; a render tries again).
+   */
+  async #focusOwn(library: Library, mediaId: string, entered: number): Promise<CommandResult<"montages.focus">> {
+    if (!(await this.#heldMedia([mediaId])).has(mediaId)) {
+      throw new EngineFailure({ code: "NOT_FOUND", detail: OWN_PHOTO_NOT_FOUND_DETAIL });
+    }
+    const resolver = this.#deps.focus(library);
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(new Error("the focus budget of this command is spent")), this.#focusBudget(entered));
+    try {
+      // A resolver without the own-photo judgement (an engine built without media) judges nothing.
+      if (resolver.focusForOwn === undefined) return { focus: null };
+      const answer = await Promise.race([resolver.focusForOwn(mediaId, stop.signal), new Promise<"late">((resolve) => stop.signal.addEventListener("abort", () => resolve("late"), { once: true }))]);
+      return { focus: answer === "late" || !answer.resolved ? null : answer.focus };
+    } catch {
+      this.#deps.log("montages.focus: an own photo could not be judged for its focus; it is answered without one");
+      return { focus: null };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ---------- shared ----------

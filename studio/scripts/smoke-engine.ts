@@ -87,7 +87,7 @@ import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library
 import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
 import { probeVideo } from "../engine/render/ffmpeg.testkit";
 import { FIXTURES } from "../engine/media/video/testing/fixtures/index";
-import { MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
+import { jpegMetadataMarkers, MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
 import { PEAK_RSS_BYTES } from "../engine/renderQueue/pool";
 import { verifyRenderedMp4 } from "../engine/verify";
 import { commitHoldPaths } from "../engine/videos/e2eCommitHold";
@@ -104,7 +104,7 @@ import { parseFlashapiList } from "../engine/music/listSchema";
 import { EXCERPTS, excerptOf } from "../engine/music/testing/storeKit";
 import { startMockCdn, withExcerptDurations, withFutureExpiry } from "./mockCdn";
 import { startMockFlashapi } from "./mockFlashapi";
-import { faceWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
@@ -602,6 +602,8 @@ function checkPackage(target: Target): void {
   check("app.asar contains the face gate's models and onnxruntime-web's WASM runtime", missingFaceAssets.length === 0, { missingFaceAssets });
   // T7c: the face worker thread is its own built entry, loaded by file URL
   // from inside the asar (never unpacked, for the same integrity reason).
+  // 3f.2: the own-photo decode worker, the same way: inside the asar, never unpacked.
+  check("app.asar contains the own-photo decode worker entry, and it is not unpacked", entries.includes("/out-studio/engine/photoDecodeWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "photoDecodeWorker.js")));
   check("app.asar contains the face worker entry, and it is not unpacked", entries.includes("/out-studio/engine/faceWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "faceWorker.js")));
   // 3b.2, the text rasteriser: resvg's .wasm, the six fonts and their OFL texts stay inside the asar too (never
   // unpacked, for the same integrity reason). That they load from there under the fuses, in the real
@@ -721,6 +723,12 @@ function checkFaceWorker(where: string, engine: string, worker: string | null, f
   check(`${where}: the face worker entry is built, loaded by file URL, a worker thread, Electron-free, and every chunk it imports is present`, problems.length === 0, problems);
 }
 
+/** 3f.2: the own-photo decode worker entry, wherever it was read from (bundleChecks.ts's `photoDecodeWorkerProblems`). */
+function checkPhotoDecodeWorker(where: string, engine: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): void {
+  const problems = photoDecodeWorkerProblems(engine, worker, fileExists);
+  check(`${where}: the own-photo decode worker entry is built, loaded by file URL, a worker thread, Electron-free, with every chunk it imports present and the WASM decode only inside it`, problems.length === 0, problems);
+}
+
 /** 3b.2: the text worker entry, wherever it was read from (bundleChecks.ts's `textWorkerProblems`). */
 function checkTextWorker(where: string, engine: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): void {
   const problems = textWorkerProblems(engine, worker, fileExists);
@@ -766,6 +774,13 @@ async function productionCheck(target: Target): Promise<void> {
       existsSync(textWorkerPath) ? await readFile(textWorkerPath, "utf8") : null,
       (outStudioPath) => existsSync(join(ROOT, "out-studio", outStudioPath)),
     );
+    const photoWorkerPath = join(ROOT, "out-studio", "engine", "photoDecodeWorker.js");
+    checkPhotoDecodeWorker(
+      "the production build",
+      await readFile(join(ROOT, "out-studio", "engine", "main.js"), "utf8"),
+      existsSync(photoWorkerPath) ? await readFile(photoWorkerPath, "utf8") : null,
+      (outStudioPath) => existsSync(join(ROOT, "out-studio", outStudioPath)),
+    );
     const workerPath = join(ROOT, "out-studio", "engine", "faceWorker.js");
     checkFaceWorker(
       "the production build",
@@ -790,6 +805,12 @@ async function productionCheck(target: Target): Promise<void> {
     "the package",
     asarText(target, join("out-studio", "engine", "main.js")),
     packagedEntries.has("/out-studio/engine/textWorker.js") ? asarText(target, join("out-studio", "engine", "textWorker.js")) : null,
+    (outStudioPath) => packagedEntries.has(`/out-studio/${outStudioPath}`),
+  );
+  checkPhotoDecodeWorker(
+    "the package",
+    asarText(target, join("out-studio", "engine", "main.js")),
+    packagedEntries.has("/out-studio/engine/photoDecodeWorker.js") ? asarText(target, join("out-studio", "engine", "photoDecodeWorker.js")) : null,
     (outStudioPath) => packagedEntries.has(`/out-studio/${outStudioPath}`),
   );
   checkFaceWorker(
@@ -1371,8 +1392,8 @@ async function runImportScenario(target: Target): Promise<void> {
 /**
  * The own-media import in the real build, on both operating systems: main's dialog stand-in (`--studio-pick-media`) names ONE path; the
  * file there is rewritten between picks. A PNG goes through the whole job in the packaged engine (copy into `media/.staging`, the E2E
- * build's stand-in importer, the stored file and its record, written with the Windows retries and the fsyncs of the library's own
- * helpers), then the record is listed, survives an app restart and is deleted with its file. The other kinds are refused where the
+ * build's real photo importer (3f.2: WASM decode, upright, re-encoded as a JPEG without metadata), the stored file and its record, written with the Windows retries and the fsyncs of the library's own
+ * helpers), then the record is listed, survives an app restart and is deleted with its file. A 1x1 picture and an animated WebP fail inside their jobs (too-small, animated-webp). The other kinds are refused where the
  * engine says: no importer yet. Nothing is sent to the network.
  */
 async function runPackagedMediaScenario(target: Target): Promise<void> {
@@ -1439,39 +1460,35 @@ async function runPackagedMediaScenario(target: Target): Promise<void> {
     const first = field(listed, "result", "media", "0");
     check(
       "media scenario: media.list has the record: the photo's name, its size from the PNG, and the size of the stored file",
-      field(listed, "result", "total") === 1 && field(first, "mediaId") === mediaId && field(first, "kind") === MEDIA_SMOKE_STORED.kind && field(first, "name") === MEDIA_SMOKE_STORED.name && field(first, "width") === MEDIA_SMOKE_STORED.width && field(first, "height") === MEDIA_SMOKE_STORED.height && field(first, "bytes") === MEDIA_SMOKE_STORED.bytes,
+      field(listed, "result", "total") === 1 && field(first, "mediaId") === mediaId && field(first, "kind") === MEDIA_SMOKE_STORED.kind && field(first, "name") === MEDIA_SMOKE_STORED.name && field(first, "width") === MEDIA_SMOKE_STORED.width && field(first, "height") === MEDIA_SMOKE_STORED.height && typeof field(first, "bytes") === "number" && Number(field(first, "bytes")) > 0,
       listed,
     );
     check("media scenario: the record's JSON carries no path", !JSON.stringify(listed).includes(tmp), listed);
-    const problems = mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, "png");
+    const problems = mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, MEDIA_SMOKE_STORED.extension);
     check("media scenario: media/ holds the stored file and its record and nothing else", problems.length === 0, problems);
-    const storedBytes = new Uint8Array(await readFile(join(mediaDir, `${mediaId}.png`)));
-    check("media scenario: the stored file is the picked file, byte for byte", createHash("sha256").update(storedBytes).digest("hex") === createHash("sha256").update(photo.bytes).digest("hex"));
+    // 3f.2: the stored file is the importer's own JPEG (the PNG decoded by the engine's WASM codec, re-encoded by ffmpeg), never the picked bytes.
+    const storedBytes = new Uint8Array(await readFile(join(mediaDir, `${mediaId}.${MEDIA_SMOKE_STORED.extension}`)));
+    check("media scenario: the stored file is a JPEG the importer made, not the picked PNG", storedBytes[0] === 0xff && storedBytes[1] === 0xd8 && storedBytes[2] === 0xff && createHash("sha256").update(storedBytes).digest("hex") !== createHash("sha256").update(photo.bytes).digest("hex"));
+    check("media scenario: the stored JPEG holds no metadata segment (no JFIF, EXIF, comment or encoder string)", jpegMetadataMarkers(storedBytes).length === 0 && !Buffer.from(storedBytes).includes(Buffer.from("Lavc")), jpegMetadataMarkers(storedBytes));
     const recordText = await readFile(join(mediaDir, `${mediaId}.json`), "utf8");
-    check("media scenario: the record on disk names the file by its own name and the picked path nowhere", recordText.includes(`"file": "${mediaId}.png"`) && !recordText.includes(pickedDir), recordText);
+    check("media scenario: the record on disk names the file by its own name and the picked path nowhere", recordText.includes(`"file": "${mediaId}.${MEDIA_SMOKE_STORED.extension}"`) && !recordText.includes(pickedDir), recordText);
     check("media scenario: the staging folder is empty after the import", (await names(stagingDir)).length === 0, await names(stagingDir));
 
     // 3. Every other case, through the same dialog stand-in: the bytes decide, whatever the name.
-    let failedJobs = 0;
     for (const file of MEDIA_SMOKE_FILES.filter((f) => f.label !== "photo")) {
       await Bun.write(pickedPath, file.bytes);
       const answer = await pick("any");
-      if ("failsAs" in file.expect) {
-        // A video has an importer (3f.3a): the file is accepted into a job, and the importer's walker fails it once its copy is made.
-        const ids = field(answer, "result", "jobIds");
-        const jobId = Array.isArray(ids) ? String(ids[0]) : "";
+      if ("failed" in file.expect) {
+        // The boundary takes the file (its bytes are a photo's); the photo importer turns it away INSIDE the job, with its reason.
+        const wantedReason = file.expect.failed;
+        const taken = field(answer, "result", "jobIds");
+        const failedId = Array.isArray(taken) && taken.length === 1 ? String(taken[0]) : "";
+        const failed = await waitFor(`the ${file.label} import job to end`, async () => (await snapshotJobs()).find((job) => field(job, "jobId") === failedId && field(job, "status") !== "running" && field(job, "status") !== "queued") ?? null, 30_000, 100);
         check(
-          `media scenario: the ${file.label} file picked as any is accepted into one job, refuses nothing and names no path`,
-          field(answer, "ok") === true && field(answer, "result", "picked") === true && Array.isArray(ids) && ids.length === 1 && JSON.stringify(field(answer, "result", "refused")) === "[]" && !JSON.stringify(answer).includes(tmp),
-          answer,
-        );
-        const failed = await waitFor(`the ${file.label} job to end`, async () => (await snapshotJobs()).find((job) => field(job, "jobId") === jobId && field(job, "status") !== "running" && field(job, "status") !== "queued") ?? null, 30_000, 100);
-        check(
-          `media scenario: the ${file.label} job fails as ${file.expect.failsAs}, with no path in what it says`,
-          field(failed, "status") === "failed" && field(failed, "error", "code") === "MEDIA_UNSUPPORTED" && field(failed, "error", "mediaReason") === file.expect.failsAs && !JSON.stringify(failed).includes(tmp),
+          `media scenario: the ${file.label} file starts a job that fails as ${wantedReason}, and names no path`,
+          failedId !== "" && field(failed, "status") === "failed" && field(failed, "error", "code") === "MEDIA_UNSUPPORTED" && field(failed, "error", "mediaReason") === wantedReason && !JSON.stringify(failed).includes(tmp),
           failed,
         );
-        failedJobs++;
         continue;
       }
       const refused = field(answer, "result", "refused", "0");
@@ -1482,11 +1499,11 @@ async function runPackagedMediaScenario(target: Target): Promise<void> {
         answer,
       );
     }
-    check("media scenario: no refused file left anything in media/ or its staging folder", mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, "png").length === 0 && (await names(stagingDir)).length === 0, { media: await names(mediaDir), staging: await names(stagingDir) });
+    check("media scenario: no refused file left anything in media/ or its staging folder", mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, MEDIA_SMOKE_STORED.extension).length === 0 && (await names(stagingDir)).length === 0, { media: await names(mediaDir), staging: await names(stagingDir) });
 
     // 4. The window cannot name a file, and the commands of a job that is over or never was.
     const withPath = await req(running.cdp, "media.pickImport", { kind: "photo", path: pickedPath });
-    check("media scenario: a pick that names a path is refused by the contract, and nothing is imported", field(withPath, "ok") === false && (await snapshotJobs()).filter((job) => field(job, "kind") === "import").length === 1 + failedJobs, withPath);
+    check("media scenario: a pick that names a path is refused by the contract, and nothing is imported", field(withPath, "ok") === false && (await snapshotJobs()).filter((job) => field(job, "kind") === "import").length === MEDIA_SMOKE_FILES.filter((f) => "job" in f.expect || "failed" in f.expect).length, withPath);
     const cancelOver = await req(running.cdp, "media.cancelImport", { jobId });
     check("media scenario: media.cancelImport of a job that is over answers it as it ended, and changes nothing", field(cancelOver, "ok") === true && field(cancelOver, "result", "jobId") === jobId && (await req(running.cdp, "media.list", {}).then((r) => field(r, "result", "total"))) === 1, cancelOver);
     const cancelUnknown = await req(running.cdp, "media.cancelImport", { jobId: "job-00000404" });

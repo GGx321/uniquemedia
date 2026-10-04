@@ -24,10 +24,12 @@ export interface MockMediaAccept {
   bytes: number;
   facts?: Partial<MockMediaFacts>;
   /**
-   * 3f.3a: the kind's importer refuses the file AFTER its copy (a codec, a length, a size): the job runs to its total and then ends failed with
-   * MEDIA_UNSUPPORTED and this reason, and nothing is stored. Absent: the importer takes the file.
+   * A photo whose face the detector would find (3f.2): `montages.focus` of it answers a point, not null. The record carries no such field; the
+   * mock keeps it beside the record, as the engine keeps the face in pixels.
    */
-  refuse?: MediaUnsupportedReason;
+  face?: boolean;
+  /** The kind's importer turns the file away INSIDE the job (3f.2: `too-small`, `dimensions`, `animated-webp`, `format`...): the job fails with MEDIA_UNSUPPORTED and stores nothing. */
+  failWith?: MediaUnsupportedReason;
 }
 
 const NO_FACTS: MockMediaFacts = { width: null, height: null, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null };
@@ -74,6 +76,8 @@ export class MockOwnMedia {
   readonly #deps: MockOwnMediaDeps;
   /** In the order they were stored; the mock's clock moves on at every record, so this is also the order of `createdAt`. */
   #records: MediaSummary[] = [];
+  /** The own photos the script says have a face (3f.2). */
+  readonly #faces = new Set<string>();
   #jobs: ImportJob[] = [];
   /** Jobs that started while imports were held and wait for the let-go. */
   #waiting: ImportJob[] = [];
@@ -158,9 +162,9 @@ export class MockOwnMedia {
     }
     job.done = job.total;
     this.#event("job.progress", { ...ref, done: job.total, total: job.total });
-    if (job.accept.refuse !== undefined) {
-      // As the engine's job: the importer's refusal is the job's end, with the reason and the engine's own words for it; nothing is stored.
-      const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: job.accept.refuse, detail: `the file was refused: ${job.accept.refuse}` };
+    if (job.accept.failWith !== undefined) {
+      // The copy is done and the importer turns the file away: the job fails with its reason, nothing is stored, the next job takes its turn.
+      const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: job.accept.failWith, detail: `the file was refused: ${job.accept.failWith}` };
       job.status = "failed";
       job.error = error;
       this.#event("job.failed", { ...ref, error });
@@ -177,6 +181,7 @@ export class MockOwnMedia {
       ...job.accept.facts,
     };
     this.#records.push(summary);
+    if (job.accept.face === true) this.#faces.add(summary.mediaId);
     this.#event("media.changed", { change: "upserted", media: summary });
     job.status = "done";
     job.mediaId = summary.mediaId;
@@ -214,10 +219,26 @@ export class MockOwnMedia {
     return { media: all.slice(0, MAX_LISTED_MEDIA), total: all.length };
   }
 
+  /** Whether the library holds this media as a PHOTO: what a render's admission and a draft's referential check ask (3f.2). */
+  holdsPhoto(mediaId: string): boolean {
+    return this.#records.some((r) => r.mediaId === mediaId && r.kind === "photo");
+  }
+
+  /** Whether the library holds this media, of any kind (`media.delete` answers NOT_FOUND before it asks the reserved set). */
+  has(mediaId: string): boolean {
+    return this.#records.some((r) => r.mediaId === mediaId);
+  }
+
+  /** Whether the detector would find a face in this own photo (3f.2), as the script said. */
+  hasFace(mediaId: string): boolean {
+    return this.#faces.has(mediaId);
+  }
+
   /** Removes a record and announces it; false for an id it does not hold. */
   delete(mediaId: string): boolean {
     const at = this.#records.findIndex((r) => r.mediaId === mediaId);
     if (at < 0) return false;
+    this.#faces.delete(mediaId);
     this.#records.splice(at, 1);
     this.#event("media.changed", { change: "removed", mediaId });
     return true;

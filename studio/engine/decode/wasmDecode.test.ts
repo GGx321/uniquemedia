@@ -112,6 +112,21 @@ describe("createWasmImageDecoder", () => {
     expect(called).toBe(false);
   });
 
+  // 3f.2: the own-photo importer takes camera pictures, so it asks for a higher cap of its own; the default (the face gate's) is unchanged.
+  test("a decoder built with its own maxPixels accepts a header over the default cap and refuses one over its own, before the backend", async () => {
+    let calls = 0;
+    const decode = createWasmImageDecoder(fakeBackend({ decodeJpeg: async () => ((calls++), { width: 5000, height: 5000, data: new Uint8Array(5000 * 5000 * 4) }) }), { maxPixels: 25_000_000 });
+
+    expect((await decode(jpegWithHeaderSize(5000, 5000), new AbortController().signal)).width).toBe(5000);
+    await expect(decode(jpegWithHeaderSize(5001, 5000), new AbortController().signal)).rejects.toThrow(/25000000/);
+    expect(calls).toBe(1);
+  });
+
+  test("a decoder built without options keeps the default cap", async () => {
+    const decode = createWasmImageDecoder(fakeBackend({}));
+    await expect(decode(jpegWithHeaderSize(5000, 5000), new AbortController().signal)).rejects.toThrow(new RegExp(`${MAX_DECODE_PIXELS}`));
+  });
+
   // N9: the exact boundary, both sides — MAX_DECODE_PIXELS = 16_777_216 = 4096x4096 exactly.
   test("N9: accepts a JPEG header at exactly MAX_DECODE_PIXELS (4096x4096)", async () => {
     const atCap = jpegWithHeaderSize(4096, 4096);

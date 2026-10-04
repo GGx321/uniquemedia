@@ -122,11 +122,11 @@ describe("montages.focus: what it refuses", () => {
     }
   });
 
-  test("an own upload is NOT_FOUND until the media store exists (slice 3f)", async () => {
+  test("an own photo with no media store wired is NOT_FOUND (3f.2; the own photo's answers are in service.ownPhotos.test.ts)", async () => {
     const w = world();
     const r = montageRig(w);
 
-    expect((await failureOf(r.service.focus({ avatarId: w.avatar.id, photo: { source: "own", mediaId: "media-0000001" } }))).code).toBe("NOT_FOUND");
+    expect(await failureOf(r.service.focus({ avatarId: w.avatar.id, photo: { source: "own", mediaId: "media-0000001" } }))).toMatchObject({ code: "NOT_FOUND" });
   });
 
   test("an avatar the library does not have, a draft avatar and an archived one are NOT_FOUND", async () => {
