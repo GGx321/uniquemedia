@@ -339,12 +339,12 @@ export class MediaStaging {
         await close();
         return judged.ok ? refuse("cancelled", "the import was cancelled") : judged;
       }
-      const { kind, size, cap, head } = judged;
+      const { kind, size, cap, head, routed } = judged;
       const opened: OpenedMedia = {
         kind,
         bytes: size,
         head,
-        copy: (options = {}) => this.#guardedCopy(handle, request, kind, size, cap, options),
+        copy: (options = {}) => this.#guardedCopy(handle, request, kind, size, cap, routed, options),
         close,
       };
       return { ok: true, opened };
@@ -369,7 +369,7 @@ export class MediaStaging {
   async #judge(
     handle: FileHandle,
     request: OpenRequest,
-  ): Promise<{ ok: true; kind: MediaKind; size: number; cap: number; head: Uint8Array } | { ok: false; reason: StageRefusal; detail: string }> {
+  ): Promise<{ ok: true; kind: MediaKind; size: number; cap: number; head: Uint8Array; routed: boolean } | { ok: false; reason: StageRefusal; detail: string }> {
     const info = await handle.stat({ bigint: true });
     if (!sameIdentity(pickedIdentityOf(info), request.expected)) return refuse("changed", "the file is not the one the dialog showed");
     if (info.size === 0n) return refuse("empty", "the file has no bytes");
@@ -387,26 +387,30 @@ export class MediaStaging {
       return refuse(reason, reason === "heic" ? "a HEIC picture cannot be imported" : "the file's bytes are not of the kind that was asked for");
     }
     // The one drop zone (3f.6): the head of an MP4 or MOV cannot tell a video from a voice note, so the tracks decide (`isoRoute.ts`), read from THIS handle, never the path.
+    let routed = false;
     if (request.kind === "any" && kind === "video" && isIsoFamily(head)) {
       const route = await routeIsoFile(handleSource(handle, size));
-      if (route === "audio") kind = "audio";
+      if (route === "audio") {
+        kind = "audio";
+        routed = true;
+      }
       if (route === "neither") return refuse("format", "the file holds neither a video nor a sound track");
     }
     if (this.#options.supports?.(kind) === false) return refuse("not-yet-supported", `${kind} files cannot be imported yet`);
     const cap = this.#caps[kind];
     if (size > cap) return refuse("too-large", `the file is larger than ${cap} bytes`);
-    return { ok: true, kind, size, cap, head };
+    return { ok: true, kind, size, cap, head, routed };
   }
 
-  async #guardedCopy(handle: FileHandle, request: OpenRequest, kind: MediaKind, size: number, cap: number, options: CopyOptions): Promise<StageResult> {
+  async #guardedCopy(handle: FileHandle, request: OpenRequest, kind: MediaKind, size: number, cap: number, routed: boolean, options: CopyOptions): Promise<StageResult> {
     try {
-      return await this.#copy(handle, request, kind, size, cap, options);
+      return await this.#copy(handle, request, kind, size, cap, routed, options);
     } catch (error) {
       return refusalOfError(error);
     }
   }
 
-  async #copy(handle: FileHandle, request: OpenRequest, kind: MediaKind, size: number, cap: number, options: CopyOptions): Promise<StageResult> {
+  async #copy(handle: FileHandle, request: OpenRequest, kind: MediaKind, size: number, cap: number, routed: boolean, options: CopyOptions): Promise<StageResult> {
     const { signal, onProgress } = options;
     // A function, so that TypeScript does not read the first answer as the answer for the whole copy.
     const aborted = (): boolean => signal?.aborted === true;
@@ -474,8 +478,9 @@ export class MediaStaging {
       const format = formatOf(stagedHead);
       const again = resolveMediaKind(request.kind, stagedHead);
       // A file the drop zone routed to the audio importer (`isoRoute.ts`) is still an MP4 or MOV by its head, which the sniff alone calls a video: that is the same file.
-      const routed = request.kind === "any" && kind === "audio" && again === "video" && isIsoFamily(stagedHead);
-      if ((again !== kind && !routed) || format === null) {
+      // Only a file that WAS routed (`routed`, from the judging) gets this: a head that changed from an `M4A ` brand to isom after the open was never looked at, and is `changed`.
+      const sameFile = routed && again === "video" && isIsoFamily(stagedHead);
+      if ((again !== kind && !sameFile) || format === null) {
         return await abandon(refuse("changed", "the file's start changed while it was being copied"));
       }
       try {

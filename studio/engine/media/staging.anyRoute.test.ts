@@ -127,6 +127,53 @@ describe("what is not routed", () => {
   });
 });
 
+describe("the copy of a file that was NOT routed", () => {
+  test("a head changed in place from an M4A brand to isom between the open and the copy is `changed`: the leniency belongs to a file that WAS routed", async () => {
+    const file = await put("memo.m4a", fixtureBytes("m4a"));
+    const opened = await staging().open({ ...file, kind: "any" });
+    if (!opened.ok) throw new Error(`refused: ${opened.reason}`);
+    // The brand `M4A ` says audio by itself: no look at the tracks was needed, so none was made.
+    expect(opened.opened.kind).toBe("audio");
+    const handle = await openFile(file.path, "r+");
+    await handle.write(new Uint8Array([0x69, 0x73, 0x6f, 0x6d]), 0, 4, 8);
+    await handle.close();
+    expect(await opened.opened.copy({})).toMatchObject({ ok: false, reason: "changed" });
+    await opened.opened.close();
+  });
+});
+
+describe("a routed file is held to the AUDIO kind's own limits (3f.6 review, R11)", () => {
+  test("a routed file over the audio cap is refused too-large, before a byte is copied (the any pick's cap is the largest of all)", async () => {
+    const bytes = AUDIO_ONLY();
+    const file = await put("voice.m4a", bytes);
+    const small = new MediaStaging({
+      root: libraryRoot(),
+      newId: () => `staged-${String(++ids).padStart(8, "0")}`,
+      caps: { photo: 1 << 20, video: 1 << 30, audio: bytes.length - 1, sticker: 1 << 20 },
+    });
+    expect(await small.open({ ...file, kind: "any" })).toMatchObject({ ok: false, reason: "too-large" });
+  });
+
+  test("a routed file at exactly the audio cap is taken", async () => {
+    const bytes = AUDIO_ONLY();
+    const file = await put("voice.m4a", bytes);
+    const exact = new MediaStaging({
+      root: libraryRoot(),
+      newId: () => `staged-${String(++ids).padStart(8, "0")}`,
+      caps: { photo: 1 << 20, video: 1 << 30, audio: bytes.length, sticker: 1 << 20 },
+    });
+    const result = await exact.open({ ...file, kind: "any" });
+    expect(result.ok).toBe(true);
+    if (result.ok) await result.opened.close();
+  });
+
+  test("a routed file is refused not-yet-supported when the audio kind has no importer, and a video importer alone does not take it", async () => {
+    const file = await put("voice.m4a", AUDIO_ONLY());
+    const noAudio = new MediaStaging({ root: libraryRoot(), newId: () => `staged-${String(++ids).padStart(8, "0")}`, supports: (kind) => kind === "video" });
+    expect(await noAudio.open({ ...file, kind: "any" })).toMatchObject({ ok: false, reason: "not-yet-supported" });
+  });
+});
+
 describe("the copy of a routed file", () => {
   test("is staged as a track, with the container its bytes are (mp4), and the job's importer is the audio one", async () => {
     const file = await put("voice.m4a", AUDIO_ONLY());
