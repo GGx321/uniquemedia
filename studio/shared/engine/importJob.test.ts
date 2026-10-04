@@ -124,6 +124,12 @@ describe("the Russian text of each refusal reason (CF10)", () => {
     expect(MEDIA_REASONS_RU.heic).toContain("сохраните как JPEG");
   });
 
+  test("a photo that is too small, too large in pixels or an animated WebP says so in its own words (3f.2)", () => {
+    expect(MEDIA_REASONS_RU["too-small"]).toContain("2 пиксел");
+    expect(MEDIA_REASONS_RU.dimensions).toContain("мегапиксел");
+    expect(MEDIA_REASONS_RU["animated-webp"]).toContain("WebP");
+  });
+
   test("no text holds a path or a file name placeholder", () => {
     for (const text of Object.values(MEDIA_REASONS_RU)) {
       expect(text).not.toMatch(/[\\/]/);

@@ -122,7 +122,23 @@ describe("byte caps", () => {
 });
 
 describe("refusal reasons", () => {
-  test("name the boundary's own reasons", () => {
-    expect(MediaUnsupportedReason.options).toEqual(["not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported"]);
+  test("name the boundary's own reasons, then the photo importer's (3f.2)", () => {
+    expect(MediaUnsupportedReason.options).toEqual([
+      "not-a-file",
+      "empty",
+      "too-large",
+      "format",
+      "heic",
+      "changed",
+      "unreadable",
+      "no-space",
+      "too-many",
+      "failed",
+      "cancelled",
+      "not-yet-supported",
+      "too-small",
+      "dimensions",
+      "animated-webp",
+    ]);
   });
 });
