@@ -337,6 +337,13 @@ export const RENDER_NOT_QUEUED_DETAIL = "the render request ran out of time befo
 // Do not "fix" the wording: parity/testing/golden.ts is APPEND-ONLY and its `montages.focus: judged, unjudged, refused` line carries this exact text.
 export const OWN_PHOTO_NOT_FOUND_DETAIL = "own photos are not available yet";
 
+/**
+ * `EngineError.detail` of the NOT_FOUND `music.peaks` answers for an own track the library does not hold, or holds as something that is not a track
+ * (3f.4). Kept word for word for the same reason as `OWN_PHOTO_NOT_FOUND_DETAIL`: the parity golden's `music.peaks` line carries this exact text.
+ */
+// Do not "fix" the wording: parity/testing/golden.ts is APPEND-ONLY and its `music.peaks` lines for an own track carry this exact text.
+export const OWN_MUSIC_NOT_FOUND_DETAIL = "own music is not available yet";
+
 /** The start of the detail main gives a command the engine did not answer in time (`the engine did not answer within 30 s`): the command may still have been carried out. */
 export const NO_ANSWER_DETAIL_PREFIX = "the engine did not answer within ";
 

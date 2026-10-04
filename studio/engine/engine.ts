@@ -37,10 +37,12 @@ import {
   type UnreadableAvatar,
   type UnsequencedEvent,
   UNREADABLE_REASON_DETAIL,
+  OWN_MUSIC_NOT_FOUND_DETAIL,
   MAX_LISTED_PHOTOS,
   MAX_LISTED_RUNS,
 } from "../shared/engine";
 import { downscaleToJpeg, MAX_SOURCE_PIXELS, preflightDownscale } from "../node/downscale";
+import { windowPeaks } from "../shared/music/trackShape";
 import { timeoutSignal, untilAborted } from "./money/timeoutSignal";
 import { AGE_CHECK_MAX_SIDE, passesAgeThreshold } from "./avatars/ageCheck";
 import { candidateJobEnd, runCandidateJob, type SlotOutcome } from "./avatars/candidateJob";
@@ -99,6 +101,7 @@ import { MediaDiskError } from "./library/mediaRecords";
 import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { ownPhotoSourceOf, readVerifiedOwnPhoto } from "./videos/ownPhotos";
+import { ownTrackFactsOf } from "./videos/ownTrack";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
 import { createStickerAssets, StickerAssetError, type StickerAssets } from "./videos/stickerAssets";
 import { MontageService, type MontageServiceDeps } from "./montages/service";
@@ -731,6 +734,16 @@ export class Engine {
       openLibrary: () => this.library,
       focus: deps.montages?.focus ?? ((library) => this.#focusOf(library)),
       ownPhotos: (mediaIds) => this.#media.holding(mediaIds, "photo"),
+      // 3f.4: the own tracks a draft names, with their decoded lengths: what `ownTrackFactsOf` says a render could read (audio, with a length, stored as M4A).
+      ownTracks: async (mediaIds) => {
+        const held = new Map<string, { readonly durationMs: number }>();
+        for (const mediaId of mediaIds) {
+          const found = await this.#media.lookup(mediaId, "audio");
+          const facts = found === undefined ? null : ownTrackFactsOf(found);
+          if (facts !== null) held.set(mediaId, facts);
+        }
+        return held;
+      },
       ...(deps.musicTracks === undefined ? {} : { tracks: deps.musicTracks }),
       newId: deps.newId,
       now: () => new Date(deps.clock()),
@@ -1487,8 +1500,19 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { tracks: this.#music.list() } };
       case "music.peaks": {
         const { track, startMs, durationMs, bars } = command.payload;
-        // Own music arrives with 3f; until then there is no such track, and the answer says why.
-        if (track.source === "own") return errorResponseFor(command, { code: "NOT_FOUND", detail: "own music is not available yet" });
+        // An own track (3f.4): the waveform its record keeps (the 50 ms envelope the importer found), windowed by the same function as a trending track's. A media
+        // the library does not hold, one that is not a track, one whose waveform cannot be trusted, and no open library all answer NOT_FOUND, with the detail the
+        // answer had before own music existed (the parity golden names it).
+        if (track.source === "own") {
+          let waveform: number[] | undefined;
+          try {
+            waveform = await this.#media.waveform(track.mediaId);
+          } catch {
+            waveform = undefined;
+          }
+          if (waveform === undefined) return errorResponseFor(command, { code: "NOT_FOUND", detail: OWN_MUSIC_NOT_FOUND_DETAIL });
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { peaks: windowPeaks({ stepMs: 50, peaks: waveform }, startMs, durationMs, bars) } };
+        }
         const peaks = await this.#music.peaks(track.trackId, startMs, durationMs, bars);
         if (peaks === null) return errorResponseFor(command, { code: "NOT_FOUND", detail: `track ${track.trackId} is not stored` });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { peaks } };
