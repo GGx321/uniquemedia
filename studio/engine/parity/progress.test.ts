@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { ProgressInvariants, type RenderProgress } from "./testing/progress";
+import { ImportProgressInvariants, ProgressInvariants, type ImportProgress, type RenderProgress } from "./testing/progress";
 useNativeGlobals();
 
 // The parity transcript does not write a render's `done` (the engine steps by ffmpeg's frames, the mock by a clock), so what
@@ -91,5 +91,49 @@ describe("a render's progress numbers", () => {
 
   test("refuses a step after the saving phase began", () => {
     expect(() => run(p(0), p(84), p(84, true), p(90))).toThrow(/after the saving phase/);
+  });
+});
+
+// Fix round 3, M3: an import's progress counts BYTES copied, and the numbers either engine sends must satisfy the same kind of rules.
+const ip = (done: number, jobId = "job-a", total = 1000, queued = false): ImportProgress => ({ jobId, done, total, ...(queued ? { queued: true } : {}) });
+
+function runImports(...events: ImportProgress[]): void {
+  const checker = new ImportProgressInvariants();
+  for (const event of events) checker.check(event);
+}
+
+describe("an import's progress numbers", () => {
+  test("accepts a start at zero, steps that climb, and a last step at the total", () => {
+    expect(() => runImports(ip(0), ip(100), ip(600), ip(1000))).not.toThrow();
+  });
+
+  test("accepts a job announced queued, then announced again when it runs, then its steps", () => {
+    expect(() => runImports(ip(0, "job-a", 1000, true), ip(0), ip(1000))).not.toThrow();
+  });
+
+  test("accepts a job that ends with nothing copied, and two jobs interleaved", () => {
+    expect(() => runImports(ip(0, "job-a"), ip(0, "job-b", 50, true), ip(1000, "job-a"), ip(0, "job-b", 50), ip(50, "job-b", 50))).not.toThrow();
+  });
+
+  test("refuses a job that does not begin at zero", () => {
+    expect(() => runImports(ip(10))).toThrow(/begin at zero/);
+  });
+
+  test("refuses done beyond the total, and a total that changes", () => {
+    expect(() => runImports(ip(0), ip(1001))).toThrow(/outside 0\.\.total/);
+    expect(() => runImports(ip(0), ip(10, "job-a", 900))).toThrow(/total changed/);
+  });
+
+  test("refuses done that goes back", () => {
+    expect(() => runImports(ip(0), ip(500), ip(400))).toThrow(/goes back/);
+  });
+
+  test("refuses queued anywhere but the first announcement of a job", () => {
+    expect(() => runImports(ip(0), ip(0, "job-a", 1000, true))).toThrow(/queued is only the first/);
+    expect(() => runImports(ip(0, "job-a", 1000, true), ip(5, "job-a", 1000, true))).toThrow(/queued/);
+  });
+
+  test("refuses a job announced at zero more than twice", () => {
+    expect(() => runImports(ip(0, "job-a", 1000, true), ip(0), ip(0))).toThrow(/at most twice/);
   });
 });

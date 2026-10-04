@@ -264,14 +264,67 @@ describe("jobs that wait for their turn", () => {
     expect((await unwrap(mock.client.request("media.list", {}))).total).toBe(2);
   });
 
-  test("a queued job is cancelled at once and never stores", async () => {
+  test("a queued job's cancel is answered first and its end follows, as the engine's does: job.cancelled comes on the clock, never before the answer", async () => {
     const mock = makeMock();
     const answer = await pick(mock, [photo, { name: "second.jpg", accept: { kind: "photo", bytes: 130 } }]);
     if (!answer.picked) throw new Error("not picked");
     const [, second] = answer.jobIds as [string, string];
+    const before = importEvents(mock).length;
     await unwrap(mock.client.request("media.cancelImport", { jobId: second }));
-    expect(importEvents(mock).some((e) => e.type === "job.cancelled")).toBe(true);
+    expect(importEvents(mock).length).toBe(before);
     mock.scheduler.runAll();
+    const cancelled = importEvents(mock).filter((e) => e.type === "job.cancelled");
+    expect(cancelled).toHaveLength(1);
     expect((await unwrap(mock.client.request("media.list", {}))).media.map((m) => m.name)).toEqual(["lake.jpg"]);
+    const snapshot = await unwrap(mock.client.request("engine.snapshot", {}));
+    expect(snapshot.jobs.find((j) => j.jobId === second)).toMatchObject({ status: "cancelled" });
+  });
+
+  test("a cancelled queued job never takes the turn: the job behind it runs when the first ends", async () => {
+    const mock = makeMock();
+    const answer = await pick(mock, [photo, { name: "second.jpg", accept: { kind: "photo", bytes: 130 } }, { name: "third.jpg", accept: { kind: "photo", bytes: 140 } }]);
+    if (!answer.picked) throw new Error("not picked");
+    await unwrap(mock.client.request("media.cancelImport", { jobId: answer.jobIds[1] as string }));
+    mock.scheduler.runAll();
+    expect((await unwrap(mock.client.request("media.list", {}))).media.map((m) => m.name)).toEqual(["third.jpg", "lake.jpg"]);
+  });
+});
+
+describe("the most imports that wait at once (the engine's cap of 40)", () => {
+  const many = (from: number, count: number) => Array.from({ length: count }, (_, i) => ({ name: `p${from + i}.jpg`, accept: { kind: "photo" as const, bytes: 100 + i } }));
+
+  test("a file beyond 40 queued and running is refused too-many by name, and the jobs taken go on (a pick takes at most 20 files)", async () => {
+    const mock = makeMock();
+    const first = await pick(mock, many(0, 20));
+    const second = await pick(mock, many(20, 20));
+    const third = await pick(mock, many(40, 5));
+    if (!first.picked || !second.picked || !third.picked) throw new Error("not picked");
+    expect(first.jobIds).toHaveLength(20);
+    expect(second.jobIds).toHaveLength(20);
+    expect(third.jobIds).toEqual([]);
+    expect(third.refused).toEqual(many(40, 5).map((f) => ({ name: f.name, reason: "too-many" })));
+    mock.scheduler.runAll();
+    expect((await unwrap(mock.client.request("media.list", {}))).total).toBe(40);
+  });
+
+  test("a pick that reaches the cap half way is split: the files that fit start jobs, the rest are refused", async () => {
+    const mock = makeMock();
+    await pick(mock, many(0, 20));
+    await pick(mock, many(20, 15));
+    const edge = await pick(mock, many(35, 10));
+    if (!edge.picked) throw new Error("not picked");
+    expect(edge.jobIds).toHaveLength(5);
+    expect(edge.refused).toHaveLength(5);
+  });
+
+  test("room frees as jobs end: the cap counts the jobs not yet over", async () => {
+    const mock = makeMock();
+    await pick(mock, many(0, 20));
+    await pick(mock, many(20, 20));
+    mock.scheduler.runAll();
+    const again = await pick(mock, many(40, 2));
+    if (!again.picked) throw new Error("not picked");
+    expect(again.jobIds).toHaveLength(2);
+    expect(again.refused).toEqual([]);
   });
 });

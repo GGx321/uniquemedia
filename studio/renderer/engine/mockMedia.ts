@@ -35,6 +35,9 @@ const DEFAULT_FACTS: Readonly<Record<MediaKind, MockMediaFacts>> = {
   sticker: { ...NO_FACTS, width: 320, height: 320, loopFrames: 6, delayFrames: [2, 2, 2] },
 };
 
+/** The most imports (queued and running) taken at once, as the engine takes them: each holds its file open. */
+export const MOCK_MAX_PENDING_IMPORTS = 40;
+
 /** A cancel that nothing holds ends the job after this long (the real engine's copy sees it between two chunks). */
 const CANCEL_DELAY_MS = 50;
 
@@ -79,8 +82,9 @@ export class MockOwnMedia {
     this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.nextId("evt"), kind: "event", type, payload } as UnsequencedEvent);
   }
 
-  /** Starts the job of an accepted file and announces it at zero; its id. */
-  startImport(name: string, accept: MockMediaAccept): string {
+  /** Starts the job of an accepted file and announces it at zero; its id, or null when too many are pending (the engine's `too-many`). */
+  startImport(name: string, accept: MockMediaAccept): string | null {
+    if (this.active() >= MOCK_MAX_PENDING_IMPORTS) return null;
     const job: ImportJob = {
       jobId: this.#deps.nextId("job"),
       mediaKind: accept.kind,
@@ -119,7 +123,8 @@ export class MockOwnMedia {
 
   /** The turn is free: the first job that waits runs, and is announced again at zero. */
   #promote(): void {
-    const next = this.#jobs.find((job) => job.status === "queued");
+    // A job whose cancel is on its way never takes the turn.
+    const next = this.#jobs.find((job) => job.status === "queued" && !job.cancelRequested);
     if (next === undefined || this.#jobs.some((job) => job.status === "running")) return;
     next.status = "running";
     this.#announce(next);
@@ -171,9 +176,15 @@ export class MockOwnMedia {
     const job = this.#jobs.find((j) => j.jobId === jobId);
     if (job === undefined) return false;
     if (job.status === "queued") {
-      // A job still in its queue ends at once: it has copied nothing.
-      job.status = "cancelled";
-      this.#event("job.cancelled", { kind: "import", jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null });
+      // A job still in its queue has copied nothing and ends soon, AFTER the answer (the engine's job closes its file first).
+      job.cancelRequested = true;
+      job.cancelTimers.push(
+        this.#deps.scheduler.schedule(CANCEL_DELAY_MS, () => {
+          if (job.status !== "queued" || !this.#jobs.includes(job)) return;
+          job.status = "cancelled";
+          this.#event("job.cancelled", { kind: "import", jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null });
+        }),
+      );
       return true;
     }
     if (job.status !== "running") return true;

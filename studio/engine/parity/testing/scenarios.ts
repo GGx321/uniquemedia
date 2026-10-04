@@ -1088,6 +1088,29 @@ const OWN_MEDIA_RECORD_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: "own media: a second import waits queued behind the first, is cancelled in its queue, and the first still ends in its record",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      t.note("the first photo's job runs (held before its first byte); the second finds the turn taken and waits queued");
+      control.holdImports(true);
+      await control.mediaDialog("good");
+      await t.call("media.pickImport", { kind: "photo" });
+      await control.mediaDialog("good");
+      const [queued] = pickedJobIds(await t.call("media.pickImport", { kind: "photo" }));
+      if (queued === undefined) throw new Error("the second pick started no job");
+      t.note("a window that resyncs sees the first running and the second queued");
+      await t.call("engine.snapshot", {});
+      t.note("the owner cancels the queued one: it ends in its queue, and its cancel is answered before its end is told");
+      await t.call("media.cancelImport", { jobId: queued });
+      await t.advance("end");
+      t.note("the first goes on and ends in its record; the cancelled one stored nothing");
+      control.holdImports(false);
+      await t.settle();
+      await t.call("media.list", {});
+      await t.call("engine.snapshot", {});
+    },
+  },
+  {
     name: "own media: without an importer a good photo is refused and nothing is stored",
     async run(t, _w, control) {
       await control.mediaDialog("good");

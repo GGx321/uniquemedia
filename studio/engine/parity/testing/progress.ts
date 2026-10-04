@@ -54,3 +54,44 @@ export class ProgressInvariants {
     line.saving = saving;
   }
 }
+
+/** The parts of an import's `job.progress` the invariants judge (`done` counts bytes copied of the file's size). */
+export interface ImportProgress {
+  readonly jobId: string;
+  readonly done: number;
+  readonly total: number;
+  readonly queued?: boolean | undefined;
+}
+
+/**
+ * What every import's progress numbers must satisfy, whichever engine sends them (the transcript writes the start and the steps as
+ * phases, since the engine steps per percent of a copy and the mock in one step):
+ *  - a job begins at zero, and its `total` never changes;
+ *  - `0 <= done <= total`, and `done` never goes back; unlike a render, a copy may reach the total (its end follows);
+ *  - progress at zero is the START: at most twice (announced queued, announced again when it runs); every step is above zero;
+ *  - `queued` is only ever on a job's FIRST announcement, at zero.
+ * A violation throws, so the scenario that met it fails on whichever engine sent it.
+ */
+export class ImportProgressInvariants {
+  readonly #jobs = new Map<string, JobLine>();
+
+  check(progress: ImportProgress): void {
+    const { jobId, done, total } = progress;
+    const queued = progress.queued === true;
+    const fail = (rule: string): never => {
+      throw new Error(`job.progress of import ${jobId} (done ${done} of ${total}${queued ? ", queued" : ""}): ${rule}`);
+    };
+    if (!Number.isInteger(done) || !Number.isInteger(total) || done < 0 || done > total) return fail("done is outside 0..total");
+    const line = this.#jobs.get(jobId);
+    if (queued && (done !== 0 || line !== undefined)) return fail("queued is only the first announcement of a job, at zero");
+    if (line === undefined) {
+      if (done !== 0) return fail("a job must begin at zero");
+      this.#jobs.set(jobId, { total, done: 0, saving: false, starts: 1 });
+      return;
+    }
+    if (total !== line.total) return fail(`total changed from ${line.total}`);
+    if (done < line.done) return fail(`done goes back from ${line.done}`);
+    if (done === 0 && ++line.starts > 2) return fail("a job is announced at zero at most twice (queued, then running): a step must be above zero");
+    line.done = done;
+  }
+}

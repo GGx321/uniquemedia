@@ -1,6 +1,6 @@
 import type { EngineError, EventMessage } from "../../../shared/engine";
 import { FRAME_H, FRAME_W } from "../../../shared/montage";
-import { ProgressInvariants } from "./progress";
+import { ImportProgressInvariants, ProgressInvariants } from "./progress";
 
 // The parity harness's record of a scenario (Stage 3, 3d.1b): what was asked, what was answered and every event, in the order
 // it happened, written as plain lines. The SAME scenario runs against the mock and against the real engine, each writes its
@@ -345,6 +345,7 @@ export class Transcript {
   readonly #rig: Recorded;
   readonly norm: Normalizer;
   readonly #progress = new ProgressInvariants();
+  readonly #importProgress = new ImportProgressInvariants();
   /** The renders announced as waiting for a slot, in order (as aliases): what the window shows as «В очереди». */
   readonly #queued: string[] = [];
   #seen: number;
@@ -366,6 +367,11 @@ export class Transcript {
       // The transcript leaves a render's `done` out; the rules its numbers must satisfy are checked here, on both engines.
       if (event.type === "job.progress" && event.payload.kind === "render") {
         this.#progress.check(event.payload);
+        if (event.payload.queued === true) this.#queued.push(String(objectOf(this.norm.value({ jobId: event.payload.jobId })).jobId));
+      }
+      // An import's numbers count bytes copied; the rules they must satisfy are checked here too, on both engines.
+      if (event.type === "job.progress" && event.payload.kind === "import") {
+        this.#importProgress.check(event.payload);
         if (event.payload.queued === true) this.#queued.push(String(objectOf(this.norm.value({ jobId: event.payload.jobId })).jobId));
       }
       const line = eventLine(event, this.norm);

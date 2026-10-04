@@ -1344,8 +1344,11 @@ export class MockEngine implements EngineBridge {
         const jobIds: string[] = [];
         const refused: { name: string; reason: MediaUnsupportedReason }[] = [];
         for (const file of pick) {
-          if ("accept" in file) jobIds.push(this.ownMedia.startImport(file.name, file.accept));
-          else refused.push({ name: file.name, reason: file.reason });
+          if ("accept" in file) {
+            const jobId = this.ownMedia.startImport(file.name, file.accept);
+            if (jobId === null) refused.push({ name: file.name, reason: "too-many" });
+            else jobIds.push(jobId);
+          } else refused.push({ name: file.name, reason: file.reason });
         }
         return this.ok(c, { picked: true, jobIds, refused, skipped: 0 });
       }
