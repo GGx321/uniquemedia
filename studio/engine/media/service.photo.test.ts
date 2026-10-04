@@ -10,6 +10,7 @@ import { tempDirFor } from "../../testing/tempDir";
 import { createRealDecodeBackend } from "../decode/realBackend";
 import { createWasmImageDecoder } from "../decode/wasmDecode";
 import { JobRegistry } from "../jobs";
+import { servedMediaRecord } from "../library/mediaRecords";
 import { PNG_1X1 } from "../library/testing/sampleData";
 import { pickedIdentityOf } from "./identity";
 import type { MediaImportCall } from "./imports";
@@ -88,6 +89,16 @@ describe("an own photo through the import job", () => {
     expect(file.subarray(0, 3)).toEqual(Uint8Array.from([0xff, 0xd8, 0xff]));
     expect(jpegSegmentMarkers(file).filter((m) => (m >= 0xe0 && m <= 0xef) || m === 0xfe)).toEqual([]);
     expect(await staged()).toEqual([]);
+  });
+
+  test("the record the job writes is one main's studio-media://media route would serve: the stored file, its size, its container", async () => {
+    const r = rig();
+    await startedJob(r, await callFor("a.png", await quadrantPicture(workDir(), "p", 16, 16, "png")));
+    await r.service.settled();
+    const mediaId = (await r.service.list("photo")).media[0]?.mediaId ?? "";
+    const record = servedMediaRecord(JSON.parse(await readFile(join(mediaDir(), `${mediaId}.json`), "utf8")));
+    const file = await readFile(join(mediaDir(), `${mediaId}.jpg`));
+    expect(record).toEqual({ id: mediaId, kind: "photo", format: "jpeg", bytes: file.length, file: `${mediaId}.jpg` });
   });
 
   test("the stored photo can be looked up for a render: its path, size and hash are those of the stored JPEG", async () => {

@@ -1,4 +1,5 @@
 import { AVATARS_DIR, PHOTOS_DIR, VIDEOS_DIR } from "../../engine/library/layout";
+import { servedMediaRecord } from "../../engine/library/mediaRecords";
 import { VideoRecordSchema } from "../../engine/videos/record";
 import { readRootId } from "../../engine/videos/rootMarker";
 import { openDiskSource, type ByteSource, type MediaFsOps } from "./diskSource";
@@ -15,7 +16,7 @@ import type { MediaRoute } from "./route";
 //   cover/<trackId>               <userData>/music/covers/<trackId>.{jpg,png,webp}
 //   sticker/<stickerId>           the built-in catalogue (stickers.ts): APNG, from memory
 //   text/<previewId>              <userData>/render-tmp/text/<previewId>.png
-//   media/<mediaId>               <library>/media/<mediaId>.{jpg,png,webp,gif,apng,mp4,m4a}   (own uploads, 3f)
+//   media/<mediaId>               through the RECORD (below): <library>/media/<mediaId>.json names <library>/media/<mediaId>.<ext>   (own uploads, 3f)
 //
 // A missing file, a wrong kind, a link, a file outside its root and a stale or foreign record all end the same
 // way, `null`: the caller answers 404 and nothing tells them apart.
@@ -41,7 +42,6 @@ export interface Served {
 
 const MIB = 1024 * 1024;
 const IMAGES: readonly KindKey[] = ["jpg", "png", "webp"];
-const OWN_MEDIA: readonly KindKey[] = ["jpg", "png", "webp", "gif", "apng", "mp4", "m4a"];
 /** A poster, a cover and a text preview are small pictures: a bigger file is not one of ours. */
 const SMALL_IMAGE_BYTES = 8 * MIB;
 /** A record is a few KiB of JSON. */
@@ -93,6 +93,39 @@ async function videoOf(route: Extract<MediaRoute, { route: "video" }>, deps: Med
   return source === null ? null : { source, contentType: KINDS.mp4.contentType };
 }
 
+/** Whether `ext` is one of the kinds the protocol has a type for (an own file in another container, a WAV or a MOV, is not served yet). */
+const isKindKey = (ext: string): ext is KindKey => Object.prototype.hasOwnProperty.call(KINDS, ext);
+
+/**
+ * The `media` route (3f.2). An own upload is served THROUGH ITS RECORD, as a video is: `<library>/media/<mediaId>.json` is read (bounded, no link
+ * followed) and judged by the engine's own record schema (`servedMediaRecord`: the schema's version, a container the kind may be, a `file` that
+ * is exactly `<id>.<extension of its format>`); it must be this media's own; then ONLY the file it names is opened, its first bytes must be what
+ * its container is, and its size must be the one the record was written for. So a stored file with no record (a crash's orphan, a media whose
+ * delete has begun: the engine removes the record first) is never served, an extension that a scan would find is never a reason to serve, and a
+ * file that was replaced is not served. The renderer sends an id; no part of the answer's path comes from it but the id itself.
+ */
+async function ownMediaOf(route: Extract<MediaRoute, { route: "media" }>, deps: MediaDeps): Promise<Served | null> {
+  const recordSource = await openDiskSource(
+    { root: deps.libraryRoot(), segments: ["media", `${route.mediaId}.json`], maxBytes: MAX_RECORD_BYTES, sniff: (header) => header[0] === 0x7b },
+    deps.fs,
+  );
+  if (recordSource === null) return null;
+  let json: unknown;
+  try {
+    json = JSON.parse(Buffer.from(await recordSource.read(0, recordSource.size)).toString("utf8"));
+  } catch {
+    return null;
+  }
+  const record = servedMediaRecord(json);
+  if (record === null || record.id !== route.mediaId) return null;
+  const ext = record.file.slice(record.file.lastIndexOf(".") + 1);
+  if (!isKindKey(ext)) return null;
+  const kind: MediaKind = KINDS[ext];
+  const source = await openDiskSource({ root: deps.libraryRoot(), segments: ["media", record.file], maxBytes: Math.min(kind.maxBytes, record.bytes), sniff: kind.sniff }, deps.fs);
+  if (source === null || source.size !== record.bytes) return null;
+  return { source, contentType: kind.contentType };
+}
+
 /** What a route serves, or null. Never throws for a file problem. */
 export async function resolveMedia(route: MediaRoute, deps: MediaDeps): Promise<Served | null> {
   switch (route.route) {
@@ -113,6 +146,6 @@ export async function resolveMedia(route: MediaRoute, deps: MediaDeps): Promise<
     case "text":
       return firstOf(deps.textPreviewRoot(), [], route.previewId, ["png"], SMALL_IMAGE_BYTES, deps);
     case "media":
-      return firstOf(deps.libraryRoot(), ["media"], route.mediaId, OWN_MEDIA, undefined, deps);
+      return ownMediaOf(route, deps);
   }
 }

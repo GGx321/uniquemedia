@@ -115,7 +115,13 @@ describe("every route answers over the wire shape the renderer sees", () => {
     await writeFile(join(userData, "music", "covers", `${TRACK}.jpg`), JPEG);
     await writeFile(join(userData, "render-tmp", "text", "preview-0001.png"), PNG);
     await mkdir(join(w.libraryRoot, "media"), { recursive: true });
-    await writeFile(join(w.libraryRoot, "media", "media-000001.gif"), Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(20)]));
+    const gif = Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(20)]);
+    await writeFile(join(w.libraryRoot, "media", "media-000001.gif"), gif);
+    // 3f.2: an own upload is served through its record, so the engine's record sits beside the stored file.
+    await writeFile(
+      join(w.libraryRoot, "media", "media-000001.json"),
+      JSON.stringify({ schemaVersion: 1, id: "media-000001", kind: "sticker", name: "x.gif", createdAt: "2026-10-04T10:00:00.000Z", bytes: gif.length, sha256: "a".repeat(64), format: "gif", file: "media-000001.gif", width: 10, height: 10, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: 3, delayFrames: [1, 1, 1] }),
+    );
     const cases: [string, string][] = [
       [videoUrl(), "video/mp4"],
       [`studio-media://poster/${w.avatarId}/${VIDEO}`, "image/jpeg"],
