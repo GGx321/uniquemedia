@@ -266,22 +266,7 @@ describe("createDecodeGate: giving the memory back", () => {
 });
 
 describe("createDecodeGate: what it does not keep (fix round 2)", () => {
-  test("the last decoded picture is not kept alive by the gate once the caller has dropped it", async () => {
-    const { gate, workers } = gateWith();
-    // The picture lives only inside this function: what outlives it is a weak reference to its pixel buffer.
-    const reference = await (async () => {
-      const decoding = gate.decode(bytes(), signal());
-      await tick();
-      workers[0]?.answer(512, 512);
-      const image = await decoding;
-      return new WeakRef(image.data.buffer);
-    })();
-    for (let turn = 0; turn < 5; turn++) {
-      await tick();
-      Bun.gc(true);
-    }
-    expect(reference.deref()).toBeUndefined();
-  });
+  // That the gate does not keep the last decoded picture alive needs a precise GC, which Bun's is not: it is decodeGate.retention.node-cases.ts, under Electron's Node.
 
   test("a worker that was already replaced says nothing about the present: its message is ignored", async () => {
     const { gate, workers } = gateWith();
