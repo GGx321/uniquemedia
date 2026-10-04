@@ -311,6 +311,18 @@ export class MediaService {
     });
   }
 
+  /**
+   * A stored track's waveform (3f.4: one value per 50 ms, 0 to 1000), for `music.peaks`; undefined for an id the library does not hold, a media that
+   * is not a track, or a record whose waveform cannot be trusted. Read from the record on disk; a media being deleted is out of it from the first tick.
+   */
+  async waveform(mediaId: string): Promise<number[] | undefined> {
+    return this.#deps.withLibrary(async (library) => {
+      const area = this.#areaOf(library.root);
+      await area.ready;
+      return area.records.waveformOf(mediaId);
+    });
+  }
+
   /** Which of `mediaIds` the library holds as `kind` (a draft's referential check): one pass under one hold. A media being deleted is not held. */
   async holding(mediaIds: readonly string[], kind: MediaKind): Promise<Set<string>> {
     return this.#deps.withLibrary(async (library) => {
@@ -440,6 +452,7 @@ export class MediaService {
         format: outcome.output?.format ?? staged.format,
         name,
         facts: outcome.facts,
+        ...(outcome.waveform === undefined ? {} : { waveform: outcome.waveform }),
         ...(outcome.output === undefined ? { sha256: staged.sha256 } : outcome.output.sha256 === undefined ? {} : { sha256: outcome.output.sha256 }),
       };
       let media: MediaSummary;
