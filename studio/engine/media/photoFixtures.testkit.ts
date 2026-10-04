@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runFfmpegOk } from "../render/ffmpeg.testkit";
+import type { MediaKind } from "../../shared/engine";
 import type { MediaImportRequest } from "./imports";
 import type { StagedMedia, WorkFile } from "./staging";
 import type { MediaFormat } from "./sniff";
@@ -129,6 +130,8 @@ export interface Handoff {
 
 export interface HandoffOptions {
   readonly format: MediaFormat;
+  /** The kind the staging says the bytes are; a photo by default. */
+  readonly kind?: MediaKind;
   readonly name?: string;
   /** What the staging says the bytes hash to; the real hash by default. */
   readonly sha256?: string;
@@ -144,7 +147,7 @@ export async function handoff(dir: string, bytes: Uint8Array, options: HandoffOp
   let next = 0;
   const staged: StagedMedia = {
     stagingId: "staged-00000001",
-    kind: "photo",
+    kind: options.kind ?? "photo",
     format: options.format,
     bytes: bytes.length,
     sha256: options.sha256 ?? createHash("sha256").update(bytes).digest("hex"),

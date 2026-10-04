@@ -50,6 +50,10 @@ export const MAX_PICKED_FILES = 20;
  * - `too-small` (3f.2): a photo with a side under 2 px (`coverCrop` cannot make a 1 px side even);
  * - `dimensions` (3f.2): a photo with more pixels than the importer takes (50 megapixels, so a 48 megapixel camera picture is taken), judged from its header;
  * - `animated-webp` (3f.2): a WebP that animates; only still pictures are taken.
+ * - `not-animated` (3f.5): a sticker that does not animate: a still PNG, a GIF or an APNG of one frame, or one whose frames all fall into a single 30 fps slot;
+ * - `loop-too-long` (3f.5): a sticker whose loop, on the 30 fps grid, is over 300 frames (10 s), or that has more than 300 source frames.
+ *   (A sticker's side over 720 px is `dimensions`, under 2 px `too-small`, a file over 5 MB or an animation that re-encodes past 5 MB `too-large`,
+ *   and a file that is not a GIF or an APNG the decoder reads the way the validator did is `format`.)
  */
 export const MediaUnsupportedReason = z.enum([
   "not-a-file",
@@ -69,6 +73,9 @@ export const MediaUnsupportedReason = z.enum([
   "too-small",
   "dimensions",
   "animated-webp",
+  // 3f.5, one per line and at the END.
+  "not-animated",
+  "loop-too-long",
 ]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
 

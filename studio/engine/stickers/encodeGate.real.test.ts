@@ -5,8 +5,8 @@ import { inspectApng } from "../../shared/stickers/apng";
 import { decodeFrames } from "../../scripts/stickers/apngDecode.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
-import { createStickerEncodeGate, createStickerEncodeSpawner, EncodeWorkerError } from "./encodeGate";
-import { EncodeTooLargeError } from "./encodeJob";
+import { createStickerEncodeGate, createStickerEncodeSpawner } from "./encodeGate";
+import { EncodeTooLargeError, EncodeWorkerError } from "./encodeErrors";
 useNativeGlobals();
 
 // The REAL encode worker (stickerEncodeWorker.ts, from source) behind the real gate: the wire format, a raw file read frame by frame, and what the

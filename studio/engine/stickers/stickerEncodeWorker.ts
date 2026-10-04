@@ -1,6 +1,7 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
-import { EncodeTooLargeError, encodeStickerFrames } from "./encodeJob";
+import { EncodeTooLargeError } from "./encodeErrors";
+import { encodeStickerFrames } from "./encodeJob";
 import { EncodeRequestSchema, MAX_ENCODE_MESSAGE_LENGTH, type EncodeResponse } from "./encodeProtocol";
 
 // The own-sticker encode worker thread (3f.5): reads the raw rgba frames the importer's ffmpeg decode wrote, one at a time, and writes the APNG

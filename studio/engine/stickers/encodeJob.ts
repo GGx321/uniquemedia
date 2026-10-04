@@ -1,17 +1,10 @@
 import { ApngTooLargeError, createApngEncoder } from "../../shared/stickers/apngWriter";
+import { EncodeTooLargeError } from "./encodeErrors";
 
 // The own-sticker encode job (3f.5), free of threads and files: it asks `readFrame` for each raw frame that lasts at least one 30 fps slot, one
 // at a time, into ONE reused buffer, and writes them with Studio's own RGBA APNG writer (shared/stickers/apngWriter.ts), each with its slots as
 // its delay. It runs inside the encode worker (stickerEncodeWorker.ts), because compressing 300 frames of up to 720 x 720 with a hand-written
 // deflate takes tens of seconds and must never run on the engine's event loop.
-
-/** The finished file would pass the byte limit. */
-export class EncodeTooLargeError extends Error {
-  constructor(maxBytes: number) {
-    super(`the encoded sticker passes ${maxBytes} bytes`);
-    this.name = "EncodeTooLargeError";
-  }
-}
 
 export interface EncodeFrames {
   readonly width: number;

@@ -1,20 +1,12 @@
 import { Worker } from "node:worker_threads";
 import { EncodeRequestSchema, EncodeResponseSchema, type EncodeRequest } from "./encodeProtocol";
-import { EncodeTooLargeError } from "./encodeJob";
+import { EncodeTooLargeError, EncodeWorkerError } from "./encodeErrors";
 
 // The own-sticker encode gate (3f.5). Re-encoding an owner's animation with Studio's own APNG writer (a hand-written deflate: the bytes must be
 // the same on every platform) takes tens of seconds for a long one, and it is synchronous, so it must not run on the engine's event loop. It runs
 // in a `worker_thread`, ONE PER JOB: the thread is started for the job and ended when the job is over, however it ended. A cancel or the time
 // limit ENDS the thread (`terminate()`: nothing synchronous can be interrupted from inside), and nothing is written after that, because the
 // worker only ever answers with bytes; the importer writes them, and only after the signal was looked at.
-
-/** The worker (or the engine's stand-in for one) failed, was ended, ran out of time, or the job could not be encoded: the owner's file is not to blame. */
-export class EncodeWorkerError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "EncodeWorkerError";
-  }
-}
 
 /** The part of a `worker_threads` `Worker` the gate uses. */
 export interface EncodeWorkerLike {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { EncodeTooLargeError } from "./encodeJob";
-import { createStickerEncodeGate, EncodeWorkerError, type EncodeWorkerLike } from "./encodeGate";
+import { EncodeTooLargeError, EncodeWorkerError } from "./encodeErrors";
+import { createStickerEncodeGate, type EncodeWorkerLike } from "./encodeGate";
 useNativeGlobals();
 
 // The own-sticker encode gate (3f.5): compressing an owner's animation takes tens of seconds, so it runs in a `worker_thread`. A cancel or a time
