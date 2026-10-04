@@ -513,6 +513,11 @@ export const JobProgress = z
   .refine((p) => p.kind !== "import" || p.prepare === undefined || p.stage === "prepare", {
     message: "what the probe judged belongs to the prepare stage only",
     path: ["prepare"],
+  })
+  // The last unit of the prepare is the job's own end (the record is stored): a window never sees a full bar of a job that is still working. A copy may be full.
+  .refine((p) => p.kind !== "import" || p.stage !== "prepare" || p.done < p.total, {
+    message: "a prepare progress is below its total: the job's end is the last unit",
+    path: ["done"],
   });
 
 /** `job.failed`'s payload: the job's identity (see `JobProgress`) and why it failed. */

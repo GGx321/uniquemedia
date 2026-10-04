@@ -46,6 +46,18 @@ describe("an import's progress stage", () => {
     expect(JobProgress.safeParse({ ...progress, stage: "prepare", done: 101 }).success).toBe(false);
   });
 
+  test("a prepare progress is never full: the last unit belongs to the end of the job (a full copy is allowed, its end follows)", () => {
+    expect(JobProgress.safeParse({ ...progress, stage: "prepare", done: 100, total: 100 }).success).toBe(false);
+    expect(JobProgress.safeParse({ ...progress, stage: "prepare", done: 99, total: 100 }).success).toBe(true);
+    expect(JobProgress.safeParse({ ...progress, stage: "prepare", done: 0, total: 1 }).success).toBe(true);
+    expect(JobProgress.safeParse({ ...progress, done: 100, total: 100 }).success).toBe(true);
+    expect(JobProgress.safeParse({ ...progress, stage: "copy", done: 100, total: 100 }).success).toBe(true);
+  });
+
+  test("a snapshot's job that is done in its prepare stage is a full count: only a progress is never full", () => {
+    expect(JobState.safeParse({ ...state, status: "done", stage: "prepare", done: 100, total: 100, mediaId: "media-00000001", result: { kind: "import", mediaId: "media-00000001", media: { mediaId: "media-00000001", kind: "video", name: "walk.mov", bytes: 10, createdAt: "2026-10-04T10:00:00.000Z", width: 2, height: 2, durationMs: 1000, sourceFps: 30, hdrToSdr: false, loopFrames: null, delayFrames: null } } }).success).toBe(true);
+  });
+
   test("a queued import is announced at zero and in no stage but the first", () => {
     expect(JobProgress.safeParse({ ...progress, done: 0, queued: true }).success).toBe(true);
     expect(JobProgress.safeParse({ ...progress, done: 0, queued: true, stage: "prepare" }).success).toBe(false);
