@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MontageDraft } from "../../../shared/engine";
+import { MAX_SOURCE_OFFSET_MS, MontageDraft } from "../../../shared/engine";
 import {
   addRefusal,
   ADD_CLIP_MS,
@@ -206,6 +206,21 @@ describe("trimming a clip (100 ms steps, at least 0.5 s, the total at most 15 s)
     expect(() => clampDuration(draftSpec(1), 0, Number.NaN)).toThrow(RangeError);
     expect(() => clampDuration(draftSpec(1), 1, 1_000)).toThrow(RangeError);
   });
+
+  test("3f.3b: an own video clip is held to the limit its video sets (from its trim to the video's end), as well as to the room", () => {
+    // 2 s from 1.8 s into a 6.4 s video: at most 4.6 s; the room alone would allow 13 s.
+    const spec = draftSpec([videoClip(0, 2_000, 1_800)]);
+    expect(maxDurationMs(spec, 0, 4_600)).toBe(4_600);
+    expect(clampDuration(spec, 0, 9_000, 4_600)).toBe(4_600);
+    expect(durations(setDuration(spec, 0, 9_000, 4_600))).toEqual([4_600]);
+    // The room still holds when it is the tighter one.
+    const tight = draftSpec([...photoClips(6, 2_000), videoClip(6, 2_000, 0)]);
+    expect(maxDurationMs(tight, 6, 9_000)).toBe(3_000);
+    // A clip already longer than its video comes down to the limit at the first move.
+    expect(durations(setDuration(draftSpec([videoClip(0, 6_000, 1_800)]), 0, 5_900, 4_600))).toEqual([4_600]);
+    // Without a limit (the video not known yet) only the room counts.
+    expect(maxDurationMs(spec, 0)).toBe(15_000);
+  });
 });
 
 describe("split evenly (the old «Слайды»: the same total over every clip)", () => {
@@ -267,6 +282,12 @@ describe("splitting at the playhead (CF4: own video clips only; photo and collag
   test("a split needs a free clip slot", () => {
     const full = draftSpec([...photoClips(19, 500), videoClip(19, 2_000)]);
     expect(splitClipAt(full, 19, 10_500)).toEqual({ ok: false, reason: "clip-cap" });
+  });
+
+  test("3f.3b: the second part never starts past the contract's furthest offset into the video", () => {
+    const deep = draftSpec([videoClip(0, 2_000, MAX_SOURCE_OFFSET_MS - 500)]);
+    expect(durations(ok(splitClipAt(deep, 0, 500)))).toEqual([500, 1_500]);
+    expect(splitClipAt(deep, 0, 600)).toEqual({ ok: false, reason: "not-splittable" });
   });
 });
 

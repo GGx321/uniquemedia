@@ -70,6 +70,19 @@ export function placeLayer(spec: MontageDraft, index: number, centre: Point): Mo
   return { ...spec, layers: spec.layers.map((l, i) => (i === index ? { ...l, x: centre.x, y: centre.y } : l)) };
 }
 
+/**
+ * Own video clip `clipIndex` with its focus set to `focus` (3f.3b): what its crop centres on, as a photo cell's face point does (`videoClipCrop`); the
+ * same draft when it already is. Only an own video clip has one of its own.
+ */
+export function setVideoFocus(spec: MontageDraft, clipIndex: number, focus: Focus): MontageDraft {
+  const clip = spec.clips[clipIndex];
+  if (clip === undefined) throw new RangeError(`clip index must be 0..${spec.clips.length - 1}, got ${clipIndex}`);
+  if (clip.kind !== "video") throw new RangeError(`clip ${clipIndex} is not an own video: its focus is a cell's`);
+  if (clip.focus !== null && clip.focus.x === focus.x && clip.focus.y === focus.y) return spec;
+  const replaced: Clip = { ...clip, focus: { x: focus.x, y: focus.y } };
+  return { ...spec, clips: spec.clips.map((c, i) => (i === clipIndex ? replaced : c)) };
+}
+
 /** Cell `cell` of clip `clipIndex` with its face focus set to `focus`; the same draft when it already is. Only a cell with a photo has one. */
 export function setCellFocus(spec: MontageDraft, clipIndex: number, cell: number, focus: Focus): MontageDraft {
   const clip = spec.clips[clipIndex];

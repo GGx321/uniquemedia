@@ -12,6 +12,7 @@ import {
   type Size,
   stickerBox,
   textBox,
+  videoClipCrop,
 } from "../../../shared/montage";
 import { BUILTIN_STICKER_SIZE, stickerById } from "../../../shared/stickers/manifest";
 import { cellSourceWindow, clipViewAt, previewFrameAt, stickerFrameIndex, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
@@ -119,9 +120,22 @@ describe("the clip under the playhead", () => {
     expect(clipViewAt(off, 0, size)?.cells.map((c) => c.alphaPermille)).toEqual([1000, 1000, 1000]);
   });
 
-  test("an own video (3f) or an own photo in a cell is own media: drawn as a neutral surface until 3f", () => {
-    const view = clipViewAt(draftSpec([videoClip(0)]), 0, size);
-    expect(view?.cells).toEqual([{ index: 0, rect: { x: 0, y: 0, w: FRAME_W, h: FRAME_H }, content: { kind: "own" }, source: null, window: null, alphaPermille: 1000 }]);
+  test("an own photo in a cell is own media: drawn as a neutral surface", () => {
+    const own = draftSpec([{ ...photoClip(0, "photo-a-0001"), cell: { photo: { source: "own", mediaId: "media-own-0002" }, focus: null } }]);
+    expect(clipViewAt(own, 0, size)?.cells).toEqual([{ index: 0, rect: { x: 0, y: 0, w: FRAME_W, h: FRAME_H }, content: { kind: "own" }, source: null, window: null, alphaPermille: 1000 }]);
+  });
+
+  test("3f.3b: an own video fills the whole frame with the render's crop of its stored size (videoClipCrop, static), once that size is known", () => {
+    const spec = draftSpec([{ ...videoClip(0, 2_000, 1_800), focus: { x: 0.2, y: 0.5 } }]);
+    const wide = { w: 1_080, h: 608 };
+    const view = clipViewAt(spec, 0, size, (mediaId) => (mediaId === "media-own-0001" ? wide : null));
+    expect(view?.cells).toEqual([
+      { index: 0, rect: { x: 0, y: 0, w: FRAME_W, h: FRAME_H }, content: { kind: "video", mediaId: "media-own-0001", focus: { x: 0.2, y: 0.5 } }, source: wide, window: videoClipCrop(wide, { x: 0.2, y: 0.5 }), alphaPermille: 1000 },
+    ]);
+    // No motion: the last frame shows the same part of it.
+    expect(clipViewAt(spec, 59, size, () => wide)?.cells[0]?.window).toEqual(videoClipCrop(wide, { x: 0.2, y: 0.5 }));
+    // Its size not known yet (the record not read): no window, nothing guessed.
+    expect(clipViewAt(spec, 0, size)?.cells[0]).toMatchObject({ content: { kind: "video" }, source: null, window: null });
   });
 });
 

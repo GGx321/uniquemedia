@@ -1,4 +1,4 @@
-import { type Cell, type Clip, type Focus, type MontageDraft, type Motion } from "../../../shared/engine";
+import { type Cell, type Clip, type Focus, MAX_SOURCE_OFFSET_MS, type MontageDraft, type Motion } from "../../../shared/engine";
 import { MAX_CLIPS, MAX_TOTAL_MS, MIN_CLIP_MS, splitEvenly, STEP_MS } from "../../../shared/montage";
 
 // 3d.3a: the clip track's edits, as pure functions over a draft. The editor sends each result through
@@ -142,23 +142,27 @@ export function moveClip(spec: MontageDraft, from: number, boundary: number): Mo
   return withClips(spec, [...rest.slice(0, at), clip, ...rest.slice(at)]);
 }
 
-/** The longest clip `index` may become: its length plus the room (only its own length once the room is gone). */
-export function maxDurationMs(spec: MontageDraft, index: number): number {
-  return clipAt(spec, index).durationMs + roomMs(spec);
+/**
+ * The longest clip `index` may become: its length plus the room (only its own length once the room is gone). `limitMs` is a cap of the clip's own: an
+ * own video clip's, from its trim to its video's end (3f.3b, `durationLimitMs`), once the video is known.
+ */
+export function maxDurationMs(spec: MontageDraft, index: number, limitMs?: number): number {
+  const max = clipAt(spec, index).durationMs + roomMs(spec);
+  return limitMs === undefined ? max : Math.min(max, limitMs);
 }
 
-/** `wantedMs` as clip `index` may take it: the nearest 100 ms, at least 0.5 s, the total at most 15 s. */
-export function clampDuration(spec: MontageDraft, index: number, wantedMs: number): number {
+/** `wantedMs` as clip `index` may take it: the nearest 100 ms, at least 0.5 s, the total at most 15 s, and within `limitMs` when given. */
+export function clampDuration(spec: MontageDraft, index: number, wantedMs: number, limitMs?: number): number {
   if (!Number.isFinite(wantedMs)) throw new RangeError(`a duration must be a finite number, got ${wantedMs}`);
-  const max = maxDurationMs(spec, index);
+  const max = maxDurationMs(spec, index, limitMs);
   const snapped = Math.round(wantedMs / STEP_MS) * STEP_MS;
   return Math.max(MIN_CLIP_MS, Math.min(max, snapped));
 }
 
-/** Clip `index` at `wantedMs` (clamped); the same draft when its length does not change. */
-export function setDuration(spec: MontageDraft, index: number, wantedMs: number): MontageDraft {
+/** Clip `index` at `wantedMs` (clamped, and within `limitMs` when given); the same draft when its length does not change. */
+export function setDuration(spec: MontageDraft, index: number, wantedMs: number, limitMs?: number): MontageDraft {
   const clip = clipAt(spec, index);
-  const durationMs = clampDuration(spec, index, wantedMs);
+  const durationMs = clampDuration(spec, index, wantedMs, limitMs);
   return durationMs === clip.durationMs ? spec : replaceClip(spec, index, { ...clip, durationMs });
 }
 
@@ -181,14 +185,15 @@ export function evenOut(spec: MontageDraft): MontageDraft {
 
 /**
  * Splits an own video clip at `atMs` on the montage's timeline (snapped to 100 ms): the second part is a new clip
- * that continues the source where the first stops. Never a photo or collage clip (CF4).
+ * that continues the source where the first stops, never further into it than the contract's `MAX_SOURCE_OFFSET_MS`
+ * (3f.3b). Never a photo or collage clip (CF4).
  */
 export function splitClipAt(spec: MontageDraft, index: number, atMs: number): Edit {
   const clip = clipAt(spec, index);
   if (clip.kind !== "video") return refuse("not-splittable");
   const start = clipStartMs(spec, index);
   const at = Math.round(atMs / STEP_MS) * STEP_MS - start;
-  if (at <= 0 || at >= clip.durationMs) return refuse("not-splittable");
+  if (at <= 0 || at >= clip.durationMs || clip.trimStartMs + at > MAX_SOURCE_OFFSET_MS) return refuse("not-splittable");
   if (at < MIN_CLIP_MS || clip.durationMs - at < MIN_CLIP_MS) return refuse("too-short");
   if (spec.clips.length >= MAX_CLIPS) return refuse("clip-cap");
   const clipId = nextClipId(spec);

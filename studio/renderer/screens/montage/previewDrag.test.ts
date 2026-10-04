@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { coverCrop, FOCUS_FALLBACK, FRAME_H, FRAME_W, type Size } from "../../../shared/montage";
-import { dragFocus, dragLayerCentre, placeLayer, resizeFactor, setCellFocus } from "./previewDrag";
+import { dragFocus, dragLayerCentre, placeLayer, resizeFactor, setCellFocus, setVideoFocus } from "./previewDrag";
 import { collageClip, draftSpec, photoClip, stickerLayer, textLayer, videoClip } from "./testkit";
 
 /** Four decimals, as the drags keep them. */
@@ -127,6 +127,23 @@ describe("setCellFocus", () => {
   test("the same draft when the focus is already that", () => {
     const spec = setCellFocus(draftSpec([photoClip(0, "photo-a-0001")]), 0, 0, { x: 0.3, y: 0.4 });
     expect(setCellFocus(spec, 0, 0, { x: 0.3, y: 0.4 })).toBe(spec);
+  });
+
+  test("3f.3b: an own video clip's focus is its own, written by setVideoFocus; the same draft when it already is", () => {
+    const spec = draftSpec([photoClip(0, "photo-a-0001"), videoClip(1)]);
+    const moved = setVideoFocus(spec, 1, { x: 0.25, y: 0.5 });
+    expect(moved.clips[1]).toEqual({ ...videoClip(1), focus: { x: 0.25, y: 0.5 } });
+    expect(moved.clips[0]).toBe(spec.clips[0]);
+    expect(setVideoFocus(moved, 1, { x: 0.25, y: 0.5 })).toBe(moved);
+    expect(() => setVideoFocus(spec, 0, { x: 0.5, y: 0.5 })).toThrow(RangeError);
+    expect(() => setVideoFocus(spec, 2, { x: 0.5, y: 0.5 })).toThrow(RangeError);
+  });
+
+  test("3f.3b: a wide own video dragged across the frame moves its focus as a photo's crop moves (dragFocus over the whole frame)", () => {
+    // 1080 x 608 under a 1080 x 1920 frame: the crop is 342 x 608 of it; a 100 px drag right shows what is left of it, 100 × 342 / 1080 source px.
+    const to = dragFocus(null, { dx: 100, dy: 0 }, { w: FRAME_W, h: FRAME_H }, { w: 1_080, h: 608 });
+    expect(to.x).toBeCloseTo(0.5 - (100 * 342) / FRAME_W / 1_080, 4);
+    expect(to.y).toBe(0.38);
   });
 
   test("refuses an empty cell, an own video and a cell or clip that is not there", () => {

@@ -23,7 +23,13 @@ import {
   trackClock,
   trackName,
   trackTitle,
+  trimOfLabel,
+  trimRangeLabel,
+  VIDEO_PROBLEM_TAGS,
+  videoFactsLabel,
+  videoRoomLabel,
   whenLabel,
+  clipAria,
 } from "./labels";
 import { draftSpec, montageOf, photoClip, stickerLayer, textLayer } from "./testkit";
 
@@ -248,5 +254,40 @@ describe("the music block", () => {
     expect(musicAria(music, null, null)).toBe("Музыка: трек, с 0:42");
     expect(musicAria(music, "Espresso · Sabrina Carpenter", "too-short")).toBe("Музыка: Espresso · Sabrina Carpenter, с 0:42, трек короче ролика");
     expect(musicAria(music, null, "unavailable")).toBe("Музыка: трек недоступен");
+  });
+});
+
+describe("an own video clip (3f.3b)", () => {
+  const latte = { name: "latte-pour.mov", width: 1_080, height: 1_920, durationMs: 6_400, sourceFps: 60, hdrToSdr: true };
+
+  test("«Обрезка»: the part of the video «1.8 → 3.8 с» and «2.0 с из 6.4»", () => {
+    expect(trimRangeLabel(1_800, 3_800)).toBe(`1.8 → 3.8${NBSP}с`);
+    expect(trimOfLabel(2_000, 6_400)).toBe(nb("2.0 с из 6.4"));
+    // The stored length as the record has it, to a tenth.
+    expect(trimOfLabel(500, 6_433)).toBe(nb("0.5 с из 6.4"));
+  });
+
+  test("the source facts: length, stored size, the owner's rate and the constant 30 fps it became", () => {
+    expect(videoFactsLabel(latte)).toBe(nb("6.4 с · 1080×1920 · 60 → 30 fps"));
+    expect(videoFactsLabel({ ...latte, sourceFps: 29.97, width: 1_080, height: 608, durationMs: 14_000 })).toBe(nb("14.0 с · 1080×608 · 29.97 → 30 fps"));
+    expect(videoFactsLabel({ ...latte, sourceFps: 23.976 })).toBe(nb("6.4 с · 1080×1920 · 23.98 → 30 fps"));
+    // Already 30 fps: nothing changed.
+    expect(videoFactsLabel({ ...latte, sourceFps: 30 })).toBe(nb("6.4 с · 1080×1920 · 30 fps"));
+  });
+
+  test("what is left of the 15 s for this clip, as far as its video goes", () => {
+    expect(videoRoomLabel(9_600, 5_400, 5_400)).toBe(nb("ролик 9.6 с из 15 · кадр можно удлинить ещё на 5.4 с"));
+    expect(videoRoomLabel(9_600, 5_400, 1_200)).toBe(nb("ролик 9.6 с из 15 · кадр можно удлинить ещё на 1.2 с — дальше видео кончается"));
+    expect(videoRoomLabel(9_600, 5_400, 0)).toBe(nb("ролик 9.6 с из 15 · видео уже целиком в кадре"));
+    expect(videoRoomLabel(15_000, 0, 0)).toBe(nb("ролик 15.0 с из 15 · длиннее кадр уже не станет"));
+  });
+
+  test("the clip block: «▶ видео» named by its file, or what the render refuses it for", () => {
+    const clip = { clipId: "clip-003", durationMs: 2_000, transitionIn: "cut", kind: "video", mediaId: "media-own-0001", trimStartMs: 1_800, focus: null } as const;
+    expect(clipAria(2, clip, null, "latte-pour.mov")).toBe(nb("Кадр 3: видео latte-pour.mov, 2.0 с"));
+    expect(clipAria(2, clip, null)).toBe(nb("Кадр 3: видео, 2.0 с"));
+    expect(clipAria(2, clip, "video-too-short", "latte-pour.mov")).toBe(nb("Кадр 3: видео короче кадра, 2.0 с"));
+    expect(clipAria(2, clip, "media-unavailable")).toBe(nb("Кадр 3: файла больше нет, 2.0 с"));
+    expect(VIDEO_PROBLEM_TAGS).toEqual({ "video-too-short": "⚠ видео короче кадра", "media-unavailable": "⚠ файла больше нет" });
   });
 });

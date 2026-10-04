@@ -1,10 +1,11 @@
 import type { Clip, Montage, MontageDraft } from "../../../shared/engine";
-import { estimateBytes, FPS, FRAME_H, FRAME_W, FRAMES_PER_STEP, staggerStepFrames } from "../../../shared/montage";
+import { estimateBytes, FPS, FRAME_H, FRAME_W, FRAMES_PER_STEP, MAX_TOTAL_MS, staggerStepFrames } from "../../../shared/montage";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { countOf, NBSP } from "../../lib/format";
 import type { RenderControl } from "../../engine/renderJobs";
 import type { SaveState } from "./autosave";
 import type { AddRefusal } from "./clipOps";
+import type { OwnVideo, VideoProblem } from "./ownVideos";
 import type { PhotoProblem } from "./renderBlock";
 import type { ActionBlock } from "./selection";
 
@@ -91,10 +92,57 @@ export const PHOTO_PROBLEM_TAGS: Record<PhotoProblem, string> = {
   unavailable: "⚠ фото недоступно",
 };
 
-/** A clip block's accessible name: «Кадр 2: коллаж 3, 3.2 с», «Кадр 1: фото отклонено, 2.4 с». */
-export function clipAria(index: number, clip: Clip, problem: PhotoProblem | null): string {
-  const what = problem === null ? clipKindLabel(clip) : PHOTO_PROBLEM_TAGS[problem].replace(/^⚠\s*/, "");
+/** The tag on an own video clip's block that the render refuses (3f.3b), in the voice of the photo tags. */
+export const VIDEO_PROBLEM_TAGS: Record<VideoProblem, string> = {
+  "video-too-short": "⚠ видео короче кадра",
+  "media-unavailable": "⚠ файла больше нет",
+};
+
+const isVideoProblem = (problem: PhotoProblem | VideoProblem): problem is VideoProblem => problem === "video-too-short" || problem === "media-unavailable";
+
+/**
+ * A clip block's accessible name: «Кадр 2: коллаж 3, 3.2 с», «Кадр 1: фото отклонено, 2.4 с», «Кадр 3: видео latte-pour.mov, 2.0 с» (an own video by its
+ * file's name once its record is known), «Кадр 3: видео короче кадра, 2.0 с».
+ */
+export function clipAria(index: number, clip: Clip, problem: PhotoProblem | VideoProblem | null, videoName: string | null = null): string {
+  const tag = problem === null ? null : isVideoProblem(problem) ? VIDEO_PROBLEM_TAGS[problem] : PHOTO_PROBLEM_TAGS[problem];
+  const what = tag !== null ? tag.replace(/^⚠\s*/, "") : clip.kind === "video" && videoName !== null ? `видео ${videoName}` : clipKindLabel(clip);
   return `Кадр ${index + 1}: ${what}, ${secondsLabel(clip.durationMs)}`;
+}
+
+// ---------- an own video clip (3f.3b; EditorMine.dc.html, R16–R20) ----------
+
+const tenths = (ms: number): string => (ms / 1000).toFixed(1);
+const MAX_TOTAL_SECONDS = MAX_TOTAL_MS / 1000;
+
+/** «Обрезка»: the part of the video the clip plays, «1.8 → 3.8 с». */
+export function trimRangeLabel(startMs: number, endMs: number): string {
+  return `${tenths(startMs)} → ${tenths(endMs)}${NBSP}с`;
+}
+
+/** «2.0 с из 6.4»: the clip's length out of the stored video's. */
+export function trimOfLabel(durationMs: number, sourceMs: number): string {
+  return `${secondsLabel(durationMs)} из ${tenths(sourceMs)}`;
+}
+
+/** A frame rate as the owner knows it: «60», «29.97» (two decimals at most, no trailing zeros). */
+const fpsText = (fps: number): string => String(Math.round(fps * 100) / 100);
+
+/** The source facts (R19): «6.4 с · 1080×1920 · 60 → 30 fps», the stored length and size, the owner's rate and the constant 30 fps it became. */
+export function videoFactsLabel(video: Pick<OwnVideo, "durationMs" | "width" | "height" | "sourceFps">): string {
+  const rate = fpsText(video.sourceFps) === String(FPS) ? `${FPS}${NBSP}fps` : `${fpsText(video.sourceFps)}${NBSP}→ ${FPS}${NBSP}fps`;
+  return `${secondsLabel(video.durationMs)} · ${video.width}×${video.height} · ${rate}`;
+}
+
+/**
+ * What is left of the 15 s for an own video clip (R14's line, held to its video): «ролик 9.6 с из 15 · кадр можно удлинить ещё на 5.4 с», or less when
+ * the video ends first. `growMs` is how much longer the clip may get with both edges (`videoTrim.ts`).
+ */
+export function videoRoomLabel(totalMs: number, roomMs: number, growMs: number): string {
+  const head = `ролик ${secondsLabel(totalMs)} из ${MAX_TOTAL_SECONDS}`;
+  if (roomMs <= 0) return `${head} · длиннее кадр уже не станет`;
+  if (growMs <= 0) return `${head} · видео уже целиком в кадре`;
+  return growMs < roomMs ? `${head} · кадр можно удлинить ещё на ${secondsLabel(growMs)} — дальше видео кончается` : `${head} · кадр можно удлинить ещё на ${secondsLabel(growMs)}`;
 }
 
 /** Why a toolbar action is off, in its tooltip. */
