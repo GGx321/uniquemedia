@@ -52,6 +52,13 @@ export const LAYER_ANIMATED_BYTES = 34 * MIB;
 export const LAYER_CALL_BUDGET_BYTES = 700 * MIB;
 
 /**
+ * The most (loop frames x width x height) an animated layer may have and still fit a call that FOLLOWS another one: the tightest position, since
+ * layers cannot be reordered to make one fit (`planLayerBatches`). The import of an own sticker (3f.5) refuses a loop over it, so the owner is never
+ * given a sticker the render would refuse at its very first layer: 166 frames at 720 x 720, 300 frames at 480 x 480.
+ */
+export const MAX_ANIMATION_LOOP_PIXELS = Math.floor((LAYER_CALL_BUDGET_BYTES - LAYER_CALL_BASE_BYTES - LAYER_CHAINED_INPUT_BYTES - LAYER_ANIMATED_BYTES) / 2.5);
+
+/**
  * What a layer file can take on disk, per frame of the timeline: measured with real «Без фона» captions (emoji, scale 1.6, the whole
  * timeline) and ten 648 px stickers, a 15 s FFV1 file is 300 MiB, 0.66 MiB per frame; a flat caption is a few MiB. 1 MiB per frame is the bound.
  */

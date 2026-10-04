@@ -106,6 +106,76 @@ export function lzw(indices: ArrayLike<number>, minCodeSize = 2): Uint8Array {
   return Uint8Array.from(out);
 }
 
+/**
+ * A COMPRESSING LZW encoder (a dictionary of strings, as a real GIF writer has): the same stream shape as `lzw` (a clear code first, an end code
+ * last, the width growing with the table as a decoder reads it, the table cleared before it fills) but a flat frame is a few KB, not as big as the
+ * picture. For the fixtures that must stay within a sticker's 5 MB cap at the largest size (a 720 x 720 GIF of 300 frames).
+ */
+export function lzwCompress(indices: ArrayLike<number>, minCodeSize = 2): Uint8Array {
+  const clear = 1 << minCodeSize;
+  const eoi = clear + 1;
+  const out: number[] = [];
+  let acc = 0;
+  let bits = 0;
+  const put = (code: number, width: number): void => {
+    acc |= code << bits;
+    bits += width;
+    while (bits >= 8) {
+      out.push(acc & 255);
+      acc >>>= 8;
+      bits -= 8;
+    }
+  };
+  // The decoder's own state, which is what the width of each code follows: it adds one entry per code after the first that follows a clear.
+  let width = minCodeSize + 1;
+  let decoderNext = eoi + 1;
+  let first = true;
+  // The encoder's dictionary: (prefix code, next symbol) to the code of that string.
+  let dictionary = new Map<number, number>();
+  let encoderNext = eoi + 1;
+  const emit = (code: number): void => {
+    put(code, width);
+    if (first) {
+      first = false;
+    } else {
+      decoderNext += 1;
+      if (decoderNext === 1 << width && width < 12) width += 1;
+    }
+  };
+  const restart = (): void => {
+    put(clear, width);
+    width = minCodeSize + 1;
+    decoderNext = eoi + 1;
+    first = true;
+    dictionary = new Map();
+    encoderNext = eoi + 1;
+  };
+  put(clear, width);
+  if (indices.length === 0) {
+    put(eoi, width);
+    if (bits > 0) out.push(acc & 255);
+    return Uint8Array.from(out);
+  }
+  let prefix = indices[0] ?? 0;
+  for (let i = 1; i < indices.length; i++) {
+    const symbol = indices[i] ?? 0;
+    const known = dictionary.get((prefix << 8) | symbol);
+    if (known !== undefined) {
+      prefix = known;
+      continue;
+    }
+    emit(prefix);
+    dictionary.set((prefix << 8) | symbol, encoderNext);
+    encoderNext += 1;
+    prefix = symbol;
+    if (decoderNext >= 4093) restart();
+  }
+  emit(prefix);
+  put(eoi, width);
+  if (bits > 0) out.push(acc & 255);
+  return Uint8Array.from(out);
+}
+
 export interface TestGifFrame {
   /** Centiseconds as written; `null` writes no graphic control extension at all. Default 3. */
   readonly delayCs?: number | null;
@@ -122,6 +192,8 @@ export interface TestGifFrame {
   readonly minCodeSize?: number;
   /** The image data as it goes on the wire (a hostile stream); replaces the encoded one. */
   readonly rawData?: Uint8Array;
+  /** Write the pixels with the compressing encoder (`lzwCompress`) instead of the literal-only one. */
+  readonly compress?: boolean;
 }
 
 export interface TestGif {
@@ -153,7 +225,7 @@ export function buildGif(spec: TestGif): Uint8Array {
     parts.push(descriptor(frame.x ?? 0, frame.y ?? 0, w, h, frame.interlaced ?? false));
     parts.push(Uint8Array.of(frame.minCodeSize ?? 2));
     const indices = frame.indices ?? Array.from({ length: w * h }, (_, p) => (i + (p % 5 === 0 ? 1 : 0)) % 4);
-    parts.push(subBlocks(frame.rawData ?? lzw(indices)));
+    parts.push(subBlocks(frame.rawData ?? (frame.compress === true ? lzwCompress(indices) : lzw(indices))));
   });
   if (!spec.omitTrailer) parts.push(TRAILER);
   if (spec.trailing !== undefined) parts.push(spec.trailing);

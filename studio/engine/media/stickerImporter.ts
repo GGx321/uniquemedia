@@ -5,6 +5,7 @@ import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type FfmpegSpawner } fr
 import { inspectApng, inspectApngRaw, STICKER_FPS, STICKER_LIMITS, type ApngRejectCode } from "../../shared/stickers/apng";
 import { inspectGif, type GifRejectCode } from "../../shared/stickers/gif";
 import { quantiseByAccumulatedTime, type FrameDuration } from "../../shared/stickers/quantise";
+import { MAX_ANIMATION_LOOP_PIXELS } from "../render/layerPass";
 import { EncodeTooLargeError } from "../stickers/encodeErrors";
 import type { StickerEncodeJob } from "../stickers/encodeGate";
 import type { MediaImporter, MediaImportRequest } from "./imports";
@@ -14,10 +15,12 @@ import type { MediaImporter, MediaImportRequest } from "./imports";
 //
 //   1. JUDGE. The staged copy is read once (its size and sha256 checked again), and a bounded PURE reader judges it (`inspectGif`, `inspectApngRaw`:
 //      every block and chunk, the caps, a GIF's LZW streams to the pixel). Nothing here decodes a picture. What it keeps is the canvas and each
-//      frame's raw delay. A still PNG, a file of one frame and an APNG whose default image is not a frame (a poster: ffmpeg and the browsers disagree
-//      on it) are refused here.
+//      frame's raw delay. A still PNG, a file of one frame and an APNG whose default image is not a frame (`DEFAULT_IMAGE_NOT_A_FRAME`, a poster
+//      before the first fcTL) are refused here. The poster is refused, not skipped, so that every platform gives ONE answer: measured, the macOS ffmpeg 6.0 skips
+//      it as the browsers do, but a decoder that draws it as a frame would play another loop than the preview, and the Windows build is another ffmpeg.
 //   2. QUANTISE. The delays go onto the 30 fps grid by ACCUMULATED time (`quantise.ts`); a frame too short for any slot drops out of the loop. The loop
-//      is judged in 30 fps frames: over 300 is refused.
+//      is judged in 30 fps frames: over 300 is refused, and so is a loop whose frames times its canvas is over what the render's layer pass can hold
+//      (`MAX_ANIMATION_LOOP_PIXELS`, the memory rule of 3b.6), as `dimensions`.
 //   3. CROSS-CHECK. ffmpeg, in a CHILD PROCESS, decodes the staged copy once to count what comes out of `fps=30` (`-xerror`, `-f null`): the count must be
 //      the loop the quantiser promised, which holds the decoder to the rule the importer used for the delays. What was judged is what is decoded: the
 //      decoder is named from the verdict (`-f`, `-codec_whitelist`, `-c:v`), the protocol is `file` only, and allocations and pixels are capped.
@@ -150,6 +153,9 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
     // 2. QUANTISE.
     const { slots, loopFrames } = quantiseByAccumulatedTime(source.durations);
     if (loopFrames > STICKER_LIMITS.maxLoopFrames) throw new Refused("loop-too-long");
+    // The memory rule of 3b.6: the render prices a sticker at its loop cache, one frame of its own size per SLOT of the loop, and refuses a layer that fits
+    // no call. A loop the render could never use is refused here, where the owner can still choose another file.
+    if (loopFrames * source.width * source.height > MAX_ANIMATION_LOOP_PIXELS) throw new Refused("dimensions");
     const keptSlots = slots.filter((n) => n > 0);
     if (keptSlots.length < 2) throw new Refused("not-animated");
 

@@ -56,8 +56,9 @@ describe("inspectApngRaw: the delays are not forced onto the grid", () => {
 });
 
 describe("inspectApngRaw: DEFAULT_IMAGE_NOT_A_FRAME is refused", () => {
-  // Decision (3f.5): an APNG whose default image (the IDAT) is NOT the first frame (a poster before the first fcTL) is refused. Chrome
-  // skips that image and ffmpeg's decoder draws it as a frame, so the preview and the render would play different loops.
+  // Decision (3f.5): an APNG whose default image (the IDAT) is NOT the first frame (a poster before the first fcTL) is refused. The APNG spec says a
+  // viewer that animates skips it, and the browsers and the macOS ffmpeg 6.0 do (measured); but a decoder that draws it as a frame would make the render
+  // play another loop than the preview, and the Windows build is another ffmpeg. Refusing it gives every platform one answer, and the owner a clear text.
   test("image data before the first fcTL", () => {
     const bytes = concat([PNG_SIGNATURE, ihdr(8, 8), actl(2, 0), idat(), fctl(0, 8, 8, 0, 0, 1, 30), idat(), fctl(1, 8, 8, 0, 0, 1, 30), fdat(2), iend()]);
     expect(rejected(inspectApngRaw(bytes))).toBe("DEFAULT_IMAGE_NOT_A_FRAME");
