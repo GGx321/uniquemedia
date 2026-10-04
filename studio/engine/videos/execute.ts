@@ -17,6 +17,7 @@ import { collectForbiddenStrings, combineForbiddenStrings } from "./forbiddenStr
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { copyOwnPhotos, type OwnPhotoSource } from "./ownPhotos";
 import { openOwnTrack, OwnTrackUnavailableError, type OwnTrackSource } from "./ownTrack";
+import type { OwnStickerSource } from "./ownStickers";
 import { resolveLayers, type LayerDeps } from "./layers";
 import { CommitTracker } from "./live";
 import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
@@ -81,6 +82,11 @@ export interface RenderPlan {
    * into its own folder; `resolvePhoto` points at the copy (`ownPhotoCopyName`), never at the library file. Absent: none.
    */
   readonly ownPhotos?: readonly OwnPhotoSource[];
+  /**
+   * The own stickers the spec names (3f.5), each as the admission found it: the library file, its canvas, loop and sha256. The job verifies
+   * each when it resolves the layers and writes the verified bytes into its own folder (`layers.ts`); ffmpeg never reads the library file. Absent: none.
+   */
+  readonly ownStickers?: readonly OwnStickerSource[];
   /** Silence, by type (invariant 31): a plan cannot name a track file. A track comes only through `track`, opened from the store when the job starts. */
   readonly audio: { readonly kind: "silent" };
   /**
@@ -293,7 +299,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     let layers: Awaited<ReturnType<typeof resolveLayers>> | undefined;
     if (plan.spec.layers.length > 0) {
       if (deps.layers === undefined) throw new RenderFailure({ code: "INTERNAL", detail: "this engine cannot render text or sticker layers" });
-      layers = await resolveLayers(plan.spec.layers, jobDir, deps.layers, context.signal);
+      layers = await resolveLayers(plan.spec.layers, jobDir, deps.layers, context.signal, new Map((plan.ownStickers ?? []).map((own) => [own.mediaId, own])));
     }
 
     const music = await openTrack(plan, context.signal);

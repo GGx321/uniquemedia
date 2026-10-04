@@ -130,9 +130,9 @@ export interface Handoff {
 
 export interface HandoffOptions {
   readonly format: MediaFormat;
-  readonly name?: string;
   /** The kind the staging says the bytes are; a photo by default. */
   readonly kind?: MediaKind;
+  readonly name?: string;
   /** What the staging says the bytes hash to; the real hash by default. */
   readonly sha256?: string;
   readonly signal?: AbortSignal;

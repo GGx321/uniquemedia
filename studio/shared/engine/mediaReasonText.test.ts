@@ -18,7 +18,11 @@ describe("mediaReasonRu", () => {
     for (const reason of ["too-long", "too-small", "dimensions", "codec", "structure"] as const) {
       expect(MEDIA_REASONS_RU[reason]).not.toMatch(VIDEO_WORDS);
       expect(mediaReasonRu(reason)).toBe(MEDIA_REASONS_RU[reason]);
-      // A kind with no text of its own for the reason (a sticker) is told the neutral one.
+    }
+  });
+
+  test("a sticker has no text of its own for the length, the codec or the structure: it is told the neutral one", () => {
+    for (const reason of ["too-long", "codec", "structure"] as const) {
       expect(mediaReasonRu(reason, "sticker")).toBe(MEDIA_REASONS_RU[reason]);
     }
   });

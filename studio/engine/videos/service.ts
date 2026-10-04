@@ -5,6 +5,7 @@ import { EXPORT_CHANGING_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 import { ownPhotoCells, ownPhotoIssues } from "../../shared/montage/ownPhotos";
+import { ownStickerCells, ownStickerIssues } from "../../shared/montage/ownStickers";
 import { ownTrackIssues, trendingTrackIssues } from "../../shared/montage/trackIssues";
 import type { RenderTrackSource } from "../music/renderTrack";
 import { estimateBytesUpper } from "../../shared/montage";
@@ -26,6 +27,7 @@ import type { CommitFs } from "./commitFs";
 import { deleteVideo, findVideoRecord, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
 import { createRenderExecute, totalFramesOf, type RenderPlan, type SettleInput, type VideoRenderDeps } from "./execute";
 import { ownPhotoCopyName, ownPhotoSourceOf, type OwnPhotoSource } from "./ownPhotos";
+import { ownStickerSourceOf, type OwnStickerSource } from "./ownStickers";
 import { ownTrackSourceOf, type OwnTrackSource } from "./ownTrack";
 import { newHashBudget, type FileStateChecker } from "./fileState";
 import type { LayerDeps } from "./layers";
@@ -96,9 +98,10 @@ export interface VideoServiceDeps {
    */
   readonly tracks?: RenderTrackSource;
   /**
-   * The own media (3f.2 photos, 3f.4 music): `videos.render` looks each own photo of a spec up as a PHOTO and its own track as an AUDIO media
-   * (`MediaService.lookup`) and reserves each on the queue in the same step; the job copies a photo, verified, into its own folder and reads the
-   * track's verified bytes. Absent: no own media is held, so a spec that names one is refused as `media-unavailable`.
+   * The own media (3f.2 photos, 3f.4 music, 3f.5 stickers): `videos.render` looks each own photo of a spec up as a PHOTO, each own sticker as a STICKER
+   * and its own track as an AUDIO media (`MediaService.lookup`) and reserves each on the queue in the same step; the job copies a photo or sticker,
+   * verified, into its own folder and reads the track's verified bytes. Absent: no own media is held, so a spec that names one is refused as
+   * `media-unavailable`.
    */
   readonly media?: { lookup(mediaId: string, kind: MediaKind, onFound?: (found: MediaLookup) => void): Promise<MediaLookup | undefined> };
   readonly newId: () => string;
@@ -297,9 +300,9 @@ export class VideoService {
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
     if (renderTmpDir === undefined) throw new EngineFailure({ code: "INTERNAL", detail: "no render folder is configured, so nothing can be rendered" });
-    // 3f.2, 3f.4: the own photos and the own track the spec names are looked up and RESERVED here, each in the step that finds it (MediaService.lookup's
-    // onFound), so `media.delete` of one is refused IN_FLIGHT from that moment. The holds are given back whatever happens below: `submit` takes over
-    // with the queue's own reservation, and a refusal leaves nothing held.
+    // 3f.2, 3f.4, 3f.5: the own photos, stickers and track the spec names are looked up and RESERVED here, each in the step that finds it
+    // (MediaService.lookup's onFound), so `media.delete` of one is refused IN_FLIGHT from that moment. The holds are given back whatever happens
+    // below: `submit` takes over with the queue's own reservation, and a refusal leaves nothing held.
     const admission = await this.#admitOwnMedia(spec);
     try {
       // Invariant 35: the export folder, checked NOW, before anything else about the render is looked at (a spec that is
@@ -315,8 +318,8 @@ export class VideoService {
         // The draft was read from the library that was open then; a render is queued in the one that is open now.
         if (source.library !== null && source.library !== library) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${source.montageId} in the open library` });
         // The own media were found in the library that was open when they were looked up: another one now holds none of them.
-        if ((admission.sources.size > 0 || admission.track !== null) && admission.library !== library) throw new EngineFailure({ code: "IN_FLIGHT", detail: "the library was switched while the render was being prepared" });
-        return this.#render(library, spec, source, renderTmpDir, check, admission.sources, admission.track, { remaining, marginMs });
+        if ((admission.photos.size + admission.stickers.size > 0 || admission.track !== null) && admission.library !== library) throw new EngineFailure({ code: "IN_FLIGHT", detail: "the library was switched while the render was being prepared" });
+        return this.#render(library, spec, source, renderTmpDir, check, admission.photos, admission.stickers, admission.track, { remaining, marginMs });
       });
     } finally {
       admission.release();
@@ -324,37 +327,55 @@ export class VideoService {
   }
 
   /**
-   * The own media of `spec`: each own photo looked up as a PHOTO and the own track as an AUDIO media, each held on the queue in the same step that finds
-   * it (`onFound` runs inside the lookup, so there is no await between the two, and `media.delete` takes a media out of lookup in its first tick before it
-   * asks the reserved provider: a media is either found here and then refused to the delete, or not found). A media that two cells use is looked up once.
-   * One that is not there (or is another kind, or not one the render can read) is `media-unavailable` (at each of its cells, or at the music); a track
-   * too short for `startMs` plus the montage is `track-too-short`: every hold already made is given back and the render is refused. The issues keep
-   * the order `montages.get` gives them: the photos, then the track. `release` gives the holds back; calling it again changes nothing.
+   * The own media of `spec`: each own photo looked up as a PHOTO, each own sticker as a STICKER and the own track as an AUDIO media, each held on the
+   * queue in the same step that finds it (`onFound` runs inside the lookup, so there is no await between the two, and `media.delete` takes a media out
+   * of lookup in its first tick before it asks the reserved provider: a media is either found here and then refused to the delete, or not found). A
+   * media that two cells or layers use is looked up once. One that is not there (or is another kind, or not one the render can read) is
+   * `media-unavailable` at each of its places (the photos' first, in clip order, then the stickers', in layer order, then the music); a track too
+   * short for `startMs` plus the montage is `track-too-short`: every hold already made is given back and the render is refused. `release` gives the
+   * holds back; calling it again changes nothing.
    */
-  async #admitOwnMedia(spec: MontageDraft): Promise<{ sources: Map<string, OwnPhotoSource>; track: OwnTrackSource | null; library: Library | null; release: () => void }> {
-    const sources = new Map<string, OwnPhotoSource>();
+  async #admitOwnMedia(
+    spec: MontageDraft,
+  ): Promise<{ photos: Map<string, OwnPhotoSource>; stickers: Map<string, OwnStickerSource>; track: OwnTrackSource | null; library: Library | null; release: () => void }> {
+    const photos = new Map<string, OwnPhotoSource>();
+    const stickers = new Map<string, OwnStickerSource>();
     const admitted: { track: OwnTrackSource | null } = { track: null };
     const holds: (() => void)[] = [];
     const release = (): void => {
       for (const hold of holds.splice(0)) hold();
     };
-    const cells = ownPhotoCells(spec);
+    const photoCells = ownPhotoCells(spec);
+    const stickerCells = ownStickerCells(spec);
     const music = spec.music?.source === "own" ? spec.music : null;
-    if (cells.length === 0 && music === null) return { sources, track: null, library: null, release };
+    if (photoCells.length + stickerCells.length === 0 && music === null) return { photos, stickers, track: null, library: null, release };
     const library = this.#deps.openLibrary();
     const media = this.#deps.media;
-    const asked = new Set<string>();
     try {
-      for (const { mediaId } of cells) {
-        if (asked.has(mediaId)) continue;
-        asked.add(mediaId);
+      const askedPhotos = new Set<string>();
+      for (const { mediaId } of photoCells) {
+        if (askedPhotos.has(mediaId)) continue;
+        askedPhotos.add(mediaId);
         if (media === undefined) continue;
         await media.lookup(mediaId, "photo", (found) => {
           // Synchronously, in the lookup's own step: the hold and the record it is a hold of.
           const source = ownPhotoSourceOf(found);
           if (source === null) return;
           holds.push(this.#deps.queue.holdMedia(mediaId));
-          sources.set(mediaId, source);
+          photos.set(mediaId, source);
+        });
+      }
+      const askedStickers = new Set<string>();
+      for (const { mediaId } of stickerCells) {
+        if (askedStickers.has(mediaId)) continue;
+        askedStickers.add(mediaId);
+        if (media === undefined) continue;
+        await media.lookup(mediaId, "sticker", (found) => {
+          // The same step, for a sticker.
+          const source = ownStickerSourceOf(found);
+          if (source === null) return;
+          holds.push(this.#deps.queue.holdMedia(mediaId));
+          stickers.set(mediaId, source);
         });
       }
       if (music !== null && media !== undefined) {
@@ -366,13 +387,17 @@ export class VideoService {
         });
       }
       const held = admitted.track;
-      const issues = [...ownPhotoIssues(spec, (mediaId) => sources.has(mediaId)), ...ownTrackIssues(spec, (mediaId) => (held !== null && held.mediaId === mediaId ? { durationMs: held.durationMs } : null))];
+      const issues = [
+        ...ownPhotoIssues(spec, (mediaId) => photos.has(mediaId)),
+        ...ownStickerIssues(spec, (mediaId) => stickers.has(mediaId)),
+        ...ownTrackIssues(spec, (mediaId) => (held !== null && held.mediaId === mediaId ? { durationMs: held.durationMs } : null)),
+      ];
       if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues: issues.slice(0, MAX_MONTAGE_ISSUES) });
     } catch (error) {
       release();
       throw error;
     }
-    return { sources, track: admitted.track, library, release };
+    return { photos, stickers, track: admitted.track, library, release };
   }
 
   /**
@@ -413,6 +438,7 @@ export class VideoService {
     renderTmpDir: string,
     check: Extract<ExportRootCheck, { ok: true }>,
     ownPhotos: ReadonlyMap<string, OwnPhotoSource>,
+    ownStickers: ReadonlyMap<string, OwnStickerSource>,
     ownTrack: OwnTrackSource | null,
     time: { remaining(): number; marginMs: number },
   ): Promise<{ jobId: string; videoId: string }> {
@@ -487,6 +513,7 @@ export class VideoService {
         return own === undefined ? undefined : { path: join(renderTmpDir, jobId, ownPhotoCopyName(own.mediaId)), width: own.width, height: own.height };
       },
       ownPhotos: [...ownPhotos.values()],
+      ownStickers: [...ownStickers.values()],
       audio: { kind: "silent" },
       // The id and the start only: the file's path comes from the track store when the job runs (invariant 31).
       ...(filled.music?.source === "trending" ? { track: { trackId: filled.music.trackId, startMs: filled.music.startMs } } : {}),
@@ -513,7 +540,14 @@ export class VideoService {
       ...deps.renderOverrides,
     });
     // ONE number of frames: the queue's total, and the verifier's expectation (execute), come from the same function.
-    const result = deps.queue.submit({ jobId, ref: { videoId, avatarId: spec.avatarId, montageId }, totalFrames: totalFramesOf(filled.clips), photoIds: scenePhotoIds(filled.clips), mediaIds: [...ownPhotos.keys(), ...(ownTrack === null ? [] : [ownTrack.mediaId])], execute: execute(plan) });
+    const result = deps.queue.submit({
+      jobId,
+      ref: { videoId, avatarId: spec.avatarId, montageId },
+      totalFrames: totalFramesOf(filled.clips),
+      photoIds: scenePhotoIds(filled.clips),
+      mediaIds: [...ownPhotos.keys(), ...ownStickers.keys(), ...(ownTrack === null ? [] : [ownTrack.mediaId])],
+      execute: execute(plan),
+    });
     if (!result.ok) {
       if (result.code === "QUEUE_FULL") throw new EngineFailure({ code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(result.limit) });
       const held = new Set(result.photoIds);

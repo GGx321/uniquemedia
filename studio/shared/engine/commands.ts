@@ -6,7 +6,7 @@ import { EventMessage } from "./events";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
 import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult } from "./media";
-import { StickerBytes, StickerBytesPayload } from "./stickerBytes";
+import { OwnStickerBytes, OwnStickerBytesPayload, StickerBytes, StickerBytesPayload } from "./stickerBytes";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
   ApiKeyStatus,
@@ -231,6 +231,10 @@ const MAIN_ONLY_SPECS = [
   // re-inspected, the manifest agreeing): the window names an id, and is told the file and never a path. NOT_FOUND for an id the
   // set does not hold.
   defineCommand("stickers.bytes", StickerBytesPayload, StickerBytes),
+  // Stage 3 (3f.5): an OWN sticker's bytes for the same decoder, as a command of its own so the two doors stay apart. Main resolves the media id
+  // through its record (the kind must be sticker, the sha256 is checked on the exact bytes, the size is capped before it reads), answers the file and
+  // never a path. NOT_FOUND for an id that is not an own sticker; INTERNAL, with fixed text, for one that fails its check.
+  defineCommand("media.stickerBytes", OwnStickerBytesPayload, OwnStickerBytes),
 ] as const;
 
 /** Commands main forwards to the engine. */

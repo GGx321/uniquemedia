@@ -104,6 +104,32 @@ export type ApngInspection =
   | { readonly ok: true; readonly info: ApngInfo }
   | { readonly ok: false; readonly code: ApngRejectCode; readonly detail: string };
 
+/** A frame as written, for the importer (3f.5): where it sits and how long it lasts in the file's own fraction of a second. */
+export interface ApngRawFrameInfo {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  /** The delay as written in fcTL (`delayDen` 0 is already read as 100); never 0. */
+  readonly delayNum: number;
+  readonly delayDen: number;
+}
+
+export interface ApngRawInfo {
+  readonly width: number;
+  readonly height: number;
+  readonly bitDepth: number;
+  readonly colorType: number;
+  readonly interlaced: boolean;
+  readonly frameCount: number;
+  readonly frames: readonly ApngRawFrameInfo[];
+  readonly loopCount: number;
+}
+
+export type ApngRawInspection =
+  | { readonly ok: true; readonly info: ApngRawInfo }
+  | { readonly ok: false; readonly code: ApngRejectCode; readonly detail: string };
+
 const SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
 const VALID_DEPTHS: Readonly<Record<number, readonly number[]>> = {
   0: [1, 2, 4, 8, 16],
@@ -123,6 +149,37 @@ const fail = (code: ApngRejectCode, detail: string): ApngInspection => ({ ok: fa
  * not read a file already over the byte cap.
  */
 export function inspectApng(bytes: Uint8Array, limits: StickerLimits = STICKER_LIMITS): ApngInspection {
+  return walk(bytes, limits, true);
+}
+
+/**
+ * The importer's reader (3f.5): the same structural judgement as `inspectApng`, but the delays are returned RAW and are not forced onto the
+ * 30 fps grid. An owner's APNG is written in any fraction of a second, so an off-grid delay is not a fault here (`OFF_GRID_DELAY` never comes
+ * back) and the loop's length is not capped here (`LOOP_TOO_LONG` neither): the importer puts the delays on the grid by accumulated time
+ * (`quantise.ts`) and judges the loop in 30 fps frames after that. A zero delay is still refused (`ZERO_DELAY`: players disagree on how
+ * long it lasts), as are more than `limits.maxLoopFrames` frames and a default image that is not a frame (`DEFAULT_IMAGE_NOT_A_FRAME`).
+ */
+export function inspectApngRaw(bytes: Uint8Array, limits: StickerLimits = STICKER_LIMITS): ApngRawInspection {
+  const result = walk(bytes, limits, false);
+  if (!result.ok) return result;
+  const { info } = result;
+  return {
+    ok: true,
+    info: {
+      width: info.width,
+      height: info.height,
+      bitDepth: info.bitDepth,
+      colorType: info.colorType,
+      interlaced: info.interlaced,
+      frameCount: info.frameCount,
+      loopCount: info.loopCount,
+      frames: info.frames.map(({ x, y, width, height, delayNum, delayDen }) => ({ x, y, width, height, delayNum, delayDen })),
+    },
+  };
+}
+
+/** `grid`: judge the delays against the 30 fps grid (the strict reader). Off: raw delays, and `delayFrames` / `loopFrames` are 0 (unused). */
+function walk(bytes: Uint8Array, limits: StickerLimits, grid: boolean): ApngInspection {
   if (bytes.length > limits.maxBytes) return fail("TOO_LARGE_FILE", `${bytes.length} bytes, the cap is ${limits.maxBytes}`);
   if (bytes.length < SIGNATURE.length || SIGNATURE.some((b, i) => bytes[i] !== b)) return fail("NOT_PNG", "no PNG signature");
 
@@ -211,12 +268,12 @@ export function inspectApng(bytes: Uint8Array, limits: StickerLimits = STICKER_L
       const delayNum = u16(dataAt + 20);
       const delayDen = u16(dataAt + 22) === 0 ? 100 : u16(dataAt + 22);
       if (delayNum === 0) return fail("ZERO_DELAY", `frame ${frames.length} has a zero delay`);
-      if ((delayNum * STICKER_FPS) % delayDen !== 0) {
+      if (grid && (delayNum * STICKER_FPS) % delayDen !== 0) {
         return fail("OFF_GRID_DELAY", `frame ${frames.length} lasts ${delayNum}/${delayDen} s, not a whole number of 1/${STICKER_FPS} s frames`);
       }
-      const delayFrames = (delayNum * STICKER_FPS) / delayDen;
+      const delayFrames = grid ? (delayNum * STICKER_FPS) / delayDen : 0;
       loopFrames += delayFrames;
-      if (loopFrames > limits.maxLoopFrames) return fail("LOOP_TOO_LONG", `the loop passes ${limits.maxLoopFrames} frames at ${STICKER_FPS} fps`);
+      if (grid && loopFrames > limits.maxLoopFrames) return fail("LOOP_TOO_LONG", `the loop passes ${limits.maxLoopFrames} frames at ${STICKER_FPS} fps`);
       frames.push({ x, y, width, height, delayNum, delayDen, delayFrames });
       frameHasData = false;
     } else if (isIdat) {

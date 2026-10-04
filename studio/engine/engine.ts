@@ -744,6 +744,7 @@ export class Engine {
         }
         return held;
       },
+      ownStickers: (mediaIds) => this.#media.holding(mediaIds, "sticker"),
       ...(deps.musicTracks === undefined ? {} : { tracks: deps.musicTracks }),
       newId: deps.newId,
       now: () => new Date(deps.clock()),
@@ -1434,7 +1435,7 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId, ...outcome } };
       }
       case "media.list":
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#media.list(command.payload.kind) };
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#media.list(command.payload.kind, command.payload.mediaIds) };
       case "media.delete": {
         const { mediaId } = command.payload;
         let removed: "deleted" | "not-found" | "in-use";

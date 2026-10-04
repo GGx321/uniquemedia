@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { MontageDraft } from "../engine/montage";
 import { notYetSupportedIssues } from "./notYetSupported";
 
-// N9: the parts of a montage whose slice has not landed are REFUSED, never rendered without them. 3f.2 lifted it for an
-// own photo in a photo or collage cell (`source: "own"`) and 3f.4 for an own track. An own video and an own sticker stay refused until their slices.
+// N9: the parts of a montage whose slice has not landed are REFUSED, never rendered without them. 3f.2 lifted it for an own photo in a photo or
+// collage cell (`source: "own"`), 3f.4 for an own track and 3f.5 for an own sticker. An own video stays refused until its slice.
 
 type Clip = MontageDraft["clips"][number];
 type Cell = Extract<Clip, { kind: "photo" }>["cell"];
@@ -45,15 +45,35 @@ describe("notYetSupportedIssues: an own track is supported (3f.4)", () => {
   });
 });
 
+describe("notYetSupportedIssues: own stickers are supported (3f.5)", () => {
+  const stickerLayer = (n: number, sticker: Extract<MontageDraft["layers"][number], { kind: "sticker" }>["sticker"]): MontageDraft["layers"][number] => ({
+    kind: "sticker",
+    layerId: `layer-${n}`,
+    startMs: 0,
+    endMs: 1000,
+    x: 0.5,
+    y: 0.5,
+    size: 0.3,
+    sticker,
+  });
+
+  test("an own sticker layer is no issue (the engine then judges it with `media-unavailable`, and a render holds it until it ends)", () => {
+    const layers = [stickerLayer(1, { source: "own", mediaId: "media-3" })];
+    expect(notYetSupportedIssues(spec([photoClip(1, own(1))], { layers }))).toEqual([]);
+  });
+
+  test("an own sticker next to a built-in one and a text layer is no issue either", () => {
+    const layers: MontageDraft["layers"] = [
+      stickerLayer(1, { source: "builtin", stickerId: "heart-pulse" }),
+      stickerLayer(2, { source: "own", mediaId: "media-3" }),
+      { kind: "text", layerId: "layer-3", startMs: 0, endMs: 1000, value: "hi", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.5, scale: 1 },
+    ];
+    expect(notYetSupportedIssues(spec([photoClip(1, own(1))], { layers }))).toEqual([]);
+  });
+});
+
 describe("notYetSupportedIssues: the rest of own media stays refused", () => {
   test("an own video clip is refused where it is, even next to an own photo", () => {
     expect(notYetSupportedIssues(spec([photoClip(1, own(1)), videoClip(2)]))).toEqual([{ code: "not-yet-supported", path: ["clips", 1] }]);
-  });
-
-  test("an own sticker layer is refused where it is", () => {
-    const layers: MontageDraft["layers"] = [
-      { kind: "sticker", layerId: "layer-1", startMs: 0, endMs: 1000, x: 0.5, y: 0.5, size: 0.3, sticker: { source: "own", mediaId: "media-3" } },
-    ];
-    expect(notYetSupportedIssues(spec([photoClip(1, own(1))], { layers }))).toEqual([{ code: "not-yet-supported", path: ["layers", 0] }]);
   });
 });

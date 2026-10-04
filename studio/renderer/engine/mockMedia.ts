@@ -246,14 +246,33 @@ export class MockOwnMedia {
   }
 
   /** Newest first, cut as the engine cuts it: the contract's 500. */
-  list(kind?: MediaKind): { media: MediaSummary[]; total: number } {
-    const all = this.#records.filter((r) => kind === undefined || r.kind === kind).reverse();
+  list(kind?: MediaKind, mediaIds?: readonly string[]): { media: MediaSummary[]; total: number } {
+    const named = mediaIds === undefined ? undefined : new Set(mediaIds);
+    const all = this.#records.filter((r) => (kind === undefined || r.kind === kind) && (named === undefined || named.has(r.mediaId))).reverse();
     return { media: all.slice(0, MAX_LISTED_MEDIA), total: all.length };
   }
 
   /** Whether the library holds this media as a PHOTO: what a render's admission and a draft's referential check ask (3f.2). */
   holdsPhoto(mediaId: string): boolean {
     return this.#records.some((r) => r.mediaId === mediaId && r.kind === "photo");
+  }
+
+  /** Whether the library holds this media as a STICKER: what a render's admission and a draft's referential check ask for an own sticker (3f.5). */
+  holdsSticker(mediaId: string): boolean {
+    return this.#records.some((r) => r.mediaId === mediaId && r.kind === "sticker");
+  }
+
+  /** The stored sticker's record, or undefined for an id that is not an own sticker here (what `media.stickerBytes` resolves through, 3f.5). */
+  stickerOf(mediaId: string): MediaSummary | undefined {
+    return this.#records.find((r) => r.mediaId === mediaId && r.kind === "sticker");
+  }
+
+  /**
+   * Seeds a stored record with no job and no event: the dev build's own sticker (3f.5), there from the start as one stored on disk would be.
+   * Its ids are the mock's own and its time is the one the mock keeps, so the ids and times handed out later do not move.
+   */
+  seedRecord(summary: MediaSummary): void {
+    this.#records.push(summary);
   }
 
   /** Whether the library holds this media as a TRACK a render can read, and how long it is (3f.4): what a render's admission and a draft's referential check ask. */
@@ -280,7 +299,7 @@ export class MockOwnMedia {
   seed(seeds: readonly MockOwnSeed[]): void {
     for (const seed of seeds) {
       const summary: MediaSummary = {
-        mediaId: `media-seed-${String(++this.#seeded).padStart(4, "0")}`,
+        mediaId: `media-demo-${String(++this.#seeded).padStart(4, "0")}`,
         kind: seed.kind,
         name: seed.name,
         bytes: seed.bytes,

@@ -1,10 +1,11 @@
 import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import type { Focus, Layer, MontageDraft, TextLayer } from "../../../shared/engine";
 import { FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, zonesHit } from "../../../shared/montage";
+import { ownStickerCells } from "../../../shared/montage/ownStickers";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
 import { previewLook, refusedNow } from "../../engine/textPreviewQueue";
-import { photoUrl, placeholderGradient, stickerUrl } from "../../lib/media";
+import { ownStickerUrl, photoUrl, placeholderGradient, stickerUrl } from "../../lib/media";
 import { Icon } from "../../ui/Icon";
 import { Silhouette } from "../../ui/Portrait";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
@@ -15,7 +16,8 @@ import { PreviewAudio } from "./PreviewAudio";
 import { resolveSelection } from "./selection";
 import type { DraftSession } from "./session";
 import { StickerCanvas } from "./StickerCanvas";
-import { StickerFrameCache, stickerFramesFrom } from "./stickerFrames";
+import { type OwnSticker, useOwnStickers } from "./ownStickers";
+import { ownStickerKey, StickerFrameCache, stickerFramesFrom } from "./stickerFrames";
 import { setStickerSize } from "./stickerOps";
 import { setTextScale } from "./textOps";
 import { useLayerPreview, usePrefetchTextPreviews, useTextPreviews } from "./textPreviews";
@@ -188,6 +190,8 @@ interface StageProps {
 function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, focusPending, dragPhoto, onFillCell, onSelectCell }: StageProps) {
   const { client } = useEngine();
   const textPreviews = useTextPreviews();
+  // The owner's own stickers by media id (3f.5): the record each own-sticker layer is drawn from.
+  const ownStickers = useOwnStickers(client, ownStickerCells(spec).map((cell) => cell.mediaId));
   const commands = useSelectionCommands(session, timeline);
   const playheadFrame = usePlayheadFrame(timeline.playhead);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -433,7 +437,15 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
         return layer.kind === "text" ? (
           <TextLayerView key={layer.layerId} layer={layer} factor={resizing?.layerId === layer.layerId ? textFactor(spec, index, resizing.factor) : 1} onReload={() => textPreviews.reload(layer.layerId)} {...handlers} />
         ) : (
-          <StickerLayerView key={layer.layerId} layer={layer} frame={frame} cache={cache} url={layer.sticker.source === "builtin" ? stickerUrl(client, layer.sticker.stickerId) : null} {...handlers} />
+          <StickerLayerView
+            key={layer.layerId}
+            layer={layer}
+            frame={frame}
+            cache={cache}
+            url={layer.sticker.source === "builtin" ? stickerUrl(client, layer.sticker.stickerId) : ownStickerUrl(client, layer.sticker.mediaId)}
+            own={layer.sticker.source === "own" ? ownStickers.get(layer.sticker.mediaId) : undefined}
+            {...handlers}
+          />
         );
       })}
       {zones && <ReelsZones />}
@@ -623,12 +635,31 @@ function TextLayerView({ layer, factor, onReload, ...view }: LayerViewProps & { 
   );
 }
 
-/** A sticker: its picture on a canvas, the frame its stored loop puts at this tick. */
-function StickerLayerView({ layer, frame, cache, url, ...view }: LayerViewProps & { layer: Extract<Layer, { kind: "sticker" }>; frame: number; cache: StickerFrameCache; url: string | null }) {
-  const entry = layer.sticker.source === "builtin" ? stickerById(layer.sticker.stickerId) : undefined;
+/**
+ * A sticker: its picture on a canvas, the frame its stored loop puts at this tick. A built-in sticker's picture is the set's (a square, one frame per
+ * 30 fps tick); an OWN one's (3f.5) is on its record's canvas and loop and its per-frame delays pick the frame, its bytes coming over `media.stickerBytes`.
+ */
+function StickerLayerView({ layer, frame, cache, url, own, ...view }: LayerViewProps & { layer: Extract<Layer, { kind: "sticker" }>; frame: number; cache: StickerFrameCache; url: string | null; own: OwnSticker | undefined }) {
+  if (layer.sticker.source === "own") {
+    const ownBox = stickerLayerBox(layer, own) ?? stickerBox(layer);
+    if (own === undefined || url === null) {
+      // An own sticker whose record is not known (the library no longer holds it, or the list has not come yet): its place, with nothing to draw.
+      return (
+        <LayerBox box={ownBox} kind="sticker" extra="pv-sticker-missing" {...view}>
+          <Icon name="sparkle" size={14} />
+        </LayerBox>
+      );
+    }
+    return (
+      <LayerBox box={ownBox} kind="sticker" {...view}>
+        <StickerCanvas cache={cache} stickerId={ownStickerKey(own.mediaId)} url={url} side={own.width} height={own.height} frameIndex={stickerFrameOf(own, layer, frame)} />
+      </LayerBox>
+    );
+  }
+  const entry = stickerById(layer.sticker.stickerId);
   const box = stickerLayerBox(layer) ?? stickerBox(layer);
   if (entry === undefined || url === null) {
-    // An own sticker (3f) or one gone from the set: its place, with nothing to draw.
+    // A sticker gone from the set: its place, with nothing to draw.
     return (
       <LayerBox box={box} kind="sticker" extra="pv-sticker-missing" {...view}>
         <Icon name="sparkle" size={14} />

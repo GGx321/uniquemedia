@@ -55,7 +55,9 @@ function newestVideoId(answer: Answer): string {
   return stringAt(Object.fromEntries(Object.entries(first)), "videoId");
 }
 
-// An own sticker is the one layer N9 still refuses (3f brings own media); a text layer and a built-in sticker render since 3b.6.
+// An own sticker is judged against the library since 3f.5 (media-unavailable when it holds none: this id is held by nobody); a text layer and a
+// built-in sticker render since 3b.6. Two older scenarios below keep this layer and their names ("not yet supported"): their transcripts changed by
+// exactly the lines that recorded `not-yet-supported` for it, the behaviour 3f.5 lifted.
 const ownStickerLayer = { layerId: "layer-0001", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "own", mediaId: "media-0000001" }, x: 0.5, y: 0.5, size: 0.2 };
 
 /** A draft of `photoIds`, made and named. */
@@ -1244,6 +1246,103 @@ const OWN_VIDEO_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
+// ---------- 3f.5: own stickers in a draft and a render ----------
+
+/** An own sticker as a layer of the editor's spec. */
+const ownStickerOf = (mediaId: string): Record<string, unknown> => ({ layerId: "layer-00000001", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "own", mediaId }, x: 0.5, y: 0.5, size: 0.2 });
+
+/** Imports the one good sticker and answers its media id. */
+async function importedStickerId(t: Transcript, control: Control): Promise<string> {
+  await control.mediaDialog("sticker");
+  await t.call("media.pickImport", { kind: "sticker" });
+  await t.settle();
+  const [mediaId] = listedMediaIds(await t.call("media.list", { kind: "sticker" }));
+  if (mediaId === undefined) throw new Error("the sticker was not stored");
+  return mediaId;
+}
+
+/** Appended after the 3f.2 scenarios: the golden transcripts above are append-only. (`media.stickerBytes` is main's alone, so it has no engine answer to hold.) */
+const OWN_STICKER_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "own stickers: a render holds its sticker against media.delete until it ends, and a deleted sticker is media-unavailable in the draft and the render",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedStickerId(t, control);
+      t.note("a draft with the own sticker in a layer: the engine finds nothing wrong");
+      const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1), photo(w, 2)] });
+      const montageId = montageIdOf(created);
+      const stored = objectAt({ spec: specOf(created) }, "spec");
+      await t.call("montages.save", { montageId, spec: { ...stored, layers: [ownStickerOf(mediaId)] }, name: "Свой стикер" });
+      await t.call("montages.get", { montageId });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      t.note("the render is queued: the sticker is held, so deleting it is refused and it stays listed");
+      await t.call("videos.render", { montageId });
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", { kind: "sticker" });
+      t.note("the render ends: the same delete goes through");
+      await t.settle();
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", {});
+      t.note("the draft still names the sticker: it reads unavailable at its layer, and a render of it is refused for that");
+      await t.call("montages.get", { montageId });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      await t.call("videos.render", { montageId });
+    },
+  },
+  {
+    name: "own stickers: a render that fails lets its sticker go, a media held as another kind is no sticker, and a spec that names a sticker nobody holds is refused before the export folder is asked",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedStickerId(t, control);
+      const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1), photo(w, 2)] });
+      const stored = objectAt({ spec: specOf(created) }, "spec");
+      t.note("the first render's ffmpeg fails: while it runs the sticker is held, and when it has failed the delete goes through");
+      control.failNextRender("encode");
+      await t.call("videos.render", { spec: { ...stored, layers: [ownStickerOf(mediaId)] } });
+      await t.call("media.delete", { mediaId });
+      await t.settle();
+      await t.call("media.delete", { mediaId });
+      t.note("a sticker that is not there, in a spec that is otherwise good");
+      await t.call("videos.render", { spec: { ...stored, layers: [ownStickerOf("media-00000404")] } });
+      t.note("an own PHOTO is not a sticker");
+      const photoId = await importedPhotoId(t, control);
+      await t.call("videos.render", { spec: { ...stored, layers: [ownStickerOf(photoId)] } });
+      t.note("a spec with a structural issue is refused for that alone, whatever its sticker");
+      await t.call("videos.render", { spec: { ...stored, clips: clipsOf(stored, 1_000), layers: [ownStickerOf("media-00000404")] } });
+    },
+  },
+  {
+    name: "own stickers: the sticker importer refuses a file inside its job with its reason, and the next sticker takes its turn",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      t.note("the boundary takes the file (its bytes are a PNG's, and a PNG may be a sticker); the importer turns it away: one progress step at the total, then job.failed");
+      await control.mediaDialog("stillSticker");
+      await t.call("media.pickImport", { kind: "sticker" });
+      await t.settle();
+      t.note("nothing is stored, and the failed job is in a window's snapshot");
+      await t.call("media.list", { kind: "sticker" });
+      await t.call("engine.snapshot", {});
+      t.note("the next sticker is stored as if nothing happened, with the canvas, the loop and the delays on the 30 fps grid");
+      await control.mediaDialog("sticker");
+      await t.call("media.pickImport", { kind: "sticker" });
+      await t.settle();
+      await t.call("media.list", { kind: "sticker" });
+    },
+  },
+  {
+    name: "own stickers: media.list by id answers the records named, of the kind asked, and nothing for an id nobody holds",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      const mediaId = await importedStickerId(t, control);
+      t.note("the sticker by its id, with an id nobody holds beside it");
+      await t.call("media.list", { kind: "sticker", mediaIds: [mediaId, "media-00000404"] });
+      t.note("the same id asked as a photo, and no ids at all");
+      await t.call("media.list", { kind: "photo", mediaIds: [mediaId] });
+      await t.call("media.list", { mediaIds: [] });
+    },
+  },
+];
+
 // ---------- 3f.4: an own track as the music ----------
 
 /** A montage of two scene photos (2 s each) with the own track `mediaId` as its music, from `startMs`. */
@@ -1351,7 +1450,7 @@ const OWN_MUSIC_SCENARIOS: readonly Scenario[] = [
 ];
 
 /** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_MUSIC_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

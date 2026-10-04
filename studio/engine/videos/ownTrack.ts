@@ -2,7 +2,8 @@ import { NODE_OPEN_OPS, type OpenRegularOps } from "../library/openRegular";
 import type { MediaLookup } from "../media/service";
 import { TrackUnavailableError, type RenderTrack } from "../music/renderTrack";
 import { trackForbiddenStrings } from "../music/trackTags";
-import { OwnFileUnavailableError, readVerifiedOwnFile } from "./ownFile";
+import { RenderFailure } from "../renderQueue/queue";
+import { readVerifiedOwnMedia } from "./ownMedia";
 
 // The render's own track (Stage 3, 3f.4). `MediaService.lookup` says where a stored track is and what it must hash to; the render does NOT point ffmpeg at
 // that file. As for a trending track (`TrackStore.openForRender`) and an own photo (`ownPhotos.ts`), the bytes are read ONCE from an open handle, checked
@@ -49,7 +50,7 @@ export function ownTrackSourceOf(found: MediaLookup): OwnTrackSource | null {
 }
 
 /**
- * The track for a render, after a fresh check: the verified bytes (`readVerifiedOwnFile`), with the length the record proved, the file's name for the tile, and
+ * The track for a render, after a fresh check: the verified bytes (`readVerifiedOwnMedia`), with the length the record proved, the file's name for the tile, and
  * `check` for ffmpeg to confirm that the render's private copy is exactly one audio stream (`inspect` is `inspectStreams`). Throws `OwnTrackUnavailableError`
  * (no path in it) when the file is not what its record says, and the signal's reason for a cancel.
  */
@@ -61,9 +62,9 @@ export async function openOwnTrack(
 ): Promise<RenderTrack> {
   let bytes: Uint8Array;
   try {
-    bytes = await readVerifiedOwnFile(source, signal, ops);
+    bytes = await readVerifiedOwnMedia(source, "track", signal, ops);
   } catch (error) {
-    if (error instanceof OwnFileUnavailableError) throw new OwnTrackUnavailableError();
+    if (error instanceof RenderFailure) throw new OwnTrackUnavailableError();
     throw error;
   }
   const check = async (copy: string, checkSignal: AbortSignal): Promise<void> => {

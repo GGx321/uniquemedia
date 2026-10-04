@@ -3,7 +3,7 @@ import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { EngineClient } from "../engine/client";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { ManualScheduler } from "../engine/scheduler";
-import { coverUrl, ownTrackUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
+import { coverUrl, ownStickerUrl, ownTrackUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
 
 // 3d.3b: a built-in sticker's picture is asked for by id, never by a path (invariant 12): main's `studio-media://sticker/<id>`
 // route serves the catalogue, the dev mock a stand-in of its own.
@@ -111,5 +111,25 @@ describe("trackUrl", () => {
 
   test("an id that breaks the contract never becomes an address", () => {
     for (const bad of ["../x", "a/b", "", "TRACK"]) expect(trackUrl({ kind: "window" }, bad) === null).toBe(true);
+  });
+});
+
+// 3f.5: an own sticker's picture as an element shows it: the stored file by its media id, through the media RECORD main resolves it by.
+describe("ownStickerUrl", () => {
+  const real: Pick<EngineClient, "kind" | "ownStickerUrl"> = { kind: "window" };
+
+  test("the real client's own stickers are studio-media://media/<mediaId>", () => {
+    expect(ownStickerUrl(real, "media-0000001")).toBe("studio-media://media/media-0000001");
+  });
+
+  test("an id that breaks the contract has no address, and never one with a path in it", () => {
+    expect(ownStickerUrl(real, "../photo")).toBe(null);
+    expect(ownStickerUrl(real, "media-0000001.png")).toBe(null);
+    expect(ownStickerUrl(real, "")).toBe(null);
+  });
+
+  test("the mock's own address for it wins, and may be null for a media it does not hold as a sticker", () => {
+    expect(ownStickerUrl({ kind: "mock", ownStickerUrl: (mediaId) => `data:image/png;base64,${mediaId}` }, "media-0000001")).toBe("data:image/png;base64,media-0000001");
+    expect(ownStickerUrl({ kind: "mock", ownStickerUrl: () => null }, "media-0000001")).toBe(null);
   });
 });

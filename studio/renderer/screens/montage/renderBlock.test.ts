@@ -135,9 +135,14 @@ describe("the reasons, each on its own", () => {
     expect(renderBlock(input({ spec: draftSpec(4, { layers: [text, sticker] }), verdict: null }))).toBeNull();
   });
 
-  test("a part whose slice has not landed yet says «скоро» for that part", () => {
+  test("an own sticker is supported since 3f.5: with no verdict it blocks nothing, and the engine's verdict says «файла больше нет» when the library lost it", () => {
     const withOwnSticker = draftSpec(4, { layers: [{ layerId: "layer-001", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "own", mediaId: "media-0000001" }, x: 0.5, y: 0.5, size: 0.2 }] });
-    expect(renderBlock(input({ spec: withOwnSticker, verdict: null }))?.text).toBe("Свои стикеры — скоро");
+    expect(renderBlock(input({ spec: withOwnSticker, verdict: null }))).toBeNull();
+    const gone: MontageIssue[] = [{ code: "media-unavailable", path: ["layers", 0, "sticker"] }];
+    expect(renderBlock(input({ spec: withOwnSticker, verdict: { spec: withOwnSticker, issues: gone } }))?.text).toBe("Стикер 1: файла больше нет");
+  });
+
+  test("a part whose slice has not landed yet says «скоро» for that part", () => {
     // A trending track is supported since 3c.5 and an own track since 3f.4: neither waits for a slice any more, and the engine's verdict says what is wrong.
     const withMusic = draftSpec(4, { music: { source: "own", mediaId: "media-0000001", startMs: 0 } });
     expect(renderBlock(input({ spec: withMusic, verdict: null }))).toBeNull();
@@ -205,18 +210,16 @@ describe("layerProblems: the layers the engine refuses", () => {
   const own = { ...stickerLayer(2, 0, 1_000), sticker: { source: "own", mediaId: "media-own-0001" } } as const;
   const spec = draftSpec(2, { layers: [textLayer(0, 0, 1_000), stickerLayer(1, 0, 1_000), own, { ...own, layerId: "layer-004" }] });
 
-  test("a caption, a sticker gone from the set, an own sticker's file, an own sticker not supported yet", () => {
+  test("a caption, a sticker gone from the set, an own sticker's file", () => {
     const issues: MontageIssue[] = [
       { code: "caption-invalid", path: ["layers", 0, "value"] },
       { code: "sticker-unavailable", path: ["layers", 1, "sticker"] },
       { code: "media-unavailable", path: ["layers", 2, "sticker"] },
-      { code: "not-yet-supported", path: ["layers", 3] },
     ];
     expect([...layerProblems(spec, issues)]).toEqual([
       ["layer-001", "надпись не проходит проверку"],
       ["layer-002", "стикера больше нет"],
       ["layer-003", "файла больше нет"],
-      ["layer-004", "свои стикеры — скоро"],
     ]);
   });
 

@@ -109,6 +109,12 @@ export interface ServedMediaRecord {
   readonly bytes: number;
   /** `<id>.<extension of the format>`, inside `<library>/media/`: the only name the route may open. */
   readonly file: string;
+  /** The sha256 of the stored file's bytes: `media.stickerBytes` checks the exact bytes it sends against it (3f.5). */
+  readonly sha256: string;
+  /** The stored canvas, and a sticker's loop in 30 fps frames (null for what has none): what the bytes of a sticker must say they are (3f.5). */
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly loopFrames: number | null;
 }
 
 /**
@@ -122,7 +128,7 @@ export function servedMediaRecord(json: unknown): ServedMediaRecord | null {
   const record = parsed.data;
   if (!FORMATS_OF_KIND[record.kind].includes(record.format)) return null;
   if (record.file !== `${record.id}.${MEDIA_EXTENSIONS[record.format]}`) return null;
-  return { id: record.id, kind: record.kind, format: record.format, bytes: record.bytes, file: record.file };
+  return { id: record.id, kind: record.kind, format: record.format, bytes: record.bytes, file: record.file, sha256: record.sha256, width: record.width, height: record.height, loopFrames: record.loopFrames };
 }
 
 /** What an importer learned of the file it made; which fields a kind has is the contract's (`MediaSummary`). */
@@ -413,8 +419,9 @@ export class MediaRecords {
   }
 
   /** Newest first (the later one first when two share an instant), cut at `MAX_LISTED_MEDIA`; `total` counts every match. */
-  list(kind?: MediaKind): { media: MediaSummary[]; total: number } {
-    const all = [...this.#index.values()].filter((r) => kind === undefined || r.kind === kind);
+  list(kind?: MediaKind, mediaIds?: readonly string[]): { media: MediaSummary[]; total: number } {
+    const named = mediaIds === undefined ? undefined : new Set(mediaIds);
+    const all = [...this.#index.values()].filter((r) => (kind === undefined || r.kind === kind) && (named === undefined || named.has(r.id)));
     const orderOf = (record: RecordShape): number => this.#order.get(record.id) ?? 0;
     all.sort((a, b) => (a.createdAt === b.createdAt ? orderOf(b) - orderOf(a) : a.createdAt < b.createdAt ? 1 : -1));
     return { media: all.slice(0, MAX_LISTED_MEDIA).map((r) => this.#summaryOf(r)), total: all.length };

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MEDIA_BYTE_CAPS, type PickedFileIdentity, type UnsequencedEvent } from "../../shared/engine";
@@ -94,7 +95,7 @@ describe("an own track through the import job", () => {
     const { mediaId } = await importFixture(r, "mp3");
     const record = servedMediaRecord(JSON.parse(await readFile(join(mediaDir(), `${mediaId}.json`), "utf8")));
     const file = await readFile(join(mediaDir(), `${mediaId}.m4a`));
-    expect(record).toEqual({ id: mediaId, kind: "audio", format: "m4a", bytes: file.length, file: `${mediaId}.m4a` });
+    expect(record).toEqual({ id: mediaId, kind: "audio", format: "m4a", bytes: file.length, file: `${mediaId}.m4a`, sha256: createHash("sha256").update(file).digest("hex"), width: null, height: null, loopFrames: null });
     expect(Buffer.from(file.subarray(4, 12)).toString("latin1")).toBe("ftypM4A ");
   });
 

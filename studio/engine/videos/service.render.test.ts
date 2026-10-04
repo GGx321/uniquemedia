@@ -37,7 +37,6 @@ async function failureOf(work: Promise<unknown>): Promise<EngineError> {
 }
 
 const textLayer = (n: number) => ({ layerId: `layer-0000000${n}`, kind: "text" as const, startMs: 0, endMs: 1000, value: "hello", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 });
-const ownStickerLayer = (n: number) => ({ ...stickerLayer(n), sticker: { source: "own" as const, mediaId: "media-0000001" } });
 const stickerLayer = (n: number) => ({ layerId: `layer-0000001${n}`, kind: "sticker" as const, startMs: 0, endMs: 1000, sticker: { source: "builtin" as const, stickerId: "sticker-0001" }, x: 0.5, y: 0.5, size: 0.3 });
 
 /** Nothing about the render may be touched by a refusal: no job, no reservation, no export folder, no intermediate, no record. */
@@ -120,7 +119,6 @@ describe("videos.render: the answer", () => {
 
 describe("videos.render: N9, what is not supported yet is refused, never dropped", () => {
   const cases: Array<[string, (w: World) => MontageDraft, string[]]> = [
-    ["an own sticker layer", (w) => ({ ...specFor(w), layers: [ownStickerLayer(1)] }), ["layers", "0"]],
     [
       "an own video clip",
       (w) => ({ ...specFor(w), clips: [{ clipId: "clip-00000001", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: SPEC_MS, transitionIn: "cut" as const }] }),
@@ -171,7 +169,8 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
     const w = world();
     const r = serviceRig(w);
     const pastEnd = { ...textLayer(1), startMs: 3_000, endMs: SPEC_MS + 100 };
-    const spec = { ...specFor(w), layers: [pastEnd, ownStickerLayer(2), stickerLayer(3)], music: { source: "trending" as const, trackId: "track-0000001", startMs: 0 } };
+    const ownVideo = { clipId: "clip-00000001", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: SPEC_MS, transitionIn: "cut" as const };
+    const spec = { ...specFor(w), clips: [ownVideo], layers: [pastEnd, stickerLayer(3)], music: { source: "trending" as const, trackId: "track-0000001", startMs: 0 } };
 
     const error = await failureOf(r.service.render({ spec }));
 
@@ -243,10 +242,11 @@ describe("videos.render: N9, what is not supported yet is refused, never dropped
     const w = world();
     const r = serviceRig(w);
 
-    const error = await failureOf(r.service.render({ spec: { ...specFor(w), clips: [], layers: [ownStickerLayer(1)] } }));
+    const shortOwnVideo = { clipId: "clip-00000001", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), clips: [shortOwnVideo] } }));
 
     expect(error.code).toBe("MONTAGE_INVALID");
-    expect(error.issues?.map((i) => i.code)).toEqual(expect.arrayContaining(["no-clips", "not-yet-supported"]));
+    expect(error.issues?.map((i) => i.code)).toEqual(expect.arrayContaining(["duration-too-short", "not-yet-supported"]));
   });
 
   test("a spec that is too short is MONTAGE_INVALID duration-too-short", async () => {

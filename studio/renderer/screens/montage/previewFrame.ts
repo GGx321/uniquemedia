@@ -119,9 +119,12 @@ export function textLayerBox(layer: { readonly x: number; readonly y: number }, 
   return textBox(layer, { w: picture.width, h: picture.height });
 }
 
-/** A built-in sticker layer's box on the frame (the engine's `stickerBox` on the set's picture); null for one the set lacks or an own one (3f). */
-export function stickerLayerBox(layer: Extract<Layer, { kind: "sticker" }>): Rect | null {
-  if (layer.sticker.source !== "builtin") return null;
+/**
+ * A sticker layer's box on the frame (the engine's `stickerBox`): a built-in sticker on the set's picture; an OWN one (3f.5) on ITS canvas (`own`,
+ * from its record, which need not be square). Null for a built-in id the set lacks, and for an own sticker whose record is not known (yet).
+ */
+export function stickerLayerBox(layer: Extract<Layer, { kind: "sticker" }>, own?: { readonly width: number; readonly height: number }): Rect | null {
+  if (layer.sticker.source === "own") return own === undefined ? null : stickerBox(layer, { w: own.width, h: own.height });
   const entry = stickerById(layer.sticker.stickerId);
   if (entry === undefined) return null;
   return stickerBox(layer, { w: entry.size, h: entry.size });

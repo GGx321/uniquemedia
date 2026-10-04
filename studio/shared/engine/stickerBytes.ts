@@ -27,3 +27,22 @@ export const StickerBytes = z.strictObject({
     .refine((s) => s.length % 4 === 0 && BASE64.test(s), "not base64"),
 });
 export type StickerBytes = z.infer<typeof StickerBytes>;
+
+// 3f.5: the same for an OWN sticker, as a command of its own (`media.stickerBytes`) and not a kind-tagged payload on `stickers.bytes`. The built-in
+// command's id is a key into the shipped catalogue and the route behind it must never reach a user file; an own sticker's id is a media id main
+// resolves through the media RECORD. Two commands keep the two doors apart (each with its own schema, handler and refusals), so neither can be
+// widened to the other's files by a payload field. Main-only; the window names a media id and nothing else, and is told the verified file.
+
+export const OwnStickerBytesPayload = z.strictObject({ mediaId: Id });
+export type OwnStickerBytesPayload = z.infer<typeof OwnStickerBytesPayload>;
+
+export const OwnStickerBytes = z.strictObject({
+  mediaId: Id,
+  /** The stored APNG, byte for byte, as base64 in whole padded quanta. */
+  apngBase64: z
+    .string()
+    .min(4)
+    .max(MAX_STICKER_BASE64)
+    .refine((s) => s.length % 4 === 0 && BASE64.test(s), "not base64"),
+});
+export type OwnStickerBytes = z.infer<typeof OwnStickerBytes>;

@@ -298,6 +298,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "avatars.pickImportPhoto": { payload: {}, result: { picked: true, stagingId: "staging-0001", width: 1024, height: 1365 } },
   "media.pickImport": { payload: { kind: "photo" }, result: { picked: true, jobIds: ["job-00000001"], refused: [{ name: "notes.txt", reason: "format" }], skipped: 0 } },
   "stickers.bytes": { payload: { stickerId: "heart-pulse" }, result: { stickerId: "heart-pulse", apngBase64: "iVBORw0KGgo=" } },
+  "media.stickerBytes": { payload: { mediaId: "media-00000001" }, result: { mediaId: "media-00000001", apngBase64: "iVBORw0KGgo=" } },
   "media.list": { payload: { kind: "photo" }, result: { media: [ownMedia], total: 1 } },
   "media.delete": { payload: { mediaId: "media-00000001" }, result: { mediaId: "media-00000001" } },
   "media.cancelImport": { payload: { jobId: "job-00000001" }, result: { jobId: "job-00000001" } },
@@ -487,6 +488,7 @@ describe("contract surface", () => {
         "avatars.pickImportPhoto",
         "media.pickImport",
         "stickers.bytes",
+        "media.stickerBytes",
         "media.list",
         "media.delete",
         "media.cancelImport",
@@ -564,11 +566,12 @@ describe("contract surface", () => {
     expect(covered).toEqual(all);
   });
 
-  test("only the key commands, the dialogs («import photo», «export folder»), «show in folder» (a video's file, an avatar's folder) and the built-in stickers' bytes (3d.4) are handled by main alone", () => {
+  test("only the key commands, the dialogs («import photo», «export folder»), «show in folder» (a video's file, an avatar's folder) and the built-in and own stickers' bytes (3d.4, 3f.5) are handled by main alone", () => {
     const actual: string[] = [...MAIN_ONLY_COMMANDS].sort();
     expect(actual).toEqual([
       "avatars.pickImportPhoto",
       "media.pickImport",
+      "media.stickerBytes",
       "settings.clearApiKey",
       "settings.clearMusicKey",
       "settings.exportDisplay",

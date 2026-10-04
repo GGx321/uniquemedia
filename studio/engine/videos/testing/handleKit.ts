@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 
-// Test support for the guards that read a stored own file from an OPEN HANDLE (`ownFile.ts`): a handle whose `stat` lies about the size, and one that
+// Test support for the guards that read a stored own file from an OPEN HANDLE (`ownMedia.ts`): a handle whose `stat` lies about the size, and one that
 // counts what it is asked to read. The stat a handle answers keeps its methods (`isFile`) and its identity (`dev`, `ino`), so the guard under test is
 // reached: a stand-in that dropped them would be refused by `openRegularNoFollow` before the size was ever looked at, and the test would pass for the wrong reason.
 
