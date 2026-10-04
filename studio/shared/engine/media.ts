@@ -47,13 +47,16 @@ export const MAX_PICKED_FILES = 20;
  * - `failed`: the kind's importer failed, or the engine could not go on with this file (the rest of a pick that stopped there is `failed` too);
  * - `cancelled`: the import was stopped (the window closed, the engine's own time ran out, the app quit);
  * - `not-yet-supported`: the kind has no importer yet;
- * - `too-long`: a video longer than three minutes (3f.3a);
- * - `codec`: a video whose codec the importer does not take: H.264, HEVC (HDR and Dolby Vision 8.x included) and ProRes are taken, VP9, AV1 and the rest are not (3f.3a);
- * - `dimensions`: a picture past 4K, 4096 on its long side or 2160 on its short one (3f.3a);
- * - `too-small`: a picture with a side under 2 pixels (3f.3a);
- * - `structure`: the file's boxes are put together in a way the importer will not take (two video tracks, a track outside its container, a repeated
- *   box, a mirrored or oddly turned picture, an unusual colour tag, non-square pixels, a fragmented file, two tables that disagree): not a wrong
- *   file TYPE, so not `format` (3f.3a).
+ * The codes below are SHARED by every kind: each kind's importer uses the ones that apply to it, and the text a window shows depends on the kind of
+ * the file (`mediaReasonRu(reason, kind)`, errorMessagesRu.ts), so a code names the problem and not the kind.
+ * - `too-long`: the file runs longer than its kind allows (video: three minutes; music has its own limit);
+ * - `codec`: the file is encoded with a codec the kind's importer does not take (video: H.264, HEVC with HDR and Dolby Vision 8.x included, and
+ *   ProRes are taken; VP9, AV1 and the rest are not);
+ * - `dimensions`: the picture is larger than the kind allows (video: past 4K, 4096 on the long side or 2160 on the short one);
+ * - `too-small`: the picture has a side under 2 pixels;
+ * - `structure`: the file's parts are put together in a way the importer will not take (video: two video tracks, a track outside its container, a
+ *   repeated box, an edit list it cannot follow, a mirrored or oddly turned picture, an unusual colour tag, non-square pixels, a fragmented file,
+ *   two tables that disagree): not a wrong file TYPE, so not `format`.
  */
 export const MediaUnsupportedReason = z.enum([
   "not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported",
