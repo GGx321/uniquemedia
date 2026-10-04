@@ -116,7 +116,9 @@ export const NODE_TEST_SUITES: readonly NodeTestSuite[] = [
     // 3a.9: what each OS's disk answers when something is already at the export name (a folder, a link), under the product's runtime.
     name: "export name claim",
     entry: "studio/engine/exportClaim.node-test.ts",
-    minTests: 7,
+    // 7 claim tests plus 1 from decode/decodeGate.retention.node-cases.ts (the entry imports it: a suite of its own would exceed the workflow steps'
+    // timeout-minutes, which are bound to the number of suites).
+    minTests: 8,
     workers: {},
   },
 ];

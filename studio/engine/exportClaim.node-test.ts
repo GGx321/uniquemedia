@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { claimExportName, exportFileName, NODE_EXPORT_FOLDER_FS, prepareExportFolder, type PreparedFolder } from "./exportName";
 import { NODE_COMMIT_FS } from "./videos/commitFs";
+import "./decode/decodeGate.retention.node-cases";
 
 // The export name claim on the REAL disk, under ELECTRON'S NODE, the product's own runtime, on both CI OSes (plan 3a.9, from the
 // 3a.8a and 3a.8b.2 reviews). The claim creates an empty file with `wx`; what a disk answers when something is already at the
