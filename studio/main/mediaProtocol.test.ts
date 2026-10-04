@@ -324,9 +324,11 @@ describe("every refusal looks the same", () => {
 });
 
 describe("the scheme's privileges and the renderer's policy", () => {
-  test("the scheme is registered standard, secure, fetch and stream, and nothing more", () => {
+  test("the scheme is registered standard, secure, fetch, stream and CORS, and nothing more", () => {
     expect(MEDIA_SCHEME).toBe("studio-media");
-    expect(MEDIA_SCHEME_PRIVILEGES).toEqual({ standard: true, secure: true, supportFetchAPI: true, stream: true });
+    // corsEnabled (3d.4): the preview reads a built-in sticker's bytes for ImageDecoder, and Chromium refuses a script's request to a
+    // scheme that is not CORS-enabled. Which routes script may read is the CSP's connect-src (below): the stickers' route only.
+    expect(MEDIA_SCHEME_PRIVILEGES).toEqual({ standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true });
   });
 
   test("main registers exactly those privileges and never bypasses the CSP", async () => {
@@ -334,10 +336,20 @@ describe("the scheme's privileges and the renderer's policy", () => {
     expect(source).toContain("privileges: MEDIA_SCHEME_PRIVILEGES");
     expect(source).not.toMatch(/bypassCSP\s*:/);
     expect(MEDIA_SCHEME_PRIVILEGES).not.toHaveProperty("bypassCSP");
-    expect(MEDIA_SCHEME_PRIVILEGES).not.toHaveProperty("corsEnabled");
   });
 
-  test("the renderer CSP lets the scheme into img-src and media-src only", async () => {
+  test("the renderer CSP lets script read the built-in stickers' route and no other part of the scheme", async () => {
+    const html = await readFile(resolve(import.meta.dirname, "../renderer/index.html"), "utf8");
+    const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)?.[1] ?? "";
+    const directives = Object.fromEntries(csp.split(";").map((part) => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+    // A photo, a video, a track, a text picture, own media: shown by an element, never read by script.
+    expect(directives["connect-src"]).toEqual(["'self'", "studio-media://sticker"]);
+    for (const [name, values] of Object.entries(directives)) {
+      if (name !== "connect-src") expect([name, values.some((v) => v.startsWith("studio-media://"))]).toEqual([name, false]);
+    }
+  });
+
+  test("the renderer CSP lets the whole scheme into img-src and media-src only", async () => {
     const html = await readFile(resolve(import.meta.dirname, "../renderer/index.html"), "utf8");
     const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)?.[1] ?? "";
     const directives = Object.fromEntries(csp.split(";").map((part) => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
