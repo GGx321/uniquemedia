@@ -1,5 +1,6 @@
 import { type EngineClient, unavailableClient } from "./client";
 import { MockEngine, mockEngineClient } from "./mockEngine";
+import { withMineDemo } from "./mockMineDemo";
 import { realScheduler } from "./scheduler";
 import { windowStudioClient } from "./windowStudio";
 
@@ -12,9 +13,13 @@ export function chooseEngineClient(dev: boolean, makeMock: () => EngineClient): 
   return windowStudioClient() ?? (dev ? makeMock() : unavailableClient());
 }
 
-/** The demo mock with real timers, so progress is visible in the dev build; its draft plays the demo video in its third clip (3f.3b). */
+/**
+ * The demo mock with real timers, so progress is visible in the dev build; its draft plays the demo video in its third clip (3f.3b), and «Мои»
+ * holds a file of every kind with the drop zone's dialog scripted (3f.6, mockMineDemo.ts).
+ */
 function demoMock(): EngineClient {
-  return mockEngineClient(new MockEngine({ preset: "demo", demoVideos: true, demoOwnVideo: true, scheduler: realScheduler, latencyMs: 160, stepMs: 900, textDrawMs: 120 }));
+  const engine = new MockEngine({ preset: "demo", demoVideos: true, demoOwnVideo: true, scheduler: realScheduler, latencyMs: 160, stepMs: 900, textDrawMs: 120 });
+  return withMineDemo(engine, mockEngineClient(engine));
 }
 
 /**
