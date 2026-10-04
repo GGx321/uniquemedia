@@ -217,6 +217,9 @@ function childrenOf(m: Uint8Array, view: DataView, start: number, end: number, b
   if (cached !== undefined) return cached;
   const found: BoxRef[] = [];
   for (let at = start; at < end; ) {
+    // QuickTime writers end a list with a 32-bit zero, which is not a box (Apple's writer: the end of a video sample entry, on most of the
+    // system's own movies); ffmpeg leaves anything shorter than a header alone. All-zero bytes there are the end of the list; anything else is not.
+    if (end - at < 8 && m.subarray(at, end).every((byte) => byte === 0)) break;
     if (found.length >= MAX_CHILDREN || ++budget.visited > MAX_VISITED) throw new Refusal("too-many-boxes");
     const box = boxAt(m, view, at, end, 0, false);
     found.push(box);
@@ -474,13 +477,22 @@ const MAX_TRAK_DEPTH = 16;
 /** The subtypes of a data handler (`dhlr`'s alias, URL and resource references). */
 const DATA_HANDLER_SUBTYPES: ReadonlySet<string> = new Set(["alis", "url ", "rsrc"]);
 
-/** True when a `meta` box holds an `hdlr` tag where ffmpeg's `mov_read_meta` finds one: on a 4-byte step from the start of the payload, while more than 8 bytes are left. */
-function metaHoldsHandler(m: Uint8Array, box: BoxRef): boolean {
+/**
+ * What ffmpeg's `mov_read_meta` reads of a `meta` box: it looks for an `hdlr` tag on a 4-byte step from the start of the payload (while more than 8
+ * bytes are left), steps back to that box's size field, and reads the rest of the box as a list from there. Nothing before the tag is read, and
+ * with no tag nothing is. Null when it reads nothing.
+ */
+function metaChildren(m: Uint8Array, view: DataView, box: BoxRef, budget: Budget): BoxRef[] | null {
   for (let k = 0; payloadLength(box) - k > 8; k += 4) {
     const at = box.body + k;
-    if (m[at] === 0x68 && m[at + 1] === 0x64 && m[at + 2] === 0x6c && m[at + 3] === 0x72) return true;
+    if (m[at] === 0x68 && m[at + 1] === 0x64 && m[at + 2] === 0x6c && m[at + 3] === 0x72) return lenientChildren(m, view, at - 4, box.end, budget);
   }
-  return false;
+  return null;
+}
+
+/** An `hdlr` whose subtype names a MEDIA type (the one thing a handler can do to a track): a metadata handler (`mdta`, `mdir`) is not one. */
+function isMediaHandler(m: Uint8Array, box: BoxRef): boolean {
+  return payloadLength(box) >= 12 && MEDIA_HANDLER_TYPES.has(latin1(m, box.body + 8, box.body + 12));
 }
 
 /** A data handler, as every ordinary MOV has one in `minf`: a data subtype, or component type `dhlr` over a subtype that is no media type (ffmpeg reads the SUBTYPE). */
@@ -494,24 +506,29 @@ function isDataHandler(m: Uint8Array, box: BoxRef): boolean {
  * ffmpeg parses EVERY `hdlr` it finds in a `trak` and the last one wins, so a track is what the walker read of `mdia/hdlr` only if no other `hdlr`
  * of the track says otherwise. One walk of the WHOLE subtree, in the one visit budget, and one rule: the only `hdlr` a track may have is the
  * one in `mdia` (read by the caller, which refuses a second) and a data handler in `minf`. Any other, wherever it hides (the `trak` itself,
- * `stbl`, `dinf`, `edts`, `tref`, `udta`, `meta` anywhere), is refused whatever it says; there is no list of names to forget. Measured on ffmpeg 6.x:
- * an `hdlr` in a sample entry or outside every `trak` changes nothing, so neither is walked.
+ * `stbl`, `dinf`, `edts`, `tref`, `udta`), is refused whatever it says. The exception is a `meta` box: Apple's writers put per-track metadata in
+ * `trak/meta` with an `mdta` handler (a lens model, a focal length), which names no media type and changes nothing about the track, so inside a
+ * `meta` box (found the way ffmpeg finds its handler, `metaChildren`) only a MEDIA subtype is refused. Measured on ffmpeg 6.x: an `hdlr` in a
+ * sample entry or outside every `trak` changes nothing, so neither is walked (a real-ffmpeg test holds the sample entry on every platform).
  */
 function checkHandlers(m: Uint8Array, view: DataView, trak: BoxRef, budget: Budget): void {
-  const walk = (container: BoxRef, path: string, depth: number): void => {
+  const visit = (kids: readonly BoxRef[], path: string, inMeta: boolean, depth: number): void => {
     if (depth > MAX_TRAK_DEPTH) throw new Refusal("too-many-boxes");
-    const kids = STRICT_PATHS.has(path) ? childrenOf(m, view, container.body, container.end, budget) : lenientChildren(m, view, container.body, container.end, budget);
     for (const kid of kids) {
       if (kid.type === "hdlr") {
-        if (path !== "trak/mdia" && !(path === "trak/mdia/minf" && isDataHandler(m, kid))) throw new Refusal("hidden-handler");
+        const allowed = inMeta ? !isMediaHandler(m, kid) : path === "trak/mdia" || (path === "trak/mdia/minf" && isDataHandler(m, kid));
+        if (!allowed) throw new Refusal("hidden-handler");
       } else if (kid.type === "meta") {
-        if (metaHoldsHandler(m, kid)) throw new Refusal("hidden-handler");
+        const inside = metaChildren(m, view, kid, budget);
+        if (inside !== null) visit(inside, `${path}/meta`, true, depth + 1);
       } else if (TRAK_CONTAINERS.has(kid.type)) {
-        walk(kid, `${path}/${kid.type}`, depth + 1);
+        const next = `${path}/${kid.type}`;
+        const list = !inMeta && STRICT_PATHS.has(next) ? childrenOf(m, view, kid.body, kid.end, budget) : lenientChildren(m, view, kid.body, kid.end, budget);
+        visit(list, next, inMeta, depth + 1);
       }
     }
   };
-  walk(trak, "trak", 0);
+  visit(childrenOf(m, view, trak.body, trak.end, budget), "trak", false, 0);
 }
 
 /** Every `dref` entry of a track must be the file itself: a reference to another file is a way to make ffmpeg open one. */
