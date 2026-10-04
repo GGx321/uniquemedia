@@ -1,0 +1,503 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { MAX_LISTED_MEDIA, MediaSummary } from "../../shared/engine";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { tempDirFor } from "../../testing/tempDir";
+import { MediaCommitError, MediaRecords, SimulatedCrash, type MediaCommitInput, type MediaRecordsOptions } from "./mediaRecords";
+useNativeGlobals();
+
+// 3f.1b: the own-media records, `<library>/media/<mediaId>.json` beside the stored file `<mediaId>.<ext>`. Write-once, written atomically,
+// recovered on open (the crash windows), and never touching anything outside `<library>/media/`.
+
+const tmp = tempDirFor({ beforeEach, afterEach }, "studio-media-records-");
+const root = (): string => join(tmp(), "library");
+const mediaDir = (): string => join(root(), "media");
+const stagingDir = (): string => join(mediaDir(), ".staging");
+
+beforeEach(async () => {
+  await mkdir(stagingDir(), { recursive: true });
+});
+
+let ids = 0;
+let clock = Date.parse("2026-10-04T10:00:00.000Z");
+const PHOTO_FACTS = { width: 3024, height: 4032, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null } as const;
+const VIDEO_FACTS = { width: 1080, height: 1920, durationMs: 6400, sourceFps: 60, hdrToSdr: true, loopFrames: null, delayFrames: null } as const;
+
+function records(extra: Partial<MediaRecordsOptions> = {}): MediaRecords {
+  return new MediaRecords({
+    root: root(),
+    newId: () => `media-${String(++ids).padStart(8, "0")}`,
+    now: () => new Date((clock += 1000)),
+    warn: () => undefined,
+    ...extra,
+  });
+}
+
+/** A staged copy, as the staging makes it: `<stagingId>.media` in `.staging`. */
+async function staged(bytes: Buffer | string = "photo bytes"): Promise<string> {
+  const path = join(stagingDir(), `staged-${String(++ids).padStart(8, "0")}.media`);
+  await writeFile(path, bytes);
+  return path;
+}
+
+async function photoInput(extra: Partial<MediaCommitInput> = {}): Promise<MediaCommitInput> {
+  return { sourcePath: await staged(), kind: "photo", format: "jpeg", name: "summer.jpg", facts: PHOTO_FACTS, ...extra };
+}
+
+const names = async (dir: string): Promise<string[]> => (await readdir(dir).catch(() => [])).filter((n) => n !== ".staging").sort();
+
+describe("a stored file gets its record", () => {
+  test("the staged copy moves into media/ under the id and the record is written beside it", async () => {
+    const store = records();
+    const input = await photoInput();
+    const summary = await store.commit(input);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+    expect(await readFile(join(mediaDir(), `${summary.mediaId}.jpg`), "utf8")).toBe("photo bytes");
+    await expect(lstat(input.sourcePath)).rejects.toThrow();
+  });
+
+  test("the summary fits the contract, names the display name and the size of the stored file, and holds no path", async () => {
+    const store = records();
+    const summary = await store.commit(await photoInput({ sourcePath: await staged("twelve bytes") }));
+    expect(MediaSummary.safeParse(summary).success).toBe(true);
+    expect(summary).toMatchObject({ kind: "photo", name: "summer.jpg", bytes: 12, width: 3024, height: 4032 });
+    expect(JSON.stringify(summary).includes(tmp())).toBe(false);
+  });
+
+  test("createdAt is the engine's clock", async () => {
+    clock = Date.parse("2026-10-04T12:00:00.000Z") - 1000;
+    const summary = await records().commit(await photoInput());
+    expect(summary.createdAt).toBe("2026-10-04T12:00:00.000Z");
+  });
+
+  test("the record holds the sha256 of the stored file: the hash it was given, or one it computes", async () => {
+    const store = records();
+    const given = createHash("sha256").update("photo bytes").digest("hex");
+    const a = await store.commit(await photoInput({ sha256: given }));
+    const b = await store.commit(await photoInput());
+    for (const summary of [a, b]) {
+      const record: unknown = JSON.parse(await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8"));
+      expect(record).toMatchObject({ schemaVersion: 1, id: summary.mediaId, sha256: given, format: "jpeg", bytes: 11 });
+    }
+  });
+
+  test("a video keeps what the importer learned of it", async () => {
+    const summary = await records().commit({ sourcePath: await staged("v"), kind: "video", format: "mov", name: "walk.mov", facts: VIDEO_FACTS });
+    expect(summary).toMatchObject({ kind: "video", durationMs: 6400, sourceFps: 60, hdrToSdr: true });
+    expect(await names(mediaDir())).toContain(`${summary.mediaId}.mov`);
+  });
+
+  test("it is listed at once, newest first, and found by id", async () => {
+    const store = records();
+    const first = await store.commit(await photoInput());
+    const second = await store.commit(await photoInput({ name: "b.jpg" }));
+    expect(store.list().media.map((m) => m.mediaId)).toEqual([second.mediaId, first.mediaId]);
+    expect(store.get(first.mediaId)).toEqual(first);
+    expect(store.filePath(first.mediaId)).toBe(join(mediaDir(), `${first.mediaId}.jpg`));
+  });
+});
+
+describe("what is refused before anything is moved", () => {
+  async function untouched(input: MediaCommitInput, store = records()): Promise<MediaCommitError> {
+    const error = await store.commit(input).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    if (!(error instanceof MediaCommitError)) throw new Error(`expected a MediaCommitError, got ${String(error)}`);
+    expect(await names(mediaDir())).toEqual([]);
+    expect(store.list().total).toBe(0);
+    return error;
+  }
+
+  test("facts that do not fit the kind (a photo with no width) leave the staged copy where it is", async () => {
+    const input = await photoInput({ facts: { ...PHOTO_FACTS, width: null } });
+    expect((await untouched(input)).code).toBe("invalid");
+    expect((await lstat(input.sourcePath)).isFile()).toBe(true);
+  });
+
+  test("a name with control or bidi characters is refused", async () => {
+    expect((await untouched(await photoInput({ name: "a‮gpj.exe" }))).code).toBe("invalid");
+  });
+
+  test("a source outside the staging folder is refused, whatever it is", async () => {
+    const outside = join(tmp(), "outside.jpg");
+    await writeFile(outside, "the owner's file");
+    expect((await untouched(await photoInput({ sourcePath: outside }))).code).toBe("unsafe");
+    expect(await readFile(outside, "utf8")).toBe("the owner's file");
+  });
+
+  test("a source that climbs out of the staging folder by a dot segment is refused", async () => {
+    const outside = join(tmp(), "outside.jpg");
+    await writeFile(outside, "the owner's file");
+    expect((await untouched(await photoInput({ sourcePath: join(stagingDir(), "..", "..", "..", "outside.jpg") }))).code).toBe("unsafe");
+  });
+
+  test("a source that is a link is refused: the file moved must be the file that was copied", async () => {
+    const outside = join(tmp(), "outside.jpg");
+    await writeFile(outside, "the owner's file");
+    const link = join(stagingDir(), "linked-00000001.media");
+    await symlink(outside, link);
+    expect((await untouched(await photoInput({ sourcePath: link }))).code).toBe("unsafe");
+    expect(await readFile(outside, "utf8")).toBe("the owner's file");
+  });
+
+  test("a source that is a folder is refused", async () => {
+    const folder = join(stagingDir(), "folder-00000001.media");
+    await mkdir(folder);
+    expect((await untouched(await photoInput({ sourcePath: folder }))).code).toBe("unsafe");
+  });
+
+  test("an empty file is refused: a record has bytes", async () => {
+    expect((await untouched(await photoInput({ sourcePath: await staged("") }))).code).toBe("invalid");
+  });
+
+  test("a kind is not stored as a container it cannot be: a video as a JPEG", async () => {
+    expect((await untouched({ sourcePath: await staged("v"), kind: "video", format: "jpeg", name: "v.mp4", facts: VIDEO_FACTS })).code).toBe("invalid");
+  });
+
+  test("a hash that is not a sha256 is refused", async () => {
+    expect((await untouched(await photoInput({ sha256: "not-a-hash" }))).code).toBe("invalid");
+  });
+
+  test("a cancel that has already fired moves nothing", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const store = records();
+    const input = await photoInput();
+    const error = await store.commit(input, controller.signal).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaCommitError);
+    expect((error as MediaCommitError).code).toBe("cancelled");
+    expect((await lstat(input.sourcePath)).isFile()).toBe(true);
+    expect(await names(mediaDir())).toEqual([]);
+  });
+
+  test("a media folder that is a link is refused and nothing goes through it", async () => {
+    const other = join(tmp(), "other");
+    await mkdir(join(other, ".staging"), { recursive: true });
+    await writeFile(join(other, ".staging", "x-00000001.media"), "the owner's, in a folder that looks like staging");
+    await rename(mediaDir(), join(tmp(), "real-media"));
+    await symlink(other, mediaDir());
+    const store = records();
+    const error = await store.commit({ sourcePath: join(stagingDir(), "x-00000001.media"), kind: "photo", format: "jpeg", name: "a.jpg", facts: PHOTO_FACTS }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaCommitError);
+    expect((await readdir(other)).sort()).toEqual([".staging"]);
+    expect(await readdir(join(other, ".staging"))).toEqual(["x-00000001.media"]);
+  });
+});
+
+describe("a crash at each point of a commit leaves a library that opens cleanly", () => {
+  test("a crash after the file is stored and before the record: the next open removes the file, nothing is listed", async () => {
+    const crashing = records({
+      hooks: {
+        beforeRecordRename: () => {
+          throw new SimulatedCrash();
+        },
+      },
+    });
+    const input = await photoInput();
+    await expect(crashing.commit(input)).rejects.toThrow();
+    // What the disk holds at that moment: the stored file (a crash cannot clean up), and the record's temp file.
+    const before = await names(mediaDir());
+    expect(before.some((n) => n.endsWith(".jpg"))).toBe(true);
+
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(await names(mediaDir())).toEqual([]);
+    expect(reopened.list()).toEqual({ media: [], total: 0 });
+    expect(report.removedOrphans).toBeGreaterThanOrEqual(1);
+  });
+
+  test("a failed commit cleans up after itself when it can: nothing is left behind", async () => {
+    const failing = records({
+      hooks: {
+        beforeRecordRename: () => {
+          throw new Error("disk full");
+        },
+      },
+    });
+    await expect(failing.commit(await photoInput())).rejects.toThrow();
+    expect(await names(mediaDir())).toEqual([]);
+    expect(failing.list().total).toBe(0);
+  });
+
+  test("a crash that left the record's temp file (and no record): the next open sweeps it", async () => {
+    await writeFile(join(mediaDir(), ".media-00000009.json.abcdef123456.tmp"), "half a record");
+    const reopened = records();
+    await reopened.recover();
+    expect(await names(mediaDir())).toEqual([]);
+  });
+
+  test("a crash after the record: the next open lists the media, untouched", async () => {
+    const first = records();
+    const summary = await first.commit(await photoInput());
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(reopened.list().media).toEqual([summary]);
+    expect(report).toMatchObject({ removedOrphans: 0, removedDangling: 0, problems: [] });
+  });
+
+  test("a record whose file is gone is removed at the next open: it names nothing", async () => {
+    const first = records();
+    const summary = await first.commit(await photoInput());
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "taken-away.jpg"));
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(reopened.list().total).toBe(0);
+    expect(await names(mediaDir())).toEqual([]);
+    expect(report.removedDangling).toBe(1);
+  });
+
+  test("a record whose file changed size is not listed, and nothing is removed: it may be the owner's tool at work", async () => {
+    const first = records();
+    const summary = await first.commit(await photoInput());
+    await writeFile(join(mediaDir(), `${summary.mediaId}.jpg`), "a different length of bytes");
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(reopened.list().total).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+    expect(report.problems).toHaveLength(1);
+  });
+
+  test("a cancel after the file is stored and before the record: the stored file is taken back out and no record is written", async () => {
+    const controller = new AbortController();
+    const store = records({ hooks: { afterFileStored: () => controller.abort() } });
+    const error = await store.commit(await photoInput(), controller.signal).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaCommitError);
+    expect((error as MediaCommitError).code).toBe("cancelled");
+    expect(await names(mediaDir())).toEqual([]);
+    expect(store.list().total).toBe(0);
+  });
+
+  test("a cancel that arrives after the record is durable changes nothing: the media is stored", async () => {
+    const controller = new AbortController();
+    const store = records();
+    const summary = await store.commit(await photoInput(), controller.signal);
+    controller.abort();
+    expect(store.get(summary.mediaId)).toEqual(summary);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+  });
+
+  test("a commit that is in flight is not an orphan: a cleanup running meanwhile leaves its file", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached: () => void = () => undefined;
+    const atGate = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const store = records({
+      hooks: {
+        afterFileStored: async () => {
+          reached();
+          await gate;
+        },
+      },
+    });
+    const commit = store.commit(await photoInput());
+    await atGate;
+    await store.recover();
+    release();
+    const summary = await commit;
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+  });
+});
+
+describe("what open will not judge for itself", () => {
+  async function planted(name: string, text: string): Promise<void> {
+    await writeFile(join(mediaDir(), name), text);
+  }
+  const record = (over: Record<string, unknown> = {}): string =>
+    JSON.stringify({ schemaVersion: 1, id: "media-00000050", kind: "photo", name: "a.jpg", createdAt: "2026-10-04T10:00:00.000Z", bytes: 5, sha256: "a".repeat(64), format: "jpeg", file: "media-00000050.jpg", ...PHOTO_FACTS, ...over });
+
+  test("a record that is not JSON is not listed and not removed, and its file is not an orphan", async () => {
+    await planted("media-00000050.json", "{ not json");
+    await planted("media-00000050.jpg", "bytes");
+    const store = records();
+    const report = await store.recover();
+    expect(store.list().total).toBe(0);
+    expect(await names(mediaDir())).toEqual(["media-00000050.jpg", "media-00000050.json"]);
+    expect(report.problems).toEqual([{ file: "media-00000050.json", reason: "unreadable" }]);
+  });
+
+  test("a record written by a newer Studio is kept as it is, with its file", async () => {
+    await planted("media-00000050.json", record({ schemaVersion: 2 }));
+    await planted("media-00000050.jpg", "bytes");
+    const store = records();
+    const report = await store.recover();
+    expect(store.list().total).toBe(0);
+    expect(await names(mediaDir())).toEqual(["media-00000050.jpg", "media-00000050.json"]);
+    expect(report.problems).toEqual([{ file: "media-00000050.json", reason: "too-new" }]);
+  });
+
+  test("a record under another id's name is not trusted", async () => {
+    // Everything is sound except the name: the record says id 50 and lies in 51's file; its own file is where it says.
+    await planted("media-00000051.json", record());
+    await planted("media-00000050.jpg", "bytes");
+    const store = records();
+    await store.recover();
+    expect(store.list().total).toBe(0);
+  });
+
+  test("a record that names a file other than its own id and format is not trusted: it could point a delete anywhere", async () => {
+    for (const file of ["../../victim.txt", "/etc/passwd", "media-00000099.jpg", "media-00000050.jpg/../x", "..\\victim.txt"]) {
+      await planted("media-00000050.json", record({ file }));
+      await planted("media-00000050.jpg", "bytes");
+      const store = records();
+      const report = await store.recover();
+      expect(store.list().total).toBe(0);
+      expect(report.problems).toHaveLength(1);
+    }
+  });
+
+  test("a record with facts that do not fit its kind is not listed", async () => {
+    await planted("media-00000050.json", record({ width: null }));
+    await planted("media-00000050.jpg", "bytes");
+    const store = records();
+    await store.recover();
+    expect(store.list().total).toBe(0);
+  });
+
+  test("only files of the shape of ours are ever removed as orphans, and folders are left", async () => {
+    await planted("media-00000060.jpg", "an orphan of ours");
+    await planted("notes.txt", "the owner's");
+    await planted("MEDIA-00000061.jpg", "capitals are not ours");
+    await planted("media-00000062.exe", "not a format of ours");
+    await mkdir(join(mediaDir(), "media-00000063.jpg"));
+    await records().recover();
+    expect(await names(mediaDir())).toEqual(["MEDIA-00000061.jpg", "media-00000062.exe", "media-00000063.jpg", "notes.txt"]);
+  });
+
+  test("the staging folder is not the records' business: its files are left", async () => {
+    await writeFile(join(stagingDir(), "staged-00000001.media"), "a copy an importer owns");
+    await records().recover();
+    expect(await readdir(stagingDir())).toEqual(["staged-00000001.media"]);
+  });
+
+  test("a media folder that is a link is not opened: nothing in it is read or removed", async () => {
+    const other = join(tmp(), "other");
+    await mkdir(other);
+    await writeFile(join(other, "media-00000060.jpg"), "the owner's, with a name like ours");
+    await rename(mediaDir(), join(tmp(), "real-media"));
+    await symlink(other, mediaDir());
+    const store = records();
+    const report = await store.recover();
+    expect(await readdir(other)).toEqual(["media-00000060.jpg"]);
+    expect(store.list().total).toBe(0);
+    expect(report.unusable).toBe(true);
+  });
+
+  test("no media folder yet is an empty library of own files, and nothing is made", async () => {
+    await rename(mediaDir(), join(tmp(), "gone"));
+    const store = records();
+    const report = await store.recover();
+    expect(store.list().total).toBe(0);
+    expect(report).toMatchObject({ removedOrphans: 0, removedDangling: 0, problems: [] });
+    expect(await readdir(root())).toEqual([]);
+  });
+});
+
+describe("a record is removed with its file, and nothing else", () => {
+  test("the record goes first, then the file; the media is no longer listed", async () => {
+    const store = records();
+    const summary = await store.commit(await photoInput());
+    expect(await store.remove(summary.mediaId)).toBe(true);
+    expect(await names(mediaDir())).toEqual([]);
+    expect(store.list().total).toBe(0);
+    expect(store.get(summary.mediaId)).toBeUndefined();
+  });
+
+  test("an id it does not hold is not a removal", async () => {
+    const store = records();
+    expect(await store.remove("media-00000404")).toBe(false);
+  });
+
+  test("an id that is not an id never reaches the disk", async () => {
+    const store = records();
+    await writeFile(join(tmp(), "victim.txt"), "the owner's");
+    expect(await store.remove("../victim")).toBe(false);
+    expect(await readFile(join(tmp(), "victim.txt"), "utf8")).toBe("the owner's");
+  });
+
+  test("the file replaced by a link to the owner's data: the link goes, the data stays", async () => {
+    const store = records();
+    const summary = await store.commit(await photoInput());
+    const victim = join(tmp(), "victim.txt");
+    await writeFile(victim, "the owner's data");
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "old.jpg"));
+    await symlink(victim, join(mediaDir(), `${summary.mediaId}.jpg`));
+    await store.remove(summary.mediaId);
+    expect(await readFile(victim, "utf8")).toBe("the owner's data");
+  });
+
+  test("a file that cannot be removed is told once without its path, the record is gone, and the next open sweeps the file", async () => {
+    const warned: string[] = [];
+    const store = records({
+      warn: (text) => warned.push(text),
+      fs: {
+        unlink: async (path) => {
+          if (path.endsWith(".jpg")) throw Object.assign(new Error("busy"), { code: "EBUSY" });
+          const { unlink } = await import("node:fs/promises");
+          await unlink(path);
+        },
+        platform: "linux",
+      },
+    });
+    const summary = await store.commit(await photoInput());
+    expect(await store.remove(summary.mediaId)).toBe(true);
+    expect(store.list().total).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`]);
+    expect(warned).toHaveLength(1);
+    expect(warned[0]?.includes(tmp())).toBe(false);
+    await records().recover();
+    expect(await names(mediaDir())).toEqual([]);
+  });
+
+  test("a record that cannot be removed leaves everything as it was and says so", async () => {
+    const store = records({
+      fs: {
+        unlink: async (path) => {
+          if (path.endsWith(".json")) throw Object.assign(new Error("busy"), { code: "EBUSY" });
+          const { unlink } = await import("node:fs/promises");
+          await unlink(path);
+        },
+        platform: "linux",
+      },
+    });
+    const summary = await store.commit(await photoInput());
+    await expect(store.remove(summary.mediaId)).rejects.toThrow();
+    expect(store.get(summary.mediaId)).toEqual(summary);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+  });
+});
+
+describe("the listing", () => {
+  test("a kind filter lists that kind only, and the total is of that kind", async () => {
+    const store = records();
+    await store.commit(await photoInput());
+    await store.commit({ sourcePath: await staged("v"), kind: "video", format: "mp4", name: "v.mp4", facts: VIDEO_FACTS });
+    expect(store.list("video").media.map((m) => m.kind)).toEqual(["video"]);
+    expect(store.list("video").total).toBe(1);
+    expect(store.list().total).toBe(2);
+    expect(store.list("audio")).toEqual({ media: [], total: 0 });
+  });
+
+  test("a listing is cut at MAX_LISTED_MEDIA and says how many there are", async () => {
+    const store = records();
+    const count = MAX_LISTED_MEDIA + 3;
+    for (let i = 0; i < count; i++) await store.commit(await photoInput({ sourcePath: await staged(`p${i}`) }));
+    const listing = store.list();
+    expect(listing.media).toHaveLength(MAX_LISTED_MEDIA);
+    expect(listing.total).toBe(count);
+  }, 60_000);
+
+  test("a media id is never handed out twice", async () => {
+    const store = records({ newId: () => "media-00000001" });
+    await store.commit(await photoInput());
+    const again = await store.commit(await photoInput()).catch((e: unknown) => e);
+    expect(again).toBeInstanceOf(MediaCommitError);
+    expect(store.list().total).toBe(1);
+  });
+});

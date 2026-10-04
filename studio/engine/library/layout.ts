@@ -11,6 +11,14 @@ export const REJECTED_FILE = "rejected.jsonl";
 /** Video records, one write-once JSON per video (task 3a.8b writes them; 3a.2 reads them). "Used" is derived from these, never from a log of its own. */
 export const VIDEOS_DIR = "videos";
 /**
+ * Own media (Stage 3, 3f.1b): `<library>/media/<mediaId>.json` (one write-once record) beside the stored file `<mediaId>.<ext>`.
+ * Library-wide, not per avatar. `.staging` inside it holds the copies an import is still working on (3f.1).
+ */
+export const MEDIA_DIR = "media";
+export const MEDIA_STAGING_DIR = ".staging";
+/** An own-media record's `schemaVersion`: the writer (mediaRecords.ts) stamps it and refuses to list a newer one (it is kept as it is). */
+export const MEDIA_RECORD_SCHEMA_VERSION = 1;
+/**
  * Montage drafts (Stage 3, 3d.1a): one JSON per draft, `avatars/<avatarId>/montages/<montageId>.json`, written
  * atomically (temp, fsync, rename) by the montage service. A draft is the owner's work in progress, never a source
  * of "used" (only a rendered video's record is).
