@@ -136,11 +136,33 @@ describe("the sticker importer: a GIF", () => {
       return argv;
     });
     await accepted(await runWith(flatGif([0, 1, 2, 3], [0, 1, 7, null]), "gif", { spawner }));
-    // The frame with no graphic control extension has no delay to rewrite: it stays 0 and ffmpeg's own default (10 cs) plays it.
+    // A frame with no graphic control extension is given one (10 cs, as every ffmpeg that reads the file as a browser does): the Windows ffmpeg did not
+    // count such a frame the way the macOS one does.
     expect(seen).toEqual([
-      [10, 10, 7, 0],
-      [10, 10, 7, 0],
+      [10, 10, 7, 10],
+      [10, 10, 7, 10],
     ]);
+  });
+
+  test("a frame with no graphic control extension is given one even when every other delay is already as played", async () => {
+    const seen: number[][] = [];
+    const spawner = recordingSpawner([], (argv) => {
+      const result = inspectGif(new Uint8Array(readFileSync(argv[argv.indexOf("-i") + 1] ?? "")));
+      if (!result.ok) throw new Error(result.code);
+      seen.push(result.info.frames.map((f) => f.delayCs));
+      return argv;
+    });
+    await accepted(await runWith(flatGif([0, 1, 2], [null, 10, 10]), "gif", { spawner }));
+    expect(seen).toEqual([
+      [10, 10, 10],
+      [10, 10, 10],
+    ]);
+  });
+
+  test("a GIF that gets graphic control extensions inserted still keeps each frame's picture, in order", async () => {
+    const stored = await accepted(await runWith(flatGif([0, 1, 2], [null, 1, null]), "gif"));
+    expect([pixel(stored, 0, 3, 2), pixel(stored, 1, 3, 2), pixel(stored, 2, 3, 2)]).toEqual([GIF_RED, GIF_GREEN, GIF_BLUE]);
+    expect(stored.delayFrames).toEqual([3, 3, 3]);
   });
 
   test("the file the owner gave is not touched by the rewrite of the delays: the stored picture and loop are the same", async () => {

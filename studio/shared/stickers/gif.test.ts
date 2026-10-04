@@ -53,6 +53,13 @@ describe("inspectGif: what it reports", () => {
     expect(written).toEqual([7, 300, null]);
   });
 
+  test("reports where each frame's image descriptor starts: the 0x2c byte", () => {
+    const bytes = buildGif({ frames: [{ delayCs: 7 }, { delayCs: null }, { delayCs: 3 }] });
+    const info = accepted(inspectGif(bytes));
+    expect(info.frames.map((f) => bytes[f.descriptorOffset])).toEqual([0x2c, 0x2c, 0x2c]);
+    expect(info.frames.map((f) => f.descriptorOffset)).toEqual([...info.frames.map((f) => f.descriptorOffset)].sort((a, b) => a - b));
+  });
+
   test("reports a frame's own region and flags", () => {
     const info = accepted(inspectGif(buildGif({ width: 8, height: 8, frames: [{ width: 8, height: 8 }, { x: 2, y: 3, width: 4, height: 2, disposal: 2, transparent: 1, interlaced: true }] })));
     expect(info.frames[1]).toMatchObject({ x: 2, y: 3, width: 4, height: 2, disposal: 2, transparent: true, interlaced: true });

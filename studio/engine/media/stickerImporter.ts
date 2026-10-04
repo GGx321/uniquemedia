@@ -3,7 +3,7 @@ import { lstat, readFile, stat, writeFile } from "node:fs/promises";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import { inspectApng, inspectApngRaw, STICKER_FPS, STICKER_LIMITS, type ApngRejectCode } from "../../shared/stickers/apng";
-import { inspectGif, type GifRejectCode } from "../../shared/stickers/gif";
+import { inspectGif, type GifFrameInfo, type GifRejectCode } from "../../shared/stickers/gif";
 import { quantiseByAccumulatedTime, type FrameDuration } from "../../shared/stickers/quantise";
 import { MAX_ANIMATION_LOOP_PIXELS } from "../render/layerPass";
 import { EncodeTooLargeError } from "../stickers/encodeErrors";
@@ -67,8 +67,42 @@ interface Source {
   readonly width: number;
   readonly height: number;
   readonly durations: readonly FrameDuration[];
-  /** The delays a GIF is played with, where they sit in the file: the decoder is shown a copy with exactly these (see `run`). Empty for an APNG. */
-  readonly delayEdits: readonly { readonly offset: number; readonly cs: number }[];
+  /** The decoder is shown this instead of the file when it is not null: the GIF with its delays written as they are played (see `playedDelays`). */
+  readonly playedCopy: Uint8Array | null;
+}
+
+/** A graphic control extension of 10 cs: no disposal, no transparency. What a frame with none is played with. */
+const DEFAULT_GCE = Uint8Array.of(0x21, 0xf9, 0x04, 0x00, 0x0a, 0x00, 0x00, 0x00);
+
+/**
+ * The GIF with every frame's delay written as it is PLAYED, or null when the file already says so. What a demuxer does with a delay of 0 or 1 cs, or with a
+ * frame that has no graphic control extension, differs from one ffmpeg build to the next (the Windows and the macOS CI builds counted such files
+ * differently), while the loop is judged by the rule the browsers use. So ffmpeg is shown this copy: a delay that is played differently is rewritten in place,
+ * and a frame with no extension is given one of 10 cs before its image descriptor. The pictures are not touched.
+ */
+function playedDelays(bytes: Uint8Array, frames: readonly GifFrameInfo[]): Uint8Array | null {
+  if (frames.every((frame) => (frame.delayOffset === null ? false : frame.delayCs === frame.playedCs))) return null;
+  const rewritten = new Uint8Array(bytes);
+  for (const frame of frames) {
+    if (frame.delayOffset === null) continue;
+    rewritten[frame.delayOffset] = frame.playedCs & 255;
+    rewritten[frame.delayOffset + 1] = frame.playedCs >> 8;
+  }
+  const pieces: Uint8Array[] = [];
+  let cursor = 0;
+  for (const frame of frames) {
+    if (frame.delayOffset !== null) continue;
+    pieces.push(rewritten.subarray(cursor, frame.descriptorOffset), DEFAULT_GCE);
+    cursor = frame.descriptorOffset;
+  }
+  pieces.push(rewritten.subarray(cursor));
+  const out = new Uint8Array(pieces.reduce((n, piece) => n + piece.length, 0));
+  let at = 0;
+  for (const piece of pieces) {
+    out.set(piece, at);
+    at += piece.length;
+  }
+  return out;
 }
 
 function reasonOfCode(code: GifRejectCode | ApngRejectCode): MediaUnsupportedReason {
@@ -94,14 +128,13 @@ function judge(bytes: Uint8Array, format: string): Source {
     const result = inspectGif(bytes);
     if (!result.ok) throw new Refused(reasonOfCode(result.code));
     const { info } = result;
-    const delayEdits = info.frames.flatMap((frame) => (frame.delayOffset !== null && frame.delayCs !== frame.playedCs ? [{ offset: frame.delayOffset, cs: frame.playedCs }] : []));
-    return { container: "gif", width: info.width, height: info.height, durations: info.frames.map((frame) => ({ num: frame.playedCs, den: 100 })), delayEdits };
+    return { container: "gif", width: info.width, height: info.height, durations: info.frames.map((frame) => ({ num: frame.playedCs, den: 100 })), playedCopy: playedDelays(bytes, info.frames) };
   }
   if (format === "apng") {
     const result = inspectApngRaw(bytes);
     if (!result.ok) throw new Refused(reasonOfCode(result.code));
     const { info } = result;
-    return { container: "apng", width: info.width, height: info.height, durations: info.frames.map((frame) => ({ num: frame.delayNum, den: frame.delayDen })), delayEdits: [] };
+    return { container: "apng", width: info.width, height: info.height, durations: info.frames.map((frame) => ({ num: frame.delayNum, den: frame.delayDen })), playedCopy: null };
   }
   throw new Refused("format");
 }
@@ -162,19 +195,13 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
     const keptSlots = slots.filter((n) => n > 0);
     if (keptSlots.length < 2) throw new Refused("not-animated");
 
-    // The decoder is shown the delays the loop is PLAYED with. What a GIF demuxer does with a delay of 0 or 1 cs depends on its version (the macOS and the
-    // Windows ffmpeg differ), and the loop is judged by the rule browsers use; so a GIF whose delays need it is given to ffmpeg as a copy with those delays
-    // rewritten, in a file of the job's own, made new. The owner's file and the library's staged copy are never touched.
+    // The decoder is shown the delays the loop is PLAYED with (`playedDelays`), as a copy in a file of the job's own, made new. The owner's file and the
+    // library's staged copy are never touched.
     let inputPath = staged.path;
-    if (source.delayEdits.length > 0) {
-      const copy = new Uint8Array(bytes);
-      for (const { offset, cs } of source.delayEdits) {
-        copy[offset] = cs & 255;
-        copy[offset + 1] = cs >> 8;
-      }
+    if (source.playedCopy !== null) {
       const normalised = await request.workFile();
       signal.throwIfAborted();
-      await writeFile(normalised.path, copy, { flag: "wx", signal });
+      await writeFile(normalised.path, source.playedCopy, { flag: "wx", signal });
       inputPath = normalised.path;
     }
 

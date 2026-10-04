@@ -47,6 +47,8 @@ export interface GifFrameInfo {
   readonly playedCs: number;
   /** Where the two bytes (little-endian) of the delay sit in the file, or null when the frame has no graphic control extension. */
   readonly delayOffset: number | null;
+  /** Where the frame's image descriptor starts (its 0x2c byte). */
+  readonly descriptorOffset: number;
   readonly disposal: number;
   readonly transparent: boolean;
   readonly interlaced: boolean;
@@ -234,6 +236,7 @@ export function inspectGif(bytes: Uint8Array, limits: StickerLimits = STICKER_LI
     }
 
     if (introducer === 0x2c) {
+      const descriptorOffset = pos;
       if (pos + 10 > bytes.length) return fail("TRUNCATED", "the file ends inside an image descriptor");
       const x = u16(pos + 1);
       const y = u16(pos + 3);
@@ -269,6 +272,7 @@ export function inspectGif(bytes: Uint8Array, limits: StickerLimits = STICKER_LI
         delayCs,
         playedCs: clampGifDelayCs(delayCs),
         delayOffset: pending?.delayOffset ?? null,
+        descriptorOffset,
         disposal: pending?.disposal ?? 0,
         transparent: pending?.transparent ?? false,
         interlaced: (packed & 0x40) !== 0,
