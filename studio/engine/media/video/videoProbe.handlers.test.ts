@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { bytesSource, probeVideo, type ProbeRefusal, type VideoInfo } from "./videoProbe";
-import { box, buildMp4, hdlrBox, type Mp4Spec, type TrackSpec } from "./testing/mp4VideoBuilder";
+import { box, buildMp4, concat, hdlrBox, u32, type Mp4Spec, type TrackSpec } from "./testing/mp4VideoBuilder";
 useNativeGlobals();
 
 // 3f.3a review round 3 (M-1): ffmpeg parses EVERY `hdlr` inside a `trak` and the last one wins, so "a sound handler is sound" only holds if no other
@@ -60,9 +60,9 @@ describe("a handler hidden in the track's meta or udta", () => {
     expect(await refusalOf({ tracks: [video(), sound({ trakExtra: [box("meta", hdlrBox("vide"))] })] })).toBe("hidden-handler");
   });
 
-  test("the metadata handler of an iTunes-style tag (mdir) is not a media type, and is taken", async () => {
-    const info = await infoOf({ tracks: [video({ trakExtra: [metaWith("mdir")] }), { handler: "soun", trakExtra: [box("udta", metaWith("mdir"))] }] });
-    expect(info.video.width).toBe(1920);
+  test("a track-level meta box with ANY handler is refused, an iTunes-style mdir one too (round 4: one rule, no list of media types)", async () => {
+    expect(await refusalOf({ tracks: [video({ trakExtra: [metaWith("mdir")] })] })).toBe("hidden-handler");
+    expect(await refusalOf({ tracks: [video(), { handler: "soun", trakExtra: [box("udta", metaWith("mdir"))] }] })).toBe("hidden-handler");
   });
 
   test("a meta box nobody can read is not a reason to refuse a clip", async () => {

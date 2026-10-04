@@ -125,20 +125,23 @@ export function withFirstTrackHandler(source: Uint8Array, handler: string): Uint
 
 /**
  * A copy whose FIRST track is labelled SOUND in `mdia/hdlr` (the walker takes a sound track for sound) and carries a second `hdlr` that says
- * `vide`, where ffmpeg also parses one: at the start of `minf` (`where: "minf"`), or in a `meta` box at the end of the `trak` (`"meta"`). ffmpeg
- * lets the last handler it reads win, so it sees the track as video. The file needs its moov after its mdat.
+ * `vide`, where ffmpeg also parses one: at the start of `minf`, `stbl` (before `stsd`) or `dinf` (before `dref`), in a `meta` box at the end of
+ * the `trak`, or directly at the end of the `trak`. ffmpeg lets the last handler it reads win, so it sees the track as video. The file needs its
+ * moov after its mdat.
  */
-export function withHiddenVideoHandler(source: Uint8Array, where: "minf" | "meta"): Uint8Array {
+export function withHiddenVideoHandler(source: Uint8Array, where: "minf" | "stbl" | "dinf" | "meta" | "trak"): Uint8Array {
   const labelled = withFirstTrackHandler(source, "soun");
   const { moov, trak } = firstTrak(labelled);
   const hdlr = fullBox("hdlr", 0, concat(u32(0), Uint8Array.from([0x76, 0x69, 0x64, 0x65]), new Uint8Array(13)));
   const mdia = child(labelled, trak, "mdia");
   const minf = child(labelled, mdia, "minf");
-  const added = where === "minf" ? hdlr : box("meta", concat(u32(0), hdlr));
-  const at = where === "minf" ? minf.body : trak.end;
+  const inner = where === "stbl" || where === "dinf" ? child(labelled, minf, where) : undefined;
+  const added = where === "meta" ? box("meta", concat(u32(0), hdlr)) : hdlr;
+  const at = where === "minf" ? minf.body : inner !== undefined ? inner.body : trak.end;
+  const parents = where === "minf" ? [moov, trak, mdia, minf] : inner !== undefined ? [moov, trak, mdia, minf, inner] : [moov, trak];
   const out = concat(labelled.subarray(0, at), added, labelled.subarray(at));
   const view = new DataView(out.buffer);
-  for (const b of where === "minf" ? [moov, trak, mdia, minf] : [moov, trak]) view.setUint32(b.start, view.getUint32(b.start) + added.byteLength);
+  for (const b of parents) view.setUint32(b.start, view.getUint32(b.start) + added.byteLength);
   return out;
 }
 
