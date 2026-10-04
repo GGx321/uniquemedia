@@ -1213,8 +1213,37 @@ const OWN_PHOTO_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
+// ---------- 3f.3a: own video, and an importer that refuses after the copy ----------
+
+/** Appended after the 3f.1b scenarios: the golden transcripts above are append-only. */
+const OWN_VIDEO_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "own media: a video is a job that ends in a record with the facts of its mezzanine, and one the importer refuses after its copy ends failed with its reason and stores nothing",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      t.note("a clip is picked: its job starts, held before its first byte so the answer comes with the job running");
+      control.holdImports(true);
+      await control.mediaDialog("video");
+      await t.call("media.pickImport", { kind: "video" });
+      t.note("the job goes on: the copy, the importer, the record, media.changed, then job.done; the record has the facts of the mezzanine");
+      control.holdImports(false);
+      await t.settle();
+      await t.call("media.list", { kind: "video" });
+      t.note("a clip the importer cannot read is picked: its copy is made to the total, then the importer refuses it and the job ends failed with the reason");
+      control.holdImports(true);
+      await control.mediaDialog("badVideo");
+      await t.call("media.pickImport", { kind: "video" });
+      control.holdImports(false);
+      await t.settle();
+      t.note("nothing was stored for it: the list is what it was, and a window that resyncs sees the failed import beside the finished one");
+      await t.call("media.list", {});
+      await t.call("engine.snapshot", {});
+    },
+  },
+];
+
 /** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

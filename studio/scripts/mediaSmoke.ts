@@ -6,7 +6,8 @@ import { PNG_1X1 } from "../engine/library/testing/sampleData";
 // through main's E2E dialog stand-in (`--studio-pick-media`, one path): the file at that path is REWRITTEN between picks, one tiny file per
 // case, and picked with `any`, so the kind comes from the bytes (never the name). Only a photo is accepted, by the real photo importer
 // (3f.2: decoded, turned upright and stored as a JPEG with no metadata); a 1x1 picture and an animated WebP are refused by it. Every other
-// kind has no importer yet and is refused `not-yet-supported`.
+// kind has no importer yet and is refused `not-yet-supported`, except a video (3f.3a): a file that is only a header is accepted into a JOB, which
+// the importer's own box walker fails (`format`), and the real clip (`MEDIA_SMOKE_CLIP`) is imported at the end.
 
 /** What one pick of a file must come to: a job that is started, or the refusal's reason. */
 export type MediaSmokeExpectation = { readonly job: true } | { readonly refused: MediaUnsupportedReason } | { readonly failed: MediaUnsupportedReason };
@@ -38,7 +39,7 @@ export const MEDIA_SMOKE_FILES: readonly MediaSmokeFile[] = [
   { label: "photo", bytes: SMOKE_TEST_PNG, expect: { job: true } },
   { label: "tiny", bytes: PNG_1X1, expect: { failed: "too-small" } },
   { label: "animated-webp", bytes: animatedWebpHeaders(), expect: { failed: "animated-webp" } },
-  { label: "video", bytes: ftyp("isom"), expect: { refused: "not-yet-supported" } },
+  { label: "video", bytes: ftyp("isom"), expect: { failed: "format" } },
   { label: "audio", bytes: ftyp("M4A "), expect: { refused: "not-yet-supported" } },
   { label: "sticker", bytes: Uint8Array.from([...ascii("GIF89a"), 1, 0, 1, 0, 0, 0, 0]), expect: { refused: "not-yet-supported" } },
   { label: "text", bytes: Uint8Array.from(ascii("just some notes, not a media file\n")), expect: { refused: "format" } },
@@ -73,3 +74,10 @@ export function mediaRecordFileProblems(names: readonly string[], mediaId: strin
   const wanted = [`${mediaId}.json`, `${mediaId}.${extension}`];
   return [...wanted.filter((name) => !names.includes(name)).map((name) => `${name} is missing`), ...names.filter((name) => !wanted.includes(name)).map((name) => `${name} is left in media/`)];
 }
+
+/**
+ * The real clip the packaged smoke imports (3f.3a): an HEVC HLG clip, variable frame rate, turned a quarter, in a QuickTime file (an iPhone held
+ * upright). It is the committed fixture `video/testing/fixtures/hevc-hlg-rotated-vfr.mov`, 4 KB: the packaged ffmpeg of each operating system
+ * (macOS 6.0, Windows 6.1.1) must turn it into a 96 x 192 constant-rate SDR H.264 clip.
+ */
+export const MEDIA_SMOKE_CLIP = { fixture: "hevc-hlg-rotated-vfr.mov", width: 96, height: 192, hdrToSdr: true, minDurationMs: 700, maxDurationMs: 770 } as const;

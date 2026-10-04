@@ -43,9 +43,11 @@
  * - the own-media scenario (plan 3f.1b, `runPackagedMediaScenario`): `media.pickImport` through main's E2E dialog stand-in
  *   (`--studio-pick-media`, one path whose file is rewritten between picks) with one tiny file per kind picked as `any` (the kind
  *   comes from the bytes): a PNG is imported by a JOB (the copy, the E2E build's stand-in importer, the record) and stored with its
- *   record, listed, kept across an app restart, and deleted; a video, a track and a sticker are refused `not-yet-supported` (no
- *   importer yet), a text file `format`, a HEIC picture `heic`; what a crash left in `media/` and its `.staging` is removed at the
- *   library's opening; the window cannot name a path. `--only media` runs it alone.
+ *   record, listed, kept across an app restart, and deleted; a track and a sticker are refused `not-yet-supported` (no importer
+ *   yet), a bare video header is accepted into a job that fails `format` (3f.3a), a text file is refused `format`, a HEIC picture
+ *   `heic`; what a crash left in `media/` and its `.staging` is removed at the library's opening; the window cannot name a path.
+ *   Last, a real HEVC HLG, variable-rate, turned clip (3f.3a) is imported through the packaged ffmpeg of the operating system and
+ *   must come out as a 96 x 192 constant-rate SDR H.264 record. `--only media` runs it alone.
  *
  * Every debug door (remote debugging, DevTools, the test switches) is a
  * build-time constant: a `build:studio` output has none, however it is
@@ -84,7 +86,8 @@ import { openLibrary } from "../engine/library";
 import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library/testing/sampleData";
 import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
 import { probeVideo } from "../engine/render/ffmpeg.testkit";
-import { jpegMetadataMarkers, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
+import { FIXTURES } from "../engine/media/video/testing/fixtures/index";
+import { jpegMetadataMarkers, MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
 import { PEAK_RSS_BYTES } from "../engine/renderQueue/pool";
 import { verifyRenderedMp4 } from "../engine/verify";
 import { commitHoldPaths } from "../engine/videos/e2eCommitHold";
@@ -1522,6 +1525,31 @@ async function runPackagedMediaScenario(target: Target): Promise<void> {
     const twice = await req(running.cdp, "media.delete", { mediaId });
     check("media scenario: deleting the same id again is NOT_FOUND", field(twice, "ok") === false && field(twice, "error", "code") === "NOT_FOUND", twice);
     check("media scenario: the picked file itself was never touched by any of it", existsSync(pickedPath));
+
+    // 7. Own video (3f.3a): a real HEVC HLG, variable-rate, turned clip goes through the packaged ffmpeg of this operating system.
+    await Bun.write(pickedPath, new Uint8Array(await readFile(FIXTURES[MEDIA_SMOKE_CLIP.fixture].file)));
+    const clipStarted = await pick("any");
+    const clipIds = field(clipStarted, "result", "jobIds");
+    const clipJobId = Array.isArray(clipIds) ? String(clipIds[0]) : "";
+    check("media scenario: picking the clip starts one import job and refuses nothing", field(clipStarted, "ok") === true && Array.isArray(clipIds) && clipIds.length === 1 && JSON.stringify(field(clipStarted, "result", "refused")) === "[]", clipStarted);
+    const clipJob = await waitFor("the clip's import job to end", async () => (await snapshotJobs()).find((job) => field(job, "jobId") === clipJobId && field(job, "status") !== "running" && field(job, "status") !== "queued") ?? null, 180_000, 200);
+    check("media scenario: the clip's job is done, and is an import of a video", field(clipJob, "status") === "done" && field(clipJob, "mediaKind") === "video", clipJob);
+    const clipId = String(field(clipJob, "mediaId"));
+    const clipListed = await req(running.cdp, "media.list", { kind: "video" });
+    const clip = field(clipListed, "result", "media", "0");
+    const clipDuration = Number(field(clip, "durationMs"));
+    check(
+      "media scenario: the clip's record says what the mezzanine is: upright (96 x 192), tone-mapped, about 22 frames long at 30 fps, and the source's own variable rate",
+      field(clip, "mediaId") === clipId && field(clip, "width") === MEDIA_SMOKE_CLIP.width && field(clip, "height") === MEDIA_SMOKE_CLIP.height && field(clip, "hdrToSdr") === MEDIA_SMOKE_CLIP.hdrToSdr && clipDuration >= MEDIA_SMOKE_CLIP.minDurationMs && clipDuration <= MEDIA_SMOKE_CLIP.maxDurationMs && Math.abs(Number(field(clip, "sourceFps")) - 19.091) < 0.01,
+      clip,
+    );
+    const stored = await probeVideo(join(mediaDir, `${clipId}.mp4`)).catch(() => null);
+    const storedVideo = stored?.streams.find((s) => s.codec_type === "video");
+    check("media scenario: the stored file is an H.264 mezzanine of 96 x 192 (ffprobe's own reading)", storedVideo?.codec_name === "h264" && storedVideo.width === MEDIA_SMOKE_CLIP.width && storedVideo.height === MEDIA_SMOKE_CLIP.height && stored?.streams.length === 1, stored);
+    check("media scenario: the clip left only its stored file and its record in media/ and nothing in its staging folder", mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), clipId, "mp4").length === 0 && (await names(stagingDir)).length === 0, { media: await names(mediaDir), staging: await names(stagingDir) });
+    check("media scenario: the clip's record carries no path", !JSON.stringify(clipListed).includes(tmp), clipListed);
+    const clipRemoved = await req(running.cdp, "media.delete", { mediaId: clipId });
+    check("media scenario: media.delete removes the clip and its file", field(clipRemoved, "ok") === true && (await names(mediaDir)).filter((n) => n !== ".staging").length === 0, clipRemoved);
   } finally {
     await quit(running);
     await removeTemp(tmp);

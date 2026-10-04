@@ -31,6 +31,7 @@ import { createTextGate, TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textG
 import { createDecodeGate } from "./decode/decodeGate";
 import { createDecodeWorkerSpawner } from "./decode/spawn";
 import { createPhotoImporter, MAX_PHOTO_PIXELS } from "./media/photoImporter";
+import { createVideoImporter } from "./media/videoImporter";
 import { createCommitHold } from "./videos/e2eCommitHold";
 
 const parentPort = process.parentPort;
@@ -262,7 +263,11 @@ parentPort.once("message", (event) => {
       // 3f.2: the own-photo importer. JPEG and PNG are decoded by the WASM codecs in their own worker thread (fix round 1: ended on a
       // cancel, a time limit and when idle, so the engine thread stays free and the memory goes back); a WebP is decoded by ffmpeg in a child
       // process; the stored file is a JPEG without metadata.
-      mediaImporters: { photo: createPhotoImporter({ decode: createDecodeGate({ spawnWorker: createDecodeWorkerSpawner(PHOTO_DECODE_WORKER_URL, { nodeModulesDir: NODE_MODULES_DIR, maxPixels: MAX_PHOTO_PIXELS }), idleRecycleMs: PHOTO_DECODE_IDLE_RECYCLE_MS, timeoutMs: PHOTO_DECODE_TIMEOUT_MS }).decode }) },
+      // 3f.3a: the own-video importer, beside it: ffmpeg in a child process under the walker's verdict, a mezzanine H.264 clip out.
+      mediaImporters: {
+        photo: createPhotoImporter({ decode: createDecodeGate({ spawnWorker: createDecodeWorkerSpawner(PHOTO_DECODE_WORKER_URL, { nodeModulesDir: NODE_MODULES_DIR, maxPixels: MAX_PHOTO_PIXELS }), idleRecycleMs: PHOTO_DECODE_IDLE_RECYCLE_MS, timeoutMs: PHOTO_DECODE_TIMEOUT_MS }).decode }),
+        video: createVideoImporter(),
+      },
     });
 
     void ready.then((engine) => {
