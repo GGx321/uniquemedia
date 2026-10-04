@@ -7,6 +7,7 @@ import {
   clipCellRects,
   clipMotionPlan,
   clipRanges,
+  layerRange,
   layerVisibleAt,
   motionWindow,
   type MotionPlan,
@@ -153,4 +154,13 @@ export function stickerFrameIndex(frame: number, startFrame: number, loopFrames:
     if (tick < end) return index;
   }
   return delayFrames.length - 1;
+}
+
+/**
+ * The frame of a layer's sticker on screen at timeline `frame`: from the LAYER's first frame, on the loop stored with the sticker
+ * and through its own `delayFrames` where it has them (an own sticker, 3f.5: the manifest's built-in set has none, one frame per
+ * tick).
+ */
+export function stickerFrameOf(sticker: { readonly loopFrames: number; readonly delayFrames?: readonly number[] }, layer: { readonly startMs: number; readonly endMs: number }, frame: number): number {
+  return stickerFrameIndex(frame, layerRange(layer).startFrame, sticker.loopFrames, sticker.delayFrames);
 }

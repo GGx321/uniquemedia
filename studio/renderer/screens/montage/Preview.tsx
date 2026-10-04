@@ -1,6 +1,6 @@
 import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import type { Focus, Layer, MontageDraft, TextLayer } from "../../../shared/engine";
-import { FRAME_H, FRAME_W, layerRange, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, zonesHit } from "../../../shared/montage";
+import { FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, zonesHit } from "../../../shared/montage";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
 import { previewLook } from "../../engine/textPreviewQueue";
@@ -9,7 +9,7 @@ import { Icon } from "../../ui/Icon";
 import { Silhouette } from "../../ui/Portrait";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { captionLine, layerName, stickerName } from "./labels";
-import { type CellView, clipViewAt, stickerFrameIndex, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
+import { type CellView, clipViewAt, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
 import { dragFocus, dragLayerCentre, placeLayer, type Point, resizeFactor, setCellFocus } from "./previewDrag";
 import { PreviewAudio } from "./PreviewAudio";
 import { resolveSelection } from "./selection";
@@ -117,7 +117,6 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
   const { client } = useEngine();
   // One decoder per built-in sticker, fed by main over IPC (`stickers.bytes`): the media scheme stays closed to script reads.
   const [cache] = useState(() => new StickerFrameCache(stickerFramesFrom(client)));
-  useEffect(() => () => cache.closeAll(), [cache]);
   // Every caption's picture is asked for up front, so it is there before the playhead reaches it.
   usePrefetchTextPreviews(spec.layers.filter((l): l is TextLayer => l.kind === "text"));
   const empty = spec.clips.length === 0;
@@ -638,7 +637,7 @@ function StickerLayerView({ layer, frame, cache, url, ...view }: LayerViewProps 
   }
   return (
     <LayerBox box={box} kind="sticker" {...view}>
-      <StickerCanvas cache={cache} stickerId={entry.id} url={url} side={entry.size} frameIndex={stickerFrameIndex(frame, layerRange(layer).startFrame, entry.loopFrames)} />
+      <StickerCanvas cache={cache} stickerId={entry.id} url={url} side={entry.size} frameIndex={stickerFrameOf(entry, layer, frame)} />
     </LayerBox>
   );
 }

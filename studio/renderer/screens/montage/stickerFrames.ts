@@ -87,7 +87,10 @@ interface Held {
   released: boolean;
 }
 
-/** One decoder per picture, shared by every layer showing it; closed when the last one releases it. */
+/**
+ * One decoder per sticker, shared by every layer showing it; closed when the last one releases it. Each canvas releases what it
+ * acquired when it goes, so leaving the editor closes every decoder (EditorPreview.test.tsx pins it).
+ */
 export class StickerFrameCache {
   readonly #open: OpenStickerFrames;
   readonly #held = new Map<string, Held>();
@@ -121,14 +124,6 @@ export class StickerFrameCache {
     if (held.count > 0) return;
     this.#held.delete(url);
     this.#close(held);
-  }
-
-  /** Every picture still held is closed (the editor closing). */
-  closeAll(): void {
-    for (const [url, held] of [...this.#held]) {
-      this.#held.delete(url);
-      this.#close(held);
-    }
   }
 
   #close(held: Held): void {

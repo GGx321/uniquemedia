@@ -7,6 +7,7 @@ import { PHOTO_IDS } from "../engine/mockEngine.testkit";
 import { callsOf, flush } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { type ManualFrames, manualFrames } from "./montage/frames.testkit";
+import { installImageDecoder } from "./montage/imageDecoder.testkit";
 import { dragLayerCentre, resizeFactor } from "./montage/previewDrag";
 import * as renderBlockModule from "./montage/renderBlock";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, paidMusicCalls, studio as openStudio } from "./montage/screenKit";
@@ -307,6 +308,37 @@ describe("stickers", () => {
     });
     expect(inPreview("Стикер 1: Сердце").parentElement?.className).toContain("pv-layer-zone");
   });
+
+  test("drawn on a canvas at the frame the LAYER's start and the stored loop pick: from 1.0 s, at 2.5 s, heart-pulse's frame 21", async () => {
+    const decoders = installImageDecoder();
+    restores.push(() => decoders.restore());
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [heart(0, 1_000, 4_000)] });
+    const head = within(timeline()).getByRole("slider", { name: "Плейхед" });
+    fireEvent.keyDown(head, { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(head, { key: "ArrowRight", shiftKey: true });
+    for (let i = 0; i < 5; i++) fireEvent.keyDown(head, { key: "ArrowRight" });
+    await waitFor(() => expect(preview().querySelector("canvas") !== null).toBe(true));
+    // (75 - 30) mod 24: 2.5 s is frame 75, the layer starts on frame 30, the loop stored with heart-pulse is 24 frames.
+    expect(preview().querySelector("canvas")?.getAttribute("data-frame")).toBe("21");
+    await waitFor(() => expect(decoders.decoded.at(-1)).toBe(21));
+    expect(decoders.inits.map((i) => i.colorSpaceConversion)).toEqual(["none"]);
+    // The bytes came from main (stickers.bytes), never from a read of the media scheme.
+    expect(callsOf(engine, "stickers.bytes").map((c) => c.payload.stickerId)).toEqual(["heart-pulse"]);
+  });
+
+  test("leaving the editor closes every sticker decoder it opened", async () => {
+    const decoders = installImageDecoder();
+    restores.push(() => decoders.restore());
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [heart(0, 0, 4_000), heart(1, 0, 4_000, { x: 0.3 }), { ...heart(2, 0, 4_000, { x: 0.2 }), sticker: { source: "builtin", stickerId: "star-spin" } }] });
+    await waitFor(() => expect(decoders.inits).toHaveLength(2));
+    expect(decoders.closed).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Черновики" }));
+    await screen.findByRole("heading", { level: 1, name: "Монтаж" });
+    await flush();
+    expect(decoders.closed).toBe(2);
+  });
 });
 
 describe("dragging and scaling a layer", () => {
@@ -330,6 +362,39 @@ describe("dragging and scaling a layer", () => {
     const layer = heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.2 });
     await openDraft(engine, client, { layers: [layer] });
     drag(inPreview("Стикер 1: Сердце"), 40, 40, 4, "cancel");
+    expect(layerBox("Стикер 1: Сердце")).toEqual(exact(stickerBox(layer)));
+    await flush();
+    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  test("a press that travels less than the drag threshold (4 px) moves nothing; at the threshold it moves", async () => {
+    const { client, engine } = await studio();
+    const layer = heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.2 });
+    await openDraft(engine, client, { layers: [layer] });
+    drag(inPreview("Стикер 1: Сердце"), 3, 0, 20);
+    expect(layerBox("Стикер 1: Сердце")).toEqual(exact(stickerBox(layer)));
+    await flush();
+    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
+    drag(inPreview("Стикер 1: Сердце"), 4, 0, 21);
+    expect(layerBox("Стикер 1: Сердце").x).toBeGreaterThan(stickerBox(layer).x);
+  });
+
+  test("a cancelled corner drag (the system took the pointer) leaves the size as it was", async () => {
+    const { client, engine } = await studio();
+    const layer = heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.2 });
+    await openDraft(engine, client, { layers: [layer] });
+    fireEvent.click(inPreview("Стикер 1: Сердце"));
+    const corner = preview().querySelector(".pv-corner-br");
+    if (corner === null) throw new Error("no corner handle on the selected sticker");
+    const centre = { x: 540 / FRAME_PX, y: 960 / FRAME_PX };
+    fireEvent.pointerDown(corner, { pointerId: 22, button: 0, clientX: centre.x + 20, clientY: centre.y });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 22, clientX: centre.x + 40, clientY: centre.y, buttons: 1 }));
+    });
+    expect(layerBox("Стикер 1: Сердце").w).toBeGreaterThan(stickerBox(layer).w);
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 22 }));
+    });
     expect(layerBox("Стикер 1: Сердце")).toEqual(exact(stickerBox(layer)));
     await flush();
     expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
@@ -452,6 +517,19 @@ describe("a cell's crop by its face point", () => {
     await flush();
     const back = (await nextSave(engine, 1)).clips[0];
     expect(back?.kind === "collage" ? back.cells[0]?.focus : "?").toBe(null);
+  });
+
+  test("a cancelled crop drag (the system took the pointer) leaves the focus as it was", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { clips: [collageClip(0, [P1, P2], 4_000, false)] });
+    const cell = (): HTMLElement => inPreview("Кадр 1, ячейка 1");
+    fireEvent.pointerDown(cell(), { pointerId: 23, button: 0, clientX: 0, clientY: 0 });
+    const photo = (): string => cell().querySelector(".pv-photo")?.getAttribute("style") ?? "";
+    const before = photo();
+    drag(cell(), 0, 30, 24, "cancel");
+    expect(photo()).toBe(before);
+    await flush();
+    expect(callsOf(engine, "montages.save")).toHaveLength(0);
   });
 
   test("arrow keys move the selected cell's photo, a held key one undo step", async () => {

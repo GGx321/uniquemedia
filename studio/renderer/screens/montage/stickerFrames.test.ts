@@ -3,6 +3,7 @@ import type { EngineClient } from "../../engine/client";
 import { MockEngine, mockEngineClient } from "../../engine/mockEngine";
 import { mockStickerBytes } from "../../engine/mockStickers";
 import { ManualScheduler } from "../../engine/scheduler";
+import { installImageDecoder } from "./imageDecoder.testkit";
 import { openWithImageDecoder, type StickerFrames, StickerFrameCache, stickerFramesFrom } from "./stickerFrames";
 
 // 3d.4: a sticker's frames are decoded once per picture by WebCodecs `ImageDecoder` and shared by every layer that shows it; the
@@ -88,17 +89,6 @@ describe("the sticker frame cache", () => {
     expect(opened.map((o) => o.key)).toEqual(["heart-pulse", "star-spin"]);
   });
 
-  test("closeAll releases every decoder still held (the editor closing)", async () => {
-    const { open, opened, answer } = opener();
-    const cache = new StickerFrameCache(open);
-    void cache.acquire("heart-pulse");
-    void cache.acquire("star-spin");
-    await answer(0);
-    await answer(1);
-    cache.closeAll();
-    expect(opened.map((o) => o.frames.closed)).toEqual([1, 1]);
-  });
-
   test("a release of a sticker never acquired changes nothing", () => {
     const cache = new StickerFrameCache(opener().open);
     expect(() => cache.release("heart-pulse")).not.toThrow();
@@ -106,43 +96,6 @@ describe("the sticker frame cache", () => {
 });
 
 // ---------- the window's decoder ----------
-
-interface FakeDecoderControl {
-  /** The init each decoder was made with. */
-  readonly inits: ImageDecoderInit[];
-  /** How many decoders were closed. */
-  closed: number;
-  /** The frame indexes asked of `decode`. */
-  readonly decoded: number[];
-  supported: boolean;
-  readyFails: boolean;
-}
-
-/** A stand-in for WebCodecs' `ImageDecoder` (the test DOM has none), recording what it is asked. */
-function installImageDecoder(frameCount = 24): FakeDecoderControl {
-  const control: FakeDecoderControl = { inits: [], closed: 0, decoded: [], supported: true, readyFails: false };
-  class FakeImageDecoder {
-    static isTypeSupported(): Promise<boolean> {
-      return Promise.resolve(control.supported);
-    }
-    readonly tracks: { ready: Promise<void>; selectedTrack: { frameCount: number } };
-    readonly completed: Promise<void>;
-    constructor(init: ImageDecoderInit) {
-      control.inits.push(init);
-      this.tracks = { ready: control.readyFails ? Promise.reject(new Error("broken file")) : Promise.resolve(), selectedTrack: { frameCount } };
-      this.completed = Promise.resolve();
-    }
-    decode(options: { frameIndex: number }): Promise<{ image: { close(): void } }> {
-      control.decoded.push(options.frameIndex);
-      return Promise.resolve({ image: { close: () => undefined } });
-    }
-    close(): void {
-      control.closed += 1;
-    }
-  }
-  Object.defineProperty(globalThis, "ImageDecoder", { value: FakeImageDecoder, configurable: true, writable: true });
-  return control;
-}
 
 afterEach(() => {
   Reflect.deleteProperty(globalThis, "ImageDecoder");

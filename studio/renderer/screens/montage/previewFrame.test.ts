@@ -13,8 +13,8 @@ import {
   stickerBox,
   textBox,
 } from "../../../shared/montage";
-import { BUILTIN_STICKER_SIZE } from "../../../shared/stickers/manifest";
-import { cellSourceWindow, clipViewAt, previewFrameAt, stickerFrameIndex, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
+import { BUILTIN_STICKER_SIZE, stickerById } from "../../../shared/stickers/manifest";
+import { cellSourceWindow, clipViewAt, previewFrameAt, stickerFrameIndex, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
 import { collageClip, draftSpec, photoClip, stickerLayer, textLayer, videoClip } from "./testkit";
 
 // 3d.4: what the preview draws at a frame, from the SHARED geometry the engine renders with (studio/shared/montage): the clip
@@ -56,7 +56,7 @@ describe("the part of a photo a cell shows (the render's crop and motion)", () =
 
   test("on every frame of every motion, the window is motionWindow's canvas rectangle mapped back to the photo's pixels", () => {
     const cells = [{ w: FRAME_W, h: FRAME_H }, ...collageRects("collage3").map((r) => ({ w: r.w, h: r.h }))];
-    const plans: MotionPlan[] = [KENBURNS_IN, { kind: "kenburns", direction: "out", zoomFromPermille: 1100, zoomToPermille: 1000 }, { kind: "pan", direction: "left", zoomFromPermille: 1150, zoomToPermille: 1150 }, { kind: "pan", direction: "down", zoomFromPermille: 1150, zoomToPermille: 1150 }];
+    const plans: MotionPlan[] = [KENBURNS_IN, { kind: "kenburns", direction: "out", zoomFromPermille: 1100, zoomToPermille: 1000 }, { kind: "pan", direction: "left", zoomFromPermille: 1150, zoomToPermille: 1150 }, { kind: "pan", direction: "right", zoomFromPermille: 1150, zoomToPermille: 1150 }, { kind: "pan", direction: "up", zoomFromPermille: 1150, zoomToPermille: 1150 }, { kind: "pan", direction: "down", zoomFromPermille: 1150, zoomToPermille: 1150 }];
     for (const cell of cells) {
       for (const plan of plans) {
         const g = cellMotionGeometry(cell, PHOTO, { x: 0.2, y: 0.7 });
@@ -151,6 +151,22 @@ describe("the layers on screen", () => {
 });
 
 describe("a sticker's frame on its loop", () => {
+  test("by the tick and the stored loop alone: 99 ticks into a 24-frame loop is frame 3 (a decoder's 33 000 µs would say otherwise)", () => {
+    expect(stickerFrameIndex(33 + 99, 33, 24)).toBe(3);
+  });
+
+  test("a layer's sticker, from the LAYER's start and the sticker's stored loop: heart-pulse from 1.0 s at 2.5 s is frame 21", () => {
+    const heart = stickerById("heart-pulse");
+    if (heart === undefined) throw new Error("heart-pulse is in the set");
+    expect(heart.loopFrames).toBe(24);
+    expect(stickerFrameOf(heart, { startMs: 1_000, endMs: 4_000 }, 75)).toBe((75 - 30) % 24);
+  });
+
+  test("a sticker's own delays are used where it has them (own stickers, 3f.5); the built-in set is one frame per tick", () => {
+    expect([0, 1, 2, 3, 6].map((t) => stickerFrameOf({ loopFrames: 6, delayFrames: [2, 1, 3] }, { startMs: 0, endMs: 1_000 }, t))).toEqual([0, 0, 1, 2, 0]);
+    expect(stickerFrameOf({ loopFrames: 6 }, { startMs: 0, endMs: 1_000 }, 2)).toBe(2);
+  });
+
   test("the 30 fps tick since the layer started, wrapped on the loop stored with the sticker (the built-in set: one frame per tick)", () => {
     expect([0, 1, 23, 24, 25, 49].map((t) => stickerFrameIndex(33 + t, 33, 24))).toEqual([0, 1, 23, 0, 1, 1]);
   });
