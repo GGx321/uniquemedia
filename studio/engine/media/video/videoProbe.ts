@@ -69,6 +69,7 @@ export type ProbeRefusal =
   | "sample-count-mismatch"
   | "unsupported-edit"
   | "hidden-handler"
+  | "hidden-track-box"
   | "several-sample-entries"
   | "dimension-mismatch"
   | "unsupported-codec"
@@ -481,6 +482,13 @@ function readStts(view: DataView, box: BoxRef): SampleTimes {
 const TRAK_CONTAINERS: ReadonlySet<string> = new Set(["mdia", "minf", "stbl", "dinf", "edts", "tref", "udta"]);
 /** The lists the walker reads strictly anyway (a malformed box refuses the file); the rest of a track is read the lenient way ffmpeg reads it. */
 const STRICT_PATHS: ReadonlySet<string> = new Set(["trak", "trak/mdia", "trak/mdia/minf", "trak/mdia/minf/stbl", "trak/mdia/minf/dinf", "trak/edts"]);
+/** Where each box that makes a track's stream may be: the one list the walker reads it from. A copy anywhere else in a `trak` is refused (`hidden-track-box`). */
+const STREAM_PART_HOMES: Readonly<Record<string, string | undefined>> = {
+  mdhd: "trak/mdia",
+  minf: "trak/mdia",
+  stbl: "trak/mdia/minf",
+  stsd: "trak/mdia/minf/stbl",
+};
 /** ffmpeg stops at 10 levels of nesting; deeper than this is refused rather than followed. */
 const MAX_TRAK_DEPTH = 16;
 /** The subtypes of a data handler (`dhlr`'s alias, URL and resource references). */
@@ -524,6 +532,10 @@ function checkHandlers(m: Uint8Array, view: DataView, trak: BoxRef, budget: Budg
   const visit = (kids: readonly BoxRef[], path: string, inMeta: boolean, depth: number): void => {
     if (depth > MAX_TRAK_DEPTH) throw new Refusal("too-many-boxes");
     for (const kid of kids) {
+      // The parts that make a STREAM (3f.6 review, H1): ffmpeg's parse table does not look at how deep they are, so `minf/stbl/stsd` directly in a `trak` is a stream that no
+      // `mdia` and no `hdlr` introduced (the codec of its sample entry says it is a video). Each is where the walker reads it or nowhere.
+      const home = STREAM_PART_HOMES[kid.type];
+      if (home !== undefined && !inMeta && path !== home) throw new Refusal("hidden-track-box");
       if (kid.type === "hdlr") {
         const allowed = inMeta ? !isMediaHandler(m, kid) : path === "trak/mdia" || (path === "trak/mdia/minf" && isDataHandler(m, kid));
         if (!allowed) throw new Refusal("hidden-handler");
