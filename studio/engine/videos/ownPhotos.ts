@@ -49,9 +49,9 @@ export function readVerifiedOwnPhoto(source: OwnPhotoSource, signal: AbortSignal
  * when a file is not a plain file, is gone, or is not the size and hash its record gave; the signal's reason when `signal` fires.
  * Nothing is written for a photo that fails.
  */
-export async function copyOwnPhotos(dir: string, sources: readonly OwnPhotoSource[], signal: AbortSignal): Promise<void> {
+export async function copyOwnPhotos(dir: string, sources: readonly OwnPhotoSource[], signal: AbortSignal, ops: OpenRegularOps = NODE_OPEN_OPS): Promise<void> {
   for (const source of sources) {
-    const bytes = await readVerifiedOwnPhoto(source, signal);
+    const bytes = await readVerifiedOwnPhoto(source, signal, ops);
     signal.throwIfAborted();
     try {
       // `wx`: the job folder is new, so a name already there is not ours and is never written through.

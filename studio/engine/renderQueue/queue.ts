@@ -1,4 +1,4 @@
-import type { EngineError, JobProgress, JobState, RenderResult } from "../../shared/engine";
+import { RENDER_TIMEOUT_DETAIL_PREFIX, type EngineError, type JobProgress, type JobState, type RenderResult } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import type { JobRegistry, RenderJobEnd, RenderJobRef } from "../jobs";
 import { RenderGraphError } from "../render";
@@ -136,7 +136,7 @@ export function renderErrorFrom(error: unknown, home: string): EngineError {
 function renderErrorUnmasked(error: unknown): EngineError {
   if (error instanceof RenderFailure) return error.engineError;
   if (error instanceof RenderGraphError) return { code: "RENDER_FAILED", detail: `the render graph was refused (${error.code}): ${oneLine(error.message)}`.slice(0, 300) };
-  if (error instanceof FfmpegTimeoutError) return { code: "TIMEOUT", detail: `the render ran past its time limit of ${Math.round(error.timeoutMs / 1000)} s` };
+  if (error instanceof FfmpegTimeoutError) return { code: "TIMEOUT", detail: `${RENDER_TIMEOUT_DETAIL_PREFIX} of ${Math.round(error.timeoutMs / 1000)} s` };
   if (error instanceof FfmpegError) {
     const tail = oneLine(error.stderrTail).slice(-DETAIL_TAIL);
     return { code: "RENDER_FAILED", detail: tail === "" ? error.message : `${error.message}: ${tail}` };

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { JobState, RenderResult } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import { JobRegistry } from "../jobs";
+import { RENDER_TIMEOUT_DETAIL_PREFIX } from "../../shared/engine";
 import { RenderGraphError } from "../render";
 import { MAX_UNFINISHED_RENDERS, RenderFailure, RenderQueue, renderErrorFrom, type RenderContext, type RenderQueueDeps, type RenderQueueEvent, type RenderSubmission } from "./queue";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -255,6 +256,12 @@ describe("RenderQueue: a job's life", () => {
     await queue.idle();
 
     expect(jobs.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" } });
+  });
+
+  test("a timeout of the render says so in the detail the window keys its own text on", () => {
+    const failure = renderErrorFrom(new FfmpegTimeoutError(60_000, ""), "/home/x");
+    expect(failure.code).toBe("TIMEOUT");
+    expect(failure.detail?.startsWith(RENDER_TIMEOUT_DETAIL_PREFIX)).toBe(true);
   });
 
   test.each(["PHOTO_UNRESOLVED", "BAD_OVERLAY", "UNSAFE_GRAPH", "VIDEO_UNRESOLVED", "CELL_EMPTY"] as const)(

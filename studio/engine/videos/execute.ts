@@ -9,11 +9,14 @@ import type { Library } from "../library";
 import type { PhotoResolver } from "../render";
 import { inspectStreams } from "../music/decodeCheck";
 import { TrackUnavailableError, type RenderTrack, type RenderTrackSource } from "../music/renderTrack";
+import { stagingTimeoutMs } from "../renderQueue/progress";
 import { RenderFailure, type RenderContext } from "../renderQueue/queue";
+import { stagingBound, type StagingBound } from "../renderQueue/stagingBound";
 import { runRenderJob, type RenderRunDeps, type RunAudio } from "../renderQueue/runner";
 import type { VerifiedFile, VerifyExpected } from "../verify";
 import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
+import type { OpenRegularOps } from "../library/openRegular";
 import { collectForbiddenStrings, combineForbiddenStrings } from "./forbiddenStrings";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { copyOwnPhotos, type OwnPhotoSource } from "./ownPhotos";
@@ -143,6 +146,8 @@ export interface VideoRenderDeps {
   readonly tracks?: Pick<RenderTrackSource, "openForRender">;
   /** The kinds of stream ffmpeg sees in a file, for the check of an own track's private copy (3f.4); `inspectStreams` by default (a test passes a stand-in). */
   readonly inspectStreams?: (path: string, signal: AbortSignal) => Promise<readonly string[]>;
+  /** How the own photos' library files are opened for their copies (a test plays a dead disk); the real ones by default. */
+  readonly ownPhotoOps?: OpenRegularOps;
   /** The disk calls of the own videos' streamed copy (how the library file is opened, how the copy is created, the free-space question, the chunk size); the real ones unless a test plays a disk. */
   readonly ownVideoIo?: StreamCopyIo;
   /** Codes, ids and box paths only. */
@@ -334,7 +339,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     }
   };
 
-  return (plan) => async (context) => {
+  const executeJob = async (plan: RenderPlan, context: RenderContext, staging: StagingBound, stagedBytes: number): Promise<RenderResult> => {
     const ownVideos = checkOwnVideos(plan);
     // The layers first, before the export volume or the library is touched: the text is drawn by the engine's own rasteriser and the
     // stickers are checked against the shipped catalogue, so a caption that breaks a rule, or a sticker that is not intact, fails
@@ -343,10 +348,11 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     let layers: Awaited<ReturnType<typeof resolveLayers>> | undefined;
     if (plan.spec.layers.length > 0) {
       if (deps.layers === undefined) throw new RenderFailure({ code: "INTERNAL", detail: "this engine cannot render text or sticker layers" });
-      layers = await resolveLayers(plan.spec.layers, jobDir, deps.layers, context.signal, new Map((plan.ownStickers ?? []).map((own) => [own.mediaId, own])));
+      const resolving = deps.layers;
+      layers = await staging.run((signal) => resolveLayers(plan.spec.layers, jobDir, resolving, signal, new Map((plan.ownStickers ?? []).map((own) => [own.mediaId, own]))));
     }
 
-    const music = await openTrack(plan, context.signal);
+    const music = await staging.run((signal) => openTrack(plan, signal));
     const track = music?.track ?? null;
     const audio: RunAudio = music === null ? plan.audio : { kind: "music", startMs: music.startMs, data: music.track.data, check: music.track.check };
     const tile = track === null ? plan.music : { title: track.title, artist: track.artist };
@@ -414,9 +420,11 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
                 ownVideoBytes: [...ownVideos.values()].reduce((sum, own) => sum + own.bytes, 0),
               }),
           overlays: layers === undefined ? [] : layers.overlays,
+          staging,
+          stagingBytes: stagedBytes,
           ...(layers === undefined ? {} : { stageLayers: layers.stage }),
           // 3f.2: each own photo is copied, verified, into the job folder; `resolvePhoto` already names the copies.
-          ...(plan.ownPhotos === undefined || plan.ownPhotos.length === 0 ? {} : { stageOwnPhotos: (dir: string) => copyOwnPhotos(dir, plan.ownPhotos ?? [], context.signal) }),
+          ...(plan.ownPhotos === undefined || plan.ownPhotos.length === 0 ? {} : { stageOwnPhotos: (dir: string, signal: AbortSignal) => copyOwnPhotos(dir, plan.ownPhotos ?? [], signal, deps.ownPhotoOps) }),
           audio,
           output: temp,
           signal: context.signal,
@@ -555,6 +563,22 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       if (commit === null || commitEnded) release();
       // A commit stopped at its pre-claim deadline may still be stuck in a call; it stays live for recovery until it really ends.
       else void commit.then(release, release);
+    }
+  };
+
+  return (plan) => async (context) => {
+    // ONE time bound for all the job's staging, from the SUM of the bytes it will read: the own photos', videos' and stickers' copies and a track's bytes. Each read runs raced
+    // against it (here, and in the runner for the copies into the job folder), so a read that never returns ends the job TIMEOUT instead of holding the render slot for ever.
+    const stagedBytes =
+      (plan.ownPhotos ?? []).reduce((sum, own) => sum + own.bytes, 0) +
+      (plan.ownVideos ?? []).reduce((sum, own) => sum + own.bytes, 0) +
+      (plan.ownStickers ?? []).reduce((sum, own) => sum + own.bytes, 0) +
+      (plan.ownTrack?.source.bytes ?? 0);
+    const staging = stagingBound((deps.runDeps?.stagingTimeoutMs ?? stagingTimeoutMs)(stagedBytes), context.signal, deps.runDeps?.stagingTimers);
+    try {
+      return await executeJob(plan, context, staging, stagedBytes);
+    } finally {
+      staging.release();
     }
   };
 }
