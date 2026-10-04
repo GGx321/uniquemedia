@@ -8,6 +8,7 @@ import { tempDirFor } from "../../testing/tempDir";
 import { NODE_OPEN_OPS } from "../library/openRegular";
 import { RenderFailure } from "../renderQueue/queue";
 import { copyOwnPhotos, ownPhotoCopyName, readVerifiedOwnPhoto, type OwnPhotoSource } from "./ownPhotos";
+import { lyingHandle } from "./testing/handleKit";
 useNativeGlobals();
 
 // The render reads a VERIFIED COPY of each own photo (3f.2), as it does for a built-in sticker (sha-checked, copied with `wx` into the job
@@ -147,41 +148,23 @@ describe("readVerifiedOwnPhoto: opened as staging opens a file, read within its 
 
   test("a handle whose size is not the record's is refused without a byte of it being read", async () => {
     const a = await stored("media-0000001", Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3]));
-    let reads = 0;
     const real = await open(a.path, "r");
-    const handle = new Proxy(real, {
-      get(target, property) {
-        if (property === "stat") return async () => ({ ...(await target.stat({ bigint: true })), size: 10n ** 12n });
-        if (property === "read") return async () => void reads++;
-        const value: unknown = Reflect.get(target, property);
-        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
-      },
-    });
-    const ops = { ...NODE_OPEN_OPS, open: async () => handle };
+    // The stat keeps `isFile` and the identity (`handleKit.ts`), so `openRegularNoFollow` lets the handle through and it is the SIZE check that refuses it:
+    // an earlier stand-in dropped `isFile`, was refused at the open, and the test passed whether or not the size was checked.
+    const lying = lyingHandle(real, { lyingSize: 10 ** 12, fill: "none" });
+    const ops = { ...NODE_OPEN_OPS, open: async () => lying.handle };
     await failureOf(readVerifiedOwnPhoto(a, new AbortController().signal, ops));
-    expect(reads).toBe(0);
+    expect(lying.reads()).toBe(0);
     await real.close().catch(() => undefined);
   });
 
   test("a file that grew after it was measured is refused: the read is bounded by the record's size plus one byte", async () => {
     const a = await stored("media-0000001", Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3]));
     const real = await open(a.path, "r");
-    let asked = 0;
-    const handle = new Proxy(real, {
-      get(target, property) {
-        if (property === "read") {
-          return async (buffer: Uint8Array, offset: number, length: number) => {
-            asked += length;
-            buffer.fill(9, offset, offset + length);
-            return { bytesRead: length, buffer };
-          };
-        }
-        const value: unknown = Reflect.get(target, property);
-        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
-      },
-    });
-    await failureOf(readVerifiedOwnPhoto(a, new AbortController().signal, { ...NODE_OPEN_OPS, open: async () => handle }));
-    expect(asked).toBeLessThanOrEqual(a.bytes + 1);
+    const growing = lyingHandle(real, { fill: "all" });
+    await failureOf(readVerifiedOwnPhoto(a, new AbortController().signal, { ...NODE_OPEN_OPS, open: async () => growing.handle }));
+    expect(growing.asked()).toBeLessThanOrEqual(a.bytes + 1);
+    expect(growing.asked()).toBeGreaterThan(0);
     await real.close().catch(() => undefined);
   });
 });

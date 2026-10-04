@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { NODE_OPEN_OPS, openRegularNoFollow, type OpenRegularOps } from "../library/openRegular";
+import { NODE_OPEN_OPS, type OpenRegularOps } from "../library/openRegular";
 import type { MediaLookup } from "../media/service";
 import { RenderFailure } from "../renderQueue/queue";
+import { OwnFileUnavailableError, readVerifiedOwnFile } from "./ownFile";
 
 // The render's private copy of each own photo (Stage 3, 3f.2). `MediaService.lookup` answers where a stored photo is and what it must
 // hash to; the render does NOT point ffmpeg at that file. Like a built-in sticker (sha-checked, copied with `wx` into the job folder) and
@@ -43,35 +43,13 @@ const UNAVAILABLE = (): RenderFailure => new RenderFailure({ code: "RENDER_FAILE
  * copy for a render and the face detector's input both come from here, so what is judged is what is rendered.
  */
 export async function readVerifiedOwnPhoto(source: OwnPhotoSource, signal: AbortSignal, ops: OpenRegularOps = NODE_OPEN_OPS): Promise<Uint8Array> {
-  signal.throwIfAborted();
-  let bytes: Uint8Array;
   try {
-    // Opened as the staging opens a file (3f.1): a link, a folder, a device or a FIFO is refused by the name, the handle must be the file the name
-    // led to, and everything after is read from THE HANDLE: its size is the record's, and no more than that (plus one byte, to see growth) is read.
-    const handle = await openRegularNoFollow(source.path, { ops });
-    try {
-      const facts = await handle.stat();
-      if (facts.size !== source.bytes) throw UNAVAILABLE();
-      const buffer = Buffer.alloc(source.bytes + 1);
-      let filled = 0;
-      while (filled < buffer.length) {
-        signal.throwIfAborted();
-        const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
-        if (bytesRead === 0) break;
-        filled += bytesRead;
-      }
-      if (filled !== source.bytes) throw UNAVAILABLE();
-      bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, source.bytes);
-    } finally {
-      await handle.close();
-    }
+    // Opened as the staging opens a file (3f.1), within the record's size and against its hash: `readVerifiedOwnFile` (shared with the own track, 3f.4).
+    return await readVerifiedOwnFile(source, signal, ops);
   } catch (error) {
-    if (signal.aborted) throw signal.reason;
-    if (error instanceof RenderFailure) throw error;
-    throw UNAVAILABLE();
+    if (error instanceof OwnFileUnavailableError) throw UNAVAILABLE();
+    throw error;
   }
-  if (createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw UNAVAILABLE();
-  return bytes;
 }
 
 /**
