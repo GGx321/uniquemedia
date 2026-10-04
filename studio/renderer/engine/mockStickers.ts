@@ -5,6 +5,9 @@ import { concatBytes, PNG_SIGNATURE, pngBase64Url, pngChunk, zlibStored } from "
 // `studio-media://sticker/<id>`, so the mock client hands an APNG data URL instead, a sparkle in the colour of the sticker's
 // category that turns and pulses over the manifest's own loop, one frame per 1/30 s like the real set. So the preview decodes and
 // loops it the way the real app does. Not the sticker: never design on its look (the real one is the generated set, 3b.5).
+//
+// 3f.5: the same star stands in for an OWN sticker (`mockOwnStickerBytes`), on the canvas, the loop and the per-frame delays of its record, so
+// the preview decodes and loops it as it would the stored APNG.
 
 const CATEGORY_COLOURS: Record<StickerCategoryId, readonly [number, number, number]> = {
   love: [0xff, 0x6b, 0x8b],
@@ -20,16 +23,17 @@ const CATEGORY_COLOURS: Record<StickerCategoryId, readonly [number, number, numb
 const SIDE = 64;
 /** A 2-bit palette: transparent, the colour at the soft edge, the colour. */
 const EDGE_ALPHA = 120;
+/** An own sticker's stand-in keeps under this many bytes of pixels (stored uncompressed), by showing fewer, longer frames when its record has many. */
+const OWN_PIXEL_BUDGET = 3 * 1024 * 1024;
 
 const made = new Map<string, { bytes: Uint8Array; url: string }>();
 
-/** The four-pointed star of outer radius `r`, turned by `turn` radians, centred on the picture: its eight corners. */
-function star(r: number, turn: number): [number, number][] {
-  const c = SIDE / 2;
+/** The four-pointed star of outer radius `r`, turned by `turn` radians, centred on the `w` x `h` picture: its eight corners. */
+function star(r: number, turn: number, w: number, h: number): [number, number][] {
   return Array.from({ length: 8 }, (_, i): [number, number] => {
     const angle = turn + (i * Math.PI) / 4;
     const radius = i % 2 === 0 ? r : r * 0.38;
-    return [c + radius * Math.cos(angle), c + radius * Math.sin(angle)];
+    return [w / 2 + radius * Math.cos(angle), h / 2 + radius * Math.sin(angle)];
   });
 }
 
@@ -44,14 +48,14 @@ function inside(points: readonly [number, number][], px: number, py: number): bo
   return hit;
 }
 
-/** Frame `k` of `frames`: the star a quarter turn further each loop (it looks the same after a quarter turn), pulsing once. */
-function frameRows(k: number, frames: number): Uint8Array {
+/** Frame `k` of `frames` on a `w` x `h` canvas: the star a quarter turn further each loop (it looks the same after a quarter turn), pulsing once. */
+function frameRows(k: number, frames: number, w: number, h: number): Uint8Array {
   const phase = k / frames;
-  const points = star((SIDE / 2 - 2) * (0.78 + 0.22 * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase))), (Math.PI / 2) * phase);
-  const stride = 1 + SIDE / 4;
-  const raw = new Uint8Array(stride * SIDE);
-  for (let y = 0; y < SIDE; y++) {
-    for (let x = 0; x < SIDE; x++) {
+  const points = star((Math.min(w, h) / 2 - 2) * (0.78 + 0.22 * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase))), (Math.PI / 2) * phase, w, h);
+  const stride = 1 + Math.ceil(w / 4);
+  const raw = new Uint8Array(stride * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
       let hits = 0;
       for (const [sx, sy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]] as const) if (inside(points, x + sx, y + sy)) hits++;
       const index = hits === 0 ? 0 : hits < 3 ? 1 : 2;
@@ -69,34 +73,35 @@ function u32(...values: number[]): Uint8Array {
   return out;
 }
 
-/** A frame control: the whole picture, shown for 1/30 s, replacing the frame before. */
-function fctl(sequence: number): Uint8Array {
+/** A frame control: the whole picture, shown for `delay` 30 fps frames, replacing the frame before. */
+function fctl(sequence: number, w: number, h: number, delay: number): Uint8Array {
   const out = new Uint8Array(26);
-  out.set(u32(sequence, SIDE, SIDE, 0, 0), 0);
+  out.set(u32(sequence, w, h, 0, 0), 0);
   const view = new DataView(out.buffer);
-  view.setUint16(20, 1);
+  view.setUint16(20, delay);
   view.setUint16(22, 30);
   out[24] = 0; // dispose: none
   out[25] = 0; // blend: source
   return out;
 }
 
-function standIn(category: StickerCategoryId, frames: number): Uint8Array {
-  const [r, g, b] = CATEGORY_COLOURS[category];
-  const header = concatBytes([u32(SIDE, SIDE), Uint8Array.from([2, 3, 0, 0, 0])]);
+/** The stand-in: one frame per entry of `delays` (30 fps frames each), on a `w` x `h` canvas, in the colour of `category`. */
+function standIn(colour: readonly [number, number, number], delays: readonly number[], w: number, h: number): Uint8Array {
+  const [r, g, b] = colour;
+  const header = concatBytes([u32(w, h), Uint8Array.from([2, 3, 0, 0, 0])]);
   const parts: Uint8Array[] = [
     Uint8Array.from(PNG_SIGNATURE),
     pngChunk("IHDR", header),
-    pngChunk("acTL", u32(frames, 0)),
+    pngChunk("acTL", u32(delays.length, 0)),
     pngChunk("PLTE", Uint8Array.from([0, 0, 0, r, g, b, r, g, b])),
     pngChunk("tRNS", Uint8Array.from([0, EDGE_ALPHA, 255])),
   ];
   let sequence = 0;
-  for (let k = 0; k < frames; k++) {
-    parts.push(pngChunk("fcTL", fctl(sequence++)));
-    const data = zlibStored(frameRows(k, frames));
+  delays.forEach((delay, k) => {
+    parts.push(pngChunk("fcTL", fctl(sequence++, w, h, delay)));
+    const data = zlibStored(frameRows(k, delays.length, w, h));
     parts.push(k === 0 ? pngChunk("IDAT", data) : pngChunk("fdAT", concatBytes([u32(sequence++), data])));
-  }
+  });
   parts.push(pngChunk("IEND", new Uint8Array(0)));
   return concatBytes(parts);
 }
@@ -106,7 +111,7 @@ function standInOf(stickerId: string): { bytes: Uint8Array; url: string } | null
   if (sticker === undefined) return null;
   const known = made.get(sticker.id);
   if (known !== undefined) return known;
-  const bytes = standIn(sticker.category, sticker.loopFrames);
+  const bytes = standIn(CATEGORY_COLOURS[sticker.category], Array.from({ length: sticker.loopFrames }, () => 1), SIDE, SIDE);
   const entry = { bytes, url: pngBase64Url(bytes) };
   made.set(sticker.id, entry);
   return entry;
@@ -124,4 +129,37 @@ export function mockStickerUrl(stickerId: string): string | null {
 export function mockStickerBytes(stickerId: string): Uint8Array | null {
   const entry = standInOf(stickerId);
   return entry === null ? null : new Uint8Array(entry.bytes);
+}
+
+/** What the stand-in of an own sticker needs of its record. */
+export interface OwnStickerFacts {
+  readonly mediaId: string;
+  readonly width: number;
+  readonly height: number;
+  readonly loopFrames: number;
+  readonly delayFrames: readonly number[];
+}
+
+const OWN_COLOURS: readonly (readonly [number, number, number])[] = Object.values(CATEGORY_COLOURS);
+
+/**
+ * The bytes of the stand-in of an own sticker (3f.5): an APNG on the canvas, the loop and the per-frame delays of its record, which is what main
+ * answers `media.stickerBytes` with (the stored file). A record with so many frames that they would not fit the pixel budget stored uncompressed is
+ * shown with fewer, longer frames over the same loop, never a different loop.
+ */
+export function mockOwnStickerBytes(sticker: OwnStickerFacts): Uint8Array {
+  const { width, height, loopFrames, delayFrames } = sticker;
+  const frameBytes = (1 + Math.ceil(width / 4)) * height;
+  const fits = Math.max(1, Math.floor(OWN_PIXEL_BUDGET / frameBytes));
+  let delays = delayFrames;
+  if (delays.length > fits) {
+    // `fits` frames that share the loop between them, as evenly as whole 30 fps frames allow.
+    const base = Math.floor(loopFrames / fits);
+    const extra = loopFrames - base * fits;
+    delays = Array.from({ length: fits }, (_, i) => base + (i < extra ? 1 : 0));
+  }
+  let hash = 0;
+  for (const ch of sticker.mediaId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  const colour = OWN_COLOURS[hash % OWN_COLOURS.length] ?? [0xff, 0xd1, 0x66];
+  return standIn(colour, delays, width, height);
 }

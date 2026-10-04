@@ -59,6 +59,10 @@ export const MAX_PICKED_FILES = 20;
  * - `structure` (3f.3a): the file's parts are put together in a way the importer will not take (video: two video tracks, a track outside its
  *   container, a repeated box, an edit list it cannot follow, a mirrored or oddly turned picture, an unusual colour tag, non-square pixels, a
  *   fragmented file, two tables that disagree): not a wrong file TYPE, so not `format`.
+ * - `not-animated` (3f.5): a sticker that does not animate: a still PNG, a GIF or an APNG of one frame, or one whose frames all fall into a single 30 fps slot;
+ * - `loop-too-long` (3f.5): a sticker whose loop, on the 30 fps grid, is over 300 frames (10 s), or that has more than 300 source frames.
+ *   (A sticker's side over 720 px is `dimensions`, under 2 px `too-small`, a file over 5 MB or an animation that re-encodes past 5 MB `too-large`,
+ *   and a file that is not a GIF or an APNG the decoder reads the way the validator did is `format`.)
  */
 export const MediaUnsupportedReason = z.enum([
   "not-a-file",
@@ -82,6 +86,9 @@ export const MediaUnsupportedReason = z.enum([
   "too-long",
   "codec",
   "structure",
+  // 3f.5, one per line and at the END.
+  "not-animated",
+  "loop-too-long",
 ]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
 
@@ -137,6 +144,9 @@ export const MAX_STICKER_LOOP_FRAMES = 300;
 /** `media.list` answers at most this many records (newest first); `total` says how many there are. */
 export const MAX_LISTED_MEDIA = 500;
 
+/** `media.list` by id (3f.5): at most this many ids (a draft has at most 10 sticker layers, and 20 files are picked at a time). */
+export const MAX_LISTED_BY_ID = 50;
+
 const PositiveInt = z.number().int().positive();
 
 /**
@@ -184,7 +194,14 @@ export const MediaSummary = z
 export type MediaSummary = z.infer<typeof MediaSummary>;
 
 /** `media.list`: every own file, or those of one kind. */
-export const MediaListPayload = z.strictObject({ kind: MediaKind.optional() });
+export const MediaListPayload = z.strictObject({
+  kind: MediaKind.optional(),
+  /**
+   * Only the records with these ids (the `kind` still filters them): for a window that needs the few files a draft names, however old they are, since the
+   * plain listing is cut at `MAX_LISTED_MEDIA` newest. `total` then counts the matches. An id nobody holds matches nothing.
+   */
+  mediaIds: z.array(Id).max(MAX_LISTED_BY_ID).optional(),
+});
 export const MediaListResult = z
   .strictObject({
     /** Newest first, at most `MAX_LISTED_MEDIA`. */

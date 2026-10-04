@@ -644,3 +644,87 @@ describe("playback", () => {
     expect(frames.pending()).toBe(0);
   });
 });
+
+// 3f.5: an OWN sticker in the preview. The layer's record (canvas, loop, delays) comes from `media.list`; its frames are decoded from the bytes main
+// hands over by `media.stickerBytes` (never a read of the media scheme, never the built-in command), and the frame on screen is picked by the 30 fps
+// tick through the record's own per-frame delays, as the render's loop does.
+describe("own stickers", () => {
+  const ownLayer = (index: number, mediaId: string, over: Partial<ReturnType<typeof stickerLayer>> = {}) => ({ ...stickerLayer(index, 0, 4_000), sticker: { source: "own" as const, mediaId }, ...over });
+
+  /** Stores an own sticker the mock's way (a scripted file picked in the dialog), to the end of its job; its media id. */
+  async function storeSticker(harness: Awaited<ReturnType<typeof studio>>, facts: { width: number; height: number; loopFrames: number; delayFrames: number[] }): Promise<string> {
+    const { engine, client, scheduler } = harness;
+    engine.pickMediaNext([{ name: "party.gif", accept: { kind: "sticker", bytes: 100, facts } }]);
+    await asAnotherWindow(() => client.request("media.pickImport", { kind: "sticker" }));
+    act(() => scheduler.runAll());
+    await flush();
+    const listed = await client.request("media.list", { kind: "sticker" });
+    const media = listed.ok ? listed.result.media[0] : undefined;
+    if (media === undefined) throw new Error("the sticker was not stored");
+    return media.mediaId;
+  }
+
+  test("sits in the engine's box on ITS canvas, which need not be square", async () => {
+    const harness = await studio();
+    const mediaId = await storeSticker(harness, { width: 200, height: 100, loopFrames: 6, delayFrames: [3, 3] });
+    const layer = ownLayer(0, mediaId, { size: 0.4, x: 0.5, y: 0.5 });
+    await openDraft(harness.engine, harness.client, { layers: [layer] });
+    await waitFor(() => expect(layerBox("Стикер 1: свой стикер")).toEqual(exact(stickerBox(layer, { w: 200, h: 100 }))));
+  });
+
+  test("is drawn on a canvas of its own size at the frame its DELAYS put at this tick; the bytes come from media.stickerBytes and never from stickers.bytes", async () => {
+    const decoders = installImageDecoder();
+    restores.push(() => decoders.restore());
+    const harness = await studio();
+    const mediaId = await storeSticker(harness, { width: 200, height: 100, loopFrames: 6, delayFrames: [2, 4] });
+    await openDraft(harness.engine, harness.client, { layers: [ownLayer(0, mediaId)] });
+    const head = within(timeline()).getByRole("slider", { name: "Плейхед" });
+    // One arrow is 0.1 s: tick 3.
+    fireEvent.keyDown(head, { key: "ArrowRight" });
+    await waitFor(() => expect(preview().querySelector("canvas") !== null).toBe(true));
+    const canvas = preview().querySelector("canvas");
+    // Tick 3 on delays [2, 4]: the second picture (frame 1; the first lasts ticks 0 and 1), whatever the decoder says about its own durations.
+    expect(canvas?.getAttribute("data-frame")).toBe("1");
+    expect([canvas?.getAttribute("width"), canvas?.getAttribute("height")]).toEqual(["200", "100"]);
+    await waitFor(() => expect(decoders.decoded.at(-1)).toBe(1));
+    expect(callsOf(harness.engine, "media.stickerBytes").map((c) => c.payload.mediaId)).toEqual([mediaId]);
+    expect(callsOf(harness.engine, "stickers.bytes")).toEqual([]);
+    expect(decoders.inits.map((i) => i.colorSpaceConversion)).toEqual(["none"]);
+  });
+
+  test("wraps on the stored loop: tick 6 is the first picture again, tick 3 the second", async () => {
+    const decoders = installImageDecoder();
+    restores.push(() => decoders.restore());
+    const harness = await studio();
+    const mediaId = await storeSticker(harness, { width: 200, height: 100, loopFrames: 6, delayFrames: [2, 4] });
+    await openDraft(harness.engine, harness.client, { layers: [ownLayer(0, mediaId)] });
+    const head = within(timeline()).getByRole("slider", { name: "Плейхед" });
+    fireEvent.keyDown(head, { key: "ArrowRight" });
+    await waitFor(() => expect(preview().querySelector("canvas")?.getAttribute("data-frame")).toBe("1"));
+    // Two arrows are tick 6: the loop is 6 ticks long, so the first picture is back.
+    fireEvent.keyDown(head, { key: "ArrowRight" });
+    await waitFor(() => expect(preview().querySelector("canvas")?.getAttribute("data-frame")).toBe("0"));
+  });
+
+  test("a sticker the library does not hold shows its place with nothing in it, and asks main for no bytes", async () => {
+    const harness = await studio();
+    await openDraft(harness.engine, harness.client, { layers: [ownLayer(0, "media-00000404")] });
+    expect(preview().querySelector("canvas") === null).toBe(true);
+    expect(inPreview("Стикер 1: свой стикер").parentElement?.className).toContain("pv-sticker-missing");
+    expect(callsOf(harness.engine, "media.stickerBytes")).toEqual([]);
+  });
+
+  test("a sticker deleted while the editor is open loses its picture (media.changed)", async () => {
+    const decoders = installImageDecoder();
+    restores.push(() => decoders.restore());
+    const harness = await studio();
+    const mediaId = await storeSticker(harness, { width: 200, height: 100, loopFrames: 6, delayFrames: [3, 3] });
+    await openDraft(harness.engine, harness.client, { layers: [ownLayer(0, mediaId)] });
+    await waitFor(() => expect(preview().querySelector("canvas") !== null).toBe(true));
+
+    await asAnotherWindow(() => harness.client.request("media.delete", { mediaId }));
+
+    await waitFor(() => expect(preview().querySelector("canvas") === null).toBe(true));
+    expect(decoders.closed).toBe(1);
+  });
+});

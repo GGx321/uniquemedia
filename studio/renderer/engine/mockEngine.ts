@@ -56,10 +56,10 @@ import {
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue, type TextLayer } from "../../shared/engine/montage";
-import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, totalFrames, trackIssues } from "../../shared/montage";
+import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, ownStickerCells, ownStickerIssues, totalFrames, trackIssues } from "../../shared/montage";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
-import { mockStickerBytes, mockStickerUrl } from "./mockStickers";
+import { mockOwnStickerBytes, mockStickerBytes, mockStickerUrl } from "./mockStickers";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
@@ -219,6 +219,8 @@ export interface MockEngineOptions {
   preset?: "empty" | "demo";
   /** 3e.2: with the `demo` preset, Mia also has videos in every file state (the dev build's «Видео» tab); off unless asked. */
   demoVideos?: boolean;
+  /** 3f.5: with the `demo` preset, the library also holds one own sticker (a seeded record, as if stored by an earlier session), so the dev build can show one; off unless asked. */
+  seedOwnSticker?: boolean;
   scheduler?: Scheduler;
   /** Delay before each response; 0 answers on the next microtask. */
   latencyMs?: number;
@@ -713,6 +715,38 @@ export class MockEngine implements EngineBridge {
     this.music = mockMusic(options.music ?? (options.preset === "demo" ? demoMusic() : {}), this.clock);
     if (options.preset === "demo" && options.photos === undefined) this.seedDemoMontage();
     if (options.preset === "demo" && options.demoVideos === true && options.photos === undefined) this.seedDemoVideos();
+    if (options.preset === "demo" && options.seedOwnSticker === true) this.seedDemoOwnSticker();
+  }
+
+  /**
+   * The bytes of the stand-in for the own sticker `mediaId` (3f.5), as main answers `media.stickerBytes` with the stored file; null for a media the
+   * mock does not hold as a sticker. The window's `ownStickerUrl` for the dev build, where there is no `studio-media://`, is this as a data URL.
+   */
+  mockOwnStickerBytes(mediaId: string): Uint8Array | null {
+    const record = this.ownMedia.stickerOf(mediaId);
+    if (record === undefined || record.width === null || record.height === null || record.loopFrames === null || record.delayFrames === null) return null;
+    return mockOwnStickerBytes({ mediaId: record.mediaId, width: record.width, height: record.height, loopFrames: record.loopFrames, delayFrames: record.delayFrames });
+  }
+
+  /**
+   * The dev build's own sticker (3f.5): one stored record, with no job and no event, so the preview and the render can be tried with an own sticker.
+   * Its id and time are its own (never the ones `nextId` and the clock hand out), so seeding it shifts nothing that comes later.
+   */
+  private seedDemoOwnSticker(): void {
+    this.ownMedia.seed({
+      mediaId: "media-seed-0001",
+      kind: "sticker",
+      name: "Мой стикер.gif",
+      bytes: 48_000,
+      createdAt: new Date(START_OF_TIME - 3_600_000).toISOString(),
+      width: 240,
+      height: 240,
+      durationMs: null,
+      sourceFps: null,
+      hdrToSdr: false,
+      loopFrames: 24,
+      delayFrames: Array.from({ length: 12 }, () => 2),
+    });
   }
 
   /**
@@ -1365,8 +1399,17 @@ export class MockEngine implements EngineBridge {
         for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
         return this.ok(c, { stickerId: c.payload.stickerId, apngBase64: btoa(binary) });
       }
+      case "media.stickerBytes": {
+        // Main's answer from the stored sticker's record (3f.5): the mock's is its own stand-in, on the record's canvas, loop and delays. An id that is
+        // not an own sticker (missing, deleted, another kind) is one NOT_FOUND with the engine's fixed text.
+        const bytes = this.mockOwnStickerBytes(c.payload.mediaId);
+        if (bytes === null) return this.fail(c, { code: "NOT_FOUND", detail: "no such own sticker" });
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        return this.ok(c, { mediaId: c.payload.mediaId, apngBase64: btoa(binary) });
+      }
       case "media.list":
-        return this.ok(c, this.ownMedia.list(c.payload.kind));
+        return this.ok(c, this.ownMedia.list(c.payload.kind, c.payload.mediaIds));
       case "media.delete": {
         const { mediaId } = c.payload;
         if (!this.ownMedia.has(mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
@@ -1858,6 +1901,8 @@ export class MockEngine implements EngineBridge {
     });
     // The set is in the build: the engine's own function, so the mock and the engine name the same stickers.
     referential.push(...stickerIssues(spec));
+    // An own sticker is the library's, judged by the engine's own function against what the mock holds as stickers (3f.5).
+    referential.push(...ownStickerIssues(spec, (mediaId) => this.ownMedia.holdsSticker(mediaId)));
     // The store's tracks are the mock's own: the engine's function judges a trending track against what is held.
     referential.push(...trackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId)));
     return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referential].slice(0, MAX_MONTAGE_ISSUES);
@@ -2084,7 +2129,7 @@ export class MockEngine implements EngineBridge {
     if (issues.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues });
     // 3f.2: then each own photo is looked up (and held) before the export folder is asked: one that is not there is `media-unavailable`
     // at each of its cells, through the same function the engine's admission uses.
-    const missing = ownPhotoIssues(spec, (mediaId) => this.ownMedia.holdsPhoto(mediaId)).slice(0, MAX_MONTAGE_ISSUES);
+    const missing = [...ownPhotoIssues(spec, (mediaId) => this.ownMedia.holdsPhoto(mediaId)), ...ownStickerIssues(spec, (mediaId) => this.ownMedia.holdsSticker(mediaId))].slice(0, MAX_MONTAGE_ISSUES);
     if (missing.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues: missing });
     const reason = this.checkExport(estimateBytesUpper(spec.clips));
     if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
@@ -2105,7 +2150,7 @@ export class MockEngine implements EngineBridge {
       title,
       spec,
       photoIds: cells.map((cell) => cell.photoId),
-      mediaIds: [...new Set(ownPhotoCells(spec).map((cell) => cell.mediaId))],
+      mediaIds: [...new Set([...ownPhotoCells(spec), ...ownStickerCells(spec)].map((cell) => cell.mediaId))],
       status: "queued",
       done: 0,
       total: totalFrames(spec.clips),
@@ -3152,7 +3197,7 @@ export function mockEngineClient(engine: MockEngine = new MockEngine()): EngineC
   const client = createEngineClient(engine, "mock", () => `msg-${String(++messageCounter).padStart(6, "0")}`);
   // The dev build has no `studio-media://`: a text preview's PNG is handed to the window as a data URL, and a built-in
   // sticker as a stand-in of the mock's own.
-  return { ...client, textPreviewUrl: (previewId) => pngDataUrl(engine.mockPreviewPng(previewId)), stickerUrl: mockStickerUrl };
+  return { ...client, textPreviewUrl: (previewId) => pngDataUrl(engine.mockPreviewPng(previewId)), stickerUrl: mockStickerUrl, ownStickerUrl: (mediaId) => pngDataUrl(engine.mockOwnStickerBytes(mediaId)) };
 }
 
 function pngDataUrl(bytes: Uint8Array | null): string | null {

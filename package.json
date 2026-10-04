@@ -20,6 +20,7 @@
     "typecheck:studio": "tsc --noEmit -p studio/tsconfig.json && tsc --noEmit -p studio/shared/tsconfig.json",
     "test:studio:electron-node": "bun studio/scripts/electronNodeTests.ts",
     "test:studio:suite": "bun studio/scripts/realWorkerTests.ts --shards=3 --suite",
+    "test:studio:suite:shard": "bun studio/scripts/realWorkerTests.ts",
     "test:studio:suite:canary": "bun studio/scripts/realWorkerTests.ts --known-crashes-only --shards=3 --suite",
     "build:studio": "STUDIO_E2E=0 electron-vite build -c electron.studio.vite.config.ts && bun run studio/scripts/prepareFaceAssets.ts && bun run studio/scripts/prepareTextAssets.ts",
     "build:studio:e2e": "STUDIO_E2E=1 electron-vite build -c electron.studio.vite.config.ts && bun run studio/scripts/prepareFaceAssets.ts && bun run studio/scripts/prepareTextAssets.ts",

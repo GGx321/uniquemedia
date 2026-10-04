@@ -273,11 +273,11 @@ export class MediaService {
 
   // ---------- the records ----------
 
-  async list(kind?: MediaKind): Promise<{ media: MediaSummary[]; total: number }> {
+  async list(kind?: MediaKind, mediaIds?: readonly string[]): Promise<{ media: MediaSummary[]; total: number }> {
     return this.#deps.withLibrary(async (library) => {
       const area = this.#areaOf(library.root);
       await area.ready;
-      return area.records.list(kind);
+      return area.records.list(kind, mediaIds);
     });
   }
 

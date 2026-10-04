@@ -37,6 +37,11 @@
  * A shard that TIMES OUT is different: a hung Bun means the runner is wedged, so the remaining shards are skipped
  * (with an `::error::`) instead of each waiting out its own bound. In this mode the arguments after `--suite` are flags, written as
  * `--flag=value` (a value in its own argument would be read as a path), and paths to test directories or files.
+ *
+ * `--shard=I/N` (instead of `--shards=N`) runs ONLY shard I of N, with the same partition, retry, bound, slow-test warnings and
+ * `::error::` as that shard has in the sequential run: the job of a parallel CI matrix (the Windows suite, CI-5). Every job computes the
+ * whole plan itself, so the partition has to be a pure function of the sorted file list; the N jobs together run each file exactly once
+ * (realWorkerTests.test.ts proves it on the real tree). A tier run (STUDIO_TEST_TIER) is never sharded.
  */
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
@@ -118,9 +123,11 @@ export interface TestTarget {
   knownCrashesOnly: boolean;
   /** Split the suite's test files into this many `bun test` processes; 1 hands `testArgs` to one process as they are. */
   shards: number;
+  /** Run only this shard (1-based `index`) of `of` shards: the job of a parallel matrix; `shards` equals `of`. Undefined runs them all. */
+  shard?: { index: number; of: number };
 }
 
-const USAGE = "usage: realWorkerTests.ts [--known-crashes-only] [--shards=N] --suite <bun test arguments...>";
+const USAGE = "usage: realWorkerTests.ts [--known-crashes-only] [--shards=N | --shard=I/N] --suite <bun test arguments...>";
 
 /**
  * What to hand to `bun test`: `--suite <args...>`, exactly those `bun test` arguments (the main suite).
@@ -132,8 +139,9 @@ export function testTarget(argv: readonly string[]): TestTarget {
   let rest = argv;
   let knownCrashesOnly = false;
   let shards = 1;
+  let shard: { index: number; of: number } | undefined;
   let shardsGiven = false;
-  // Our own options come first, in either order, each at most once.
+  // Our own options come first, in either order, each at most once; `--shards` and `--shard` exclude each other.
   for (;;) {
     const head = rest[0];
     if (head === "--known-crashes-only" && !knownCrashesOnly) knownCrashesOnly = true;
@@ -142,11 +150,19 @@ export function testTarget(argv: readonly string[]): TestTarget {
       if (count === undefined) throw new Error(`${USAGE}\n--shards takes a whole number from 1 to 99`);
       shards = Number(count);
       shardsGiven = true;
+    } else if (head !== undefined && /^--shard=/.test(head) && !shardsGiven) {
+      const match = /^--shard=([1-9]\d?)\/([1-9]\d?)$/.exec(head);
+      const index = Number(match?.[1]);
+      const of = Number(match?.[2]);
+      if (match === null || index > of) throw new Error(`${USAGE}\n--shard takes I/N: whole numbers, N from 1 to 99 and I from 1 to N`);
+      shards = of;
+      shard = { index, of };
+      shardsGiven = true;
     } else break;
     rest = rest.slice(1);
   }
-  if (rest[0] !== "--suite" || rest.length < 2 || rest.includes("--known-crashes-only") || rest.some((a) => a.startsWith("--shards"))) throw new Error(USAGE);
-  return { testArgs: rest.slice(1), knownCrashesOnly, shards };
+  if (rest[0] !== "--suite" || rest.length < 2 || rest.includes("--known-crashes-only") || rest.some((a) => a.startsWith("--shard"))) throw new Error(USAGE);
+  return { testArgs: rest.slice(1), knownCrashesOnly, shards, ...(shard === undefined ? {} : { shard }) };
 }
 
 /** The file names `bun test` picks up on its own: `*.test.*`, `*_test.*`, `*.spec.*`, `*_spec.*` in a JS or TS extension, whatever the case. */
@@ -218,6 +234,17 @@ export async function shardedTestArgs(testArgs: readonly string[], shards: numbe
     }
   }
   return plan;
+}
+
+/**
+ * Keeps only shard `shard.index` of a plan made for `shard.of` shards (the job of a parallel matrix). Every job computes the whole
+ * plan itself, from the same sorted file list, so the N jobs partition the suite without talking to each other. A shard the plan does
+ * not have (fewer test files than shards) throws: a matrix job must never pass by running nothing.
+ */
+export function selectShard(plan: readonly (readonly string[])[], shard: { index: number; of: number }): string[][] {
+  const args = plan[shard.index - 1];
+  if (args === undefined) throw new Error(`realWorkerTests: shard ${shard.index} of ${shard.of} has no test files (the suite has fewer files than shards)`);
+  return [[...args]];
 }
 
 /**
@@ -389,12 +416,14 @@ export async function runShards(
   plan: readonly (readonly string[])[],
   runShard: (args: readonly string[], label: string) => Promise<ShardOutcome>,
   log: (line: string) => void = (line) => console.log(line),
+  /** Which shards `plan` holds, when it is a part of a bigger run (one job of a matrix): the first one's number and how many there are in all. */
+  numbering: { first: number; of: number } = { first: 1, of: plan.length },
 ): Promise<number> {
   let exitCode = 0;
   for (const [index, args] of plan.entries()) {
-    const label = plan.length > 1 ? `shard ${index + 1} of ${plan.length}` : "the run";
+    const label = numbering.of > 1 ? `shard ${numbering.first + index} of ${numbering.of}` : "the run";
     const files = args.filter((arg) => !arg.startsWith("-"));
-    if (plan.length > 1) log(`\n== ${label}: ${files.length} test files ==`);
+    if (numbering.of > 1) log(`\n== ${label}: ${files.length} test files ==`);
     const { code, hung } = await runShard(args, label);
     if (code !== 0) {
       if (exitCode === 0) exitCode = code;
@@ -417,7 +446,9 @@ if (import.meta.main) {
     target = testTarget(process.argv.slice(2));
     const tier = tierOf(process.env);
     const lists = tier === undefined ? await shardedTestArgs(target.testArgs, target.shards, process.cwd()) : await tierTestArgs(target.testArgs, tier, process.cwd());
-    plan = lists.map(withDefaultTimeout);
+    // A tier run is never sharded, so `--shard` only applies to the suite itself.
+    const own = tier === undefined && target.shard !== undefined ? selectShard(lists, target.shard) : lists;
+    plan = own.map(withDefaultTimeout);
     if (tier !== undefined && plan.length === 0) {
       console.log(`::notice::realWorkerTests: no test carries the ${tierTag(tier)} tag, so there is nothing to run in this tier`);
       process.exit(0);
@@ -427,6 +458,7 @@ if (import.meta.main) {
     process.exit(2);
   }
   const { knownCrashesOnly } = target;
+  const numbering = tierOf(process.env) === undefined && target.shard !== undefined ? { first: target.shard.index, of: target.shard.of } : undefined;
   const exitCode = await runShards(plan, async (args, label) => {
     let hung = false;
     const attempt = async (): Promise<AttemptResult> => {
@@ -448,6 +480,6 @@ if (import.meta.main) {
     };
     const code = await runWithCrashRetry(attempt, knownCrashesOnly ? { label, signatures: WORKER_TEARDOWN_CRASHES } : { label });
     return { code, hung };
-  });
+  }, undefined, numbering);
   process.exit(exitCode);
 }

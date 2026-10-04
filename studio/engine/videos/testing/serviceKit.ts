@@ -167,9 +167,5 @@ export class FakeTimers {
   }
 }
 
-/** Polls `condition` every 5 ms for up to `timeoutMs` of wall time. */
-export async function until(condition: () => boolean, what = "the condition", timeoutMs = 5_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
-  if (!condition()) throw new Error(`timed out waiting for ${what}`);
-}
+/** The one wait for a condition (15 s ceiling, not a cost: a satisfied wait returns at once): this file used to keep its own copy at 5 s, which missed the raise made for slow Windows runners. */
+export { until } from "../../testing/engineHarness";

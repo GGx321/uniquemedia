@@ -52,6 +52,10 @@ const FORBIDDEN_DEBUG_MARKERS = [
   // 3e.2: the dev build's demo videos (Mia's records in every file state): the mock's option and the method that seeds them.
   "demoVideos",
   "seedDemoVideos",
+  // 3f.5: the dev build's own sticker (a seeded record, its option, and the stand-in for the stored file): the mock is dev-only.
+  "seedOwnSticker",
+  "seedDemoOwnSticker",
+  "mockOwnStickerBytes",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",
@@ -288,7 +292,18 @@ export function photoDecodeWorkerProblems(engineMain: string, worker: string | n
   return problems;
 }
 
-function workerEntryProblems(name: string, engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): string[] {
+/**
+ * 3f.5: the same checks for the own-sticker encode worker (`out-studio/engine/stickerEncodeWorker.js`). It takes no `workerData` (the job comes by
+ * message), so it is held to `parentPort` only; and the APNG writer must stay where it belongs: `ApngTooLargeError`'s message is distinctive, and the
+ * engine bundle must not contain it, or the hand-written deflate (tens of seconds over 300 frames) could run on the engine's own thread.
+ */
+export function stickerEncodeWorkerProblems(engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): string[] {
+  const problems = workerEntryProblems("stickerEncodeWorker", engineMain, worker, fileExists, { workerData: false });
+  if (engineMain.includes("the APNG passes its limit of")) problems.push("the engine bundle contains the APNG writer; it must run only inside the encode worker");
+  return problems;
+}
+
+function workerEntryProblems(name: string, engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean, options: { workerData: boolean } = { workerData: true }): string[] {
   const problems: string[] = [];
   if (!new RegExp(`new URL\\(\\s*["']\\./${name}\\.js["']\\s*,\\s*import\\.meta\\.url\\s*\\)`).test(engineMain)) {
     problems.push(`the engine does not resolve "./${name}.js" against its own import.meta.url`);
@@ -297,7 +312,11 @@ function workerEntryProblems(name: string, engineMain: string, worker: string | 
     problems.push(`out-studio/engine/${name}.js is missing`);
     return problems;
   }
-  if (!worker.includes("parentPort") || !worker.includes("workerData")) problems.push(`${name}.js does not use worker_threads' parentPort/workerData`);
+  if (options.workerData) {
+    if (!worker.includes("parentPort") || !worker.includes("workerData")) problems.push(`${name}.js does not use worker_threads' parentPort/workerData`);
+  } else if (!worker.includes("parentPort")) {
+    problems.push(`${name}.js does not use worker_threads' parentPort`);
+  }
   if (/(?:\bfrom\s*|\bimport\s*\(?\s*)["']electron["']/.test(worker)) problems.push(`${name}.js imports electron`);
   for (const specifier of relativeImportsOf(worker)) {
     if (!fileExists(posix.normalize(posix.join("engine", specifier)))) problems.push(`${name}.js imports ${specifier}, which is not in the build`);

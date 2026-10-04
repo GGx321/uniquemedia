@@ -34,6 +34,7 @@ import { handleMediaPickCommand } from "./mediaImportFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
 import { handleMusicKeyCommand, musicKeyStatusOf, openMusicKeyStore } from "./musicKeyFlow";
 import { createStickerLookup } from "./media/stickers";
+import { handleOwnStickerBytesCommand } from "./ownStickerBytesFlow";
 import { handleStickerBytesCommand } from "./stickerBytesFlow";
 import { createStickerAssets } from "../engine/videos/stickerAssets";
 import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES } from "./mediaProtocol";
@@ -424,6 +425,8 @@ async function startStudio(): Promise<void> {
           platform: process.platform,
         }),
       stickerBytes: (command) => handleStickerBytesCommand(command, { stickers: stickerAssets }),
+      // 3f.5: an own sticker's bytes, resolved through its record in the library the settings name now.
+      ownStickerBytes: (command) => handleOwnStickerBytesCommand(command, { libraryRoot: () => settings.current.libraryPath }),
       engine: (command) => engine.request(command),
     }),
   );

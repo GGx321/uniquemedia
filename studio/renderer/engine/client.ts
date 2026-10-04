@@ -39,6 +39,11 @@ export interface EngineClient {
    * `studio-media://`). Absent on the real client, whose stickers are `studio-media://sticker/<stickerId>` (lib/media.ts).
    */
   stickerUrl?(stickerId: string): string | null;
+  /**
+   * Where the window gets an OWN sticker's picture (3f.5): the mock's stand-in for the stored one (a data URL). Absent on the real client, whose own
+   * stickers are `studio-media://media/<mediaId>` (lib/media.ts). Null for a media the mock does not hold as a sticker.
+   */
+  ownStickerUrl?(mediaId: string): string | null;
 }
 
 /** The wire: what `window.studio` exposes, and what the mock engine implements. */

@@ -4,7 +4,7 @@ import { MockEngine, mockEngineClient } from "../../engine/mockEngine";
 import { mockStickerBytes } from "../../engine/mockStickers";
 import { ManualScheduler } from "../../engine/scheduler";
 import { installImageDecoder } from "./imageDecoder.testkit";
-import { openWithImageDecoder, type StickerFrames, StickerFrameCache, stickerFramesFrom } from "./stickerFrames";
+import { mediaIdOfOwnKey, openWithImageDecoder, ownStickerKey, type StickerFrames, StickerFrameCache, stickerFramesFrom } from "./stickerFrames";
 
 // 3d.4: a sticker's frames are decoded once per picture by WebCodecs `ImageDecoder` and shared by every layer that shows it; the
 // decoder is released when the last of them goes (a layer deleted, the clip changed, the editor closed). A decoder holds the whole
@@ -166,5 +166,61 @@ describe("stickerFramesFrom: the bytes come from main over IPC", () => {
     const control = installImageDecoder();
     expect(await stickerFramesFrom(mock())("sticker-nowhere")).toBe(null);
     expect(control.inits).toHaveLength(0);
+  });
+});
+
+// 3f.5: an OWN sticker's bytes come over IPC too, by a command of its own (`media.stickerBytes`): the built-in command never reaches a user file,
+// and an own sticker's key can never be mistaken for a catalogue id (a catalogue id has no colon).
+describe("an own sticker's frames", () => {
+  const mock = (options: ConstructorParameters<typeof MockEngine>[0] = {}) => {
+    const engine = new MockEngine({ scheduler: new ManualScheduler(), preset: "demo", seedOwnSticker: true, ...options });
+    return { engine, client: mockEngineClient(engine) };
+  };
+
+  test("the key of an own sticker names its media and can be told from a built-in id", () => {
+    expect(ownStickerKey("media-seed-0001")).toBe("own:media-seed-0001");
+    expect(mediaIdOfOwnKey(ownStickerKey("media-seed-0001"))).toBe("media-seed-0001");
+    expect(mediaIdOfOwnKey("heart-pulse")).toBeNull();
+    expect(mediaIdOfOwnKey("own:")).toBeNull();
+    expect(mediaIdOfOwnKey("own:../x")).toBeNull();
+  });
+
+  test("asks media.stickerBytes for the media, never stickers.bytes, and decodes exactly the bytes main answered", async () => {
+    const control = installImageDecoder();
+    const { client } = mock();
+    const asked: string[] = [];
+    const spy: EngineClient = { ...client, request: (type, payload) => (asked.push(type), client.request(type, payload)) };
+    const frames = await stickerFramesFrom(spy)(ownStickerKey("media-seed-0001"));
+    expect(frames === null).toBe(false);
+    expect(asked).toEqual(["media.stickerBytes"]);
+    const answer = await client.request("media.stickerBytes", { mediaId: "media-seed-0001" });
+    if (!answer.ok) throw new Error(answer.error.code);
+    const data = control.inits[0]?.data;
+    expect(data instanceof Uint8Array ? Buffer.from(data).toString("base64") : null).toBe(answer.result.apngBase64);
+  });
+
+  test("a built-in sticker still asks stickers.bytes alone", async () => {
+    installImageDecoder();
+    const { client } = mock();
+    const asked: string[] = [];
+    const spy: EngineClient = { ...client, request: (type, payload) => (asked.push(type), client.request(type, payload)) };
+    await stickerFramesFrom(spy)("heart-pulse");
+    expect(asked).toEqual(["stickers.bytes"]);
+  });
+
+  test("a media main does not hold as a sticker (NOT_FOUND) decodes nothing", async () => {
+    const control = installImageDecoder();
+    const { client } = mock();
+    expect(await stickerFramesFrom(client)(ownStickerKey("media-00000404"))).toBe(null);
+    expect(control.inits).toHaveLength(0);
+  });
+
+  test("a key that is not an own key and not an id (a path) is not asked for at all", async () => {
+    installImageDecoder();
+    const { client } = mock();
+    const asked: string[] = [];
+    const spy: EngineClient = { ...client, request: (type, payload) => (asked.push(type), client.request(type, payload)) };
+    expect(await stickerFramesFrom(spy)("../../etc/passwd")).toBe(null);
+    expect(asked).toEqual([]);
   });
 });

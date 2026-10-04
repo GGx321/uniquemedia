@@ -7,6 +7,7 @@ import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
 import type { RevealCommand, RevealFolderCommand } from "./revealFlow";
 import type { SettingsCommand } from "./settingsFlow";
+import type { OwnStickerBytesCommand } from "./ownStickerBytesFlow";
 import type { StickerBytesCommand } from "./stickerBytesFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 import { captureConsole, expectNoKeyFragment } from "../testing/keyLeaks";
@@ -36,6 +37,7 @@ function routesSpy() {
   const revealFolder: RevealFolderCommand[] = [];
   const mediaImport: MediaPickCommand[] = [];
   const stickerBytes: StickerBytesCommand[] = [];
+  const ownStickerBytes: OwnStickerBytesCommand[] = [];
   const engine: EngineCommandMessage[] = [];
   const routes: RequestRoutes = {
     mainOnly: async (command) => {
@@ -74,12 +76,16 @@ function routesSpy() {
       stickerBytes.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { stickerId: command.payload.stickerId, apngBase64: "iVBORw0KGgo=" } };
     },
+    ownStickerBytes: async (command) => {
+      ownStickerBytes.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { mediaId: command.payload.mediaId, apngBase64: "iVBORw0KGgo=" } };
+    },
     engine: async (command) => {
       engine.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, mediaImport, stickerBytes, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, mediaImport, stickerBytes, ownStickerBytes, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -438,6 +444,9 @@ describe("handleRendererRequest", () => {
       stickerBytes: async () => {
         throw new Error("unreachable");
       },
+      ownStickerBytes: async () => {
+        throw new Error("unreachable");
+      },
       engine: async () => {
         throw new Error("unreachable");
       },
@@ -547,5 +556,50 @@ describe("stickers.bytes routing", () => {
       expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
     }
     expect([stickerBytes, engine]).toEqual([[], []]);
+  });
+});
+
+// 3f.5: an OWN sticker's bytes for the preview, a command of its own (the built-in door stays closed to user files). Main-only, behind the same
+// trusted-sender check as every request; the window names a media id and nothing else.
+describe("media.stickerBytes routing", () => {
+  test("is main's alone: it reaches the own-sticker route and is never forwarded to the engine, nor to the built-in route", async () => {
+    const { routes, ownStickerBytes, stickerBytes, mediaImport, engine } = routesSpy();
+    const response = await handleRendererRequest(command("media.stickerBytes", { mediaId: "media-0000001" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: true, type: "media.stickerBytes", result: { mediaId: "media-0000001" } });
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(ownStickerBytes.map((c) => c.payload)).toEqual([{ mediaId: "media-0000001" }]);
+    expect([stickerBytes, mediaImport, engine]).toEqual([[], [], []]);
+  });
+
+  test("the built-in command never reaches the own-sticker route", async () => {
+    const { routes, ownStickerBytes, stickerBytes } = routesSpy();
+    await handleRendererRequest(command("stickers.bytes", { stickerId: "heart-pulse" }), APP_FRAME, PACKAGED, routes);
+    expect(ownStickerBytes).toEqual([]);
+    expect(stickerBytes).toHaveLength(1);
+  });
+
+  test("a path, a file name, a kind or anything beside a media id is refused before any route runs", async () => {
+    const { routes, ownStickerBytes, stickerBytes, engine } = routesSpy();
+    for (const payload of [{ mediaId: "media-0000001", path: "/etc/passwd" }, { mediaId: "media-0000001", kind: "photo" }, { mediaId: "../photos/x" }, { mediaId: "media-0000001.png" }, { stickerId: "heart-pulse" }, {}, "media-0000001", null]) {
+      const response = await handleRendererRequest(command("media.stickerBytes", payload), APP_FRAME, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect([ownStickerBytes, stickerBytes, engine]).toEqual([[], [], []]);
+  });
+
+  test("from a sender that is not the app's own top frame (another page, an iframe, no window) is refused before any route runs", async () => {
+    const { routes, ownStickerBytes, engine } = routesSpy();
+    const frames: SenderFrame[] = [
+      { url: "data:text/html,<p>x</p>", isTopFrame: true, isAppWindow: true },
+      { url: "https://example.com/", isTopFrame: true, isAppWindow: true },
+      { url: FILE_URL, isTopFrame: false, isAppWindow: true },
+      { url: FILE_URL, isTopFrame: true, isAppWindow: false },
+      { url: null, isTopFrame: true, isAppWindow: true },
+    ];
+    for (const frame of frames) {
+      const response = await handleRendererRequest(command("media.stickerBytes", { mediaId: "media-0000001" }), frame, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect([ownStickerBytes, engine]).toEqual([[], []]);
   });
 });

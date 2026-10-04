@@ -121,6 +121,9 @@ async function wired() {
     stickerBytes: async () => {
       throw new Error("not used");
     },
+    ownStickerBytes: async () => {
+      throw new Error("not used");
+    },
     engine: (c) => engine.handle(c),
   };
   const ask = async (type: string, payload: unknown = {}) => {

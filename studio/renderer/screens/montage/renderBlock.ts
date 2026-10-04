@@ -112,13 +112,12 @@ const LAYER_PROBLEMS: Partial<Record<MontageIssueCode, string>> = {
   "caption-invalid": "надпись не проходит проверку",
   "sticker-unavailable": "стикера больше нет",
   "media-unavailable": "файла больше нет",
-  "not-yet-supported": "свои стикеры — скоро",
 };
 
 /**
  * The layers the engine refuses, by the layer's id in the spec IT judged (`judged`), with a few words for the block
- * (3d.3b): a caption that breaks the rules, a sticker gone from the set, an own sticker (missing, or not supported until
- * 3f). A layer's first issue is the one told. Structural issues (`layer-outside-timeline`, `layer-too-short`) are drawn by
+ * (3d.3b): a caption that breaks the rules, a sticker gone from the set, an own sticker the library lost (3f.5 lifted
+ * N9 for it, so no layer is «скоро» any more). A layer's first issue is the one told. Structural issues (`layer-outside-timeline`, `layer-too-short`) are drawn by
  * the timeline from the current spec itself.
  */
 export function layerProblems(judged: MontageDraft, issues: readonly MontageIssue[]): ReadonlyMap<string, string> {
@@ -167,8 +166,7 @@ function photoText(first: FlaggedCell, usedVideo: UsedVideo | null): string {
 function notYetText(spec: MontageDraft, issue: MontageIssue): string {
   const [root, i] = issue.path;
   if (root === "music") return "Музыка в видео — скоро";
-  // Text and built-in stickers render since 3b.6: the only layer N9 still refuses is an own sticker (3f).
-  if (root === "layers") return "Свои стикеры — скоро";
+  // Text, built-in stickers (3b.6) and own stickers (3f.5) render: no layer is refused by N9 any more.
   if (root === "clips" && typeof i === "number" && spec.clips[i]?.kind === "video") return "Своё видео — скоро";
   return "Свои фото — скоро";
 }

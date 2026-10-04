@@ -5,6 +5,8 @@
 #
 #   blocking    `build` (macOS + Windows, every push to main and every tag): the whole suite, correctness only. A wall-clock
 #               budget in it has a generous bound that only a runaway trips (assertBudget in studio/testing/tiers.ts).
+#               On Windows the bun suite is not in `build` but in `test-windows` (CI-5): the same suite as 4 parallel jobs,
+#               one shard each, so the Windows wall time is the slowest shard, not the sum of three. macOS keeps it in `build`.
 #   perf        `perf` (every push to main, never blocks): the `[perf]` tests with their tight wall-clock budgets enforced and
 #               the numbers printed: deadline headroom, the event-loop gap, "stays fast on the worst input". ubuntu per push;
 #               Windows joins in the scheduled tier.
@@ -168,8 +170,13 @@ jobs:
       # attempts — ONLY on a Bun crash with no failed test (a failed test,
       # a load error or a hang is never retried), and prints a ::warning::
       # on every retry.
+      #
+      # CI-5: not on Windows. There the same 3-shard-equivalent suite runs in the `test-windows` job below, as parallel jobs (every
+      # test file in exactly one of them: realWorkerTests.test.ts proves the partition), and `release` waits for it. macOS stays
+      # here: its whole suite is about 2.5 minutes, and a macOS minute bills 10x, so splitting it would cost more than it saves.
       - run: bun run test:studio:suite ./studio
         timeout-minutes: 150
+        if: runner.os != 'Windows'
       # The real workers' tests (the face worker's, the text worker's) run under ELECTRON'S NODE, the product's own
       # runtime (studio/scripts/electronNodeTests.ts: bun bundles them, the Electron binary runs them as plain Node).
       # Not under Bun: there `worker.terminate()` does not interrupt running wasm (the text deadline test would
@@ -274,8 +281,54 @@ jobs:
             release-studio/*.exe
           if-no-files-found: ignore
 
+  # The Windows bun suite (CI-5), as parallel jobs: the suite `build` runs on macOS (`bun run test:studio:suite ./studio`, 3 shards one
+  # after another) is here one shard per job, 4 in all. Before, `build (windows-latest)` ran the three shards in sequence (4.5, 6.2 and
+  # 8.1 minutes in run 37193353642, 21 minutes with setup); now the wall time is the slowest shard plus the setup, and the typecheck,
+  # the Electron-Node suites and the packaging (`build (windows-latest)`) run beside the shards, not before them. Every job computes
+  # the partition of the sorted test files on its own (realWorkerTests.ts `--shard=I/N`: round-robin, deterministic, the same checkout),
+  # and realWorkerTests.test.ts proves the N shards together run every test file exactly once; the matrix below and the `/4` in the
+  # command are guarded to agree. Each job keeps its own 15-minute attempt bound and its own crash retry (a retry reruns one shard);
+  # the step's limit is attempts x bound plus slack. fail-fast is off: every shard reports, as the sequential run did. Each job repeats
+  # the install and the models fetch (about a minute: the price of the parallelism). Caching bun's package cache was measured and
+  # dropped: a warm run (run 37196927344) spent 31 s restoring it and 10 s installing, against 47 to 55 s for a cold install, so it
+  # saved about ten seconds and added a post step; node_modules is not cached (a restored tree would skip the postinstalls that
+  # fetch the ffmpeg and electron binaries). No secret is available to, or cached by, these jobs (read-only token, no secrets context).
+  test-windows:
+    name: test (windows-latest, shard ${{ matrix.shard }}/4)
+    if: github.event_name != 'schedule' && inputs.tier != 'scheduled'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: windows-latest
+    # The suite step is bounded (60), the steps before it are not: a hung install or models fetch would hold each of the four jobs for
+    # GitHub's 360 minutes. 75 = that step's 60 plus the setup.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      # Same pin as the build job (see the comment there).
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install
+      # The face worker's tests need the two models, like the build job's (same cache key, same step: see the build job for why the fetch
+      # runs on a hit too).
+      - name: Cache face gate models
+        uses: actions/cache@v4
+        with:
+          path: .cache/studio-face-models
+          key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
+      - name: Fetch face gate models
+        run: bun run models:face
+      # One shard of 4 (realWorkerTests.ts), its own bun process with its own 15-minute bound and crash retry; 3 attempts x 15 minutes
+      # is 45, so 60 leaves slack and still ends a hang.
+      - name: Suite, shard ${{ matrix.shard }} of 4
+        run: bun run test:studio:suite:shard --shard=${{ matrix.shard }}/4 --suite ./studio
+        timeout-minutes: 60
+
   # The release (tags only): the installers the `build` job uploaded (PACKAGE is true on a tag), attached to the GitHub Release once
-  # BOTH OSes built, smoke-tested and uploaded theirs, and the heavy tier (deterministic: a fixed seed) passed. BEHAVIOUR CHANGE: this
+  # BOTH OSes built, smoke-tested and uploaded theirs, every Windows suite shard (`test-windows`, CI-5) passed, and the heavy tier
+  # (deterministic: a fixed seed) passed. BEHAVIOUR CHANGE: this
   # step used to run inside each `build` leg, so when one OS failed the other still published its own installer; now a failure on
   # either OS (or in the heavy tier) publishes nothing at all. The perf tier is not a gate: its budgets are measurements, and one of
   # them has read 786 ms of 800 on Windows. Moved here from the build job as it was (same files, same `make_latest`), plus a check
@@ -283,7 +336,7 @@ jobs:
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, heavy]
+    needs: [build, test-windows, heavy]
     runs-on: ubuntu-latest
     permissions:
       contents: write

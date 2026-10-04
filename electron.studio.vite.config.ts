@@ -67,6 +67,10 @@ export default defineConfig(({ command }) => ({
           // 3f.2: the own-photo decode worker thread (studio/engine/main.ts's PHOTO_DECODE_WORKER_URL): synchronous WASM, its memory never shrinks,
           // so it runs in a thread the engine ends on a cancel and when idle. Listed here or it would not be built at all.
           "engine/photoDecodeWorker": at("studio/engine/decode/photoDecodeWorker.ts"),
+          // 3f.5: the own-sticker encode worker thread (studio/engine/main.ts's STICKER_ENCODE_WORKER_URL): the hand-written deflate over up to
+          // 300 frames is synchronous and takes tens of seconds, so it runs in a thread the engine ends on a cancel or a time limit. Listed
+          // here or it would not be built at all.
+          "engine/stickerEncodeWorker": at("studio/engine/stickers/stickerEncodeWorker.ts"),
           // 3b.2: the text worker thread (resvg-wasm and the fonts) the engine spawns by file URL
           // (studio/engine/main.ts's TEXT_WORKER_URL). resvg-wasm is a devDependency, so its JS glue is
           // bundled into this entry only, never into engine/main.js (bundleChecks.ts's textWorkerProblems

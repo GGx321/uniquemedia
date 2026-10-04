@@ -90,6 +90,19 @@ describe("a stored file gets its record", () => {
     expect(await names(mediaDir())).toContain(`${summary.mediaId}.mov`);
   });
 
+  test("a listing by id holds the records named, newest first, whatever the kind filter lets through, and `total` counts what matched", async () => {
+    const store = records();
+    const first = await store.commit(await photoInput({ name: "a.jpg" }));
+    const second = await store.commit(await photoInput({ name: "b.jpg" }));
+    const third = await store.commit(await photoInput({ name: "c.jpg" }));
+    const listed = store.list(undefined, [first.mediaId, third.mediaId, "media-00000404"]);
+    expect(listed.media.map((m) => m.mediaId)).toEqual([third.mediaId, first.mediaId]);
+    expect(listed.total).toBe(2);
+    expect(store.list("video", [first.mediaId, second.mediaId])).toEqual({ media: [], total: 0 });
+    expect(store.list("photo", [second.mediaId]).media.map((m) => m.mediaId)).toEqual([second.mediaId]);
+    expect(store.list(undefined, []).total).toBe(0);
+  });
+
   test("it is listed at once, newest first, and found by id", async () => {
     const store = records();
     const first = await store.commit(await photoInput());

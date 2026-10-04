@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, relativeImportsOf, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, relativeImportsOf, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -166,7 +166,7 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('fetch("studio-openrouter-base-url")')).toEqual(["contains studio-openrouter-base-url"]);
   });
 
-  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "holdImports", "MockOwnMedia", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
+  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "holdImports", "MockOwnMedia", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos", "seedOwnSticker", "seedDemoOwnSticker", "mockOwnStickerBytes"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
     expect(productionBundleProblems(`engine.${control}(1);`)).toEqual([`contains ${control}`]);
   });
 
@@ -411,6 +411,45 @@ describe("photoDecodeWorkerProblems", () => {
   test("fails when the engine bundle carries the WASM decode itself: it must run only inside the worker", () => {
     const engine = `${ENGINE}\nthrow new Error("decode/wasmDecode: unsupported image format for the engine own decoder");`;
     expect(photoDecodeWorkerProblems(engine, PHOTO_WORKER, PRESENT)).toContain("the engine bundle contains the WASM image decoder; it must run only inside the decode worker");
+  });
+});
+
+// 3f.5: the own-sticker encode worker takes no `workerData` (the job comes by message), so that is the one rule of a worker entry it is not held
+// to; and the APNG writer with its hand-written deflate must not come into the engine's own bundle.
+describe("stickerEncodeWorkerProblems", () => {
+  const ENGINE = 'const STICKER_ENCODE_WORKER_URL = new URL("./stickerEncodeWorker.js", import.meta.url);';
+  const WORKER = 'import { parentPort } from "node:worker_threads";\nimport { z } from "../shared-Abc123.js";';
+  const PRESENT = (path: string): boolean => ["engine/stickerEncodeWorker.js", "shared-Abc123.js"].includes(path);
+
+  test("passes a build whose engine spawns the encode worker by file URL and whose worker is a worker thread with its chunks present", () => {
+    expect(stickerEncodeWorkerProblems(ENGINE, WORKER, PRESENT)).toEqual([]);
+  });
+
+  test("fails when the encode worker entry was not built", () => {
+    expect(stickerEncodeWorkerProblems(ENGINE, null, PRESENT)).toContain("out-studio/engine/stickerEncodeWorker.js is missing");
+  });
+
+  test("fails when the engine no longer spawns it by that file URL", () => {
+    expect(stickerEncodeWorkerProblems("spawn();", WORKER, PRESENT)).toContain('the engine does not resolve "./stickerEncodeWorker.js" against its own import.meta.url');
+  });
+
+  test("fails when the entry is not a worker thread", () => {
+    expect(stickerEncodeWorkerProblems(ENGINE, 'import { z } from "../shared-Abc123.js";', PRESENT)).toContain("stickerEncodeWorker.js does not use worker_threads' parentPort");
+  });
+
+  test("fails when a chunk the worker imports is missing, and when it imports electron", () => {
+    expect(stickerEncodeWorkerProblems(ENGINE, WORKER, () => false)).toEqual(["stickerEncodeWorker.js imports ../shared-Abc123.js, which is not in the build"]);
+    expect(stickerEncodeWorkerProblems(ENGINE, `${WORKER}\nimport { app } from "electron";`, PRESENT)).toContain("stickerEncodeWorker.js imports electron");
+  });
+
+  test("fails when the engine bundle carries the APNG writer: it must run only inside the worker", () => {
+    const engine = `${ENGINE}\nthrow new Error("the APNG passes its limit of " + 5);`;
+    expect(stickerEncodeWorkerProblems(engine, WORKER, PRESENT)).toContain("the engine bundle contains the APNG writer; it must run only inside the encode worker");
+  });
+
+  test("the other workers are still held to workerData: a decode worker without it fails", () => {
+    const engine = 'const PHOTO_DECODE_WORKER_URL = new URL("./photoDecodeWorker.js", import.meta.url);';
+    expect(photoDecodeWorkerProblems(engine, WORKER, (path) => ["engine/photoDecodeWorker.js", "shared-Abc123.js"].includes(path))).toContain("photoDecodeWorker.js does not use worker_threads' parentPort/workerData");
   });
 });
 

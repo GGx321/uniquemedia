@@ -13,6 +13,7 @@ import {
   runOnce,
   runShards,
   runWithCrashRetry,
+  selectShard,
   shardedTestArgs,
   WINDOWS_COMMAND_LINE_LIMIT,
   shardFiles,
@@ -233,6 +234,90 @@ describe("testTarget with --shards", () => {
   test("a second --shards, or one after --suite (bun would receive it), is refused", () => {
     expect(() => testTarget(["--shards=2", "--shards=3", "--suite", "./studio"])).toThrow(/usage/);
     expect(() => testTarget(["--suite", "./studio", "--shards=3"])).toThrow(/usage/);
+  });
+});
+
+// CI-5: on Windows the suite runs as parallel jobs, each running ONE shard of N (`--shard=I/N`). Every job computes the partition on
+// its own, from the same sorted file list, so it only has to be deterministic; what must hold is that the N jobs together run every
+// test file exactly once.
+describe("testTarget with --shard=I/N", () => {
+  test("--shard=I/N before --suite selects shard I of N, in either order with --known-crashes-only", () => {
+    expect(testTarget(["--shard=2/4", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], knownCrashesOnly: false, shards: 4, shard: { index: 2, of: 4 } });
+    expect(testTarget(["--known-crashes-only", "--shard=1/3", "--suite", "./studio", "--randomize"])).toEqual({ testArgs: ["./studio", "--randomize"], knownCrashesOnly: true, shards: 3, shard: { index: 1, of: 3 } });
+    expect(testTarget(["--shard=3/3", "--known-crashes-only", "--suite", "./studio"])).toEqual({ testArgs: ["./studio"], knownCrashesOnly: true, shards: 3, shard: { index: 3, of: 3 } });
+  });
+
+  test("an index outside 1..N, a count outside 1..99 and anything that is not I/N are refused", () => {
+    for (const bad of ["--shard=0/4", "--shard=5/4", "--shard=1/0", "--shard=1/100", "--shard=1", "--shard=/4", "--shard=a/b", "--shard=1/4/4", "--shard=-1/4", "--shard=1.5/4", "--shard"]) {
+      expect(() => testTarget([bad, "--suite", "./studio"])).toThrow(/usage/);
+    }
+  });
+
+  test("--shard and --shards together, a second --shard, or one after --suite (bun would receive it) is refused", () => {
+    expect(() => testTarget(["--shards=4", "--shard=1/4", "--suite", "./studio"])).toThrow(/usage/);
+    expect(() => testTarget(["--shard=1/4", "--shards=4", "--suite", "./studio"])).toThrow(/usage/);
+    expect(() => testTarget(["--shard=1/4", "--shard=2/4", "--suite", "./studio"])).toThrow(/usage/);
+    expect(() => testTarget(["--suite", "./studio", "--shard=1/4"])).toThrow(/usage/);
+  });
+
+  test("--shard without --suite is refused", () => {
+    expect(() => testTarget(["--shard=1/4"])).toThrow(/usage/);
+  });
+});
+
+describe("running one shard of N", () => {
+  const ROOT = join(import.meta.dir, "..", "..");
+  const PLAN = [
+    ["--randomize", "./a.test.ts"],
+    ["--randomize", "./b.test.ts"],
+    ["--randomize", "./c.test.ts"],
+  ];
+
+  test("selectShard keeps only that shard's arguments, and refuses a shard the plan does not have (fewer files than shards)", () => {
+    expect(selectShard(PLAN, { index: 2, of: 3 })).toEqual([["--randomize", "./b.test.ts"]]);
+    expect(selectShard(PLAN, { index: 3, of: 3 })).toEqual([["--randomize", "./c.test.ts"]]);
+    expect(() => selectShard(PLAN, { index: 4, of: 4 })).toThrow(/shard 4 of 4 has no test files/);
+  });
+
+  test("a numbered single shard is announced and reported as its own number, not as `the run`", async () => {
+    const lines: string[] = [];
+    const ran: string[] = [];
+    const code = await runShards(
+      [["./b.test.ts"]],
+      async (_args, label) => {
+        ran.push(label);
+        return { code: 1, hung: false };
+      },
+      (line) => lines.push(line),
+      { first: 2, of: 4 },
+    );
+    expect(code).toBe(1);
+    expect(ran).toEqual(["shard 2 of 4"]);
+    expect(lines).toContain("\n== shard 2 of 4: 1 test files ==");
+    const at = lines.findIndex((l) => l.startsWith("::error::") && l.includes("shard 2 of 4 failed"));
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(lines[at + 1]).toContain("./b.test.ts");
+  });
+
+  // The proof that no file is skipped or run twice: every job's selection, for the real ./studio tree, together is exactly the file list.
+  for (const count of [3, 4, 5]) {
+    test(`the ${count} jobs' shards of the real ./studio tree together run every test file exactly once`, async () => {
+      const all = await listTestFiles(["./studio"], ROOT);
+      const plan = await shardedTestArgs(["./studio", "--randomize"], count, ROOT);
+      const picked: string[] = [];
+      for (let index = 1; index <= count; index++) {
+        const [args] = selectShard(plan, { index, of: count });
+        const files = (args ?? []).filter((arg) => !arg.startsWith("-"));
+        expect(files.length).toBeGreaterThan(0);
+        picked.push(...files);
+      }
+      expect(new Set(picked).size).toBe(picked.length);
+      expect([...picked].sort()).toEqual(all);
+    });
+  }
+
+  test("two independent computations of the partition (two jobs) agree", async () => {
+    expect(await shardedTestArgs(["./studio"], 4, ROOT)).toEqual(await shardedTestArgs(["./studio"], 4, ROOT));
   });
 });
 
@@ -507,12 +592,52 @@ describe("the Electron-Node steps' bounds", () => {
     return Object.fromEntries(Object.entries(parsed.jobs).map(([name, job]) => [name, typeof job === "object" && job !== null ? Object.fromEntries(Object.entries(job)) : {}]));
   }
 
+  // CI-5: Windows runs the bun suite as parallel jobs, one shard each. Nothing may go missing in the move: macOS keeps its three
+  // sequential shards in `build`, Windows' `build` leg skips that step, and the matrix of `test-windows` is exactly the shards 1..N of
+  // the `--shard=I/N` its command line passes (together with realWorkerTests' own partition tests this is "every file once").
+  test("the Windows suite job runs shards 1..N of N, one per matrix entry, bounded, on the same trigger as build; the build job skips the bun suite on Windows only", async () => {
+    const jobs = await workflowJobs();
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    const job = jobs["test-windows"];
+    expect(job).toBeDefined();
+    expect(job?.if).toBe(jobs.build?.if);
+    expect(job?.["runs-on"]).toBe("windows-latest");
+    const matrix = (job?.strategy as { "fail-fast"?: unknown; matrix?: { shard?: unknown } } | undefined) ?? {};
+    expect(matrix["fail-fast"]).toBe(false);
+    const shards = matrix.matrix?.shard;
+    if (!Array.isArray(shards)) throw new Error("test-windows has no shard matrix");
+    const command = /run: bun run test:studio:suite:shard --shard=\$\{\{ matrix\.shard \}\}\/(\d+) --suite \.\/studio\r?\n\s+timeout-minutes: (\d+)/.exec(workflow);
+    expect(command).not.toBeNull();
+    const count = Number(command?.[1]);
+    expect(count).toBeGreaterThan(1);
+    expect(shards).toEqual(Array.from({ length: count }, (_, i) => i + 1));
+    expect(String(job?.name)).toContain(`/${count})`);
+    // One shard per job: its step covers every attempt of one shard, not of all of them.
+    expect(Number(command?.[2])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
+    // The job itself is bounded too, above the suite step's own limit, so a hung install cannot hold a job for GitHub's 360 minutes.
+    expect(Number(job?.["timeout-minutes"])).toBeGreaterThan(Number(command?.[2]));
+    expect(Number(job?.["timeout-minutes"])).toBeLessThanOrEqual(120);
+    // The same suite, the same models: the jobs hold the steps a shard needs.
+    const steps = (job?.steps ?? []) as { run?: string; uses?: string }[];
+    expect(steps.some((step) => step.run === "bun install")).toBe(true);
+    expect(steps.some((step) => step.run === "bun run models:face")).toBe(true);
+    // The one place the bun suite is skipped is the Windows leg of build; macOS still runs it there, whole.
+    const suite = ((jobs.build?.steps ?? []) as { run?: string; if?: string }[]).filter((step) => step.run === "bun run test:studio:suite ./studio");
+    expect(suite).toHaveLength(1);
+    expect(suite[0]?.if).toBe("runner.os != 'Windows'");
+    // The package script behind the job is the same runner with the shard flag only, so it cannot drift from the suite's own flags.
+    const scripts = scriptsOf(JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")));
+    expect(scripts["test:studio:suite:shard"]).toBe("bun studio/scripts/realWorkerTests.ts");
+    expect(scripts["test:studio:suite"]).toBe(`bun studio/scripts/realWorkerTests.ts --shards=3 --suite`);
+  });
+
   test("the release job exists, runs on tags only, and needs the build and the heavy tier", async () => {
     const jobs = await workflowJobs();
     const release = jobs.release;
     expect(release).toBeDefined();
     expect(release?.if).toBe("startsWith(github.ref, 'refs/tags/')");
-    expect(release?.needs).toEqual(["build", "heavy"]);
+    // CI-5: the Windows suite shards are their own job (`test-windows`), so a release must wait for it too, not only for `build`.
+    expect(release?.needs).toEqual(["build", "test-windows", "heavy"]);
     expect(release?.permissions).toEqual({ contents: "write" });
     expect(release?.["continue-on-error"]).toBeUndefined();
   });

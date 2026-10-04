@@ -17,7 +17,6 @@ async function create(mock: Mock, photoIds: string[] = [], avatarId: string = MI
   return (await unwrap(mock.client.request("montages.create", { avatarId, photoIds }))).montage;
 }
 
-const ownStickerLayer = (layerId: string) => ({ layerId, kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "own" as const, mediaId: "media-0000001" }, x: 0.5, y: 0.5, size: 0.2 });
 const textLayer = (layerId: string) => ({ layerId, kind: "text" as const, startMs: 0, endMs: 1_000, value: "Hi", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 });
 
 describe("montages.create", () => {
@@ -150,11 +149,12 @@ describe("montages.get", () => {
   test("marks a part whose slice has not landed as not-yet-supported", async () => {
     const mock = makeMock();
     const montage = await create(mock, [PHOTO_IDS[0] ?? ""]);
-    await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, layers: [ownStickerLayer("layer-0001")] }, name: null }));
+    // An own sticker is supported since 3f.5 (media-unavailable when the library lacks it); an own track still waits for 3f.4.
+    await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, music: { source: "own", mediaId: "media-0000001", startMs: 0 } }, name: null }));
 
     const got = await unwrap(mock.client.request("montages.get", { montageId: montage.montageId }));
 
-    expect(got.issues).toEqual([{ code: "not-yet-supported", path: ["layers", 0] }]);
+    expect(got.issues).toEqual([{ code: "not-yet-supported", path: ["music"] }]);
   });
 
   test("marks a scene photo that is no longer usable photo-unavailable, at its cell", async () => {
