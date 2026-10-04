@@ -121,14 +121,13 @@ describe("videos.render: the answer", () => {
 describe("videos.render: N9, what is not supported yet is refused, never dropped", () => {
   const cases: Array<[string, (w: World) => MontageDraft, string[]]> = [
     ["an own sticker layer", (w) => ({ ...specFor(w), layers: [ownStickerLayer(1)] }), ["layers", "0"]],
-    ["an own track", (w) => ({ ...specFor(w), music: { source: "own", mediaId: "media-0000001", startMs: 0 } }), ["music"]],
     [
       "an own video clip",
       (w) => ({ ...specFor(w), clips: [{ clipId: "clip-00000001", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: SPEC_MS, transitionIn: "cut" as const }] }),
       ["clips", "0"],
     ],
-    // An own photo in a photo clip or a collage cell is NOT here since 3f.2 lifted N9 for it: a missing one is `media-unavailable`
-    // (service.ownPhotos.test.ts), and one that is held renders.
+    // An own photo in a photo clip or a collage cell is NOT here since 3f.2 lifted N9 for it, and an own track since 3f.4: a missing one is
+    // `media-unavailable` (service.ownPhotos.test.ts, service.ownMusic.test.ts), and one that is held renders.
   ];
 
   test.each(cases)("%s answers MONTAGE_INVALID with not-yet-supported at its path, before anything else is looked at", async (_name, build, path) => {

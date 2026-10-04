@@ -96,14 +96,14 @@ describe("videos.render: the music track is judged before anything is queued", (
     expect(r.queue.states()[0]).toMatchObject({ status: "done" });
   });
 
-  test("an own track is still not-yet-supported (3f.4), and the track store is not asked about it", async () => {
+  test("an own track is judged by the media store, never the track store (3f.4): with none wired it is media-unavailable, and the track store is not asked", async () => {
     const w = world();
     const opened: string[] = [];
     const r = serviceRig(w, { deps: { tracks: store(8_000, opened) } });
 
     const error = await failureOf(r.service.render({ spec: { ...specOf(w.avatar.id, [photoId(w, 0)], 4_000), music: { source: "own", mediaId: "media-0000001", startMs: 0 } } }));
 
-    expect(error.issues).toEqual([{ code: "not-yet-supported", path: ["music"] }]);
+    expect(error.issues).toEqual([{ code: "media-unavailable", path: ["music"] }]);
     expect(opened).toEqual([]);
     await expectNothingTouched(r);
   });
