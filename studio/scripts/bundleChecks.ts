@@ -63,6 +63,7 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "withMineDemo",
   "mineDemoSeeds",
   "mineDemoPicks",
+  "mockDropDoor",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",

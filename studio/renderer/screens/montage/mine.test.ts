@@ -7,7 +7,13 @@ import {
   deleteConfirmText,
   deleteRefusalText,
   dragKey,
+  dropSummary,
+  guardFileDrop,
   importCard,
+  installFileDropGuard,
+  isFileDrag,
+  livePosters,
+  MAX_LIVE_POSTERS,
   importFailure,
   importTileLabel,
   type MineLibrary,
@@ -163,6 +169,23 @@ describe("the words on the tiles and rows", () => {
     expect(trackRowAria(song, 9_600)).toBe("summer-edit.mp3, 0:42, свой трек, в ролике");
   });
 
+  test("the montage's own track that became shorter than the montage from its start (round 1, L4): «✓ в ролике · короче ролика», still selectable, with what to do", () => {
+    // summer-edit.mp3 is 42 s; started at 35 s it holds 7 s of the 9.6 s montage.
+    const late = { ...SPEC, music: { source: "own" as const, mediaId: SONG.mediaId, startMs: 35_000 } };
+    const rows = mineSections(LIBRARY, [], late, NO_TARGET).tracks.flatMap((t) => (t.kind === "record" && t.media.mediaId === SONG.mediaId ? [t] : []));
+    const [row] = rows;
+    if (row === undefined) throw new Error("no row");
+    expect([row.inDraft, row.tooShort, row.pickable]).toEqual([true, true, true]);
+    expect(trackRowNote(row)).toBe("0:42 · ✓ в ролике · короче ролика");
+    expect(trackRowAria(row, 9_600)).toBe(s("summer-edit.mp3, 0:42, свой трек, в ролике, короче ролика (9.6 с) с этого начала: сдвиньте начало трека раньше или укоротите ролик"));
+    // From 0 it holds the whole montage.
+    const fromStart = mineSections(LIBRARY, [], { ...late, music: { source: "own" as const, mediaId: SONG.mediaId, startMs: 0 } }, NO_TARGET).tracks.find((t) => t.kind === "record" && t.media.mediaId === SONG.mediaId);
+    expect(fromStart?.kind === "record" && [fromStart.tooShort, fromStart.pickable]).toEqual([false, true]);
+    // Another short track is not selectable at all.
+    const note = mineSections(LIBRARY, [], late, NO_TARGET).tracks.find((t) => t.kind === "record" && t.media.mediaId === NOTE.mediaId);
+    expect(note?.kind === "record" && [note.tooShort, note.pickable]).toEqual([true, false]);
+  });
+
   test("a sticker tile's name", () => {
     const [tile] = mineSections(LIBRARY, [], SPEC, NO_TARGET).stickers;
     if (tile?.kind !== "record") throw new Error("tile");
@@ -269,6 +292,96 @@ describe("one track plays at a time (M9)", () => {
     expect(nextListening(null, "media-a-000001")).toBe("media-a-000001");
     expect(nextListening("media-a-000001", "media-b-000001")).toBe("media-b-000001");
     expect(nextListening("media-b-000001", "media-b-000001")).toBeNull();
+  });
+});
+
+describe("video posters (round 1, M1): a live <video> only for tiles near the view, at most MAX_LIVE_POSTERS", () => {
+  const ids = Array.from({ length: 40 }, (_, i) => `media-video-${String(i).padStart(4, "0")}`);
+
+  test("the tiles near the view, in the list's order, up to the cap; the rest draw the film placeholder", () => {
+    const near = new Set(ids.slice(5, 12));
+    expect([...livePosters(ids, near, MAX_LIVE_POSTERS)]).toEqual(ids.slice(5, 12));
+    expect([...livePosters(ids, new Set(ids), MAX_LIVE_POSTERS)]).toEqual(ids.slice(0, MAX_LIVE_POSTERS));
+    expect(MAX_LIVE_POSTERS).toBe(24);
+  });
+
+  test("a tile that left the zone lets go of its poster; an id the list does not hold is never live", () => {
+    expect(livePosters(ids, new Set(), MAX_LIVE_POSTERS).size).toBe(0);
+    expect([...livePosters(ids.slice(0, 2), new Set(["media-gone-0001", ids[1] ?? ""]), MAX_LIVE_POSTERS)]).toEqual([ids[1]]);
+    expect(livePosters(ids, new Set(ids), 0).size).toBe(0);
+  });
+});
+
+describe("files dragged from Finder over the drop zone (M13): what the zone says before the drop", () => {
+  const item = (type: string, kind = "file") => ({ kind, type });
+
+  test("a drag of files only: text or a link dragged from a page is not a drop of files", () => {
+    expect(isFileDrag(["Files"])).toBe(true);
+    expect(isFileDrag(["text/plain", "Files"])).toBe(true);
+    expect(isFileDrag(["text/plain"])).toBe(false);
+    expect(isFileDrag(["text/uri-list", "text/html"])).toBe(false);
+    expect(isFileDrag([])).toBe(false);
+  });
+
+  test("«Отпустите — добавим 3 файла · 2 фото, 1 видео»: counted by the type each item says (a GIF is a sticker)", () => {
+    expect(dropSummary([item("image/jpeg"), item("image/png"), item("video/quicktime")])).toEqual({ count: 3, title: s("Отпустите — добавим 3 файла"), detail: "2 фото, 1 видео" });
+    expect(dropSummary([item("audio/mpeg"), item("audio/x-m4a"), item("image/gif"), item("video/mp4"), item("image/webp")])?.detail).toBe("1 фото, 1 видео, 2 трека, 1 стикер");
+    expect(dropSummary([item("image/gif")])).toEqual({ count: 1, title: s("Отпустите — добавим 1 файл"), detail: "1 стикер" });
+  });
+
+  test("a type it cannot tell (a folder, an unknown file): «N файлов», with the kinds the zone takes", () => {
+    expect(dropSummary([item("image/jpeg"), item("")])).toEqual({ count: 2, title: s("Отпустите — добавим 2 файла"), detail: "фото, видео, музыка, стикеры" });
+    expect(dropSummary([item("application/pdf")])?.detail).toBe("фото, видео, музыка, стикеры");
+  });
+
+  test("more than 20: the zone says only 20 go in", () => {
+    expect(dropSummary(Array.from({ length: 25 }, () => item("image/jpeg")))).toEqual({ count: 25, title: s("Отпустите — добавим 20 из 25 файлов"), detail: "за раз — не больше 20, остальные не добавятся" });
+  });
+
+  test("items that are not files (a string beside them) are not counted; none at all is no summary", () => {
+    expect(dropSummary([item("text/plain", "string"), item("image/jpeg")])?.count).toBe(1);
+    expect(dropSummary([item("text/plain", "string")])).toBeNull();
+    expect(dropSummary([])).toBeNull();
+  });
+});
+
+describe("files dropped anywhere but the drop zone do nothing, and the window never opens them", () => {
+  function dragEvent(types: string[], prevented = false) {
+    const transfer = { types, dropEffect: "copy" as string };
+    const event = { defaultPrevented: prevented, dataTransfer: transfer, prevented: false, preventDefault() { this.prevented = true; } };
+    return { event, transfer };
+  }
+
+  test("a file drag the zone did not take is refused: the default (open the file) is prevented and the cursor says no", () => {
+    const { event, transfer } = dragEvent(["Files"]);
+    guardFileDrop(event);
+    expect(event.prevented).toBe(true);
+    expect(transfer.dropEffect).toBe("none");
+  });
+
+  test("the window's guard listens to dragover and drop, and is taken off again", () => {
+    const target = new EventTarget();
+    const stop = installFileDropGuard(target);
+    const fire = (type: string) => {
+      const transfer = { types: ["Files"], dropEffect: "copy" };
+      const event = Object.assign(new Event(type, { cancelable: true }), { dataTransfer: transfer });
+      target.dispatchEvent(event);
+      return [event.defaultPrevented, transfer.dropEffect];
+    };
+    expect(fire("dragover")).toEqual([true, "none"]);
+    expect(fire("drop")).toEqual([true, "none"]);
+    stop();
+    expect(fire("drop")).toEqual([false, "copy"]);
+  });
+
+  test("the zone's own drag is left as the zone set it; a drag that is not of files is left alone", () => {
+    const zone = dragEvent(["Files"], true);
+    guardFileDrop(zone.event);
+    expect([zone.event.prevented, zone.transfer.dropEffect]).toEqual([false, "copy"]);
+    const text = dragEvent(["text/plain"]);
+    guardFileDrop(text.event);
+    expect([text.event.prevented, text.transfer.dropEffect]).toEqual([false, "copy"]);
+    guardFileDrop({ defaultPrevented: false, dataTransfer: null, preventDefault() {} });
   });
 });
 

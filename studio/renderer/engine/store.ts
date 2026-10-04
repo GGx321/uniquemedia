@@ -17,7 +17,19 @@ import {
   type UnreadableAvatar,
 } from "../../shared/engine";
 import type { EngineClient } from "./client";
-import { applyImportCancelled, applyImportDone, applyImportFailed, applyImportProgress, failActiveImports, importsFromSnapshot, type ImportView, markImportCancelling } from "./importJobs";
+import {
+  applyCancelAsks,
+  applyImportCancelled,
+  applyImportDone,
+  applyImportFailed,
+  applyImportProgress,
+  failActiveImports,
+  importsFromSnapshot,
+  type ImportView,
+  isActiveImport,
+  markImportCancelling,
+  unmarkImportCancelling,
+} from "./importJobs";
 import { applyVideoChanged, nextRenderBatch } from "./renderJobs";
 
 export type JobStatus = JobState["status"];
@@ -216,8 +228,17 @@ export type MediaStoreChange = Extract<EventMessage, { type: "media.changed" }>[
 /** What the media listeners hear (3f.6): each `media.changed`, and `resynced` after a snapshot taken again (the records are listed on demand). */
 export type MediaSignal = MediaStoreChange | { readonly change: "resynced" };
 
-/** Dismissed imports remembered at most (so a snapshot does not bring them back); the oldest is forgotten first. */
+/** Dismissed imports, and imports this window asked to cancel, remembered at most (so a snapshot does not undo them); the oldest go first. */
 const MAX_DISMISSED_IMPORTS = 200;
+
+/** Adds `id` to an insertion-ordered set capped at `MAX_DISMISSED_IMPORTS`, forgetting the oldest. */
+function rememberCapped(set: Set<string>, id: string): void {
+  set.add(id);
+  for (const old of set) {
+    if (set.size <= MAX_DISMISSED_IMPORTS) break;
+    set.delete(old);
+  }
+}
 
 /**
  * Adds `notice` to `notices`, deduped by `noticeId` (an exact repeat delivery
@@ -292,6 +313,11 @@ export class EngineStore {
   private readonly mediaListeners = new Set<(signal: MediaSignal) => void>();
   /** The imports the owner dismissed (3f.6): a snapshot that still lists one does not bring it back. Insertion-ordered, capped. */
   private readonly dismissedImports = new Set<string>();
+  /**
+   * The imports this window asked to cancel (round 1, L1), marked BEFORE `media.cancelImport` goes: its `job.cancelled` may land before the answer,
+   * and a snapshot or a tab opened later must still read it as the owner's own cancel. Taken back when the engine refuses. Insertion-ordered, capped.
+   */
+  private readonly cancelAsked = new Set<string>();
   private held: EventMessage[] = [];
   private syncing = false;
   private queuedSnapshot = false;
@@ -472,20 +498,29 @@ export class EngineStore {
     });
   }
 
-  /** 3f.6: this window asked to cancel the import `jobId` (`media.cancelImport` answered): marked until its real end comes. */
-  markImportCancelling(jobId: string): void {
+  /** 3f.6 (round 1, L1): this window is about to ask the engine to cancel the import `jobId`: marked now, before the command goes, for good. */
+  askImportCancel(jobId: string): void {
+    rememberCapped(this.cancelAsked, jobId);
     const imports = markImportCancelling(this.view.imports, jobId);
+    if (imports !== this.view.imports) this.update({ imports });
+  }
+
+  /** 3f.6: the engine refused that cancel: the import goes on, and an end the engine makes later is its own. */
+  cancelRefused(jobId: string): void {
+    this.cancelAsked.delete(jobId);
+    const imports = unmarkImportCancelling(this.view.imports, jobId);
     if (imports !== this.view.imports) this.update({ imports });
   }
 
   /** 3f.6: the owner closed an import's outcome (a refusal, say): it leaves the view, and a later snapshot does not bring it back. */
   dismissImport(jobId: string): void {
-    this.dismissedImports.add(jobId);
-    for (const old of this.dismissedImports) {
-      if (this.dismissedImports.size <= MAX_DISMISSED_IMPORTS) break;
-      this.dismissedImports.delete(old);
-    }
+    rememberCapped(this.dismissedImports, jobId);
     if (this.view.imports.some((i) => i.jobId === jobId)) this.update({ imports: this.view.imports.filter((i) => i.jobId !== jobId) });
+  }
+
+  /** The imports after an event: this window's cancel asks put back on any import first heard of here. */
+  private withAsks(imports: readonly ImportView[]): readonly ImportView[] {
+    return applyCancelAsks(imports, this.cancelAsked);
   }
 
   markJobCancelled(jobId: string): void {
@@ -839,6 +874,7 @@ export class EngineStore {
         this.view.imports,
         s.jobs.flatMap((j) => (j.kind === "import" ? [j] : [])),
         this.dismissedImports,
+        this.cancelAsked,
       ),
       engineError: null,
       notices: s.notices.reduce(mergeNotice, [] as readonly EngineNotice[]),
@@ -858,7 +894,7 @@ export class EngineStore {
       case "job.progress": {
         // An import (3f.1b) is no avatar's job: it has no row in `jobs`, its own in `imports` (3f.6).
         if (event.payload.kind === "import") {
-          this.update({ lastSeq, imports: applyImportProgress(this.view.imports, event.payload) });
+          this.update({ lastSeq, imports: this.withAsks(applyImportProgress(this.view.imports, event.payload)) });
           return;
         }
         const { done, total } = event.payload;
@@ -878,7 +914,7 @@ export class EngineStore {
       case "job.done": {
         const { jobId, result } = event.payload;
         if (result.kind === "import") {
-          this.update({ lastSeq, imports: applyImportDone(this.view.imports, jobId, result) });
+          this.update({ lastSeq, imports: this.withAsks(applyImportDone(this.view.imports, jobId, result)) });
           return;
         }
         // L9: total from the result itself when nothing (no job.progress,
@@ -924,7 +960,7 @@ export class EngineStore {
       case "job.failed": {
         const { error } = event.payload;
         if (event.payload.kind === "import") {
-          this.update({ lastSeq, imports: applyImportFailed(this.view.imports, event.payload) });
+          this.update({ lastSeq, imports: this.withAsks(applyImportFailed(this.view.imports, event.payload)) });
           return;
         }
         this.patchJob(event.payload, (job) => ({ ...job, status: "failed", saving: false, error }), lastSeq);
@@ -951,7 +987,7 @@ export class EngineStore {
         return;
       case "job.cancelled":
         if (event.payload.kind === "import") {
-          this.update({ lastSeq, imports: applyImportCancelled(this.view.imports, event.payload) });
+          this.update({ lastSeq, imports: this.withAsks(applyImportCancelled(this.view.imports, event.payload)) });
           return;
         }
         this.patchJob(event.payload, (job) => (isActiveJob(job) ? { ...job, status: "cancelled", saving: false } : job), lastSeq);
@@ -964,6 +1000,10 @@ export class EngineStore {
         // Compared by generation, not the path string, since this window's
         // command answer may have updated the settings before the event came.
         if (this.listsLibraryGeneration !== null && librarySwitchGeneration !== this.listsLibraryGeneration) {
+          // 3f.6 (round 1, L7): the finished imports' cards were about the old library: dismissed, so the snapshot does not bring them back.
+          const finished = this.view.imports.filter((i) => !isActiveImport(i));
+          for (const done of finished) rememberCapped(this.dismissedImports, done.jobId);
+          if (finished.length > 0) this.update({ imports: this.view.imports.filter(isActiveImport) });
           void this.resync("snapshot", this.generation, "user");
         }
         return;

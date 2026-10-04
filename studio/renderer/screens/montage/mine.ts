@@ -1,4 +1,4 @@
-import { Id, MAX_LISTED_MEDIA, type EngineError, type MediaKind, type MediaRefusal, type MediaSummary, type MontageDraft, mediaReasonRu } from "../../../shared/engine";
+import { Id, MAX_LISTED_MEDIA, MAX_PICKED_FILES, type EngineError, type MediaKind, type MediaRefusal, type MediaSummary, type MontageDraft, mediaReasonRu } from "../../../shared/engine";
 import { FPS, MIN_CLIP_MS } from "../../../shared/montage";
 import type { MediaStoreChange } from "../../engine/store";
 import { type ImportView, importPercent, isActiveImport } from "../../engine/importJobs";
@@ -49,7 +49,17 @@ export type VisualTile =
   | { readonly kind: "record"; readonly media: MediaSummary; readonly slot: number | null; readonly action: VisualAction }
   | { readonly kind: "import"; readonly view: ImportView };
 
-export type TrackTile = { readonly kind: "record"; readonly media: MediaSummary; readonly inDraft: boolean; readonly tooShort: boolean } | { readonly kind: "import"; readonly view: ImportView };
+export type TrackTile =
+  | {
+      readonly kind: "record";
+      readonly media: MediaSummary;
+      readonly inDraft: boolean;
+      /** Shorter than the montage: from its start for a track not in it, from the montage's own start for the montage's track (round 1, L4). */
+      readonly tooShort: boolean;
+      /** A click on it does something: any track not too short, and the montage's own track always (it selects the music, whose start can move). */
+      readonly pickable: boolean;
+    }
+  | { readonly kind: "import"; readonly view: ImportView };
 
 export type StickerTile = { readonly kind: "record"; readonly media: MediaSummary; readonly uses: number; readonly on: boolean } | { readonly kind: "import"; readonly view: ImportView };
 
@@ -82,7 +92,7 @@ export function mineSections(library: MineLibrary, imports: readonly ImportView[
   const active = imports.filter(isActiveImport);
   const slots = ownSlots(spec);
   const total = totalMs(spec);
-  const ownTrack = spec.music?.source === "own" ? spec.music.mediaId : null;
+  const ownTrack = spec.music?.source === "own" ? spec.music : null;
   const stickerUses = new Map<string, number>();
   for (const layer of spec.layers) if (layer.kind === "sticker" && layer.sticker.source === "own") stickerUses.set(layer.sticker.mediaId, (stickerUses.get(layer.sticker.mediaId) ?? 0) + 1);
 
@@ -97,7 +107,14 @@ export function mineSections(library: MineLibrary, imports: readonly ImportView[
   ];
   const tracks: TrackTile[] = [
     ...active.filter((v) => v.mediaKind === "audio").map((view): TrackTile => ({ kind: "import", view })),
-    ...library.media.filter((m) => m.kind === "audio").map((media): TrackTile => ({ kind: "record", media, inDraft: media.mediaId === ownTrack, tooShort: ownTrackTooShort({ durationMs: media.durationMs ?? 0 }, total) })),
+    ...library.media
+      .filter((m) => m.kind === "audio")
+      .map((media): TrackTile => {
+        const inDraft = media.mediaId === ownTrack?.mediaId;
+        // The montage's own track is judged from where it starts (the engine's `track-too-short`); another from 0, where a pick puts it.
+        const tooShort = ownTrackTooShort({ durationMs: (media.durationMs ?? 0) - (inDraft ? (ownTrack?.startMs ?? 0) : 0) }, total);
+        return { kind: "record", media, inDraft, tooShort, pickable: inDraft || !tooShort };
+      }),
   ];
   const stickers: StickerTile[] = [
     ...active.filter((v) => v.mediaKind === "sticker").map((view): StickerTile => ({ kind: "import", view })),
@@ -164,18 +181,27 @@ export function visualTitle(tile: Extract<VisualTile, { kind: "record" }>): stri
   }
 }
 
-/** A track row's second line: «0:42 · свой трек», «0:42 · ✓ в ролике», «0:05 · короче ролика». */
+/** A track row's second line: «0:42 · свой трек», «0:42 · ✓ в ролике», «0:05 · короче ролика», «0:42 · ✓ в ролике · короче ролика». */
 export function trackRowNote(row: Extract<TrackTile, { kind: "record" }>): string {
   const length = lengthClock(row.media.durationMs ?? 0);
-  return `${length} · ${row.inDraft ? "✓ в ролике" : row.tooShort ? "короче ролика" : "свой трек"}`;
+  if (row.inDraft) return `${length} · ✓ в ролике${row.tooShort ? " · короче ролика" : ""}`;
+  return `${length} · ${row.tooShort ? "короче ролика" : "свой трек"}`;
 }
 
-/** A track row's accessible name, with why a short one cannot be chosen. */
+/** A track row's accessible name, with why a short one cannot be chosen, or what to do when the montage's own track runs out (L4). */
 export function trackRowAria(row: Extract<TrackTile, { kind: "record" }>, montageMs: number): string {
   const parts = [row.media.name, lengthClock(row.media.durationMs ?? 0), "свой трек"];
-  if (row.inDraft) parts.push("в ролике");
-  else if (row.tooShort) parts.push(`короче ролика (${secondsLabel(montageMs)}), не выбрать`);
+  if (row.inDraft) {
+    parts.push("в ролике");
+    if (row.tooShort) parts.push(`короче ролика (${secondsLabel(montageMs)}) с этого начала: сдвиньте начало трека раньше или укоротите ролик`);
+  } else if (row.tooShort) parts.push(`короче ролика (${secondsLabel(montageMs)}), не выбрать`);
   return parts.join(", ");
+}
+
+/** A track row's tooltip: what a click does, or why it does nothing. */
+export function trackRowTitle(row: Extract<TrackTile, { kind: "record" }>): string {
+  if (row.inDraft) return row.tooShort ? "Трек короче ролика с этого начала — клик откроет музыку: сдвиньте начало раньше или укоротите ролик" : "Этот трек уже в ролике — клик откроет музыку";
+  return row.tooShort ? "Трек короче ролика — его не выбрать" : "Клик — трек в ролик, с начала";
 }
 
 /** A sticker tile's accessible name: «Стикер underline.gif: в плейхед, в ролике 2, у выбранного слоя». */
@@ -286,6 +312,105 @@ export function deleteRefusalText(error: EngineError, name: string): string {
 /** One track plays at a time (M9): a row starts its own (stopping another); the same row again stops it. */
 export function nextListening(current: string | null, mediaId: string): string | null {
   return current === mediaId ? null : mediaId;
+}
+
+// ---------- video posters (round 1, M1) ----------
+
+/**
+ * The most video tiles that hold a live `<video>` at once. Measured in Electron 43 (the round 1 review): a `<video>` per tile costs the renderer
+ * about 8 MB each (50 tiles 422 MB, 300 tiles 827 MB), and a detached player lingers until it is collected. The rest draw the film placeholder.
+ */
+export const MAX_LIVE_POSTERS = 24;
+
+/** The video tiles that may hold a live poster: those near the view (`near`), in the list's order, at most `cap`. */
+export function livePosters(order: readonly string[], near: ReadonlySet<string>, cap: number): ReadonlySet<string> {
+  const live = new Set<string>();
+  for (const id of order) {
+    if (live.size >= cap) break;
+    if (near.has(id)) live.add(id);
+  }
+  return live;
+}
+
+// ---------- files dropped from Finder or Explorer (M13, round 2) ----------
+
+/** A drag carries files (Finder, Explorer), not text or a link from a page. */
+export function isFileDrag(types: readonly string[]): boolean {
+  return types.includes("Files");
+}
+
+/** What the kinds the zone takes are called on it, in its order, for a count of each («2 фото, 1 видео, 2 трека, 1 стикер»). */
+const DROP_KINDS: readonly { kind: MediaKind; forms: readonly [string, string, string] }[] = [
+  { kind: "photo", forms: ["фото", "фото", "фото"] },
+  { kind: "video", forms: ["видео", "видео", "видео"] },
+  { kind: "audio", forms: ["трек", "трека", "треков"] },
+  { kind: "sticker", forms: ["стикер", "стикера", "стикеров"] },
+];
+
+/** The kind a dragged item's type says (only a guess for the zone's words: the engine reads the bytes); null when it cannot tell. */
+function kindOfType(type: string): MediaKind | null {
+  if (type === "image/gif") return "sticker";
+  if (type.startsWith("image/")) return "photo";
+  if (type.startsWith("video/")) return "video";
+  if (type.startsWith("audio/")) return "audio";
+  return null;
+}
+
+/**
+ * The drop zone while files are dragged over it (M13: «Отпустите — добавим 3 файла · 2 фото, 1 видео»). During a drag only the items' kinds
+ * and types are known: counted by type when every one says it, else the kinds the zone takes; over 20, only 20 go in. Null for a drag
+ * that holds no file.
+ */
+export function dropSummary(items: readonly { readonly kind: string; readonly type: string }[]): { count: number; title: string; detail: string } | null {
+  const files = items.filter((item) => item.kind === "file");
+  const count = files.length;
+  if (count === 0) return null;
+  if (count > MAX_PICKED_FILES) return { count, title: `Отпустите — добавим ${MAX_PICKED_FILES} из ${countOf(count, FILE_FORMS)}`, detail: `за раз — не больше ${MAX_PICKED_FILES}, остальные не добавятся` };
+  const title = `Отпустите — добавим ${countOf(count, FILE_FORMS)}`;
+  const kinds = files.map((item) => kindOfType(item.type));
+  if (kinds.some((kind) => kind === null)) return { count, title, detail: "фото, видео, музыка, стикеры" };
+  const parts = DROP_KINDS.flatMap(({ kind, forms }) => {
+    const n = kinds.filter((k) => k === kind).length;
+    return n === 0 ? [] : [`${n} ${plural(n, forms)}`];
+  });
+  return { count, title, detail: parts.join(", ") };
+}
+
+/** The part of a drag event the window-wide guard reads and sets. */
+export interface FileDragEvent {
+  readonly defaultPrevented: boolean;
+  readonly dataTransfer: { readonly types: readonly string[]; dropEffect: string } | null;
+  preventDefault(): void;
+}
+
+/**
+ * The window's own guard against files dropped anywhere but the drop zone (`dragover` and `drop` on the window): the browser's default (open the
+ * file) is prevented and the cursor says no. A drag the zone took (it prevented the default first) and a drag that holds no file are left alone.
+ */
+export function guardFileDrop(event: FileDragEvent): void {
+  const transfer = event.dataTransfer;
+  if (event.defaultPrevented || transfer === null || !isFileDrag(transfer.types)) return;
+  event.preventDefault();
+  transfer.dropEffect = "none";
+}
+
+/** Whether an event carries a drag's transfer the guard can read (a `DragEvent`, or a test's stand-in). */
+function isFileDragEvent(event: Event): event is Event & FileDragEvent {
+  const transfer: unknown = Reflect.get(event, "dataTransfer");
+  return transfer === null || (typeof transfer === "object" && transfer !== null && "types" in transfer && "dropEffect" in transfer);
+}
+
+/** Puts `guardFileDrop` on the window's `dragover` and `drop` (main.tsx); returns the function that takes it off. */
+export function installFileDropGuard(target: Pick<EventTarget, "addEventListener" | "removeEventListener">): () => void {
+  const guard = (event: Event): void => {
+    if (isFileDragEvent(event)) guardFileDrop(event);
+  };
+  target.addEventListener("dragover", guard);
+  target.addEventListener("drop", guard);
+  return () => {
+    target.removeEventListener("dragover", guard);
+    target.removeEventListener("drop", guard);
+  };
 }
 
 // ---------- a drag out of the panel ----------

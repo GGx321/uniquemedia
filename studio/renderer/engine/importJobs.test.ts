@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EngineError, ImportResult, JobState, MediaSummary } from "../../shared/engine";
 import {
+  applyCancelAsks,
   applyImportCancelled,
   applyImportDone,
   applyImportFailed,
@@ -13,6 +14,7 @@ import {
   markImportCancelling,
   MAX_FINISHED_IMPORTS,
   prepareFactsOf,
+  unmarkImportCancelling,
   type ImportProgress,
   type ImportView,
 } from "./importJobs";
@@ -119,6 +121,12 @@ describe("the end: done, failed, cancelled", () => {
     expect(applyImportCancelled(failed, cancelRef)).toBe(failed);
   });
 
+  test("a failure that arrives over an import already done changes nothing (round 1, L2: the record is there)", () => {
+    const done = applyImportDone(applyImportProgress([], progress()), JOB, result("media-0000001"));
+    expect(applyImportFailed(done, { kind: "import", jobId: JOB, mediaKind: "video", name: "street-walk.mp4", mediaId: null, error: UNSUPPORTED })).toBe(done);
+    expect(only(done)).toMatchObject({ status: "done", error: null });
+  });
+
   test("a failure or a cancel first heard of here is still shown, by the identity its event carries", () => {
     const failed = applyImportFailed([], { kind: "import", jobId: JOB, mediaKind: "audio", name: "track.wma", mediaId: null, error: UNSUPPORTED });
     expect(only(failed)).toMatchObject({ name: "track.wma", mediaKind: "audio", status: "failed" });
@@ -151,16 +159,38 @@ describe("the end: done, failed, cancelled", () => {
 });
 
 describe("a cancel this window asked for: marked, and the mark stays with the end (so the tab tells the owner's cancel from the engine's)", () => {
-  test("only an active import is marked; the mark outlives its end", () => {
+  const CANCEL_REF = { kind: "import" as const, jobId: JOB, mediaKind: "video" as const, name: "street-walk.mp4", mediaId: null };
+
+  test("an active import is marked; the mark outlives its end; a done or failed one is not marked", () => {
     const running = applyImportProgress([], progress());
     const marked = markImportCancelling(running, JOB);
     expect(only(marked).cancelRequested).toBe(true);
     expect(markImportCancelling(marked, "job-unknown-01")).toBe(marked);
     expect(markImportCancelling(marked, JOB)).toBe(marked);
-    const cancelled = applyImportCancelled(marked, { kind: "import", jobId: JOB, mediaKind: "video", name: "street-walk.mp4", mediaId: null });
+    const cancelled = applyImportCancelled(marked, CANCEL_REF);
     expect(only(cancelled)).toMatchObject({ status: "cancelled", cancelRequested: true });
     const done = applyImportDone(running, JOB, result("media-0000001"));
     expect(markImportCancelling(done, JOB)).toBe(done);
+    const failed = applyImportFailed(running, { ...CANCEL_REF, error: UNSUPPORTED });
+    expect(markImportCancelling(failed, JOB)).toBe(failed);
+  });
+
+  test("the race (round 1, L1): the job's cancelled event beats the cancel's answer; the mark still lands on it", () => {
+    const cancelledFirst = applyImportCancelled(applyImportProgress([], progress()), CANCEL_REF);
+    expect(only(markImportCancelling(cancelledFirst, JOB))).toMatchObject({ status: "cancelled", cancelRequested: true });
+  });
+
+  test("a refused cancel takes the mark back: the import goes on and a later engine cancel is told", () => {
+    const marked = markImportCancelling(applyImportProgress([], progress()), JOB);
+    const unmarked = unmarkImportCancelling(marked, JOB);
+    expect(only(unmarked).cancelRequested).toBe(false);
+    expect(unmarkImportCancelling(unmarked, JOB)).toBe(unmarked);
+  });
+
+  test("the asked cancels are put back on the imports they name (an import first heard of after the ask)", () => {
+    const fresh = applyImportCancelled([], CANCEL_REF);
+    expect(only(applyCancelAsks(fresh, new Set([JOB]))).cancelRequested).toBe(true);
+    expect(applyCancelAsks(fresh, new Set())).toBe(fresh);
   });
 
   test("a cancel the engine made on its own (the window closed elsewhere, its time ran out) is not this window's", () => {
@@ -196,6 +226,8 @@ describe("a snapshot: the engine's list of import jobs replaces the view", () =>
     const after = only(importsFromSnapshot(preparing, [state({ status: "running", done: 45, total: 100 })], new Set()));
     expect(after).toMatchObject({ stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 }, done: 45, cancelRequested: true });
     expect(only(importsFromSnapshot(preparing, [state({ status: "cancelled" })], new Set())).cancelRequested).toBe(true);
+    // A cancel asked for an import this window held no view of yet is put on it too.
+    expect(only(importsFromSnapshot([], [state({ status: "running" })], new Set(), new Set([JOB]))).cancelRequested).toBe(true);
     // One that does say it is taken at its word.
     const said = Object.assign(state({ status: "running", done: 10, total: 1_000 }), { stage: "copy" });
     expect(only(importsFromSnapshot(preparing, [said], new Set())).stage).toBe("copy");

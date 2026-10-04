@@ -1,6 +1,6 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { type DragEvent, useEffect, useId, useRef, useState } from "react";
 import type { EngineError, MediaSummary, MontageDraft } from "../../../shared/engine";
-import type { EngineClient } from "../../engine/client";
+import type { DropReply, EngineClient } from "../../engine/client";
 import { type ImportView, importPercent, isActiveImport } from "../../engine/importJobs";
 import { useEngine, useEngineView } from "../../engine/react";
 import type { EngineStore, MediaStoreChange } from "../../engine/store";
@@ -14,11 +14,15 @@ import {
   type BinDrag,
   deleteConfirmText,
   deleteRefusalText,
+  dropSummary,
   type FillTarget,
   importCard,
   importFailure,
   importTileLabel,
+  isFileDrag,
   lengthClock,
+  livePosters,
+  MAX_LIVE_POSTERS,
   type MineLibrary,
   mineHint,
   mineSections,
@@ -30,17 +34,21 @@ import {
   type TrackTile,
   trackRowAria,
   trackRowNote,
+  trackRowTitle,
   type VisualTile,
   visualAria,
   visualTitle,
 } from "./mine";
+import type { PlayheadStore } from "./playhead";
 
 // 3f.6: the «Мои» tab (EditorMine.dc.html, the components sheet's drop zone and its import, normalising and refusal states; the
-// reconciliation's M1–M12, M14, M15). The drop zone opens MAIN's own dialog (`media.pickImport {kind: "any"}`): the window sends a kind
-// and nothing else, never a path (M13, a Finder drop, is not in Stage 3). Under it, the import that runs now (copying, or preparing a
-// video, «HDR → SDR, 60 → 30 fps»), a pick's refusals and the imports that failed, each said in its kind's own words. Then the owner's
-// files: photos and videos (a click places one by the «Фото» tab's rules, a drag inserts one), music (listen, pick), stickers (at the
-// playhead). Every file can be deleted, after a confirmation; one a queued or running render uses is refused, and said so.
+// reconciliation's M1–M15). The drop zone opens MAIN's own dialog (`media.pickImport {kind: "any"}`: the window sends a kind and nothing
+// else), and takes files dragged from Finder or Explorer (M13, round 2, the owner's decision of 2026-10-04): the dropped `File` objects go to
+// the client's drop door and nothing else (the preload maps them to the paths the OS gave them; main takes those as its own dialog's picks).
+// Under it, the import that runs now (copying, or preparing a video, «HDR → SDR, 60 → 30 fps»), a pick's or a drop's refusals and the imports
+// that failed, each said in its kind's own words. Then the owner's files: photos and videos (a click places one by the «Фото» tab's rules, a
+// drag inserts one), music (listen, pick), stickers (at the playhead). Every file can be deleted, after a confirmation; one a queued or running
+// render uses is refused, and said so.
 
 type ListState = { readonly state: "loading" } | { readonly state: "ready"; readonly library: MineLibrary } | { readonly state: "failed"; readonly error: EngineError };
 
@@ -95,6 +103,8 @@ export function useMineLibrary(client: Pick<EngineClient, "request">, store: Pic
 
 export interface MineTabProps {
   readonly spec: MontageDraft;
+  /** The editor's playhead: listening to a track stops a playback, and a playback stops the listening (L5: one sound at a time). */
+  readonly playhead: PlayheadStore;
   /** The selected clip's empty cell a photo click fills; null when none waits. */
   readonly fillTarget: FillTarget;
   /** Why no clip can be added (20 clips, no 0.5 s of room). */
@@ -107,7 +117,7 @@ export interface MineTabProps {
   readonly onPickVisual: (media: MediaSummary) => void;
   /** A photo or video dragged out of the tab (onto «Кадры» or an empty cell), or null when the drag ends. */
   readonly onDragVisual: (drag: BinDrag | null) => void;
-  /** A track row clicked (never one shorter than the montage). */
+  /** A track row clicked (never one shorter than the montage, but the montage's own track always: it selects the music). */
   readonly onPickTrack: (media: MediaSummary) => void;
   /** A sticker tile clicked: a layer at the playhead. */
   readonly onPickSticker: (mediaId: string) => void;
@@ -116,11 +126,30 @@ export interface MineTabProps {
 const dragOf = (media: MediaSummary): BinDrag | null =>
   media.kind === "photo" ? { source: "own", kind: "photo", mediaId: media.mediaId } : media.kind === "video" ? { source: "own", kind: "video", mediaId: media.mediaId, durationMs: media.durationMs ?? 0 } : null;
 
+/**
+ * A video tile's poster (round 1, M1): the stored mezzanine's first frame, muted (its sound is never used, V4). When the tile goes, the element
+ * lets go of the file and its decoder at once (paused, no source, loaded again), as the preview's video does, rather than when it is collected.
+ */
+export function PosterVideo({ url, onFail }: { url: string; onFail: () => void }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const element = ref.current;
+    if (element === null) return;
+    element.src = url;
+    return () => {
+      element.pause();
+      element.removeAttribute("src");
+      element.load();
+    };
+  }, [url]);
+  return <video ref={ref} className="mine-pic" muted playsInline preload="metadata" aria-hidden="true" tabIndex={-1} onError={onFail} />;
+}
+
 /** A photo or video tile's picture: the stored file through main's media route (an element shows it, nothing reads it), or a stand-in. */
-function VisualPicture({ media }: { media: MediaSummary }) {
+function VisualPicture({ media, live }: { media: MediaSummary; live: boolean }) {
   const { client } = useEngine();
   const [failed, setFailed] = useState(false);
-  const url = media.kind === "photo" ? ownPhotoUrl(client, media.mediaId) : ownVideoUrl(client, media.mediaId);
+  const url = media.kind === "photo" ? ownPhotoUrl(client, media.mediaId) : live ? ownVideoUrl(client, media.mediaId) : null;
   if (url === null || failed) {
     return (
       <span className={media.kind === "video" ? "mine-pic mine-pic-video" : "mine-pic"} style={media.kind === "photo" ? { background: placeholderGradient(media.mediaId) } : undefined} aria-hidden="true">
@@ -131,8 +160,7 @@ function VisualPicture({ media }: { media: MediaSummary }) {
   return media.kind === "photo" ? (
     <img className="mine-pic" src={url} alt="" draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} />
   ) : (
-    // The first frame of the stored mezzanine, muted: its sound is never used (V4).
-    <video className="mine-pic" src={url} muted playsInline preload="metadata" aria-hidden="true" tabIndex={-1} onError={() => setFailed(true)} />
+    <PosterVideo url={url} onFail={() => setFailed(true)} />
   );
 }
 
@@ -163,7 +191,25 @@ function DeleteButton({ media, onDelete }: { media: MediaSummary; onDelete: (med
   );
 }
 
-function VisualTileView({ tile, fillTarget, onPick, onDrag, onDelete, onCancel, hintId }: { tile: VisualTile; fillTarget: FillTarget; onPick: (media: MediaSummary) => void; onDrag: (drag: BinDrag | null) => void; onDelete: (media: MediaSummary) => void; onCancel: (view: ImportView) => void; hintId: string }) {
+function VisualTileView({
+  tile,
+  live,
+  fillTarget,
+  onPick,
+  onDrag,
+  onDelete,
+  onCancel,
+  hintId,
+}: {
+  tile: VisualTile;
+  live: boolean;
+  fillTarget: FillTarget;
+  onPick: (media: MediaSummary) => void;
+  onDrag: (drag: BinDrag | null) => void;
+  onDelete: (media: MediaSummary) => void;
+  onCancel: (view: ImportView) => void;
+  hintId: string;
+}) {
   if (tile.kind === "import") {
     const { view } = tile;
     return (
@@ -177,7 +223,7 @@ function VisualTileView({ tile, fillTarget, onPick, onDrag, onDelete, onCancel, 
   const { media, slot, action } = tile;
   const drag = action === "too-short" ? null : dragOf(media);
   return (
-    <li className={["ph mine-tile", slot !== null ? "mine-tile-in" : "", action === "too-short" ? "mine-tile-off" : ""].filter(Boolean).join(" ")}>
+    <li className={["ph mine-tile", slot !== null ? "mine-tile-in" : "", action === "too-short" ? "mine-tile-off" : ""].filter(Boolean).join(" ")} data-poster={media.kind === "video" ? media.mediaId : undefined}>
       <button
         type="button"
         className="mine-pick"
@@ -198,7 +244,7 @@ function VisualTileView({ tile, fillTarget, onPick, onDrag, onDelete, onCancel, 
         }}
         onDragEnd={() => onDrag(null)}
       >
-        <VisualPicture media={media} />
+        <VisualPicture media={media} live={live} />
       </button>
       {media.kind === "video" && (
         <span className="ctag mine-dur">
@@ -229,7 +275,7 @@ function TrackRowView({ row, montageMs, listening, onListen, onPick, onDelete, o
       </li>
     );
   }
-  const { media, tooShort, inDraft } = row;
+  const { media, tooShort, inDraft, pickable } = row;
   const playing = listening === media.mediaId;
   const canListen = ownTrackUrl(client, media.mediaId) !== null;
   return (
@@ -250,10 +296,10 @@ function TrackRowView({ row, montageMs, listening, onListen, onPick, onDelete, o
         className="mine-track-pick"
         aria-label={trackRowAria(row, montageMs)}
         aria-current={inDraft ? "true" : undefined}
-        aria-disabled={tooShort ? "true" : undefined}
-        title={tooShort ? "Трек короче ролика — его не выбрать" : inDraft ? "Этот трек уже в ролике" : "Клик — трек в ролик, с начала"}
+        aria-disabled={pickable ? undefined : "true"}
+        title={trackRowTitle(row)}
         onClick={() => {
-          if (!tooShort) onPick(media);
+          if (pickable) onPick(media);
         }}
       >
         <span className="mine-track-name">{media.name}</span>
@@ -292,18 +338,65 @@ function StickerTileView({ tile, blocked, why, onPick, onDelete, onCancel }: { t
   );
 }
 
-export function MineTab({ spec, fillTarget, addBlock, stickerWhy, selectedSticker, onPickVisual, onDragVisual, onPickTrack, onPickSticker }: MineTabProps) {
+/**
+ * The video tiles near the view (round 1, M1), by an IntersectionObserver on the tab's own scroll area with about a screen's margin: only
+ * those may hold a live poster (`livePosters`, at most `MAX_LIVE_POSTERS`). Where nothing reports (no observer), every tile counts as near and
+ * the cap alone holds.
+ */
+function useNearPosters(root: { readonly current: HTMLElement | null }, ids: readonly string[]): ReadonlySet<string> {
+  const [near, setNear] = useState<ReadonlySet<string>>(() => new Set());
+  const key = ids.join("\n");
+  useEffect(() => {
+    const scroller = root.current;
+    if (scroller === null) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setNear(new Set(key === "" ? [] : key.split("\n")));
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setNear((now) => {
+          const next = new Set(now);
+          for (const entry of entries) {
+            const id = entry.target.getAttribute("data-poster");
+            if (id === null) continue;
+            if (entry.isIntersecting) next.add(id);
+            else next.delete(id);
+          }
+          return next;
+        });
+      },
+      { root: scroller, rootMargin: "100% 0px" },
+    );
+    for (const tile of scroller.querySelectorAll("[data-poster]")) observer.observe(tile);
+    return () => observer.disconnect();
+  }, [root, key]);
+  return near;
+}
+
+export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, selectedSticker, onPickVisual, onDragVisual, onPickTrack, onPickSticker }: MineTabProps) {
   const { client, store } = useEngine();
   const view = useEngineView();
   const mounted = useMounted();
   const hintId = useId();
+  const scroller = useRef<HTMLDivElement>(null);
   const offline = client.kind === "unavailable" || view.phase === "offline";
   const { list, retry } = useMineLibrary(client, store, `${view.bootId ?? ""}\n${view.settings?.libraryPath ?? ""}`);
 
-  // ---------- the pick (M1) and its result (M15) ----------
+  // ---------- the pick (M1), the drop (M13) and their result (M15) ----------
   const [picking, setPicking] = useState(false);
   const [outcome, setOutcome] = useState<PickOutcome | null>(null);
-  const [pickError, setPickError] = useState<EngineError | null>(null);
+  const [pickError, setPickError] = useState<{ title: string; error: EngineError } | null>(null);
+  /** Files dragged over the zone now: what it will take. */
+  const [over, setOver] = useState<ReturnType<typeof dropSummary>>(null);
+  const importDropped = client.importDropped;
+  const canDrop = importDropped !== undefined && !offline && !picking;
+
+  function settle(reply: DropReply, title: string): void {
+    if (!reply.ok) setPickError({ title, error: reply.error });
+    else if (reply.result.picked) setOutcome({ jobIds: reply.result.jobIds, refused: reply.result.refused, skipped: reply.result.skipped });
+  }
+
   async function pick(): Promise<void> {
     if (picking) return;
     setPicking(true);
@@ -311,36 +404,63 @@ export function MineTab({ spec, fillTarget, addBlock, stickerWhy, selectedSticke
     const reply = await client.request("media.pickImport", { kind: "any" });
     if (!mounted.current) return;
     setPicking(false);
-    if (!reply.ok) setPickError(reply.error);
-    else if (reply.result.picked) setOutcome({ jobIds: reply.result.jobIds, refused: reply.result.refused, skipped: reply.result.skipped });
+    settle(reply.ok ? { ok: true, result: reply.result } : reply, "Окно выбора файлов не открылось");
+  }
+
+  async function drop(files: readonly File[]): Promise<void> {
+    if (importDropped === undefined || picking || files.length === 0) return;
+    setPicking(true);
+    setPickError(null);
+    const reply = await importDropped(files);
+    if (!mounted.current) return;
+    setPicking(false);
+    settle(reply, "Перетащенные файлы не добавились");
+  }
+
+  /** A drag over the zone: only files are taken, and only when the zone can take them; the browser's own handling (open the file) never happens. */
+  function onDragOver(event: DragEvent<HTMLButtonElement>): void {
+    const transfer = event.dataTransfer;
+    if (!isFileDrag([...transfer.types])) return;
+    event.preventDefault();
+    transfer.dropEffect = canDrop ? "copy" : "none";
+    setOver(canDrop ? dropSummary([...transfer.items].map((item) => ({ kind: item.kind, type: item.type }))) : null);
+  }
+
+  function onDragLeave(event: DragEvent<HTMLButtonElement>): void {
+    const next = event.relatedTarget;
+    if (next instanceof Node && event.currentTarget.contains(next)) return;
+    setOver(null);
+  }
+
+  function onDrop(event: DragEvent<HTMLButtonElement>): void {
+    const transfer = event.dataTransfer;
+    if (!isFileDrag([...transfer.types])) return;
+    event.preventDefault();
+    setOver(null);
+    if (canDrop) void drop([...transfer.files]);
   }
 
   // ---------- the imports on their way (M6, M14) ----------
-  /** The cancels this tab sent: an end that beats the answer is still the owner's own (nothing to tell). */
-  const [asked, setAsked] = useState<ReadonlySet<string>>(() => new Set());
   const [cancelError, setCancelError] = useState<EngineError | null>(null);
   async function cancel(target: ImportView): Promise<void> {
-    setAsked((now) => new Set(now).add(target.jobId));
+    // Marked BEFORE the command goes (round 1, L1): the job's end may beat the answer, and it is still the owner's own cancel.
+    store.askImportCancel(target.jobId);
     const reply = await client.request("media.cancelImport", { jobId: target.jobId });
-    if (reply.ok) {
-      store.markImportCancelling(target.jobId);
-      return;
-    }
-    if (!mounted.current) return;
+    if (reply.ok) return;
     // Refused: the import goes on, and says so again.
-    setAsked((now) => new Set([...now].filter((id) => id !== target.jobId)));
-    setCancelError(reply.error);
+    store.cancelRefused(target.jobId);
+    if (mounted.current) setCancelError(reply.error);
   }
-  const imports = view.imports.map((i) => (asked.has(i.jobId) && !i.cancelRequested ? { ...i, cancelRequested: true } : i));
+  const imports = view.imports;
   const running = imports.find((i) => i.status === "running");
   const waiting = imports.filter((i) => i.status === "queued").length;
   const failures = imports.flatMap((i) => {
     const text = importFailure(i);
     return text === null ? [] : [{ jobId: i.jobId, ...text }];
   });
-  const result = outcome === null ? null : pickOutcomeText(outcome, view.imports);
+  const result = outcome === null ? null : pickOutcomeText(outcome, imports);
 
-  // ---------- listen (M9): one track at a time ----------
+  // ---------- listen (M9): one track at a time, and one sound in the editor (L5) ----------
   const audio = useRef<HTMLAudioElement>(null);
   const [listening, setListening] = useState<string | null>(null);
   useEffect(() => {
@@ -351,15 +471,27 @@ export function MineTab({ spec, fillTarget, addBlock, stickerWhy, selectedSticke
       element.pause();
       return;
     }
+    // The preview's playback stops: one sound at a time.
+    if (playhead.get().playing) playhead.toggle();
     element.src = url;
     element.currentTime = 0;
     element.play()?.catch(() => {
       if (mounted.current) setListening(null);
     });
-  }, [listening, client, mounted]);
+  }, [listening, client, mounted, playhead]);
+  // A playback started (the timeline's «Воспроизвести», a key): the listening stops.
+  useEffect(() => playhead.subscribe(() => {
+    if (playhead.get().playing) setListening(null);
+  }), [playhead]);
   useEffect(() => {
     const element = audio.current;
-    return () => element?.pause();
+    return () => {
+      if (element === null) return;
+      element.pause();
+      // The file and its decoder are let go now, not when the element is collected.
+      element.removeAttribute("src");
+      element.load();
+    };
   }, []);
 
   // ---------- delete ----------
@@ -385,15 +517,36 @@ export function MineTab({ spec, fillTarget, addBlock, stickerWhy, selectedSticke
   const empty = list.state === "ready" && library.media.length === 0 && !imports.some(isActiveImport);
   const montageMs = totalMs(spec);
   const confirmText = confirm === null ? null : deleteConfirmText(confirm.media, spec);
+  // M1: the video tiles near the view hold a live poster, at most MAX_LIVE_POSTERS of them.
+  const videoIds = sections.visual.flatMap((t) => (t.kind === "record" && t.media.kind === "video" ? [t.media.mediaId] : []));
+  const near = useNearPosters(scroller, videoIds);
+  const live = livePosters(videoIds, near, MAX_LIVE_POSTERS);
 
   return (
-    <div className="mine">
-      <button type="button" className="drop" aria-busy={picking} disabled={offline || picking} onClick={() => void pick()}>
+    <div ref={scroller} className="mine">
+      <button
+        type="button"
+        className={over !== null ? "drop drop-over" : "drop"}
+        aria-busy={picking}
+        disabled={offline || picking}
+        onClick={() => void pick()}
+        onDragEnter={onDragOver}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         <span className="drop-ic">{picking ? <Spin /> : <Icon name="upload" size={18} />}</span>
-        <span className="drop-text">
-          <span className="drop-title">Добавить файлы</span>
-          <span className="faint drop-sub">фото, видео, музыка, стикеры · перетащите или нажмите</span>
-        </span>
+        {over !== null ? (
+          <span className="drop-text">
+            <span className="drop-title">{over.title}</span>
+            <span className="faint drop-sub">{over.detail}</span>
+          </span>
+        ) : (
+          <span className="drop-text">
+            <span className="drop-title">Добавить файлы</span>
+            <span className="faint drop-sub">фото, видео, музыка, стикеры · перетащите или нажмите</span>
+          </span>
+        )}
       </button>
 
       {offline && (
@@ -403,13 +556,9 @@ export function MineTab({ spec, fillTarget, addBlock, stickerWhy, selectedSticke
         </p>
       )}
 
-      {running !== undefined && (
-        <MineStatus view={running} queued={waiting} onCancel={(v) => void cancel(v)} />
-      )}
+      {running !== undefined && <MineStatus view={running} queued={waiting} onCancel={(v) => void cancel(v)} />}
 
-      {pickError !== null && (
-        <MineAlert title="Окно выбора файлов не открылось" body={errorText(pickError)} onClose={() => setPickError(null)} />
-      )}
+      {pickError !== null && <MineAlert title={pickError.title} body={errorText(pickError.error)} onClose={() => setPickError(null)} />}
       {cancelError !== null && <MineAlert title="Не удалось отменить" body={errorText(cancelError)} onClose={() => setCancelError(null)} />}
       {result !== null && <MineAlert title={result.title} body={[...result.lines, ...(result.rest === null ? [] : [result.rest])]} onClose={() => setOutcome(null)} />}
       {failures.map((f) => (
@@ -469,7 +618,7 @@ export function MineTab({ spec, fillTarget, addBlock, stickerWhy, selectedSticke
             <Icon name="folder" size={20} strokeWidth={1.7} />
           </span>
           <p className="mine-empty-title">Своих файлов пока нет</p>
-          <p className="faint">Фото и видео станут кадрами, музыка — треком ролика, анимированные GIF и APNG — стикерами. Studio хранит у себя копию, исходный файл не трогает.</p>
+          <p className="faint">Фото и видео станут кадрами, музыка — треком ролика, анимированные GIF и APNG — стикерами. Перетащите файлы сюда или нажмите «Добавить файлы». Studio хранит у себя копию, исходный файл не трогает.</p>
         </div>
       ) : (
         <div className="mine-sections">
@@ -485,6 +634,7 @@ export function MineTab({ spec, fillTarget, addBlock, stickerWhy, selectedSticke
                   <VisualTileView
                     key={tile.kind === "import" ? tile.view.jobId : tile.media.mediaId}
                     tile={tile}
+                    live={tile.kind === "record" && live.has(tile.media.mediaId)}
                     fillTarget={fillTarget}
                     onPick={onPickVisual}
                     onDrag={onDragVisual}
@@ -598,8 +748,9 @@ function MineAlert({ title, body, onClose }: { title: string; body: string | rea
       <Icon name="alert" size={18} />
       <span className="drop-text">
         <span className="drop-title">{title}</span>
-        {lines.map((line) => (
-          <span key={line} className="drop-alert-line">
+        {lines.map((line, i) => (
+          // Two refused files may share a name and a reason (round 1, L6): the line's place keys it, never its text.
+          <span key={i} className="drop-alert-line">
             {line}
           </span>
         ))}

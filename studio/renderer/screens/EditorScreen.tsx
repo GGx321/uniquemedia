@@ -239,9 +239,9 @@ function stickerAddWhy(spec: Montage["spec"], restMs: number): string | null {
 }
 
 /** The «Мои» tab (3f.6), with why no sticker can be added where the playhead rests (M12 follows the «GIF» tab's rules). */
-function MineTabAtPlayhead({ timeline, spec, ...props }: { timeline: TimelineState } & Omit<MineTabProps, "stickerWhy">) {
+function MineTabAtPlayhead({ timeline, spec, ...props }: { timeline: TimelineState } & Omit<MineTabProps, "stickerWhy" | "playhead">) {
   const restMs = usePlayheadRest(timeline.playhead);
-  return <MineTab spec={spec} stickerWhy={stickerAddWhy(spec, restMs)} {...props} />;
+  return <MineTab spec={spec} playhead={timeline.playhead} stickerWhy={stickerAddWhy(spec, restMs)} {...props} />;
 }
 
 /** The «GIF» tab, and why no sticker can be added where the playhead rests (G10: at the cap it says what to do about it). */

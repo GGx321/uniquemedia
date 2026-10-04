@@ -73,17 +73,83 @@ describe("imports in the view", () => {
     expect(failed?.error).toMatchObject({ code: "MEDIA_UNSUPPORTED", mediaReason: "codec" });
   });
 
-  test("a cancel asked here marks the import until its end; the end makes it cancelled", async () => {
+  test("a cancel asked here marks the import before the command goes; the end makes it cancelled and keeps the mark", async () => {
     const scheduler = new ManualScheduler();
     const h = await started(new MockEngine({ scheduler }));
     const [jobId = ""] = await pick(h, [VIDEO]);
-    h.store.markImportCancelling(jobId);
+    h.store.askImportCancel(jobId);
     expect(h.store.getView().imports[0]?.cancelRequested).toBe(true);
     const reply = await h.client.request("media.cancelImport", { jobId });
     expect(reply.ok).toBe(true);
     scheduler.runAll();
     await settle();
     expect(h.store.getView().imports[0]).toMatchObject({ status: "cancelled", cancelRequested: true });
+  });
+
+  test("the race (round 1, L1): the engine's cancelled event lands before the answer, and the import is still the owner's own cancel", async () => {
+    const scheduler = new ManualScheduler();
+    const h = await started(new MockEngine({ scheduler }));
+    const [jobId = ""] = await pick(h, [VIDEO]);
+    h.store.askImportCancel(jobId);
+    // The engine ends the job on its own clock before this window hears the cancel's answer.
+    await h.client.request("media.cancelImport", { jobId });
+    scheduler.runAll();
+    await settle();
+    expect(h.store.getView().imports[0]).toMatchObject({ status: "cancelled", cancelRequested: true });
+    // And a snapshot taken afterwards (a remounted tab, a resync) keeps it so.
+    h.store.reload();
+    await settle();
+    expect(h.store.getView().imports[0]).toMatchObject({ status: "cancelled", cancelRequested: true });
+  });
+
+  test("a cancel the engine refused takes the mark back: the import goes on, and an end the engine makes later is told", async () => {
+    const scheduler = new ManualScheduler();
+    const h = await started(new MockEngine({ scheduler }));
+    const [jobId = ""] = await pick(h, [VIDEO]);
+    h.store.askImportCancel(jobId);
+    h.store.cancelRefused(jobId);
+    expect(h.store.getView().imports[0]?.cancelRequested).toBe(false);
+    h.store.reload();
+    await settle();
+    expect(h.store.getView().imports[0]?.cancelRequested).toBe(false);
+  });
+
+  test("a snapshot keeps the cancel marks asked earlier (round 1, S5)", async () => {
+    const scheduler = new ManualScheduler();
+    const engine = new MockEngine({ scheduler });
+    engine.holdImports(true);
+    const h = await started(engine);
+    const [jobId = ""] = await pick(h, [VIDEO]);
+    h.store.askImportCancel(jobId);
+    h.store.reload();
+    await settle();
+    expect(h.store.getView().imports[0]).toMatchObject({ status: "running", cancelRequested: true });
+  });
+
+  test("going offline for any other reason than the engine gone leaves the imports as they are (round 1, S6)", async () => {
+    const scheduler = new ManualScheduler();
+    const engine = new MockEngine({ scheduler });
+    engine.holdImports(true);
+    const h = await started(engine);
+    await pick(h, [VIDEO]);
+    h.engine.failNext("engine.snapshot", { code: "INTERNAL", detail: "a snapshot that failed for once" });
+    h.store.reload();
+    await settle();
+    expect(h.store.getView().phase).toBe("offline");
+    expect(h.store.getView().imports[0]?.status).toBe("running");
+  });
+
+  test("a library switch clears the old library's finished imports, and the snapshot after it does not bring them back (round 1, L7)", async () => {
+    const scheduler = new ManualScheduler();
+    const h = await started(new MockEngine({ scheduler }));
+    await pick(h, [BAD_VIDEO]);
+    scheduler.runAll();
+    await settle();
+    expect(statuses(h.store)).toEqual([["clip.webm", "failed"]]);
+    const switched = await h.client.request("settings.setLibraryPath", { path: "/Users/studio/Other library" });
+    expect(switched.ok).toBe(true);
+    await settle();
+    expect(h.store.getView().imports).toEqual([]);
   });
 
   test("a snapshot brings the imports that started before this window looked (another window's pick)", async () => {

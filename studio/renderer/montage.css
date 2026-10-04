@@ -3867,6 +3867,30 @@ button.drop:focus-visible {
   outline-offset: 2px;
 }
 
+/* M13 (round 2): files from Finder or Explorer held over the zone, the sheet's «Отпустите — добавим 3 файла · 2 фото, 1 видео» */
+button.drop.drop-over,
+button.drop.drop-over:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-08);
+}
+
+.drop-over .drop-ic,
+button.drop.drop-over:hover:not(:disabled) .drop-ic {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.drop-over .drop-title {
+  color: var(--accent-text);
+  white-space: normal;
+}
+
+/* The zone's children never take the drag themselves, so a leave from the zone onto its own icon or text is never a leave. */
+button.drop > * {
+  pointer-events: none;
+}
+
 .drop-ic {
   display: flex;
   flex-shrink: 0;

@@ -132,12 +132,32 @@ export function applyImportCancelled(imports: readonly ImportView[], cancelled: 
   return patchImport(imports, cancelled, (view) => (isActiveImport(view) ? { ...view, status: "cancelled" } : view));
 }
 
-/** This window asked to cancel `jobId`: marked (for good). Nothing for a job that is not active here. */
+/** An import a cancel can still be the owner's: running, waiting, or already cancelled (its end may beat the cancel's answer). */
+const cancellable = (view: ImportView): boolean => isActiveImport(view) || view.status === "cancelled";
+
+/**
+ * This window asked to cancel `jobId`: marked (for good). An import already cancelled is marked too: the engine's `job.cancelled` may land before
+ * the cancel's answer (round 1, L1), and it is still the owner's own cancel. Nothing for an import that is done or failed, or not here.
+ */
 export function markImportCancelling(imports: readonly ImportView[], jobId: string): readonly ImportView[] {
   const at = imports.findIndex((i) => i.jobId === jobId);
   const view = imports[at];
-  if (view === undefined || !isActiveImport(view) || view.cancelRequested) return imports;
+  if (view === undefined || !cancellable(view) || view.cancelRequested) return imports;
   return imports.map((i, n) => (n === at ? { ...view, cancelRequested: true } : i));
+}
+
+/** The engine refused the cancel: the import goes on, and is not the owner's cancel any more. */
+export function unmarkImportCancelling(imports: readonly ImportView[], jobId: string): readonly ImportView[] {
+  const at = imports.findIndex((i) => i.jobId === jobId);
+  const view = imports[at];
+  if (view === undefined || !view.cancelRequested) return imports;
+  return imports.map((i, n) => (n === at ? { ...view, cancelRequested: false } : i));
+}
+
+/** The cancels this window asked for, put back on the imports they name (one first heard of after the ask, by an event or a snapshot). */
+export function applyCancelAsks(imports: readonly ImportView[], asked: ReadonlySet<string>): readonly ImportView[] {
+  if (asked.size === 0 || !imports.some((i) => asked.has(i.jobId) && !i.cancelRequested && cancellable(i))) return imports;
+  return imports.map((i) => (asked.has(i.jobId) && !i.cancelRequested && cancellable(i) ? { ...i, cancelRequested: true } : i));
 }
 
 /** The engine is gone for good (no event will end anything): every active import fails with `error`. */
@@ -150,7 +170,7 @@ export function failActiveImports(imports: readonly ImportView[], error: EngineE
  * The view after a snapshot: the engine's import jobs in its order, minus the ones the owner dismissed. A snapshot that does not say the
  * stage keeps a running import's prepare as this window last heard it (and its facts); this window's cancel mark is kept.
  */
-export function importsFromSnapshot(previous: readonly ImportView[], states: readonly ImportState[], dismissed: ReadonlySet<string>): readonly ImportView[] {
+export function importsFromSnapshot(previous: readonly ImportView[], states: readonly ImportState[], dismissed: ReadonlySet<string>, asked: ReadonlySet<string> = new Set()): readonly ImportView[] {
   const before = new Map(previous.map((i) => [i.jobId, i]));
   const views = states
     .filter((state) => !dismissed.has(state.jobId))
@@ -171,7 +191,7 @@ export function importsFromSnapshot(previous: readonly ImportView[], states: rea
         prepare: stage !== "prepare" ? null : keepPrepare ? (was?.prepare ?? null) : prepareFactsOf(state),
         mediaId: state.mediaId,
         error: state.error ?? null,
-        cancelRequested: was?.cancelRequested === true,
+        cancelRequested: was?.cancelRequested === true || asked.has(state.jobId),
       };
     });
   return capFinished(views);

@@ -1,3 +1,4 @@
+import type { MediaKind } from "../../shared/engine";
 import type { EngineClient } from "./client";
 import type { MockEngine, MockMediaPick } from "./mockEngine";
 import type { MockOwnSeed } from "./mockMedia";
@@ -40,7 +41,7 @@ export function mineDemoPicks(): MockMediaPick[][] {
   ];
 }
 
-/** `engine` with the demo library, and `client` with the drop zone's dialog scripted in turn (`media.pickImport {kind: "any"}` only). */
+/** `engine` with the demo library, and `client` with the drop zone's dialog scripted in turn (`media.pickImport {kind: "any"}` only) and a drop door. */
 export function withMineDemo(engine: MockEngine, client: EngineClient): EngineClient {
   engine.seedOwnMedia(mineDemoSeeds());
   const picks = mineDemoPicks();
@@ -52,5 +53,34 @@ export function withMineDemo(engine: MockEngine, client: EngineClient): EngineCl
     }
     return client.request(type, payload);
   };
-  return { ...client, request };
+  return { ...client, request, importDropped: mockDropDoor(engine, client) };
+}
+
+/** What the mock's importer would take a dropped file for, by its type and then its extension (the real engine reads the bytes); null for none. */
+function mockKindOf(file: File): MediaKind | null {
+  const ext = file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase();
+  if (file.type === "image/gif" || ext === "gif") return "sticker";
+  if (file.type.startsWith("image/") || ["jpg", "jpeg", "png", "webp"].includes(ext)) return "photo";
+  if (file.type.startsWith("video/") || ["mp4", "mov"].includes(ext)) return "video";
+  if (file.type.startsWith("audio/") || ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"].includes(ext)) return "audio";
+  return null;
+}
+
+/**
+ * The dev build's (and the screen tests') drop door (3f.6 round 2, M13): what main would do with the dropped files' paths, played on the mock: the
+ * files go through the mock's own pick (`media.pickImport {kind: "any"}` with the dialog scripted as these files), a type it cannot tell refused as
+ * `format`. The real door is the preload's (`webUtils` paths to main).
+ */
+export function mockDropDoor(engine: MockEngine, client: EngineClient): NonNullable<EngineClient["importDropped"]> {
+  return async (files) => {
+    if (files.length === 0) return { ok: true, result: { picked: false } };
+    engine.pickMediaNext(
+      files.map((file): MockMediaPick => {
+        const kind = mockKindOf(file);
+        return kind === null ? { name: file.name, reason: "format" } : { name: file.name, accept: { kind, bytes: Math.max(1, file.size) } };
+      }),
+    );
+    const reply = await client.request("media.pickImport", { kind: "any" });
+    return reply.ok ? { ok: true, result: reply.result } : { ok: false, error: reply.error };
+  };
 }
