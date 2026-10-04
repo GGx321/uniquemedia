@@ -1422,7 +1422,7 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId, ...outcome } };
       }
       case "media.list":
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#media.list(command.payload.kind) };
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#media.list(command.payload.kind, command.payload.mediaIds) };
       case "media.delete": {
         const { mediaId } = command.payload;
         let removed: "deleted" | "not-found" | "in-use";

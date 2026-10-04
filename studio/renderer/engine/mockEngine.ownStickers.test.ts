@@ -35,6 +35,37 @@ async function specWith(mock: Mock, ...mediaIds: string[]): Promise<MontageDraft
   return { ...got.montage.spec, layers: mediaIds.map((id, i) => ownLayer(i + 1, id)) };
 }
 
+describe("media.list by id", () => {
+  test("answers the records named and no others, as the engine does, and not the stickers of another kind", async () => {
+    const mock = makeMock();
+    const first = await storeSticker(mock, party);
+    const second = await storeSticker(mock, { ...party, name: "other.gif" });
+    const listed = await unwrap(mock.client.request("media.list", { kind: "sticker", mediaIds: [first, "media-00000404"] }));
+    expect(listed.media.map((m) => m.mediaId)).toEqual([first]);
+    expect(listed.total).toBe(1);
+    const none = await unwrap(mock.client.request("media.list", { kind: "photo", mediaIds: [first, second] }));
+    expect(none).toEqual({ media: [], total: 0 });
+    const empty = await unwrap(mock.client.request("media.list", { mediaIds: [] }));
+    expect(empty.total).toBe(0);
+  });
+
+  test("finds a sticker older than the 500 newest, which the plain listing cuts off", async () => {
+    const mock = makeMock();
+    const oldest = await storeSticker(mock, party);
+    for (let batch = 0; batch < 25; batch++) {
+      mock.engine.pickMediaNext(Array.from({ length: 20 }, (_, i) => ({ ...party, name: `newer-${batch}-${i}.gif` })));
+      await unwrap(mock.client.request("media.pickImport", { kind: "sticker" }));
+      mock.scheduler.runAll();
+    }
+    const plain = await unwrap(mock.client.request("media.list", { kind: "sticker" }));
+    expect(plain.total).toBe(501);
+    expect(plain.media).toHaveLength(500);
+    expect(plain.media.some((m) => m.mediaId === oldest)).toBe(false);
+    const byId = await unwrap(mock.client.request("media.list", { kind: "sticker", mediaIds: [oldest] }));
+    expect(byId.media.map((m) => m.mediaId)).toEqual([oldest]);
+  });
+});
+
 const render = (mock: Mock, spec: MontageDraft) => mock.client.request("videos.render", { spec });
 const remove = (mock: Mock, mediaId: string) => mock.client.request("media.delete", { mediaId });
 

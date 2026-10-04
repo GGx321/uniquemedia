@@ -394,8 +394,9 @@ export class MediaRecords {
   }
 
   /** Newest first (the later one first when two share an instant), cut at `MAX_LISTED_MEDIA`; `total` counts every match. */
-  list(kind?: MediaKind): { media: MediaSummary[]; total: number } {
-    const all = [...this.#index.values()].filter((r) => kind === undefined || r.kind === kind);
+  list(kind?: MediaKind, mediaIds?: readonly string[]): { media: MediaSummary[]; total: number } {
+    const named = mediaIds === undefined ? undefined : new Set(mediaIds);
+    const all = [...this.#index.values()].filter((r) => (kind === undefined || r.kind === kind) && (named === undefined || named.has(r.id)));
     const orderOf = (record: RecordShape): number => this.#order.get(record.id) ?? 0;
     all.sort((a, b) => (a.createdAt === b.createdAt ? orderOf(b) - orderOf(a) : a.createdAt < b.createdAt ? 1 : -1));
     return { media: all.slice(0, MAX_LISTED_MEDIA).map((r) => this.#summaryOf(r)), total: all.length };

@@ -214,8 +214,9 @@ export class MockOwnMedia {
   }
 
   /** Newest first, cut as the engine cuts it: the contract's 500. */
-  list(kind?: MediaKind): { media: MediaSummary[]; total: number } {
-    const all = this.#records.filter((r) => kind === undefined || r.kind === kind).reverse();
+  list(kind?: MediaKind, mediaIds?: readonly string[]): { media: MediaSummary[]; total: number } {
+    const named = mediaIds === undefined ? undefined : new Set(mediaIds);
+    const all = this.#records.filter((r) => (kind === undefined || r.kind === kind) && (named === undefined || named.has(r.mediaId))).reverse();
     return { media: all.slice(0, MAX_LISTED_MEDIA), total: all.length };
   }
 

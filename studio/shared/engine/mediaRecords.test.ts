@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_LISTED_MEDIA, MediaCancelImportPayload, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaSummary } from "./media";
+import { MAX_LISTED_BY_ID, MAX_LISTED_MEDIA, MediaCancelImportPayload, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaSummary } from "./media";
 
 // 3f.1b: own-media records, the listing and the import job's commands (K28, K29).
 
@@ -97,6 +97,13 @@ describe("media.list", () => {
     expect(MediaListPayload.safeParse({ kind: "video" }).success).toBe(true);
     expect(MediaListPayload.safeParse({ kind: "any" }).success).toBe(false);
     expect(MediaListPayload.safeParse({ kind: "video", path: "/x" }).success).toBe(false);
+    // 3f.5 round 1: a draft's own stickers by id, however old they are (the plain listing is cut at MAX_LISTED_MEDIA).
+    expect(MediaListPayload.safeParse({ kind: "sticker", mediaIds: ["media-00000001", "media-00000002"] }).success).toBe(true);
+    expect(MediaListPayload.safeParse({ mediaIds: [] }).success).toBe(true);
+    expect(MediaListPayload.safeParse({ mediaIds: ["../x"] }).success).toBe(false);
+    expect(MediaListPayload.safeParse({ mediaIds: "media-00000001" }).success).toBe(false);
+    expect(MediaListPayload.safeParse({ mediaIds: Array.from({ length: MAX_LISTED_BY_ID + 1 }, (_, i) => `media-${String(i).padStart(8, "0")}`) }).success).toBe(false);
+    expect(MediaListPayload.safeParse({ mediaIds: Array.from({ length: MAX_LISTED_BY_ID }, (_, i) => `media-${String(i).padStart(8, "0")}`) }).success).toBe(true);
   });
 
   test("answers at most MAX_LISTED_MEDIA records and how many there are in all", () => {

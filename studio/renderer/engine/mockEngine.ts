@@ -1409,7 +1409,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { mediaId: c.payload.mediaId, apngBase64: btoa(binary) });
       }
       case "media.list":
-        return this.ok(c, this.ownMedia.list(c.payload.kind));
+        return this.ok(c, this.ownMedia.list(c.payload.kind, c.payload.mediaIds));
       case "media.delete": {
         const { mediaId } = c.payload;
         if (!this.ownMedia.has(mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });

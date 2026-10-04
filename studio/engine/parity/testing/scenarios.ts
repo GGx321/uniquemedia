@@ -1327,6 +1327,18 @@ const OWN_STICKER_SCENARIOS: readonly Scenario[] = [
       await t.call("media.list", { kind: "sticker" });
     },
   },
+  {
+    name: "own stickers: media.list by id answers the records named, of the kind asked, and nothing for an id nobody holds",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      const mediaId = await importedStickerId(t, control);
+      t.note("the sticker by its id, with an id nobody holds beside it");
+      await t.call("media.list", { kind: "sticker", mediaIds: [mediaId, "media-00000404"] });
+      t.note("the same id asked as a photo, and no ids at all");
+      await t.call("media.list", { kind: "photo", mediaIds: [mediaId] });
+      await t.call("media.list", { mediaIds: [] });
+    },
+  },
 ];
 
 /** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */

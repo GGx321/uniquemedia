@@ -144,6 +144,9 @@ export const MAX_STICKER_LOOP_FRAMES = 300;
 /** `media.list` answers at most this many records (newest first); `total` says how many there are. */
 export const MAX_LISTED_MEDIA = 500;
 
+/** `media.list` by id (3f.5): at most this many ids (a draft has at most 10 sticker layers, and 20 files are picked at a time). */
+export const MAX_LISTED_BY_ID = 50;
+
 const PositiveInt = z.number().int().positive();
 
 /**
@@ -191,7 +194,14 @@ export const MediaSummary = z
 export type MediaSummary = z.infer<typeof MediaSummary>;
 
 /** `media.list`: every own file, or those of one kind. */
-export const MediaListPayload = z.strictObject({ kind: MediaKind.optional() });
+export const MediaListPayload = z.strictObject({
+  kind: MediaKind.optional(),
+  /**
+   * Only the records with these ids (the `kind` still filters them): for a window that needs the few files a draft names, however old they are, since the
+   * plain listing is cut at `MAX_LISTED_MEDIA` newest. `total` then counts the matches. An id nobody holds matches nothing.
+   */
+  mediaIds: z.array(Id).max(MAX_LISTED_BY_ID).optional(),
+});
 export const MediaListResult = z
   .strictObject({
     /** Newest first, at most `MAX_LISTED_MEDIA`. */

@@ -1,6 +1,7 @@
 import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import type { Focus, Layer, MontageDraft, TextLayer } from "../../../shared/engine";
 import { FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, zonesHit } from "../../../shared/montage";
+import { ownStickerCells } from "../../../shared/montage/ownStickers";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
 import { previewLook, refusedNow } from "../../engine/textPreviewQueue";
@@ -190,7 +191,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
   const { client } = useEngine();
   const textPreviews = useTextPreviews();
   // The owner's own stickers by media id (3f.5): the record each own-sticker layer is drawn from.
-  const ownStickers = useOwnStickers(client);
+  const ownStickers = useOwnStickers(client, ownStickerCells(spec).map((cell) => cell.mediaId));
   const commands = useSelectionCommands(session, timeline);
   const playheadFrame = usePlayheadFrame(timeline.playhead);
   const [drag, setDrag] = useState<Drag | null>(null);
