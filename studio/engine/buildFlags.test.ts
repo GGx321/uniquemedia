@@ -228,7 +228,6 @@ describe("the smoke test's production bundle checks", () => {
       "the mock-CDN transport is in the engine bundle",
       // 3a.9: the commit hold the packaged E2E arms; compiled out of production (the passing test above).
       "a test-only commit hold is in the engine bundle",
-      // 3f.1b: the stand-in photo importer the packaged E2E drives an import through; compiled out of production.
     ]);
   });
 });

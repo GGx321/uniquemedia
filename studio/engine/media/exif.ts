@@ -78,7 +78,7 @@ function readJpeg(bytes: Uint8Array): Orientation {
       continue;
     }
     const length = ((bytes[at + 2] ?? 0) << 8) | (bytes[at + 3] ?? 0);
-    // A segment's length counts its own two bytes: below 2 it is not a segment, and walking on would not move forward.
+    // A segment's length counts its own two bytes, so below 2 it is malformed (it ends inside its own length field): the file is not read on. (The walk would still advance, by the marker's two bytes at least; the point is that nothing after a broken length can be trusted.)
     if (length < 2) return UPRIGHT;
     const bodyStart = at + 4;
     const bodyEnd = at + 2 + length;

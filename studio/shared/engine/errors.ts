@@ -334,6 +334,7 @@ export const RENDER_NOT_QUEUED_DETAIL = "the render request ran out of time befo
  * answer had before the media store existed, kept word for word because the parity suite's golden transcript names it (the goldens are
  * append-only); the engine and the mock both use THIS constant. The renderer shows a Russian text by code, never this detail.
  */
+// Do not "fix" the wording: parity/testing/golden.ts is APPEND-ONLY and its `montages.focus: judged, unjudged, refused` line carries this exact text.
 export const OWN_PHOTO_NOT_FOUND_DETAIL = "own photos are not available yet";
 
 /** The start of the detail main gives a command the engine did not answer in time (`the engine did not answer within 30 s`): the command may still have been carried out. */

@@ -51,7 +51,25 @@ export const MAX_PICKED_FILES = 20;
  * - `dimensions` (3f.2): a photo with more pixels than the importer takes (50 megapixels, so a 48 megapixel camera picture is taken), judged from its header;
  * - `animated-webp` (3f.2): a WebP that animates; only still pictures are taken.
  */
-export const MediaUnsupportedReason = z.enum(["not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported", "too-small", "dimensions", "animated-webp"]);
+export const MediaUnsupportedReason = z.enum([
+  "not-a-file",
+  "empty",
+  "too-large",
+  "format",
+  "heic",
+  "changed",
+  "unreadable",
+  "no-space",
+  "too-many",
+  "failed",
+  "cancelled",
+  "not-yet-supported",
+  // 3f.2, one per line and at the END: the codes are neutral and shared by the kinds (the video import adds its own beside them);
+  // the texts are per kind (`MEDIA_REASONS_RU`).
+  "too-small",
+  "dimensions",
+  "animated-webp",
+]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
 
 /** A file name as a person reads it (no folder): at most 120 characters, and no control or bidi characters. */
