@@ -84,4 +84,16 @@ describe("what each fixture is", () => {
     const { video } = await infoOf("hevc-hlg-flat-4k.mp4");
     expect([video.width, video.height, video.dynamicRange]).toEqual([4096, 2160, "hlg"]);
   });
+
+  test("hevc-hlg-out-of-cube.mp4: HEVC, BT.2020 HLG, the chart's size, three frames", async () => {
+    const { video } = await infoOf("hevc-hlg-out-of-cube.mp4");
+    expect([video.fourcc, video.dynamicRange, video.width, video.height, video.samples]).toEqual(["hvc1", "hlg", 192, 96, 3]);
+    expect(video.colour).toEqual({ tagged: true, primaries: 9, transfer: 18, matrix: 9, fullRange: false });
+  });
+
+  test("h264-p3-saturated.mp4: H.264 SDR, Display P3 primaries, sRGB transfer, BT.709 matrix, limited range, five frames", async () => {
+    const { video } = await infoOf("h264-p3-saturated.mp4");
+    expect([video.fourcc, video.dynamicRange, video.width, video.height, video.samples]).toEqual(["avc1", "sdr", 192, 96, 5]);
+    expect(video.colour).toEqual({ tagged: true, primaries: 12, transfer: 13, matrix: 1, fullRange: false });
+  });
 });

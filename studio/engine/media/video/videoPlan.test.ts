@@ -271,10 +271,27 @@ describe("the filter graph", () => {
     expect(graph).toBe("fps=30,setsar=1,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,format=yuv420p");
   });
 
-  test("HLG is tagged BEFORE zscale (SP3: zscale fails on untagged frames), then linearised, converted, tone-mapped and encoded as BT.709", async () => {
-    const graph = await graphOf(hlg);
-    const steps = [
+  /** The steps of the chain from the tag on (what the colour part is made of), one filter each. */
+  const colourSteps = (graph: string): string[] => {
+    const steps = graph.split(",");
+    return steps.slice(steps.findIndex((step) => step.startsWith("setparams=")));
+  };
+  /**
+   * The zscale steps that apply a TRANSFER function (they carry a `t=`), each with the step before it. The one right after the tone map is not
+   * one: it takes linear light to linear light (it only converts to RGB for the 16-bit step), so no curve is applied there.
+   */
+  const transferSteps = (graph: string): { step: string; before: string | undefined }[] => {
+    const steps = graph.split(",");
+    return steps.flatMap((step, at) => (/^zscale=([^,]*:)?t=/.test(step) && steps[at - 1] !== "tonemap=tonemap=hable:desat=0" ? [{ step, before: steps[at - 1] }] : []));
+  };
+
+  test("HLG is tagged BEFORE zscale (SP3: zscale fails on untagged frames), then made RGB, linearised, converted, tone-mapped and encoded as BT.709", async () => {
+    expect(colourSteps(await graphOf(hlg))).toEqual([
       "setparams=colorspace=bt2020nc:color_primaries=bt2020:color_trc=arib-std-b67:range=tv",
+      // YUV to RGB with the transfer untouched, as 16-bit integers: a colour outside the RGB cube is clipped HERE, in the signal, where no transfer
+      // function has been applied yet (3f.3a follow-up, round 4 (a)).
+      "zscale",
+      "format=gbrp16le",
       "zscale=t=linear:npl=100",
       "format=gbrpf32le",
       "zscale=p=bt709",
@@ -284,21 +301,28 @@ describe("the filter graph", () => {
       "format=gbrp16le",
       "zscale=t=bt709:m=bt709:r=tv",
       "format=yuv420p",
-    ];
-    let at = -1;
-    for (const step of steps) {
-      const found = graph.indexOf(step, at + 1);
-      expect(found).toBeGreaterThan(at);
-      at = found;
-    }
+    ]);
   });
 
   test("the HDR chain clamps linear light to 16-bit integers (so no negative value reaches the gamma step) between the tone map and the gamma", async () => {
     // A colour outside BT.709's gamut is negative in one channel after the primaries conversion. zimg's gamma step on a negative float is not
     // defined, and ONE Windows runner's CPU made garbage of it (a chart patch 47 codes off) where others did not. An integer in between clips at zero.
     const graph = await graphOf(hlg);
-    expect(graph.indexOf("format=gbrp16le")).toBeGreaterThan(graph.indexOf("tonemap="));
-    expect(graph.indexOf("format=gbrp16le")).toBeLessThan(graph.lastIndexOf("zscale=t=bt709"));
+    expect(graph.lastIndexOf("format=gbrp16le")).toBeGreaterThan(graph.indexOf("tonemap="));
+    expect(graph.lastIndexOf("format=gbrp16le")).toBeLessThan(graph.lastIndexOf("zscale=t=bt709"));
+  });
+
+  test("the HDR chain's first transfer function (the inverse HLG curve) is fed 16-bit integers, not the float of a YUV to RGB conversion", async () => {
+    // With real footage YUV outside the RGB cube gives negative R'G'B', which zimg's approximate inverse curve takes (CPU-dependent on negatives).
+    const graph = await graphOf(hlg);
+    expect(graph.indexOf("format=gbrp16le")).toBeLessThan(graph.indexOf("zscale=t=linear:npl=100"));
+    expect(graph.split(",")[graph.split(",").indexOf("zscale=t=linear:npl=100") - 1]).toBe("format=gbrp16le");
+  });
+
+  test("every transfer function of the HDR chain is applied to a 16-bit integer frame: the inverse curve and the BT.709 gamma", async () => {
+    const steps = transferSteps(await graphOf(hlg));
+    expect(steps.map((s) => s.step)).toEqual(["zscale=t=linear:npl=100", "zscale=t=bt709:m=bt709:r=tv"]);
+    expect(steps.map((s) => s.before)).toEqual(["format=gbrp16le", "format=gbrp16le"]);
   });
 
   test("PQ is tagged as PQ", async () => {
@@ -318,16 +342,39 @@ describe("the filter graph", () => {
     expect(graph).toContain("zscale=p=bt709:t=bt709:m=bt709:r=tv");
   });
 
-  test("a BT.601 clip is converted to BT.709 by zscale", async () => {
+  /** The conversion of an SDR clip whose primaries are not BT.709's: linear light can go negative (a colour outside BT.709's gamut), so it is split. */
+  const SDR_PRIMARIES_CONVERSION = ["zscale", "format=gbrp16le", "zscale=t=linear:p=bt709:m=bt709:r=pc", "format=gbrp16le", "zscale=t=bt709:m=bt709:r=tv", "format=yuv420p"];
+
+  test("a BT.601 clip is converted to BT.709 in the split chain (its primaries are not BT.709's)", async () => {
     const graph = await graphOf(withVideo({ entry: entry({ width: 720, height: 576, colr: nclx(5, 1, 5) }) }));
     expect(graph).toContain("colorspace=bt470bg:color_primaries=bt470bg:color_trc=bt709");
-    expect(graph).toContain("zscale=p=bt709:t=bt709:m=bt709:r=tv");
+    expect(colourSteps(graph).slice(1)).toEqual(SDR_PRIMARIES_CONVERSION);
   });
 
-  test("Display P3 primaries are named and converted", async () => {
+  test("Display P3 primaries are named and converted in the split chain, never in one zscale (3f.3a follow-up, round 4 (b))", async () => {
     const graph = await graphOf(withVideo({ entry: entry({ width: 1080, height: 1920, colr: nclx(12, 1, 1) }) }));
     expect(graph).toContain("color_primaries=smpte432");
-    expect(graph).toContain("zscale=p=bt709:t=bt709:m=bt709:r=tv");
+    expect(colourSteps(graph).slice(1)).toEqual(SDR_PRIMARIES_CONVERSION);
+    expect(graph).not.toContain("zscale=p=bt709:t=bt709");
+  });
+
+  test("BT.2020 SDR is converted in the split chain too", async () => {
+    const graph = await graphOf(withVideo({ entry: entry({ fourcc: "hvc1", width: 1080, height: 1920, colr: nclx(9, 1, 9) }) }));
+    expect(colourSteps(graph).slice(1)).toEqual(SDR_PRIMARIES_CONVERSION);
+  });
+
+  test("in the split SDR chain each transfer function is applied to a 16-bit integer frame: the inverse curve and the BT.709 gamma", async () => {
+    const steps = transferSteps(await graphOf(withVideo({ entry: entry({ width: 1080, height: 1920, colr: nclx(12, 13, 1) }) })));
+    expect(steps.map((s) => s.step)).toEqual(["zscale=t=linear:p=bt709:m=bt709:r=pc", "zscale=t=bt709:m=bt709:r=tv"]);
+    expect(steps.map((s) => s.before)).toEqual(["format=gbrp16le", "format=gbrp16le"]);
+  });
+
+  test("a clip whose primaries ARE BT.709's is never put through the 16-bit linear step: it keeps the single zscale (no negative light can come of the primaries)", async () => {
+    for (const colr of [nclx(1, 13, 1), nclx(1, 1, 5), nclx(1, 1, 1, true)]) {
+      const graph = await graphOf(withVideo({ entry: entry({ width: 1080, height: 1920, colr }) }));
+      expect(graph).not.toContain("gbrp16le");
+      expect(graph).toContain("zscale=p=bt709:t=bt709:m=bt709:r=tv");
+    }
   });
 
   test("an sRGB transfer is converted to the BT.709 one", async () => {

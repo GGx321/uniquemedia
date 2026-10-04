@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ffmpegPath } from "../../../../../node/ffmpegBinary";
-import { CHART, chartFrame } from "../chart";
+import { CHART, chartFrame, HLG_OUT_OF_CUBE_CODES, P3_SDR_CODES } from "../chart";
 import { withClaimedSize, withRotation } from "../mp4Patch";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -35,8 +35,12 @@ const VFR_SETPTS = "setpts='(if(lt(N,5),N*20,if(lt(N,9),80+(N-4)*60,320+(N-8)*20
 const VFR_FRAMES = 14;
 const SIZE = `${CHART.width}x${CHART.height}`;
 
+// `bun generate.ts [name ...]` writes only the named fixtures (all of them with no names): an encoder newer than the one that made the committed
+// bytes would change the others, and they are pinned.
+const only = process.argv.slice(2);
 const out: Record<string, string> = {};
 const emit = (name: string, from: string): void => {
+  if (only.length > 0 && !only.includes(name)) return;
   const bytes = readFileSync(from);
   writeFileSync(join(here, name), bytes);
   out[name] = `${bytes.byteLength} bytes, sha256 ${createHash("sha256").update(bytes).digest("hex")}`;
@@ -146,6 +150,18 @@ try {
   // composition times (`ctts`), so the samples (`stts`) say about one second and the picture shows three.
   ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=128x72:r=30:d=1", "-vf", "setpts='if(lt(N,29),N/30,3)/TB'", "-fps_mode", "vfr", "-c:v", "libx264", "-bf", "3", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", "-fflags", "+bitexact", join(work, "held.mp4")]);
   emit("h264-vfr-held-last-frame-bframes.mp4", join(work, "held.mp4"));
+
+  // 12. HEVC HLG whose Y'CbCr is OUTSIDE the RGB cube (R'G'B' down to -0.9 and up to 1.6: `HLG_OUT_OF_CUBE_CODES`), lossless so the codes the chain sees
+  // are exactly those. The first stage of the HDR chain must clip the signal in 16-bit integers before any transfer function is applied.
+  ffmpeg([...rawIn("yuv420p10le"), ...x265().slice(0, -1), "lossless=1:pools=1:frame-threads=1:log-level=error", "-pix_fmt", "yuv420p10le", ...hlgTags, "-an", join(work, "oc.mp4")], repeat(chartFrame({ matrix: "bt2020", bits: 10, chroma: "420", codes: HLG_OUT_OF_CUBE_CODES }), 3));
+  emit("hevc-hlg-out-of-cube.mp4", join(work, "oc.mp4"));
+
+  // 13. H.264 SDR in Display P3 (primaries smpte432, sRGB transfer, BT.709 matrix, limited): twelve greys, six colours at the edge of P3's gamut
+  // (outside BT.709's: after the primaries conversion one channel of linear light is negative) and six Y'CbCr codes outside the RGB cube.
+  const p3Codes = P3_SDR_CODES;
+  const p3Tags = ["-color_primaries", "smpte432", "-color_trc", "iec61966-2-1", "-colorspace", "bt709", "-color_range", "tv"];
+  ffmpeg([...rawIn("yuv420p"), "-c:v", "libx264", "-preset", "medium", "-crf", "4", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", ...p3Tags, "-an", join(work, "p3.mp4")], repeat(chartFrame({ matrix: "bt709", bits: 8, chroma: "420", codes: p3Codes }), 5));
+  emit("h264-p3-saturated.mp4", join(work, "p3.mp4"));
 
   console.log(JSON.stringify(out, null, 2));
 } finally {

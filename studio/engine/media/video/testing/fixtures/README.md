@@ -46,6 +46,16 @@ And the ones real editors and encoders make (review round 2): edit lists.
 
 | `h264-vfr-held-last-frame-bframes.mp4` | a variable-rate clip (29 frames at 30 fps, the last held until 3 s) re-encoded by x264 with B-frames: the hold is in `ctts` | `stts` says about 1 s and the edit shows 3 s: the upper frame bound is the edit's |
 
+And the two of the colour follow-up (review round 4): colour outside what the chain's float steps can take.
+
+| File | What | Used for |
+| --- | --- | --- |
+| `hevc-hlg-out-of-cube.mp4` | HEVC Main 10 HLG, BT.2020, lossless, 24 patches of 10-bit Y'CbCr codes whose R'G'B' is OUTSIDE the 0..1 cube (`HLG_OUT_OF_CUBE_CODES`, `../chart.ts`): negative in one or two channels (down to about -0.9), over 1 (up to about 1.6), or both | the first stage of the HDR chain clips the signal in 16-bit integers before the inverse HLG curve: every patch within 2 codes of `hlgOutOfCubeToSdrBt709` (a clipped signal through the HLG model) |
+| `h264-p3-saturated.mp4` | H.264 SDR in Display P3 (primaries `smpte432`, sRGB transfer, BT.709 matrix, limited), 24 patches: 12 greys, 6 colours at the edge of P3's gamut (`P3_SDR_PATCHES`), which are outside BT.709's (a negative BT.709 channel of linear light after the primaries conversion), and 6 Y'CbCr codes outside the RGB cube (`P3_OUT_OF_CUBE_CODES`) | the SDR path for non-BT.709 primaries is split at the signal and at the linear light: every patch within 2 codes of `p3SdrToSdrBt709` (a clipped signal, clipped light); the one-zscale chain it replaced is 72 codes off on the out-of-cube patches |
+
+Regenerate only these with `bun generate.ts hevc-hlg-out-of-cube.mp4 h264-p3-saturated.mp4` (the generator writes only the files it is given names of, and
+all 16 come out byte for byte the same as the committed ones on the machine that made them, macOS arm64 ffmpeg 6.0).
+
 What ffmpeg 6.0 does with them, measured: it honours the edit list (the trims come out at 90 frames, not 105, 120 or 147; with a `ctts` and its
 compensating edit the count is the samples'; an empty edit before the segment adds no frames; an edit longer than the samples plays all the
 samples; one shorter cuts them). The importer's frame check is built from that (`expectedFrames`, `../../videoPlan.ts`).

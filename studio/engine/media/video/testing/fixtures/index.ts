@@ -26,6 +26,8 @@ export const FIXTURES = {
   "h264-bframes.mp4": fixture("h264-bframes.mp4", 28895, "8d91d109a4c0f6b011a2589856a68626357e59ca0dc73e01f4274270236d76e1"),
   "hevc-bframes.mp4": fixture("hevc-bframes.mp4", 23165, "ff28482623bd67e33f3af5dd61deda41e806f53736e3dcb381e08b8f7a9887d3"),
   "h264-vfr-held-last-frame-bframes.mp4": fixture("h264-vfr-held-last-frame-bframes.mp4", 18868, "46016add2184bcf75c951784819bc2671de78746f97d54bcd12f191c09957b39"),
+  "hevc-hlg-out-of-cube.mp4": fixture("hevc-hlg-out-of-cube.mp4", 5261, "b2c291ec0a428f8e075b974c5c9f994a37f1ee78f83e37dd2f830e8cc175b703"),
+  "h264-p3-saturated.mp4": fixture("h264-p3-saturated.mp4", 1946, "face87d6c642967eea04353d3b4478a216867d0892a3079b4baea4cdd9bf9d9a"),
 } as const satisfies Record<string, VideoFixture>;
 
 export type VideoFixtureName = keyof typeof FIXTURES;

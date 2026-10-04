@@ -69,6 +69,8 @@ export interface ChartFrameOptions {
   bits: 8 | 10;
   /** 4:2:0 or 4:2:2: where the chroma planes are halved. */
   chroma: "420" | "422";
+  /** The Y'CbCr codes of each patch, in the patches' order, instead of the codes of `CHART_PATCHES` (for a chart whose point is codes outside the RGB cube). */
+  codes?: readonly (readonly [number, number, number])[];
 }
 
 /** One raw planar frame of the chart (`yuv420p`, `yuv420p10le`, `yuv422p10le`), ready for `-f rawvideo`. */
@@ -84,7 +86,7 @@ export function chartFrame(options: ChartFrameOptions): Uint8Array {
     if (bytes === 2) view.setUint16(at * 2, value, true);
     else out[at] = value;
   };
-  const codes = CHART_PATCHES.map((rgb) => rgbToYcbcr(rgb, options.matrix, options.bits));
+  const codes = options.codes ?? CHART_PATCHES.map((rgb) => rgbToYcbcr(rgb, options.matrix, options.bits));
   const patchAt = (x: number, y: number): readonly [number, number, number] => codes[Math.floor(y / patchHeight) * columns + Math.floor(x / patchWidth)] ?? [0, 0, 0];
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) put(0, y * width + x, patchAt(x, y)[0]);
   const stepY = options.chroma === "420" ? 2 : 1;
@@ -145,5 +147,81 @@ export function hlgToSdrBt709(signal: Rgb): [number, number, number] {
   const brightest = Math.max(r, g, b);
   const gain = brightest <= 0 ? 0 : hable(brightest) / hable(10) / brightest;
   const encode = (light: number): number => Math.pow(Math.min(1, Math.max(0, light * gain)), 1 / 2.4);
+  return rgbToYcbcr([encode(r), encode(g), encode(b)], "bt709", 8);
+}
+
+// ---------- charts whose point is colour outside the RGB cube or outside BT.709's gamut (3f.3a follow-up, review round 4) ----------
+
+export type Codes = readonly [number, number, number];
+
+/**
+ * Y'CbCr codes (10-bit, limited range, BT.2020 matrix: legal codes all) of an HLG clip whose R'G'B' is OUTSIDE the 0..1 cube, as 4:2:0 coding of real
+ * footage produces at saturated edges and near black: some channel negative (R', G' or B' down to about -0.9), some over 1 (up to about 1.6), some
+ * both. Patch by patch: negative only, over 1 only, and both.
+ */
+export const HLG_OUT_OF_CUBE_CODES: readonly Codes[] = [
+  [90, 64, 64], [90, 300, 64], [90, 512, 64], [90, 724, 300], [90, 960, 512], [160, 64, 512],
+  [160, 300, 512], [160, 512, 960], [160, 960, 300], [300, 64, 300], [300, 300, 300], [300, 512, 300],
+  [300, 960, 300], [500, 64, 300], [500, 300, 960], [500, 960, 64], [700, 64, 300], [700, 300, 724],
+  [700, 724, 300], [700, 960, 300], [850, 64, 300], [850, 300, 300], [850, 512, 960], [850, 724, 960],
+];
+
+const clip01 = (value: number): number => Math.min(1, Math.max(0, value));
+
+/** The R'G'B' of Y'CbCr codes (BT.2020, 10-bit), UNCLIPPED: a channel can be negative or over 1. */
+export function hlgOutOfCubeRgb(codes: Codes): Rgb {
+  return ycbcrToRgb(codes, "bt2020", 10);
+}
+
+/**
+ * What the importer must make of out-of-cube HLG Y'CbCr: the signal is CLIPPED to the cube (16-bit integers, before any transfer function), then it
+ * goes through the same chain as an HLG signal (`hlgToSdrBt709`), as 8-bit limited BT.709 Y'CbCr.
+ */
+export function hlgOutOfCubeToSdrBt709(codes: Codes): [number, number, number] {
+  const [r, g, b] = hlgOutOfCubeRgb(codes);
+  return hlgToSdrBt709([clip01(r), clip01(g), clip01(b)]);
+}
+
+/**
+ * Display P3 patches as sRGB-encoded P3 signals in 0..1 (the transfer of Display P3), all INSIDE the RGB cube: twelve greys, then six colours at the
+ * edge of P3's gamut, which are OUTSIDE BT.709's (a P3 green or red is a negative BT.709 red, or blue, channel of linear light).
+ */
+export const P3_SDR_PATCHES: readonly Rgb[] = [
+  [0.04, 0.04, 0.04], [0.1, 0.1, 0.1], [0.18, 0.18, 0.18], [0.26, 0.26, 0.26], [0.34, 0.34, 0.34], [0.42, 0.42, 0.42],
+  [0.5, 0.5, 0.5], [0.58, 0.58, 0.58], [0.65, 0.65, 0.65], [0.75, 0.75, 0.75], [0.85, 0.85, 0.85], [0.95, 0.95, 0.95],
+  [0.0, 0.9, 0.0], [0.05, 0.8, 0.1], [0.9, 0.0, 0.0], [0.0, 0.0, 0.9], [0.0, 0.85, 0.85], [0.9, 0.0, 0.9],
+];
+
+/** Six 8-bit limited BT.709 Y'CbCr codes (all legal) whose R'G'B' is OUTSIDE the 0..1 cube: negative (down to -0.7), over 1 (up to 1.6), and both. */
+export const P3_OUT_OF_CUBE_CODES: readonly Codes[] = [
+  [30, 16, 16], [100, 70, 16], [30, 240, 240], [100, 240, 70], [150, 70, 240], [200, 70, 240],
+];
+
+/** The 24 patches of the Display P3 clip as Y'CbCr codes: `P3_SDR_PATCHES` (BT.709 matrix), then `P3_OUT_OF_CUBE_CODES`. */
+export const P3_SDR_CODES: readonly Codes[] = [...P3_SDR_PATCHES.map((rgb): Codes => rgbToYcbcr(rgb, "bt709", 8)), ...P3_OUT_OF_CUBE_CODES];
+
+const srgbToLinear = (value: number): number => (value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4));
+/** Linear Display P3 (D65) to linear BT.709 (D65). */
+const P3_TO_BT709: readonly (readonly [number, number, number])[] = [
+  [1.2249401, -0.2249404, 0],
+  [-0.0420569, 1.0420571, 0],
+  [-0.0196376, -0.0786361, 1.0982735],
+];
+
+/** The BT.709 LINEAR light of Y'CbCr codes of a Display P3 clip (BT.709 matrix, sRGB transfer, 8-bit limited), unclipped: a channel can be negative. */
+export function p3LinearBt709(codes: Codes): Rgb {
+  const [r, g, b] = ycbcrToRgb(codes, "bt709", 8).map((value) => srgbToLinear(clip01(value)));
+  const light = P3_TO_BT709.map((row) => row[0] * (r ?? 0) + row[1] * (g ?? 0) + row[2] * (b ?? 0));
+  return [light[0] ?? 0, light[1] ?? 0, light[2] ?? 0];
+}
+
+/**
+ * What the importer must make of Display P3 Y'CbCr (BT.709 matrix, sRGB transfer, 8-bit limited): clip the signal to the cube, to linear light,
+ * to BT.709 primaries, CLIP the light to 0..1 (what is outside BT.709's gamut), then the BT.709 curve zimg applies to display-referred light: a
+ * plain 1/2.4 power (as in `hlgToSdrBt709`), as 8-bit limited BT.709 Y'CbCr.
+ */
+export function p3SdrToSdrBt709(codes: Codes): [number, number, number] {
+  const [r, g, b] = p3LinearBt709(codes);
+  const encode = (light: number): number => Math.pow(clip01(light), 1 / 2.4);
   return rgbToYcbcr([encode(r), encode(g), encode(b)], "bt709", 8);
 }
