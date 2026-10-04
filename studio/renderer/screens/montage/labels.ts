@@ -204,11 +204,13 @@ export function trackTitle(track: { readonly title: string; readonly artist: str
 /** What the editor knows of the draft's track (`TrackLookup`, MusicTrack.tsx), as far as its name goes. */
 export type TrackNameSource =
   | { readonly state: "listed"; readonly track: { readonly title: string; readonly artist: string | null } }
-  | { readonly state: "unlisted" | "own" | "loading" | "none" };
+  | { readonly state: "own"; readonly track: { readonly name: string } }
+  | { readonly state: "unlisted" | "own-gone" | "loading" | "none" };
 
 /**
  * What the track is called on the block: its title (and artist), «трек из прежнего списка» for a stored track the current
- * list no longer offers (its title is not known), «свой трек» (3f); null while it is still being looked up.
+ * list no longer offers (its title is not known), the file's own name for an own track (3f.4) and «свой трек: файла больше нет»
+ * for one the library no longer lists; null while it is still being looked up.
  */
 export function trackName(lookup: TrackNameSource): string | null {
   switch (lookup.state) {
@@ -217,7 +219,9 @@ export function trackName(lookup: TrackNameSource): string | null {
     case "unlisted":
       return "трек из прежнего списка";
     case "own":
-      return "свой трек";
+      return lookup.track.name;
+    case "own-gone":
+      return "свой трек: файла больше нет";
     default:
       return null;
   }

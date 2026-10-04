@@ -388,6 +388,88 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     });
   });
 
+  // 3f.4: an own track in the same card, timeline block and waveform. It has a name (the file's), a decoded length and a waveform of its own, no cover, no
+  // highlights; the engine's verdict (`media-unavailable` at the music, `track-too-short`) says what is wrong with it.
+  describe("an own track (3f.4)", () => {
+    const ownMusic = (mediaId: string, startMs: number) => ({ music: { source: "own" as const, mediaId, startMs } });
+    /** A 40 s own track in the mock's library, answering its media id. */
+    async function withOwnTrack(durationMs = 40_000): Promise<{ client: Awaited<ReturnType<typeof studio>>["client"]; engine: MockEngine; mediaId: string }> {
+      const { client, engine } = await studio({ music: MUSIC });
+      engine.seedOwnMedia([{ kind: "audio", name: "my mix.mp3", bytes: 640_000, facts: { durationMs }, waveform: Array.from({ length: Math.ceil(durationMs / 50) }, (_, i) => 200 + ((i * 37) % 700)) }]);
+      const listed = await client.request("media.list", { kind: "audio" });
+      const mediaId = listed.ok ? listed.result.media[0]?.mediaId : undefined;
+      if (mediaId === undefined) throw new Error("no own track was seeded");
+      return { client, engine, mediaId };
+    }
+
+    test("the timeline block is named by the file and starts where the draft says; its waveform is asked as an OWN track", async () => {
+      const { client, engine, mediaId } = await withOwnTrack();
+      await openDraft(engine, client, ownMusic(mediaId, 12_000));
+      await within(timeline()).findByRole("button", { name: "Музыка: my mix.mp3, с 0:12" });
+      await waitFor(() => expect(callsOf(engine, "music.peaks").some((c) => c.payload.track.source === "own" && c.payload.track.mediaId === mediaId)).toBe(true));
+      expect(callsOf(engine, "music.peaks").some((c) => c.payload.track.source === "trending")).toBe(false);
+    });
+
+    test("the card shows the name, the length and that it is the owner's own file, with no highlight and no pick", async () => {
+      const { client, engine, mediaId } = await withOwnTrack();
+      await openDraft(engine, client, ownMusic(mediaId, 12_000));
+      selectBlock(/^Музыка:/);
+      expect(await within(props()).findByText("my mix.mp3")).toBeDefined();
+      expect(plain(props().querySelector(".ed-music-facts .mono")?.textContent)).toBe("0:40 · свой файл");
+      expect(within(props()).queryByRole("group", { name: "Выбрать лучшую часть" })).toBeNull();
+      expect(within(props()).queryByText(/от Instagram/)).toBeNull();
+      expect(within(props()).getByText("свой трек")).toBeDefined();
+    });
+
+    test("the card's waveform is the whole track's (68 bars from music.peaks of the own track), and the window is a slider over it", async () => {
+      const { client, engine, mediaId } = await withOwnTrack();
+      await openDraft(engine, client, ownMusic(mediaId, 12_000));
+      selectBlock(/^Музыка:/);
+      const slider = await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
+      await waitFor(() => expect(callsOf(engine, "music.peaks").some((c) => c.payload.track.source === "own" && c.payload.startMs === 0 && c.payload.durationMs === 40_000 && c.payload.bars === 68)).toBe(true));
+      // 40 s track, 8 s montage: the last start that fits is 32 s.
+      expect([slider.getAttribute("aria-valuenow"), slider.getAttribute("aria-valuemax")]).toEqual(["12000", "32000"]);
+    });
+
+    test("the window moves the music like a trending track's: one undo step per press, never past the end", async () => {
+      const { client, engine, mediaId } = await withOwnTrack();
+      await openDraft(engine, client, ownMusic(mediaId, 12_000));
+      selectBlock(/^Музыка:/);
+      const slider = (): HTMLElement => within(props()).getByRole("slider", { name: "Начало музыки в треке" });
+      await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
+      fireEvent.keyDown(slider(), { key: "End" });
+      expect(slider().getAttribute("aria-valuenow")).toBe("32000");
+      const saved = await nextSave(engine);
+      expect(saved.music).toEqual({ source: "own", mediaId, startMs: 32_000 });
+      undo();
+      expect(slider().getAttribute("aria-valuenow")).toBe("12000");
+    });
+
+    test("a track too short for the start says so, from its decoded length, before the engine has judged the edit", async () => {
+      const { client, engine, mediaId } = await withOwnTrack(7_000);
+      await openDraft(engine, client, ownMusic(mediaId, 0));
+      await within(timeline()).findByRole("button", { name: /^Музыка: my mix\.mp3/ });
+      selectBlock(/^Музыка:/);
+      await within(props()).findByText("Трек кончается раньше ролика: начните его раньше или замените трек.");
+    });
+
+    test("a track the library no longer holds is unavailable: the block, the card and the render say the same, and nothing paid is sent", async () => {
+      const { client, engine, mediaId } = await withOwnTrack();
+      await openDraft(engine, client, ownMusic(mediaId, 12_000));
+      await client.request("media.delete", { mediaId });
+      // A save by another window makes the engine judge the draft again.
+      selectBlock(/^Музыка:/);
+      await waitFor(() => expect(within(props()).queryByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.")).not.toBeNull());
+    });
+
+    test("with the library's name list not yet answered the block is unnamed, never wrongly named", async () => {
+      const { client, engine } = await studio({ music: MUSIC });
+      await openDraft(engine, client, ownMusic("media-00000404", 0));
+      const block = await within(timeline()).findByRole("button", { name: /^Музыка:/ });
+      expect(plain(block.getAttribute("aria-label"))).not.toContain("Espresso");
+    });
+  });
+
   test("«Заменить трек» opens the «Музыка» tab", async () => {
     const { client, engine } = await studio({ music: MUSIC });
     await openDraft(engine, client, withMusic(12_000));

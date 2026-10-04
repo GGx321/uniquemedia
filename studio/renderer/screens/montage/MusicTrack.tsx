@@ -18,7 +18,16 @@ import type { TimelineState } from "./useTimeline";
 // the last start that keeps the whole montage inside the track. Choosing a track is the media panel's (SLOT 3d.5): with no
 // music the lane offers «Добавить музыку», «Скоро» until then.
 
-/** What the editor knows of the draft's track from `music.list` (K23). */
+/** An own track as the library lists it (`media.list`, 3f.4): what the editor shows of it. */
+export interface OwnTrackFacts {
+  readonly mediaId: string;
+  /** The picked file's name. */
+  readonly name: string;
+  /** The decoded length the importer proved, in ms: what a montage's start is measured against. */
+  readonly durationMs: number;
+}
+
+/** What the editor knows of the draft's track from `music.list` (K23) or, for an own track, from `media.list` (3f.4). */
 export type TrackLookup =
   | { readonly state: "none" }
   /** Asked, not answered yet (or the ask failed): no title to show. */
@@ -26,13 +35,31 @@ export type TrackLookup =
   | { readonly state: "listed"; readonly track: TrackSummary }
   /** A stored track the current list no longer offers (tracks of earlier lists are kept, not offered: 3c.4). */
   | { readonly state: "unlisted" }
-  /** An own track (3f): nothing to look up yet. */
-  | { readonly state: "own" };
+  /** An own track the library holds: its name and length. It has no highlights and no cover. */
+  | { readonly state: "own"; readonly track: OwnTrackFacts }
+  /** An own track the library does not list (deleted, or never an audio media): the engine's verdict says the same (`media-unavailable`). */
+  | { readonly state: "own-gone" };
 
-/** The draft's trending track as `music.list` describes it; asked again for another track and whenever the list changes. */
+/** What the window needs of a track to place the music over it: its length and the highlights that offer a start (an own track has none). */
+export type PlayableFacts = Pick<TrackSummary, "durationMs" | "highlights">;
+
+/** The length and highlights of the track the lookup found, or null while the track is not known (or gone). */
+export function playableFacts(lookup: TrackLookup): PlayableFacts | null {
+  if (lookup.state === "listed") return lookup.track;
+  if (lookup.state === "own") return { durationMs: lookup.track.durationMs, highlights: [] };
+  return null;
+}
+
+/**
+ * The draft's track: a trending one as `music.list` describes it (asked again for another track and whenever the list changes), an own one as `media.list`
+ * lists it (3f.4: the file's name and decoded length; asked again for another track). A failed read, and a list that was cut at its 500 and does not hold the
+ * track, leave it unknown («loading»): nothing but the words depends on it, and the engine's verdict decides what is wrong.
+ */
 export function useTrackSummary(client: EngineClient, music: MontageMusic, listVersion: string | null): TrackLookup {
   const trackId = music?.source === "trending" ? music.trackId : null;
+  const mediaId = music?.source === "own" ? music.mediaId : null;
   const [found, setFound] = useState<{ trackId: string; track: TrackSummary | null } | null>(null);
+  const [foundOwn, setFoundOwn] = useState<{ mediaId: string; track: OwnTrackFacts | null } | null>(null);
   useEffect(() => {
     if (trackId === null) return;
     let alive = true;
@@ -44,32 +71,54 @@ export function useTrackSummary(client: EngineClient, music: MontageMusic, listV
       alive = false;
     };
   }, [client, trackId, listVersion]);
+  useEffect(() => {
+    if (mediaId === null) return;
+    let alive = true;
+    void client.request("media.list", { kind: "audio" }).then((reply) => {
+      if (!alive || !reply.ok) return;
+      const media = reply.result.media.find((m) => m.mediaId === mediaId);
+      if (media !== undefined) setFoundOwn({ mediaId, track: media.durationMs === null ? null : { mediaId, name: media.name, durationMs: media.durationMs } });
+      // Not in a list that is whole: gone. Not in one that was cut: unknown, so no word is said about it.
+      else if (reply.result.total <= reply.result.media.length) setFoundOwn({ mediaId, track: null });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [client, mediaId]);
   if (music === null) return { state: "none" };
-  if (trackId === null) return { state: "own" };
+  if (mediaId !== null) {
+    if (foundOwn === null || foundOwn.mediaId !== mediaId) return { state: "loading" };
+    return foundOwn.track === null ? { state: "own-gone" } : { state: "own", track: foundOwn.track };
+  }
   if (found === null || found.trackId !== trackId) return { state: "loading" };
   return found.track === null ? { state: "unlisted" } : { state: "listed", track: found.track };
 }
 
-/** A waveform `music.peaks` answered: the window it is of, and its bars. */
+/** A waveform `music.peaks` answered: the track it is of (`peaksRef`), the window it is of, and its bars. */
 interface Peaks {
-  readonly trackId: string;
+  readonly ref: string;
   readonly startMs: number;
   readonly durationMs: number;
   readonly peaks: readonly number[];
 }
 
-interface PeaksAsk {
-  readonly trackId: string;
-  readonly startMs: number;
-  readonly durationMs: number;
-  readonly bars: number;
-}
+/** One window of a track's waveform: a trending track by its `trackId`, an own track by its `mediaId` (3f.4), and never both. */
+type PeaksAsk = { readonly startMs: number; readonly durationMs: number; readonly bars: number } & (
+  | { readonly trackId: string; readonly mediaId?: undefined }
+  | { readonly mediaId: string; readonly trackId?: undefined }
+);
+
+/** The id the ask names, and which kind of track it is: a trending id and an own id are never the same track, whatever their text. */
+const idOf = (ask: PeaksAsk): string => ask.mediaId ?? ask.trackId;
+const peaksRef = (ask: PeaksAsk): string => `${ask.mediaId === undefined ? "trending" : "own"}:${idOf(ask)}`;
+const peaksTrack = (ask: PeaksAsk): { source: "trending"; trackId: string } | { source: "own"; mediaId: string } =>
+  ask.mediaId === undefined ? { source: "trending", trackId: ask.trackId } : { source: "own", mediaId: ask.mediaId };
 
 /**
- * The waveform of `[startMs, startMs + durationMs)` of a trending track, `bars` bars. One ask at a time and the latest one
+ * The waveform of `[startMs, startMs + durationMs)` of a trending track or an own one (3f.4), `bars` bars. One ask at a time and the latest one
  * wins: during a drag the start moves faster than the engine answers, so the next ask goes when the one out returns, for
  * wherever the start is by then. The last answer is kept until a newer one comes (the block draws it shifted meanwhile).
- * `missing`: the store does not hold the track (NOT_FOUND). A new `listVersion` (the track list was fetched again) asks
+ * `missing`: the track's id when the store (or, for an own track, the library) does not hold it (NOT_FOUND). A new `listVersion` (the track list was fetched again) asks
  * again: a track the store lacked may be stored now.
  */
 export function usePeaks(client: EngineClient, ask: PeaksAsk | null, listVersion: string | null): { peaks: Peaks | null; missing: string | null } {
@@ -87,7 +136,7 @@ export function usePeaks(client: EngineClient, ask: PeaksAsk | null, listVersion
       alive.current = false;
     };
   }, []);
-  const key = ask === null ? null : `${ask.trackId}|${ask.startMs}|${ask.durationMs}|${ask.bars}`;
+  const key = ask === null ? null : `${peaksRef(ask)}|${ask.startMs}|${ask.durationMs}|${ask.bars}`;
 
   useEffect(() => {
     const pump = (): void => {
@@ -99,22 +148,22 @@ export function usePeaks(client: EngineClient, ask: PeaksAsk | null, listVersion
       }
       out.current = true;
       again.current = false;
-      void client.request("music.peaks", { track: { source: "trending", trackId: next.trackId }, startMs: next.startMs, durationMs: next.durationMs, bars: next.bars }).then((reply) => {
+      void client.request("music.peaks", { track: peaksTrack(next), startMs: next.startMs, durationMs: next.durationMs, bars: next.bars }).then((reply) => {
         out.current = false;
         if (!alive.current) return;
         if (reply.ok) {
-          setPeaks({ trackId: next.trackId, startMs: next.startMs, durationMs: next.durationMs, peaks: reply.result.peaks });
+          setPeaks({ ref: peaksRef(next), startMs: next.startMs, durationMs: next.durationMs, peaks: reply.result.peaks });
           setMissing(null);
-        } else if (reply.error.code === "NOT_FOUND") setMissing(next.trackId);
+        } else if (reply.error.code === "NOT_FOUND") setMissing(peaksRef(next));
         const latest = wanted.current;
-        const moved = latest !== null && (latest.trackId !== next.trackId || latest.startMs !== next.startMs || latest.durationMs !== next.durationMs || latest.bars !== next.bars);
+        const moved = latest !== null && (peaksRef(latest) !== peaksRef(next) || latest.startMs !== next.startMs || latest.durationMs !== next.durationMs || latest.bars !== next.bars);
         if (moved || again.current) pump();
       });
     };
     if (key !== null) pump();
   }, [client, key, listVersion]);
 
-  return { peaks: ask !== null && peaks?.trackId === ask.trackId ? peaks : null, missing: ask !== null && missing === ask.trackId ? missing : null };
+  return { peaks: ask !== null && peaks?.ref === peaksRef(ask) ? peaks : null, missing: ask !== null && missing === peaksRef(ask) ? idOf(ask) : null };
 }
 
 export interface MusicTrackProps {
@@ -153,11 +202,11 @@ export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, list
   const heldKey = useRef<string | null>(null);
   const music = spec.music;
   const total = totalMs(spec);
-  const track = lookup.state === "listed" ? lookup.track : null;
+  const facts = playableFacts(lookup);
   const startMs = slip ?? music?.startMs ?? 0;
   const widthPx = total * pxPerMs;
   const bars = waveBars(Math.max(0, widthPx - 2 * WAVE_INSET_PX));
-  const ask = music?.source === "trending" && total > 0 ? { trackId: music.trackId, startMs, durationMs: total, bars } : null;
+  const ask = music === null || total <= 0 ? null : music.source === "trending" ? { trackId: music.trackId, startMs, durationMs: total, bars } : { mediaId: music.mediaId, startMs, durationMs: total, bars };
   const { peaks, missing } = usePeaks(client, ask, listVersion);
 
   if (music === null) {
@@ -176,11 +225,11 @@ export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, list
   }
 
   // The engine judged the committed start; while a drag slides it, the window's guess (the listed length is the proven one) stands.
-  const issue = trackProblem({ missing: missing !== null, verdict: slip === null ? verdict : { judged: false }, guessTooShort: track !== null && startMs + total > track.durationMs });
+  const issue = trackProblem({ missing: missing !== null, verdict: slip === null ? verdict : { judged: false }, guessTooShort: facts !== null && startMs + total > facts.durationMs });
   const selected = timeline.selection?.kind === "music";
-  const trackMs = track?.durationMs ?? null;
+  const trackMs = facts?.durationMs ?? null;
   const movable = trackMs !== null && total > 0 && issue !== "unavailable";
-  const highlights = track?.highlights ?? [];
+  const highlights = facts?.highlights ?? [];
   const marks = highlightMarks(highlights, startMs, total);
   const title = trackName(lookup);
   // The bars answered for another start are drawn where that music now is, until the answer for this start comes.

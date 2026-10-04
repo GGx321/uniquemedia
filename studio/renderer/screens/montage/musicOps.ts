@@ -1,4 +1,4 @@
-import { MAX_PEAK_BARS, MAX_SOURCE_OFFSET_MS, MIN_PEAK_BARS, type MontageDraft, type TrackSummary } from "../../../shared/engine";
+import { MAX_PEAK_BARS, MAX_SOURCE_OFFSET_MS, MIN_PEAK_BARS, type MontageDraft, type MontageIssue, type TrackSummary } from "../../../shared/engine";
 import { MIN_TOTAL_MS, STEP_MS } from "../../../shared/montage";
 import { totalMs } from "./clipOps";
 import type { Range } from "./layerOps";
@@ -96,6 +96,19 @@ export function trackProblem(facts: { readonly missing: boolean; readonly verdic
   if (facts.missing) return "unavailable";
   if (facts.verdict.judged) return facts.verdict.problem;
   return facts.guessTooShort ? "too-short" : null;
+}
+
+/**
+ * The engine's verdict on the music, from the issues of the spec it judged (3f.4). A trending track the store lacks is `track-unavailable`; an own track
+ * the library lacks is `media-unavailable` AT THE MUSIC (an own media gone from a clip or a layer is not the music's problem); a track too short for its
+ * start is `track-too-short` for both. Unavailable is told before too-short. `judgedNow` is whether the engine judged THE SPEC ON SCREEN: otherwise the
+ * block has no verdict and trusts none.
+ */
+export function musicVerdictOf(judgedNow: boolean, issues: readonly MontageIssue[]): TrackVerdict {
+  if (!judgedNow) return { judged: false };
+  const unavailable = issues.some((issue) => issue.code === "track-unavailable" || (issue.code === "media-unavailable" && issue.path[0] === "music" && issue.path.length === 1));
+  if (unavailable) return { judged: true, problem: "unavailable" };
+  return { judged: true, problem: issues.some((issue) => issue.code === "track-too-short") ? "too-short" : null };
 }
 
 /** Whether the music starts exactly on one of the track's quick picks (the ★ on the block's tag). */

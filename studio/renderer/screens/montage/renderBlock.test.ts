@@ -116,6 +116,19 @@ describe("the reasons, each on its own", () => {
     expect(renderBlock(input({ spec: withMusic, verdict: { spec: withMusic, issues: [{ code: "track-too-short", path: ["music"] }] } }))?.text).toBe("Трек короче ролика с выбранного места");
   });
 
+  test("an own track the library lost, and one too short for its start (3f.4): the button says so, and a good one blocks nothing", () => {
+    const own = draftSpec(4, { music: { source: "own", mediaId: "media-0000001", startMs: 0 } });
+    expect(renderBlock(input({ spec: own, verdict: { spec: own, issues: [{ code: "media-unavailable", path: ["music"] }] } }))?.text).toBe("Трек: файла больше нет");
+    expect(renderBlock(input({ spec: own, verdict: { spec: own, issues: [{ code: "track-too-short", path: ["music"] }] } }))?.text).toBe("Трек короче ролика с выбранного места");
+    expect(renderBlock(input({ spec: own, verdict: { spec: own, issues: [] } }))).toBeNull();
+  });
+
+  test("a verdict on ANOTHER spec says nothing of an own track the owner has just changed", () => {
+    const judged = draftSpec(4, { music: { source: "own", mediaId: "media-0000001", startMs: 0 } });
+    const edited = draftSpec(4, { music: { source: "own", mediaId: "media-0000002", startMs: 0 } });
+    expect(renderBlock(input({ spec: edited, verdict: { spec: judged, issues: [{ code: "media-unavailable", path: ["music"] }] } }))).toBeNull();
+  });
+
   test("a text layer and a built-in sticker block nothing since 3b.6", () => {
     const text = { layerId: "layer-001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "hi", font: "manrope" as const, style: "plaque" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
     const sticker = { layerId: "layer-002", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId: "heart-pulse" }, x: 0.5, y: 0.5, size: 0.2 };
@@ -125,9 +138,9 @@ describe("the reasons, each on its own", () => {
   test("a part whose slice has not landed yet says «скоро» for that part", () => {
     const withOwnSticker = draftSpec(4, { layers: [{ layerId: "layer-001", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "own", mediaId: "media-0000001" }, x: 0.5, y: 0.5, size: 0.2 }] });
     expect(renderBlock(input({ spec: withOwnSticker, verdict: null }))?.text).toBe("Свои стикеры — скоро");
-    // A trending track is supported since 3c.5; an own track waits for 3f.4.
+    // A trending track is supported since 3c.5 and an own track since 3f.4: neither waits for a slice any more, and the engine's verdict says what is wrong.
     const withMusic = draftSpec(4, { music: { source: "own", mediaId: "media-0000001", startMs: 0 } });
-    expect(renderBlock(input({ spec: withMusic, verdict: null }))?.text).toBe("Музыка в видео — скоро");
+    expect(renderBlock(input({ spec: withMusic, verdict: null }))).toBeNull();
     const withTrack = draftSpec(4, { music: { source: "trending", trackId: "track-0000001", startMs: 0 } });
     expect(renderBlock(input({ spec: withTrack, verdict: null }))).toBeNull();
     const withVideo = draftSpec([photoClip(0, "photo-mia-0001", 2_000), { clipId: "clip-002", durationMs: 3_000, transitionIn: "cut", kind: "video", mediaId: "media-0000001", trimStartMs: 0, focus: null }]);

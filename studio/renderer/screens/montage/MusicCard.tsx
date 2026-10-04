@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
-import type { MontageDraft, TrackSummary } from "../../../shared/engine";
+import type { MontageDraft } from "../../../shared/engine";
 import { STEP_MS } from "../../../shared/montage";
 import { useEngine } from "../../engine/react";
 import { NBSP } from "../../lib/format";
@@ -10,7 +10,7 @@ import { trackClock } from "./labels";
 import { deleteKeyHandler } from "./LayerProperties";
 import { clampMusicStart, highlightPicks, musicStartRange, musicWindow, setMusicStart, trackProblem, type TrackVerdict } from "./musicOps";
 import { Cover, trackLength } from "./MusicTab";
-import { type TrackLookup, usePeaks } from "./MusicTrack";
+import { type PlayableFacts, playableFacts, type TrackLookup, usePeaks } from "./MusicTrack";
 import type { DraftSession } from "./session";
 import { usePlaying } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
@@ -38,7 +38,7 @@ function Star() {
  * as a slip of the window alone (review round 1: the draft is not written on every move) and is ONE edit when it is let go; a
  * cancelled pointer (`pointercancel`) changes nothing; a click that does not drag moves the window to the click on release.
  */
-function TrackWindow({ session, track, startMs, total, peaks }: { session: DraftSession; track: TrackSummary; startMs: number; total: number; peaks: readonly number[] | null }) {
+function TrackWindow({ session, track, startMs, total, peaks }: { session: DraftSession; track: PlayableFacts; startMs: number; total: number; peaks: readonly number[] | null }) {
   const strip = useRef<HTMLDivElement>(null);
   const gesture = useRef<(() => void) | null>(null);
   const heldKey = useRef<string | null>(null);
@@ -182,18 +182,28 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
   const commands = useSelectionCommands(session, timeline);
   const onKeyDown = deleteKeyHandler(commands.remove);
   const music = spec.music;
+  /** A trending track as `music.list` describes it (its cover, artist, «E» and highlights), and an own one as `media.list` does (3f.4: a name and a length). */
   const track = lookup.state === "listed" ? lookup.track : null;
-  const ask = music?.source === "trending" && track !== null && track.durationMs > 0 ? { trackId: track.trackId, startMs: 0, durationMs: track.durationMs, bars: CARD_BARS } : null;
+  const own = lookup.state === "own" ? lookup.track : null;
+  const facts = playableFacts(lookup);
+  const ask =
+    music === null || facts === null || facts.durationMs <= 0
+      ? null
+      : music.source === "own"
+        ? { mediaId: music.mediaId, startMs: 0, durationMs: facts.durationMs, bars: CARD_BARS }
+        : track === null
+          ? null
+          : { trackId: track.trackId, startMs: 0, durationMs: track.durationMs, bars: CARD_BARS };
   const { peaks, missing } = usePeaks(client, ask, listVersion);
   const playing = usePlaying(timeline.playhead);
   if (music === null) return null;
   const total = totalMs(spec);
-  const problem = trackProblem({ missing: missing !== null, verdict, guessTooShort: track !== null && music.startMs + total > track.durationMs });
-  const picks = track === null ? [] : highlightPicks(track.highlights, music.startMs, total, track.durationMs);
+  const problem = trackProblem({ missing: missing !== null, verdict, guessTooShort: facts !== null && music.startMs + total > facts.durationMs });
+  const picks = facts === null ? [] : highlightPicks(facts.highlights, music.startMs, total, facts.durationMs);
 
   function pick(ms: number): void {
-    if (track === null) return;
-    const edit = setMusicStart(session.state.spec, ms, track.durationMs);
+    if (facts === null) return;
+    const edit = setMusicStart(session.state.spec, ms, facts.durationMs);
     if (edit.ok && edit.spec !== session.state.spec) session.edit(edit.spec);
   }
 
@@ -217,9 +227,20 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
       <div className="ed-music-card">
         {track !== null ? <Cover track={track} className="ed-music-cover" /> : <span className="ed-music-cover ed-music-cover-none" aria-hidden="true" />}
         <span className="ed-music-facts">
-          <span className="ed-music-name">{track !== null ? track.title : lookup.state === "unlisted" ? "Трек из прежнего списка" : lookup.state === "own" ? "Свой трек" : "Трек…"}</span>
+          <span className="ed-music-name">
+            {track !== null ? track.title : own !== null ? own.name : lookup.state === "unlisted" ? "Трек из прежнего списка" : lookup.state === "own-gone" ? "Свой трек: файла больше нет" : "Трек…"}
+          </span>
           {track !== null && <span className="muted">{track.artist ?? "исполнитель не указан"}</span>}
-          <span className="mono faint">{track !== null ? `${trackLength(track.durationMs)} · тренд Instagram${track.explicit ? " · E" : ""}` : lookup.state === "unlisted" ? "его нет в нынешнем списке" : " "}</span>
+          {own !== null && <span className="muted">свой трек</span>}
+          <span className="mono faint">
+            {track !== null
+              ? `${trackLength(track.durationMs)} · тренд Instagram${track.explicit ? " · E" : ""}`
+              : own !== null
+                ? `${trackLength(own.durationMs)} · свой файл`
+                : lookup.state === "unlisted"
+                  ? "его нет в нынешнем списке"
+                  : " "}
+          </span>
         </span>
       </div>
 
@@ -230,13 +251,14 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
         </p>
       )}
 
-      {track !== null ? (
+      {facts !== null ? (
         <div className="ed-pgroup">
           <div className="ed-prow">
-            <span className="lbl">Лучшая часть</span>
-            <span className="mono faint ed-props-sub">от Instagram · {track.highlights.length}</span>
+            {/* An own track has no highlights of Instagram's: the window is the whole of what it offers. */}
+            <span className="lbl">{track !== null ? "Лучшая часть" : "Начало музыки"}</span>
+            <span className="mono faint ed-props-sub">{track !== null ? `от Instagram · ${track.highlights.length}` : "свой файл"}</span>
           </div>
-          <TrackWindow session={session} track={track} startMs={music.startMs} total={total} peaks={peaks?.peaks ?? null} />
+          <TrackWindow session={session} track={facts} startMs={music.startMs} total={total} peaks={peaks?.peaks ?? null} />
           {picks.length > 0 && (
             <div className="ed-hl-picks" role="group" aria-label="Выбрать лучшую часть">
               {picks.map((p) => (

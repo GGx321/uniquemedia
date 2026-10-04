@@ -166,7 +166,7 @@ function photoText(first: FlaggedCell, usedVideo: UsedVideo | null): string {
 /** «скоро» for a part whose slice has not landed (N9), by where the engine would refuse it. */
 function notYetText(spec: MontageDraft, issue: MontageIssue): string {
   const [root, i] = issue.path;
-  if (root === "music") return "Музыка в видео — скоро";
+  // Music is never here since 3f.4 (a trending track since 3c.5): the engine judges it (`track-unavailable`, `media-unavailable`, `track-too-short`).
   // Text and built-in stickers render since 3b.6: the only layer N9 still refuses is an own sticker (3f).
   if (root === "layers") return "Свои стикеры — скоро";
   if (root === "clips" && typeof i === "number" && spec.clips[i]?.kind === "video") return "Своё видео — скоро";

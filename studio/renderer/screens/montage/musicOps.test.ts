@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_PEAK_BARS, MAX_SOURCE_OFFSET_MS, MIN_PEAK_BARS, MontageDraft } from "../../../shared/engine";
-import { atHighlight, clampMusicStart, highlightMarks, type MusicEdit, musicStartRange, setMusicStart, slipStart, trackProblem, waveBars } from "./musicOps";
+import { MAX_PEAK_BARS, MAX_SOURCE_OFFSET_MS, MIN_PEAK_BARS, MontageDraft, type MontageIssue } from "../../../shared/engine";
+import { atHighlight, clampMusicStart, highlightMarks, type MusicEdit, musicStartRange, musicVerdictOf, setMusicStart, slipStart, trackProblem, waveBars } from "./musicOps";
 import { draftSpec } from "./testkit";
 
 // 3d.3b: the music track on the timeline. The block always spans the whole montage (the render cuts and pads the audio to
@@ -75,6 +75,39 @@ describe("setting the start", () => {
     expect(setMusicStart(draftSpec(4), 0, TRACK_MS)).toEqual({ ok: false, reason: "no-music" });
     const own = draftSpec(4, { music: { source: "own", mediaId: "media-own-0002", startMs: 0 } });
     expect(ok(setMusicStart(own, 1_234, TRACK_MS)).music).toEqual({ source: "own", mediaId: "media-own-0002", startMs: 1_234 });
+  });
+});
+
+// 3f.4: the engine's verdict on the music, from the issues of the spec it judged. A trending track is `track-unavailable` or `track-too-short`; an own track
+// is `media-unavailable` AT THE MUSIC (the code every own media gets) or `track-too-short`: the editor says the same of both.
+describe("musicVerdictOf: what the engine's issues say of the music", () => {
+  const at = (code: MontageIssue["code"], ...path: (string | number)[]): MontageIssue => ({ code, path });
+
+  test("not judged yet: the block has no verdict, and trusts none", () => {
+    expect(musicVerdictOf(false, [at("track-unavailable", "music")])).toEqual({ judged: false });
+  });
+
+  test("judged with nothing wrong with the music: judged, no problem", () => {
+    expect(musicVerdictOf(true, [])).toEqual({ judged: true, problem: null });
+    expect(musicVerdictOf(true, [at("photo-unavailable", "clips", 0, "cell")])).toEqual({ judged: true, problem: null });
+  });
+
+  test("a trending track the store lacks, and an own track the library lacks, are both unavailable", () => {
+    expect(musicVerdictOf(true, [at("track-unavailable", "music")])).toEqual({ judged: true, problem: "unavailable" });
+    expect(musicVerdictOf(true, [at("media-unavailable", "music")])).toEqual({ judged: true, problem: "unavailable" });
+  });
+
+  test("a track too short for its start is too-short, whichever kind it is", () => {
+    expect(musicVerdictOf(true, [at("track-too-short", "music")])).toEqual({ judged: true, problem: "too-short" });
+  });
+
+  test("an own media gone from a CLIP or a LAYER is not a problem of the music", () => {
+    expect(musicVerdictOf(true, [at("media-unavailable", "clips", 1, "cell")])).toEqual({ judged: true, problem: null });
+    expect(musicVerdictOf(true, [at("media-unavailable", "layers", 0, "sticker")])).toEqual({ judged: true, problem: null });
+  });
+
+  test("unavailable is told before too-short", () => {
+    expect(musicVerdictOf(true, [at("track-too-short", "music"), at("media-unavailable", "music")])).toEqual({ judged: true, problem: "unavailable" });
   });
 });
 

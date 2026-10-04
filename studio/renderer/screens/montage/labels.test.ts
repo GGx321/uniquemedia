@@ -233,7 +233,9 @@ describe("the music block", () => {
   test("what the track is called on the block: its title, or what the editor knows of it", () => {
     expect(trackName({ state: "listed", track })).toBe("Espresso · Sabrina Carpenter");
     expect(trackName({ state: "unlisted" })).toBe("трек из прежнего списка");
-    expect(trackName({ state: "own" })).toBe("свой трек");
+    // An own track (3f.4) is called by the file's name; one the library no longer lists is told so.
+    expect(trackName({ state: "own", track: { name: "my mix.mp3" } })).toBe("my mix.mp3");
+    expect(trackName({ state: "own-gone" })).toBe("свой трек: файла больше нет");
     expect(trackName({ state: "loading" })).toBe(null);
     expect(trackName({ state: "none" })).toBe(null);
   });

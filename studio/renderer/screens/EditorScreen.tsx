@@ -18,7 +18,7 @@ import { LayerProperties } from "./montage/LayerProperties";
 import { addLayerRefusal } from "./montage/layerOps";
 import { type MediaTab, MediaPanel } from "./montage/MediaPanel";
 import { MusicProperties } from "./montage/MusicCard";
-import { pickTrack, type TrackVerdict } from "./montage/musicOps";
+import { musicVerdictOf, pickTrack, type TrackVerdict } from "./montage/musicOps";
 import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
 import { PhotoBin } from "./montage/PhotoBin";
@@ -439,9 +439,7 @@ function DraftEditor({
   const judgedNow = sameJson(verdict.spec, state.spec);
   const judged = judgedNow ? verdict.issues : [];
   // The track: judged (by the length the engine's decode proved) or not yet; the block trusts only a verdict on the spec on screen.
-  const musicVerdict: TrackVerdict = judgedNow
-    ? { judged: true, problem: judged.some((i) => i.code === "track-unavailable") ? "unavailable" : judged.some((i) => i.code === "track-too-short") ? "too-short" : null }
-    : { judged: false };
+  const musicVerdict: TrackVerdict = musicVerdictOf(judgedNow, judged);
   const flaggedLayers = layerProblems(verdict.spec, judged);
   const focus = useFocusResolver(client, session, avatarId);
   /** A free photo dragged out of the bin. */
