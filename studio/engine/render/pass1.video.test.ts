@@ -53,6 +53,15 @@ describe("buildPass1: an own video clip", () => {
     expect(VIDEO_INPUT_ARGS).toContain("h264");
   });
 
+  test("is held to an allocation cap and a pixel cap before -i, as a second line of defence behind the sha check (L-4)", () => {
+    const { argv } = only(build([video(2_000)]));
+    const before = argv.slice(0, argv.indexOf("-i"));
+    expect(Number(before[before.indexOf("-max_alloc") + 1])).toBe(256 * 1024 * 1024);
+    expect(Number(before[before.indexOf("-max_pixels") + 1])).toBe((FRAME_W + 64) * (FRAME_H + 64));
+    // ... and a mezzanine of exactly the frame's size fits under it (the real-ffmpeg test of the portrait mezzanine runs it).
+    expect(Number(before[before.indexOf("-max_pixels") + 1])).toBeGreaterThanOrEqual(FRAME_W * FRAME_H);
+  });
+
   test("maps exactly one stream, the filter graph's picture: the clip's audio is never used", () => {
     const { argv } = only(build([video(2_000)]));
     expect(argv.filter((a) => a === "-map")).toHaveLength(1);

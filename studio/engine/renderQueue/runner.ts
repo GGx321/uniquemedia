@@ -1,6 +1,7 @@
-import { mkdir, rm, statfs, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Id } from "../../shared/engine";
+import { freeBytesOf } from "../freeBytes";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { totalFrames as framesOfTimeline } from "../../shared/montage";
@@ -68,8 +69,10 @@ export interface RenderRunInput {
   /**
    * Writes the private copies of the own videos the clips name into the job folder (3f.3b; `resolveVideo` already points at those names): each mezzanine is STREAMED
    * in, checked against its record as it goes. Called once, after `stageOwnPhotos` and before the layers are staged or anything is run; the same rules for what it throws.
+   * `progress(copied, total)` says how many bytes of all the copies are made: the job's own progress moves with it (a copy of hundreds of MiB must not look frozen), and the
+   * ffmpeg budget starts only when the staging has ended (the copies' time is the disk's, not ffmpeg's).
    */
-  readonly stageOwnVideos?: (dir: string) => Promise<void>;
+  readonly stageOwnVideos?: (dir: string, progress: (copied: number, total: number) => void) => Promise<void>;
   /**
    * Silence, or one stored track as the VERIFIED BYTES the track store handed over (never a path: a file on disk can change
    * between the store's check and ffmpeg's read). The runner writes them to `<job folder>/track.m4a`, has `check` look at that
@@ -124,17 +127,9 @@ export interface RenderRunOutcome {
 /** The name of the temp output a job may write and, on failure, remove; nothing else. */
 const partName = (jobId: string): string => `.studio-part-${jobId}.mp4`;
 
-const defaultFreeBytes = async (dir: string): Promise<number | null> => {
-  try {
-    const info = await statfs(dir);
-    const free = info.bavail * info.bsize;
-    return Number.isFinite(free) ? free : null;
-  } catch {
-    return null;
-  }
-};
-
 const MIB = 1024 * 1024;
+/** The copies of the own videos fill up to this part of the timeline's frames in pass 1's slice of the progress. */
+const COPY_SHARE = 0.3;
 
 const defaultRemoveTree = (path: string): Promise<void> => rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 const defaultRemoveFile = (path: string): Promise<void> => rm(path, { force: true, maxRetries: 5, retryDelay: 100 });
@@ -194,7 +189,8 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   const stageFrames = timelineFrames * (1 + layerPlan.jobs.length);
   const fold = new ProgressFold(totalFrames);
   const budgetMs = renderTimeoutMs(totalFrames);
-  const deadline = now() + budgetMs;
+  // The ffmpeg budget starts when the staging is over (below): the copies of the own videos can take as long as a slow disk takes.
+  let deadline = now() + budgetMs;
 
   const measure = deps.measure ?? measureTruePeak;
 
@@ -292,12 +288,16 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   try {
     await scrubFs(mkdir(clipDir, { recursive: true }));
     if (input.stageOwnPhotos !== undefined) await stage(input.stageOwnPhotos(clipDir));
-    if (input.stageOwnVideos !== undefined) await stage(input.stageOwnVideos(clipDir));
+    if (input.stageOwnVideos !== undefined) {
+      // The copies share the start of the bar with pass 1: up to a third of pass 1's own slice, so it moves but never reaches what pass 1 will report.
+      await stage(input.stageOwnVideos(clipDir, (copied, total) => report(total > 0 ? fold.pass1(Math.floor((Math.min(copied, total) / total) * COPY_SHARE * timelineFrames)) : null)));
+    }
     if (input.stageLayers !== undefined && input.overlays.length > 0) await stage(input.stageLayers(clipDir));
+    deadline = now() + budgetMs;
     // The layer files can take real room (a 15 s file with heavy captions and stickers is 300 MiB, and two exist at once): ask the volume
     // BEFORE anything is rendered, and refuse cleanly rather than fail an ffmpeg half way with a full disk.
     if (layerPlan.jobs.length > 0) {
-      const free = await (deps.freeBytes ?? defaultFreeBytes)(clipDir);
+      const free = await (deps.freeBytes ?? freeBytesOf)(clipDir);
       if (free !== null && free < layerPlan.peakDiskBytes) {
         throw new RenderFailure({ code: "RENDER_FAILED", detail: `not enough free space for the render's temporary files: about ${Math.ceil(layerPlan.peakDiskBytes / MIB)} MiB are needed` });
       }
@@ -329,8 +329,9 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
       });
       // An own video clip is checked, not trusted: its length comes from the file it is cut from, and a mezzanine that gave fewer (or more) frames than the clip asks
       // for would make a SHORTER clip without a sound. `-xerror` and a constant rate should make it exact; a file that is not is refused here, before it is joined to the rest.
-      if (input.clips[job.index]?.kind === "video" && wrote !== null && wrote !== job.frames) {
-        throw new RenderFailure({ code: "RENDER_FAILED", detail: `an own video's clip file has ${wrote} frames, the clip is ${job.frames}` });
+      // A count nobody saw is no count: an ffmpeg that reported no frames at all fails a video clip closed (a real one always reports them).
+      if (input.clips[job.index]?.kind === "video" && wrote !== job.frames) {
+        throw new RenderFailure({ code: "RENDER_FAILED", detail: wrote === null ? "an own video's clip file was not counted: ffmpeg reported no frames" : `an own video's clip file has ${wrote} frames, the clip is ${job.frames}` });
       }
       framesOfDoneClips += job.frames;
       reportStage(framesOfDoneClips);

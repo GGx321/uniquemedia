@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { open, rm, statfs, type FileHandle } from "node:fs/promises";
+import { open, rm, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
-import { MEDIA_BYTE_CAPS } from "../../shared/engine";
+import { MAX_STORED_VIDEO_BYTES } from "../../shared/engine";
+import { freeBytesOf } from "../freeBytes";
 import { NODE_OPEN_OPS, openRegularNoFollow, type OpenRegularOps } from "../library/openRegular";
 import { RenderFailure } from "../renderQueue/queue";
 
@@ -104,27 +105,31 @@ export interface StreamCopyIo {
   readonly remove?: (path: string) => Promise<void>;
   /** The chunk size; `OWN_COPY_CHUNK_BYTES` by default. */
   readonly chunkBytes?: number;
+  /** The largest record size taken; `MAX_STORED_VIDEO_BYTES` by default (a test lowers it). */
+  readonly maxBytes?: number;
+  /** Told after each chunk how many bytes of THIS file are copied so far. */
+  readonly onBytes?: (copied: number) => void;
 }
 
 const defaultOpenDest = (path: string): Promise<DestFile> => open(path, "wx", 0o600);
 const defaultRemove = (path: string): Promise<void> => rm(path, { force: true });
-const defaultFreeBytes = async (dir: string): Promise<number | null> => {
-  try {
-    const info = await statfs(dir);
-    const free = info.bavail * info.bsize;
-    return Number.isFinite(free) ? free : null;
-  } catch {
-    return null;
-  }
-};
-
-const noSpace = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `not enough free space for the render's temporary files: the own ${what} cannot be copied` });
+export const ownMediaNoSpace = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `not enough free space for the render's temporary files: the own ${what} cannot be copied` });
+const noSpace = ownMediaNoSpace;
+/** Something the disk said that is not «it is gone»: an I/O error, a handle limit, a lock held by an antivirus. The file may well be fine. */
+const readFailed = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `an own ${what} of this montage could not be read` });
 const copyFailed = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `the copy of an own ${what} could not be written to the render's folder` });
 
 /** What a failed write or create of the copy is: a full disk is told as that, anything else without its text (it names the folder). */
 function destFailure(error: unknown, what: string): RenderFailure {
   const code = error instanceof Error ? Reflect.get(error, "code") : undefined;
   return code === "ENOSPC" || code === "EDQUOT" ? noSpace(what) : copyFailed(what);
+}
+
+/** The disk's own words for «this is not the file»: gone, not a folder on the way, a link, not a plain file, or another file than the name led to. Nothing else says the file is gone. */
+const NOT_THAT_FILE = new Set(["ENOENT", "ENOTDIR", "ELOOP", "ENOTREG", "ECHANGED"]);
+function isNotThatFile(error: unknown): boolean {
+  const code = error instanceof Error ? Reflect.get(error, "code") : undefined;
+  return typeof code === "string" && NOT_THAT_FILE.has(code);
 }
 
 async function writeAll(file: DestFile, buffer: Uint8Array, length: number): Promise<void> {
@@ -143,8 +148,8 @@ async function writeAll(file: DestFile, buffer: Uint8Array, length: number): Pro
  */
 export async function copyVerifiedOwnMedia(source: StoredFile, what: string, dest: string, signal: AbortSignal, io: StreamCopyIo = {}): Promise<void> {
   signal.throwIfAborted();
-  if (!Number.isSafeInteger(source.bytes) || source.bytes < 1 || source.bytes > MEDIA_BYTE_CAPS.video) throw ownMediaUnavailable(what);
-  const free = await (io.freeBytes ?? defaultFreeBytes)(dirname(dest));
+  if (!Number.isSafeInteger(source.bytes) || source.bytes < 1 || source.bytes > (io.maxBytes ?? MAX_STORED_VIDEO_BYTES)) throw ownMediaUnavailable(what);
+  const free = await (io.freeBytes ?? freeBytesOf)(dirname(dest));
   signal.throwIfAborted();
   if (free !== null && free < source.bytes + OWN_COPY_FREE_MARGIN_BYTES) throw noSpace(what);
 
@@ -178,6 +183,7 @@ export async function copyVerifiedOwnMedia(source: StoredFile, what: string, des
       } catch (error) {
         throw destFailure(error, what);
       }
+      io.onBytes?.(total);
     }
     signal.throwIfAborted();
     if (total !== source.bytes) throw ownMediaUnavailable(what);
@@ -194,7 +200,8 @@ export async function copyVerifiedOwnMedia(source: StoredFile, what: string, des
     if (created) await remove(dest).catch(() => undefined);
     if (signal.aborted) throw signal.reason;
     if (error instanceof RenderFailure) throw error;
-    throw ownMediaUnavailable(what);
+    // Only the disk's «not that file» is the file being gone or changed; any other open or read error is a failed read, so the owner is not told the file is gone while the draft says all is well.
+    throw isNotThatFile(error) ? ownMediaUnavailable(what) : readFailed(what);
   } finally {
     await reader?.close().catch(() => undefined);
   }

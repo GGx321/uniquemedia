@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
-import { MEDIA_BYTE_CAPS } from "../../shared/engine";
+import { MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS } from "../../shared/engine";
 import type { MediaImporter } from "./imports";
 import { openFileSource } from "./video/fileSource";
 import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
@@ -33,6 +33,8 @@ export interface VideoImporterOptions {
   readonly run?: typeof runFfmpegArgv;
   /** Overrides the plan's wall-clock limit (a test). */
   readonly timeoutMs?: number;
+  /** The largest mezzanine stored; `MAX_STORED_VIDEO_BYTES` by default (a test lowers it). */
+  readonly maxStoredBytes?: number;
 }
 
 /** Whether what ffmpeg wrote is what the plan asked for; the walker's reading of it, never ffmpeg's. */
@@ -81,16 +83,17 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
     }
     if (!judged.ok) return { ok: false, reason: judged.reason };
     const { plan } = judged;
+    const maxStoredBytes = options.maxStoredBytes ?? MAX_STORED_VIDEO_BYTES;
     if (signal.aborted) return { ok: false, reason: "cancelled" };
 
     const work = await workFile();
-    const fail = async (reason: "failed" | "cancelled"): Promise<{ ok: false; reason: "failed" | "cancelled" }> => {
+    const fail = async (reason: "failed" | "cancelled" | "too-large"): Promise<{ ok: false; reason: "failed" | "cancelled" | "too-large" }> => {
       await work.release();
       return { ok: false, reason };
     };
     try {
       await run({
-        argv: videoArgs(staged.path, plan, work.path),
+        argv: videoArgs(staged.path, plan, work.path, maxStoredBytes),
         output: work.path,
         signal,
         timeoutMs: options.timeoutMs ?? plan.timeoutMs,
@@ -101,6 +104,11 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
       return fail(signal.aborted ? "cancelled" : "failed");
     }
     if (signal.aborted) return fail("cancelled");
+
+    // The size comes first (the photo importer does the same): a mezzanine over the cap is one the render's copy and a draft would refuse, so it is never stored, and a file the
+    // encode's own `-fs` limit cut short is told as what it is, not as a broken one.
+    const writtenBytes = await stat(work.path).then((info) => info.size, () => 0);
+    if (writtenBytes > maxStoredBytes) return fail("too-large");
 
     // What ffmpeg wrote is judged by the same walker that judged what it read.
     let made: VideoInfo | undefined;
@@ -113,7 +121,7 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
       await written.close();
     }
     if (made === undefined || !isPlannedOutput(made, plan)) return fail("failed");
-    if (!((await stat(work.path).then((info) => info.size, () => 0)) > 0)) return fail("failed");
+    if (!(writtenBytes > 0)) return fail("failed");
 
     return {
       ok: true,

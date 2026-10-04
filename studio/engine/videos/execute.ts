@@ -321,9 +321,9 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
    * Streams the plan's own videos into the job folder, then maps what only the owner can fix: a mezzanine that is gone or changed is the contract's `media-unavailable`
    * at each clip that uses it (`OwnVideoUnavailableError` names the media, never a path). A full disk, a failed write and a cancel come out as they are.
    */
-  const stageOwnVideos = async (plan: RenderPlan, sources: readonly OwnVideoSource[], dir: string, signal: AbortSignal): Promise<void> => {
+  const stageOwnVideos = async (plan: RenderPlan, sources: readonly OwnVideoSource[], dir: string, signal: AbortSignal, progress: (copied: number, total: number) => void): Promise<void> => {
     try {
-      await copyOwnVideos(dir, sources, signal, deps.ownVideoIo);
+      await copyOwnVideos(dir, sources, signal, deps.ownVideoIo, progress);
     } catch (error) {
       if (!(error instanceof OwnVideoUnavailableError)) throw error;
       log(`render ${plan.jobId}: an own video was refused (changed or gone)`);
@@ -410,7 +410,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
                   const own = ownVideos.get(mediaId);
                   return own === undefined ? undefined : { path: join(jobDir, ownVideoCopyName(mediaId)), width: own.width, height: own.height };
                 },
-                stageOwnVideos: (dir: string) => stageOwnVideos(plan, [...ownVideos.values()], dir, context.signal),
+                stageOwnVideos: (dir: string, progress: (copied: number, total: number) => void) => stageOwnVideos(plan, [...ownVideos.values()], dir, context.signal, progress),
               }),
           overlays: layers === undefined ? [] : layers.overlays,
           ...(layers === undefined ? {} : { stageLayers: layers.stage }),

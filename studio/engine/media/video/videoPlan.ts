@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../../shared/engine";
+import { MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../../shared/engine";
 import { longerThan, type ProbeRefusal, type VideoCodec, type VideoColour, type VideoInfo, type VideoProbe } from "./videoProbe";
 
 // From what the walker read (`videoProbe.ts`) to what is refused and what ffmpeg is asked to do (Stage 3 plan, 3f.3a). Pure: it starts nothing
@@ -43,6 +43,9 @@ export const VIDEO_LIMITS = {
 
 /** Frames of slack either way in `expectedFrames`: the rounding of the first and the last. */
 const FRAME_SLACK = 2;
+
+/** What `-fs` allows above the stored-video cap: the muxer stops late, never early. */
+export const STORED_STOP_SLACK_BYTES = 64 * 1024 * 1024;
 
 /** One allocation may take at most 256 MiB: above a 4K 12-bit 4:4:4 plane (about 35 MiB) and far below a container bomb. */
 const MAX_ALLOC_BYTES = 256 * 1024 * 1024;
@@ -206,7 +209,7 @@ export function videoFilterGraph(plan: VideoPlan): string {
  * (`render/musicChain.ts`): the file protocol only, the demuxer forced, an allocation cap and a pixel cap, no stdin; one video stream mapped
  * and nothing else; no metadata; the output cut at three minutes whatever the headers claimed.
  */
-export function videoArgs(input: string, plan: VideoPlan, output: string): string[] {
+export function videoArgs(input: string, plan: VideoPlan, output: string, maxStoredBytes: number = MAX_STORED_VIDEO_BYTES): string[] {
   if (!isAbsolute(input) || !isAbsolute(output)) throw new TypeError("videoArgs: the paths must be absolute");
   return [
     "-nostdin",
@@ -284,6 +287,10 @@ export function videoArgs(input: string, plan: VideoPlan, output: string): strin
     "+bitexact",
     "-flags:v",
     "+bitexact",
+    // The encode is bounded by what it WRITES, not by time: a grainy three minutes at CRF 16 can be several GiB. The muxer applies `-fs` late (it can overshoot), so the limit has
+    // room above the cap, and the importer refuses anything over the cap itself (`too-large`, judged by size before structure, so a file this limit cut is told as that).
+    "-fs",
+    String(maxStoredBytes + STORED_STOP_SLACK_BYTES),
     "-movflags",
     "+faststart",
     "-f",

@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { MAX_STORED_VIDEO_BYTES } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
 import type { MediaLookup } from "../media/service";
 import { RenderFailure } from "../renderQueue/queue";
+import { OWN_COPY_FREE_MARGIN_BYTES } from "./ownMedia";
 import { copyOwnVideos, ownVideoCopyName, ownVideoFactsOf, OwnVideoUnavailableError, ownVideoSourceOf, type OwnVideoSource } from "./ownVideos";
 useNativeGlobals();
 
@@ -58,6 +60,25 @@ describe("ownVideoFactsOf", () => {
     expect(ownVideoFactsOf(lookupOf({ width: null }))).toBeNull();
     expect(ownVideoFactsOf(lookupOf({ height: null }))).toBeNull();
     expect(ownVideoFactsOf(lookupOf({ durationMs: null }))).toBeNull();
+  });
+});
+
+describe("ownVideoFactsOf: a draft sees the bound a render copies under (M-1)", () => {
+  test("a mezzanine over the stored-video cap is not a video the render can read, so a draft says media-unavailable too", () => {
+    expect(ownVideoFactsOf(lookupOf({}, { bytes: MAX_STORED_VIDEO_BYTES + 1 }))).toBeNull();
+  });
+
+  test("one exactly at the cap is", () => {
+    expect(ownVideoFactsOf(lookupOf({}, { bytes: MAX_STORED_VIDEO_BYTES }))).toEqual({ width: 1080, height: 570, durationMs: 3_000 });
+  });
+
+  test("the cap can be lowered for a test: one byte over it is refused and one at it is taken", () => {
+    expect(ownVideoFactsOf(lookupOf({}, { bytes: 1_001 }), 1_000)).toBeNull();
+    expect(ownVideoFactsOf(lookupOf({}, { bytes: 1_000 }), 1_000)).not.toBeNull();
+  });
+
+  test("an empty record is no video either", () => {
+    expect(ownVideoFactsOf(lookupOf({}, { bytes: 0 }))).toBeNull();
   });
 });
 
@@ -127,6 +148,56 @@ describe("copyOwnVideos", () => {
     expect(error).toBeInstanceOf(RenderFailure);
     expect(error).not.toBeInstanceOf(OwnVideoUnavailableError);
     expect(await readdir(jobDir())).toEqual([]);
+  });
+
+  test("the media that fails is the one named: the SECOND source's id, never the first's (M-3)", async () => {
+    const a = await stored("media-0000001", pattern(100, 1));
+    const b = await stored("media-0000002", pattern(70, 2));
+    await writeFile(b.path, pattern(70, 9));
+    const error = await copyOwnVideos(jobDir(), [a, b], signal(), IO).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OwnVideoUnavailableError);
+    expect(error instanceof OwnVideoUnavailableError && error.mediaId).toBe("media-0000002");
+    // The first was copied before the second failed; the failed one left nothing (the render removes the whole folder).
+    expect(await readdir(jobDir())).toEqual([ownVideoCopyName("media-0000001")]);
+  });
+
+  test("and the first, when the first fails, even with a good second behind it", async () => {
+    const a = await stored("media-0000001", pattern(100, 1));
+    const b = await stored("media-0000002", pattern(70, 2));
+    await writeFile(a.path, pattern(100, 9));
+    const error = await copyOwnVideos(jobDir(), [a, b], signal(), IO).catch((e: unknown) => e);
+    expect(error instanceof OwnVideoUnavailableError && error.mediaId).toBe("media-0000001");
+  });
+
+  test("the room is asked for ONCE up front, for the SUM of every video plus the margin: a volume that cannot hold them all refuses before the first copy is made (M-2)", async () => {
+    const a = await stored("media-0000001", pattern(100, 1));
+    const b = await stored("media-0000002", pattern(70, 2));
+    const asked: string[] = [];
+    const io = { ...IO, freeBytes: async (dir: string) => (asked.push(dir), 170 + OWN_COPY_FREE_MARGIN_BYTES - 1) };
+    const error = await copyOwnVideos(jobDir(), [a, b], signal(), io).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RenderFailure);
+    expect(error).not.toBeInstanceOf(OwnVideoUnavailableError);
+    expect(String(error)).toMatch(/free space/);
+    expect(asked).toEqual([jobDir()]);
+    expect(await readdir(jobDir())).toEqual([]);
+  });
+
+  test("a volume with exactly the sum plus the margin takes them all", async () => {
+    const a = await stored("media-0000001", pattern(100, 1));
+    const b = await stored("media-0000002", pattern(70, 2));
+    await copyOwnVideos(jobDir(), [a, b], signal(), { ...IO, freeBytes: async () => 170 + OWN_COPY_FREE_MARGIN_BYTES });
+    expect((await readdir(jobDir())).sort()).toEqual([ownVideoCopyName("media-0000001"), ownVideoCopyName("media-0000002")]);
+  });
+
+  test("progress is reported as bytes copied of the sum, across videos, ending at the whole", async () => {
+    const a = await stored("media-0000001", pattern(100, 1));
+    const b = await stored("media-0000002", pattern(70, 2));
+    const seen: [number, number][] = [];
+    await copyOwnVideos(jobDir(), [a, b], signal(), IO, (copied, total) => void seen.push([copied, total]));
+    expect(seen.every(([, total]) => total === 170)).toBe(true);
+    expect(seen.map(([copied]) => copied)).toEqual([...seen.map(([copied]) => copied)].sort((x, y) => x - y));
+    expect(seen.at(-1)).toEqual([170, 170]);
+    expect(seen.some(([copied]) => copied > 100 && copied < 170)).toBe(true);
   });
 
   test("a cancel before the next video is copied stops it and leaves nothing", async () => {

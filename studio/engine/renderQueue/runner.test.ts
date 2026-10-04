@@ -1212,8 +1212,23 @@ describe("runRenderJob: own video clips (3f.3b)", () => {
     expect(calls).toHaveLength(3);
   });
 
-  test("a scripted ffmpeg that reports no frames at all is not judged (only a real ffmpeg always reports them)", async () => {
+  test("an ffmpeg that reports NO frames for a video clip fails the job closed (L-1): a real ffmpeg always reports them, and a count nobody saw is not a count", async () => {
     const r = videoRig();
+    const { deps, calls } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "data");
+      call.child.exit(0);
+    });
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RenderFailure);
+    expect(error instanceof RenderFailure && error.engineError.code).toBe("RENDER_FAILED");
+    expect(String(error)).not.toContain(r.tmpRoot);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("a photo job whose scripted ffmpeg reports no frames is still fine: only a video clip's count is held to ffmpeg's report", async () => {
+    const r = rig();
     const { deps, calls } = depsWith((call) => {
       writeFileSync(outputOf(call.args), "data");
       call.child.exit(0);
@@ -1222,6 +1237,66 @@ describe("runRenderJob: own video clips (3f.3b)", () => {
     await runRenderJob(r.input, deps);
 
     expect(calls).toHaveLength(3);
+  });
+
+  test("the ffmpeg budget starts AFTER the copies are made: a copy that takes longer than the whole budget leaves ffmpeg its full time (M-2)", async () => {
+    const r = videoRig();
+    let clock = 0;
+    const { deps, calls } = depsWith(goodFfmpeg, { now: () => clock });
+
+    await runRenderJob(
+      {
+        ...r.input,
+        stageOwnVideos: async () => {
+          clock += 10 * renderTimeoutMs(60);
+        },
+      },
+      deps,
+    );
+
+    expect(calls).toHaveLength(3);
+  });
+
+  test("and the budget is still the budget once ffmpeg runs: a call after the copies that outlives it is a timeout", async () => {
+    const r = videoRig();
+    let clock = 0;
+    const { deps } = depsWith(
+      (call) => {
+        clock += 10 * renderTimeoutMs(60);
+        goodFfmpeg(call);
+      },
+      { now: () => clock },
+    );
+
+    await expect(runRenderJob({ ...r.input, stageOwnVideos: async () => void (clock += 5) }, deps)).rejects.toBeInstanceOf(FfmpegTimeoutError);
+  });
+
+  test("the copies report their progress: the job's own progress moves during staging, before ffmpeg, never backwards and never to the total (M-2)", async () => {
+    const r = videoRig();
+    let atFirstCall: number[] | null = null;
+    const { deps } = depsWith((call) => {
+      atFirstCall ??= [...r.progress];
+      goodFfmpeg(call);
+    });
+
+    await runRenderJob(
+      {
+        ...r.input,
+        stageOwnVideos: async (_dir, progress) => {
+          progress(25, 100);
+          progress(50, 100);
+          progress(100, 100);
+        },
+      },
+      deps,
+    );
+
+    const before: number[] = atFirstCall ?? [];
+    expect(before.length).toBeGreaterThan(0);
+    expect(before).toEqual([...before].sort((a, b) => a - b));
+    expect(Math.max(...before)).toBeLessThan(60);
+    expect(Math.min(...before)).toBeGreaterThan(0);
+    expect(r.progress).toEqual([...r.progress].sort((a, b) => a - b));
   });
 
   test("a photo clip is not judged this way: its frames are checked by pass 2 and the verifier, as before", async () => {

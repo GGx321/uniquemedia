@@ -3,13 +3,13 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, open, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { MEDIA_BYTE_CAPS } from "../../shared/engine";
+import { MAX_STORED_VIDEO_BYTES } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
 import { NODE_OPEN_OPS, type OpenRegularOps } from "../library/openRegular";
 import { RenderFailure } from "../renderQueue/queue";
 import { lyingHandle } from "./testing/handleKit";
-import { copyVerifiedOwnMedia, OWN_COPY_FREE_MARGIN_BYTES, type DestFile, type StoredFile, type StreamCopyIo } from "./ownMedia";
+import { copyVerifiedOwnMedia, OwnMediaUnavailableError, OWN_COPY_FREE_MARGIN_BYTES, type DestFile, type StoredFile, type StreamCopyIo } from "./ownMedia";
 useNativeGlobals();
 
 // The STREAMING copy of a stored own file (3f.3b): an own video's mezzanine is far too large to read into memory (up to three minutes of 1080 x 1920 at CRF 16), so the
@@ -191,9 +191,18 @@ describe("copyVerifiedOwnMedia: the size is bound by the record", () => {
     const file = await stored(pattern(50));
     let opened = 0;
     const ops: OpenRegularOps = { ...NODE_OPEN_OPS, open: async (...args) => (opened++, NODE_OPEN_OPS.open(...args)) };
-    await failureOf(copyVerifiedOwnMedia({ ...file, bytes: MEDIA_BYTE_CAPS.video + 1 }, "video", destOf(), signal(), { ...SMALL, open: ops }));
+    await failureOf(copyVerifiedOwnMedia({ ...file, bytes: MAX_STORED_VIDEO_BYTES + 1 }, "video", destOf(), signal(), { ...SMALL, open: ops }));
     expect(opened).toBe(0);
     expect(await readdir(jobDir())).toEqual([]);
+  });
+
+  test("the cap is the shared stored-video cap, and a lower one given by the caller holds: one byte over is refused, one at it is copied", async () => {
+    const bytes = pattern(50);
+    const file = await stored(bytes);
+    await failureOf(copyVerifiedOwnMedia(file, "video", destOf(), signal(), { ...SMALL, maxBytes: 49 }));
+    expect(await readdir(jobDir())).toEqual([]);
+    await copyVerifiedOwnMedia(file, "video", destOf(), signal(), { ...SMALL, maxBytes: 50 });
+    expect(new Uint8Array(await readFile(destOf()))).toEqual(bytes);
   });
 
   test("a record of zero bytes, or a negative or fractional one, is refused without opening the file", async () => {
@@ -251,6 +260,88 @@ describe("copyVerifiedOwnMedia: only a plain file of ours is read", () => {
       expect(text).not.toContain(tmp());
       expect(text).not.toContain("media-0000001");
     }
+  });
+});
+
+describe("copyVerifiedOwnMedia: only a file that is really not there or not that file is `unavailable` (L-3)", () => {
+  const erroring = (code: string, where: "lstat" | "open"): OpenRegularOps => {
+    const fail = (): never => {
+      throw Object.assign(new Error(`${code}: the disk said no`), { code });
+    };
+    return where === "lstat" ? { ...NODE_OPEN_OPS, lstat: async () => fail() } : { ...NODE_OPEN_OPS, open: async () => fail() };
+  };
+  const kindOf = async (io: StreamCopyIo): Promise<"unavailable" | "failed"> => {
+    const file = await stored(pattern(50));
+    const error = await copyVerifiedOwnMedia(file, "video", destOf(), signal(), io).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RenderFailure);
+    expect(await readdir(jobDir())).toEqual([]);
+    return error instanceof OwnMediaUnavailableError ? "unavailable" : "failed";
+  };
+
+  test.each(["ENOENT", "ELOOP"])("%s at the lstat and at the open is unavailable: the file is gone or is a link", async (code) => {
+    expect(await kindOf({ ...SMALL, open: erroring(code, "lstat") })).toBe("unavailable");
+    expect(await kindOf({ ...SMALL, open: erroring(code, "open") })).toBe("unavailable");
+  });
+
+  test.each(["EIO", "EMFILE", "EBUSY", "EACCES", "EPERM"])("%s at the lstat and at the open is a failed read, NOT the file being gone", async (code) => {
+    expect(await kindOf({ ...SMALL, open: erroring(code, "lstat") })).toBe("failed");
+    expect(await kindOf({ ...SMALL, open: erroring(code, "open") })).toBe("failed");
+  });
+
+  test("a read error in the middle of the copy (EIO) is a failed read, and the partial copy is removed", async () => {
+    const file = await stored(pattern(100));
+    const real = await open(file.path, "r");
+    let reads = 0;
+    const flaky = new Proxy(real, {
+      get(target, property) {
+        if (property === "read") {
+          return async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+            if (++reads === 3) throw Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+            return target.read(buffer, offset, length, position);
+          };
+        }
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const error = await copyVerifiedOwnMedia(file, "video", destOf(), signal(), { ...SMALL, open: { ...NODE_OPEN_OPS, open: async () => flaky } }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RenderFailure);
+    expect(error).not.toBeInstanceOf(OwnMediaUnavailableError);
+    expect(await readdir(jobDir())).toEqual([]);
+    await real.close().catch(() => undefined);
+  });
+
+  test("a link, a changed identity, a wrong size and a wrong hash are unavailable", async () => {
+    const bytes = pattern(60);
+    const real = await stored(bytes, "media-0000002.mp4");
+    const link = join(libraryDir(), "media-0000001.mp4");
+    await symlink(real.path, link);
+    const asLink = await copyVerifiedOwnMedia({ ...real, path: link }, "video", destOf(), signal(), SMALL).catch((e: unknown) => e);
+    expect(asLink).toBeInstanceOf(OwnMediaUnavailableError);
+    const wrongSize = await copyVerifiedOwnMedia({ ...real, bytes: 59 }, "video", destOf(), signal(), SMALL).catch((e: unknown) => e);
+    expect(wrongSize).toBeInstanceOf(OwnMediaUnavailableError);
+    const wrongHash = await copyVerifiedOwnMedia({ ...real, sha256: sha(pattern(60, 3)) }, "video", destOf(), signal(), SMALL).catch((e: unknown) => e);
+    expect(wrongHash).toBeInstanceOf(OwnMediaUnavailableError);
+    const swapping: OpenRegularOps = {
+      lstat: (path) => NODE_OPEN_OPS.lstat(path),
+      open: async (path, flags) => {
+        await rm(real.path);
+        await symlink(link, real.path).catch(() => undefined);
+        return NODE_OPEN_OPS.open(path, flags);
+      },
+    };
+    const swapped = await copyVerifiedOwnMedia(real, "video", destOf(), signal(), { ...SMALL, open: swapping }).catch((e: unknown) => e);
+    expect(swapped).toBeInstanceOf(OwnMediaUnavailableError);
+  });
+});
+
+describe("copyVerifiedOwnMedia: progress", () => {
+  test("reports the bytes copied of THIS file after each chunk, ending at its whole size", async () => {
+    const seen: number[] = [];
+    await copyVerifiedOwnMedia(await stored(pattern(100)), "video", destOf(), signal(), { ...SMALL, onBytes: (n) => void seen.push(n) });
+    expect(seen.at(-1)).toBe(100);
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(seen.length).toBeGreaterThan(3);
   });
 });
 

@@ -47,6 +47,46 @@ describe("what it asks ffmpeg for", () => {
   });
 });
 
+describe("the size of the mezzanine (3f.3b): a stored video the render could not copy is never stored", () => {
+  // The fake writes the 3.8 KB chart fixture as its output; the importer's cap is lowered around it.
+  const importWith = async (maxStoredBytes: number) => {
+    const run: Run = async (options) => void (await copyFile(FIXTURES["h264-sdr-chart.mp4"].file, options.output));
+    const rig = requestFor(tmp(), await stage(tmp(), "h264-sdr-chart.mp4"));
+    return { outcome: await createVideoImporter({ run, maxStoredBytes })(rig.request), rig };
+  };
+  const size = FIXTURES["h264-sdr-chart.mp4"].bytes;
+
+  test("a mezzanine over the cap is refused too-large, after the encode, and its work file is released", async () => {
+    const { outcome, rig } = await importWith(size - 1);
+    expect(outcome).toEqual({ ok: false, reason: "too-large" });
+    expect(rig.released).toHaveLength(1);
+  });
+
+  test("one exactly at the cap is not refused for its size", async () => {
+    expect((await importWith(size)).outcome).not.toEqual({ ok: false, reason: "too-large" });
+  });
+
+  test("the encode itself is bounded: -fs, with room above the cap for the muxer's late stop", async () => {
+    const calls: RunOptions[] = [];
+    const run: Run = async (options) => {
+      calls.push(options);
+      await copyFile(FIXTURES["h264-sdr-chart.mp4"].file, options.output);
+    };
+    await createVideoImporter({ run, maxStoredBytes: 1_000_000 })((requestFor(tmp(), await stage(tmp(), "h264-sdr-chart.mp4"))).request);
+    const argv = calls[0]?.argv ?? [];
+    const limit = Number(argv[argv.indexOf("-fs") + 1]);
+    expect(argv).toContain("-fs");
+    expect(limit).toBeGreaterThan(1_000_000);
+    expect(limit).toBeLessThanOrEqual(1_000_000 + 128 * 1024 * 1024);
+  });
+
+  test("a truncated file the -fs limit cut is told too-large, not failed (its size is checked before its structure)", async () => {
+    const run: Run = async (options) => void (await writeFile(options.output, new Uint8Array(5_000)));
+    const rig = requestFor(tmp(), await stage(tmp(), "h264-sdr-chart.mp4"));
+    expect(await createVideoImporter({ run, maxStoredBytes: 1_000 })(rig.request)).toEqual({ ok: false, reason: "too-large" });
+  });
+});
+
 describe("what it checks of the file ffmpeg wrote", () => {
   async function outcomeWhenFfmpegWrites(fixture: keyof typeof FIXTURES | null) {
     const run: Run = async (options) => {
