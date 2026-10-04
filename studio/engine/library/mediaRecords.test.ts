@@ -603,3 +603,144 @@ describe("the listing", () => {
     expect(store.list().total).toBe(1);
   });
 });
+
+// Fix round 3, M1: a media that is being deleted is gone for every reader from the first moment of the delete, not from its last.
+describe("a record that is being removed", () => {
+  /** A store whose first unlink waits: the removal is parked between its start and its end. */
+  function parked(): { store: MediaRecords; reached: Promise<void>; release: () => void } {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reach: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => {
+      reach = resolve;
+    });
+    let armed = false;
+    const store = records({
+      fs: {
+        unlink: async (path) => {
+          if (armed && path.endsWith(".json")) {
+            reach();
+            await gate;
+          }
+          const { unlink } = await import("node:fs/promises");
+          await unlink(path);
+        },
+        platform: "linux",
+      },
+    });
+    const arm = (): void => {
+      armed = true;
+    };
+    return Object.assign({ store, reached, release }, { arm }) as never;
+  }
+
+  async function withParkedRemoval() {
+    const rig = parked() as unknown as { store: MediaRecords; reached: Promise<void>; release: () => void; arm: () => void };
+    const summary = await rig.store.commit(await photoInput());
+    rig.arm();
+    const removing = rig.store.remove(summary.mediaId);
+    await rig.reached;
+    return { ...rig, summary, removing };
+  }
+
+  test("is no longer found by anyone while its record is still on disk: get, has, lookup data, file path and listing", async () => {
+    const { store, summary, release, removing } = await withParkedRemoval();
+    expect(store.get(summary.mediaId)).toBeUndefined();
+    expect(store.has(summary.mediaId)).toBe(false);
+    expect(store.filePath(summary.mediaId)).toBeUndefined();
+    expect(store.integrityOf(summary.mediaId)).toBeUndefined();
+    expect(store.list()).toEqual({ media: [], total: 0 });
+    release();
+    expect(await removing).toBe(true);
+    expect(await names(mediaDir())).toEqual([]);
+  });
+
+  test("is taken out before the removal's first await: a reader in the same tick already misses it", async () => {
+    const store = records();
+    const summary = await store.commit(await photoInput());
+    const removing = store.remove(summary.mediaId);
+    expect(store.has(summary.mediaId)).toBe(false);
+    await removing;
+  });
+
+  test("a cleanup that runs meanwhile does not bring it back from its record on disk", async () => {
+    const { store, summary, release, removing } = await withParkedRemoval();
+    await store.recover();
+    expect(store.get(summary.mediaId)).toBeUndefined();
+    release();
+    await removing;
+    expect(store.list().total).toBe(0);
+  });
+
+  test("a media id being removed is not handed out again", async () => {
+    const queue = ["media-00000001", "media-00000001", "media-00000002"];
+    let armed = false;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reach: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => {
+      reach = resolve;
+    });
+    const store = records({
+      newId: () => queue.shift() ?? "media-00000009",
+      fs: {
+        unlink: async (path) => {
+          if (armed && path.endsWith(".json")) {
+            reach();
+            await gate;
+          }
+          const { unlink } = await import("node:fs/promises");
+          await unlink(path);
+        },
+        platform: "linux",
+      },
+    });
+    await store.commit(await photoInput());
+    armed = true;
+    const removing = store.remove("media-00000001");
+    await reached;
+    const again = await store.commit(await photoInput()).catch((e: unknown) => e);
+    expect(again).toBeInstanceOf(MediaCommitError);
+    release();
+    await removing;
+  });
+
+  test("a removal that fails puts the media back as it was: found again, in the same place of the listing", async () => {
+    const store = records({
+      fs: {
+        unlink: async (path) => {
+          if (path.endsWith(".json")) throw Object.assign(new Error("busy"), { code: "EBUSY" });
+          const { unlink } = await import("node:fs/promises");
+          await unlink(path);
+        },
+        platform: "linux",
+      },
+    });
+    const first = await store.commit(await photoInput({ name: "first.jpg" }));
+    const second = await store.commit(await photoInput({ name: "second.jpg" }));
+    await expect(store.remove(first.mediaId)).rejects.toThrow();
+    expect(store.get(first.mediaId)).toEqual(first);
+    expect(store.list().media.map((m) => m.mediaId)).toEqual([second.mediaId, first.mediaId]);
+    expect(store.filePath(first.mediaId)).toBeDefined();
+  });
+
+  test("a folder that turns out unusable puts it back too", async () => {
+    const store = records();
+    const summary = await store.commit(await photoInput());
+    await rename(mediaDir(), join(tmp(), "real-media"));
+    await symlink(join(tmp(), "real-media"), mediaDir());
+    await expect(store.remove(summary.mediaId)).rejects.toThrow();
+    expect(store.has(summary.mediaId)).toBe(true);
+  });
+
+  test("two removals of one id at once: one deletes, the other finds nothing", async () => {
+    const store = records();
+    const summary = await store.commit(await photoInput());
+    const both = await Promise.all([store.remove(summary.mediaId), store.remove(summary.mediaId)]);
+    expect(both.sort()).toEqual([false, true]);
+  });
+});

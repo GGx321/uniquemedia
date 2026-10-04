@@ -1136,3 +1136,45 @@ describe("a full queue (the review's queue items)", () => {
     await r.service.stop();
   }, 60_000);
 });
+
+describe("a render that reserves a media while it is being deleted (fix round 3, M1)", () => {
+  test("finds nothing: a lookup made once the delete has started does not see the media, so no render can take it", async () => {
+    const reached = deferred();
+    const gate = deferred();
+    let armed = false;
+    const r = rig({
+      records: {
+        fs: {
+          unlink: async (path) => {
+            if (armed && path.endsWith(".json")) {
+              reached.resolve();
+              await gate.promise;
+            }
+            await fsUnlink(path);
+          },
+          platform: "linux",
+        },
+      },
+    });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    const id = (await r.service.list()).media[0]?.mediaId ?? "";
+    armed = true;
+    const deleting = r.service.delete(id);
+    await reached.promise;
+    expect(await r.service.lookup(id)).toBeUndefined();
+    gate.resolve();
+    expect(await deleting).toBe("deleted");
+  });
+
+  test("a media the provider reserves at the moment of the delete is refused, and a lookup still finds it afterwards", async () => {
+    const reserved = new Set<string>();
+    const r = rig({ reservedMedia: (id) => reserved.has(id) });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    const id = (await r.service.list()).media[0]?.mediaId ?? "";
+    reserved.add(id);
+    expect(await r.service.delete(id)).toBe("in-use");
+    expect(await r.service.lookup(id)).toBeDefined();
+  });
+});

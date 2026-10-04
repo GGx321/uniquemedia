@@ -177,6 +177,8 @@ export class MediaRecords {
   /** The order records came into the index: the tie-break of a listing when two were made in the same instant. */
   readonly #order = new Map<string, number>();
   #entered = 0;
+  /** Records being removed: out of the index from the first moment of the removal (nobody finds them), back in if it fails. */
+  readonly #deleting = new Map<string, RecordShape>();
   /** Ids between the file's rename and the record's write: a cleanup must not take their file for an orphan. */
   readonly #inFlight = new Set<string>();
 
@@ -319,7 +321,7 @@ export class MediaRecords {
       if (!entry.isFile() || !ORPHAN_NAME.test(entry.name)) continue;
       const id = entry.name.slice(0, entry.name.lastIndexOf("."));
       // Judged AFTER the listing: a commit that ended since has its record in the index now, and its file is no orphan.
-      if (recordIds.has(id) || this.#inFlight.has(id) || this.#index.has(id)) continue;
+      if (recordIds.has(id) || this.#inFlight.has(id) || this.#index.has(id) || this.#deleting.has(id)) continue;
       if (await this.#removeQuietly(join(this.#dir, entry.name))) removedOrphans++;
     }
     return { listed: this.#index.size, removedOrphans, removedDangling, problems, unusable: false };
@@ -355,6 +357,7 @@ export class MediaRecords {
   }
 
   #enter(record: RecordShape): void {
+    if (this.#deleting.has(record.id)) return;
     if (!this.#index.has(record.id)) this.#order.set(record.id, ++this.#entered);
     this.#index.set(record.id, record);
   }
@@ -447,7 +450,7 @@ export class MediaRecords {
     const file = this.#expectedFile(id, input.format);
     const target = join(this.#dir, file);
     const recordPath = join(this.#dir, `${id}.json`);
-    if (this.#index.has(id) || this.#inFlight.has(id) || (await exists(target)) || (await exists(recordPath))) throw new MediaCommitError("exists", "that media id is already taken");
+    if (this.#index.has(id) || this.#deleting.has(id) || this.#inFlight.has(id) || (await exists(target)) || (await exists(recordPath))) throw new MediaCommitError("exists", "that media id is already taken");
 
     this.#inFlight.add(id);
     let stored = false;
@@ -514,13 +517,24 @@ export class MediaRecords {
     if (!Id.safeParse(mediaId).success) return false;
     const record = this.#index.get(mediaId);
     if (record === undefined) return false;
-    if ((await this.#dirState()) !== "ok") throw new MediaDiskError("the media folder is not usable", "EUNSAFE");
-    try {
-      await this.#unlink(join(this.#dir, `${record.id}.json`));
-    } catch (error) {
-      if (!hasErrorCode(error, "ENOENT")) throw new MediaDiskError("the media record could not be removed", errorCodeOf(error) ?? "error");
-    }
+    // Taken out of the index BEFORE the first await: from this tick nobody finds it (a render that looks the media up and reserves it
+    // with no await between the two cannot take a media whose delete has begun), and a second removal finds nothing to remove.
     this.#index.delete(mediaId);
+    this.#deleting.set(mediaId, record);
+    try {
+      if ((await this.#dirState()) !== "ok") throw new MediaDiskError("the media folder is not usable", "EUNSAFE");
+      try {
+        await this.#unlink(join(this.#dir, `${record.id}.json`));
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT")) throw new MediaDiskError("the media record could not be removed", errorCodeOf(error) ?? "error");
+      }
+    } catch (error) {
+      // Nothing was removed: the media is back as it was, in the same place of the listing (its order was never dropped).
+      this.#deleting.delete(mediaId);
+      this.#index.set(mediaId, record);
+      throw error;
+    }
+    this.#deleting.delete(mediaId);
     this.#order.delete(mediaId);
     await fsyncDir(this.#dir).catch(() => undefined);
     // The name is rebuilt from the id and format, never taken from the record's own `file` text.
