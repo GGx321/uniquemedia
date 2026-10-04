@@ -48,7 +48,7 @@ export const MAX_PICKED_FILES = 20;
  * - `cancelled`: the import was stopped (the window closed, the engine's own time ran out, the app quit);
  * - `not-yet-supported`: the kind has no importer yet;
  * - `too-small` (3f.2): a photo with a side under 2 px (`coverCrop` cannot make a 1 px side even);
- * - `dimensions` (3f.2): a photo with more pixels than the decoder takes (16 megapixels: 4096 x 4096), judged from its header;
+ * - `dimensions` (3f.2): a photo with more pixels than the importer takes (50 megapixels, so a 48 megapixel camera picture is taken), judged from its header;
  * - `animated-webp` (3f.2): a WebP that animates; only still pictures are taken.
  */
 export const MediaUnsupportedReason = z.enum(["not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported", "too-small", "dimensions", "animated-webp"]);

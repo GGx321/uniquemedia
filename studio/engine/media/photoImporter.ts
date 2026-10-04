@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../shared/engine";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
-import { MAX_DECODE_PIXELS } from "../decode/wasmDecode";
 import type { FaceGateImage } from "../face";
 import { imageSize } from "../library/media";
 import { readOrientation, type ExifContainer } from "./exif";
@@ -33,12 +32,15 @@ export const MAX_PHOTO_SIDE = 4096;
 /** The smallest side a photo may have: `coverCrop` cannot make a 1 px side even (3a.3). */
 export const MIN_PHOTO_SIDE = 2;
 
-/** One allocation of ffmpeg may take at most this much: above the largest frame (16 megapixels, RGBA is 64 MiB), far below a container bomb. */
-const MAX_ALLOC_BYTES = 256 * 1024 * 1024;
+/** One allocation of ffmpeg may take at most this much: above the largest frame (50 megapixels, RGBA is 200 MB), far below a container bomb. */
+const MAX_ALLOC_BYTES = 512 * 1024 * 1024;
+
+/** The most pixels a source may have, judged from its header before any decode: 8000 x 6000 is a 48 megapixel camera picture; memory (the decoded RGBA, the upright RGB) is about 350 MB at the cap. */
+export const MAX_PHOTO_PIXELS = 50_000_000;
 const DEFAULT_FFMPEG_TIMEOUT_MS = 90_000;
 
 export interface PhotoImporterDeps {
-  /** The WASM JPEG and PNG decoder (`createWasmImageDecoder`); its pixel cap is `MAX_DECODE_PIXELS`. */
+  /** The WASM JPEG and PNG decoder (`createWasmImageDecoder`); build it with `maxPixels: MAX_PHOTO_PIXELS`. */
   readonly decode: (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage>;
   /** Starts the child processes; Node's `spawn` when absent (a test injects a scripted one). */
   readonly spawner?: FfmpegSpawner | undefined;
@@ -69,7 +71,7 @@ function containerOf(format: MediaFormat): ExifContainer {
 function judgeSize(size: { width: number; height: number } | null): { width: number; height: number } {
   if (size === null) throw new Refused("format");
   if (size.width < MIN_PHOTO_SIDE || size.height < MIN_PHOTO_SIDE) throw new Refused("too-small");
-  if (size.width * size.height > MAX_DECODE_PIXELS) throw new Refused("dimensions");
+  if (size.width * size.height > MAX_PHOTO_PIXELS) throw new Refused("dimensions");
   return size;
 }
 

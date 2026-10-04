@@ -71,7 +71,8 @@ function toUint8Array(data: Uint8Array | Uint8ClampedArray): Uint8Array {
  * (face/parity.test.ts — re-review N8: this comment named a
  * "wasmDecode.parity.test.ts" that was never actually created).
  */
-export function createWasmImageDecoder(backend: DecodeBackend): (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> {
+export function createWasmImageDecoder(backend: DecodeBackend, options: { maxPixels?: number } = {}): (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> {
+  const maxPixels = options.maxPixels ?? MAX_DECODE_PIXELS;
   return async (bytes, signal) => {
     if (signal.aborted) throw signal.reason;
 
@@ -82,8 +83,8 @@ export function createWasmImageDecoder(backend: DecodeBackend): (bytes: Uint8Arr
 
     const header = imageSize(bytes);
     if (header === null) throw new Error("decode/wasmDecode: the image header could not be read");
-    if (header.width * header.height > MAX_DECODE_PIXELS) {
-      throw new Error(`decode/wasmDecode: ${header.width}x${header.height} (${header.width * header.height} px) exceeds the ${MAX_DECODE_PIXELS}-pixel cap`);
+    if (header.width * header.height > maxPixels) {
+      throw new Error(`decode/wasmDecode: ${header.width}x${header.height} (${header.width * header.height} px) exceeds the ${maxPixels}-pixel cap`);
     }
 
     const decoded = mediaType === "image/jpeg" ? await backend.decodeJpeg(bytes) : await backend.decodePng(bytes);

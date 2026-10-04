@@ -12,7 +12,7 @@ import { runFfmpegOk } from "../render/ffmpeg.testkit";
 import { createRealDecodeBackend } from "../decode/realBackend";
 import { createWasmImageDecoder } from "../decode/wasmDecode";
 import type { MediaImportOutcome } from "./imports";
-import { createPhotoImporter, MAX_PHOTO_SIDE, type PhotoImporterDeps } from "./photoImporter";
+import { createPhotoImporter, MAX_PHOTO_PIXELS, MAX_PHOTO_SIDE, type PhotoImporterDeps } from "./photoImporter";
 import {
   animatedWebp,
   BLUE,
@@ -38,7 +38,7 @@ const NODE_MODULES_DIR = join(import.meta.dir, "../../../node_modules");
 let decoder: ReturnType<typeof createWasmImageDecoder>;
 
 beforeAll(async () => {
-  decoder = createWasmImageDecoder(await createRealDecodeBackend(NODE_MODULES_DIR));
+  decoder = createWasmImageDecoder(await createRealDecodeBackend(NODE_MODULES_DIR), { maxPixels: MAX_PHOTO_PIXELS });
 });
 
 const importerWith = (extra: Partial<PhotoImporterDeps> = {}): ReturnType<typeof createPhotoImporter> => createPhotoImporter({ decode: decoder, ...extra });
@@ -248,8 +248,8 @@ describe("the photo importer: sizes", () => {
     expect([stored.width, stored.height]).toEqual([16, 4096]);
   });
 
-  test("refuses a header that claims more than 16 megapixels as dimensions, without decoding it", async () => {
-    expect((await runWith(headerOnlyPng(4097, 4096), "png")).outcome).toEqual({ ok: false, reason: "dimensions" });
+  test("refuses a header that claims more than 50 megapixels (7072 by 7072 is 50,013,184) as dimensions, without decoding it", async () => {
+    expect((await runWith(headerOnlyPng(7072, 7072), "png")).outcome).toEqual({ ok: false, reason: "dimensions" });
     expect((await runWith(headerOnlyPng(65_535, 65_535), "png")).outcome).toEqual({ ok: false, reason: "dimensions" });
   });
 
@@ -258,7 +258,17 @@ describe("the photo importer: sizes", () => {
     expect((await runWith(headerOnlyPng(1, 20_000), "png")).outcome).toEqual({ ok: false, reason: "too-small" });
   });
 
-  heavyTest("takes a 4096 by 4096 picture, exactly the pixel cap, and stores it at that size", async () => {
+  heavyTest("takes an 8000 by 6000 camera picture (48 megapixels), scaled to 4096 by 3072, rotated when its EXIF says so", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 8000, 6000, "jpeg");
+    const stored = await accepted(await runWith(picture, "jpeg"));
+    expect([stored.width, stored.height]).toEqual([4096, 3072]);
+    // A second hand-off needs a folder of its own: the first one's work files are still there.
+    const hand = await handoff(join(tmp(), "turned"), jpegWithExif(picture, 6), { format: "jpeg" });
+    const turned = await accepted({ outcome: await importerWith()(hand.request) });
+    expect([turned.width, turned.height]).toEqual([3072, 4096]);
+  }, 180_000);
+
+  heavyTest("takes a 4096 by 4096 picture and stores it at that size", async () => {
     const picture = await quadrantPicture(tmp(), "p", 4096, 4096, "jpeg");
     const stored = await accepted(await runWith(picture, "jpeg"));
     expect([stored.width, stored.height]).toEqual([4096, 4096]);

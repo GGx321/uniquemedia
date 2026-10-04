@@ -7,11 +7,11 @@ import { createWasmImageDecoder, type DecodeBackend } from "./wasmDecode";
  * should not pay. The load runs once, also for decodes asked together. A load that failed (a codec file missing) is NOT remembered: the
  * next decode tries again, so a repaired install works without a restart.
  */
-export function createLazyImageDecoder(load: () => Promise<DecodeBackend>): (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> {
+export function createLazyImageDecoder(load: () => Promise<DecodeBackend>, options: { maxPixels?: number } = {}): (bytes: Uint8Array, signal: AbortSignal) => Promise<FaceGateImage> {
   let decoder: Promise<ReturnType<typeof createWasmImageDecoder>> | undefined;
   return async (bytes, signal) => {
     if (decoder === undefined) {
-      const loading = load().then(createWasmImageDecoder);
+      const loading = load().then((backend) => createWasmImageDecoder(backend, options));
       decoder = loading;
       loading.catch(() => {
         if (decoder === loading) decoder = undefined;

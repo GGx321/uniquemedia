@@ -30,7 +30,7 @@ import { createTextWorkerSpawner } from "./text/worker/spawn";
 import { createTextGate, TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textGate";
 import { createLazyImageDecoder } from "./decode/lazyDecoder";
 import { createRealDecodeBackend } from "./decode/realBackend";
-import { createPhotoImporter } from "./media/photoImporter";
+import { createPhotoImporter, MAX_PHOTO_PIXELS } from "./media/photoImporter";
 import { createCommitHold } from "./videos/e2eCommitHold";
 
 const parentPort = process.parentPort;
@@ -256,7 +256,7 @@ parentPort.once("message", (event) => {
       ...(STUDIO_E2E ? { videos: { renderOverrides: { hooks: { reached: createCommitHold({ dir: dirname(init.data.ledgerPath) }) } } } } : {}),
       // 3f.2: the own-photo importer. JPEG and PNG are decoded by the engine's WASM codecs (loaded at the first photo, by the same
       // verified loader the face worker uses); a WebP is decoded by ffmpeg in a child process; the stored file is a JPEG without metadata.
-      mediaImporters: { photo: createPhotoImporter({ decode: createLazyImageDecoder(() => createRealDecodeBackend(NODE_MODULES_DIR)) }) },
+      mediaImporters: { photo: createPhotoImporter({ decode: createLazyImageDecoder(() => createRealDecodeBackend(NODE_MODULES_DIR), { maxPixels: MAX_PHOTO_PIXELS }) }) },
     });
 
     void ready.then((engine) => {
