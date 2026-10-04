@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { z } from "zod";
 import { Id, MAX_LISTED_MEDIA, MediaFileName, MediaKind, MediaSummary } from "../../shared/engine";
 import type { MediaFormat } from "../media/sniff";
+import { MAX_ENVELOPE_STEPS } from "../music/trackRecord";
 import { fsyncDir, fsyncFile, hasErrorCode, isTempName, writeJsonAtomic } from "./durableFs";
 import { isFromNewerVersion, MEDIA_DIR, MEDIA_RECORD_SCHEMA_VERSION, MEDIA_STAGING_DIR } from "./layout";
 import { renameWithRetry } from "./renameRetry";
@@ -79,6 +80,25 @@ const RecordShape = z.looseObject({
 });
 type RecordShape = z.infer<typeof RecordShape>;
 
+/**
+ * A track's waveform (3f.4), as its record keeps it: the 50 ms envelope the track store keeps for a trending track (`EnvelopeSchema`), one integer 0 to
+ * 1000 per step, at least one step (a track that decoded has one) and no more than the store's own limit. Kept in the record, not in the index: a
+ * ten minute track has 12000 values, and a library of tracks must not hold them all in memory (`waveformOf` reads the one that is asked for).
+ */
+const Waveform = z.array(z.number().int().min(0).max(1000)).min(1).max(MAX_ENVELOPE_STEPS);
+
+/** The largest record file `waveformOf` reads: a record is a few KiB of JSON, plus a waveform of up to 20000 values (about 100 KiB). */
+const MAX_RECORD_FILE_BYTES = 1024 * 1024;
+
+/** What `waveformOf` needs of a record on disk: whose it is, what it is, and the waveform. */
+const RecordWaveform = z.looseObject({ id: Id, kind: z.literal("audio"), waveform: Waveform });
+
+/** A record as the index keeps it: without the waveform (see `Waveform`). */
+function inIndex(record: RecordShape): RecordShape {
+  const { waveform: _waveform, ...rest } = record;
+  return rest;
+}
+
 /** What main's `studio-media://media/<mediaId>` route reads of a record: which stored file to open, and what it must be. */
 export interface ServedMediaRecord {
   readonly id: string;
@@ -125,7 +145,9 @@ export interface MediaCommitInput {
   readonly name: string;
   readonly facts: MediaFacts;
   /** The sha256 of the file's bytes when the caller has it (the staged copy's is known); computed from the file otherwise. */
-  readonly sha256?: string;
+  readonly sha256?: string | undefined;
+  /** A track's waveform (3f.4): one value per 50 ms, each an integer 0 to 1000. Only an audio record has one; `waveformOf` reads it back. */
+  readonly waveform?: readonly number[] | undefined;
 }
 
 export type MediaCommitFailure = "invalid" | "unsafe" | "exists" | "cancelled" | "disk";
@@ -384,7 +406,7 @@ export class MediaRecords {
   #enter(record: RecordShape): void {
     if (this.#deleting.has(record.id)) return;
     if (!this.#index.has(record.id)) this.#order.set(record.id, ++this.#entered);
-    this.#index.set(record.id, record);
+    this.#index.set(record.id, inIndex(record));
   }
 
   /** Newest first (the later one first when two share an instant), cut at `MAX_LISTED_MEDIA`; `total` counts every match. */
@@ -423,6 +445,26 @@ export class MediaRecords {
   }
 
   /**
+   * A track's waveform, read from its record on disk, or undefined: an id the library does not hold, a media that is not a track, a record
+   * with none, one that is gone, a link, one too large to be a record, one that names another media, or a waveform that is not what the commit wrote
+   * (a list of integers 0 to 1000). The record is read by the name the id makes, never followed through a link; nothing here throws for a file.
+   */
+  async waveformOf(mediaId: string): Promise<number[] | undefined> {
+    const held = this.#index.get(mediaId);
+    if (held === undefined || held.kind !== "audio") return undefined;
+    const path = join(this.#dir, `${held.id}.json`);
+    try {
+      if ((await this.#dirState()) !== "ok") return undefined;
+      const info = await lstat(path);
+      if (!info.isFile() || info.size > MAX_RECORD_FILE_BYTES) return undefined;
+      const parsed = RecordWaveform.safeParse(JSON.parse(await readFile(path, "utf8")));
+      return parsed.success && parsed.data.id === held.id ? parsed.data.waveform : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Stores the file and writes its record. Refused (`MediaCommitError`, nothing moved) for facts that do not fit the kind, a source that
    * is not a plain file directly in the staging folder, an id already taken, or a signal that already fired. A failure after the file
    * was moved takes it back out. A cancel before the record is durable removes the stored file; once the record is durable the
@@ -450,6 +492,8 @@ export class MediaRecords {
     if (!MediaSummary.safeParse(candidate).success) throw new MediaCommitError("invalid", "the file's facts do not fit its kind");
     if (!FORMATS_OF_KIND[input.kind].includes(input.format)) throw new MediaCommitError("invalid", `a ${input.kind} is not stored as ${input.format}`);
     if (input.sha256 !== undefined && !/^[a-f0-9]{64}$/.test(input.sha256)) throw new MediaCommitError("invalid", "the hash is not a sha256");
+    // Only a track has a waveform, and it is what the envelope is: judged before anything moves.
+    if (input.waveform !== undefined && (input.kind !== "audio" || !Waveform.safeParse(input.waveform).success)) throw new MediaCommitError("invalid", "the waveform does not fit a track");
 
     if ((await this.#dirState()) !== "ok") throw new MediaCommitError("unsafe", "the library's media folder is not a plain folder");
     const source = resolve(input.sourcePath);
@@ -507,6 +551,7 @@ export class MediaRecords {
         hdrToSdr: input.facts.hdrToSdr,
         loopFrames: input.facts.loopFrames,
         delayFrames: candidate.delayFrames,
+        ...(input.waveform === undefined ? {} : { waveform: [...input.waveform] }),
       };
       const hook = this.#options.hooks?.beforeRecordRename;
       await writeJsonAtomic(recordPath, record, hook === undefined ? {} : { beforeRename: hook });
