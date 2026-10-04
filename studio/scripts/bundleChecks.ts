@@ -56,6 +56,9 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "seedOwnSticker",
   "seedDemoOwnSticker",
   "mockOwnStickerBytes",
+  // 3f.3b: the dev build's own video clip in the demo draft (the option and the method that seeds it): the mock is dev-only.
+  "demoOwnVideo",
+  "seedDemoOwnVideoClip",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",

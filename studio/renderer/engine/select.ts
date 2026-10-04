@@ -12,9 +12,9 @@ export function chooseEngineClient(dev: boolean, makeMock: () => EngineClient): 
   return windowStudioClient() ?? (dev ? makeMock() : unavailableClient());
 }
 
-/** The demo mock with real timers, so progress is visible in the dev build. */
+/** The demo mock with real timers, so progress is visible in the dev build; its draft plays the demo video in its third clip (3f.3b). */
 function demoMock(): EngineClient {
-  return mockEngineClient(new MockEngine({ preset: "demo", demoVideos: true, scheduler: realScheduler, latencyMs: 160, stepMs: 900, textDrawMs: 120 }));
+  return mockEngineClient(new MockEngine({ preset: "demo", demoVideos: true, demoOwnVideo: true, scheduler: realScheduler, latencyMs: 160, stepMs: 900, textDrawMs: 120 }));
 }
 
 /**

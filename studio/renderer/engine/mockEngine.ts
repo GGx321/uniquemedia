@@ -223,6 +223,11 @@ export interface MockEngineOptions {
   demoVideos?: boolean;
   /** 3f.5: with the `demo` preset, the library also holds one own sticker (a seeded record, as if stored by an earlier session), so the dev build can show one; off unless asked. */
   seedOwnSticker?: boolean;
+  /**
+   * 3f.3b: with the `demo` preset, the demo draft's third clip is the library's demo video (as the EditorMine artboard draws it), so the dev build can show an
+   * own video clip before «Мои» (3f.6) places one; off unless asked.
+   */
+  demoOwnVideo?: boolean;
   scheduler?: Scheduler;
   /** Delay before each response; 0 answers on the next microtask. */
   latencyMs?: number;
@@ -720,6 +725,20 @@ export class MockEngine implements EngineBridge {
     if (options.preset === "demo" && options.photos === undefined) this.seedDemoMontage();
     if (options.preset === "demo" && options.demoVideos === true && options.photos === undefined) this.seedDemoVideos();
     if (options.preset === "demo" && options.seedOwnSticker === true) this.seedDemoOwnSticker();
+    if (options.preset === "demo" && options.demoOwnVideo === true && options.photos === undefined) this.seedDemoOwnVideoClip();
+  }
+
+  /**
+   * 3f.3b: the dev build's draft as the EditorMine artboard draws it: its third clip plays 1.8 → 3.8 s of the library's demo video (`demo-clip.mov`, a
+   * landscape 1080 x 608 of 14 s), so the editor's own video clip (the preview, «Обрезка», the source facts) can be tried. The photo it replaces stays
+   * free. Nothing is announced; built in a method, never at module load: the mock's demo data must not reach a release bundle.
+   */
+  private seedDemoOwnVideoClip(): void {
+    const mediaId = "media-demo-0002";
+    const montage = this.montages.get("montage-demo-0001");
+    if (montage === undefined || this.ownMedia.holdsVideo(mediaId) === null) return;
+    const clips = montage.spec.clips.map((clip, i) => (i === 2 ? { clipId: clip.clipId, durationMs: clip.durationMs, transitionIn: clip.transitionIn, kind: "video" as const, mediaId, trimStartMs: 1_800, focus: null } : clip));
+    this.montages.set(montage.montageId, Montage.parse({ ...montage, spec: { ...montage.spec, clips } }));
   }
 
   /**

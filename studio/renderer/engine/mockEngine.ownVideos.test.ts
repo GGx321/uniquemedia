@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { MontageDraft } from "../../shared/engine/montage";
+import { MockEngine, mockEngineClient } from "./mockEngine";
 import { makeMock, MIA, PHOTO_IDS, scene, unwrap, type Mock } from "./mockEngine.testkit";
+import { ManualScheduler } from "./scheduler";
 
 // 3f.3b in the mock: an own video clip plays as the engine plays it. It renders when the library holds the media as a video long enough for the clip
 // (`trimStartMs` plus its length) and is `media-unavailable` (or `video-too-short`) when it does not; a queued or running render holds it against `media.delete`
@@ -213,5 +215,17 @@ describe("the dev build's seed of an own video", () => {
   test("a mock that is not the demo holds none", async () => {
     const mock = makeMock();
     expect((await unwrap(mock.client.request("media.list", { kind: "video" }))).total).toBe(0);
+  });
+
+  test("asked to (the dev build), the demo draft's third clip plays 1.8 → 3.8 s of the demo video, as EditorMine draws it, with nothing wrong in it", async () => {
+    const engine = new MockEngine({ preset: "demo", demoOwnVideo: true, scheduler: new ManualScheduler(), latencyMs: 0 });
+    const client = mockEngineClient(engine);
+    const { montage, issues } = await unwrap(client.request("montages.get", { montageId: "montage-demo-0001" }));
+    expect(montage.spec.clips.map((c) => c.kind)).toEqual(["photo", "collage", "video", "photo"]);
+    expect(montage.spec.clips[2]).toEqual({ clipId: "clip-003", durationMs: 2_000, transitionIn: "cut", kind: "video", mediaId: "media-demo-0002", trimStartMs: 1_800, focus: null });
+    expect(issues.filter((issue) => issue.path[0] === "clips" && issue.path[1] === 2)).toEqual([]);
+    // Off unless asked: the demo's third clip stays a photo.
+    const plain = mockEngineClient(new MockEngine({ preset: "demo", scheduler: new ManualScheduler(), latencyMs: 0 }));
+    expect((await unwrap(plain.request("montages.get", { montageId: "montage-demo-0001" }))).montage.spec.clips[2]?.kind).toBe("photo");
   });
 });
