@@ -21,15 +21,23 @@ export function PreviewAudio({ spec, playhead }: { spec: MontageDraft; playhead:
   useEffect(() => {
     const element = audio.current;
     if (element === null || src === null) return;
-    /** The element refused to play this file (no decoder for it): no more tries until the track changes. */
+    /** The element refused to play this file (no decoder for it): no more seeks or tries until the track changes, only pauses. */
     let refused = false;
     const sync = (): void => {
       const { music: now, total } = latest.current;
-      const action = audioCorrection(audioTarget(playhead.get(), now, total), { currentTimeSec: element.currentTime, paused: element.paused, durationSec: element.duration });
+      const action = audioCorrection(audioTarget(playhead.get(), now, total), {
+        currentTimeSec: element.currentTime,
+        paused: element.paused,
+        durationSec: element.duration,
+        seeking: element.seeking,
+        readyState: element.readyState,
+        rate: element.playbackRate,
+      });
+      if (action.play === false) element.pause();
+      if (refused) return;
       if (action.seekSec !== null) element.currentTime = action.seekSec;
       if (element.playbackRate !== action.rate) element.playbackRate = action.rate;
-      if (action.play === false) element.pause();
-      if (action.play === true && !refused) {
+      if (action.play === true) {
         Promise.resolve(element.play()).catch((error: unknown) => {
           // A pause before the start lands (AbortError) is the clock's own doing; anything else is the file.
           if (!(error instanceof DOMException && error.name === "AbortError")) refused = true;

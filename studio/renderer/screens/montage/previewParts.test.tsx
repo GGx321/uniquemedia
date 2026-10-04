@@ -123,11 +123,12 @@ describe("the music element", () => {
     return { ...mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() })), kind: "window" as const };
   }
 
-  /** The `<audio>` with its media calls recorded: the test DOM plays nothing. */
-  function recordAudio(element: HTMLAudioElement) {
+  /** The `<audio>` with its media calls recorded: the test DOM plays nothing. `refuse` makes `play()` reject as a file it cannot play. */
+  function recordAudio(element: HTMLAudioElement, options: { readyState?: number; refuse?: boolean } = {}) {
     const calls: string[] = [];
     let time = 0;
     let paused = true;
+    let rate = 1;
     Object.defineProperty(element, "currentTime", {
       get: () => time,
       set: (value: number) => {
@@ -137,9 +138,19 @@ describe("the music element", () => {
     });
     Object.defineProperty(element, "paused", { get: () => paused });
     Object.defineProperty(element, "duration", { get: () => 180 });
+    Object.defineProperty(element, "seeking", { get: () => false });
+    Object.defineProperty(element, "readyState", { get: () => options.readyState ?? 4 });
+    Object.defineProperty(element, "playbackRate", {
+      get: () => rate,
+      set: (value: number) => {
+        rate = value;
+        calls.push(`rate ${value}`);
+      },
+    });
     element.play = () => {
-      paused = false;
       calls.push("play");
+      if (options.refuse === true) return Promise.reject(new DOMException("no decoder for this file", "NotSupportedError"));
+      paused = false;
       return Promise.resolve();
     };
     element.pause = () => {
@@ -147,6 +158,14 @@ describe("the music element", () => {
       calls.push("pause");
     };
     return { calls, at: (seconds: number) => (time = seconds) };
+  }
+
+  function mount(playhead: PlayheadStore) {
+    return render(
+      <EngineProvider client={windowClient()}>
+        <PreviewAudio spec={draftSpec(4, { music: MUSIC })} playhead={playhead} />
+      </EngineProvider>,
+    );
   }
 
   test("plays the stored track from its start plus the playhead, follows the clock, pauses with it", async () => {
@@ -175,6 +194,46 @@ describe("the music element", () => {
     act(() => fake.advance(500));
     expect(audio.calls.at(-1)).toBe("seek 44");
     act(() => playhead.toggle());
+    expect(audio.calls.at(-1)).toBe("pause");
+  });
+
+  test("a slow start (too little data yet) is not moved again on every frame", async () => {
+    const fake = fakeFrameClock();
+    const playhead = new PlayheadStore(fake.clock);
+    playhead.setTotal(8_000);
+    const view = mount(playhead);
+    const element = view.container.querySelector("audio");
+    if (element === null) throw new Error("no audio element");
+    const audio = recordAudio(element, { readyState: 1 });
+    act(() => playhead.toggle());
+    for (let i = 0; i < 10; i++) act(() => fake.advance(100));
+    expect(audio.calls).toEqual(["seek 42", "play"]);
+  });
+
+  test("a file the element refuses to play is not tried again on every frame: no more seeks, no more plays", async () => {
+    const fake = fakeFrameClock();
+    const playhead = new PlayheadStore(fake.clock);
+    playhead.setTotal(8_000);
+    const view = mount(playhead);
+    const element = view.container.querySelector("audio");
+    if (element === null) throw new Error("no audio element");
+    const audio = recordAudio(element, { refuse: true });
+    act(() => playhead.toggle());
+    await settle();
+    for (let i = 0; i < 5; i++) act(() => fake.advance(100));
+    expect(audio.calls).toEqual(["seek 42", "play"]);
+  });
+
+  test("the editor closing (the element going) stops the music", async () => {
+    const fake = fakeFrameClock();
+    const playhead = new PlayheadStore(fake.clock);
+    playhead.setTotal(8_000);
+    const view = mount(playhead);
+    const element = view.container.querySelector("audio");
+    if (element === null) throw new Error("no audio element");
+    const audio = recordAudio(element);
+    act(() => playhead.toggle());
+    view.unmount();
     expect(audio.calls.at(-1)).toBe("pause");
   });
 
