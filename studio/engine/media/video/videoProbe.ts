@@ -178,7 +178,7 @@ const NON_VIDEO_ENTRIES: ReadonlySet<string> = new Set([
 ]);
 
 /** Handler subtypes that name a MEDIA type: a track's kind. Data-reference handlers (`alis`, `url `, `rsrc`) and the like name none, and every ordinary MOV has one in `minf`. */
-const MEDIA_HANDLER_TYPES: ReadonlySet<string> = new Set(["vide", "soun", "subp", "clcp", "text", "sbtl", "meta"]);
+const MEDIA_HANDLER_TYPES: ReadonlySet<string> = new Set(["vide", "soun", "subp", "clcp", "m1a ", "text", "sbtl", "meta"]);
 /** The longest an edit's start (`media_time`) may be into the samples: a legal trim starts within one keyframe interval, and this bounds the pre-roll ffmpeg decodes and throws away. */
 const MAX_EDIT_START_SECONDS = 30;
 
@@ -204,14 +204,46 @@ function boxAt(bytes: Uint8Array, view: DataView, at: number, limit: number, bas
   return { type, body: base + at + 8, end: base + at + size32 };
 }
 
-/** The boxes directly inside `[start, end)` of `m`, at most `MAX_CHILDREN`; each one counts against the shared visit budget. */
-function childrenOf(m: Uint8Array, view: DataView, start: number, end: number, budget: { visited: number }): BoxRef[] {
+/** What one walk of a `moov` has spent: the boxes visited (all levels together), and the lists already made (a list is made, and paid for, once). */
+interface Budget {
+  visited: number;
+  readonly listed: Map<string, BoxRef[]>;
+}
+
+/** The boxes directly inside `[start, end)` of `m`, at most `MAX_CHILDREN`; each one counts against the shared visit budget (once per list). */
+function childrenOf(m: Uint8Array, view: DataView, start: number, end: number, budget: Budget): BoxRef[] {
+  const key = `${start}:${end}`;
+  const cached = budget.listed.get(key);
+  if (cached !== undefined) return cached;
   const found: BoxRef[] = [];
   for (let at = start; at < end; ) {
     if (found.length >= MAX_CHILDREN || ++budget.visited > MAX_VISITED) throw new Refusal("too-many-boxes");
     const box = boxAt(m, view, at, end, 0, false);
     found.push(box);
     at = box.end;
+  }
+  budget.listed.set(key, found);
+  return found;
+}
+
+/**
+ * The boxes inside `[start, end)` as ffmpeg's `mov_read_default` reads a list it does not check first: a size of 0, or one past the parent, is the
+ * rest of the parent; a size under 8 (or less than a header left, as the zero terminator QuickTime ends a `udta` with) ends the list; what came
+ * before the end was read, and acted on. Never throws for the shape of the list, only for its length (the same caps as `childrenOf`).
+ */
+function lenientChildren(m: Uint8Array, view: DataView, start: number, end: number, budget: Budget): BoxRef[] {
+  const found: BoxRef[] = [];
+  for (let at = start; end - at >= 8; ) {
+    if (found.length >= MAX_CHILDREN || ++budget.visited > MAX_VISITED) throw new Refusal("too-many-boxes");
+    const left = end - at;
+    const size32 = view.getUint32(at);
+    const header = size32 === 1 ? 16 : 8;
+    if (left < header) break;
+    const declared = size32 === 1 ? view.getBigUint64(at + 8) : BigInt(size32);
+    const size = declared === 0n || declared > BigInt(left) ? left : Number(declared);
+    if (size < header) break;
+    found.push({ type: latin1(m, at + 4, at + 8), body: at + header, end: at + size });
+    at += size;
   }
   return found;
 }
@@ -348,7 +380,7 @@ function resolveColour(colr: ColrNclx | null, dolby: { profile: number; compatib
  * The track's edit list: none, or one media segment after at most one empty edit. Anything else (two segments, a segment at another speed, a
  * segment of no length, an empty edit that is the whole list) is refused, because what ffmpeg would play of it is not what the walker measured.
  */
-function readEdit(m: Uint8Array, view: DataView, edts: BoxRef | undefined, timescale: number, budget: { visited: number }): { mediaTime: number; durationTicks: number } | null {
+function readEdit(m: Uint8Array, view: DataView, edts: BoxRef | undefined, timescale: number, budget: Budget): { mediaTime: number; durationTicks: number } | null {
   if (edts === undefined) return null;
   const elst = onlyOf(childrenOf(m, view, edts.body, edts.end, budget), "elst");
   if (elst === undefined) return null;
@@ -433,44 +465,57 @@ function readStts(view: DataView, box: BoxRef): SampleTimes {
   return { samples, durationTicks, variableFrameRate: Number.isFinite(min) && max > min && max - min > Math.max(1, min * 0.1) };
 }
 
-/** The children of `[start, end)` of a box whose layout is not trusted: what can be read, and nothing when it cannot be (a refusal for too many boxes still goes up). */
-function tryChildren(m: Uint8Array, view: DataView, start: number, end: number, budget: { visited: number }): BoxRef[] {
-  try {
-    return childrenOf(m, view, start, end, budget);
-  } catch (error) {
-    if (error instanceof Refusal && error.reason === "bad-box") return [];
-    throw error;
+/** The containers inside a `trak` that ffmpeg's mov demuxer descends into (its parse table); `meta` is scanned on its own terms. */
+const TRAK_CONTAINERS: ReadonlySet<string> = new Set(["mdia", "minf", "stbl", "dinf", "edts", "tref", "udta"]);
+/** The lists the walker reads strictly anyway (a malformed box refuses the file); the rest of a track is read the lenient way ffmpeg reads it. */
+const STRICT_PATHS: ReadonlySet<string> = new Set(["trak", "trak/mdia", "trak/mdia/minf", "trak/mdia/minf/stbl", "trak/mdia/minf/dinf", "trak/edts"]);
+/** ffmpeg stops at 10 levels of nesting; deeper than this is refused rather than followed. */
+const MAX_TRAK_DEPTH = 16;
+/** The subtypes of a data handler (`dhlr`'s alias, URL and resource references). */
+const DATA_HANDLER_SUBTYPES: ReadonlySet<string> = new Set(["alis", "url ", "rsrc"]);
+
+/** True when a `meta` box holds an `hdlr` tag where ffmpeg's `mov_read_meta` finds one: on a 4-byte step from the start of the payload, while more than 8 bytes are left. */
+function metaHoldsHandler(m: Uint8Array, box: BoxRef): boolean {
+  for (let k = 0; payloadLength(box) - k > 8; k += 4) {
+    const at = box.body + k;
+    if (m[at] === 0x68 && m[at + 1] === 0x64 && m[at + 2] === 0x6c && m[at + 3] === 0x72) return true;
   }
+  return false;
 }
 
-/** Refuses an `hdlr` whose subtype names a media type. */
-function checkHandlerBox(m: Uint8Array, box: BoxRef): void {
-  if (payloadLength(box) >= 12 && MEDIA_HANDLER_TYPES.has(latin1(m, box.body + 8, box.body + 12))) throw new Refusal("hidden-handler");
+/** A data handler, as every ordinary MOV has one in `minf`: a data subtype, or component type `dhlr` over a subtype that is no media type (ffmpeg reads the SUBTYPE). */
+function isDataHandler(m: Uint8Array, box: BoxRef): boolean {
+  if (payloadLength(box) < 12) return false;
+  const subtype = latin1(m, box.body + 8, box.body + 12);
+  return DATA_HANDLER_SUBTYPES.has(subtype) || (latin1(m, box.body + 4, box.body + 8) === "dhlr" && !MEDIA_HANDLER_TYPES.has(subtype));
 }
 
 /**
- * ffmpeg parses EVERY `hdlr` inside a `trak` and the last one wins, so a track's handler is only what the walker read if no other `hdlr` of the
- * track names a media type. `mdia`'s own is read (and a second one refused) by the caller; this looks at the other places an `hdlr` can stand: `minf`
- * (where an ordinary MOV has a data handler, which names no media type and is taken), `trak/meta` and `trak/udta/meta` (a `meta` box with or
- * without the version and flags in front of its children).
+ * ffmpeg parses EVERY `hdlr` it finds in a `trak` and the last one wins, so a track is what the walker read of `mdia/hdlr` only if no other `hdlr`
+ * of the track says otherwise. One walk of the WHOLE subtree, in the one visit budget, and one rule: the only `hdlr` a track may have is the
+ * one in `mdia` (read by the caller, which refuses a second) and a data handler in `minf`. Any other, wherever it hides (the `trak` itself,
+ * `stbl`, `dinf`, `edts`, `tref`, `udta`, `meta` anywhere), is refused whatever it says; there is no list of names to forget. Measured on ffmpeg 6.x:
+ * an `hdlr` in a sample entry or outside every `trak` changes nothing, so neither is walked.
  */
-function checkHiddenHandlers(m: Uint8Array, view: DataView, parts: readonly BoxRef[], inMinf: readonly BoxRef[], budget: { visited: number }): void {
-  const inMinfHandlers = inMinf.filter((box) => box.type === "hdlr");
-  if (inMinfHandlers.length > 1) throw new Refusal("duplicate-box");
-  for (const box of inMinfHandlers) checkHandlerBox(m, box);
-  const metas = [...parts.filter((box) => box.type === "meta")];
-  for (const udta of parts.filter((box) => box.type === "udta")) metas.push(...tryChildren(m, view, udta.body, udta.end, budget).filter((box) => box.type === "meta"));
-  for (const meta of metas) {
-    for (const start of [meta.body + 4, meta.body]) {
-      const handlers = tryChildren(m, view, start, meta.end, budget).filter((box) => box.type === "hdlr");
-      for (const box of handlers) checkHandlerBox(m, box);
-      if (handlers.length > 0) break;
+function checkHandlers(m: Uint8Array, view: DataView, trak: BoxRef, budget: Budget): void {
+  const walk = (container: BoxRef, path: string, depth: number): void => {
+    if (depth > MAX_TRAK_DEPTH) throw new Refusal("too-many-boxes");
+    const kids = STRICT_PATHS.has(path) ? childrenOf(m, view, container.body, container.end, budget) : lenientChildren(m, view, container.body, container.end, budget);
+    for (const kid of kids) {
+      if (kid.type === "hdlr") {
+        if (path !== "trak/mdia" && !(path === "trak/mdia/minf" && isDataHandler(m, kid))) throw new Refusal("hidden-handler");
+      } else if (kid.type === "meta") {
+        if (metaHoldsHandler(m, kid)) throw new Refusal("hidden-handler");
+      } else if (TRAK_CONTAINERS.has(kid.type)) {
+        walk(kid, `${path}/${kid.type}`, depth + 1);
+      }
     }
-  }
+  };
+  walk(trak, "trak", 0);
 }
 
 /** Every `dref` entry of a track must be the file itself: a reference to another file is a way to make ffmpeg open one. */
-function checkDataReferences(m: Uint8Array, view: DataView, inMinf: readonly BoxRef[], budget: { visited: number }): void {
+function checkDataReferences(m: Uint8Array, view: DataView, inMinf: readonly BoxRef[], budget: Budget): void {
   const dinf = onlyOf(inMinf, "dinf");
   if (dinf === undefined) return;
   const dref = onlyOf(childrenOf(m, view, dinf.body, dinf.end, budget), "dref");
@@ -482,7 +527,7 @@ function checkDataReferences(m: Uint8Array, view: DataView, inMinf: readonly Box
   }
 }
 
-function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined, edts: BoxRef | undefined, mdhd: BoxRef | undefined, tables: readonly BoxRef[] | undefined, movieTimescale: number, budget: { visited: number }): VideoTrackInfo {
+function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined, edts: BoxRef | undefined, mdhd: BoxRef | undefined, tables: readonly BoxRef[] | undefined, movieTimescale: number, budget: Budget): VideoTrackInfo {
   if (tkhd === undefined || mdhd === undefined || tables === undefined) throw new Refusal("bad-header");
   const { rotation, width: tkhdWidth, height: tkhdHeight } = readTkhd(m, view, tkhd);
   const { timescale } = readTimes(m, view, mdhd);
@@ -584,7 +629,7 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
 
   const m = await readExactly(source, moov.body, moov.end - moov.body);
   const view = new DataView(m.buffer, m.byteOffset, m.byteLength);
-  const budget = { visited: 0 };
+  const budget: Budget = { visited: 0, listed: new Map() };
   const top = childrenOf(m, view, 0, m.byteLength, budget);
   if (top.some((box) => box.type === "mvex")) throw new Refusal("fragmented");
   const mvhd = onlyOf(top, "mvhd");
@@ -597,6 +642,7 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
   let audioTracks = 0;
   for (const trak of traks) {
     const parts = childrenOf(m, view, trak.body, trak.end, budget);
+    checkHandlers(m, view, trak, budget);
     const mdia = onlyOf(parts, "mdia");
     if (mdia === undefined) continue;
     const inMdia = childrenOf(m, view, mdia.body, mdia.end, budget);
@@ -604,16 +650,18 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
     const minf = onlyOf(inMdia, "minf");
     const handler = hdlr !== undefined && payloadLength(hdlr) >= 12 ? latin1(m, hdlr.body + 8, hdlr.body + 12) : "";
     const inMinf = minf === undefined ? [] : childrenOf(m, view, minf.body, minf.end, budget);
+    // `checkHandlers` took the data handler of `minf`; a second one is a repeat (ffmpeg would read the last).
+    onlyOf(inMinf, "hdlr");
     checkDataReferences(m, view, inMinf, budget);
-    checkHiddenHandlers(m, view, parts, inMinf, budget);
     const stbl = onlyOf(inMinf, "stbl");
     const tables = stbl === undefined ? undefined : childrenOf(m, view, stbl.body, stbl.end, budget);
     const stsd = tables === undefined ? undefined : onlyOf(tables, "stsd");
     const entryType = stsd !== undefined && payloadLength(stsd) >= 16 ? latin1(m, stsd.body + 12, stsd.body + 16) : undefined;
     if (handler === "soun") audioTracks++;
     // A sound track is a sound track whatever its codec is called: ffmpeg never makes a video stream of a `soun` track (the video tag lookup is
-    // skipped once the handler has said audio), and no decoder but the pinned one is opened. No other `hdlr` of the
-    // track names a media type (`checkHiddenHandlers`: ffmpeg reads them all and the last one wins), so a sound handler cannot hide another. Otherwise: a video track by its handler OR by its sample entry (see NON_VIDEO_ENTRIES).
+    // skipped once the handler has said audio), and no decoder but the pinned one is opened. The track has no other `hdlr` but a data handler
+    // (`checkHandlers`: ffmpeg reads them all and the last one wins), so a sound handler cannot hide another. Otherwise: a video track by its
+    // handler OR by its sample entry (see NON_VIDEO_ENTRIES).
     if (handler === "soun") continue;
     if (handler !== "vide" && (entryType === undefined || NON_VIDEO_ENTRIES.has(entryType))) continue;
     // ONE video track only. ffmpeg silently drops a track it cannot use (no samples, a broken table), so with two the stream it maps as the
