@@ -162,6 +162,12 @@ export interface EngineDeps {
    * 3f.2 to 3f.5 pass theirs. A kind with none is refused as `not-yet-supported`, before its file is copied.
    */
   mediaImporters?: MediaImporters;
+  /**
+   * Whether a queued or running render uses an own media (3f.1b review M-3): `media.delete` is refused with IN_FLIGHT while it does. The
+   * render queue's reserved set, as photos have. Nothing passes one until N9 is lifted for a kind of own media: 3f.2 (photos), 3f.3b
+   * (video), 3f.4 (music) and 3f.5 (stickers) each wire the real one and test it.
+   */
+  reservedMedia?: (mediaId: string) => boolean;
   /** Test knob: the disk calls, `O_NOFOLLOW`, chunk size and caps of the staging copy. */
   mediaStaging?: Pick<MediaStagingOptions, "ops" | "noFollow" | "chunkBytes" | "caps" | "freeBytes" | "freeMarginBytes" | "fs" | "warn">;
   /** Test knob: how long the engine lets one `media.import` call take to open the file (the job's copy is not bound by it); `MEDIA_IMPORT_ENGINE_DEADLINE_MS` unless a test says otherwise. */
@@ -662,6 +668,7 @@ export class Engine {
       newId: deps.newId,
       now: () => new Date(deps.clock()),
       importers: deps.mediaImporters,
+      reservedMedia: deps.reservedMedia,
       staging: deps.mediaStaging,
       log: (line) => console.warn(`studio engine: ${line}`),
     });
@@ -1412,14 +1419,15 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#media.list(command.payload.kind) };
       case "media.delete": {
         const { mediaId } = command.payload;
-        let removed: boolean;
+        let removed: "deleted" | "not-found" | "in-use";
         try {
           removed = await this.#media.delete(mediaId);
         } catch (error) {
           if (error instanceof MediaDiskError) throw new EngineFailure({ code: "INTERNAL", detail: error.message });
           throw error;
         }
-        if (!removed) throw new EngineFailure({ code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
+        if (removed === "in-use") throw new EngineFailure({ code: "IN_FLIGHT", detail: "a queued or running render uses this media; delete it when the render ends" });
+        if (removed === "not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { mediaId } };
       }
       case "media.cancelImport": {

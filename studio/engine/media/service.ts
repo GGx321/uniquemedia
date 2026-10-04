@@ -10,7 +10,8 @@ import {
 import type { JobRegistry } from "../jobs";
 import { MediaCommitError, MediaDiskError, MediaRecords, type MediaRecordsOptions } from "../library/mediaRecords";
 import type { MediaImportCall, MediaImporters, MediaImportResult } from "./imports";
-import type { MediaFormat } from "./sniff";
+import { open } from "node:fs/promises";
+import { formatOf, SNIFF_HEAD_BYTES, type MediaFormat } from "./sniff";
 import { MediaStaging, type MediaStagingOptions, type OpenedMedia, type StagedMedia, type WorkFile } from "./staging";
 
 // The own-media import JOB (Stage 3, 3f.1b; K29) and the records' commands (K28).
@@ -54,6 +55,18 @@ export interface MediaServiceDeps {
   /** Test knobs: the records' disk calls and crash points. */
   readonly records?: Pick<MediaRecordsOptions, "fs" | "hooks" | "warn"> | undefined;
   readonly log: (line: string) => void;
+  /**
+   * Whether a queued or running render uses this media (the render queue's reserved set, as photos have): `media.delete` refuses it
+   * (`in-use`) until the render ends. Absent: nothing is reserved. Every task that lifts N9 for a kind of own media (3f.2 photos, 3f.3b
+   * video, 3f.4 music, 3f.5 stickers) must wire the real one and test it.
+   */
+  readonly reservedMedia?: ((mediaId: string) => boolean) | undefined;
+  /** How long an importer that ignores the cancel is given before its answer is dropped and the job moves on; 5 s by default. */
+  readonly importerGraceMs?: number | undefined;
+  /** How long `stop` waits for the jobs to clean up; 10 s by default. */
+  readonly stopWaitMs?: number | undefined;
+  /** How many imports (queued and running) are taken at once; each holds its file open. 40 by default. */
+  readonly maxPendingImports?: number | undefined;
 }
 
 interface Area {
@@ -72,6 +85,45 @@ type End =
 
 /** How many times a record whose id is already taken is retried with the next id (a collision is a freak: ids are random). */
 const COMMIT_ATTEMPTS = 3;
+const DEFAULT_IMPORTER_GRACE_MS = 5_000;
+const DEFAULT_STOP_WAIT_MS = 10_000;
+const DEFAULT_MAX_PENDING_IMPORTS = 40;
+
+/** Resolves with `aborted` once `signal` fires, or with the value of `work`: a wait that must not outlive a cancel. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<{ aborted: true } | { aborted: false; value: T }> {
+  if (signal === undefined) return work.then((value) => ({ aborted: false as const, value }));
+  if (signal.aborted) return Promise.resolve({ aborted: true as const });
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => resolve({ aborted: true });
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve({ aborted: false, value });
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function errorCodeOf(error: unknown): string {
+  return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error";
+}
+
+/** The first bytes of a file, for a check of what it is. */
+async function headOf(path: string): Promise<Uint8Array> {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(SNIFF_HEAD_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return Uint8Array.from(buffer.subarray(0, bytesRead));
+  } finally {
+    await handle.close();
+  }
+}
 
 export class MediaService {
   readonly #deps: MediaServiceDeps;
@@ -148,7 +200,12 @@ export class MediaService {
     if (this.#stopping) return { ok: false, reason: "cancelled", detail: "the engine is stopping" };
     return this.#deps.withLibrary(async (library) => {
       const area = this.#areaOf(library.root);
-      await area.ready;
+      // A cancel does not wait for a recovery that is slow (a dead drive): the call answers cancelled and starts nothing.
+      if ((await untilAborted(area.ready, signal)).aborted) return { ok: false, reason: "cancelled", detail: "the import was cancelled" };
+      // Each pending job holds its file open: beyond the cap a file is turned away before it is opened.
+      if (this.#deps.jobs.activeImports() >= (this.#deps.maxPendingImports ?? DEFAULT_MAX_PENDING_IMPORTS)) {
+        return { ok: false, reason: "too-many", detail: "too many imports are waiting; add the file when some have ended" };
+      }
       const result = await area.staging.open({ path: call.path, kind: call.pick, expected: call.expected }, signal);
       if (!result.ok) return { ok: false, reason: result.reason, detail: result.detail };
       const { opened } = result;
@@ -158,8 +215,15 @@ export class MediaService {
         return { ok: false, reason: "failed", detail: "no job id could be made" };
       }
       // Registered before the call's own hold ends: there is no moment when the library is neither held by the call nor by the job.
-      const jobSignal = this.#deps.jobs.startImport(jobId, { mediaKind: opened.kind, name: call.name }, opened.bytes);
-      this.#announce(jobId, 0);
+      let jobSignal: AbortSignal;
+      try {
+        // A job that finds the turn taken is queued: it holds its file open and waits.
+        jobSignal = this.#deps.jobs.startImport(jobId, { mediaKind: opened.kind, name: call.name }, opened.bytes, { queued: this.#active });
+      } catch {
+        await opened.close();
+        return { ok: false, reason: "failed", detail: "the import could not be registered" };
+      }
+      this.#announce(jobId);
       area.active++;
       const run: Promise<void> = this.#run(jobId, area, opened, call.name, jobSignal).finally(() => {
         area.active--;
@@ -183,11 +247,19 @@ export class MediaService {
     await Promise.allSettled([...this.#areas.values()].map((area) => area.ready));
   }
 
-  /** The engine stops: no import is taken, every running one is cancelled, and this returns once each has cleaned up. */
+  /**
+   * The engine stops: no import is taken, every queued and running one is cancelled, and this returns once each has cleaned up, or after
+   * `stopWaitMs` (an importer that ignores the cancel must not keep the engine from stopping).
+   */
   async stop(): Promise<void> {
     this.#stopping = true;
-    for (const state of this.#deps.jobs.states()) if (state.kind === "import" && state.status === "running") this.#deps.jobs.cancel(state.jobId);
-    await this.settled();
+    for (const state of this.#deps.jobs.states()) if (state.kind === "import" && (state.status === "running" || state.status === "queued")) this.#deps.jobs.cancel(state.jobId);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.#deps.stopWaitMs ?? DEFAULT_STOP_WAIT_MS);
+    });
+    await Promise.race([this.settled(), bound]);
+    clearTimeout(timer);
   }
 
   // ---------- the records ----------
@@ -218,14 +290,21 @@ export class MediaService {
     });
   }
 
-  /** Removes the file and its record. False for an id the library does not hold. A disk that fails throws `MediaDiskError` (no path in it). */
-  async delete(mediaId: string): Promise<boolean> {
+  /**
+   * Removes the file and its record. `not-found` for an id the library does not hold; `in-use` while a queued or running render uses it
+   * (the reserved provider: the plan keeps a draft's reference and reads it as `media-unavailable`, but a render in flight reads the file);
+   * otherwise `deleted`. A disk that fails throws `MediaDiskError` (no path in it).
+   */
+  async delete(mediaId: string): Promise<"deleted" | "not-found" | "in-use"> {
     return this.#deps.withLibrary(async (library) => {
       const area = this.#areaOf(library.root);
       await area.ready;
+      if (!area.records.has(mediaId)) return "not-found";
+      if (this.#deps.reservedMedia?.(mediaId) === true) return "in-use";
       const removed = await area.records.remove(mediaId);
-      if (removed) this.#event("media.changed", { change: "removed", mediaId });
-      return removed;
+      if (!removed) return "not-found";
+      this.#event("media.changed", { change: "removed", mediaId });
+      return "deleted";
     });
   }
 
@@ -235,18 +314,23 @@ export class MediaService {
     let end: End;
     try {
       end = await this.#execute(jobId, area, opened, name, signal);
-    } catch {
-      // A bug or a disk failure that nothing below classified: only the fact travels, never a message that may name a path.
-      this.#deps.log(`import job ${jobId} failed unexpectedly`);
+    } catch (error) {
+      // A bug or a disk failure that nothing below classified: only the fact and the code travel, never a message that may name a path.
+      this.#deps.log(`import job ${jobId} failed unexpectedly (${errorCodeOf(error)})`);
       end = { status: "failed", reason: "failed", detail: "the import failed" };
     }
-    // The handle goes before the job is told to be over; the staged copy and the work files already went.
-    await opened.close();
-    this.#finish(jobId, opened.kind, name, end);
+    try {
+      // The handle goes before the job is told to be over; the staged copy and the work files already went.
+      await opened.close();
+    } finally {
+      this.#finish(jobId, opened.kind, name, end);
+    }
   }
 
   async #execute(jobId: string, area: Area, opened: OpenedMedia, name: string, signal: AbortSignal): Promise<End> {
     if (!(await this.#turn(signal))) return { status: "cancelled" };
+    // Its turn came: a job that waited is announced again, now running.
+    if (this.#deps.jobs.startImportRunning(jobId)) this.#announce(jobId);
     const works: WorkFile[] = [];
     let staged: StagedMedia | null = null;
     try {
@@ -269,25 +353,45 @@ export class MediaService {
       if (signal.aborted) return { status: "cancelled" };
       const importer = this.#deps.importers?.[staged.kind];
       if (importer === undefined) return { status: "failed", reason: "not-yet-supported", detail: `${staged.kind} files cannot be imported yet` };
-      let outcome;
-      try {
-        outcome = await importer({
-          staged,
-          name,
-          signal,
-          workFile: async () => {
-            const work = await area.staging.workFile();
-            works.push(work);
-            return work;
-          },
-        });
-      } catch {
-        // The importer's own message may name its working files: only the fact travels.
-        return { status: "failed", reason: "failed", detail: "the importer failed" };
+      const answered = importer({
+        staged,
+        name,
+        signal,
+        workFile: async () => {
+          const work = await area.staging.workFile();
+          works.push(work);
+          return work;
+        },
+      }).then(
+        (value) => ({ answer: "value" as const, value }),
+        () => ({ answer: "threw" as const }),
+      );
+      // An importer owes the job a stop within seconds of the signal. One that does not is given a grace window, and then its answer
+      // is dropped, its work files are released and the turn moves on: a hung importer must not hold every later import and the library.
+      const grace = this.#graceAfterAbort(signal);
+      const given = await Promise.race([answered, grace.promise]);
+      grace.cancel();
+      if (given.answer === "hung") {
+        this.#deps.log(`import job ${jobId}: the importer did not stop after the cancel; its answer is dropped`);
+        return { status: "cancelled" };
       }
+      // The importer's own message may name its working files: only the fact travels.
+      if (given.answer === "threw") return { status: "failed", reason: "failed", detail: "the importer failed" };
+      const outcome = given.value;
       // Whatever an importer answers after the signal is thrown away; its work files are released below.
       if (signal.aborted) return { status: "cancelled" };
       if (!outcome.ok) return outcome.reason === "cancelled" ? { status: "cancelled" } : { status: "failed", reason: outcome.reason, detail: `the file was refused: ${outcome.reason}` };
+
+      // The container an importer declares is its word: the file's own first bytes must say the same (the staged copy was judged by the staging).
+      if (outcome.output !== undefined) {
+        let actual: MediaFormat | null = null;
+        try {
+          actual = formatOf(await headOf(outcome.output.file.path));
+        } catch {
+          return { status: "failed", reason: "failed", detail: "the importer's file could not be read" };
+        }
+        if (actual !== outcome.output.format) return { status: "failed", reason: "failed", detail: "the importer's file is not the container it says" };
+      }
 
       const input = {
         sourcePath: outcome.output?.file.path ?? staged.path,
@@ -297,20 +401,52 @@ export class MediaService {
         facts: outcome.facts,
         ...(outcome.output === undefined ? { sha256: staged.sha256 } : outcome.output.sha256 === undefined ? {} : { sha256: outcome.output.sha256 }),
       };
+      let media: MediaSummary;
       for (let attempt = 1; ; attempt++) {
         try {
-          return { status: "done", media: await area.records.commit(input, signal) };
+          media = await area.records.commit(input, signal);
+          break;
         } catch (error) {
           if (error instanceof MediaCommitError && error.code === "exists" && attempt < COMMIT_ATTEMPTS) continue;
           return endOfCommitFailure(error);
         }
       }
+      // Told at once, before anything else can happen to the record: a delete that lands while the job cleans up is announced after it.
+      this.#event("media.changed", { change: "upserted", media });
+      return { status: "done", media };
     } finally {
-      // Before the job ends and drops the library hold: the staged copy and every work file are gone whichever way it ended.
-      await staged?.dispose();
-      for (const work of works) await work.release();
-      this.#release();
+      // Before the job ends and drops the library hold: the staged copy and every work file are gone whichever way it ended. The turn
+      // is handed on whatever the cleanup does: a failing disposal must not stop every later import.
+      try {
+        await staged?.dispose();
+        for (const work of works) await work.release();
+      } finally {
+        this.#release();
+      }
     }
+  }
+
+  /** Resolves `hung` a grace window after `signal` fires; `cancel` stops the wait when the importer answered first. */
+  #graceAfterAbort(signal: AbortSignal): { promise: Promise<{ answer: "hung" }>; cancel: () => void } {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const promise = new Promise<{ answer: "hung" }>((resolve) => {
+      const start = (): void => {
+        timer = setTimeout(() => resolve({ answer: "hung" }), this.#deps.importerGraceMs ?? DEFAULT_IMPORTER_GRACE_MS);
+      };
+      if (signal.aborted) start();
+      else {
+        onAbort = start;
+        signal.addEventListener("abort", start, { once: true });
+      }
+    });
+    return {
+      promise,
+      cancel: () => {
+        clearTimeout(timer);
+        if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+      },
+    };
   }
 
   #finish(jobId: string, mediaKind: MediaKind, name: string, end: End): void {
@@ -319,7 +455,6 @@ export class MediaService {
       case "done": {
         const state = this.#deps.jobs.finishImport(jobId, { status: "done", result: { kind: "import", mediaId: end.media.mediaId, media: end.media } });
         if (state === null || state.kind !== "import" || state.result === undefined) return;
-        this.#event("media.changed", { change: "upserted", media: end.media });
         this.#event("job.done", { jobId, result: state.result });
         return;
       }
@@ -368,8 +503,9 @@ export class MediaService {
 
   // ---------- events ----------
 
-  #announce(jobId: string, done: number): void {
-    const payload = this.#deps.jobs.progress(jobId, done);
+  /** Announces a queued or running import at zero (`queued: true` while it waits). */
+  #announce(jobId: string): void {
+    const payload = this.#deps.jobs.announceImport(jobId);
     if (payload !== null) this.#event("job.progress", payload);
   }
 

@@ -360,6 +360,19 @@ describe("media.list and media.delete", () => {
     expect(ok(await started.engine.handle(command("media.delete", { mediaId: id }))).result).toEqual({ mediaId: id });
   });
 
+  test("a media that a queued or running render uses is refused with IN_FLIGHT, and deleted once the render is over", async () => {
+    const reserved = new Set<string>();
+    const started = await start({ mediaImporters: { photo: asIs }, reservedMedia: (id) => reserved.has(id) });
+    await imported(started);
+    const listed = ok(await started.engine.handle(command("media.list", {}))).result as { media: { mediaId: string }[] };
+    const id = listed.media[0]?.mediaId ?? "";
+    reserved.add(id);
+    expect(failed(await started.engine.handle(command("media.delete", { mediaId: id }))).error.code).toBe("IN_FLIGHT");
+    expect(((ok(await started.engine.handle(command("media.list", {}))).result) as { total: number }).total).toBe(1);
+    reserved.delete(id);
+    expect(ok(await started.engine.handle(command("media.delete", { mediaId: id }))).result).toEqual({ mediaId: id });
+  });
+
   test("the records of an earlier life are listed after a restart", async () => {
     const first = await start({ mediaImporters: { photo: asIs } });
     await imported(first, "kept.jpg", jpeg(300));

@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFileSync } from "node:fs";
-import { lstat, mkdir, open, readdir, readFile, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rm, unlink as fsUnlink, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { JobProgress, JobResult, JobState, MediaSummary, type EngineError, type PickedFileIdentity, type UnsequencedEvent } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
 import { JobRegistry } from "../jobs";
+import { PNG_1X1 } from "../library/testing/sampleData";
 import { SimulatedCrash, treatSimulatedCrash } from "../library/testing/mediaCrash";
 import { pickedIdentityOf } from "./identity";
+import type { OpenRegularOps } from "../library/openRegular";
 import type { MediaImporter, MediaImportCall } from "./imports";
 import { MediaService, type MediaServiceDeps } from "./service";
 useNativeGlobals();
@@ -272,7 +274,7 @@ describe("a finished import", () => {
   test("a file the importer made is what is stored; the staged copy and the work file are gone", async () => {
     const importer: MediaImporter = async ({ workFile }) => {
       const work = await workFile();
-      await writeFile(work.path, "normalised photo");
+      await writeFile(work.path, PNG_1X1);
       return { ok: true, facts: PHOTO_FACTS, output: { file: work, format: "png" } };
     };
     const r = rig({ importers: { photo: importer } });
@@ -282,8 +284,8 @@ describe("a finished import", () => {
     if (state?.kind !== "import" || state.result === undefined) throw new Error(`not done: ${JSON.stringify(state)}`);
     const id = state.result.media.mediaId;
     expect(await stored()).toEqual([`${id}.json`, `${id}.png`]);
-    expect(await readFile(join(mediaDir(), `${id}.png`), "utf8")).toBe("normalised photo");
-    expect(state.result.media.bytes).toBe(16);
+    expect(await readFile(join(mediaDir(), `${id}.png`))).toEqual(Buffer.from(PNG_1X1));
+    expect(state.result.media.bytes).toBe(PNG_1X1.length);
     expect(await staged()).toEqual([]);
   });
 
@@ -728,7 +730,7 @@ describe("the records through the service", () => {
     const target = listed.media[0];
     if (target === undefined) throw new Error("nothing listed");
     r.events.length = 0;
-    expect(await r.service.delete(target.mediaId)).toBe(true);
+    expect(await r.service.delete(target.mediaId)).toBe("deleted");
     expect((await r.service.list()).media.map((m) => m.name)).toEqual(["a.jpg"]);
     expect(await stored()).toHaveLength(2);
     expect(r.events).toHaveLength(1);
@@ -763,7 +765,7 @@ describe("the records through the service", () => {
 
   test("deleting an id the library does not hold is false and tells nothing", async () => {
     const r = rig();
-    expect(await r.service.delete("media-00000404")).toBe(false);
+    expect(await r.service.delete("media-00000404")).toBe("not-found");
     expect(r.events).toEqual([]);
   });
 
@@ -780,4 +782,357 @@ describe("the records through the service", () => {
     expect(await readdir(libraryRoot())).toEqual(["library.json", "media"]);
     await rm(victim);
   });
+});
+
+// ---------- the 3f.1b review: what an importer, a delete and a full queue may do to a job ----------
+
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+
+describe("a delete between the commit and the job's end (L-1, probe P2)", () => {
+  test("the window is told upserted, then removed, never the other way round: no ghost tile", async () => {
+    const reached = deferred();
+    const gate = deferred();
+    let armed = true;
+    const r = rig({
+      staging: {
+        fs: {
+          unlink: async (path) => {
+            // The staged copy's dispose after a commit that moved it away: the job is still running here.
+            if (armed && path.endsWith(".media")) {
+              armed = false;
+              reached.resolve();
+              await gate.promise;
+            }
+            await fsUnlink(path);
+          },
+        },
+      },
+    });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await reached.promise;
+    const [media] = (await r.service.list()).media;
+    expect(await r.service.delete(media?.mediaId ?? "")).toBe("deleted");
+    gate.resolve();
+    await r.service.settled();
+    const changes = r.events.flatMap((e) => (e.type === "media.changed" ? [e.payload.change] : []));
+    expect(changes).toEqual(["upserted", "removed"]);
+    expect(r.jobs.stateOf(jobId)).toMatchObject({ status: "done" });
+  });
+});
+
+describe("a media that a queued or running render uses (M-3)", () => {
+  test("is not deleted while the provider says it is reserved: the answer is in-use, nothing is removed or told", async () => {
+    const reserved = new Set<string>();
+    const r = rig({ reservedMedia: (id) => reserved.has(id) });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    const [media] = (await r.service.list()).media;
+    const id = media?.mediaId ?? "";
+    reserved.add(id);
+    r.events.length = 0;
+    expect(await r.service.delete(id)).toBe("in-use");
+    expect((await r.service.list()).total).toBe(1);
+    expect(await stored()).toHaveLength(2);
+    expect(r.events).toEqual([]);
+  });
+
+  test("is deleted as soon as the render is over", async () => {
+    const reserved = new Set<string>();
+    const r = rig({ reservedMedia: (id) => reserved.has(id) });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    const id = (await r.service.list()).media[0]?.mediaId ?? "";
+    reserved.add(id);
+    expect(await r.service.delete(id)).toBe("in-use");
+    reserved.delete(id);
+    expect(await r.service.delete(id)).toBe("deleted");
+  });
+
+  test("an id the library does not hold is not-found even when the provider says it is reserved", async () => {
+    const r = rig({ reservedMedia: () => true });
+    expect(await r.service.delete("media-00000404")).toBe("not-found");
+  });
+
+  test("with no provider nothing is reserved", async () => {
+    const r = rig();
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(await r.service.delete((await r.service.list()).media[0]?.mediaId ?? "")).toBe("deleted");
+  });
+});
+
+describe("an importer that ignores its signal (M-4)", () => {
+  test("is given a grace window after the cancel; then its answer is dropped, the job is cancelled and the turn is released", async () => {
+    let first = true;
+    const r = rig({
+      importerGraceMs: 30,
+      importers: {
+        photo: async () => {
+          if (first) {
+            first = false;
+            // Never settles, and never looks at its signal.
+            return new Promise(() => undefined);
+          }
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    const hung = await started(r, await callFor("a.jpg", jpeg(300)));
+    const next = await started(r, await callFor("b.jpg", jpeg(310)));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    r.service.cancel(hung);
+    await r.service.settled();
+    expect(r.jobs.stateOf(hung)).toMatchObject({ status: "cancelled" });
+    expect(r.jobs.stateOf(next)).toMatchObject({ status: "done" });
+    expect(await staged()).toEqual([]);
+    expect(r.jobs.activeImports()).toBe(0);
+  });
+
+  test("one that answers within the grace window is still thrown away: the cancel stands", async () => {
+    const r = rig({
+      importerGraceMs: 500,
+      importers: {
+        photo: async ({ signal }) => {
+          await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    r.service.cancel(jobId);
+    await r.service.settled();
+    expect(r.jobs.stateOf(jobId)).toMatchObject({ status: "cancelled" });
+    expect(await stored()).toEqual([]);
+  });
+
+  test("an importer that is still in its time is not cut short: no cancel, no grace", async () => {
+    const r = rig({
+      importerGraceMs: 10,
+      importers: {
+        photo: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 60));
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(r.jobs.stateOf(jobId)).toMatchObject({ status: "done" });
+  });
+});
+
+describe("stopping with a job that will not stop (L-6)", () => {
+  test("stop returns within its bound even when an importer ignores its signal for good", async () => {
+    const r = rig({ importerGraceMs: 60_000, stopWaitMs: 60, importers: { photo: () => new Promise(() => undefined) } });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const began = Date.now();
+    await r.service.stop();
+    expect(Date.now() - began).toBeLessThan(5_000);
+  });
+});
+
+describe("opening a file waits for the library's recovery, but not past a cancel (L-5)", () => {
+  test("a call cancelled while the recovery is still running answers cancelled and starts no job", async () => {
+    await mkdir(stagingDir(), { recursive: true });
+    await writeFile(join(stagingDir(), "old-00000001.media"), "left by a crash");
+    const never = deferred();
+    const r = rig({
+      staging: {
+        fs: {
+          unlink: async (path) => {
+            await never.promise;
+            await fsUnlink(path);
+          },
+          platform: "linux",
+        },
+      },
+    });
+    const controller = new AbortController();
+    const pending = r.service.import(await callFor("a.jpg", jpeg(300)), controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+    expect(await pending).toMatchObject({ ok: false, reason: "cancelled" });
+    expect(r.jobs.states()).toEqual([]);
+    never.resolve();
+    await r.service.settled();
+  });
+});
+
+describe("the turn is released whatever the cleanup does (L-7)", () => {
+  test("a staged copy whose disposal throws still frees the turn: the next import runs", async () => {
+    let first = true;
+    const r = rig({
+      importers: {
+        photo: async ({ staged: handle }) => {
+          if (first) {
+            first = false;
+            (handle as { dispose: () => Promise<void> }).dispose = async () => {
+              throw new Error("the disk is gone");
+            };
+          }
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    const b = await started(r, await callFor("b.jpg", jpeg(310)));
+    await r.service.settled();
+    expect(["done", "failed"]).toContain(String(r.jobs.stateOf(a)?.status));
+    expect(r.jobs.stateOf(b)).toMatchObject({ status: "done" });
+    expect(r.jobs.activeImports()).toBe(0);
+  });
+});
+
+describe("the container an importer says its file is (L-9)", () => {
+  const output =
+    (format: "png" | "jpeg"): MediaImporter =>
+    async ({ workFile }) => {
+      const work = await workFile();
+      await writeFile(work.path, jpeg(64));
+      return { ok: true, facts: PHOTO_FACTS, output: { file: work, format } };
+    };
+
+  test("is checked against the file's own first bytes: a JPEG declared as a PNG is a failed job and nothing is stored", async () => {
+    const r = rig({ importers: { photo: output("png") } });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(failedWith(r, jobId)).toMatchObject({ code: "MEDIA_UNSUPPORTED", mediaReason: "failed" });
+    expect(await stored()).toEqual([]);
+    expect(await staged()).toEqual([]);
+  });
+
+  test("a file that is what it says is stored", async () => {
+    const r = rig({ importers: { photo: output("jpeg") } });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(r.jobs.stateOf(jobId)).toMatchObject({ status: "done" });
+  });
+});
+
+describe("a job that cannot be registered (L-10)", () => {
+  test("closes the file it opened and answers failed", async () => {
+    let closes = 0;
+    const ops: OpenRegularOps = {
+      lstat: (p) => lstat(p, { bigint: true }),
+      open: async (p, flags) => {
+        const handle = await open(p, flags);
+        return new Proxy(handle, {
+          get(target, prop) {
+            if (prop === "close") {
+              return async () => {
+                closes++;
+                return target.close();
+              };
+            }
+            const value: unknown = Reflect.get(target, prop);
+            return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          },
+        }) as FileHandle;
+      },
+    };
+    // The same job id twice: the second registration throws.
+    const r = rig({ newId: () => "job-00000001", staging: { ops } });
+    const first = await r.service.import(await callFor("a.jpg", jpeg(300)));
+    expect(first.ok).toBe(true);
+    await r.service.settled();
+    const before = closes;
+    const second = await r.service.import(await callFor("b.jpg", jpeg(310)));
+    expect(second).toMatchObject({ ok: false, reason: "failed" });
+    expect(closes).toBe(before + 1);
+  });
+});
+
+describe("what an unexpected failure logs (L-12)", () => {
+  test("the disk's code and the job, never the message that may name a path", async () => {
+    const lines: string[] = [];
+    const r = rig({
+      log: (line) => lines.push(line),
+      emit: (event) => {
+        if (event.type === "media.changed") throw Object.assign(new Error(`cannot write ${tmp()}/secret`), { code: "EIO" });
+      },
+    });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(lines.some((line) => line.includes("EIO"))).toBe(true);
+    expect(lines.join("\n").includes(tmp())).toBe(false);
+  });
+});
+
+describe("a full queue (the review's queue items)", () => {
+  /** An importer every job waits in until `release`. */
+  function held(): { importer: MediaImporter; release: () => void } {
+    const gate = deferred();
+    return {
+      release: gate.resolve,
+      importer: async () => {
+        await gate.promise;
+        return { ok: true, facts: PHOTO_FACTS };
+      },
+    };
+  }
+
+  test("a job that waits for its turn is queued, and runs when its turn comes, announced each time", async () => {
+    const h = held();
+    const r = rig({ importers: { photo: h.importer } });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    const b = await started(r, await callFor("b.jpg", jpeg(310)));
+    expect(r.jobs.stateOf(b)).toMatchObject({ status: "queued" });
+    const announced = r.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "import" && e.payload.jobId === b ? [e.payload] : []));
+    expect(announced).toHaveLength(1);
+    expect(announced[0]).toMatchObject({ queued: true, done: 0 });
+    h.release();
+    await r.service.settled();
+    expect(r.jobs.stateOf(a)).toMatchObject({ status: "done" });
+    expect(r.jobs.stateOf(b)).toMatchObject({ status: "done" });
+    const second = r.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "import" && e.payload.jobId === b && e.payload.done === 0 ? [e.payload.queued === true] : []));
+    expect(second).toEqual([true, false]);
+  });
+
+  test("a queued job is cancelled from its queue at once, and counts as active until then", async () => {
+    const h = held();
+    const r = rig({ importers: { photo: h.importer } });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    const b = await started(r, await callFor("b.jpg", jpeg(310)));
+    expect(r.jobs.activeImports()).toBe(2);
+    r.service.cancel(b);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(r.jobs.stateOf(b)).toMatchObject({ status: "cancelled" });
+    expect(r.jobs.activeImports()).toBe(1);
+    h.release();
+    await r.service.settled();
+  });
+
+  test("beyond the cap a file is refused too-many before it is held open, and the jobs already taken go on", async () => {
+    const h = held();
+    const r = rig({ maxPendingImports: 3, importers: { photo: h.importer } });
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) ids.push(await started(r, await callFor(`p${i}.jpg`, jpeg(300 + i))));
+    const over = await r.service.import(await callFor("over.jpg", jpeg(400)));
+    expect(over).toMatchObject({ ok: false, reason: "too-many" });
+    expect(r.jobs.activeImports()).toBe(3);
+    h.release();
+    await r.service.settled();
+    for (const id of ids) expect(r.jobs.stateOf(id)).toMatchObject({ status: "done" });
+    // The queue has room again.
+    expect((await r.service.import(await callFor("again.jpg", jpeg(410)))).ok).toBe(true);
+    await r.service.settled();
+  });
+
+  test("the default cap is 40", async () => {
+    const h = held();
+    const r = rig({ importers: { photo: h.importer } });
+    for (let i = 0; i < 40; i++) await started(r, await callFor(`q${i}.jpg`, jpeg(200 + i)));
+    expect(await r.service.import(await callFor("q40.jpg", jpeg(300)))).toMatchObject({ ok: false, reason: "too-many" });
+    h.release();
+    await r.service.stop();
+  }, 60_000);
 });
