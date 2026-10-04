@@ -15,7 +15,10 @@ useNativeGlobals();
 // without following a link and as a regular file (a folder or a link is `not-a-file`), its size from the open handle within the `any` cap,
 // its identity pinned, then the engine's `media.import`, one file after another. The answer is a pick's `MediaPickResult`.
 
-const TRUSTED: TrustedRenderer = { fileUrl: "file:///Applications/Studio.app/Contents/Resources/app.asar/out-studio/renderer/index.html" };
+/** The app's page as the platform the test runs on writes it: a file URL with a drive letter on Windows (`isTrustedSender` reads it by the platform's rules). */
+const TRUSTED: TrustedRenderer = {
+  fileUrl: process.platform === "win32" ? "file:///C:/Program%20Files/Studio/resources/app.asar/out-studio/renderer/index.html" : "file:///Applications/Studio.app/Contents/Resources/app.asar/out-studio/renderer/index.html",
+};
 const APP_FRAME: SenderFrame = { url: TRUSTED.fileUrl, isTopFrame: true, isAppWindow: true };
 
 let dir = "";
