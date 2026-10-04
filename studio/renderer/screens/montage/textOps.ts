@@ -1,7 +1,8 @@
 import { Caption, type CaptionIssue, type MontageDraft, type TextFont, type TextLayer, type TextStyle } from "../../../shared/engine";
-import { TEXT_BASE_PX } from "../../../shared/montage";
+import { TEXT_BASE_PX, textBox } from "../../../shared/montage";
 import { captionIssue } from "../../../shared/text/captionRules";
 import { CaptionLayoutError, layoutCaption } from "../../../shared/text/layout";
+import { layerBoxZones, type ZoneId, zoneEscape } from "./stickerOps";
 
 // 3d.5: a text layer's properties (EditorText.dc.html; the reconciliation's R23–R31, T2) as pure edits over a draft, the
 // sibling of layerOps.ts. The editor sends each result through `DraftSession.edit`, so every one is an undo step and is saved
@@ -124,6 +125,21 @@ export function setTextScale(spec: MontageDraft, index: number, scale: number): 
   if (!Number.isFinite(scale)) throw new RangeError(`a scale must be a finite number, got ${scale}`);
   const next = Math.min(MAX_TEXT_SCALE, Math.max(MIN_TEXT_SCALE, Math.round(scale * 100) / 100));
   return next === layer.scale ? spec : withText(spec, index, { ...layer, scale: next });
+}
+
+/**
+ * Which Reels zones a caption reaches (3d.4, AM10), bottom first: judged on the box of the picture the ENGINE drew for it
+ * (`montages.textPreview`'s width and height, placed by the engine's `textBox`), never on an estimate.
+ */
+export function textZones(layer: TextLayer, picture: { readonly width: number; readonly height: number }): ZoneId[] {
+  return layerBoxZones(textBox(layer, { w: picture.width, h: picture.height }));
+}
+
+/** «Сдвинуть внутрь» for a caption: out of every Reels zone by the shortest way, its size kept. The same draft when it reaches none. */
+export function moveTextInside(spec: MontageDraft, index: number, picture: { readonly width: number; readonly height: number }): MontageDraft {
+  const layer = textAt(spec, index);
+  const to = zoneEscape(textBox(layer, { w: picture.width, h: picture.height }), layer);
+  return to === null ? spec : withText(spec, index, { ...layer, x: to.x, y: to.y });
 }
 
 /** «Размер» as the panel shows it: the caption's pixels on the 1080 frame before any shrink to fit (K21). */

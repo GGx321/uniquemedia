@@ -70,18 +70,22 @@ export function stickerZones(layer: StickerLayer): ZoneId[] {
   return boxZones(stickerBox(layer)).sort();
 }
 
+/** Which Reels zones a layer drawn in `box` reaches, bottom first (3d.4: a caption's box is the engine's picture's). */
+export function layerBoxZones(box: Rect): ZoneId[] {
+  return boxZones(box).sort();
+}
+
 /**
- * Layer `index` moved out of every Reels zone by the shortest way, its size kept: up out of the bottom band, and out of the right
- * strip either to its left or above it, whichever is nearer. The same draft when it reaches no zone.
+ * The centre (fractions of the frame) that takes a layer drawn in `box` out of every Reels zone by the shortest way, its size kept:
+ * up out of the bottom band, and out of the right strip either to its left or above it, whichever is nearer. An axis the move did
+ * not need keeps `centre`'s value exactly. Null when the box reaches no zone, or no clear place is near.
  */
-export function moveInside(spec: MontageDraft, index: number): MontageDraft {
-  const layer = stickerAt(spec, index);
-  const box = stickerBox(layer);
-  if (boxZones(box).length === 0) return spec;
+export function zoneEscape(box: Rect, centre: { readonly x: number; readonly y: number }): { x: number; y: number } | null {
+  if (boxZones(box).length === 0) return null;
   const zones = reelsSafeZones();
   const bottom = zones.find((z) => z.id === "bottom")?.rect;
   const right = zones.find((z) => z.id === "right")?.rect;
-  if (bottom === undefined || right === undefined) return spec;
+  if (bottom === undefined || right === undefined) return null;
   // Where the box's top-left may go: kept above the bottom band, then out of the right strip to its left or above it.
   const aboveBottom = Math.min(box.y, bottom.y - box.h - ROUNDING_MARGIN_PX);
   const candidates: { x: number; y: number }[] = [
@@ -92,9 +96,17 @@ export function moveInside(spec: MontageDraft, index: number): MontageDraft {
   const clear = candidates.filter((at) => at.x >= 0 && at.y >= 0 && boxZones({ ...box, ...at }).length === 0);
   const distance = (at: { x: number; y: number }): number => Math.hypot(at.x - box.x, at.y - box.y);
   const best = clear.sort((a, b) => distance(a) - distance(b))[0];
-  if (best === undefined) return spec;
+  if (best === undefined) return null;
   // The contract keeps the centre as a fraction of the frame; an axis the move did not touch keeps its value exactly.
-  const x = best.x === box.x ? layer.x : (best.x + box.w / 2) / FRAME_W;
-  const y = best.y === box.y ? layer.y : (best.y + box.h / 2) / FRAME_H;
-  return withSticker(spec, index, { ...layer, x, y });
+  return { x: best.x === box.x ? centre.x : (best.x + box.w / 2) / FRAME_W, y: best.y === box.y ? centre.y : (best.y + box.h / 2) / FRAME_H };
+}
+
+/**
+ * Layer `index` moved out of every Reels zone by the shortest way, its size kept (`zoneEscape`). The same draft when it reaches no
+ * zone.
+ */
+export function moveInside(spec: MontageDraft, index: number): MontageDraft {
+  const layer = stickerAt(spec, index);
+  const to = zoneEscape(stickerBox(layer), layer);
+  return to === null ? spec : withSticker(spec, index, { ...layer, x: to.x, y: to.y });
 }

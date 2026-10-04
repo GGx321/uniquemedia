@@ -7,6 +7,7 @@ import {
   captionRefusal,
   type CaptionEdit,
   insertAt,
+  moveTextInside,
   MAX_TEXT_SCALE,
   MIN_TEXT_SCALE,
   setCaption,
@@ -17,6 +18,7 @@ import {
   TEXT_COLORS,
   TEXT_PRESETS,
   textSize,
+  textZones,
   TYPING_PAUSE_MS,
   typingGoesOn,
 } from "./textOps";
@@ -252,5 +254,34 @@ describe("an emoji chip goes where the caret is (R27)", () => {
     expect(insertAt("abc", 99, 99, "✨")).toEqual({ value: "abc✨", caret: 4 });
     expect(insertAt("abc", -4, -1, "🥐")).toEqual({ value: "🥐abc", caret: 2 });
     expect(insertAt("abcd", 3, 1, "-")).toEqual({ value: "a-d", caret: 2 });
+  });
+});
+
+// 3d.4 (AM10, left by 3d.5 for the engine's real box): a caption reaching a Reels zone is warned about like a sticker, judged on the
+// box of the picture the ENGINE drew (`montages.textPreview`'s width and height, placed by the engine's `textBox`), never on an
+// estimate; «Сдвинуть внутрь» moves it out by the shortest way, its size kept.
+describe("a caption in the Reels zones (AM10)", () => {
+  const PICTURE = { width: 400, height: 120 };
+  const at = (x: number, y: number): MontageDraft => ({ ...SPEC, layers: SPEC.layers.map((l, i) => (i === TEXT ? { ...l, x, y } : l)) });
+
+  test("which zones its box reaches, bottom first; none in the clear", () => {
+    expect(textZones(textOf(at(0.5, 0.95)), PICTURE)).toEqual(["bottom"]);
+    expect(textZones(textOf(at(0.95, 0.6)), PICTURE)).toEqual(["right"]);
+    expect(textZones(textOf(at(0.9, 0.82)), PICTURE)).toEqual(["bottom", "right"]);
+    expect(textZones(textOf(at(0.5, 0.2)), PICTURE)).toEqual([]);
+  });
+
+  test("«Сдвинуть внутрь» moves it out of every zone, its size kept; an axis it did not need keeps its value", () => {
+    for (const [x, y] of [[0.5, 0.95], [0.95, 0.6], [0.9, 0.82]] as const) {
+      const moved = textOf(moveTextInside(at(x, y), TEXT, PICTURE));
+      expect(textZones(moved, PICTURE)).toEqual([]);
+      expect([moved.value, moved.scale]).toEqual(["sunday reset", 1]);
+    }
+    expect(textOf(moveTextInside(at(0.5, 0.95), TEXT, PICTURE)).x).toBe(0.5);
+  });
+
+  test("the same draft when it reaches no zone", () => {
+    const spec = at(0.5, 0.2);
+    expect(moveTextInside(spec, TEXT, PICTURE)).toBe(spec);
   });
 });

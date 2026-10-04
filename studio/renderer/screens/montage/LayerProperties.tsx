@@ -2,10 +2,11 @@ import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, 
 import { graphemeCount, MAX_CAPTION_GRAPHEMES, MAX_CAPTION_UNITS, type MontageDraft, type TextFont, type TextLayer, type TextStyle } from "../../../shared/engine";
 import { STICKER_CATEGORIES, stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
+import { previewLook } from "../../engine/textPreviewQueue";
 import { NBSP } from "../../lib/format";
 import { stickerUrl } from "../../lib/media";
 import { Icon } from "../../ui/Icon";
-import { captionNotice } from "./captionCheck";
+import { captionCheckOf, captionNotice } from "./captionCheck";
 import { totalMs } from "./clipOps";
 import { ownsKeys } from "./keys";
 import { actionWhyLabel, loopLabel, rangeLabel, stickerName } from "./labels";
@@ -13,9 +14,9 @@ import type { LayerEdge } from "./layerOps";
 import { type ActionState, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
 import { moveInside, setStickerSize, type StickerLayer, stickerPercent, stickerZones, type ZoneId } from "./stickerOps";
-import { type CaptionRefusal, insertAt, MAX_TEXT_SCALE, MIN_TEXT_SCALE, setCaption, setTextColor, setTextFont, setTextScale, setTextStyle, TEXT_COLORS, textSize, typingGoesOn } from "./textOps";
+import { type CaptionRefusal, insertAt, MAX_TEXT_SCALE, MIN_TEXT_SCALE, moveTextInside, setCaption, setTextColor, setTextFont, setTextScale, setTextStyle, TEXT_COLORS, textSize, textZones, typingGoesOn } from "./textOps";
 import { setLayerTime, timeRefusalLabel } from "./timeInput";
-import { useCaptionCheck } from "./useCaptionCheck";
+import { useLayerPreview } from "./textPreviews";
 import { usePlayheadRest } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 
@@ -175,7 +176,11 @@ function TextFields({ session, layer }: { session: DraftSession; layer: TextLaye
   const colorId = useId();
   /** Text the field holds but the draft does not: the contract or the layout refuses it, so it never reached the engine. */
   const [typed, setTyped] = useState<{ text: string; reason: CaptionRefusal } | null>(null);
-  const check = useCaptionCheck(layer);
+  // The window's one preview of this layer (3d.4): the caption's verdict, and the box of the picture the engine drew.
+  const preview = useLayerPreview(layer);
+  const check = captionCheckOf(preview);
+  const picture = preview.picture !== null && preview.picture.look === previewLook(layer) ? preview.picture.answer : null;
+  const zone = picture === null ? null : zoneWords(textZones(layer, picture), "Текст");
   // The draft's caption moved under the field (an undo, another window): the field shows it again.
   useEffect(() => setTyped(null), [layer.value]);
   const value = typed?.text ?? layer.value;
@@ -332,22 +337,37 @@ function TextFields({ session, layer }: { session: DraftSession; layer: TextLaye
         </div>
         <TimeFields session={session} layer={layer} />
       </div>
+
+      {zone !== null && picture !== null && <ZoneWarning words={zone} onMove={() => apply((spec, at) => moveTextInside(spec, at, picture))} />}
     </>
   );
 }
 
 // ---------- a sticker (R35–R41) ----------
 
-const ZONE_WORDS: Record<"bottom" | "right" | "both", { title: string; text: string }> = {
-  right: { title: "Под кнопками Reels", text: "Стикер заходит в зону справа: в ленте его могут перекрыть лайки и комментарии." },
-  bottom: { title: "Под подписью Reels", text: "Стикер заходит в зону снизу: в ленте его закроют подпись и аудио." },
-  both: { title: "Под кнопками и подписью Reels", text: "Стикер заходит в зоны справа и снизу: в ленте его могут закрыть кнопки, подпись и аудио." },
-};
-
-function zoneWords(zones: readonly ZoneId[]): { title: string; text: string } | null {
+/** The zone warning's words (R39; 3d.4: for a caption too, AM10), for a sticker or a text. */
+function zoneWords(zones: readonly ZoneId[], what: "Стикер" | "Текст"): { title: string; text: string } | null {
   if (zones.length === 0) return null;
-  if (zones.length > 1) return ZONE_WORDS.both;
-  return zones[0] === "bottom" ? ZONE_WORDS.bottom : ZONE_WORDS.right;
+  if (zones.length > 1) return { title: "Под кнопками и подписью Reels", text: `${what} заходит в зоны справа и снизу: в ленте его могут закрыть кнопки, подпись и аудио.` };
+  return zones[0] === "bottom"
+    ? { title: "Под подписью Reels", text: `${what} заходит в зону снизу: в ленте его закроют подпись и аудио.` }
+    : { title: "Под кнопками Reels", text: `${what} заходит в зону справа: в ленте его могут перекрыть лайки и комментарии.` };
+}
+
+/** A Reels zone warning with «Сдвинуть внутрь» (a warning only: the render draws the layer as placed). */
+function ZoneWarning({ words, onMove }: { words: { title: string; text: string }; onMove: () => void }) {
+  return (
+    <div className="ed-zone" role="status">
+      <Icon name="alert" size={16} />
+      <div className="ed-zone-body">
+        <p className="ed-zone-title">{words.title}</p>
+        <p className="ed-zone-text">{words.text}</p>
+        <button type="button" className="btn btn-s" onClick={onMove}>
+          Сдвинуть внутрь
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function StickerFields({ session, layer, onReplace }: { session: DraftSession; layer: StickerLayer; onReplace: () => void }) {
@@ -357,7 +377,7 @@ function StickerFields({ session, layer, onReplace }: { session: DraftSession; l
   const category = entry === undefined ? undefined : STICKER_CATEGORIES.find((c) => c.id === entry.category);
   const url = entry === undefined ? null : stickerUrl(client, entry.id);
   const loop = loopLabel(layer);
-  const zone = zoneWords(stickerZones(layer));
+  const zone = zoneWords(stickerZones(layer), "Стикер");
   const size = useSliderGesture(session, `size:${layer.layerId}`);
 
   function apply(edit: (spec: MontageDraft, at: number) => MontageDraft, mergeKey?: string): void {
@@ -405,18 +425,7 @@ function StickerFields({ session, layer, onReplace }: { session: DraftSession; l
         <span className="faint ed-props-note">Анимация идёт по кругу весь отрезок. Позицию и размер меняйте и в превью.</span>
       </div>
 
-      {zone !== null && (
-        <div className="ed-zone" role="status">
-          <Icon name="alert" size={16} />
-          <div className="ed-zone-body">
-            <p className="ed-zone-title">{zone.title}</p>
-            <p className="ed-zone-text">{zone.text}</p>
-            <button type="button" className="btn btn-s" onClick={() => apply((spec, at) => moveInside(spec, at))}>
-              Сдвинуть внутрь
-            </button>
-          </div>
-        </div>
-      )}
+      {zone !== null && <ZoneWarning words={zone} onMove={() => apply((spec, at) => moveInside(spec, at))} />}
 
       <button type="button" className="btn btn-s ed-props-replace" onClick={onReplace}>
         Заменить стикер

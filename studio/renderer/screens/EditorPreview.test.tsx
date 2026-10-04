@@ -244,6 +244,33 @@ describe("captions as the engine draws them", () => {
   });
 });
 
+describe("a caption in the Reels zones (AM10: judged on the engine's box)", () => {
+  test("the panel warns about a caption in the bottom band, and «Сдвинуть внутрь» moves it out once", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [{ ...textLayer(0, 0, 4_000), y: 0.96 }] });
+    await flush();
+    fireEvent.click(within(timeline()).getByRole("button", { name: /^Текст 1:/ }));
+    await flush();
+    expect(within(props()).getByText("Под подписью Reels")).toBeDefined();
+    expect(within(props()).getByText("Текст заходит в зону снизу: в ленте его закроют подпись и аудио.")).toBeDefined();
+    fireEvent.click(within(props()).getByRole("button", { name: "Сдвинуть внутрь" }));
+    expect(within(props()).queryByText("Под подписью Reels") === null).toBe(true);
+    const saved = (await nextSave(engine)).layers[0];
+    expect(saved?.y ?? 1).toBeLessThan(0.96);
+    expect(saved?.x).toBe(0.5);
+    expect(callsOf(engine, "montages.save")).toHaveLength(1);
+  });
+
+  test("a caption in the clear has no warning", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [textLayer(0, 0, 4_000)] });
+    await flush();
+    fireEvent.click(within(timeline()).getByRole("button", { name: /^Текст 1:/ }));
+    await flush();
+    expect(within(props()).queryByRole("button", { name: "Сдвинуть внутрь" }) === null).toBe(true);
+  });
+});
+
 describe("stickers", () => {
   test("a built-in sticker sits in the engine's box on the set's square picture", async () => {
     const { client, engine } = await studio();
