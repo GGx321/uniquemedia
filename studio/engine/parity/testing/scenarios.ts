@@ -1449,8 +1449,110 @@ const OWN_MUSIC_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
+// ---------- 3f.3b: own video clips in a draft and a render ----------
+
+/** An own photo of the editor's spec as a photo clip. */
+const ownPhotoClipOf = (n: number, mediaId: string, durationMs: number): Record<string, unknown> => ({ clipId: `clip-000000${n}`, kind: "photo", cell: { photo: { source: "own", mediaId }, focus: null }, motion: "static", durationMs, transitionIn: "cut" });
+
+/** An own video clip of the editor's spec. */
+const videoClipOf = (n: number, mediaId: string, trimStartMs: number, durationMs: number): Record<string, unknown> => ({ clipId: `clip-000000${n}`, kind: "video", mediaId, trimStartMs, focus: null, durationMs, transitionIn: "cut" });
+
+/** A spec of a 2 s scene-photo clip and a 2 s own video clip of `mediaId` from `trimStartMs`: 4 s, the shortest a spec may be. */
+function ownVideoSpec(w: World, mediaId: string, trimStartMs: number): Record<string, unknown> {
+  const scenePhotoClip = { clipId: "clip-0000001", kind: "photo", cell: { photo: { source: "scene", photoId: photo(w, 1) }, focus: null }, motion: "static", durationMs: 2_000, transitionIn: "cut" };
+  return { schemaVersion: 1, avatarId: w.avatarId, layers: [], music: null, seed: 7, clips: [scenePhotoClip, videoClipOf(2, mediaId, trimStartMs, 2_000)] };
+}
+
+/** Imports the one good video and answers its media id (its mezzanine is 6.4 s long, 1080 x 1920). */
+async function importedVideoId(t: Transcript, control: Control): Promise<string> {
+  await control.mediaDialog("video");
+  await t.call("media.pickImport", { kind: "video" });
+  await t.settle();
+  const [mediaId] = listedMediaIds(await t.call("media.list", { kind: "video" }));
+  if (mediaId === undefined) throw new Error("the video was not stored");
+  return mediaId;
+}
+
+/** Appended after the 3f.4 scenarios: the golden transcripts above are append-only. */
+const OWN_VIDEO_CLIP_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "own video clips: a render holds its video against media.delete until it ends, and a deleted video is media-unavailable in the draft and the render",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedVideoId(t, control);
+      t.note("a draft with the own video as its second clip: the engine finds nothing wrong");
+      const montageId = montageIdOf(await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1)] }));
+      await t.call("montages.save", { montageId, spec: ownVideoSpec(w, mediaId, 1_000), name: "Своё видео" });
+      await t.call("montages.get", { montageId });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      t.note("the render is queued: the video is held, so deleting it is refused and it stays listed");
+      await t.call("videos.render", { montageId });
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", { kind: "video" });
+      t.note("the render ends: the same delete goes through");
+      await t.settle();
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", {});
+      t.note("the draft still names the video: it reads unavailable at its clip, and a render of it is refused for that");
+      await t.call("montages.get", { montageId });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      await t.call("videos.render", { montageId });
+    },
+  },
+  {
+    name: "own video clips: a clip that asks past the end of its video is video-too-short in the draft and the render, and one that ends exactly at its end is rendered",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedVideoId(t, control);
+      const montageId = montageIdOf(await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1)] }));
+      t.note("the mezzanine is 6.4 s: a 2 s clip from 4.5 s ends 0.1 s past it, in the draft and in the render, and no render is queued");
+      await t.call("montages.save", { montageId, spec: ownVideoSpec(w, mediaId, 4_500), name: "Слишком далеко" });
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      await t.call("engine.snapshot", {});
+      t.note("from 4.4 s the clip ends exactly at the end of the video: nothing is wrong, and the render is queued and ends");
+      await t.call("montages.save", { montageId, spec: ownVideoSpec(w, mediaId, 4_400), name: "Ровно до конца" });
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+    },
+  },
+  {
+    name: "own video clips: a render that fails lets its video go, a media held as another kind is no video, and the issues of a spec come in the order photos, videos, stickers, music",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedVideoId(t, control);
+      t.note("the first render's ffmpeg fails: while it runs the video is held, and when it has failed the delete goes through");
+      control.failNextRender("encode");
+      await t.call("videos.render", { spec: ownVideoSpec(w, mediaId, 0) });
+      await t.call("media.delete", { mediaId });
+      await t.settle();
+      await t.call("media.delete", { mediaId });
+      t.note("a video that is not there, in a spec that is otherwise good");
+      await t.call("videos.render", { spec: ownVideoSpec(w, "media-00000404", 0) });
+      t.note("an own PHOTO is not a video");
+      const photoId = await importedPhotoId(t, control);
+      await t.call("videos.render", { spec: ownVideoSpec(w, photoId, 0) });
+      t.note("a spec that names a photo, a video, a sticker and a track nobody holds: one issue each, photos first, then videos, then stickers, then the music");
+      await t.call("videos.render", {
+        spec: {
+          schemaVersion: 1,
+          avatarId: w.avatarId,
+          layers: [ownStickerOf("media-00000406")],
+          music: { source: "own", mediaId: "media-00000407", startMs: 0 },
+          seed: 7,
+          clips: [ownPhotoClipOf(1, "media-00000405", 2_000), videoClipOf(2, "media-00000404", 0, 2_000)],
+        },
+      });
+      t.note("a spec with a structural issue is refused for that alone, whatever its video");
+      await t.call("videos.render", { spec: { ...ownVideoSpec(w, "media-00000404", 0), clips: [videoClipOf(1, "media-00000404", 0, 1_000)] } });
+    },
+  },
+];
+
 /** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

@@ -48,9 +48,16 @@ export interface MockOwnSeed {
   createdAt?: string;
 }
 
-/** What the dev build's library holds: one own track (a function, not a constant: a release bundle that drops the mock must not keep it). */
+/**
+ * What the dev build's library holds: one own track (3f.4) and one own video (3f.3b), so the editor has a «свой трек» and a «своё видео» to place. A function, not a
+ * constant: a release bundle that drops the mock must not keep it. The track stays FIRST (its id is `media-demo-0001`, which tests and stories name). The video is a
+ * landscape clip of 14 s (the mezzanine's size within 1080 x 1920), long enough for a trim and a clip of any length the montage allows.
+ */
 export function demoOwnMedia(): MockOwnSeed[] {
-  return [{ kind: "audio", name: "demo-voiceover.mp3", bytes: 2_350_000, facts: { durationMs: 74_000 }, createdAt: "2026-09-20T09:00:00.000Z" }];
+  return [
+    { kind: "audio", name: "demo-voiceover.mp3", bytes: 2_350_000, facts: { durationMs: 74_000 }, createdAt: "2026-09-20T09:00:00.000Z" },
+    { kind: "video", name: "demo-clip.mov", bytes: 41_000_000, facts: { width: 1080, height: 608, durationMs: 14_000, sourceFps: 29.97 }, createdAt: "2026-09-21T09:00:00.000Z" },
+  ];
 }
 
 /** The envelope of a track of `durationMs`, 0 to 1000 per 50 ms: stable (the same length gives the same values), and never flat, so the editor has a waveform to draw. */
@@ -279,6 +286,15 @@ export class MockOwnMedia {
   holdsTrack(mediaId: string): { readonly durationMs: number } | null {
     const record = this.#records.find((r) => r.mediaId === mediaId && r.kind === "audio");
     return record === undefined || record.durationMs === null ? null : { durationMs: record.durationMs };
+  }
+
+  /**
+   * Whether the library holds this media as a VIDEO a render can read, and how long its stored mezzanine is (3f.3b): what a render's admission and a draft's referential
+   * check ask for an own video clip. Null for a media that is not there, is another kind, or has no length.
+   */
+  holdsVideo(mediaId: string): { readonly durationMs: number } | null {
+    const record = this.#records.find((r) => r.mediaId === mediaId && r.kind === "video");
+    return record === undefined || record.durationMs === null || record.width === null || record.height === null ? null : { durationMs: record.durationMs };
   }
 
   /** The display name of a stored track (3f.4): what the video's tile says of it; undefined for a media that is not there or is not a track. */

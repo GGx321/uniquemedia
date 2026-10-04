@@ -57,7 +57,7 @@ import {
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue, type TextLayer } from "../../shared/engine/montage";
-import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, ownStickerCells, ownStickerIssues, ownTrackIssues, totalFrames, trackIssues, trendingTrackIssues } from "../../shared/montage";
+import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, ownStickerCells, ownStickerIssues, ownTrackIssues, ownVideoClips, ownVideoIssues, totalFrames, trackIssues, trendingTrackIssues } from "../../shared/montage";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
 import { windowPeaks } from "../../shared/music/trackShape";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
@@ -1911,6 +1911,8 @@ export class MockEngine implements EngineBridge {
       if (clip.kind === "photo") judge(clip.cell.photo, ["clips", i, "cell"]);
       else if (clip.kind === "collage") clip.cells.forEach((cell, j) => judge(cell.photo, ["clips", i, "cells", j]));
     });
+    // An own video clip (3f.3b) is judged by the engine's own function against what the mock holds as videos: media-unavailable, then video-too-short.
+    referential.push(...ownVideoIssues(spec, (mediaId) => this.ownMedia.holdsVideo(mediaId)));
     // The set is in the build: the engine's own function, so the mock and the engine name the same stickers.
     referential.push(...stickerIssues(spec));
     // An own sticker is the library's, judged by the engine's own function against what the mock holds as stickers (3f.5).
@@ -2140,11 +2142,12 @@ export class MockEngine implements EngineBridge {
       MAX_MONTAGE_ISSUES,
     );
     if (issues.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues });
-    // 3f.2, 3f.4, 3f.5: then each own photo, own sticker and the own track are looked up (and held) before the export folder is asked: one that is
-    // not there is `media-unavailable` (at each of its cells, layers, or at the music), a track too short is `track-too-short`, through the same
-    // functions the engine's admission uses, in its order: photos, stickers, the track.
+    // 3f.2, 3f.3b, 3f.4, 3f.5: then each own photo, own video, own sticker and the own track are looked up (and held) before the export folder is asked: one that is
+    // not there is `media-unavailable` (at each of its cells, clips, layers, or at the music), a video clip past its video's end is `video-too-short` and a track too short
+    // is `track-too-short`, through the same functions the engine's admission uses, in its order: photos, videos, stickers, the track.
     const missing = [
       ...ownPhotoIssues(spec, (mediaId) => this.ownMedia.holdsPhoto(mediaId)),
+      ...ownVideoIssues(spec, (mediaId) => this.ownMedia.holdsVideo(mediaId)),
       ...ownStickerIssues(spec, (mediaId) => this.ownMedia.holdsSticker(mediaId)),
       ...ownTrackIssues(spec, (mediaId) => this.ownMedia.holdsTrack(mediaId)),
     ].slice(0, MAX_MONTAGE_ISSUES);
@@ -2168,7 +2171,7 @@ export class MockEngine implements EngineBridge {
       title,
       spec,
       photoIds: cells.map((cell) => cell.photoId),
-      mediaIds: [...new Set([...[...ownPhotoCells(spec), ...ownStickerCells(spec)].map((cell) => cell.mediaId), ...(spec.music?.source === "own" ? [spec.music.mediaId] : [])])],
+      mediaIds: [...new Set([...[...ownPhotoCells(spec), ...ownVideoClips(spec), ...ownStickerCells(spec)].map((cell) => cell.mediaId), ...(spec.music?.source === "own" ? [spec.music.mediaId] : [])])],
       status: "queued",
       done: 0,
       total: totalFrames(spec.clips),

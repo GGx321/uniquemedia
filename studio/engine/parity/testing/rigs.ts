@@ -186,6 +186,8 @@ const LONG_TRACK = "long.mp3";
 const trackHead = (fill: number): Buffer => Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 0, 0]), Buffer.alloc(PARITY_TRACK_BYTES - 10, fill)]);
 
 /** An M4A's first bytes (brand `M4A `): what the rigs' music importer "makes", so the stored track is one the render's chain could read. */
+/** The stand-in mezzanine of the rig's video importer (3f.3b): an `isom` MP4 head and filler, `PARITY_VIDEO_BYTES` long. */
+const PARITY_MEZZANINE = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom"), Buffer.alloc(4), Buffer.from("isom"), Buffer.alloc(PARITY_VIDEO_BYTES - 24, 5)]);
 const PARITY_M4A = Buffer.from([0, 0, 0, 0x14, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20, 0, 0, 2, 0, 0x6d, 0x70, 0x34, 0x32]);
 
 /** Writes the `track` pick's file into `folder` and returns its path. */
@@ -580,7 +582,8 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     }
     // A layer file (3f.5: the first parity render with a layer) is checked against the timeline's frames; this ffmpeg is not there to count them, so it
     // reports none for it, which the runner reads as a scripted ffmpeg that said nothing. Every other call reports far more than it has, as before.
-    if (!basename(opts.output).startsWith("layers-")) opts.onFrames?.(1_000_000);
+    // The same for the clip file of an own video (3f.3b): the runner holds it to its exact frame count, and this ffmpeg cuts nothing from the stand-in mezzanine.
+    if (!basename(opts.output).startsWith("layers-") && !opts.argv.includes("-codec_whitelist")) opts.onFrames?.(1_000_000);
     await atGate(2, opts.signal);
     await writingRun(opts);
   };
@@ -642,9 +645,15 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     await writeFile(file.path, parityStickerApng(), { flag: "wx" });
     return { ok: true, facts: { ...PARITY_STICKER_FACTS, delayFrames: [...PARITY_STICKER_FACTS.delayFrames] }, output: { file, format: "apng" } };
   };
-  // 3f.3a: a stand-in for the video importer: it takes a clip and refuses the one that carries the codec it does not read, after the copy.
-  const parityVideoImporter: MediaImporter = async ({ staged }) =>
-    Buffer.from(staged.head).toString("latin1").includes(PARITY_UNSUPPORTED_CODEC) ? { ok: false, reason: "codec" } : { ok: true, facts: PARITY_VIDEO_FACTS };
+  // 3f.3a: a stand-in for the video importer: it takes a clip and refuses the one that carries the codec it does not read, after the copy. What it stores (3f.3b)
+  // is an MP4 of `PARITY_VIDEO_BYTES` bytes (a stand-in for the mezzanine: the rig's ffmpeg is not there, so a render only COPIES it, verified, and the rig's
+  // ffmpeg ignores it), so the record is the same size as before and a render of an own video clip can read it back.
+  const parityVideoImporter: MediaImporter = async ({ staged, workFile }) => {
+    if (Buffer.from(staged.head).toString("latin1").includes(PARITY_UNSUPPORTED_CODEC)) return { ok: false, reason: "codec" };
+    const file = await workFile();
+    await writeFile(file.path, PARITY_MEZZANINE, { flag: "wx" });
+    return { ok: true, facts: PARITY_VIDEO_FACTS, output: { file, format: "mp4" } };
+  };
   // 3f.4: the music importer takes every track, except the `long-track` pick (the real importer refuses a track over ten minutes as `too-long`, inside its
   // job). What it stores is an M4A (a stand-in: the rig's ffmpeg is not there, so the render's stream check and true-peak pass are scripted below).
   const parityTrackImporter: MediaImporter = async ({ name, workFile }) => {

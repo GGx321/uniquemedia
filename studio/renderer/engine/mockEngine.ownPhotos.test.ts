@@ -68,11 +68,11 @@ describe("videos.render: an own photo in a cell", () => {
     expect((reply.error.issues ?? []).map((i) => i.code)).toEqual(["duration-too-short"]);
   });
 
-  test("an own video clip is still not-yet-supported", async () => {
+  test("an own video clip is judged like any own media (3f.3b): one the library does not hold is media-unavailable at its clip", async () => {
     const mock = makeMock();
     const spec = { ...specOf(), clips: [{ clipId: "clip-00000001", kind: "video" as const, mediaId: "media-00000001", trimStartMs: 0, focus: null, durationMs: 4_000, transitionIn: "cut" as const }] };
 
-    expect(await render(mock, spec)).toMatchObject({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "not-yet-supported", path: ["clips", 0] }] } });
+    expect(await render(mock, spec)).toMatchObject({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "media-unavailable", path: ["clips", 0] }] } });
   });
 });
 

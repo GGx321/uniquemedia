@@ -87,6 +87,16 @@ export function ownTrackUrl(client: Pick<EngineClient, "kind">, mediaId: string)
   return `studio-media://media/${mediaId}`;
 }
 
+/**
+ * An own video's mezzanine for the preview's `<video>` (3f.3b): the SAME file the render cuts from, served by main as `studio-media://media/<mediaId>` THROUGH
+ * ITS RECORD as `video/mp4` with byte ranges for seeking. An id and nothing else. Only on the real client (the dev mock stores no picture: the preview draws a
+ * placeholder); null for an id that breaks the contract.
+ */
+export function ownVideoUrl(client: Pick<EngineClient, "kind">, mediaId: string): string | null {
+  if (client.kind !== "window" || !Id.safeParse(mediaId).success) return null;
+  return `studio-media://media/${mediaId}`;
+}
+
 // Neutral placeholder gradients (warm and cool greys, as in the mockup) for
 // the mock engine, which has no real images.
 const PLACEHOLDERS = [

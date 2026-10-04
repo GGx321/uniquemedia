@@ -188,19 +188,19 @@ describe("videos.render", () => {
     expect(reply).toEqual({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "no-clips", path: ["clips"] }] } });
   });
 
-  test("refuses a draft with a part whose slice has not landed as MONTAGE_INVALID (not-yet-supported)", async () => {
+  test("refuses a draft whose own video the library does not hold as MONTAGE_INVALID (media-unavailable at its clip: N9 was lifted for video clips by 3f.3b)", async () => {
     const mock = makeMock();
     const draft = await draftOf(mock, [P1]);
-    // An own sticker is supported since 3f.5 and an own track since 3f.4; an own video clip still waits for 3f.3b.
+    // An own sticker is supported since 3f.5, an own track since 3f.4 and an own video clip since 3f.3b: the engine judges each against the library.
     const ownVideo = { clipId: "clip-90000002", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: 4_000, transitionIn: "cut" as const };
     await unwrap(mock.client.request("montages.save", { montageId: draft.montageId, spec: { ...draft.spec, clips: [ownVideo] }, name: null }));
 
     const reply = await mock.client.request("videos.render", { montageId: draft.montageId });
 
-    expect(reply).toEqual({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "not-yet-supported", path: ["clips", 0] }] } });
+    expect(reply).toEqual({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "media-unavailable", path: ["clips", 0] }] } });
   });
 
-  test("refuses a built-in sticker the set lacks and an unstored track together, in the engine's order: structure, N9, stickers, track", async () => {
+  test("refuses a built-in sticker the set lacks and an unstored track together, in the engine's order: structure, stickers, track", async () => {
     const mock = makeMock();
     const draft = await draftOf(mock, [P1]);
     const pastEnd = { layerId: "layer-0001", kind: "text" as const, startMs: 0, endMs: 9_000, value: "Hi", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
@@ -213,7 +213,7 @@ describe("videos.render", () => {
 
     expect(reply).toMatchObject({ ok: false, error: { code: "MONTAGE_INVALID" } });
     const issues = reply.ok ? [] : (reply.error.issues ?? []);
-    expect(issues.map((i) => i.code)).toEqual(["layer-outside-timeline", "not-yet-supported", "sticker-unavailable", "track-unavailable"]);
+    expect(issues.map((i) => i.code)).toEqual(["layer-outside-timeline", "sticker-unavailable", "track-unavailable"]);
   });
 
   test("refuses a draft that is not there with NOT_FOUND", async () => {

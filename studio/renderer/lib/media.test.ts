@@ -3,7 +3,7 @@ import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { EngineClient } from "../engine/client";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { ManualScheduler } from "../engine/scheduler";
-import { coverUrl, ownStickerUrl, ownTrackUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
+import { coverUrl, ownStickerUrl, ownTrackUrl, ownVideoUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
 
 // 3d.3b: a built-in sticker's picture is asked for by id, never by a path (invariant 12): main's `studio-media://sticker/<id>`
 // route serves the catalogue, the dev mock a stand-in of its own.
@@ -49,6 +49,22 @@ describe("ownTrackUrl", () => {
   test("a trending track's address is its own route, not this one", () => {
     expect(trackUrl(client("window"), "4199287736976977")).toBe("studio-media://track/4199287736976977");
     expect(ownTrackUrl(client("window"), "4199287736976977")).toBe("studio-media://media/4199287736976977");
+  });
+});
+
+describe("ownVideoUrl (3f.3b)", () => {
+  const client = (kind: EngineClient["kind"]): Pick<EngineClient, "kind"> => ({ kind });
+
+  test("the real client asks main's media route by the media id", () => {
+    expect(ownVideoUrl(client("window"), "media-00000009")).toBe("studio-media://media/media-00000009");
+  });
+
+  test("the dev mock has no picture to play: no address", () => {
+    expect(ownVideoUrl(client("mock"), "media-00000009")).toBeNull();
+  });
+
+  test("an id that is not one never becomes an address", () => {
+    for (const bad of ["../x", "a/b", "", "C:\\x", "x y", "MEDIA-0001", "media-9", "media-00000009.mp4"]) expect([bad, ownVideoUrl(client("window"), bad)]).toEqual([bad, null]);
   });
 });
 

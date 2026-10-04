@@ -146,16 +146,16 @@ describe("montages.get", () => {
     expect(got.issues).toEqual([]);
   });
 
-  test("marks a part whose slice has not landed as not-yet-supported", async () => {
+  test("marks an own video the library does not hold as media-unavailable, at its clip (N9 was lifted for video clips by 3f.3b)", async () => {
     const mock = makeMock();
     const montage = await create(mock, [PHOTO_IDS[0] ?? ""]);
-    // An own sticker is supported since 3f.5 and an own track since 3f.4 (media-unavailable when the library lacks one); an own video clip still waits for 3f.3b.
+    // An own sticker is supported since 3f.5, an own track since 3f.4 and an own video clip since 3f.3b (media-unavailable when the library lacks one).
     const ownVideo = { clipId: "clip-00000099", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: 4_000, transitionIn: "cut" as const };
     await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, clips: [ownVideo] }, name: null }));
 
     const got = await unwrap(mock.client.request("montages.get", { montageId: montage.montageId }));
 
-    expect(got.issues).toEqual([{ code: "not-yet-supported", path: ["clips", 0] }]);
+    expect(got.issues).toEqual([{ code: "media-unavailable", path: ["clips", 0] }]);
   });
 
   test("marks a scene photo that is no longer usable photo-unavailable, at its cell", async () => {
@@ -168,18 +168,18 @@ describe("montages.get", () => {
     expect(got.issues).toEqual([{ code: "photo-unavailable", path: ["clips", 0, "cell"] }]);
   });
 
-  test("puts the referential issues after the structural and not-yet-supported ones", async () => {
+  test("puts the referential issues after the structural ones", async () => {
     const mock = makeMock();
     const montage = await create(mock, [PHOTO_IDS[0] ?? ""]);
     const sticker = { layerId: "layer-0002", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId: "no-such-sticker" }, x: 0.5, y: 0.5, size: 0.2 };
-    // An own video clip is still not-yet-supported; an own track no longer is (3f.4): it is judged with the other references, after the stickers.
+    // An own video clip (3f.3b) and an own track (3f.4) are judged with the other references: the clip with the photos, the track after the stickers.
     const video = { clipId: "clip-00000099", kind: "video" as const, mediaId: "media-0000008", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
     await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, clips: [...montage.spec.clips, video], layers: [sticker], music: { source: "own", mediaId: "media-0000009", startMs: 0 } }, name: null }));
 
     const got = await unwrap(mock.client.request("montages.get", { montageId: montage.montageId }));
 
     expect(got.issues).toEqual([
-      { code: "not-yet-supported", path: ["clips", 1] },
+      { code: "media-unavailable", path: ["clips", 1] },
       { code: "sticker-unavailable", path: ["layers", 0, "sticker"] },
       { code: "media-unavailable", path: ["music"] },
     ]);
