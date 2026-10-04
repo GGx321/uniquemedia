@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { NODE_OPEN_OPS, openRegularNoFollow, type OpenRegularOps } from "../library/openRegular";
 import type { MediaLookup } from "../media/service";
 import { RenderFailure } from "../renderQueue/queue";
 
@@ -41,19 +42,35 @@ const UNAVAILABLE = (): RenderFailure => new RenderFailure({ code: "RENDER_FAILE
  * recorded sha256. A `RenderFailure` (no path in it) when it is gone or is not that file; the signal's reason when `signal` fires. The
  * copy for a render and the face detector's input both come from here, so what is judged is what is rendered.
  */
-export async function readVerifiedOwnPhoto(source: OwnPhotoSource, signal: AbortSignal): Promise<Uint8Array> {
+export async function readVerifiedOwnPhoto(source: OwnPhotoSource, signal: AbortSignal, ops: OpenRegularOps = NODE_OPEN_OPS): Promise<Uint8Array> {
   signal.throwIfAborted();
   let bytes: Uint8Array;
   try {
-    const facts = await lstat(source.path);
-    if (facts.isSymbolicLink() || !facts.isFile() || facts.size !== source.bytes) throw UNAVAILABLE();
-    bytes = new Uint8Array(await readFile(source.path, { signal }));
+    // Opened as the staging opens a file (3f.1): a link, a folder, a device or a FIFO is refused by the name, the handle must be the file the name
+    // led to, and everything after is read from THE HANDLE: its size is the record's, and no more than that (plus one byte, to see growth) is read.
+    const handle = await openRegularNoFollow(source.path, { ops });
+    try {
+      const facts = await handle.stat();
+      if (facts.size !== source.bytes) throw UNAVAILABLE();
+      const buffer = Buffer.alloc(source.bytes + 1);
+      let filled = 0;
+      while (filled < buffer.length) {
+        signal.throwIfAborted();
+        const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+        if (bytesRead === 0) break;
+        filled += bytesRead;
+      }
+      if (filled !== source.bytes) throw UNAVAILABLE();
+      bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, source.bytes);
+    } finally {
+      await handle.close();
+    }
   } catch (error) {
     if (signal.aborted) throw signal.reason;
     if (error instanceof RenderFailure) throw error;
     throw UNAVAILABLE();
   }
-  if (bytes.length !== source.bytes || createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw UNAVAILABLE();
+  if (createHash("sha256").update(bytes).digest("hex") !== source.sha256) throw UNAVAILABLE();
   return bytes;
 }
 

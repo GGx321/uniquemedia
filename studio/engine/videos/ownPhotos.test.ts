@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
+import { NODE_OPEN_OPS } from "../library/openRegular";
 import { RenderFailure } from "../renderQueue/queue";
 import { copyOwnPhotos, ownPhotoCopyName, readVerifiedOwnPhoto, type OwnPhotoSource } from "./ownPhotos";
 useNativeGlobals();
@@ -132,6 +134,55 @@ describe("copyOwnPhotos", () => {
     controller.abort(new Error("stopped"));
     await expect(copyOwnPhotos(jobDir(), [a, b], controller.signal)).rejects.toThrow("stopped");
     expect(await readdir(jobDir())).toEqual([]);
+  });
+});
+
+describe("readVerifiedOwnPhoto: opened as staging opens a file, read within its size (review L3)", () => {
+  test.skipIf(process.platform === "win32")("a FIFO where the file should be is refused at once, not waited on", async () => {
+    const a = await stored("media-0000001", Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3]));
+    const fifo = join(libraryDir(), "fifo.jpg");
+    execFileSync("mkfifo", [fifo]);
+    await failureOf(readVerifiedOwnPhoto({ ...a, path: fifo }, new AbortController().signal));
+  });
+
+  test("a handle whose size is not the record's is refused without a byte of it being read", async () => {
+    const a = await stored("media-0000001", Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3]));
+    let reads = 0;
+    const real = await open(a.path, "r");
+    const handle = new Proxy(real, {
+      get(target, property) {
+        if (property === "stat") return async () => ({ ...(await target.stat({ bigint: true })), size: 10n ** 12n });
+        if (property === "read") return async () => void reads++;
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const ops = { ...NODE_OPEN_OPS, open: async () => handle };
+    await failureOf(readVerifiedOwnPhoto(a, new AbortController().signal, ops));
+    expect(reads).toBe(0);
+    await real.close().catch(() => undefined);
+  });
+
+  test("a file that grew after it was measured is refused: the read is bounded by the record's size plus one byte", async () => {
+    const a = await stored("media-0000001", Uint8Array.from([0xff, 0xd8, 0xff, 1, 2, 3]));
+    const real = await open(a.path, "r");
+    let asked = 0;
+    const handle = new Proxy(real, {
+      get(target, property) {
+        if (property === "read") {
+          return async (buffer: Uint8Array, offset: number, length: number) => {
+            asked += length;
+            buffer.fill(9, offset, offset + length);
+            return { bytesRead: length, buffer };
+          };
+        }
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    await failureOf(readVerifiedOwnPhoto(a, new AbortController().signal, { ...NODE_OPEN_OPS, open: async () => handle }));
+    expect(asked).toBeLessThanOrEqual(a.bytes + 1);
+    await real.close().catch(() => undefined);
   });
 });
 
