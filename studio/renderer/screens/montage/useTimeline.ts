@@ -4,7 +4,7 @@ import type { EngineClient } from "../../engine/client";
 import { evenOut, totalMs } from "./clipOps";
 import { type FrameClock, windowFrameClock } from "./playback";
 import { PlayheadStore } from "./playhead";
-import { addStickerLayer, addTextLayer } from "./layerOps";
+import { addOwnStickerLayer, addStickerLayer, addTextLayer } from "./layerOps";
 import { duplicateSelected, lowerSelected, raiseSelected, removeSelected, type Selection, splitSelected } from "./selection";
 import type { DraftSession } from "./session";
 import type { TextPreset } from "./textOps";
@@ -112,6 +112,16 @@ export function useSelectionCommands(session: DraftSession, timeline: TimelineSt
       },
       [session, playhead, select],
     ),
+    /** An own sticker from «Мои» at the playhead (3f.6, M12), selected; its id, or null. */
+    addOwnSticker: useCallback(
+      (mediaId: string): string | null => {
+        const edit = addOwnStickerLayer(session.state.spec, clockMs(playhead.get().ms), mediaId);
+        if (!edit.ok || edit.id === undefined || !session.edit(edit.spec)) return null;
+        select({ kind: "layer", layerId: edit.id });
+        return edit.id;
+      },
+      [session, playhead, select],
+    ),
   };
 }
 
@@ -121,7 +131,7 @@ export function useSelectionCommands(session: DraftSession, timeline: TimelineSt
  * as an undo step. An unresolved answer (null, a refusal) leaves null, which the preview draws at
  * `FOCUS_FALLBACK`. `pending` names the photos still being judged («ищем лицо…»).
  */
-export function useFocusResolver(client: EngineClient, session: DraftSession, avatarId: string): { pending: ReadonlySet<string>; resolve(photoId: string): void } {
+export function useFocusResolver(client: EngineClient, session: DraftSession, avatarId: string): { pending: ReadonlySet<string>; resolve(photoId: string): void; resolveOwn(mediaId: string): void } {
   /** Questions still out, per photo: the same photo may be asked again (placed, undone, placed) before an answer. */
   const [open, setOpen] = useState<ReadonlyMap<string, number>>(() => new Map());
   const pending = useMemo<ReadonlySet<string>>(() => new Set(open.keys()), [open]);
@@ -153,5 +163,19 @@ export function useFocusResolver(client: EngineClient, session: DraftSession, av
     [client, session, avatarId],
   );
 
-  return { pending, resolve };
+  /**
+   * 3f.6: the same for an own photo placed from «Мои» (`montages.focus` with the own source): the engine judges the stored photo; a found
+   * focus is written into the history (`DraftSession.fillOwnFocus`), never as an undo step. Nothing is shown while it is judged (the preview
+   * draws an own photo as a stand-in), and an unresolved answer leaves null, which the render judges again.
+   */
+  const resolveOwn = useCallback(
+    (mediaId: string) => {
+      void client.request("montages.focus", { avatarId, photo: { source: "own", mediaId } }).then((reply) => {
+        if (alive.current && reply.ok && reply.result.focus !== null) session.fillOwnFocus(mediaId, reply.result.focus);
+      });
+    },
+    [client, session, avatarId],
+  );
+
+  return { pending, resolve, resolveOwn };
 }

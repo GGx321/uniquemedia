@@ -4,6 +4,7 @@ import { DEFAULT_STICKER, DEFAULT_TEXT_Y, MAX_TOTAL_MS } from "../../../shared/m
 import {
   ADD_LAYER_MS,
   addLayerRefusal,
+  addOwnStickerLayer,
   addStickerLayer,
   addTextLayer,
   clampEdge,
@@ -311,5 +312,24 @@ describe("rows: a kind's blocks packed so that none covers another (packing only
 
   test("an overlap goes to the next free row, in z-order", () => {
     expect(layerRows([textLayer(0, 0, 2_000), textLayer(1, 1_000, 3_000), textLayer(2, 2_000, 4_000), textLayer(3, 500, 3_500)])).toEqual({ rows: [0, 1, 0, 2], count: 3 });
+  });
+});
+
+describe("an own sticker from «Мои» (3f.6, M12): at the playhead, like a built-in one", () => {
+  const EIGHT_S = draftSpec(4);
+  test("lands where the mockup puts a sticker, for min(3 s, the rest), with the own source", () => {
+    const edit = addOwnStickerLayer(EIGHT_S, 2_000, "media-stk-00001");
+    if (!edit.ok) throw new Error(edit.reason);
+    expect(MontageDraft.safeParse(edit.spec).success).toBe(true);
+    expect(edit.spec.layers).toEqual([
+      { layerId: "layer-001", startMs: 2_000, endMs: 5_000, kind: "sticker", sticker: { source: "own", mediaId: "media-stk-00001" }, x: DEFAULT_STICKER.x, y: DEFAULT_STICKER.y, size: DEFAULT_STICKER.size },
+    ]);
+    expect(edit.id).toBe("layer-001");
+  });
+
+  test("the caps and the room hold as for a built-in one: 10 stickers, under 0.3 s left, no clips", () => {
+    expect(addOwnStickerLayer(draftSpec(4, { layers: Array.from({ length: MAX_STICKER_LAYERS }, (_, i) => stickerLayer(i, 0, 1_000)) }), 0, "media-stk-00001")).toEqual({ ok: false, reason: "layer-cap" });
+    expect(addOwnStickerLayer(EIGHT_S, 7_800, "media-stk-00001")).toEqual({ ok: false, reason: "no-room" });
+    expect(addOwnStickerLayer(draftSpec([]), 0, "media-stk-00001")).toEqual({ ok: false, reason: "no-room" });
   });
 });

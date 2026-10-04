@@ -78,6 +78,16 @@ export function trackUrl(client: Pick<EngineClient, "kind">, trackId: string): s
 }
 
 /**
+ * An own photo's picture (3f.6: the «Мои» tab's tile), served by main as `studio-media://media/<mediaId>` THROUGH ITS RECORD (the stored, normalised
+ * JPEG). An element shows it; nothing reads its pixels. The window sends an id and nothing else. Only on the real client (the dev mock stores no picture:
+ * the tile draws a placeholder); null for an id that breaks the contract.
+ */
+export function ownPhotoUrl(client: Pick<EngineClient, "kind">, mediaId: string): string | null {
+  if (client.kind !== "window" || !Id.safeParse(mediaId).success) return null;
+  return `studio-media://media/${mediaId}`;
+}
+
+/**
  * An own track's audio (3f.4: the preview's music), served by main as `studio-media://media/<mediaId>` THROUGH ITS RECORD, with byte ranges for seeking.
  * The window sends an id and nothing else: it never sees, and never supplies, a path. Only on the real client (the dev mock stores no audio, so its preview
  * is silent); null for an id that breaks the contract.

@@ -1,4 +1,4 @@
-import { type Cell, type Clip, type Focus, MAX_SOURCE_OFFSET_MS, type MontageDraft, type Motion } from "../../../shared/engine";
+import { type Cell, type Clip, type Focus, MAX_SOURCE_OFFSET_MS, type MontageDraft, type Motion, type PhotoRef } from "../../../shared/engine";
 import { MAX_CLIPS, MAX_TOTAL_MS, MIN_CLIP_MS, splitEvenly, STEP_MS } from "../../../shared/montage";
 
 // 3d.3a: the clip track's edits, as pure functions over a draft. The editor sends each result through
@@ -22,7 +22,8 @@ export type ClipLayout = "photo" | "collage2" | "collage3" | "collage4";
  * - `photo-in-draft`: the scene photo is already in the montage (one photo, once);
  * - `layer-cap`: 10 layers of that kind already;
  * - `not-splittable`: a photo or collage clip (CF4), or a point not strictly inside the item;
- * - `too-short`: a part of a split would be under its minimum (0.5 s for a clip, 0.3 s for a layer);
+ * - `too-short`: a part of a split would be under its minimum (0.5 s for a clip, 0.3 s for a layer), or an own video is shorter than a clip's
+ *   minimum (3f.6);
  * - `not-a-photo-clip`: a layout, motion or stagger change on a clip that has none.
  */
 export type Refusal = "clip-cap" | "no-room" | "photo-in-draft" | "layer-cap" | "not-splittable" | "too-short" | "not-a-photo-clip";
@@ -122,6 +123,80 @@ export function insertPhotoClip(spec: MontageDraft, boundary: number, photoId: s
 /** «Клик — кадр в конец ролика». */
 export function appendPhotoClip(spec: MontageDraft, photoId: string, focus: Focus | null = null): Edit {
   return insertPhotoClip(spec, spec.clips.length, photoId, focus);
+}
+
+// ---------- the owner's own photos and videos (3f.6, «Мои») ----------
+// The same rules as a scene photo (P12, AM7): a new clip of min(2.0 s, the room) at a boundary, refused at 20 clips or under 0.5 s of
+// room. An own file may be placed more than once: only scene photos take part in one photo → one video.
+
+const ownCell = (mediaId: string, focus: Focus | null): Cell => ({ photo: { source: "own", mediaId }, focus });
+
+/** A new photo clip of the own photo `mediaId` before the clip at `boundary` (0 = the start, the clip count = the end). */
+export function insertOwnPhotoClip(spec: MontageDraft, boundary: number, mediaId: string, focus: Focus | null = null): Edit {
+  assertIndex(boundary, spec.clips.length + 1, "boundary");
+  const why = addRefusal(spec);
+  if (why !== null) return refuse(why);
+  const clipId = nextClipId(spec);
+  const clip: Clip = { clipId, durationMs: Math.min(ADD_CLIP_MS, roomMs(spec)), transitionIn: "cut", kind: "photo", cell: ownCell(mediaId, focus), motion: "kenburns" };
+  return done(withClips(spec, [...spec.clips.slice(0, boundary), clip, ...spec.clips.slice(boundary)]), clipId);
+}
+
+/** An own photo's tile clicked: a clip at the end. */
+export function appendOwnPhotoClip(spec: MontageDraft, mediaId: string, focus: Focus | null = null): Edit {
+  return insertOwnPhotoClip(spec, spec.clips.length, mediaId, focus);
+}
+
+/** What placing an own video needs of its record: its id and the stored video's length. */
+export interface OwnVideoFacts {
+  readonly mediaId: string;
+  readonly durationMs: number;
+}
+
+/** The longest clip an own video of `durationMs` can fill from its start: its length cut down to the 100 ms grid. */
+export const videoClipLimitMs = (durationMs: number): number => Math.floor(Math.max(0, durationMs) / STEP_MS) * STEP_MS;
+
+/**
+ * A new clip of the own video `video` before the clip at `boundary`: from its start (`trimStartMs` 0, a whole frame), for min(2.0 s, the room,
+ * its own length on the grid), focus left to the default crop. A video under the shortest clip on the grid is `too-short` (the importer refuses
+ * one at import; this holds anyway). The caps are told first, as for a photo.
+ */
+export function insertVideoClip(spec: MontageDraft, boundary: number, video: OwnVideoFacts): Edit {
+  assertIndex(boundary, spec.clips.length + 1, "boundary");
+  const why = addRefusal(spec);
+  if (why !== null) return refuse(why);
+  const limit = videoClipLimitMs(video.durationMs);
+  if (limit < MIN_CLIP_MS) return refuse("too-short");
+  const clipId = nextClipId(spec);
+  const clip: Clip = { clipId, durationMs: Math.min(ADD_CLIP_MS, roomMs(spec), limit), transitionIn: "cut", kind: "video", mediaId: video.mediaId, trimStartMs: 0, focus: null };
+  return done(withClips(spec, [...spec.clips.slice(0, boundary), clip, ...spec.clips.slice(boundary)]), clipId);
+}
+
+/** An own video's tile clicked: a clip at the end. */
+export function appendVideoClip(spec: MontageDraft, video: OwnVideoFacts): Edit {
+  return insertVideoClip(spec, spec.clips.length, video);
+}
+
+/** Puts the own photo `mediaId` (with `focus`) into cell `cell` of clip `clipIndex`. The same media already there is the same draft. */
+export function setCellOwnPhoto(spec: MontageDraft, clipIndex: number, cell: number, mediaId: string, focus: Focus | null = null): Edit {
+  const clip = clipAt(spec, clipIndex);
+  if (clip.kind === "video") throw new RangeError(`clip ${clipIndex} is a video and has no cells`);
+  const cells = cellsOf(clip);
+  assertIndex(cell, cells.length, "cell index");
+  const current = cells[cell]?.photo;
+  if (current?.source === "own" && current.mediaId === mediaId) return done(spec);
+  const next = ownCell(mediaId, focus);
+  if (clip.kind === "photo") return done(replaceClip(spec, clipIndex, { ...clip, cell: next }));
+  return done(replaceClip(spec, clipIndex, { ...clip, cells: clip.cells.map((c, i) => (i === cell ? next : c)) }));
+}
+
+/** Where each own photo or video stands in the draft (M5): the number of the first clip holding it, in clip order. */
+export function ownSlots(spec: MontageDraft): ReadonlyMap<string, number> {
+  const slots = new Map<string, number>();
+  spec.clips.forEach((clip, i) => {
+    const ids = clip.kind === "video" ? [clip.mediaId] : cellsOf(clip).flatMap((c) => (c.photo?.source === "own" ? [c.photo.mediaId] : []));
+    for (const id of ids) if (!slots.has(id)) slots.set(id, i + 1);
+  });
+  return slots;
 }
 
 export function removeClip(spec: MontageDraft, index: number): MontageDraft {
@@ -276,9 +351,20 @@ export function setCellPhoto(spec: MontageDraft, clipIndex: number, cell: number
  * is still null; a stored focus is never replaced. The same draft when nothing changes.
  */
 export function fillFocus(spec: MontageDraft, photoId: string, focus: Focus): MontageDraft {
+  return fillPhotoFocus(spec, { source: "scene", photoId }, focus);
+}
+
+/** `fillFocus` for an own photo (3f.6): the focus `montages.focus` found for it, written into its cells still waiting for one. */
+export function fillOwnFocus(spec: MontageDraft, mediaId: string, focus: Focus): MontageDraft {
+  return fillPhotoFocus(spec, { source: "own", mediaId }, focus);
+}
+
+const samePhoto = (a: PhotoRef, b: PhotoRef): boolean => (a.source === "scene" ? b.source === "scene" && a.photoId === b.photoId : b.source === "own" && a.mediaId === b.mediaId);
+
+function fillPhotoFocus(spec: MontageDraft, photo: PhotoRef, focus: Focus): MontageDraft {
   let changed = false;
   const fill = (cell: Cell): Cell => {
-    if (cell.focus !== null || cell.photo?.source !== "scene" || cell.photo.photoId !== photoId) return cell;
+    if (cell.focus !== null || cell.photo === null || !samePhoto(cell.photo, photo)) return cell;
     changed = true;
     return { ...cell, focus };
   };

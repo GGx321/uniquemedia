@@ -2,7 +2,7 @@ import { Focus, MontageDraft, MontageName, type Montage } from "../../../shared/
 import type { Scheduler } from "../../engine/scheduler";
 import type { MontageChange } from "../../engine/store";
 import { DraftAutosave, type FlushResult, type SaveState, type SendSave } from "./autosave";
-import { cellsOf, fillFocus } from "./clipOps";
+import { cellsOf, fillFocus, fillOwnFocus } from "./clipOps";
 import { canRedo, canUndo, commitVersion, type CommitOptions, type History, redoVersion, rewriteVersions, sealVersion, startHistory, undoVersion } from "./history";
 import { sameJson } from "./json";
 
@@ -43,16 +43,24 @@ export interface SessionOptions {
 
 const sameSave = (a: SaveState, b: SaveState): boolean => a.kind === b.kind && (a.kind !== "failed" || (b.kind === "failed" && a.error === b.error));
 
+/** One focus a save filled in: for a scene photo, or for an own photo (3f.6). */
+type FocusFill = { readonly source: "scene" | "own"; readonly id: string; readonly focus: Focus };
+
+const applyFill = (spec: MontageDraft, fill: FocusFill): MontageDraft => (fill.source === "scene" ? fillFocus(spec, fill.id, fill.focus) : fillOwnFocus(spec, fill.id, fill.focus));
+
 /**
- * The focuses `remote` filled in, when filling them is ALL that tells it from `present` (each scene photo's focus, null
+ * The focuses `remote` filled in, when filling them is ALL that tells it from `present` (each photo's focus, scene or own, null
  * here, found there); null when anything else differs, or nothing does.
  */
-function focusFills(present: MontageDraft, remote: MontageDraft): [string, Focus][] | null {
-  const fills: [string, Focus][] = [];
+function focusFills(present: MontageDraft, remote: MontageDraft): FocusFill[] | null {
+  const fills: FocusFill[] = [];
   for (const clip of remote.clips) {
-    for (const cell of cellsOf(clip)) if (cell.photo?.source === "scene" && cell.focus !== null) fills.push([cell.photo.photoId, cell.focus]);
+    for (const cell of cellsOf(clip)) {
+      if (cell.photo === null || cell.focus === null) continue;
+      fills.push(cell.photo.source === "scene" ? { source: "scene", id: cell.photo.photoId, focus: cell.focus } : { source: "own", id: cell.photo.mediaId, focus: cell.focus });
+    }
   }
-  const filled = fills.reduce((at, [photoId, focus]) => fillFocus(at, photoId, focus), present);
+  const filled = fills.reduce(applyFill, present);
   return filled !== present && sameJson(filled, remote) ? fills : null;
 }
 
@@ -107,12 +115,21 @@ export class DraftSession {
    * Not an undo step. True when the draft on screen changed (it is then saved like an edit).
    */
   fillFocus(photoId: string, focus: Focus): boolean {
+    return this.#fillFocus({ source: "scene", id: photoId, focus });
+  }
+
+  /** `fillFocus` for an own photo placed from «Мои» (3f.6): the same rules, the own photo's cells. */
+  fillOwnFocus(mediaId: string, focus: Focus): boolean {
+    return this.#fillFocus({ source: "own", id: mediaId, focus });
+  }
+
+  #fillFocus(fill: FocusFill): boolean {
     if (this.#state.save.kind === "gone") return false;
     // The focus itself is checked first: it is written into undone versions too, which no later edit re-checks, so
     // the session never relies on the client having validated the engine's answer.
-    if (!Focus.safeParse(focus).success) return false;
+    if (!Focus.safeParse(fill.focus).success) return false;
     const before = this.#history.present;
-    const next = rewriteVersions(this.#history, (spec) => fillFocus(spec, photoId, focus));
+    const next = rewriteVersions(this.#history, (spec) => applyFill(spec, fill));
     // Like an edit: a present the contract would refuse never enters.
     if (next === this.#history || !MontageDraft.safeParse(next.present).success) return false;
     this.#history = next;
@@ -177,7 +194,7 @@ export class DraftSession {
     // A save that only filled in face focuses (another window's `montages.focus` answers) is written into every version,
     // as this window's own would be: never an undo step that ⌘Z here would silently take back.
     const fills = focusFills(this.#history.present, montage.spec);
-    this.#history = fills === null ? commitVersion(this.#history, montage.spec) : rewriteVersions(this.#history, (spec) => fills.reduce((at, [photoId, focus]) => fillFocus(at, photoId, focus), spec));
+    this.#history = fills === null ? commitVersion(this.#history, montage.spec) : rewriteVersions(this.#history, (spec) => fills.reduce(applyFill, spec));
     this.#refresh();
     return "adopted";
   }
