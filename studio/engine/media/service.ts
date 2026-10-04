@@ -332,6 +332,9 @@ export class MediaService {
     // Its turn came: a job that waited is announced again, now running.
     if (this.#deps.jobs.startImportRunning(jobId)) this.#announce(jobId);
     const works: WorkFile[] = [];
+    // Sealed when the job ends: an importer that was dropped (it ignored the cancel) and asks for a file later gets none, so nothing is
+    // created that no cleanup would ever take (a held name is skipped by the staging's sweep).
+    let sealed = false;
     let staged: StagedMedia | null = null;
     try {
       let lastPercent = 0;
@@ -358,7 +361,13 @@ export class MediaService {
         name,
         signal,
         workFile: async () => {
+          if (sealed) throw new Error("the import has ended");
           const work = await area.staging.workFile();
+          if (sealed) {
+            // The job ended while the name was being made: it is let go at once, never left held.
+            await work.release();
+            throw new Error("the import has ended");
+          }
           works.push(work);
           return work;
         },
@@ -417,6 +426,7 @@ export class MediaService {
     } finally {
       // Before the job ends and drops the library hold: the staged copy and every work file are gone whichever way it ended. The turn
       // is handed on whatever the cleanup does: a failing disposal must not stop every later import.
+      sealed = true;
       try {
         await staged?.dispose();
         for (const work of works) await work.release();

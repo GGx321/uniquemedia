@@ -1178,3 +1178,57 @@ describe("a render that reserves a media while it is being deleted (fix round 3,
     expect(await r.service.lookup(id)).toBeDefined();
   });
 });
+
+describe("a hung importer's late work file (fix round 3, M2)", () => {
+  test("after the job ended, workFile throws: nothing is created that no cleanup would ever take", async () => {
+    const late = deferred();
+    let lateOutcome = "not tried";
+    let first = true;
+    const r = rig({
+      importerGraceMs: 20,
+      importers: {
+        photo: async ({ workFile }) => {
+          if (!first) return { ok: true, facts: PHOTO_FACTS };
+          first = false;
+          // Ignores the cancel; wakes up long after the job was dropped and asks for a file to write a mezzanine in.
+          await late.promise;
+          try {
+            const work = await workFile();
+            await writeFile(work.path, "a mezzanine nobody wants");
+            lateOutcome = "got a file";
+          } catch {
+            lateOutcome = "refused";
+          }
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    const hung = await started(r, await callFor("a.jpg", jpeg(300)));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    r.service.cancel(hung);
+    await r.service.settled();
+    expect(r.jobs.stateOf(hung)).toMatchObject({ status: "cancelled" });
+    late.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(lateOutcome).toBe("refused");
+    expect(await staged()).toEqual([]);
+  });
+
+  test("a work file asked for while the job runs is still given, and released when the job ends", async () => {
+    let path = "";
+    const r = rig({
+      importers: {
+        photo: async ({ workFile }) => {
+          const work = await workFile();
+          path = work.path;
+          await writeFile(work.path, "scratch");
+          return { ok: false, reason: "too-large" };
+        },
+      },
+    });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(path).not.toBe("");
+    expect(await staged()).toEqual([]);
+  });
+});
