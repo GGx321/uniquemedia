@@ -91,7 +91,7 @@ describe("nodeTestSummaryProblem: `electron --test` exits 0 for runs that tested
     for (const suite of NODE_TEST_SUITES) expect(suite.minTests).toBeGreaterThan(0);
     // CI-4 moved the deadline headroom out of the text worker's blocking count and added a plain "the worst shadow caption renders" test (10 -> 10);
     // the event-loop gap tests stay blocking, with a wide criterion, and also run in the perf tier with the tight one.
-    expect(Object.fromEntries(NODE_TEST_SUITES.map((suite) => [suite.name, suite.minTests]))).toEqual({ "text worker": 10, "face worker": 18, "caption rules": 64, "caption worker": 8, "export name claim": 7 });
+    expect(Object.fromEntries(NODE_TEST_SUITES.map((suite) => [suite.name, suite.minTests]))).toEqual({ "text worker": 10, "face worker": 18, "caption rules": 64, "caption worker": 8, "export name claim": 8 });
   });
 
   test("the perf tier's counts: what each suite runs when STUDIO_TEST_TIER=perf", () => {
