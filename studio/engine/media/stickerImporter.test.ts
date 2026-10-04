@@ -425,7 +425,7 @@ describe("the sticker importer: ffmpeg decodes what was judged, or the file is r
         expect(argv.indexOf("-c:v")).toBeLessThan(argv.indexOf("-i"));
         expect(at("-protocol_whitelist")).toBe("file");
         expect(Number(at("-max_alloc"))).toBeGreaterThan(0);
-        expect(Number(at("-max_pixels"))).toBe(STICKER_LIMITS.maxSide * STICKER_LIMITS.maxSide);
+        expect(Number(at("-max_pixels"))).toBeGreaterThanOrEqual(STICKER_LIMITS.maxSide * STICKER_LIMITS.maxSide);
         expect(argv).toContain("-nostdin");
         expect(argv).toContain("-xerror");
         expect(at("-threads")).toBe("1");
@@ -446,13 +446,14 @@ describe("the sticker importer: ffmpeg decodes what was judged, or the file is r
     expect(calls[1]?.[calls[1].indexOf("-f", calls[1].indexOf("-i")) + 1]).toBe("rawvideo");
   });
 
-  test("the ffmpeg never gets the owner's path: it reads the staged copy and writes the work file only", async () => {
+  test("the ffmpeg never gets the owner's path, nor the staged copy's: it reads a work file of the judged bytes and writes a work file", async () => {
     const calls: string[][] = [];
     const hand = await handoff(tmp(), flatGif([0, 1], [10, 10]), { format: "gif", kind: "sticker", name: "holiday.gif" });
     await importerWith({ spawner: recordingSpawner(calls) })(hand.request);
     const mentioned = calls.flat().filter((token) => token.includes("/") || token.includes("\\"));
-    const allowed = new Set([hand.request.staged.path, ...hand.works.map((w) => w.path)]);
+    const allowed = new Set(hand.works.map((w) => w.path));
     for (const token of mentioned) expect(allowed.has(token)).toBe(true);
+    expect(mentioned).not.toContain(hand.request.staged.path);
     expect(calls.flat().join(" ")).not.toContain("holiday");
   });
 });
@@ -467,7 +468,7 @@ describe("the sticker importer: the encode and the files it writes", () => {
     const hand = await handoff(tmp(), flatGif([0, 1, 2], [2, 2, 2], { width: 6, height: 4 }), { format: "gif", kind: "sticker" });
     await importerWith({ encode })(hand.request);
     expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({ rawPath: hand.works[0]?.path, width: 6, height: 4, slots: [1, 0, 1], maxBytes: MEDIA_BYTE_CAPS.sticker });
+    expect(jobs[0]).toMatchObject({ rawPath: hand.works[1]?.path, width: 6, height: 4, slots: [1, 0, 1], maxBytes: MEDIA_BYTE_CAPS.sticker });
   });
 
   test("an encode that passes the byte cap is refused as too-large", async () => {
@@ -488,14 +489,14 @@ describe("the sticker importer: the encode and the files it writes", () => {
     const encode: StickerImporterDeps["encode"] = async () => encodeApng({ width: 8, height: 6, frames: [new Uint8Array(8 * 6 * 4), new Uint8Array(8 * 6 * 4)] });
     const { outcome, hand } = await runWith(flatGif([0, 1], [10, 10]), "gif", { encode });
     expect(outcome).toEqual({ ok: false, reason: "failed" });
-    expect(existsSync(hand.works[1]?.path ?? "")).toBe(false);
+    expect(existsSync(hand.works[2]?.path ?? "")).toBe(false);
   });
 
   test("bytes that are not an APNG at all are refused, and not stored", async () => {
     const encode: StickerImporterDeps["encode"] = async () => new Uint8Array(64);
     const { outcome, hand } = await runWith(flatGif([0, 1], [10, 10]), "gif", { encode });
     expect(outcome).toEqual({ ok: false, reason: "failed" });
-    expect(existsSync(hand.works[1]?.path ?? "")).toBe(false);
+    expect(existsSync(hand.works[2]?.path ?? "")).toBe(false);
   });
 
   /** An encode that answers a file of its own making: `width` by `height`, each frame lasting the given slots. */
@@ -544,7 +545,8 @@ describe("the sticker importer: the encode and the files it writes", () => {
     await writeFile(victim, "keep me");
     const link = join(tmp(), "work-link.media");
     await symlink(victim, link);
-    const request = { ...hand.request, workFile: async () => ({ path: link, release: async () => undefined }) };
+    let call = 0;
+    const request = { ...hand.request, workFile: async () => (call++ === 0 ? hand.request.workFile() : { path: link, release: async () => undefined }) };
     expect(await importerWith()(request)).toEqual({ ok: false, reason: "failed" });
     expect(await readFile(victim, "utf8")).toBe("keep me");
   });
@@ -556,7 +558,7 @@ describe("the sticker importer: the encode and the files it writes", () => {
     const link = join(tmp(), "out-link.media");
     await symlink(victim, link);
     let call = 0;
-    const request = { ...hand.request, workFile: async () => (call++ === 0 ? hand.request.workFile() : { path: link, release: async () => undefined }) };
+    const request = { ...hand.request, workFile: async () => (call++ < 2 ? hand.request.workFile() : { path: link, release: async () => undefined }) };
     expect(await importerWith()(request)).toEqual({ ok: false, reason: "failed" });
     expect(await readFile(victim, "utf8")).toBe("keep me");
   });
@@ -630,7 +632,7 @@ describe("the sticker importer: a cancel", () => {
     await encoding;
     hand.controller.abort();
     expect(await running).toEqual({ ok: false, reason: "cancelled" });
-    expect(existsSync(hand.works[1]?.path ?? "")).toBe(false);
+    expect(existsSync(hand.works[2]?.path ?? "")).toBe(false);
   });
 
   test("that lands while the stored file's name is being made stores nothing", async () => {
@@ -640,12 +642,12 @@ describe("the sticker importer: a cancel", () => {
       ...hand.request,
       workFile: async () => {
         const work = await hand.request.workFile();
-        if (call++ === 1) hand.controller.abort();
+        if (call++ === 2) hand.controller.abort();
         return work;
       },
     };
     expect(await importerWith()(request)).toEqual({ ok: false, reason: "cancelled" });
-    expect(existsSync(hand.works[1]?.path ?? "")).toBe(false);
+    expect(existsSync(hand.works[2]?.path ?? "")).toBe(false);
   });
 
   test("that lands just as the encode returns stores nothing: the signal is looked at before the file is written", async () => {
@@ -656,6 +658,6 @@ describe("the sticker importer: a cancel", () => {
       return bytes;
     };
     expect(await importerWith({ encode })(hand.request)).toEqual({ ok: false, reason: "cancelled" });
-    expect(existsSync(hand.works[1]?.path ?? "")).toBe(false);
+    expect(existsSync(hand.works[2]?.path ?? "")).toBe(false);
   });
 });

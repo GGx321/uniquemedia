@@ -62,6 +62,10 @@ export interface GifInfo {
   readonly frames: readonly GifFrameInfo[];
   /** The loop count a NETSCAPE2.0 or ANIMEXTS1.0 block gives (0 is forever), or null when there is none. */
   readonly loopCount: number | null;
+  /** How many colours the global table has (0 when the file has none). */
+  readonly globalTableEntries: number;
+  /** Where the screen's background colour index is written (the byte after the screen's packed flags); null when the file has no global table. */
+  readonly backgroundIndexOffset: number | null;
 }
 
 export type GifInspection =
@@ -190,7 +194,7 @@ export function inspectGif(bytes: Uint8Array, limits: StickerLimits = STICKER_LI
     if (introducer === 0x3b) {
       if (pos + 1 !== bytes.length) return fail("TRAILING_DATA", "bytes after the trailer");
       if (frames.length === 0) return fail("NO_FRAMES", "the file holds no image");
-      return { ok: true, info: { width: screenWidth, height: screenHeight, frameCount: frames.length, frames, loopCount } };
+      return { ok: true, info: { width: screenWidth, height: screenHeight, frameCount: frames.length, frames, loopCount, globalTableEntries: hasGlobalTable ? 1 << ((screenPacked & 7) + 1) : 0, backgroundIndexOffset: hasGlobalTable ? 11 : null } };
     }
 
     if (introducer === 0x21) {

@@ -5,7 +5,7 @@ const cs = (n: number) => ({ num: n, den: 100 });
 
 describe("quantiseByAccumulatedTime", () => {
   test("a frame of exactly 1/30 s gets one slot", () => {
-    expect(quantiseByAccumulatedTime([{ num: 1, den: 30 }, { num: 1, den: 30 }, { num: 1, den: 30 }])).toEqual({ slots: [1, 1, 1], loopFrames: 3 });
+    expect(quantiseByAccumulatedTime([{ num: 1, den: 30 }, { num: 1, den: 30 }, { num: 1, den: 30 }])).toEqual({ slots: [1, 1, 1], loopFrames: 3, endsOnHalf: false });
   });
 
   test("a frame of 2/30 s gets two slots", () => {
@@ -52,7 +52,7 @@ describe("quantiseByAccumulatedTime", () => {
   });
 
   test("an empty list is a loop of nothing", () => {
-    expect(quantiseByAccumulatedTime([])).toEqual({ slots: [], loopFrames: 0 });
+    expect(quantiseByAccumulatedTime([])).toEqual({ slots: [], loopFrames: 0, endsOnHalf: false });
   });
 
   test("a zero or negative duration is refused", () => {
@@ -68,5 +68,28 @@ describe("clampGifDelayCs", () => {
 
   test("2 cs and above are kept as they are", () => {
     expect([clampGifDelayCs(2), clampGifDelayCs(3), clampGifDelayCs(10), clampGifDelayCs(65535)]).toEqual([2, 3, 10, 65535]);
+  });
+
+  describe("endsOnHalf", () => {
+    test("is true when the whole loop is an odd number of half slots (1/120 + 1/120 + 1/15 s is 2.5 slots)", () => {
+      expect(quantiseByAccumulatedTime([{ num: 1, den: 120 }, { num: 1, den: 120 }, { num: 1, den: 15 }]).endsOnHalf).toBe(true);
+    });
+
+    test("is false for a whole number of slots", () => {
+      expect(quantiseByAccumulatedTime([{ num: 1, den: 15 }, { num: 1, den: 15 }]).endsOnHalf).toBe(false);
+    });
+
+    test("is false a hair away from a half (the exact fraction is not the half)", () => {
+      expect(quantiseByAccumulatedTime([{ num: 1, den: 120 }, { num: 1, den: 120 }, { num: 100001, den: 1_500_000 }]).endsOnHalf).toBe(false);
+    });
+
+    test("is false for a quarter and a three-quarter slot", () => {
+      expect(quantiseByAccumulatedTime([{ num: 1, den: 120 }]).endsOnHalf).toBe(false);
+      expect(quantiseByAccumulatedTime([{ num: 1, den: 40 }]).endsOnHalf).toBe(false);
+    });
+
+    test("is true for a single frame of half a slot", () => {
+      expect(quantiseByAccumulatedTime([{ num: 1, den: 60 }]).endsOnHalf).toBe(true);
+    });
   });
 });

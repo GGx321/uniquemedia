@@ -60,6 +60,14 @@ describe("inspectGif: what it reports", () => {
     expect(info.frames.map((f) => f.descriptorOffset)).toEqual([...info.frames.map((f) => f.descriptorOffset)].sort((a, b) => a - b));
   });
 
+  test("reports where the screen's background colour index is written, and how many colours the global table has", () => {
+    const bytes = buildGif({ frames: framesOf(2) });
+    const info = accepted(inspectGif(bytes));
+    expect(info.globalTableEntries).toBe(4);
+    expect(info.backgroundIndexOffset).toBe(11);
+    expect(bytes[info.backgroundIndexOffset ?? 0]).toBe(0);
+  });
+
   test("reports a frame's own region and flags", () => {
     const info = accepted(inspectGif(buildGif({ width: 8, height: 8, frames: [{ width: 8, height: 8 }, { x: 2, y: 3, width: 4, height: 2, disposal: 2, transparent: 1, interlaced: true }] })));
     expect(info.frames[1]).toMatchObject({ x: 2, y: 3, width: 4, height: 2, disposal: 2, transparent: true, interlaced: true });

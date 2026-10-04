@@ -147,3 +147,38 @@ export function withPoster(apng: Uint8Array): Uint8Array {
   out.push(chunkBytes("IEND", new Uint8Array(0)));
   return join(out);
 }
+
+/**
+ * An APNG of `count` frames that all share ONE compressed picture (so a big canvas costs one compression, not `count`), each lasting `delay`
+ * seconds: for the importer's size rules, which are judged before any pixel is decoded. The pixels are a flat colour.
+ */
+export function repeatedFramesApng(width: number, height: number, count: number, delay: readonly [number, number]): Uint8Array {
+  const chunks = chunksOf(flatApng([[10, 20, 30, 255]], { width, height }));
+  const ihdr = chunks.find((c) => c.name === "IHDR");
+  const picture = chunks.find((c) => c.name === "IDAT");
+  if (ihdr === undefined || picture === undefined) throw new Error("not a file flatApng wrote");
+  const actl = new Uint8Array(8);
+  new DataView(actl.buffer).setUint32(0, count);
+  const out: Uint8Array[] = [chunkBytes("IHDR", ihdr.data), chunkBytes("acTL", actl)];
+  let seq = 0;
+  for (let i = 0; i < count; i++) {
+    const fctl = new Uint8Array(26);
+    const view = new DataView(fctl.buffer);
+    view.setUint32(0, seq++);
+    view.setUint32(4, width);
+    view.setUint32(8, height);
+    view.setUint16(20, delay[0]);
+    view.setUint16(22, delay[1]);
+    out.push(chunkBytes("fcTL", fctl));
+    if (i === 0) {
+      out.push(chunkBytes("IDAT", picture.data));
+    } else {
+      const data = new Uint8Array(4 + picture.data.length);
+      new DataView(data.buffer).setUint32(0, seq++);
+      data.set(picture.data, 4);
+      out.push(chunkBytes("fdAT", data));
+    }
+  }
+  out.push(chunkBytes("IEND", new Uint8Array(0)));
+  return join(out);
+}

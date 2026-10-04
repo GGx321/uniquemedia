@@ -24,6 +24,11 @@ export interface Quantised {
   readonly slots: readonly number[];
   /** The sum of `slots`: the loop's length in 30 fps frames. */
   readonly loopFrames: number;
+  /**
+   * The loop's exact length is a whole number of slots plus one half (2.5, 8.5, ...). There a rounding of the delays by a hair, such as the APNG demuxer's
+   * to 1/100000 s, moves ffmpeg's count by one either way, so a count one off is not a disagreement about the rule.
+   */
+  readonly endsOnHalf: boolean;
 }
 
 const gcd = (a: bigint, b: bigint): bigint => {
@@ -56,7 +61,10 @@ export function quantiseByAccumulatedTime(durations: readonly FrameDuration[]): 
     slots.push(boundary - previous);
     previous = boundary;
   }
-  return { slots, loopFrames: previous };
+  // N / D * fps is a half past a whole number exactly when 2 * fps * N is an odd multiple of D.
+  const doubled = 2n * fps * n;
+  const endsOnHalf = durations.length > 0 && doubled % d === 0n && (doubled / d) % 2n === 1n;
+  return { slots, loopFrames: previous, endsOnHalf };
 }
 
 /**

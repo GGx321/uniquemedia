@@ -117,7 +117,7 @@ describe("the sticker importer at the caps", () => {
       hand.controller.abort();
       expect(await running).toEqual({ ok: false, reason: "cancelled" });
       expect(workers.terminated).toBe(1);
-      const out = hand.works[1]?.path;
+      const out = hand.works[2]?.path;
       expect(out === undefined ? false : await stat(out).then(() => true, () => false)).toBe(false);
     },
     600_000,
