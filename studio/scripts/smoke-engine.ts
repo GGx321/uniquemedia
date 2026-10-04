@@ -2647,6 +2647,19 @@ async function main(): Promise<void> {
     check("the poster route serves a poster", field(played, "poster", "loaded") === true, played);
     check("a built-in sticker loads through studio-media://sticker (from the asar when packaged)", field(played, "sticker", "loaded") === true && field(played, "sticker", "width") === 320, played);
     check("an unknown sticker does not load", field(played, "unknownSticker", "loaded") === false, played);
+    // 3d.4 (review round 1): the preview's decoder gets a built-in sticker's bytes from main over IPC (`stickers.bytes`, from inside
+    // app.asar when packaged); the media scheme stays closed to script reads (it is never CORS-enabled).
+    const stickerBytes = await cdp.evaluate(`(async () => {
+      const head = async (stickerId) => {
+        const r = await window.__req("stickers.bytes", { stickerId });
+        return r.ok ? { ok: true, head: r.result.apngBase64.slice(0, 11), length: r.result.apngBase64.length } : { ok: false, code: r.error.code };
+      };
+      const fetched = await fetch("studio-media://sticker/heart-pulse").then(() => "read", () => "refused");
+      return { known: await head("heart-pulse"), unknown: await head("no-such-sticker"), fetched };
+    })()`);
+    check("stickers.bytes answers a built-in sticker's verified PNG bytes (from the asar when packaged)", field(stickerBytes, "known", "ok") === true && field(stickerBytes, "known", "head") === "iVBORw0KGgo" && Number(field(stickerBytes, "known", "length")) > 1000, stickerBytes);
+    check("stickers.bytes of a sticker the set lacks is NOT_FOUND", field(stickerBytes, "unknown", "code") === "NOT_FOUND", stickerBytes);
+    check("the window cannot read the media scheme by script (no corsEnabled)", field(stickerBytes, "fetched") === "refused", stickerBytes);
     // The record was only there for this section: later checks (and a restarted engine) must find the library as it was.
     await rm(recordPath);
 
