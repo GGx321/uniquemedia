@@ -4,6 +4,7 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CommandMessage, MEDIA_BYTE_CAPS, OwnStickerBytes, PROTOCOL_VERSION } from "../shared/engine";
 import { NODE_OPEN_OPS } from "../engine/library/openRegular";
+import { PNG_1X1 } from "../engine/library/testing/sampleData";
 import { flatApng, flatGif, type Rgba } from "../engine/media/stickerFixtures.testkit";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { tempDirFor } from "../testing/tempDir";
@@ -221,6 +222,11 @@ describe("media.stickerBytes in main: a sticker whose file is not what its recor
     expect(await refusal(ask(MEDIA))).toEqual({ code: "INTERNAL", detail: CHECK_FAILED });
   });
 
+  test("a still PNG whose hash and size are the record's passes the sniff and is refused by the strict APNG reader alone", async () => {
+    await store(MEDIA, PNG_1X1, { width: 1, height: 1, loopFrames: 2, delayFrames: [1, 1] });
+    expect(await refusal(ask(MEDIA))).toEqual({ code: "INTERNAL", detail: CHECK_FAILED });
+  });
+
   test("an APNG whose loop is not the record's is refused", async () => {
     await store(MEDIA, APNG, { loopFrames: 5, delayFrames: [2, 3] });
     expect(await refusal(ask(MEDIA))).toEqual({ code: "INTERNAL", detail: CHECK_FAILED });
@@ -249,6 +255,26 @@ describe("media.stickerBytes in main: nothing of the disk leaks", () => {
       const text = JSON.stringify(answer.ok ? { ...answer, result: { ...answer.result, apngBase64: "" } } : answer);
       expect([text.includes(tmp()), text.includes(library()), text.includes(".png"), text.includes(".json"), text.includes("media/")]).toEqual([false, false, false, false, false]);
     }
+  });
+
+  test("a read of the sticker's file that throws a message with the path in it answers the fixed text and leaks nothing", async () => {
+    await store(MEDIA);
+    let opens = 0;
+    const secret = join(library(), "media", `${MEDIA}.png`);
+    const fs: MediaFsOps = {
+      ...NODE_MEDIA_FS,
+      open: {
+        ...NODE_MEDIA_FS.open,
+        // The record is opened twice (its header, its bytes), the sticker's file twice more: the fourth open is the read of the bytes to be sent.
+        open: async (path, flags) => {
+          if (++opens === 4) throw new Error(`EIO: i/o error, open '${secret}'`);
+          return NODE_MEDIA_FS.open.open(path, flags);
+        },
+      },
+    };
+    const answer = await refusal(ask(MEDIA, { fs }));
+    expect(opens).toBe(4);
+    expect(answer).toEqual({ code: "INTERNAL", detail: CHECK_FAILED });
   });
 
   test("a failure of the disk itself is the same fixed text, never the system's message", async () => {

@@ -51,6 +51,11 @@ describe("the real encode worker", () => {
     expect((await gate().encode({ rawPath: good, width: W, height: H, slots: [1, 1], maxBytes: 1 << 20 }, signal())).length).toBeGreaterThan(0);
   });
 
+  test("a raw file with bytes beyond its frames fails the job: it is not what was judged", async () => {
+    const long = await rawFile([frame(0), frame(1), Uint8Array.of(1)]);
+    await expect(gate().encode({ rawPath: long, width: W, height: H, slots: [1, 1], maxBytes: 1 << 20 }, signal())).rejects.toBeInstanceOf(EncodeWorkerError);
+  });
+
   test("a raw file that is not there fails the job", async () => {
     await expect(gate().encode({ rawPath: join(dir(), "missing.rgba"), width: W, height: H, slots: [1], maxBytes: 1 << 20 }, signal())).rejects.toBeInstanceOf(EncodeWorkerError);
   });
