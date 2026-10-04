@@ -289,9 +289,10 @@ jobs:
   # and realWorkerTests.test.ts proves the N shards together run every test file exactly once; the matrix below and the `/4` in the
   # command are guarded to agree. Each job keeps its own 15-minute attempt bound and its own crash retry (a retry reruns one shard);
   # the step's limit is attempts x bound plus slack. fail-fast is off: every shard reports, as the sequential run did. Each job repeats
-  # the install and the models fetch (about a minute: the price of the parallelism), so bun's package cache is restored (it holds
-  # downloaded tarballs, verified against bun.lock on install: a bad entry cannot become a different package); node_modules is not cached.
-  # No secret is available to, or cached by, these jobs (read-only token, no secrets context).
+  # the install and the models fetch (about a minute: the price of the parallelism). Caching bun's package cache was measured and
+  # dropped: a warm run (run 37196927344) spent 31 s restoring it and 10 s installing, against 47 to 55 s for a cold install, so it
+  # saved about ten seconds and added a post step; node_modules is not cached (a restored tree would skip the postinstalls that
+  # fetch the ffmpeg and electron binaries). No secret is available to, or cached by, these jobs (read-only token, no secrets context).
   test-windows:
     name: test (windows-latest, shard ${{ matrix.shard }}/4)
     if: github.event_name != 'schedule' && inputs.tier != 'scheduled'
@@ -306,16 +307,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - name: Find bun's package cache
-        id: bun-cache-dir
-        shell: bash
-        run: echo "dir=$(bun pm cache)" >> "$GITHUB_OUTPUT"
-      - name: Cache bun's packages
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.bun-cache-dir.outputs.dir }}
-          key: bun-packages-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-packages-${{ runner.os }}-
       - run: bun install
       # The face worker's tests need the two models, like the build job's (same cache key, same step: see the build job for why the fetch
       # runs on a hit too).
